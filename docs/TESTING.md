@@ -854,7 +854,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_LINK=<ping ms>[,…]` | Our avatar moved by a stand-in simulator through a simulated link, to compare Aurora's movement with Firestorm's |
 | `AURORA_DEMO_KEY=<arrow>[:pulse]` | Holds an arrow key (or presses and releases it, over and over) |
 | `AURORA_DEMO_SIT=<n>` | Clicks n times on the Sit button |
-| `AURORA_DEMO_SIT_TP=local\|region` | Sits on the nearest prim, then teleports from the seat |
+| `AURORA_DEMO_SIT_TP=local\|region\|ao-local\|ao-region` | Sits on the nearest prim, then teleports from the seat (`ao-*`: with the AO on) |
 | `AURORA_DEMO_MMO="x,y[,flags]"` | Mouse steering and optional world walking with both buttons |
 | `AURORA_DEMO_DOUBLECLICK=walk\|run\|tp[,x,y]` or `menu` | Double click on the ground, its wolf menu entry |
 | `AURORA_DEMO_AVATAR_TRAVEL=<mode>` | Avatar navigation menu, approach, persistent follow and automatic flight |
@@ -1319,6 +1319,13 @@ when unfocused") is ignored during a screenshot.
   `demo sit tp: arrived, seated false, parent 0, seat animation false`
   (before the fix: `parent 150, seat animation true`, the avatar drawn
   seated far out of the region).
+  `ao-local` and `ao-region` do the same with the demo's AO turned on at
+  frame 240: the seat plays the stock sit, which the AO overrides and stops,
+  and the simulator keeps the AO's animations through the teleport and
+  sends no new stock state, as a simulator can (#2700). Capture frame 380:
+  seated in the AO's sit; frame 720: standing at the destination. The log
+  ends `AO state None, AO sit cover false` (before the fix: `AO state
+  Some(Sitting), AO sit cover true`, the avatar standing in the AO's sit).
 - **`AURORA_DEMO_MMO="x,y[,1|2|3]"`**: left press on the avatar then right
   button held (steering with the mouse); `1`: right arrow instead (the
   avatar slides right, its yaw unchanged), `2`: double right click
@@ -3917,7 +3924,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
 | `AURORA_DEMO_NIGHT_SKY=real\|legacy[:<azimuth>,<elevation>]` | The night sky's stars at midnight, the camera looking at the sky |
 | `AURORA_DEMO_NIGHT_SKY_PLACE=<latitude>[,<gain>]` | Where the real sky is seen from, and its stars' brightness |
-| `AURORA_DEMO_OCCLUSION=1` | Wall with hidden objects (occlusion test) |
+| `AURORA_DEMO_OCCLUSION=1\|edge` | Wall with hidden objects (occlusion test); `edge`: cubes in plain view beside a near wall |
 | `AURORA_DEMO_DEBUG="<overlays>"` | Debug overlays |
 | `AURORA_DEMO_EEP_PARCEL=<mode>` | EEP environment of the region and the parcel |
 | `AURORA_DEMO_ENV_SELECT=<mode>` | Environment picker |
@@ -4531,7 +4538,10 @@ both open states and the selection count. Capture at frame 620.
   ahead; `far`: the same rows 30 m further and 30 m to the right, 56 to 88 m
   away (within the 96 m draw distance); `dense`: about 580 trees of every
   species, turned and sized at random, and 390 grass tufts over the land
-  ahead (the cost of a forest, with `AURORA_PROFILE=1`). The species
+  ahead (the cost of a forest, with `AURORA_PROFILE=1`). With
+  `AURORA_GRAPHICS_PRESET=potato` (trees' detail 0, as the Legacy Low)
+  neither trees nor grass are drawn; `deluxe` (1) keeps the finest trunks
+  further than `medium` (0.5). The species
   textures are not fetched: stand-ins drawn under their ids (bark on the
   left half, leaves in the top right quarter, grass blades from the bottom
   edge), only with this scenario. Close-ups: `AURORA_DEMO_CAMERA=close,790,185,80`
@@ -4650,6 +4660,14 @@ both open states and the selection count. Capture at frame 620.
   sphere's by its weight. Used to check `AURORA_PROBE_WALK` on the probes
   the plaza does not have otherwise (its only probe is the mirror's, which
   is a hero probe and no cube map).
+- **`AURORA_DEMO_OCCLUSION=edge`**: a tall wall 1.5 m ahead of the start
+  view covers its left half, and nine cubes stand in the open right half,
+  farther than the wall (with `AURORA_DEMO_POS="80,100"`, the default, on
+  open land). Every cube is in plain view: a capture must show the same
+  cubes as one with `AURORA_NO_OCCLUSION=1`. Before #2459 the Hi-Z pyramid
+  dropped the last row and column of each odd-sized level, so a large
+  object seen only in the right or bottom part of the screen was tested
+  against the wall's depth and culled.
 - **`AURORA_DEMO_OVERDRAW=<n>`**: n rows of opaque walls (12 if the
   value is not a number, 40 at most) east of the plaza, one
   behind the other and each taller than the one in front, sent from the
@@ -10006,7 +10024,7 @@ What the inventory must show with these scenarios:
     colour and the overview the warning "Video memory over the driver's
     budget".
 - **`AURORA_TEXTURE_SLOTS=<n>`**: the texture table holds n textures
-  instead of 65,536 (`aurora-render/src/textures.rs`; the `renderer ready:`
+  instead of 262,144 (`aurora-render/src/textures.rs`; the `renderer ready:`
   line of the log gives its size). Each texture known to the streamer holds
   a slot of it, from the first face that uses it until 45 s after the last
   one stopped. Used to fill the table in demo.
@@ -10026,6 +10044,16 @@ What the inventory must show with these scenarios:
     all get their texture (capture after frame 1500 with
     `AURORA_DEMO_POS="160,126"`), `textures=` of `perf summary` never
     exceeds 6095 and the log has no `texture table full` line.
+  - Textures left without a slot get one once the table has room again
+    (#2822): `AURORA_DEMO_TEXTURES=6000`, `AURORA_DEMO_TEXTURES_CHURN=1`,
+    `AURORA_FPS_LIMIT=60`, `AURORA_DEMO_POS="215,126"` and `5000`. The
+    last 1,013 textures have no slot and their cubes, in front of the
+    camera, are white (capture at frame 250). The cubes removed at frame
+    300 give their slots back: the log says `texture table: … textures in
+    use have a slot again` and, on the next line, how many objects were
+    built again (678 cubes) and how long the pass took; at frame 650
+    those cubes have their texture. Before the fix they stayed white for
+    as long as they were there.
 
 - **`AURORA_COLORED_AMBIENT=0|1|alt`**: overrides Preferences › Graphics ›
   Sky and environment › Colored sky ambient for this launch (`alt`: on

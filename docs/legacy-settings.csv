@@ -1676,7 +1676,7 @@ RenderAutoMuteSurfaceAreaLimit,F32,in-aurora,,max_attachment_area,"Maximum surfa
 RenderAvatarCloth,Boolean,to-add,low,,Controls if system avatar clothes use wavy cloth
 RenderAvatarComplexityMode,S32,in-aurora,,complexity_mode,"0 - complexity limit applies to everyone, 1 - always show friends, 2 - only show friends"
 RenderAvatarFriendsOnly,Boolean,in-aurora,,"friends_only (per account, not listed in Debug Settings)","When enabled hides all avatars that aren't friends. Does not affect inworld control avatars (animeshes), nor self."
-RenderAvatarLODFactor,F32,to-add,high,,Controls level of detail of avatars (multiplier for current screen area when calculated level of detail)
+RenderAvatarLODFactor,F32,fixed,,"Aurora always draws avatar bodies at full detail (it loads no lower body mesh), the Legacy slider at its top",Controls level of detail of avatars (multiplier for current screen area when calculated level of detail)
 RenderAvatarMaxART,F32,to-add,high,,Render Time Limit in microseconds (0.0 = no limit)
 RenderAvatarMaxComplexity,U32,in-aurora,,max_complexity,"Maximum Avatar Complexity; above this value, the avatar is rendered as a solid color outline (0 to disable this limit)."
 RenderAvatarMaxNonImpostors,U32,in-aurora,,max_avatars,Maximum number of avatars to fully render at one time; over this limit uses impostor rendering (simplified rendering with less frequent upda
@@ -1736,7 +1736,7 @@ RenderExposure,F32,in-aurora,,exposure,Exposure value to send to tonemapper.
 RenderFSAASamples,U32,in-aurora,,antialiasing,"Quality of antialiasing: 0 = Low, 1 = Medium, 2 = High, 3 = Ultra"
 RenderFSAAType,U32,in-aurora,,antialiasing,"Type of Antialiasing to use: 0 = None, 1 = FXAA, 2 = SMAA"
 RenderFarClip,F32,in-aurora,,draw_distance,Distance of far clip plane from camera (meters)
-RenderFlexTimeFactor,F32,to-add,high,,Controls level of detail of flexible objects (multiplier for amount of time spent processing flex objects)
+RenderFlexTimeFactor,F32,fixed,,"Aurora steps every flexible prim at 60 Hz whatever its size on screen, the smoothest the Legacy slider gives",Controls level of detail of flexible objects (multiplier for amount of time spent processing flex objects)
 RenderFogRatio,F32,not-applicable,,marked obsolete or deprecated by the Legacy Viewer,DEPRECATED - Distance from camera where fog reaches maximum density (fraction or multiple of far clip distance)
 RenderGLContextCoreProfile,Boolean,not-applicable,,"OpenGL only, Aurora draws with Vulkan or Metal",Don't use a compatibility profile OpenGL context. Requires restart.
 RenderGLMultiThreadedMedia,Boolean,not-applicable,,"OpenGL only, Aurora draws with Vulkan or Metal","Allow OpenGL to use multiple render contexts for playing media (may reduce frame stutters, doesn't play nice with Intel drivers)"
@@ -1882,7 +1882,7 @@ RenderSpotShadowBias,F32,to-add,low,,Bias value for shadows (prevent shadow acne
 RenderSpotShadowOffset,F32,to-add,low,,Offset value for shadows (prevent shadow acne).
 RenderSunDynamicRange,F32,to-add,low,,Defines what percent brighter the sun is than local point lights (1.0 = 100% brighter. Value should not be less than 0. ).
 RenderTerrainDetail,S32,to-add,high,,"Detail applied to terrain texturing (0 = none, 1 = full)"
-RenderTerrainLODFactor,F32,to-add,high,,Controls level of detail of terrain (multiplier for current screen area when calculated level of detail)
+RenderTerrainLODFactor,F32,fixed,,"Aurora always draws terrain at full resolution (1 m), finer than the Legacy slider at its top",Controls level of detail of terrain (multiplier for current screen area when calculated level of detail)
 RenderTerrainPBRDetail,S32,to-add,high,,"Detail level for PBR terrain. 0 is full detail. Negative values drop rendering features, in accordance with the GLTF specification when poss"
 RenderTerrainPBREnabled,Boolean,fixed,,the Legacy default is built into Aurora: aurora-viewer/src/ui/region/manage.rs:701,Enable PBR Terrain features.
 RenderTerrainPBRNormalsEnabled,Boolean,fixed,,the Legacy default is built into Aurora: aurora-viewer/src/world/terrain.rs:306,EXPERIMENTAL: Change normal gen for PBR Terrain.
@@ -1896,7 +1896,7 @@ RenderTonemapMix,F32,in-aurora,,tonemap_mix,Mix between linear and tonemapped co
 RenderTonemapType,U32,in-aurora,,tonemapper,"What tonemapper to use: 0 = Khronos Neutral, 1 = ACES"
 RenderTrackerBeacon,Boolean,to-add,high,,"Display tracking arrow and beacon to target avatar, teleport destination"
 RenderTransparentWater,Boolean,to-add,low,,Render water as transparent. Setting to false renders water as opaque with a simple texture applied.
-RenderTreeLODFactor,F32,to-add,high,,Controls level of detail of vegetation (multiplier for current screen area when calculated level of detail)
+RenderTreeLODFactor,F32,in-aurora,,tree_lod_factor,Controls level of detail of vegetation (multiplier for current screen area when calculated level of detail)
 RenderUIBuffer,Boolean,not-applicable,,"OpenGL only, Aurora draws with Vulkan or Metal",Cache ui render in a screen aligned buffer.
 RenderUIInSnapshot,Boolean,in-aurora,,snapshot.interface,Display user interface in snapshot
 RenderUnloadedAvatar,Boolean,to-add,high,,Show avatars which haven't finished loading
