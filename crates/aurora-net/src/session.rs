@@ -1031,6 +1031,7 @@ impl Session<'_> {
                     log::info!("SimulatorFeatures received: avatar hover height {avatar_hover_height}");
                     let _ = events.send(NetEvent::SimulatorFeatures {
                         handle,
+                        animated_object_max_tris: v["AnimatedObjects"]["AnimatedObjectMaxTris"].as_i32().max(0) as u32,
                         voice_server_type,
                         avatar_hover_height,
                         materials_rate,
@@ -3775,6 +3776,22 @@ impl Session<'_> {
             return;
         }
         match e.message.as_str() {
+            "OpenRegionInfo" => {
+                if let Some(sim) = self.sims.get(&e.sim) {
+                    let value = &b["MaxLinkCount"];
+                    let max_children = (!value.is_undef()).then(|| {
+                        let value = value.as_i32();
+                        if value < 0 { 10000 } else { value as u32 }
+                    });
+                    emit(
+                        self.sh,
+                        NetEvent::RegionLinkLimit {
+                            handle: sim.handle,
+                            max_children,
+                        },
+                    );
+                }
+            }
             "EnableSimulator" => {
                 for info in b["SimulatorInfo"].as_array() {
                     let handle = info["Handle"].as_u64();
