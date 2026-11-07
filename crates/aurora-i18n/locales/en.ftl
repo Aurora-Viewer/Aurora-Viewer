@@ -11607,7 +11607,12 @@ bridge-object-info-result =
     Your current position: { $observer }
 bridge-query-timeout = The bridge did not return the requested information in time. Try again.
 bridge-query-interrupted = The information request was interrupted by a region or bridge connection change. Try again.
-ao-bootstrap-interrupted = An unfinished AO import already exists in #Aurora. Review it in inventory before retrying.
+ao-bootstrap-interrupted = An unfinished AO import already exists in #{ $folder }. Use the recovery notice in the AO window before retrying.
+ao-unfinished-import = Unfinished AO import in #Aurora/{ $folder }: { $count } sets.
+ao-finish-import = Finish import
+ao-show-in-inventory = Show in inventory
+ao-duplicate-native = Another #Aurora/{ $folder } folder contains { $count } sets. Merge it into the active AO folder?
+ao-native-already-exists = A native Aurora AO folder already exists. Choose it in the AO window instead of migrating again.
 
 # Guided AO editor
 ao-states = States

@@ -24,6 +24,8 @@ pub enum Action {
     Import(Uuid),
     Migrate,
     ReloadMigration,
+    FinishRecovery(inventory::Recovery),
+    ShowRecovery(Uuid),
     Reload,
     Preferences,
     MovementPreferences,
@@ -292,6 +294,28 @@ pub fn show(
                     egui::ScrollArea::vertical().max_height(85.0).show(ui, |ui| {
                         for warning in &state.warnings {
                             ui.label(warning);
+                        }
+                    });
+                });
+            }
+            for recovery in inventory::recoveries(inv) {
+                let name = inv
+                    .folders
+                    .get(&recovery.source)
+                    .map_or("Aurora AO".to_owned(), |f| f.info.name.clone());
+                widgets::surface(ui, p, |ui| {
+                    let notice = if recovery.duplicate {
+                        aurora_i18n::tr!("ao-duplicate-native", folder = name.as_str(), count = recovery.sets)
+                    } else {
+                        aurora_i18n::tr!("ao-unfinished-import", folder = name.as_str(), count = recovery.sets)
+                    };
+                    ui.label(RichText::new(notice).color(p.warn));
+                    ui.horizontal(|ui| {
+                        if ui.button(aurora_i18n::tr!("ao-finish-import")).clicked() {
+                            out.push(Action::FinishRecovery(recovery));
+                        }
+                        if ui.button(aurora_i18n::tr!("ao-show-in-inventory")).clicked() {
+                            out.push(Action::ShowRecovery(recovery.source));
                         }
                     });
                 });

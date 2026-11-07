@@ -449,6 +449,21 @@ where
     let mut moved = false;
     let resolve = |ids: &HashMap<Uuid, Uuid>, id: Uuid| ids.get(&id).copied().unwrap_or(id);
     for (index, op) in change.operations.iter().enumerate() {
+        let kind = match op {
+            Operation::Folder { .. } => "Folder",
+            Operation::Patch { .. } => "Patch",
+            Operation::Links { .. } => "Links",
+            Operation::Delete { .. } => "Delete",
+            Operation::Purge(_) => "Purge",
+        };
+        macro_rules! log_operation_error {
+            ($result:expr) => {
+                $result.map_err(|error: String| {
+                    log::warn!("Inventory operation {index} ({kind}) failed: {error}");
+                    error
+                })?
+            };
+        }
         progress(Progress {
             phase: Phase::Updating,
             completed: index,
@@ -468,19 +483,21 @@ where
                     unreachable!("remap keeps the kind")
                 };
                 let name = folder_name(name);
-                let made = create_folder_without_ais(
-                    http,
-                    create_cap,
-                    fetch_cap,
-                    owner,
-                    *id,
-                    *parent,
-                    &name,
-                    *type_default as i8,
-                    send_edit,
-                    announce,
-                )
-                .await?;
+                let made = log_operation_error!(
+                    create_folder_without_ais(
+                        http,
+                        create_cap,
+                        fetch_cap,
+                        owner,
+                        *id,
+                        *parent,
+                        &name,
+                        *type_default as i8,
+                        send_edit,
+                        announce,
+                    )
+                    .await
+                );
                 let Some(actual) = made else {
                     return Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-the-new-folder-reload").into());
                 };
@@ -496,7 +513,7 @@ where
                 continue;
             }
             for edit in udp_edits(op, &change.known)? {
-                send_edit(edit).await?;
+                log_operation_error!(send_edit(edit).await);
             }
             // a new folder went its own way above
             match op {
@@ -505,12 +522,14 @@ where
                     if id.is_nil() || parent.is_nil() {
                         return Err(aurora_i18n::tr!("inventory-move-invalid-target").into());
                     }
-                    send_move(InventoryMove {
-                        id: *id,
-                        parent,
-                        folder: *folder,
-                    })
-                    .await?;
+                    log_operation_error!(
+                        send_move(InventoryMove {
+                            id: *id,
+                            parent,
+                            folder: *folder,
+                        })
+                        .await
+                    );
                     moved = true;
                 }
                 _ => {}
@@ -528,7 +547,9 @@ where
                 let body = llsd_map! { "categories" => Llsd::Array(vec![llsd_map! {
                     "category_id" => Uuid::nil(), "parent_id" => parent, "name" => folder_name(name), "type_default" => *type_default,
                 }]) };
-                let reply = crate::outfits::send(http.post(format!("{cap}/category/{parent}?tid={}", Uuid::new_v4())), &body).await?;
+                let reply = log_operation_error!(
+                    crate::outfits::send(http.post(format!("{cap}/category/{parent}?tid={}", Uuid::new_v4())), &body).await
+                );
                 let actual = reply["_created_categories"].at(0).as_uuid();
                 if actual.is_nil() {
                     return Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-the-new-folder-reload").into());
@@ -553,23 +574,27 @@ where
                     if id.is_nil() || parent.is_nil() {
                         return Err(aurora_i18n::tr!("inventory-move-invalid-target").into());
                     }
-                    send_move(InventoryMove {
-                        id,
-                        parent,
-                        folder: *folder,
-                    })
-                    .await?;
+                    log_operation_error!(
+                        send_move(InventoryMove {
+                            id,
+                            parent,
+                            folder: *folder,
+                        })
+                        .await
+                    );
                     moved = true;
                 }
                 if !fields.is_empty() {
                     let kind = if *folder { "category" } else { "item" };
-                    crate::outfits::send(http.patch(format!("{cap}/{kind}/{id}")), &Llsd::Map(fields)).await?;
+                    log_operation_error!(crate::outfits::send(http.patch(format!("{cap}/{kind}/{id}")), &Llsd::Map(fields)).await);
                 }
             }
             Operation::Links { parent, links } => {
                 let parent = resolve(&created, *parent);
                 let body = llsd_map! { "links" => crate::outfits::links_body(links) };
-                let response = crate::outfits::send(http.post(format!("{cap}/category/{parent}?tid={}", Uuid::new_v4())), &body).await?;
+                let response = log_operation_error!(
+                    crate::outfits::send(http.post(format!("{cap}/category/{parent}?tid={}", Uuid::new_v4())), &body).await
+                );
                 if response["_created_items"].as_array().len() < links.len()
                     || response["_created_items"].as_array().iter().any(|id| id.as_uuid().is_nil())
                 {
@@ -578,10 +603,10 @@ where
             }
             Operation::Delete { id, folder } => {
                 let kind = if *folder { "category" } else { "item" };
-                crate::outfits::send(http.delete(format!("{cap}/{kind}/{id}")), &Llsd::new_map()).await?;
+                log_operation_error!(crate::outfits::send(http.delete(format!("{cap}/{kind}/{id}")), &Llsd::new_map()).await);
             }
             Operation::Purge(id) => {
-                crate::outfits::send(http.delete(format!("{cap}/category/{id}/children")), &Llsd::new_map()).await?;
+                log_operation_error!(crate::outfits::send(http.delete(format!("{cap}/category/{id}/children")), &Llsd::new_map()).await);
             }
         }
     }

@@ -479,6 +479,14 @@ impl App {
                     migration.message.clear();
                 }
             }
+            Action::FinishRecovery(recovery) => match inventory::finish_recovery(&self.world.inventory, recovery) {
+                Ok(change) => self.apply_ao_action(Action::Edit(change, None)),
+                Err(reason) => self.ao_ui.message = reason,
+            },
+            Action::ShowRecovery(id) => {
+                self.inventory_ui.show_folder(&self.world.inventory, id);
+                self.panels.inventory = true;
+            }
             Action::Edit(change, select) => self.queue_ao_edit(change, select, None),
             Action::EditContainer(change, target) => self.queue_ao_edit(change, None, Some(target)),
         }
