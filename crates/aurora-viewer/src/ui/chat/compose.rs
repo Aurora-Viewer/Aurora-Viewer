@@ -8,7 +8,7 @@
 //! Each conversation keeps its draft, and its field takes the keyboard as
 //! in the other styles (#422, #425).
 
-use super::{ChatUi, ConvAction, OutgoingChat, parse_channel, sidebar, suggest, typing};
+use super::{ChatUi, ConvAction, OutgoingChat, ooc, ooc_key, parse_channel, send_enter, sidebar, suggest, typing};
 use crate::theme::Palette;
 use crate::ui::menu;
 use crate::world::World;
@@ -227,10 +227,12 @@ pub(super) fn show(
                 super::cursor_to_end(ui.ctx(), conv_input, &draft);
             }
             let mut sent = false;
-            if send_clicked
-                || ((resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt))
-            {
-                let text = st.suggest.expand(st.selected, draft.trim());
+            if send_clicked || ((resp.has_focus() || resp.lost_focus()) && ui.input(send_enter)) {
+                let mut text = st.suggest.expand(st.selected, draft.trim());
+                // Alt+Enter, not the send button, marks the line OOC (in IMs too)
+                if ui.input(|i| i.key_pressed(egui::Key::Enter) && ooc_key(&i.modifiers)) {
+                    text = ooc(&text);
+                }
                 if !text.is_empty() {
                     sent = true;
                     st.input_history.entry(st.selected).or_default().record(conv_input, &draft);

@@ -598,6 +598,26 @@ pub fn sends_local_line(channel: i32, message: &str) -> bool {
     channel != 0 || !message.is_empty()
 }
 
+/// Enter that may send: plain, Ctrl (shout), Shift (whisper) or Alt alone
+/// (OOC). Ctrl+Alt is AltGr on Windows and stays unclaimed, like any other
+/// Alt chord: FSNearbyChatControl / FSFloaterIM::handleKeyHere (indra/newview)
+/// test `mask == MASK_ALT`.
+fn send_enter(i: &egui::InputState) -> bool {
+    i.key_pressed(egui::Key::Enter) && (!i.modifiers.alt || ooc_key(&i.modifiers))
+}
+
+/// Alt+Enter alone sends ((OOC)) chat (FSUseAltOOC, on by default).
+fn ooc_key(m: &egui::Modifiers) -> bool {
+    m.alt && !m.ctrl && !m.shift && !m.mac_cmd
+}
+
+/// An OOC line as FSNearbyChat::sendChat (fsnearbychathub.cpp) and
+/// FSFloaterIM::sendMsgFromInputEditor build it: the default FSOOCPrefix and
+/// FSOOCPostfix around the text, before the channel is read.
+fn ooc(text: &str) -> String {
+    if text.is_empty() { String::new() } else { format!("(( {text} ))") }
+}
+
 /// Parse "/5 text" channel prefixes.
 /// FSNearbyChat::stripChannelNumber (fsnearbychathub.cpp): a slash, an
 /// optional minus sign, then the digits; the text after them, with or
@@ -3353,8 +3373,12 @@ fn classic_pane(
         cursor_to_end(ui.ctx(), conv_input, &draft);
     }
     let mut sent = false;
-    if send_clicked || ((resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt)) {
-        let text = st.suggest.expand(st.selected, draft.trim());
+    if send_clicked || ((resp.has_focus() || resp.lost_focus()) && ui.input(send_enter)) {
+        let mut text = st.suggest.expand(st.selected, draft.trim());
+        // Alt+Enter, not the send button, marks the line OOC (in IMs too)
+        if ui.input(|i| i.key_pressed(egui::Key::Enter) && ooc_key(&i.modifiers)) {
+            text = ooc(&text);
+        }
         if !text.is_empty() {
             sent = true;
             st.input_history.entry(st.selected).or_default().record(conv_input, &draft);
@@ -3975,7 +3999,7 @@ pub(crate) fn cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
 }
 
 /// The local chat's field, Firestorm's chat bar (LLFloaterIMNearbyChat):
-/// Enter says, Ctrl+Enter shouts, Shift+Enter whispers, `/channel` and the
+/// Enter says, Ctrl+Enter shouts, Shift+Enter whispers, Alt+Enter sends ((OOC)), `/channel` and the
 /// gestures' completion; Enter on an empty field returns to movement. Shared
 /// by the full-width bar and the chat island (`bars/dock.rs`), which draws
 /// its own frame (`build` dresses the field) and shows emoji pictures.
@@ -4033,7 +4057,7 @@ pub(crate) fn bar_input(
     }
     st.has_focus = resp.has_focus();
     // The editor leaves ordinary Enter to this send path.
-    let enter = !focusing && (resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt);
+    let enter = !focusing && (resp.has_focus() || resp.lost_focus()) && ui.input(send_enter);
     // Enter, even on an empty bar, ends the typing (sendChat → stopTyping)
     let said = typing::says_aloud(&st.input, st.type_during_emote, st.colon_emote);
     st.local_field(&resp, said, enter);
@@ -4042,8 +4066,12 @@ pub(crate) fn bar_input(
     }
     if enter && !st.input.trim().is_empty() {
         st.input_history.entry(None).or_default().record(bar_input_id(), &st.input);
-        let (shout, whisper) = ui.input(|i| (i.modifiers.ctrl, i.modifiers.shift));
-        let (channel, message) = parse_channel(&st.suggest.expand(None, st.input.trim()));
+        let (shout, whisper, is_ooc) = ui.input(|i| (i.modifiers.ctrl, i.modifiers.shift, ooc_key(&i.modifiers)));
+        let mut text = st.suggest.expand(None, st.input.trim());
+        if is_ooc {
+            text = ooc(&text);
+        }
+        let (channel, message) = parse_channel(&text);
         out = Some(OutgoingChat {
             message,
             channel,
@@ -4068,6 +4096,19 @@ pub(crate) fn bar_input(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn alt_enter_alone_sends_ooc_before_the_channel_is_read() {
+        let alt = egui::Modifiers::ALT;
+        assert!(super::ooc_key(&alt));
+        // AltGr (Ctrl+Alt) and other Alt chords stay unclaimed
+        assert!(!super::ooc_key(&(alt | egui::Modifiers::CTRL)));
+        assert!(!super::ooc_key(&(alt | egui::Modifiers::SHIFT)));
+        assert_eq!(super::ooc("brb"), "(( brb ))");
+        assert_eq!(super::ooc(""), "");
+        // like the Legacy Viewer, a channel typed after Alt+Enter stays text on channel 0
+        assert_eq!(super::parse_channel(&super::ooc("/5 hi")), (0, "(( /5 hi ))".into()));
+    }
+
     use super::*;
 
     fn nearby(apart: bool, shown: bool, minimized: bool, front: bool, focused: bool, tab_visible: bool) -> NearbyChatView {
