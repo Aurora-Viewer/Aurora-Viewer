@@ -85,7 +85,7 @@ fn received_deliveries_can_be_deleted_without_unlocking_other_edits() {
         let menu = context_catalog::build(&inv, target, &st, &prefs, &facts);
         assert!(menu.entries.iter().any(|entry| entry.id == "delete" && entry.enabled));
     }
-    delete::request(&inv, &mut st, &prefs, &facts);
+    delete::request(&inv, &mut st, &prefs, &facts, &mut Vec::new());
     assert!(matches!(&st.dialog, Some(EditDialog::Delete(ids, false)) if ids.len() == 3));
     let change = rules::move_selection(&inv, &selected, id(TRASH), &prefs.protected, &facts.worn).expect("trash received deliveries");
     assert!(change.move_only());
@@ -124,6 +124,49 @@ fn received_deletion_preserves_system_worn_library_and_locked_folder_protections
     inv.folders.get_mut(&id(21)).expect("library folder").library = true;
     assert!(!delete::allowed(&inv, &[id(30)], &prefs, &facts));
     assert!(rules::move_selection(&inv, &[id(30)], id(TRASH), &prefs.protected, &facts.worn).is_err());
+}
+
+/// DeleteItems (#2344): it asks by default; turned off, Delete sends the
+/// selection straight to the Trash, while a purge from the Trash still asks
+/// (PurgeSelectedItems has no "ignore" box).
+#[test]
+fn turning_the_confirmation_off_trashes_at_once_but_a_purge_still_asks() {
+    let mut inv = received();
+    let facts = Facts::default();
+    let selected = |ids: &[Uuid]| InventoryUi {
+        selection: ids.iter().copied().collect(),
+        ..Default::default()
+    };
+    let mut actions = Vec::new();
+    let asking = InventoryPreferences::default();
+    assert!(asking.confirm_delete, "on by default, like the Legacy Viewer");
+    let mut st = selected(&[id(31)]);
+    delete::request(&inv, &mut st, &asking, &facts, &mut actions);
+    assert!(matches!(&st.dialog, Some(EditDialog::Delete(ids, false)) if *ids == [id(31)]));
+    assert!(actions.is_empty(), "nothing moves before the answer");
+
+    let silent = InventoryPreferences {
+        confirm_delete: false,
+        ..Default::default()
+    };
+    let mut st = selected(&[id(20), id(31)]);
+    delete::request(&inv, &mut st, &silent, &facts, &mut actions);
+    assert!(st.dialog.is_none(), "no confirmation");
+    assert_eq!(actions.len(), 1, "one change for the whole selection");
+    let Some(InvAction::Edit(change)) = actions.pop() else {
+        panic!("a move to the Trash")
+    };
+    assert!(change.move_only());
+    rules::demo_mutate(&mut inv, id(99), change).expect("trash the selection");
+    assert_eq!(inv.folders[&id(20)].info.parent, id(TRASH));
+    assert_eq!(inv.items[&id(31)].parent, id(TRASH));
+
+    for prefs in [&asking, &silent] {
+        let mut st = selected(&[id(31)]);
+        delete::request(&inv, &mut st, prefs, &facts, &mut actions);
+        assert!(matches!(&st.dialog, Some(EditDialog::Delete(ids, true)) if *ids == [id(31)]));
+        assert!(actions.is_empty(), "a purge waits for its confirmation");
+    }
 }
 
 /// LLFolderBridge::isProtected (#1728): a locked folder is neither moved nor
@@ -280,7 +323,7 @@ fn measure() {
         let menu = menu.expect("menu");
         assert!(menu.entries.iter().any(|e| e.id == "delete"));
         let t = Instant::now();
-        delete::request(&inv, &mut st, &prefs, &facts);
+        delete::request(&inv, &mut st, &prefs, &facts, &mut Vec::new());
         let request = ms(t);
         assert!(matches!(&st.dialog, Some(EditDialog::Delete(d, false)) if d.len() == ids.len()));
         let t = Instant::now();

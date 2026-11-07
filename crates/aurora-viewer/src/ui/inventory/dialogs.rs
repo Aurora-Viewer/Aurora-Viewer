@@ -12,7 +12,7 @@ pub(super) fn show(
     icons: &Icons,
     inv: &Inventory,
     st: &mut InventoryUi,
-    prefs: &InventoryPreferences,
+    prefs: &mut InventoryPreferences,
     facts: &Facts,
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
     actions: &mut Vec<InvAction>,
@@ -203,6 +203,17 @@ pub(super) fn show(
                 } else {
                     aurora_i18n::tr!("ui-inventory-dialogs-items-will-be-moved-to-trash")
                 });
+                if let Some(ignore) = &mut st.delete_ignore {
+                    ui.add_space(8.0);
+                    crate::ui::widgets::checkbox(
+                        ui,
+                        p,
+                        ignore,
+                        RichText::new(aurora_i18n::tr!("ui-context-do-not-show-again"))
+                            .size(12.5)
+                            .color(p.muted),
+                    );
+                }
                 if confirmation_buttons(
                     ui,
                     p,
@@ -214,36 +225,11 @@ pub(super) fn show(
                     },
                     &mut done,
                 ) {
-                    let plan = if *purge {
-                        let ids = rules::roots(inv, ids);
-                        let refresh = ids.iter().filter_map(|id| rules::parent(inv, *id)).collect();
-                        let operations = ids
-                            .iter()
-                            .map(|id| Operation::Delete {
-                                id: *id,
-                                folder: inv.folders.contains_key(id),
-                            })
-                            .collect();
-                        let holds_worn = rules::worn_ancestors(inv, &facts.worn);
-                        if ids.iter().all(|id| {
-                            rules::removable(inv, *id, &prefs.protected) && rules::in_type(inv, *id, 14) && !holds_worn.contains(id)
-                        }) {
-                            Ok(Mutation {
-                                operations,
-                                refresh,
-                                removed: ids,
-                                ..Default::default()
-                            })
-                        } else {
-                            Err(aurora_i18n::tr!("ui-inventory-dialogs-the-selection-can-no-longer-be-purged").into())
-                        }
-                    } else {
-                        rules::system(inv, 14)
-                            .ok_or_else(|| aurora_i18n::tr!("common-trash-folder-not-found").to_owned())
-                            .and_then(|to| rules::move_selection(inv, ids, to, &prefs.protected, &facts.worn))
-                    };
-                    match plan {
+                    match super::delete::plan(inv, ids, *purge, prefs, facts) {
                         Ok(change) => {
+                            if st.delete_ignore == Some(true) {
+                                prefs.confirm_delete = false;
+                            }
                             actions.push(InvAction::Edit(change));
                             done = true;
                         }
@@ -311,6 +297,8 @@ pub(super) fn show(
     });
     if open && !done {
         st.dialog = Some(dialog);
+    } else {
+        st.delete_ignore = None;
     }
 }
 
@@ -2057,7 +2045,7 @@ mod tests {
                         &Icons::default(),
                         &inv,
                         &mut st,
-                        &InventoryPreferences::default(),
+                        &mut InventoryPreferences::default(),
                         &Facts {
                             agent: Uuid::nil(),
                             worn: HashSet::new(),
@@ -2104,6 +2092,96 @@ mod tests {
         );
     }
 
+    /// DeleteItems' "ignore" box (#2344): ticked, Delete turns the
+    /// confirmation off (Preferences › Confirmations shows it unticked);
+    /// Cancel keeps it, and the purge from the Trash has no box.
+    #[test]
+    fn the_move_to_trash_confirmation_has_a_do_not_show_again_box() {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let facts = Facts::default();
+        let item = Uuid::from_u128(8100);
+        let frame = |st: &mut InventoryUi, prefs: &mut InventoryPreferences, events: Vec<egui::Event>| {
+            let mut actions = Vec::new();
+            let output = headless_output(ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0))),
+                    events,
+                    ..Default::default()
+                },
+                |_ui| {
+                    show(
+                        &ctx,
+                        &p,
+                        &Icons::default(),
+                        &inv,
+                        st,
+                        prefs,
+                        &facts,
+                        &Default::default(),
+                        &mut actions,
+                    )
+                },
+            ));
+            let texts: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::epaint::Shape::Text(t) => Some((t.galley.text().to_owned(), t.pos + egui::vec2(4.0, 4.0))),
+                    _ => None,
+                })
+                .collect();
+            (texts, actions)
+        };
+        let find = |texts: &[(String, egui::Pos2)], label: &str| texts.iter().find(|(t, _)| t == label).map(|(_, pos)| *pos);
+        let press = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let dont_ask = aurora_i18n::tr!("ui-context-do-not-show-again");
+        for (answer, kept) in [
+            (aurora_i18n::tr!("common-delete"), false),
+            (aurora_i18n::tr!("common-cancel"), true),
+        ] {
+            let mut prefs = InventoryPreferences::default();
+            let mut st = InventoryUi::default();
+            super::super::delete::open(&inv, &mut st, vec![item], false, &prefs, &facts, &mut Vec::new());
+            assert_eq!(st.delete_ignore, Some(false));
+            let mut texts = Vec::new();
+            for _ in 0..5 {
+                texts = frame(&mut st, &mut prefs, Vec::new()).0;
+            }
+            let pos = find(&texts, dont_ask).expect("the box");
+            frame(&mut st, &mut prefs, vec![egui::Event::PointerMoved(pos), press(pos, true)]);
+            let texts = frame(&mut st, &mut prefs, vec![press(pos, false)]).0;
+            assert_eq!(st.delete_ignore, Some(true), "ticked");
+            assert!(prefs.confirm_delete, "nothing saved before the answer");
+            let pos = find(&texts, answer).expect("the answer");
+            frame(&mut st, &mut prefs, vec![egui::Event::PointerMoved(pos), press(pos, true)]);
+            let actions = frame(&mut st, &mut prefs, vec![press(pos, false)]).1;
+            assert!(st.dialog.is_none() && st.delete_ignore.is_none(), "{answer} closes");
+            assert_eq!(prefs.confirm_delete, kept, "{answer}");
+            assert_eq!(
+                actions.iter().filter(|a| matches!(a, InvAction::Edit(_))).count(),
+                usize::from(!kept)
+            );
+        }
+        let mut prefs = InventoryPreferences::default();
+        let mut st = InventoryUi::default();
+        super::super::delete::open(&inv, &mut st, vec![item], true, &prefs, &facts, &mut Vec::new());
+        assert!(matches!(st.dialog, Some(EditDialog::Delete(_, true))) && st.delete_ignore.is_none());
+        let mut texts = Vec::new();
+        for _ in 0..5 {
+            texts = frame(&mut st, &mut prefs, Vec::new()).0;
+        }
+        assert!(find(&texts, aurora_i18n::tr!("ui-inventory-dialogs-purge")).is_some());
+        assert!(find(&texts, dont_ask).is_none(), "a purge always asks");
+    }
+
     /// The give confirmation (#627): the resident by name, the entries with
     /// the one that cannot be copied marked and counted, Give gives, Escape
     /// gives nothing.
@@ -2146,7 +2224,7 @@ mod tests {
                         &Icons::default(),
                         &inv,
                         st,
-                        &InventoryPreferences::default(),
+                        &mut InventoryPreferences::default(),
                         &facts,
                         &Default::default(),
                         &mut actions,
