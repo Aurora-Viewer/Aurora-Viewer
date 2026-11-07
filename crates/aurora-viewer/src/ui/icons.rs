@@ -359,6 +359,9 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "microphone",
     "mood-smile",
     "moon",
+    // Aurora-drawn Luau mark for SLua scripts, after the Legacy Viewer's
+    // Inv_Script_Luau: Tabler has no such icon (human decision, 2026-11-08)
+    "luau",
     "mountain",
     "mouse",
     "paint",
@@ -532,7 +535,7 @@ const ALIASES: &[(&str, &str)] = &[
     ("Inv_Physics", "wave-sine"),
     ("Inv_Universal", "layers-union"),
     ("Inv_Script", "code"),
-    ("Inv_Script_Luau", "moon-filled"),
+    ("Inv_Script_Luau", "luau-filled"),
     ("Inv_Sound", "file-music-filled"),
     ("Inv_Animation", "run"),
     ("Inv_Gesture", "hand-move"),
@@ -658,7 +661,7 @@ const INVENTORY_LINKS: &[(&str, &[u8])] = &[
     ),
     (
         "Inv_Script_Luau_Link",
-        include_bytes!("../../../../assets/tabler-icons/filled/moon-link.svg"),
+        include_bytes!("../../../../assets/tabler-icons/filled/luau-link.svg"),
     ),
     (
         "Inv_Sound_Link",
