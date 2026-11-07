@@ -21,8 +21,8 @@
 //! and it alone uses the queue.
 
 use crate::gpu_cull::{
-    BIN_PROBE, BIN_REFL_MIRROR, BIN_REFL_WATER, BIN_SHADOW, BIN_SHADOW_ALPHA, BIN_SPOT, BIN_WATER_EXCLUSION, COUNT_PRE1, COUNT_PRE2,
-    CullFrame, GpuCull, MAIN_BINS, REGION_PRE1, REGION_PRE2, SPOT_SHADOWS, frame_flags,
+    BIN_PROBE, BIN_PROBE_SHADOW, BIN_REFL_MIRROR, BIN_REFL_WATER, BIN_SHADOW, BIN_SHADOW_ALPHA, BIN_SPOT, BIN_WATER_EXCLUSION, COUNT_PRE1,
+    COUNT_PRE2, CullFrame, GpuCull, MAIN_BINS, REGION_PRE1, REGION_PRE2, SPOT_SHADOWS, frame_flags,
 };
 use crate::helpers::Helpers;
 use crate::light_tiles::{self, LightCulling, LightSets};
@@ -1668,6 +1668,12 @@ pub(crate) struct Backend {
     records_key: (u64, u64),
     /// Shadow atlas: one tile per cascade (see `make_shadow_atlas`).
     shadow_view: wgpu::TextureView,
+    /// The shadow map of the probe being captured, its matrix for the shaders
+    /// (drawn at the capture's first face, read by its six) and its group.
+    probe_shadow_view: wgpu::TextureView,
+    probe_shadow_vp: Mat4,
+    probe_shadow_buffer: wgpu::Buffer,
+    probe_shadow_group: wgpu::BindGroup,
     shadow_buffers: Vec<wgpu::Buffer>,
     shadow_bind_groups: Vec<wgpu::BindGroup>,
     shadow_size: u32,
@@ -2727,6 +2733,8 @@ struct Ranges {
     shadow_alpha: [(u64, u32); CASCADES],
     /// Terrain casters of each cascade drawn with the terrain's alpha test.
     shadow_terrain: [(u64, u32); CASCADES],
+    probe_shadow: (u64, u32),
+    probe_shadow_terrain: (u64, u32),
     /// Casters of the CPU lists in each projector shadow map.
     spot: [(u64, u32); SPOT_SHADOWS],
     spot_terrain: [(u64, u32); SPOT_SHADOWS],
@@ -3040,6 +3048,7 @@ impl Backend {
 
         let shadow_size = 2048u32;
         let shadow_view = Self::make_shadow_atlas(&device, shadow_size, 2);
+        let probe_shadow_view = Self::make_shadow_atlas(&device, crate::probes::SHADOW_SIZE, 0);
         let shadow_merge = crate::shadow_merge::ShadowMerge::new(&device, &shadow_view, shadow_size, SHADOW_FORMAT);
         let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("shadow"),
@@ -3076,6 +3085,13 @@ impl Backend {
             .iter()
             .map(|b| shadow_bind_group(&device, &shadow_layout, b, &lin_clamp))
             .collect();
+        let probe_shadow_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("probe shadow vp"),
+            size: std::mem::size_of::<ShadowU>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let probe_shadow_group = shadow_bind_group(&device, &shadow_layout, &probe_shadow_buffer, &lin_clamp);
         let records_bind_group = Self::make_records_bg(&device, &records_layout, &scene);
 
         let post_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -3193,6 +3209,7 @@ impl Backend {
             &frame_buffer,
             &refl_buffers,
             &shadow_view,
+            &probe_shadow_view,
             &shadow_sampler,
             &lin_clamp,
             &dummies,
@@ -3286,6 +3303,10 @@ impl Backend {
             records_key: scene.records_key,
             shadow_view,
             shadow_buffers,
+            probe_shadow_view,
+            probe_shadow_vp: Mat4::IDENTITY,
+            probe_shadow_buffer,
+            probe_shadow_group,
             shadow_bind_groups,
             shadow_size,
             shadow_count: 2,
@@ -4478,6 +4499,7 @@ impl Backend {
         frame_buffer: &wgpu::Buffer,
         refl_buffers: &[wgpu::Buffer; 9],
         shadow_view: &wgpu::TextureView,
+        probe_shadow_view: &wgpu::TextureView,
         shadow_sampler: &wgpu::Sampler,
         lin_clamp: &wgpu::Sampler,
         dummies: &Dummies,
@@ -4515,7 +4537,14 @@ impl Backend {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::TextureView(shadow_view),
+                        // the captures of a probe read its own shadow map
+                        resource: wgpu::BindingResource::TextureView(
+                            if std::ptr::eq(buffer, &refl_buffers[2]) || std::ptr::eq(buffer, &refl_buffers[8]) {
+                                probe_shadow_view
+                            } else {
+                                shadow_view
+                            },
+                        ),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
@@ -4815,6 +4844,7 @@ impl Backend {
                 &self.frame_buffer,
                 &self.refl_buffers,
                 &self.shadow_view,
+                &self.probe_shadow_view,
                 &self.shadow_sampler,
                 &self.lin_clamp,
                 &self.dummies,
@@ -4834,6 +4864,7 @@ impl Backend {
             &self.frame_buffer,
             &self.refl_buffers,
             &self.shadow_view,
+            &self.probe_shadow_view,
             &self.shadow_sampler,
             &self.lin_clamp,
             &self.dummies,
@@ -5124,7 +5155,7 @@ impl Backend {
             self.pipelines = scene;
             self.impostors.set_pipelines(impostors);
         }
-        let slots = s.probe_slots.clamp(1, crate::probes::MAX_PROBES as u32);
+        let slots = crate::probes::Probes::fitted_slots(&self.device, s.probe_slots);
         let probes_dirty = slots != self.probes.slots;
         if probes_dirty {
             self.probes = crate::probes::Probes::new(&self.device, slots);
@@ -6236,12 +6267,19 @@ impl Backend {
         // reflection probes by screen tile and depth, for the main view
         // (probes::tiles), and how its fragments walk them (sample_probes_pair)
         let probe_walk = crate::probes::ProbeWalk::from_env();
+        // (the viewer asks for what the device holds, `fitted_probe_slots`:
+        // this is for the frames until a new number of slots is applied)
+        let probe_list: std::borrow::Cow<[crate::types::ProbeGpu]> = if f.probes.probes.iter().any(|p| p.slot[0] >= self.probes.slots) {
+            f.probes.probes.iter().filter(|p| p.slot[0] < self.probes.slots).copied().collect()
+        } else {
+            std::borrow::Cow::Borrowed(&f.probes.probes)
+        };
         let probe_sets = if f.probes.enabled && probe_walk.tiles(f.probe_walk_list) {
             let size = [world_size.0, world_size.1];
             let eye = Vec3::from_slice(&main.camera_pos[..3]);
-            crate::probes::tiles(fu.view, fu.proj, eye, size, &f.probes.probes)
+            crate::probes::tiles(fu.view, fu.proj, eye, size, &probe_list)
         } else {
-            LightSets::whole()
+            crate::probes::ProbeSets::whole()
         };
         main.light_sets.mode[3] = probe_walk.shader_mode(f.probe_walk_list, f.debug.check_probe_sets);
         // the view shown instead of the image (debug_view in common.wgsl):
@@ -6410,21 +6448,49 @@ impl Backend {
             self.queue.write_buffer(&self.refl_buffers[1], 0, bytemuck::bytes_of(&u));
         }
         // ---- reflection probes: list for the shaders, face capture uniforms
-        self.probes.upload(&self.queue, f.probes.enabled, &f.probes.probes, &probe_sets);
+        self.probes.upload(&self.queue, f.probes.enabled, &probe_list, &probe_sets);
         let capture = f.probes.capture;
         // skies with a probe ambiance light with the probes' irradiance
         // (shade_pbr), which gets a capture of its own
         let irr_capture = capture.is_some() && !f.sky.classic && !f.sky.no_post;
         let mut probe_vp = Mat4::IDENTITY;
+        let mut probe_shadow_now: Option<Mat4> = None;
         if let Some(c) = &capture {
             let mut cf = f.clone();
             cf.shadows = false;
-            cf.proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(std::f32::consts::FRAC_PI_2, 1.0, c.near.max(0.1));
+            // RenderReflectionProbeDrawDistance only culls: setup3DRender keeps
+            // the far clip at MAX_FAR_CLIP * 2, so the terrain goes on past it.
+            // The objects stop at the probe's reach (below)
+            let near = c.near.max(0.1);
+            cf.proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(std::f32::consts::FRAC_PI_2, 1.0, near);
             let mut u = self.frame_uniforms(&cf, crate::probes::face_view(c.origin, c.face), None, &cascades, &splits);
             probe_vp = Mat4::from_cols_array_2d(&u.view_proj);
-            // reflection pass: no SSAO / SSR / mirrors / probes, no clip plane
-            u.misc = [0.0, 0.0, 0.0, 1.0];
+            // reflection pass: no SSAO / SSR / mirrors, no clip plane; the
+            // surfaces lit by the probes where the scene is. 2: the views of a
+            // cube's faces are mirrored (probes::face_view), so a surface facing
+            // the probe is rasterized as a back face
+            let (radiance_bits, irradiance_bits) = crate::probes::capture_lighting::bits(c.sky_only, irr_capture);
+            u.misc = [0.0, 0.0, 0.0, 2.0];
             u.clip_plane = [0.0; 4];
+            u.light_sets.mode[2] |= radiance_bits | crate::probes::capture_lighting::DOME;
+            // the sun stops at the roofs (display_cube_face, generateSunShadow)
+            if !c.sky_only && irr_capture && f.shadows {
+                if c.face == 0 {
+                    let vp = crate::probes::shadow_matrix(c.origin, f.sun_dir);
+                    self.probe_shadow_vp = vp;
+                    probe_shadow_now = Some(vp);
+                    let shadow = ShadowU {
+                        vp: vp.to_cols_array_2d(),
+                        anim_clock: self.anim_now,
+                    };
+                    self.queue.write_buffer(&self.probe_shadow_buffer, 0, bytemuck::bytes_of(&shadow));
+                }
+                let range = crate::probes::SHADOW_RANGE;
+                let outside = Mat4::from_translation(Vec3::splat(1.0e6)).to_cols_array_2d();
+                u.cascade_vp = [self.probe_shadow_vp.to_cols_array_2d(), outside, outside];
+                u.cascade_splits = [range, range, range, 1.0];
+                u.params[2] = 1.0;
+            }
             let r = crate::probes::CAPTURE_RES as f32;
             u.screen = [r, r, 1.0 / r, 1.0 / r];
             self.queue.write_buffer(&self.refl_buffers[2], 0, bytemuck::bytes_of(&u));
@@ -6433,6 +6499,7 @@ impl Backend {
             }
             if irr_capture {
                 irradiance_pass_uniforms(&mut u, c.light_scale, f.lights.len().min(MAX_LIGHTS));
+                u.light_sets.mode[2] |= irradiance_bits;
                 let r = crate::probes::IRR_CAPTURE_RES as f32;
                 u.screen = [r, r, 1.0 / r, 1.0 / r];
                 self.queue.write_buffer(&self.refl_buffers[8], 0, bytemuck::bytes_of(&u));
@@ -6808,8 +6875,12 @@ impl Backend {
                 merge_size,
                 [water_vp, mirror_vp, probe_vp],
                 spot_vp,
+                probe_shadow_now,
                 flags,
             );
+            if let Some(c) = &capture {
+                frame.probe_eye = c.origin.extend(c.reach).to_array();
+            }
             if do_water_air {
                 frame.water_air = crate::gpu_cull::view_planes(air_vp).map(|p| p.to_array());
                 frame.dist[1] = frame.dist[1].max(g.draw_distance.min(200.0));
@@ -6835,8 +6906,14 @@ impl Backend {
         rg.select_faces = push(cpu, &lists.select_faces);
         let imp_ranges: Vec<((u64, u32), (u64, u32))> = imp_caps.iter().map(|c| (push(cpu, &c.opaque), push(cpu, &c.blend))).collect();
         // reflection passes: each culled to its own frustum
-        if capture.is_some() {
-            rg.probe = push(cpu, &cull_to_view(probe_vp, &lists.probe));
+        if let Some(c) = &capture {
+            let reached: Vec<ShadowCaster> = lists
+                .probe
+                .iter()
+                .filter(|o| o.center.distance(c.origin) - o.radius < c.reach)
+                .copied()
+                .collect();
+            rg.probe = push(cpu, &cull_to_view(probe_vp, &reached));
         }
         if do_water_refl {
             rg.refl_water = push(cpu, &cull_to_view(water_vp, &lists.reflection));
@@ -6866,6 +6943,13 @@ impl Backend {
             rg.shadow[i] = push(cpu, &shadow_lists[i]);
             rg.shadow_alpha[i] = push(cpu, &shadow_alpha_lists[i]);
             rg.shadow_terrain[i] = push(cpu, &shadow_terrain_lists[i]);
+        }
+        if let Some(vp) = &probe_shadow_now {
+            let inside = |c: &&ShadowCaster| crate::gpu_cull::in_cascade(vp, c.center, c.radius);
+            let casters: Vec<DrawCmd> = lists.shadow_casters.iter().filter(inside).map(|c| c.cmd).collect();
+            let terrain: Vec<DrawCmd> = lists.terrain_shadow_casters.iter().filter(inside).map(|c| c.cmd).collect();
+            rg.probe_shadow = push(cpu, &casters);
+            rg.probe_shadow_terrain = push(cpu, &terrain);
         }
         for (range, list) in rg.spot.iter_mut().zip(&spot_lists) {
             *range = push(cpu, list);
@@ -7585,6 +7669,40 @@ impl Backend {
         // ---- reflection probe: one cube face (LLReflectionMap::update ->
         // cubeSnapshot), then the radiance filtering after the sixth
         if let Some(c) = &capture {
+            if probe_shadow_now.is_some() {
+                let size = crate::probes::SHADOW_SIZE;
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("probe shadow"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.probe_shadow_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_bind_group(1, &self.records_bind_group, &[]);
+                pass.set_bind_group(2, &scene.textures, &[]);
+                pass.set_vertex_buffer(0, scene.vertices.slice(..));
+                pass.set_vertex_buffer(1, scene.skin.slice(..));
+                pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint16);
+                pass.set_viewport(0.0, 0.0, size as f32, size as f32, 0.0, 1.0);
+                pass.set_scissor_rect(0, 0, size, size);
+                pass.set_bind_group(3, &self.probe_shadow_group, &[]);
+                pass.set_pipeline(&self.pipelines.shadow);
+                let (off, count) = rg.probe_shadow;
+                if count > 0 {
+                    pass.multi_draw_indexed_indirect(&self.indirect, off, count);
+                    calls.set(calls.get() + 1);
+                }
+                draw_bin(&mut pass, None, BIN_PROBE_SHADOW, BIN_PROBE_SHADOW);
+                draw(&mut pass, &self.pipelines.shadow_terrain, rg.probe_shadow_terrain);
+            }
             // the radiance face, then (a sky with a probe ambiance) the same
             // face of the irradiance capture
             let radiance = (
@@ -8492,7 +8610,6 @@ impl Backend {
                 // without HDR there is none to keep)
                 hold: (snapshot.is_some() || f.exposure_lock || f.cutout) && self.settings.hdr,
                 glow: self.glow_drawn,
-                inv_view_proj: unjittered_vp.inverse(),
             },
             &self.post_buffer,
             POST_AUTO_EXPOSURE_OFFSET,

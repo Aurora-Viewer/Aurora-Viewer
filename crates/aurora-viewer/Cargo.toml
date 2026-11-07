@@ -16,6 +16,9 @@ base64 = "0.23.1"
 # local time off Windows (snapshot names, chat log dates, script __DATE__);
 # already built for aurora-llsd, MIT/Apache-2.0.
 chrono = "0.4.45"
+# The Windows event log's XML for the crash report's GPU reset records
+# (crash/os_events.rs); already built for usvg, MIT/Apache-2.0.
+roxmltree = "0.21.1"
 # The bars' clock: the computer's tz database zone (Windows' zones mapped to
 # IANA names; already in the tree through chrono) and its abbreviation now
 # (CET / CEST), from the embedded tz database (about 1.3 MB of the release
