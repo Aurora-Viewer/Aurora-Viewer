@@ -736,7 +736,7 @@ mod tests {
         }
     }
 
-    /// A detach asked for during the login (the resident, a script, RLVa)
+    /// A detach the viewer sent during the login (for the resident or RLVa)
     /// still removes its link, as removeItemsFromAvatar does in the Legacy
     /// Viewer whatever mAttachmentInvLinkEnabled says.
     #[test]

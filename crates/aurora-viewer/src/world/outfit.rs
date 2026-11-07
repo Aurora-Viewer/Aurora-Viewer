@@ -267,8 +267,8 @@ impl OutfitRestore {
     }
 
     /// Whether the COF link of `item` stays when the region takes it off
-    /// without being asked to (a detach sent by the resident, a script or
-    /// RLVa always removes it).
+    /// without the viewer asking for it (a detach the viewer sent, for the
+    /// resident or RLVa, always removes it).
     ///
     /// Until the login restore has read the Current Outfit folder, no
     /// unrequested detach removes a link: LLAppearanceMgr::unregisterAttachment
