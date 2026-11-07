@@ -4341,12 +4341,21 @@ mod tests {
         });
         let brightness = legacy_bump_image(source.clone(), 1).expect("brightness map");
         let darkness = legacy_bump_image(source.clone(), 2).expect("darkness map");
-        let standard = legacy_bump_image(source, 9).expect("standard map");
+        let standard = legacy_bump_image(source.clone(), 9).expect("standard map");
         assert_ne!(&*brightness.rgba, &*darkness.rgba);
         assert_ne!(&*brightness.rgba, &*standard.rgba);
-        assert!(standard.rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255));
-        assert!(brightness.rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255));
-        assert!(darkness.rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255));
+        for (((src, standard), brightness), darkness) in source
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(standard.rgba.as_chunks::<4>().0)
+            .zip(brightness.rgba.as_chunks::<4>().0)
+            .zip(darkness.rgba.as_chunks::<4>().0)
+        {
+            assert_eq!(standard[3], src[3]);
+            assert!((i16::from(brightness[3]) + i16::from(darkness[3]) - 255).abs() <= 1);
+        }
     }
 
     #[test]
