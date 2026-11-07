@@ -10,6 +10,7 @@
 use aurora_llsd::Llsd;
 use aurora_net::RegionHandle;
 use glam::{DVec3, Vec3};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 const MAX_ITEMS: usize = 100;
@@ -242,6 +243,8 @@ pub struct HistoryStorage {
     kept: Vec<Vec<u8>>,
     /// None: not saved (demo, before login, or a file that could not be read).
     path: Option<PathBuf>,
+    /// The file exists but could not be read: nothing can be added to it.
+    unreadable: bool,
     /// The thread that writes the file (atomic_file flushes the disk: never
     /// on the frame thread), started at the first save.
     writer: Option<Writer>,
@@ -275,7 +278,9 @@ impl HistoryStorage {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(e) => {
                 log::warn!("teleport history: can't read the saved history ({e}); it is left as it is and not saved this session");
-                return HistoryStorage::default();
+                let mut storage = HistoryStorage::default();
+                storage.unreadable = true;
+                return storage;
             }
         };
         let (mut items, kept) = parse(&bytes);
@@ -290,8 +295,62 @@ impl HistoryStorage {
             items,
             kept,
             path: Some(path),
+            unreadable: false,
             writer: None,
         }
+    }
+
+    /// A Legacy Viewer's places added to this history, adding only. `add`'s
+    /// rule decides between two entries of one place: the newest visit
+    /// stays, at the older position, so importing again changes nothing.
+    /// The number of places added or updated; on a failed save the history
+    /// stays as it was, in the file too.
+    pub fn merge(&mut self, items: Vec<HistoryItem>) -> std::io::Result<usize> {
+        if self.unreadable {
+            return Err(std::io::Error::other("the saved history could not be read"));
+        }
+        let before = self.items.clone();
+        let mut by_title: HashMap<String, Vec<usize>> = HashMap::new();
+        for (i, item) in self.items.iter().enumerate() {
+            by_title.entry(item.title.clone()).or_default().push(i);
+        }
+        let mut changed = 0;
+        for item in items.into_iter().filter(|item| !item.title.is_empty()) {
+            let same = by_title.entry(item.title.clone()).or_default();
+            // the latest of the entries in range: several can be, and any
+            // other choice would move a visit again at the next import
+            let found = same
+                .iter()
+                .copied()
+                .filter(|&i| (self.items[i].global - item.global).length() < MAX_GLOBAL_POS_OFFSET)
+                .max_by(|&a, &b| self.items[a].date.total_cmp(&self.items[b].date));
+            match found {
+                Some(i) if self.items[i].date < item.date => {
+                    self.items[i].date = item.date;
+                    if !item.slurl.is_empty() {
+                        self.items[i].slurl = item.slurl;
+                    }
+                    changed += 1;
+                }
+                Some(_) => {}
+                None => {
+                    same.push(self.items.len());
+                    self.items.push(item);
+                    changed += 1;
+                }
+            }
+        }
+        if changed > 0 {
+            self.items.sort_by(|a, b| a.date.total_cmp(&b.date));
+            if let Err(e) = self.write_now() {
+                self.items = before;
+                return Err(e);
+            }
+            // again by the writer, flushed to the disk, after any save it
+            // still holds
+            self.save();
+        }
+        Ok(changed)
     }
 
     /// A history kept in memory only (the demo's).
@@ -359,6 +418,18 @@ impl HistoryStorage {
         self.save();
     }
 
+    /// In one step, for a caller that has to know it worked: a full disk
+    /// leaves the old file. No disk flush: on the frame thread.
+    fn write_now(&self) -> std::io::Result<()> {
+        let Some(path) = &self.path else {
+            return Ok(());
+        };
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        crate::atomic_file::publish(path, &self.file())
+    }
+
     /// The file's bytes: the lines kept from the file, then the places.
     fn file(&self) -> Vec<u8> {
         let mut out = Vec::new();
@@ -400,6 +471,17 @@ impl HistoryStorage {
             let _ = done.into_inner().map(|d| d.recv());
         }
     }
+}
+
+/// The places of a Legacy Viewer's `teleport_history.txt`, oldest first; a
+/// line that is not one is left out.
+pub fn places(bytes: &[u8]) -> Vec<HistoryItem> {
+    let (mut items, kept) = parse(bytes);
+    if !kept.is_empty() {
+        log::info!("teleport history: {} line(s) could not be read", kept.len());
+    }
+    items.sort_by(|a, b| a.date.total_cmp(&b.date));
+    items
 }
 
 /// The places of a file, and its lines that are not one (kept as they are).
@@ -513,6 +595,107 @@ pub fn history_matches(title: &str, filter: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn place(title: &str, x: f64, date: f64) -> HistoryItem {
+        HistoryItem {
+            title: title.into(),
+            global: DVec3::new(x, 0.0, 0.0),
+            date,
+            slurl: String::new(),
+        }
+    }
+
+    #[test]
+    fn merge_keeps_the_newest_visit_of_a_place_and_adds_nothing_twice() {
+        let mut history = HistoryStorage::in_memory(vec![place("Home", 0.0, 100.0), place("Shop", 10.0, 200.0)]);
+        let legacy = places(
+            b"{'date':d\"1970-01-01T00:00:50Z\",'global_pos':[r0,r0,r0],'slurl':'','title':'Home'}\n\
+             not a place\n\
+             {'date':d\"1970-01-01T00:05:00Z\",'global_pos':[r13,r0,r0],'slurl':'','title':'Shop'}\n\
+             {'date':d\"1970-01-01T00:02:30Z\",'global_pos':[r500,r0,r0],'slurl':'','title':'Shop'}\n\
+             {'date':d\"1970-01-01T00:01:00Z\",'global_pos':[r900,r0,r0],'slurl':'','title':'Far'}\n",
+        );
+        assert_eq!(legacy.len(), 4);
+        assert_eq!(history.merge(legacy.clone()).unwrap(), 3);
+        let seen: Vec<_> = history.items.iter().map(|i| (i.title.as_str(), i.global.x, i.date)).collect();
+        assert_eq!(
+            seen,
+            [
+                ("Far", 900.0, 60.0),
+                ("Home", 0.0, 100.0),
+                ("Shop", 500.0, 150.0),
+                // the visit is the Legacy one, the position stays ours
+                ("Shop", 10.0, 300.0),
+            ]
+        );
+        assert_eq!(history.merge(legacy).unwrap(), 0);
+    }
+
+    #[test]
+    fn merge_settles_at_once_when_a_place_is_in_range_of_two_entries() {
+        let legacy = vec![place("Shop", 0.0, 10.0), place("Shop", 6.0, 20.0), place("Shop", 3.0, 30.0)];
+        let mut history = HistoryStorage::default();
+        assert_eq!(history.merge(legacy.clone()).unwrap(), 3);
+        assert_eq!(history.merge(legacy).unwrap(), 0);
+    }
+
+    #[test]
+    fn a_merge_that_cannot_be_saved_leaves_the_history_as_it_was() {
+        let dir = std::env::temp_dir().join(format!("aurora-tphistory-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // the file's folder is a file
+        std::fs::write(dir.join("taken"), "").unwrap();
+        let mut history = HistoryStorage::in_memory(vec![place("Home", 0.0, 100.0)]);
+        history.path = Some(dir.join("taken").join(TELEPORT_HISTORY_FILE));
+        assert!(history.merge(vec![place("Far", 900.0, 60.0)]).is_err());
+        assert_eq!(history.items.len(), 1);
+        history.path = Some(dir.join(TELEPORT_HISTORY_FILE));
+        assert_eq!(history.merge(vec![place("Far", 900.0, 60.0)]).unwrap(), 1);
+        assert_eq!(HistoryStorage::load(dir.join(TELEPORT_HISTORY_FILE)).items.len(), 2);
+        history.flush();
+        assert_eq!(HistoryStorage::load(dir.join(TELEPORT_HISTORY_FILE)).items.len(), 2);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_merge_keeps_the_lines_that_could_not_be_read() {
+        let dir = std::env::temp_dir().join(format!("aurora-tphistory-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(TELEPORT_HISTORY_FILE);
+        std::fs::write(&path, "not a place\n").unwrap();
+        let mut history = HistoryStorage::load(path.clone());
+        assert_eq!(history.merge(vec![place("Far", 900.0, 60.0)]).unwrap(), 1);
+        history.flush();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("not a place\n"), "{text}");
+        assert_eq!(HistoryStorage::load(path).items.len(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_merge_does_not_replace_a_file_that_could_not_be_read() {
+        // a folder where the file should be: it exists and cannot be read
+        let dir = std::env::temp_dir().join(format!("aurora-tphistory-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut history = HistoryStorage::load(dir.clone());
+        assert!(history.merge(vec![place("Far", 900.0, 60.0)]).is_err());
+        assert!(history.items.is_empty());
+        assert!(dir.is_dir());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn places_of_a_legacy_file_come_oldest_first_without_the_bad_lines() {
+        let line = |p: &HistoryItem| aurora_llsd::to_notation(&p.to_llsd());
+        let text = format!(
+            "{}\nnot a place\n{}\n",
+            line(&place("Late", 0.0, 200.0)),
+            line(&place("Early", 10.0, 100.0))
+        );
+        let read = places(text.as_bytes());
+        assert_eq!(read.len(), 2);
+        assert_eq!(read[0].title, "Early");
+    }
 
     fn e(n: &str) -> TpEntry {
         TpEntry {

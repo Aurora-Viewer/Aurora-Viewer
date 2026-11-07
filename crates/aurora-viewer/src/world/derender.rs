@@ -118,6 +118,57 @@ pub struct Restore {
     pub requests: HashMap<RegionHandle, Vec<u32>>,
 }
 
+/// The entries of an `asset_blacklist.xml`.
+#[derive(Debug, Default)]
+pub struct FileEntries {
+    entries: Vec<(Uuid, Entry)>,
+    /// Asset types Aurora does not act on, kept as they came.
+    other: Vec<(String, Llsd)>,
+}
+
+impl FileEntries {
+    pub fn len(&self) -> usize {
+        self.entries.len() + self.other.len()
+    }
+
+    pub fn from_xml(bytes: &[u8]) -> Result<Self, String> {
+        let data = aurora_llsd::from_xml(bytes).map_err(|e| format!("{e:?}"))?;
+        let mut file = FileEntries::default();
+        for (key, value) in data.as_map().into_iter().flatten() {
+            let Ok(masked) = Uuid::parse_str(key) else {
+                continue;
+            };
+            let id = mask(masked);
+            if id.is_nil() {
+                continue;
+            }
+            // Derender entries, sound asset/owner categories and animations
+            // share the legacy file; preserve unsupported asset types below.
+            let kind = match value.get("asset_type").as_i32() {
+                AT_OBJECT => Kind::Object,
+                AT_PERSON => Kind::Resident,
+                AT_SOUND => Kind::Sound(value.get("asset_blacklist_flag").as_i32() as u8),
+                AT_ANIMATION => Kind::Animation,
+                _ => {
+                    file.other.push((key.clone(), value.clone()));
+                    continue;
+                }
+            };
+            file.entries.push((
+                id,
+                Entry {
+                    name: value.get("asset_name").as_str().to_owned(),
+                    region: value.get("asset_region").as_str().to_owned(),
+                    kind,
+                    date: parse_date(value.get("asset_date").as_str()),
+                    permanent: true,
+                },
+            ));
+        }
+        Ok(file)
+    }
+}
+
 #[derive(Default)]
 pub struct Derender {
     entries: HashMap<Uuid, Entry>,
@@ -196,46 +247,58 @@ impl Derender {
                 return list;
             }
         };
-        let data = match aurora_llsd::from_xml(&bytes) {
-            Ok(data) => data,
+        match FileEntries::from_xml(&bytes) {
+            Ok(file) => {
+                list.entries = file.entries.into_iter().collect();
+                list.other = file.other;
+            }
             Err(e) => {
-                log::warn!("asset blacklist unreadable: {e:?}");
+                log::warn!("asset blacklist unreadable: {e}");
                 return list;
             }
-        };
-        for (key, value) in data.as_map().into_iter().flatten() {
-            let Ok(masked) = Uuid::parse_str(key) else {
-                continue;
-            };
-            let id = mask(masked);
-            if id.is_nil() {
-                continue;
-            }
-            // Derender entries, sound asset/owner categories and animations
-            // share the legacy file; preserve unsupported asset types below.
-            let kind = match value.get("asset_type").as_i32() {
-                AT_OBJECT => Kind::Object,
-                AT_PERSON => Kind::Resident,
-                AT_SOUND => Kind::Sound(value.get("asset_blacklist_flag").as_i32() as u8),
-                AT_ANIMATION => Kind::Animation,
-                _ => {
-                    list.other.push((key.clone(), value.clone()));
-                    continue;
-                }
-            };
-            list.entries.insert(
-                id,
-                Entry {
-                    name: value.get("asset_name").as_str().to_owned(),
-                    region: value.get("asset_region").as_str().to_owned(),
-                    kind,
-                    date: parse_date(value.get("asset_date").as_str()),
-                    permanent: true,
-                },
-            );
         }
         log::info!("asset blacklist: {} entries", list.entries.len());
         list
+    }
+
+    /// A Legacy Viewer's entries added to the list, adding only: an entry
+    /// the list has keeps its name and date, and takes the file's sound
+    /// categories and permanence. Saved once. The number of entries added
+    /// or updated, and the new objects and residents, to take out of the
+    /// world.
+    fn merge(&mut self, file: FileEntries) -> (usize, Vec<Uuid>) {
+        let mut changed = 0;
+        let mut hide = Vec::new();
+        for (id, entry) in file.entries {
+            let Some(old) = self.entries.get_mut(&id) else {
+                if matches!(entry.kind, Kind::Object | Kind::Resident) {
+                    hide.push(id);
+                }
+                self.entries.insert(id, entry);
+                changed += 1;
+                continue;
+            };
+            let kind = match (old.kind, entry.kind) {
+                (Kind::Sound(a), Kind::Sound(b)) if a != 0 && b != 0 => Kind::Sound(a | b),
+                (kind, _) => kind,
+            };
+            if kind != old.kind || !old.permanent {
+                old.kind = kind;
+                old.permanent = true;
+                changed += 1;
+            }
+        }
+        for (key, value) in file.other {
+            if !self.other.iter().any(|(k, _)| *k == key) {
+                self.other.push((key, value));
+                changed += 1;
+            }
+        }
+        if changed > 0 {
+            self.generation = self.generation.wrapping_add(1);
+            self.save();
+        }
+        (changed, hide)
     }
 
     /// FSAssetBlacklist::saveBlacklist: the permanent entries only.
@@ -699,6 +762,24 @@ impl super::World {
         }
     }
 
+    /// A Legacy Viewer's list added to ours (`Derender::merge`): what it
+    /// names leaves the world as with `derender`, our own avatar excepted,
+    /// though its sounds can be blocked like anyone's (`sound_blacklisted`).
+    /// The number of entries added or updated, and whether our avatar sat
+    /// on one of them and was taken off (the app stands it up).
+    pub fn merge_derender(&mut self, mut file: FileEntries) -> (usize, bool) {
+        let me = self.agent_id;
+        file.entries.retain(|(id, entry)| *id != me || matches!(entry.kind, Kind::Sound(_)));
+        let (changed, hide) = self.derender.merge(file);
+        let mut unseated = false;
+        for id in hide {
+            if let Some(idx) = self.objects.index_of_uuid(&id) {
+                unseated |= self.take_out(idx, id);
+            }
+        }
+        (changed, unseated)
+    }
+
     /// Entries removed from the list (the Asset blacklist window).
     pub fn underender(&mut self, ids: &[Uuid]) {
         let restore = self.derender.remove(ids);
@@ -777,6 +858,89 @@ pub(super) mod tests_support {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn file_entry(id: Uuid, asset_type: i32, flags: i32, name: &str) -> (String, Llsd) {
+        let mut data = aurora_llsd::Map::new();
+        data.insert("asset_name".into(), Llsd::from(name));
+        data.insert("asset_type".into(), Llsd::from(asset_type));
+        data.insert("asset_blacklist_flag".into(), Llsd::from(flags));
+        data.insert("asset_date".into(), Llsd::from("2024-01-02 03:04:05"));
+        (mask(id).to_string(), Llsd::Map(data))
+    }
+
+    fn legacy_file(entries: Vec<(String, Llsd)>) -> FileEntries {
+        let bytes = aurora_llsd::to_xml(&Llsd::Map(entries.into_iter().collect()));
+        FileEntries::from_xml(&bytes).expect("a list")
+    }
+
+    #[test]
+    fn merge_adds_only_and_a_second_merge_changes_nothing() {
+        let (kept, sounds, new, texture, temporary) = (
+            Uuid::from_u128(1),
+            Uuid::from_u128(2),
+            Uuid::from_u128(3),
+            Uuid::from_u128(4),
+            Uuid::from_u128(5),
+        );
+        let file = || {
+            legacy_file(vec![
+                file_entry(kept, AT_OBJECT, 0, "theirs"),
+                file_entry(sounds, AT_SOUND, 2, "owner"),
+                file_entry(new, AT_PERSON, 0, "new"),
+                file_entry(texture, 0, 0, "a texture"),
+                file_entry(temporary, AT_OBJECT, 0, "for good"),
+            ])
+        };
+        let mut list = Derender::default();
+        list.add(
+            kept,
+            Entry {
+                name: "ours".into(),
+                ..entry(Kind::Object, true)
+            },
+        );
+        list.add(sounds, entry(Kind::Sound(1), true));
+        list.add(temporary, entry(Kind::Object, false));
+
+        let (changed, hide) = list.merge(file());
+        assert_eq!(changed, 4, "new, its texture, the sound category, the permanence");
+        assert_eq!(hide, [new]);
+        assert_eq!(list.entries[&kept].name, "ours");
+        assert_eq!(list.entries[&sounds].kind, Kind::Sound(3));
+        assert_eq!(list.entries[&new].date, parse_date("2024-01-02 03:04:05"));
+        assert!(list.entries[&temporary].permanent);
+
+        let generation = list.generation;
+        assert_eq!(list.merge(file()), (0, Vec::new()));
+        assert_eq!(list.generation, generation);
+    }
+
+    #[test]
+    fn merge_derender_takes_new_objects_out_of_the_world_but_never_ourselves() {
+        let (mut world, _) = demo_world();
+        let me = world.agent_id;
+        let object = world
+            .objects
+            .iter()
+            .find(|(_, o)| o.key.local_id == 101)
+            .expect("a demo object")
+            .1
+            .full_id;
+        let file = vec![file_entry(me, AT_PERSON, 0, "me"), file_entry(object, AT_OBJECT, 0, "an object")];
+        let (changed, unseated) = world.merge_derender(legacy_file(file));
+        assert_eq!((changed, unseated), (1, false));
+        assert!(!world.derender.contains(&me));
+        assert!(world.objects.index_of_uuid(&object).is_none());
+    }
+
+    #[test]
+    fn merge_derender_keeps_a_sound_rule_on_ourselves() {
+        let (mut world, _) = demo_world();
+        let me = world.agent_id;
+        let file = vec![file_entry(me, AT_SOUND, 4, "my gestures")];
+        assert_eq!(world.merge_derender(legacy_file(file)), (1, false));
+        assert!(world.derender.sound_blocked(Uuid::nil(), me, 4));
+    }
 
     fn update(local_id: u32, full_id: u128, parent_id: u32) -> ObjectUpdate {
         use glam::{Quat, Vec3};

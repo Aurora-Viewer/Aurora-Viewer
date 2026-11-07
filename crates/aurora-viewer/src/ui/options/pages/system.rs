@@ -159,6 +159,22 @@ pub fn page(cx: &mut Cx) {
                 false
             },
         );
+        cx.row_with(
+            tr!("ui-options-legacy-lists"),
+            tr!("ui-options-legacy-lists-help"),
+            &Nothing,
+            |ui, _, st, r| {
+                ui.vertical(|ui| {
+                    if action_button(ui, &p, "file-import", tr!("ui-options-legacy-lists-button"), ActionKind::Flat, size).clicked() {
+                        r.find_legacy_lists = true;
+                    }
+                    if !st.legacy_lists_status.is_empty() {
+                        ui.add(egui::Label::new(RichText::new(&st.legacy_lists_status).size(11.5).color(p.muted)).wrap());
+                    }
+                });
+                false
+            },
+        );
     });
     // the Legacy Viewer's uninstaller, from the viewer (uninstall.rs): what
     // it registered outside its folders, confirmed first
