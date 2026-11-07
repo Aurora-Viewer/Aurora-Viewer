@@ -458,7 +458,7 @@ impl App {
                     picked
                         .depth
                         .zip(picked.ray)
-                        .and_then(|(point, ray)| self.scene.interaction_at_ray(&self.world, point, ray, true))
+                        .and_then(|(point, ray)| self.scene.left_interaction_at_ray(&self.world, point, ray, true))
                 } else {
                     None
                 }
@@ -735,7 +735,7 @@ impl App {
                 } else {
                     point
                         .zip(ray)
-                        .and_then(|(p, r)| self.scene.interaction_at_ray(&self.world, p, r, true))
+                        .and_then(|(p, r)| self.scene.left_interaction_at_ray(&self.world, p, r, true))
                 };
                 (point, idx)
             };

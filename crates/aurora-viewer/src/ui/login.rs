@@ -10,6 +10,7 @@ use super::widgets::{self, ActionKind};
 use crate::settings::{GridChoice, Settings};
 use crate::theme::Palette;
 use egui::{Color32, Frame, Margin, RichText, Sense, Stroke, TextEdit, Vec2};
+mod camera_limits_notice;
 mod carousel;
 mod chrome;
 mod credentials_form;
@@ -97,6 +98,9 @@ pub struct LoginForm {
     /// "Photo quality" was switched off after the last session crashed with
     /// it on (`app/snapshot.rs`, `photo_quality_at_start`).
     pub photo_quality_off: bool,
+    /// The camera's limits went back on with the settings' version 33
+    /// (`Settings::camera_limits_restored`).
+    pub camera_limits_restored: bool,
 }
 
 #[derive(Default)]
@@ -110,6 +114,9 @@ pub enum LoginAction {
     SafeGraphics(safe_graphics_notice::Choice),
     /// A button of the photo quality card: turned back on (true) or read.
     PhotoQualityOff(bool),
+    /// A button of the camera limits card: the camera preferences (true) or
+    /// read.
+    CameraLimits(bool),
     #[default]
     None,
     Login,

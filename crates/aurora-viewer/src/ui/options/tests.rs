@@ -97,6 +97,7 @@ const BEFORE: &[&str] = &[
     "ssr",
     "reflection_probes",
     "probe_count",
+    "probe_range",
     "colored_sky_ambient",
     "antialiasing",
     "specular_aa",
@@ -109,6 +110,7 @@ const BEFORE: &[&str] = &[
     "background_fps_cap",
     "background_fps_limit",
     "background_gpu_pause",
+    "gpu_recovery",
     // Interface
     "language",
     "language_is_public",
