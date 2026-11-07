@@ -28,7 +28,7 @@ mod task_notecard;
 mod terrain_raw;
 mod wearable_save;
 
-use crate::agent_update::AgentUpdateRule;
+use crate::agent_update::{AgentUpdateRule, FarStep};
 use crate::caps::{self, EqEvent, EqMessage};
 use crate::circuit::{Circuit, Resend};
 use crate::login::{self, LoginError, LoginRequest, LoginResponse};
@@ -308,7 +308,9 @@ struct Session<'a> {
     one_shot: u32,
     /// "No agent updates" already reported for this CompleteAgentMovement.
     cam_warned: bool,
-    far: f32,
+    /// AgentUpdate's `Far`, from the draw distance of the viewer's controls
+    /// (agent_update.rs).
+    far: FarStep,
     /// FSDisableNeighbourRegionConnections, while the agent stands inside its
     /// region: EnableSimulator for another region is ignored.
     refuse_neighbours: bool,
@@ -508,7 +510,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         control_flags: 0,
         one_shot: 0,
         cam_warned: false,
-        far: 128.0,
+        far: FarStep::new(Instant::now()),
         refuse_neighbours: false,
         fov: DEFAULT_FOV,
         logout_started: None,
@@ -1571,7 +1573,6 @@ impl Session<'_> {
     }
 
     fn send_agent_update_if_due(&mut self, mut c: AgentControls, now: Instant) {
-        c.far = self.far;
         c.control_flags = crate::script_controls::mask_left_button(c.control_flags | self.one_shot, c.alt_or_ctrl);
         let flags_changed = c.control_flags != self.agent_update.sent_flags();
         if self.agent_update.should_send(&c, now) {
@@ -1587,7 +1588,9 @@ impl Session<'_> {
             a.camera_at_axis = c.camera_at;
             a.camera_left_axis = c.camera_left;
             a.camera_up_axis = c.camera_up;
-            a.far = c.far;
+            // the draw distance the viewer hands with its controls each
+            // frame (#2810: a value of the session's own stayed at 128 m)
+            a.far = self.far.far(c.far.clamp(32.0, 1024.0), now);
             a.control_flags = c.control_flags;
             a.flags = c.flags;
             self.send_main(&m, false);
@@ -1744,7 +1747,6 @@ impl Session<'_> {
                 m.name_data.name = str_field(name.trim());
                 self.send_main(&m, true);
             }
-            NetCommand::SetDrawDistance(d) => self.far = d.clamp(32.0, 1024.0),
             NetCommand::RefuseNeighbourRegions(on) => self.refuse_neighbours = on,
             NetCommand::SetFov(angle) => {
                 if angle.is_finite() && angle > 0.0 && angle != self.fov {
@@ -3857,6 +3859,7 @@ impl Session<'_> {
                     info["RegionHandle"].as_u64(),
                     info["TeleportFlags"].as_u64()
                 );
+                self.far.teleported();
                 self.switch_region(
                     info["RegionHandle"].as_u64(),
                     ip_from_llsd(&info["SimIP"]),
@@ -4622,6 +4625,7 @@ impl Session<'_> {
             self.agent_moved = true;
             self.regions_visited.insert(m.data.region_handle);
             self.cam_requested_at = None;
+            self.far.movement_complete(self.login_arrival, Instant::now());
             self.login_arrival = false;
             // gLastVersionChannel: the server version the Region / Estate
             // window shows
@@ -6305,7 +6309,7 @@ mod event_queue_tests {
             control_flags: 0,
             one_shot: 0,
             cam_warned: false,
-            far: 128.0,
+            far: FarStep::new(Instant::now()),
             refuse_neighbours: false,
             fov: DEFAULT_FOV,
             logout_started: None,
@@ -6648,7 +6652,7 @@ mod script_dialog_tests {
             control_flags: 0,
             one_shot: 0,
             cam_warned: false,
-            far: 128.0,
+            far: FarStep::new(Instant::now()),
             refuse_neighbours: false,
             fov: DEFAULT_FOV,
             logout_started: None,
@@ -6755,6 +6759,44 @@ mod script_dialog_tests {
             let o = &m.object_data[0];
             assert_eq!((o.object_local_id, o.sale_type, o.sale_price), (971, 2, 10));
         }
+    }
+
+    /// #2810: AgentUpdate's Far is the draw distance of the viewer's
+    /// controls (the simulator connects the neighbours within it), not a
+    /// value of the session's own that stayed at 128 m.
+    #[tokio::test]
+    async fn agent_update_asks_for_the_viewers_draw_distance() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main = UdpSocket::bind("127.0.0.1:0").await.expect("simulator");
+        let main_addr = main.local_addr().expect("simulator address");
+        let (events, _received) = crossbeam_channel::unbounded();
+        let sh = test_shared(events);
+        let mut session = test_session(&sh, sock.clone(), [(main_addr, Sim::new(main_addr, 10))].into(), main_addr);
+        session.agent_moved = true;
+        sock.writable().await.expect("socket ready");
+        let far_sent = |session: &mut Session<'_>| {
+            session.agent_update.force();
+            session.on_agent_controls(AgentControls {
+                far: 290.0,
+                ..Default::default()
+            });
+        };
+        async fn next_far(sim: &UdpSocket) -> f32 {
+            let mut datagram = [0; 1500];
+            let (size, _) = tokio::time::timeout(Duration::from_secs(2), sim.recv_from(&mut datagram))
+                .await
+                .expect("an AgentUpdate reaches the region")
+                .expect("datagram");
+            let packet = parse_packet(&datagram[..size]).expect("packet");
+            let update: msgs::AgentUpdate = packet.decode().expect("AgentUpdate");
+            update.agent_data.far
+        }
+        far_sent(&mut session);
+        assert_eq!(next_far(&main).await, 290.0);
+        // a login arrival asks for half of it first (send_agent_update)
+        session.far.movement_complete(true, Instant::now());
+        far_sent(&mut session);
+        assert_eq!(next_far(&main).await, 145.0);
     }
 
     /// The next LogoutRequest the simulator receives, past the other packets

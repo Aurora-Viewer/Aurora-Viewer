@@ -1650,8 +1650,6 @@ pub enum NetCommand {
         position: Vec3,
         look_at: Vec3,
     },
-    /// Change the draw distance used in AgentUpdate (`Far`).
-    SetDrawDistance(f32),
     /// No connection to the neighbouring regions while true
     /// (FSDisableNeighbourRegionConnections): the viewer sends false while
     /// the agent is outside its region, so that a crossing still connects.
@@ -2379,6 +2377,8 @@ pub struct AgentControls {
     pub camera_at: Vec3,
     pub camera_left: Vec3,
     pub camera_up: Vec3,
+    /// The draw distance (RenderFarClip): AgentUpdate's `Far` follows it by
+    /// the steps of `agent_update::FarStep`.
     pub far: f32,
     /// The render state (LLAgent::getRenderState): `AGENT_STATE_TYPING`
     /// while we type in the nearby chat.
