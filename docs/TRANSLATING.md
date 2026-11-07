@@ -98,12 +98,14 @@ Japanese, beyond the plural:
   (attachment), アウトフィット, 容姿 (appearance), 所有者 (owner),
   初期設定 (Preferences), 設定 (Aurora's own settings), 近くのチャット,
   テレポート, ランドマーク, スクリプト, テクスチャ, フォルダ, ごみ箱,
-  コピー (copy, the permission included), モニター (a display),
+  複製 (copy, the permission: 複製不可, 複製と譲渡の権限; and Duplicate),
+  コピー (copy, anywhere else: the clipboard, a copy of an item), モニター
+  (a display),
   ビルド (build: the tools, the window, the permission), 建物 (a building
   in the world), 体験 (experience), 自然環境 (environment, EEP), 露光
   (exposure), 射影テクスチャ (a light's projected texture), メタル (metal);
   look an existing one up in `ja.ftl` before choosing a new one. Never
-  持ち物, エクスペリエンス, アタッチ, オーナー, 露出, フォルダー, 複製 nor
+  持ち物, エクスペリエンス, アタッチ, オーナー, 露出, フォルダー nor
   モニタ: they are the variants these replace. 建築 stays only in the
   residents' own words of the demo (今夜は広場を建築するよ), never for the
   tools.

@@ -171,11 +171,14 @@ pub enum TexSource {
     },
 }
 
+// LLImageGL::updatePickMask (indra/llrender/llimagegl.cpp, LGPL 2.1).
+const PICK_ALPHA_CUTOFF: u8 = 32;
+
 /// Picking follows LLImageGL::updatePickMask / getMask: one bit per 2×2
 /// block, alpha > 32 at its first texel, repeated UVs. Top-left decoded rows
 /// are indexed from the bottom, like world UVs. No OpenGL state or
 /// readback is involved; masks are built by decode workers and retired off-thread.
-/// A second, full-resolution bit plane preserves alpha > 0 for left clicks
+/// A second, full-resolution bit plane uses the same alpha > 32 for left clicks
 /// on world Blend faces, without changing the legacy mask used by HUDs.
 pub struct PickMask {
     width: u32,
@@ -206,7 +209,7 @@ impl PickMask {
         for y in 0..h {
             for x in 0..w {
                 let row = height - 1 - y * 2;
-                if rgba[((row * width + x * 2) as usize) * 4 + 3] > 32 {
+                if rgba[((row * width + x * 2) as usize) * 4 + 3] > PICK_ALPHA_CUTOFF {
                     let bit = (y * w + x) as usize;
                     bits[bit / 8] |= 1 << (bit % 8);
                 }
@@ -214,7 +217,7 @@ impl PickMask {
         }
         for y in 0..height {
             for x in 0..width {
-                if rgba[(((height - 1 - y) * width + x) as usize) * 4 + 3] != 0 {
+                if rgba[(((height - 1 - y) * width + x) as usize) * 4 + 3] > PICK_ALPHA_CUTOFF {
                     let bit = (y * width + x) as usize;
                     bits[coarse + bit / 8] |= 1 << (bit % 8);
                 }
@@ -227,7 +230,7 @@ impl PickMask {
         self.hits_plane(uv, self.width.div_ceil(2), self.height.div_ceil(2), 0)
     }
 
-    pub fn hits_nonzero(&self, uv: glam::Vec2) -> bool {
+    pub fn hits_exact(&self, uv: glam::Vec2) -> bool {
         let coarse = (self.width.div_ceil(2) as usize * self.height.div_ceil(2) as usize).div_ceil(8);
         self.hits_plane(uv, self.width, self.height, coarse)
     }
@@ -857,13 +860,6 @@ fn full_size(e: &Entry) -> Option<(u32, u32)> {
     }
 }
 
-/// Width of a texture's UI copy decoded at `discard` or coarser: no finer
-/// than the level that fits 256 px (`texture_cache::preview_discard`).
-fn ui_width(width: u32, height: u32, discard: u8) -> u32 {
-    let level = texture_cache::preview_discard(width, height).max(discard);
-    width.div_ceil(1 << level.min(31))
-}
-
 /// Bytes of a texture's mip chain at a discard level, about (a third more
 /// than its level 0); 0 while its size is not known.
 fn bytes_at(e: &Entry, discard: u8) -> u64 {
@@ -1203,32 +1199,52 @@ impl PreviewSource {
         {
             return Some(image(w, h, pixels));
         }
+        let wanted = self.size.map(|(width, height)| {
+            let discard = texture_cache::preview_discard(width, height).max(self.decoded.unwrap_or(0));
+            texture_cache::discard_size(width, height, discard)
+        });
+        // (a coarser BC7 preview is kept for when the JPEG 2000 file gives
+        // nothing: a cache-only load with a .part file that fails to decode)
+        let mut coarse = None;
         if let Some(texture_cache::Transcoded::Bc7(cached)) = texture_cache::read_preview(&self.blocks)
-            && let Some((w, h, blocks)) = cached.levels.first()
-            && let Some(rgba) = aurora_render::bc7::decode_level(blocks, *w, *h)
+            && let Some((w, h, blocks)) = cached.levels.into_iter().next()
         {
-            return Some(image(*w, *h, rgba));
+            if wanted.is_none_or(|wanted| texture_cache::preview_is_fine_enough((w, h), wanted))
+                && let Some(rgba) = aurora_render::bc7::decode_level(&blocks, w, h)
+            {
+                return Some(image(w, h, rgba));
+            }
+            coarse = Some((w, h, blocks));
         }
-        let bytes = if self.bytes.is_empty() {
-            // Progressive downloads may only have a .part cache. Their ready
-            // coarse pixels are already visible in the main scene.
-            crate::cache::read(&self.jpeg)
-                .or_else(|_| crate::cache::read(self.jpeg.with_extension("part")))
-                .ok()
-                .map(Arc::new)?
-        } else {
-            self.bytes
-        };
-        let info = aurora_assets::j2k_info(&bytes)?;
-        // A progressive stream may only hold the coarser level already
-        // visible in the world. Never ask these bytes for a finer decode.
-        let discard = texture_cache::preview_discard(info.width, info.height).max(self.decoded.unwrap_or(0));
-        let pixels = aurora_assets::decode_j2k(&bytes, discard).ok()?;
-        Some(image(
-            pixels.width,
-            pixels.height,
-            super::jobs::to_rgba(pixels.components, &pixels.data, (pixels.width * pixels.height) as usize),
-        ))
+        let decoded = self.decoded;
+        let bytes = self.bytes;
+        let jpeg = self.jpeg;
+        let finer = (|| {
+            let bytes = if bytes.is_empty() {
+                // Progressive downloads may only have a .part cache. Their ready
+                // coarse pixels are already visible in the main scene.
+                crate::cache::read(&jpeg)
+                    .or_else(|_| crate::cache::read(jpeg.with_extension("part")))
+                    .ok()
+                    .map(Arc::new)?
+            } else {
+                bytes
+            };
+            let info = aurora_assets::j2k_info(&bytes)?;
+            // A progressive stream may only hold the coarser level already
+            // visible in the world. Never ask these bytes for a finer decode.
+            let discard = texture_cache::preview_discard(info.width, info.height).max(decoded.unwrap_or(0));
+            let pixels = aurora_assets::decode_j2k(&bytes, discard).ok()?;
+            Some(image(
+                pixels.width,
+                pixels.height,
+                super::jobs::to_rgba(pixels.components, &pixels.data, (pixels.width * pixels.height) as usize),
+            ))
+        })();
+        finer.or_else(|| {
+            let (w, h, blocks) = coarse?;
+            aurora_render::bc7::decode_level(&blocks, w, h).map(|rgba| image(w, h, rgba))
+        })
     }
 }
 
@@ -1352,13 +1368,11 @@ impl TextureStreamer {
 
     /// The transcoded chain of a texture (`texture_cache.rs`).
     fn transcoded_path(cache_dir: &std::path::Path, id: &Uuid) -> PathBuf {
-        cache_dir.join("tex").join(format!("{id}.bc7"))
+        crate::cache::path(cache_dir, "tex", id, "bc7")
     }
 
     fn cache_path(cache_dir: &std::path::Path, id: &Uuid, complete: bool) -> PathBuf {
-        cache_dir
-            .join("tex")
-            .join(format!("{id}.{}", if complete { "j2c" } else { "part" }))
+        crate::cache::path(cache_dir, "tex", id, if complete { "j2c" } else { "part" })
     }
 
     /// Reference a texture; returns its bindless slot (placeholder until loaded).
@@ -1903,7 +1917,7 @@ impl TextureStreamer {
             let source = self.preview_source(&id);
             self.ui_previews.request(id, source, jobs);
         }
-        self.note_usage(&id, 256.0);
+        self.note_usage_fixed(&id, 256.0);
     }
 
     pub fn release_transient_ui_image(&mut self, id: &Uuid) {
@@ -1927,8 +1941,14 @@ impl TextureStreamer {
     /// Width of the finest UI copy of a texture (its full size halved until
     /// it fits 256 px), once its header is known.
     pub fn ui_image_width(&self, id: &Uuid) -> Option<u32> {
+        self.ui_image_size(id).map(|(width, _)| width)
+    }
+
+    /// Dimensions of the finest copy requested for an interface image.
+    pub fn ui_image_size(&self, id: &Uuid) -> Option<(u32, u32)> {
         let (width, height) = self.full_size(id)?;
-        Some(ui_width(width, height, 0))
+        let discard = texture_cache::preview_discard(width, height);
+        Some(texture_cache::discard_size(width, height, discard))
     }
 
     /// Keep loading a texture whose UI copy came out `have` px wide, from
@@ -1937,15 +1957,24 @@ impl TextureStreamer {
     /// copy comes through `take_ui_image`, from the next upload, or from a
     /// worker when a finer level is already resident.
     pub fn refine_ui_image(&mut self, id: Uuid, have: u32, jobs: &Jobs) {
-        self.note_usage(&id, 256.0);
+        self.refine_ui_image_size(id, (have, have), jobs);
+    }
+
+    pub fn refine_ui_image_size(&mut self, id: Uuid, have: (u32, u32), jobs: &Jobs) {
+        self.note_usage_fixed(&id, 256.0);
         if self.ui_ready.contains_key(&id) {
             return;
         }
         let finer = self
             .entries
             .get(&id)
-            .and_then(|e| Some(ui_width(e.info?.width, e.info?.height, e.decoded?)))
-            .is_some_and(|width| width > have);
+            .and_then(full_size)
+            .zip(self.entries.get(&id).and_then(|e| e.decoded))
+            .is_some_and(|((width, height), decoded)| {
+                let discard = texture_cache::preview_discard(width, height).max(decoded);
+                let target = texture_cache::discard_size(width, height, discard);
+                target.0 > have.0 || target.1 > have.1
+            });
         if finer {
             let source = self.preview_source(&id);
             self.ui_previews.request(id, source, jobs);
@@ -2762,8 +2791,8 @@ impl TextureStreamer {
                         e.data = Arc::default();
                         e.complete = false;
                         e.info = None;
-                        let _ = std::fs::remove_file(self.cache_dir.join("tex").join(format!("{id}.j2c")));
-                        let _ = std::fs::remove_file(self.cache_dir.join("tex").join(format!("{id}.part")));
+                        let _ = std::fs::remove_file(Self::cache_path(&self.cache_dir, &id, true));
+                        let _ = std::fs::remove_file(Self::cache_path(&self.cache_dir, &id, false));
                     }
                     e.retry_at = Some(Instant::now() + Duration::from_secs(2u64.pow(e.failures.min(6))));
                     Self::settle(&mut self.todo, &mut self.counts, id, e);
@@ -3196,6 +3225,7 @@ impl TextureStreamer {
         // "crowded" below stays on the driver's own figure)
         let shared = video.map(|v| aurora_render::vram::VideoMemory {
             budget: crate::instances::share_cap(v.budget, &self.peers),
+            shared_budget: crate::instances::share_cap(v.shared_budget, &self.peers),
             ..v
         });
         let load = self.gpu.get();
@@ -3732,7 +3762,7 @@ mod tests {
     }
 
     #[test]
-    fn nonzero_pick_mask_preserves_each_texel_and_survives_cache_round_trip() {
+    fn exact_pick_mask_uses_legacy_threshold_and_survives_cache_round_trip() {
         let mut rgba = vec![255; 3 * 3 * 4];
         for (pixel, alpha) in [(0, 0), (1, 1), (2, 32), (3, 33), (4, 0), (5, 127), (6, 255), (7, 0), (8, 1)] {
             rgba[pixel * 4 + 3] = alpha;
@@ -3743,9 +3773,9 @@ mod tests {
         for y in 0..3 {
             for x in 0..3 {
                 let uv = glam::Vec2::new((x as f32 + 0.5) / 3.0, (2.5 - y as f32) / 3.0);
-                let nonzero = rgba[(y * 3 + x) * 4 + 3] != 0;
-                assert_eq!(mask.hits_nonzero(uv), nonzero);
-                assert_eq!(restored.hits_nonzero(uv + glam::Vec2::new(-2.0, 3.0)), nonzero);
+                let blocks = rgba[(y * 3 + x) * 4 + 3] > 32;
+                assert_eq!(mask.hits_exact(uv), blocks);
+                assert_eq!(restored.hits_exact(uv + glam::Vec2::new(-2.0, 3.0)), blocks);
                 assert_eq!(restored.hits(uv), mask.hits(uv));
             }
         }
@@ -4022,6 +4052,18 @@ mod tests {
         assert_eq!(s.entries[&Uuid::from_u128(1)].want, 0);
         s.recompute_wants();
         assert_eq!(s.entries[&Uuid::from_u128(1)].want, 2);
+    }
+
+    #[test]
+    fn interface_image_resolution_is_not_lowered_by_memory_pressure() {
+        let id = Uuid::from_u128(2);
+        for step in 0..=texture_budget::MAX_PRESSURE {
+            let mut s = pressed(step, vec![(2, large(Some(0)))]);
+            s.set_max_resolution(512);
+            s.note_usage_fixed(&id, 256.0);
+            let (want, _) = wanted(2048.0, None, &s.entries[&id], texture_budget::dropped(step));
+            assert_eq!(want, discard_for(2048.0, 256.0, None), "pressure step {step}");
+        }
     }
 
     #[test]
@@ -4968,12 +5010,14 @@ mod tests {
     /// resident level gives a coarser copy (still to be refined).
     #[test]
     fn ui_copy_width_follows_the_level_held() {
-        assert_eq!(ui_width(1024, 768, 0), 256);
-        assert_eq!(ui_width(1024, 768, 2), 256);
-        assert_eq!(ui_width(1024, 768, 4), 64);
-        assert_eq!(ui_width(128, 128, 0), 128);
-        assert_eq!(ui_width(128, 128, 1), 64);
-        assert_eq!(ui_width(300, 200, 1), 150);
+        assert_eq!(
+            texture_cache::discard_size(1024, 768, texture_cache::preview_discard(1024, 768)),
+            (256, 192)
+        );
+        assert_eq!(texture_cache::discard_size(1024, 768, 4), (64, 48));
+        assert_eq!(texture_cache::discard_size(128, 128, 0), (128, 128));
+        assert_eq!(texture_cache::discard_size(128, 128, 1), (64, 64));
+        assert_eq!(texture_cache::discard_size(300, 200, 1), (150, 100));
     }
 
     #[test]
