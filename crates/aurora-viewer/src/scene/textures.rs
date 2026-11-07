@@ -295,6 +295,10 @@ struct Entry {
     fetch_key: u64,
     /// The rank its download was last given (`fetch_priority`).
     sent: f32,
+    /// Its download was cancelled when nothing used it any more: taken out
+    /// of the fetcher's queue if it still waited (an answer says so), or
+    /// left to end if it was sent, its bytes kept (`recompute_wants`).
+    cancelled: bool,
     /// Our own avatar's bake, or an image of the interface: in the
     /// fetcher's urgent lane.
     urgent: bool,
@@ -1601,6 +1605,7 @@ impl TextureStreamer {
             unused_since: None,
             fetch_key: 0,
             sent: 0.0,
+            cancelled: false,
             urgent: false,
             dirty_cache: false,
             last_error: None,
@@ -2101,7 +2106,6 @@ impl TextureStreamer {
             ui_wanted,
             todo,
             counts,
-            by_fetch_key,
             moved,
             dropped: dropped_fetches,
             ..
@@ -2177,13 +2181,16 @@ impl TextureStreamer {
             // moves with its size on screen, and goes when nothing uses the
             // texture any more (a region left, an object gone). Firestorm
             // drops every texture request at a teleport
-            // (LLViewerTextureList::updateImages); one already sent ends.
-            if e.fetching && !e.urgent && e.fetch_key != 0 {
+            // (LLViewerTextureList::updateImages); one already sent ends,
+            // and what it brings is kept, as LLViewerFetchedTexture::
+            // updateFetch keeps a request whose priority fell to 0. Its
+            // answer was thrown away: a picture of a scripted slideshow
+            // whose download took longer than its turn on the face was
+            // downloaded again at each turn and never shown (#2830).
+            if e.fetching && !e.urgent && e.fetch_key != 0 && !e.cancelled {
                 if e.refs == 0 {
-                    by_fetch_key.remove(&e.fetch_key);
                     dropped_fetches.push(e.fetch_key);
-                    e.fetch_key = 0;
-                    e.fetching = false;
+                    e.cancelled = true;
                 } else {
                     let (_, now) = Self::rank(e);
                     if fetch_priority::changed(e.sent, now) {
@@ -2590,6 +2597,14 @@ impl TextureStreamer {
             return;
         };
         e.fetching = false;
+        e.fetch_key = 0;
+        e.cancelled = false;
+        if r.cancelled {
+            // (never sent: asked again if it is used again, from the bytes
+            // it holds)
+            Self::settle(&mut self.todo, &mut self.counts, id, e);
+            return;
+        }
         if let Ok(bytes) = &r.data {
             self.load.fetched_bytes += bytes.len() as u64;
             self.load.replies += 1;
@@ -3845,6 +3860,7 @@ mod tests {
             unused_since: None,
             fetch_key: 0,
             sent: 0.0,
+            cancelled: false,
             urgent: false,
             dirty_cache: false,
             last_error: None,
@@ -4376,9 +4392,56 @@ mod tests {
         s.recompute_wants();
         assert_eq!(s.moved, [(11, fetch_priority::texture(300.0, false))]);
         assert_eq!(s.dropped, [12]);
-        assert!(!s.entries[&Uuid::from_u128(2)].fetching);
-        assert!(!s.by_fetch_key.contains_key(&12));
+        // (its answer is still awaited: the queue's, or the reply's)
+        assert!(s.entries[&Uuid::from_u128(2)].fetching);
+        assert!(s.by_fetch_key.contains_key(&12));
         assert!(s.by_fetch_key.contains_key(&13));
+        // cancelled once only
+        s.dropped.clear();
+        s.recompute_wants();
+        assert!(s.dropped.is_empty());
+        // taken out of the queue before it was sent: asked again once used
+        s.on_fetch(FetchResult {
+            key: 12,
+            status: 0,
+            complete: false,
+            offset: 0,
+            data: Err("cancelled before it was sent".to_owned()),
+            cancelled: true,
+        });
+        let e = &s.entries[&Uuid::from_u128(2)];
+        assert!(!e.fetching && !e.cancelled && e.failures == 0 && e.last_error.is_none());
+        assert!(!s.by_fetch_key.contains_key(&12));
+    }
+
+    #[test]
+    fn a_download_already_sent_keeps_its_bytes_when_its_last_user_goes() {
+        // #2830: a slideshow picture whose download outlasts its turn on
+        // the face; its bytes were thrown away and asked for again at each
+        // turn, so it never showed
+        let mut e = entry(None, 300.0);
+        e.refs = 0;
+        e.fetching = true;
+        e.fetch_key = 21;
+        e.sent = fetch_priority::texture(300.0, false);
+        let mut s = pressed(0, vec![(1, e)]);
+        s.by_fetch_key.insert(21, Uuid::from_u128(1));
+        s.recompute_wants();
+        assert_eq!(s.dropped, [21]);
+        let body = vec![7u8; 600];
+        s.on_fetch(FetchResult {
+            key: 21,
+            status: 206,
+            complete: false,
+            offset: 0,
+            data: Ok(body.clone()),
+            cancelled: false,
+        });
+        let e = &s.entries[&Uuid::from_u128(1)];
+        assert_eq!(*e.data, body);
+        assert!(!e.fetching && !e.cancelled && e.failures == 0);
+        // and the next turn of the picture starts from them
+        assert_eq!(next_range(e.data.len(), 2000).start, 599);
     }
 
     #[test]
@@ -4772,6 +4835,7 @@ mod tests {
             complete: false,
             offset: 0,
             data: Err(format!("status {status}")),
+            cancelled: false,
         });
     }
 
@@ -5180,6 +5244,7 @@ mod tests {
             complete: true,
             offset: 0,
             data: Ok(vec![4, 5, 6, 7]),
+            cancelled: false,
         });
         b.update();
         let e = &b.s.entries[&id];

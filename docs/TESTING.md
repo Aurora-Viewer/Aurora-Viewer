@@ -1523,6 +1523,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_SCULPT_ZERO=1` | Subtype-zero sculpt classification beside torus and sphere controls |
 | `AURORA_DEMO_SCULPT_MISSING=1\|late` | A sculpt whose map is missing: the sphere placeholder, then its torus with `late` |
 | `AURORA_DEMO_TEXTURE_MISSING=1` | Boxes whose texture is missing: the Legacy Viewer's grey, never the rez grid for ever |
+| `AURORA_DEMO_SLIDESHOW=1[,<s>][,net=<ms>][,mbps=<m>][,crowd=<n>][,preload]` | A panel whose texture a script changes every few seconds, its pictures downloaded from a local server |
 | `AURORA_DEMO_BOM_REZZED=1\|pbr` | Ground BOM placeholders, or PBR BOM maps on a ground box and an attachment |
 | `AURORA_DEMO_OBJECT_MENU=<mode>` | Object actions, scene menu customization/notecards, object profile and pathfinding readers |
 
@@ -1706,6 +1707,24 @@ the disk cache and read again, as a retry finding it on the server): the
 torus it describes replaces the sphere. A map still loading draws nothing,
 as in the Legacy Viewer. Capture with `AURORA_FPS_LIMIT=60` around frames
 700 and 1100.
+
+`AURORA_DEMO_SLIDESHOW=1[,<seconds>][,net=<ms>][,mbps=<m>][,side=<px>][,count=<n>][,crowd=<n>][,preload]`
+puts a panel 4 m ahead of the camera at frame 300 and changes its texture
+entry every `seconds` (3) to the next of `count` pictures (6), as a script
+calling llSetTexture makes the simulator send a full update. The pictures
+(`side` px, 1024; each its own hue and its number in white bars) come from
+the local asset server after `net` ms (150), on a link of `mbps` megabits a
+second if given, with no copy in the disk cache. `preload` puts the next
+picture on the panel's back face; `crowd=<n>` adds n boxes beyond it, each
+with its own picture, that compete for the downloads like the textures of a
+busy region. The log tells at each change whether the picture leaving was
+shown (`demo slideshow: picture 2 leaves after 1.5 s, shown: …` or `NEVER
+SHOWN`, with its state). `1,1.5,net=200,mbps=4,crowd=300`: while the crowd
+loads, a picture's download outlasts its turn; before the fix of #2830 every
+picture left with 0 bytes at every turn until the crowd had loaded, the
+panel staying in the rez grid (about 22 s); now each keeps what its download
+brought and shows from its second turn, now and then its third. Capture with
+`AURORA_FPS_LIMIT=60`.
 
 `AURORA_DEMO_TEXTURE_MISSING=1` places two boxes east of the start position
 (x=134, y=133 and 135.5) at frame 300, a white one and a dark, mostly

@@ -969,6 +969,8 @@ pub struct App {
     sculpt_missing_demo: Option<crate::demo::sculpt::MissingMapDemo>,
     /// AURORA_DEMO_TEXTURE_MISSING: boxes whose texture is missing.
     texture_missing_demo: Option<crate::demo::missing_texture::MissingTextureDemo>,
+    /// AURORA_DEMO_SLIDESHOW: a panel whose texture changes every few seconds.
+    slideshow_demo: Option<crate::demo::slideshow::SlideshowDemo>,
     /// AURORA_DEMO_EXPERIENCE: experiences asking (door, pad, greeter).
     experience_demo: Option<crate::demo::experience::ExperienceDemo>,
     /// AURORA_DEMO_TP_AWAY: the demo region's coarse locations while away.
@@ -1826,6 +1828,7 @@ impl App {
             },
             sculpt_missing_demo: None,
             texture_missing_demo: None,
+            slideshow_demo: None,
             experience_demo: None,
             away_coarse: Vec::new(),
             geometry_demo: None,
@@ -12313,6 +12316,16 @@ impl App {
         if let Some(demo) = &mut self.texture_missing_demo {
             demo.tick(self.frame_count, &mut self.world, &mut self.scene.textures);
         }
+        // AURORA_DEMO_SLIDESHOW: a scripted slideshow
+        if let Some(demo) = &mut self.slideshow_demo {
+            demo.tick(
+                self.frame_count,
+                &mut self.world,
+                &mut self.scene.textures,
+                self.camera.position,
+                self.camera.forward(),
+            );
+        }
         // AURORA_DEMO_EXPERIENCE: the door or the pad, and what asks
         // without a click (walking into the pad, arriving)
         if let Some(reply) = self
@@ -19870,6 +19883,7 @@ impl ApplicationHandler for App {
             self.texture_res_demo = crate::demo::texture_res::TextureResDemo::from_env();
             self.sculpt_missing_demo = crate::demo::sculpt::MissingMapDemo::from_env();
             self.texture_missing_demo = crate::demo::missing_texture::MissingTextureDemo::from_env();
+            self.slideshow_demo = crate::demo::slideshow::SlideshowDemo::from_env();
             self.experience_demo = crate::demo::experience::ExperienceDemo::from_env();
             self.geometry_demo = crate::demo::geometry::GeometryDemo::from_env();
             self.turn_demo = crate::demo::turn::TurnDemo::from_env();
