@@ -4,11 +4,10 @@
 //! time. Aurora's own: the Legacy Viewer only has its toast.
 //!
 //! The rows come from the balance itself, whatever moved it: a sale, a
-//! payment, L$ bought, a fee, a refund. L$ gained are kept out of the number
-//! until they land, then it counts up, so it always ends on the real balance.
-//! L$ spent are never held back: the number drops at once and stays exact,
-//! so that nobody counts on money already gone; when their row lands, the
-//! number flashes in its colour.
+//! payment, L$ bought, a fee, a refund. A change is kept out of the number
+//! until its row lands. The number then flashes, green for L$ gained, red
+//! for L$ spent, and ticks to its new value, so it always ends on the real
+//! balance.
 //!
 //! The state takes the time as an argument, the tests need no clock.
 
@@ -24,7 +23,7 @@ const FADE_IN: Duration = Duration::from_millis(200);
 const FLY: Duration = Duration::from_millis(400);
 const STEP: Duration = Duration::from_millis(250);
 const COUNT: Duration = Duration::from_millis(600);
-/// How long the number takes to fade back from the colour of L$ spent.
+/// How long the number takes to fade back from its flash.
 const FLASH: Duration = Duration::from_millis(600);
 /// More rows would fill the screen: the last one adds up the next changes.
 const MAX_ROWS: usize = 6;
@@ -39,7 +38,8 @@ struct Row {
     on_top: Option<Instant>,
 }
 
-/// L$ landing in the number: `total` was left when `start` began.
+/// L$ landing in the number, spent when negative: `total` was left when
+/// `start` began.
 struct Count {
     total: i64,
     start: Instant,
@@ -61,13 +61,14 @@ pub struct GainRow {
 pub struct Frame {
     pub balance: Option<i32>,
     pub rows: Vec<GainRow>,
-    /// The colour of L$ spent on the number, 0 to 1.
+    /// The number's flash: towards 1 for L$ gained, -1 for L$ spent.
     pub flash: f32,
 }
 
-/// The balance's colour, `flash` towards that of L$ spent.
+/// The balance's colour for a `Frame::flash`.
 pub fn ink(p: &Palette, flash: f32) -> egui::Color32 {
-    p.ink.lerp_to_gamma(p.danger, flash)
+    let towards = if flash < 0.0 { p.danger } else { p.success };
+    p.ink.lerp_to_gamma(towards, flash.abs())
 }
 
 #[derive(Default)]
@@ -80,8 +81,8 @@ pub struct BalanceGains {
     /// The rows move up one step since then.
     step: Option<Instant>,
     count: Option<Count>,
-    /// L$ spent landed in the number then.
-    flash: Option<Instant>,
+    /// A row landed in the number then: whether it was L$ gained.
+    flash: Option<(Instant, bool)>,
 }
 
 /// Fraction of `length` gone since `start`, 0 to 1.
@@ -116,29 +117,27 @@ impl BalanceGains {
         });
     }
 
-    /// L$ gained still on their way into the number.
+    /// The changes still on their way into the number.
     fn held(&self) -> i64 {
-        self.rows.iter().map(|row| row.amount.max(0)).sum()
+        self.rows.iter().map(|row| row.amount).sum()
     }
 
-    /// The first row has landed: L$ gained start counting up.
+    /// The first row has landed: the number flashes and starts ticking.
     fn land(&mut self, still: bool, now: Instant) {
         let Some(row) = self.rows.pop_front() else {
             return;
         };
-        if row.amount < 0 && !still {
-            self.flash = Some(now);
-        }
-        let left = self.left(now) + row.amount.max(0);
-        self.count = (!still && left > 0).then_some(Count { total: left, start: now });
+        let left = self.left(now) + row.amount;
+        self.flash = (!still).then_some((now, row.amount > 0));
+        self.count = (!still && left != 0).then_some(Count { total: left, start: now });
         self.step = (!still && !self.rows.is_empty()).then_some(now);
     }
 
-    /// What is left of the count-up.
+    /// What is left of the count, rounded away from zero: it ends on 0.
     fn left(&self, now: Instant) -> i64 {
         self.count.as_ref().map_or(0, |c| {
             let t = progress(now, c.start, COUNT);
-            (c.total as f32 * (1.0 - ease_out(t))).ceil() as i64
+            (c.total.abs() as f32 * (1.0 - ease_out(t))).ceil() as i64 * c.total.signum()
         })
     }
 
@@ -170,7 +169,7 @@ impl BalanceGains {
         if self.count.as_ref().is_some_and(|c| now >= c.start + COUNT) {
             self.count = None;
         }
-        if self.flash.is_some_and(|start| now >= start + FLASH) {
+        if self.flash.is_some_and(|(start, _)| now >= start + FLASH) {
             self.flash = None;
         }
         if self.flying.is_none()
@@ -184,9 +183,12 @@ impl BalanceGains {
         }
         let number = i64::from(real) - self.held() - self.left(now);
         Frame {
-            balance: Some(i32::try_from(number.clamp(i64::from(real.min(0)), i64::from(real))).unwrap_or(real)),
+            balance: Some(i32::try_from(number).unwrap_or(real)),
             rows: self.rows(still, now),
-            flash: self.flash.map_or(0.0, |start| 1.0 - progress(now, start, FLASH)),
+            flash: self.flash.map_or(0.0, |(start, gained)| {
+                let left = 1.0 - progress(now, start, FLASH);
+                if gained { left } else { -left }
+            }),
         }
     }
 
@@ -352,49 +354,61 @@ mod tests {
     }
 
     #[test]
-    fn a_purchase_drops_the_number_at_once_and_shows_a_negative_row() {
+    fn a_purchase_waits_as_a_row_then_ticks_down_exactly_to_the_balance() {
         let mut run = Run::new(1000);
         run.balance -= 300;
         let frame = run.wait(AFTER);
-        assert_eq!(frame.balance, Some(700), "never held back");
+        assert_eq!(frame.balance, Some(1000), "held back while the row waits");
         assert_eq!(frame.rows[0].amount, -300);
-        // it leaves like the others, and nothing counts
         let frame = run.wait(HOLD + AFTER * 4);
         assert!(frame.rows[0].slot < 0.0, "{frame:?}");
-        assert_eq!(frame.balance, Some(700));
-        // it lands: the number flashes, fades back and stays
+        assert_eq!(frame.balance, Some(1000));
+        // it lands: a red flash, and the number never leaves the two values
         let frame = run.wait(FLY);
-        assert_eq!((frame.balance, frame.rows.len()), (Some(700), 0));
-        assert!(frame.flash > 0.5, "{frame:?}");
-        let later = run.wait(FLASH / 2);
-        assert!(later.flash < frame.flash, "{later:?}");
-        assert_eq!(later.balance, Some(700));
-        assert_eq!(run.wait(FLASH), settled(700));
+        assert_eq!(frame.rows.len(), 0);
+        assert!(frame.flash < -0.5, "{frame:?}");
+        let mut last = frame.balance.expect("a balance");
+        for _ in 0..60 {
+            let number = run.wait(AFTER).balance.expect("a balance");
+            assert!((700..=last).contains(&number), "{number} after {last}");
+            last = number;
+        }
+        assert_eq!(run.wait(ALL_OF_IT), settled(700));
     }
 
     #[test]
-    fn only_spending_flashes_and_never_with_reduced_motion() {
+    fn a_gain_flashes_green_where_a_purchase_flashes_red() {
         let mut run = Run::new(1000);
         run.balance += 100;
         run.wait(HOLD + FLY + AFTER * 4);
-        assert_eq!(run.frame().flash, 0.0, "a gain counts up instead");
+        let frame = run.frame();
+        assert!(frame.flash > 0.5, "{frame:?}");
+        let p = crate::theme::Theme::default().palette();
+        assert_ne!(ink(&p, 1.0), ink(&p, -1.0));
+        assert_eq!(ink(&p, 0.0), p.ink);
+        assert_eq!(ink(&p, 1.0), p.success);
+        assert_eq!(ink(&p, -1.0), p.danger);
+    }
+
+    #[test]
+    fn no_flash_with_reduced_motion() {
         let mut run = Run::new(1000);
         run.still = true;
         run.balance -= 100;
         run.wait(HOLD + FLY + AFTER * 4);
-        assert_eq!(run.frame().flash, 0.0);
-        assert_eq!(run.wait(ALL_OF_IT), settled(900));
+        let frame = run.frame();
+        assert_eq!((frame.flash, frame.balance), (0.0, Some(900)));
         assert!(!run.gains.animating());
     }
 
     #[test]
-    fn a_purchase_while_a_gain_waits_lowers_the_number_too() {
+    fn changes_land_in_turn_on_the_real_balance() {
         let mut run = Run::new(1000);
         run.balance += 100;
         run.wait(AFTER);
         run.balance -= 300;
         let frame = run.wait(AFTER);
-        assert_eq!(frame.balance, Some(700));
+        assert_eq!(frame.balance, Some(1000), "nothing moves before its row");
         assert_eq!(frame.rows.iter().map(|r| r.amount).collect::<Vec<_>>(), [100, -300]);
         assert_eq!(run.wait(ALL_OF_IT), settled(800));
     }
