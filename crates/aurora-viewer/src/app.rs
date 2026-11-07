@@ -43,6 +43,7 @@ mod sound_explorer;
 // mod bug_report;
 mod alt_graph;
 mod avatar_health;
+mod avatar_welcome;
 mod blender_live;
 mod blender_shape;
 mod buy_currency;
@@ -807,6 +808,10 @@ pub struct App {
     /// World › SL Marketplace (LLFloaterMarketplace).
     marketplace_ui: ui::marketplace::MarketplaceUi,
     web_browser_ui: ui::web_browser::WebBrowserUi,
+    /// The toolbar's `avatar` (LLFloaterAvatarWelcomePack), and the folders
+    /// its page asked to wear (app/avatar_welcome.rs).
+    avatar_welcome_ui: ui::avatar_welcome::AvatarWelcomeUi,
+    welcome_wears: avatar_welcome::WelcomeWears,
     /// Me › Marketplace listings (LLFloaterMarketplaceListings).
     listings_ui: ui::marketplace_listings::ListingsUi,
     /// The demo's SLM server (AURORA_DEMO_MARKETPLACE_LISTINGS).
@@ -1718,6 +1723,8 @@ impl App {
             buy_land_source: Default::default(),
             marketplace_ui: Default::default(),
             web_browser_ui: Default::default(),
+            avatar_welcome_ui: Default::default(),
+            welcome_wears: Default::default(),
             listings_ui: Default::default(),
             demo_slm: None,
             people_map_ui: Default::default(),
@@ -3017,6 +3024,10 @@ impl App {
         self.web_browser_ui = Default::default();
         // closed, or the next session would open the home page by itself
         self.panels.web_browser = false;
+        // the page belongs to the grid, its browser and wears to the session
+        self.avatar_welcome_ui = Default::default();
+        self.welcome_wears = Default::default();
+        self.panels.avatar_welcome = false;
         // the listings belong to the account (LLMarketplaceData)
         self.listings_ui = Default::default();
         self.demo_slm = None;
@@ -3375,6 +3386,10 @@ impl App {
             }
             if self.contents_copies.owns(request) {
                 self.contents_copy_result(request, result);
+                return;
+            }
+            if self.welcome_wears.owns(request) {
+                self.welcome_wear_result(request, result);
                 return;
             }
             if self.world_edits.remove(&request) {
@@ -9062,6 +9077,7 @@ impl App {
                 ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
             self.contents_copy_tick(Instant::now());
+            self.welcome_wear_tick(Instant::now());
             for change in self.world.take_inventory_edits() {
                 let request = uuid::Uuid::new_v4();
                 self.world_edits.insert(request);
@@ -14224,12 +14240,47 @@ impl App {
         ui::marketplace::home(&self.settings.grid).map(str::to_owned)
     }
 
+    /// The grid's Avatar Welcome Pack page (LFSimFeatureHandler::
+    /// avatarPickerURL), None on a grid without one.
+    /// AURORA_DEMO_AVATAR_WELCOME=<page>: a page of the tester's choice in
+    /// demo, "sl" for the Second Life page's address.
+    fn avatar_welcome_page(&self) -> Option<String> {
+        use ui::avatar_welcome::{PackGrid, pack_url};
+        let language = aurora_i18n::language();
+        if self.demo {
+            let page = std::env::var("AURORA_DEMO_AVATAR_WELCOME").ok().filter(|u| !u.trim().is_empty())?;
+            return match page.trim() {
+                "sl" => pack_url(PackGrid::SecondLife, language),
+                page => Some(page.to_owned()),
+            };
+        }
+        match self.settings.grid {
+            crate::settings::GridChoice::SecondLife => pack_url(PackGrid::SecondLife, language),
+            crate::settings::GridChoice::SecondLifeBeta => pack_url(PackGrid::SecondLifeBeta, language),
+            crate::settings::GridChoice::Custom => {
+                let region = self.world.opensim_extras().map(|e| e.avatar_picker_url.as_str()).unwrap_or("");
+                let login = self.world.login.as_ref().map(|l| l.raw["avatar-picker-url"].as_str()).unwrap_or("");
+                let id = crate::grids::active(&self.settings)
+                    .map(|g| {
+                        if g.nickname.is_empty() {
+                            g.name.as_str()
+                        } else {
+                            g.nickname.as_str()
+                        }
+                    })
+                    .unwrap_or("");
+                pack_url(PackGrid::OpenSim { region, login, id }, language)
+            }
+        }
+    }
+
     /// All embedded web windows share native input ownership and shortcut guards.
     fn web_has_focus(&self) -> bool {
         self.profile_ui.web_has_focus()
             || self.search_ui.web_has_focus()
             || self.marketplace_ui.web_has_focus()
             || self.web_browser_ui.web_has_focus(self.panels.web_browser)
+            || self.avatar_welcome_ui.web_has_focus(self.panels.avatar_welcome)
     }
 
     /// LLMediaCtrl::handleKeyHere / handleUnicodeCharHere: the clicked page
@@ -14240,6 +14291,7 @@ impl App {
             .or_else(|| self.search_ui.focused_web())
             .or_else(|| self.marketplace_ui.focused_web())
             .or_else(|| self.web_browser_ui.focused_web(self.panels.web_browser))
+            .or_else(|| self.avatar_welcome_ui.focused_web(self.panels.avatar_welcome))
     }
 
     /// The session id the web tab's search page is opened with; none in
@@ -15330,6 +15382,7 @@ impl App {
                     grid_help: self.grid_help(),
                     marketplace: self.marketplace_home().is_some()
                         || (self.demo && crate::world::marketplace::demo::Mode::from_env().is_some()),
+                    avatar_welcome: self.avatar_welcome_page().is_some(),
                     parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
                         (Some(region), Some(parcel)) => ui::parcel_icons::parcel_icons(&ui::parcel_icons::ParcelState {
                             region_flags: region.region_flags,
@@ -17119,6 +17172,25 @@ impl App {
                         home: &self.settings.browser_home_page,
                     },
                 );
+                // the Avatar Welcome Pack: the same plugins and browser
+                // settings, and the OpenID cookie on Second Life only
+                let pack = self.avatar_welcome_page();
+                let pack_cookie = cookie
+                    .as_ref()
+                    .filter(|_| !self.demo && self.settings.grid != crate::settings::GridChoice::Custom);
+                let wears = self.avatar_welcome_ui.show(
+                    &ctx,
+                    &p,
+                    &mut self.panels.avatar_welcome,
+                    &ui::avatar_welcome::PackWeb {
+                        paths: paths.as_ref(),
+                        browser: &browser,
+                        cookie: pack_cookie,
+                        url: pack.as_deref(),
+                    },
+                );
+                self.welcome_wears.push(wears);
+                self.toolbar_ui.avatar_welcome = pack.is_some();
                 self.show_marketplace_listings(&ctx, &p);
                 let web = ui::profile::WebContext {
                     paths: paths.as_ref(),
@@ -18369,6 +18441,12 @@ impl ApplicationHandler for App {
             {
                 self.web_browser_ui.go_to(&page);
                 self.panels.web_browser = true;
+                self.panels.perf = false;
+            }
+            // AURORA_DEMO_AVATAR_WELCOME=<page>|sl: the Avatar Welcome Pack
+            // on that page (sl: the Second Life page's address), open at start
+            if self.avatar_welcome_page().is_some() {
+                self.panels.avatar_welcome = true;
                 self.panels.perf = false;
             }
             // AURORA_DEMO_MARKETPLACE_LISTINGS=merchant|not-merchant|error|audit:
