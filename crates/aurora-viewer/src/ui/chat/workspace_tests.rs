@@ -1132,12 +1132,12 @@ fn empty_sections_are_not_drawn() {
 /// its layout once each way (the human's report of 2026-10-16).
 #[test]
 fn layout_thresholds_have_a_margin() {
-    use super::{RAIL_BELOW, members_room_now, rail_now};
-    assert!(rail_now(None, RAIL_BELOW - 1.0));
-    assert!(!rail_now(None, RAIL_BELOW + 1.0));
-    assert!(rail_now(Some(true), RAIL_BELOW + 20.0), "a rail stays one past 600");
-    assert!(!rail_now(Some(true), RAIL_BELOW + 41.0));
-    assert!(!rail_now(Some(false), RAIL_BELOW + 1.0));
+    use super::{RAIL_BELOW, members_room_now, narrow_now};
+    assert!(narrow_now(None, RAIL_BELOW - 1.0));
+    assert!(!narrow_now(None, RAIL_BELOW + 1.0));
+    assert!(narrow_now(Some(true), RAIL_BELOW + 20.0), "a narrow window stays one past 600");
+    assert!(!narrow_now(Some(true), RAIL_BELOW + 41.0));
+    assert!(!narrow_now(Some(false), RAIL_BELOW + 1.0));
     let room = super::members::WIDTH + super::MESSAGES_MIN;
     assert!(members_room_now(None, room));
     assert!(!members_room_now(None, room - 1.0));
@@ -1162,6 +1162,190 @@ fn the_column_eases_to_the_rail() {
     let narrow = *widths.last().expect("frames");
     let between = widths.iter().filter(|w| **w < wide - 1.0 && **w > narrow + 1.0).count();
     assert!(narrow < wide && between >= 3, "{wide} → {widths:?}");
+}
+
+/// The window at `width`, then the frames of the column's easing.
+fn resize(h: &mut Harness, width: f32) {
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(width, 560.0));
+    for _ in 0..30 {
+        h.frame(Vec::new());
+    }
+}
+
+/// A click on the column's button, then the frames of the column's easing.
+fn toggle_column(h: &mut Harness) {
+    let button = h.rect(super::super::sidebar::control_id("column-toggle"));
+    h.click(button.center());
+    h.frame(vec![egui::Event::PointerGone]);
+    for _ in 0..30 {
+        h.frame(Vec::new());
+    }
+}
+
+fn shows_rail(h: &Harness) -> bool {
+    h.rect(entry_id(Pinned::Local)).width() <= super::super::sidebar::RAIL
+}
+
+fn collapsed_asked(h: &Harness) -> Vec<bool> {
+    h.actions
+        .iter()
+        .filter_map(|a| match a {
+            ConvAction::ColumnCollapsed(collapsed) => Some(*collapsed),
+            _ => None,
+        })
+        .collect()
+}
+
+/// All false is the automatic layout; each click departs from it or comes
+/// back to it, whatever the width.
+#[test]
+fn the_column_choice_comes_back_to_automatic() {
+    use super::ColumnChoice;
+    let auto = ColumnChoice::default();
+    assert!(auto.rail(true) && !auto.rail(false), "automatic: the window decides");
+
+    let collapsed = auto.toggled(false);
+    assert_eq!(
+        collapsed,
+        ColumnChoice {
+            collapsed: true,
+            opened: false
+        }
+    );
+    assert!(collapsed.rail(false) && collapsed.rail(true), "a rail at any width");
+    assert_eq!(collapsed.toggled(false), auto, "expanded in a wide window: automatic");
+
+    let opened = auto.toggled(true);
+    assert_eq!(
+        opened,
+        ColumnChoice {
+            collapsed: false,
+            opened: true
+        }
+    );
+    assert!(!opened.rail(true), "the column in a narrow window");
+    assert_eq!(opened.toggled(true), auto, "closed again: nothing stays collapsed");
+
+    // collapsed in a wide window, then expanded in a narrow one: the last
+    // click is the wish, not the older collapse
+    assert_eq!(collapsed.toggled(true), opened);
+
+    assert!(!auto.by_hand(), "the button is plain while automatic");
+    assert!(collapsed.by_hand() && opened.by_hand(), "and lit by hand, in both directions");
+}
+
+/// In a wide window the button collapses the column for good: the window
+/// narrowed and widened again leaves it a rail, and the settings are told.
+#[test]
+fn the_button_collapses_the_column_at_any_width() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    resize(&mut h, 700.0);
+    assert!(!shows_rail(&h));
+    h.st.side_filter = "nobody".into();
+    h.frame(Vec::new());
+    toggle_column(&mut h);
+    assert!(h.st.column.collapsed);
+    assert!(shows_rail(&h), "collapsed in a wide window");
+    assert_eq!(h.st.side_filter, "", "the rail has no field to clear a search from");
+    assert_eq!(collapsed_asked(&h), [true]);
+
+    resize(&mut h, 460.0);
+    resize(&mut h, 700.0);
+    assert!(shows_rail(&h), "still collapsed once wide again");
+
+    toggle_column(&mut h);
+    assert!(!h.st.column.collapsed);
+    assert!(!shows_rail(&h), "expanded");
+    assert_eq!(collapsed_asked(&h), [true, false]);
+
+    resize(&mut h, 460.0);
+    assert!(shows_rail(&h), "automatic again: narrow, a rail");
+    resize(&mut h, 700.0);
+    assert!(!shows_rail(&h), "automatic again: wide, the column");
+}
+
+/// In a narrow window the button opens the column until the window is wide
+/// enough to have it anyway: narrowed again, the rail comes back by itself.
+/// Nothing of it is saved.
+#[test]
+fn the_button_opens_the_column_in_a_narrow_window() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    resize(&mut h, 580.0);
+    assert!(shows_rail(&h));
+    toggle_column(&mut h);
+    assert!(!shows_rail(&h), "opened");
+    assert!(h.rect(super::super::sidebar::search_id()).width() > 0.0, "with its search field");
+    toggle_column(&mut h);
+    assert!(shows_rail(&h), "closed");
+    toggle_column(&mut h);
+    assert!(!shows_rail(&h), "opened again");
+
+    resize(&mut h, 700.0);
+    assert!(!h.st.column.opened, "automatic once wide");
+    resize(&mut h, 580.0);
+    assert!(shows_rail(&h), "narrow again: the rail by itself");
+    assert_eq!(collapsed_asked(&h), [] as [bool; 0]);
+}
+
+/// Below `OPEN_FROM` the column does not fit: the button is greyed out, a
+/// click does nothing, and the column opened closes by itself, for good.
+#[test]
+fn the_button_is_greyed_out_when_the_column_does_not_fit() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    let button = super::super::sidebar::control_id("column-toggle");
+    resize(&mut h, 460.0);
+    assert!(!h.frames.ctx.read_response(button).expect("drawn").sense.senses_click());
+    toggle_column(&mut h);
+    assert!(shows_rail(&h) && !h.st.column.opened, "a click on it does nothing");
+
+    resize(&mut h, super::OPEN_FROM + 4.0);
+    assert!(h.frames.ctx.read_response(button).expect("drawn").sense.senses_click());
+    toggle_column(&mut h);
+    assert!(!shows_rail(&h), "opened from the threshold");
+
+    resize(&mut h, 460.0);
+    assert!(shows_rail(&h) && !h.st.column.opened, "no room left: closed");
+    resize(&mut h, super::OPEN_FROM + 4.0);
+    assert!(shows_rail(&h), "room again: still automatic");
+
+    // collapsed by hand it stays so, greyed out until the room is back
+    h.st.column.collapsed = true;
+    resize(&mut h, 460.0);
+    toggle_column(&mut h);
+    assert!(h.st.column.collapsed);
+    resize(&mut h, 700.0);
+    toggle_column(&mut h);
+    assert!(!h.st.column.collapsed && !shows_rail(&h));
+}
+
+/// The column's button stands level with the conversation's box, at the
+/// height of its buttons, in the column and in the rail.
+#[test]
+fn the_column_button_is_level_with_the_box() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    resize(&mut h, 700.0);
+    for what in ["the column", "the rail"] {
+        let button = h.rect(super::super::sidebar::control_id("column-toggle"));
+        let field = h.rect(egui::Id::unique(("conv_input", None::<Uuid>)));
+        assert!(
+            (button.center().y - field.center().y).abs() <= 1.0,
+            "{what}: {button:?} and {field:?}"
+        );
+        assert_eq!(button.height(), super::super::compose::BUTTON);
+        toggle_column(&mut h);
+    }
+}
+
+/// The column collapsed by hand leaves the members' panel its place: only
+/// a narrow window takes it away.
+#[test]
+fn a_collapsed_column_keeps_the_members_panel() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.st.column.collapsed = true;
+    resize(&mut h, 700.0);
+    assert!(h.st.layout_members_room == Some(true), "room in a wide window, rail or not");
+    resize(&mut h, 560.0);
+    assert!(h.st.layout_members_room == Some(false), "none in a narrow one");
 }
 
 /// Finding in a conversation opens the field in the head's row: no strip

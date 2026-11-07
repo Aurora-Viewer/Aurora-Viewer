@@ -277,6 +277,8 @@ pub(super) fn show(
     contacts_sub: ContactsSub,
     docked: bool,
     rail: bool,
+    // the window is narrow enough for the rail (`rail`: what is drawn)
+    narrow: bool,
     // RAIL or WIDTH, or on its way from one to the other
     width: f32,
     height: f32,
@@ -319,7 +321,8 @@ pub(super) fn show(
     let filter = st.side_filter.trim().to_lowercase();
     let matches = |name: &str| filter.is_empty() || name.to_lowercase().contains(&filter);
     let voice = voice_panel_wanted(world, st);
-    let list_h = (column.bottom() - ui.cursor().top() - if voice { voice_panel_h(rail) + VOICE_PANEL_GAP } else { 0.0 } - 6.0).max(ENTRY_H);
+    let list_h =
+        (column.bottom() - ui.cursor().top() - if voice { voice_panel_h(rail) + 2.0 * VOICE_PANEL_GAP } else { 0.0 } - FOOT_H).max(ENTRY_H);
     egui::ScrollArea::vertical()
         .id_salt("conversation_column")
         .max_height(list_h)
@@ -529,7 +532,78 @@ pub(super) fn show(
     if voice {
         voice_panel(ui, p, world, st, actions, rail);
     }
+    column_toggle(ui, p, st, actions, column, narrow);
     contacts_clicked
+}
+
+/// The foot of the column, under its list or call panel: the height of the
+/// conversation's box and the room under it, so that its button stands level
+/// with the box's own buttons (`column_toggle`).
+const FOOT_H: f32 = super::compose::BOX_H + super::compose::UNDER_BOX;
+
+/// The button that collapses and expands the column, at the bottom left of
+/// the window (`workspace::ColumnChoice`). An Aurora addition: the Legacy
+/// Viewer's window has tabs and no such list. The nearest is the unregistered
+/// LLFloaterIMContainer (indra/newview/llfloaterimcontainer.cpp):
+/// onExpandCollapseButtonClicked, ConversationsListPaneCollapsed.
+/// Over the rail's pictures in both layouts, it does not move from under
+/// the pointer that used it, level with a one-line conversation box and the
+/// size of its buttons. Lit while the column is what a click asked
+/// (`ColumnChoice::by_hand`), plain while it follows the window, greyed out
+/// in a window too narrow for the column (`workspace::OPEN_FROM`), as a head
+/// tool without its panel's room. The rail has no search field to clear a
+/// search from: collapsing ends it.
+fn column_toggle(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, actions: &mut Vec<ConvAction>, column: egui::Rect, narrow: bool) {
+    let rail = st.column.rail(narrow);
+    let fits = st.layout_width.is_some_and(|w| w >= super::workspace::OPEN_FROM);
+    let off = rail && !fits;
+    let (icon, tip) = if off {
+        ("layout-sidebar-left-expand-filled", aurora_i18n::tr!("ui-chat-column-no-room"))
+    } else if rail {
+        ("layout-sidebar-left-expand-filled", aurora_i18n::tr!("ui-chat-column-expand"))
+    } else {
+        ("layout-sidebar-left-collapse-filled", aurora_i18n::tr!("ui-chat-column-collapse"))
+    };
+    let center = egui::pos2(
+        column.left() + RAIL / 2.0,
+        column.bottom() - super::compose::UNDER_BOX - super::compose::BOX_H / 2.0,
+    );
+    let rect = egui::Rect::from_center_size(center, egui::Vec2::splat(super::compose::BUTTON));
+    let sense = if off { egui::Sense::hover() } else { egui::Sense::click() };
+    let resp = ui.interact(rect, control_id("column-toggle"), sense);
+    let hovered = resp.hovered() && !off;
+    let lit = st.column.by_hand() && !off;
+    let face = match (lit, hovered) {
+        // the conversation's box beside it, not the accent: this is a
+        // state, the accent marks the conversation shown
+        (true, false) => Some(p.raised),
+        (true, true) => Some(p.raised.gamma_multiply(1.3)),
+        (false, true) => Some(p.raised.gamma_multiply(0.7)),
+        (false, false) => None,
+    };
+    if let Some(face) = face {
+        ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, face);
+    }
+    super::thread::paint_icon(
+        ui.painter(),
+        icon,
+        egui::Rect::from_center_size(center, egui::Vec2::splat(18.0)),
+        match (lit, hovered) {
+            _ if off => p.muted_dim.gamma_multiply(0.6),
+            (true, _) | (false, true) => p.ink,
+            (false, false) => p.muted,
+        },
+    );
+    if resp.on_hover_text(tip).clicked() {
+        let was = st.column.collapsed;
+        st.column = st.column.toggled(narrow);
+        if st.column.collapsed != was {
+            actions.push(ConvAction::ColumnCollapsed(st.column.collapsed));
+        }
+        if !rail {
+            st.side_filter.clear();
+        }
+    }
 }
 
 /// What the nearby chat's entry says: who can hear us, and its last line.
@@ -959,15 +1033,15 @@ fn voice_panel_h(rail: bool) -> f32 {
 /// The call panel's buttons (the mockup's `.vpanel .rb`).
 const VOICE_BUTTON_H: f32 = 28.0;
 
-/// Room under the call panel, the same as under the conversation's field.
-const VOICE_PANEL_GAP: f32 = 12.0;
+/// Room above and below the call panel, between the list and the foot.
+const VOICE_PANEL_GAP: f32 = 6.0;
 
 fn voice_panel(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, actions: &mut Vec<ConvAction>, rail: bool) {
     let Some(call) = world.calls.active.as_ref() else {
         return;
     };
     let conversation = call.conversation();
-    let bottom = ui.max_rect().bottom() - VOICE_PANEL_GAP;
+    let bottom = ui.max_rect().bottom() - FOOT_H - VOICE_PANEL_GAP;
     let rect = egui::Rect::from_min_max(
         egui::pos2(ui.max_rect().left(), bottom - voice_panel_h(rail)),
         egui::pos2(ui.max_rect().right(), bottom),

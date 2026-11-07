@@ -164,11 +164,17 @@ pub struct ChatUi {
     /// `AURORA_DEMO_CONV=aurora:local:channel`: the channel selector shown
     /// without changing the preferences.
     pub demo_channel: bool,
-    /// The workspace's layout last frame (None before the first): the
-    /// column as a rail, room for the members' panel. A threshold crossed
-    /// back needs a margin past it (`workspace::rail_now`), so a window
-    /// resized around one does not flip at every point.
-    layout_rail: Option<bool>,
+    /// What the button at the foot of the column asked; `collapsed` is
+    /// given every frame by the app, from the settings.
+    pub column: workspace::ColumnChoice,
+    /// `AURORA_DEMO_CONV=aurora:collapsed`: the column collapsed without
+    /// changing the preferences, until its button is used.
+    pub demo_column_collapsed: bool,
+    /// The workspace's layout last frame (None before the first): a window
+    /// narrow enough for the rail, room for the members' panel. A threshold
+    /// crossed back needs a margin past it (`workspace::narrow_now`), so a
+    /// window resized around one does not flip at every point.
+    layout_narrow: Option<bool>,
     layout_members_room: Option<bool>,
     /// The workspace's width last frame, and whether this frame's change of
     /// it comes from a drag of the window's edge: the layout then follows
@@ -1177,6 +1183,8 @@ fn line_job(
 }
 
 pub enum ConvAction {
+    /// The column's button changed `ColumnChoice::collapsed`: to keep.
+    ColumnCollapsed(bool),
     Local(OutgoingChat),
     Im {
         to: uuid::Uuid,

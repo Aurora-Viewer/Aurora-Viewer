@@ -1099,6 +1099,9 @@ pub struct Settings {
     /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
     /// legacy lines).
     pub chat_style: ChatStyle,
+    /// The column of the conversations' workspace stays a rail at any
+    /// window width (its button; off, the column follows the window).
+    pub chat_column_collapsed: bool,
     /// Pictures and videos under the links of the Conversations window
     /// (Preferences › Chat; `link_preview.rs`).
     pub link_previews: crate::link_preview::Settings,
@@ -2030,6 +2033,7 @@ impl Default for Settings {
             plate_shift_click: PlateClick::Nothing,
             plate_ctrl_click: PlateClick::Nothing,
             chat_style: ChatStyle::Aurora,
+            chat_column_collapsed: false,
             link_previews: Default::default(),
             gifs: Default::default(),
             notifications_style: NotificationsStyle::Aurora,
