@@ -27,6 +27,8 @@ pub const AUTO_SOUTH: i8 = -9;
 pub const AUTO_EAST: i8 = -10;
 pub const AUTO_LEFT_BUMPER: i8 = -11;
 pub const AUTO_RIGHT_BUMPER: i8 = -12;
+pub const AUTO_WEST: i8 = -13;
+pub const AUTO_NORTH: i8 = -14;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -152,6 +154,8 @@ pub fn automatic_button(binding: i8) -> Option<GamepadButton> {
     match binding {
         AUTO_SOUTH => Some(GamepadButton::South),
         AUTO_EAST => Some(GamepadButton::East),
+        AUTO_WEST => Some(GamepadButton::West),
+        AUTO_NORTH => Some(GamepadButton::North),
         AUTO_LEFT_BUMPER => Some(GamepadButton::LeftBumper),
         AUTO_RIGHT_BUMPER => Some(GamepadButton::RightBumper),
         _ => None,
@@ -241,6 +245,7 @@ pub struct FirstPerson {
     pub move_stick: GamepadStick,
     pub camera_stick: GamepadStick,
     pub jump_button: i8,
+    pub crouch_button: i8,
     pub rise_button: i8,
     pub fall_button: i8,
     pub zoom_in_button: i8,
@@ -259,6 +264,7 @@ impl Default for FirstPerson {
             move_stick: GamepadStick::Custom,
             camera_stick: GamepadStick::Custom,
             jump_button: AUTO_EAST,
+            crouch_button: AUTO_WEST,
             rise_button: AUTO_LEFT_BUMPER,
             fall_button: AUTO_RIGHT_BUMPER,
             zoom_in_button: AUTO_RIGHT_TRIGGER,
@@ -274,8 +280,10 @@ pub struct Settings {
     pub enabled: bool,
     /// Gamepads are monitored independently of the opt-in raw joystick/HID input.
     pub gamepad_style: GamepadStyle,
+    pub gamepad_layout_version: u8,
     pub first_person: FirstPerson,
     pub gamepad_flycam_view_button: i8,
+    pub reset_view_button: i8,
     /// Analog sticks assigned to avatar and flycam motion separately.
     pub gamepad_move_stick: GamepadStick,
     pub gamepad_camera_stick: GamepadStick,
@@ -307,6 +315,7 @@ pub struct Settings {
     /// Zero-based button numbers; -1 disables a button.
     pub flycam_button: i8,
     pub jump_button: i8,
+    pub crouch_button: i8,
     pub rise_button: i8,
     pub fall_button: i8,
     pub flycam_rise_button: i8,
@@ -318,6 +327,8 @@ pub struct Settings {
     pub gamepad_avatar_zoom_out_button: i8,
     pub gamepad_avatar_pan_up_button: i8,
     pub gamepad_avatar_pan_down_button: i8,
+    pub gamepad_avatar_pan_left_button: i8,
+    pub gamepad_avatar_pan_right_button: i8,
     pub gamepad_avatar_next_button: i8,
     pub gamepad_avatar_previous_button: i8,
 }
@@ -327,8 +338,10 @@ impl Default for Settings {
         Self {
             enabled: false,
             gamepad_style: GamepadStyle::Auto,
+            gamepad_layout_version: 0,
             first_person: FirstPerson::default(),
             gamepad_flycam_view_button: INHERIT_BUTTON,
+            reset_view_button: AUTO_NORTH,
             gamepad_move_stick: GamepadStick::Custom,
             gamepad_camera_stick: GamepadStick::Custom,
             gamepad_flycam_move_stick: GamepadStick::Custom,
@@ -357,6 +370,7 @@ impl Default for Settings {
             run_threshold: 0.7,
             flycam_button: 0,
             jump_button: 1,
+            crouch_button: AUTO_WEST,
             rise_button: -1,
             fall_button: -1,
             flycam_rise_button: INHERIT_BUTTON,
@@ -367,6 +381,8 @@ impl Default for Settings {
             gamepad_avatar_zoom_out_button: -1,
             gamepad_avatar_pan_up_button: -1,
             gamepad_avatar_pan_down_button: -1,
+            gamepad_avatar_pan_left_button: -1,
+            gamepad_avatar_pan_right_button: -1,
             gamepad_avatar_next_button: -1,
             gamepad_avatar_previous_button: -1,
         }
@@ -419,7 +435,41 @@ impl Settings {
         settings
     }
 
+    pub fn migrate_gamepad_layout(&mut self) {
+        if self.gamepad_layout_version >= 1 {
+            return;
+        }
+        let old_rise = self.rise_button;
+        let old_fall = self.fall_button;
+        if self.gamepad_avatar_next_button == AUTO_DPAD_RIGHT {
+            self.gamepad_avatar_next_button = AUTO_RIGHT_BUMPER;
+        }
+        if self.gamepad_avatar_previous_button == AUTO_DPAD_LEFT {
+            self.gamepad_avatar_previous_button = AUTO_LEFT_BUMPER;
+        }
+        if self.gamepad_avatar_pan_left_button == -1 {
+            self.gamepad_avatar_pan_left_button = AUTO_DPAD_LEFT;
+        }
+        if self.gamepad_avatar_pan_right_button == -1 {
+            self.gamepad_avatar_pan_right_button = AUTO_DPAD_RIGHT;
+        }
+        if self.gamepad_avatar_next_button == self.rise_button {
+            self.rise_button = -1;
+        }
+        if self.gamepad_avatar_previous_button == self.fall_button {
+            self.fall_button = -1;
+        }
+        if self.flycam_rise_button == AUTO_DPAD_UP || (self.flycam_rise_button == INHERIT_BUTTON && old_rise == AUTO_RIGHT_BUMPER) {
+            self.flycam_rise_button = AUTO_EAST;
+        }
+        if self.flycam_fall_button == AUTO_DPAD_DOWN || (self.flycam_fall_button == INHERIT_BUTTON && old_fall == AUTO_LEFT_BUMPER) {
+            self.flycam_fall_button = AUTO_WEST;
+        }
+        self.gamepad_layout_version = 1;
+    }
+
     fn gamepad(&mut self) {
+        self.gamepad_layout_version = 1;
         self.first_person.move_stick = GamepadStick::Left;
         self.first_person.camera_stick = GamepadStick::Right;
         self.jump_button = AUTO_EAST;
@@ -430,8 +480,10 @@ impl Settings {
         self.gamepad_avatar_zoom_out_button = AUTO_LEFT_TRIGGER;
         self.gamepad_avatar_pan_up_button = AUTO_DPAD_UP;
         self.gamepad_avatar_pan_down_button = AUTO_DPAD_DOWN;
-        self.gamepad_avatar_next_button = AUTO_DPAD_RIGHT;
-        self.gamepad_avatar_previous_button = AUTO_DPAD_LEFT;
+        self.gamepad_avatar_pan_left_button = AUTO_DPAD_LEFT;
+        self.gamepad_avatar_pan_right_button = AUTO_DPAD_RIGHT;
+        self.gamepad_avatar_next_button = AUTO_RIGHT_BUMPER;
+        self.gamepad_avatar_previous_button = AUTO_LEFT_BUMPER;
         self.gamepad_move_stick = GamepadStick::Left;
         self.gamepad_camera_stick = GamepadStick::Right;
         self.gamepad_flycam_move_stick = GamepadStick::Left;
@@ -442,10 +494,10 @@ impl Settings {
             self.mapping[4] = 5;
             self.mapping[5] = 2;
         }
-        self.rise_button = AUTO_RIGHT_BUMPER;
-        self.fall_button = AUTO_LEFT_BUMPER;
-        self.flycam_rise_button = AUTO_DPAD_UP;
-        self.flycam_fall_button = AUTO_DPAD_DOWN;
+        self.rise_button = -1;
+        self.fall_button = -1;
+        self.flycam_rise_button = AUTO_EAST;
+        self.flycam_fall_button = AUTO_WEST;
         self.avatar = Tuning {
             gain: [1.0, 1.0, 0.0, 0.0, 4.0, 4.0, 0.0],
             dead_zone: [0.15; CHANNELS],
@@ -566,6 +618,8 @@ pub struct Motion {
     pub axes: [f32; CHANNELS],
     pub toggle_flycam: bool,
     pub reset_zoom: bool,
+    pub reset_view: bool,
+    pub crouch: bool,
     pub jump: bool,
     pub jump_pressed: bool,
     pub rise: bool,
@@ -574,6 +628,7 @@ pub struct Motion {
     pub flycam_speed: Option<f32>,
     pub avatar_zoom: f32,
     pub avatar_pan: f32,
+    pub avatar_pan_side: f32,
     pub avatar_cycle: i8,
 }
 
@@ -588,7 +643,7 @@ impl Motion {
 
     /// Intent to translate the player, excluding camera sticks and triggers.
     pub fn player_movement_input(&self) -> bool {
-        self.axes[..3].iter().any(|value| value.abs() > 0.0001) || self.jump || self.rise || self.fall
+        self.axes[..3].iter().any(|value| value.abs() > 0.0001) || self.jump || self.crouch || self.rise || self.fall
     }
 
     pub fn apply_avatar(&self, i: &mut crate::agent::MoveInput) {
@@ -608,9 +663,12 @@ impl Motion {
             || self.jump
             || self.rise
             || self.fall
+            || self.crouch
+            || self.reset_view
             || self.reset_zoom
             || self.avatar_zoom != 0.0
             || self.avatar_pan != 0.0
+            || self.avatar_pan_side != 0.0
             || self.avatar_cycle != 0
     }
 }
@@ -630,7 +688,7 @@ pub struct Controller {
     axis_buttons_armed: u16,
     zoom_pressure_armed: [bool; 2],
     flycam_speed_armed: [bool; 2],
-    avatar_camera_armed: [bool; 4],
+    avatar_camera_armed: [bool; 6],
     flycam_speed_owner: Option<usize>,
     zoom_reset: zoom::ResetGesture,
 }
@@ -679,7 +737,7 @@ impl Controller {
         self.axis_buttons_armed = 0;
         self.zoom_pressure_armed = [false; 2];
         self.flycam_speed_armed = [false; 2];
-        self.avatar_camera_armed = [false; 4];
+        self.avatar_camera_armed = [false; 6];
         self.flycam_speed_owner = None;
         self.zoom_reset = Default::default();
     }
@@ -801,18 +859,20 @@ impl Controller {
         };
         let mut avatar_camera_pressure = if !flycam && d.is_gamepad {
             (if first_person {
-                [s.first_person.zoom_in_button, s.first_person.zoom_out_button, -1, -1]
+                [s.first_person.zoom_in_button, s.first_person.zoom_out_button, -1, -1, -1, -1]
             } else {
                 [
                     s.gamepad_avatar_zoom_in_button,
                     s.gamepad_avatar_zoom_out_button,
                     s.gamepad_avatar_pan_up_button,
                     s.gamepad_avatar_pan_down_button,
+                    s.gamepad_avatar_pan_left_button,
+                    s.gamepad_avatar_pan_right_button,
                 ]
             })
             .map(|binding| pressure(resolve_binding(d, binding)))
         } else {
-            [0.0; 4]
+            [0.0; 6]
         };
         for (armed, value) in self.avatar_camera_armed.iter_mut().zip(&mut avatar_camera_pressure) {
             *armed |= *value <= 0.005;
@@ -995,6 +1055,17 @@ impl Controller {
             axes: self.filtered,
             toggle_flycam,
             reset_zoom,
+            reset_view: d.is_gamepad && pressed(resolve_binding(d, s.reset_view_button)),
+            crouch: d.is_gamepad
+                && !flycam
+                && held(resolve_binding(
+                    d,
+                    if first_person {
+                        s.first_person.crouch_button
+                    } else {
+                        s.crouch_button
+                    },
+                )),
             jump,
             jump_pressed,
             rise: held(resolve_binding(
@@ -1021,6 +1092,7 @@ impl Controller {
             flycam_speed: (flycam && d.is_gamepad).then_some(flycam_speed),
             avatar_zoom: avatar_camera_pressure[0] - avatar_camera_pressure[1],
             avatar_pan: avatar_camera_pressure[2] - avatar_camera_pressure[3],
+            avatar_pan_side: avatar_camera_pressure[4] - avatar_camera_pressure[5],
             avatar_cycle: if !flycam && !first_person && d.is_gamepad {
                 i8::from(pressed(resolve_binding(d, s.gamepad_avatar_next_button)))
                     - i8::from(pressed(resolve_binding(d, s.gamepad_avatar_previous_button)))
