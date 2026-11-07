@@ -2313,7 +2313,7 @@ build-ui-texture-paste-limited = Vous avez appliqué une texture avec des permis
 ui-options-commands = Commandes
 common-camera-and-display-commands = Commandes de caméra et d'affichage
 common-teleport-commands = Commandes de téléportation
-build-ui-contents-like-dragging-the-item-to-inventory = Comme glisser l'élément vers l'inventaire
+contents-copy-selection-tip = Copier les éléments sélectionnés dans un nouveau dossier au nom de l’objet.
 ui-context-community = Communauté
 common-communication = Communication
 ui-bars-communicate = Communiquer
@@ -4339,6 +4339,8 @@ ui-people-exact-object-name = Nom exact d'un objet
 ui-options-commands-case-insensitive-partial-name-among-nearby-avatars = Nom partiel, sans tenir compte des majuscules, parmi les avatars à proximité
 world-mutes-empty-name = Nom vide.
 ui-options-probe-count = Nombre de sondes
+ui-options-probe-range = Portée des sondes
+ui-options-probe-range-help = Jusqu’où autour de vous la scène reçoit des sondes de réflexion, dans la distance d’affichage (plus loin ne coûte pas plus de mémoire vidéo)
 ui-options-maximum-pages-videos-loaded-at-once-plugininstancestotal = Nombre maximal de pages / vidéos chargées en même temps (PluginInstancesTotal)
 ui-options-maximum-particles-0-disabled = Nombre maximal de particules (0 = désactivées)
 ui-options-names = Noms
@@ -5682,7 +5684,6 @@ ui-bars-script-library = Bibliothèque de scripts
 ui-bars-message-of-the-day = Message du jour
 ui-bars-wiki = Wiki d'Aurora Viewer
 ui-bars-knowledge-base = Base de connaissances
-ui-bars-sysinfo-button = Bouton d'informations système dans les conversations
 ui-bars-about = À propos d'Aurora Viewer
 cmdline-dice-successes = { "Succès: " }{ $successes }
 build-manip-south = Sud
@@ -13343,3 +13344,14 @@ picker-pipette-no-texture = Aucune texture copiable trouvée dans votre inventai
 picker-pipette-no-material = Aucun matériau copiable trouvé dans votre inventaire.
 
 local-texture-preview-hint = Texture locale — aperçu d’un fichier de cet ordinateur.
+
+# Object linking: LLSelectMgr::linkObjects
+build-link-error-title = Impossible de lier les objets
+build-link-downloading = Les informations des objets sont en cours de téléchargement. Veuillez patienter puis réessayer.
+build-link-too-many = Impossible de lier { $count } prims. Le maximum est de { $max }.
+build-link-modify = Vous devez avoir le droit de modifier chaque objet à lier.
+build-link-permanent = Un objet permanent de cette sélection ne peut pas être lié depuis une autre région.
+build-link-owners = Les objets à lier doivent avoir le même propriétaire.
+build-link-regions = Les objets à lier doivent se trouver dans la même région.
+build-link-animesh = La sélection dépasse la limite de triangles des objets animés.
+build-link-restricted = Une restriction empêche la liaison de cette sélection.
