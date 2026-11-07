@@ -112,6 +112,11 @@ pub(super) struct Picked {
 }
 
 impl Picked {
+    /// The diagnostic synchronous read has no drawn-face identity.
+    pub(super) fn depth_only(&self) -> bool {
+        pick_mode() == PickMode::Wait
+    }
+
     pub(super) fn visible_point(&self) -> Option<Vec3> {
         match self.drawn.blend.or(self.drawn.opaque) {
             Some(face) => Some(face.point),
@@ -310,6 +315,7 @@ impl App {
     /// cursor without having it (`click_pick`), it asks for it and returns:
     /// `resolve_clicks` runs it again with the answer.
     fn run_click(&mut self, click: Click) {
+        let started = Instant::now();
         self.clicks.running = Some(click);
         match click {
             Click::Press => {
@@ -325,6 +331,17 @@ impl App {
             Click::Gun { at_cursor } => self.gun_press(at_cursor),
         }
         self.clicks.running = None;
+        // what the click costs the main thread, each time it runs: when it
+        // asks for the depth, then with the answer
+        let ms = started.elapsed().as_secs_f32() * 1000.0;
+        let run = if self.clicks.in_hand.is_some() {
+            "run with the depth"
+        } else if self.clicks.waiting() {
+            "asked for the depth"
+        } else {
+            "run"
+        };
+        self.note_pick(format_args!("{click:?} {run} in {ms:.2} ms"));
     }
 
     /// The cursor ray and the depth under the cursor for the click being
@@ -386,6 +403,7 @@ impl App {
             (depth, t.elapsed())
         });
         let ticket = g.renderer.request_pick(x, y);
+        self.frame_profile.trace_click();
         // LLToolCamera::handleMouseDown: displayed surfaces, including the
         // transparency overlay. Posed geometry avoids an attachment's bind pose.
         // (Alt in mouselook frees the cursor for the grab tool, not the camera.)
@@ -398,6 +416,7 @@ impl App {
             (false, true) => aurora_render::DrawnMode::LeftVisible,
             (false, false) => aurora_render::DrawnMode::Left,
         };
+        self.hover_drawn.cancel(&mut g.renderer);
         let drawn = Some(g.renderer.request_drawn(x, y, mode));
         let tags = self.name_tag_candidates(ray);
         let check = check.map(|(depth, waited)| Check {
@@ -439,7 +458,7 @@ impl App {
                     picked
                         .depth
                         .zip(picked.ray)
-                        .and_then(|(point, ray)| self.scene.interaction_at_ray(&self.world, point, ray, true))
+                        .and_then(|(point, ray)| self.scene.left_interaction_at_ray(&self.world, point, ray, true))
                 } else {
                     None
                 }
@@ -561,6 +580,19 @@ impl App {
             // aimed at (`rigged`), and the posed bounds of the object
             // designated, which must hold the point read from the GPU
             let local = |idx: usize| self.world.objects.get(idx).map(|o| o.key.local_id);
+            if self.demo {
+                let clicker = self.world.objects.index_of_uuid(&crate::demo::action_id(975));
+                if let (Some(idx), Some(ray), Some(body)) = (clicker, picked.ray, picked.drawn.opaque)
+                    && let Some(surface) = self.scene.left_touch_surface(&self.world, idx, ray)
+                    && let Some(offset) = self.world.objects.get(idx).and_then(|o| self.world.region_offset(o.key.region))
+                {
+                    log::info!(
+                        "demo attachment clearance: body={:?}, gap={:.6}m",
+                        self.scene.record_object(body.record).and_then(|(i, _)| local(i)),
+                        (surface.position + offset - body.point).dot(ray.1)
+                    );
+                }
+            }
             let got = shown.and_then(|d| local(d.idx));
             let raw = |f: Option<aurora_render::DrawnFace>| f.and_then(|f| self.scene.record_object(f.record)).and_then(|(i, _)| local(i));
             let aimed = match self.clicks.demo.expected.take() {
@@ -703,7 +735,7 @@ impl App {
                 } else {
                     point
                         .zip(ray)
-                        .and_then(|(p, r)| self.scene.interaction_at_ray(&self.world, p, r, true))
+                        .and_then(|(p, r)| self.scene.left_interaction_at_ray(&self.world, p, r, true))
                 };
                 (point, idx)
             };

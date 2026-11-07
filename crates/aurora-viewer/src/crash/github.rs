@@ -18,6 +18,9 @@ const TOKEN: &str = "https://github.com/login/oauth/access_token";
 const CLIENT_ID: &str = "Iv23liT7PLWClMLztI1W";
 const SERVICE: &str = "Aurora Viewer GitHub";
 const ACCOUNT: &str = "crash-reports";
+/// The credential store's entry of the authorization (service, account),
+/// for the removal from this computer (`uninstall.rs`).
+pub const STORE_ENTRY: (&str, &str) = (SERVICE, ACCOUNT);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Failure {

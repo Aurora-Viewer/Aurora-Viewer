@@ -69,7 +69,10 @@ pub enum Request {
         text: String,
     },
     LoadLayoutNotecard(Uuid),
-    TransferTask(Box<super::task_inventory::TransferRequest>),
+    CopyContents {
+        object: Uuid,
+        items: Vec<aurora_net::build::TaskItem>,
+    },
     /// Focus slider moved (LLAgentCamera::setCameraZoomFraction).
     ZoomFraction(f32),
     AboutLand,
@@ -106,6 +109,15 @@ pub struct FaceClip {
     pub face: aurora_prim::te::TextureFace,
     pub legacy: Option<crate::scene::legacy_mat::LegacyMaterial>,
     pub gltf: Option<(Uuid, aurora_assets::material::PbrOverride)>,
+    /// What the diffuse, the material and its four override maps may count
+    /// on when pasted (`texture_copy::availability`).
+    pub image: crate::build::texture_copy::Availability,
+    pub material: crate::build::texture_copy::Availability,
+    pub maps: [crate::build::texture_copy::Availability; 4],
+    /// The normal / specular map could not be copied: `legacy` holds none
+    /// and the paste keeps the target's own (NormMapNoCopy, SpecMapNoCopy).
+    pub normal_kept: bool,
+    pub specular_kept: bool,
 }
 
 /// Object parameters copied with "Copy" of the Object tab (LLPanelObject::onCopyParams).
@@ -121,6 +133,10 @@ pub struct FeaturesClip {
     pub flexible: Option<aurora_prim::extra::FlexibleParams>,
     pub light: Option<aurora_prim::extra::LightParams>,
     pub light_image: Option<aurora_prim::extra::LightImageParams>,
+    /// The projector map could not be copied (`texture_copy::can_copy`):
+    /// the paste leaves the target's projector as it is, like the Legacy
+    /// Viewer's clipboard without its "spot" entry.
+    pub keep_light_image: bool,
     pub probe: Option<aurora_prim::extra::ReflectionProbeParams>,
     pub material: u8,
     pub physics: Option<aurora_net::build::PhysicsParams>,
@@ -184,8 +200,12 @@ pub struct FloaterState {
     pub group_picker_open: bool,
     pub media_settings: Option<MediaSettingsState>,
     pub confirm: Option<Confirm>,
+    pub link_error: Option<String>,
     pub picker: TexturePicker,
     pub pick_target: Option<PickTarget>,
+    /// A texture or material dropped on a Texture tab slot, applied next
+    /// frame: the slot, the asset and the inventory item it came from.
+    pub slot_drop: Option<(PickTarget, Uuid, Uuid)>,
     texture_edit: Option<texture_preview::Session>,
     /// ObjectMedia data fetched for the selection, and the objects asked.
     pub media_data: HashMap<Uuid, ObjectMediaData>,
@@ -217,6 +237,9 @@ pub(crate) const INSPECTOR_ID: &str = "build_tools_inspector_c3";
 /// Build shortcuts (menu_viewer.xml): Ctrl+B, Ctrl+1..5, delete, duplicate,
 /// link, edit linked parts, grid, undo...
 pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings) {
+    if tool.ui.link_error.is_some() {
+        return;
+    }
     tool.ui.legacy_window = s.legacy_window;
     if tool.ui.layout.organizing || tool.ui.notecards.open.is_some() {
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
@@ -260,7 +283,7 @@ pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s
         if let Some(command) = Shortcut::from_key(key, mods, tool.open) {
             // The picker owns Escape in stages (pipette, then dialog).
             // Leave its event intact instead of consuming a no-op Close.
-            if command == Shortcut::Close && tool.ui.color_picker.is_open() {
+            if command == Shortcut::Close && (tool.ui.color_picker.is_open() || crate::ui::texture_picker::pipette::armed(ctx)) {
                 continue;
             }
             if !repeat || matches!(command, Shortcut::History(_)) {
@@ -284,6 +307,7 @@ pub fn show(
     mods: super::Mods,
     env: &mut Env,
 ) -> bool {
+    floaters::link_error(ctx, p, tool);
     contents_selection::finish_if_hidden_or_blurred(ctx, tool, world);
     if !tool.open {
         tool.dismiss_texture_picker();
@@ -425,6 +449,13 @@ pub fn show(
             compact::body(ui, p, tool, world, s, mods, env);
         }
     });
+    if let Some((target, asset, item)) = tool.ui.slot_drop.take() {
+        let sel = texture::selected(tool, world);
+        match tool.admit_item(world, item, &texture_preview::admit_targets(target, &sel)) {
+            Ok(()) => tool.apply_texture(world, env, target, asset, &sel),
+            Err(text) => world.system_notice(text, crate::world::notice_topics::Topic::Items),
+        }
+    }
     toggle_sections |= legacy_toggle_sections;
     if copy_uuid && !tool.selection.is_empty() {
         ctx.copy_text(tool.copy_keys(world, s, mods.shift));

@@ -51,7 +51,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, imports: &mut Imports, acti
             let (mut area, foot) = widgets::above_footer(ui);
             let square = area.available_size().min_elem();
             area.vertical_centered(|ui| {
-                widgets::picture(
+                let response = widgets::picture(
                     ui,
                     p,
                     preview.map(|(_, _, texture)| texture),
@@ -59,6 +59,9 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, imports: &mut Imports, acti
                     "photo-filled",
                     "",
                 );
+                if matches!(&entry.source, Some(Source::Material { images, .. }) if images[slot].as_ref().is_some_and(|image| image.asset.is_none())) {
+                    widgets::local_texture::paint(ui, p, response.rect);
+                }
             });
             if preview.is_none() && key.is_some() && !entry.material_large_pending[slot] {
                 actions.push(Action::LargeMap(id, slot));
@@ -82,7 +85,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, imports: &mut Imports, acti
                 } else {
                     entry.player.pose.clone()
                 };
-                aurora_render::preview::paint_with_pose(
+                let response = aurora_render::preview::paint_with_pose(
                     &mut area,
                     egui::Id::unique(("large_import_preview", id)),
                     model.clone(),
@@ -90,6 +93,9 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, imports: &mut Imports, acti
                     size,
                     pose,
                 );
+                if matches!(entry.source, Some(Source::Texture(_) | Source::Material { .. })) {
+                    widgets::local_texture::paint(&area, p, response.rect);
+                }
             } else {
                 widgets::picture(&mut area, p, None, size, "cube-3d-sphere", "");
             }
