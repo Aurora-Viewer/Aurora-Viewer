@@ -967,13 +967,13 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             super::stream_title::WINDOW,
             &mut panels.stream_title,
         );
-        if menu::item(ui, p, "map-pin-filled", aurora_i18n::tr!("landmark-create-here")) {
+        if menu::item(ui, p, "bookmark-filled", aurora_i18n::tr!("landmark-create-here")) {
             *action = BarAction::CreateLandmark;
         }
         if menu::item(ui, p, "map", aurora_i18n::tr!("owned-land-title")) {
             *action = BarAction::OwnedLand;
         }
-        menu::submenu(ui, p, "eye-filled", aurora_i18n::tr!("world-show-more"), true, |ui| {
+        menu::submenu(ui, p, "dots-filled", aurora_i18n::tr!("world-show-more"), true, |ui| {
             flip_window(
                 ui,
                 p,
@@ -1150,7 +1150,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         flip_window(
             ui,
             p,
-            "eye-filled",
+            "adjustments-horizontal-filled",
             aurora_i18n::tr!("avatar-render-title"),
             super::avatar_render_settings::WINDOW,
             &mut panels.avatar_render_settings,
@@ -1286,10 +1286,6 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             *action = BarAction::ServerReleaseNotes;
         }
         menu::separator(ui, p);
-        // Enable Sysinfo Button (SysinfoButtonInIM), then About, whose
-        // window carries the system information
-        menu::todo(ui, p, "device-desktop-filled", aurora_i18n::tr!("ui-bars-sysinfo-button"));
-        menu::separator(ui, p);
         let about = aurora_i18n::tr!("ui-bars-about");
         flip_window(ui, p, "info-circle-filled", about, super::about::WINDOW, &mut panels.about);
         let version = aurora_i18n::tr!("common-aurora-viewer", value0 = aurora_version::version().to_string());
@@ -1363,7 +1359,7 @@ fn health_menu(ui: &mut egui::Ui, p: &Palette, h: &HealthMenu) {
         if menu::item_keys(
             ui,
             p,
-            "refresh",
+            "paperclip",
             aurora_i18n::tr!("avatar-health-refresh-attachments"),
             &h.refresh_keys,
         ) {
