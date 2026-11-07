@@ -5,6 +5,7 @@ mod app_links;
 pub(crate) use app_links::{group_name as app_link_group_name, take_wanted as take_app_link_wants};
 mod bubbles;
 mod call;
+mod channel;
 mod completion;
 mod compose;
 mod console;
@@ -3281,7 +3282,11 @@ fn classic_pane(
             }
             // leave exactly the send button + spacing (else the row overflows
             // and the resizable window grows every frame)
-            let field_w = (ui.available_width() - SEND_BTN_W - ui.spacing().item_spacing.x).floor().max(40.0);
+            let show_channel = st.selected.is_none() && st.show_channel;
+            let channel_w = if show_channel { channel::RESERVED_WIDTH } else { 0.0 };
+            let field_w = (ui.available_width() - SEND_BTN_W - ui.spacing().item_spacing.x - channel_w)
+                .floor()
+                .max(40.0);
             input::prepare(ui, conv_input, st.selected.is_none());
             let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
             let nav = super::emoji::codes::keys(ui, conv_input);
@@ -3301,6 +3306,9 @@ fn classic_pane(
                 Some(id) => suggest::Scope::Session(id, &people),
             };
             suggest::after(ui, p, &mut output, &mut draft, suggest_nav, &mut st.suggest, scope);
+            if show_channel {
+                channel::show(ui, p, &mut draft, sidebar::control_id("box-channel"));
+            }
             let has_text = !draft.trim().is_empty();
             send_clicked = send_button(ui, p, icons, has_text).clicked() && has_text;
             output
@@ -3965,6 +3973,11 @@ pub(crate) fn bar_input_id() -> egui::Id {
     egui::Id::unique("nearby_chat_input")
 }
 
+/// The nearby chat bar's selector, separate from the workspace field.
+pub(crate) fn bar_channel_id() -> egui::Id {
+    bar_input_id().with("channel")
+}
+
 /// The text cursor of a field after the last character: the keyboard given
 /// to a field that holds a draft, or the letter that started the chat.
 pub(crate) fn cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
@@ -3974,7 +3987,7 @@ pub(crate) fn cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
     egui::TextEdit::store_state(ctx, id, state);
 }
 
-/// The local chat's field, Firestorm's chat bar (LLFloaterIMNearbyChat):
+/// The local chat's field, the Legacy Viewer's chat bar (LLFloaterIMNearbyChat):
 /// Enter says, Ctrl+Enter shouts, Shift+Enter whispers, `/channel` and the
 /// gestures' completion; Enter on an empty field returns to movement. Shared
 /// by the full-width bar and the chat island (`bars/dock.rs`), which draws
@@ -3989,30 +4002,42 @@ pub(crate) fn bar_input(
     build: impl FnOnce(egui::TextEdit<'_>) -> egui::TextEdit<'_>,
 ) -> Option<OutgoingChat> {
     let mut out = None;
+    let show_channel = st.show_channel;
+    let channel_width = if show_channel { channel::RESERVED_WIDTH } else { 0.0 };
+    let field_width = (width - channel_width).max(40.0);
     // the shortcuts (Enter, Ctrl / Shift + Enter, /channel) are a tooltip:
     // written in the empty field they crowded the bar (the human's request)
-    let build = identified(build);
-    input::prepare(ui, bar_input_id(), true);
-    let recalled = st.input_history.entry(None).or_default().recall(ui, bar_input_id(), &mut st.input);
-    let nav = super::emoji::codes::keys(ui, bar_input_id());
-    let suggest_nav = if nav.is_none() { suggest::keys(ui, bar_input_id()) } else { None };
+    let build = identified(|edit| build(edit).desired_width(field_width));
     let mut emoji = emoji;
-    let minimum = ui.spacing().interact_size.y;
-    let mut output = input::show(ui, emoji.as_deref_mut(), bar_input_id(), &mut st.input, width, minimum, build);
-    if recalled {
-        output.response.mark_changed();
-    }
-    super::emoji::codes::after(ui, p, emoji, &mut output, &mut st.input, nav);
-    super::spelling::field(ui, p, &mut output, &mut st.input, true);
-    suggest::after(
-        ui,
-        p,
-        &mut output,
-        &mut st.input,
-        suggest_nav,
-        &mut st.suggest,
-        suggest::Scope::Nearby(gestures),
-    );
+    let output = ui
+        .horizontal_centered(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            input::prepare(ui, bar_input_id(), true);
+            let recalled = st.input_history.entry(None).or_default().recall(ui, bar_input_id(), &mut st.input);
+            let nav = super::emoji::codes::keys(ui, bar_input_id());
+            let suggest_nav = if nav.is_none() { suggest::keys(ui, bar_input_id()) } else { None };
+            let minimum = ui.spacing().interact_size.y;
+            let mut output = input::show(ui, emoji.as_deref_mut(), bar_input_id(), &mut st.input, field_width, minimum, build);
+            if recalled {
+                output.response.mark_changed();
+            }
+            super::emoji::codes::after(ui, p, emoji, &mut output, &mut st.input, nav);
+            super::spelling::field(ui, p, &mut output, &mut st.input, true);
+            suggest::after(
+                ui,
+                p,
+                &mut output,
+                &mut st.input,
+                suggest_nav,
+                &mut st.suggest,
+                suggest::Scope::Nearby(gestures),
+            );
+            if show_channel {
+                channel::show(ui, p, &mut st.input, bar_channel_id());
+            }
+            output
+        })
+        .inner;
     let resp = output
         .response
         .response
@@ -4062,7 +4087,7 @@ pub(crate) fn bar_input(
             st.focus_request = true;
         }
     }
-    // Enter on an empty bar returns to movement (like Firestorm).
+    // Enter on an empty bar returns to movement (like the Legacy Viewer).
     out
 }
 
