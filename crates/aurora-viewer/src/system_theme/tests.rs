@@ -152,3 +152,13 @@ fn the_repeated_read_stops_with_the_option() {
     set_active(false);
     assert!(!active());
 }
+
+/// A desktop with less than both is said in Preferences, once it is known.
+#[test]
+fn what_the_system_gives() {
+    assert_eq!(given_by(false, false, false), Given::Everything);
+    assert_eq!(given_by(true, true, true), Given::Everything);
+    assert_eq!(given_by(true, false, true), Given::Everything);
+    assert_eq!(given_by(true, true, false), Given::ModeOnly);
+    assert_eq!(given_by(true, false, false), Given::Nothing);
+}
