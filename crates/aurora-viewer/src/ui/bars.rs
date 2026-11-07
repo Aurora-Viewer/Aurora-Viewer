@@ -2111,6 +2111,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "webbrowser" => toggle(super::web_browser::WINDOW, &mut panels.web_browser),
         // Floater.Toggle fs_voice_controls
         "voice" => toggle(super::voice_controls::WINDOW, &mut panels.voice_controls),
+        // Floater.Toggle fs_posestand
+        "pose_stand" => toggle(super::pose_stand::WINDOW, &mut panels.pose_stand),
         // the Legacy Viewer's Statistics (Floater.Toggle stats) opens
         // Aurora's Performance window
         "performance" | "statistics" => toggle("perf", &mut panels.perf),
@@ -2209,6 +2211,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "gridstatus" => panels.grid_status,
         "webbrowser" => panels.web_browser,
         "voice" => panels.voice_controls,
+        "pose_stand" => panels.pose_stand,
         "performance" | "statistics" => panels.perf,
         "snapshot" => panels.snapshot,
         "beacons" => panels.beacons,
@@ -2946,7 +2949,9 @@ pub(crate) fn toolbar_row(
             && (!panels.chat || super::widgets::floater_minimized(ui.ctx(), "conversations"));
         let count = if badge { row.unread } else { 0 };
         // the Photo roll's button, dimmed while the session has no photo
-        let usable = !(b.command == "photo_roll" && toolbar.photo_roll_empty);
+        // the pose stand's, dimmed while we sit (Agent.IsActionAllowed
+        // fs_when_not_sitting), its own ground lock included
+        let usable = !(b.command == "photo_roll" && toolbar.photo_roll_empty) && !(b.command == "pose_stand" && row.seated);
         let tip = if badge {
             aurora_i18n::tr!(
                 "ui-bars-unread",
