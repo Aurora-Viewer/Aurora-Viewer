@@ -733,6 +733,16 @@ fn poser_window_stays_steady_at_scaled_fonts_and_keeps_the_upload_footer_visible
                     let (world, mut editor) = selected_fixture();
                     editor.poser.library_open = library;
                     editor.poser.settings_open = settings;
+                    editor.poser.storage.message = Some(
+                        aurora_i18n::tr!(
+                            "poser-saved",
+                            path = format!(
+                                "/a-long-local-profile-directory/{}/Portrait.aurora-pose.json",
+                                "nested-directory/".repeat(12)
+                            )
+                        )
+                        .to_string(),
+                    );
                     (world, editor)
                 },
                 |(world, editor), ctx, p| {
@@ -817,6 +827,100 @@ fn poser_bone_rows_and_xyz_controls_are_painted_inside_their_scroll_clips() {
     }
 }
 #[test]
+fn poser_name_can_be_replaced_and_survives_idle_frames() {
+    use crate::ui::widgets::elide_tests::{Frames, painted};
+    let (world, mut editor) = selected_fixture();
+    let frame = editor.editor_frame(&world).unwrap();
+    let p = crate::theme::Theme::default().palette();
+    let mut frames = Frames::new();
+    let mut texts = Vec::new();
+    for _ in 0..5 {
+        texts = frames.run(Vec::new(), |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame));
+    }
+    let pointer = painted(&texts, &editor.poser.name).rect.center();
+    for pressed in [true, false] {
+        frames.run(
+            vec![
+                egui::Event::PointerMoved(pointer),
+                egui::Event::PointerButton {
+                    pos: pointer,
+                    pressed,
+                    button: egui::PointerButton::Primary,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame),
+        );
+    }
+    let modifiers = egui::Modifiers {
+        ctrl: true,
+        command: true,
+        ..Default::default()
+    };
+    frames.run(
+        vec![egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }],
+        |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame),
+    );
+    frames.run(
+        vec![
+            egui::Event::Text("Portrait".into()),
+            egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: String::new(),
+                active_range_chars: None,
+            }),
+        ],
+        |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame),
+    );
+    assert_eq!(editor.poser.name, "Portrait");
+    for _ in 0..30 {
+        frames.run(Vec::new(), |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame));
+        assert_eq!(editor.poser.name, "Portrait");
+    }
+}
+#[test]
+fn poser_load_menu_opens_the_existing_library_without_a_file_picker() {
+    use crate::ui::widgets::elide_tests::{Frames, painted};
+    let (world, mut editor) = selected_fixture();
+    let frame = editor.editor_frame(&world).unwrap();
+    let p = crate::theme::Theme::default().palette();
+    editor.poser.storage.ready = true;
+    let mut frames = Frames::new();
+    let mut texts = Vec::new();
+    for _ in 0..5 {
+        texts = frames.run(Vec::new(), |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame));
+    }
+    for label in ["poser-load-menu", "poser-library"] {
+        let pointer = painted(&texts, aurora_i18n::text(label)).rect.center();
+        for pressed in [true, false] {
+            frames.run(
+                vec![
+                    egui::Event::PointerMoved(pointer),
+                    egui::Event::PointerButton {
+                        pos: pointer,
+                        pressed,
+                        button: egui::PointerButton::Primary,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame),
+            );
+        }
+        texts = frames.run(Vec::new(), |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame));
+    }
+    assert!(editor.poser.library_open);
+    assert!(!editor.poser.storage.ready);
+    assert!(
+        editor.poser.storage.job.is_none(),
+        "opening the library must not launch a file picker"
+    );
+}
+#[test]
 fn poser_library_saves_bvh_confirms_overwrite_and_correlates_loads_to_the_original_subject() {
     let (world, editor) = fixture();
     let owner = Uuid::new_v4();
@@ -831,12 +935,17 @@ fn poser_library_saves_bvh_confirms_overwrite_and_correlates_loads_to_the_origin
     let ctx = egui::Context::default();
     let mut service = storage::Service::default();
     let tick = |service: &mut storage::Service| service.tick(&jobs, &ctx, owner, rig.clone(), world.avatar_lib.skeleton.as_ref());
+    service.filter = "does not match Portrait".into();
     service.job = Some(storage::Job::Save(document.clone(), session.pose.clone(), true, true, false));
     for _ in 0..3 {
         tick(&mut service);
     }
     assert_eq!(service.entries.len(), 1);
     let path = service.entries[0].path.clone();
+    assert_eq!(service.saved_path.as_ref(), Some(&path));
+    assert_eq!(service.selected, Some(0));
+    assert!(service.filter.is_empty());
+    assert!(service.message.as_ref().unwrap().contains(path.to_string_lossy().as_ref()));
     let bvh = std::fs::read(root.join("poses/Portrait.bvh")).unwrap();
     let imported = aurora_assets::import_animation::parse_bvh_pose(&bvh, world.avatar_lib.skeleton.as_ref().unwrap()).unwrap();
     assert!(

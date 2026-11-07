@@ -82,6 +82,10 @@ poser. Poses affect only this viewer, including poses of other residents.
 
 ## Library and files
 
+Save reports the saved file’s full path. Load > Pose library opens the saved
+poses directly; its Open folder button opens their directory in the file manager.
+File pickers start in that same directory.
+
 Save writes a named `*.aurora-pose.json` under the current account's local
 `poses/` directory. It retains rotation, relative translation, scale and
 world-lock flags, without subject IDs, avatar names or world coordinates.
