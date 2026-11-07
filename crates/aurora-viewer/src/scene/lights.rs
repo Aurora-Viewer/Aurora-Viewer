@@ -222,7 +222,10 @@ impl Scene {
             let Some((center, hud)) = self.gpu.get(idx).map(|g| (g.center, g.hud)) else {
                 continue;
             };
-            if hud || (!self.attached_lights && worn(world, o)) || !gives_light(l.color, l.radius) {
+            // (the 360° snapshot's "Hide all avatars" also turns the worn
+            // lights off, LLFloater360Capture's sRenderAttachedLights)
+            let attached_off = !self.attached_lights || world.photo_isolation.hide_avatars;
+            if hud || (attached_off && worn(world, o)) || !gives_light(l.color, l.radius) {
                 continue;
             }
             let dist = light_dist(center, l.radius, eye);

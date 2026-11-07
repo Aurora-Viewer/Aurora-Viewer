@@ -2541,7 +2541,7 @@ impl Scene {
                     renderer.cull.objects.set(idx, g.cull_object(idx));
                 }
             }
-        } else if iso.applied() {
+        } else if iso.hides() {
             for &idx in synced {
                 let hidden = !isolate::object_visible(world, idx);
                 if let Some(g) = self.gpu.get_mut(idx) {
