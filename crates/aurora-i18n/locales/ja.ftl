@@ -13380,3 +13380,7 @@ debug-settings-warning-title = 警告
 debug-settings-warning-text = デバッグ設定ウィンドウの使用はサポートされていません。デバッグ設定を変更すると、動作に深刻な影響が出たり、データや機能、サービスへのアクセスを失ったりするおそれがあります。内容を正確に理解していない値は変更しないでください。
 debug-settings-warning-ignore = この警告を今後表示しない
 debug-settings-type-color = 色
+
+# Preferences › Graphics: the trees' detail (RenderTreeLODFactor)
+ui-options-trees = 樹木
+ui-options-trees-hint = 遠くにあるリンデンの樹木の詳細度です（デフォルトは0.5）。ポテトレベルでは樹木と草が表示されません。

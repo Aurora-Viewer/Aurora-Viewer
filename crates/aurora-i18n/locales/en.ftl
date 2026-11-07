@@ -13407,3 +13407,7 @@ debug-settings-warning-title = Warning
 debug-settings-warning-text = The use of the Debug Settings window is unsupported. Changing debug settings can severely impact your experience and might lead to loss of data, functionality or even access to the service. Please do not change any values without knowing exactly what you are doing.
 debug-settings-warning-ignore = Do not show this warning again
 debug-settings-type-color = Colour
+
+# Preferences › Graphics: the trees' detail (RenderTreeLODFactor)
+ui-options-trees = Trees
+ui-options-trees-hint = Detail of Linden trees at a distance (0.5 by default). The Potato level turns trees and grass off.

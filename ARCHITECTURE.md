@@ -3544,7 +3544,10 @@ placed with a uniform scale; a grass tuft has its own small mesh, built at
 once from the terrain heights under its blades and rewritten in place when
 terrain patches arrive for its region (`Region::terrain_revision`). Both
 take their species texture whatever their texture entry says, alpha-tested
-at 0.5, so they cast shadows and are picked through their cut-out.
+at 0.5, so they cast shadows and are picked through their cut-out. A
+tree's detail level follows `scene/tree_detail.rs` (RenderTreeLODFactor,
+LLVOTree::idleUpdate) instead of the volumes' rule, with its own slack for
+the LOD watch; at a factor of 0 neither trees nor grass are drawn.
 
 `World::group_for_rez` shares the agent-parcel membership / active-group
 fallback rule between inventory rezzing, the Create tool, `rezplat`, Ctrl+D
