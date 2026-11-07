@@ -866,6 +866,8 @@ mod tests {
                 opensim: Default::default(),
                 currency_symbol: String::new(),
                 export_supported: false,
+                max_link_children: None,
+                animated_object_max_tris: 0,
             },
         );
         let r = rez(prepare(

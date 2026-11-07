@@ -24,6 +24,7 @@ mod dof;
 mod drawn_pick;
 mod exposure;
 pub mod frame_priority;
+mod fsr;
 pub mod gpu_alloc;
 pub mod gpu_cull;
 mod gtao;
