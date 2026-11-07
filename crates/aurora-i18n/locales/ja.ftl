@@ -5205,6 +5205,10 @@ controls-view-front = 前方
 controls-view-side = 側面
 controls-view-rear = 後方
 controls-view-shoulder = 肩越し
+controls-view-tip = { $view }。右クリック：現在のカメラ位置をこの視点として保存、または既定に戻します。
+controls-view-save = 現在のカメラ位置を「{ $view }」として保存
+controls-view-restore = 「{ $view }」を既定に戻す
+controls-view-not-saved = 「{ $view }」を保存できません：先にカメラをアバターから離してください。
 controls-turn-left = 左に回転
 controls-roll-left = 左に傾ける
 controls-roll-right = 右に傾ける
@@ -13376,3 +13380,7 @@ debug-settings-warning-title = 警告
 debug-settings-warning-text = デバッグ設定ウィンドウの使用はサポートされていません。デバッグ設定を変更すると、動作に深刻な影響が出たり、データや機能、サービスへのアクセスを失ったりするおそれがあります。内容を正確に理解していない値は変更しないでください。
 debug-settings-warning-ignore = この警告を今後表示しない
 debug-settings-type-color = 色
+
+# Preferences › Graphics: the trees' detail (RenderTreeLODFactor)
+ui-options-trees = 樹木
+ui-options-trees-hint = 遠くにあるリンデンの樹木の詳細度です（デフォルトは0.5）。0にすると樹木と草は表示されません。

@@ -5208,6 +5208,10 @@ controls-view-front = Front
 controls-view-side = Side
 controls-view-rear = Rear
 controls-view-shoulder = Shoulder
+controls-view-tip = { $view }. Right click: save the camera here as this view, or restore it.
+controls-view-save = Save the camera here as { $view }
+controls-view-restore = Back to the default { $view }
+controls-view-not-saved = { $view } not saved: move the camera away from the avatar first.
 controls-turn-left = Turn left
 controls-roll-left = Roll left
 controls-roll-right = Roll right
@@ -13403,3 +13407,7 @@ debug-settings-warning-title = Warning
 debug-settings-warning-text = The use of the Debug Settings window is unsupported. Changing debug settings can severely impact your experience and might lead to loss of data, functionality or even access to the service. Please do not change any values without knowing exactly what you are doing.
 debug-settings-warning-ignore = Do not show this warning again
 debug-settings-type-color = Colour
+
+# Preferences › Graphics: the trees' detail (RenderTreeLODFactor)
+ui-options-trees = Trees
+ui-options-trees-hint = Detail of Linden trees at a distance (0.5 by default). At 0, trees and grass are not drawn.

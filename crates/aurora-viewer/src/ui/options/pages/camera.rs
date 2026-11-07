@@ -58,7 +58,8 @@ pub fn page(cx: &mut Cx, tab: usize) {
                                 }
                             });
                         if ch {
-                            c.apply_preset(preset);
+                            // the view as the user saved it (Controls window)
+                            s.camera.apply_view(preset, &s.camera_views);
                         }
                         ch
                     },
@@ -103,7 +104,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                             } else {
                                 c.preset
                             };
-                            c.apply_preset(preset);
+                            s.camera.apply_view(preset, &s.camera_views);
                         }
                         reset
                     },

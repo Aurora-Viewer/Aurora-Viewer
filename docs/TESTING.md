@@ -388,7 +388,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:item][:mail][:apply][:applied][:moved][:toolbar][:apart]` | The photo reel filled with `n` photos, then its quick view, a deletion asked, a photo sent again (inventory, e-mail), applied to the profile, the tray moved or the toolbar's Photo roll |
 | `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep][-back]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
 | `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora or a LUT), the chosen one's strength and settings, the before / after line, the filter panel |
-| `AURORA_DEMO_CONTROLS=camera\|roll\|movement\|compact\|compact-move\|classic\|free\|free-compact` | The Controls window open on a tab, the Legacy Viewer's two windows, or driving the photo window's free camera |
+| `AURORA_DEMO_CONTROLS=camera\|roll\|movement\|compact\|compact-move\|classic\|views\|classic-views\|free\|free-compact` | The Controls window open on a tab, the Legacy Viewer's two windows, a view saved and given back, or driving the photo window's free camera |
 | `AURORA_DEMO_CAMERA_PRESETS=save\|apply\|object\|pick[-…]` | The viewfinder's camera presets: saved on the avatar, a place and an object, applied, or the object chosen in the scene |
 
 `AURORA_DEMO_RENDER_TEXTURE`: with demo mode and `AURORA_CAPTURE`, the capture
@@ -817,7 +817,12 @@ reset, saved positions), `roll` on the same tab with a 15° camera roll
 `compact-move` the same, then at frame 640 the toolbar's Move pressed on it
 (#1815: it expands on its Movement tab; capture at 700),
 `classic` Firestorm's camera and movement windows (Preferences › Aurora,
-not saved). `free` opens the photo window with its "Free camera" switch on:
+not saved). `views` (Aurora's window) and `classic-views` (the Legacy
+Viewer's camera window) save a view (#2755): the camera turned away at 610
+and saved as the Front view at 620, as the view's right click does, the Rear
+view at 640 and the Front view again at 660; the log gives the camera when
+saved and at 700, at the same place. The view is kept in the demo profile's
+settings: a second run starts with it. `free` opens the photo window with its "Free camera" switch on:
 the Controls window opens by itself on its camera tab, which drives the free
 camera (the "Free camera / The avatar stays put" banner with Back and its
 key, the move and look joysticks with up / down and their keys between them,
@@ -3893,7 +3898,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
 | `AURORA_DEMO_NIGHT_SKY=real\|legacy[:<azimuth>,<elevation>]` | The night sky's stars at midnight, the camera looking at the sky |
 | `AURORA_DEMO_NIGHT_SKY_PLACE=<latitude>[,<gain>]` | Where the real sky is seen from, and its stars' brightness |
-| `AURORA_DEMO_OCCLUSION=1` | Wall with hidden objects (occlusion test) |
+| `AURORA_DEMO_OCCLUSION=1\|edge` | Wall with hidden objects (occlusion test); `edge`: cubes in plain view beside a near wall |
 | `AURORA_DEMO_DEBUG="<overlays>"` | Debug overlays |
 | `AURORA_DEMO_EEP_PARCEL=<mode>` | EEP environment of the region and the parcel |
 | `AURORA_DEMO_ENV_SELECT=<mode>` | Environment picker |
@@ -4507,7 +4512,10 @@ both open states and the selection count. Capture at frame 620.
   ahead; `far`: the same rows 30 m further and 30 m to the right, 56 to 88 m
   away (within the 96 m draw distance); `dense`: about 580 trees of every
   species, turned and sized at random, and 390 grass tufts over the land
-  ahead (the cost of a forest, with `AURORA_PROFILE=1`). The species
+  ahead (the cost of a forest, with `AURORA_PROFILE=1`). With
+  `AURORA_GRAPHICS_PRESET=potato` (trees' detail 0, as the Legacy Low)
+  neither trees nor grass are drawn; `deluxe` (1) keeps the finest trunks
+  further than `medium` (0.5). The species
   textures are not fetched: stand-ins drawn under their ids (bark on the
   left half, leaves in the top right quarter, grass blades from the bottom
   edge), only with this scenario. Close-ups: `AURORA_DEMO_CAMERA=close,790,185,80`
@@ -4626,6 +4634,14 @@ both open states and the selection count. Capture at frame 620.
   sphere's by its weight. Used to check `AURORA_PROBE_WALK` on the probes
   the plaza does not have otherwise (its only probe is the mirror's, which
   is a hero probe and no cube map).
+- **`AURORA_DEMO_OCCLUSION=edge`**: a tall wall 1.5 m ahead of the start
+  view covers its left half, and nine cubes stand in the open right half,
+  farther than the wall (with `AURORA_DEMO_POS="80,100"`, the default, on
+  open land). Every cube is in plain view: a capture must show the same
+  cubes as one with `AURORA_NO_OCCLUSION=1`. Before #2459 the Hi-Z pyramid
+  dropped the last row and column of each odd-sized level, so a large
+  object seen only in the right or bottom part of the screen was tested
+  against the wall's depth and culled.
 - **`AURORA_DEMO_OVERDRAW=<n>`**: n rows of opaque walls (12 if the
   value is not a number, 40 at most) east of the plaza, one
   behind the other and each taller than the one in front, sent from the
@@ -9988,7 +10004,7 @@ What the inventory must show with these scenarios:
     colour and the overview the warning "Video memory over the driver's
     budget".
 - **`AURORA_TEXTURE_SLOTS=<n>`**: the texture table holds n textures
-  instead of 65,536 (`aurora-render/src/textures.rs`; the `renderer ready:`
+  instead of 262,144 (`aurora-render/src/textures.rs`; the `renderer ready:`
   line of the log gives its size). Each texture known to the streamer holds
   a slot of it, from the first face that uses it until 45 s after the last
   one stopped. Used to fill the table in demo.
@@ -10008,6 +10024,16 @@ What the inventory must show with these scenarios:
     all get their texture (capture after frame 1500 with
     `AURORA_DEMO_POS="160,126"`), `textures=` of `perf summary` never
     exceeds 6095 and the log has no `texture table full` line.
+  - Textures left without a slot get one once the table has room again
+    (#2822): `AURORA_DEMO_TEXTURES=6000`, `AURORA_DEMO_TEXTURES_CHURN=1`,
+    `AURORA_FPS_LIMIT=60`, `AURORA_DEMO_POS="215,126"` and `5000`. The
+    last 1,013 textures have no slot and their cubes, in front of the
+    camera, are white (capture at frame 250). The cubes removed at frame
+    300 give their slots back: the log says `texture table: … textures in
+    use have a slot again` and, on the next line, how many objects were
+    built again (678 cubes) and how long the pass took; at frame 650
+    those cubes have their texture. Before the fix they stayed white for
+    as long as they were there.
 
 - **`AURORA_COLORED_AMBIENT=0|1|alt`**: overrides Preferences › Graphics ›
   Sky and environment › Colored sky ambient for this launch (`alt`: on

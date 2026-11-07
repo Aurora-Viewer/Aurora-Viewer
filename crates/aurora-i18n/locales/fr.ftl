@@ -5213,6 +5213,10 @@ controls-view-front = Avant
 controls-view-side = Côté
 controls-view-rear = Arrière
 controls-view-shoulder = Épaule
+controls-view-tip = { $view }. Clic droit : enregistrer la caméra ici pour cette vue, ou la rétablir.
+controls-view-save = Enregistrer la caméra ici pour « { $view } »
+controls-view-restore = Rétablir « { $view } » par défaut
+controls-view-not-saved = « { $view } » non enregistrée : éloignez d’abord la caméra de l’avatar.
 controls-turn-left = Tourner à gauche
 controls-roll-left = Incliner à gauche
 controls-roll-right = Incliner à droite
@@ -13399,3 +13403,7 @@ debug-settings-warning-title = Avertissement
 debug-settings-warning-text = L'utilisation de la fenêtre Paramètres de débogage n'est pas prise en charge. Modifier ces paramètres peut fortement dégrader votre expérience et entraîner une perte de données, de fonctionnalités, voire d'accès au service. Ne modifiez aucune valeur sans savoir exactement ce que vous faites.
 debug-settings-warning-ignore = Ne plus afficher cet avertissement
 debug-settings-type-color = Couleur
+
+# Preferences › Graphics: the trees' detail (RenderTreeLODFactor)
+ui-options-trees = Arbres
+ui-options-trees-hint = Détail des arbres Linden à distance (0,5 par défaut). À 0, les arbres et l'herbe ne sont pas affichés.

@@ -572,6 +572,11 @@ pub struct Settings {
     /// the new default.
     pub occlusion_culling: bool,
     pub lod_factor: f32,
+    /// RenderTreeLODFactor: the detail of Linden trees at a distance; 0 draws
+    /// no tree nor grass (scene/tree_detail.rs). Preferences › Graphics
+    /// "Trees", 0 to 1 (the Legacy slider starts at 0.125); the levels set
+    /// 0 (Potato), 0.5 or 1 (Deluxe), as its featuretable.
+    pub tree_lod_factor: f32,
     /// Texture memory sized from the detected video memory (else `texture_budget_mb`).
     pub texture_budget_auto: bool,
     pub texture_budget_mb: u32,
@@ -1102,6 +1107,9 @@ pub struct Settings {
     /// presets) or the viewfinder (`camera::presets`); kept apart from
     /// `camera`, which "Reset" sets back.
     pub camera_shots: Vec<crate::camera::CameraShot>,
+    /// The user's own Rear, Front, Side and Shoulder views (`camera::SavedViews`,
+    /// issue #2755), kept by "Reset" like `camera_shots`.
+    pub camera_views: crate::camera::SavedViews,
     /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
     /// legacy lines).
     pub chat_style: ChatStyle,
@@ -1457,7 +1465,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 33;
+const SETTINGS_VERSION: u32 = 34;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1831,6 +1839,7 @@ impl Default for Settings {
             bloom_strength: BLOOM_STRENGTH,
             occlusion_culling: true,
             lod_factor: 2.0,
+            tree_lod_factor: 0.5,
             texture_budget_auto: true,
             texture_budget_mb: 1536,
             max_texture_resolution: MAX_TEXTURE_RESOLUTION,
@@ -2029,6 +2038,7 @@ impl Default for Settings {
             interface_colors: Default::default(),
             classic_controls: false,
             camera_shots: Vec::new(),
+            camera_views: Default::default(),
             plates_friends_only_full: false,
             plates_friend_tint: true,
             plates_hover_expand: true,
@@ -2511,6 +2521,7 @@ impl Settings {
         self.ground_feet_max_avatars = self.ground_feet_max_avatars.min(MAX_GROUND_FEET_AVATARS);
         self.camera = std::mem::take(&mut self.camera).sanitized();
         crate::camera::presets::sanitize(&mut self.camera_shots);
+        self.camera_views.sanitize();
         if self.settings_version < 5 {
             // new defaults: no vsync, no frame cap (the old "0 = screen rate,
             // 1 = unlimited" setting becomes a switch + value)
@@ -2683,6 +2694,12 @@ impl Settings {
             camera.disable_constraints = false;
             camera.ignore_sim_constraints = false;
         }
+        if self.settings_version < 34 {
+            // the levels now set the trees' detail: a profile still exactly
+            // on Potato or Deluxe takes theirs (0 and 1, the Legacy Viewer's
+            // Low and Ultra), any other keeps 0.5
+            crate::graphics_presets::upgrade_tree_detail(&mut self);
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -2758,6 +2775,12 @@ impl Settings {
             BLOOM_STRENGTH
         };
         self.lod_factor = self.lod_factor.clamp(0.5, 4.0);
+        // unclamped in the Legacy Viewer, whose Phototools go to 8
+        self.tree_lod_factor = if self.tree_lod_factor.is_finite() {
+            self.tree_lod_factor.clamp(0.0, 8.0)
+        } else {
+            0.5
+        };
         self.ui_scale = self.ui_scale.clamp(0.75, 2.0);
         self.mouse_sensitivity = self.mouse_sensitivity.clamp(0.1, 5.0);
         self.texture_budget_mb = self.texture_budget_mb.clamp(256, 32768);

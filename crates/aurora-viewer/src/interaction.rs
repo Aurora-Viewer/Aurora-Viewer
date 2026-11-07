@@ -426,6 +426,9 @@ impl Interactions {
                 folder,
                 sale_type: p.sale_type,
                 price,
+                // packAgentGroupAndCatID reads gAgent.getGroupID() when the
+                // purchase is sent: the active group now, nil for none
+                group_id: world.groups.active,
             }
         } else {
             let (default, buttons) = d.prices.as_ref()?;
@@ -872,6 +875,42 @@ mod tests {
             };
             assert!(
                 matches!(state.confirm(&w, None), Some(NetCommand::BuyObject { local_id: 971, price: 10, sale_type: ty, folder, .. }) if ty == sale_type && folder == expected_folder)
+            );
+        }
+    }
+
+    /// packAgentGroupAndCatID sends gAgent.getGroupID() when the purchase is
+    /// confirmed: the bought object takes the active group of that moment,
+    /// one chosen while the dialog was open included, and none without one
+    /// (#2793).
+    #[test]
+    fn a_purchase_carries_the_active_group_at_confirmation() {
+        let mut w = world();
+        let idx = w.objects.index_of_uuid(&crate::demo::action_id(974)).unwrap();
+        let land_group = Uuid::from_u128(0x2793);
+        for (active, expected) in [(Some(land_group), land_group), (None, Uuid::nil())] {
+            w.apply(aurora_net::NetEvent::ActiveGroup {
+                id: Uuid::from_u128(5),
+                name: "Before".into(),
+                title: String::new(),
+            });
+            let mut state = Interactions::default();
+            let t = target(&w, idx, &state.props).unwrap();
+            state.open(t);
+            state.on_properties(&[ObjectProps {
+                object_id: t.root,
+                sale_type: 2,
+                sale_price: 10,
+                ..Default::default()
+            }]);
+            w.apply(aurora_net::NetEvent::ActiveGroup {
+                id: active.unwrap_or_default(),
+                name: active.map(|_| "Land group".to_owned()).unwrap_or_default(),
+                title: String::new(),
+            });
+            assert!(
+                matches!(state.confirm(&w, None), Some(NetCommand::BuyObject { group_id, .. }) if group_id == expected),
+                "active group {active:?}"
             );
         }
     }
