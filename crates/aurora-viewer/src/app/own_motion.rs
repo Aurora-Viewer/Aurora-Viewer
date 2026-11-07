@@ -12,6 +12,13 @@ fn run_state(always_run: bool, temporary: bool, temprun_blocked: bool) -> bool {
     always_run || (temporary && !temprun_blocked)
 }
 
+/// Whether a change of @temprun must reach the simulator: a double-tap run
+/// it ended (clearTempRun), or the autopilot's run, which it masks or gives
+/// back without the autopilot changing.
+pub(super) fn temprun_resync(ended_double_tap: bool, changed: bool, autopilot_run: bool) -> bool {
+    ended_double_tap || (changed && autopilot_run)
+}
+
 impl App {
     /// The run state the simulator was told (SetAlwaysRun): "Always run",
     /// a double-tap run, or the run to a double-clicked point.
@@ -310,7 +317,7 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::run_state;
+    use super::{run_state, temprun_resync};
 
     #[test]
     fn temprun_stops_a_temporary_run_and_leaves_always_run_alone() {
@@ -319,5 +326,13 @@ mod tests {
         assert!(run_state(true, false, true), "@temprun does not stop Always run");
         assert!(run_state(true, true, true));
         assert!(!run_state(false, false, false));
+    }
+
+    #[test]
+    fn a_change_of_temprun_reaches_the_simulator_only_with_a_run_to_change() {
+        assert!(temprun_resync(true, true, false), "a double-tap run it ended");
+        assert!(temprun_resync(false, true, true), "an autopilot run it masks or gives back");
+        assert!(!temprun_resync(false, true, false), "nothing was running");
+        assert!(!temprun_resync(false, false, true), "no change");
     }
 }

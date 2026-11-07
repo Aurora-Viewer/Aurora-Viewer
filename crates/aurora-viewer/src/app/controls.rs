@@ -19,6 +19,7 @@ impl App {
             shots: &self.settings.camera_shots,
             flying: self.world.agent.flying,
             always_run: self.always_run,
+            run_locked: self.world.rlva.has("alwaysrun"),
             seated: self.world.agent.seated,
             mouselook: self.camera.mouselook(),
             object_view: self.object_view,
