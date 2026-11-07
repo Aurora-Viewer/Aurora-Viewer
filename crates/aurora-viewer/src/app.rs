@@ -1457,6 +1457,7 @@ impl App {
         });
         scene.draw_distance = settings.draw_distance;
         scene.lod_factor = settings.lod_factor;
+        scene.tree_lod_factor = settings.tree_lod_factor;
         let update_demo = ui::update::UpdateDemo::from_env(&settings);
         Ok(Box::new(App {
             area_search_ui: ui::area_search::AreaSearchUi::from_saved(&settings.area_search),
@@ -9562,6 +9563,7 @@ impl App {
                 pixel_angle: lod_height as f32 / self.camera.fov_y.max(1e-3),
             };
             self.scene.lod_factor = self.settings.lod_factor;
+            self.scene.tree_lod_factor = self.settings.tree_lod_factor;
             self.scene.textures.set_max_resolution(self.settings.max_texture_resolution);
             self.scene.max_avatars = self.settings.max_avatars as usize;
             if self.demo {

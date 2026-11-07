@@ -64,6 +64,7 @@ pub mod still_check;
 mod sync_check;
 mod sync_plan;
 mod sync_slow;
+mod tree_detail;
 mod world_overlays;
 pub use sync_plan::LodInfo;
 pub mod sync_sets;
@@ -1018,6 +1019,8 @@ pub struct Scene {
     last_sync: Option<Instant>,
     frame: u32,
     pub lod_factor: f32,
+    /// RenderTreeLODFactor (`tree_detail.rs`).
+    pub tree_lod_factor: f32,
     pub draw_distance: f32,
     last_origin: Option<(u32, u32)>,
     blend_tmp: Vec<blend_order::BlendEntry>,
@@ -1197,6 +1200,12 @@ pub fn lod_for(radius: f32, distance: f32, lod_factor: f32, fov_y: f32) -> u8 {
     } else {
         0
     }
+}
+
+/// The detail level of object `o`: a plant's (`plants::plant_lod`), else
+/// a volume's (`lod_for`).
+pub(super) fn object_lod(o: &Object, radius: f32, distance: f32, lod_factor: f32, tree_factor: f32, fov_y: f32) -> u8 {
+    plants::plant_lod(o, distance, tree_factor, lod_factor).unwrap_or_else(|| lod_for(radius, distance, lod_factor, fov_y))
 }
 
 /// Prim material code of light sources (material_codes.h LL_MCODE_LIGHT).
@@ -1583,6 +1592,7 @@ impl Scene {
             last_sync: None,
             frame: 0,
             lod_factor: 2.0,
+            tree_lod_factor: 0.5,
             draw_distance: 96.0,
             last_origin: None,
             blend_tmp: Vec::new(),
@@ -2384,9 +2394,16 @@ impl Scene {
                     .tree_species
                     .filter(|&s| (s as usize) < aurora_prim::tree::TREE_SPECIES.len())
                     .unwrap_or(0);
+                // (a trunk past the finest four: not drawn, tree_detail.rs)
+                if lod == plants::NOT_DRAWN {
+                    return None;
+                }
                 return Some(GeomKey::Tree { species, lod: lod.min(3) });
             }
             LL_PCODE_LEGACY_GRASS => {
+                if lod == plants::NOT_DRAWN {
+                    return None;
+                }
                 return Some(GeomKey::Grass {
                     id: o.full_id,
                     hash: plants::grass_hash(o),
@@ -2775,7 +2792,7 @@ impl Scene {
         // detail level checks: by events, or the slice of every object
         let events = !sync_sets::slice_mode();
         let dt = self.last_sync.replace(now).map_or(0.0, |last| (now - last).as_secs_f32());
-        let camera_moved = self.sets.lod.advance(view.eye, self.lod_factor, self.fov_y);
+        let camera_moved = self.sets.lod.advance(view.eye, self.lod_factor, self.fov_y, self.tree_lod_factor);
         if events {
             self.note_hud_changes(world);
         }
@@ -3210,7 +3227,7 @@ impl Scene {
         }
         self.anchors.placed(world, idx, m.anchor);
         if let Some((radius, distance)) = m.lod {
-            self.watch_lod(idx, m.anchor.is_some(), radius, distance);
+            self.watch_lod(world, idx, m.anchor.is_some(), radius, distance);
         }
         if m.clear_flags
             && let Some(o) = world.objects.get_mut_untracked(idx)
@@ -3225,11 +3242,15 @@ impl Scene {
     /// turn (sync_sets.rs); the others when the camera has travelled far
     /// enough to change their level (lod_watch.rs). An object whose turn
     /// came before that keeps the wait it has.
-    fn watch_lod(&mut self, idx: usize, anchored: bool, radius: f32, distance: f32) {
+    fn watch_lod(&mut self, world: &World, idx: usize, anchored: bool, radius: f32, distance: f32) {
         if anchored || self.sets.follows_motion(idx) {
             self.sets.lod.forget(idx);
         } else if !(self.sets.only_checked(idx) && self.sets.lod.is_watched(idx)) {
-            let slack = lod_watch::lod_slack(radius, distance, self.lod_factor, self.fov_y);
+            let plant = world
+                .objects
+                .get(idx)
+                .and_then(|o| plants::plant_slack(o, distance, self.tree_lod_factor, self.lod_factor));
+            let slack = plant.unwrap_or_else(|| lod_watch::lod_slack(radius, distance, self.lod_factor, self.fov_y));
             self.sets.lod.watch(idx, slack);
         }
     }
@@ -3440,14 +3461,31 @@ impl Scene {
             &self.mesh_lod_overrides,
             o,
             hud,
-            lod_for(lod_radius, lod_dist, self.lod_factor, self.fov_y),
+            object_lod(o, lod_radius, lod_dist, self.lod_factor, self.tree_lod_factor, self.fov_y),
         );
         // (whatever comes of this sync; what the GPU places leaves below)
-        self.watch_lod(idx, false, lod_radius, lod_dist);
+        self.watch_lod(world, idx, false, lod_radius, lod_dist);
         let Some(o) = world.objects.get(idx) else {
             return;
         };
         let wanted = Self::object_geom_key(o, lod);
+        if lod == plants::NOT_DRAWN {
+            // a plant the trees' detail stops (tree_detail.rs): its drawing
+            // goes, as for a parcel that hides it, but it stays watched so
+            // that a higher factor brings it back
+            if let Some(mut g) = self.gpu.get_mut(idx).map(std::mem::take) {
+                self.release_obj(renderer, idx, &mut g);
+            }
+            self.anchors.forget(idx);
+            self.pick.remove(idx);
+            self.list_index.remove(idx);
+            if let Some(object) = world.objects.get_mut_untracked(idx) {
+                object.render.needs_records = false;
+                object.shape_dirty = false;
+                object.material_dirty = false;
+            }
+            return;
+        }
         let wearer = Self::wearer_avatar(world, idx);
         let owner_avatar = wearer.map(|(_, i)| i);
         let first_person_hidden = Self::attachment_first_person_hidden(world, idx);
