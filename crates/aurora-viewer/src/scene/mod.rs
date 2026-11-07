@@ -3983,6 +3983,11 @@ impl Scene {
                         g.tex_ids.push(generated);
                         aux_tex[0] = generated;
                         rec.tex[1] = self.textures.acquire(renderer, generated, TexSource::Asset);
+                        // A texture-entry bump follows the diffuse mapping,
+                        // even when a material with no normal map supplies a
+                        // separate normal transform.
+                        rec.mat_uv = rec.uv_st;
+                        rec.legacy[0] = rec.params[0];
                     }
                 }
             }
