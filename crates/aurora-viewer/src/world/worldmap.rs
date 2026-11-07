@@ -926,7 +926,7 @@ impl WorldMap {
             .filter(|(_, i)| i.name.to_lowercase().contains(s.as_str()))
             .map(|(k, i)| (*k, i))
             .collect();
-        v.sort_by_key(|a| a.1.name.to_lowercase());
+        v.sort_by_key(|a| crate::natural_order::key(&a.1.name));
         v
     }
 
