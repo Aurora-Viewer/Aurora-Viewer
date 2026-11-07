@@ -28,6 +28,12 @@ impl App {
             None => {}
         }
         self.sync_pose_stand();
+        // stood up from outside (the appearance editor, a script, a teleport):
+        // the checkbox follows the avatar, as the saved setting does
+        if self.pose_stand.lock_lost(self.world.agent.is_sitting()) {
+            log::info!("pose stand: the ground lock was lost, lock turned off");
+            self.settings.pose_stand.lock = false;
+        }
         let effects = self
             .pose_stand
             .late_release(self.world.agent.is_sitting(), std::time::Instant::now());

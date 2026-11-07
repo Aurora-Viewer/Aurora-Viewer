@@ -70,10 +70,7 @@ impl App {
     /// animation turned off (an Aurora choice), our avatar keeps its pose.
     pub(super) fn update_avatar_health(&mut self) {
         let editing = (self.shape_ui.open || self.wearable_ui.open) && !self.world.agent_id.is_nil() && self.settings.customize_animation;
-        // the pose stand's ground lock keeps the avatar down meanwhile; closing
-        // the stand stands it up (an Aurora combination, the Legacy Viewer
-        // has no such guard)
-        if editing && !self.avatar_health.customizing && !self.pose_stand.holds_avatar() {
+        if editing && !self.avatar_health.customizing {
             // changeCameraToCustomizeAvatar: "force stand up" first
             // (LLAgent::standUp, AGENT_CONTROL_STAND_UP)
             self.send(NetCommand::OneShotControl(aurora_net::control::STAND_UP));

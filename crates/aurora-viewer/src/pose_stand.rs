@@ -134,10 +134,36 @@ pub struct Stand {
 }
 
 impl Stand {
-    /// The lock holds the avatar on the ground: other features must not
-    /// stand it up meanwhile (the stand reconciles on closing).
-    pub fn holds_avatar(&self) -> bool {
+    /// The lock is on: we sat down for it and have not let go.
+    #[cfg(test)]
+    fn holds_lock(&self) -> bool {
         self.open && self.locked
+    }
+
+    /// Each frame while the stand is open: whether the ground lock was lost
+    /// from outside. The lock sat us down and the server confirmed it; if we
+    /// no longer sit (the shape editor's stand-up, a script unsit, the user
+    /// standing, a teleport), the lock is dropped and this returns true, so
+    /// that the checkbox and the saved setting follow what the avatar does.
+    /// The Legacy Viewer stands the avatar up the same way and leaves its
+    /// checkbox ticked; following the real state is an Aurora clarity fix.
+    /// The stand's own moves never trigger it: `set_lock` clears the
+    /// confirmation, and `close` releases the lock itself. Nothing sits the
+    /// avatar again.
+    pub fn lock_lost(&mut self, sitting: bool) -> bool {
+        if !self.open || !self.locked {
+            return false;
+        }
+        if sitting {
+            self.sit_confirmed = true;
+            return false;
+        }
+        if self.sit_confirmed {
+            self.locked = false;
+            self.sit_confirmed = false;
+            return true;
+        }
+        false
     }
 
     /// Each frame after a closing: the ground-sit asked by the lock may be
@@ -246,6 +272,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn an_outside_stand_up_drops_the_lock_but_the_stands_own_release_does_not() {
+        let lock = Settings {
+            lock: true,
+            last_pose: String::new(),
+        };
+        let mut stand = Stand::default();
+        stand.open(Facts::default(), &lock);
+        // the ground-sit is not confirmed yet: standing is no loss
+        assert!(!stand.lock_lost(false));
+        assert!(stand.holds_lock());
+        assert!(!stand.lock_lost(true));
+        // the editor, a script or the user stands us up
+        assert!(stand.lock_lost(false));
+        assert!(!stand.holds_lock());
+        assert!(!stand.lock_lost(false), "reported once");
+
+        // the stand's own release: unticking sits no more, nothing to report
+        let mut stand = Stand::default();
+        stand.open(Facts::default(), &lock);
+        stand.lock_lost(true);
+        stand.lock_changed(false);
+        assert!(!stand.lock_lost(false));
+        // locking again waits for its own confirmation
+        stand.lock_changed(true);
+        assert!(!stand.lock_lost(false));
+        assert!(stand.holds_lock());
+
+        // closing releases it without a report
+        stand.lock_lost(true);
+        stand.close(true, false);
+        assert!(!stand.lock_lost(false));
+    }
+
+    #[test]
     fn settings_default_like_the_legacy_viewer() {
         let s = Settings::default();
         assert!(!s.lock, "FSPoseStandLock is off");
@@ -339,11 +399,11 @@ mod tests {
         };
         let mut stand = Stand::default();
         stand.open(Facts::default(), &lock);
-        assert!(stand.holds_avatar());
+        assert!(stand.holds_lock());
         assert!(stand.late_release(false, Instant::now()).is_empty());
         // closed before the server seated us
         assert!(!stand.close(false, false).contains(&Effect::StandUp));
-        assert!(!stand.holds_avatar());
+        assert!(!stand.holds_lock());
         let now = Instant::now();
         assert!(stand.late_release(false, now).is_empty(), "not seated yet");
         assert_eq!(stand.late_release(true, now), vec![Effect::StandUp]);
