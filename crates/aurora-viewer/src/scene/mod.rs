@@ -3030,7 +3030,9 @@ impl Scene {
         let mut ids = std::mem::take(&mut self.reslotted_tmp);
         self.textures.take_reslotted(&mut ids);
         if !ids.is_empty() {
+            let t0 = Instant::now();
             let wanted: std::collections::HashSet<Uuid> = ids.iter().copied().collect();
+            let mut rebuilt = 0;
             for (idx, g) in self.gpu.iter_mut().enumerate() {
                 if !g.tex_ids.iter().any(|t| wanted.contains(t)) {
                     continue;
@@ -3045,7 +3047,14 @@ impl Scene {
                     g.tex_generation = u64::MAX;
                 }
                 self.sets.dirty.insert(idx);
+                rebuilt += 1;
             }
+            log::info!(
+                "texture table: {rebuilt} objects drawing {} textures given a slot again are built again ({} objects looked at in {:.2} ms)",
+                wanted.len(),
+                self.gpu.len(),
+                t0.elapsed().as_secs_f64() * 1000.0
+            );
             ids.clear();
         }
         self.reslotted_tmp = ids;
