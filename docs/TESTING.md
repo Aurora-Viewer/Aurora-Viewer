@@ -8342,7 +8342,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   opened at frame 600 (capture at frame 640). `open`: by date with friends
   first (the defaults): the demo friend first, then Nova Example two hours
   ago with the violet inbox mark of unread offline messages, a group, a
-  resident, a conference and older entries. `name`: sorted by name.
+  resident, a conference and older entries; Loup Example, blocked in the
+  demo, stays hidden until the view menu's Show blocked. `name`: sorted by
+  name.
   `filter`: "no" typed in the filter, the matching letters in violet.
   `off`: logging turned off, the entries still listed. `empty`: logging on
   and nothing from before: only the demo's open group chat, logged as it
