@@ -33,7 +33,11 @@
 //! corner), `immersivetags` (the same, the name tags shown, not saved),
 //! `immersivehuds` (the same, the HUDs hidden, not saved). The chat bar: `autohide` (shown only while it is used, with
 //! either bars), `chatstart` (autohidden, Enter pressed at frame 300 on a
-//! draft: the bar back). The location field's suggestions: `locations`
+//! draft: the bar back), `window` (never shown, Conversations window only),
+//! `windowenter` / `windowmin` / `windowreopen` (the same, Enter pressed at
+//! frame 300 with the Conversations window closed / minimized / closed
+//! after being placed: it comes back on the Nearby tab, the keyboard in
+//! its field). The location field's suggestions: `locations`
 //! (the place menu opened at frame 300, "Aur" typed in its destination
 //! field: the landmarks and places it names; with `legacy`, typed in the
 //! location field).
@@ -109,13 +113,40 @@ pub struct DemoBars {
     pub immersive_tags: bool,
     /// Immersive mode with the HUDs hidden.
     pub immersive_no_huds: bool,
-    /// The chat bar autohidden (#1009), whatever is saved.
-    pub autohide: bool,
+    /// When the chat bar shows, whatever is saved: `autohide` (#1009),
+    /// `window` (never, #2696).
+    pub chat_bar: Option<crate::settings::ChatBar>,
     /// Autohidden, Enter pressed at frame 300 on a draft: the bar back.
     pub chat_start: bool,
+    /// Conversations window only, Enter pressed at frame 300 with the
+    /// window standing as said.
+    pub window_enter: Option<WindowEnter>,
     /// "Aur" typed in the place menu's destination field (the location
     /// field with `legacy`) at frame 300: its suggestions shown.
     pub locations: bool,
+}
+
+/// How the Conversations window stands when the `window…` scenarios press
+/// Enter at frame 300 (#2696).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowEnter {
+    /// Never opened: Enter opens it on the Nearby tab.
+    Closed,
+    /// Opened at frame 100 on Contacts, minimized at frame 200: Enter
+    /// expands it on the Nearby tab.
+    Minimized,
+    /// Opened at frame 100 on Contacts, at a place and size of its own,
+    /// closed at frame 200: Enter brings it back there, on the Nearby tab.
+    Reopened,
+}
+
+impl DemoBars {
+    /// The frame's step of a `window…` scenario: 100 open, 200 put away,
+    /// 300 Enter.
+    pub fn window_enter_at(&self, frame: u64) -> Option<(WindowEnter, u64)> {
+        let mode = self.window_enter?;
+        matches!(frame, 100 | 200 | 300).then_some((mode, frame))
+    }
 }
 
 /// How the demo opens Performance from the system island.
@@ -215,10 +246,19 @@ pub fn parse(value: &str) -> DemoBars {
                 d.access = Some(crate::settings::FavoritesAccess::Row);
                 d.row_drag = true;
             }
-            "autohide" => d.autohide = true,
+            "autohide" => d.chat_bar = Some(crate::settings::ChatBar::WhenTyping),
             "chatstart" => {
-                d.autohide = true;
+                d.chat_bar = Some(crate::settings::ChatBar::WhenTyping);
                 d.chat_start = true;
+            }
+            "window" | "windowenter" | "windowmin" | "windowreopen" => {
+                d.chat_bar = Some(crate::settings::ChatBar::ConversationsOnly);
+                d.window_enter = match word {
+                    "windowenter" => Some(WindowEnter::Closed),
+                    "windowmin" => Some(WindowEnter::Minimized),
+                    "windowreopen" => Some(WindowEnter::Reopened),
+                    _ => None,
+                };
             }
             _ => {}
         }
@@ -267,6 +307,16 @@ mod tests {
         assert_eq!(clock.clock_zone, Some(crate::settings::ClockZone::Local));
         assert_eq!(clock.clock_seconds, Some(false));
         assert_eq!(parse("clock12").clock_format, Some(crate::settings::ClockFormat::H12));
+        use crate::settings::ChatBar;
+        assert_eq!(parse("autohide").chat_bar, Some(ChatBar::WhenTyping));
+        let window = parse("legacy,window");
+        assert!(window.chat_bar == Some(ChatBar::ConversationsOnly) && window.window_enter.is_none());
+        let reopen = parse("windowreopen");
+        assert_eq!(reopen.chat_bar, Some(ChatBar::ConversationsOnly));
+        assert_eq!(reopen.window_enter_at(200), Some((WindowEnter::Reopened, 200)));
+        assert_eq!(reopen.window_enter_at(250), None);
+        assert_eq!(parse("windowmin").window_enter, Some(WindowEnter::Minimized));
+        assert_eq!(parse("windowenter").window_enter, Some(WindowEnter::Closed));
         let peek = parse("peekleft");
         assert!(peek.peek_left && peek.hidden == Some(false) && peek.classic == Some(false));
         assert_eq!(

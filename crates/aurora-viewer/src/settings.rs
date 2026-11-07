@@ -54,6 +54,27 @@ pub enum ChatThumbnails {
     TopRight,
 }
 
+/// The nearby chat bar (Preferences › Chat, #2696): at the bottom always,
+/// only while it is used (the Legacy Viewer's `AutohideChatBar`, #1009), or
+/// never, the Nearby tab of the Conversations window taking its place
+/// (Aurora's: there Enter always shows the bar, `start_chat` in
+/// indra/newview/llviewerinput.cpp).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ChatBar {
+    #[default]
+    Always,
+    WhenTyping,
+    ConversationsOnly,
+}
+
+impl ChatBar {
+    /// The bar is not always on screen: the default dock keeps the
+    /// Conversations button.
+    pub fn hides(self) -> bool {
+        self != ChatBar::Always
+    }
+}
+
 /// Where the islands show the favourites (Preferences › Interface,
 /// "Favourites access"): a button of the place island and its menu (the
 /// default), a row of pills under the islands, or a button of the dock and
@@ -732,6 +753,14 @@ pub struct Settings {
     /// CloseChatOnReturn off). On by default (human choice of 2026-10-16);
     /// off, the bar lets go after sending.
     pub chat_keep_focus: bool,
+    /// Aurora extension, Enter toggles typing: Enter on an empty field gives
+    /// the keyboard back to the world in every conversation too (IMs and
+    /// group chats), not only in the nearby chat. Off by default.
+    pub chat_enter_toggles: bool,
+    /// Aurora extension, Enter returns to the last chat field used: from the
+    /// world, Enter focuses the conversation last talked in when its window
+    /// is open, instead of always the chat bar. Off by default.
+    pub chat_enter_last_field: bool,
     /// The nearby chat fields complete a gesture's trigger after `/`, with
     /// the list of the matching ones (FSChatbarGestureAutoCompleteEnable, on).
     pub chat_gesture_autocomplete: bool,
@@ -745,11 +774,15 @@ pub struct Settings {
     /// `@` in a chat field lists the residents of the conversation to mention
     /// (FSUseChatMentionAutoComplete, on).
     pub chat_mention_autocomplete: bool,
-    /// The local chat bar (the chat island) shows only while it is used:
-    /// Enter or a letter key brings it (#1009). The Legacy Viewer's
-    /// `AutohideChatBar`, off by default; with the islands the default dock
-    /// then keeps the Conversations button.
-    pub autohide_chat_bar: bool,
+    /// When the local chat bar (the chat island) shows: always, only while
+    /// it is used (#1009), or never, the Conversations window's Nearby tab
+    /// taking Enter (#2696). With the islands, the default dock keeps the
+    /// Conversations button while the bar hides.
+    pub chat_bar: ChatBar,
+    /// The former switch "Hide the chat bar when not in use", read once:
+    /// on is `ChatBar::WhenTyping`.
+    #[serde(rename = "autohide_chat_bar", skip_serializing)]
+    pub(crate) former_autohide_chat_bar: Option<bool>,
     /// Show Contacts in Conversations (Preferences > Chat, on by default as
     /// the Legacy Viewer's always-present entry; it can be hidden there).
     pub show_contacts_tab: bool,
@@ -1451,7 +1484,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 33;
+const SETTINGS_VERSION: u32 = 34;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1902,11 +1935,14 @@ impl Default for Settings {
             compact_automated_chat: false,
             compact_im_system_lines: false,
             chat_keep_focus: true,
+            chat_enter_toggles: false,
+            chat_enter_last_field: false,
             chat_gesture_autocomplete: true,
             chat_name_prediction: true,
             colon_emote: false,
             chat_mention_autocomplete: true,
-            autohide_chat_bar: false,
+            chat_bar: ChatBar::Always,
+            former_autohide_chat_bar: None,
             show_contacts_tab: true,
             conversations_own_windows: false,
             send_typing_state: true,
@@ -2674,6 +2710,18 @@ impl Settings {
             self.camera_limits_restored = camera.disable_constraints || camera.ignore_sim_constraints;
             camera.disable_constraints = false;
             camera.ignore_sim_constraints = false;
+        }
+        // "Hide the chat bar when not in use" became the "Chat bar" choice:
+        // on is "Shown when typing", off (or absent) "Always shown". Only
+        // earlier files: an older build that saved over a newer file wrote
+        // the switch back beside the choice, which stays
+        let autohide = self.former_autohide_chat_bar.take();
+        if self.settings_version < 34 {
+            self.chat_bar = if autohide == Some(true) {
+                ChatBar::WhenTyping
+            } else {
+                ChatBar::Always
+            };
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -3747,6 +3795,42 @@ mod tests {
             ..Settings::default()
         };
         assert!(!chosen.sanitized().chat_keep_focus);
+    }
+
+    /// "Hide the chat bar when not in use" became the "Chat bar" choice
+    /// (#2696): on is "Shown when typing", anything else "Always shown",
+    /// once for earlier files; a choice made since stays.
+    #[test]
+    fn chat_bar_is_always_shown_by_default_and_once_for_earlier_files() {
+        assert_eq!(Settings::default().sanitized().chat_bar, ChatBar::Always);
+        let read = |file: serde_json::Value| serde_json::from_value::<Settings>(file).expect("read settings").sanitized();
+        for version in [0, 16, 33] {
+            let on = read(serde_json::json!({ "settings_version": version, "autohide_chat_bar": true }));
+            assert_eq!(on.chat_bar, ChatBar::WhenTyping, "version {version}");
+            assert_eq!(on.settings_version, SETTINGS_VERSION);
+            let off = read(serde_json::json!({ "settings_version": version, "autohide_chat_bar": false }));
+            assert_eq!(off.chat_bar, ChatBar::Always, "version {version}");
+            let absent = read(serde_json::json!({ "settings_version": version }));
+            assert_eq!(absent.chat_bar, ChatBar::Always, "version {version}");
+        }
+        // saved: the choice, without the former switch
+        let saved =
+            serde_json::to_value(read(serde_json::json!({ "settings_version": 33, "autohide_chat_bar": true }))).expect("serialize");
+        assert_eq!(saved["chat_bar"], serde_json::json!("WhenTyping"));
+        assert!(saved.get("autohide_chat_bar").is_none());
+        // chosen since: kept, even with the switch an older build wrote back
+        for autohide in [None, Some(false), Some(true)] {
+            let mut file = serde_json::json!({ "settings_version": SETTINGS_VERSION, "chat_bar": "ConversationsOnly" });
+            if let Some(on) = autohide {
+                file["autohide_chat_bar"] = serde_json::json!(on);
+            }
+            assert_eq!(read(file).chat_bar, ChatBar::ConversationsOnly, "{autohide:?}");
+        }
+        let again = Settings {
+            chat_bar: ChatBar::Always,
+            ..Settings::default()
+        };
+        assert_eq!(again.sanitized().chat_bar, ChatBar::Always);
     }
 
     /// ArrowKeysAlwaysMove is off in the Legacy Viewer: the arrows move the
