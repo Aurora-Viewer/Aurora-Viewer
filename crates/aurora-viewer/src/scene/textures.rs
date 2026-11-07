@@ -1429,11 +1429,11 @@ impl TextureStreamer {
         };
         let (width, height) = (image.size[0], image.size[1]);
         let rgba = image.rgba.to_vec();
-        // Generated bump normals have opaque alpha so a material's gloss is
-        // independent of the source height map.
+        // The normal texture's alpha carries the source height for legacy
+        // gloss modulation. It does not make the face transparent.
         let alpha = AlphaKind::Opaque;
         let has_alpha = false;
-        let levels = mips_for(width, height, rgba, 16, alpha);
+        let levels = build_mips(width, height, rgba, 16);
         let mips: Vec<MipLevel> = levels
             .iter()
             .map(|(width, height, data)| MipLevel {
@@ -1806,8 +1806,8 @@ impl TextureStreamer {
             && let Some(image) = self.local_images.get(&id).cloned()
         {
             let rgba = image.rgba.to_vec();
-            let alpha = classify_alpha(&rgba);
-            let levels = mips_for(image.size[0], image.size[1], rgba, 16, alpha);
+            let alpha = AlphaKind::Opaque;
+            let levels = build_mips(image.size[0], image.size[1], rgba, 16);
             let mips: Vec<MipLevel> = levels
                 .iter()
                 .map(|(width, height, data)| MipLevel {
@@ -1819,7 +1819,7 @@ impl TextureStreamer {
             if let Some(slot) = renderer.create_texture(&mips) {
                 set_slot_alpha(&mut self.alpha_by_slot, &mut self.generation, &mut self.alpha_changes, slot, alpha);
                 self.alpha_channel_by_slot.resize(self.alpha_by_slot.len(), false);
-                self.alpha_channel_by_slot[slot as usize] = true;
+                self.alpha_channel_by_slot[slot as usize] = false;
                 self.local_slots.insert(id, slot);
                 if let Some(generated) = self.legacy_bump_slots.get_mut(&id) {
                     generated.refs = generated.refs.saturating_add(1);
@@ -3843,10 +3843,7 @@ fn legacy_bump_image(source: Arc<aurora_render::preview::Image>, mode: u8) -> Op
     // heights use byte deltas directly. Keep its default horizontal scale 64.
     let height_scale = if mode <= 2 { 512.0 / 255.0 } else { 1.0 };
     let normals = super::legacy_bump::normal_from_height_scaled(width as usize, height as usize, &heights, 64.0, height_scale)?;
-    let rgba = normals
-        .into_iter()
-        .flat_map(|[r, g, b, _height]| [r, g, b, 255])
-        .collect::<Vec<_>>();
+    let rgba = normals.into_iter().flatten().collect::<Vec<_>>();
     Some(Arc::new(aurora_render::preview::Image {
         size: [width, height],
         rgba: rgba.into(),
@@ -4103,6 +4100,11 @@ mod tests {
         )
         .expect("generated normal");
         assert!(normal.rgba.as_chunks::<4>().0.iter().any(|p| p[0] != 128 || p[1] != 128));
+        assert_eq!(
+            normal.rgba.as_chunks::<4>().0.iter().map(|p| p[3]).collect::<Vec<_>>(),
+            mono,
+            "the generated normal retains height in alpha for gloss modulation"
+        );
     }
 
     #[test]
