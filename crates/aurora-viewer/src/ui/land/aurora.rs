@@ -373,6 +373,8 @@ pub(super) fn show(
     has_xp: bool,
 ) -> bool {
     let mut streams_changed = false;
+    let page_before = s.page;
+    let view_as_visitor_before = s.view_as_visitor;
     let role = manager_role(v);
     if role.is_none() {
         s.view_as_visitor = false;
@@ -390,6 +392,7 @@ pub(super) fn show(
         accent: false,
     });
     sheet::page_tabs(ui, p, &tabs, &mut s.page, role, &mut s.view_as_visitor);
+    s.commit_name_for_transition(page_before, view_as_visitor_before, world);
     ui.add_space(8.0);
     let Some(parcel) = v.parcel.clone() else {
         super::no_selection(ui, p);

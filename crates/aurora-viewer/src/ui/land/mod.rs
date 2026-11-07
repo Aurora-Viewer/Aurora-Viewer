@@ -137,6 +137,12 @@ impl Draft {
         }
     }
 
+    fn reset(&mut self, server: &str) {
+        self.text = server.to_owned();
+        self.base = server.to_owned();
+        self.editing = None;
+    }
+
     /// Track the widget's focus; Some(text) when a change is committed.
     fn after(&mut self, r: &egui::Response) -> Option<String> {
         // The name appears in both the header and Manage. An unfocused copy
@@ -146,11 +152,21 @@ impl Draft {
         } else if self.editing.is_some_and(|id| !r.ctx.memory(|m| m.has_focus(id))) {
             self.editing = None;
         }
-        if r.lost_focus() && self.text != self.base {
-            self.base = self.text.clone();
-            return Some(self.text.clone());
+        if r.lost_focus() {
+            return self.take_pending();
         }
         None
+    }
+
+    /// Commits an edit when its widget is about to disappear, even if egui
+    /// cannot report lost focus from a widget that is no longer rendered.
+    fn take_pending(&mut self) -> Option<String> {
+        self.editing = None;
+        if self.text == self.base {
+            return None;
+        }
+        self.base.clone_from(&self.text);
+        Some(self.text.clone())
     }
 }
 
@@ -274,6 +290,7 @@ pub struct LandUi {
     covenant_open: bool,
     was_open: bool,
     name: Draft,
+    name_target: Option<(RegionHandle, i32)>,
     desc: Draft,
     clean_time: Draft,
     media_desc: Draft,
@@ -321,6 +338,40 @@ pub struct LandUi {
 }
 
 impl LandUi {
+    fn sync_name_target(&mut self, handle: RegionHandle, parcel: Option<&ParcelInfo>) {
+        let target = parcel.map(|parcel| (handle, parcel.local_id));
+        if self.name_target != target {
+            self.name.reset(parcel.map_or("", |parcel| parcel.name.as_str()));
+            self.name_target = target;
+        } else if let Some(parcel) = parcel {
+            self.name.sync(&parcel.name);
+        }
+    }
+
+    fn commit_name(&mut self, world: &mut World) {
+        let selected = world.land.sel.as_ref().and_then(|selection| {
+            selection
+                .parcel
+                .as_deref()
+                .map(|parcel| ((selection.handle, parcel.local_id), parcel.name.as_str()))
+        });
+        let target = selected.map(|(target, _)| target);
+        if target != self.name_target {
+            self.name.reset(selected.map_or("", |(_, name)| name));
+            self.name_target = target;
+            return;
+        }
+        if let Some(name) = self.name.take_pending() {
+            world.land.update(|u| u.name = name);
+        }
+    }
+
+    fn commit_name_for_transition(&mut self, page: Page, view_as_visitor: bool, world: &mut World) {
+        if page != self.page || view_as_visitor != self.view_as_visitor {
+            self.commit_name(world);
+        }
+    }
+
     /// Open on the parcel at a global position (right-click on land, mini-map).
     pub fn select_at_global(world: &mut World, gx: f64, gy: f64) {
         if let Some((h, pos, size)) = Self::region_at_global(world, gx, gy) {
@@ -506,6 +557,7 @@ impl LandUi {
         let mut streams_changed = false;
         if !*open {
             if self.was_open {
+                self.commit_name(world);
                 // onVisibilityChanged: the selection is dropped with the
                 // floater, and the objects "Show" highlighted (unhighlightAll);
                 // the pass question keeps it until answered (EXT-6464)
@@ -547,11 +599,10 @@ impl LandUi {
         }
         self.demo = demo;
         let view = self.view(world);
-        if let Some(parcel) = &view.parcel {
-            // Once before either editor: committing the header must not be
-            // undone by Manage syncing the same frame's older snapshot.
-            self.name.sync(&parcel.name);
-        }
+        // Once before either editor: committing the header must not be
+        // undone by Manage syncing the same frame's older snapshot. A new
+        // parcel target also discards the previous parcel's unfinished draft.
+        self.sync_name_target(view.handle, view.parcel.as_deref());
         let screen = ctx.content_rect();
         // FIRE-17280: no experiences tab where the region has none
         let has_xp = demo
@@ -608,6 +659,11 @@ impl LandUi {
                 });
             });
         });
+        if !*open {
+            // The close button clears `open` after drawing the body, so flush
+            // here before the next frame takes the closed-state early return.
+            self.commit_name(world);
+        }
         dialogs::show(ctx, p, self, &view, world);
         scripts::show(ctx, p, &mut self.scripts, &view, world);
         if let Some(ids) = self.picker.show(ctx, p, world) {
@@ -1045,6 +1101,48 @@ fn money(v: i32) -> String {
 mod tests {
     use super::*;
 
+    const LAND_HANDLE: RegionHandle = 7;
+
+    fn selected_world() -> World {
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.land.select_at(LAND_HANDLE, glam::Vec3::ZERO, (256.0, 256.0));
+        let parcel = Arc::new(ParcelInfo {
+            local_id: 3,
+            name: "Old name".into(),
+            owner_id: world.agent_id,
+            ..Default::default()
+        });
+        world.land.apply(
+            aurora_net::land::LandEvent::Selected {
+                handle: LAND_HANDLE,
+                info: parcel,
+                result: aurora_net::land::PARCEL_RESULT_SUCCESS,
+            },
+            &crate::world::land::SelectionContext {
+                agent_region: Some(LAND_HANDLE),
+                region_id: Uuid::nil(),
+            },
+        );
+        world.land.take_commands();
+        world
+    }
+
+    fn type_name(ctx: &egui::Context, draft: &mut Draft) {
+        let (responses, _) = name_frame(ctx, draft, "Old name", vec![], true);
+        ctx.memory_mut(|m| m.request_focus(responses[0].id));
+        name_frame(ctx, draft, "Old name", vec![], true);
+        assert!(draft.editing.is_some());
+        // Model the edited field's value after the user's text entry. The
+        // next frame changes context before that response can report focus loss.
+        draft.text = "New name".into();
+        assert_eq!(draft.text, "New name");
+    }
+
+    fn sync_name_target(ui: &mut LandUi, world: &World) {
+        let parcel = world.land.sel.as_ref().and_then(|sel| sel.parcel.as_deref());
+        ui.sync_name_target(LAND_HANDLE, parcel);
+    }
+
     fn name_frame(
         ctx: &egui::Context,
         draft: &mut Draft,
@@ -1121,6 +1219,89 @@ mod tests {
             assert!(commits.is_empty());
             assert_eq!(draft.text, "New name");
         }
+    }
+
+    #[test]
+    fn parcel_rename_commits_before_page_or_visitor_preview_changes() {
+        for (page, visitor) in [(Page::Manage, false), (Page::Overview, true)] {
+            let ctx = egui::Context::default();
+            let mut ui = LandUi::default();
+            let mut world = selected_world();
+            sync_name_target(&mut ui, &world);
+            type_name(&ctx, &mut ui.name);
+
+            ui.page = page;
+            ui.view_as_visitor = visitor;
+            ui.commit_name_for_transition(Page::Overview, false, &mut world);
+
+            assert_eq!(
+                world.land.sel.as_ref().and_then(|s| s.parcel.as_ref()).map(|p| p.name.as_str()),
+                Some("New name")
+            );
+            assert!(world.land.take_commands().iter().any(|cmd| matches!(
+                cmd,
+                aurora_net::NetCommand::Land(aurora_net::land::LandCommand::Update { update, .. }) if update.name == "New name"
+            )));
+        }
+    }
+
+    #[test]
+    fn parcel_rename_commits_when_the_about_land_window_closes() {
+        let ctx = egui::Context::default();
+        let mut ui = LandUi::default();
+        let mut world = selected_world();
+        sync_name_target(&mut ui, &world);
+        type_name(&ctx, &mut ui.name);
+
+        ui.commit_name(&mut world);
+        assert_eq!(
+            world.land.sel.as_ref().and_then(|s| s.parcel.as_ref()).map(|p| p.name.as_str()),
+            Some("New name")
+        );
+        assert!(world.land.take_commands().iter().any(|cmd| matches!(
+            cmd,
+            aurora_net::NetCommand::Land(aurora_net::land::LandCommand::Update { update, .. }) if update.name == "New name"
+        )));
+    }
+
+    #[test]
+    fn parcel_rename_draft_never_moves_to_a_new_selection() {
+        let ctx = egui::Context::default();
+        let mut ui = LandUi::default();
+        let mut world = selected_world();
+        sync_name_target(&mut ui, &world);
+        type_name(&ctx, &mut ui.name);
+
+        world.land.apply(
+            aurora_net::land::LandEvent::Selected {
+                handle: LAND_HANDLE,
+                info: Arc::new(ParcelInfo {
+                    local_id: 4,
+                    name: "Another parcel".into(),
+                    owner_id: world.agent_id,
+                    ..Default::default()
+                }),
+                result: aurora_net::land::PARCEL_RESULT_SUCCESS,
+            },
+            &crate::world::land::SelectionContext {
+                agent_region: Some(LAND_HANDLE),
+                region_id: Uuid::nil(),
+            },
+        );
+        ui.commit_name(&mut world);
+
+        assert_eq!(ui.name.text, "Another parcel");
+        assert_eq!(
+            world.land.sel.as_ref().and_then(|s| s.parcel.as_ref()).map(|p| p.name.as_str()),
+            Some("Another parcel")
+        );
+        assert!(
+            !world
+                .land
+                .take_commands()
+                .iter()
+                .any(|cmd| matches!(cmd, aurora_net::NetCommand::Land(aurora_net::land::LandCommand::Update { .. })))
+        );
     }
 
     #[test]
