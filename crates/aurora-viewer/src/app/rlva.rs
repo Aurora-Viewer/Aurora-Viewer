@@ -147,8 +147,11 @@ impl App {
         if self.world.rlva.has("alwaysrun") && self.always_run {
             self.set_always_run(false);
         }
-        if self.world.rlva.has("temprun") {
-            self.temp_run = None;
+        if self.world.rlva.has("temprun") && self.temp_run.take().is_some() && !self.always_run && !self.joystick.running {
+            self.send(aurora_net::NetCommand::SetRun {
+                running: false,
+                source: aurora_net::RunSource::Temporary,
+            });
         }
         let invalid: Vec<_> = self
             .build

@@ -4385,7 +4385,7 @@ impl App {
     /// runs while held (agent_handle_doubletap_run). The right button of
     /// mouse steering counts as a forward key, so a double right click runs.
     fn walk_tap(&mut self, group: u8, pressed: bool) {
-        if pressed && self.in_world() {
+        if pressed && self.in_world() && !self.world.rlva.has("temprun") {
             if self.temp_run.is_none()
                 && let Some((last, at)) = self.last_tap
                 && last == group
@@ -4393,7 +4393,10 @@ impl App {
             {
                 self.temp_run = Some(group);
                 if !self.always_run {
-                    self.send(NetCommand::SetAlwaysRun(true));
+                    self.send(NetCommand::SetRun {
+                        running: true,
+                        source: aurora_net::RunSource::Temporary,
+                    });
                 }
             }
             self.last_tap = Some((group, Instant::now()));
@@ -4412,7 +4415,10 @@ impl App {
         if !still_held {
             self.temp_run = None;
             if !self.always_run && !self.joystick.running {
-                self.send(NetCommand::SetAlwaysRun(false));
+                self.send(NetCommand::SetRun {
+                    running: false,
+                    source: aurora_net::RunSource::Temporary,
+                });
             }
         }
     }
@@ -5902,7 +5908,10 @@ impl App {
         self.on_left_release();
         self.release_object_hold();
         if self.temp_run.take().is_some() && !self.always_run {
-            self.send(NetCommand::SetAlwaysRun(false));
+            self.send(NetCommand::SetRun {
+                running: false,
+                source: aurora_net::RunSource::Temporary,
+            });
         }
         self.set_mouselook_grab(false);
         self.egui_ctx.request_repaint();
@@ -7376,9 +7385,19 @@ impl App {
             return;
         }
         self.always_run = on;
-        self.send(NetCommand::SetAlwaysRun(
-            self.always_run || self.temp_run.is_some() || self.joystick.running,
-        ));
+        let source = if self.always_run {
+            aurora_net::RunSource::Always
+        } else if self.temp_run.is_some() {
+            aurora_net::RunSource::Temporary
+        } else if self.joystick.running {
+            aurora_net::RunSource::Joystick
+        } else {
+            aurora_net::RunSource::Always
+        };
+        self.send(NetCommand::SetRun {
+            running: self.always_run || self.temp_run.is_some() || self.joystick.running,
+            source,
+        });
         self.world.system_message(if self.always_run {
             aurora_i18n::tr!("app-always-run-enabled")
         } else {
@@ -20486,7 +20505,10 @@ impl ApplicationHandler for App {
                 // again, also in mouselook (taken back with the focus)
                 self.release_cursor(true);
                 if self.temp_run.take().is_some() && !self.always_run {
-                    self.send(NetCommand::SetAlwaysRun(false));
+                    self.send(NetCommand::SetRun {
+                        running: false,
+                        source: aurora_net::RunSource::Temporary,
+                    });
                 }
             }
             WindowEvent::KeyboardInput { event: ke, .. } => {

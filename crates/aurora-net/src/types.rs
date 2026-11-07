@@ -1656,8 +1656,12 @@ pub enum NetCommand {
     /// Every change of the control flags comes through here, in order: a
     /// key tapped between two ticks of the session is not lost.
     AgentControls(AgentControls),
-    /// Walk / run toggle (SetAlwaysRun), used for double-tap running.
-    SetAlwaysRun(bool),
+    /// Simulator's aggregate walk/run state, with the source retained so
+    /// RLVa can enforce Always Run and temporary run independently.
+    SetRun {
+        running: bool,
+        source: RunSource,
+    },
     /// Our look-at target (ViewerEffect, LLHUDEffectLookAt::packData).
     LookAt {
         effect: Uuid,
@@ -2314,6 +2318,16 @@ pub enum NetCommand {
     ClearObjectCache,
     /// Build tools: selection, moves, new prims, links, terraforming.
     Build(crate::build::BuildCmd),
+}
+
+/// Internal source of a SetAlwaysRun update. The wire protocol remains the
+/// simulator's single boolean; this prevents source-blind RLVa checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunSource {
+    Always,
+    Temporary,
+    Joystick,
+    Autopilot,
 }
 
 pub mod control {

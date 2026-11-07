@@ -127,7 +127,10 @@ impl App {
         if running != self.joystick.running {
             self.joystick.running = running;
             if !self.always_run && self.temp_run.is_none() {
-                self.send(aurora_net::NetCommand::SetAlwaysRun(running));
+                self.send(aurora_net::NetCommand::SetRun {
+                    running,
+                    source: aurora_net::RunSource::Joystick,
+                });
             }
         }
     }
