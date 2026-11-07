@@ -42,6 +42,18 @@ impl Place {
     }
 }
 
+/// Destination data stays on the invite for accepting it, while every
+/// presentation surface follows the current showloc restriction.
+pub fn destination_presentation(showloc: bool, place: Option<&Place>) -> (Option<String>, Option<String>) {
+    if showloc {
+        (Some(aurora_i18n::tr!("rlva-hidden-generic").into()), None)
+    } else {
+        let label = place.and_then(Place::label);
+        let url = place.and_then(|p| Some(crate::slurl::make(p.region.as_deref()?, p.pos)));
+        (label, url)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum InviteKind {
     /// Teleport to the sender: the lure to accept (a god's when `godlike`).
@@ -282,12 +294,15 @@ impl World {
             }
         }
         self.refresh_teleport_places();
-        let line = self.notice_line(aurora_i18n::tr!(
+        // The transcript is durable and cannot be retracted when @showloc
+        // changes later. Keep destination and message payloads out of it;
+        // the invitation card renders live from the private Invite record.
+        let history = self.notice_line(aurora_i18n::tr!(
             "world-teleport-invites-offer-received",
             name = agent_link(im.from_agent_id),
-            message = body
+            message = aurora_i18n::tr!("rlva-hidden-generic")
         ));
-        self.transcript_only(im.from_agent_id, &line);
+        self.transcript_only(im.from_agent_id, &history);
     }
 
     /// IM_TELEPORT_REQUEST: "<name> is requesting to be teleported to your
@@ -416,48 +431,63 @@ impl World {
     /// the notification then say where the offer leads, above the message
     /// (the card keeps it once answered).
     pub fn refresh_teleport_places(&mut self) {
-        let unknown: Vec<(u64, (u32, u32))> = self
+        let pending: Vec<(u64, Option<(u32, u32)>)> = self
             .teleport_invites
             .list
             .iter()
             .filter_map(|v| match &v.kind {
-                InviteKind::Offer { place: Some(p), .. } if p.region.is_none() => Some((v.id, p.grid)),
+                InviteKind::Offer { place, .. } => Some((v.id, place.as_ref().and_then(|p| p.region.is_none().then_some(p.grid)))),
                 _ => None,
             })
             .collect();
-        for (id, grid) in unknown {
-            let Some(region) = self.map.sim_at(grid.0, grid.1).map(|(_, sim)| sim.name.clone()) else {
-                if self.teleport_invites.asked.insert(grid) {
-                    let (x, y) = (grid.0 as u16, grid.1 as u16);
-                    self.map.push(NetCommand::MapBlockRequest {
-                        min_x: x,
-                        min_y: y,
-                        max_x: x,
-                        max_y: y,
-                        null_sims: true,
-                    });
-                }
-                continue;
-            };
+        for (id, grid) in pending {
+            if let Some(grid) = grid
+                && self.map.sim_at(grid.0, grid.1).is_none()
+                && self.teleport_invites.asked.insert(grid)
+            {
+                let (x, y) = (grid.0 as u16, grid.1 as u16);
+                self.map.push(NetCommand::MapBlockRequest {
+                    min_x: x,
+                    min_y: y,
+                    max_x: x,
+                    max_y: y,
+                    null_sims: true,
+                });
+            }
+            let resolved = grid.and_then(|grid| self.map.sim_at(grid.0, grid.1).map(|(_, sim)| sim.name.clone()));
+            let showloc = self.rlva.has("showloc");
             let Some(v) = self.teleport_invites.list.iter_mut().find(|v| v.id == id) else {
                 continue;
             };
-            let InviteKind::Offer { place: Some(place), .. } = &mut v.kind else {
+            let InviteKind::Offer { place, .. } = &mut v.kind else {
                 continue;
             };
-            place.region = Some(region);
-            let label = place.label().unwrap_or_default();
-            let mut body = aurora_i18n::tr!("world-teleport-invites-place", place = label).to_string();
-            if !v.message.is_empty() {
-                body = format!("{body}\n{}", v.message);
+            if let (Some(place), Some(region)) = (place.as_mut(), resolved) {
+                place.region = Some(region);
+            }
+            let (label, _) = destination_presentation(showloc, place.as_ref());
+            let mut body = match label {
+                Some(label) if showloc => label,
+                Some(label) => aurora_i18n::tr!("world-teleport-invites-place", place = label).to_string(),
+                None => String::new(),
+            };
+            let message = if showloc {
+                aurora_i18n::tr!("rlva-hidden-generic")
+            } else {
+                &v.message
+            };
+            if !message.is_empty() {
+                body = if body.is_empty() {
+                    message.to_owned()
+                } else {
+                    format!("{body}\n{message}")
+                };
             }
             if let Some(note) = rating_note(v.rating) {
                 body = format!("{body}\n\n{note}");
             }
             let notification = v.notification;
-            if let Some(n) = self.notifications.list.iter_mut().find(|n| n.id == notification) {
-                n.body = body;
-            }
+            self.notifications.update_body(notification, body);
         }
     }
 
@@ -473,6 +503,15 @@ impl World {
             self.social.names.entry(from).or_insert_with(|| im.from_name.clone());
         }
         self.social.session_mut(from);
+        let text = if matches!(kind, ChatKind::Invite(_)) {
+            format!(
+                "{}\n{}",
+                text.lines().next().unwrap_or_default(),
+                aurora_i18n::tr!("rlva-hidden-generic")
+            )
+        } else {
+            text
+        };
         let line = ChatLine {
             time: SystemTime::now(),
             from: im.from_name.clone(),
@@ -527,6 +566,24 @@ mod tests {
     const ME: Uuid = Uuid::from_u128(1);
     const JANE: Uuid = Uuid::from_u128(2);
     const LURE: Uuid = Uuid::from_u128(0x10);
+
+    #[test]
+    fn showloc_hides_offer_destination_without_discarding_route_data() {
+        let place = Place {
+            grid: (1000, 1000),
+            pos: Vec3::new(12.0, 34.0, 56.0),
+            region: Some("Private Region".into()),
+        };
+        let (label, url) = destination_presentation(true, Some(&place));
+        assert_eq!(label.as_deref(), Some(aurora_i18n::tr!("rlva-hidden-generic")));
+        assert!(url.is_none());
+        assert_eq!(place.region.as_deref(), Some("Private Region"));
+        let (label, url) = destination_presentation(false, Some(&place));
+        assert!(label.unwrap().contains("Private Region"));
+        let url = url.unwrap();
+        assert!(url.contains("Private%20Region") || url.contains("Private Region"));
+        assert_eq!(destination_presentation(false, None), (None, None));
+    }
 
     fn temp() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("aurora-tp-invites-{}", Uuid::new_v4()));
@@ -616,7 +673,10 @@ mod tests {
         // the card is not written: the transcript has the offer once
         let log = transcript(&mut w);
         assert_eq!(log.len(), 1);
-        assert!(log[0].contains("Join me in Ahern"), "{log:?}");
+        assert!(
+            !log[0].contains("Join me in Ahern") && !log[0].contains("Ahern/128/64/22"),
+            "{log:?}"
+        );
         // where it leads, once the map knows the region
         w.map.sims.insert(
             (1000, 1001),
