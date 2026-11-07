@@ -1441,3 +1441,20 @@ fn right_click_outside_build_selects_one_object_at_a_time() {
     assert_eq!(selected(&tool), [99612]);
     assert_eq!(tool.menu_roots(&world, b), [b]);
 }
+
+#[test]
+fn photo_mode_releases_menu_selection_and_deselects_objects() {
+    let (mut world, mut tool, settings) = fixture();
+    tool.open = false;
+    let a = object(&world, 99610);
+    assert!(tool.select_for_menu_with(&mut world, &settings, a, false));
+    assert_eq!(selected(&tool), [99610]);
+    // Entering photo mode or right-clicking/clicking/escaping in photo mode releases the selection
+    tool.release_menu_selection(&world);
+    assert!(tool.selection.is_empty());
+    // Active selections can be cleared via deselect_all without affecting settings
+    tool.click_select(&mut world, &settings, Some(a), false);
+    assert_eq!(selected(&tool), [99610]);
+    tool.deselect_all(&world);
+    assert!(tool.selection.is_empty());
+}

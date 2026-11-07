@@ -7061,8 +7061,15 @@ impl App {
             self.check_temp_run();
         }
         if !pressed && was_drag && self.right_gesture.opens_menu() && self.mouse_mode == MouseMode::None {
-            // a click (no drag): context menu
-            self.open_context_menu();
+            if self.photo_full_frame() {
+                if !self.build.selection.is_empty() {
+                    self.build.deselect_all(&self.world);
+                    self.flush_build();
+                }
+            } else {
+                // a click (no drag): context menu
+                self.open_context_menu();
+            }
         }
     }
 
@@ -9766,17 +9773,27 @@ impl App {
                 mods,
             );
             self.build.refresh_link_geometry(&self.world, &self.scene);
-            let mut selection_wire = self.build.wire_selection(&self.world, &self.settings.build);
-            // another avatar's attachment the open menu is about, outlined
-            // like a child prim of a selection (it cannot be selected)
-            for idx in self.menu_outline() {
-                selection_wire.entry(idx).or_insert(false);
-            }
-            for (idx, current) in self.inspect_outline() {
-                selection_wire.entry(idx).or_insert(current);
+            let mut selection_wire = if self.photo_full_frame() {
+                Default::default()
+            } else {
+                self.build.wire_selection(&self.world, &self.settings.build)
+            };
+            if !self.photo_full_frame() {
+                // another avatar's attachment the open menu is about, outlined
+                // like a child prim of a selection (it cannot be selected)
+                for idx in self.menu_outline() {
+                    selection_wire.entry(idx).or_insert(false);
+                }
+                for (idx, current) in self.inspect_outline() {
+                    selection_wire.entry(idx).or_insert(current);
+                }
             }
             self.scene.set_wire_selection(&mut self.world, selection_wire);
-            self.scene.selection_silhouettes = self.build.silhouette_selection(&self.world, &self.settings.build);
+            self.scene.selection_silhouettes = if self.photo_full_frame() {
+                Default::default()
+            } else {
+                self.build.silhouette_selection(&self.world, &self.settings.build)
+            };
             // Use face coverage while highlighting local appearances. Actual
             // build selection, wire outlines and edits stay untouched; its
             // ordinary face overlay returns when the mode is switched off.
@@ -15087,6 +15104,10 @@ impl App {
             Screen::World => {
                 // the full-frame photo view: the world and its own strip only
                 if self.photo_full_frame() {
+                    if self.context_menu.take().is_some() || self.build.menu_selection {
+                        self.build.release_menu_selection(&self.world);
+                        self.flush_build();
+                    }
                     self.photo_ui(&ctx, &p, projector, renderer);
                     // the poser stays over it (#1389): pose, then shoot
                     if self.ik_editor.open && self.ik_editor.posing() {
