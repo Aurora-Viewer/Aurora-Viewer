@@ -324,26 +324,28 @@ fn vulkan_layers(text: &str) -> Option<String> {
 
 /// The GPU errors wgpu handed to the viewer (`wgpu error: …`, logged by
 /// aurora-render main_thread.rs), first of each in the order they came:
-/// `out-of-memory` or the wgpu operation that failed, never the rest of the
-/// message, whose labels are free text. A session stuck on these errors
+/// `out-of-memory`, with the operation when the log names it, or the wgpu
+/// operation that failed, never the rest of the message, whose labels are
+/// free text. A session stuck on these errors
 /// (#2311, x155) otherwise says nothing of what failed. A line of any other
 /// module or level is left out, as in [`gpu_work_in`].
 fn gpu_errors_in(head: &str, tail: &str) -> Option<String> {
     const SHOWN: usize = 6;
-    let mut found: Vec<&str> = Vec::new();
-    let mut note = |what| {
-        if !found.contains(&what) {
-            found.push(what);
+    const OUT_OF_MEMORY: &str = "out-of-memory";
+    let mut found: Vec<String> = Vec::new();
+    let mut note = |what: &str| {
+        if !found.iter().any(|f| f == what) {
+            found.push(what.to_owned());
         }
     };
     for text in [head, tail] {
         // An error whose operation is still to come: the message goes on
-        // over the lines below its record.
-        let mut open = false;
+        // over the lines below its record. The word to note if none comes.
+        let mut open: Option<&str> = None;
         for line in text.lines() {
             if line.starts_with('[') {
-                if std::mem::take(&mut open) {
-                    note("other");
+                if let Some(unnamed) = open.take() {
+                    note(unnamed);
                 }
                 let Some((record, message)) = line.split_once("] wgpu error: ") else {
                     continue;
@@ -351,18 +353,23 @@ fn gpu_errors_in(head: &str, tail: &str) -> Option<String> {
                 if !record.ends_with(" ERROR aurora_render::main_thread") {
                     continue;
                 }
-                if message.starts_with("Out of Memory") {
-                    note("out-of-memory");
+                open = Some(if message.starts_with("Out of Memory") {
+                    OUT_OF_MEMORY
                 } else {
-                    open = true;
+                    "other"
+                });
+            } else if open.is_some()
+                && let Some(rest) = line.trim_start().strip_prefix("In ")
+            {
+                match (open.take(), gpu_operation(rest)) {
+                    (Some(OUT_OF_MEMORY), Some(operation)) => note(&format!("{OUT_OF_MEMORY} in {operation}")),
+                    (Some(OUT_OF_MEMORY), None) => note(OUT_OF_MEMORY),
+                    (_, operation) => note(operation.unwrap_or("other")),
                 }
-            } else if open && let Some(rest) = line.trim_start().strip_prefix("In ") {
-                open = false;
-                note(gpu_operation(rest).unwrap_or("other"));
             }
         }
-        if open {
-            note("other");
+        if let Some(unnamed) = open {
+            note(unnamed);
         }
     }
     if found.is_empty() {
@@ -1330,6 +1337,24 @@ mod tests {
         assert_eq!(gpu_errors_in(&log, "").as_deref(), expected);
         // the head and the tail of a short log are the same text
         assert_eq!(gpu_errors_in(&log, &log).as_deref(), expected);
+    }
+
+    #[test]
+    fn an_out_of_memory_error_says_which_call_when_the_log_does() {
+        let e = WGPU_ERROR;
+        let named = format!(
+            "{e}Out of Memory\n\nCaused by:\n  In Device::create_bind_group, label = 'Private Place'\n    Not enough memory left.\n\
+             [2026-11-04T10:00:01.000Z INFO  aurora_viewer] still here\n"
+        );
+        assert_eq!(
+            gpu_errors_in(&named, &named).as_deref(),
+            Some("out-of-memory in Device::create_bind_group")
+        );
+        // a name that is not an operation of wgpu's is not published
+        let odd = format!("{e}Out of Memory\n\nCaused by:\n  In Alice::resident\n");
+        assert_eq!(gpu_errors_in(&odd, "").as_deref(), Some("out-of-memory"));
+        // the log of a build that wrote no sources, at its very end
+        assert_eq!(gpu_errors_in(&format!("{e}Out of Memory\n"), "").as_deref(), Some("out-of-memory"));
     }
 
     #[test]
