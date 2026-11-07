@@ -27,8 +27,8 @@ pub struct MaturityPreference {
     last_response: u8,
     retries: u8,
     /// The teleport waiting for the preference to be in sync.
-    held: Option<(Uuid, NetCommand)>,
-    out: Vec<(Uuid, NetCommand)>,
+    held: Option<(Uuid, NetCommand, bool)>,
+    out: Vec<(Uuid, NetCommand, bool)>,
 }
 
 /// What an answer of the server leads to.
@@ -61,21 +61,21 @@ impl MaturityPreference {
     fn send(&mut self, maturity: u8) {
         self.request_id += 1;
         self.last_request = maturity;
-        self.out.push((Uuid::nil(), NetCommand::SetMaturityPreference(maturity)));
+        self.out.push((Uuid::nil(), NetCommand::SetMaturityPreference(maturity), false));
     }
 
     /// A teleport asked while the preference is not in sync waits for it.
-    pub fn hold(&mut self, teleport: NetCommand, actor: Uuid) {
-        self.held = Some((actor, teleport));
+    pub fn hold(&mut self, teleport: NetCommand, actor: Uuid, portal: bool) {
+        self.held = Some((actor, teleport, portal));
     }
 
     /// Disabling RLVa cancels delayed scripted actions, including a teleport
     /// already released by a maturity answer but not yet sent by the app.
     pub fn cancel_script_teleports(&mut self) {
-        if self.held.as_ref().is_some_and(|(actor, _)| !actor.is_nil()) {
+        if self.held.as_ref().is_some_and(|(actor, _, _)| !actor.is_nil()) {
             self.held = None;
         }
-        self.out.retain(|(actor, _)| actor.is_nil());
+        self.out.retain(|(actor, _, _)| actor.is_nil());
     }
 
     pub fn holds_teleport(&self) -> bool {
@@ -134,7 +134,7 @@ impl MaturityPreference {
     }
 
     /// The requests to send, and the teleport released by the sync.
-    pub fn take_commands(&mut self) -> Vec<(Uuid, NetCommand)> {
+    pub fn take_commands(&mut self) -> Vec<(Uuid, NetCommand, bool)> {
         std::mem::take(&mut self.out)
     }
 }
@@ -156,26 +156,36 @@ mod tests {
         assert!(!m.synced());
         assert!(matches!(
             m.take_commands()[..],
-            [(_, NetCommand::SetMaturityPreference(SIM_ACCESS_MATURE))]
+            [(_, NetCommand::SetMaturityPreference(SIM_ACCESS_MATURE), false)]
         ));
-        m.hold(teleport(), Uuid::nil());
+        m.hold(teleport(), Uuid::nil(), false);
         assert_eq!(m.answer(Some(SIM_ACCESS_MATURE)), Outcome::Synced);
         assert!(m.synced());
-        assert!(matches!(m.take_commands()[..], [(_, NetCommand::TeleportHome)]));
+        assert!(matches!(m.take_commands()[..], [(_, NetCommand::TeleportHome, false)]));
         assert_eq!(m.preferred, Some(SIM_ACCESS_MATURE));
+    }
+
+    #[test]
+    fn portal_origin_survives_maturity_hold() {
+        let mut m = MaturityPreference::default();
+        m.request(SIM_ACCESS_MATURE, SIM_ACCESS_PG);
+        m.take_commands();
+        m.hold(teleport(), Uuid::nil(), true);
+        assert_eq!(m.answer(Some(SIM_ACCESS_MATURE)), Outcome::Synced);
+        assert!(matches!(m.take_commands().as_slice(), [(_, NetCommand::TeleportHome, true)]));
     }
 
     #[test]
     fn a_server_keeping_another_value_is_asked_three_more_times_then_wins() {
         let mut m = MaturityPreference::default();
         m.request(SIM_ACCESS_ADULT, SIM_ACCESS_PG);
-        m.hold(teleport(), Uuid::nil());
+        m.hold(teleport(), Uuid::nil(), false);
         m.take_commands();
         for _ in 0..MAX_RETRIES {
             assert_eq!(m.answer(Some(SIM_ACCESS_PG)), Outcome::Waiting);
             assert!(matches!(
                 m.take_commands()[..],
-                [(_, NetCommand::SetMaturityPreference(SIM_ACCESS_ADULT))]
+                [(_, NetCommand::SetMaturityPreference(SIM_ACCESS_ADULT), false)]
             ));
             assert!(m.holds_teleport());
         }
@@ -197,7 +207,7 @@ mod tests {
     fn a_failed_request_reports_at_once_unless_already_in_sync() {
         let mut m = MaturityPreference::default();
         m.request(SIM_ACCESS_MATURE, SIM_ACCESS_PG);
-        m.hold(teleport(), Uuid::nil());
+        m.hold(teleport(), Uuid::nil(), false);
         assert_eq!(
             m.answer(None),
             Outcome::Failed {
