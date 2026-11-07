@@ -13384,3 +13384,14 @@ debug-settings-type-color = 色
 # Preferences › Graphics: the trees' detail (RenderTreeLODFactor)
 ui-options-trees = 樹木
 ui-options-trees-hint = 遠くにあるリンデンの樹木の詳細度です（デフォルトは0.5）。0にすると樹木と草は表示されません。
+
+# Preferences › Build (the Legacy Viewer's Build preferences)
+ui-options-about-build = 作成ツールで作ったプリムの初期状態です。
+ui-options-build-new-objects = 新しいオブジェクト
+ui-options-build-new-objects-note = 作成ツールで作ったプリムは、表示された時点でこれらの設定を受け取ります。
+ui-options-build-size-hint = 幅、奥行き、高さ（メートル、0.01～10）
+ui-options-build-material = 素材
+ui-options-build-flesh = 肉
+ui-options-build-physical = 物理
+ui-options-build-temporary = 一時的
+ui-options-build-new-faces = 新しいオブジェクトの外観

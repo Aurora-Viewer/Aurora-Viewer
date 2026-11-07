@@ -483,6 +483,8 @@ pub fn build_rez(p: &aurora_net::build::NewPrim) -> ObjectUpdate {
         | crate::ui::context::flags::OBJECT_MODIFY
         | crate::ui::context::flags::OBJECT_COPY
         | crate::ui::context::flags::OBJECT_MOVE
+        // a prim we create is ours with every right, transfer included
+        | crate::ui::context::flags::OBJECT_TRANSFER
         | p.add_flags;
     object
 }

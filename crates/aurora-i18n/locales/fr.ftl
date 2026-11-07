@@ -13407,3 +13407,14 @@ debug-settings-type-color = Couleur
 # Preferences › Graphics: the trees' detail (RenderTreeLODFactor)
 ui-options-trees = Arbres
 ui-options-trees-hint = Détail des arbres Linden à distance (0,5 par défaut). À 0, les arbres et l'herbe ne sont pas affichés.
+
+# Preferences › Build (the Legacy Viewer's Build preferences)
+ui-options-about-build = Ce que devient un prim créé avec l'outil Créer.
+ui-options-build-new-objects = Nouveaux objets
+ui-options-build-new-objects-note = Un prim créé avec l'outil Créer prend ces réglages à son apparition.
+ui-options-build-size-hint = Largeur, profondeur et hauteur en mètres (0,01 à 10)
+ui-options-build-material = Matériau
+ui-options-build-flesh = Chair
+ui-options-build-physical = Physique
+ui-options-build-temporary = Temporaire
+ui-options-build-new-faces = Aspect des nouveaux objets

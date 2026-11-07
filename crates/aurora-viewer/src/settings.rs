@@ -2775,6 +2775,19 @@ impl Settings {
             BLOOM_STRENGTH
         };
         self.lod_factor = self.lod_factor.clamp(0.5, 4.0);
+        // the ranges of the Legacy Viewer's Build preferences
+        let b = &mut self.build;
+        b.new_prim_transparency = if b.new_prim_transparency.is_finite() {
+            b.new_prim_transparency.clamp(0.0, 100.0)
+        } else {
+            0.0
+        };
+        b.new_prim_glow = if b.new_prim_glow.is_finite() {
+            b.new_prim_glow.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        b.new_prim_shiny = b.new_prim_shiny.min(3);
         // unclamped in the Legacy Viewer, whose Phototools go to 8
         self.tree_lod_factor = if self.tree_lod_factor.is_finite() {
             self.tree_lod_factor.clamp(0.0, 8.0)
