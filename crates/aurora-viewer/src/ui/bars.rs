@@ -76,6 +76,8 @@ pub enum BarAction {
     /// The nearby chat bar put away or brought back with the keyboard
     /// (MainChatbarVisible, FSNearbyChat::onDefaultChatBarButtonClicked).
     ToggleChatBar,
+    /// The Web browser toolbar button was routed to the system browser.
+    OpenUrl(String),
     /// Show Friends Only switched (RFO, FSRenderFriendsOnly).
     ToggleFriendsOnly,
     ToggleMoveLock,
@@ -2879,6 +2881,8 @@ pub(crate) struct Row<'a> {
     pub style: super::toolbar::Style,
     /// The "Toolbar buttons" window is open (and the toolbars unlocked).
     pub editing: bool,
+    pub browser_behavior: crate::settings::BrowserBehavior,
+    pub browser_home_page: &'a str,
 }
 
 /// The toolbar's buttons one after the other in `ui` (Firestorm's bar or
@@ -3014,7 +3018,16 @@ pub(crate) fn toolbar_row(
             continue;
         }
         if response.clicked() && !rlva_locked {
-            let a = run_command(ui.ctx(), &b.command, panels);
+            // the page the built-in window would open: the Legacy default for
+            // an empty setting, a scheme added to a bare host
+            let home = crate::ui::web_browser::home_page(row.browser_home_page);
+            let a = if b.command == "webbrowser"
+                && crate::link_trust::should_use_system_browser(&home, row.browser_behavior, crate::link_trust::BrowserEntryPoint::Toolbar)
+            {
+                BarAction::OpenUrl(home)
+            } else {
+                run_command(ui.ctx(), &b.command, panels)
+            };
             if !matches!(a, BarAction::None) {
                 *action = a;
             }
@@ -3049,6 +3062,8 @@ pub fn bottom_bar(
     islands: bool,
     emoji: Option<&mut super::emoji::Emoji>,
     favorites: &favorites::View,
+    browser_behavior: crate::settings::BrowserBehavior,
+    browser_home_page: &str,
 ) -> (Option<super::chat::OutgoingChat>, BarAction, f32, bool) {
     let bar = super::toolbar::Bar::Bottom;
     let style = toolbar_settings.style(bar).resolve(bar, islands);
@@ -3071,6 +3086,8 @@ pub fn bottom_bar(
             bar,
             style,
             editing,
+            browser_behavior,
+            browser_home_page,
         };
         return dock::bottom(
             ui,
@@ -3210,6 +3227,8 @@ pub fn bottom_bar(
                                 bar,
                                 style,
                                 editing,
+                                browser_behavior,
+                                browser_home_page,
                             };
                             let look = |b: &crate::ui::skin::ToolButton| {
                                 let at = buttons.iter().position(|x| x.command == b.command).unwrap_or(0);
@@ -3279,6 +3298,8 @@ mod tests {
                             false,
                             None,
                             &favorites::View::default(),
+                            crate::settings::BrowserBehavior::BuiltInForSecondLife,
+                            crate::ui::web_browser::DEFAULT_HOME,
                         );
                         reserved = height;
                     },

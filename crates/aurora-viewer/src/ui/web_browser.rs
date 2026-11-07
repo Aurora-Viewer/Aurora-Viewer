@@ -282,7 +282,7 @@ impl WebBrowserUi {
             if widgets::action_button_if(ui, p, "external-link-filled", label, ActionKind::Flat, external, outside.is_some()).clicked()
                 && let Some(url) = outside
             {
-                super::context::request(ui.ctx(), super::context::CtxAction::OpenUrl(url));
+                super::context::request(ui.ctx(), super::context::CtxAction::OpenUrlExternal(url));
             }
         });
         ui.add_space(4.0);

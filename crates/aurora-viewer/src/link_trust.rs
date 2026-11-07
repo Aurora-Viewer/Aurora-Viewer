@@ -13,6 +13,72 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrowserEntryPoint {
+    Link,
+    MarketplaceLink,
+    MarketplaceWindow,
+    ExplicitExternal,
+    Toolbar,
+    SearchExternal,
+}
+
+/// Apply the saved browser choice to a particular link entry point. The
+/// Second Life mode preserves Aurora's former entry-point routing where it
+/// differs from the Legacy Viewer's host-based preference.
+pub fn should_use_system_browser(url: &str, behavior: crate::settings::BrowserBehavior, entry: BrowserEntryPoint) -> bool {
+    use crate::settings::BrowserBehavior;
+    // The explicit “Open in system browser” controls must honour their label,
+    // regardless of the saved preference, as loadURLExternal does in the Legacy Viewer.
+    if matches!(entry, BrowserEntryPoint::ExplicitExternal | BrowserEntryPoint::SearchExternal) {
+        return true;
+    }
+    if entry == BrowserEntryPoint::MarketplaceWindow {
+        return false;
+    }
+    match behavior {
+        BrowserBehavior::SystemForAll => true,
+        BrowserBehavior::BuiltInForAll => false,
+        BrowserBehavior::BuiltInForSecondLife => match entry {
+            BrowserEntryPoint::MarketplaceLink | BrowserEntryPoint::MarketplaceWindow | BrowserEntryPoint::Toolbar => false,
+            BrowserEntryPoint::Link => use_system_browser(url, behavior),
+            BrowserEntryPoint::ExplicitExternal | BrowserEntryPoint::SearchExternal => true,
+        },
+    }
+}
+
+/// Whether a web URL should leave Aurora. This follows the Legacy Viewer's
+/// `PreferredBrowserBehavior` host list. Mail and other non-web schemes keep
+/// their existing handling in the caller; this predicate still reports mailto
+/// as outside the built-in web browser.
+pub fn use_system_browser(url: &str, behavior: crate::settings::BrowserBehavior) -> bool {
+    use crate::settings::BrowserBehavior;
+
+    let parsed = match reqwest::Url::parse(url.trim()) {
+        Ok(parsed) if matches!(parsed.scheme(), "http" | "https") => parsed,
+        Ok(parsed) if parsed.scheme() == "mailto" => return true,
+        _ => return false,
+    };
+    match behavior {
+        BrowserBehavior::SystemForAll => true,
+        BrowserBehavior::BuiltInForAll => false,
+        BrowserBehavior::BuiltInForSecondLife => {
+            let Some(host) = parsed.host_str().map(str::to_ascii_lowercase) else {
+                return true;
+            };
+            ![
+                "lindenlab.com",
+                "secondlife.com",
+                "secondlife.io",
+                "secondlifegrid.net",
+                "secondlife-status.statuspage.io",
+            ]
+            .iter()
+            .any(|domain| host == *domain || host.strip_suffix(domain).is_some_and(|prefix| prefix.ends_with('.')))
+        }
+    }
+}
+
 /// Trusted domains, their subdomains included. Hosts of pages or files
 /// anyone can publish (github.io, githubusercontent.com, sites.google.com,
 /// dropbox.com...) stay out: a fake login page can live there.
@@ -430,6 +496,103 @@ pub fn refused_scheme(url: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browser_behavior_routes_the_same_urls_by_preference() {
+        use crate::settings::BrowserBehavior::{BuiltInForAll, BuiltInForSecondLife, SystemForAll};
+
+        let cases = [
+            ("chat link", "https://example.org/chat", [true, true, false]),
+            (
+                "Marketplace link",
+                "https://marketplace.secondlife.com/p/item",
+                [true, false, false],
+            ),
+            ("Second Life page", "https://secondlife.com/destinations", [true, false, false]),
+            ("other site", "https://video.example.net/watch", [true, true, false]),
+            ("mail link", "mailto:help@example.net", [true, true, true]),
+            ("host lookalike", "https://secondlife.com.evil.example/", [true, true, false]),
+        ];
+        let behaviors = [SystemForAll, BuiltInForSecondLife, BuiltInForAll];
+        for (name, url, expected) in cases {
+            for (index, behavior) in behaviors.into_iter().enumerate() {
+                assert_eq!(use_system_browser(url, behavior), expected[index], "{name}, {behavior:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_toolbar_sends_a_home_page_the_system_browser_accepts() {
+        // the toolbar button with "system browser for all links": an empty
+        // setting or a bare host must still open a page, not be refused
+        for (setting, expected) in [
+            ("", crate::ui::web_browser::DEFAULT_HOME.to_owned()),
+            ("example.org", "https://example.org/".to_owned()),
+            ("https://example.org/start", "https://example.org/start".to_owned()),
+        ] {
+            let home = crate::ui::web_browser::home_page(setting);
+            assert_eq!(home.trim_end_matches('/'), expected.trim_end_matches('/'), "{setting:?}");
+            assert!(refused_scheme(&home).is_none(), "{setting:?}");
+            assert!(should_use_system_browser(
+                &home,
+                crate::settings::BrowserBehavior::SystemForAll,
+                BrowserEntryPoint::Toolbar
+            ));
+        }
+    }
+
+    #[test]
+    fn default_settings_keep_auroras_entry_point_routing() {
+        use crate::settings::BrowserBehavior::BuiltInForSecondLife;
+        use BrowserEntryPoint::*;
+
+        let routes = [
+            ("https://example.org/chat", Link, true),
+            ("https://marketplace.secondlife.com/p/item", MarketplaceLink, false),
+            ("https://example.org/home", Toolbar, false),
+            ("https://example.org/search", SearchExternal, true),
+            ("https://marketplace.secondlife.com/p/item", ExplicitExternal, true),
+        ];
+        for (url, entry, expected) in routes {
+            assert_eq!(
+                should_use_system_browser(url, BuiltInForSecondLife, entry),
+                expected,
+                "{entry:?}: {url}"
+            );
+        }
+        assert!(!should_use_system_browser(
+            "https://secondlife.com/destinations",
+            BuiltInForSecondLife,
+            Link
+        ));
+        assert!(should_use_system_browser(
+            "https://secondlife.com/destinations",
+            crate::settings::BrowserBehavior::SystemForAll,
+            Link
+        ));
+    }
+
+    #[test]
+    fn explicit_external_actions_always_leave_viewer() {
+        use crate::settings::BrowserBehavior::{BuiltInForAll, BuiltInForSecondLife, SystemForAll};
+        for behavior in [SystemForAll, BuiltInForSecondLife, BuiltInForAll] {
+            for entry in [BrowserEntryPoint::ExplicitExternal, BrowserEntryPoint::SearchExternal] {
+                assert!(should_use_system_browser("https://example.org", behavior, entry));
+            }
+        }
+    }
+
+    #[test]
+    fn marketplace_listing_open_action_stays_in_marketplace_in_every_mode() {
+        use crate::settings::BrowserBehavior::{BuiltInForAll, BuiltInForSecondLife, SystemForAll};
+        for behavior in [SystemForAll, BuiltInForSecondLife, BuiltInForAll] {
+            assert!(!should_use_system_browser(
+                "https://not-the-marketplace.example/",
+                behavior,
+                BrowserEntryPoint::MarketplaceWindow
+            ));
+        }
+    }
 
     #[test]
     fn trusted() {

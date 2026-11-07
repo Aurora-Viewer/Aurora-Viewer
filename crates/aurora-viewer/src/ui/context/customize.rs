@@ -355,6 +355,8 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::ShowPlaceInfo(..) => "ShowPlaceInfo",
         CtxAction::ShowPlace(..) => "ShowPlace",
         CtxAction::OpenUrl(..) => "OpenUrl",
+        CtxAction::OpenUrlExternal(..) => "OpenUrlExternal",
+        CtxAction::OpenUrlSearch(..) => "OpenUrlSearch",
         CtxAction::AppLink(..) => "AppLink",
         CtxAction::TeleportToPlace(..) => "TeleportToPlace",
         CtxAction::TeleportToPlaceConfirmed(..) => "TeleportToPlaceConfirmed",
