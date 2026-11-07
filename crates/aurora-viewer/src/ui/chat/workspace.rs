@@ -20,8 +20,11 @@ use uuid::Uuid;
 
 /// Below this width the column becomes a rail of pictures.
 pub(super) const RAIL_BELOW: f32 = 600.0;
-/// The window's least width with the column as a rail (`chat::show`).
-pub(super) const LEAST: f32 = 300.0;
+/// From this width the button can open the column in a narrow window.
+/// Narrower, the conversation's head has no room left for a name, and a
+/// resident's name and the field's hint wrap. The column does not fit: the
+/// button is greyed out and the column opened closes.
+pub(super) const OPEN_FROM: f32 = 560.0;
 /// The members' panel shows when the messages keep at least this width.
 const MESSAGES_MIN: f32 = 360.0;
 /// How far past a threshold a window must go back before the layout
@@ -72,9 +75,10 @@ pub(crate) struct ColumnChoice {
     /// A rail at any width, until the button expands it again. The
     /// settings keep it (`Settings::chat_column_collapsed`).
     pub collapsed: bool,
-    /// The whole column in a window narrow enough for the rail. It ends
-    /// with the narrowness: a window widened past the threshold has the
-    /// column anyway, and is automatic again when narrowed.
+    /// The whole column in a window narrow enough for the rail, from
+    /// `OPEN_FROM`. It ends with that band: a window widened past it has
+    /// the column anyway, one narrowed below it no longer has the room,
+    /// and either is automatic again.
     pub opened: bool,
 }
 
@@ -96,17 +100,6 @@ impl ColumnChoice {
         ColumnChoice {
             collapsed: !self.rail(narrow) && !self.opened,
             opened: self.rail(narrow) && narrow,
-        }
-    }
-
-    /// The window's least width: the column opened by hand keeps its
-    /// width and the conversation the room the rail leaves it, so a click
-    /// in a smaller window makes the window grow to fit.
-    pub(super) fn least_width(self) -> f32 {
-        if self.opened {
-            LEAST - sidebar::RAIL + sidebar::WIDTH
-        } else {
-            LEAST
         }
     }
 }
@@ -170,7 +163,7 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
     st.layout_width = Some(size.x);
     let narrow = narrow_now(st.layout_narrow, size.x);
     st.layout_narrow = Some(narrow);
-    st.column.opened &= narrow;
+    st.column.opened &= narrow && size.x >= OPEN_FROM;
     let column = ease(
         ui.ctx(),
         ui.scope_id().with("column_width"),
