@@ -977,6 +977,9 @@ pub struct BuildTool {
     /// past the slop drops it, so the object it started on has to be taken
     /// by the rectangle like any other (LLToolSelectRect::handleHover).
     press: Option<Option<ObjKey>>,
+    /// The rectangle being dragged started in HUD space, which it keeps
+    /// after the drag has cleared the selection that said so.
+    rect_hud: bool,
     /// Compact section (Rights, Transform, Features, Materials, Contents, Shape).
     pub tab: usize,
     /// Last message for the floater's status line.
@@ -1034,6 +1037,7 @@ impl Default for BuildTool {
             new_defaults_pending: 0,
             rect: None,
             press: None,
+            rect_hud: false,
             tab: 6,
             status: String::new(),
             last_frame: None,
@@ -1314,6 +1318,8 @@ impl BuildTool {
         self.manip.cancel();
         self.land.cancel();
         self.grab_up();
+        self.rect = None;
+        self.press = None;
         self.deselect_all(world);
         self.faces.clear();
         self.sync_hud_zoom(world);
@@ -1593,6 +1599,9 @@ impl BuildTool {
     }
 
     pub fn hud_selected(&self, world: &World) -> bool {
+        if self.rect.is_some() && self.rect_hud {
+            return true;
+        }
         self.selection
             .first()
             .and_then(|key| world.objects.index_of(key))
@@ -2356,6 +2365,7 @@ impl BuildTool {
                         // (LLToolCompTranslate -> LLToolSelectRect)
                         let extend = mods.shift || mods.ctrl;
                         self.press = Some(pick.and_then(|idx| world.objects.get(idx)).map(|o| o.key));
+                        self.rect_hud = self.hud_selected(world) || pick.is_some_and(|idx| select_type(world, idx) == SelectType::Hud);
                         self.rect = Some((cursor, cursor, extend));
                         true
                     }
