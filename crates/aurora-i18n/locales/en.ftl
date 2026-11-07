@@ -10245,7 +10245,7 @@ ui-land-manage-show-tip = Highlight these objects in the world
 ui-land-people-show-tip = Highlight this owner's objects in the world
 ui-land-manage-search-desc = L$ { $fee } a week. Category, rating, picture and description are used for the results.
 ui-land-manage-category-rating = Category and rating
-ui-land-manage-visibility-advanced = Advanced: name, description, picture (also in the header)
+ui-land-manage-visibility-advanced = Advanced: name, description, picture (name and picture also in the header)
 ui-land-manage-name = Name
 ui-land-manage-picture-desc = Shown in search and in the header.
 ui-land-manage-show = Show
@@ -13441,3 +13441,14 @@ picker-pipette-no-texture = No copyable texture found in your inventory.
 picker-pipette-no-material = No copyable material found in your inventory.
 
 local-texture-preview-hint = Local texture — preview from a file on this computer.
+
+# Object linking: LLSelectMgr::linkObjects
+build-link-error-title = Unable to link objects
+build-link-downloading = Object information is still downloading. Please wait and try linking again.
+build-link-too-many = Cannot link { $count } prims. The maximum is { $max }.
+build-link-modify = You must have permission to modify every object you want to link.
+build-link-permanent = A permanent object in this selection cannot be linked from another region.
+build-link-owners = The objects must have the same owner to be linked.
+build-link-regions = The objects must be in the same region to be linked.
+build-link-animesh = The selection exceeds the animated object triangle limit.
+build-link-restricted = A restriction prevents linking this selection.

@@ -10229,7 +10229,7 @@ ui-land-manage-show-tip = これらのオブジェクトをワールド内でハ
 ui-land-people-show-tip = この所有者のオブジェクトをワールド内でハイライト
 ui-land-manage-search-desc = 週L$ { $fee }かかります。カテゴリ、レーティング、画像、説明が検索結果に使われます。
 ui-land-manage-category-rating = カテゴリとレーティング
-ui-land-manage-visibility-advanced = 詳細：名前、説明、画像（ヘッダーでも変更可）
+ui-land-manage-visibility-advanced = 詳細：名前、説明、画像（名前と画像はヘッダーでも変更可）
 ui-land-manage-name = 名前
 ui-land-manage-picture-desc = 検索とヘッダーに表示されます。
 ui-land-manage-show = 表示
@@ -13414,3 +13414,14 @@ picker-pipette-no-texture = コピー可能なテクスチャがインベント�
 picker-pipette-no-material = コピー可能なマテリアルがインベントリにありません。
 
 local-texture-preview-hint = ローカルテクスチャ — このコンピューターのファイルのプレビュー。
+
+# Object linking: LLSelectMgr::linkObjects
+build-link-error-title = オブジェクトをリンクできません
+build-link-downloading = オブジェクト情報をダウンロード中です。しばらく待ってから再度リンクしてください。
+build-link-too-many = { $count } 個のプリムはリンクできません。上限は { $max } 個です。
+build-link-modify = リンクするすべてのオブジェクトを編集する権限が必要です。
+build-link-permanent = 選択した恒久オブジェクトは別のリージョンからリンクできません。
+build-link-owners = リンクするオブジェクトの所有者は同じである必要があります。
+build-link-regions = リンクするオブジェクトは同じリージョンにある必要があります。
+build-link-animesh = 選択内容はアニメーションオブジェクトの三角形数の上限を超えています。
+build-link-restricted = 制限により、選択したオブジェクトをリンクできません。

@@ -7271,6 +7271,7 @@ mod tests {
             0.0,
             [Mat4::IDENTITY; 3],
             [None; aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS],
+            None,
             flags,
         );
         frame.water = [[0.0, 0.0, 0.0, 1.0]; 6];
