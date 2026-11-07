@@ -104,7 +104,7 @@ pub const COMMANDS: &[Command] = commands![
     "wearable_favorites", "hanger-2-filled", "toolbar-command-wearable-favorites", false;
     "discord", "brand-discord-filled", "toolbar-command-discord", false;
     "360capture", "panorama-horizontal-filled", "toolbar-command-360-snapshot", false;
-    "omnifilter", "filter-filled", "toolbar-command-omnifilter", false;
+    "omnifilter", "filter-filled", "toolbar-command-omnifilter", true;
     "avatar_align", "user-scan", "toolbar-command-avatar-align", false;
     "face_nearest_avatar", "user-search", "toolbar-command-face-nearest", false;
 ];
