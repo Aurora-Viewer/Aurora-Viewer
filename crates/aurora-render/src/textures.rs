@@ -95,9 +95,15 @@ const MAX_PAGES: u32 = 1 << (32 - LAYER_BITS);
 /// the two were one number, at most 16,384, and the table kept that size
 /// once textures went to pages: arriving in a busy region (9,000 textures)
 /// 45 s or less after leaving another, the last 1,500 textures found no
-/// slot and were drawn white for as long as they were used. Four times
-/// that: more than the video memory holds textures for.
-pub const SLOTS: u32 = 1 << 16;
+/// slot and were drawn white for as long as they were used. Then four
+/// times that, 65,536: but a texture holds its slot while any object of a
+/// connected region uses it, in view or not, and the camera moved through
+/// an estate of busy neighbouring regions can keep that many in use
+/// (#2822). Sixteen times: a slot without texels shows the shared
+/// placeholder and costs 4 bytes of the location buffer (1 MB in all),
+/// and the slots are handed out lowest first, so a scene of a few
+/// thousand textures uploads no more of that buffer than before.
+pub const SLOTS: u32 = 1 << 18;
 const MAX_SLOTS: u32 = 1 << 20;
 
 /// Slots of the table: [`SLOTS`], or what AURORA_TEXTURE_SLOTS asks for (to
@@ -608,7 +614,9 @@ impl PageStore {
 
     fn new_with_integrated(capacity: u32, page_capacity: u32, max_layers: u32, max_dim: u32, integrated: bool) -> Self {
         Self {
-            slots: Vec::with_capacity(capacity as usize),
+            // (room for the slots the table held before #2822, as then:
+            // past them it grows, a few times at most)
+            slots: Vec::with_capacity(capacity.min(1 << 16) as usize),
             free_slots: BinaryHeap::new(),
             capacity,
             pages: Vec::new(),

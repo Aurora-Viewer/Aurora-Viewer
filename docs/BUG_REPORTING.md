@@ -104,7 +104,8 @@ What each part tells the one who fixes it:
   to the viewer, noted at the very start, so a crash while Vulkan starts has
   them too.
 - **GPU errors**: the errors wgpu reported, first of each in the order they
-  came: `out-of-memory` or the wgpu operation that failed
+  came: `out-of-memory`, with the call when the log names it (`out-of-memory
+  in Device::create_bind_group`), or the wgpu operation that failed
   (`Queue::write_buffer`). Their messages stay in the local log.
 - **Last state**: screen, frame rate, frame time, window size, graphics
   preset, memory, video memory used / budget, texture memory pressure,
