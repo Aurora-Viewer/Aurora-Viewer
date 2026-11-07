@@ -276,7 +276,7 @@ pub fn system_fonts() -> Vec<SystemFont> {
             out.push(SystemFont { name, path });
         }
     }
-    out.sort_by_key(|f| f.name.to_lowercase());
+    out.sort_by_key(|f| crate::natural_order::key(&f.name));
     out
 }
 
