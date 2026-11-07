@@ -83,6 +83,32 @@ pub fn try_texture(
     }
 }
 
+/// Runs `make`, which makes GPU objects with no check of their own (a set
+/// of render targets and what binds them), and says whether the memory
+/// refused them. Whatever came back invalid is `make`'s to drop: unlike
+/// [`try_texture`] there is nothing to fall back on but trying again.
+pub fn scoped<T>(device: &wgpu::Device, make: impl FnOnce() -> T) -> (T, bool) {
+    let oom = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+    let invalid = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let made = make();
+    let invalid = pollster::block_on(invalid.pop()).map(|e| e.to_string());
+    let oom = pollster::block_on(oom.pop()).map(|e| e.to_string());
+    let refused = memory_refused(oom.as_deref(), invalid.as_deref());
+    if let Some(e) = invalid.filter(|_| !refused) {
+        // not the memory: as outside a scope, said and not acted on
+        log::error!("wgpu error: {e}");
+    }
+    (made, refused)
+}
+
+/// Whether a scope's errors mean the memory ran out: wgpu said so, or an
+/// object came back invalid, which is all that shows of a failed allocation
+/// the driver reports as unexpected (see the module). Any other validation
+/// error is a bug of ours and retrying would not cure it.
+fn memory_refused(oom: Option<&str>, invalid: Option<&str>) -> bool {
+    oom.is_some() || invalid.is_some_and(|e| e.contains("is invalid"))
+}
+
 /// The error's reason (wgpu's text spreads over several lines, the last
 /// one says most).
 fn reason(text: &str) -> String {
@@ -103,6 +129,28 @@ fn injected_failure(bytes: u64) -> Option<String> {
     limit
         .filter(|l| bytes >= *l)
         .map(|_| "out of video memory (AURORA_GPU_OOM)".to_owned())
+}
+
+/// `AURORA_GPU_OOM_TARGETS=<seconds>`: for that long after the first frame
+/// target made, the render targets come back invalid as if video memory
+/// were full (testing). They are made with no usage, which wgpu refuses:
+/// the same invalid texture a full card leaves, in a real device, without
+/// filling the card.
+pub fn targets_refused() -> bool {
+    static UNTIL: OnceLock<Option<Instant>> = OnceLock::new();
+    let until = *UNTIL.get_or_init(|| {
+        std::env::var("AURORA_GPU_OOM_TARGETS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .map(|seconds| Instant::now() + Duration::from_secs(seconds))
+    });
+    until.is_some_and(|t| Instant::now() < t)
+}
+
+/// The interface's blur and glass of a window this size fall under
+/// `AURORA_GPU_OOM`, as a texture of the window's size.
+pub fn ui_targets_refused(size: [u32; 2]) -> bool {
+    injected_failure(u64::from(size[0]) * u64::from(size[1]) * 4).is_some()
 }
 
 /// When to try an allocation again after it failed: 2 s, then twice as
@@ -342,6 +390,19 @@ mod tests {
         assert!(!backoff.ready(Instant::now()));
         queue.write_buffer(&buffer, 0, &[1; 4096]);
         assert!(pollster::block_on(scope.pop()).is_none());
+    }
+
+    #[test]
+    fn only_a_refused_allocation_counts_as_out_of_memory() {
+        assert!(memory_refused(Some("Out of Memory"), None));
+        assert!(memory_refused(
+            None,
+            Some("In Texture::create_view\n  Texture with 'hdr' label is invalid")
+        ));
+        assert!(memory_refused(Some("Out of Memory"), Some("anything")));
+        assert!(!memory_refused(None, None));
+        // a wrong descriptor is ours: trying again would never end
+        assert!(!memory_refused(None, Some("In Device::create_texture\n  Invalid usage flags")));
     }
 
     #[test]

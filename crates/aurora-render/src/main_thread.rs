@@ -1515,6 +1515,7 @@ impl Renderer {
             // capture): the last readbacks stay, the timings are not
             // counted twice
             stats = RenderStats {
+                video_memory_full: self.last_stats.video_memory_full,
                 gpu_ms: self.last_stats.gpu_ms,
                 gpu_pixels: self.last_stats.gpu_pixels,
                 gpu_elements: self.last_stats.gpu_elements,
