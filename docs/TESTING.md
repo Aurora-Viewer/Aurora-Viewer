@@ -3891,6 +3891,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal scale>[,<fog r,g,b>]` | Water of the `AURORA_DEMO_SKY` day with these values, out-of-range ones included |
 | `AURORA_DEMO_SKY_FLAGS=<flags>\|none` | Settings flags of the `AURORA_DEMO_SKY` day (rights of the sky and water snapshots) |
 | `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
+| `AURORA_DEMO_CLOUDS=fair\|broken\|stratocumulus\|overcast` | Volumetric clouds (Preferences › Aurora › Clouds on) under a fixed sky of that cloud type |
 | `AURORA_DEMO_NIGHT_SKY=real\|legacy[:<azimuth>,<elevation>]` | The night sky's stars at midnight, the camera looking at the sky |
 | `AURORA_DEMO_NIGHT_SKY_PLACE=<latitude>[,<gain>]` | Where the real sky is seen from, and its stars' brightness |
 | `AURORA_DEMO_OCCLUSION=1` | Wall with hidden objects (occlusion test) |
@@ -4167,6 +4168,30 @@ both open states and the selection count. Capture at frame 620.
   sends Second Life's own, `rainbow_id` and `halo_id`); the shape, the place
   and the colors' order are those of skyF.glsl. Capture in `AURORA_AA=3` and
   `AURORA_AA=6`.
+- **`AURORA_DEMO_CLOUDS=fair|broken|stratocumulus|overcast`**: turns on
+  Preferences › Aurora › Clouds › Volumetric for this launch (in memory,
+  `AURORA_CLOUDS=legacy` keeps the Legacy Viewer's flat layer under the
+  same sky, for the before / after) and the region answers with a fixed
+  afternoon (`demo_clouds.rs`): the sun about 50° up in the south-east, the
+  Legacy Viewer's default haze and cloud colours, the cover of the preset
+  through `cloud_shadow` (0.27 `fair`, 0.38 `broken`, 0.45 `stratocumulus`,
+  0.62 `overcast`), which gives the cloud type and so the layer: cumulus
+  1.2 to 3 km above the camera, a lumpy sheet at 0.6 to 1.5 km, a stratus
+  slab at 0.4 to 0.9 km. The camera looks east, 12° up, from behind the
+  avatar. The volumetric layer takes about 16 frames after the switch to
+  make its noise (the Legacy layer shows meanwhile), so capture from
+  `AURORA_CAPTURE_FRAMES=620`. What to look at: separate heaps with flat
+  bases and bright rims for `fair`, rows that merge towards the horizon, a
+  grey uniform sheet for `overcast`, no hard edge at the horizon (the far
+  clouds melt into the haze), the sun's disc and the stars behind the
+  clouds' transparency. Under water, in a photo (tiles and sizes keep no
+  history), in a cut-out photo and in the reflections (water, mirror,
+  probes) the Legacy layer is drawn, for now.
+  `AURORA_PROFILE=1` prints `g_clouds=` (the noise, trace and
+  reconstruction compute, in ms; the composite is inside the sky's time).
+- **`AURORA_CLOUDS=aurora|legacy`**: volumetric clouds or the Legacy Viewer's
+  flat layer for this launch, whatever the setting says (and the demo
+  scenario). Anything else changes nothing.
 - **`AURORA_DEMO_NIGHT_SKY=real|legacy[:<azimuth>,<elevation>]`**: sets
   Preferences › Graphics › Environment › Night sky for this launch (in
   memory), the demo's midnight (unless `AURORA_DEMO_TOD` is also given) and
@@ -9782,6 +9807,7 @@ What the inventory must show with these scenarios:
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
+| `AURORA_CLOUDS=aurora` or `legacy` | Volumetric clouds or the Legacy Viewer's flat layer for this launch, over the setting (and over `AURORA_DEMO_CLOUDS`) |
 | `AURORA_COLORED_AMBIENT=0`, `1` or `alt` | Sky ambient softened, grey under linear and HDR skies (Legacy Viewer), coloured at full strength like the first PBR release, or one second in two |
 | `AURORA_RIGGED_BLEND=split`, `runs`, `copy`, `depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: object by object, what is half covered writing its depth as drawn, then the fainter texels, then their depth from 1/255 on a copy (default); the same without the fainter texels' depth (#1024); where nearly opaque before their colour, then point by point where half covered (#966); from 1/255 on a copy (#948); where half covered before their colour; from 1/255; none (sorted with the others); or `split` by turns |
 | `AURORA_MESH_ORDER=asset` | Mesh faces keep the triangle order of the asset instead of the Legacy Viewer's vertex cache order |
