@@ -2008,10 +2008,10 @@ fn fs_particle(in: PartOut) -> @location(0) vec4<f32> {
     if (d > 0.0) {
         let sp = world_from_depth(screen_uv(in.clip.xy), d);
         let gap = distance(sp, frame.camera_pos.xyz) - distance(in.world_pos, frame.camera_pos.xyz);
-        let hard_fade = 0.05;
+        let hard_fade = 0.066;
         let soft_fade = max(frame.cam_right.w, hard_fade);
         let opacity = clamp(in.color.a, 0.0, 1.0);
-        let hardness = smoothstep(0.99, 1.0, opacity);
+        let hardness = smoothstep(0.97, 1.0, opacity);
         let fade_distance = mix(soft_fade, hard_fade, hardness);
         alpha *= clamp(gap / fade_distance, 0.0, 1.0);
     }
