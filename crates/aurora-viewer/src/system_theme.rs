@@ -88,8 +88,10 @@ fn update(change: impl FnOnce(&mut Look)) {
     }
 }
 
-/// Starts following, once: nothing runs before the option is on.
-pub fn start() {
+/// Starts following, once: nothing runs before the option is on. `wait`
+/// gives the first read a moment, for a first frame in the system's colours;
+/// the frame loop never waits, the look arrives as a change.
+pub fn start(wait: bool) {
     static START: Once = Once::new();
     START.call_once(|| {
         let (ready, first) = std::sync::mpsc::channel();
@@ -99,9 +101,10 @@ pub fn start() {
             None => backend::run(ready),
         });
         match spawned {
-            Ok(_) => {
+            Ok(_) if wait => {
                 let _ = first.recv_timeout(FIRST_READ);
             }
+            Ok(_) => {}
             Err(e) => log::warn!("system theme: not followed ({e})"),
         }
     });
@@ -109,13 +112,15 @@ pub fn start() {
 
 /// Once a frame while following.
 pub fn tick() {
-    backend::tick();
+    if !scripted() {
+        backend::tick();
+    }
 }
 
 /// The mode of the window, on the systems where winit reports it. Linux's
 /// comes from the portal; a demo scenario keeps its own.
 pub fn window_theme(theme: Option<winit::window::Theme>) {
-    if cfg!(target_os = "linux") || demo_looks().is_some() {
+    if cfg!(target_os = "linux") || scripted() {
         return;
     }
     let scheme = match theme {
@@ -166,6 +171,13 @@ fn demo_looks() -> Option<DemoLooks> {
         .map(|raw| parse_demo(&raw))
 }
 
+/// Whether a demo scenario supplies the looks, which nothing may overwrite;
+/// read once, as this is asked every frame.
+fn scripted() -> bool {
+    static SCRIPTED: OnceLock<bool> = OnceLock::new();
+    *SCRIPTED.get_or_init(|| demo_looks().is_some())
+}
+
 /// The looks a demo run steps through, as a system would change.
 #[derive(Debug, Clone, PartialEq)]
 struct DemoLooks {
@@ -187,6 +199,9 @@ fn parse_demo(raw: &str) -> DemoLooks {
             {
                 demo.every = Duration::from_secs_f32(secs);
             }
+            continue;
+        }
+        if part.trim().is_empty() {
             continue;
         }
         let mut look = Look::default();

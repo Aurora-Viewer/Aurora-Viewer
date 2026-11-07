@@ -1790,7 +1790,7 @@ impl App {
         crate::high_contrast::set(wanted_high_contrast(&settings));
         crate::disable_glass::set(wanted_disable_glass(&settings));
         if following_system(&settings) {
-            crate::system_theme::start();
+            crate::system_theme::start(true);
         }
         crate::interface_colors::set(wanted_interface_colors(&settings));
         ui::surface_opacity::set(wanted_opacity(&settings));
