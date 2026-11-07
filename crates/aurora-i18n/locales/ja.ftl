@@ -4442,6 +4442,7 @@ common-teleport-offer-sent = { $name }{ "にテレポートのオファーを送
 ui-perf-sun-shadows-depth-prepass-occlusion = 太陽の影、深度プリパス、オクルージョン
 ui-perf-shadows-and-depth = 影と深度
 ui-inventory-controls-favorites-tab = お気に入りタブ
+ui-inventory-controls-favorites-starred-only = お気に入り登録した項目のみ
 ui-inventory-controls-worn-tab = 着用中タブ
 ui-inventory-controls-recent-tab = 最新タブ
 build-ui-floaters-opacity = 不透明度：

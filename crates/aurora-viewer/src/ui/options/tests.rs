@@ -175,6 +175,7 @@ const BEFORE: &[&str] = &[
     "inventory.recent_hours",
     "inventory.show_worn",
     "inventory.show_favorites",
+    "inventory.favorites_starred_only",
     "inventory.search_trash",
     "inventory.search_library",
     "inventory.search_outfits",
