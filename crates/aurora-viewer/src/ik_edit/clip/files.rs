@@ -13,8 +13,8 @@ pub(super) enum Action {
     Load,
     LoadProject,
     SaveProject,
-    Save,
-    Import,
+    Save { last_key_only: bool },
+    Import { last_key_only: bool },
 }
 pub(super) enum Output {
     Preview {
@@ -123,19 +123,25 @@ pub(super) fn start(
                     .map_err(|e| e.to_string())?;
                 return Ok(Output::Saved(path));
             }
-            let animation = document.animation().map_err(|k| aurora_i18n::text(k).to_owned())?;
+            let last_key_only = match action {
+                Action::Save { last_key_only } | Action::Import { last_key_only } => last_key_only,
+                _ => false,
+            };
+            let animation = document
+                .animation_for_export(last_key_only)
+                .map_err(|k| aurora_i18n::text(k).to_owned())?;
             let bytes = aurora_assets::import_animation::encode(&animation).map_err(|e| e.to_string())?;
             let animation = aurora_assets::anim::parse_animation_upload(&bytes).map_err(|e| e.to_string())?;
             let name = basename(&document.name);
             Ok(match action {
                 Action::Load => unreachable!("file loading returned above"),
                 Action::LoadProject | Action::SaveProject => unreachable!("project file operation returned above"),
-                Action::Import => Output::Prepared(Prepared {
+                Action::Import { .. } => Output::Prepared(Prepared {
                     name,
                     bytes: Arc::new(bytes),
                     animation: Arc::new(animation),
                 }),
-                Action::Save => {
+                Action::Save { .. } => {
                     let Some(path) = rfd::FileDialog::new()
                         .add_filter(aurora_i18n::tr!("anim-edit-file-filter"), &["anim"])
                         .set_file_name(format!("{name}.anim"))
