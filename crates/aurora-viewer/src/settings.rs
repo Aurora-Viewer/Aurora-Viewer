@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 pub mod area_search;
 pub mod backup;
 mod hover_height;
+pub mod registry;
 mod saver;
 pub mod stream_list;
 
@@ -425,6 +426,10 @@ pub struct Settings {
     /// Stable releases only, or also the betas built every night
     /// (Preferences › Language and updates).
     pub update_channel: aurora_updater::feed::Channel,
+    /// How often a running viewer looks for a new version again, after the
+    /// check at launch (Preferences › Language and updates); a new one shows
+    /// a notice. Aurora only: the Legacy Viewer checks at launch.
+    pub update_check_interval: crate::updater::Interval,
     pub ignored_update: String,
     pub area_search: area_search::AreaSearch,
     pub crash_reports: CrashReports,
@@ -448,6 +453,11 @@ pub struct Settings {
     /// Debug overlays (not saved).
     #[serde(skip)]
     pub debug: DebugView,
+    /// DebugSettingsHideDefault: the Debug Settings window lists the changed
+    /// settings only.
+    pub debug_settings_changed_only: bool,
+    /// The "ignore" of the DebugSettingsWarning notification.
+    pub debug_settings_warning_ignored: bool,
     /// The Dev Toolbox's arrangement (Customize); None: the default one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dev_toolbox: Option<crate::dev_toolbox::tools::Layout>,
@@ -562,6 +572,11 @@ pub struct Settings {
     /// the new default.
     pub occlusion_culling: bool,
     pub lod_factor: f32,
+    /// RenderTreeLODFactor: the detail of Linden trees at a distance; 0 draws
+    /// no tree nor grass (scene/tree_detail.rs). Preferences › Graphics
+    /// "Trees", 0 to 1 (the Legacy slider starts at 0.125); the levels set
+    /// 0 (Potato), 0.5 or 1 (Deluxe), as its featuretable.
+    pub tree_lod_factor: f32,
     /// Texture memory sized from the detected video memory (else `texture_budget_mb`).
     pub texture_budget_auto: bool,
     pub texture_budget_mb: u32,
@@ -1092,6 +1107,9 @@ pub struct Settings {
     /// presets) or the viewfinder (`camera::presets`); kept apart from
     /// `camera`, which "Reset" sets back.
     pub camera_shots: Vec<crate::camera::CameraShot>,
+    /// The user's own Rear, Front, Side and Shoulder views (`camera::SavedViews`,
+    /// issue #2755), kept by "Reset" like `camera_shots`.
+    pub camera_views: crate::camera::SavedViews,
     /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
     /// legacy lines).
     pub chat_style: ChatStyle,
@@ -1205,8 +1223,13 @@ pub struct Settings {
     pub contact_shadows: bool,
     /// 0 none, 1 FXAA, 2 MSAA 2x, 3 MSAA 4x, 4 MSAA 8x, 5 TAA, 6 SMAA (the
     /// default, RenderFSAAType 2 of Firestorm's High to Ultra levels in
-    /// featuretable.txt)
+    /// featuretable.txt), 7 AMD FSR 3.1 (beyond the Legacy Viewer)
     pub antialiasing: u8,
+    /// With FSR, its quality mode: 0 native AA, 1 quality (the default),
+    /// 2 balanced, 3 performance, 4 ultra performance.
+    pub fsr_quality: u8,
+    /// With FSR, its sharpening (RCAS) in percent; 0 turns it off.
+    pub fsr_sharpness: u32,
     /// World resolution as a percentage of the window; HUDs and UI stay native.
     pub render_scale_percent: u32,
     /// Geometric specular anti-aliasing (common.wgsl `specular_aa_roughness`):
@@ -1249,6 +1272,10 @@ pub struct Settings {
     /// again, before Windows resets the card (app/busy_pause.rs). On by
     /// default; not in the Legacy Viewer.
     pub background_gpu_pause: bool,
+    /// After a GPU device loss (a driver reset of the card, often caused
+    /// by another program), a new window and device instead of closing
+    /// (app/gpu_recovery.rs). On by default; the Legacy Viewer closes.
+    pub gpu_recovery: bool,
     /// Maximum live particles (0 = particles off).
     pub max_particles: u32,
     /// Avatars drawn (the nearest ones).
@@ -1276,8 +1303,12 @@ pub struct Settings {
     /// Reflection probes (RenderReflectionProbeLevel): 0 none (sky only),
     /// 1 manual, 2 manual + terrain, 3 full scene.
     pub reflection_probes: u8,
-    /// Reflection probe cube slots (RenderReflectionProbeCount; 8..=64).
+    /// Reflection probe cube slots (RenderReflectionProbeCount; 8..=256).
     pub probe_count: u32,
+    /// How far automatic reflection probes are placed around the camera
+    /// (m, 32..=512), within the draw distance. The Legacy Viewer has no
+    /// such limit (the draw distance); 512 keeps its reach.
+    pub probe_range: f32,
     /// RenderAvatarMaxComplexity: avatars above it show as grey silhouettes
     /// (0 = no limit; Firestorm's Ultra preset is 350 000).
     pub max_complexity: u32,
@@ -1439,7 +1470,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 33;
+const SETTINGS_VERSION: u32 = 34;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1746,6 +1777,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             update_mode: crate::updater::Mode::Ask,
+            update_check_interval: crate::updater::Interval::default(),
             update_channel: aurora_updater::feed::Channel::Stable,
             ignored_update: String::new(),
             area_search: Default::default(),
@@ -1784,6 +1816,8 @@ impl Default for Settings {
             username: String::new(),
             remember_username: true,
             remember_password: false,
+            debug_settings_changed_only: false,
+            debug_settings_warning_ignored: false,
             grid: GridChoice::SecondLife,
             custom_login_uri: "http://127.0.0.1:9000/".into(),
             grids: Vec::new(),
@@ -1810,6 +1844,7 @@ impl Default for Settings {
             bloom_strength: BLOOM_STRENGTH,
             occlusion_culling: true,
             lod_factor: 2.0,
+            tree_lod_factor: 0.5,
             texture_budget_auto: true,
             texture_budget_mb: 1536,
             max_texture_resolution: MAX_TEXTURE_RESOLUTION,
@@ -2008,6 +2043,7 @@ impl Default for Settings {
             interface_colors: Default::default(),
             classic_controls: false,
             camera_shots: Vec::new(),
+            camera_views: Default::default(),
             plates_friends_only_full: false,
             plates_friend_tint: true,
             plates_hover_expand: true,
@@ -2053,6 +2089,8 @@ impl Default for Settings {
             projector_shadow_limit: 2,
             contact_shadows: false,
             antialiasing: 6,
+            fsr_quality: 1,
+            fsr_sharpness: 80,
             render_scale_percent: 100,
             specular_aa: true,
             colored_sky_ambient: false,
@@ -2066,6 +2104,7 @@ impl Default for Settings {
             background_fps_cap: true,
             background_fps_limit: 15,
             background_gpu_pause: true,
+            gpu_recovery: true,
             max_particles: 4096,
             max_avatars: 16,
             ssao: 1,
@@ -2076,7 +2115,8 @@ impl Default for Settings {
             screen_indirect_intensity: SCREEN_INDIRECT_INTENSITY,
             water_reflections: 1,
             reflection_probes: 3,
-            probe_count: 32,
+            probe_count: 256,
+            probe_range: 512.0,
             max_complexity: 350_000,
             max_attachment_area: 1000.0,
             loading_avatars: 0,
@@ -2131,9 +2171,17 @@ fn legacy_keybindings() -> crate::keybinds::KeyBindings {
 
 /// Automatic texture memory (MB) from the detected video memory: 70 % of
 /// it, at least 1.5 GB left to the rest, never under 768 MB. Integrated
-/// GPUs share the system memory: 2 GB; unknown: 1.5 GB.
-pub fn auto_texture_budget(vram_mb: Option<u64>, integrated: bool) -> u64 {
-    match vram_mb {
+/// GPUs may use a bounded share of a separate shared heap; unknown: 1.5 GB.
+pub fn auto_texture_budget(dedicated_mb: Option<u64>, shared_mb: Option<u64>, integrated: bool) -> u64 {
+    if integrated && let Some(shared) = shared_mb.filter(|&mb| mb > 0) {
+        let total = dedicated_mb.unwrap_or(0).saturating_add(shared);
+        let legacy_target = (total.saturating_mul(7) / 10).min(total.saturating_sub(1536)).max(768);
+        // Keep the auto setting conservative before the live per-heap
+        // budget arrives. The runtime target applies the same cap to its
+        // changing VK_EXT_memory_budget value.
+        return legacy_target.min(shared / 2);
+    }
+    match dedicated_mb {
         Some(v) if !integrated && v >= 1024 => (v * 7 / 10).min(v.saturating_sub(1536)).max(768),
         _ if integrated => 2048,
         _ => 1536,
@@ -2479,6 +2527,7 @@ impl Settings {
         self.ground_feet_max_avatars = self.ground_feet_max_avatars.min(MAX_GROUND_FEET_AVATARS);
         self.camera = std::mem::take(&mut self.camera).sanitized();
         crate::camera::presets::sanitize(&mut self.camera_shots);
+        self.camera_views.sanitize();
         if self.settings_version < 5 {
             // new defaults: no vsync, no frame cap (the old "0 = screen rate,
             // 1 = unlimited" setting becomes a switch + value)
@@ -2651,6 +2700,12 @@ impl Settings {
             camera.disable_constraints = false;
             camera.ignore_sim_constraints = false;
         }
+        if self.settings_version < 34 {
+            // the levels now set the trees' detail: a profile still exactly
+            // on Potato or Deluxe takes theirs (0 and 1, the Legacy Viewer's
+            // Low and Ultra), any other keeps 0.5
+            crate::graphics_presets::upgrade_tree_detail(&mut self);
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -2726,6 +2781,12 @@ impl Settings {
             BLOOM_STRENGTH
         };
         self.lod_factor = self.lod_factor.clamp(0.5, 4.0);
+        // unclamped in the Legacy Viewer, whose Phototools go to 8
+        self.tree_lod_factor = if self.tree_lod_factor.is_finite() {
+            self.tree_lod_factor.clamp(0.0, 8.0)
+        } else {
+            0.5
+        };
         self.ui_scale = self.ui_scale.clamp(0.75, 2.0);
         self.mouse_sensitivity = self.mouse_sensitivity.clamp(0.1, 5.0);
         self.texture_budget_mb = self.texture_budget_mb.clamp(256, 32768);
@@ -2744,10 +2805,17 @@ impl Settings {
         self.projector_shadow_limit = self
             .projector_shadow_limit
             .clamp(1, aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS as u8);
-        self.antialiasing = self.antialiasing.min(6);
+        self.antialiasing = self.antialiasing.min(7);
+        self.fsr_quality = self.fsr_quality.min(4);
+        self.fsr_sharpness = self.fsr_sharpness.min(100);
         self.render_scale_percent = self.render_scale_percent.clamp(50, 100);
         self.reflection_probes = self.reflection_probes.min(3);
-        self.probe_count = self.probe_count.clamp(8, 64);
+        self.probe_count = self.probe_count.clamp(8, 256);
+        self.probe_range = if self.probe_range.is_finite() {
+            self.probe_range.clamp(32.0, 512.0)
+        } else {
+            512.0
+        };
         self.tonemapper = self.tonemapper.min(1);
         self.tonemap_mix = if self.tonemap_mix.is_finite() {
             self.tonemap_mix.clamp(0.0, 1.0)
@@ -2894,11 +2962,11 @@ impl Settings {
     /// Texture memory budget (MB): the manual value, or in automatic mode a
     /// share of the detected video memory (as Firestorm's unlimited VRAM
     /// mode: leave room for render targets, geometry and other programs).
-    pub fn texture_budget(&self, vram_mb: Option<u64>, integrated: bool) -> u64 {
+    pub fn texture_budget(&self, dedicated_mb: Option<u64>, shared_mb: Option<u64>, integrated: bool) -> u64 {
         if !self.texture_budget_auto {
             return self.texture_budget_mb as u64;
         }
-        auto_texture_budget(vram_mb, integrated)
+        auto_texture_budget(dedicated_mb, shared_mb, integrated)
     }
 
     /// (resolution, distance) for the shadow quality step.
@@ -2918,7 +2986,7 @@ impl Settings {
     }
 
     pub fn render_settings(&self) -> aurora_render::RenderSettings {
-        use aurora_render::{AntiAliasing, AoMethod, Tonemapper};
+        use aurora_render::{AntiAliasing, AoMethod, FsrQuality, Tonemapper};
         let mut water_effects = self.water_effects.render();
         water_effects.particle_budget = self.max_particles;
         aurora_render::RenderSettings {
@@ -2931,8 +2999,16 @@ impl Settings {
                 3 => AntiAliasing::Msaa(4),
                 4 => AntiAliasing::Msaa(8),
                 5 => AntiAliasing::Taa,
+                7 => AntiAliasing::Fsr(match self.fsr_quality {
+                    0 => FsrQuality::NativeAa,
+                    1 => FsrQuality::Quality,
+                    2 => FsrQuality::Balanced,
+                    3 => FsrQuality::Performance,
+                    _ => FsrQuality::UltraPerformance,
+                }),
                 _ => AntiAliasing::Smaa,
             },
+            fsr_sharpness: (self.fsr_sharpness > 0).then(|| self.fsr_sharpness.min(100) as f32 / 100.0),
             tonemapper: if self.tonemapper == 1 {
                 Tonemapper::Aces
             } else {
@@ -2955,7 +3031,7 @@ impl Settings {
             specular_aa: self.specular_aa,
             water_reflection_scale: Self::reflection_scale(self.water_reflections),
             mirror_scale: Self::reflection_scale(self.mirrors),
-            probe_slots: self.probe_count.clamp(8, 64),
+            probe_slots: self.probe_count.clamp(8, 256),
             ssr: self.ssr,
             anisotropy: self.anisotropy,
             occlusion: self.occlusion_culling,
@@ -3116,6 +3192,17 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn automatic_texture_budget_uses_shared_heap_only_for_integrated_gpus() {
+        use super::auto_texture_budget;
+        assert_eq!(auto_texture_budget(Some(512), Some(7800), true), 3900);
+        // Discrete automatic sizing keeps the old 70% / 1.5 GB reserve rule.
+        assert_eq!(auto_texture_budget(Some(8192), Some(7800), false), 5734);
+        // When the system heap cannot be identified, the existing safe
+        // integrated default remains in force.
+        assert_eq!(auto_texture_budget(Some(512), None, true), 2048);
+    }
+
     #[test]
     fn appearance_camera_and_pose_preferences_default_on_and_persist_independently() {
         use super::Settings;

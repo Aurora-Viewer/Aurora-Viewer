@@ -26,6 +26,7 @@ pub(super) fn frame(raw: &[PlayingAnimation]) -> Frame<'_> {
         seat_animations: false,
         underwater: false,
         region: Some(1),
+        teleports: 0,
     }
 }
 pub(super) fn signal(state: State, now: Instant) -> PlayingAnimation {
@@ -1105,6 +1106,67 @@ fn adding_to_a_swimming_list_appends_without_replacing_links_or_originals() {
 }
 
 #[test]
+fn adding_to_an_ordered_state_sends_only_the_link() {
+    use crate::world::inventory::actions;
+    use aurora_net::inventory::operations::Operation;
+    let (mut inv, set) = fixture();
+    let reload = |inv: &mut Inventory| {
+        let mut catalog = inventory::Catalog::default();
+        catalog.refresh(inv);
+        catalog.selected(set.id).expect("set").clone()
+    };
+    let patches = |ops: &[Operation]| -> Vec<(Uuid, String)> {
+        ops.iter()
+            .filter_map(|op| match op {
+                Operation::Patch { id, body, .. } => {
+                    Some((*id, format!("{}{}", body["desc"].to_string_value(), body["name"].to_string_value())))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    let walk = set.states[&State::Walking].steps[0].members[0].original;
+    let change = inventory::add(&inv, &set, State::Standing, walk, None).expect("add");
+    actions::demo_mutate(&mut inv, Uuid::from_u128(1), change).expect("saved");
+    let mut set = reload(&mut inv);
+    let steps = set.states[&State::Standing].steps.clone();
+    assert_eq!(steps.iter().map(|s| s.order).collect::<Vec<_>>(), [0, 1, 2]);
+    // AOEngine::addAnimation: one link, no rewrite of the stands already there
+    let change = inventory::add(&inv, &set, State::Standing, walk, None).expect("add");
+    assert!(
+        matches!(change.operations.as_slice(), [Operation::Links { links, .. }] if links[0].desc == "3"),
+        "{:?}",
+        change.operations
+    );
+    // updateSortOrder rewrites only the entry out of place
+    inv.items.get_mut(&steps[2].id).expect("link").desc = "5".into();
+    set = reload(&mut inv);
+    let change = inventory::add(&inv, &set, State::Standing, walk, None).expect("add");
+    let rewritten = patches(&change.operations);
+    assert_eq!(rewritten.len(), 1);
+    assert_eq!(rewritten[0], (steps[2].id, "2".into()));
+    assert!(matches!(change.operations.last(), Some(Operation::Links { links, .. }) if links[0].desc == "3"));
+    // the same inside a group, and for the group folder's OR value
+    let selected = steps[..2].iter().map(|s| s.id).collect();
+    let (change, group) = inventory::editor::combine(&inv, &set, State::Standing, "Together", false, &selected).expect("group");
+    let reply = actions::demo_mutate(&mut inv, Uuid::from_u128(1), change).expect("saved");
+    set = reload(&mut inv);
+    let group = reply.created.get(&group).copied().unwrap_or(group);
+    let change = inventory::add(&inv, &set, State::Standing, walk, Some(group)).expect("add to group");
+    assert!(
+        matches!(change.operations.as_slice(), [Operation::Links { links, .. }] if links[0].desc == "2"),
+        "{:?}",
+        change.operations
+    );
+    inv.folders.get_mut(&group).expect("group").info.name = "Together:OR7".into();
+    set = reload(&mut inv);
+    let change = inventory::add(&inv, &set, State::Standing, walk, None).expect("add");
+    let rewritten = patches(&change.operations);
+    assert_eq!(rewritten.len(), 2, "{rewritten:?}");
+    assert!(rewritten.contains(&(group, "Together:OR1".into())));
+}
+
+#[test]
 fn every_swimming_context_broadcasts_its_selected_animation_and_hands_back_on_exit() {
     let (_, mut set) = fixture();
     for (index, state) in State::SWIMMING.into_iter().enumerate() {
@@ -1210,4 +1272,175 @@ fn an_authored_water_recovery_stops_the_hold_without_starting_priority_six_swimm
     let (_, commands) = runtime.update(Some(&set), f, now + Duration::from_millis(180), |_| true, |_| 0);
     assert!(commands.contains(&(held, false)));
     assert!(commands.iter().all(|(_, start)| !start));
+}
+
+/// Issue #2700: our AO stopped the stock sit and holds the sit itself. A
+/// teleport that leaves us off the seat ends that hold (the Legacy AO ends its
+/// override on the arrival's missing stock sit, AOEngine::override), even
+/// when the simulator sends no new stock state; a failed teleport, or a
+/// simulator still reporting the stock sit, keeps it.
+#[test]
+fn a_teleport_off_the_seat_ends_the_held_sit_override() {
+    let (_, set) = fixture();
+    let now = Instant::now();
+    let at = |ms: u64| now + Duration::from_millis(ms);
+    let sit_override = step(&set, State::Sitting, 0);
+    let seated = |r: &mut Runtime| {
+        let raw = [signal(State::Sitting, now)];
+        let mut f = frame(&raw);
+        f.on_object = true;
+        let (_, cmd) = r.update(Some(&set), f, now, |_| true, |_| 0);
+        assert_eq!(
+            cmd,
+            vec![(State::Sitting.motion(), false), (sit_override, true), (SIT_GENERIC, true)]
+        );
+        // the simulator's echo: our sit and its cover, the stock sit stopped
+        let echo = [
+            PlayingAnimation::from_signal(sit_override, 2, at(100), None),
+            PlayingAnimation::from_signal(SIT_GENERIC, 3, at(100), None),
+        ];
+        let mut f = frame(&echo);
+        f.on_object = true;
+        assert!(r.update(Some(&set), f, at(100), |_| true, |_| 0).1.is_empty());
+        assert_eq!(r.current, Some(State::Sitting));
+        echo
+    };
+
+    let mut r = Runtime::default();
+    let echo = seated(&mut r);
+    // a failed teleport: got off locally (teleportCore), still seated for the
+    // simulator, which keeps the AO's sit
+    assert!(r.update(Some(&set), frame(&echo), at(200), |_| true, |_| 0).1.is_empty());
+    assert_eq!(r.current, Some(State::Sitting));
+    // the teleport arrives, in the same region, with no new stock state
+    let mut f = frame(&echo);
+    f.teleports = 1;
+    let (pose, cmd) = r.update(Some(&set), f, at(3000), |_| true, |_| 0);
+    assert_eq!(cmd, vec![(sit_override, false), (SIT_GENERIC, false)], "no stock sit restored");
+    assert_eq!(r.current, None);
+    assert!(!pose.iter().any(|a| a.id == sit_override || a.id == SIT_GENERIC));
+    // the next walk is an ordinary walk
+    let walk = [echo[0], echo[1], signal(State::Walking, at(4000))];
+    let (_, cmd) = r.update(Some(&set), frame(&walk), at(4000), |_| true, |_| 0);
+    assert_eq!(r.current, Some(State::Walking));
+    assert!(cmd.contains(&(step(&set, State::Walking, 0), true)));
+    assert!(!cmd.iter().any(|(id, start)| *start && (*id == sit_override || *id == SIT_GENERIC)));
+
+    // still on an object after the teleport (or the simulator still sends
+    // the stock sit): the sit goes on
+    let mut r = Runtime::default();
+    let echo = seated(&mut r);
+    let mut f = frame(&echo);
+    f.on_object = true;
+    f.teleports = 1;
+    assert!(r.update(Some(&set), f, at(3000), |_| true, |_| 0).1.is_empty());
+    assert_eq!(r.current, Some(State::Sitting));
+    let mut r = Runtime::default();
+    seated(&mut r);
+    let raw = [signal(State::Sitting, now)];
+    let mut f = frame(&raw);
+    f.teleports = 1;
+    r.update(Some(&set), f, at(3000), |_| true, |_| 0);
+    assert_eq!(r.current, Some(State::Sitting));
+}
+
+/// Seats `r` on an object with the AO's sit, as the simulator's echo leaves
+/// it: our sit and its cover playing, the stock sit stopped and held.
+fn seat_with_ao_sit(r: &mut Runtime, set: &Set, at: Instant) -> [PlayingAnimation; 2] {
+    let raw = [signal(State::Sitting, at)];
+    let mut f = frame(&raw);
+    f.on_object = true;
+    r.update(Some(set), f, at, |_| true, |_| 0);
+    let echo = [
+        PlayingAnimation::from_signal(step(set, State::Sitting, 0), 2, at, None),
+        PlayingAnimation::from_signal(SIT_GENERIC, 3, at, None),
+    ];
+    let mut f = frame(&echo);
+    f.on_object = true;
+    r.update(Some(set), f, at + Duration::from_millis(100), |_| true, |_| 0);
+    assert_eq!(r.current, Some(State::Sitting));
+    echo
+}
+
+/// #2700, review of PR #2829: the arrival list can still carry the stock
+/// sit. The AO overrides it while it is listed, as the Legacy AO does, but
+/// the echo of its own stop must not leave it holding the sit off any
+/// object. A teleport the simulator started (llTeleportAgent) can arrive
+/// with us still seated, and the unseat follows: that ends the hold too. A
+/// new sit on an object afterwards is held as usual.
+#[test]
+fn after_a_teleport_off_the_seat_the_sit_is_not_held_again() {
+    let (_, set) = fixture();
+    let now = Instant::now();
+    let at = |ms: u64| now + Duration::from_millis(ms);
+    let sit_override = step(&set, State::Sitting, 0);
+    let stops_the_sit = |cmd: &[(Uuid, bool)]| {
+        cmd.contains(&(sit_override, false))
+            && cmd.contains(&(SIT_GENERIC, false))
+            && !cmd
+                .iter()
+                .any(|(id, start)| *start && (*id == State::Sitting.motion() || *id == sit_override))
+    };
+
+    // The arrival list still has the stock sit, then the echo of our stop.
+    let mut r = Runtime::default();
+    let echo = seat_with_ao_sit(&mut r, &set, now);
+    let raw = [echo[0], echo[1], signal(State::Sitting, at(3000))];
+    let mut f = frame(&raw);
+    f.teleports = 1;
+    let (_, cmd) = r.update(Some(&set), f, at(3000), |_| true, |_| 0);
+    assert_eq!(r.current, Some(State::Sitting), "the AO overrides a listed stock sit");
+    assert!(cmd.contains(&(State::Sitting.motion(), false)));
+    let mut f = frame(&echo);
+    f.teleports = 1;
+    let (pose, cmd) = r.update(Some(&set), f, at(3100), |_| true, |_| 0);
+    assert_ne!(r.current, Some(State::Sitting), "our stop's echo ends the sit off any object");
+    assert!(stops_the_sit(&cmd), "{cmd:?}");
+    assert!(!pose.iter().any(|a| a.id == sit_override || a.id == State::Sitting.motion()));
+    let mut f = frame(&echo);
+    f.teleports = 1;
+    r.update(Some(&set), f, at(5000), |_| true, |_| 0);
+    assert_ne!(r.current, Some(State::Sitting), "and stays ended");
+
+    // A teleport the simulator started: still seated on arrival, unseated later.
+    let mut r = Runtime::default();
+    let echo = seat_with_ao_sit(&mut r, &set, now);
+    let mut f = frame(&echo);
+    f.on_object = true;
+    f.teleports = 1;
+    assert!(r.update(Some(&set), f, at(3000), |_| true, |_| 0).1.is_empty());
+    assert_eq!(r.current, Some(State::Sitting), "still seated");
+    let mut f = frame(&echo);
+    f.teleports = 1;
+    let (_, cmd) = r.update(Some(&set), f, at(3500), |_| true, |_| 0);
+    assert_ne!(r.current, Some(State::Sitting), "the later unseat ends the sit");
+    assert!(stops_the_sit(&cmd), "{cmd:?}");
+
+    // Sitting on an object again after the teleport is an ordinary sit.
+    let raw = [signal(State::Sitting, at(6000))];
+    let mut f = frame(&raw);
+    f.on_object = true;
+    f.teleports = 1;
+    r.update(Some(&set), f, at(6000), |_| true, |_| 0);
+    let echo = [
+        PlayingAnimation::from_signal(sit_override, 2, at(6100), None),
+        PlayingAnimation::from_signal(SIT_GENERIC, 3, at(6100), None),
+    ];
+    let mut f = frame(&echo);
+    f.on_object = true;
+    f.teleports = 1;
+    r.update(Some(&set), f, at(6100), |_| true, |_| 0);
+    assert_eq!(r.current, Some(State::Sitting), "the new sit is held");
+}
+
+/// The changes held back after a teleport to another region are sent as
+/// their net result: the last change of each animation, stops first.
+#[test]
+fn held_changes_keep_the_last_change_of_each_animation() {
+    let (a, b, c) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+    let mut held = Vec::new();
+    runtime::hold_changes(&mut held, vec![(a, false), (b, true)]);
+    runtime::hold_changes(&mut held, vec![(b, false), (c, true)]);
+    runtime::hold_changes(&mut held, vec![(a, true)]);
+    assert_eq!(held, vec![(b, false), (c, true), (a, true)]);
 }

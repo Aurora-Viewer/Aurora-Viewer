@@ -58,7 +58,8 @@ pub fn page(cx: &mut Cx, tab: usize) {
                                 }
                             });
                         if ch {
-                            c.apply_preset(preset);
+                            // the view as the user saved it (Controls window)
+                            s.camera.apply_view(preset, &s.camera_views);
                         }
                         ch
                     },
@@ -103,7 +104,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                             } else {
                                 c.preset
                             };
-                            c.apply_preset(preset);
+                            s.camera.apply_view(preset, &s.camera_views);
                         }
                         reset
                     },
@@ -197,9 +198,10 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-camera-moving-your-avatar-returns-the-camera-behind-it-after"),
                     &field!(camera.reset_on_movement),
                 );
+                // FSResetCameraOnTP: only a teleport inside the region reads it
                 cx.toggle(
-                    tr!("ui-options-camera-return-after-teleporting"),
-                    tr!("ui-options-camera-the-camera-returns-behind-your-avatar-on-arrival"),
+                    tr!("ui-options-camera-return-after-a-teleport-in-the-region"),
+                    tr!("ui-options-camera-after-a-teleport-in-the-region-the-camera-returns"),
                     &field!(camera.reset_on_teleport),
                 );
                 cx.toggle(
