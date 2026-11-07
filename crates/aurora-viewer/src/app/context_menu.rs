@@ -310,7 +310,7 @@ impl App {
         } else {
             w.place_details.open_panel(source, &w.map, &mut w.landmarks, now);
             self.panels.places = true;
-            self.places_ui.raise();
+            self.places_ui.show_profile();
         }
     }
 

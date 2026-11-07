@@ -305,38 +305,37 @@ impl PlaceDetailsUi {
 fn window_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, place: &Place, actions: &mut Vec<PlaceAction>) {
     let global = place.global;
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 3.0;
-        if button(
+        ui.spacing_mut().item_spacing.x = 6.0;
+        if teleport_button(
             ui,
             p,
             aurora_i18n::tr!("common-teleport-3"),
             aurora_i18n::tr!("ui-place-details-teleport-to-the-specified-location"),
             global.is_some() && teleport_allowed(place, world),
-            108.0,
         ) && let Some(a) = teleport_action(place, world)
         {
             actions.push(a);
         }
-        if button(
+        if map_button(
             ui,
             p,
             aurora_i18n::tr!("common-map"),
             aurora_i18n::tr!("ui-place-details-show-the-corresponding-location-on-the-map"),
             global.is_some(),
-            85.0,
         ) && let Some(g) = global
         {
             actions.push(PlaceAction::ShowOnMap(g));
         }
         if matches!(place.source, Source::Landmark { .. }) {
             ui.add_enabled_ui(false, |ui| {
-                button(
+                action_button(
                     ui,
                     p,
+                    "",
                     aurora_i18n::tr!("common-edit"),
                     aurora_i18n::tr!("ui-place-details-edit-this-landmark"),
+                    widgets::ActionKind::Flat,
                     true,
-                    70.0,
                 )
             })
             .response
@@ -360,6 +359,27 @@ pub fn button(ui: &mut egui::Ui, p: &Palette, label: &str, tip: &str, enabled: b
     ui.add_enabled(enabled, |ui: &mut egui::Ui| ui.add_sized([width, 23.0], b))
         .on_hover_text(tip)
         .clicked()
+}
+
+/// An action button of a place profile: as tall as those of Aurora's Places
+/// window, and as wide as its label.
+fn action_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, tip: &str, kind: widgets::ActionKind, enabled: bool) -> bool {
+    let size = egui::vec2(widgets::action_button_fit(ui, icon, label), 26.0);
+    widgets::action_button_if(ui, p, icon, label, kind, size, enabled)
+        .on_hover_text(tip)
+        .clicked()
+}
+
+/// The Teleport button of a place profile, in the highlight colour with the
+/// icon of Aurora's Places window. Deliberate difference: the Legacy Viewer's
+/// button is plain, here the main action stands out.
+pub fn teleport_button(ui: &mut egui::Ui, p: &Palette, label: &str, tip: &str, enabled: bool) -> bool {
+    action_button(ui, p, "location-filled", label, tip, widgets::ActionKind::Primary, enabled)
+}
+
+/// The Map button beside `teleport_button`.
+pub fn map_button(ui: &mut egui::Ui, p: &Palette, label: &str, tip: &str, enabled: bool) -> bool {
+    action_button(ui, p, "map", label, tip, widgets::ActionKind::Flat, enabled)
 }
 
 /// The panel of a place: landmark info for a landmark, place profile else.
