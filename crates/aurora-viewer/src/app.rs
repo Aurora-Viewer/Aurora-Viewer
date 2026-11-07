@@ -1335,6 +1335,29 @@ fn open_notification_to_type(
     Some(conversation)
 }
 
+fn apply_poser_focus_request(
+    camera: &mut crate::camera::Camera,
+    agent: &mut crate::agent::AgentState,
+    settings: &crate::camera::CameraSettings,
+    posing: bool,
+    focus: Option<(Vec3, crate::camera::AutoCameraMove)>,
+) {
+    if let Some((focus, cause)) = focus
+        && crate::camera::camera_auto_move_allowed(posing, settings.auto_move_while_posing, cause)
+    {
+        let distance = if cause == crate::camera::AutoCameraMove::PoserOpenFraming {
+            4.2
+        } else {
+            2.8
+        };
+        camera.frame_poser_joint(focus, distance, agent, settings);
+    }
+}
+
+fn world_press_stops_for_poser_subject(posing: bool, alt_camera_gesture: bool, on_subject: bool) -> bool {
+    posing && !alt_camera_gesture && on_subject
+}
+
 impl App {
     // Growing editor state must not accumulate large return-value temporaries
     // on the Windows main stack while the avatar library is being loaded.
@@ -4782,6 +4805,13 @@ impl App {
             (self.world.objects.get(idx)?.full_id == self.world.agent_id).then_some(p)
         });
         let on_avatar = avatar_hit.is_some();
+        // The poser owns presses on our posed body even when its overlay has
+        // no handle there. Do this before click actions, camera focus, and
+        // avatar steering can observe the press. Alt remains the explicit
+        // camera gesture and continues through this path.
+        if world_press_stops_for_poser_subject(self.ik_editor.posing(), alt, on_avatar) {
+            return;
+        }
         // a media face takes the click (LLToolPie::handleMediaClick)
         self.media.build_mode = self.build.open;
         // "Object view" of the Controls window: the click is Alt's
@@ -7726,7 +7756,12 @@ impl App {
         // moving brings the camera back to the avatar (LLAgent::moveAt & co ->
         // resetView, FSResetCameraOnMovement): after an orbit the agent turns
         // to where the camera looks, the camera stays put
-        let moving = i.resets_camera(self.crouch_toggle.latched());
+        let moving = i.resets_camera(self.crouch_toggle.latched())
+            && crate::camera::camera_auto_move_allowed(
+                self.ik_editor.posing(),
+                self.settings.camera.auto_move_while_posing,
+                crate::camera::AutoCameraMove::MovementReset,
+            );
         if moving && self.mouse_mode != MouseMode::FocusOrbit {
             // A stick held to look up/down keeps its aim while walking,
             // like held mouse steering, instead of fighting the pitch fade.
@@ -9172,6 +9207,8 @@ impl App {
         self.update_audio();
         self.update_wind_sound(dt);
         let mut late_camera_frame = None;
+        let mut late_camera_settings = None;
+        let mut late_poser_auto_moves = true;
         let mut late_controls = None;
         if self.in_world() {
             self.update_sounds();
@@ -9230,27 +9267,52 @@ impl App {
             if !self.camera.mouselook() && self.camera.mouselook_zoom_held() {
                 self.end_mouselook_zoom();
             }
+            let poser_auto_moves = crate::camera::camera_auto_move_allowed(
+                self.ik_editor.posing(),
+                self.settings.camera.auto_move_while_posing,
+                crate::camera::AutoCameraMove::AutomaticTracking,
+            );
+            let poser_eye_follow = crate::camera::camera_auto_move_allowed(
+                self.ik_editor.posing(),
+                self.settings.camera.auto_move_while_posing,
+                crate::camera::AutoCameraMove::FollowEyes,
+            );
+            let mut camera_settings = self.settings.camera.clone();
+            if !poser_auto_moves {
+                camera_settings.track_focus_object = false;
+                camera_settings.reset_on_movement = false;
+            }
+            if !poser_eye_follow {
+                camera_settings.mouselook_follow_eyes = false;
+            }
             let frame = crate::camera::FrameInput {
                 dt,
                 aspect: self.camera_aspect(),
                 now: world_now(),
                 steering: self.mouse_mode == MouseMode::Steer,
                 build_mode: self.build.open,
-                edit_tracking: self
-                    .camera
-                    .focus_object_id()
-                    .filter(|id| self.build.edits_object(&self.world, id))
-                    .map(|_| self.settings.build.follow_edit_object),
+                edit_tracking: if poser_auto_moves {
+                    self.camera
+                        .focus_object_id()
+                        .filter(|id| self.build.edits_object(&self.world, id))
+                        .map(|_| self.settings.build.follow_edit_object)
+                } else {
+                    Some(false)
+                },
                 eye_offset: None,
                 draw_distance: self.settings.draw_distance,
                 region_width: self.world.main().map_or(256.0, |r| r.heightmap.size_x as f32),
             };
-            if frame.edit_tracking.is_some() || self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera) {
+            if (poser_auto_moves && frame.edit_tracking.is_some())
+                || (poser_auto_moves && self.camera.needs_animated_eyes(&self.world.agent, &camera_settings))
+            {
                 // Evaluate the focused edit selection after the local drag,
                 // and first-person eyes after this frame's animation.
                 late_camera_frame = Some(frame);
+                late_camera_settings = Some(camera_settings.clone());
+                late_poser_auto_moves = poser_auto_moves;
             } else {
-                self.camera.update(&mut self.world, &self.settings.camera, &frame);
+                self.camera.update(&mut self.world, &camera_settings, &frame);
             }
             if self.demo
                 && let Some((eye, target)) = crate::demo::projector_camera(self.frame_count)
@@ -9318,7 +9380,7 @@ impl App {
             if !self.world.agent.flying && self.world.rlva.has("jump") {
                 c.control_flags &= !control::UP_POS;
             }
-            if late_camera_frame.is_some() && self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera) {
+            if late_camera_frame.is_some() && poser_auto_moves && self.camera.needs_animated_eyes(&self.world.agent, &camera_settings) {
                 late_controls = Some(c);
             } else {
                 self.net.set_controls(c);
@@ -9803,11 +9865,12 @@ impl App {
             self.flush_build();
             let camera_changed = late_camera_frame.is_some() || panned;
             if let Some(mut frame) = late_camera_frame {
+                let camera_settings = late_camera_settings.unwrap_or_else(|| self.settings.camera.clone());
                 frame.eye_offset = self.scene.eyes_offset(&self.world, &self.world.agent_id);
-                if self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera) {
+                if late_poser_auto_moves && self.camera.needs_animated_eyes(&self.world.agent, &camera_settings) {
                     frame.now = now;
                 }
-                self.camera.update(&mut self.world, &self.settings.camera, &frame);
+                self.camera.update(&mut self.world, &camera_settings, &frame);
                 if let Some(controls) = late_controls {
                     // AgentUpdate must describe the displayed eye and aim,
                     // keeping the movement, script and RLVa flags prepared above.
@@ -15098,6 +15161,14 @@ impl App {
                         ui::layout::set_move_area(&ctx, screen);
                         self.ik_editor.over_viewfinder = true;
                         self.ik_editor.show(&ctx, &p, &self.world, projector);
+                        let focus = self.ik_editor.take_poser_focus(&self.world);
+                        apply_poser_focus_request(
+                            &mut self.camera,
+                            &mut self.world.agent,
+                            &self.settings.camera,
+                            self.ik_editor.posing(),
+                            focus,
+                        );
                         self.ik_editor.over_viewfinder = false;
                     }
                     // Personal Lighting, opened from the light panel, stays
@@ -15780,6 +15851,14 @@ impl App {
                     },
                 );
                 self.ik_editor.show(&ctx, &p, &self.world, projector);
+                let focus = self.ik_editor.take_poser_focus(&self.world);
+                apply_poser_focus_request(
+                    &mut self.camera,
+                    &mut self.world.agent,
+                    &self.settings.camera,
+                    self.ik_editor.posing(),
+                    focus,
+                );
                 if !self.ik_editor.posing() {
                     self.ik_editor.request_object_data(&mut self.world, Instant::now());
                     self.build.out.extend(self.ik_editor.take_prim_requests());
@@ -20998,6 +21077,21 @@ mod tests {
     use super::{RightGesture, UiActions, WindowedGeometry, capture_files, frame_cap, fullscreen_shortcut};
     use crate::settings::Settings;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn world_press_does_not_fall_through_for_unhandled_poser_subject_clicks() {
+        let stops_world_press = super::world_press_stops_for_poser_subject;
+        assert!(stops_world_press(true, false, true), "body press cannot reach world steering/focus");
+        assert!(!stops_world_press(true, true, true), "Alt camera gesture remains available");
+        assert!(
+            !stops_world_press(true, false, false),
+            "clicks away from the posed subject keep normal behavior"
+        );
+        assert!(
+            !stops_world_press(false, false, true),
+            "outside posing, subject click keeps normal behavior"
+        );
+    }
 
     #[test]
     fn coarse_interface_handles_refine_independently_and_portraits_wait_for_full_ui_size() {

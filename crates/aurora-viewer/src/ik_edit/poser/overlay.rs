@@ -4,6 +4,14 @@ use crate::ik_edit::segments::{self, Source};
 
 impl Editor {
     pub(in crate::ik_edit) fn select_pose_bone(&mut self, bone: usize, rig: &Rig, frame: &Frame) {
+        if self.selected != Some(bone) {
+            let cause = if std::mem::take(&mut self.poser.open_frame_pending) {
+                crate::camera::AutoCameraMove::PoserOpenFraming
+            } else {
+                crate::camera::AutoCameraMove::PoserSelectionFraming
+            };
+            self.poser.focus_requested = Some((bone, cause));
+        }
         self.mirrors.initialize(rig);
         self.selected = Some(bone);
         self.control = Control::Bone;

@@ -21,7 +21,9 @@ mod settings;
 
 pub use focus::FocusObject;
 pub use free::FreeCamera;
-pub use settings::{CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, VrView, zoom_lens};
+pub use settings::{
+    AutoCameraMove, CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, VrView, camera_auto_move_allowed, zoom_lens,
+};
 
 /// Reference for a rolled view, shared with flycam handoff and AgentUpdate.
 /// At a vertical pole the world Z axis cannot define an up direction.
@@ -770,6 +772,20 @@ impl Camera {
     pub fn set_view(&mut self, camera: Vec3, focus: Vec3, agent: &mut AgentState, s: &CameraSettings) {
         self.unlock_view(agent, s);
         self.set_camera_pos_and_focus(camera, focus, None, s);
+    }
+
+    /// Frame one poser joint while keeping the camera on its current side of
+    /// the subject. The poser preference is checked by the app at the event
+    /// that requests this one-shot framing.
+    pub fn frame_poser_joint(&mut self, focus: Vec3, distance_limit: f32, agent: &mut AgentState, s: &CameraSettings) {
+        let direction = (self.position - self.target).normalize_or_zero();
+        let direction = if direction.length_squared() > 0.5 {
+            direction
+        } else {
+            Vec3::new(-1.0, 0.0, 0.25).normalize()
+        };
+        let distance = (self.position - self.target).length().clamp(1.8, 5.0).min(distance_limit);
+        self.set_view(focus + direction * distance, focus, agent, s);
     }
 
     /// Appearance framing, including a changed eye with an unchanged focus.
