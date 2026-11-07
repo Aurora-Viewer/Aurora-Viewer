@@ -450,9 +450,22 @@ fn poser_closing_and_ik_switch_release_every_subject_unless_keep_pose_is_explici
     assert!(!editor.poser.active);
     assert!(editor.pose_layers(&world).is_empty());
 }
+/// The demo animesh without DemoSim's "you own this" update flag, so only
+/// its OwnerID decides whose it is.
+fn animesh_not_flagged_ours() -> Vec<aurora_net::objects::ObjectUpdate> {
+    demo::animesh_objects(demo::ANIMESH_MESH)
+        .into_iter()
+        .map(|mut o| {
+            o.update_flags &= !crate::ui::context::flags::OBJECT_YOU_OWNER;
+            o
+        })
+        .collect()
+}
 #[test]
-fn poser_subjects_require_ownership_or_consent_and_losing_ownership_drops_only_that_layer() {
-    let (mut world, mut editor) = fixture();
+fn an_animesh_whose_owner_id_is_not_sent_is_ours_by_its_update_flags() {
+    // the simulator sends OwnerID only with ObjectProperties: a rezzed
+    // animesh not selected yet is known as ours by OBJECT_YOU_OWNER alone
+    let (mut world, _) = fixture();
     world.apply(NetEvent::ObjectUpdates {
         handle: 1,
         objects: demo::animesh_objects(demo::ANIMESH_MESH),
@@ -463,10 +476,39 @@ fn poser_subjects_require_ownership_or_consent_and_losing_ownership_drops_only_t
         .find(|(_, o)| o.key.local_id == 9200)
         .map(|(i, o)| (i, o.full_id))
         .unwrap();
+    assert!(world.objects.get(index).unwrap().owner_id.is_nil());
+    assert_eq!(subjects::eligibility_reason(&world, id), None);
+    world.objects.get_mut(index).unwrap().update_flags &= !crate::ui::context::flags::OBJECT_YOU_OWNER;
+    assert_eq!(subjects::eligibility_reason(&world, id), Some("not-owned"));
+    world.objects.get_mut(index).unwrap().owner_id = Uuid::from_u128(77);
+    world.objects.get_mut(index).unwrap().update_flags |= crate::ui::context::flags::OBJECT_YOU_OWNER;
+    assert_eq!(
+        subjects::eligibility_reason(&world, id),
+        Some("not-owned"),
+        "a known other owner wins"
+    );
+}
+#[test]
+fn poser_subjects_require_ownership_or_consent_and_losing_ownership_drops_only_that_layer() {
+    let (mut world, mut editor) = fixture();
+    world.apply(NetEvent::ObjectUpdates {
+        handle: 1,
+        objects: animesh_not_flagged_ours(),
+    });
+    let (index, id) = world
+        .objects
+        .iter()
+        .find(|(_, o)| o.key.local_id == 9200)
+        .map(|(i, o)| (i, o.full_id))
+        .unwrap();
     assert!(!subjects::allowed(&world, id));
     world.objects.get_mut(index).unwrap().owner_id = world.agent_id;
-    assert!(subjects::allowed(&world, id));
+    assert!(
+        !world.avatar_poses.contains_key(&id) && subjects::allowed(&world, id),
+        "a still owned animesh, never posed by an animation yet, is offered"
+    );
     world.avatar_poses.insert(id, world.avatar_poses[&world.agent_id].clone());
+    assert!(subjects::allowed(&world, id));
     editor.pick_subject(&world, id);
     assert_eq!(editor.pose_layers(&world).len(), 2);
     let head = world.avatar_lib.rig.names["mHead"];
@@ -486,6 +528,103 @@ fn poser_subjects_require_ownership_or_consent_and_losing_ownership_drops_only_t
     assert_eq!(layers.len(), 1);
     assert!(layers.contains_key(&world.agent_id));
     assert_eq!(editor.poser.subject, world.agent_id);
+}
+#[test]
+fn poser_animesh_menu_has_a_name_instead_of_a_local_id_when_properties_are_missing() {
+    use crate::ui::widgets::elide_tests::{Frames, painted};
+    let (mut world, mut editor) = fixture();
+    world.apply(NetEvent::ObjectUpdates {
+        handle: 1,
+        objects: animesh_not_flagged_ours(),
+    });
+    let (index, id) = world
+        .objects
+        .iter()
+        .find(|(_, o)| o.key.local_id == 9200)
+        .map(|(i, o)| (i, o.full_id))
+        .unwrap();
+    world.objects.get_mut(index).unwrap().owner_id = world.agent_id;
+    world.avatar_poses.insert(id, world.avatar_poses[&world.agent_id].clone());
+    let mut frames = Frames::new();
+    let p = crate::theme::Theme::default().palette();
+    crate::ui::widgets::place_floater(&frames.ctx, "poser", egui::pos2(30.0, 30.0), egui::vec2(880.0, 760.0));
+    let frame = editor.editor_frame(&world).unwrap();
+    let mut draw = |ui: &mut egui::Ui| editor.poser_ui(ui.ctx(), &p, &world, &frame);
+    for _ in 0..3 {
+        frames.run(Vec::new(), &mut draw);
+    }
+    frames
+        .ctx
+        .data_mut(|d| d.insert_temp(egui::Id::unique("poser-subjects-open"), true));
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        texts = frames.run(Vec::new(), &mut draw);
+    }
+    assert!(painted(&texts, aurora_i18n::tr!("poser-animesh")).rect.is_positive());
+}
+#[test]
+fn poser_animesh_subject_uses_object_name_in_menu_and_requests_missing_properties_once() {
+    use crate::ui::widgets::elide_tests::{Frames, painted};
+    let (mut world, mut editor) = fixture();
+    world.apply(NetEvent::ObjectUpdates {
+        handle: 1,
+        objects: animesh_not_flagged_ours(),
+    });
+    let (index, id) = world
+        .objects
+        .iter()
+        .find(|(_, o)| o.key.local_id == 9200)
+        .map(|(i, o)| (i, o.full_id))
+        .unwrap();
+    world.objects.get_mut(index).unwrap().owner_id = world.agent_id;
+    world.avatar_poses.insert(id, world.avatar_poses[&world.agent_id].clone());
+    let mut frames = Frames::new();
+    let p = crate::theme::Theme::default().palette();
+    crate::ui::widgets::place_floater(&frames.ctx, "poser", egui::pos2(30.0, 30.0), egui::vec2(880.0, 760.0));
+    let frame = editor.editor_frame(&world).unwrap();
+    let mut draw = |ui: &mut egui::Ui| editor.poser_ui(ui.ctx(), &p, &world, &frame);
+    for _ in 0..3 {
+        frames.run(Vec::new(), &mut draw);
+    }
+    frames
+        .ctx
+        .data_mut(|d| d.insert_temp(egui::Id::unique("poser-subjects-open"), true));
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        texts = frames.run(Vec::new(), &mut draw);
+    }
+    assert!(painted(&texts, aurora_i18n::tr!("poser-animesh")).rect.is_positive());
+    drop(draw);
+    assert_eq!(editor.take_poser_requests(), vec![Request::ObjectName(id)]);
+    let mut draw = |ui: &mut egui::Ui| editor.poser_ui(ui.ctx(), &p, &world, &frame);
+    for _ in 0..3 {
+        texts = frames.run(Vec::new(), &mut draw);
+    }
+    drop(draw);
+    assert!(
+        editor.take_poser_requests().is_empty(),
+        "the outstanding property request is rate-limited"
+    );
+    let props = aurora_net::build::ObjectProps {
+        object_id: id,
+        name: "My Animesh Subject".to_owned(),
+        ..Default::default()
+    };
+    editor.update_poser_subject_names(&[props]);
+    let mut draw = |ui: &mut egui::Ui| editor.poser_ui(ui.ctx(), &p, &world, &frame);
+    for _ in 0..3 {
+        texts = frames.run(Vec::new(), &mut draw);
+    }
+    assert!(painted(&texts, "My Animesh Subject").rect.is_positive());
+    assert!(
+        !texts
+            .iter()
+            .any(|t| t.source == format!("Animesh {}", world.objects.get(index).unwrap().key.local_id))
+    );
+    assert!(
+        editor.take_poser_requests().is_empty(),
+        "the property request is rate-limited while the response is pending"
+    );
 }
 fn click(pos: egui::Pos2) -> Vec<egui::Event> {
     vec![
