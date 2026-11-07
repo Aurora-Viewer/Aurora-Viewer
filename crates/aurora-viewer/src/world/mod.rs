@@ -5100,7 +5100,9 @@ impl World {
         if let Some(item) = item
             && self.outfit.keeps_cof_link(item)
         {
-            // the region replaced it during the login restore: worn again
+            // before the login restore has read the COF, or replaced by the
+            // region while it puts the outfit on: the link stays, and the
+            // restore wears it again (mAttachmentInvLinkEnabled)
             return;
         }
         if let Some(item) = item
