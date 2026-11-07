@@ -574,7 +574,7 @@ pub struct Settings {
     pub lod_factor: f32,
     /// RenderTreeLODFactor: the detail of Linden trees at a distance; 0 draws
     /// no tree nor grass (scene/tree_detail.rs). Preferences › Graphics
-    /// "Trees", 0.125 to 1 like the Legacy Viewer's slider; the levels set
+    /// "Trees", 0 to 1 (the Legacy slider starts at 0.125); the levels set
     /// 0 (Potato), 0.5 or 1 (Deluxe), as its featuretable.
     pub tree_lod_factor: f32,
     /// Texture memory sized from the detected video memory (else `texture_budget_mb`).

@@ -325,16 +325,17 @@ fn quality(cx: &mut Cx) {
                 .changed()
             },
         );
-        // TreeMeshDetail (panel_preferences_graphics1.xml): 0.125 to 1, as
-        // the Legacy slider; Potato's 0 (no tree nor grass) comes from the
-        // level or Debug Settings
+        // TreeMeshDetail (panel_preferences_graphics1.xml). From 0, where the
+        // Legacy slider starts at 0.125: 0 turns trees and grass off, as the
+        // Potato level and Debug Settings do (the human's decision,
+        // 2026-11-07)
         cx.keywords("RenderTreeLODFactor LOD").row(
             tr!("ui-options-trees"),
             tr!("ui-options-trees-hint"),
             &field!(tree_lod_factor),
             |ui, s| {
                 ui.add(
-                    egui::Slider::new(&mut s.tree_lod_factor, 0.125..=1.0)
+                    egui::Slider::new(&mut s.tree_lod_factor, 0.0..=1.0)
                         .custom_parser(aurora_i18n::parse_number)
                         .step_by(0.125)
                         .trailing_fill(true),

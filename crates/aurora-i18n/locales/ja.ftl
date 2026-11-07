@@ -13383,4 +13383,4 @@ debug-settings-type-color = 色
 
 # Preferences › Graphics: the trees' detail (RenderTreeLODFactor)
 ui-options-trees = 樹木
-ui-options-trees-hint = 遠くにあるリンデンの樹木の詳細度です（デフォルトは0.5）。ポテトレベルでは樹木と草が表示されません。
+ui-options-trees-hint = 遠くにあるリンデンの樹木の詳細度です（デフォルトは0.5）。0にすると樹木と草は表示されません。

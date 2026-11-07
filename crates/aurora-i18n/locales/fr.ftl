@@ -13406,4 +13406,4 @@ debug-settings-type-color = Couleur
 
 # Preferences › Graphics: the trees' detail (RenderTreeLODFactor)
 ui-options-trees = Arbres
-ui-options-trees-hint = Détail des arbres Linden à distance (0,5 par défaut). Le niveau Patate retire les arbres et l'herbe.
+ui-options-trees-hint = Détail des arbres Linden à distance (0,5 par défaut). À 0, les arbres et l'herbe ne sont pas affichés.

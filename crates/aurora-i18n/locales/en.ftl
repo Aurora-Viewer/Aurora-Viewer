@@ -13410,4 +13410,4 @@ debug-settings-type-color = Colour
 
 # Preferences › Graphics: the trees' detail (RenderTreeLODFactor)
 ui-options-trees = Trees
-ui-options-trees-hint = Detail of Linden trees at a distance (0.5 by default). The Potato level turns trees and grass off.
+ui-options-trees-hint = Detail of Linden trees at a distance (0.5 by default). At 0, trees and grass are not drawn.
