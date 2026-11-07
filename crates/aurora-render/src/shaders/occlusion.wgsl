@@ -46,13 +46,23 @@ fn cs_hiz_down(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let lim = vec2<i32>(textureDimensions(hiz_src)) - vec2<i32>(1);
     let p = vec2<i32>(id.xy) * 2;
-    let last = id.xy == dst - vec2<u32>(1u);
-    let end = select(p + vec2<i32>(1), max(lim, p), last);
-    var far = 1.0;
-    for (var y = p.y; y <= end.y; y++) {
-        for (var x = p.x; x <= end.x; x++) {
-            far = min(far, textureLoad(hiz_src, min(vec2<i32>(x, y), lim), 0).r);
-        }
+    let a = textureLoad(hiz_src, min(p, lim), 0).r;
+    let b = textureLoad(hiz_src, min(p + vec2<i32>(1, 0), lim), 0).r;
+    let c = textureLoad(hiz_src, min(p + vec2<i32>(0, 1), lim), 0).r;
+    let d = textureLoad(hiz_src, min(p + vec2<i32>(1, 1), lim), 0).r;
+    var far = min(min(a, b), min(c, d));
+    // only the last row and column of the level read more
+    let odd = (vec2<i32>(id.xy) == vec2<i32>(dst) - vec2<i32>(1)) & (lim == p + vec2<i32>(2));
+    if (odd.x) {
+        far = min(far, textureLoad(hiz_src, vec2<i32>(p.x + 2, p.y), 0).r);
+        far = min(far, textureLoad(hiz_src, min(p + vec2<i32>(2, 1), lim), 0).r);
+    }
+    if (odd.y) {
+        far = min(far, textureLoad(hiz_src, vec2<i32>(p.x, p.y + 2), 0).r);
+        far = min(far, textureLoad(hiz_src, min(p + vec2<i32>(1, 2), lim), 0).r);
+    }
+    if (odd.x && odd.y) {
+        far = min(far, textureLoad(hiz_src, p + vec2<i32>(2), 0).r);
     }
     textureStore(hiz_dst, vec2<i32>(id.xy), vec4<f32>(far, 0.0, 0.0, 1.0));
 }
