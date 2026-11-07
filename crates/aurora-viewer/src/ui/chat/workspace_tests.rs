@@ -1230,6 +1230,9 @@ fn the_column_choice_comes_back_to_automatic() {
     // click is the wish, not the older collapse
     assert_eq!(collapsed.toggled(true), opened);
 
+    assert!(!auto.by_hand(), "the button is plain while automatic");
+    assert!(collapsed.by_hand() && opened.by_hand(), "and lit by hand, in both directions");
+
     assert_eq!(auto.least_width(), super::LEAST);
     assert_eq!(collapsed.least_width(), super::LEAST);
     assert!(opened.least_width() >= super::super::sidebar::WIDTH + super::LEAST - super::super::sidebar::RAIL);
@@ -1300,6 +1303,24 @@ fn the_column_opened_makes_a_small_window_grow() {
     let window = egui::AreaState::load(&h.frames.ctx, egui::Id::unique("conversations")).and_then(|s| s.size);
     let least = h.st.column.least_width();
     assert!(window.is_some_and(|size| size.x >= least), "{window:?} for {least}");
+}
+
+/// The column's button stands level with the conversation's box, at the
+/// height of its buttons, in the column and in the rail.
+#[test]
+fn the_column_button_is_level_with_the_box() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    resize(&mut h, 700.0);
+    for what in ["the column", "the rail"] {
+        let button = h.rect(super::super::sidebar::control_id("column-toggle"));
+        let field = h.rect(egui::Id::unique(("conv_input", None::<Uuid>)));
+        assert!(
+            (button.center().y - field.center().y).abs() <= 1.0,
+            "{what}: {button:?} and {field:?}"
+        );
+        assert_eq!(button.height(), super::super::compose::BUTTON);
+        toggle_column(&mut h);
+    }
 }
 
 /// The column collapsed by hand leaves the members' panel its place: only
