@@ -1010,12 +1010,12 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
         );
         let g = both.a;
         if (g.w > 0.0) {
-            gloss_sky = g.rgb;
+            gloss_sky = g.rgb * probe_pass_radiance();
         }
         if (env > 0.0) {
             let e = both.b;
             if (e.w > 0.0) {
-                env_sky = e.rgb;
+                env_sky = e.rgb * probe_pass_radiance();
             }
         }
     }
@@ -1547,7 +1547,7 @@ fn fs_mask_g(in: VsOut, @builtin(front_facing) front: bool) -> GOut {
 @fragment
 fn fs_reflect(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let rec = records[in.record];
-    // A mirrored view (water, mirror) flips the winding: the side facing
+    // A mirrored view (water, mirror, the faces of a probe) flips the winding: the side facing
     // its camera is the one rasterized as a back face. Single-sided faces
     // show that side only, as in the Legacy Viewer's culled reflection and
     // hero probe passes: a mirror's own surface, a few centimetres in front

@@ -21,7 +21,7 @@ mod settings;
 
 pub use focus::FocusObject;
 pub use free::FreeCamera;
-pub use settings::{CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, VrView, zoom_lens};
+pub use settings::{CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, SavedViews, VrView, zoom_lens};
 
 /// Reference for a rolled view, shared with flycam handoff and AgentUpdate.
 /// At a vertical pole the world Z axis cannot define an up direction.
@@ -738,6 +738,15 @@ impl Camera {
         }
     }
 
+    /// LLPickInfo::fetchResults uses calcFocusOffset for both camera focus
+    /// and handle_object_sit's AgentRequestSit. The offset is relative to
+    /// the clicked object's origin but remains in world axes.
+    pub fn object_pick_offset(&self, object: &FocusObject, point: Vec3, ray: Option<(Vec3, Vec3)>) -> Vec3 {
+        let Some(ray) = ray else { return point - object.position };
+        let virtual_camera = self.focus_target + (self.position - self.focus_target) / (1.0 + self.fov_zoom);
+        focus::calc_focus_offset(object, point, ray, self.position, self.forward(), virtual_camera)
+    }
+
     /// Alt+click (LLToolCamera::pickCallback): lock the camera on the
     /// clicked point, inside the clicked object when there is one.
     pub fn alt_focus(
@@ -750,10 +759,7 @@ impl Camera {
     ) {
         self.set_focus_on_avatar(false, true, true, agent, s);
         let focus = match object {
-            Some((_, g)) => {
-                let virtual_camera = self.focus_target + (self.position - self.focus_target) / (1.0 + self.fov_zoom);
-                g.position + focus::calc_focus_offset(&g, point, ray, self.position, self.forward(), virtual_camera)
-            }
+            Some((_, g)) => g.position + self.object_pick_offset(&g, point, Some(ray)),
             None => point,
         };
         self.set_focus_global(Some(focus), object.map(|o| o.0), object.map(|o| o.1), s);
