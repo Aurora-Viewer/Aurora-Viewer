@@ -60,6 +60,8 @@ use std::time::Instant;
 pub enum Step {
     Open(Tool, EditMode, u8),
     Select(usize),
+    LinkSetup(bool),
+    Link,
     SharedRights(usize, bool),
     Face(usize, u8, bool),
     /// Target channel, Local tab.
@@ -366,6 +368,15 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
     let Some(frame) = (frame + 215).checked_sub(base) else {
         return Vec::new();
     };
+    if matches!(parts[0], "link" | "link-ready" | "link-denied") {
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
+            220 => vec![Step::LinkSetup(parts[0] == "link-denied")],
+            227 => vec![Step::Focus(true)],
+            250 if parts[0] != "link-ready" => vec![Step::Link],
+            _ => Vec::new(),
+        };
+    }
     if matches!(parts[0], "pbr-bom" | "bp-bom") {
         return match frame {
             215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
@@ -671,4 +682,37 @@ fn x_start(tool: &BuildTool) -> f32 {
 
 fn y_start(tool: &BuildTool) -> f32 {
     tool.manip.drag.as_ref().map(|d| d.start_cursor.1).unwrap_or(0.0)
+}
+
+/// Two synthetic prims with different ObjectUpdate owner availability, as a
+/// rezzed mesh and new cubes can have. Selection properties supply both owners.
+pub fn link_setup(world: &mut World, tool: &mut BuildTool, settings: &BuildSettings, denied: bool) {
+    let Some(handle) = world.main_region else { return };
+    let mut objects = Vec::new();
+    for (local_id, offset, scale) in [
+        (99750, Vec3::new(5.0, 0.0, 1.5), Vec3::ONE),
+        (99751, Vec3::new(6.0, 0.0, 1.5), Vec3::new(0.25, 5.0, 3.0)),
+    ] {
+        let mut update = crate::demo::action_avatar(false);
+        update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        update.local_id = local_id;
+        update.full_id = crate::demo::action_id(local_id);
+        update.parent_id = 0;
+        update.position = world.agent.position + offset;
+        update.scale = scale;
+        update.owner_id = if local_id == 99750 { uuid::Uuid::nil() } else { world.agent_id };
+        update.extra = Default::default();
+        update.update_flags = crate::ui::context::flags::OBJECT_MOVE | crate::ui::context::flags::OBJECT_YOU_OWNER;
+        if !denied || local_id == 99751 {
+            update.update_flags |= crate::ui::context::flags::OBJECT_MODIFY;
+        }
+        objects.push(update);
+    }
+    world.apply(aurora_net::NetEvent::ObjectUpdates { handle, objects });
+    tool.deselect_all(world);
+    for id in [99750, 99751] {
+        if let Some(index) = world.objects.index_of_uuid(&crate::demo::action_id(id)) {
+            tool.click_select(world, settings, Some(index), id == 99751);
+        }
+    }
 }
