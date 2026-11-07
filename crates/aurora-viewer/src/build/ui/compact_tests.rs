@@ -2590,6 +2590,52 @@ fn typed_transparency_reaches_every_selected_face_even_over_a_mixed_value() {
     }
 }
 
+fn press(inspector: &mut Inspector, point: egui::Pos2) {
+    inspector.show(vec![egui::Event::PointerMoved(point)]);
+    for pressed in [true, false] {
+        inspector.show(vec![egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        }]);
+    }
+}
+
+fn key(inspector: &mut Inspector, key: egui::Key) {
+    inspector.show(vec![egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Default::default(),
+    }]);
+}
+
+/// The UV field `property` (scale U / V, offset U / V, rotation) with its
+/// column title: the title's rect, then the field's shown text and rect.
+fn uv_field(texts: &[(String, egui::Rect)], property: usize) -> Option<(egui::Rect, (String, egui::Rect))> {
+    let (label, width, row) = match property {
+        0 | 1 => (aurora_i18n::tr!("common-scale"), 103.0, property),
+        2 | 3 => (aurora_i18n::tr!("build-ui-texture-offset"), 75.0, property - 2),
+        _ => (aurora_i18n::tr!("build-ui-texture-rotation"), 71.0, 0),
+    };
+    let title = texts.iter().find(|(text, _)| text == label)?.1;
+    let mut fields: Vec<_> = texts
+        .iter()
+        .filter(|(text, rect)| {
+            (text == "—" || aurora_i18n::parse_number(text).is_some())
+                && rect.top() > title.bottom()
+                && rect.top() < title.bottom() + 70.0
+                && rect.left() >= title.left()
+                && rect.right() < title.left() + width
+        })
+        .cloned()
+        .collect();
+    fields.sort_by(|a, b| a.1.top().total_cmp(&b.1.top()));
+    Some((title, fields.get(row)?.clone()))
+}
+
 /// How a typed UV entry ends in `typed_uv_value_*`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Finish {
@@ -2623,26 +2669,6 @@ fn typed_uv_value_over_a_mixed_field_reaches_every_face_and_only_that_component(
             let f = inspector.world.objects.get(idx).unwrap().te.as_ref().unwrap().face(face as usize);
             [[f.scale_s, f.scale_t, f.offset_s, f.offset_t, f.rotation]; 4]
         }
-    }
-    fn press(inspector: &mut Inspector, point: egui::Pos2) {
-        inspector.show(vec![egui::Event::PointerMoved(point)]);
-        for pressed in [true, false] {
-            inspector.show(vec![egui::Event::PointerButton {
-                pos: point,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: Default::default(),
-            }]);
-        }
-    }
-    fn key(inspector: &mut Inspector, key: egui::Key) {
-        inspector.show(vec![egui::Event::Key {
-            key,
-            physical_key: None,
-            pressed: true,
-            repeat: false,
-            modifiers: Default::default(),
-        }]);
     }
     for legacy in [false, true] {
         for pbr in [false, true] {
@@ -2682,25 +2708,7 @@ fn typed_uv_value_over_a_mixed_field_reaches_every_face_and_only_that_component(
                         inspector.show(vec![]);
                     }
                     let (_, texts) = inspector.show(vec![]);
-                    let (label, width, row) = match property {
-                        0 | 1 => (aurora_i18n::tr!("common-scale"), 103.0, property),
-                        2 | 3 => (aurora_i18n::tr!("build-ui-texture-offset"), 75.0, property - 2),
-                        _ => (aurora_i18n::tr!("build-ui-texture-rotation"), 71.0, 0),
-                    };
-                    let title = texts.iter().find(|(text, _)| text == label).unwrap().1;
-                    let mut fields: Vec<_> = texts
-                        .iter()
-                        .filter(|(text, rect)| {
-                            (text == "—" || aurora_i18n::parse_number(text).is_some())
-                                && rect.top() > title.bottom()
-                                && rect.top() < title.bottom() + 70.0
-                                && rect.left() >= title.left()
-                                && rect.right() < title.left() + width
-                        })
-                        .cloned()
-                        .collect();
-                    fields.sort_by(|a, b| a.1.top().total_cmp(&b.1.top()));
-                    let (shown, field) = fields.get(row).cloned().unwrap_or_else(|| panic!("{case}: missing UV field"));
+                    let (title, (shown, field)) = uv_field(&texts, property).unwrap_or_else(|| panic!("{case}: missing UV field"));
                     assert_eq!(shown, "—", "{case}: the field is mixed");
                     press(&mut inspector, field.center());
                     assert!(
@@ -2745,6 +2753,111 @@ fn typed_uv_value_over_a_mixed_field_reaches_every_face_and_only_that_component(
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/// #1956, review of PR #2814: a PBR material's own UV transform is
+/// inherited by a face with no override. `PbrMaterial::apply_override`
+/// takes a scale or an offset as a whole pair, so editing U alone must keep
+/// the V that face shows (the base material's), on one channel and under
+/// "All", in what is applied and in what is sent. Both window styles.
+#[test]
+fn a_pbr_uv_edit_keeps_the_other_component_inherited_from_the_material() {
+    let asset = uuid::Uuid::from_u128(0x2814);
+    let base = aurora_assets::material::TextureTransform {
+        scale: [2.0, 3.0],
+        offset: [0.2, 0.3],
+        rotation: 0.0,
+    };
+    for legacy in [false, true] {
+        for channel in [0usize, 1] {
+            for (property, typed, expected) in [(0, "4", ([4.0, 3.0], [0.2, 0.3])), (2, "0.4", ([2.0, 3.0], [0.4, 0.3]))] {
+                let case = format!("legacy={legacy} channel={channel} field={property}");
+                let mut inspector = material_inspector();
+                inspector.settings.legacy_window = legacy;
+                inspector.tool.tab = 3;
+                inspector.tool.ui.tex_tab = 1;
+                inspector.tool.ui.pbr_channel = channel;
+                let key_ = inspector.tool.selection[0];
+                let idx = inspector.world.objects.index_of(&key_).unwrap();
+                let n = inspector.tool.num_faces(&inspector.world, idx) as u8;
+                inspector.world.objects.get_mut(idx).unwrap().extra.render_materials = vec![(u8::MAX, asset)];
+                inspector.scene.materials.insert(
+                    asset,
+                    aurora_assets::PbrMaterial {
+                        transforms: [base; 4],
+                        ..Default::default()
+                    },
+                );
+                inspector.list_contents(idx);
+                inspector.show(vec![]);
+                crate::ui::widgets::size_floater(&inspector.ctx, super::super::INSPECTOR_ID, egui::vec2(390.0, 1500.0));
+                for _ in 0..5 {
+                    inspector.show(vec![]);
+                }
+                let (_, texts) = inspector.show(vec![]);
+                let (_, (shown, field)) = uv_field(&texts, property).unwrap_or_else(|| panic!("{case}: missing UV field"));
+                let material_value = if property == 0 { base.scale[0] } else { base.offset[0] };
+                assert!(
+                    aurora_i18n::parse_number(&shown).is_some_and(|v| (v as f32 - material_value).abs() < 1e-5),
+                    "{case}: the field shows the material's value, not {shown}"
+                );
+                press(&mut inspector, field.center());
+                inspector.tool.out.clear();
+                inspector.show(vec![egui::Event::Text(typed.into())]);
+                key(&mut inspector, egui::Key::Enter);
+                inspector.show(vec![]);
+                let edited: Vec<usize> = if channel == 0 { (0..4).collect() } else { vec![channel - 1] };
+                // applied: the material under each face's new override
+                for face in 0..n {
+                    let mut material = aurora_assets::PbrMaterial {
+                        transforms: [base; 4],
+                        ..Default::default()
+                    };
+                    material.apply_override(&BuildTool::gltf_override(&inspector.world, idx, face));
+                    for (c, t) in material.transforms.iter().enumerate() {
+                        let want = if edited.contains(&c) { expected } else { (base.scale, base.offset) };
+                        assert_eq!((t.scale, t.offset), want, "{case}: face {face} channel {c}");
+                        assert_eq!(t.rotation, 0.0);
+                    }
+                }
+                // sent: the KHR_texture_transform of each face's override
+                let sent: Vec<serde_json::Value> = inspector
+                    .tool
+                    .out
+                    .iter()
+                    .filter_map(|command| match command {
+                        aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Cap { cap, body, .. })
+                            if cap == "ModifyMaterialParams" =>
+                        {
+                            Some(body.as_array().to_vec())
+                        }
+                        _ => None,
+                    })
+                    .flatten()
+                    .map(|entry| serde_json::from_str(entry.get("gltf_json").as_str()).expect("override JSON"))
+                    .collect();
+                assert_eq!(sent.len(), usize::from(n), "{case}: one override per face");
+                // the edited pair whole, the untouched one left to the material
+                let sent_pairs = if property == 0 {
+                    (expected.0, [0.0, 0.0])
+                } else {
+                    ([1.0, 1.0], expected.1)
+                };
+                for json in &sent {
+                    let transform =
+                        &json["materials"][0]["pbrMetallicRoughness"]["baseColorTexture"]["extensions"]["KHR_texture_transform"];
+                    let pair = |name: &str| -> Option<[f32; 2]> {
+                        Some([transform[name][0].as_f64()? as f32, transform[name][1].as_f64()? as f32])
+                    };
+                    assert_eq!(
+                        (pair("scale"), pair("offset")),
+                        (Some(sent_pairs.0), Some(sent_pairs.1)),
+                        "{case}: sent {json}"
+                    );
                 }
             }
         }

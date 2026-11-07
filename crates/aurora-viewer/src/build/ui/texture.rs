@@ -298,12 +298,18 @@ impl BuildTool {
     /// Change the GLTF override of the selected faces with a material
     /// (FSRenderMaterialOverrideFunctor): only the faces with a base material.
     fn edit_gltf(&mut self, world: &mut World, sel: &[Sel], f: impl Fn(&mut PbrOverride)) {
+        self.edit_gltf_faces(world, sel, |_, o| f(o));
+    }
+
+    /// `edit_gltf` with the index of each face in `sel`.
+    fn edit_gltf_faces(&mut self, world: &mut World, sel: &[Sel], f: impl Fn(usize, &mut PbrOverride)) {
         let updates: Vec<GltfUpdate> = sel
             .iter()
-            .filter(|s| BuildTool::gltf_asset(world, s.idx, s.face).is_some())
-            .map(|s| {
+            .enumerate()
+            .filter(|(_, s)| BuildTool::gltf_asset(world, s.idx, s.face).is_some())
+            .map(|(k, s)| {
                 let mut o = BuildTool::gltf_override(world, s.idx, s.face);
-                f(&mut o);
+                f(k, &mut o);
                 GltfUpdate {
                     object: s.idx,
                     face: s.face,
@@ -850,10 +856,25 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
         let write = uv_controls(ui, p, &mut values, mixed, 5, editable, ["U", "V"]);
         if write.contains(&true) {
             // LLPanelFace::updateGLTFTextureTransform: the committed
-            // component only, on each face's override and each channel
+            // component only, on each face's override and each channel.
+            // apply_override takes a scale or an offset as a whole pair, so
+            // a pair with a committed component starts from what that face
+            // and channel show: the other component keeps its value, the
+            // base material's when the override has none. Better than
+            // LLPanelFace, which starts from the raw override and resets
+            // that component to the identity.
             let new = [values[0], values[1], values[2], values[3], values[4].to_radians()];
-            tool.edit_gltf(world, sel, |o| {
-                for t in &mut o.transforms[channels.clone()] {
+            let effective = &face_transforms;
+            tool.edit_gltf_faces(world, sel, |k, o| {
+                for channel in channels.clone() {
+                    let shown = effective[k][channel];
+                    let t = &mut o.transforms[channel];
+                    if write[0] || write[1] {
+                        t.scale = shown.scale;
+                    }
+                    if write[2] || write[3] {
+                        t.offset = shown.offset;
+                    }
                     let mut a = components(t);
                     for i in (0..5).filter(|&i| write[i]) {
                         a[i] = new[i];
