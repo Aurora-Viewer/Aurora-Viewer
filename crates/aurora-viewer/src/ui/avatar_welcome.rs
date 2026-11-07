@@ -177,6 +177,12 @@ impl AvatarWelcomeUi {
     /// Draws the page; returns the web view's size (None: no page).
     fn contents(&mut self, ui: &mut egui::Ui, p: &Palette, env: &PackWeb) -> Option<Vec2> {
         let Some(url) = env.url else {
+            // the page is gone (a Hypergrid region): stop the browser so that
+            // no focus or key stays with a page that is not drawn
+            if self.web.running() || self.web.focused || !self.loaded.is_empty() {
+                self.web.close();
+                self.loaded.clear();
+            }
             ui.add_space(24.0);
             ui.vertical_centered(|ui| {
                 ui.label(
