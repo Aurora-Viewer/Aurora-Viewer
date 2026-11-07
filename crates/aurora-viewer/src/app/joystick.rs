@@ -441,7 +441,7 @@ impl App {
         // right stick; while translating, that same stick steers the avatar.
         if m.gamepad
             && !self.camera.mouselook()
-            && self.mouse_mode != crate::app::MouseMode::FocusOrbit
+            && !matches!(self.mouse_mode, crate::app::MouseMode::FocusOrbit | crate::app::MouseMode::MouseCam)
             && (self.world.agent.is_sitting()
                 || self.camera.gamepad_pan_follows_player()
                 || !(i.forward || i.back || i.turn_left || i.turn_right || i.strafe_left || i.strafe_right))

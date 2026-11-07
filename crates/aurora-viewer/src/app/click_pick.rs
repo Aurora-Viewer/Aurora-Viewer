@@ -61,6 +61,9 @@ pub(super) enum Click {
     /// Left press in mouselook that no script took: touch at the crosshair,
     /// or under the cursor Alt freed (app/script_clicks.rs).
     Gun { at_cursor: bool },
+    /// The Mouse Camera's press: focus on the clicked point
+    /// (app/mouse_cam.rs).
+    MouseCam,
 }
 
 /// What follows a click that waits for its depth, kept in order.
@@ -309,6 +312,9 @@ impl App {
     }
 
     fn mouse_button(&mut self, button: MouseButton, pressed: bool, over_ui: bool) {
+        if self.mouse_cam.swallows(button, pressed) {
+            return;
+        }
         match button {
             MouseButton::Right => self.on_right_button(pressed, over_ui),
             MouseButton::Left if pressed => {
@@ -382,6 +388,7 @@ impl App {
             Click::World => self.world_press(),
             Click::Menu => self.world_menu(),
             Click::Gun { at_cursor } => self.gun_press(at_cursor),
+            Click::MouseCam => self.mouse_cam_press(),
         }
         self.clicks.running = None;
         // what the click costs the main thread, each time it runs: when it
@@ -461,6 +468,7 @@ impl App {
         // transparency overlay. Posed geometry avoids an attachment's bind pose.
         // (Alt in mouselook frees the cursor for the grab tool, not the camera.)
         let camera = (self.alt && !matches!(click, Click::Gun { .. }))
+            || click == Click::MouseCam
             || self.object_view
             || (self.build.open && self.build.tool == crate::build::Tool::Focus);
         let mode = match (click == Click::Menu, camera) {
