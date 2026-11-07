@@ -6117,9 +6117,13 @@ impl Backend {
         if !self.vr.wanted() {
             world.session.request_stop();
         }
-        let frame = world
-            .session
-            .begin(&world.runtime, packet.params.view, packet.params.near, packet.params.vr_rig);
+        let frame = world.session.begin(
+            &world.runtime,
+            packet.params.view,
+            packet.params.near,
+            packet.params.vr_rig,
+            packet.params.vr_revision,
+        );
         let focused = world.session.focused
             && frame
                 .as_ref()

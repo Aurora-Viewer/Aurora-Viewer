@@ -1071,10 +1071,12 @@ pub fn gamepad_page(cx: &mut Cx, tab: usize) {
         });
     } else {
         gamepad_style_selector(cx);
+        gamepad_button_binding(cx, tr!("joystick-control-reset-view"), field!(gamepad.reset_view_button));
         cx.group(tr!("joystick-avatar-mode"), |cx| {
             gamepad_stick_binding(cx, tr!("joystick-control-move-avatar"), field!(gamepad.gamepad_move_stick));
             gamepad_stick_binding(cx, tr!("joystick-control-move-camera"), field!(gamepad.gamepad_camera_stick));
             gamepad_button_binding(cx, tr!("joystick-control-jump"), field!(gamepad.jump_button));
+            gamepad_button_binding(cx, tr!("joystick-control-crouch"), field!(gamepad.crouch_button));
             gamepad_button_binding(cx, tr!("joystick-control-fly-up"), field!(gamepad.rise_button));
             gamepad_button_binding(cx, tr!("joystick-control-fly-down"), field!(gamepad.fall_button));
             gamepad_button_binding(cx, tr!("joystick-control-flycam"), field!(gamepad.flycam_button));
@@ -1082,6 +1084,12 @@ pub fn gamepad_page(cx: &mut Cx, tab: usize) {
             gamepad_button_binding(cx, tr!("joystick-avatar-zoom-out"), field!(gamepad.gamepad_avatar_zoom_out_button));
             gamepad_button_binding(cx, tr!("joystick-avatar-pan-up"), field!(gamepad.gamepad_avatar_pan_up_button));
             gamepad_button_binding(cx, tr!("joystick-avatar-pan-down"), field!(gamepad.gamepad_avatar_pan_down_button));
+            gamepad_button_binding(cx, tr!("joystick-avatar-pan-left"), field!(gamepad.gamepad_avatar_pan_left_button));
+            gamepad_button_binding(
+                cx,
+                tr!("joystick-avatar-pan-right"),
+                field!(gamepad.gamepad_avatar_pan_right_button),
+            );
             gamepad_button_binding(cx, tr!("joystick-avatar-next"), field!(gamepad.gamepad_avatar_next_button));
             gamepad_button_binding(cx, tr!("joystick-avatar-previous"), field!(gamepad.gamepad_avatar_previous_button));
         });
@@ -1089,6 +1097,7 @@ pub fn gamepad_page(cx: &mut Cx, tab: usize) {
             gamepad_stick_binding(cx, tr!("joystick-control-move-avatar"), field!(gamepad.first_person.move_stick));
             gamepad_stick_binding(cx, tr!("joystick-control-move-camera"), field!(gamepad.first_person.camera_stick));
             gamepad_button_binding(cx, tr!("joystick-control-jump"), field!(gamepad.first_person.jump_button));
+            gamepad_button_binding(cx, tr!("joystick-control-crouch"), field!(gamepad.first_person.crouch_button));
             gamepad_button_binding(cx, tr!("joystick-control-fly-up"), field!(gamepad.first_person.rise_button));
             gamepad_button_binding(cx, tr!("joystick-control-fly-down"), field!(gamepad.first_person.fall_button));
             gamepad_button_binding_with_fallback(

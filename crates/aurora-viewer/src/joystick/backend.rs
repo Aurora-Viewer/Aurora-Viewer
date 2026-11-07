@@ -110,16 +110,26 @@ impl Worker {
         }
     }
 
-    fn button_kind(code: gilrs_core::EvCode) -> GamepadButton {
+    fn button_kind(code: gilrs_core::EvCode, style: GamepadStyle) -> GamepadButton {
         use gilrs_core::native_ev_codes as b;
         if code == b::BTN_SOUTH {
             GamepadButton::South
         } else if code == b::BTN_EAST {
             GamepadButton::East
         } else if code == b::BTN_NORTH {
-            GamepadButton::North
+            // xpad reports X as BTN_X (alias BTN_NORTH), unlike the Linux
+            // positional gamepad convention used by PlayStation drivers.
+            if cfg!(target_os = "linux") && style == GamepadStyle::Xbox {
+                GamepadButton::West
+            } else {
+                GamepadButton::North
+            }
         } else if code == b::BTN_WEST {
-            GamepadButton::West
+            if cfg!(target_os = "linux") && style == GamepadStyle::Xbox {
+                GamepadButton::North
+            } else {
+                GamepadButton::West
+            }
         } else if code == b::BTN_SELECT {
             GamepadButton::Select
         } else if code == b::BTN_START {
@@ -278,6 +288,7 @@ impl Worker {
                                 (info.min >= 0 && info.max > info.min).then(|| axis_index(*code)).flatten()
                             })
                         };
+                        let style = Self::controller_style(pad.name(), pad.vendor_id());
                         let mut device = Device::gamepad(
                             format!("joystick:{}:{id}", uuid::Uuid::from_bytes(pad.uuid())),
                             pad.name().to_owned(),
@@ -295,8 +306,8 @@ impl Worker {
                                     gilrs_core::native_ev_codes::AXIS_RIGHTZ,
                                 ]),
                             ],
-                            Self::controller_style(pad.name(), pad.vendor_id()),
-                            pad.buttons().iter().copied().map(Self::button_kind).collect(),
+                            style,
+                            pad.buttons().iter().copied().map(|code| Self::button_kind(code, style)).collect(),
                         );
                         device.gamepad_dpad = [
                             axis_index(gilrs_core::native_ev_codes::AXIS_DPADX),
@@ -583,6 +594,44 @@ fn decode_hid(state: &mut Device, data: &[u8]) -> [bool; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_face_buttons_keep_x_crouch_and_y_reset() {
+        use crate::joystick::{Controller, Settings};
+        use gilrs_core::native_ev_codes as codes;
+        for style in [GamepadStyle::Xbox, GamepadStyle::Playstation] {
+            let native = [codes::BTN_SOUTH, codes::BTN_EAST, codes::BTN_NORTH, codes::BTN_WEST];
+            let buttons = native.map(|code| Worker::button_kind(code, style));
+            let settings = Settings {
+                enabled: true,
+                ..Settings::gamepad_defaults()
+            };
+            let mut device = Device::gamepad("pad".into(), "Pad".into(), 0, [[None; 2]; 2], [None; 2], style, buttons.to_vec());
+            // xpad's BTN_X/BTN_Y aliases differ from positional Linux Sony codes.
+            let x = if cfg!(target_os = "linux") && style == GamepadStyle::Xbox {
+                2
+            } else {
+                3
+            };
+            let y = if x == 2 { 3 } else { 2 };
+            let mut controller = Controller::default();
+            for (flycam, first) in [(false, false), (false, true), (true, false)] {
+                controller.sample_device(Some(&device), &settings, flycam, first, 0.1);
+                device.button(x, true);
+                let motion = controller.sample_device(Some(&device), &settings, flycam, first, 0.1);
+                assert_eq!(motion.crouch, !flycam);
+                assert_eq!(motion.fall, flycam);
+                assert!(!motion.reset_view);
+                device.button(x, false);
+                device.button(y, true);
+                let motion = controller.sample_device(Some(&device), &settings, flycam, first, 0.1);
+                assert!(motion.reset_view);
+                assert!(!motion.crouch && !motion.fall);
+                device.button(y, false);
+                controller.sample_device(Some(&device), &settings, flycam, first, 0.1);
+            }
+        }
+    }
 
     #[test]
     #[cfg(windows)]

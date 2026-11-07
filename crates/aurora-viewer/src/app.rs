@@ -4129,7 +4129,14 @@ impl App {
                 camera_eye,
                 camera_at,
                 force_mouselook,
-            } => self.camera.on_sit_response(object, camera_eye, camera_at, force_mouselook),
+            } => {
+                self.camera.on_sit_response(object, camera_eye, camera_at, force_mouselook);
+                // VR ignores creator poses, but the saved desktop view must
+                // receive seats entered while the headset is active.
+                if let Some(camera) = &mut self.vr_camera {
+                    camera.on_sit_response(object, camera_eye, camera_at, force_mouselook);
+                }
+            }
             NetEvent::CameraConstraint(plane) => self.camera.set_collide_plane(plane, &self.settings.camera),
             NetEvent::RegionRestart(notice) => self.on_region_restart(notice),
             NetEvent::RegionRestartCancelled => self.on_region_restart_cancelled(),
@@ -4547,8 +4554,8 @@ impl App {
 
     /// Escape / "Reset camera" (handle_reset_view).
     fn reset_camera_view(&mut self) {
-        if self.vr_mode == Some(crate::camera::VrView::Avatar) {
-            self.camera.handle_reset_view(&mut self.world.agent, &self.settings.camera);
+        if self.vr_mode.is_some() {
+            self.reset_gamepad_view();
             return;
         }
         self.stop_autopilot(true);
@@ -8062,7 +8069,9 @@ impl App {
             || self.web_has_focus()
             || egui::Popup::is_any_open(&self.egui_ctx)
             || self.snapshots.reel.quick.is_open();
-        let typing = typing || web_or_popup;
+        // The headset owns keyboard movement; desktop focus can remain on chat
+        // or a popup after sitting, but must not swallow VR vehicle controls.
+        let typing = self.vr_camera.is_none() && (typing || web_or_popup);
         let (kb, m) = (&self.settings.keybinds, self.mods());
         // typing in the chat bar, only the keys it hands to the avatar move
         // it (crate::keybinds::chat_bar_moves)
@@ -8158,6 +8167,7 @@ impl App {
             || i.down
             || self.joystick.motion.player_movement_input()
             || (self.mouse_mode == MouseMode::Steer && self.right_drag);
+        i.down |= self.joystick.motion.crouch;
         i.down = self.crouch_toggle.apply(
             self.settings.crouch_toggle,
             self.world.agent.flying,
@@ -8249,6 +8259,13 @@ impl App {
             i.resets_camera(self.crouch_toggle.latched())
         };
         let gamepad_movement = gamepad && self.joystick.motion.player_movement_input();
+        if self.vr_mode.is_none()
+            && moving
+            && !self.input.resets_camera(self.crouch_toggle.latched())
+            && let Some(yaw) = self.camera.gamepad_pan_movement_yaw()
+        {
+            self.world.agent.yaw = yaw;
+        }
         if moving && self.mouse_mode != MouseMode::FocusOrbit && self.vr_mode != Some(crate::camera::VrView::Avatar) {
             // A stick held to look up/down keeps its aim while walking,
             // like held mouse steering, instead of fighting the pitch fade.
@@ -8314,9 +8331,15 @@ impl App {
         };
         self.camera.apply_keys(keys, &mut self.world.agent, &self.settings.camera, dt);
         self.camera.joystick_pitch(i.joystick_pitch, dt);
-        if gamepad && !moving && self.mouse_mode != MouseMode::FocusOrbit {
+        if gamepad
+            && (!moving || self.world.agent.is_sitting() || self.camera.gamepad_pan_follows_player())
+            && self.mouse_mode != MouseMode::FocusOrbit
+        {
             self.camera
                 .joystick_orbit_yaw(self.joystick.motion.axes[5], dt, &mut self.world.agent);
+            if moving && let Some(yaw) = self.camera.gamepad_pan_movement_yaw() {
+                self.world.agent.yaw = yaw;
+            }
         }
     }
 
@@ -9765,7 +9788,7 @@ impl App {
         // ---- agent / camera
         let typing = self.egui_ctx.egui_wants_keyboard_input();
         let vr_body_yaw = self.world.agent.yaw;
-        if self.vr_camera.is_some() {
+        if self.vr_camera.is_some() && !self.world.agent.is_sitting() {
             self.world.agent.yaw = self.vr_rig_yaw;
         }
         self.update_move_input(typing, dt);
@@ -9830,7 +9853,10 @@ impl App {
             let camera_distance = self.camera.position.distance(self.world.agent.position);
             let yaw_before_update = self.world.agent.yaw;
             self.world.agent.update(&self.input, ml, dt, camera_distance);
-            if self.vr_camera.is_some() {
+            if self.vr_camera.is_some() && self.world.agent.is_sitting() {
+                // Seated keys drive the vehicle script, not a second local turn.
+                self.world.agent.yaw = yaw_before_update;
+            } else if self.vr_camera.is_some() {
                 let delta = self.world.agent.yaw - yaw_before_update;
                 self.vr_rig_yaw += (delta + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
             }
@@ -9900,6 +9926,11 @@ impl App {
             self.update_pointing();
             self.update_look_at(w as f32, h as f32);
             let mut c = self.world.agent.controls(&self.input, &self.camera, self.settings.draw_distance);
+            if self.vr_mode.is_some() && self.world.agent.is_sitting() {
+                // Vehicle scripts need the original digital turn controls,
+                // rather than desktop mouselook's turn-to-strafe conversion.
+                c.control_flags = self.world.agent.control_flags(&self.input, false) | (c.control_flags & control::MOUSELOOK);
+            }
             // the walk to a double-clicked point (src/autopilot.rs)
             c.control_flags = self.autopilot_controls(c.control_flags);
             if let Some(flags) = self.vr_follow_flags {
@@ -22673,7 +22704,7 @@ mod tests {
             super::apply_test_fps_limit(&mut settings, value);
             assert_eq!((settings.fps_cap, settings.fps_limit), (enabled, limit), "{value}");
             if !enabled {
-                assert_eq!(frame_cap(&settings, false, true, 144.0, true, None), 0.0);
+                assert_eq!(frame_cap(&settings, false, false, true, 144.0, true, None), 0.0);
             }
         }
     }

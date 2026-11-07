@@ -51,6 +51,12 @@ impl Flycam {
         self.fov = self.reference_fov;
     }
 
+    /// Keep position, heading and lens while removing artificial pitch/roll.
+    pub fn reset_orientation(&mut self) {
+        let forward = self.forward().with_z(0.0).normalize_or(Vec3::X);
+        self.rotation = Self::from_direction(self.position, forward, Vec3::Z, self.fov).rotation;
+    }
+
     pub fn forward(&self) -> Vec3 {
         self.rotation * Vec3::X
     }
@@ -97,6 +103,18 @@ impl Flycam {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reset_view_preserves_position_heading_and_zoom() {
+        let mut cam = Flycam::from_direction(Vec3::new(3.0, 5.0, 7.0), Vec3::new(1.0, 2.0, 3.0), Vec3::Z, 0.8);
+        cam.rotation *= Quat::from_rotation_x(0.7);
+        let heading = cam.forward().with_z(0.0).normalize();
+        cam.reset_orientation();
+        assert_eq!(cam.position, Vec3::new(3.0, 5.0, 7.0));
+        assert_eq!(cam.fov, 0.8);
+        assert!(cam.forward().abs_diff_eq(heading, 1e-5));
+        assert!(cam.up().abs_diff_eq(Vec3::Z, 1e-5));
+    }
 
     #[test]
     fn vr_flycam_forward_follows_full_rendered_head_pose_without_tilting_rig() {

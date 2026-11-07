@@ -41,6 +41,7 @@ pub(crate) struct Session {
     running: bool,
     pub focused: bool,
     anchor: Option<Anchor>,
+    rig_revision: Option<u64>,
     /// Tracked head positions seen in a row, still within `SETTLE_STEP` of
     /// each other, before anchoring; then, for `WATCH`, the last one and
     /// when the anchor was taken (a jump means the pose it used was a
@@ -240,6 +241,7 @@ impl Session {
             running: false,
             focused: false,
             anchor: None,
+            rig_revision: None,
             settle: (0, None),
             anchored: None,
             frame: None,
@@ -262,6 +264,7 @@ impl Session {
         desktop_view: glam::Mat4,
         near: f32,
         rig_mode: crate::stereo_view::RigMode,
+        revision: u64,
     ) -> Result<Option<Eyes>> {
         let mut event_buffer = xr::EventDataBuffer::new();
         while let Some(event) = instance.poll_event(&mut event_buffer)? {
@@ -401,6 +404,10 @@ impl Session {
         anchor
             .follow_head(desktop_view, pose(head.pose), rig_mode)
             .ok_or("Invalid moving VR view")?;
+        if self.rig_revision != Some(revision) && matches!(rig_mode, crate::stereo_view::RigMode::FirstPerson) {
+            anchor.recenter_first_person(pose(head.pose)).ok_or("Invalid VR head recenter")?;
+        }
+        self.rig_revision = Some(revision);
         let camera = |i: usize| -> Result<EyeView> {
             let v = views[i];
             anchor

@@ -2731,6 +2731,9 @@ impl Settings {
     }
 
     pub(crate) fn sanitized(mut self) -> Settings {
+        if self.settings_version <= SETTINGS_VERSION {
+            self.gamepad.migrate_gamepad_layout();
+        }
         if self
             .graphics_saved_active
             .as_ref()
@@ -3639,6 +3642,28 @@ mod tests {
                 assert_eq!((restored.appearance_camera_movement, restored.customize_animation), (camera, pose));
             }
         }
+    }
+
+    #[test]
+    fn saved_gamepad_defaults_upgrade_to_pan_shoulders_and_face_button_height() {
+        use crate::joystick::{AUTO_DPAD_DOWN, AUTO_DPAD_LEFT, AUTO_DPAD_RIGHT, AUTO_DPAD_UP, AUTO_LEFT_BUMPER, AUTO_RIGHT_BUMPER};
+        let mut document = serde_json::to_value(Settings::default()).expect("settings");
+        let pad = document["gamepad"].as_object_mut().unwrap();
+        pad.remove("gamepad_layout_version");
+        pad.remove("gamepad_avatar_pan_left_button");
+        pad.remove("gamepad_avatar_pan_right_button");
+        for (name, binding) in [
+            ("gamepad_avatar_next_button", AUTO_DPAD_RIGHT),
+            ("gamepad_avatar_previous_button", AUTO_DPAD_LEFT),
+            ("rise_button", AUTO_RIGHT_BUMPER),
+            ("fall_button", AUTO_LEFT_BUMPER),
+            ("flycam_rise_button", AUTO_DPAD_UP),
+            ("flycam_fall_button", AUTO_DPAD_DOWN),
+        ] {
+            pad.insert(name.into(), serde_json::json!(binding));
+        }
+        let loaded = serde_json::from_value::<Settings>(document).expect("old settings").sanitized();
+        assert_eq!(loaded.gamepad, crate::joystick::Settings::gamepad_defaults());
     }
 
     #[test]

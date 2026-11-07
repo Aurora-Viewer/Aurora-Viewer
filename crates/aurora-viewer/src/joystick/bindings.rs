@@ -2,7 +2,7 @@
 
 use super::{Device, GamepadStick, Settings};
 
-const BUTTON_PATHS: [&str; 24] = [
+const BUTTON_PATHS: [&str; 29] = [
     "jump_button",
     "rise_button",
     "fall_button",
@@ -27,6 +27,11 @@ const BUTTON_PATHS: [&str; 24] = [
     "first_person.zoom_out_button",
     "first_person.view_button",
     "gamepad_flycam_view_button",
+    "crouch_button",
+    "first_person.crouch_button",
+    "reset_view_button",
+    "gamepad_avatar_pan_left_button",
+    "gamepad_avatar_pan_right_button",
 ];
 
 impl Settings {
@@ -55,11 +60,16 @@ impl Settings {
             20 => &mut self.first_person.zoom_in_button,
             21 => &mut self.first_person.zoom_out_button,
             22 => &mut self.first_person.view_button,
-            _ => &mut self.gamepad_flycam_view_button,
+            23 => &mut self.gamepad_flycam_view_button,
+            24 => &mut self.crouch_button,
+            25 => &mut self.first_person.crouch_button,
+            26 => &mut self.reset_view_button,
+            27 => &mut self.gamepad_avatar_pan_left_button,
+            _ => &mut self.gamepad_avatar_pan_right_button,
         }
     }
 
-    fn resolved_buttons(&self, device: Option<&Device>) -> [i8; 24] {
+    fn resolved_buttons(&self, device: Option<&Device>) -> [i8; 29] {
         let raw = [
             self.jump_button,
             self.rise_button,
@@ -85,6 +95,11 @@ impl Settings {
             self.first_person.zoom_out_button,
             self.first_person.view_button,
             self.gamepad_flycam_view_button,
+            self.crouch_button,
+            self.first_person.crouch_button,
+            self.reset_view_button,
+            self.gamepad_avatar_pan_left_button,
+            self.gamepad_avatar_pan_right_button,
         ];
         std::array::from_fn(|i| {
             let binding = match raw[i] {
@@ -119,6 +134,9 @@ impl Settings {
                 let mode = self.button_scope(other);
                 if other != index && !(inherited && other == index + 3) && scope & mode != 0 && value == binding {
                     if other == 3 && index >= 17 {
+                        if scope & 1 != 0 {
+                            self.flycam_button = -1;
+                        }
                         if scope & 4 != 0 {
                             self.first_person.view_button = -1;
                         }
@@ -180,7 +198,8 @@ impl Settings {
                 }
             }
             4..=10 | 23 => 2,
-            17..=22 => 4,
+            17..=22 | 25 => 4,
+            26 => 7,
             _ => 1,
         }
     }
@@ -344,6 +363,126 @@ mod tests {
     }
 
     #[test]
+    fn gamepad_shoulders_cycle_targets_without_flight_input_and_pan_uses_dpad() {
+        let settings = gamepad_settings();
+        let mut device = device();
+        let mut controller = Controller::default();
+        controller.sample_device(Some(&device), &settings, false, false, 0.1);
+        for (binding, direction) in [(super::super::AUTO_RIGHT_BUMPER, 1), (super::super::AUTO_LEFT_BUMPER, -1)] {
+            let index = super::super::resolve_binding(&device, binding) as usize;
+            device.button(index, true);
+            let motion = controller.sample_device(Some(&device), &settings, false, false, 0.1);
+            assert_eq!(motion.avatar_cycle, direction);
+            assert!(!motion.player_movement_input());
+            assert_eq!(
+                controller.sample_device(Some(&device), &settings, false, false, 0.1).avatar_cycle,
+                0
+            );
+            device.button(index, false);
+            controller.sample_device(Some(&device), &settings, false, false, 0.1);
+        }
+        let index = super::super::resolve_binding(&device, super::super::AUTO_DPAD_LEFT) as usize;
+        device.button(index, true);
+        let motion = controller.sample_device(Some(&device), &settings, false, false, 0.1);
+        assert_eq!(motion.avatar_pan_side, 1.0);
+        assert_eq!(motion.avatar_cycle, 0);
+    }
+
+    #[test]
+    fn gamepad_layout_migrates_old_default_controls_once_and_preserves_custom_bindings() {
+        use super::super::*;
+        let mut old = Settings {
+            gamepad_layout_version: 0,
+            gamepad_avatar_pan_left_button: -1,
+            gamepad_avatar_pan_right_button: -1,
+            gamepad_avatar_next_button: AUTO_DPAD_RIGHT,
+            gamepad_avatar_previous_button: AUTO_DPAD_LEFT,
+            rise_button: AUTO_RIGHT_BUMPER,
+            fall_button: AUTO_LEFT_BUMPER,
+            flycam_rise_button: AUTO_DPAD_UP,
+            flycam_fall_button: AUTO_DPAD_DOWN,
+            ..Settings::gamepad_defaults()
+        };
+        let mut inherited = old.clone();
+        inherited.flycam_rise_button = INHERIT_BUTTON;
+        inherited.flycam_fall_button = INHERIT_BUTTON;
+        inherited.migrate_gamepad_layout();
+        assert_eq!(inherited, Settings::gamepad_defaults());
+        old.migrate_gamepad_layout();
+        assert_eq!(old, Settings::gamepad_defaults());
+        old.flycam_fall_button = AUTO_DPAD_DOWN;
+        old.migrate_gamepad_layout();
+        assert_eq!(old.flycam_fall_button, AUTO_DPAD_DOWN, "subsequent custom choices survive");
+        let mut custom = Settings {
+            gamepad_layout_version: 0,
+            gamepad_avatar_next_button: 8,
+            gamepad_avatar_previous_button: 9,
+            flycam_rise_button: 10,
+            flycam_fall_button: 11,
+            ..Settings::gamepad_defaults()
+        };
+        custom.migrate_gamepad_layout();
+        assert_eq!((custom.gamepad_avatar_next_button, custom.gamepad_avatar_previous_button), (8, 9));
+        assert_eq!((custom.flycam_rise_button, custom.flycam_fall_button), (10, 11));
+    }
+
+    #[test]
+    fn joystick_crouch_height_and_reset_bindings_work_in_each_mode() {
+        let settings = gamepad_settings();
+        let mut snapshot = Snapshot {
+            devices: vec![device()],
+            updated: Some(Instant::now()),
+            ..Default::default()
+        };
+        let mut controller = Controller::default();
+        for (flycam, first) in [(false, false), (false, true), (true, false)] {
+            controller.sample_view(&snapshot, &settings, true, flycam, first, 0.1);
+            let west = super::super::resolve_binding(&snapshot.devices[0], super::super::AUTO_WEST) as usize;
+            let north = super::super::resolve_binding(&snapshot.devices[0], super::super::AUTO_NORTH) as usize;
+            let east = super::super::resolve_binding(&snapshot.devices[0], super::super::AUTO_EAST) as usize;
+            snapshot.devices[0].button(west, true);
+            let motion = controller.sample_view(&snapshot, &settings, true, flycam, first, 0.1);
+            assert_eq!(motion.crouch, !flycam);
+            if flycam {
+                assert!(motion.fall);
+            }
+            snapshot.devices[0].button(west, false);
+            snapshot.devices[0].button(east, true);
+            let motion = controller.sample_view(&snapshot, &settings, true, flycam, first, 0.1);
+            assert_eq!(motion.rise, flycam);
+            assert_eq!(motion.jump, !flycam);
+            snapshot.devices[0].button(east, false);
+            snapshot.devices[0].button(north, true);
+            assert!(controller.sample_view(&snapshot, &settings, true, flycam, first, 0.1).reset_view);
+            assert!(!controller.sample_view(&snapshot, &settings, true, flycam, first, 0.1).reset_view);
+            snapshot.devices[0].button(north, false);
+            controller.sample_view(&snapshot, &settings, true, flycam, first, 0.1);
+        }
+        // Settings written before these actions existed receive the new defaults.
+        let mut saved = serde_json::to_value(&settings).expect("settings");
+        saved.as_object_mut().unwrap().remove("crouch_button");
+        saved.as_object_mut().unwrap().remove("reset_view_button");
+        saved["first_person"].as_object_mut().unwrap().remove("crouch_button");
+        let loaded: Settings = serde_json::from_value(saved).expect("old settings");
+        assert_eq!(loaded.crouch_button, super::super::AUTO_WEST);
+        assert_eq!(loaded.first_person.crouch_button, super::super::AUTO_WEST);
+        assert_eq!(loaded.reset_view_button, super::super::AUTO_NORTH);
+    }
+
+    #[test]
+    fn joystick_reset_binding_conflicts_are_resolved_in_all_modes() {
+        let mut settings = gamepad_settings();
+        let d = device();
+        settings.bind_button("reset_view_button", 0, Some(&d));
+        assert_eq!(settings.flycam_button, -1);
+        assert_eq!(settings.view_button(false, true), -1);
+        assert_eq!(settings.view_button(true, false), -1);
+        settings.bind_button("first_person.crouch_button", 0, Some(&d));
+        assert_eq!(settings.reset_view_button, -1);
+        assert_eq!(settings.first_person.crouch_button, 0);
+    }
+
+    #[test]
     fn joystick_native_button_order_does_not_turn_full_triggers_into_movement() {
         use crate::joystick::{GamepadButton as B, resolve_binding};
         let d = Device::gamepad(
@@ -362,15 +501,17 @@ mod tests {
                 B::LeftBumper,
                 B::DpadUp,
                 B::DpadDown,
+                B::West,
+                B::North,
             ],
         );
         let defaults = gamepad_settings();
         assert_eq!(resolve_binding(&d, defaults.jump_button), 4);
         assert_eq!(resolve_binding(&d, defaults.flycam_button), 2);
-        assert_eq!(resolve_binding(&d, defaults.flycam_fall_button), 7);
-        assert_eq!(resolve_binding(&d, defaults.flycam_rise_button), 6);
-        assert_eq!(resolve_binding(&d, defaults.rise_button), 0);
-        assert_eq!(resolve_binding(&d, defaults.fall_button), 5);
+        assert_eq!(resolve_binding(&d, defaults.flycam_fall_button), 8);
+        assert_eq!(resolve_binding(&d, defaults.flycam_rise_button), 4);
+        assert_eq!(resolve_binding(&d, defaults.rise_button), -1);
+        assert_eq!(resolve_binding(&d, defaults.fall_button), -1);
         assert_eq!(&defaults.avatar.gain[4..6], &[4.0, 4.0]);
         assert_eq!(&defaults.flycam.gain[4..6], &[4.0, 4.0]);
         for (flycam, first) in [(false, false), (false, true), (true, false)] {
@@ -398,7 +539,7 @@ mod tests {
                 }
             }
         }
-        for (flycam, down_button, up_button) in [(false, 5, 0), (true, 7, 6)] {
+        for (flycam, down_button, up_button) in [(false, 8, 4), (true, 8, 4)] {
             let mut snap = Snapshot {
                 devices: vec![d.clone()],
                 updated: Some(Instant::now()),
@@ -408,11 +549,15 @@ mod tests {
             controller.sample_view(&snap, &defaults, true, flycam, false, 0.1);
             snap.devices[0].button(down_button, true);
             let down = controller.sample_view(&snap, &defaults, true, flycam, false, 0.1);
-            assert!(down.fall && !down.rise);
+            assert_eq!(down.fall, flycam);
+            assert_eq!(down.crouch, !flycam);
+            assert!(!down.rise);
             snap.devices[0].button(down_button, false);
             snap.devices[0].button(up_button, true);
             let up = controller.sample_view(&snap, &defaults, true, flycam, false, 0.1);
-            assert!(up.rise && !up.fall);
+            assert_eq!(up.rise, flycam);
+            assert_eq!(up.jump, !flycam);
+            assert!(!up.fall);
         }
     }
 
@@ -650,7 +795,7 @@ mod tests {
     }
 
     #[test]
-    fn joystick_avatar_camera_dpad_hat_axes_pan_and_cycle_without_repeating() {
+    fn joystick_avatar_camera_dpad_hat_axes_pan_in_four_directions() {
         let settings = gamepad_settings();
         let mut device = Device::gamepad(
             "hat".into(),
@@ -676,9 +821,9 @@ mod tests {
         assert_eq!(controller.sample(&snapshot, &settings, true, false, 0.1).avatar_pan, -1.0);
         snapshot.devices[0].axes[7] = 0.0;
         snapshot.devices[0].axes[6] = 1.0;
-        assert_eq!(controller.sample(&snapshot, &settings, true, false, 0.1).avatar_cycle, 1);
+        assert_eq!(controller.sample(&snapshot, &settings, true, false, 0.1).avatar_pan_side, -1.0);
         assert_eq!(controller.sample(&snapshot, &settings, true, false, 0.1).avatar_cycle, 0);
         snapshot.devices[0].axes[6] = -1.0;
-        assert_eq!(controller.sample(&snapshot, &settings, true, false, 0.1).avatar_cycle, -1);
+        assert_eq!(controller.sample(&snapshot, &settings, true, false, 0.1).avatar_pan_side, 1.0);
     }
 }

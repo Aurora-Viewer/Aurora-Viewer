@@ -288,6 +288,8 @@ pub struct Camera {
     pub fov_y: f32,
     pub near: f32,
     vr_mode: Option<VrView>,
+    seat_camera_heading: Option<f32>,
+    vr_seat_turn: f32,
     vr_native_pose: Option<(Vec3, Vec3)>,
     vr_center_offset: Vec3,
     vr_center_goal: Option<Vec3>,
@@ -297,8 +299,9 @@ pub struct Camera {
     vr_movement_input: bool,
     vr_orbit_input: bool,
     vr_zoom_boom_z: Option<f32>,
-    vr_pan_height: f32,
-    vr_pan_target: f32,
+    vr_pan_offset: Vec3,
+    avatar_pan_offset: Vec3,
+    gamepad_pan_active: bool,
     vr_travel_heading: Option<Vec3>,
     vr_input: vr::FramingInput,
     vr_head: Option<aurora_render::HeadPose>,
@@ -328,6 +331,7 @@ pub struct Camera {
     time_in_air: f32,
     collide_plane: Vec4,
     sit_camera: Option<SitCamera>,
+    seat_view_fixed: bool,
     follow: follow::Simulation,
     follow_available: bool,
     force_mouselook: bool,
@@ -389,6 +393,8 @@ impl Default for Camera {
             fov_y: DEFAULT_FOV,
             near: 0.1,
             vr_mode: None,
+            seat_camera_heading: None,
+            vr_seat_turn: 0.0,
             vr_native_pose: None,
             vr_center_offset: Vec3::ZERO,
             vr_center_goal: None,
@@ -398,8 +404,9 @@ impl Default for Camera {
             vr_movement_input: false,
             vr_orbit_input: false,
             vr_zoom_boom_z: None,
-            vr_pan_height: 0.0,
-            vr_pan_target: 0.0,
+            vr_pan_offset: Vec3::ZERO,
+            avatar_pan_offset: Vec3::ZERO,
+            gamepad_pan_active: false,
             vr_travel_heading: None,
             vr_input: vr::FramingInput::default(),
             vr_head: None,
@@ -425,6 +432,7 @@ impl Default for Camera {
             time_in_air: 0.0,
             collide_plane: Vec4::ZERO,
             sit_camera: None,
+            seat_view_fixed: false,
             follow: Default::default(),
             follow_available: false,
             force_mouselook: false,
@@ -578,6 +586,7 @@ impl Camera {
         if self.mouselook() {
             return;
         }
+        self.clear_avatar_pan();
         // mouselook ends the free camera (the flycam's toggle the other way)
         self.free = None;
         self.clear_flycam();
@@ -597,7 +606,7 @@ impl Camera {
 
     /// LLAgentCamera::changeCameraToDefault.
     pub fn change_to_default(&mut self, agent: &mut AgentState, s: &CameraSettings) {
-        if self.follow_available {
+        if self.follow_available && self.vr_mode.is_none() {
             self.change_to_follow(agent, s);
         } else {
             self.change_to_third_person(agent, s, true);
@@ -943,6 +952,7 @@ impl Camera {
     /// as the focus object so it follows the avatar as it moves.
     pub fn zoom_avatar(&mut self, avatar: (Uuid, FocusObject), agent: &mut AgentState, s: &CameraSettings) {
         let previous_vr_view = self.vr_view(0.0);
+        self.clear_avatar_pan();
         self.set_focus_on_avatar(false, true, true, agent, s);
         let g = avatar.1;
         let focus = g.position + Vec3::Z * AVATAR_ZOOM_FOCUS_Z;
@@ -960,8 +970,8 @@ impl Camera {
             self.vr_center_offset = Vec3::ZERO;
             self.vr_center_goal = None;
             self.vr_zoom_boom_z = None;
-            self.vr_pan_height = 0.0;
-            self.vr_pan_target = 0.0;
+            self.vr_pan_offset = Vec3::ZERO;
+            self.avatar_pan_offset = Vec3::ZERO;
             focus - direction * AVATAR_ZOOM_DISTANCE - physical
         } else {
             g.position + g.rotation * Vec3::new(AVATAR_ZOOM_DISTANCE, 0.0, AVATAR_ZOOM_EYE_Z)
@@ -1016,7 +1026,21 @@ impl Camera {
         movement: bool,
         steering: bool,
     ) {
-        if movement && !s.reset_on_movement {
+        if !change_camera && self.gamepad_pan_active && self.gamepad_follow_avatar {
+            if self.focus_object != Some(self.own) {
+                // Movement returns from a viewed avatar to the player's pan
+                // point without changing the boom, heading or pan level.
+                self.start_animation(s);
+                self.focus_target = self.avatar.position + Vec3::Z * s.focus_offset().z + self.avatar_pan_offset;
+                self.focus_object = Some(self.own);
+                self.focus_geom = None;
+                self.focus_object_offset = self.focus_target - self.avatar.position;
+                self.focus_offset = self.focus_offset_target;
+                self.fov_zoom = 0.0;
+            }
+            return;
+        }
+        if (movement && !s.reset_on_movement) || (!change_camera && self.seated_manual_view()) {
             return;
         }
         self.clear_flycam();
@@ -1048,6 +1072,7 @@ impl Camera {
 
     /// handle_reset_view (Escape, "Reset camera").
     pub fn handle_reset_view(&mut self, agent: &mut AgentState, s: &CameraSettings) {
+        self.clear_avatar_pan();
         let vr_heading = (self.vr_mode == Some(VrView::Avatar)).then(|| self.vr_view(0.0).inverse().transform_vector3(Vec3::NEG_Z));
         if !s.reset_view_turns_avatar {
             // setFocusOnAvatar(true, false, false): the avatar keeps its direction
@@ -1068,8 +1093,8 @@ impl Camera {
             self.vr_center_offset = Vec3::ZERO;
             self.vr_center_goal = None;
             self.vr_zoom_boom_z = None;
-            self.vr_pan_height = 0.0;
-            self.vr_pan_target = 0.0;
+            self.vr_pan_offset = Vec3::ZERO;
+            self.avatar_pan_offset = Vec3::ZERO;
         }
     }
 
@@ -1083,6 +1108,7 @@ impl Camera {
     }
 
     pub fn start_flycam(&mut self, s: &CameraSettings, from_mouselook: bool) {
+        self.clear_avatar_pan();
         // A mode switch precedes the next camera update: fov_y still holds
         // the previous frame's first-person zoom, even after its lens resets.
         if from_mouselook {
@@ -1232,9 +1258,7 @@ impl Camera {
 
     /// AvatarSitResponse: the seat's camera and forced mouselook.
     pub fn on_sit_response(&mut self, object: Uuid, eye: Vec3, at: Vec3, force_mouselook: bool) {
-        if eye.distance_squared(at) > SIT_CAMERA_THRESHOLD_SQUARED {
-            self.sit_camera = Some(SitCamera { object, eye, at });
-        }
+        self.sit_camera = (eye.distance_squared(at) > SIT_CAMERA_THRESHOLD_SQUARED).then_some(SitCamera { object, eye, at });
         self.force_mouselook = force_mouselook;
     }
 
@@ -1412,6 +1436,12 @@ impl Camera {
     /// mouselook), `clicks` > 0 zooms out. Returns true when the settings
     /// changed: Ctrl / Shift + wheel raise the camera / the focus point.
     pub fn scroll(&mut self, clicks: f32, ctrl: bool, shift: bool, agent: &mut AgentState, s: &mut CameraSettings) -> bool {
+        if self.vehicle_view_locked() {
+            return false;
+        }
+        if clicks.is_finite() && clicks != 0.0 && !s.disable_wheel_zoom {
+            self.prepare_seated_camera();
+        }
         if self.vr_mode == Some(VrView::Avatar) {
             if clicks.is_finite() && !s.disable_wheel_zoom {
                 self.vr_native_input();
@@ -1530,6 +1560,12 @@ impl Camera {
     /// Mouse motion during a camera drag (LLToolCamera::handleHover), in
     /// window pixels (y down). A full window width turns 360°.
     pub fn drag(&mut self, mode: ToolMode, dx: f32, dy: f32, width: f32, agent: &mut AgentState) {
+        if self.vehicle_view_locked() {
+            return;
+        }
+        if dx != 0.0 || dy != 0.0 {
+            self.prepare_seated_camera();
+        }
         let Some(t) = &mut self.tool else {
             return;
         };
@@ -1590,6 +1626,12 @@ impl Camera {
     /// Right drag (Aurora): around the avatar without turning it, or around
     /// the alt-camera focus point.
     pub fn orbit_drag(&mut self, dx: f32, dy: f32, sensitivity: f32, agent: &mut AgentState) {
+        if self.vehicle_view_locked() {
+            return;
+        }
+        if dx != 0.0 || dy != 0.0 {
+            self.prepare_seated_camera();
+        }
         let k = DRAG_RATE * sensitivity;
         if self.vr_mode == Some(VrView::Avatar) && dx != 0.0 {
             self.vr_native_input();
@@ -1615,6 +1657,12 @@ impl Camera {
     /// Camera keys held this frame (LLAgentCamera::updateCamera); like
     /// camera_spin_around_cw & co they first unlock the view from the avatar.
     pub fn apply_keys(&mut self, keys: CameraKeys, agent: &mut AgentState, s: &CameraSettings, dt: f32) {
+        if self.vehicle_view_locked() {
+            return;
+        }
+        if keys.any() {
+            self.prepare_seated_camera();
+        }
         let mut keys = keys;
         if self.vr_mode == Some(VrView::Avatar) {
             if keys.any() {
@@ -1661,6 +1709,12 @@ impl Camera {
     /// The joystick's continuous pitch, as LLAgent::pitch updates the
     /// third-person camera; mouselook uses AgentState::pitch instead.
     pub fn joystick_pitch(&mut self, rate: f32, dt: f32) {
+        if self.vehicle_view_locked() {
+            return;
+        }
+        if rate != 0.0 {
+            self.prepare_seated_camera();
+        }
         if !self.mouselook() && rate != 0.0 {
             let angle = -rate * dt.clamp(0.0, 0.2);
             if self.focus_on_avatar {
@@ -1687,7 +1741,49 @@ impl Camera {
         }
     }
 
+    /// Creator-provided fixed views remain authoritative only on the desktop.
+    pub fn vehicle_view_locked(&self) -> bool {
+        self.vr_mode.is_none() && self.seat_view_fixed && !self.mouselook() && self.free.is_none() && self.flycam.is_none()
+    }
+
+    pub fn seated_manual_view(&self) -> bool {
+        self.avatar.seat.is_some() && self.gamepad_follow_avatar && self.focus_object == Some(self.own) && !self.focus_on_avatar
+    }
+
+    /// Use the existing object-relative camera for adjustable seated views.
+    /// Driving controls must not restore the creator's follow simulation over it.
+    fn prepare_seated_camera(&mut self) {
+        if self.vr_mode.is_some()
+            || self.avatar.seat.is_none()
+            || !self.focus_on_avatar
+            || self.mouselook()
+            || self.free.is_some()
+            || self.flycam.is_some()
+            || self.vehicle_view_locked()
+        {
+            return;
+        }
+        self.last_mode = self.mode;
+        self.mode = CameraMode::ThirdPerson;
+        self.anim = None;
+        self.focus_target = self.avatar.position.with_z(self.target.z);
+        self.focus_offset = self.position - self.focus_target;
+        self.focus_offset_target = self.focus_offset;
+        self.focus_object = Some(self.own);
+        self.focus_geom = None;
+        self.focus_object_offset = self.focus_target - self.avatar.position;
+        self.focus_on_avatar = false;
+        self.gamepad_follow_avatar = true;
+        self.fov_zoom = 0.0;
+    }
+
     pub fn gamepad_zoom(&mut self, rate: f32, dt: f32, agent: &mut AgentState, s: &CameraSettings) {
+        if self.vehicle_view_locked() {
+            return;
+        }
+        if rate != 0.0 {
+            self.prepare_seated_camera();
+        }
         if self.vr_mode == Some(VrView::Avatar) && rate != 0.0 {
             self.vr_request(vr::FramingInput {
                 recenter: false,
@@ -1701,38 +1797,73 @@ impl Camera {
         }
     }
 
-    /// Use the existing unlocked focus for a temporary world-vertical pan.
-    /// Returning to the avatar restores the configured camera preset offsets.
-    pub fn gamepad_pan_vertical(&mut self, meters: f32, agent: &mut AgentState, s: &CameraSettings) {
-        if !self.third_person() || self.free.is_some() || self.flycam.is_some() || !meters.is_finite() || meters == 0.0 {
+    fn clear_avatar_pan(&mut self) {
+        self.avatar_pan_offset = Vec3::ZERO;
+        self.vr_pan_offset = Vec3::ZERO;
+        self.gamepad_pan_active = false;
+    }
+
+    pub fn gamepad_pan_follows_player(&self) -> bool {
+        self.gamepad_pan_active && self.gamepad_follow_avatar && self.focus_object == Some(self.own)
+    }
+
+    pub fn gamepad_pan_movement_yaw(&self) -> Option<f32> {
+        let forward = -self.focus_offset_target;
+        (self.gamepad_pan_follows_player() && self.avatar.seat.is_none() && forward.truncate().length_squared() > 1e-6)
+            .then(|| forward.y.atan2(forward.x))
+    }
+
+    /// Keep a persistent pan point, using the native object-relative focus on
+    /// desktop and translation-only framing in VR.
+    pub fn gamepad_pan(&mut self, meters: glam::Vec2, agent: &mut AgentState, s: &CameraSettings) {
+        if self.vehicle_view_locked() || !meters.is_finite() || meters == glam::Vec2::ZERO {
             return;
         }
+        self.prepare_seated_camera();
+        if !self.third_person() || self.free.is_some() || self.flycam.is_some() {
+            return;
+        }
+        let forward = if self.vr_mode == Some(VrView::Avatar) {
+            let gaze = self.vr_head.map_or(Vec3::NEG_Z, |head| head.rotation * Vec3::NEG_Z);
+            self.vr_view(0.0).inverse().transform_vector3(gaze)
+        } else {
+            self.forward()
+        };
+        let left = Vec3::Z.cross(forward).normalize_or(Vec3::Y);
+        let delta = left * meters.x + Vec3::Z * meters.y;
+        self.avatar_pan_offset += delta;
+        self.gamepad_pan_active = true;
         if self.vr_mode == Some(VrView::Avatar) {
-            // Apply pan to the same boom and focus, retaining native orbit,
-            // zoom and follow state through the transition.
-            self.vr_pan_target += meters;
             self.vr_request(vr::FramingInput { recenter: true, zoom: 0.0 });
             return;
         }
         if self.focus_on_avatar {
-            // The rear-view preset aims ahead of the player. That offset is
-            // not an orbit pivot: use the avatar's horizontal center while
-            // preserving the configured height and the current eye position.
-            let focus = Vec3::new(self.avatar.position.x, self.avatar.position.y, self.target.z);
+            let focus = self.avatar.position.with_z(self.target.z);
             self.set_view(self.position, focus, agent, s);
-            // Keep the viewer's existing focus transition, using the same
-            // duration as other camera changes. Subsequent pan input must
-            // update the destination without restarting the transition.
             self.set_animation_duration(s.zoom_time, true);
             self.focus_object = Some(self.own);
             self.gamepad_follow_avatar = true;
         }
-        self.pan(Vec3::Z * meters);
+        if self.focus_geom.is_some_and(|geometry| geometry.avatar) {
+            self.gamepad_follow_avatar = true;
+        }
+        self.pan(delta);
+    }
+
+    #[cfg(test)]
+    pub fn gamepad_pan_vertical(&mut self, meters: f32, agent: &mut AgentState, s: &CameraSettings) {
+        self.gamepad_pan(glam::Vec2::new(0.0, meters), agent, s);
     }
 
     /// Turn the third-person view with a gamepad while the avatar is idle.
     /// Once movement starts, the caller routes this input to the avatar instead.
     pub fn joystick_orbit_yaw(&mut self, rate: f32, dt: f32, agent: &mut AgentState) {
+        if self.vehicle_view_locked() {
+            return;
+        }
+        if rate != 0.0 {
+            self.prepare_seated_camera();
+        }
         if self.vr_mode == Some(VrView::Avatar) && rate != 0.0 {
             self.vr_native_input();
             self.vr_travel_heading = None;
@@ -1753,6 +1884,9 @@ impl Camera {
 
     /// Once per frame, after the avatar moved (LLAgentCamera::updateCamera).
     pub fn update(&mut self, world: &mut World, s: &CameraSettings, f: &FrameInput) {
+        if self.vr_mode.is_none() {
+            self.follow_seated_camera(world, s, f.now);
+        }
         if !world.rlva.enabled() {
             self.update_unrestricted(world, s, f);
             return;
@@ -1810,6 +1944,11 @@ impl Camera {
         self.own = world.agent_id;
         self.avatar = avatar_frame(world, s, f.now);
         self.sync_seat(&mut world.agent, s);
+        self.seat_view_fixed = self.avatar.seat.is_some()
+            && (self
+                .sit_camera
+                .is_some_and(|sit| world.objects.index_of_uuid(&sit.object).is_some())
+                || world.scripted_camera.active().is_some_and(follow::Params::fixed_view));
         if let Some(flycam) = self.flycam {
             self.position = flycam.position;
             self.target = flycam.position + flycam.forward();
@@ -1826,7 +1965,17 @@ impl Camera {
             self.anim = None;
             return;
         }
-        self.follow_available = world.scripted_camera.active().is_some();
+        self.follow_available = self.vr_mode.is_none() && world.scripted_camera.active().is_some();
+        if self.vr_mode.is_some() && self.mode == CameraMode::Follow {
+            self.change_to_third_person(&mut world.agent, s, false);
+        }
+        if self.vehicle_view_locked() {
+            self.focus_on_avatar = true;
+            self.focus_object = None;
+            self.focus_geom = None;
+            self.gamepad_follow_avatar = false;
+            self.fov_zoom = 0.0;
+        }
         if self.third_person() && self.focus_on_avatar && self.follow_available {
             self.change_to_follow(&world.agent, s);
         }
@@ -1852,7 +2001,11 @@ impl Camera {
         }
         let world = &*world;
         let agent = &world.agent;
-        self.head = self.avatar.position + Vec3::Z * HEAD_HEIGHT;
+        self.head = if self.vr_mode == Some(VrView::FirstPerson) && agent.is_sitting() {
+            self.mouselook_eye(agent, s, f.eye_offset)
+        } else {
+            self.avatar.position + Vec3::Z * HEAD_HEIGHT
+        };
         self.refresh_focus_object(
             world,
             s,
@@ -1977,7 +2130,7 @@ impl Camera {
                     written_yaw: agent.yaw,
                 });
                 self.start_animation(s);
-                if self.force_mouselook {
+                if self.force_mouselook && self.vr_mode.is_none() {
                     self.change_to_mouselook(agent, s, true);
                 }
             }
@@ -2045,6 +2198,9 @@ impl Camera {
 
     /// The seat's camera (llSetCameraEyeOffset / AtOffset), in render space.
     fn sit_camera_point(&self, world: &World, now: Instant, eye: bool) -> Option<Vec3> {
+        if self.vr_mode.is_some() {
+            return None;
+        }
         let sit = self.sit_camera?;
         self.avatar.seat?;
         let idx = world.objects.index_of_uuid(&sit.object)?;
@@ -2248,6 +2404,77 @@ impl Camera {
         )
     }
 
+    /// Use the rendered body (including its seat-relative rotation),
+    /// rather than the independently steered camera frame.
+    pub fn vr_avatar_yaw(world: &World, settings: &CameraSettings, now: Instant) -> f32 {
+        let avatar = avatar_frame(world, settings, now);
+        let forward = avatar.render_rotation * Vec3::X;
+        if forward.truncate().length_squared() > 1e-6 {
+            forward.y.atan2(forward.x)
+        } else {
+            world.agent.yaw
+        }
+    }
+
+    fn follow_seated_camera(&mut self, world: &World, settings: &CameraSettings, now: Instant) {
+        if !world.agent.seated || self.flycam.is_some() || self.free.is_some() {
+            self.seat_camera_heading = None;
+            return;
+        }
+        let current = avatar_frame(world, settings, now);
+        let heading = current.rotation.and_then(|rotation| {
+            let forward = rotation * Vec3::X;
+            (forward.truncate().length_squared() > 1e-6).then(|| forward.y.atan2(forward.x))
+        });
+        let previous = std::mem::replace(&mut self.seat_camera_heading, heading);
+        let Some((previous, heading)) = previous.zip(heading) else { return };
+        let delta = (heading - previous + PI).rem_euclid(TAU) - PI;
+        if self.vr_mode == Some(VrView::FirstPerson) {
+            self.vr_seat_turn += delta;
+            return;
+        }
+        let player_camera =
+            self.vr_mode == Some(VrView::Avatar) && (self.focus_on_avatar || self.gamepad_avatar_target() == Some(self.own));
+        if !player_camera && !(self.vr_mode.is_none() && self.seated_manual_view()) {
+            return;
+        }
+        // Transport the native camera's existing boom and smoothing history in
+        // the seat frame. Orbit/pan/zoom remain relative to the moving avatar.
+        let rotation = Quat::from_rotation_z(delta);
+        self.avatar_pan_offset = rotation * self.avatar_pan_offset;
+        self.vr_pan_offset = rotation * self.vr_pan_offset;
+        let old = self.avatar.position;
+        let new = current.position;
+        let point = |p: Vec3| new + rotation * (p - old);
+        for p in [
+            &mut self.position,
+            &mut self.target,
+            &mut self.virtual_position,
+            &mut self.smoothing_last_global,
+            &mut self.focus_target,
+        ] {
+            *p = point(*p);
+        }
+        self.smoothing_last_agent = rotation * self.smoothing_last_agent;
+        self.focus_offset = rotation * self.focus_offset;
+        self.focus_offset_target = rotation * self.focus_offset_target;
+        self.focus_object_offset = rotation * self.focus_object_offset;
+        if let Some((eye, target)) = &mut self.vr_native_pose {
+            *eye = point(*eye);
+            *target = point(*target);
+        }
+        if let Some(eye) = &mut self.vr_last_eye {
+            *eye = point(*eye);
+        }
+        if let Some(heading) = &mut self.vr_travel_heading {
+            *heading = rotation * *heading;
+        }
+        if let Some(anim) = &mut self.anim {
+            anim.start_camera = point(anim.start_camera);
+            anim.start_focus = point(anim.start_focus);
+        }
+    }
+
     /// Enter a VR mode through the same focus/free-camera resets as desktop controls.
     pub fn enter_vr_mode(&mut self, mode: VrView, agent: &mut AgentState, settings: &CameraSettings, rig_yaw: f32) -> f32 {
         let vr_forward = self.vr_view(rig_yaw).inverse().transform_vector3(Vec3::NEG_Z);
@@ -2260,7 +2487,7 @@ impl Camera {
         agent.pitch = 0.0;
         match mode {
             VrView::FirstPerson => self.enter_mouselook(agent, settings, false),
-            VrView::Avatar => self.change_to_default(agent, settings),
+            VrView::Avatar => self.change_to_third_person(agent, settings, false),
             VrView::Flycam => {
                 self.change_to_default(agent, settings);
                 self.start_flycam(settings, was_mouselook);
@@ -2272,6 +2499,8 @@ impl Camera {
         }
         self.snap();
         self.vr_mode = Some(mode);
+        self.seat_camera_heading = None;
+        self.vr_seat_turn = 0.0;
         self.vr_frame_on_entry = mode == VrView::Avatar;
         self.vr_frame_after_travel = false;
         self.vr_head = None;
@@ -2279,8 +2508,9 @@ impl Camera {
         self.vr_center_offset = Vec3::ZERO;
         self.vr_center_goal = None;
         self.vr_zoom_boom_z = None;
-        self.vr_pan_height = 0.0;
-        self.vr_pan_target = 0.0;
+        self.vr_pan_offset = Vec3::ZERO;
+        self.avatar_pan_offset = Vec3::ZERO;
+        self.gamepad_pan_active = false;
         self.vr_travel_heading = (mode == VrView::Avatar).then_some(vr_forward);
         self.vr_input = vr::FramingInput::default();
         self.vr_heading_offset = 0.0;
@@ -2291,10 +2521,9 @@ impl Camera {
         self.vr_orbit_input = false;
         self.vr_framing_active = 0;
         agent.yaw = body_yaw;
-        if matches!(mode, VrView::FirstPerson | VrView::Avatar) {
-            vr_forward.y.atan2(vr_forward.x)
-        } else {
-            rig_yaw
+        match mode {
+            VrView::FirstPerson | VrView::Flycam => rig_yaw,
+            VrView::Avatar => vr_forward.y.atan2(vr_forward.x),
         }
     }
 
@@ -2320,8 +2549,6 @@ impl Camera {
             self.vr_native_pose = None;
             self.vr_center_offset = Vec3::ZERO;
             self.vr_zoom_boom_z = None;
-            self.vr_pan_height = 0.0;
-            self.vr_pan_target = 0.0;
             self.vr_travel_heading = None;
             self.snap();
         }
@@ -2346,6 +2573,15 @@ impl Camera {
         self.vr_frame_after_travel = false;
         self.vr_center_goal = None;
         self.vr_center_offset = Vec3::ZERO;
+    }
+
+    pub fn vr_reset_avatar_view(&mut self, agent: &mut AgentState, settings: &CameraSettings) {
+        self.avatar_pan_offset = Vec3::ZERO;
+        self.gamepad_pan_active = false;
+        self.vr_resume_avatar_follow(agent, settings);
+        // A new button press must frame even if pan/recenter input is held.
+        self.vr_framing_active = 0;
+        self.vr_request(vr::FramingInput { recenter: true, zoom: 0.0 });
     }
 
     pub fn vr_request_orbit_framing(&mut self, active: bool) {
@@ -2387,8 +2623,10 @@ impl Camera {
 
     /// Physical body yaw is independent of the artificial camera rig.
     pub fn update_vr(&mut self, world: &mut World, settings: &CameraSettings, frame: &FrameInput, rig_yaw: f32) {
+        let sampled_forward =
+            (self.vr_mode == Some(VrView::Avatar)).then(|| self.vr_view(rig_yaw).inverse().transform_vector3(Vec3::NEG_Z));
+        self.follow_seated_camera(world, settings, frame.now);
         let avatar = self.vr_mode == Some(VrView::Avatar);
-        let sampled_forward = avatar.then(|| self.vr_view(rig_yaw).inverse().transform_vector3(Vec3::NEG_Z));
         if avatar {
             if self.vr_input.zoom != 0.0
                 && self.vr_zoom_boom_z.is_none()
@@ -2399,9 +2637,14 @@ impl Camera {
             self.vr_native_input();
         }
         let body_yaw = world.agent.yaw;
-        world.agent.yaw = rig_yaw;
+        let seated = world.agent.is_sitting();
+        if !seated {
+            world.agent.yaw = rig_yaw;
+        }
         self.update(world, settings, frame);
-        world.agent.yaw = body_yaw;
+        if !seated {
+            world.agent.yaw = body_yaw;
+        }
         if !avatar {
             self.stabilize_vr(&world.agent);
             return;
@@ -2514,10 +2757,10 @@ impl Camera {
             if let Some(goal) = self.vr_center_goal {
                 self.vr_center_offset += (goal - self.vr_center_offset) * (1.0 - 2.0_f32.powf(-frame.dt.clamp(0.0, 0.1) / 0.18));
             }
-            self.vr_pan_height += (self.vr_pan_target - self.vr_pan_height) * interpolant(settings.zoom_time * 0.25, frame.dt);
+            self.vr_pan_offset += (self.avatar_pan_offset - self.vr_pan_offset) * interpolant(settings.zoom_time * 0.25, frame.dt);
             self.vr_last_frame = Some(frame.now);
         }
-        let translation = yaw * self.vr_center_offset + Vec3::Z * self.vr_pan_height;
+        let translation = yaw * self.vr_center_offset + self.vr_pan_offset;
         self.position = orbit_eye + translation;
         self.target = pivot + translation;
         if world.rlva.enabled() {
@@ -2536,7 +2779,8 @@ impl Camera {
         }
         // The simulator plane belongs to the player's local follow camera.
         // The desktop People zoom leaves that camera to follow another avatar.
-        if !self.vr_tracks_other_avatar()
+        if self.avatar.seat.is_none()
+            && !self.vr_tracks_other_avatar()
             && !settings.disable_constraints
             && !settings.ignore_sim_constraints
             && self.collide_plane != Vec4::ZERO
@@ -2561,7 +2805,7 @@ impl Camera {
     pub fn stabilize_vr(&mut self, agent: &AgentState) {
         self.shake = Vec3::ZERO;
         if self.mouselook() {
-            self.position = self.avatar.position + Vec3::Z * HEAD_HEIGHT + self.vr_body_offset;
+            self.position = self.head + self.vr_body_offset;
             self.target = self.position + agent.forward();
         }
     }
@@ -2571,14 +2815,15 @@ impl Camera {
         let position = if let Some(flycam) = self.flycam {
             flycam.position
         } else if self.mouselook() {
-            self.avatar.position + Vec3::Z * HEAD_HEIGHT + self.vr_body_offset
+            self.head + self.vr_body_offset
         } else {
             self.position
         };
         let forward = if let Some(flycam) = self.flycam {
             flycam.forward()
         } else if self.mouselook() {
-            Vec3::new(rig_yaw.cos(), rig_yaw.sin(), 0.0)
+            let yaw = rig_yaw + self.vr_seat_turn;
+            Vec3::new(yaw.cos(), yaw.sin(), 0.0)
         } else {
             self.vr_travel_heading
                 .unwrap_or_else(|| Quat::from_rotation_z(self.vr_heading_offset) * self.forward())
@@ -3018,8 +3263,16 @@ mod tests {
             );
             camera.reset_view(&mut world.agent, &settings, true, false, false, true);
             settle(&mut camera, &mut world, &settings);
-            assert!(camera.focus_on_avatar);
-            assert_eq!(camera.gamepad_avatar_target(), None, "return clears temporary tracking");
+            assert!(!camera.focus_on_avatar);
+            assert_eq!(
+                camera.gamepad_avatar_target(),
+                Some(world.agent_id),
+                "movement retains the pan point"
+            );
+            camera.handle_reset_view(&mut world.agent, &settings);
+            settle(&mut camera, &mut world, &settings);
+            assert_eq!(camera.avatar_pan_offset, Vec3::ZERO);
+            assert_eq!(camera.gamepad_avatar_target(), None);
         }
     }
 
@@ -5115,12 +5368,12 @@ mod tests {
     }
 
     #[test]
-    fn vr_first_person_ignores_animated_eyes_shake_and_artificial_pitch() {
+    fn vr_first_person_ignores_standing_eye_animation_shake_and_artificial_pitch() {
         let settings = CameraSettings {
             mouselook_follow_eyes: true,
             ..Default::default()
         };
-        for seated in [false, true] {
+        for seated in [false] {
             let mut world = hover_world(seated);
             let mut camera = Camera::default();
             camera.change_to_mouselook(&mut world.agent, &settings, false);
@@ -5143,6 +5396,462 @@ mod tests {
                 previous = Some(position);
             }
         }
+    }
+
+    #[test]
+    fn desktop_pan_point_survives_movement_orbit_zoom_and_resets_at_explicit_boundaries() {
+        let settings = CameraSettings::default();
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let mut camera = Camera::default();
+        settle(&mut camera, &mut world, &settings);
+        camera.gamepad_pan(glam::Vec2::new(0.6, 0.4), &mut world.agent, &settings);
+        settle(&mut camera, &mut world, &settings);
+        let pan = camera.avatar_pan_offset;
+        let point = camera.target - world.agent.position;
+        assert!(pan.truncate().length() > 0.5 && pan.z > 0.3);
+        world.agent.position += Vec3::new(1.5, -0.7, 0.2);
+        camera.reset_view(&mut world.agent, &settings, true, false, true, false);
+        camera.joystick_orbit_yaw(0.8, 0.2, &mut world.agent);
+        camera.gamepad_zoom(0.5, 0.2, &mut world.agent, &settings);
+        settle(&mut camera, &mut world, &settings);
+        assert_eq!(camera.avatar_pan_offset, pan);
+        assert!((camera.target - world.agent.position).abs_diff_eq(point, 1e-4));
+        assert!(camera.gamepad_pan_follows_player());
+        let id = crate::ui::people::nearby(&world)
+            .into_iter()
+            .find(|row| focus_object_geom(&world, &row.0, Instant::now()).is_some_and(|g| g.avatar))
+            .unwrap()
+            .0;
+        let index = world.objects.index_of_uuid(&id).unwrap();
+        let target = pick_focus_object(&world, index, Instant::now()).unwrap();
+        camera.zoom_avatar(target, &mut world.agent, &settings);
+        assert_eq!(camera.avatar_pan_offset, Vec3::ZERO, "explicit target cycling resets pan");
+        settle(&mut camera, &mut world, &settings);
+        camera.gamepad_pan(glam::Vec2::new(0.2, 0.3), &mut world.agent, &settings);
+        settle(&mut camera, &mut world, &settings);
+        let other_pan = camera.avatar_pan_offset;
+        camera.reset_view(&mut world.agent, &settings, true, false, true, false);
+        settle(&mut camera, &mut world, &settings);
+        assert!(camera.gamepad_pan_follows_player());
+        assert_eq!(camera.avatar_pan_offset, other_pan, "movement return retains the pan level");
+        camera.handle_reset_view(&mut world.agent, &settings);
+        settle(&mut camera, &mut world, &settings);
+        assert_eq!(camera.avatar_pan_offset, Vec3::ZERO);
+        assert!(!camera.gamepad_pan_active);
+        camera.gamepad_pan(glam::Vec2::new(-0.4, 0.3), &mut world.agent, &settings);
+        camera.start_flycam(&settings, false);
+        assert_eq!(camera.avatar_pan_offset, Vec3::ZERO);
+        assert!(!camera.gamepad_pan_active);
+    }
+
+    #[test]
+    fn vr_pan_point_stays_centered_after_new_movement_orbit_and_zoom_input() {
+        use aurora_render::stereo_view::{Anchor, Pose, RigMode};
+        let settings = CameraSettings::default();
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut camera = Camera::default();
+        let yaw = camera.enter_vr_mode(VrView::Avatar, &mut world.agent, &settings, 0.0);
+        camera.update_vr(&mut world, &settings, &frame(0.016), yaw);
+        let mut head = Pose {
+            position: Vec3::Y * 1.6,
+            orientation: Quat::IDENTITY,
+        };
+        let mut anchor = Anchor::new(camera.vr_view(yaw), head).unwrap();
+        anchor.follow_head(camera.vr_view(yaw), head, RigMode::Avatar).unwrap();
+        // The renderer publishes the last submitted rig, before input mutates
+        // the native camera pose for zoom/orbit.
+        let presented = std::cell::Cell::new(camera.vr_view(yaw));
+        let tick = |camera: &mut Camera, world: &mut World, anchor: &mut Anchor, head: Pose| {
+            camera.vr_tracking(Some(vr_sample(anchor, head, presented.get(), RigMode::Avatar)));
+            camera.update_vr(world, &settings, &frame(0.016), yaw);
+            presented.set(camera.vr_view(yaw));
+            anchor.follow_head(presented.get(), head, RigMode::Avatar).unwrap();
+        };
+        head.orientation = Quat::from_rotation_y(0.5);
+        camera.vr_tracking(Some(vr_sample(&anchor, head, presented.get(), RigMode::Avatar)));
+        let gaze = presented
+            .get()
+            .inverse()
+            .transform_vector3(anchor.relative_head_rotation(head).unwrap() * Vec3::NEG_Z);
+        let expected_left = Vec3::Z.cross(gaze).normalize();
+        camera.gamepad_pan(glam::Vec2::new(0.6, 0.4), &mut world.agent, &settings);
+        assert!((camera.avatar_pan_offset - expected_left * 0.6 - Vec3::Z * 0.4).length() < 1e-5);
+        for _ in 0..180 {
+            tick(&mut camera, &mut world, &mut anchor, head);
+        }
+        let pan = camera.avatar_pan_offset;
+        for action in ["movement", "orbit", "zoom"] {
+            head.position += Vec3::X * 0.05;
+            head.orientation *= Quat::from_rotation_y(0.25);
+            match action {
+                "movement" => {
+                    world.agent.position += Vec3::new(1.0, -0.5, 0.0);
+                    camera.vr_request_movement_framing(true);
+                }
+                "orbit" => {
+                    camera.joystick_orbit_yaw(0.8, 0.2, &mut world.agent);
+                    camera.vr_request_orbit_framing(true);
+                }
+                _ => camera.gamepad_zoom(0.6, 0.2, &mut world.agent, &settings),
+            }
+            for _ in 0..180 {
+                tick(&mut camera, &mut world, &mut anchor, head);
+            }
+            assert_eq!(camera.avatar_pan_offset, pan);
+            assert!(camera.vr_pan_offset.abs_diff_eq(pan, 1e-4));
+            let gaze = camera
+                .vr_view(yaw)
+                .inverse()
+                .transform_vector3(anchor.relative_head_rotation(head).unwrap() * Vec3::NEG_Z);
+            let to_point = world.agent.position + pan - anchor.head_position(head).unwrap();
+            assert!(gaze.truncate().normalize().dot(to_point.truncate().normalize()) > 0.999, "{action}");
+        }
+        camera.vr_reset_avatar_view(&mut world.agent, &settings);
+        for _ in 0..180 {
+            tick(&mut camera, &mut world, &mut anchor, head);
+        }
+        assert_eq!(camera.avatar_pan_offset, Vec3::ZERO);
+        assert!(camera.vr_pan_offset.length() < 1e-4);
+        camera.gamepad_pan(glam::Vec2::new(0.2, -0.3), &mut world.agent, &settings);
+        camera.enter_vr_mode(VrView::FirstPerson, &mut world.agent, &settings, yaw);
+        camera.enter_vr_mode(VrView::Avatar, &mut world.agent, &settings, yaw);
+        assert_eq!(camera.avatar_pan_offset, Vec3::ZERO);
+    }
+
+    #[test]
+    fn vr_avatar_reset_clears_pan_without_changing_zoom_or_heading() {
+        use aurora_render::stereo_view::{Anchor, Pose, RigMode};
+        let settings = CameraSettings::default();
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut camera = Camera::default();
+        let yaw = camera.enter_vr_mode(VrView::Avatar, &mut world.agent, &settings, 0.0);
+        camera.update_vr(&mut world, &settings, &frame(0.016), yaw);
+        let mut head = Pose {
+            position: Vec3::Y * 1.6,
+            orientation: Quat::IDENTITY,
+        };
+        let mut anchor = Anchor::new(camera.vr_view(yaw), head).expect("anchor");
+        anchor.follow_head(camera.vr_view(yaw), head, RigMode::Avatar).expect("follow");
+        camera.vr_tracking(Some(vr_sample(&anchor, head, camera.vr_view(yaw), RigMode::Avatar)));
+        camera.gamepad_pan_vertical(0.4, &mut world.agent, &settings);
+        camera.gamepad_zoom(0.5, 0.2, &mut world.agent, &settings);
+        for _ in 0..120 {
+            camera.update_vr(&mut world, &settings, &frame(0.016), yaw);
+            anchor.follow_head(camera.vr_view(yaw), head, RigMode::Avatar).expect("settled");
+            camera.vr_tracking(Some(vr_sample(&anchor, head, camera.vr_view(yaw), RigMode::Avatar)));
+        }
+        assert!(camera.avatar_pan_offset.z > 0.3);
+        let zoom = camera.zoom_fraction;
+        let height = camera.position.z - camera.vr_pan_offset.z;
+        let heading = camera.vr_view(yaw).inverse().transform_vector3(Vec3::NEG_Z);
+        for turn in [0.3, -0.6] {
+            head.orientation = Quat::from_rotation_y(turn);
+            camera.vr_tracking(Some(vr_sample(&anchor, head, camera.vr_view(yaw), RigMode::Avatar)));
+            camera.vr_reset_avatar_view(&mut world.agent, &settings);
+            for _ in 0..120 {
+                camera.update_vr(&mut world, &settings, &frame(0.016), yaw);
+                anchor.follow_head(camera.vr_view(yaw), head, RigMode::Avatar).expect("reset");
+                camera.vr_tracking(Some(vr_sample(&anchor, head, camera.vr_view(yaw), RigMode::Avatar)));
+            }
+            let view = camera.vr_view(yaw).inverse();
+            assert!(view.transform_vector3(Vec3::NEG_Z).abs_diff_eq(heading, 1e-5));
+            assert!((camera.position.z - height).abs() < 1e-4);
+            assert_eq!(camera.avatar_pan_offset, Vec3::ZERO);
+            assert!(camera.vr_pan_offset.length() < 1e-4);
+            assert_eq!(camera.zoom_fraction, zoom);
+            let gaze = view.transform_vector3(anchor.relative_head_rotation(head).unwrap() * Vec3::NEG_Z);
+            let to_player = world.agent.position - anchor.head_position(head).unwrap();
+            assert!(gaze.truncate().normalize().dot(to_player.truncate().normalize()) > 0.999);
+        }
+    }
+
+    #[test]
+    fn vr_first_person_entry_uses_drawn_avatar_heading_instead_of_camera_yaw() {
+        let settings = CameraSettings::default();
+        let mut world = hover_world(false);
+        world.agent.yaw = -0.8;
+        world.bodies.insert(world.agent_id, crate::world::body::Body::new(Vec3::Y));
+        let facing = Camera::vr_avatar_yaw(&world, &settings, Instant::now());
+        assert!((facing - std::f32::consts::FRAC_PI_2).abs() < 1e-5);
+        let mut camera = Camera::default();
+        let yaw = camera.enter_vr_mode(VrView::FirstPerson, &mut world.agent, &settings, facing);
+        assert!((yaw - facing).abs() < 1e-5);
+        assert_eq!(world.agent.yaw, -0.8);
+    }
+
+    #[test]
+    fn vr_seated_cameras_follow_vehicle_turns_without_losing_orbit_or_zoom() {
+        let settings = CameraSettings {
+            smoothing: 10.0,
+            ..Default::default()
+        };
+        for (mode, orbit) in [(VrView::FirstPerson, false), (VrView::Avatar, false), (VrView::Avatar, true)] {
+            let mut world = hover_world(true);
+            let avatar_index = world.objects.index_of_uuid(&world.agent_id).unwrap();
+            let seat = world.objects.parent_of(world.objects.get(avatar_index).unwrap()).unwrap();
+            let seat_id = world.objects.get(seat).unwrap().full_id;
+            let mut camera = Camera::default();
+            settle(&mut camera, &mut world, &settings);
+            camera.on_sit_response(seat_id, Vec3::new(-4.0, 0.0, 2.0), Vec3::Z, false);
+            let facing = Camera::vr_avatar_yaw(&world, &settings, Instant::now());
+            let yaw = camera.enter_vr_mode(mode, &mut world.agent, &settings, facing);
+            if mode == VrView::FirstPerson {
+                assert!((yaw - facing).abs() < 1e-5);
+            }
+            for _ in 0..480 {
+                camera.update_vr(&mut world, &settings, &frame(0.016), yaw);
+            }
+            if orbit {
+                camera.joystick_orbit_yaw(1.0, 0.2, &mut world.agent);
+                for _ in 0..480 {
+                    camera.update_vr(&mut world, &settings, &frame(0.016), yaw);
+                }
+            }
+            let before = camera.vr_view(yaw).inverse();
+            let offset = before.w_axis.truncate() - camera.avatar.position;
+            let heading = before.transform_vector3(Vec3::NEG_Z);
+            let zoom = camera.zoom_fraction;
+            let original = world.objects.get(seat).unwrap().rotation;
+            let original_position = world.objects.get(seat).unwrap().position;
+            for step in 1..=60 {
+                let angle = step as f32 * 0.02;
+                let rotation = Quat::from_rotation_z(angle);
+                world.objects.get_mut(seat).unwrap().rotation = rotation * original;
+                world.objects.get_mut(seat).unwrap().position = original_position + Vec3::new(angle, angle * 0.5, 0.0);
+                camera.update_vr(&mut world, &settings, &frame(0.016), yaw);
+                let view = camera.vr_view(yaw).inverse();
+                assert!(
+                    view.transform_vector3(Vec3::NEG_Z).abs_diff_eq(rotation * heading, 2e-4),
+                    "{mode:?}, orbit={orbit}, angle={angle}, forward={:?}, expected={:?}",
+                    view.transform_vector3(Vec3::NEG_Z),
+                    rotation * heading
+                );
+                assert!(
+                    (view.w_axis.truncate() - camera.avatar.position).abs_diff_eq(rotation * offset, 2e-3),
+                    "{mode:?}, orbit={orbit}, angle={angle}"
+                );
+                assert_eq!(camera.zoom_fraction, zoom);
+            }
+        }
+    }
+
+    #[test]
+    fn vr_seated_first_person_uses_posed_eyes_on_entry_and_mode_switch() {
+        let settings = CameraSettings::default();
+        for ground in [false, true] {
+            let mut world = hover_world(!ground);
+            world.agent.ground_sit = ground;
+            let mut camera = Camera::default();
+            settle(&mut camera, &mut world, &settings);
+            for mode in [VrView::FirstPerson, VrView::Avatar, VrView::FirstPerson] {
+                camera.enter_vr_mode(mode, &mut world.agent, &settings, 0.0);
+                for eyes in [None, Some(Vec3::new(0.6, -0.2, 0.15)), Some(Vec3::new(0.2, 0.1, 0.9))] {
+                    let mut frame = frame(0.016);
+                    frame.eye_offset = eyes;
+                    camera.update_vr(&mut world, &settings, &frame, 0.4);
+                    if mode != VrView::FirstPerson {
+                        continue;
+                    }
+                    let expected = camera.mouselook_eye(&world.agent, &settings, eyes);
+                    let inverse = camera.vr_view(0.4).inverse();
+                    assert!(inverse.w_axis.truncate().abs_diff_eq(expected, 1e-5));
+                    assert!(inverse.transform_vector3(Vec3::NEG_Z).z.abs() < 1e-5);
+                    assert!(camera.position.abs_diff_eq(expected, 1e-5));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn seated_camera_policy_keeps_desktop_fixed_views_and_vr_player_controls() {
+        let settings = CameraSettings {
+            smoothing: 0.0,
+            ..Default::default()
+        };
+        for vr in [false, true] {
+            for source in ["seat", "script-position", "script-focus", "script-open", "none"] {
+                let mut world = hover_world(true);
+                let mut camera = Camera::default();
+                settle(&mut camera, &mut world, &settings);
+                let avatar = world.objects.index_of_uuid(&world.agent_id).unwrap();
+                let seat = world.objects.parent_of(world.objects.get(avatar).unwrap()).unwrap();
+                let seat_id = world.objects.get(seat).unwrap().full_id;
+                if source == "seat" {
+                    camera.on_sit_response(seat_id, Vec3::new(-5.0, 0.0, 2.0), Vec3::Z, false);
+                } else if source.starts_with("script") {
+                    let lock = match source {
+                        "script-position" => 21,
+                        "script-focus" => 22,
+                        _ => 21,
+                    };
+                    world.scripted_camera.set(
+                        seat_id,
+                        world.main_region.unwrap(),
+                        &[(12, 1.0), (7, 5.0), (lock, if source == "script-open" { 0.0 } else { 1.0 })],
+                        Vec3::ZERO,
+                    );
+                }
+                if vr {
+                    camera.enter_vr_mode(VrView::Avatar, &mut world.agent, &settings, 0.0);
+                }
+                for _ in 0..240 {
+                    if vr {
+                        camera.update_vr(&mut world, &settings, &frame(0.016), 0.0);
+                    } else {
+                        camera.update(&mut world, &settings, &frame(0.016));
+                    }
+                }
+                let fixed = !vr && matches!(source, "seat" | "script-position" | "script-focus");
+                assert_eq!(camera.vehicle_view_locked(), fixed, "{source}, vr={vr}");
+                let eye = camera.position;
+                let at = camera.target;
+                camera.joystick_orbit_yaw(1.0, 0.2, &mut world.agent);
+                camera.gamepad_zoom(0.7, 0.2, &mut world.agent, &settings);
+                camera.gamepad_pan_vertical(0.4, &mut world.agent, &settings);
+                for _ in 0..240 {
+                    // Movement uses this native reset entry point every frame.
+                    if !vr {
+                        camera.reset_view(&mut world.agent, &settings, true, false, false, true);
+                    }
+                    if vr {
+                        camera.update_vr(&mut world, &settings, &frame(0.016), 0.0);
+                    } else {
+                        camera.update(&mut world, &settings, &frame(0.016));
+                    }
+                }
+                if fixed {
+                    assert!(camera.position.abs_diff_eq(eye, 1e-4), "{source}");
+                    assert!(camera.target.abs_diff_eq(at, 1e-4), "{source}");
+                } else {
+                    assert!(camera.position.distance(eye) > 0.1, "{source}, vr={vr}");
+                    if vr {
+                        assert!((camera.vr_pan_offset.z - 0.4).abs() < 1e-4);
+                        assert!(camera.third_person());
+                        assert!(!camera.follow_available);
+                    } else {
+                        assert!(camera.seated_manual_view());
+                        assert!(camera.focus_target.z > at.z + 0.3);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn vr_seated_pan_ignores_the_standing_avatar_camera_plane() {
+        let settings = CameraSettings::default();
+        let mut world = hover_world(true);
+        let mut camera = Camera::default();
+        camera.enter_vr_mode(VrView::Avatar, &mut world.agent, &settings, 0.0);
+        for _ in 0..120 {
+            camera.update_vr(&mut world, &settings, &frame(0.016), 0.0);
+        }
+        let height = camera.position.z;
+        camera.set_collide_plane(Vec4::new(0.0, 0.0, 1.0, height + 0.1), &settings);
+        camera.gamepad_pan_vertical(0.4, &mut world.agent, &settings);
+        for _ in 0..120 {
+            camera.update_vr(&mut world, &settings, &frame(0.016), 0.0);
+        }
+        assert!(camera.position.z > height + 0.3);
+    }
+
+    #[test]
+    fn adjustable_desktop_vehicle_camera_keeps_pan_zoom_and_orbit_while_turning() {
+        let settings = CameraSettings {
+            smoothing: 0.0,
+            ..Default::default()
+        };
+        let mut world = hover_world(true);
+        let mut camera = Camera::default();
+        settle(&mut camera, &mut world, &settings);
+        camera.joystick_orbit_yaw(0.8, 0.2, &mut world.agent);
+        camera.gamepad_zoom(0.5, 0.2, &mut world.agent, &settings);
+        camera.gamepad_pan_vertical(0.3, &mut world.agent, &settings);
+        settle(&mut camera, &mut world, &settings);
+        let offset = camera.position - camera.avatar.position;
+        let forward = camera.forward();
+        let radius = camera.focus_offset_target.length();
+        let avatar = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let seat = world.objects.parent_of(world.objects.get(avatar).unwrap()).unwrap();
+        let original = world.objects.get(seat).unwrap().rotation;
+        for step in 1..=60 {
+            let rotation = Quat::from_rotation_z(step as f32 * 0.02);
+            world.objects.get_mut(seat).unwrap().rotation = rotation * original;
+            camera.reset_view(&mut world.agent, &settings, true, false, false, true);
+            camera.update(&mut world, &settings, &frame(0.016));
+            assert!(camera.seated_manual_view());
+            assert!((camera.position - camera.avatar.position).abs_diff_eq(rotation * offset, 2e-3));
+            assert!(camera.forward().abs_diff_eq(rotation * forward, 2e-4));
+            assert!((camera.focus_offset_target.length() - radius).abs() < 1e-4);
+        }
+    }
+
+    #[test]
+    fn desktop_fixed_vehicle_camera_blocks_mouse_and_camera_keys() {
+        let mut settings = CameraSettings::default();
+        let mut world = hover_world(true);
+        let mut camera = Camera::default();
+        settle(&mut camera, &mut world, &settings);
+        let avatar = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let seat = world.objects.parent_of(world.objects.get(avatar).unwrap()).unwrap();
+        let seat_id = world.objects.get(seat).unwrap().full_id;
+        camera.on_sit_response(seat_id, Vec3::new(-4.0, 0.0, 2.0), Vec3::Z, false);
+        camera.update(&mut world, &settings, &frame(0.016));
+        assert!(camera.vehicle_view_locked());
+        let zoom = camera.zoom_fraction;
+        let orbit = camera.orbit_yaw;
+        let pitch = camera.pitch;
+        camera.scroll(2.0, false, false, &mut world.agent, &mut settings);
+        camera.orbit_drag(30.0, 20.0, 1.0, &mut world.agent);
+        camera.joystick_pitch(1.0, 0.2);
+        camera.apply_keys(
+            CameraKeys {
+                orbit_left: 1.0,
+                zoom_in: 1.0,
+                pan_up: 1.0,
+                ..Default::default()
+            },
+            &mut world.agent,
+            &settings,
+            0.2,
+        );
+        assert_eq!(camera.zoom_fraction, zoom);
+        assert_eq!(camera.orbit_yaw, orbit);
+        assert_eq!(camera.pitch, pitch);
+        assert!(camera.focus_on_avatar);
+    }
+
+    #[test]
+    fn vr_avatar_orbits_a_fixed_vehicle_camera_and_keeps_tracking_the_seat() {
+        let settings = CameraSettings::default();
+        let mut world = hover_world(true);
+        let mut camera = Camera::default();
+        settle(&mut camera, &mut world, &settings);
+        let seat = world
+            .objects
+            .iter()
+            .find(|(_, o)| !o.is_avatar() && o.parent_id == 0)
+            .unwrap()
+            .1
+            .full_id;
+        camera.on_sit_response(seat, Vec3::new(-4.0, 0.0, 3.0), Vec3::Z, false);
+        camera.enter_vr_mode(VrView::Avatar, &mut world.agent, &settings, 0.0);
+        for _ in 0..120 {
+            camera.update_vr(&mut world, &settings, &frame(0.016), 0.0);
+        }
+        let before = camera.position;
+        let body_yaw = world.agent.yaw;
+        camera.joystick_orbit_yaw(1.0, 0.2, &mut world.agent);
+        for _ in 0..120 {
+            camera.update_vr(&mut world, &settings, &frame(0.016), 0.0);
+        }
+        assert!(camera.position.distance(before) > 0.1);
+        assert!(camera.focus_on_avatar);
+        assert!(!camera.vehicle_view_locked());
+        assert!((world.agent.yaw - body_yaw).abs() < 1e-4);
     }
 
     #[test]

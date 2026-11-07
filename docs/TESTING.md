@@ -489,16 +489,29 @@ A connected physical gamepad remains active; without one, a synthetic gamepad
 walks after frame 650 so mappings can be explored while moving;
 Gamepad › Settings shows the gamepad-only flycam travel speed and level-camera
 control. Horizontal and vertical sensitivity sliders edit the gamepad profile’s per-mode axis gains.
-Avatar Mode maps zoom to RT/LT, player pan to D-pad up/down, and nearest/previous
-avatar cycling to D-pad right/left by default. Controller zoom stays in third
+Avatar Mode maps zoom to RT/LT, vertical pan to D-pad up/down, horizontal pan to
+D-pad left/right, and nearest/previous avatar cycling to RB/R1 and LB/L1 by default. Controller zoom stays in third
 person at close range; mouse-wheel zoom can still enter mouselook. Cycling before the nearest or
-after the furthest avatar returns to the player. Avatar fly-up/down are RB/R1 and LB/L1;
-flycam down/up are D-pad down/D-pad up. Avatar and Flycam look sensitivity default to 4.0,
-first-person look sensitivity to 1.875. Pan is temporary: returning to
-your avatar restores the configured camera preset height; other-avatar pans
-reset to their head on selection. First person has independent mappings and
-look sensitivity/inversion. Change view mode cycles Avatar → First person →
-Flycam → Avatar; disabled modes are skipped. First-person zoom uses a
+after the furthest avatar returns to the player. In Avatar flight, B/Circle ascends
+and X/Square descends;
+flycam down/up are X (Square)/B (Circle). X (Square) crouches in Avatar and
+First Person; Y (Triangle) resets the current view in every mode. First Person
+returns to the current head position and avatar heading; VR Avatar recenters by horizontal translation,
+clearing pan while preserving zoom; Flycam removes artificial pitch and roll without moving.
+Earlier default flycam height bindings migrate to B/X once, alongside the
+new pan/target layout. Other custom bindings remain editable in Map controls.
+In VR, seated keyboard movement reaches vehicle controls and flycam keyboard travel
+remains independent of the avatar. First Person and the player-focused Avatar camera
+follow seated avatar/vehicle yaw while keeping the horizon level. VR ignores creator
+seat views, forced first-person requests and scripted follow-camera poses, retaining
+its own orbit, pan and zoom. Desktop Avatar respects explicit seat views and scripted
+position/focus locks; otherwise manual camera adjustments remain available while driving. Avatar and Flycam look sensitivity default to 4.0,
+first-person look sensitivity to 1.875. Movement, orbit and zoom retain the pan
+point. Y/Triangle, switching view modes, and explicit avatar-target cycling reset
+horizontal and vertical pan. New movement/view input recenters VR by translation
+toward that pan point. First person has independent mappings and
+look sensitivity/inversion. Change view mode cycles First person → Avatar →
+Flycam → First person; disabled modes are skipped. First-person zoom uses a
 smooth transient lens zoom: it stays after release and looking around, then
 resets on player movement input or when entering flycam (passive avatar motion does not reset it); saved camera and mouse zoom settings are unchanged.
 In normal use, select **Input gamepad** in Gamepad Settings and turn on

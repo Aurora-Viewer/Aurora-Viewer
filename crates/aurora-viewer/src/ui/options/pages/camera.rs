@@ -172,7 +172,11 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 );
             });
             cx.group(tr!("ui-options-camera-vr"), |cx| {
-                cx.toggle(tr!("ui-options-camera-vr-at-start"), tr!("ui-options-camera-vr-at-start-help"), &field!(camera.vr_at_start));
+                cx.toggle(
+                    tr!("ui-options-camera-vr-at-start"),
+                    tr!("ui-options-camera-vr-at-start-help"),
+                    &field!(camera.vr_at_start),
+                );
             });
         }
         1 => {

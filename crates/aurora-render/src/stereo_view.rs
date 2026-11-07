@@ -162,6 +162,28 @@ impl Anchor {
         Some(())
     }
 
+    /// Explicit first-person entry/reset cancels current physical yaw, while
+    /// retaining gravity and subsequent room-scale head movement.
+    pub fn recenter_first_person(&mut self, head: Pose) -> Option<()> {
+        let rig = self.rig;
+        let mut next = Self::new(rig.inverse(), head)?;
+        next.mode = Some(RigMode::FirstPerson);
+        next.recenter_position(head)?;
+        *self = next;
+        Some(())
+    }
+
+    /// Recenter translation at the current cyclopean head without rotating it.
+    pub fn recenter_position(&mut self, head: Pose) -> Option<()> {
+        head.matrix()?;
+        let offset = self.rig.transform_vector3(self.tracking.transform_point3(head.position));
+        if !offset.is_finite() {
+            return None;
+        }
+        self.correction = -offset;
+        Some(())
+    }
+
     pub fn head_position(&self, pose: Pose) -> Option<Vec3> {
         pose.matrix()?;
         let position = (self.rig * self.tracking).transform_point3(pose.position) + self.correction;
@@ -208,6 +230,69 @@ mod tests {
             position: head.position + head.orientation * Vec3::X * offset,
             orientation: head.orientation * Quat::from_rotation_y(cant),
         }
+    }
+
+    #[test]
+    fn vr_first_person_reset_faces_the_rig_and_retains_gravity() {
+        let view = rig_view(Vec3::new(8.0, 5.0, 3.0), 0.6);
+        let start = pose(Vec3::Y * 1.6);
+        let head = Pose {
+            position: Vec3::new(0.4, 1.3, -0.6),
+            orientation: Quat::from_rotation_y(1.1) * Quat::from_rotation_x(0.3),
+        };
+        let mut anchor = Anchor::new(view, start).expect("anchor");
+        anchor.follow_head(view, head, RigMode::FirstPerson).expect("follow");
+        anchor.recenter_first_person(head).expect("reset");
+        assert!(
+            anchor
+                .head_position(head)
+                .unwrap()
+                .abs_diff_eq(view.inverse().w_axis.truncate(), 1e-5)
+        );
+        let direction = (anchor.rig * anchor.tracking * head.matrix().unwrap()).transform_vector3(Vec3::NEG_Z);
+        let expected = view.inverse().transform_vector3(Vec3::NEG_Z);
+        assert!(direction.truncate().normalize().abs_diff_eq(expected.truncate().normalize(), 1e-5));
+        assert!((direction.z - 0.3_f32.sin()).abs() < 1e-5);
+        let turned = Pose {
+            orientation: Quat::from_rotation_y(0.4) * head.orientation,
+            ..head
+        };
+        assert!(
+            anchor
+                .relative_head_rotation(turned)
+                .unwrap()
+                .angle_between(anchor.relative_head_rotation(head).unwrap())
+                > 0.39
+        );
+    }
+
+    #[test]
+    fn vr_head_recenter_removes_translation_and_preserves_physical_aim() {
+        let start = Pose {
+            position: Vec3::new(0.0, 1.5, 0.0),
+            orientation: Quat::IDENTITY,
+        };
+        let view = rig_view(Vec3::new(8.0, 5.0, 3.0), 0.6);
+        let mut anchor = Anchor::new(view, start).expect("anchor");
+        let moved = Pose {
+            position: Vec3::new(0.4, 1.2, -0.5),
+            orientation: Quat::from_rotation_y(0.7),
+        };
+        anchor.follow_head(view, moved, RigMode::FirstPerson).expect("follow");
+        let rotation = anchor.relative_head_rotation(moved).expect("rotation");
+        anchor.recenter_position(moved).expect("recenter");
+        assert!(
+            anchor
+                .head_position(moved)
+                .unwrap()
+                .abs_diff_eq(view.inverse().w_axis.truncate(), 1e-5)
+        );
+        assert_eq!(anchor.relative_head_rotation(moved), Some(rotation));
+        let leaned = Pose {
+            position: moved.position + Vec3::new(0.3, 0.0, 0.0),
+            ..moved
+        };
+        assert!((anchor.head_position(leaned).unwrap() - anchor.head_position(moved).unwrap()).length() > 0.29);
     }
 
     #[test]
