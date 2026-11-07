@@ -186,7 +186,9 @@ This does not validate real two-client LSL delivery.
 Offline demos use `AURORA_DEMO=1` and `AURORA_DEMO_POSER=` with `self`,
 `connected`, `camera`, `scale`, `hands`, `face`, `misc`, `physics`, `library`, `settings`, `animesh`,
 `consent-accept`, `consent-refuse`, `consent-timeout`, `consent-withdraw`,
-`consent-request` or `consent-reminder`. Capture frame 620. The synthetic
+`consent-request`, `consent-reminder` or `photo-request`. The `photo-request`
+scenario sends a queued invite and displays the incoming consent prompt over
+full-frame photo mode. Capture frame 620. The synthetic
 request/answer events exercise the real consent state machine; they are
 not a substitute for two-client LSL transport validation.
 

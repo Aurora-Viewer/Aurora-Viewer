@@ -252,7 +252,7 @@ impl Editor {
                             )
                             .clicked()
                             {
-                                self.poser.requests.push(Request::Ask(peer));
+                                self.request_pose_consent(peer);
                             }
                         }
                         Status::Pending => {

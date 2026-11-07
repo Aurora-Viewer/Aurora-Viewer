@@ -164,6 +164,9 @@ impl Editor {
     pub fn take_poser_requests(&mut self) -> Vec<Request> {
         std::mem::take(&mut self.poser.requests)
     }
+    pub fn request_pose_consent(&mut self, peer: Uuid) {
+        self.poser.requests.push(Request::Ask(peer));
+    }
     pub fn set_poser_bridge(&mut self, state: crate::world::bridge::QueryState) {
         self.poser.bridge = state;
     }

@@ -23,7 +23,7 @@ impl App {
             self.world.preview_shape(Some(values));
         }
         // bridge-* modes show the subject menu's bridge hints for the same peer.
-        let fixture = mode.starts_with("consent-") || mode.starts_with("bridge-");
+        let fixture = mode.starts_with("consent-") || mode.starts_with("bridge-") || mode == "photo-request";
         if fixture
             && self.frame_count == 400
             && let Some(handle) = self.world.main_region
@@ -33,7 +33,9 @@ impl App {
                 objects: vec![crate::demo::poser::peer()],
             });
         }
-        self.ik_editor.demo_tick(&self.world, self.frame_count, &format!("poser-{mode}"));
+        if mode != "photo-request" {
+            self.ik_editor.demo_tick(&self.world, self.frame_count, &format!("poser-{mode}"));
+        }
         if self.frame_count == 420 {
             self.panels.chat = false;
             self.panels.people = false;
@@ -76,14 +78,25 @@ impl App {
                         rights_has: 1,
                     });
                 }
-                if mode.starts_with("consent-") {
+                if mode.starts_with("consent-") || mode == "photo-request" {
                     let mut consent = std::mem::take(&mut self.world.poser_consent);
-                    consent.demo(&self.world, peer, mode, self.frame_count);
+                    consent.demo(
+                        &self.world,
+                        peer,
+                        if mode == "photo-request" { "consent-request" } else { mode },
+                        self.frame_count,
+                    );
                     self.world.poser_consent = consent;
                 }
                 if self.frame_count == 440 {
-                    self.egui_ctx
-                        .data_mut(|d| d.insert_temp(egui::Id::unique("poser-subjects-open"), true));
+                    if mode == "photo-request" {
+                        self.panels.snapshot = true;
+                        self.snapshots.ui.full_frame = true;
+                        self.ik_editor.request_pose_consent(peer);
+                    } else {
+                        self.egui_ctx
+                            .data_mut(|d| d.insert_temp(egui::Id::unique("poser-subjects-open"), true));
+                    }
                 }
                 if self.frame_count == 490 && (mode == "consent-accept" || mode == "consent-withdraw") {
                     self.ik_editor.select_pose_subject(&self.world, peer);
@@ -118,6 +131,18 @@ impl App {
     }
     pub(super) fn tick_poser_consent(&mut self) {
         let mut consent = std::mem::take(&mut self.world.poser_consent);
+        let now = Instant::now();
+        let deferred = process_queued_poser_requests(&mut self.ik_editor, &mut consent, &self.world, now);
+        for request in deferred {
+            match request {
+                crate::ik_edit::poser::Request::OpenPrivacy => {
+                    self.panels.settings = true;
+                    self.options_ui.open(crate::ui::options::Page::Privacy, 0);
+                }
+                crate::ik_edit::poser::Request::RepairBridge => self.bridge_runtime.retry(now),
+                crate::ik_edit::poser::Request::Ask(_) | crate::ik_edit::poser::Request::Cancel(_) => unreachable!(),
+            }
+        }
         if consent.dirty {
             self.settings.pose_requests = consent.preferences.clone();
             self.settings.save();
@@ -125,7 +150,7 @@ impl App {
         } else {
             consent.preferences.clone_from(&self.settings.pose_requests);
         }
-        consent.sync(&self.world, Instant::now());
+        consent.sync(&self.world, now);
         let bridge = match self.demo.then(|| std::env::var("AURORA_DEMO_POSER").ok()).flatten() {
             // The demo has no worn bridge: its poser fixtures stand for a
             // ready one, unless a bridge-* mode shows a waiting state.
@@ -146,22 +171,6 @@ impl App {
     }
     pub(super) fn poser_consent_ui(&mut self, ctx: &egui::Context, p: &Palette) {
         let mut consent = std::mem::take(&mut self.world.poser_consent);
-        // The requester sees every nearby avatar with Ask in the poser's
-        // subject menu; there is no capability probe.
-        for request in self.ik_editor.take_poser_requests() {
-            match request {
-                crate::ik_edit::poser::Request::Ask(peer) => {
-                    consent.request(&self.world, peer, Instant::now());
-                }
-                crate::ik_edit::poser::Request::Cancel(peer) => consent.cancel(peer),
-                crate::ik_edit::poser::Request::OpenPrivacy => {
-                    self.panels.settings = true;
-                    self.options_ui.open(crate::ui::options::Page::Privacy, 0);
-                }
-                // The Movelock window's Repair: recompile and restart both scripts.
-                crate::ik_edit::poser::Request::RepairBridge => self.bridge_runtime.retry(Instant::now()),
-            }
-        }
         if let Some(request) = consent.incoming.front().copied() {
             let id = egui::Id::unique(("poser-consent-block", request.id));
             let mut block = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
@@ -225,5 +234,82 @@ impl App {
                 });
         }
         self.world.poser_consent = consent;
+    }
+}
+
+fn apply_poser_requests(
+    requests: Vec<crate::ik_edit::poser::Request>,
+    consent: &mut poser_consent::State,
+    world: &World,
+    now: Instant,
+) -> Vec<crate::ik_edit::poser::Request> {
+    let mut deferred = Vec::new();
+    for request in requests {
+        match request {
+            crate::ik_edit::poser::Request::Ask(peer) => {
+                consent.request(world, peer, now);
+            }
+            crate::ik_edit::poser::Request::Cancel(peer) => consent.cancel(peer),
+            action @ (crate::ik_edit::poser::Request::OpenPrivacy | crate::ik_edit::poser::Request::RepairBridge) => {
+                deferred.push(action);
+            }
+        }
+    }
+    deferred
+}
+
+fn process_queued_poser_requests(
+    editor: &mut crate::ik_edit::Editor,
+    consent: &mut poser_consent::State,
+    world: &World,
+    now: Instant,
+) -> Vec<crate::ik_edit::poser::Request> {
+    apply_poser_requests(editor.take_poser_requests(), consent, world, now)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{demo, scene::avatar::AvatarLibrary};
+    use aurora_net::{
+        NetEvent,
+        bridge::{
+            Endpoint,
+            query::{PoseKind, Query},
+        },
+    };
+    use std::sync::Arc;
+    use uuid::Uuid;
+
+    #[test]
+    fn queued_pose_invite_is_transmitted_during_full_frame_photo_mode() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        world.agent_id = demo::DEMO_AGENT;
+        world.main_region = Some(1);
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![demo::action_avatar(false), demo::poser::peer()],
+        });
+        let peer = demo::poser::PEER;
+        let mut consent = poser_consent::State::default();
+        consent.sync(&world, Instant::now());
+        let mut editor = crate::ik_edit::Editor::default();
+        editor.request_pose_consent(peer);
+        let photo_full_frame = true;
+
+        // The per-frame queue processor is independent of the UI branch; that
+        // branch returns early while `photo_full_frame` is true.
+        assert!(photo_full_frame);
+        assert!(process_queued_poser_requests(&mut editor, &mut consent, &world, Instant::now()).is_empty());
+        assert!(editor.take_poser_requests().is_empty(), "the per-frame step drained the queue");
+        let endpoint = Endpoint {
+            url: "https://synthetic.agni.lindenlab.com/cap/11111111-1111-4111-8111-111111111111".into(),
+            token: Uuid::from_u128(1),
+        };
+        assert!(matches!(
+            consent.commands(Some(endpoint)).as_slice(),
+            [NetCommand::BridgeQuery { query: Query::Pose { kind: PoseKind::Request, target, .. }, .. }]
+                if *target == peer
+        ));
     }
 }
