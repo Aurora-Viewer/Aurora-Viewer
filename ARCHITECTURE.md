@@ -103,7 +103,8 @@ respects the complete storage binding and dispatch limits, and retains its
 working allocation with backoff after failure. Scenes beyond those limits
 select the existing CPU draw lists before list construction.
 A reflection-probe capture lights its surfaces from the other probes and has
-one sun shadow map of its own, centred on the probe (`probes::shadow_matrix`).
+one sun shadow map of its own, centred on the probe (`probes::shadow_matrix`);
+the sky stops at the rim of the dome, as in the Legacy Viewer.
 Reflection-probe capture mips use separate compute passes before the final
 radiance/irradiance pass. This avoids invalid Vulkan image layouts in wgpu
 30 when a mip written by one dispatch is sampled by later dispatches.

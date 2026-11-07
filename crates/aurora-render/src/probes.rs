@@ -152,6 +152,8 @@ pub fn shadow_matrix(origin: Vec3, sun_dir: Vec3) -> Mat4 {
 pub(crate) mod capture_lighting {
     pub const LIT: u32 = 0x20000;
     pub const AMBIANCE: u32 = 0x40000;
+    /// Any capture, of any sky: PROBE_CAPTURE_DOME, no sky under the dome.
+    pub const DOME: u32 = 0x80000;
 
     /// The bits of the radiance capture and of the irradiance capture.
     pub fn bits(sky_only: bool, probe_ambient_sky: bool) -> (u32, u32) {
@@ -829,7 +831,9 @@ mod tests {
 
     #[test]
     fn captures_are_lit_by_the_probes_only_where_they_light_the_scene() {
-        use capture_lighting::{AMBIANCE, LIT, bits};
+        use capture_lighting::{AMBIANCE, DOME, LIT, bits};
+        // the dome bit stands apart: every capture sets it, whatever the lighting
+        assert_eq!(DOME & (LIT | AMBIANCE), 0);
         assert_eq!(bits(false, true), (LIT, LIT | AMBIANCE));
         assert_eq!(bits(true, true), (0, 0));
         assert_eq!(bits(false, false), (0, 0));

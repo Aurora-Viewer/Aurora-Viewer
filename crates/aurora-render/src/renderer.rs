@@ -6480,7 +6480,7 @@ impl Backend {
             let (radiance_bits, irradiance_bits) = crate::probes::capture_lighting::bits(c.sky_only, irr_capture);
             u.misc = [0.0, 0.0, 0.0, 1.0];
             u.clip_plane = [0.0; 4];
-            u.light_sets.mode[2] |= radiance_bits;
+            u.light_sets.mode[2] |= radiance_bits | crate::probes::capture_lighting::DOME;
             // the sun stops at the roofs (display_cube_face, generateSunShadow)
             if !c.sky_only && irr_capture && f.shadows {
                 if c.face == 0 {

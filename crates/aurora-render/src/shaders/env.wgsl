@@ -383,6 +383,17 @@ fn sky_pixel(in: SkyOut) -> vec4<f32> {
     // from the camera, not region positions minus the camera: those rounded
     // differently each frame and the sky shook as it moved (#1059)
     let dir = sky_ray(in.ndc);
+    // A probe's capture keeps black what nothing covers under the dome's rim:
+    // LLVOWLSky::calcPhi ends the dome at pi/8 from its apex, and
+    // LLDrawPoolWLSky::renderDome lowers it by the dome offset (about 5.4
+    // degrees under the horizon by default). Without this, the haze under the
+    // horizon lit the sides of everything outdoors through the irradiance.
+    if ((frame.light_mode.z & PROBE_CAPTURE_DOME) != 0u) {
+        let rim_up = 0.92387953 - frame.sky_misc.x;
+        if (normalize(dir).z < rim_up / sqrt(0.14644661 + rim_up * rim_up)) {
+            return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        }
+    }
     var col = sky_full_at(dir, sky_footprint(in.ndc, dir));
     if (camera_underwater()) {
         let wf = water_fog_view(dir * 512.0, frame.water_normal.w);
