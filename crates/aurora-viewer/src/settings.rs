@@ -658,6 +658,24 @@ pub struct Settings {
     /// their conversation on its card (#1198); a payment from anyone else
     /// shows there only when it is open. On by default.
     pub payment_opens_conversation: bool,
+    /// Preferences › Chat › Notifications: sales, objects paid and other L$
+    /// that are not a resident's direct payment show a toast (#2675). Off by
+    /// default, where the Legacy Viewer's NotifyMoneyReceived is on: the
+    /// highlight at the balance says it without covering the world, and a
+    /// busy seller would get one toast per sale.
+    pub notify_money_received: bool,
+    /// Preferences › Chat › Notifications: a resident's direct payment with
+    /// no card shows a toast (NotifyMoneyReceived, on by default, #2675).
+    pub notify_direct_payment: bool,
+    /// A direct payment's toast only above `notify_direct_threshold` L$.
+    pub notify_direct_above: bool,
+    pub notify_direct_threshold: i32,
+    /// A sale's toast only above `notify_money_threshold` L$.
+    pub notify_money_above: bool,
+    pub notify_money_threshold: i32,
+    /// Preferences › Layout › Bars: L$ gained and spent show under the
+    /// balance (`ui/balance_gains.rs`, Aurora's own, on by default).
+    pub balance_gain_animation: bool,
     /// Preferences › Chat › Conversations: our own direct payment to a
     /// resident opens their conversation on its card (#1198); otherwise it
     /// shows there only when it is open. Off by default.
@@ -1865,6 +1883,13 @@ impl Default for Settings {
             payment_confirm_threshold: 200,
             always_track_payments: false,
             payment_opens_conversation: true,
+            notify_money_received: false,
+            notify_direct_payment: true,
+            notify_direct_above: false,
+            notify_direct_threshold: 200,
+            notify_money_above: false,
+            notify_money_threshold: 200,
+            balance_gain_animation: true,
             payment_sent_opens_conversation: false,
             maps: MapSettings::default(),
             search: Default::default(),

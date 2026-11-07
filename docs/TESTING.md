@@ -5014,7 +5014,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_BUY_PASS=sell\|none\|own` | The ground menu's "Buy access" on the plaza parcel |
 | `AURORA_DEMO_PAY=<mode>` | Demo balance and the Pay window of a resident or a group |
 | `AURORA_DEMO_MONEY_TRACKER=<mode>` | The money tracker on a session of payments, in either look |
-| `AURORA_DEMO_PAYMENT=card\|legacy\|sent\|sent-open\|friend\|off` | A direct payment as a card in the conversation with the other resident |
+| `AURORA_DEMO_PAYMENT=card\|legacy\|sent\|sent-open\|friend\|off\|sale\|balance\|earning` | L$ received: a direct payment as a card in the conversation with the other resident |
 | `AURORA_DEMO_LOGIN=<mode>` | Offline login screen and account carousel |
 | `AURORA_DEMO_LOGIN_SUBMIT=<frame>[,<frame>…]` | Press Log in of the open login form at those frames |
 | `AURORA_DEMO_LOGIN_FAVORITES=1\|open\|pick` | Stored favorite landmarks in the demo accounts' start menus |
@@ -5296,9 +5296,20 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   "Open the conversation when you pay a resident" turned on (off by
   default). `friend`: no
   conversation open; a friend's L$250 opens theirs on its card ("For the boat ride"), a
-  stranger's L$20 shows nowhere. `off`: the same with "Open a conversation for a
-  friend's payment" off: no conversation opens. Capture after frame 400, with `--language fr`
-  and `--language en`.
+  stranger's L$20 is a notification. `off`: the same with "Open a conversation for a
+  friend's payment" off: no conversation opens, both are notifications. `sale` (#2675): no
+  conversation; notifications for a sale ("for Steel helmet"), an object paid with its name
+  ("for Tip jar") and without, and a stranger's L$20, no card. `balance`: no toast; 6 seconds
+  after the start, three payments 0.9 s apart rise under the balance (12,480 L$), in its
+  colour, stacked downwards, then a purchase of L$300, bold in the danger colour. They leave one
+  at a time; each one that lands flashes the number, green or red, and it ticks up or down;
+  `AURORA_DEMO_BARS=legacy`, or Reduce motion, to see the other looks. `earning`:
+  from 12,480 L$, every 10 seconds for as long as the viewer runs, a sale, an object paid or a
+  direct payment of 20 to 300 L$, a purchase of as much, or ten times as much L$ bought, with
+  the saved switches and limits, which can be changed meanwhile (by default a direct payment
+  has its toast or its card, the others the highlight alone; `sale` turns every toast on for
+  its run, `balance` off). Capture
+  after frame 400, with `--language fr` and `--language en`.
 - **`AURORA_DEMO_QUICKPREFS=1`**: opens Quick preferences at the first
   frame, as the toolbar's button does. Top to bottom: Draw distance, Particles,
   Avatar physics detail, Level of detail, Fully rendered avatars, Avatar name

@@ -46,6 +46,13 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-show-balance-help"),
                     &field!(show_balance),
                 );
+                // the L$ gained and spent under it (#2675); also the
+                // balance's right click and the account island's
+                cx.toggle(
+                    tr!("ui-options-balance-gain-animation"),
+                    tr!("ui-options-balance-gain-animation-hint"),
+                    &field!(balance_gain_animation),
+                );
                 // also a left click on the clock, and the island's right click
                 use crate::settings::ClockZone;
                 cx.choice(
