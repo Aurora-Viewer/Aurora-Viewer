@@ -2156,6 +2156,11 @@ chat, retaining the clicked prim's UUID and the basic script summary.
 `aurora-net/src/bridge/query.rs` validates the bounded typed response; bridge
 protocol 1.21 adds this read-only query without changing movement commands.
 
+`ui/land/mod.rs` rechecks the selected parcel and current identity rights at
+every name commit, including focus loss, page changes and window close.
+`ui/land/name_tests.rs` covers those commits in both layouts, including
+ownership, group-power and lease-status changes while an edit is pending.
+
 `ui/land/scripts/table.rs` caches the script-resource rows by the world's
 resource revision, sorts numeric columns by their values and filters object
 or owner names. Late avatar/group name replies refresh the search and owner
