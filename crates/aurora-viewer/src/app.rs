@@ -1958,6 +1958,11 @@ impl App {
                 .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
             return;
         }
+        if self.demo
+            && let NetCommand::SetAlwaysRun(run) = cmd
+        {
+            log::info!("demo: SetAlwaysRun({run}) sent");
+        }
         if let NetCommand::GroupTitleUpdate { group, role } = &cmd {
             self.world.group_data.title_sent(*group, *role);
             self.world.region_titles.title_sent(*group, *role);
@@ -4386,7 +4391,10 @@ impl App {
     /// mouse steering counts as a forward key, so a double right click runs.
     fn walk_tap(&mut self, group: u8, pressed: bool) {
         if pressed && self.in_world() {
+            // LLAgent::setTempRun: @temprun leaves the double tap a plain walk;
+            // @alwaysrun does not touch it.
             if self.temp_run.is_none()
+                && !self.world.rlva.has("temprun")
                 && let Some((last, at)) = self.last_tap
                 && last == group
                 && at.elapsed().as_secs_f32() < NUDGE_TIME

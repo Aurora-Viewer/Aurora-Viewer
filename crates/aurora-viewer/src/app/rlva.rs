@@ -147,8 +147,10 @@ impl App {
         if self.world.rlva.has("alwaysrun") && self.always_run {
             self.set_always_run(false);
         }
-        if self.world.rlva.has("temprun") {
-            self.temp_run = None;
+        // RlvUIEnabler::onToggleMovement: clearTempRun tells the simulator,
+        // which would otherwise keep running with nothing left to stop it.
+        if self.world.rlva.has("temprun") && self.temp_run.take().is_some() {
+            self.send(NetCommand::SetAlwaysRun(self.running() || self.joystick.running));
         }
         let invalid: Vec<_> = self
             .build
@@ -225,6 +227,14 @@ impl App {
                     "@setcam_focus:{};4;0/-1/0=force,setcam_fovmin:0.6=n,setcam_fovmax:0.9=n",
                     crate::demo::DEMO_LOUP
                 )
+            } else if let Some(run) = scenario.strip_prefix("run-") {
+                self.panels.settings = false;
+                match run {
+                    "temprun" => "@temprun=n".to_owned(),
+                    "alwaysrun" => "@alwaysrun=n".to_owned(),
+                    "both" => "@temprun=n,alwaysrun=n".to_owned(),
+                    _ => "@clear".to_owned(),
+                }
             } else if scenario == "rename" {
                 self.settings.rlva.shared_wear = false;
                 self.settings.rlva.auto_rename = true;
@@ -395,6 +405,16 @@ impl App {
                 self.world.rlva.has("unsit"),
                 self.world.rlva.has("sendchat")
             );
+        }
+        if mode.starts_with("run-") {
+            // A double tap through the real input path, held until frame 750.
+            match self.frame_count {
+                720 | 722 => self.walk_tap(0, true),
+                721 | 750 => self.walk_tap(0, false),
+                730 if mode == "run-late" => self.rlva_demo_message("@temprun=n".to_owned()),
+                740 => log::info!("RLVa demo: {mode} temp_run={}, running={}", self.temp_run.is_some(), self.running()),
+                _ => {}
+            }
         }
         if mode == "sitting" && self.frame_count == 740 {
             self.rlva_demo_message("@sitground=force".to_owned());

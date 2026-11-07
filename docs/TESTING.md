@@ -5224,6 +5224,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   The native demo simulator must confirm the stand before the ground sit.
   At frame 810 its log reports `ground_sit=true, object_seated=false`;
   capture after frame 850 to inspect the final ground-sitting pose.
+  `run-temprun`, `run-alwaysrun`, `run-both`, `run-none` and `run-late` send
+  a double tap through the input path at frames 720 to 722, held until 750,
+  under that restriction (`run-late`: @temprun arrives at 730, mid-run). The
+  log gives each `demo: SetAlwaysRun(...) sent` and, at frame 740,
+  `temp_run=` and `running=`. Only `run-alwaysrun` and `run-none` run;
+  `run-late` stops at 730 with a `SetAlwaysRun(false)`.
 
 - **`AURORA_DEMO_GRIDS=1|pages`** opens the grid manager with synthetic metadata
   without contacting a grid; `pages` selects its Web pages tab. Combine with
