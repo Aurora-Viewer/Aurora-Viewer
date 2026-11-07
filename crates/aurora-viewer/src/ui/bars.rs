@@ -2072,6 +2072,15 @@ pub fn top_bars(
     if let Some((painter, slot)) = glass {
         super::widgets::finish_bar_glass(&painter, slot, bar.response.rect, p);
     }
+    if st.favorites.access == crate::settings::FavoritesAccess::Row {
+        let (row, a) = favorites::row(ui.ctx(), p, icons, st.favorites, bar.response.rect);
+        if let Some(a) = a {
+            action = a;
+        }
+        islands::set_favorites_row_bottom(ui.ctx(), Some(row.bottom()));
+    } else {
+        islands::set_favorites_row_bottom(ui.ctx(), None);
+    }
     (action, audio_action)
 }
 
