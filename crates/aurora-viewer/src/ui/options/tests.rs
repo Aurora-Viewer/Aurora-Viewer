@@ -193,6 +193,8 @@ const BEFORE: &[&str] = &[
     "compact_automated_chat",
     "compact_im_system_lines",
     "chat_keep_focus",
+    "chat_enter_toggles",
+    "chat_enter_last_field",
     "chat_gesture_autocomplete",
     "chat_name_prediction",
     "colon_emote",
