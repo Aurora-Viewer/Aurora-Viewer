@@ -393,243 +393,243 @@ ExternalWebsocketSyncLocal,Boolean,unreviewed,,,Should the JSONRPC server listen
 ExternalWebsocketSyncPort,S32,unreviewed,,,Port that the JSONRPC server listens on when editing
 FMODProfilerEnable,Boolean,unreviewed,,,Enable profiler tool if using FMOD Studio
 FMODResampleMethod,U32,unreviewed,,,"Sets the method used for internal resampler 0(Linear), 1(Cubic), 2(Spline) for FMOD Studio"
-FSAdvancedTooltips,Boolean,unreviewed,,named in Aurora: aurora-viewer/src/hover_tips.rs:9,Show extended information in hovertips about objects (classic Phoenix style)
-FSAdvancedWorldmapRegionInfo,Boolean,unreviewed,,,Shows additional region infos on the world map (agent count and maturity level)
-FSAllowDoubleClickOnScriptedObjects,Boolean,unreviewed,,,"If enabled, allows double-click movement action (walk/teleport) to scripted objects"
-FSAllowEEPWaterDerender,Boolean,unreviewed,,,Allow EEP assets to disable water rendering to increase FPS
-FSAlwaysFly,Boolean,unreviewed,,field `fly_override`,"Fly Override, for no-fly zones. Must be activated each time."
-FSAlwaysShowInboxButton,Boolean,unreviewed,,,"If enabled, the Received Items folder aka Inbox is always shown at the bottom of the inventory, even if it is shown as folder in the invento"
-FSAlwaysShowTPCancel,Boolean,unreviewed,,,Always show the TP cancel button even if the sim says it cant be canceled. The sim will always know if it can and will ignore cancel request
-FSAlwaysTrackPayments,Boolean,unreviewed,,field `always_track_payments`,Always track payments even if the money tracker is closed
-FSAnimatedScriptDialogs,Boolean,unreviewed,,,Animates script dialogs V1 style. Only effective when dialogs in top right are activated.
-FSAnimationPreviewExpanded,Boolean,unreviewed,,,Expand or collapse the advanced animation information in the animation preview floater by default
-FSAnnounceIncomingIM,Boolean,unreviewed,,field `announce_incoming_im`,Opens the IM floater and announces an incoming IM as soon as somebody is starting to write an IM to you.
-FSAppearanceShowHints,Boolean,unreviewed,,,"If enabled, show visual hints (avatar images) in appearance editor"
-FSAreaSearchAdvanced,Boolean,unreviewed,,,Displays the advanced settings tab
-FSAreaSearchColumnConfig,U32,unreviewed,,,Stores the column visibility for the area search
-FSAreaSearch_ClickAction,LLSD,unreviewed,,,Area Search Filter: Mouse click action
-FSAreaSearch_ExcludeAttachments,Boolean,unreviewed,,,Area Search Filter: Exclude attachments
-FSAreaSearch_ExcludeChildPrims,Boolean,unreviewed,,,Area Search Filter: Exclude child prims
-FSAreaSearch_ExcludeNeighborRegions,Boolean,unreviewed,,,Area Search Filter: Exclude neighbor regions
-FSAreaSearch_ExcludePhysical,Boolean,unreviewed,,,Area Search Filter: Exclude physical objects
-FSAreaSearch_ExcludeReflectionProbes,Boolean,unreviewed,,,Area Search Filter: Exclude reflection probes
-FSAreaSearch_ExcludeTemporary,Boolean,unreviewed,,,Area Search Filter: Exclude temporary objects
-FSAreaSearch_FilterDistance,Boolean,unreviewed,,,Area Search Filter: Filter by distance
-FSAreaSearch_FilterForSale,Boolean,unreviewed,,,Area Search Filter: Only show objects that are for sale
-FSAreaSearch_MaximumDistance,S32,unreviewed,,,Area Search Filter: Maximum distance
-FSAreaSearch_MaximumPrice,S32,unreviewed,,,Area Search Filter: Maximum price
-FSAreaSearch_MinimumDistance,S32,unreviewed,,,Area Search Filter: Minimum distance
-FSAreaSearch_MinimumPrice,S32,unreviewed,,,Area Search Filter: Minimum price
-FSAreaSearch_OnlyAttachments,Boolean,unreviewed,,,Area Search Filter: Find only attachments
-FSAreaSearch_OnlyCopiable,Boolean,unreviewed,,,Area Search Filter: Find only copiable objects
-FSAreaSearch_OnlyCurrentParcel,Boolean,unreviewed,,,Area Search Filter: Find only objects in the current parcel
-FSAreaSearch_OnlyLocked,Boolean,unreviewed,,,Area Search Filter: Find only locked objects
-FSAreaSearch_OnlyMOAP,Boolean,unreviewed,,,Area Search Filter: Find only objects that have shared media applied
-FSAreaSearch_OnlyModifiable,Boolean,unreviewed,,,Area Search Filter: Find only modifiable objects
-FSAreaSearch_OnlyPhantom,Boolean,unreviewed,,,Area Search Filter: Find only phantom objects
-FSAreaSearch_OnlyPhysical,Boolean,unreviewed,,,Area Search Filter: Find only physical objects
-FSAreaSearch_OnlyReflectionProbes,Boolean,unreviewed,,,Area Search Filter: Find only reflection probes
-FSAreaSearch_OnlyTemporary,Boolean,unreviewed,,,Area Search Filter: Find only temporary objects
-FSAreaSearch_OnlyTransferable,Boolean,unreviewed,,,Area Search Filter: Find only transferable objects
-FSAudioMusicFadeIn,F32,unreviewed,,,Fade in time in seconds for music streams
-FSAudioMusicFadeOut,F32,unreviewed,,,Fade out time in seconds for music streams
-FSAutoOrderIMTabs,Boolean,unreviewed,,,Use automatic tab ordering for IM tabs inside the conversations floater.
-FSAutoOrderIMTabsAtTop,Boolean,unreviewed,,,Add new IM tabs as first in their chat type group.
-FSAutoOrderIMTabsPriorities,String,unreviewed,,,Priority for automatic ordering IM tabs. Higher priority means the tab will be inserted before lower priority. Default is Groups[0]=2 Confer
-FSAutoUnmuteAmbient,Boolean,unreviewed,,,"If Ambient sounds are muted, unmute on TP. Default (false)"
-FSAutoUnmuteSounds,Boolean,unreviewed,,,"If Sound Effects are muted, unmute on TP. Default (false)"
-FSAvatarTurnSpeed,F32,unreviewed,,,Modify the speed at which the avatar responds to turning movements. 0-100 percent of max rate. Default is 0.
-FSBeamColorFile,String,unreviewed,,,Beam file for the shape of your beam
-FSBeamShape,String,unreviewed,,,Beam file for the shape of your beam
-FSBeamShapeScale,F32,unreviewed,,,How Big You Want to let the beam be
-FSBetterGroupNoticesToIMLog,Boolean,unreviewed,,,Improved logging of group notices to group IM log.
-FSBeyondNearbyChatColorDiminishFactor,F32,unreviewed,,,The factor the color for nearby chat diminishes if the sender is beyond chat range
-FSBlockClickSit,Boolean,unreviewed,,field `block_click_sit`,Prevents sitting on left-click.
-FSBrowserHomePage,String,unreviewed,,field `browser_home_page`,Home page for the built in web browser
-FSBubblesHideConsoleAndToasts,Boolean,unreviewed,,field `chat_bubbles_hide_console`,"If enabled, using bubble chat will hide the chat output in the Nearby Chat console and toasts"
-FSBuildPrefs_ActualRoot,Boolean,unreviewed,,,Show the axis on the actual root of a linkset instead of mass center
-FSBuildPrefs_Alpha,F32,unreviewed,,,New object created default alpha
-FSBuildPrefs_Color,Color4,unreviewed,,,New object created default color
-FSBuildPrefs_EditHandleScaling,F32,unreviewed,,,Factor to scale editing handles.
-FSBuildPrefs_EditTextShadowing,Boolean,unreviewed,,,Whether the hint-text while building has a drop-shadow.
-FSBuildPrefs_FullBright,Boolean,unreviewed,,,New object created default fullbright
-FSBuildPrefs_Glow,F32,unreviewed,,,New object created default glow
-FSBuildPrefs_Material,String,unreviewed,,field `new_prim_material`,"Default Setting For New Objects to be created, physical flag"
-FSBuildPrefs_Phantom,Boolean,unreviewed,,,New object created default of phantom
-FSBuildPrefs_Physical,Boolean,unreviewed,,,New object created default of physical
-FSBuildPrefs_PivotIsPercent,Boolean,unreviewed,,,Consider the Pivot points values as a percentage
-FSBuildPrefs_PivotX,F32,unreviewed,,,Pivot point on the X axis
-FSBuildPrefs_PivotY,F32,unreviewed,,,Pivot point on the Y axis
-FSBuildPrefs_PivotZ,F32,unreviewed,,,Pivot point on the Z axis
-FSBuildPrefs_Shiny,String,unreviewed,,,New object created default shiny
-FSBuildPrefs_Temporary,Boolean,unreviewed,,,New object created default of temporary
-FSBuildPrefs_Xsize,F32,unreviewed,,,Default Size For New Objects to be created X
-FSBuildPrefs_Ysize,F32,unreviewed,,,Default Size For New Objects to be created Y
-FSBuildPrefs_Zsize,F32,unreviewed,,,Default Size For New Objects to be created Z
-FSBuildToolDecimalPrecision,S32,unreviewed,,field `decimal_precision`,Decimal digits to display on various build tool controls (0-7)
-FSChatHistoryShowYou,Boolean,unreviewed,,,"Show localized ""You"" instead of your avatar's username (like CHUI)"
-FSChatWindow,S32,unreviewed,,field `conversations_own_windows`,Show chat in multiple windows(by default) or in one multi-tabbed window(requires restart)
-FSChatbarGestureAutoCompleteEnable,Boolean,unreviewed,,field `chat_gesture_autocomplete`,Toggles gesture auto complete in chat bar
-FSChatbarNamePrediction,Boolean,unreviewed,,field `chat_name_prediction`,Toggles name prediction in nearby chat
-FSClientTagsVisibility,U32,unreviewed,,,"Show client tags: 0=Client tags Off, 1=That are on the TPVD (needs FSUseLegacyClienttags), 2=That are on the client_tag.xml (needs FSUseLega"
-FSCloseChatOnReturnInMouselook,Boolean,unreviewed,,,"When CloseChatOnReturn is enabled, only deselect nearby chat in mouselook"
-FSCloseChatOnReturnOnlyForNearbyChatControl,Boolean,unreviewed,,,"When CloseChatOnReturn is enabled, only deselect nearby chat bar"
-FSCloudColorEnd,Color4,unreviewed,,,"End color (and alpha) of the avatar loading/bakefail ""cloud"" particle effect."
-FSCloudColorStart,Color4,unreviewed,,,"Start color (and alpha) of the avatar loading/bakefail ""cloud"" particle effect."
-FSCmdLine,Boolean,unreviewed,,field `chat_commands`,Enable usage of chat bar as a command line
-FSCmdLineAO,String,unreviewed,,named in Aurora: aurora-viewer/src/cmdline/mod.rs:293,Turn AO on/off
-FSCmdLineAnnounceChannel,S32,unreviewed,,field `announce_to_channel`,Chat channel where chat command output is announced.
-FSCmdLineAnnounceToChannel,Boolean,unreviewed,,field `announce_to_channel`,Echo chat command output to a script channel.
-FSCmdLineBandWidth,String,unreviewed,,,Change max. bandwidth quickly
-FSCmdLineCalc,String,unreviewed,,,Calculates an expression
-FSCmdLineClearChat,String,unreviewed,,,Clear chat transcript to stop lag from chat spam
-FSCmdLineCopyCam,String,unreviewed,,,Copies the current camera location to the clipboard as pos|focus|roll
-FSCmdLineDrawDistance,String,unreviewed,,,Change draw distance quickly
-FSCmdLineGround,String,unreviewed,,,Teleport to ground function command
-FSCmdLineHeight,String,unreviewed,,,Teleport to height function command
-FSCmdLineKeyToName,String,unreviewed,,,Use a fast key to name query
-FSCmdLineMapTo,String,unreviewed,,,Teleport to a region by name rapidly
-FSCmdLineMapToKeepPos,Boolean,unreviewed,,field `map_to_keep_pos`,Whether to use current local position on teleport to the new region
-FSCmdLineMedia,String,unreviewed,,,Chat command for setting a media url
-FSCmdLineMusic,String,unreviewed,,,Chat command for setting a music url
-FSCmdLineOfferTp,String,unreviewed,,,Offer a teleport to target avatar
-FSCmdLinePasteCam,String,unreviewed,,,Restores the camera from a pos|focus|roll
-FSCmdLinePlatformSize,F32,unreviewed,,field `platform_size`,How wide the rezzed platform will appear to be.
-FSCmdLinePos,String,unreviewed,,,Teleport to position function command
-FSCmdLineRezPlatform,String,unreviewed,,,Rez a platform underneath you
-FSCmdLineRollDice,String,unreviewed,,named in Aurora: aurora-viewer/src/cmdline/dice.rs:3,Rolls dice - cmd [number of dice] [number of faces]. Example: cmd 1 20. Lack of parameters is equal to cmd 1 6 (standard die).
-FSCmdLineTP2,String,unreviewed,,,"Teleport to a person by name, partials work."
-FSCmdLineTeleportHome,String,unreviewed,,,Teleport to home function command
-FSCmdLineTrackPos,String,unreviewed,,,Track a position or avatar on the world map.
-FSCmdTeleportToCam,String,unreviewed,,field `teleport_to_cam`,Teleport to your camera
-FSCollisionMessagesInChat,Boolean,unreviewed,,field `in_chat`,Shows collision messages in nearby chat.
-FSColorClienttags,U32,unreviewed,,,"Color Client tags by: 0=Off, 1=Single color per Viewer, 2=User defined color (one color per UUID), 3=New Tagsystem Color"
-FSColorIMsDistinctly,Boolean,unreviewed,,,Color IM/Group messages distinctly in the console.
-FSColorUsername,Boolean,unreviewed,,,Color username distinctly from the rest of the tag
-FSComboboxSubstringSearch,Boolean,unreviewed,,,Allows fulltext search on comboboxes
-FSCommitForSaleOnChange,Boolean,unreviewed,,,Enables old SL default behavior. Objects set for sale will take effect on change instead of requiring a confirm first.
-FSConfirmPayments,Boolean,unreviewed,,field `confirm_payments`,Enables confirmation dialogs for payments.
-FSConsoleClassicDrawMode,Boolean,unreviewed,,,Enables classic console draw mode (single background block over all lines with width of the longest line)
-FSContactListShowSearch,Boolean,unreviewed,,field `show_search`,Shows the search filter in the legacy contact list.
-FSContactSetsColorizeChat,Boolean,unreviewed,,,Whether to color a friends chat based on their friends groups
-FSContactSetsColorizeFriends,Boolean,unreviewed,,field `colorize_friends`,Whether to color a friends list entry based on their friends groups
-FSContactSetsColorizeMiniMap,Boolean,unreviewed,,,Whether to color a friends mini map icon based on their friends groups
-FSContactSetsColorizeNameTag,Boolean,unreviewed,,,Whether to color a friends name tag based on their friends groups
-FSContactSetsColorizeRadar,Boolean,unreviewed,,,Whether to color a friends name in the radar list based on their friends groups
-FSContactSetsListColorizeOffline,Boolean,unreviewed,,,Whether to use a custom color for offline contacts in Contact Sets lists. A custom contact set color takes precedence when set.
-FSContactSetsListOfflineColor,Color4,unreviewed,,,Custom color for offline contacts in Contact Sets lists when FSContactSetsListColorizeOffline is enabled.
-FSContactSetsListShowIcons,Boolean,unreviewed,,field `set_list_icons`,Show/hide profile icons in Contact Sets lists
-FSContactSetsNotificationNearbyChat,Boolean,unreviewed,,,Show the On/Offline notifications caused by Contactsets in Nearby Chat
-FSContactSetsNotificationToast,Boolean,unreviewed,,,Show the On/Offline notifications caused by Contactsets as Toast message
-FSContactSetsProfilePlacement,S32,unreviewed,,,"Where to show contact sets in the profile groups list: 0=below groups, 1=hidden, 2=above groups"
-FSContactsSortOrder,U32,unreviewed,,,"Specifies sort order for friends (0 = by display name, 1 = username, 2 = by online status then display, 3 = by online status then username)"
-FSConversationLogLifetime,U32,unreviewed,,,Number of days transcripts are preserved in the conversation log before being purged
-FSCopyObjKeySeparator,String,unreviewed,,field `copy_key_separator`,This chunk of text goes between keys when you use the Copy Key button with multiple objects selected.
-FSCreateCallingCards,Boolean,unreviewed,,,Don't create calling cards when friending other avatars (requires restart)
-FSCreateGiveInventoryParticleEffect,Boolean,unreviewed,,,"If enabled, the viewer will create particle effects around the avatar if inventory is transferred to another avatar."
-FSCreateOctreeLog,Boolean,unreviewed,,,Create a log of octree operation. This can cause huge frame stalls on edit
-FSDefaultObjectTexture,String,unreviewed,,,Default texture that will be applied to rezzed prims. (UUID texture reference)
-FSDestroyGLTexturesImmediately,Boolean,unreviewed,,,"If enabled, GL textures will be removed from memory immediately when its fetched texture is removed. This might result in textures behind yo"
-FSDestroyGLTexturesThreshold,F32,unreviewed,,,"Threshold, at what texture memory load level GL textures will be removed from memory if FSDestroyGLTexturesImmediately is set to TRUE."
-FSDisableAvatarTrackerAtCloseIn,Boolean,unreviewed,,,Disables the tracking beacon if distance to target avatar is less than 3m.
-FSDisableBeaconAfterTeleport,Boolean,unreviewed,,,Disables the beacon of the teleport destination after a teleport.
-FSDisableBlockListAutoOpen,Boolean,unreviewed,,,Disables automatic opening of the block list when muting people or objects.
-FSDisableIMChiclets,Boolean,unreviewed,,named in Aurora: aurora-viewer/src/settings.rs:48,"If enabled, the Legacy Viewer will not show any group / IM chat chiclets (notifications envelope and sum of IMs will remain on the screen)."
-FSDisableLabeledChatLinks,Boolean,unreviewed,,,"When true, wiki-style bracketed links ([https://host label]) in IMs, group chat, ad-hoc conferences and group notices keep their label, but "
-FSDisableLabeledChatLinksNearbyChat,Boolean,unreviewed,,,"When true, wiki-style bracketed links ([https://host label]) in nearby (local) chat and object text keep their label, but hovering shows an "
-FSDisableLoginScreens,Boolean,unreviewed,,,Disable login screen progress bar
-FSDisableLogoutScreens,Boolean,unreviewed,,,Disable logout screen progress bar
-FSDisableMouseWheelCameraZoom,Boolean,unreviewed,,field `disable_wheel_zoom`,"If true, the Legacy Viewer will not use mouse wheel to zoom in/out the camera."
-FSDisableNeighbourRegionConnections,Boolean,unreviewed,,field `no_neighbour_regions`,"Do not connect to neighbouring regions, only to the current region (limits region crossing) - experimental"
-FSDisableReturnObjectNotification,Boolean,unreviewed,,,Disable 'Object has been returned to your inventory Lost and Found folder' notifications
-FSDisableRiggedMeshMatrixCaching,Boolean,unreviewed,,,Disable the caching of Rigged mesh matrix pallettes.Non-persistant.
-FSDisableTeleportScreens,Boolean,unreviewed,,,Disable teleport screens
-FSDisableTurningAroundWhenWalkingBackwards,Boolean,unreviewed,,field `walk_backwards_without_turning`,Disables your avatar turning around locally when moving backwards.
-FSDisableWMIProbing,Boolean,unreviewed,,,Disables VRAM detection via WMI probing on Windows systems
-FSDiskCacheHighWaterPercent,F32,unreviewed,,,Trigger point above which we should start to clear out older cache entries
-FSDiskCacheLowWaterPercent,F32,unreviewed,,,Level to drain cache to once it goes over the high water limit.
-FSDiskCacheSize,U32,unreviewed,,,Controls amount of hard drive space reserved for local asset caching in MB
-FSDismissGroupNoticeAttachmentsToTrash,Boolean,unreviewed,,,"If enabled, dismissing group notices with attachments will move attachment to trash folder"
-FSDoNotHideMapOnTeleport,Boolean,unreviewed,,,"If enabled, the world map won't be closed when teleporting"
-FSDontIgnoreAdHocFromFriends,Boolean,unreviewed,,field `ignore_adhoc`,Allow my friends to start conference chats with me.
-FSDontNagWhenPurging,Boolean,unreviewed,,,"If enabled, emptying trash will not double check before deleting. WARNING: You should only use this if you are a regular trash emptier and a"
-FSDoubleClickAddInventoryClothing,Boolean,unreviewed,,named in Aurora: aurora-viewer/src/ui/inventory/context.rs:77,Whether or not to add clothes instead of wearing them
-FSDoubleClickAddInventoryObjects,Boolean,unreviewed,,named in Aurora: aurora-viewer/src/ui/inventory/context.rs:77,Whether or not to add objects instead of wearing them
-FSDrawDistanceVRAMOptimization,Boolean,unreviewed,,,Enables a feature that reduces your draw distance when VRAM becomes full
-FSEditGrid,Boolean,unreviewed,,,Allows editing a grid from the grid manager
-FSEmphasizeShoutWhisper,Boolean,unreviewed,,,Enables bolding shouted chat and italicizing whispered chat
-FSEnableAggressiveComplexityUpdates,Boolean,unreviewed,,,Enable active complexity calculations. This may have a significant detrimental performance impact if enabled.
-FSEnableEmojiWindowPopupWhileTyping,Boolean,unreviewed,,,Enables automatic opening of emoji chooser window while typing in chat bars.
-FSEnableGrowl,Boolean,unreviewed,,field `system_notifications`,Enables Growl notifications
-FSEnableLogThrottle,Boolean,unreviewed,,,Enables throttling for writing to the log file to prevent spam
-FSEnableMovingFolderLinks,Boolean,unreviewed,,,Enable moving of folder links via drag and drop
-FSEnableObjectExports,Boolean,unreviewed,,,Enable object imports and exports (WARNING: This feature is unstable and under active development. Use at your own risk!)
-FSEnablePerGroupSnoozeDuration,Boolean,unreviewed,,field `group_snooze_ask`,Enables input of a snooze duration per group.
-FSEnableRightclickMenuInMouselook,Boolean,unreviewed,,field `mouselook_alt_right_menu`,Enables pie or context menus on alt right click in mouselook
-FSEnableRightclickOnTransparentObjects,Boolean,unreviewed,,,"If enabled, right-clicks on transparent objects will open the context menu"
-FSEnableVolumeControls,Boolean,unreviewed,,,"If true, the Legacy Viewer will show volume controls (sounds, media, stream) in upper right corner of the screen. Useful, if skin already has its ow"
-FSEnabledLanguages,LLSD,unreviewed,,,Languages that are enabled and can be used in this install.
-FSEnforceStrictObjectCheck,Boolean,unreviewed,,,"Force malformed prims to be treated as invalid. This setting derenders all malformed prims, even those that might not cause obvious issues. "
-FSEnvironmentManualTransitionTime,F32,unreviewed,,field `env_manual_transition`,Timespan for blending between day/water/sky settings when manually changed. 0 is immediate.
-FSEventPollCoreRetries,U32,unreviewed,,,DEBUG: EventQueueGet llcorehttp retry count. 0 keeps current 7.2.3 behavior; 5 matches 7.2.2 behaviour.
-FSExperimentalDragTexture,Boolean,unreviewed,,,"If enabled, allows to click-drag or click-scale (together with caps lock) a texture face in build mode. This feature is still experimental a"
-FSExperimentalLostAttachmentsFix,Boolean,unreviewed,,named in Aurora: aurora-viewer/src/world/mod.rs:1057,Enables the experimental fix for attachments getting detached on teleports and region crossings.
-FSExperimentalLostAttachmentsFixKillDelay,F32,unreviewed,,,Delay in seconds after a teleport for that kill object messages to detach attachments are being ignored.
-FSExperimentalLostAttachmentsFixReport,Boolean,unreviewed,,,"If enabled, reports attachments that were attempted to get detached during a teleport or region crossing to nearby chat."
-FSExperimentalOutfitsReturn,Boolean,unreviewed,,,FIRE-36116 - debounce redundant refreshList calls
-FSExperimentalRegionCrossingMovementFix,S32,unreviewed,,,Enables the experimental fix for region crossing movements being bogus due to false predictions by the viewer (0 = Disabled (Unlimited predi
-FSExportContents,Boolean,unreviewed,,,Export object contents in linkset backups
-FSFadeAudioStream,Boolean,unreviewed,,,Use fading when changing the parcel audio stream.
-FSFadeGroupNotices,Boolean,unreviewed,,,Fade group notices. (V3 default: true)
-FSFilePickerOpenDirectory,String,unreviewed,,,The last used directory for opening a file
-FSFilePickerSaveDirectory,String,unreviewed,,,The last used directory for saving a file
-FSFilterGrowlKeywordDuplicateIMs,Boolean,unreviewed,,,Filters duplicate IMs in Growl if they have already been shown as part of a keyword alert.
-FSFirstRunAfterSettingsRestore,Boolean,unreviewed,,,Specifies that you have not run the viewer since you performed a settings restore
-FSFlashOnMessage,Boolean,unreviewed,,field `flash_on_message`,Flash/Bounce the app icon when a new message is received and the Legacy Viewer is not in focus
-FSFlashOnObjectIM,Boolean,unreviewed,,field `flash_on_object_im`,Flash/Bounce the app icon when a new instant message from an object is received and the Legacy Viewer is not in focus.
-FSFlashOnScriptDialog,Boolean,unreviewed,,field `flash_on_script_dialog`,Flash/Bounce the app icon when a script dialog is received and the Legacy Viewer is not in focus
-FSFlyAfterTeleport,Boolean,unreviewed,,field `fly_after_teleport`,Always fly after teleporting.
-FSFocusPointFollowsPointer,Boolean,unreviewed,,named in Aurora: aurora-viewer/src/dof.rs:17,Allows the Depth of Field focus to actively follow the mouse point
-FSFocusPointLocked,Boolean,unreviewed,,named in Aurora: aurora-viewer/src/dof.rs:22,Whether the focus point used for DoF is currently Locked in place
-FSFocusPointRender,Boolean,unreviewed,,,Draw a small crosshair where the DoF focus is
-FSFolderViewItemHeight,S32,unreviewed,,,"Controls the height of folder items, for instance in inventory"
-FSFontChatLineSpacingPixels,S32,unreviewed,,,Line spacing pixels for chat text (requires restart)
-FSFontLineSpacingAdjustment,S32,unreviewed,,,Line spacing pixels for UI text (requires restart
-FSFontSettingsFile,String,unreviewed,,,The font settings file with the font currently being used.
-FSFontSizeAdjustment,F32,unreviewed,,named in Aurora: aurora-viewer/src/settings.rs:1428,Number of points to add to the defualt font sizes
+FSAdvancedTooltips,Boolean,check,,hover_tips.form may cover it,Show extended information in hovertips about objects (classic Phoenix style)
+FSAdvancedWorldmapRegionInfo,Boolean,to-add,low,,Shows additional region infos on the world map (agent count and maturity level)
+FSAllowDoubleClickOnScriptedObjects,Boolean,to-add,low,,"If enabled, allows double-click movement action (walk/teleport) to scripted objects"
+FSAllowEEPWaterDerender,Boolean,to-add,low,,Allow EEP assets to disable water rendering to increase FPS
+FSAlwaysFly,Boolean,in-aurora,,"a session toggle (fly override), not saved, as in the Legacy Viewer","Fly Override, for no-fly zones. Must be activated each time."
+FSAlwaysShowInboxButton,Boolean,to-add,low,,"If enabled, the Received Items folder aka Inbox is always shown at the bottom of the inventory, even if it is shown as folder in the invento"
+FSAlwaysShowTPCancel,Boolean,to-add,low,,Always show the TP cancel button even if the sim says it cant be canceled. The sim will always know if it can and will ignore cancel request
+FSAlwaysTrackPayments,Boolean,in-aurora,,always_track_payments,Always track payments even if the money tracker is closed
+FSAnimatedScriptDialogs,Boolean,to-add,low,,Animates script dialogs V1 style. Only effective when dialogs in top right are activated.
+FSAnimationPreviewExpanded,Boolean,not-applicable,,a window's last state; Aurora keeps its own window state,Expand or collapse the advanced animation information in the animation preview floater by default
+FSAnnounceIncomingIM,Boolean,in-aurora,,announce_incoming_im,Opens the IM floater and announces an incoming IM as soon as somebody is starting to write an IM to you.
+FSAppearanceShowHints,Boolean,in-aurora,,shape_show_hints,"If enabled, show visual hints (avatar images) in appearance editor"
+FSAreaSearchAdvanced,Boolean,not-applicable,,a window's last state; Aurora keeps its own window state,Displays the advanced settings tab
+FSAreaSearchColumnConfig,U32,not-applicable,,a window's last state; Aurora keeps its own window state,Stores the column visibility for the area search
+FSAreaSearch_ClickAction,LLSD,in-aurora,,area_search.filters.click_action,Area Search Filter: Mouse click action
+FSAreaSearch_ExcludeAttachments,Boolean,in-aurora,,area_search.filters.include_attachments (inverted),Area Search Filter: Exclude attachments
+FSAreaSearch_ExcludeChildPrims,Boolean,in-aurora,,area_search.filters.children (inverted),Area Search Filter: Exclude child prims
+FSAreaSearch_ExcludeNeighborRegions,Boolean,in-aurora,,area_search.filters.neighbors (inverted),Area Search Filter: Exclude neighbor regions
+FSAreaSearch_ExcludePhysical,Boolean,in-aurora,,area_search.filters.exclude_physical,Area Search Filter: Exclude physical objects
+FSAreaSearch_ExcludeReflectionProbes,Boolean,in-aurora,,area_search.filters.exclude_probes,Area Search Filter: Exclude reflection probes
+FSAreaSearch_ExcludeTemporary,Boolean,in-aurora,,area_search.filters.exclude_temporary,Area Search Filter: Exclude temporary objects
+FSAreaSearch_FilterDistance,Boolean,in-aurora,,area_search.filters.distance_on,Area Search Filter: Filter by distance
+FSAreaSearch_FilterForSale,Boolean,in-aurora,,area_search.filters.sale,Area Search Filter: Only show objects that are for sale
+FSAreaSearch_MaximumDistance,S32,in-aurora,,area_search.filters.max_distance,Area Search Filter: Maximum distance
+FSAreaSearch_MaximumPrice,S32,in-aurora,,area_search.filters.max_price,Area Search Filter: Maximum price
+FSAreaSearch_MinimumDistance,S32,in-aurora,,area_search.filters.min_distance,Area Search Filter: Minimum distance
+FSAreaSearch_MinimumPrice,S32,in-aurora,,area_search.filters.min_price,Area Search Filter: Minimum price
+FSAreaSearch_OnlyAttachments,Boolean,in-aurora,,area_search.filters.only_attachments,Area Search Filter: Find only attachments
+FSAreaSearch_OnlyCopiable,Boolean,in-aurora,,area_search.filters.copy,Area Search Filter: Find only copiable objects
+FSAreaSearch_OnlyCurrentParcel,Boolean,in-aurora,,area_search.filters.parcel_only,Area Search Filter: Find only objects in the current parcel
+FSAreaSearch_OnlyLocked,Boolean,in-aurora,,area_search.filters.locked,Area Search Filter: Find only locked objects
+FSAreaSearch_OnlyMOAP,Boolean,in-aurora,,area_search.filters.media,Area Search Filter: Find only objects that have shared media applied
+FSAreaSearch_OnlyModifiable,Boolean,in-aurora,,area_search.filters.modify,Area Search Filter: Find only modifiable objects
+FSAreaSearch_OnlyPhantom,Boolean,in-aurora,,area_search.filters.phantom,Area Search Filter: Find only phantom objects
+FSAreaSearch_OnlyPhysical,Boolean,in-aurora,,area_search.filters.physical,Area Search Filter: Find only physical objects
+FSAreaSearch_OnlyReflectionProbes,Boolean,in-aurora,,area_search.filters.probe,Area Search Filter: Find only reflection probes
+FSAreaSearch_OnlyTemporary,Boolean,in-aurora,,area_search.filters.temporary,Area Search Filter: Find only temporary objects
+FSAreaSearch_OnlyTransferable,Boolean,in-aurora,,area_search.filters.transfer,Area Search Filter: Find only transferable objects
+FSAudioMusicFadeIn,F32,check,,no setting found; the stream may fade with a fixed time,Fade in time in seconds for music streams
+FSAudioMusicFadeOut,F32,check,,no setting found; the stream may fade with a fixed time,Fade out time in seconds for music streams
+FSAutoOrderIMTabs,Boolean,to-add,low,,Use automatic tab ordering for IM tabs inside the conversations floater.
+FSAutoOrderIMTabsAtTop,Boolean,to-add,low,,Add new IM tabs as first in their chat type group.
+FSAutoOrderIMTabsPriorities,String,to-add,low,,Priority for automatic ordering IM tabs. Higher priority means the tab will be inserted before lower priority. Default is Groups[0]=2 Confer
+FSAutoUnmuteAmbient,Boolean,to-add,low,,"If Ambient sounds are muted, unmute on TP. Default (false)"
+FSAutoUnmuteSounds,Boolean,to-add,low,,"If Sound Effects are muted, unmute on TP. Default (false)"
+FSAvatarTurnSpeed,F32,to-add,high,,Modify the speed at which the avatar responds to turning movements. 0-100 percent of max rate. Default is 0.
+FSBeamColorFile,String,to-add,low,,Beam file for the shape of your beam
+FSBeamShape,String,to-add,low,,Beam file for the shape of your beam
+FSBeamShapeScale,F32,to-add,low,,How Big You Want to let the beam be
+FSBetterGroupNoticesToIMLog,Boolean,to-add,low,,Improved logging of group notices to group IM log.
+FSBeyondNearbyChatColorDiminishFactor,F32,to-add,low,,The factor the color for nearby chat diminishes if the sender is beyond chat range
+FSBlockClickSit,Boolean,in-aurora,,block_click_sit,Prevents sitting on left-click.
+FSBrowserHomePage,String,in-aurora,,browser_home_page,Home page for the built in web browser
+FSBubblesHideConsoleAndToasts,Boolean,in-aurora,,chat_bubbles_hide_console,"If enabled, using bubble chat will hide the chat output in the Nearby Chat console and toasts"
+FSBuildPrefs_ActualRoot,Boolean,in-aurora,,build.actual_root,Show the axis on the actual root of a linkset instead of mass center
+FSBuildPrefs_Alpha,F32,to-add,high,new objects' defaults,New object created default alpha
+FSBuildPrefs_Color,Color4,to-add,high,new objects' defaults,New object created default color
+FSBuildPrefs_EditHandleScaling,F32,in-aurora,,build.gizmo_scale,Factor to scale editing handles.
+FSBuildPrefs_EditTextShadowing,Boolean,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)",Whether the hint-text while building has a drop-shadow.
+FSBuildPrefs_FullBright,Boolean,to-add,high,new objects' defaults,New object created default fullbright
+FSBuildPrefs_Glow,F32,to-add,high,new objects' defaults,New object created default glow
+FSBuildPrefs_Material,String,in-aurora,,build.new_prim_material,"Default Setting For New Objects to be created, physical flag"
+FSBuildPrefs_Phantom,Boolean,to-add,high,new objects' defaults,New object created default of phantom
+FSBuildPrefs_Physical,Boolean,to-add,high,new objects' defaults,New object created default of physical
+FSBuildPrefs_PivotIsPercent,Boolean,to-add,low,,Consider the Pivot points values as a percentage
+FSBuildPrefs_PivotX,F32,to-add,low,,Pivot point on the X axis
+FSBuildPrefs_PivotY,F32,to-add,low,,Pivot point on the Y axis
+FSBuildPrefs_PivotZ,F32,to-add,low,,Pivot point on the Z axis
+FSBuildPrefs_Shiny,String,to-add,high,new objects' defaults,New object created default shiny
+FSBuildPrefs_Temporary,Boolean,to-add,high,new objects' defaults,New object created default of temporary
+FSBuildPrefs_Xsize,F32,in-aurora,,build.new_prim_size,Default Size For New Objects to be created X
+FSBuildPrefs_Ysize,F32,in-aurora,,build.new_prim_size,Default Size For New Objects to be created Y
+FSBuildPrefs_Zsize,F32,in-aurora,,build.new_prim_size,Default Size For New Objects to be created Z
+FSBuildToolDecimalPrecision,S32,in-aurora,,build.decimal_precision,Decimal digits to display on various build tool controls (0-7)
+FSChatHistoryShowYou,Boolean,to-add,low,,"Show localized ""You"" instead of your avatar's username (like CHUI)"
+FSChatWindow,S32,in-aurora,,conversations_own_windows,Show chat in multiple windows(by default) or in one multi-tabbed window(requires restart)
+FSChatbarGestureAutoCompleteEnable,Boolean,in-aurora,,chat_gesture_autocomplete,Toggles gesture auto complete in chat bar
+FSChatbarNamePrediction,Boolean,in-aurora,,chat_name_prediction,Toggles name prediction in nearby chat
+FSClientTagsVisibility,U32,check,,client tags: needs a product decision,"Show client tags: 0=Client tags Off, 1=That are on the TPVD (needs FSUseLegacyClienttags), 2=That are on the client_tag.xml (needs FSUseLega"
+FSCloseChatOnReturnInMouselook,Boolean,check,,chat_keep_focus may cover it,"When CloseChatOnReturn is enabled, only deselect nearby chat in mouselook"
+FSCloseChatOnReturnOnlyForNearbyChatControl,Boolean,check,,chat_keep_focus may cover it,"When CloseChatOnReturn is enabled, only deselect nearby chat bar"
+FSCloudColorEnd,Color4,to-add,low,,"End color (and alpha) of the avatar loading/bakefail ""cloud"" particle effect."
+FSCloudColorStart,Color4,to-add,low,,"Start color (and alpha) of the avatar loading/bakefail ""cloud"" particle effect."
+FSCmdLine,Boolean,in-aurora,,chat_commands.enabled,Enable usage of chat bar as a command line
+FSCmdLineAO,String,in-aurora,,chat_commands.ao,Turn AO on/off
+FSCmdLineAnnounceChannel,S32,in-aurora,,chat_commands.announce_channel,Chat channel where chat command output is announced.
+FSCmdLineAnnounceToChannel,Boolean,in-aurora,,chat_commands.announce_to_channel,Echo chat command output to a script channel.
+FSCmdLineBandWidth,String,in-aurora,,chat_commands.bandwidth,Change max. bandwidth quickly
+FSCmdLineCalc,String,in-aurora,,chat_commands.calc,Calculates an expression
+FSCmdLineClearChat,String,in-aurora,,chat_commands.clear_chat,Clear chat transcript to stop lag from chat spam
+FSCmdLineCopyCam,String,in-aurora,,chat_commands.copy_cam,Copies the current camera location to the clipboard as pos|focus|roll
+FSCmdLineDrawDistance,String,in-aurora,,chat_commands.draw_distance,Change draw distance quickly
+FSCmdLineGround,String,in-aurora,,chat_commands.ground,Teleport to ground function command
+FSCmdLineHeight,String,in-aurora,,chat_commands.height,Teleport to height function command
+FSCmdLineKeyToName,String,in-aurora,,chat_commands.key_to_name,Use a fast key to name query
+FSCmdLineMapTo,String,in-aurora,,chat_commands.map_to,Teleport to a region by name rapidly
+FSCmdLineMapToKeepPos,Boolean,in-aurora,,chat_commands.map_to_keep_pos,Whether to use current local position on teleport to the new region
+FSCmdLineMedia,String,in-aurora,,chat_commands.media,Chat command for setting a media url
+FSCmdLineMusic,String,in-aurora,,chat_commands.music,Chat command for setting a music url
+FSCmdLineOfferTp,String,in-aurora,,chat_commands.offer_tp,Offer a teleport to target avatar
+FSCmdLinePasteCam,String,in-aurora,,chat_commands.paste_cam,Restores the camera from a pos|focus|roll
+FSCmdLinePlatformSize,F32,in-aurora,,chat_commands.platform_size,How wide the rezzed platform will appear to be.
+FSCmdLinePos,String,in-aurora,,chat_commands.pos,Teleport to position function command
+FSCmdLineRezPlatform,String,in-aurora,,chat_commands.rez_platform,Rez a platform underneath you
+FSCmdLineRollDice,String,in-aurora,,chat_commands.roll_dice,Rolls dice - cmd [number of dice] [number of faces]. Example: cmd 1 20. Lack of parameters is equal to cmd 1 6 (standard die).
+FSCmdLineTP2,String,in-aurora,,chat_commands.tp2,"Teleport to a person by name, partials work."
+FSCmdLineTeleportHome,String,in-aurora,,chat_commands.teleport_home,Teleport to home function command
+FSCmdLineTrackPos,String,in-aurora,,chat_commands.track_pos,Track a position or avatar on the world map.
+FSCmdTeleportToCam,String,in-aurora,,chat_commands.teleport_to_cam,Teleport to your camera
+FSCollisionMessagesInChat,Boolean,in-aurora,,collisions.in_chat,Shows collision messages in nearby chat.
+FSColorClienttags,U32,check,,client tags: needs a product decision,"Color Client tags by: 0=Off, 1=Single color per Viewer, 2=User defined color (one color per UUID), 3=New Tagsystem Color"
+FSColorIMsDistinctly,Boolean,to-add,low,,Color IM/Group messages distinctly in the console.
+FSColorUsername,Boolean,to-add,low,,Color username distinctly from the rest of the tag
+FSComboboxSubstringSearch,Boolean,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)",Allows fulltext search on comboboxes
+FSCommitForSaleOnChange,Boolean,to-add,low,,Enables old SL default behavior. Objects set for sale will take effect on change instead of requiring a confirm first.
+FSConfirmPayments,Boolean,in-aurora,,confirm_payments,Enables confirmation dialogs for payments.
+FSConsoleClassicDrawMode,Boolean,check,,classic_chat_lines may cover it,Enables classic console draw mode (single background block over all lines with width of the longest line)
+FSContactListShowSearch,Boolean,in-aurora,,contacts.show_search,Shows the search filter in the legacy contact list.
+FSContactSetsColorizeChat,Boolean,to-add,low,,Whether to color a friends chat based on their friends groups
+FSContactSetsColorizeFriends,Boolean,in-aurora,,contacts.colorize_friends,Whether to color a friends list entry based on their friends groups
+FSContactSetsColorizeMiniMap,Boolean,to-add,low,,Whether to color a friends mini map icon based on their friends groups
+FSContactSetsColorizeNameTag,Boolean,to-add,low,,Whether to color a friends name tag based on their friends groups
+FSContactSetsColorizeRadar,Boolean,to-add,low,,Whether to color a friends name in the radar list based on their friends groups
+FSContactSetsListColorizeOffline,Boolean,to-add,low,,Whether to use a custom color for offline contacts in Contact Sets lists. A custom contact set color takes precedence when set.
+FSContactSetsListOfflineColor,Color4,to-add,low,,Custom color for offline contacts in Contact Sets lists when FSContactSetsListColorizeOffline is enabled.
+FSContactSetsListShowIcons,Boolean,in-aurora,,contacts.set_list_icons,Show/hide profile icons in Contact Sets lists
+FSContactSetsNotificationNearbyChat,Boolean,to-add,low,,Show the On/Offline notifications caused by Contactsets in Nearby Chat
+FSContactSetsNotificationToast,Boolean,to-add,low,,Show the On/Offline notifications caused by Contactsets as Toast message
+FSContactSetsProfilePlacement,S32,to-add,low,,"Where to show contact sets in the profile groups list: 0=below groups, 1=hidden, 2=above groups"
+FSContactsSortOrder,U32,not-applicable,,read nowhere in the Legacy sources,"Specifies sort order for friends (0 = by display name, 1 = username, 2 = by online status then display, 3 = by online status then username)"
+FSConversationLogLifetime,U32,to-add,low,,Number of days transcripts are preserved in the conversation log before being purged
+FSCopyObjKeySeparator,String,in-aurora,,build.copy_key_separator,This chunk of text goes between keys when you use the Copy Key button with multiple objects selected.
+FSCreateCallingCards,Boolean,to-add,low,,Don't create calling cards when friending other avatars (requires restart)
+FSCreateGiveInventoryParticleEffect,Boolean,to-add,low,,"If enabled, the viewer will create particle effects around the avatar if inventory is transferred to another avatar."
+FSCreateOctreeLog,Boolean,not-applicable,,a log of the Legacy renderer's octree,Create a log of octree operation. This can cause huge frame stalls on edit
+FSDefaultObjectTexture,String,to-add,low,an asset id: the permission rules apply,Default texture that will be applied to rezzed prims. (UUID texture reference)
+FSDestroyGLTexturesImmediately,Boolean,not-applicable,,read nowhere in the Legacy sources,"If enabled, GL textures will be removed from memory immediately when its fetched texture is removed. This might result in textures behind yo"
+FSDestroyGLTexturesThreshold,F32,not-applicable,,read nowhere in the Legacy sources,"Threshold, at what texture memory load level GL textures will be removed from memory if FSDestroyGLTexturesImmediately is set to TRUE."
+FSDisableAvatarTrackerAtCloseIn,Boolean,to-add,low,,Disables the tracking beacon if distance to target avatar is less than 3m.
+FSDisableBeaconAfterTeleport,Boolean,to-add,low,,Disables the beacon of the teleport destination after a teleport.
+FSDisableBlockListAutoOpen,Boolean,to-add,low,,Disables automatic opening of the block list when muting people or objects.
+FSDisableIMChiclets,Boolean,check,,named in settings.rs: Aurora's interface has no chiclets,"If enabled, the Legacy Viewer will not show any group / IM chat chiclets (notifications envelope and sum of IMs will remain on the screen)."
+FSDisableLabeledChatLinks,Boolean,to-add,low,,"When true, wiki-style bracketed links ([https://host label]) in IMs, group chat, ad-hoc conferences and group notices keep their label, but "
+FSDisableLabeledChatLinksNearbyChat,Boolean,to-add,low,,"When true, wiki-style bracketed links ([https://host label]) in nearby (local) chat and object text keep their label, but hovering shows an "
+FSDisableLoginScreens,Boolean,to-add,low,,Disable login screen progress bar
+FSDisableLogoutScreens,Boolean,to-add,low,,Disable logout screen progress bar
+FSDisableMouseWheelCameraZoom,Boolean,in-aurora,,camera.disable_wheel_zoom,"If true, the Legacy Viewer will not use mouse wheel to zoom in/out the camera."
+FSDisableNeighbourRegionConnections,Boolean,in-aurora,,no_neighbour_regions,"Do not connect to neighbouring regions, only to the current region (limits region crossing) - experimental"
+FSDisableReturnObjectNotification,Boolean,to-add,low,,Disable 'Object has been returned to your inventory Lost and Found folder' notifications
+FSDisableRiggedMeshMatrixCaching,Boolean,not-applicable,,read nowhere in the Legacy sources,Disable the caching of Rigged mesh matrix pallettes.Non-persistant.
+FSDisableTeleportScreens,Boolean,to-add,low,,Disable teleport screens
+FSDisableTurningAroundWhenWalkingBackwards,Boolean,in-aurora,,walk_backwards_without_turning,Disables your avatar turning around locally when moving backwards.
+FSDisableWMIProbing,Boolean,not-applicable,,Windows video memory probing through WMI; Aurora reads it from the graphics API,Disables VRAM detection via WMI probing on Windows systems
+FSDiskCacheHighWaterPercent,F32,check,,Aurora's cache has its own housekeeping,Trigger point above which we should start to clear out older cache entries
+FSDiskCacheLowWaterPercent,F32,check,,Aurora's cache has its own housekeeping,Level to drain cache to once it goes over the high water limit.
+FSDiskCacheSize,U32,in-aurora,,cache_size_mb,Controls amount of hard drive space reserved for local asset caching in MB
+FSDismissGroupNoticeAttachmentsToTrash,Boolean,to-add,low,,"If enabled, dismissing group notices with attachments will move attachment to trash folder"
+FSDoNotHideMapOnTeleport,Boolean,to-add,low,,"If enabled, the world map won't be closed when teleporting"
+FSDontIgnoreAdHocFromFriends,Boolean,in-aurora,,autoresponse.adhoc_from_friends,Allow my friends to start conference chats with me.
+FSDontNagWhenPurging,Boolean,to-add,low,,"If enabled, emptying trash will not double check before deleting. WARNING: You should only use this if you are a regular trash emptier and a"
+FSDoubleClickAddInventoryClothing,Boolean,in-aurora,,inventory.double_click_add_clothes,Whether or not to add clothes instead of wearing them
+FSDoubleClickAddInventoryObjects,Boolean,in-aurora,,inventory.double_click_add_objects,Whether or not to add objects instead of wearing them
+FSDrawDistanceVRAMOptimization,Boolean,to-add,low,,Enables a feature that reduces your draw distance when VRAM becomes full
+FSEditGrid,Boolean,to-add,low,,Allows editing a grid from the grid manager
+FSEmphasizeShoutWhisper,Boolean,to-add,low,,Enables bolding shouted chat and italicizing whispered chat
+FSEnableAggressiveComplexityUpdates,Boolean,to-add,low,,Enable active complexity calculations. This may have a significant detrimental performance impact if enabled.
+FSEnableEmojiWindowPopupWhileTyping,Boolean,to-add,low,,Enables automatic opening of emoji chooser window while typing in chat bars.
+FSEnableGrowl,Boolean,in-aurora,,system_notifications,Enables Growl notifications
+FSEnableLogThrottle,Boolean,not-applicable,,a debugging switch of the Legacy Viewer,Enables throttling for writing to the log file to prevent spam
+FSEnableMovingFolderLinks,Boolean,to-add,low,,Enable moving of folder links via drag and drop
+FSEnableObjectExports,Boolean,check,,Aurora's export features to compare,Enable object imports and exports (WARNING: This feature is unstable and under active development. Use at your own risk!)
+FSEnablePerGroupSnoozeDuration,Boolean,in-aurora,,group_snooze_ask,Enables input of a snooze duration per group.
+FSEnableRightclickMenuInMouselook,Boolean,in-aurora,,camera.mouselook_alt_right_menu,Enables pie or context menus on alt right click in mouselook
+FSEnableRightclickOnTransparentObjects,Boolean,to-add,low,,"If enabled, right-clicks on transparent objects will open the context menu"
+FSEnableVolumeControls,Boolean,check,,system_island.media may cover it,"If true, the Legacy Viewer will show volume controls (sounds, media, stream) in upper right corner of the screen. Useful, if skin already has its ow"
+FSEnabledLanguages,LLSD,not-applicable,,the Legacy installer's languages; Aurora's language is the setting language,Languages that are enabled and can be used in this install.
+FSEnforceStrictObjectCheck,Boolean,to-add,low,,"Force malformed prims to be treated as invalid. This setting derenders all malformed prims, even those that might not cause obvious issues. "
+FSEnvironmentManualTransitionTime,F32,in-aurora,,env_manual_transition,Timespan for blending between day/water/sky settings when manually changed. 0 is immediate.
+FSEventPollCoreRetries,U32,not-applicable,,a switch between two Legacy versions' network retries,DEBUG: EventQueueGet llcorehttp retry count. 0 keeps current 7.2.3 behavior; 5 matches 7.2.2 behaviour.
+FSExperimentalDragTexture,Boolean,to-add,low,,"If enabled, allows to click-drag or click-scale (together with caps lock) a texture face in build mode. This feature is still experimental a"
+FSExperimentalLostAttachmentsFix,Boolean,check,,named in world/mod.rs: may be built in,Enables the experimental fix for attachments getting detached on teleports and region crossings.
+FSExperimentalLostAttachmentsFixKillDelay,F32,check,,may be built in with the fix,Delay in seconds after a teleport for that kill object messages to detach attachments are being ignored.
+FSExperimentalLostAttachmentsFixReport,Boolean,to-add,low,,"If enabled, reports attachments that were attempted to get detached during a teleport or region crossing to nearby chat."
+FSExperimentalOutfitsReturn,Boolean,not-applicable,,an internal fix switch of the Legacy Viewer,FIRE-36116 - debounce redundant refreshList calls
+FSExperimentalRegionCrossingMovementFix,S32,check,,region crossing prediction to compare,Enables the experimental fix for region crossing movements being bogus due to false predictions by the viewer (0 = Disabled (Unlimited predi
+FSExportContents,Boolean,check,,Aurora's export features to compare,Export object contents in linkset backups
+FSFadeAudioStream,Boolean,check,,no setting found; the stream may fade with a fixed time,Use fading when changing the parcel audio stream.
+FSFadeGroupNotices,Boolean,to-add,low,,Fade group notices. (V3 default: true)
+FSFilePickerOpenDirectory,String,not-applicable,,read nowhere in the Legacy sources,The last used directory for opening a file
+FSFilePickerSaveDirectory,String,not-applicable,,read nowhere in the Legacy sources,The last used directory for saving a file
+FSFilterGrowlKeywordDuplicateIMs,Boolean,to-add,low,,Filters duplicate IMs in Growl if they have already been shown as part of a keyword alert.
+FSFirstRunAfterSettingsRestore,Boolean,not-applicable,,internal state of the Legacy Viewer's restore,Specifies that you have not run the viewer since you performed a settings restore
+FSFlashOnMessage,Boolean,in-aurora,,flash_on_message,Flash/Bounce the app icon when a new message is received and the Legacy Viewer is not in focus
+FSFlashOnObjectIM,Boolean,in-aurora,,flash_on_object_im,Flash/Bounce the app icon when a new instant message from an object is received and the Legacy Viewer is not in focus.
+FSFlashOnScriptDialog,Boolean,in-aurora,,flash_on_script_dialog,Flash/Bounce the app icon when a script dialog is received and the Legacy Viewer is not in focus
+FSFlyAfterTeleport,Boolean,in-aurora,,fly_after_teleport,Always fly after teleporting.
+FSFocusPointFollowsPointer,Boolean,in-aurora,,dof.focus,Allows the Depth of Field focus to actively follow the mouse point
+FSFocusPointLocked,Boolean,check,,named in dof.rs: may be session state,Whether the focus point used for DoF is currently Locked in place
+FSFocusPointRender,Boolean,to-add,low,,Draw a small crosshair where the DoF focus is
+FSFolderViewItemHeight,S32,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)","Controls the height of folder items, for instance in inventory"
+FSFontChatLineSpacingPixels,S32,to-add,low,,Line spacing pixels for chat text (requires restart)
+FSFontLineSpacingAdjustment,S32,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)",Line spacing pixels for UI text (requires restart
+FSFontSettingsFile,String,in-aurora,,font,The font settings file with the font currently being used.
+FSFontSizeAdjustment,F32,in-aurora,,font_scale,Number of points to add to the defualt font sizes
 FSForcedVideoMemory,U32,not-listed,,HideFromEditor in the Legacy Viewer,Overrides the video memory detection on Windows if a value greater 0 is passed (in case DirectX memory detection fails or is wrong)
-FSFriendListColumnShowDisplayName,Boolean,unreviewed,,,Enables the display name column in the legacy friend list.
-FSFriendListColumnShowFullName,Boolean,unreviewed,,,Enables the full name column in the legacy friend list.
-FSFriendListColumnShowPermissions,Boolean,unreviewed,,,"If enabled, show permission columns in the contacts list"
-FSFriendListColumnShowUserName,Boolean,unreviewed,,field `column_username`,Enables the username column in the legacy friend list.
-FSFriendListFullNameFormat,S32,unreviewed,,field `full_name_display_first`,"Defines the order of how the full name in the contacts list is shown (0 = username (display name), 1 = display name (username))"
-FSFriendListSortOrder,S32,unreviewed,,field `sort_by_display_name`,"Defines the sort order of the contacts list (0 = username, 1 = display name)"
-FSGridBuilderURL,String,unreviewed,,,Fetch an html page of grids from this URL.
-FSGroupNoticesToIMLog,Boolean,unreviewed,,,"Show group notices in group chats, in addition to toasts."
-FSGroupNotifyNoTransparency,Boolean,unreviewed,,,"If true, group notices will be shown opaque and ignore the floater opacity settings."
-FSGrowlWhenActive,Boolean,unreviewed,,field `system_notifications_when_active`,"If Growl notifications are active, show them even when the window is active."
-FSHideHelpButtons,Boolean,unreviewed,,,"When enabled, hides the help button from floaters (requires restart)"
-FSHighlightGroupMods,Boolean,unreviewed,,,Enable group moderator message highlighting
-FSHudTextBackgroundOpacity,F32,unreviewed,,,"Opacity of floating text background (0.0 = completely transparent, 1.0 = completely opaque)"
-FSHudTextFadeDistance,F32,unreviewed,,,Sets the distance where HUD text starts to fade
-FSHudTextFadeRange,F32,unreviewed,,,Sets the range it takes for a HUD text to fade from fully visible to invisible
-FSHudTextShowBackground,S32,unreviewed,,,Displays a black/white background behind the prim floating text to make the text more readable
-FSHudTextUseHoverHighlight,Boolean,unreviewed,,,"When an object is being hovered over, highlight the HUD text by moving to the foreground and disable alpha"
-FSIMChatFlashOnFriendStatusChange,Boolean,unreviewed,,,Flash IM tab when friend goes online or offline.
-FSIMChatHistoryFade,F32,unreviewed,,,"Amount to fade IM text into the background of the chat transcript floater (0.25-1.0, 0.25 for really light, 1 for fully visible)."
-FSIMOpacity,F32,unreviewed,,,Opacity of the IM floater
-FSIMSystemMessageBrackets,Boolean,unreviewed,,,Enables surrounding system messages with square brackets in chat transcript if using V1 style chat history. []
-FSIMTabNameFormat,S32,unreviewed,,,"Controls in what format the name on IM tabs will be shown: 0 = Display Name, 1 = Username, 2 = Display Name (Username), 3 = Username (Displa"
-FSIgnoreAdHocSessions,Boolean,unreviewed,,field `ignore_adhoc`,Automatically ignore and leave all conference (ad-hoc) chats.
-FSIgnoreClientsideMeshValidation,Boolean,unreviewed,,,Treat the errors from Clientside mesh validation as warnings and do not block upload. This setting allows you to fall back on server side ch
-FSIgnoreFinishAnimation,Boolean,unreviewed,,field `quickjump`,Disable the wait for pre-jump or landing. Credit to Zwagoth Klaar for coding this.
-FSIgnoreSimulatorCameraConstraints,Boolean,unreviewed,,field `ignore_sim_constraints`,Ignores the 'push' the simulator applies to your camera to keep it out of objects.(Requires restart to work correctly)
-FSImActiveOpacityOverride,Boolean,unreviewed,,,"When enabled, uses the Active Opacity value when IM window is focused"
-FSImageDecodeThreads,U32,unreviewed,,,"Amount of threads to use for image decoding. 0 = auto, >= 1 number of threads. Needs restart"
-FSImportBuildOffset,Vector3,unreviewed,,,Distance from user the importer begins to build
-FSImpostorAvatarExclude,U32,unreviewed,,,"Allows for Animesh User or Control Avatars to be excluded from using impostor rendering. Values are: (0 - None, 1 - User, 2 - Control, 3 - B"
-FSInspectAvatarSlurlOpensProfile,Boolean,unreviewed,,,Open the full profile of an avatar directly when clicking on its name
-FSInspectColumnConfig,U32,unreviewed,,field `inspect_columns`,Stores the column visibility of the inspect window
+FSFriendListColumnShowDisplayName,Boolean,in-aurora,,contacts.column_display_name,Enables the display name column in the legacy friend list.
+FSFriendListColumnShowFullName,Boolean,in-aurora,,contacts.column_full_name,Enables the full name column in the legacy friend list.
+FSFriendListColumnShowPermissions,Boolean,in-aurora,,contacts.column_permissions,"If enabled, show permission columns in the contacts list"
+FSFriendListColumnShowUserName,Boolean,in-aurora,,contacts.column_username,Enables the username column in the legacy friend list.
+FSFriendListFullNameFormat,S32,in-aurora,,contacts.full_name_display_first,"Defines the order of how the full name in the contacts list is shown (0 = username (display name), 1 = display name (username))"
+FSFriendListSortOrder,S32,in-aurora,,contacts.sort_by_display_name,"Defines the sort order of the contacts list (0 = username, 1 = display name)"
+FSGridBuilderURL,String,to-add,low,,Fetch an html page of grids from this URL.
+FSGroupNoticesToIMLog,Boolean,to-add,low,,"Show group notices in group chats, in addition to toasts."
+FSGroupNotifyNoTransparency,Boolean,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)","If true, group notices will be shown opaque and ignore the floater opacity settings."
+FSGrowlWhenActive,Boolean,in-aurora,,system_notifications_when_active,"If Growl notifications are active, show them even when the window is active."
+FSHideHelpButtons,Boolean,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)","When enabled, hides the help button from floaters (requires restart)"
+FSHighlightGroupMods,Boolean,to-add,low,,Enable group moderator message highlighting
+FSHudTextBackgroundOpacity,F32,to-add,low,,"Opacity of floating text background (0.0 = completely transparent, 1.0 = completely opaque)"
+FSHudTextFadeDistance,F32,to-add,low,,Sets the distance where HUD text starts to fade
+FSHudTextFadeRange,F32,to-add,low,,Sets the range it takes for a HUD text to fade from fully visible to invisible
+FSHudTextShowBackground,S32,to-add,low,,Displays a black/white background behind the prim floating text to make the text more readable
+FSHudTextUseHoverHighlight,Boolean,to-add,low,,"When an object is being hovered over, highlight the HUD text by moving to the foreground and disable alpha"
+FSIMChatFlashOnFriendStatusChange,Boolean,to-add,low,,Flash IM tab when friend goes online or offline.
+FSIMChatHistoryFade,F32,to-add,low,,"Amount to fade IM text into the background of the chat transcript floater (0.25-1.0, 0.25 for really light, 1 for fully visible)."
+FSIMOpacity,F32,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)",Opacity of the IM floater
+FSIMSystemMessageBrackets,Boolean,to-add,low,,Enables surrounding system messages with square brackets in chat transcript if using V1 style chat history. []
+FSIMTabNameFormat,S32,to-add,low,,"Controls in what format the name on IM tabs will be shown: 0 = Display Name, 1 = Username, 2 = Display Name (Username), 3 = Username (Displa"
+FSIgnoreAdHocSessions,Boolean,in-aurora,,autoresponse.ignore_adhoc,Automatically ignore and leave all conference (ad-hoc) chats.
+FSIgnoreClientsideMeshValidation,Boolean,to-add,low,,Treat the errors from Clientside mesh validation as warnings and do not block upload. This setting allows you to fall back on server side ch
+FSIgnoreFinishAnimation,Boolean,in-aurora,,quickjump,Disable the wait for pre-jump or landing. Credit to Zwagoth Klaar for coding this.
+FSIgnoreSimulatorCameraConstraints,Boolean,in-aurora,,camera.ignore_sim_constraints,Ignores the 'push' the simulator applies to your camera to keep it out of objects.(Requires restart to work correctly)
+FSImActiveOpacityOverride,Boolean,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)","When enabled, uses the Active Opacity value when IM window is focused"
+FSImageDecodeThreads,U32,not-applicable,,Aurora sizes its decoding threads itself,"Amount of threads to use for image decoding. 0 = auto, >= 1 number of threads. Needs restart"
+FSImportBuildOffset,Vector3,check,,Aurora's import features to compare,Distance from user the importer begins to build
+FSImpostorAvatarExclude,U32,to-add,low,,"Allows for Animesh User or Control Avatars to be excluded from using impostor rendering. Values are: (0 - None, 1 - User, 2 - Control, 3 - B"
+FSInspectAvatarSlurlOpensProfile,Boolean,to-add,low,,Open the full profile of an avatar directly when clicking on its name
+FSInspectColumnConfig,U32,in-aurora,,inspect_columns,Stores the column visibility of the inspect window
 FSInternalCanEditObjectFaces,Boolean,not-listed,,HideFromEditor in the Legacy Viewer,Internal control to show/hide object texture/material edit controls
 FSInternalFaceHasBPNormalMap,Boolean,not-listed,,HideFromEditor in the Legacy Viewer,Internal control to store a flag about the edited face having a Blinn-Phong normal map or not
 FSInternalFaceHasBPSpecularMap,Boolean,not-listed,,HideFromEditor in the Legacy Viewer,Internal control to store a flag about the edited face having a Blinn-Phong specular map or not
@@ -639,305 +639,305 @@ FSInternalShowNavbarFavoritesPanel,Boolean,not-listed,,HideFromEditor in the Leg
 FSInternalShowNavbarNavigationPanel,Boolean,not-listed,,HideFromEditor in the Legacy Viewer,Internal control to show/hide navigation bar navigation panel
 FSInternalSkinCurrent,String,not-listed,,HideFromEditor in the Legacy Viewer,The currently selected skin in the current session.
 FSInternalSkinCurrentTheme,String,not-listed,,HideFromEditor in the Legacy Viewer,The selected theme for the current skin in the current session.
-FSInventoryThumbnailTooltipsDelay,F32,unreviewed,,,Sets the delay of the inventory item thumbnail tooltip
-FSKeepUnpackedCacheFiles,Boolean,unreviewed,,,"If TRUE, the viewer won't delete unpacked cache files when logging out (improves overall performance and fixes sound bugs)"
-FSLandmarkCreatedNotification,Boolean,unreviewed,,,Display a notification if a landmark is added to your inventory.
+FSInventoryThumbnailTooltipsDelay,F32,to-add,low,,Sets the delay of the inventory item thumbnail tooltip
+FSKeepUnpackedCacheFiles,Boolean,not-applicable,,the Legacy cache's files,"If TRUE, the viewer won't delete unpacked cache files when logging out (improves overall performance and fixes sound bugs)"
+FSLandmarkCreatedNotification,Boolean,to-add,low,,Display a notification if a landmark is added to your inventory.
 FSLargeOutfitsWarningInThisSession,Boolean,not-listed,,HideFromEditor in the Legacy Viewer,Internal; Suppresses the 'too many outfits' warning (does not persist across sessions)
-FSLastSearchTab,S32,unreviewed,,field `last_tab`,Last selected tab in search window
-FSLastSnapshotPanel,String,unreviewed,,,The last snapshot panel that was opened and will be restored the next time the snapshot floater is opened.
-FSLastSnapshotToFacebookHeight,S32,unreviewed,,,"The height of the last Facebook snapshot, in px"
-FSLastSnapshotToFacebookResolution,S32,unreviewed,,,"At what resolution should snapshots be posted on Facebook. 0=Current Window, 1=320x240, 2=640x480, 3=800x600, 4=1024x768, 5=1280x1024, 6=160"
-FSLastSnapshotToFacebookWidth,S32,unreviewed,,,"The width of the last Facebook snapshot, in px"
-FSLastSnapshotToFlickrHeight,S32,unreviewed,,,"The height of the last Flickr snapshot, in px"
-FSLastSnapshotToFlickrResolution,S32,unreviewed,,,"At what resolution should snapshots be posted on Flickr. 0=Current Window, 1=320x240, 2=640x480, 3=800x600, 4=1024x768, 5=1280x1024, 6=1600x"
-FSLastSnapshotToFlickrWidth,S32,unreviewed,,,"The width of the last Flickr snapshot, in px"
-FSLastSnapshotToPrimfeedHeight,S32,unreviewed,,,"The height of the last Primfeed snapshot, in px"
-FSLastSnapshotToPrimfeedResolution,S32,unreviewed,,,"At what resolution should snapshots be posted on Primfeed. 0=Current Window, 1=320x240, 2=640x480, 3=800x600, 4=1024x768, 5=1280x1024, 6=160"
-FSLastSnapshotToPrimfeedWidth,S32,unreviewed,,,"The width of the last Primfeed snapshot, in px"
-FSLastSnapshotToTwitterHeight,S32,unreviewed,,,"The height of the last Twitter snapshot, in px"
-FSLastSnapshotToTwitterResolution,S32,unreviewed,,,"At what resolution should snapshots be posted on Twitter. 0=Current Window, 1=320x240, 2=640x480, 3=800x600, 4=1024x768, 5=1280x1024, 6=1600"
-FSLastSnapshotToTwitterWidth,S32,unreviewed,,,"The width of the last Twitter snapshot, in px"
+FSLastSearchTab,S32,in-aurora,,search.last_tab,Last selected tab in search window
+FSLastSnapshotPanel,String,not-applicable,,a window's last state; Aurora keeps its own window state,The last snapshot panel that was opened and will be restored the next time the snapshot floater is opened.
+FSLastSnapshotToFacebookHeight,S32,not-applicable,,read nowhere in the Legacy sources,"The height of the last Facebook snapshot, in px"
+FSLastSnapshotToFacebookResolution,S32,not-applicable,,read nowhere in the Legacy sources,"At what resolution should snapshots be posted on Facebook. 0=Current Window, 1=320x240, 2=640x480, 3=800x600, 4=1024x768, 5=1280x1024, 6=160"
+FSLastSnapshotToFacebookWidth,S32,not-applicable,,read nowhere in the Legacy sources,"The width of the last Facebook snapshot, in px"
+FSLastSnapshotToFlickrHeight,S32,not-applicable,,window state of a feature Aurora does not have: posting to Flickr,"The height of the last Flickr snapshot, in px"
+FSLastSnapshotToFlickrResolution,S32,not-applicable,,window state of a feature Aurora does not have: posting to Flickr,"At what resolution should snapshots be posted on Flickr. 0=Current Window, 1=320x240, 2=640x480, 3=800x600, 4=1024x768, 5=1280x1024, 6=1600x"
+FSLastSnapshotToFlickrWidth,S32,not-applicable,,window state of a feature Aurora does not have: posting to Flickr,"The width of the last Flickr snapshot, in px"
+FSLastSnapshotToPrimfeedHeight,S32,not-applicable,,window state of a feature Aurora does not have: posting to Primfeed,"The height of the last Primfeed snapshot, in px"
+FSLastSnapshotToPrimfeedResolution,S32,not-applicable,,window state of a feature Aurora does not have: posting to Primfeed,"At what resolution should snapshots be posted on Primfeed. 0=Current Window, 1=320x240, 2=640x480, 3=800x600, 4=1024x768, 5=1280x1024, 6=160"
+FSLastSnapshotToPrimfeedWidth,S32,not-applicable,,window state of a feature Aurora does not have: posting to Primfeed,"The width of the last Primfeed snapshot, in px"
+FSLastSnapshotToTwitterHeight,S32,not-applicable,,read nowhere in the Legacy sources,"The height of the last Twitter snapshot, in px"
+FSLastSnapshotToTwitterResolution,S32,not-applicable,,read nowhere in the Legacy sources,"At what resolution should snapshots be posted on Twitter. 0=Current Window, 1=320x240, 2=640x480, 3=800x600, 4=1024x768, 5=1280x1024, 6=1600"
+FSLastSnapshotToTwitterWidth,S32,not-applicable,,read nowhere in the Legacy sources,"The width of the last Twitter snapshot, in px"
 FSLatencyOneTimeFixRun,Boolean,not-listed,,HideFromEditor in the Legacy Viewer,One time fix has run for this install for script dialog colors on Latency
-FSLegacyEdgeSnap,Boolean,unreviewed,,,Use old method for adjusting edge snap regions.
-FSLegacyMinimize,Boolean,unreviewed,,,Minimize floaters to bottom left instead of top left.
-FSLegacyNameCacheExpiration,Boolean,unreviewed,,,Use the legacy avatar name cache expiration (expiration at least 60 mins.)
-FSLegacyNametagPosition,Boolean,unreviewed,,,Enables the legacy nametag behavior of staying fixed at the avatar's position instead of following animation movements.
-FSLegacyNotificationWell,Boolean,unreviewed,,,Enables the legacy notifications and system messages well
-FSLegacyNotificationWellAutoResize,Boolean,unreviewed,,,Enables the automatic resizing of the legacy notifications and system messages well
-FSLegacyRadarFriendColoring,Boolean,unreviewed,,,Use old style for friends on the radar. Uses same color as minimap.
-FSLegacyRadarLindenColoring,Boolean,unreviewed,,,Color Lindens on the radar the same as the minimap.
-FSLegacySearchActionOnTeleport,U32,unreviewed,,field `teleport_action`,"Controls what action Legacy Search should take when teleporting: 0 = No effect, 1 = Close floater, 2 Minimise floater"
-FSLetterKeysFocusNearbyChatBar,Boolean,unreviewed,,named in Aurora: aurora-viewer/src/app.rs:7524,"If enabled, the chat bar in the Nearby Chat window will be preferred if it contains a chat bar and LetterKeysAffectsMovementNotFocusChatBar "
-FSLimitFramerate,Boolean,unreviewed,,,Enable framerate limitation defined by FramePerSecondLimit
-FSLimitTextureVRAMUsage,Boolean,unreviewed,,,"If enabled, limits the amount of VRAM used for textures to the value of RenderMaxVRAMBudget."
-FSLinuxEnableWin32VoiceProxy,Boolean,unreviewed,,,"Use Win32 SLVoice.exe for voice. Needs wine (https://www.winehq.org/) installed, as SLVoice.exe is started inside wine."
-FSLinuxEnableWin64VoiceProxy,Boolean,unreviewed,,,"Use Win64 SLVoice.exe for voice. Needs wine (https://www.winehq.org/) installed, as SLVoice.exe is started inside wine."
-FSLocalMeshApplyJointOffsets,Boolean,unreviewed,,,use joint offsets if they are present
-FSLocalMeshAutoReload,Boolean,unreviewed,,,Automatically reload local mesh files when they change on disk.
-FSLocalMeshAutoReloadPeriod,F32,unreviewed,,,"How often, in seconds, the viewer should scan local mesh files for changes."
-FSLocalMeshScaleAlwaysMeters,Boolean,unreviewed,,named in Aurora: aurora-assets/src/import_mesh/collada.rs:113,Ignore the units specified by the Collada file. Useful when importing from tools such as Maya
-FSLogAutoAcceptInventoryToChat,Boolean,unreviewed,,field `auto_accept_inventory_chat`,"If enabled, auto-accepted inventory items will be logged to nearby chat."
-FSLogGroupImToChatConsole,Boolean,unreviewed,,,Defines if group IM notifications should be sent to the nearby chat console (v1-style) or toasts (v2-style).
-FSLogIMInChatHistory,Boolean,unreviewed,,named in Aurora: aurora-viewer/src/world/transcripts.rs:297,"If true, IM will also be logged in the nearby chat transcript if logging nearby chat and showing IMs in nearby chat is enabled."
-FSLogImToChatConsole,Boolean,unreviewed,,,Defines if IM notifications should be sent to the nearby chat console (v1-style) or toasts (v2-style).
-FSLogSnapshotsToLocal,Boolean,unreviewed,,,Log filename of saved snapshots in to chat history
+FSLegacyEdgeSnap,Boolean,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)",Use old method for adjusting edge snap regions.
+FSLegacyMinimize,Boolean,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)",Minimize floaters to bottom left instead of top left.
+FSLegacyNameCacheExpiration,Boolean,not-applicable,,the Legacy name cache's internals,Use the legacy avatar name cache expiration (expiration at least 60 mins.)
+FSLegacyNametagPosition,Boolean,to-add,low,,Enables the legacy nametag behavior of staying fixed at the avatar's position instead of following animation movements.
+FSLegacyNotificationWell,Boolean,check,,notifications_style may cover it,Enables the legacy notifications and system messages well
+FSLegacyNotificationWellAutoResize,Boolean,check,,notifications_style may cover it,Enables the automatic resizing of the legacy notifications and system messages well
+FSLegacyRadarFriendColoring,Boolean,to-add,low,,Use old style for friends on the radar. Uses same color as minimap.
+FSLegacyRadarLindenColoring,Boolean,to-add,low,,Color Lindens on the radar the same as the minimap.
+FSLegacySearchActionOnTeleport,U32,in-aurora,,search.teleport_action,"Controls what action Legacy Search should take when teleporting: 0 = No effect, 1 = Close floater, 2 Minimise floater"
+FSLetterKeysFocusNearbyChatBar,Boolean,check,,named in app.rs: may be built in,"If enabled, the chat bar in the Nearby Chat window will be preferred if it contains a chat bar and LetterKeysAffectsMovementNotFocusChatBar "
+FSLimitFramerate,Boolean,in-aurora,,fps_cap,Enable framerate limitation defined by FramePerSecondLimit
+FSLimitTextureVRAMUsage,Boolean,in-aurora,,texture_budget_auto (inverted),"If enabled, limits the amount of VRAM used for textures to the value of RenderMaxVRAMBudget."
+FSLinuxEnableWin32VoiceProxy,Boolean,not-applicable,,the Legacy voice client under Wine,"Use Win32 SLVoice.exe for voice. Needs wine (https://www.winehq.org/) installed, as SLVoice.exe is started inside wine."
+FSLinuxEnableWin64VoiceProxy,Boolean,not-applicable,,the Legacy voice client under Wine,"Use Win64 SLVoice.exe for voice. Needs wine (https://www.winehq.org/) installed, as SLVoice.exe is started inside wine."
+FSLocalMeshApplyJointOffsets,Boolean,to-add,low,,use joint offsets if they are present
+FSLocalMeshAutoReload,Boolean,in-aurora,,imports.local_mesh_auto_reload,Automatically reload local mesh files when they change on disk.
+FSLocalMeshAutoReloadPeriod,F32,in-aurora,,imports.local_reload_seconds,"How often, in seconds, the viewer should scan local mesh files for changes."
+FSLocalMeshScaleAlwaysMeters,Boolean,in-aurora,,imports.local_assume_meters,Ignore the units specified by the Collada file. Useful when importing from tools such as Maya
+FSLogAutoAcceptInventoryToChat,Boolean,in-aurora,,auto_accept_inventory_chat,"If enabled, auto-accepted inventory items will be logged to nearby chat."
+FSLogGroupImToChatConsole,Boolean,to-add,low,,Defines if group IM notifications should be sent to the nearby chat console (v1-style) or toasts (v2-style).
+FSLogIMInChatHistory,Boolean,check,,named in world/transcript: may be built in,"If true, IM will also be logged in the nearby chat transcript if logging nearby chat and showing IMs in nearby chat is enabled."
+FSLogImToChatConsole,Boolean,to-add,low,,Defines if IM notifications should be sent to the nearby chat console (v1-style) or toasts (v2-style).
+FSLogSnapshotsToLocal,Boolean,to-add,low,,Log filename of saved snapshots in to chat history
 FSLoginDontSavePassword,Boolean,not-listed,,HideFromEditor in the Legacy Viewer,Internal setting used to indicate that passwords shouldn't be saved if --login cmdline switch is used.
-FSLookAtTargetLimitDistance,Boolean,unreviewed,,field `limit_distance`,Limit look at target distance from head to value of LookAtTargetMaxDistance
-FSLookAtTargetMaxDistance,F32,unreviewed,,field `limit_distance`,Max lookat distance in meters
-FSManipRotateJointUseNaturalDirection,Boolean,unreviewed,,,use the natural bone direction instead of world rotation
-FSManipShowJointMarkers,Boolean,unreviewed,,,Show small markers where the selectable joints are.
-FSMarkObjects,Boolean,unreviewed,,,Mark unnamed objects with (No Name)
-FSMaxAnimationPriority,S32,unreviewed,,,Allow uploading animations with higher priority (up to 6) NOTE: Only priorities up to level 5 are supported! (Default: 4)
-FSMaxBeamsPerSecond,F32,unreviewed,,,How many selection beam updates to send in a second
-FSMaxPendingIMMessages,S32,unreviewed,,,Maximum number of pending IM or group messages before a minimized or not visible chat window will be updated
-FSMenuBackgroundAlpha,F32,unreviewed,,,"Alpha (opacity) of menu backgrounds including context menus and the top menu bar (0.0 = fully transparent, 1.0 = fully opaque)"
-FSMeshHighLodSuffix,String,unreviewed,,,Suffix to use for High LOD models and files (DAE).
-FSMeshImportScaleFixup,Boolean,unreviewed,,,"Adjust normals on import, fixes underlying issue, not recommended in case underlying rendering gets fixed."
-FSMeshLowLodSuffix,String,unreviewed,,,Suffix to use for Low LOD models and files (DAE).
-FSMeshLowestLodSuffix,String,unreviewed,,,Suffix to use for Lowest LOD models and files (DAE).
-FSMeshMediumLodSuffix,String,unreviewed,,,Suffix to use for Medium LOD models and files (DAE).
-FSMeshPhysicsSuffix,String,unreviewed,,,Suffix to use for Physics models and files (DAE).
-FSMeshPreviewUVGuideFile,String,unreviewed,,,filename of the texture to use as a UV guide for mesh preview.
-FSMeshUploadAutoEnableWeights,Boolean,unreviewed,,,Automatically set weights enabled for meshes with rigging info
-FSMeshUploadAutoShowWeightsWhenEnabled,Boolean,unreviewed,,,Automatically show weights in preview for meshes with rigging info
-FSMeshUploadUseGLODAsDefault,Boolean,unreviewed,,,Use the 'reliable' (GLOD) method for LODs as the default when opening Collada files.
-FSMilkshakeRadarToasts,Boolean,unreviewed,,field `toasts`,"When enabled, radar alerts will be sent as notification toasts."
-FSMiniMapChatRing,Boolean,unreviewed,,,Show chat range ring on minimap
-FSMiniMapOpacity,F32,unreviewed,,named in Aurora: aurora-viewer/src/ui/minimap.rs:407,The opacity for the minimap background
-FSMiniMapShoutRing,Boolean,unreviewed,,,Show shout range ring on minimap
-FSMiniMapWhisperRing,Boolean,unreviewed,,,Show whisper range ring on minimap
-FSMinimapPickScale,F32,unreviewed,,named in Aurora: aurora-viewer/src/ui/minimap.rs:45,Controls the pick radius on the minimap
-FSModNameStyle,U32,unreviewed,,,Font style settings for moderators' name if FSHighlightGroupMods enabled. 0=NORMAL 1=BOLD 2=ITALIC 3=BOLD ITALIC 4=UNDERLINE 5=BOLD UNDERLIN
-FSModTextStyle,U32,unreviewed,,,Font style settings for moderators' name if FSHighlightGroupMods enabled. 0=NORMAL 1=BOLD 2=ITALIC 3=BOLD ITALIC 4=UNDERLINE 5=BOLD UNDERLIN
-FSMouselookCombatFeatures,Boolean,unreviewed,,,Enable combat features (target distance etc.) when in mouselook
-FSMuteAllGroups,Boolean,unreviewed,,field `mute_all_groups`,Disable ALL group chats.
-FSMuteGroupWhenNoticesDisabled,Boolean,unreviewed,,field `mute_groups_without_notices`,"When 'Receive group notices' is disabled, disable group chat as well."
-FSNameTagShowLegacyUsernames,Boolean,unreviewed,,field `use_display_names`,Show legacy name (Firstname Lastname) in user tags instead of username
-FSNameTagZOffsetCorrection,S32,unreviewed,,named in Aurora: aurora-viewer/src/ui/quick_prefs.rs:19,Changes the default Z-offset of the avatar nametags.
-FSNearbyChatToastsOffset,S32,unreviewed,,,Vertical offset of the nearby chat toasts
-FSNearbyChatbar,Boolean,unreviewed,,,Set to true to add a chat bar to the Nearby Chat window
-FSNetMapDoubleClickAction,S32,unreviewed,,field `mini_double_click`,"Defines the action happening if the a double click occurs on a minimap instance (minimap floater or within people panel): 0 = Nothing, 1 = O"
-FSNetMapPhantomOpacity,U32,unreviewed,,named in Aurora: aurora-viewer/src/ui/minimap.rs:70,Percentage of opacity for phantom objects on netmap.
-FSNetMapPhysical,Boolean,unreviewed,,field `mini_physical`,Accent physical objects on netmap in different colors.
-FSNetMapScripted,Boolean,unreviewed,,field `mini_physical`,Accent scripted objects on netmap in different colors.
-FSNetMapTempOnRez,Boolean,unreviewed,,field `mini_physical`,Accent temp on rez objects on netmap in different colors.
-FSNoScreenShakeOnRegionRestart,Boolean,unreviewed,,named in Aurora: aurora-viewer/src/app/region_restart.rs:224,Don't shake my screen when region restart alert message is shown
+FSLookAtTargetLimitDistance,Boolean,in-aurora,,lookat.limit_distance,Limit look at target distance from head to value of LookAtTargetMaxDistance
+FSLookAtTargetMaxDistance,F32,in-aurora,,lookat.max_distance,Max lookat distance in meters
+FSManipRotateJointUseNaturalDirection,Boolean,in-aurora,,poser.natural,use the natural bone direction instead of world rotation
+FSManipShowJointMarkers,Boolean,in-aurora,,poser.markers,Show small markers where the selectable joints are.
+FSMarkObjects,Boolean,to-add,low,,Mark unnamed objects with (No Name)
+FSMaxAnimationPriority,S32,to-add,low,,Allow uploading animations with higher priority (up to 6) NOTE: Only priorities up to level 5 are supported! (Default: 4)
+FSMaxBeamsPerSecond,F32,to-add,low,,How many selection beam updates to send in a second
+FSMaxPendingIMMessages,S32,not-applicable,,a throttle of the Legacy interface,Maximum number of pending IM or group messages before a minimized or not visible chat window will be updated
+FSMenuBackgroundAlpha,F32,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)","Alpha (opacity) of menu backgrounds including context menus and the top menu bar (0.0 = fully transparent, 1.0 = fully opaque)"
+FSMeshHighLodSuffix,String,to-add,low,,Suffix to use for High LOD models and files (DAE).
+FSMeshImportScaleFixup,Boolean,to-add,low,,"Adjust normals on import, fixes underlying issue, not recommended in case underlying rendering gets fixed."
+FSMeshLowLodSuffix,String,to-add,low,,Suffix to use for Low LOD models and files (DAE).
+FSMeshLowestLodSuffix,String,to-add,low,,Suffix to use for Lowest LOD models and files (DAE).
+FSMeshMediumLodSuffix,String,to-add,low,,Suffix to use for Medium LOD models and files (DAE).
+FSMeshPhysicsSuffix,String,to-add,low,,Suffix to use for Physics models and files (DAE).
+FSMeshPreviewUVGuideFile,String,to-add,low,,filename of the texture to use as a UV guide for mesh preview.
+FSMeshUploadAutoEnableWeights,Boolean,in-aurora,,imports.mesh_auto_weights,Automatically set weights enabled for meshes with rigging info
+FSMeshUploadAutoShowWeightsWhenEnabled,Boolean,in-aurora,,imports.mesh_auto_preview_weights,Automatically show weights in preview for meshes with rigging info
+FSMeshUploadUseGLODAsDefault,Boolean,in-aurora,,imports.mesh_reliable_default,Use the 'reliable' (GLOD) method for LODs as the default when opening Collada files.
+FSMilkshakeRadarToasts,Boolean,in-aurora,,radar.toasts,"When enabled, radar alerts will be sent as notification toasts."
+FSMiniMapChatRing,Boolean,to-add,low,,Show chat range ring on minimap
+FSMiniMapOpacity,F32,check,,named in minimap.rs: may be built in,The opacity for the minimap background
+FSMiniMapShoutRing,Boolean,to-add,low,,Show shout range ring on minimap
+FSMiniMapWhisperRing,Boolean,to-add,low,,Show whisper range ring on minimap
+FSMinimapPickScale,F32,check,,named in minimap.rs: may be built in,Controls the pick radius on the minimap
+FSModNameStyle,U32,to-add,low,,Font style settings for moderators' name if FSHighlightGroupMods enabled. 0=NORMAL 1=BOLD 2=ITALIC 3=BOLD ITALIC 4=UNDERLINE 5=BOLD UNDERLIN
+FSModTextStyle,U32,to-add,low,,Font style settings for moderators' name if FSHighlightGroupMods enabled. 0=NORMAL 1=BOLD 2=ITALIC 3=BOLD ITALIC 4=UNDERLINE 5=BOLD UNDERLIN
+FSMouselookCombatFeatures,Boolean,to-add,low,,Enable combat features (target distance etc.) when in mouselook
+FSMuteAllGroups,Boolean,in-aurora,,mute_all_groups,Disable ALL group chats.
+FSMuteGroupWhenNoticesDisabled,Boolean,in-aurora,,mute_groups_without_notices,"When 'Receive group notices' is disabled, disable group chat as well."
+FSNameTagShowLegacyUsernames,Boolean,in-aurora,,legacy_username_format,Show legacy name (Firstname Lastname) in user tags instead of username
+FSNameTagZOffsetCorrection,S32,to-add,low,,Changes the default Z-offset of the avatar nametags.
+FSNearbyChatToastsOffset,S32,to-add,low,,Vertical offset of the nearby chat toasts
+FSNearbyChatbar,Boolean,check,,nearby_chat_window may cover it,Set to true to add a chat bar to the Nearby Chat window
+FSNetMapDoubleClickAction,S32,in-aurora,,maps.mini_double_click,"Defines the action happening if the a double click occurs on a minimap instance (minimap floater or within people panel): 0 = Nothing, 1 = O"
+FSNetMapPhantomOpacity,U32,check,,named in minimap.rs: may be built in,Percentage of opacity for phantom objects on netmap.
+FSNetMapPhysical,Boolean,in-aurora,,maps.mini_physical,Accent physical objects on netmap in different colors.
+FSNetMapScripted,Boolean,in-aurora,,maps.mini_scripted,Accent scripted objects on netmap in different colors.
+FSNetMapTempOnRez,Boolean,in-aurora,,maps.mini_temp_on_rez,Accent temp on rez objects on netmap in different colors.
+FSNoScreenShakeOnRegionRestart,Boolean,in-aurora,,region_restart.shake (inverted),Don't shake my screen when region restart alert message is shown
 FSNoVersionPopup,Boolean,not-listed,,HideFromEditor in the Legacy Viewer,Disables version popup on the the Legacy Viewer Login page
-FSNotecardFontName,String,unreviewed,,,The name of the font used for the notecard editor
-FSNotecardFontSize,String,unreviewed,,,The size of the font used for the notecard editor
-FSNotifyIMFlash,Boolean,unreviewed,,field `flash_conversations_button`,Flash FUI button if new (group) IMs arrived and conversations floater is closed (IM floater must be docked to conversations floater and IMs 
-FSNotifyIncomingObjectSpam,Boolean,unreviewed,,,Notify about throttled incoming object offers from objects.
-FSNotifyIncomingObjectSpamFrom,Boolean,unreviewed,,,Notify about throttled incoming object offers from named sources.
-FSNotifyNearbyChatFlash,Boolean,unreviewed,,field `flash_conversations_nearby`,Flash FUI button if new nearby chat arrived and conversations floater is closed (nearby chat floater must be docked to conversations floater
-FSNotifyUnreadChatMessages,Boolean,unreviewed,,,Notify about new unread chat messages in history if scrolled back
-FSNotifyUnreadIMMessages,Boolean,unreviewed,,,Notify about new unread IM messages in history if scrolled back
-FSOOCPostfix,String,unreviewed,,,Postfix to mark OOC chat
-FSOOCPrefix,String,unreviewed,,,Prefix to mark OOC chat
-FSOfferThrottleMaxCount,U32,unreviewed,,,The number of objects offered within a second duration before throttling starts.
-FSOpenIMContainerOnOfflineMessage,Boolean,unreviewed,,,Open the IM container at login when an offline message is present.
-FSOpenInventoryAfterSnapshot,Boolean,unreviewed,,,"If enabled, the inventory window will open and show the snapshot after upload"
-FSOpenSimAlwaysForceShowGrid,Boolean,unreviewed,,,Soft enable/disable the startup behaviour of OpenSim builds to allow gridlist access
-FSOutfitListSortOrder,S32,unreviewed,,,"How outfit list in Avatar's floater is sorted. Bitmask: 0x1 - favorites to top, 0x2 - newest first instead of alphabetical"
-FSOutputDeviceUUID,String,unreviewed,,,UUID of the output device used for inworld sound playback
-FSOverrideVRAMDetection,Boolean,unreviewed,,,"Allow user to override the vRAM detection, use the FSForcedVideoMemory setting instead- use with extreme caution."
-FSParcelMusicAutoPlay,Boolean,unreviewed,,field `music_autoplay`,Auto play parcel music when available
-FSParticleChat,Boolean,unreviewed,,,Send Selection Info on channel 9000 when editing objects (does not work if PrivatePointAtTarget is enabled)
-FSPaymentConfirmationThreshold,S32,unreviewed,,field `payment_confirm_threshold`,Threshold when payment confirmation dialogs are triggered
-FSPaymentInfoInChat,Boolean,unreviewed,,named in Aurora: aurora-viewer/src/world/payments.rs:4,"If true, L$ balance changes will be shown in nearby chat instead of toasts."
-FSPerfFloaterSmoothingPeriods,U32,unreviewed,,,Number of periods to smooth the stats over
-FSPermissionDebitDefaultDeny,Boolean,unreviewed,,,"If enabled, LSL script debit permission dialogs will default to deny. If disabled, they will default to allow."
-FSPhysicsPresetUser1,String,unreviewed,,,full system path to a user provided physics mesh (DAE).
-FSPlayDefaultBentoAnimation,Boolean,unreviewed,,named in Aurora: aurora-viewer/src/app/reset_skeleton.rs:49,"If enabled, the viewer will run a default, priority 0 bento animation that poses hands, wings, mouth and tail in a natural position when no "
-FSPoseStandLastSelectedPose,String,unreviewed,,,Last selected pose in the pose stand
-FSPoseStandLock,Boolean,unreviewed,,,"When enabled, posestand will lock the avatar to the ground."
-FSPoserOnSaveConfirmOverwrite,Boolean,unreviewed,,,Whether to confirm overwriting a save file.
-FSPoserPelvisUnlockedForBvhSave,Boolean,unreviewed,,,Whether the mPelvis joint should be position/rotationally locked when a BVH is created.
-FSPoserSaveExternalFileAlso,Boolean,unreviewed,,,Whether to save to an external format (like BVH or ANIM) file as well when saving a pose.
-FSPoserShowBoneHighlights,Boolean,unreviewed,,,Whether to highlight a bone with the debug beacon on selection from the UI.
-FSPoserStopPosingWhenClosed,Boolean,unreviewed,,,Whether to stop animating with the poser when the poser window is closed.
-FSPoserTrackpadSensitivity,F32,unreviewed,,,The relative sensitivity of the poser trackpad.
-FSPrettyEmojiButtonCode,U32,unreviewed,,,Decimal code for the emoji button. Try 128569 or 128571 for example
-FSPrimfeedViewerApiKey,String,unreviewed,,,Viewer key for API login.
-FSRadarColorNamesByDistance,Boolean,unreviewed,,field `color_names`,Colors avatar nametags by distance in the radar.
-FSRadarColumnConfig,U32,unreviewed,,field `columns`,Stores the column visibility of the radar
-FSRadarEnhanceByBridge,Boolean,unreviewed,,field `enhance_by_bridge`,Enhance radar functionality by using client LSL Bridge.
-FSRadarShowMutedAndDerendered,Boolean,unreviewed,,field `show_muted`,"If enabled, show blocked/muted or derendered avatars in radar list"
-FSRegionCrossingAngleErrorLimit,F32,unreviewed,,,Region crossing angle error limit in degrees
-FSRegionCrossingPositionErrorLimit,F32,unreviewed,,,Region crossing position error limit in meters
-FSRegionCrossingSmoothingTime,F32,unreviewed,,,Region crossing smoothing filter time in seconds
-FSRegionRestartAnnounceChannel,S32,unreviewed,,field `announce`,Chat channel where region restart info is announced to.
-FSRemapLinuxShortcuts,Boolean,unreviewed,,,"If enabled, use the special shortcuts on Linux to remap shortcuts that are already in use by the operating system (e.g. CTRL-ALT-Fx)"
-FSRememberUsername,Boolean,unreviewed,,,Stores the username used for logging in.
-FSRemoveFlyHeightLimit,Boolean,unreviewed,,,Remove the 4096m high fly limit
-FSRemoveScriptBlockButton,Boolean,unreviewed,,,"Removes the ""block"" from script dialogs."
-FSRenderBeaconText,Boolean,unreviewed,,,Show beacon text in the viewer window if beacons are enabled
-FSRenderFarClipStepping,Boolean,unreviewed,,,Set to TRUE to increase performance via progressive draw distance stepping
-FSRenderFarClipSteppingInterval,U32,unreviewed,,,Interval in seconds between each draw distance increment
-FSRenderParcelSelectionToMaxBuildHeight,Boolean,unreviewed,,,Shows the parcel boundary up to the maximum build height instead of just 0.66m above ground
-FSRenderVignette,Vector3,unreviewed,,,"Amount of vignette to apply (X), power of vignette shading (Y), and multiplier for vignette shading (Z)."
-FSRepeatedEnvTogglesShared,Boolean,unreviewed,,named in Aurora: aurora-viewer/src/ui/environment.rs:222,Whether repeated presses of sky preset shortcuts should revert to shared environment
-FSReportBlockToNearbyChat,Boolean,unreviewed,,field `report_blocks`,Reports changes to the blocklist in nearby chat
-FSReportCollisionMessages,Boolean,unreviewed,,field `report`,Report collision messages to scripts.
-FSReportCollisionMessagesChannel,S32,unreviewed,,field `report`,The channel used to report collision messages to scripts.
-FSReportIgnoredAdHocSession,Boolean,unreviewed,,field `ignore_adhoc`,Reports to nearby chat if a conference (ad-hoc) has been ignored.
-FSReportMutedGroupChat,Boolean,unreviewed,,,Reports to nearby chat if a group chat has been muted.
-FSReportRegionRestartToChat,Boolean,unreviewed,,field `announce`,Announces region restart to a defined chat channel.
-FSReportTotalScriptCountChanges,Boolean,unreviewed,,field `script_count_alert`,Reports if the change of total number of active scripts in a region exceeds the defined threshold.
-FSReportTotalScriptCountChangesThreshold,U32,unreviewed,,,Minimum change of total active scripts in a region before reporting.
-FSResetCameraOnMovement,Boolean,unreviewed,,field `reset_on_movement`,"If true, the Legacy Viewer will reset camera on avatar movement."
-FSResetCameraOnTP,Boolean,unreviewed,,field `reset_on_teleport`,If true the camera will be reset to behind the avatar on teleporting
-FSResetSkeletonOnStandUp,Boolean,unreviewed,,,Resets own avatar skeleton upon standing up and sends the reset to all surrounding avatars
-FSRestoreOpenIMs,Boolean,unreviewed,,field `reopen_ims`,Restore open IM windows from the previous session on startup.
-FSRevokePerms,U32,unreviewed,,,"Revokes objects anim perms on your avatar on: 0) never, 1) on sit, 2) on stand, 3) on sit and stand."
-FSRowsPerScriptDialog,S32,unreviewed,,,The number of rows visible in a script dialog
-FSSaveInventoryScriptsAsMono,Boolean,unreviewed,,,Saves scripts edited directly from inventory as Mono instead of LSL
-FSSavedRenderFarClip,F32,unreviewed,,,Saved draw distance (used in case of logout during progressive draw distance stepping)
-FSScriptDebugWindowClearOnClose,Boolean,unreviewed,,,Clear [ALL SCRIPTS] tab of script debug/error window on close.
-FSScriptDialogNoTransparency,Boolean,unreviewed,,,"If true, script dialogs will be shown opaque and ignore the floater opacity settings."
-FSScriptEditorRecompileButton,Boolean,unreviewed,,,Enables the save button to recompile scripts when no change in the opened script has occurred. Very useful for preproc scripts that consist 
-FSScriptInfoExtended,Boolean,unreviewed,,,"If enabled, extend basic script info feature with various details useful for builders."
-FSScriptingFontName,String,unreviewed,,,The name of the font used for the LSL script editor
-FSScriptingFontSize,String,unreviewed,,,The size of the font used for the LSL script editor
-FSScrollWheelExitsMouselook,Boolean,unreviewed,,field `wheel_exits_mouselook`,"If enabled, mouselook can be left by turning the scroll wheel"
+FSNotecardFontName,String,to-add,low,,The name of the font used for the notecard editor
+FSNotecardFontSize,String,to-add,low,,The size of the font used for the notecard editor
+FSNotifyIMFlash,Boolean,in-aurora,,flash_conversations_button,Flash FUI button if new (group) IMs arrived and conversations floater is closed (IM floater must be docked to conversations floater and IMs 
+FSNotifyIncomingObjectSpam,Boolean,to-add,low,,Notify about throttled incoming object offers from objects.
+FSNotifyIncomingObjectSpamFrom,Boolean,to-add,low,,Notify about throttled incoming object offers from named sources.
+FSNotifyNearbyChatFlash,Boolean,in-aurora,,flash_conversations_nearby,Flash FUI button if new nearby chat arrived and conversations floater is closed (nearby chat floater must be docked to conversations floater
+FSNotifyUnreadChatMessages,Boolean,to-add,low,,Notify about new unread chat messages in history if scrolled back
+FSNotifyUnreadIMMessages,Boolean,to-add,low,,Notify about new unread IM messages in history if scrolled back
+FSOOCPostfix,String,to-add,low,,Postfix to mark OOC chat
+FSOOCPrefix,String,to-add,low,,Prefix to mark OOC chat
+FSOfferThrottleMaxCount,U32,to-add,low,,The number of objects offered within a second duration before throttling starts.
+FSOpenIMContainerOnOfflineMessage,Boolean,to-add,low,,Open the IM container at login when an offline message is present.
+FSOpenInventoryAfterSnapshot,Boolean,to-add,low,,"If enabled, the inventory window will open and show the snapshot after upload"
+FSOpenSimAlwaysForceShowGrid,Boolean,not-applicable,,a start-up switch of the Legacy OpenSim builds,Soft enable/disable the startup behaviour of OpenSim builds to allow gridlist access
+FSOutfitListSortOrder,S32,to-add,low,,"How outfit list in Avatar's floater is sorted. Bitmask: 0x1 - favorites to top, 0x2 - newest first instead of alphabetical"
+FSOutputDeviceUUID,String,in-aurora,,audio.output_device (kept out of Debug Settings: this PC's device),UUID of the output device used for inworld sound playback
+FSOverrideVRAMDetection,Boolean,to-add,low,,"Allow user to override the vRAM detection, use the FSForcedVideoMemory setting instead- use with extreme caution."
+FSParcelMusicAutoPlay,Boolean,in-aurora,,audio.music_autoplay,Auto play parcel music when available
+FSParticleChat,Boolean,to-add,low,,Send Selection Info on channel 9000 when editing objects (does not work if PrivatePointAtTarget is enabled)
+FSPaymentConfirmationThreshold,S32,in-aurora,,payment_confirm_threshold,Threshold when payment confirmation dialogs are triggered
+FSPaymentInfoInChat,Boolean,check,,named in world/payments: may be built in,"If true, L$ balance changes will be shown in nearby chat instead of toasts."
+FSPerfFloaterSmoothingPeriods,U32,not-applicable,,read nowhere in the Legacy sources,Number of periods to smooth the stats over
+FSPermissionDebitDefaultDeny,Boolean,to-add,low,,"If enabled, LSL script debit permission dialogs will default to deny. If disabled, they will default to allow."
+FSPhysicsPresetUser1,String,to-add,low,,full system path to a user provided physics mesh (DAE).
+FSPlayDefaultBentoAnimation,Boolean,check,,named in app/reset_skeleton: may be built in,"If enabled, the viewer will run a default, priority 0 bento animation that poses hands, wings, mouth and tail in a natural position when no "
+FSPoseStandLastSelectedPose,String,not-applicable,,a window's last state; Aurora keeps its own window state,Last selected pose in the pose stand
+FSPoseStandLock,Boolean,to-add,low,,"When enabled, posestand will lock the avatar to the ground."
+FSPoserOnSaveConfirmOverwrite,Boolean,in-aurora,,poser.confirm_overwrite,Whether to confirm overwriting a save file.
+FSPoserPelvisUnlockedForBvhSave,Boolean,in-aurora,,poser.unlock_pelvis,Whether the mPelvis joint should be position/rotationally locked when a BVH is created.
+FSPoserSaveExternalFileAlso,Boolean,in-aurora,,poser.also_bvh,Whether to save to an external format (like BVH or ANIM) file as well when saving a pose.
+FSPoserShowBoneHighlights,Boolean,not-applicable,,read nowhere in the Legacy sources,Whether to highlight a bone with the debug beacon on selection from the UI.
+FSPoserStopPosingWhenClosed,Boolean,in-aurora,,poser.stop_on_close,Whether to stop animating with the poser when the poser window is closed.
+FSPoserTrackpadSensitivity,F32,in-aurora,,poser.sensitivity,The relative sensitivity of the poser trackpad.
+FSPrettyEmojiButtonCode,U32,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)",Decimal code for the emoji button. Try 128569 or 128571 for example
+FSPrimfeedViewerApiKey,String,not-applicable,,window state of a feature Aurora does not have: posting to Primfeed (a service key),Viewer key for API login.
+FSRadarColorNamesByDistance,Boolean,in-aurora,,radar.color_names,Colors avatar nametags by distance in the radar.
+FSRadarColumnConfig,U32,in-aurora,,radar.columns,Stores the column visibility of the radar
+FSRadarEnhanceByBridge,Boolean,in-aurora,,radar.enhance_by_bridge,Enhance radar functionality by using client LSL Bridge.
+FSRadarShowMutedAndDerendered,Boolean,in-aurora,,radar.show_muted,"If enabled, show blocked/muted or derendered avatars in radar list"
+FSRegionCrossingAngleErrorLimit,F32,check,,region crossing prediction to compare,Region crossing angle error limit in degrees
+FSRegionCrossingPositionErrorLimit,F32,check,,region crossing prediction to compare,Region crossing position error limit in meters
+FSRegionCrossingSmoothingTime,F32,check,,region crossing prediction to compare,Region crossing smoothing filter time in seconds
+FSRegionRestartAnnounceChannel,S32,in-aurora,,region_restart.channel,Chat channel where region restart info is announced to.
+FSRemapLinuxShortcuts,Boolean,not-applicable,,Aurora's shortcuts are set in Preferences on every system,"If enabled, use the special shortcuts on Linux to remap shortcuts that are already in use by the operating system (e.g. CTRL-ALT-Fx)"
+FSRememberUsername,Boolean,in-aurora,,remember_username (kept out of Debug Settings: the login),Stores the username used for logging in.
+FSRemoveFlyHeightLimit,Boolean,to-add,low,,Remove the 4096m high fly limit
+FSRemoveScriptBlockButton,Boolean,to-add,low,,"Removes the ""block"" from script dialogs."
+FSRenderBeaconText,Boolean,to-add,low,,Show beacon text in the viewer window if beacons are enabled
+FSRenderFarClipStepping,Boolean,to-add,high,,Set to TRUE to increase performance via progressive draw distance stepping
+FSRenderFarClipSteppingInterval,U32,to-add,high,,Interval in seconds between each draw distance increment
+FSRenderParcelSelectionToMaxBuildHeight,Boolean,to-add,low,,Shows the parcel boundary up to the maximum build height instead of just 0.66m above ground
+FSRenderVignette,Vector3,to-add,low,,"Amount of vignette to apply (X), power of vignette shading (Y), and multiplier for vignette shading (Z)."
+FSRepeatedEnvTogglesShared,Boolean,check,,named in ui/environment: may be built in,Whether repeated presses of sky preset shortcuts should revert to shared environment
+FSReportBlockToNearbyChat,Boolean,in-aurora,,report_blocks,Reports changes to the blocklist in nearby chat
+FSReportCollisionMessages,Boolean,in-aurora,,collisions.report,Report collision messages to scripts.
+FSReportCollisionMessagesChannel,S32,in-aurora,,collisions.channel,The channel used to report collision messages to scripts.
+FSReportIgnoredAdHocSession,Boolean,in-aurora,,autoresponse.report_ignored_adhoc,Reports to nearby chat if a conference (ad-hoc) has been ignored.
+FSReportMutedGroupChat,Boolean,to-add,low,,Reports to nearby chat if a group chat has been muted.
+FSReportRegionRestartToChat,Boolean,in-aurora,,region_restart.announce,Announces region restart to a defined chat channel.
+FSReportTotalScriptCountChanges,Boolean,in-aurora,,script_count_alert,Reports if the change of total number of active scripts in a region exceeds the defined threshold.
+FSReportTotalScriptCountChangesThreshold,U32,in-aurora,,script_count_threshold,Minimum change of total active scripts in a region before reporting.
+FSResetCameraOnMovement,Boolean,in-aurora,,camera.reset_on_movement,"If true, the Legacy Viewer will reset camera on avatar movement."
+FSResetCameraOnTP,Boolean,in-aurora,,camera.reset_on_teleport,If true the camera will be reset to behind the avatar on teleporting
+FSResetSkeletonOnStandUp,Boolean,to-add,low,,Resets own avatar skeleton upon standing up and sends the reset to all surrounding avatars
+FSRestoreOpenIMs,Boolean,in-aurora,,reopen_ims,Restore open IM windows from the previous session on startup.
+FSRevokePerms,U32,to-add,high,,"Revokes objects anim perms on your avatar on: 0) never, 1) on sit, 2) on stand, 3) on sit and stand."
+FSRowsPerScriptDialog,S32,to-add,low,,The number of rows visible in a script dialog
+FSSaveInventoryScriptsAsMono,Boolean,to-add,low,,Saves scripts edited directly from inventory as Mono instead of LSL
+FSSavedRenderFarClip,F32,not-applicable,,internal state of FSRenderFarClipStepping,Saved draw distance (used in case of logout during progressive draw distance stepping)
+FSScriptDebugWindowClearOnClose,Boolean,to-add,low,,Clear [ALL SCRIPTS] tab of script debug/error window on close.
+FSScriptDialogNoTransparency,Boolean,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)","If true, script dialogs will be shown opaque and ignore the floater opacity settings."
+FSScriptEditorRecompileButton,Boolean,in-aurora,,script_editor.recompile,Enables the save button to recompile scripts when no change in the opened script has occurred. Very useful for preproc scripts that consist 
+FSScriptInfoExtended,Boolean,to-add,low,,"If enabled, extend basic script info feature with various details useful for builders."
+FSScriptingFontName,String,to-add,low,,The name of the font used for the LSL script editor
+FSScriptingFontSize,String,in-aurora,,script_editor.font_size,The size of the font used for the LSL script editor
+FSScrollWheelExitsMouselook,Boolean,in-aurora,,camera.wheel_exits_mouselook,"If enabled, mouselook can be left by turning the scroll wheel"
 FSSearchGroupMaturity,U32,not-listed,,HideFromEditor in the Legacy Viewer,Setting for the user's group search maturity level (consts in indra_constants.h)
-FSSecondsinChatTimestamps,Boolean,unreviewed,,named in Aurora: aurora-viewer/src/world/chat_log/import.rs:1038,"Show seconds in chat timestamps, in the chat window and logs"
-FSSelectCopyableOnly,Boolean,unreviewed,,,Only include copyable objects during selection
-FSSelectIncludeGroupOwned,Boolean,unreviewed,,,Includes group-owned objects during selection
-FSSelectLocalSearchEditorOnShortcut,Boolean,unreviewed,,,"If enabled, pressing the shortcut for search (CTRL-F) will focus the search field of the active window (if available)."
-FSSelectLockedOnly,Boolean,unreviewed,,,Select only objects that are locked
-FSSendTypingState,Boolean,unreviewed,,field `send_typing_state`,Send typing start and typing stop state notifications to other clients.
-FSShowAutoAcceptInventoryInNotifications,Boolean,unreviewed,,field `auto_accept_inventory_chat`,"If enabled, auto-accepted inventory items will be shown in notifications."
-FSShowAutorespondInNametag,Boolean,unreviewed,,,Does the user want to see autorespond mode in his own nametag?
-FSShowBackSLURL,Boolean,unreviewed,,,Report the SLURL of the region you completed a teleport from
-FSShowChatChannel,Boolean,unreviewed,,field `show_chat_channel`,Shows/Hides the channel selector in the Nearby Chat command line
-FSShowChatRangeSpheres,Boolean,unreviewed,,,"Show chat range spheres (whisper, say, shout) in 3D world around avatar"
-FSShowChatType,Boolean,unreviewed,,,"Shows/Hides the chat type selector (Whisper, Say, Shout)"
-FSShowConversationVoiceStateIndicator,Boolean,unreviewed,,,Show the voice state indicator in the conversation floater tabs
-FSShowConvoAndRadarInML,Boolean,unreviewed,,,Conversations and Radar windows stays visible when entering mouselook if it was open already.
-FSShowCurrencyBalanceInStatusbar,Boolean,unreviewed,,field `show_balance`,Show the current balance in the statusbar if enabled
-FSShowDisplayNameUpdateNotification,Boolean,unreviewed,,field `use_display_names`,Show system notifications if somebody changes their display name.
-FSShowDummyAVsinRadar,Boolean,unreviewed,,,"If true, shows dummy (preview) avatars in radar."
-FSShowEmojiButton,Boolean,unreviewed,,,Show or hide the emoji selection button in chat/IM windows
-FSShowGroupNameLength,S32,unreviewed,,,"Max length of group name to be printed in chat (-1 for full group name, 0 for disabled)."
-FSShowGroupTitleInTooltip,Boolean,unreviewed,,field `group_titles`,Shows the group title of an avatar in the tooltip.
-FSShowIMInChatHistory,Boolean,unreviewed,,,"If true, IM will also be shown in the nearby chat transcript."
-FSShowIMSendButton,Boolean,unreviewed,,,Shows the send chat button in IM session windows
-FSShowInboxFolder,Boolean,unreviewed,,,"If enabled, the Received Items folder aka Inbox is shown in the inventory as folder."
-FSShowInterfaceInMouselook,Boolean,unreviewed,,field `show_interface_in_mouselook`,"If true, the Legacy Viewer will show user interface in mouselook mode."
-FSShowInventoryThumbnailTooltips,Boolean,unreviewed,,,Shows the inventory item thumbnail as tooltip
-FSShowJoinedGroupInvitations,Boolean,unreviewed,,field `show_joined_group_invitations`,"If enabled, invitations to groups you are already a member in will be shown"
-FSShowLibraryFolder,Boolean,unreviewed,,,Show/hide the Library root folder in the Inventory floater
-FSShowMessageCountInWindowTitle,Boolean,unreviewed,,field `unread_ims_in_window_title`,Displays the number of unread IMs in the application window title.
-FSShowMouselookInstructions,Boolean,unreviewed,,field `show_mouselook_instructions`,"If true, instructions about leaving Mouseview are displayed."
-FSShowMutedChatHistory,Boolean,unreviewed,,,Shows the muted text in nearby chat transcript if enabled.
-FSShowMyOwnVoiceVisualizer,Boolean,unreviewed,,,Show voice visualizer over my own avatar.
-FSShowOnscreenConsole,Boolean,unreviewed,,,Displays the on-screen console
+FSSecondsinChatTimestamps,Boolean,check,,named in chat_log: may be built in,"Show seconds in chat timestamps, in the chat window and logs"
+FSSelectCopyableOnly,Boolean,to-add,low,,Only include copyable objects during selection
+FSSelectIncludeGroupOwned,Boolean,to-add,low,,Includes group-owned objects during selection
+FSSelectLocalSearchEditorOnShortcut,Boolean,to-add,low,,"If enabled, pressing the shortcut for search (CTRL-F) will focus the search field of the active window (if available)."
+FSSelectLockedOnly,Boolean,to-add,low,,Select only objects that are locked
+FSSendTypingState,Boolean,in-aurora,,send_typing_state,Send typing start and typing stop state notifications to other clients.
+FSShowAutoAcceptInventoryInNotifications,Boolean,in-aurora,,auto_accept_inventory_notify,"If enabled, auto-accepted inventory items will be shown in notifications."
+FSShowAutorespondInNametag,Boolean,to-add,low,,Does the user want to see autorespond mode in his own nametag?
+FSShowBackSLURL,Boolean,to-add,low,,Report the SLURL of the region you completed a teleport from
+FSShowChatChannel,Boolean,in-aurora,,show_chat_channel,Shows/Hides the channel selector in the Nearby Chat command line
+FSShowChatRangeSpheres,Boolean,to-add,low,,"Show chat range spheres (whisper, say, shout) in 3D world around avatar"
+FSShowChatType,Boolean,to-add,low,,"Shows/Hides the chat type selector (Whisper, Say, Shout)"
+FSShowConversationVoiceStateIndicator,Boolean,in-aurora,,audio.conversation_voice_indicator,Show the voice state indicator in the conversation floater tabs
+FSShowConvoAndRadarInML,Boolean,to-add,low,,Conversations and Radar windows stays visible when entering mouselook if it was open already.
+FSShowCurrencyBalanceInStatusbar,Boolean,in-aurora,,show_balance,Show the current balance in the statusbar if enabled
+FSShowDisplayNameUpdateNotification,Boolean,in-aurora,,display_name_notices,Show system notifications if somebody changes their display name.
+FSShowDummyAVsinRadar,Boolean,to-add,low,,"If true, shows dummy (preview) avatars in radar."
+FSShowEmojiButton,Boolean,to-add,low,,Show or hide the emoji selection button in chat/IM windows
+FSShowGroupNameLength,S32,to-add,low,,"Max length of group name to be printed in chat (-1 for full group name, 0 for disabled)."
+FSShowGroupTitleInTooltip,Boolean,in-aurora,,hover_tips.group_titles,Shows the group title of an avatar in the tooltip.
+FSShowIMInChatHistory,Boolean,to-add,low,,"If true, IM will also be shown in the nearby chat transcript."
+FSShowIMSendButton,Boolean,to-add,low,,Shows the send chat button in IM session windows
+FSShowInboxFolder,Boolean,to-add,low,,"If enabled, the Received Items folder aka Inbox is shown in the inventory as folder."
+FSShowInterfaceInMouselook,Boolean,in-aurora,,camera.show_interface_in_mouselook,"If true, the Legacy Viewer will show user interface in mouselook mode."
+FSShowInventoryThumbnailTooltips,Boolean,in-aurora,,inventory.thumbnail_tooltips,Shows the inventory item thumbnail as tooltip
+FSShowJoinedGroupInvitations,Boolean,in-aurora,,show_joined_group_invitations,"If enabled, invitations to groups you are already a member in will be shown"
+FSShowLibraryFolder,Boolean,in-aurora,,inventory.show_library,Show/hide the Library root folder in the Inventory floater
+FSShowMessageCountInWindowTitle,Boolean,in-aurora,,unread_ims_in_window_title,Displays the number of unread IMs in the application window title.
+FSShowMouselookInstructions,Boolean,in-aurora,,camera.show_mouselook_instructions,"If true, instructions about leaving Mouseview are displayed."
+FSShowMutedChatHistory,Boolean,to-add,low,,Shows the muted text in nearby chat transcript if enabled.
+FSShowMyOwnVoiceVisualizer,Boolean,in-aurora,,audio.voice_visualizer_self,Show voice visualizer over my own avatar.
+FSShowOnscreenConsole,Boolean,check,,show_chat may cover it,Displays the on-screen console
 FSShowSelectedInBlinnPhong,Boolean,not-listed,,HideFromEditor in the Legacy Viewer,"Show BlinnPhong while selected (non-persistent).This setting is driven by the code, not by user"
-FSShowServerVersionChangeNotice,Boolean,unreviewed,,field `sim_version_alert`,Shows a notice if the simulator version is different after a region crossing or teleport.
-FSShowStatsBarInMouselook,Boolean,unreviewed,,,Makes it so that the statistics bar stays visible when entering mouselook if it was open already.
-FSShowTimestampsIM,Boolean,unreviewed,,field `chat_timestamps_im`,Show timestamps in IM
-FSShowTimestampsNearbyChat,Boolean,unreviewed,,field `chat_timestamps_nearby`,Show timestamps in nearby chat
-FSShowTimestampsTranscripts,Boolean,unreviewed,,,Show timestamps in transcripts
-FSShowToastsInFront,Boolean,unreviewed,,,Show toasts in front of other floaters if enabled
-FSShowTypingStateInNameTag,Boolean,unreviewed,,field `typing_in_name_tags`,Shows in the nametag of an avatar if they are typing
-FSShowUploadPaymentToast,Boolean,unreviewed,,,Show UploadPayment Notifications
-FSShowVoiceVisualizerWithDot,Boolean,unreviewed,,,Shows the voice dot over avatars as part of the voice visualizer.
-FSShowWhitelistReminder,Boolean,unreviewed,,,Show the whitelist reminder on first install.
-FSSkinClobbersColorPrefs,Boolean,unreviewed,,,If enabled the default color scheme for newly selected skins will be overwritten with the user's current selected colors. (default off)
-FSSkinClobbersToolbarPrefs,Boolean,unreviewed,,,If enabled the default toolbar layout for newly selected skins will be overwritten with the user's current layout. (default off)
+FSShowServerVersionChangeNotice,Boolean,in-aurora,,sim_version_alert,Shows a notice if the simulator version is different after a region crossing or teleport.
+FSShowStatsBarInMouselook,Boolean,to-add,low,,Makes it so that the statistics bar stays visible when entering mouselook if it was open already.
+FSShowTimestampsIM,Boolean,in-aurora,,chat_timestamps_im,Show timestamps in IM
+FSShowTimestampsNearbyChat,Boolean,in-aurora,,chat_timestamps_nearby,Show timestamps in nearby chat
+FSShowTimestampsTranscripts,Boolean,to-add,low,,Show timestamps in transcripts
+FSShowToastsInFront,Boolean,to-add,low,,Show toasts in front of other floaters if enabled
+FSShowTypingStateInNameTag,Boolean,in-aurora,,typing_in_name_tags,Shows in the nametag of an avatar if they are typing
+FSShowUploadPaymentToast,Boolean,in-aurora,,imports.show_payment,Show UploadPayment Notifications
+FSShowVoiceVisualizerWithDot,Boolean,in-aurora,,audio.voice_visualizer_dot,Shows the voice dot over avatars as part of the voice visualizer.
+FSShowWhitelistReminder,Boolean,not-applicable,,the Legacy installer's antivirus notice,Show the whitelist reminder on first install.
+FSSkinClobbersColorPrefs,Boolean,not-applicable,,read nowhere in the Legacy sources,If enabled the default color scheme for newly selected skins will be overwritten with the user's current selected colors. (default off)
+FSSkinClobbersToolbarPrefs,Boolean,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)",If enabled the default toolbar layout for newly selected skins will be overwritten with the user's current layout. (default off)
 FSSkinCurrentReadableName,String,not-listed,,HideFromEditor in the Legacy Viewer,The readable name of the currently selected skin.
 FSSkinCurrentThemeReadableName,String,not-listed,,HideFromEditor in the Legacy Viewer,The readable name of the selected theme for the current skin.
-FSSnapshotFrameBorderColor,Color3,unreviewed,,,The color of the border for the Snapshot frame
-FSSnapshotFrameBorderWidth,F32,unreviewed,,,The thickness of the line drawn around the snapshot frame
-FSSnapshotFrameGuideColor,Color3,unreviewed,,,The color of the Snapshot composition guides
-FSSnapshotFrameGuideWidth,F32,unreviewed,,,The thickness of the lines drawn for the composition guides
-FSSnapshotGuideStyle,String,unreviewed,,,The framing guide layout to display inside the snapshot frame
-FSSnapshotGuideVisibility,F32,unreviewed,,,The blend factor used to color the snapshot framing guides
-FSSnapshotLocalFormat,S32,unreviewed,,,"Save snapshots to disk in this format (0 = PNG, 1 = JPEG, 2 = BMP)"
-FSSnapshotLocalNamesWithTimestamps,Boolean,unreviewed,,named in Aurora: aurora-viewer/src/snapshot/mod.rs:207,include a timestamp in the filename when saving snapshots locally
-FSSnapshotShowCaptureFrame,Boolean,unreviewed,,,"If enabled, masks the main screen according to the capture frame."
-FSSnapshotShowGuides,Boolean,unreviewed,,,"If enabled, shows composition guides inside the snapshot frame."
-FSSortAttachmentSpotsAlphabetically,Boolean,unreviewed,,,"Sorts the attachment spots in the ""Attach to"" menus alphabetically"
-FSSortDeferalFrames,U32,unreviewed,,,How many frames after an update should we wait before sorting
-FSSortFSFoldersToTop,Boolean,unreviewed,,named in Aurora: aurora-viewer/src/ui/inventory/view.rs:1177,Sorts the #FS and #RLV folders to the top like system folders.
-FSSoundCacheLocation,String,unreviewed,,,Location for caching sound files (.DSF); Uses default cache directory if empty
-FSSplashScreenHideBlogs,Boolean,unreviewed,,,Hide the blogs section on the splash screen
-FSSplashScreenHideDestinations,Boolean,unreviewed,,,Hide the destinations section on the splash screen
-FSSplashScreenHideTopBar,Boolean,unreviewed,,,Hide the top bar section on the splash screen
-FSSplashScreenNoTransparency,Boolean,unreviewed,,,Disable transparency effects on the splash screen
-FSSplashScreenUseAllCaps,Boolean,unreviewed,,,Enable all caps mode on the splash screen
-FSSplashScreenUseGrayMode,Boolean,unreviewed,,,Enable grayscale mode on the splash screen
-FSSplashScreenUseHighContrast,Boolean,unreviewed,,,Enable high contrast mode on the splash screen
-FSSplashScreenUseLargerFonts,Boolean,unreviewed,,,Use larger fonts on the splash screen
-FSSplitInventorySearchOverTabs,Boolean,unreviewed,,,"If enabled, the search terms for inventory can be entered for each tab individually."
-FSStartupClearBrowserCache,Boolean,unreviewed,,,Clear internal browser cache on next startup.
-FSStatbarLegacyMeanPerSec,Boolean,unreviewed,,,Use legacy period mean per second display for stat bars.
-FSStaticEyesUUID,String,unreviewed,,named in Aurora: aurora-viewer/src/world/lookat.rs:135,"Animation UUID to used to stop idle eye moment (Default is priority 2: 592a9fb4-5e02-77bb-e1e5-da4d17d27336, for priority 5 use: 3f0469e9-b4"
-FSStatisticsNoFocus,Boolean,unreviewed,,,"If enabled, the statistics bar will never gain focus (i.e. from closing another floater)."
-FSStatusBarMenuButtonPopupOnRollover,Boolean,unreviewed,,,"Enable rollover popups on top status bar menu icons: Quick Graphics Presets, Volume, and Media."
-FSStatusBarShowFPS,Boolean,unreviewed,,,"If enabled, shows the current FPS in the main menu bar"
-FSStatusBarShowFPSColors,Boolean,unreviewed,,,"If enabled, display FPS number in a color based on the current status."
-FSStatusBarTimeFormat,String,unreviewed,,field `clock_seconds`,"Which time format to use for the status bar clock, e.g. 12 Hours, 24 Hours, etc. The default ""Language"" restores the original behavior of ch"
-FSStatusbarShowSimulatorVersion,Boolean,unreviewed,,,"If enabled, the simulator version is included in the V1-like statusbar."
-FSStreamList,LLSD,unreviewed,,field `saved_streams`,Saved list of media streams
-FSStreamtitleHistoryLength,U32,unreviewed,,field `stream_title_history`,The maximum number of stream titles shown in the history
-FSSupportGroupChatPrefix3,Boolean,unreviewed,,,Adds (FS 1.2.3) to support group chat
-FSSupportGroupChatPrefixTesting,Boolean,unreviewed,,,Adds (W 56789f* os) to testing group chat
-FSTPHistoryTZ,String,unreviewed,,named in Aurora: aurora-viewer/src/world/tphistory.rs:468,"Select the timezone to be used with Teleport History. ('utc' = Coordinated Universal Time, 'slt' = Second Life Time (default), 'local' = the"
-FSTagShowARW,Boolean,unreviewed,,field `complexity_tags`,"If enabled, the avatar complexity will be shown in the nametag for every avatar."
-FSTagShowDistance,Boolean,unreviewed,,,"If enabled, show distance to other avatars in their nametag."
-FSTagShowDistanceColors,Boolean,unreviewed,,,"If enabled, color other avatars' nametags based on their distance"
-FSTagShowOwnARW,Boolean,unreviewed,,field `tag_complexity`,"If enabled, the avatar complexity for the own avatar will be shown in the nametag."
-FSTagShowTooComplexOnlyARW,Boolean,unreviewed,,field `tag_complexity`,"If enabled, the avatar complexity will be shown in the nametag only for too complex avatars (Jelly Dolls)"
-FSTeleportHistoryShowDate,Boolean,unreviewed,,,Shows the exact date and time in the teleport history.
-FSTeleportHistoryShowPosition,Boolean,unreviewed,,,Shows the local position within a region in the teleport history.
-FSTeleportToOffsetLateral,F32,unreviewed,,named in Aurora: aurora-viewer/src/app/chat_commands.rs:207,Horizontal distance from the target avatar that is used for teleporting to them.
-FSTeleportToOffsetVertical,F32,unreviewed,,,Vertical distance from the target avatar that is used for teleporting to them.
-FSTempDerenderUntilTeleport,Boolean,unreviewed,,named in Aurora: aurora-viewer/src/world/derender.rs:11,"If enabled, temporary derendered objects will stay derendered until teleport. If disabled, they stay derendered until the end of the session"
-FSTextureDefaultSaveAsFormat,Boolean,unreviewed,,,"The default ""save as"" format for textures, in the texture preview floater or context menu in inventory. False: TGA, True: PNG."
-FSToolbarsResetOnModeChange,Boolean,unreviewed,,,If enabled the user's current toolbar layout for newly selected modes will be overwritten with the default one for a mode. (default on)
-FSToolboxExpanded,Boolean,unreviewed,,field `expanded`,Whether to show additional build tool controls
-FSTrimLegacyNames,Boolean,unreviewed,,field `use_display_names`,"Trim ""Resident"" from Legacy Names."
-FSTurnAvatarToSelectedObject,Boolean,unreviewed,,,"If enabled, the avatar turns towards an selected object"
-FSTypeDuringEmote,Boolean,unreviewed,,field `type_during_emote`,Enables the typing animation even while emoting
-FSTypingChevronPrefix,Boolean,unreviewed,,field `typing_chevron`,Adds an additional chevron prefix to the IM window as typing indicator
-FSUndeformUUID,String,unreviewed,,named in Aurora: aurora-viewer/src/app/avatar_health.rs:6,Animation UUID to use for the undeform
-FSUnfocusChatHistoryOnReturn,Boolean,unreviewed,,,De-focus chat history after sending a message
-FSUnlinkConfirmEnabled,Boolean,unreviewed,,,Unlink confirmation dialog functionality enabled?
-FSUploadAnimationOnOwnAvatar,Boolean,unreviewed,,,"Uploading an animation preview on own avatar if set to true, preview on dummy if false. Both plays only on the local machine."
-FSUseAis3Api,Boolean,unreviewed,,,Option to disable the use of the AISv3 inventory API. NOTE: This setting has NO EFFECT in Second Life!
-FSUseAltOOC,Boolean,unreviewed,,,Set to TRUE to use the keyboard shortcut Alt+Enter to send ((OOC)) messages to Nearby Chat.
-FSUseAntiSpamMine,Boolean,unreviewed,,,Use the Anti-Spam System even for the user's own objects
-FSUseBWEmojis,Boolean,unreviewed,,,Use Black and White Emojis.
-FSUseBuiltInHistory,Boolean,unreviewed,,,Open the conversation transcript in the built in log viewer.
-FSUseChatMentionAutoComplete,Boolean,unreviewed,,field `chat_mention_autocomplete`,Enable auto-completion when typing @ mentions in chat.
-FSUseCompactEnvironmentFloaters,Boolean,unreviewed,,,"If enabled, use custom compact floaters to edit environment settings."
-FSUseCtrlShout,Boolean,unreviewed,,,Set to TRUE to use the keyboard shortcut Ctrl+Enter to Shout in Nearby Chat.
-FSUseFSLegacySearch,Boolean,unreviewed,,,Uses the Legacy Viewer's legacy search if enabled - the Linden Lab version instead if disabled
-FSUseLegacyClienttags,U32,unreviewed,,,"0=Off, 1=Local Client tags, 2=Download Client tags (needs relog)"
-FSUseLegacyCursors,Boolean,unreviewed,,,Use 1.x style cursors instead
-FSUseLegacyInventoryAcceptMessages,Boolean,unreviewed,,,"If enabled, the viewer will send accept/decline response for inventory offers after the according button has been pressed and not if the ite"
-FSUseLegacyLoginPanel,Boolean,unreviewed,,,"If enabled, the legacy layout version of the login panel will be used"
-FSUseLegacyObjectProperties,Boolean,unreviewed,,,"If enabled, the legacy object profile floater will be used when opening object properties."
-FSUseLegacyUnsupportedHardwareChecks,Boolean,unreviewed,,,"If enabled, the Legacy Viewer will perform utterly pointless checks that probably made sense in 2004."
-FSUseNearbyChatConsole,Boolean,unreviewed,,,Display popup chat embedded into the read-only world console (v1-style) instead of overlayed floaters (v2-style)
-FSUseNewRegionRestartNotification,Boolean,unreviewed,,field `show_alert`,Use the new region restart notification instead of the old one with toasts
-FSUsePrettyEmojiButton,Boolean,unreviewed,,,Use an emoji for the emoji button.
-FSUseReadOfflineMsgsCap,Boolean,unreviewed,,,"If enabled, use the ReadOfflineMsgsCap to request offline messages at login"
-FSUseShiftWhisper,Boolean,unreviewed,,,Set to TRUE to use the keyboard shortcut Shift+Enter to Whisper in Nearby Chat.
-FSUseSingleLineChatEntry,Boolean,unreviewed,,,Use single line chat entry instead of auto-expanding chat entry
-FSUseSmallCameraFloater,Boolean,unreviewed,,,"If enabled, the camera floater will be smaller and not contain the camera preset controls."
-FSUseStandaloneBlocklistFloater,Boolean,unreviewed,,,"If enabled, the Legacy Viewer will use a standalone floater for the blocklist."
-FSUseStandaloneGroupFloater,Boolean,unreviewed,,,"If enabled, the Legacy Viewer will use a standalone floater for each group profile."
-FSUseStandalonePlaceDetailsFloater,Boolean,unreviewed,,field `standalone_place_details`,"If enabled, the Legacy Viewer will use a standalone floater for each landmark details, teleport history details and parcel details view."
-FSUseStandaloneTeleportHistoryFloater,Boolean,unreviewed,,,"If enabled, the Legacy Viewer will use a standalone floater for the teleport history view."
-FSUseStatsInsteadOfLagMeter,Boolean,unreviewed,,,"Clicking on traffic indicator (upper right) toggles Statistics window, not the Lag Meter window"
-FSUseV2Friends,Boolean,unreviewed,,,Makes Comm->Friends and Comm->Groups open the v2 based windows.
+FSSnapshotFrameBorderColor,Color3,to-add,low,,The color of the border for the Snapshot frame
+FSSnapshotFrameBorderWidth,F32,to-add,low,,The thickness of the line drawn around the snapshot frame
+FSSnapshotFrameGuideColor,Color3,to-add,low,,The color of the Snapshot composition guides
+FSSnapshotFrameGuideWidth,F32,to-add,low,,The thickness of the lines drawn for the composition guides
+FSSnapshotGuideStyle,String,in-aurora,,snapshot.guide,The framing guide layout to display inside the snapshot frame
+FSSnapshotGuideVisibility,F32,to-add,low,,The blend factor used to color the snapshot framing guides
+FSSnapshotLocalFormat,S32,in-aurora,,snapshot.format,"Save snapshots to disk in this format (0 = PNG, 1 = JPEG, 2 = BMP)"
+FSSnapshotLocalNamesWithTimestamps,Boolean,in-aurora,,snapshot.timestamp_names,include a timestamp in the filename when saving snapshots locally
+FSSnapshotShowCaptureFrame,Boolean,check,,snapshot.viewfinder may cover it,"If enabled, masks the main screen according to the capture frame."
+FSSnapshotShowGuides,Boolean,in-aurora,,snapshot.guide,"If enabled, shows composition guides inside the snapshot frame."
+FSSortAttachmentSpotsAlphabetically,Boolean,to-add,low,,"Sorts the attachment spots in the ""Attach to"" menus alphabetically"
+FSSortDeferalFrames,U32,not-applicable,,a throttle of the Legacy interface,How many frames after an update should we wait before sorting
+FSSortFSFoldersToTop,Boolean,check,,named in ui/inventory: may be built in,Sorts the #FS and #RLV folders to the top like system folders.
+FSSoundCacheLocation,String,not-applicable,,Aurora keeps every asset in its own cache,Location for caching sound files (.DSF); Uses default cache directory if empty
+FSSplashScreenHideBlogs,Boolean,not-applicable,,the Legacy Viewer's web splash page,Hide the blogs section on the splash screen
+FSSplashScreenHideDestinations,Boolean,not-applicable,,the Legacy Viewer's web splash page,Hide the destinations section on the splash screen
+FSSplashScreenHideTopBar,Boolean,not-applicable,,the Legacy Viewer's web splash page,Hide the top bar section on the splash screen
+FSSplashScreenNoTransparency,Boolean,not-applicable,,the Legacy Viewer's web splash page,Disable transparency effects on the splash screen
+FSSplashScreenUseAllCaps,Boolean,not-applicable,,the Legacy Viewer's web splash page,Enable all caps mode on the splash screen
+FSSplashScreenUseGrayMode,Boolean,not-applicable,,the Legacy Viewer's web splash page,Enable grayscale mode on the splash screen
+FSSplashScreenUseHighContrast,Boolean,not-applicable,,the Legacy Viewer's web splash page,Enable high contrast mode on the splash screen
+FSSplashScreenUseLargerFonts,Boolean,not-applicable,,the Legacy Viewer's web splash page,Use larger fonts on the splash screen
+FSSplitInventorySearchOverTabs,Boolean,in-aurora,,inventory.separate_searches,"If enabled, the search terms for inventory can be entered for each tab individually."
+FSStartupClearBrowserCache,Boolean,to-add,low,,Clear internal browser cache on next startup.
+FSStatbarLegacyMeanPerSec,Boolean,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)",Use legacy period mean per second display for stat bars.
+FSStaticEyesUUID,String,fixed,,the animation id is built in (world/lookat.rs),"Animation UUID to used to stop idle eye moment (Default is priority 2: 592a9fb4-5e02-77bb-e1e5-da4d17d27336, for priority 5 use: 3f0469e9-b4"
+FSStatisticsNoFocus,Boolean,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)","If enabled, the statistics bar will never gain focus (i.e. from closing another floater)."
+FSStatusBarMenuButtonPopupOnRollover,Boolean,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)","Enable rollover popups on top status bar menu icons: Quick Graphics Presets, Volume, and Media."
+FSStatusBarShowFPS,Boolean,in-aurora,,system_island.fps,"If enabled, shows the current FPS in the main menu bar"
+FSStatusBarShowFPSColors,Boolean,to-add,low,,"If enabled, display FPS number in a color based on the current status."
+FSStatusBarTimeFormat,String,in-aurora,,system_island.clock_format,"Which time format to use for the status bar clock, e.g. 12 Hours, 24 Hours, etc. The default ""Language"" restores the original behavior of ch"
+FSStatusbarShowSimulatorVersion,Boolean,to-add,low,,"If enabled, the simulator version is included in the V1-like statusbar."
+FSStreamList,LLSD,in-aurora,,"audio.saved_streams (a list, not listed in Debug Settings)",Saved list of media streams
+FSStreamtitleHistoryLength,U32,in-aurora,,audio.stream_title_history,The maximum number of stream titles shown in the history
+FSSupportGroupChatPrefix3,Boolean,not-applicable,,the Legacy Viewer's support groups,Adds (FS 1.2.3) to support group chat
+FSSupportGroupChatPrefixTesting,Boolean,not-applicable,,the Legacy Viewer's support groups,Adds (W 56789f* os) to testing group chat
+FSTPHistoryTZ,String,check,,named in world/tphistory: may be built in,"Select the timezone to be used with Teleport History. ('utc' = Coordinated Universal Time, 'slt' = Second Life Time (default), 'local' = the"
+FSTagShowARW,Boolean,in-aurora,,tag_complexity,"If enabled, the avatar complexity will be shown in the nametag for every avatar."
+FSTagShowDistance,Boolean,to-add,low,,"If enabled, show distance to other avatars in their nametag."
+FSTagShowDistanceColors,Boolean,to-add,low,,"If enabled, color other avatars' nametags based on their distance"
+FSTagShowOwnARW,Boolean,in-aurora,,tag_complexity_own,"If enabled, the avatar complexity for the own avatar will be shown in the nametag."
+FSTagShowTooComplexOnlyARW,Boolean,in-aurora,,tag_complexity_too_complex_only,"If enabled, the avatar complexity will be shown in the nametag only for too complex avatars (Jelly Dolls)"
+FSTeleportHistoryShowDate,Boolean,to-add,low,,Shows the exact date and time in the teleport history.
+FSTeleportHistoryShowPosition,Boolean,to-add,low,,Shows the local position within a region in the teleport history.
+FSTeleportToOffsetLateral,F32,check,,named in chat commands: may be built in,Horizontal distance from the target avatar that is used for teleporting to them.
+FSTeleportToOffsetVertical,F32,check,,may be built in with the lateral offset,Vertical distance from the target avatar that is used for teleporting to them.
+FSTempDerenderUntilTeleport,Boolean,check,,named in world/derender: may be built in,"If enabled, temporary derendered objects will stay derendered until teleport. If disabled, they stay derendered until the end of the session"
+FSTextureDefaultSaveAsFormat,Boolean,to-add,low,,"The default ""save as"" format for textures, in the texture preview floater or context menu in inventory. False: TGA, True: PNG."
+FSToolbarsResetOnModeChange,Boolean,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)",If enabled the user's current toolbar layout for newly selected modes will be overwritten with the default one for a mode. (default on)
+FSToolboxExpanded,Boolean,in-aurora,,build.expanded,Whether to show additional build tool controls
+FSTrimLegacyNames,Boolean,in-aurora,,trim_resident,"Trim ""Resident"" from Legacy Names."
+FSTurnAvatarToSelectedObject,Boolean,to-add,low,,"If enabled, the avatar turns towards an selected object"
+FSTypeDuringEmote,Boolean,in-aurora,,type_during_emote,Enables the typing animation even while emoting
+FSTypingChevronPrefix,Boolean,in-aurora,,typing_chevron,Adds an additional chevron prefix to the IM window as typing indicator
+FSUndeformUUID,String,fixed,,the animation id is built in (app/avatar_health),Animation UUID to use for the undeform
+FSUnfocusChatHistoryOnReturn,Boolean,to-add,low,,De-focus chat history after sending a message
+FSUnlinkConfirmEnabled,Boolean,to-add,low,,Unlink confirmation dialog functionality enabled?
+FSUploadAnimationOnOwnAvatar,Boolean,in-aurora,,imports.preview_on_avatar,"Uploading an animation preview on own avatar if set to true, preview on dummy if false. Both plays only on the local machine."
+FSUseAis3Api,Boolean,to-add,low,OpenSim only,Option to disable the use of the AISv3 inventory API. NOTE: This setting has NO EFFECT in Second Life!
+FSUseAltOOC,Boolean,to-add,low,,Set to TRUE to use the keyboard shortcut Alt+Enter to send ((OOC)) messages to Nearby Chat.
+FSUseAntiSpamMine,Boolean,in-aurora,,anti_spam.own_objects,Use the Anti-Spam System even for the user's own objects
+FSUseBWEmojis,Boolean,to-add,low,,Use Black and White Emojis.
+FSUseBuiltInHistory,Boolean,to-add,low,,Open the conversation transcript in the built in log viewer.
+FSUseChatMentionAutoComplete,Boolean,in-aurora,,chat_mention_autocomplete,Enable auto-completion when typing @ mentions in chat.
+FSUseCompactEnvironmentFloaters,Boolean,check,,may be covered by the Aurora or Legacy style of a window,"If enabled, use custom compact floaters to edit environment settings."
+FSUseCtrlShout,Boolean,to-add,low,,Set to TRUE to use the keyboard shortcut Ctrl+Enter to Shout in Nearby Chat.
+FSUseFSLegacySearch,Boolean,check,,classic_search may cover it,Uses the Legacy Viewer's legacy search if enabled - the Linden Lab version instead if disabled
+FSUseLegacyClienttags,U32,check,,client tags: needs a product decision,"0=Off, 1=Local Client tags, 2=Download Client tags (needs relog)"
+FSUseLegacyCursors,Boolean,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)",Use 1.x style cursors instead
+FSUseLegacyInventoryAcceptMessages,Boolean,to-add,low,,"If enabled, the viewer will send accept/decline response for inventory offers after the according button has been pressed and not if the ite"
+FSUseLegacyLoginPanel,Boolean,check,,may be covered by the Aurora or Legacy style of a window,"If enabled, the legacy layout version of the login panel will be used"
+FSUseLegacyObjectProperties,Boolean,check,,may be covered by the Aurora or Legacy style of a window,"If enabled, the legacy object profile floater will be used when opening object properties."
+FSUseLegacyUnsupportedHardwareChecks,Boolean,not-applicable,,hardware checks the Legacy Viewer itself calls pointless,"If enabled, the Legacy Viewer will perform utterly pointless checks that probably made sense in 2004."
+FSUseNearbyChatConsole,Boolean,check,,show_chat may cover it,Display popup chat embedded into the read-only world console (v1-style) instead of overlayed floaters (v2-style)
+FSUseNewRegionRestartNotification,Boolean,in-aurora,,region_restart.show_alert,Use the new region restart notification instead of the old one with toasts
+FSUsePrettyEmojiButton,Boolean,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)",Use an emoji for the emoji button.
+FSUseReadOfflineMsgsCap,Boolean,check,,the protocol follows the Legacy Viewer: check which way Aurora asks,"If enabled, use the ReadOfflineMsgsCap to request offline messages at login"
+FSUseShiftWhisper,Boolean,to-add,low,,Set to TRUE to use the keyboard shortcut Shift+Enter to Whisper in Nearby Chat.
+FSUseSingleLineChatEntry,Boolean,to-add,low,,Use single line chat entry instead of auto-expanding chat entry
+FSUseSmallCameraFloater,Boolean,check,,may be covered by the Aurora or Legacy style of a window,"If enabled, the camera floater will be smaller and not contain the camera preset controls."
+FSUseStandaloneBlocklistFloater,Boolean,check,,may be covered by the Aurora or Legacy style of a window,"If enabled, the Legacy Viewer will use a standalone floater for the blocklist."
+FSUseStandaloneGroupFloater,Boolean,check,,may be covered by the Aurora or Legacy style of a window,"If enabled, the Legacy Viewer will use a standalone floater for each group profile."
+FSUseStandalonePlaceDetailsFloater,Boolean,in-aurora,,standalone_place_details,"If enabled, the Legacy Viewer will use a standalone floater for each landmark details, teleport history details and parcel details view."
+FSUseStandaloneTeleportHistoryFloater,Boolean,check,,may be covered by the Aurora or Legacy style of a window,"If enabled, the Legacy Viewer will use a standalone floater for the teleport history view."
+FSUseStatsInsteadOfLagMeter,Boolean,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)","Clicking on traffic indicator (upper right) toggles Statistics window, not the Lag Meter window"
+FSUseV2Friends,Boolean,check,,classic_people may cover it,Makes Comm->Friends and Comm->Groups open the v2 based windows.
 FSVolumeControlsPanelOpen,Boolean,not-listed,,HideFromEditor in the Legacy Viewer,Internal control for visibility of volume control panel.
-FSWearableFavoritesSortOrder,U32,unreviewed,,,The sort order for the wearable favorites item list
-FSWorldMapDoubleclickTeleport,Boolean,unreviewed,,field `world_double_click_tp`,"If enabled, double click teleports on the world map will be enabled (default)."
-FSdataQAtest,Boolean,unreviewed,,,Enable testing fsdata instead of the normal fsdata
-FSllOwnerSayToScriptDebugWindowRouting,U32,unreviewed,,,"Routing options for FSllOwnerSayToScriptDebugWindow (0 = both tabs, 1 = only object's own tab, 2 = only [ALL SCRIPTS] tab). Errors will stil"
+FSWearableFavoritesSortOrder,U32,to-add,low,comes with wearable favorites,The sort order for the wearable favorites item list
+FSWorldMapDoubleclickTeleport,Boolean,in-aurora,,maps.world_double_click_tp,"If enabled, double click teleports on the world map will be enabled (default)."
+FSdataQAtest,Boolean,not-applicable,,the Legacy Viewer's own data service,Enable testing fsdata instead of the normal fsdata
+FSllOwnerSayToScriptDebugWindowRouting,U32,check,,script_editor.owner_say_debug may cover it,"Routing options for FSllOwnerSayToScriptDebugWindow (0 = both tabs, 1 = only object's own tab, 2 = only [ALL SCRIPTS] tab). Errors will stil"
 FakeInitialOutfitName,String,unreviewed,,,Pretend that this is first time login and specified name was chosen
 FastCacheFetchEnabled,Boolean,unreviewed,,,Enable texture fast cache fetching if set
 FilterItemsMaxTimePerFrameVisible,S32,unreviewed,,,Max time devoted to items filtering per frame for visible inventory listings (in milliseconds)
