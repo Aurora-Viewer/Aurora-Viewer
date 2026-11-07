@@ -403,13 +403,13 @@ pub(crate) fn area<R>(ctx: &egui::Context, p: &Palette, name: &'static str, rect
 /// The account's picture.
 const DISC: f32 = 22.0;
 
-fn balance_galley(ui: &egui::Ui, p: &Palette, st: &StatusInfo) -> Option<std::sync::Arc<egui::Galley>> {
+fn balance_galley(ui: &egui::Ui, st: &StatusInfo) -> Option<std::sync::Arc<egui::Galley>> {
     let font = FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
     st.balance.filter(|_| st.show_balance).map(|b| {
         ui.painter().layout_no_wrap(
             format!("{} {}", aurora_i18n::integer(i64::from(b)), aurora_i18n::currency()),
             font,
-            p.ink,
+            st.balance_ink,
         )
     })
 }
@@ -420,14 +420,14 @@ fn account_slot_width(balance: Option<&std::sync::Arc<egui::Galley>>) -> f32 {
 }
 
 fn account_width(ui: &egui::Ui, p: &Palette, st: &StatusInfo) -> f32 {
-    PAD * 2.0 + account_slot_width(balance_galley(ui, p, st).as_ref())
+    PAD * 2.0 + account_slot_width(balance_galley(ui, st).as_ref())
 }
 
 /// The account island: our picture with the online status on it (a click
 /// opens the status menu), the balance (a click buys L$). A right click on
 /// either shows or hides the balance (#1340): hidden, the picture stays.
 fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action: &mut BarAction) {
-    let balance = balance_galley(ui, p, st);
+    let balance = balance_galley(ui, st);
     let w = account_slot_width(balance.as_ref());
     let rect = Rect::from_min_size(Pos2::new(island.left() + PAD, island.center().y - SLOT / 2.0), Vec2::new(w, SLOT));
     let disc = Rect::from_center_size(Pos2::new(rect.left() + 4.0 + DISC / 2.0, rect.center().y), Vec2::splat(DISC));
@@ -453,7 +453,7 @@ fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action
     crate::ui::presence::paint_mark(ui.painter(), dot, 3.0, status_shape(&st.status), col, p.bar);
     if let Some(g) = balance {
         let size = g.size();
-        crate::ui::widgets::paint_ink_left(ui.painter(), g, Pos2::new(disc.right() + 6.0, rect.center().y), p.ink);
+        crate::ui::widgets::paint_ink_left(ui.painter(), g, Pos2::new(disc.right() + 6.0, rect.center().y), st.balance_ink);
         let anchor = crate::ui::balance_gains::Anchor {
             right: disc.right() + 6.0 + size.x,
             text_top: rect.center().y - size.y / 2.0,
@@ -1141,6 +1141,7 @@ mod tests {
             balance: Some(1000),
             show_balance: true,
             balance_gains: Vec::new(),
+            balance_ink: crate::theme::Theme::default().palette().ink,
             balance_highlight: true,
             voice: (crate::voice::VoiceLight::Off, String::new()),
             slurl: String::new(),

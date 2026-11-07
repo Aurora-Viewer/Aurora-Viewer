@@ -15421,6 +15421,9 @@ impl App {
                 let balance = self
                     .balance_gains
                     .update(self.world.balance, shown, self.settings.reduce_motion, now);
+                if self.balance_gains.animating() {
+                    self.egui_ctx.request_repaint();
+                }
                 let status = ui::bars::StatusInfo {
                     location_hidden: self.world.rlva.has("showloc"),
                     show_bug_report: if self.demo {
@@ -15450,6 +15453,7 @@ impl App {
                     flying: self.world.agent.flying,
                     seated: self.world.agent.is_sitting(),
                     ping_ms: self.net.stats.ping_ms.load(std::sync::atomic::Ordering::Relaxed),
+                    balance_ink: ui::balance_gains::ink(&self.palette, balance.flash),
                     balance: balance.balance,
                     show_balance,
                     balance_gains: balance.rows,

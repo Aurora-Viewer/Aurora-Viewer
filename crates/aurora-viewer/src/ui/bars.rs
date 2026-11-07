@@ -235,6 +235,8 @@ pub struct StatusInfo<'a> {
     pub show_balance: bool,
     /// The L$ gained and spent, under the balance.
     pub balance_gains: Vec<super::balance_gains::GainRow>,
+    /// The balance's colour this frame: it flashes when L$ spent land.
+    pub balance_ink: Color32,
     /// The switch of those rows, for the balance's menu.
     pub balance_highlight: bool,
     /// Voice connection light and its explanation.
@@ -1990,7 +1992,10 @@ pub fn top_bars(
                     if let Some(b) = st.balance.filter(|_| st.show_balance) {
                         // a click opens the L$ purchase, a right click hides it
                         let balance = ui
-                            .add(egui::Label::new(small(format!("{b} {}", aurora_i18n::currency()), p.ink)).sense(egui::Sense::click()))
+                            .add(
+                                egui::Label::new(small(format!("{b} {}", aurora_i18n::currency()), st.balance_ink))
+                                    .sense(egui::Sense::click()),
+                            )
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
                             .on_hover_text(aurora_i18n::tr!("ui-bars-balance-click-to-buy-l"));
                         if balance.clicked() {
