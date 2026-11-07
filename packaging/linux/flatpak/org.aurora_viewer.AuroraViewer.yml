@@ -15,6 +15,10 @@ finish-args:
   - --device=all
   - --talk-name=org.freedesktop.Notifications
   - --talk-name=org.freedesktop.secrets
+  # A SLURL opened while the viewer runs goes to it over the session bus
+  # (slurl_handoff.rs), like the Legacy Viewer's GoSLURL hand-over: the
+  # sandbox denies owning names by default, so the hand-off gets its own.
+  - --own-name=org.aurora_viewer.AuroraViewer
 modules:
   - name: aurora-viewer
     buildsystem: simple
