@@ -223,12 +223,18 @@ impl Role {
         if !k.relation_names {
             return p.ink;
         }
+        // a tag that would not read on a light interface moves, and further
+        // than on a window: the plate is glass, so the world darkens it
+        let on_plate = |tag: Color32| {
+            let moved = crate::interface_colors::on_panel(tag);
+            if moved == tag { tag } else { moved.lerp_to_gamma(p.ink, 0.5) }
+        };
         match self {
             Role::Resident => p.ink,
-            Role::Own => c(k.tag_me),
-            Role::Friend => c(k.tag_friend),
-            Role::Linden => c(k.tag_linden),
-            Role::Blocked => c(k.tag_muted),
+            Role::Own => on_plate(c(k.tag_me)),
+            Role::Friend => on_plate(c(k.tag_friend)),
+            Role::Linden => on_plate(c(k.tag_linden)),
+            Role::Blocked => on_plate(c(k.tag_muted)),
         }
     }
 }
