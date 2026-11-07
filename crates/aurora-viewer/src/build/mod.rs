@@ -24,6 +24,7 @@ pub mod grab;
 pub mod hud_drag;
 pub mod land;
 pub mod layout;
+mod linking;
 pub mod manip;
 mod material_preview;
 pub mod materials;
@@ -329,19 +330,6 @@ pub fn copyable_object(world: &World, idx: usize) -> bool {
             .objects
             .get(root_of(world, idx))
             .is_some_and(|root| root.update_flags & OBJECT_COPY != 0)
-}
-
-/// LLSelectMgr::enableLinkObjects: two roots or more, one of them
-/// modifiable and not a permanent (pathfinding) object.
-pub fn link_allowed(world: &World, roots: &[usize]) -> bool {
-    use crate::ui::context::flags::{AFFECTS_NAVMESH, OBJECT_MODIFY};
-    roots.len() >= 2
-        && roots.iter().any(|&r| {
-            world
-                .objects
-                .get(r)
-                .is_some_and(|o| o.update_flags & OBJECT_MODIFY != 0 && o.update_flags & AFFECTS_NAVMESH == 0)
-        })
 }
 
 /// SelectOwnedOnly / SelectMovableOnly in LLSelectMgr::canSelectObject
@@ -796,6 +784,10 @@ pub struct BuildTool {
     pub selection_linked: bool,
     /// Ordered link instruction awaiting confirmed simulator parents.
     pending_link: Option<(Vec<Uuid>, Instant)>,
+    /// Mesh-header estimates refreshed from the scene before editor input.
+    link_triangles: HashMap<Uuid, f32>,
+    /// Full property replies received since each root was selected.
+    link_properties: HashSet<Uuid>,
     /// Unlink awaiting the simulator's new roots.
     pending_unlink: Option<PendingUnlink>,
     /// ObjectProperties of selected objects.
@@ -855,6 +847,8 @@ impl Default for BuildTool {
             menu_selection: false,
             selection_linked: false,
             pending_link: None,
+            link_triangles: HashMap::new(),
+            link_properties: HashSet::new(),
             pending_unlink: None,
             props: HashMap::new(),
             cam: Cam::default(),
@@ -1268,6 +1262,13 @@ impl BuildTool {
             .filter_map(|&i| Self::unit_of(world, i, s.edit_linked))
             .filter(|u| seen.insert(*u))
             .collect();
+        for id in units
+            .iter()
+            .filter_map(|key| world.objects.index_of(key))
+            .filter_map(|i| world.objects.get(root_of(world, i)).map(|o| o.full_id))
+        {
+            self.link_properties.remove(&id);
+        }
         // one ObjectSelect per region and 254 prims (sendListToRegions)
         for (handle, ids) in self.wire_ids(world, &units, self.selection_linked) {
             self.send(BuildCmd::Select { handle, local_ids: ids });
@@ -1279,10 +1280,26 @@ impl BuildTool {
     /// open (LLToolPie::handleRightClickPick -> LLToolSelect::handleObjectSelection
     /// with temp_select). Returns whether something got selected.
     pub fn select_for_menu(&mut self, world: &mut World, s: &BuildSettings, idx: usize) -> bool {
+        self.select_for_menu_with(world, s, idx, false)
+    }
+
+    /// Whether a right click extends the selection: Shift alone or Ctrl
+    /// alone, nothing else held (`pick.mKeyMask == MASK_SHIFT ||
+    /// pick.mKeyMask == MASK_CONTROL` in
+    /// LLToolSelect::handleObjectSelection).
+    pub fn menu_extends(shift: bool, ctrl: bool, alt: bool) -> bool {
+        shift != ctrl && !alt
+    }
+
+    /// As [`Self::select_for_menu`], with the click's modifiers: Shift or
+    /// Ctrl alone adds the object to the selection or takes it out
+    /// (`extend_select` in LLToolSelect::handleObjectSelection, which
+    /// LLToolPie::handleRightClickPick calls with the click's mask).
+    pub fn select_for_menu_with(&mut self, world: &mut World, s: &BuildSettings, idx: usize, extend: bool) -> bool {
         if Self::unit_of(world, idx, s.edit_linked).is_none() {
             return false;
         }
-        self.click_select(world, s, Some(idx), false);
+        self.click_select(world, s, Some(idx), extend);
         if !self.open {
             self.menu_selection = true;
         }
@@ -1302,6 +1319,14 @@ impl BuildTool {
             return;
         }
         self.selection.insert(0, unit);
+        if let Some(id) = world
+            .objects
+            .index_of(&unit)
+            .and_then(|i| world.objects.get(root_of(world, i)))
+            .map(|o| o.full_id)
+        {
+            self.link_properties.remove(&id);
+        }
         for (handle, ids) in self.wire_ids(world, &[unit], self.selection_linked) {
             self.send(BuildCmd::Select { handle, local_ids: ids });
         }
@@ -1342,13 +1367,24 @@ impl BuildTool {
         }
     }
 
+    /// What a menu entry that works on the selection acts on, for a menu
+    /// opened on object `idx`: every selected linkset when `idx` is one of
+    /// them (derenderObject takes each root of the selection), else only
+    /// `idx`'s own linkset.
+    pub fn menu_roots(&self, world: &World, idx: usize) -> Vec<usize> {
+        let roots = self.roots(world);
+        let own = root_of(world, idx);
+        if roots.contains(&own) { roots } else { vec![own] }
+    }
+
     /// Selected roots (whole linksets), latest first.
     pub fn roots(&self, world: &World) -> Vec<usize> {
         let mut out = Vec::new();
+        let mut seen = HashSet::new();
         for key in &self.selection {
             if let Some(idx) = world.objects.index_of(key) {
                 let r = root_of(world, idx);
-                if !out.contains(&r) {
+                if seen.insert(r) {
                     out.push(r);
                 }
             }
@@ -1401,11 +1437,6 @@ impl BuildTool {
             return Vec::new();
         }
         self.roots(world).into_iter().filter(|&r| copyable_object(world, r)).collect()
-    }
-
-    /// The toolbar's Link: the context menu's rule, outside attachments.
-    pub fn can_link(&self, world: &World) -> bool {
-        !self.attachment_selected(world) && link_allowed(world, &self.roots(world))
     }
 
     /// LLSelectMgr::enableUnlinkObjects: a selected prim we may modify,
@@ -1674,50 +1705,6 @@ impl BuildTool {
         }
     }
 
-    /// Ctrl+L: link the selected linksets; the last selected becomes the root.
-    pub fn link(&mut self, world: &mut World) {
-        if self.attachment_selected(world) {
-            return;
-        }
-        let roots = self.roots(world);
-        if roots.len() < 2 {
-            self.status = aurora_i18n::tr!("build-mod-select-at-least-two-objects-to-link").into();
-            return;
-        }
-        if !link_allowed(world, &roots) {
-            return;
-        }
-        let first = world.objects.get(roots[0]).map(|o| (o.key.region, o.owner_id));
-        let same = roots
-            .iter()
-            .all(|&r| world.objects.get(r).map(|o| (o.key.region, o.owner_id)) == first);
-        if !same {
-            self.status = aurora_i18n::tr!("build-mod-objects-to-link-must-have-the-same-owner-and").into();
-            return;
-        }
-        let total: usize = roots.iter().map(|&r| family(world, r).len()).sum();
-        if total > 256 {
-            self.status = aurora_i18n::tr!("build-mod-too-many-prims-in-a-single-object-256", total = format!("{}", total));
-            return;
-        }
-        let Some((handle, _)) = first else { return };
-        let ids: Vec<u32> = roots.iter().filter_map(|&r| world.objects.get(r).map(|o| o.key.local_id)).collect();
-        // New children precede the root's existing children (ObjectLink).
-        // Retain this instruction only after all simulator parents agree,
-        // so reordered UDP packets cannot redefine the newly created links.
-        let mut expected = vec![roots[0]];
-        expected.extend(roots.iter().skip(1).flat_map(|&r| family(world, r)));
-        expected.extend(family(world, roots[0]).into_iter().skip(1));
-        let members = expected
-            .into_iter()
-            .filter_map(|i| world.objects.get(i).map(|o| o.full_id))
-            .collect();
-        self.pending_link = Some((members, Instant::now()));
-        self.send(BuildCmd::Link { handle, local_ids: ids });
-        self.status = aurora_i18n::tr!("build-link-pending").into();
-        self.costs_stale();
-    }
-
     /// Ctrl+Shift+L: every selected prim (SEND_INDIVIDUALS).
     pub fn unlink(&mut self, world: &mut World) {
         if self.attachment_selected(world) {
@@ -1905,16 +1892,40 @@ impl BuildTool {
         }
     }
 
-    pub fn on_properties(&mut self, props: Vec<ObjectProps>) {
+    /// Shared full/family reply merge. A pinned single-object profile has
+    /// no world selection to trim and only receives its own UUID's replies.
+    pub(crate) fn merge_properties(&mut self, props: Vec<ObjectProps>) {
         for p in props {
             // the family reply has no creator: keep a full one we already have
             if !p.full && self.props.get(&p.object_id).is_some_and(|o| o.full) {
                 continue;
             }
+            if p.full {
+                self.link_properties.insert(p.object_id);
+            }
             self.props.insert(p.object_id, p);
         }
-        if self.props.len() > 4096 {
-            self.props.clear();
+    }
+
+    pub fn on_properties(&mut self, world: &World, props: Vec<ObjectProps>) {
+        // Retain the active selection and this reply when trimming the cache.
+        // Clearing everything used to lose the first property replies of a
+        // large OpenSim selection before the remaining replies could arrive.
+        let trim = self.props.len().saturating_add(props.len()) > 4096;
+        let keep: HashSet<_> = if trim {
+            self.roots(world)
+                .into_iter()
+                .flat_map(|root| linking::members(world, root))
+                .filter_map(|i| world.objects.get(i).map(|o| o.full_id))
+                .chain(props.iter().map(|p| p.object_id))
+                .collect()
+        } else {
+            HashSet::new()
+        };
+        self.merge_properties(props);
+        if trim {
+            self.props.retain(|id, _| keep.contains(id));
+            self.link_properties.retain(|id| self.props.contains_key(id));
         }
     }
 
