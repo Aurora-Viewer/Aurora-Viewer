@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 pub mod area_search;
 pub mod backup;
 mod hover_height;
+pub mod registry;
 mod saver;
 pub mod stream_list;
 
@@ -452,6 +453,11 @@ pub struct Settings {
     /// Debug overlays (not saved).
     #[serde(skip)]
     pub debug: DebugView,
+    /// DebugSettingsHideDefault: the Debug Settings window lists the changed
+    /// settings only.
+    pub debug_settings_changed_only: bool,
+    /// The "ignore" of the DebugSettingsWarning notification.
+    pub debug_settings_warning_ignored: bool,
     /// The Dev Toolbox's arrangement (Customize); None: the default one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dev_toolbox: Option<crate::dev_toolbox::tools::Layout>,
@@ -1797,6 +1803,8 @@ impl Default for Settings {
             username: String::new(),
             remember_username: true,
             remember_password: false,
+            debug_settings_changed_only: false,
+            debug_settings_warning_ignored: false,
             grid: GridChoice::SecondLife,
             custom_login_uri: "http://127.0.0.1:9000/".into(),
             grids: Vec::new(),

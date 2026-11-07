@@ -13351,3 +13351,24 @@ build-link-owners = The objects must have the same owner to be linked.
 build-link-regions = The objects must be in the same region to be linked.
 build-link-animesh = The selection exceeds the animated object triangle limit.
 build-link-restricted = A restriction prevents linking this selection.
+
+# Debug Settings window (LLFloaterSettingsDebug)
+debug-settings-search = Search settings
+debug-settings-changed-only = Show changed settings only
+debug-settings-none-selected = Choose a setting in the list.
+debug-settings-not-in-preferences = Preferences has no row for this setting.
+debug-settings-rlva-locked = Locked by an RLVa restriction.
+debug-settings-refused = This value was refused:
+debug-settings-default = Default: { $value }
+debug-settings-copy-name = Copy name
+debug-settings-copied = Copied
+debug-settings-reset = Reset to default
+debug-settings-type-bool = On or off
+debug-settings-type-int = Whole number
+debug-settings-type-float = Number
+debug-settings-type-text = Text
+debug-settings-type-vector = Several numbers
+debug-settings-warning-title = Warning
+debug-settings-warning-text = The use of the Debug Settings window is unsupported. Changing debug settings can severely impact your experience and might lead to loss of data, functionality or even access to the service. Please do not change any values without knowing exactly what you are doing.
+debug-settings-warning-ignore = Do not show this warning again
+debug-settings-type-color = Colour

@@ -5008,6 +5008,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PERF=compact`, `full`, `network` or `monitor-<section>` | Opens the Performance window: compact, the resource monitor, or one of its sections |
 | `AURORA_DEMO_SUITCASE=1` | The question before a Hypergrid teleport that leaves worn items behind |
 | `AURORA_DEMO_QUICKPREFS=1` | Opens the Quick preferences window (toolbar `quickprefs`) |
+| `AURORA_DEMO_DEBUG_SETTINGS=1`, `warning` or `<search>` | Opens the Debug Settings window (toolbar `settings_debug`) |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_CURRENCY=<symbol>` | An OpenSim grid's own money symbol (KC, OS$…) shown in place of L$ |
 | `AURORA_DEMO_BUY_LAND=<mode>[:confirm]` | Plaza parcel for sale and "Buy Land" window |
@@ -5299,6 +5300,14 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   stranger's L$20 shows nowhere. `off`: the same with "Open a conversation for a
   friend's payment" off: no conversation opens. Capture after frame 400, with `--language fr`
   and `--language en`.
+- **`AURORA_DEMO_DEBUG_SETTINGS`**: opens Debug Settings at the first frame.
+  `1`: past the warning, nothing typed. `warning`: on the warning, with its
+  "Do not show this warning again". Any other value is typed in the search and
+  its first match is chosen: `colors.chat_direct` shows the colour swatch,
+  `camera.camera_offset` three numbers, `language` a text field, `show_huds` a
+  switch. A value the setting's type refuses (`update_mode` = `x`) shows the
+  reason and changes nothing. Look for the star on a changed setting, and for
+  no login, service key or text holding a UUID anywhere in the list.
 - **`AURORA_DEMO_QUICKPREFS=1`**: opens Quick preferences at the first
   frame, as the toolbar's button does. Top to bottom: Draw distance, Particles,
   Avatar physics detail, Level of detail, Fully rendered avatars, Avatar name
