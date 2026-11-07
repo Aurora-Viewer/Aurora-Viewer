@@ -1283,7 +1283,9 @@ impl TextureStreamer {
     }
 
     fn schedule_legacy_bump(&mut self, source_id: Uuid, mode: u8, source: PreviewSource, jobs: &Jobs) -> Option<Uuid> {
-        let revision = source.image_revision();
+        // The worker decodes the exact resident level, including levels finer
+        // than the small inspector preview. Refresh when that level changes.
+        let revision = source.bake_revision();
         self.legacy_bump_latest.insert((source_id, mode), revision);
         let key = LegacyBumpKey { source_id, mode, revision };
         if let Some(id) = self.legacy_bumps.get(&key).copied() {
@@ -1339,7 +1341,8 @@ impl TextureStreamer {
         };
         let (width, height) = (image.size[0], image.size[1]);
         let rgba = image.rgba.to_vec();
-        // The normal-map alpha stores source height, not transparency.
+        // Generated bump normals have opaque alpha so a material's gloss is
+        // independent of the source height map.
         let alpha = AlphaKind::Opaque;
         let has_alpha = false;
         let levels = mips_for(width, height, rgba, 16, alpha);
@@ -3734,7 +3737,10 @@ fn legacy_bump_image(source: Arc<aurora_render::preview::Image>, mode: u8) -> Op
     // heights use byte deltas directly. Keep its default horizontal scale 64.
     let height_scale = if mode <= 2 { 512.0 / 255.0 } else { 1.0 };
     let normals = super::legacy_bump::normal_from_height_scaled(width as usize, height as usize, &heights, 64.0, height_scale)?;
-    let rgba = normals.into_iter().flatten().collect::<Vec<_>>();
+    let rgba = normals
+        .into_iter()
+        .flat_map(|[r, g, b, _height]| [r, g, b, 255])
+        .collect::<Vec<_>>();
     Some(Arc::new(aurora_render::preview::Image {
         size: [width, height],
         rgba: rgba.into(),
@@ -3991,10 +3997,28 @@ mod tests {
     }
 
     #[test]
+    fn legacy_bump_revision_tracks_levels_finer_than_the_preview() {
+        let source = |decoded| PreviewSource {
+            local: None,
+            bytes: Arc::new(Vec::new()),
+            jpeg: PathBuf::new(),
+            blocks: PathBuf::new(),
+            decoded: Some(decoded),
+            size: Some((1024, 1024)),
+            procedural: false,
+        };
+        assert_eq!(source(0).image_revision(), source(1).image_revision());
+        assert_ne!(source(0).bake_revision(), source(1).bake_revision());
+    }
+
+    #[test]
     fn generated_legacy_bumps_use_diffuse_luminance_or_standard_alpha() {
-        let pixels: Arc<[u8]> = vec![0, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 255, 255, 255, 255, 0].into();
+        let pixels: Arc<[u8]> = (0u8..9)
+            .flat_map(|i| [i.wrapping_mul(27), i.wrapping_mul(13), i.wrapping_mul(41), i.wrapping_mul(17)])
+            .collect::<Vec<_>>()
+            .into();
         let source = Arc::new(aurora_render::preview::Image {
-            size: [2, 2],
+            size: [3, 3],
             rgba: pixels,
         });
         let brightness = legacy_bump_image(source.clone(), 1).expect("brightness map");
@@ -4002,7 +4026,9 @@ mod tests {
         let standard = legacy_bump_image(source, 9).expect("standard map");
         assert_ne!(&*brightness.rgba, &*darkness.rgba);
         assert_ne!(&*brightness.rgba, &*standard.rgba);
-        assert!(standard.rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 0 || p[3] == 255));
+        assert!(standard.rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255));
+        assert!(brightness.rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255));
+        assert!(darkness.rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255));
     }
 
     #[test]
