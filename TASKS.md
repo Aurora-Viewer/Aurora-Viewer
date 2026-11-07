@@ -790,6 +790,8 @@ What comes before the rest (requested by the human).
 
 ## Repository and tooling
 
+- ✅ `aurora-tools.cmd` works when started from PowerShell 7 (human report, 2026-11-06; task `tools-module-path`; no issue; [PR #2791](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/2791); no effect on the viewer): cmd handed PowerShell 7's module paths down to Windows PowerShell 5.1, which then missed cmdlets such as `Get-FileHash`. The launcher now empties `PSModulePath` for its own process, and 5.1 rebuilds it; a newly generated `RELEASE\build-release.bat` does the same (an existing one keeps its content: it is only written once).
+
 - ✅ Crash triage references and setup downloads (2026-11-05; task `triage-and-setup-refs`; no issue, no effect on the viewer): the Crash triage workflow adds the `crash-triaged` label to each issue it signs, and only an open issue with that label, whose own triage section ends with the same signature, is a duplicate reference (`Get-TriageSignature`, fixtures in `scripts/test-crash-triage.ps1`; label in `setup-labels.ps1`). The one-line setup reads main's commit once and downloads every file of `scripts/tools` from that commit; a clone still uses its own files.
   - ⬜ After the merge: run `setup-labels.ps1`, then "Run workflow" on the open crash issues already signed, so they get the label and stay references.
 
