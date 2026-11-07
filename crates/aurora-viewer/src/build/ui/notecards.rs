@@ -86,10 +86,12 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
                     .char_limit(63),
             );
         } else {
-            ui.add(
-                egui::TextEdit::singleline(&mut tool.ui.notecards.filter)
-                    .desired_width(ui.available_width())
-                    .hint_text(aurora_i18n::tr!("build-layout-filter-notecards")),
+            crate::ui::widgets::search_box(
+                ui,
+                p,
+                &mut tool.ui.notecards.filter,
+                aurora_i18n::tr!("build-layout-filter-notecards"),
+                ui.available_width(),
             );
             let filter = tool.ui.notecards.filter.to_lowercase();
             let mut items: Vec<_> = world

@@ -678,11 +678,13 @@ fn insertion(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id) {
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                 .show_ui(ui, |ui| {
                     super::focus::claim(ui.ctx(), ui.layer_id(), id);
-                    let field = ui.add(
-                        egui::TextEdit::singleline(&mut e.tools.insert_filter)
-                            .id(id.with("insert_filter"))
-                            .desired_width(260.0)
-                            .hint_text(aurora_i18n::tr!("script-insert-filter")),
+                    let field = crate::ui::widgets::search_box_with(
+                        ui,
+                        p,
+                        &mut e.tools.insert_filter,
+                        aurora_i18n::tr!("script-insert-filter"),
+                        260.0,
+                        |edit| edit.id(id.with("insert_filter")),
                     );
                     if !e.tools.insertion_open {
                         field.request_focus();
@@ -788,7 +790,7 @@ pub(super) fn dialogs(
             Vec2::new(560.0, 480.0),
         )
         .show(ctx, p, &mut e.tools.library, |ui| {
-            ui.text_edit_singleline(&mut e.tools.insert_filter);
+            crate::ui::widgets::search_box(ui, p, &mut e.tools.insert_filter, "", ui.available_width());
             let filter = e.tools.insert_filter.to_lowercase();
             let mut keyword = None;
             egui::ScrollArea::vertical().show(ui, |ui| {

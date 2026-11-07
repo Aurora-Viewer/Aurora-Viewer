@@ -348,13 +348,20 @@ fn rating_boxes(ui: &mut egui::Ui, p: &Palette, boxes: &mut RatingBoxes, access:
 
 /// A form row whose search field takes the room its other controls leave:
 /// `controls` lays them out from the right edge, the search button first.
-fn field_row(ui: &mut egui::Ui, text: &mut String, hint: &str, focus: &mut bool, controls: impl FnOnce(&mut egui::Ui) -> bool) -> bool {
+fn field_row(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    text: &mut String,
+    hint: &str,
+    focus: &mut bool,
+    controls: impl FnOnce(&mut egui::Ui) -> bool,
+) -> bool {
     let mut find = false;
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             find |= controls(ui);
             let width = ui.available_width();
-            find |= query_field(ui, text, hint, width, focus);
+            find |= query_field(ui, p, text, hint, width, focus);
         });
     });
     find
@@ -381,12 +388,8 @@ fn combo<T: Copy + PartialEq>(ui: &mut egui::Ui, id: &str, value: &mut T, items:
 /// The search field of a tab, exactly `width` wide with its frame (a width
 /// asked to the field itself would not count its margins, and a row wider
 /// than the window makes it grow); true on Enter.
-fn query_field(ui: &mut egui::Ui, text: &mut String, hint: &str, width: f32, focus: &mut bool) -> bool {
-    let size = Vec2::new(width.max(80.0), ui.spacing().interact_size.y);
-    let resp = ui.add_sized(
-        size,
-        egui::TextEdit::singleline(text).hint_text(hint).align(egui::Align2::LEFT_CENTER),
-    );
+fn query_field(ui: &mut egui::Ui, p: &Palette, text: &mut String, hint: &str, width: f32, focus: &mut bool) -> bool {
+    let resp = widgets::search_box(ui, p, text, hint, width.max(80.0));
     if std::mem::take(focus) {
         resp.request_focus();
     }
@@ -610,11 +613,11 @@ impl SearchUi {
         };
         match tab {
             Tab::People => {
-                find |= field_row(ui, &mut self.texts[i], hint, &mut self.focus, |ui| find_button(ui, p));
+                find |= field_row(ui, p, &mut self.texts[i], hint, &mut self.focus, |ui| find_button(ui, p));
             }
             Tab::Groups => {
                 let maturity = &mut settings.group_maturity;
-                find |= field_row(ui, &mut self.texts[i], hint, &mut self.focus, |ui| {
+                find |= field_row(ui, p, &mut self.texts[i], hint, &mut self.focus, |ui| {
                     let mut go = find_button(ui, p);
                     // "groups_filter" of panel_fs_search_legacy_groups.xml
                     let levels = [
@@ -631,7 +634,7 @@ impl SearchUi {
             }
             Tab::Places => {
                 let (category, boxes) = (&mut self.places_category, &mut settings.places);
-                find |= field_row(ui, &mut self.texts[i], hint, &mut self.focus, |ui| {
+                find |= field_row(ui, p, &mut self.texts[i], hint, &mut self.focus, |ui| {
                     let mut go = find_button(ui, p);
                     if rating_boxes(ui, p, boxes, access) {
                         saved = true;
@@ -645,7 +648,7 @@ impl SearchUi {
                 let mut items = vec![(0, aurora_i18n::tr!("search-all-categories"))];
                 items.extend(cats.iter().map(|(id, name)| (*id, name.as_str())));
                 let (category, boxes) = (&mut self.classifieds_category, &mut settings.classifieds);
-                find |= field_row(ui, &mut self.texts[i], hint, &mut self.focus, |ui| {
+                find |= field_row(ui, p, &mut self.texts[i], hint, &mut self.focus, |ui| {
                     let mut go = find_button(ui, p);
                     if rating_boxes(ui, p, boxes, access) {
                         saved = true;
@@ -750,7 +753,7 @@ impl SearchUi {
                     }
                 });
                 let (category, boxes) = (&mut self.events_category, &mut settings.events);
-                find |= field_row(ui, &mut self.texts[i], hint, &mut self.focus, |ui| {
+                find |= field_row(ui, p, &mut self.texts[i], hint, &mut self.focus, |ui| {
                     let mut go = find_button(ui, p);
                     if rating_boxes(ui, p, boxes, access) {
                         saved = true;

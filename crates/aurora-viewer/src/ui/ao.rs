@@ -478,7 +478,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, inv: &mut Inventory, catalog: &inve
         )
         .show(ctx, p, &mut open, |ui| {
             ui.label(aurora_i18n::tr!("ao-picker-help"));
-            ui.text_edit_singleline(&mut state.filter);
+            widgets::search_box(ui, p, &mut state.filter, "", ui.available_width());
             let key = (
                 inv.generation,
                 state.filter.clone(),

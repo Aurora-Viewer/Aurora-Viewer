@@ -326,11 +326,13 @@ impl HistoryUi {
         ui.horizontal(|ui| {
             ui.set_height(find::BAR_H);
             ui.spacing_mut().item_spacing.x = 4.0;
-            let field = ui.add(
-                egui::TextEdit::singleline(&mut s.text)
-                    .id(field_id())
-                    .hint_text(aurora_i18n::tr!("ui-chat-search"))
-                    .desired_width((ui.available_width() - 200.0).clamp(80.0, 260.0)),
+            let field = crate::ui::widgets::search_box_with(
+                ui,
+                p,
+                &mut s.text,
+                aurora_i18n::tr!("ui-chat-search"),
+                (ui.available_width() - 200.0).clamp(80.0, 260.0),
+                |edit| edit.id(field_id()),
             );
             if std::mem::take(&mut s.focus) {
                 field.request_focus();

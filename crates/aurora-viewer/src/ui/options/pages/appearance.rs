@@ -196,11 +196,7 @@ fn font(cx: &mut Cx) {
                     .truncate()
                     .height(FONT_LIST_H + 40.0)
                     .show_ui(ui, |ui| {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut st.font_filter)
-                                .hint_text(tr!("ui-options-search-fonts"))
-                                .desired_width(ui.available_width()),
-                        );
+                        crate::ui::widgets::search_box(ui, &p, &mut st.font_filter, tr!("ui-options-search-fonts"), ui.available_width());
                         let filter = st.font_filter.to_lowercase();
                         let shown: Vec<&fonts::SystemFont> = list
                             .iter()

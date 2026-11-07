@@ -610,11 +610,11 @@ impl LibraryUi {
         if horizontal {
             ui.horizontal(|ui| {
                 row(self, ui);
-                widgets::search_field(ui, &mut self.search, aurora_i18n::tr!("common-search"), 160.0);
+                widgets::search_box(ui, p, &mut self.search, aurora_i18n::tr!("common-search"), 160.0);
                 self.filters(ui, p, prefs);
             });
         } else {
-            widgets::search_field(ui, &mut self.search, aurora_i18n::tr!("common-search"), ui.available_width());
+            widgets::search_box(ui, p, &mut self.search, aurora_i18n::tr!("common-search"), ui.available_width());
             ui.horizontal(|ui| row(self, ui));
             ui.horizontal(|ui| self.filters(ui, p, prefs));
         }

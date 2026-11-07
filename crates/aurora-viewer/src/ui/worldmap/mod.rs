@@ -897,8 +897,9 @@ impl WorldMapUi {
         ui.add_space(4.0);
         let mut go = false;
         ui.horizontal(|ui| {
-            let r = widgets::search_field(
+            let r = widgets::search_box(
                 ui,
+                p,
                 &mut self.search,
                 aurora_i18n::tr!("ui-worldmap-regions-by-name"),
                 ui.available_width() - 84.0,

@@ -845,7 +845,7 @@ pub fn tab(
         tool_menu(ui, p, "adjustments-filled", aurora_i18n::tr!("radar-options"), true, |ui| {
             options_menu(ui, p, data.settings, blocked);
         });
-        widgets::search_field(ui, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
+        widgets::search_box(ui, p, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
     });
     ui.add_space(4.0);
     if data.settings.show_minimap {

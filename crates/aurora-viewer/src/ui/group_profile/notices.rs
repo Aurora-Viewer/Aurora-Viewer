@@ -201,7 +201,13 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actio
         ui.spacing_mut().item_spacing.x = 5.0;
         let send = v.can(powers::NOTICES_SEND);
         let w = ui.available_width() - if send { 150.0 } else { 40.0 };
-        widgets::search_field(ui, &mut st.notices.search, aurora_i18n::tr!("ui-group-notices-search"), w.max(80.0));
+        widgets::search_box(
+            ui,
+            p,
+            &mut st.notices.search,
+            aurora_i18n::tr!("ui-group-notices-search"),
+            w.max(80.0),
+        );
         if send
             && widgets::action_button(
                 ui,

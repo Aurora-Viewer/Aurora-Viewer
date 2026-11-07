@@ -496,11 +496,13 @@ impl Emoji {
                 }
             }
         });
-        let search = ui.add(
-            egui::TextEdit::singleline(&mut self.query)
-                .id(egui::Id::unique(SEARCH_ID))
-                .hint_text(aurora_i18n::tr!("ui-emoji-search-emoji-name-or-code"))
-                .desired_width(f32::INFINITY),
+        let search = crate::ui::widgets::search_box_with(
+            ui,
+            p,
+            &mut self.query,
+            aurora_i18n::tr!("ui-emoji-search-emoji-name-or-code"),
+            ui.available_width(),
+            |edit| edit.id(egui::Id::unique(SEARCH_ID)),
         );
         // (a click on a tab or a picture leaves the keyboard nowhere: back
         // to the search, so typing still filters)

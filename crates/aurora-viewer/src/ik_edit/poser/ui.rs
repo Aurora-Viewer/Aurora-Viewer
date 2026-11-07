@@ -295,11 +295,8 @@ impl Editor {
         } else {
             self.side_selector(&mut left, p, rig, frame);
             left.add_space(2.0);
-            left.add(
-                egui::TextEdit::singleline(&mut self.poser.filter)
-                    .hint_text(aurora_i18n::tr!("poser-search"))
-                    .desired_width(f32::INFINITY),
-            );
+            let width = left.available_width();
+            widgets::search_box(&mut left, p, &mut self.poser.filter, aurora_i18n::tr!("poser-search"), width);
             left.add_space(2.0);
             let height = left.available_height();
             egui::ScrollArea::vertical()
@@ -500,10 +497,12 @@ impl Editor {
                 }
             });
         });
-        ui.add(
-            egui::TextEdit::singleline(&mut self.poser.storage.filter)
-                .hint_text(aurora_i18n::tr!("poser-library-search"))
-                .desired_width(f32::INFINITY),
+        widgets::search_box(
+            ui,
+            p,
+            &mut self.poser.storage.filter,
+            aurora_i18n::tr!("poser-library-search"),
+            ui.available_width(),
         );
         let filter = self.poser.storage.filter.to_lowercase();
         let height = (ui.available_height() - 40.0).max(30.0);

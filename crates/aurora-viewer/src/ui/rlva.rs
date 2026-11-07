@@ -139,11 +139,7 @@ impl Tools {
                     }
                 });
             } else {
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.filter)
-                        .hint_text(tr!("rlva-tools-filter"))
-                        .desired_width(f32::INFINITY),
-                );
+                crate::ui::widgets::search_box(ui, p, &mut self.filter, tr!("rlva-tools-filter"), ui.available_width());
                 let filter = self.filter.to_lowercase();
                 let now = std::time::Instant::now();
                 let mut rows: Vec<(Uuid, String)> = if self.tab == 2 {

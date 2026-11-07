@@ -108,50 +108,22 @@ pub fn search_field(
     clear_shown: bool,
     clear_tip: &str,
 ) -> (egui::Response, bool) {
-    let centre = crate::ui::widgets::field_text_margin(ui.ctx(), &egui::TextStyle::Body.resolve(ui.style()));
-    let field = ui.add_sized(
-        [width, ui.spacing().interact_size.y],
-        egui::TextEdit::singleline(text)
-            .hint_text(hint)
-            .align(egui::Align2::LEFT_CENTER)
-            .margin(egui::Margin {
-                left: 5,
-                right: 28,
-                ..centre
-            }),
-    );
-    if !clear_shown {
-        return (field, false);
-    }
-    let rect = egui::Rect::from_center_size(field.rect.right_center() - Vec2::new(14.0, 0.0), Vec2::splat(20.0));
-    let clear = ui
-        .interact(rect, field.id.with("clear"), egui::Sense::click())
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(clear_tip);
-    clear.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), clear_tip));
-    let color = if clear.hovered() { p.ink } else { p.muted };
-    if let Some(icon) = crate::ui::icons::global("x") {
-        ui.painter().image(
-            icon.id(),
-            egui::Rect::from_center_size(rect.center(), Vec2::splat(12.0)),
-            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-            color,
+    let height = ui.spacing().interact_size.y;
+    crate::ui::widgets::search_face_sized(ui, p, "search-filled", width, height, |ui| {
+        let margin = crate::ui::widgets::face_clear_margin(ui);
+        let mut field = ui.add(
+            egui::TextEdit::singleline(&mut *text)
+                .frame(egui::Frame::NONE.inner_margin(margin))
+                .hint_text(hint)
+                .desired_width(f32::INFINITY),
         );
-    } else {
-        ui.painter().line_segment(
-            [rect.center() - Vec2::splat(3.0), rect.center() + Vec2::splat(3.0)],
-            egui::Stroke::new(1.0, color),
-        );
-        ui.painter().line_segment(
-            [rect.center() + Vec2::new(-3.0, 3.0), rect.center() + Vec2::new(3.0, -3.0)],
-            egui::Stroke::new(1.0, color),
-        );
-    }
-    let clicked = clear.clicked();
-    if clicked {
-        field.request_focus();
-    }
-    (field, clicked)
+        crate::ui::widgets::demo_field_text(ui, text, &mut field);
+        let clicked = clear_shown && crate::ui::widgets::clear_cross(ui, p, &field, clear_tip);
+        if clicked {
+            field.request_focus();
+        }
+        (field, clicked)
+    })
 }
 
 /// The outline of a row or a list that cargo hovers: the light accent when

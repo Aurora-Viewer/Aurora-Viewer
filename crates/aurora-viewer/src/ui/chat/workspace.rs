@@ -262,12 +262,9 @@ pub(super) fn pane(
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.add_space(12.0);
-            ui.add(
-                egui::TextEdit::singleline(q)
-                    .id(find::filter_id(st.selected))
-                    .hint_text(aurora_i18n::tr!("ui-chat-filter"))
-                    .desired_width(width - 24.0),
-            );
+            crate::ui::widgets::search_box_with(ui, p, q, aurora_i18n::tr!("ui-chat-filter"), width - 24.0, |edit| {
+                edit.id(find::filter_id(st.selected))
+            });
         });
     }
     let conv_input = egui::Id::unique(("conv_input", st.selected));

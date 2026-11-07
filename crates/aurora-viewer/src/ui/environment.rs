@@ -644,17 +644,21 @@ pub fn settings_list(
             .show_ui(ui, |ui| {
                 // Aurora addition: the Legacy Viewer's lists only jump to
                 // the first name starting with the letters typed
-                // (LLScrollListCtrl::handleUnicodeCharHere). `search_field`
+                // (LLScrollListCtrl::handleUnicodeCharHere). A search box
                 // with ↑ ↓ left to the list, so ↓ reaches the names.
-                let search = ui.add(
-                    egui::TextEdit::singleline(&mut query)
-                        .hint_text(aurora_i18n::tr!("ui-environment-search-by-name"))
-                        .desired_width(ui.available_width())
-                        .event_filter(egui::EventFilter {
+                let search = widgets::search_box_with(
+                    ui,
+                    p,
+                    &mut query,
+                    aurora_i18n::tr!("ui-environment-search-by-name"),
+                    ui.available_width(),
+                    |edit| {
+                        edit.event_filter(egui::EventFilter {
                             horizontal_arrows: true,
                             vertical_arrows: false,
                             ..Default::default()
-                        }),
+                        })
+                    },
                 );
                 if opening {
                     search.request_focus();

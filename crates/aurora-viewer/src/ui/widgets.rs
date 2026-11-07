@@ -12,6 +12,8 @@ mod cascade_tests;
 #[cfg(test)]
 mod check_tests;
 #[cfg(test)]
+mod clear_tests;
+#[cfg(test)]
 mod collapse_tests;
 #[cfg(test)]
 mod field_centering_tests;
@@ -48,8 +50,8 @@ pub use color::color_button;
 pub use copy_on_click::copy_on_click;
 pub(crate) use modal_keys::{default_button, enter_pressed};
 pub use pills::{
-    clearable_search_box, dot_pill, dot_pill_width, filter_field, filter_pill, filter_pill_at, filter_pill_width, pill_tab, pill_tab_wide,
-    search_box,
+    bare_clear_margin, clear_button, clear_cross, demo_field_text, dot_pill, dot_pill_width, face_clear_margin, filter_field, filter_pill,
+    filter_pill_at, filter_pill_width, pill_tab, pill_tab_wide, search_box, search_box_with, search_face_sized,
 };
 pub use text_field::text_field;
 pub use unread::{CountSize, UnreadCount, unread_count};
@@ -1997,10 +1999,6 @@ pub fn header_row(ui: &mut egui::Ui, p: &Palette, cols: &[(&str, f32)]) {
 pub fn status_dot(ui: &mut egui::Ui, color: Color32) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(12.0, 14.0), Sense::hover());
     ui.painter().circle_filled(rect.center(), 3.5, color);
-}
-
-pub fn search_field(ui: &mut egui::Ui, text: &mut String, hint: &str, width: f32) -> egui::Response {
-    ui.add(egui::TextEdit::singleline(text).hint_text(hint).desired_width(width))
 }
 
 /// Small flat button with a Tabler icon (copy / paste / flip...).

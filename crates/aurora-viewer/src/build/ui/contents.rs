@@ -112,10 +112,12 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             });
         });
     }
-    ui.add(
-        egui::TextEdit::singleline(&mut tool.ui.contents_filter)
-            .hint_text(aurora_i18n::tr!("build-ui-contents-enter-filter-text"))
-            .desired_width(ui.available_width()),
+    crate::ui::widgets::search_box(
+        ui,
+        p,
+        &mut tool.ui.contents_filter,
+        aurora_i18n::tr!("build-ui-contents-enter-filter-text"),
+        ui.available_width(),
     );
     crate::ui::inventory::permissions::next_owner_toggle(ui, p, &mut tool.ui.contents_show_next_owner);
     let inv = tool.contents.objects.get(&object_id).cloned().unwrap_or_default();

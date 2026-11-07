@@ -188,16 +188,15 @@ pub fn field(
     ui.spacing_mut().item_spacing.x = gap;
     widgets::glyph(ui, "search-filled", p.muted, 13.0);
     let text_w = (ui.available_width() - trailing).max(40.0);
-    let edit = ui.add(
+    let margin = widgets::bare_clear_margin(ui);
+    let mut edit = ui.add(
         egui::TextEdit::singleline(&mut f.text)
             .id(field_id(conversation))
-            .frame(egui::Frame::NONE.inner_margin(crate::ui::widgets::field_text_margin(
-                ui.ctx(),
-                &egui::TextStyle::Body.resolve(ui.style()),
-            )))
+            .frame(egui::Frame::NONE.inner_margin(margin))
             .hint_text(aurora_i18n::tr!("ui-chat-find"))
             .desired_width(text_w),
     );
+    widgets::clear_button(ui, p, &mut f.text, &mut edit);
     if std::mem::take(&mut f.focus) {
         edit.request_focus();
     }

@@ -226,10 +226,7 @@ impl ToolbarUi {
                 );
                 let all = super::catalogue(layout);
                 let hint = aurora_i18n::tr!("toolbar-search", count = all.len().to_string());
-                // in a row: the field's own layout would take the window's height
-                ui.horizontal(|ui| {
-                    widgets::pills::search_box(ui, p, &mut self.search, &hint, ui.available_width());
-                });
+                widgets::pills::search_box(ui, p, &mut self.search, &hint, ui.available_width());
                 let filter = super::sort_key(self.search.trim());
                 let shown: Vec<&ToolButton> = all
                     .iter()

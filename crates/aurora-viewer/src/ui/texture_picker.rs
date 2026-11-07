@@ -647,7 +647,7 @@ impl TexturePicker {
             } else {
                 aurora_i18n::tr!("common-filter-textures")
             };
-            widgets::search_field(ui, &mut self.filter, hint, ui.available_width());
+            widgets::search_box(ui, p, &mut self.filter, hint, ui.available_width());
             ui.add_space(6.0);
             let font_scale = super::fonts::scale(ui.ctx());
             let footer = if self.footer_height > 0.0 && self.footer_font_scale == font_scale {

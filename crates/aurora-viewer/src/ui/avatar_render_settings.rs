@@ -126,7 +126,7 @@ impl AvatarRenderSettings {
                 let add_label = aurora_i18n::tr!("common-add");
                 let add_width = widgets::action_button_fit(ui, "plus", add_label);
                 let width = (ui.available_width() - add_width - ui.spacing().item_spacing.x).max(80.0);
-                let search = widgets::clearable_search_box(ui, p, &mut self.filter, aurora_i18n::tr!("avatar-render-filter"), width);
+                let search = widgets::search_box(ui, p, &mut self.filter, aurora_i18n::tr!("avatar-render-filter"), width);
                 if super::find_shortcut::take(ui, &[search.id]) {
                     search.request_focus();
                 }

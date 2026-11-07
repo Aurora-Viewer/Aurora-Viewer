@@ -310,7 +310,13 @@ impl Editor {
             self.gizmo.cancel();
         }
         widgets::switch_labeled(ui, palette, &mut self.limb_controls, aurora_i18n::tr!("ik-edit-limbs"));
-        ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text(aurora_i18n::tr!("ik-edit-filter")));
+        widgets::search_box(
+            ui,
+            palette,
+            &mut self.filter,
+            aurora_i18n::tr!("ik-edit-filter"),
+            ui.available_width(),
+        );
         let filter = self.filter.to_ascii_lowercase();
         for (bone, name) in world.avatar_lib.rig.canonical_names.iter().enumerate() {
             if self.visibility.visible(name)

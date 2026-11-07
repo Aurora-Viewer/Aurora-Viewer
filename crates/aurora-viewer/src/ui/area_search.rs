@@ -75,7 +75,7 @@ impl AreaSearchUi {
                 let width = (ui.available_width() - refresh_width - ui.spacing().item_spacing.x)
                     .max(120.0)
                     .floor();
-                widgets::clearable_search_box(ui, p, &mut self.table.filters.query, aurora_i18n::tr!("area-search-hint"), width);
+                widgets::search_box(ui, p, &mut self.table.filters.query, aurora_i18n::tr!("area-search-hint"), width);
                 if widgets::action_button(
                     ui,
                     p,

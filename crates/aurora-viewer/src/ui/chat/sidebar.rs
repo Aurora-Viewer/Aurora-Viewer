@@ -142,7 +142,9 @@ fn search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String, width: f32) {
             .max_rect(field)
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
-    child.add(
+    let mut margin = crate::ui::widgets::field_text_margin(ui.ctx(), &egui::FontId::proportional(12.0));
+    margin.right = crate::ui::widgets::bare_clear_margin(ui).right;
+    let mut edit = child.add(
         egui::TextEdit::singleline(text)
             .id(search_id())
             .hint_text(
@@ -151,9 +153,10 @@ fn search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String, width: f32) {
                     .color(p.muted_dim),
             )
             .font(egui::FontId::proportional(12.0))
-            .frame(egui::Frame::NONE.inner_margin(crate::ui::widgets::field_text_margin(ui.ctx(), &egui::FontId::proportional(12.0))))
+            .frame(egui::Frame::NONE.inner_margin(margin))
             .desired_width(field.width()),
     );
+    crate::ui::widgets::clear_button(&mut child, p, text, &mut edit);
 }
 
 /// Height of the search field, and the side of the button beside it.
