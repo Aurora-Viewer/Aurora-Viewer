@@ -229,14 +229,10 @@ pub(super) fn person_names(
         _ => {}
     }
     if let Some((text, ink, fill)) = tag.filter(|_| !cut) {
-        let g = ui
-            .painter()
-            .layout_no_wrap(text.to_owned(), FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())), ink);
-        let r = Rect::from_min_size(Pos2::new(x, y - 8.0), Vec2::new(g.size().x + 12.0, 16.0));
+        let (g, w) = crate::ui::widgets::tag_pill_layout(ui, text, ink);
+        let r = Rect::from_min_size(Pos2::new(x, y - 8.0), Vec2::new(w, 16.0));
         if r.right() <= right {
-            ui.painter().rect_filled(r, ui.visuals().window_corner_radius, fill);
-            let left = r.center().x - g.size().x / 2.0;
-            crate::ui::widgets::paint_row_text(ui.painter(), g, left, r.center().y, ink);
+            crate::ui::widgets::paint_tag_pill(ui, g, r, ink, fill);
         }
     }
     cut

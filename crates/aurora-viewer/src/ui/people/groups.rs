@@ -139,7 +139,8 @@ fn none_row(ui: &mut egui::Ui, c: &mut Ctx) {
     ui.set_opacity(opacity * 0.8);
     rows::face(ui, p, rect, false, hot);
     let left = rows::tile(ui, p, rect, None, "ban", "", p.raised);
-    let tag = active.then(|| (aurora_i18n::tr!("people-groups-active-tag"), p.teal, p.teal.gamma_multiply(0.14)));
+    let (tag_ink, tag_fill) = widgets::active_tag_colors(p);
+    let tag = active.then(|| (aurora_i18n::tr!("people-groups-active-tag"), tag_ink, tag_fill));
     rows::names(
         ui,
         p,
@@ -254,7 +255,8 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, g: &GroupMembership) {
         rows::paint_more(ui, p, cell, n);
     }
     let active = world.groups.active == g.id;
-    let tag = active.then(|| (aurora_i18n::tr!("people-groups-active-tag"), p.teal, p.teal.gamma_multiply(0.14)));
+    let (tag_ink, tag_fill) = widgets::active_tag_colors(p);
+    let tag = active.then(|| (aurora_i18n::tr!("people-groups-active-tag"), tag_ink, tag_fill));
     let color = if g.list_in_profile { p.ink } else { p.ink.gamma_multiply(0.85) };
     rows::names(ui, p, rect, left, end.names_right, &g.name, color, &second_line(c, g), None, tag);
     if resp.clicked() {

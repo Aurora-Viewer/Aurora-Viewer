@@ -392,6 +392,9 @@ impl Object {
             self.te = u.texture_entry;
         }
         self.extra = u.extra;
+        // Follow LLViewerObject::processUpdateMessage:
+        // if (nv_size > 0) setNameValueList(...) (indra/newview/llviewerobject.cpp).
+        // Empty NameValues in an update do not clear existing NameValues.
         if !u.name_values.is_empty() {
             self.name_values = u.name_values;
         }
@@ -1744,6 +1747,21 @@ mod tests {
     }
 
     const SMOOTH_ON: u8 = TextureAnim::ON | TextureAnim::SMOOTH | TextureAnim::LOOP;
+
+    #[test]
+    fn full_update_with_empty_name_values_keeps_previous() {
+        let mut full = update(1, AVATAR, "");
+        full.name_values = "FirstName STRING RW SV Test\nTitle STRING RW SV Initial".into();
+        let mut avatar = Object::from_update(1, full);
+        assert_eq!(avatar.group_title().as_deref(), Some("Initial"));
+
+        // Follow LLViewerObject::processUpdateMessage: an update with empty name_values preserves existing values.
+        let mut update_empty_nv = update(1, AVATAR, "");
+        update_empty_nv.name_values.clear();
+        avatar.apply_full(update_empty_nv);
+        assert_eq!(avatar.group_title().as_deref(), Some("Initial"));
+        assert!(avatar.name_values.contains("FirstName STRING RW SV Test"));
+    }
 
     #[test]
     fn group_title_name_value_update_and_clear() {
