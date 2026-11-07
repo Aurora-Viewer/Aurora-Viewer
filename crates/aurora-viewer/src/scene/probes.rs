@@ -221,7 +221,8 @@ fn edge_fade(distance: f32, edge: f32) -> f32 {
 /// in the field. Cubed: the default probe weighs so little (one over its 64 m
 /// and more) that a probe holds most of a point's light down to a few percent
 /// of its weight, and a straight fade would do all it shows in its last
-/// moments, a step in the light.
+/// moments, a step in the light. A difference with the Legacy Viewer, whose
+/// mFadeIn is straight and which has no fade out.
 fn auto_weight(fade: f32, edge: f32) -> f32 {
     (fade * edge).powi(3)
 }
