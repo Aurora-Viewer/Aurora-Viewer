@@ -427,6 +427,11 @@ impl OpenSimExtras {
 
 #[derive(Debug, Clone)]
 pub enum NetEvent {
+    /// OpenRegionInfo's MaxLinkCount, in children (LLWorld::setMaxLinkedPrims).
+    RegionLinkLimit {
+        handle: RegionHandle,
+        max_children: Option<u32>,
+    },
     /// The mute list (LLMuteList): downloaded file, or keep the cached copy.
     MuteList(crate::social::MuteListSource),
     /// Groups the agent belongs to (AgentGroupDataUpdate; added or updated).
@@ -607,6 +612,8 @@ pub enum NetEvent {
     /// and getMaxMaterialsPerTransaction; `None` = not given by the region).
     SimulatorFeatures {
         handle: RegionHandle,
+        /// AnimatedObjects / AnimatedObjectMaxTris (LLViewerObject::getAnimatedObjectMaxTris).
+        animated_object_max_tris: u32,
         voice_server_type: String,
         avatar_hover_height: bool,
         /// "RenderMaterialsCapability": requests per second.
@@ -1775,7 +1782,8 @@ pub enum NetCommand {
         local_id: u32,
         object: Uuid,
     },
-    /// Sit on an object (AgentRequestSit; `offset` in the object frame).
+    /// Sit on an object (AgentRequestSit; `offset` from the clicked object's
+    /// render position, along world axes: handle_object_sit / LLPickInfo).
     RequestSit {
         handle: RegionHandle,
         target: Uuid,
