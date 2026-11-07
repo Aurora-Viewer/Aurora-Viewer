@@ -39,10 +39,12 @@ mod tests {
     #[test]
     fn the_message_names_the_error_and_the_log() {
         let log = std::path::Path::new("C:/logs/aurora.log");
-        let (title, body) = super::text("no Vulkan adapter can present to the window", log);
+        let (title, body) = super::text("Vulkan lists no graphics card", log);
         assert!(!title.is_empty());
-        assert!(body.contains("no Vulkan adapter can present to the window"));
+        assert!(body.contains("Vulkan lists no graphics card"));
         assert!(body.contains("aurora.log"));
+        assert!(body.contains("AMD"));
+        assert!(body.contains("NVIDIA"));
         // one paragraph per advice, not a single line
         assert!(body.lines().count() >= 5);
     }

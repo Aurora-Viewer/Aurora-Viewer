@@ -199,6 +199,21 @@ struct GeomEntry {
 
 /// Frames an unused geometry is kept (an object may want it back soon).
 const GEOM_KEEP_FRAMES: u32 = 600;
+/// `AURORA_DEBUG_GEOM_DELAY=<seconds>`: every built geometry reaches the
+/// arena that long after its job ended, as on a slow PC in a busy region
+/// (a geometry pending longer than `GEOM_KEEP_FRAMES` is collected and
+/// built a second time).
+fn geom_arrival_delay() -> Option<std::time::Duration> {
+    static DELAY: std::sync::OnceLock<Option<std::time::Duration>> = std::sync::OnceLock::new();
+    *DELAY.get_or_init(|| {
+        std::env::var("AURORA_DEBUG_GEOM_DELAY")
+            .ok()
+            .and_then(|v| v.trim().parse::<f32>().ok())
+            .filter(|s| *s > 0.0)
+            .map(std::time::Duration::from_secs_f32)
+    })
+}
+
 /// Unused geometries looked at per frame once their time has come.
 const GEOM_FREED_PER_FRAME: usize = 256;
 /// Frames between two looks at what an avatar's attachments show of its
@@ -572,6 +587,10 @@ struct ObjVis {
     in_view: bool,
     casts: bool,
     reflects: bool,
+    /// In the probe captures' list: they measure from the probe, which the
+    /// renderer knows (`ProbeCapture::reach`), so the camera's reach and
+    /// small object culling do not apply.
+    probes: bool,
 }
 
 /// Object tests of the CPU lists, the same as `face_mask` in cull.wgsl:
@@ -609,18 +628,21 @@ fn object_visibility(
     let in_view = ctx.view.sphere_visible(sc, sr);
     let casts = ctx.shadows && d - sr < ctx.shadow_distance;
     let reflects = ctx.reflections && d - sr < ctx.reflection_distance;
-    if !in_view && !casts && !reflects {
+    let probes = ctx.reflections;
+    if !in_view && !casts && !reflects && !probes {
         return None;
     }
     // tiny objects far away are culled (LL-like small object culling)
-    if ctx.view.pixel_size(sc, sr) < 1.5 && !g.is_avatar {
+    let large = ctx.view.pixel_size(sc, sr) >= 1.5 || g.is_avatar;
+    if !large && !probes {
         return None;
     }
     Some(ObjVis {
         sphere: (sc, sr),
-        in_view,
-        casts,
-        reflects,
+        in_view: in_view && large,
+        casts: casts && large,
+        reflects: reflects && large,
+        probes,
     })
 }
 
@@ -1034,6 +1056,8 @@ pub struct Scene {
     /// system allocator, that growth queued the main thread behind the
     /// jobs during bursts of results).
     geom_waiting_spare: Vec<(GeomKey, jobs::PreparedGeom, f32)>,
+    /// Geometry held back by `AURORA_DEBUG_GEOM_DELAY` until its time.
+    geom_delayed: VecDeque<(Instant, GeomKey, jobs::PreparedGeom, f32)>,
     /// Streaming time of the frame by part (AURORA_PROFILE `s_*`), taken by
     /// the frame profile at the end of the frame.
     pub parts: crate::frame_profile::Parts,
@@ -1580,6 +1604,7 @@ impl Scene {
             staging: None,
             geom_waiting: Vec::new(),
             geom_waiting_spare: Vec::new(),
+            geom_delayed: VecDeque::new(),
             parts: Default::default(),
             skeletons: Default::default(),
             rig_extents: Default::default(),
@@ -1796,6 +1821,10 @@ impl Scene {
     /// Put a prepared geometry in the arena: staged faces are copied by the
     /// GPU (their regions must be ready), the others written from here.
     fn upload_geom(&mut self, renderer: &mut Renderer, key: GeomKey, geom: jobs::PreparedGeom) {
+        if self.geom_drawn(&key) {
+            log::debug!("{key:?} built twice: the copy is dropped, the geometry drawn stays");
+            return;
+        }
         let gfaces = geom
             .faces
             .into_iter()
@@ -1815,20 +1844,28 @@ impl Scene {
             pick_faces: geom.pick_faces,
         });
         match self.geoms.get_mut(&key) {
-            Some(e) => match std::mem::replace(&mut e.state, GeomState::Ready(g)) {
-                GeomState::Ready(old) => {
-                    for f in old.faces.iter().flatten() {
-                        renderer.free_mesh(*f);
-                    }
-                    self.joint_boxes.release(&key);
-                    self.geom_trash.push(old);
+            Some(e) => {
+                if matches!(std::mem::replace(&mut e.state, GeomState::Ready(g)), GeomState::Pending) {
+                    self.geom_pending = self.geom_pending.saturating_sub(1);
                 }
-                GeomState::Pending => self.geom_pending = self.geom_pending.saturating_sub(1),
-                GeomState::Failed => {}
-            },
+            }
             None => self.geom_insert(key, GeomState::Ready(g)),
         }
         self.sets.geometry_changed(sync_plan::wait_token(&key));
+    }
+
+    /// A geometry arriving for `key` while the one there is already drawn
+    /// comes from a second job for the same key: the entry, pending longer
+    /// than `GEOM_KEEP_FRAMES` with no object bound to it yet, was collected
+    /// by `geom_gc` and asked for again while the first job still ran. The
+    /// objects drawing the first one keep the draw commands written when
+    /// they bound it, which point into its arena ranges: replacing it freed
+    /// those ranges under them, the next uploads took them, and these
+    /// objects drew another mesh's vertices (long stretched triangles
+    /// across the scene, on rigged and static objects alike). The copy is
+    /// dropped instead, the geometry drawn stays.
+    fn geom_drawn(&self, key: &GeomKey) -> bool {
+        matches!(self.geoms.get(key).map(|e| &e.state), Some(GeomState::Ready(_)))
     }
 
     fn ensure_avatar_parts(&mut self, renderer: &mut Renderer) {
@@ -1874,6 +1911,12 @@ impl Scene {
         // Before, only the jobs were bounded: a chunk that became copyable
         // put all its geometry in the arena in the same frame.
         let mut placed = 0;
+        let now = Instant::now();
+        while self.geom_delayed.front().is_some_and(|d| d.0 <= now) {
+            if let Some((_, key, geom, area)) = self.geom_delayed.pop_front() {
+                self.geom_waiting.push((key, geom, area));
+            }
+        }
         let mut waiting = std::mem::replace(&mut self.geom_waiting, std::mem::take(&mut self.geom_waiting_spare));
         for (key, geom, area) in waiting.drain(..) {
             if geom.ready() && (placed == 0 || t0.elapsed() < budget / 2) {
@@ -1950,6 +1993,10 @@ impl Scene {
     /// A geometry built by a job goes to the GPU, or waits for a coming
     /// frame while another job still writes in its staging chunk.
     fn finish_geometry(&mut self, renderer: &mut Renderer, key: GeomKey, geom: jobs::PreparedGeom, area: f32) {
+        if let Some(delay) = geom_arrival_delay() {
+            self.geom_delayed.push_back((Instant::now() + delay, key, geom, area));
+            return;
+        }
         if geom.ready() {
             self.place_geometry(renderer, key, geom, area);
         } else {
@@ -2134,6 +2181,7 @@ impl Scene {
         self.geom_pending = 0;
         self.geom_waiting.clear();
         self.geom_waiting_spare.clear();
+        self.geom_delayed.clear();
         self.geom_trash = Default::default();
         self.joint_boxes = Default::default();
         self.skin_binds = Default::default();
@@ -3859,6 +3907,9 @@ impl Scene {
                 }
             }
             rec.set_hud_zoom(hud_zoom);
+            if !g.hud {
+                rec.flags[3] |= flags::OBJECT_MASK_PICK;
+            }
             rec.set_world_blend_pick(
                 !g.hud
                     && wearer.is_none()
@@ -4640,6 +4691,7 @@ impl Scene {
                 in_view,
                 casts,
                 reflects,
+                probes,
             }) = object_visibility(
                 g,
                 idx,
@@ -4734,15 +4786,17 @@ impl Scene {
                             alpha: pass.record_flags() != 0,
                         });
                     }
-                    if reflects && matches!(pass, Pass::Opaque | Pass::OpaqueTwoSided | Pass::Mask | Pass::MaskTwoSided) {
+                    if matches!(pass, Pass::Opaque | Pass::OpaqueTwoSided | Pass::Mask | Pass::MaskTwoSided) {
                         let c = ShadowCaster {
                             cmd,
                             center: sc,
                             radius: sr,
                             alpha: false,
                         };
-                        l.refl.push(c);
-                        if avatar.is_none() && g.skeleton_owner.is_none() {
+                        if reflects {
+                            l.refl.push(c);
+                        }
+                        if probes && avatar.is_none() && g.skeleton_owner.is_none() {
                             l.probe.push(c);
                         }
                     }
@@ -5883,6 +5937,40 @@ mod tests {
         // A face the object does not have (face 2 on a one-face mesh)
         // animates nothing: face 0 stays still, as in the Legacy Viewer.
         assert!((0..1).all(|fi| !tex_anim_targets(2, fi)));
+    }
+
+    #[test]
+    fn a_geometry_built_twice_keeps_the_one_drawn() {
+        let mut scene = Scene::new(Default::default(), Arc::new(AvatarLibrary::load()));
+        let key = GeomKey::Tree { species: 3, lod: 1 };
+        // a first arrival is uploaded: nothing there, or still pending
+        // (asked for again after `geom_gc` collected it), or failed before
+        assert!(!scene.geom_drawn(&key));
+        for state in [GeomState::Pending, GeomState::Failed] {
+            scene.geom_insert(key, state);
+            assert!(!scene.geom_drawn(&key));
+        }
+        // the second job's copy is dropped: the objects bound to the first
+        // one draw from its arena ranges, which must stay theirs
+        let drawn = MeshAlloc {
+            vertex_offset: 40,
+            vertex_count: 8,
+            index_offset: 96,
+            index_count: 12,
+        };
+        scene.geom_insert(
+            key,
+            GeomState::Ready(Arc::new(GpuGeom {
+                faces: vec![Some(drawn)],
+                min: Vec3::ZERO,
+                max: Vec3::ONE,
+                joint_bounds: Vec::new(),
+                pick_faces: Vec::new(),
+            })),
+        );
+        assert!(scene.geom_drawn(&key));
+        let kept = scene.geom_ready(&key).expect("the geometry drawn stays");
+        assert_eq!(kept.faces, vec![Some(drawn)]);
     }
 
     #[test]
@@ -7127,6 +7215,7 @@ mod tests {
         );
         frame.water = [[0.0, 0.0, 0.0, 1.0]; 6];
         frame.probe = frame.water;
+        frame.probe_eye = [0.0, 0.0, 0.0, 1e9];
         frame.sizes[1] = n as u32;
         let objects: Vec<CullObject> = gpu.iter().enumerate().map(|(i, g)| g.cull_object(i)).collect();
         let spheres = aurora_render::gpu_cull::world_spheres(&objects, &palettes, &[], &[]);
@@ -7150,7 +7239,7 @@ mod tests {
                     v.in_view && solid,
                     v.casts && f.pass != Pass::Hidden,
                     v.reflects && solid,
-                    v.reflects && solid && g.avatar(i).is_none() && g.skeleton_owner.is_none(),
+                    v.probes && solid && g.avatar(i).is_none() && g.skeleton_owner.is_none(),
                     v.in_view,
                 ),
                 None => (false, false, false, false, false),
