@@ -234,6 +234,7 @@ toolbar-command-asset-blacklist = Asset blacklist
 toolbar-command-phototools = Phototools
 toolbar-command-phototools-camera = Phototools camera
 toolbar-command-pose-stand = Pose stand
+ui-bars-pose-stand = Pose Stand…
 pose-stand-lock = Lock the avatar to the ground
 pose-stand-t-pose = T-Pose
 pose-stand-arms-down-legs-together = Arms down, Legs together

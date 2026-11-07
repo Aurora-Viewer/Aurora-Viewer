@@ -234,6 +234,7 @@ toolbar-command-asset-blacklist = Liste noire des ressources
 toolbar-command-phototools = Outils photo
 toolbar-command-phototools-camera = Caméra des outils photo
 toolbar-command-pose-stand = Support de pose
+ui-bars-pose-stand = Support de pose…
 pose-stand-lock = Bloquer l'avatar au sol
 pose-stand-t-pose = Pose T
 pose-stand-arms-down-legs-together = Bras baissés, jambes jointes

@@ -234,6 +234,7 @@ toolbar-command-asset-blacklist = アセットのブロックリスト
 toolbar-command-phototools = フォトツール
 toolbar-command-phototools-camera = フォトツールのカメラ設定
 toolbar-command-pose-stand = ポーズスタンド
+ui-bars-pose-stand = ポーズスタンド…
 pose-stand-lock = アバターを地面に固定します。
 pose-stand-t-pose = Ｔポーズ
 pose-stand-arms-down-legs-together = 腕を下ろし、足を揃える
