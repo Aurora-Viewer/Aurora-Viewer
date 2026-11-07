@@ -55,6 +55,10 @@ const FLAGS_CAMERA_DECOUPLED: u32 = 1 << 20;
 const MIN_CAMERA_DISTANCE: f32 = 0.1;
 const MAX_CAMERA_DISTANCE_FROM_OBJECT: f32 = 496.0;
 const CAMERA_FUDGE_FROM_OBJECT: f32 = 16.0;
+/// The goal moved this far in one frame: no smoothing. Deliberate difference:
+/// LLAgentCamera::updateCamera compares the goal with the smoothed camera, so
+/// a strong smoothing (`SMOOTHING_RANGE`), left 50 m behind by a drag, jumps
+/// to its goal again and again.
 const MAX_CAMERA_SMOOTH_DISTANCE: f32 = 50.0;
 const HEAD_BUFFER_SIZE: f32 = 0.3;
 const LAND_MIN_ZOOM: f32 = 0.15;
@@ -312,6 +316,10 @@ pub struct Camera {
     /// stop short of its goal (`SMOOTHING_RANGE`).
     smoothing_last_global: DVec3,
     smoothing_last_agent: DVec3,
+    /// Where the camera was asked to be in the last frame, before smoothing:
+    /// what `MAX_CAMERA_SMOOTH_DISTANCE` compares with.
+    smoothing_goal_global: DVec3,
+    smoothing_goal_agent: DVec3,
     smoothing_stop: bool,
     tool: Option<Tool>,
     avatar: AvatarFrame,
@@ -379,6 +387,8 @@ impl Default for Camera {
             anim: None,
             smoothing_last_global: DVec3::ZERO,
             smoothing_last_agent: DVec3::ZERO,
+            smoothing_goal_global: DVec3::ZERO,
+            smoothing_goal_agent: DVec3::ZERO,
             smoothing_stop: false,
             tool: None,
             avatar: AvatarFrame {
@@ -1043,8 +1053,9 @@ impl Camera {
         ] {
             *p += delta;
         }
+        // (not the ones relative to the avatar: it moves with the frame)
         self.smoothing_last_global += delta.as_dvec3();
-        self.smoothing_last_agent += delta.as_dvec3();
+        self.smoothing_goal_global += delta.as_dvec3();
         if let Some(free) = &mut self.free {
             free.position += delta;
         }
@@ -1308,11 +1319,13 @@ impl Camera {
     fn pan(&mut self, delta: Vec3) {
         self.focus_target += delta;
         self.target = self.focus_target;
-        // panning moves the camera with the focus, not smoothed behind it
-        self.smoothing_stop = true;
+        // panning moves the camera with the focus, not smoothed behind it,
+        // and keeps the lag it has: LLAgentCamera::cameraPanLeft restarts the
+        // smoothing from the goal, a jump with a strong smoothing
         self.zoom_in(1.0);
         self.update_focus_offset();
-        self.smoothing_last_global = (self.focus_target + self.focus_offset_target).as_dvec3();
+        self.smoothing_last_global += delta.as_dvec3();
+        self.smoothing_goal_global += delta.as_dvec3();
     }
 
     /// Already eased by the edit tool; translate the view in this frame,
@@ -1613,6 +1626,8 @@ impl Camera {
             self.current_fov_zoom = self.fov_zoom;
             self.smoothing_last_global = camera_target.as_dvec3();
             self.smoothing_last_agent = (camera_target - self.avatar.position).as_dvec3();
+            self.smoothing_goal_global = self.smoothing_last_global;
+            self.smoothing_goal_agent = self.smoothing_last_agent;
             self.position = camera_target;
             self.target = focus_target;
             self.fov_y = self.zoomed_fov(s, f.aspect);
@@ -1657,25 +1672,32 @@ impl Camera {
         // depends on `k`, so on the frame time: a camera at rest then moved
         // by one step of its coordinates in about one frame out of four.
         let agent_pos = self.avatar.position;
-        let mut global = camera.as_dvec3();
-        let mut relative = (camera - agent_pos).as_dvec3();
+        let goal_global = camera.as_dvec3();
+        let goal_agent = (camera - agent_pos).as_dvec3();
+        let (mut global, mut relative) = (goal_global, goal_agent);
         self.smoothing_stop |= f.build_mode;
         if self.third_person() && !self.smoothing_stop {
             let k = f64::from(interpolant(s.smoothing * SMOOTHING_HALF_LIFE, dt));
             let max = f64::from(MAX_CAMERA_SMOOTH_DISTANCE);
             if self.focus_on_avatar && self.focus_object.is_none() {
-                if (relative - self.smoothing_last_agent).length() < max {
-                    relative = self.smoothing_last_agent.lerp_monotonic(relative, k);
+                if (goal_agent - self.smoothing_goal_agent).length() < max {
+                    relative = self.smoothing_last_agent.lerp_monotonic(goal_agent, k);
                     camera = relative.as_vec3() + agent_pos;
                     global = camera.as_dvec3();
                 }
-            } else if (global - self.smoothing_last_global).length() < max {
-                global = self.smoothing_last_global.lerp_monotonic(global, k);
+            } else if (goal_global - self.smoothing_goal_global).length() < max {
+                global = self.smoothing_last_global.lerp_monotonic(goal_global, k);
                 camera = global.as_vec3();
+                // back on the avatar, the smoothing goes on from here
+                // (LLAgentCamera::updateCamera keeps the goal: a jump as
+                // soon as the lag is visible)
+                relative = global - agent_pos.as_dvec3();
             }
         }
         self.smoothing_last_global = global;
         self.smoothing_last_agent = relative;
+        self.smoothing_goal_global = goal_global;
+        self.smoothing_goal_agent = goal_agent;
         self.smoothing_stop = false;
 
         self.current_fov_zoom += (self.fov_zoom - self.current_fov_zoom) * interpolant(FOV_ZOOM_HALF_LIFE, dt);
@@ -3121,6 +3143,128 @@ mod tests {
     /// of close objects. Coordinates and frame times of the report (alt
     /// camera at 2 106 m, 110 to 180 frames per second); several views,
     /// since only some coordinates were unstable (about four in ten).
+    /// Every frame's step of the camera while `act` drives it, the longest.
+    fn longest_step(cam: &mut Camera, w: &mut World, s: &CameraSettings, frames: u32, mut act: impl FnMut(&mut Camera, &mut World)) -> f32 {
+        let mut longest = 0.0f32;
+        for _ in 0..frames {
+            let before = cam.position;
+            act(cam, w);
+            cam.update(w, s, &frame(1.0 / 60.0));
+            longest = longest.max(cam.position.distance(before));
+        }
+        longest
+    }
+
+    /// A camera at rest behind the avatar, then alt-focused `distance` ahead.
+    fn alt_focused(distance: f32, s: &CameraSettings) -> (Camera, World) {
+        let quick = CameraSettings {
+            smoothing: 0.0,
+            ..s.clone()
+        };
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &quick);
+        let ray = (cam.position, cam.forward());
+        cam.alt_focus(cam.position + cam.forward() * distance, None, ray, &mut w.agent, s);
+        cam.begin_drag(false);
+        (cam, w)
+    }
+
+    fn strongest_smoothing() -> CameraSettings {
+        CameraSettings {
+            smoothing: *SMOOTHING_RANGE.end(),
+            ..Default::default()
+        }
+    }
+
+    /// The lag once reached 50 m: the camera jumped to its goal, fell behind
+    /// again and jumped again, during one drag.
+    #[test]
+    fn a_long_alt_drag_with_the_strongest_smoothing_never_jumps() {
+        let s = strongest_smoothing();
+        for distance in [8.0, 35.0, 60.0] {
+            for (mode, dx, dy) in [
+                (ToolMode::Zoom, 6.0, 0.0),
+                (ToolMode::Zoom, 0.0, 3.0),
+                (ToolMode::Zoom, 0.0, -3.0),
+                (ToolMode::Orbit, 6.0, 0.0),
+                (ToolMode::Pan, 3.0, 0.0),
+            ] {
+                let (mut cam, mut w) = alt_focused(distance, &s);
+                let longest = longest_step(&mut cam, &mut w, &s, 600, |c, w| c.drag(mode, dx, dy, 1280.0, &mut w.agent));
+                assert!(longest < 1.0, "{mode:?} ({dx}, {dy}) at {distance} m: {longest} m in a frame");
+            }
+        }
+    }
+
+    #[test]
+    fn panning_a_lagging_camera_keeps_its_lag() {
+        let s = strongest_smoothing();
+        let (mut cam, mut w) = alt_focused(35.0, &s);
+        longest_step(&mut cam, &mut w, &s, 300, |c, w| {
+            c.drag(ToolMode::Zoom, 6.0, 0.0, 1280.0, &mut w.agent)
+        });
+        let longest = longest_step(&mut cam, &mut w, &s, 60, |c, w| {
+            c.drag(ToolMode::Pan, 3.0, 0.0, 1280.0, &mut w.agent)
+        });
+        assert!(longest < 1.0, "{longest} m in a frame");
+    }
+
+    #[test]
+    fn leaving_an_alt_focus_mid_glide_goes_on_from_where_the_camera_is() {
+        let s = strongest_smoothing();
+        let (mut cam, mut w) = alt_focused(20.0, &s);
+        longest_step(&mut cam, &mut w, &s, 120, |c, w| {
+            c.drag(ToolMode::Zoom, 6.0, 0.0, 1280.0, &mut w.agent)
+        });
+        cam.end_drag();
+        cam.handle_reset_view(&mut w.agent, &s);
+        let longest = longest_step(&mut cam, &mut w, &s, 240, |_, _| {});
+        assert!(longest < 0.5, "{longest} m in a frame");
+    }
+
+    /// What really moves the goal at once is still not smoothed, whatever
+    /// the setting (MAX_CAMERA_SMOOTH_DISTANCE).
+    #[test]
+    fn a_goal_that_jumps_far_in_one_frame_is_not_smoothed() {
+        let s = CameraSettings {
+            zoom_time: 0.0,
+            ..strongest_smoothing()
+        };
+        let (mut cam, mut w) = alt_focused(90.0, &s);
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        let goal = cam.focus_target + cam.focus_offset_target;
+        assert!(
+            cam.position.distance(goal) < 0.01,
+            "{} m from the goal",
+            cam.position.distance(goal)
+        );
+    }
+
+    /// The region's frame moves under a lagging camera: nothing shows.
+    #[test]
+    fn a_border_crossing_shows_nothing_with_the_strongest_smoothing() {
+        let s = strongest_smoothing();
+        let start = Vec3::new(128.0, 128.0, 25.0);
+        let mut w = world_at(start);
+        let mut cam = Camera::default();
+        settle(
+            &mut cam,
+            &mut w,
+            &CameraSettings {
+                smoothing: 0.0,
+                ..s.clone()
+            },
+        );
+        longest_step(&mut cam, &mut w, &s, 60, |c, w| c.orbit_drag(4.0, 0.0, 1.0, &mut w.agent));
+        let delta = Vec3::new(-256.0, 0.0, 0.0);
+        let before = cam.position + delta;
+        cam.shift(delta);
+        w.agent.position += delta;
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        assert!(cam.position.distance(before) < 0.1, "{} m", cam.position.distance(before));
+    }
+
     /// The strongest smoothing, with an alt camera high up, where a step of
     /// the coordinates is largest and each frame's step of the smoothing is
     /// smallest: the camera covers half its way per half-life and gets there,
