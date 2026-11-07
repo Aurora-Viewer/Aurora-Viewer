@@ -574,9 +574,10 @@ fn column_toggle(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, actions: &mut 
     let hovered = resp.hovered() && !off;
     let lit = st.column.by_hand() && !off;
     let face = match (lit, hovered) {
-        // the wash of the conversation shown, in the entries above
-        (true, false) => Some(p.violet.gamma_multiply(0.22)),
-        (true, true) => Some(p.violet.gamma_multiply(0.34)),
+        // the conversation's box beside it, not the accent: this is a
+        // state, the accent marks the conversation shown
+        (true, false) => Some(p.raised),
+        (true, true) => Some(p.raised.gamma_multiply(1.3)),
         (false, true) => Some(p.raised.gamma_multiply(0.7)),
         (false, false) => None,
     };
@@ -589,8 +590,7 @@ fn column_toggle(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, actions: &mut 
         egui::Rect::from_center_size(center, egui::Vec2::splat(18.0)),
         match (lit, hovered) {
             _ if off => p.muted_dim.gamma_multiply(0.6),
-            (true, _) => p.violet_pale,
-            (false, true) => p.ink,
+            (true, _) | (false, true) => p.ink,
             (false, false) => p.muted,
         },
     );
