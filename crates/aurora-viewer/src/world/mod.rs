@@ -3,6 +3,7 @@
 pub mod animation_log;
 pub mod anti_spam;
 pub mod appearance;
+pub mod appearance_xml;
 pub mod attachment_inventory;
 pub mod attention;
 pub mod blocking;

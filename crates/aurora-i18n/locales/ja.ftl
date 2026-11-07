@@ -13306,6 +13306,10 @@ ui-options-camera-vr-at-start-help = オンにすると、VRボタンですぐ�
 
 app-vr-leave = { $key } キーでデスクトップモードに戻ります
 
+appearance-xml-export = 自分のアピアランスをXMLにエクスポート…
+appearance-xml-file-type = アピアランス XML (*.xml)
+appearance-xml-saved = アピアランスを { $file } に保存しました。
+appearance-xml-failed = アピアランスXMLを保存できませんでした。
 picker-pipette-hint = オブジェクトの面をクリックして、インベントリからそのテクスチャまたはマテリアルを選択します。
 
 picker-pipette-no-texture = コピー可能なテクスチャがインベントリにありません。

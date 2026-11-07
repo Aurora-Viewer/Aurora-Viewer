@@ -13329,6 +13329,10 @@ ui-options-camera-vr-at-start-help = Le bouton VR passe alors en VR tout de suit
 
 app-vr-leave = Appuyez sur { $key } pour revenir au mode bureau
 
+appearance-xml-export = Exporter mon apparence en XML…
+appearance-xml-file-type = Apparence XML (*.xml)
+appearance-xml-saved = Apparence enregistrée dans { $file }.
+appearance-xml-failed = Impossible d’enregistrer l’apparence XML.
 picker-pipette-hint = Cliquez sur une face pour sélectionner sa texture ou son matériau dans votre inventaire.
 
 picker-pipette-no-texture = Aucune texture copiable trouvée dans votre inventaire.

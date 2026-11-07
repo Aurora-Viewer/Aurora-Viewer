@@ -13333,6 +13333,10 @@ ui-options-camera-vr-at-start-help = The VR button then enters VR at once. Off, 
 
 app-vr-leave = Press { $key } to return to desktop mode
 
+appearance-xml-export = Export my appearance XML…
+appearance-xml-file-type = Appearance XML (*.xml)
+appearance-xml-saved = Appearance saved to { $file }.
+appearance-xml-failed = Could not save appearance XML.
 picker-pipette-hint = Click an object face to select its texture or material from your inventory.
 
 picker-pipette-no-texture = No copyable texture found in your inventory.
