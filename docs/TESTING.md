@@ -4485,7 +4485,9 @@ both open states and the selection count. Capture at frame 620.
   labelled by their texture-entry bump code, 0–17, followed by an explicit
   legacy normal-map control and a PBR normal-map control. Check that 0 stays
   flat, brightness/darkness and each standard pattern show relief, and the
-  two explicit-normal controls retain their own map. Change Shininess through
+  two explicit-normal controls retain their own map. The standard panels use
+  synthetic height patterns under the preset IDs; compare the real preset
+  artwork on a grid, not against these demo patterns. Change Shininess through
   None/Low/Medium/High on the same test face to ensure the stored shine value
   and highlights remain independent of the bump preset. The generated maps
   load with their source textures and improve as finer source levels arrive;

@@ -1175,6 +1175,54 @@ impl PreviewSource {
             rgba: super::jobs::to_rgba(pixels.components, &pixels.data, (pixels.width * pixels.height) as usize).into(),
         }))
     }
+
+    /// Standard bump presets use the last component of the source asset as
+    /// height. The ordinary RGBA conversion fills alpha with 255 for one- and
+    /// three-component textures, so decode this worker-only source separately.
+    pub fn standard_bump_image(self, id: Uuid) -> Option<Arc<aurora_render::preview::Image>> {
+        if self.local.is_some() || self.procedural {
+            return self.inspector_image(id);
+        }
+        if let Some(discard) = self.decoded {
+            let bytes = if self.bytes.is_empty() {
+                crate::cache::read(&self.jpeg)
+                    .or_else(|_| crate::cache::read(self.jpeg.with_extension("part")))
+                    .ok()
+                    .map(Arc::new)
+            } else {
+                Some(self.bytes.clone())
+            };
+            if let Some(bytes) = bytes
+                && let Ok(pixels) = aurora_assets::decode_j2k(&bytes, discard)
+                && let Some(rgba) = standard_bump_rgba(pixels.components, &pixels.data, pixels.width as usize * pixels.height as usize)
+            {
+                return Some(Arc::new(aurora_render::preview::Image {
+                    size: [pixels.width, pixels.height],
+                    rgba: rgba.into(),
+                }));
+            }
+        }
+        // A revisited texture may have only its transcoded resident level.
+        // Its cache header still records the original component count.
+        let texture_cache::Transcoded::Bc7(cached) = texture_cache::read(&self.blocks, self.decoded.unwrap_or(0))? else {
+            return None;
+        };
+        let (width, height, blocks) = cached.levels.first()?;
+        let mut rgba = aurora_render::bc7::decode_level(blocks, *width, *height)?;
+        let channel = match cached.info.components {
+            1 => 0,
+            2 | 4 => 3,
+            3 => 2,
+            _ => return None,
+        };
+        for pixel in rgba.as_chunks_mut::<4>().0 {
+            pixel[3] = pixel[channel];
+        }
+        Some(Arc::new(aurora_render::preview::Image {
+            size: [*width, *height],
+            rgba: rgba.into(),
+        }))
+    }
     pub fn revision(&self) -> PreviewRevision {
         (
             self.local.as_ref().map_or(self.bytes.len(), |image| Arc::as_ptr(image) as usize),
@@ -1304,7 +1352,12 @@ impl TextureStreamer {
         self.legacy_bump_pending.insert(key);
         log::debug!("legacy bump normal queued: mode={mode} source={source_id} revision={revision:?} generated={generated_id}");
         jobs.spawn(move || {
-            let image = source.inspector_image(source_id).and_then(|src| legacy_bump_image(src, mode));
+            let image = (if mode >= 3 {
+                source.standard_bump_image(source_id)
+            } else {
+                source.inspector_image(source_id)
+            })
+            .and_then(|src| legacy_bump_image(src, mode));
             JobResult::LegacyBump {
                 source_id,
                 mode,
@@ -3709,6 +3762,18 @@ fn legacy_bump_id(key: LegacyBumpKey) -> Uuid {
     Uuid::from_bytes(uuid)
 }
 
+fn standard_bump_rgba(components: u8, data: &[u8], pixels: usize) -> Option<Vec<u8>> {
+    let channels = usize::from(components);
+    if !(1..=4).contains(&channels) || data.len() != pixels.checked_mul(channels)? {
+        return None;
+    }
+    let mut rgba = super::jobs::to_rgba(components, data, pixels);
+    for (pixel, source) in rgba.as_chunks_mut::<4>().0.iter_mut().zip(data.chunks_exact(channels)) {
+        pixel[3] = source[channels - 1];
+    }
+    Some(rgba)
+}
+
 fn legacy_bump_image(source: Arc<aurora_render::preview::Image>, mode: u8) -> Option<Arc<aurora_render::preview::Image>> {
     let [width, height] = source.size;
     let pixels = width.checked_mul(height)? as usize;
@@ -3971,6 +4036,53 @@ fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &D
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn standard_bump_height_uses_the_last_source_component() {
+        for (components, source, expected) in [
+            (1, vec![17, 203], [17, 203]),
+            (2, vec![8, 17, 9, 203], [17, 203]),
+            (3, vec![8, 9, 17, 10, 11, 203], [17, 203]),
+            (4, vec![8, 9, 10, 17, 11, 12, 13, 203], [17, 203]),
+        ] {
+            let rgba = standard_bump_rgba(components, &source, 2).expect("valid source");
+            assert_eq!([rgba[3], rgba[7]], expected, "{components} components");
+        }
+        assert!(standard_bump_rgba(3, &[1, 2], 1).is_none());
+        assert!(standard_bump_rgba(5, &[0; 5], 1).is_none());
+
+        let mono = [0, 80, 200, 20, 180, 40, 100, 255, 60];
+        let rgba = standard_bump_rgba(1, &mono, 9).expect("one-component height");
+        let normal = legacy_bump_image(
+            Arc::new(aurora_render::preview::Image {
+                size: [3, 3],
+                rgba: rgba.into(),
+            }),
+            9,
+        )
+        .expect("generated normal");
+        assert!(normal.rgba.as_chunks::<4>().0.iter().any(|p| p[0] != 128 || p[1] != 128));
+    }
+
+    #[test]
+    fn standard_bump_worker_keeps_last_component_of_real_j2k() {
+        let source_pixels: Vec<u8> = (0..64 * 64).flat_map(|i| [30, 90, ((i % 64) * 3) as u8]).collect();
+        let encoded = aurora_assets::j2k::encode_texture_j2k(64, 64, 3, &source_pixels, true).expect("lossless source");
+        let source = PreviewSource {
+            local: None,
+            bytes: Arc::new(encoded),
+            jpeg: PathBuf::new(),
+            blocks: PathBuf::new(),
+            decoded: Some(0),
+            size: Some((64, 64)),
+            procedural: false,
+        };
+        let image = source.standard_bump_image(Uuid::new_v4()).expect("preset source");
+        assert_eq!(image.size, [64, 64]);
+        for (source, pixel) in source_pixels.as_chunks::<3>().0.iter().zip(image.rgba.as_chunks::<4>().0) {
+            assert_eq!(pixel[3], source[2]);
+        }
+    }
 
     #[test]
     fn legacy_bump_cache_keys_separate_modes_and_source_revisions() {

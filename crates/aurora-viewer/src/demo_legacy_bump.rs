@@ -1,5 +1,7 @@
 //! AURORA_DEMO_LEGACY_BUMP=1: a grid of texture-entry bump codes 0–17,
-//! followed by explicit legacy-normal and PBR-normal controls. The preset
+//! followed by explicit legacy-normal and PBR-normal controls. Standard
+//! preset panels use synthetic height images, not the grid's preset artwork.
+//! The preset
 //! numbering follows `LLDrawPoolBump::bindBumpMap` and `std_bump.ini`; the
 //! generated standard-map normals use `LLBumpImageList::generateNormalMapFromAlpha`
 //! and `normgenF.glsl` in the Legacy Viewer.
