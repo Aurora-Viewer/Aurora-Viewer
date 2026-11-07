@@ -745,7 +745,7 @@ fn compilation_does_not_detach_the_script_before_its_first_valid_hello() {
         object_id: sim.bridge.object,
         item_id: sim.bridge.script,
         running: false,
-        mono: Some(true),
+        compile: Some(aurora_net::scripts::CompileTarget::Mono),
     };
     sim.event(reply.clone());
     sim.event(reply);
@@ -1021,7 +1021,7 @@ fn a_stopped_query_script_is_reinstalled_but_never_costs_movelock_its_controller
         object_id: sim.bridge.object,
         item_id: sim.bridge.query_script,
         running: false,
-        mono: Some(true),
+        compile: Some(aurora_net::scripts::CompileTarget::Mono),
     };
     sim.event(stopped.clone());
     assert_eq!(sim.bridge.reinstalls.len(), 1);
@@ -1036,7 +1036,7 @@ fn a_stopped_query_script_is_reinstalled_but_never_costs_movelock_its_controller
         object_id: sim.bridge.object,
         item_id: sim.bridge.query_script,
         running: false,
-        mono: Some(true),
+        compile: Some(aurora_net::scripts::CompileTarget::Mono),
     };
     sim.event(stopped);
     assert_eq!(sim.bridge.phase, Phase::Ready);
