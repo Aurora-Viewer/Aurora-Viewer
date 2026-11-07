@@ -215,7 +215,10 @@ impl InventoryUi {
                 .map(|w| (w.state.ui_id, w.state.preview_text.is_none()))
         };
         if let Some((editor, loading)) = existing {
-            let id = preview_window_id(editor, item, kind);
+            let id = self
+                .tab_hosts
+                .focus(editor)
+                .unwrap_or_else(|| preview_window_id(editor, item, kind));
             super::super::widgets::open_floater(ctx, &id, &mut true);
             ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(id)));
             return loading;
@@ -229,6 +232,65 @@ impl InventoryUi {
             open: false,
         });
         true
+    }
+
+    pub fn open_properties_many(&mut self, ids: &[Uuid]) {
+        let mut members = Vec::new();
+        for id in ids {
+            if !self
+                .windows
+                .iter()
+                .any(|w| matches!(w.state.dialog, Some(EditDialog::Properties(item)) if item == *id))
+            {
+                let mut state = Self {
+                    ui_id: Uuid::new_v4(),
+                    dialog: Some(EditDialog::Properties(*id)),
+                    ..Default::default()
+                };
+                if matches!(self.dialog, Some(EditDialog::Properties(item)) if item == *id) {
+                    self.dialog = None;
+                    state.property_edit = self.property_edit.take();
+                }
+                self.windows.push(InventoryWindow {
+                    id: state.ui_id,
+                    root: Uuid::nil(),
+                    additional: false,
+                    state: Box::new(state),
+                    open: false,
+                });
+            }
+            if let Some(window) = self
+                .windows
+                .iter()
+                .find(|w| matches!(w.state.dialog, Some(EditDialog::Properties(item)) if item == *id))
+            {
+                members.push(window.id);
+            }
+        }
+        self.tab_hosts.group(members);
+    }
+
+    pub fn focus_properties(&mut self, ctx: &egui::Context, item: Uuid) -> bool {
+        let Some(window) = self
+            .windows
+            .iter()
+            .find(|w| matches!(w.state.dialog, Some(EditDialog::Properties(id)) if id == item))
+        else {
+            return false;
+        };
+        let id = window.id;
+        let host = self.tab_hosts.focus(id).unwrap_or_else(|| format!("inventory_properties_{id}"));
+        widgets::open_floater(ctx, &host, &mut true);
+        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(host)));
+        true
+    }
+
+    pub fn group_documents(&mut self, items: &[Uuid]) {
+        let windows = items
+            .iter()
+            .filter_map(|id| self.windows.iter().find(|w| w.state.preview == Some(*id)).map(|w| w.id))
+            .collect();
+        self.tab_hosts.group(windows);
     }
 
     pub fn document(item: Uuid) -> Self {
@@ -328,6 +390,9 @@ impl InventoryUi {
         self.save_pending = false;
         if let Some(reason) = error {
             self.close_after_save = false;
+            if let Some(host) = &mut self.tab_host {
+                host.cancel_close();
+            }
             self.preview_message = aurora_i18n::tr!("notecard-save-failed", reason = reason);
             return true;
         }

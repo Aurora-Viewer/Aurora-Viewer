@@ -90,6 +90,8 @@ pub struct Editor {
     close_after_save: bool,
     closed: bool,
     raise: bool,
+    host_window: Option<String>,
+    host_active: bool,
     tools: view::Tools,
     recompile_allowed: bool,
     processor_settings: settings::ScriptSettings,
@@ -156,6 +158,7 @@ impl Editor {
 pub struct Editors {
     pub rlva_hidden: bool,
     pub documents: Vec<Editor>,
+    tab_hosts: super::preview_tabs::Hosts,
     panels: dialogs::Panels,
     debug: debug::Debug,
     includes: std::collections::HashMap<Uuid, PendingInclude>,
@@ -203,6 +206,7 @@ impl Editors {
             e.colors.cancel(&mut e.source);
             if e.dirty() || e.saving.is_some() {
                 e.close_prompt = true;
+                e.raise = true;
                 ready = false;
             }
         }
@@ -437,6 +441,25 @@ impl Editors {
         true
     }
 
+    pub fn group_inventory(&mut self, items: &[Uuid]) {
+        let keys: Vec<_> = items
+            .iter()
+            .copied()
+            .filter(|item| {
+                self.documents
+                    .iter()
+                    .any(|e| e.target.object.is_nil() && e.target.item == *item && !e.closed)
+            })
+            .collect();
+        self.tab_hosts.group(keys.clone());
+        for editor in &mut self.documents {
+            if editor.target.object.is_nil() && keys.contains(&editor.target.item) {
+                editor.raise = false;
+                editor.tools.focus_start = keys.first() == Some(&editor.target.item);
+            }
+        }
+    }
+
     pub fn open(&mut self, target: ScriptTarget, name: String, can_read: bool, can_edit: bool) -> Option<Uuid> {
         for editor in &mut self.documents {
             editor.tools.focus_start = false;
@@ -477,6 +500,8 @@ impl Editors {
             close_after_save: false,
             closed: false,
             raise: true,
+            host_window: None,
+            host_active: false,
             tools: view::Tools::opening(),
             recompile_allowed: false,
             processor_settings: settings::ScriptSettings::default(),
@@ -568,6 +593,10 @@ impl Editors {
             Err(reason) => e.status.clone_from(reason),
         }
         e.close_after_save = false;
+        if !result.as_ref().is_ok_and(|saved| saved.compiled) {
+            self.tab_hosts.cancel_member(target.item);
+            e.raise = true;
+        }
         true
     }
 
@@ -630,11 +659,34 @@ impl Editors {
         if self.panels.preferences.show(ctx, p, settings) {
             actions.push(Action::SettingsChanged);
         }
+        self.tab_hosts
+            .update(self.documents.iter().filter(|e| !e.closed).map(|e| super::preview_tabs::Member {
+                key: e.target.item,
+                name: e.name.clone(),
+                dirty: e.dirty(),
+                enabled: true,
+            }));
+        for editor in &self.documents {
+            if editor.raise || editor.close_prompt {
+                self.tab_hosts.focus(editor.target.item);
+            }
+        }
+        let mut host_views: std::collections::HashMap<_, _> = self
+            .documents
+            .iter()
+            .filter_map(|e| self.tab_hosts.view(e.target.item).map(|host| (e.target.item, host)))
+            .collect();
         for e in &mut self.documents {
             if e.closed {
                 continue;
             }
+            let mut host = host_views.remove(&e.target.item);
             let id = format!("script_editor_{}_{}", e.target.object, e.target.item);
+            let window_id = host.as_ref().map_or_else(|| id.clone(), |host| host.window_id());
+            e.host_window = host.as_ref().map(|_| window_id.clone());
+            let active = host.as_ref().is_some_and(|host| host.active());
+            let focus_host = active && !e.host_active;
+            e.host_active = active;
             e.recompile_allowed = settings.preprocessor && settings.recompile;
             if e.processor_settings != *settings {
                 e.processor_settings.clone_from(settings);
@@ -693,21 +745,36 @@ impl Editors {
                         e.compile_failed = true;
                         e.errors = vec![reason];
                         e.status = aurora_i18n::tr!("script-preproc-failed").into();
+                        self.tab_hosts.cancel_member(e.target.item);
+                        if let Some(host) = &mut host
+                            && host.active()
+                        {
+                            host.cancel_close();
+                        }
                     }
                 }
             }
             if std::mem::take(&mut e.raise) {
-                super::widgets::expand_floater(ctx, &id);
+                super::widgets::expand_floater(ctx, &window_id);
+            }
+            if host.as_ref().is_some_and(|host| !host.active()) {
+                view::poll_files(ctx, e, egui::Id::unique((&id, "source_text")), settings, &mut actions);
+                continue;
+            }
+            if focus_host {
+                let source = egui::Id::unique((&id, "source_text"));
+                ctx.memory_mut(|memory| memory.request_focus(source));
+                focus::activate(ctx, source);
             }
             let mut open = true;
             let title = format!("{}{}", e.name, if e.dirty() { " *" } else { "" });
             focus::claim(
                 ctx,
-                egui::LayerId::new(egui::Order::Middle, egui::Id::unique(&id)),
+                egui::LayerId::new(egui::Order::Middle, egui::Id::unique(&window_id)),
                 egui::Id::unique((&id, "source_text")),
             );
             Floater::new(
-                &id,
+                &window_id,
                 title,
                 ctx.content_rect().center() - Vec2::new(330.0, 260.0),
                 Vec2::new(660.0, 520.0),
@@ -715,15 +782,20 @@ impl Editors {
             .cascade(super::widgets::CascadeGroup::Script)
             .allow_partial_outside()
             .show(ctx, p, &mut open, |ui| {
-                view::body(
-                    ui,
-                    p,
-                    e,
-                    egui::Id::unique((&id, "source_text")),
-                    settings,
-                    &mut self.panels,
-                    &mut actions,
-                );
+                if let Some(host) = &mut host {
+                    host.header(ui, p);
+                }
+                ui.push_id(e.target.item, |ui| {
+                    view::body(
+                        ui,
+                        p,
+                        e,
+                        egui::Id::unique((&id, "source_text")),
+                        settings,
+                        &mut self.panels,
+                        &mut actions,
+                    );
+                });
             });
             view::dialogs(
                 ctx,
@@ -736,7 +808,7 @@ impl Editors {
             );
             let source_id = egui::Id::unique((&id, "source_text"));
             if let Some(literal) = e.colors.clicked.take() {
-                e.colors.open(&mut e.source, ctx, source_id, egui::Id::unique(&id), literal);
+                e.colors.open(&mut e.source, ctx, source_id, egui::Id::unique(&window_id), literal);
             }
             e.colors.show(
                 ctx,
@@ -745,6 +817,12 @@ impl Editors {
                 &mut e.source,
                 e.can_edit && e.loaded && e.saving.is_none() && e.loading.is_none() && !e.tools.processed,
             );
+            if let Some(host) = &mut host {
+                host.closing(&mut open);
+            }
+            if host.is_some() && e.close_after_save && e.saving.is_some() {
+                open = true;
+            }
             if !open {
                 e.colors.cancel(&mut e.source);
                 if e.dirty() || e.saving.is_some() {
@@ -787,13 +865,22 @@ impl Editors {
                         if flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
                             e.close_prompt = false;
                             e.close_after_save = false;
+                            if let Some(host) = &mut host {
+                                host.cancel_close();
+                            }
                         }
                     });
                 });
                 if !prompt_open {
                     e.close_prompt = false;
                     e.close_after_save = false;
+                    if let Some(host) = &mut host {
+                        host.cancel_close();
+                    }
                 }
+            }
+            if let Some(host) = &mut host {
+                self.tab_hosts.report(host);
             }
         }
         self.documents.retain(|e| !e.closed);
@@ -807,17 +894,21 @@ impl Editors {
             let id = egui::Id::unique((&window, "source_text"));
             if search.owns(id) {
                 bound = true;
+                if self.tab_hosts.view(e.target.item).is_some_and(|host| !host.active()) {
+                    break;
+                }
+                let window = e.host_window.as_deref().unwrap_or(&window);
                 let minimized = ctx
                     .data_mut(|d| d.get_persisted::<bool>(egui::Id::unique((&window, "minimized"))))
                     .unwrap_or(false);
-                if !minimized && let Some(parent) = ctx.memory(|m| m.area_rect(egui::Id::unique(&window))) {
+                if !minimized && let Some(parent) = ctx.memory(|m| m.area_rect(egui::Id::unique(window))) {
                     view::search(
                         ctx,
                         p,
                         e,
                         id,
                         search,
-                        (egui::Id::unique(&window), parent),
+                        (egui::Id::unique(window), parent),
                         settings.search_prefer_left,
                     );
                 }
@@ -942,6 +1033,50 @@ mod tests {
                 ],
             );
         }
+    }
+
+    #[test]
+    fn inventory_script_tabs_keep_sources_find_ownership_and_failed_saves_independent() {
+        let ctx = egui::Context::default();
+        let mut editors = Editors::default();
+        let targets = [701, 702].map(|n| ScriptTarget {
+            object: Uuid::nil(),
+            item: Uuid::from_u128(n),
+        });
+        for (index, target) in targets.iter().copied().enumerate() {
+            let request = editors.open(target, format!("Script {index}"), true, true).unwrap();
+            editors.loaded(request, target, Ok(format!("// source {index}\ndefault {{ state_entry() {{}} }}")));
+        }
+        editors.group_inventory(&targets.map(|target| target.item));
+        settle(&ctx, &mut editors);
+        editors.documents[0].source.push_str("\n// first draft");
+        editing::select(&ctx, source_id(targets[0]), 3..3, false);
+        click_label(&ctx, &mut editors, "Script 1");
+        settle(&ctx, &mut editors);
+        assert!(editors.tab_hosts.view(targets[1].item).unwrap().active());
+        assert!(editors.documents[0].dirty());
+        assert!(!editors.documents[1].dirty());
+        let _ = frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+        assert!(
+            editors.panels.search.owns(source_id(targets[1])),
+            "first={}, keyboard={:?}, second={:?}",
+            editors.panels.search.owns(source_id(targets[0])),
+            ctx.memory(|memory| memory.focused()),
+            source_id(targets[1])
+        );
+        let pending = editors.documents[0].save();
+        assert!(pending.is_some());
+        let request = editors.documents[0].saving.as_ref().unwrap().request;
+        editors.saved(request, targets[0], &Err("Save failed".to_owned()));
+        settle(&ctx, &mut editors);
+        assert!(editors.tab_hosts.view(targets[0].item).unwrap().active());
+        assert!(editors.documents[0].source.ends_with("// first draft"));
+        assert_eq!(editing::cursor(&ctx, source_id(targets[0])).primary.index.0, 3);
+        assert!(editors.documents[0].dirty());
+        assert!(!editors.documents[1].dirty());
+        // Ctrl+F is claimed by the host's active source, using its original text ID.
+        let _ = frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+        assert!(editors.panels.search.owns(source_id(targets[0])));
     }
 
     #[test]

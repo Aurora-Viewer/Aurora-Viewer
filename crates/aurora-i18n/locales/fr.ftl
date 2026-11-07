@@ -13329,6 +13329,8 @@ ui-options-camera-vr-at-start-help = Le bouton VR passe alors en VR tout de suit
 
 app-vr-leave = Appuyez sur { $key } pour revenir au mode bureau
 
+resource-preview-tabs-title = Aperçus de l’inventaire
+resource-preview-close-tab = Fermer cet onglet
 picker-pipette-hint = Cliquez sur une face pour sélectionner sa texture ou son matériau dans votre inventaire.
 
 picker-pipette-no-texture = Aucune texture copiable trouvée dans votre inventaire.

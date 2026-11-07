@@ -13333,6 +13333,8 @@ ui-options-camera-vr-at-start-help = The VR button then enters VR at once. Off, 
 
 app-vr-leave = Press { $key } to return to desktop mode
 
+resource-preview-tabs-title = Inventory previews
+resource-preview-close-tab = Close this tab
 picker-pipette-hint = Click an object face to select its texture or material from your inventory.
 
 picker-pipette-no-texture = No copyable texture found in your inventory.

@@ -13306,6 +13306,8 @@ ui-options-camera-vr-at-start-help = オンにすると、VRボタンですぐ�
 
 app-vr-leave = { $key } キーでデスクトップモードに戻ります
 
+resource-preview-tabs-title = インベントリのプレビュー
+resource-preview-close-tab = このタブを閉じる
 picker-pipette-hint = オブジェクトの面をクリックして、インベントリからそのテクスチャまたはマテリアルを選択します。
 
 picker-pipette-no-texture = コピー可能なテクスチャがインベントリにありません。

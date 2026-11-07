@@ -159,6 +159,7 @@ pub enum InvAction {
         resident: Uuid,
     },
     Preview(Uuid),
+    PreviewMany(Vec<Uuid>),
     /// Open a sky or water settings item in its editor (LLSettingsBridgeAction).
     EditEnvironment(Uuid),
     Gesture(crate::ui::gestures::Action),
@@ -548,6 +549,8 @@ pub struct InventoryUi {
     move_to: Option<move_to::MoveTo>,
     pub links_filter: Option<Uuid>,
     pub windows: Vec<InventoryWindow>,
+    pub(super) tab_hosts: super::preview_tabs::Hosts,
+    pub(super) tab_host: Option<super::preview_tabs::View>,
     pub thumbnail: thumbnail::ThumbnailUi,
     hover: hover::State,
     pub share_picker: super::avatar_picker::AvatarPicker,
@@ -2117,6 +2120,30 @@ pub fn show(
         st.dialog = Some(EditDialog::Share(std::mem::take(&mut st.share_items), *resident));
     }
     let mut windows = std::mem::take(&mut st.windows);
+    for window in &mut windows {
+        if let Some(view) = &mut window.state.tab_host {
+            st.tab_hosts.report(view);
+        }
+    }
+    st.tab_hosts.update(windows.iter().filter_map(|window| {
+        let item = window.state.preview.or(match window.state.dialog {
+            Some(EditDialog::Properties(id)) => Some(id),
+            _ => None,
+        })?;
+        let item = world.inventory.items.get(&item)?;
+        Some(super::preview_tabs::Member {
+            key: window.id,
+            name: item.name.clone(),
+            dirty: window.state.preview_dirty,
+            enabled: window.state.preview.is_none() || world.inventory.can_preview(item.asset_type),
+        })
+    }));
+    // Keep selection fixed through this frame: a click in an earlier editor
+    // must not draw a second body for the same host later in this loop.
+    let mut tab_views: std::collections::HashMap<_, _> = windows
+        .iter()
+        .filter_map(|window| st.tab_hosts.view(window.id).map(|view| (window.id, view)))
+        .collect();
     let mut spawned = Vec::new();
     for w in &mut windows {
         if !w.root.is_nil() && !world.inventory.folders.contains_key(&w.root) {
@@ -2125,6 +2152,8 @@ pub fn show(
             continue;
         }
         w.state.ui_id = w.id;
+        w.state.tab_host = tab_views.remove(&w.id);
+        let tab_visible = w.state.tab_host.as_ref().is_none_or(|host| host.active());
         if w.id == listings::PANEL && w.state.fetch_all {
             fetch_whole_inventory(&mut world.inventory, &mut w.state);
         }
@@ -2231,20 +2260,22 @@ pub fn show(
         controls::dialogs(ctx, p, &mut w.state, prefs);
         folder_colors::show(ctx, p, &world.inventory, &mut w.state, prefs);
         context_catalog::process_deferred(&mut world.inventory, &mut w.state, prefs, &facts);
-        dialogs::show(ctx, p, icons, &world.inventory, &mut w.state, prefs, &facts, images, &mut actions);
-        move_to::show(ctx, p, icons, &mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
-        dialogs::preview(
-            ctx,
-            p,
-            icons,
-            &world.inventory,
-            &world.inventory,
-            &mut w.state,
-            images,
-            prefs,
-            script_settings,
-            &mut actions,
-        );
+        if tab_visible {
+            dialogs::show(ctx, p, icons, &world.inventory, &mut w.state, prefs, &facts, images, &mut actions);
+            move_to::show(ctx, p, icons, &mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
+            dialogs::preview(
+                ctx,
+                p,
+                icons,
+                &world.inventory,
+                &world.inventory,
+                &mut w.state,
+                images,
+                prefs,
+                script_settings,
+                &mut actions,
+            );
+        }
         w.state.thumbnail.show(
             ctx,
             p,
@@ -2273,6 +2304,10 @@ pub fn show(
         if w.id != listings::PANEL {
             w.state.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
         }
+        if let Some(view) = &mut w.state.tab_host {
+            st.tab_hosts.report(view);
+        }
+        st.tab_hosts.append(&mut w.state.tab_hosts);
         spawned.append(&mut w.state.windows);
     }
     // Documents and confirmations outlive the inventory window which opened
@@ -2311,6 +2346,8 @@ pub fn show(
 mod delete_tests;
 #[cfg(test)]
 mod drag_tests;
+#[cfg(test)]
+mod tab_tests;
 #[cfg(test)]
 mod texture_tests;
 
