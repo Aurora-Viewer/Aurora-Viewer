@@ -188,6 +188,14 @@ impl Popped {
         self.windows.iter().any(|w| w.conversation == conversation && !w.hidden)
     }
 
+    #[cfg(test)]
+    pub(super) fn focus_requested(&self, conversation: Option<Uuid>) -> bool {
+        self.windows
+            .iter()
+            .find(|w| w.conversation == conversation && !w.hidden)
+            .is_some_and(|w| w.view.conv_focus_request)
+    }
+
     /// Put the window of `conversation` away, or show it back; false when
     /// it has none.
     pub(super) fn set_hidden(&mut self, conversation: Option<Uuid>, hidden: bool) -> bool {
