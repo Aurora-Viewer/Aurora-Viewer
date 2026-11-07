@@ -8,9 +8,8 @@
 
 use super::World;
 use super::land::{AgentRights, owned_by_agent, powers};
-use super::landmarks::in_parcel;
 use aurora_net::{ParcelInfo, RegionHandle};
-use glam::{DVec3, Vec3};
+use glam::Vec3;
 use uuid::Uuid;
 
 /// The ownership of a ParcelOverlay cell (its low three bits, PARCEL_* of
@@ -85,28 +84,11 @@ impl World {
             let (i, j) = ((local.x / CELL).max(0.0) as u32, (local.y / CELL).max(0.0) as u32);
             (i < *cx && j < *cy).then(|| data.get((j * cx + i) as usize).copied()).flatten()
         });
-        let origin = aurora_net::handle_to_origin(handle);
-        let global = DVec3::new(
-            f64::from(origin.0) + f64::from(local.x),
-            f64::from(origin.1) + f64::from(local.y),
-            0.0,
-        );
-        let ours = self.parcel.as_deref().filter(|_| self.main_region == Some(handle));
-        let selected = self
-            .land
-            .sel
-            .as_ref()
-            .filter(|s| s.handle == handle)
-            .and_then(|s| s.parcel.as_deref());
-        let parcel = [ours, selected, known]
-            .into_iter()
-            .flatten()
-            .find(|p| in_parcel(&p.bitmap, origin, global));
         Some(Place {
             region_owner: info.owner,
             estate_manager: info.is_estate_manager,
             overlay,
-            parcel,
+            parcel: self.known_parcel_at(handle, local, known),
         })
     }
 
