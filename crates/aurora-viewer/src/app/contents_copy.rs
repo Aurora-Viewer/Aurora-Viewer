@@ -10,7 +10,7 @@ use crate::ui::object_actions::{CopyConfirm, CopyRequest};
 use crate::world::appearance::WearMode;
 use crate::world::inventory::actions as rules;
 use crate::world::notifications::{Data, Kind};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 #[cfg(test)]
@@ -23,6 +23,44 @@ const FT_CLOTHING: i32 = 5;
 /// outfit is left as it is.
 const WEAR_TIMEOUT: Duration = Duration::from_secs(60);
 const COPY_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Keep the per-item transfer path's recheck after a move confirmation and
+/// after asynchronous folder creation: the current listing owns permissions.
+fn refresh_copy(mut request: CopyRequest, build: &crate::build::BuildTool, world: &crate::world::World) -> Result<CopyRequest, String> {
+    use crate::build::task_inventory;
+    if let Some(inv) = build.contents.objects.get(&request.object) {
+        let current: HashMap<_, _> = inv.items.iter().map(|item| (item.item_id, item)).collect();
+        for item in &mut request.items {
+            *item = (*current
+                .get(&item.item_id)
+                .ok_or_else(|| aurora_i18n::tr!("task-transfer-unavailable").to_owned())?)
+            .clone();
+        }
+    }
+    request.transfer = task_inventory::contents_transfer(
+        world,
+        request.object,
+        &request.items,
+        task_inventory::owned(world, request.object, build.props.get(&request.object)),
+    )?;
+    request.transfer.scripted |= build
+        .contents
+        .objects
+        .get(&request.object)
+        .is_some_and(|inv| inv.items.iter().any(|item| item.asset_type == 10));
+    Ok(request)
+}
+
+fn copy_approval_covers(
+    before: &crate::build::task_inventory::ContentsTransfer,
+    after: &crate::build::task_inventory::ContentsTransfer,
+) -> bool {
+    if after.moved.is_empty() {
+        return true;
+    }
+    let approved: HashSet<_> = before.moved.iter().copied().collect();
+    after.moved.iter().all(|item| approved.contains(item)) && (!after.scripted || before.scripted)
+}
 
 #[derive(Default)]
 pub(super) struct ContentsCopies {
@@ -179,19 +217,7 @@ impl App {
             ContentsAction::Script(object, item) => self.open_script(aurora_net::scripts::ScriptTarget { object, item }),
             ContentsAction::Notecard(object, item) => self.open_task_notecard(object, item),
             ContentsAction::Copy(request) => self.copy_contents(*request),
-            ContentsAction::Take(object, items) => {
-                let Some(idx) = self.world.objects.index_of_uuid(&object) else {
-                    return;
-                };
-                if items
-                    .iter()
-                    .all(|item| self.build.task_transfer_kind(&self.world, object, item).is_ok())
-                {
-                    for item in &items {
-                        self.build.copy_item_to_inventory(&self.world, idx, item, Uuid::nil());
-                    }
-                }
-            }
+            ContentsAction::Take(object, items) => self.copy_selected_contents(object, items),
             ContentsAction::Remove(object, ids) => {
                 let Some(idx) = self.world.objects.index_of_uuid(&object) else {
                     return;
@@ -239,9 +265,24 @@ impl App {
         self.contents_copy_alert(text);
     }
 
-    /// The contents window's copy: the move warning first when no-copy
+    pub(super) fn copy_selected_contents(&mut self, object: Uuid, items: Vec<aurora_net::build::TaskItem>) {
+        let props = self.build.props.get(&object).or_else(|| self.interactions.props.get(&object));
+        match ui::object_actions::task_copy_request(object, items, props, &self.world) {
+            Ok(request) => self.copy_contents(request),
+            Err(reason) => self.contents_copy_alert(reason),
+        }
+    }
+
+    /// The contents copy: the move warning first when no-copy
     /// items leave the object (warn_move_inventory), then the folder.
     pub(super) fn copy_contents(&mut self, request: CopyRequest) {
+        let request = match refresh_copy(request, &self.build, &self.world) {
+            Ok(request) => request,
+            Err(reason) => {
+                self.contents_copy_alert(reason);
+                return;
+            }
+        };
         if !request.transfer.moved.is_empty() {
             let prefs = &self.settings.inventory;
             let warn = if request.transfer.scripted {
@@ -257,7 +298,19 @@ impl App {
         self.create_contents_folder(request);
     }
 
-    pub(super) fn contents_copy_confirmed(&mut self, confirm: CopyConfirm) {
+    pub(super) fn contents_copy_confirmed(&mut self, mut confirm: CopyConfirm) {
+        let before = confirm.request.transfer.clone();
+        confirm.request = match refresh_copy(confirm.request, &self.build, &self.world) {
+            Ok(request) => request,
+            Err(reason) => {
+                self.contents_copy_alert(reason);
+                return;
+            }
+        };
+        if !copy_approval_covers(&before, &confirm.request.transfer) {
+            self.copy_contents(confirm.request);
+            return;
+        }
         if confirm.ignore {
             let prefs = &mut self.settings.inventory;
             if confirm.request.transfer.scripted {
@@ -336,6 +389,18 @@ impl App {
         if creation.timed_out {
             return;
         }
+        let before = request.transfer.clone();
+        let request = match refresh_copy(request, &self.build, &self.world) {
+            Ok(request) if copy_approval_covers(&before, &request.transfer) => request,
+            Ok(_) => {
+                self.contents_copy_failed(id, aurora_i18n::tr!("task-transfer-unavailable").to_owned());
+                return;
+            }
+            Err(reason) => {
+                self.contents_copy_failed(id, reason);
+                return;
+            }
+        };
         let Some((handle, local_id)) = self
             .world
             .objects
@@ -361,6 +426,11 @@ impl App {
             let moved = &request.transfer.moved;
             if let Some(inv) = self.build.contents.objects.get_mut(&request.object) {
                 inv.items.retain(|i| !moved.contains(&i.item_id));
+            }
+            if let Some(c) = self.interactions.contents.as_mut().filter(|c| c.target.object == request.object)
+                && let Some(Ok(items)) = c.result.as_mut()
+            {
+                items.retain(|item| !moved.contains(&item.id));
             }
             self.build.contents_changed(request.object);
         }
@@ -462,7 +532,7 @@ impl App {
     pub(super) fn demo_contents_copy(&mut self, mode: &str) {
         let (action, yes) = mode.strip_suffix("-yes").map_or((mode, false), |action| (action, true));
         let wear = match action {
-            "copy" | "copy-timeout" => None,
+            "copy" | "copy-timeout" | "selected-copy" => None,
             "replace" => Some(WearMode::ReplaceOutfit),
             "add" => Some(WearMode::Append),
             _ => return,
@@ -470,6 +540,25 @@ impl App {
         match self.frame_count {
             420 => {
                 let Some(c) = &self.interactions.contents else { return };
+                if action == "selected-copy" {
+                    let object = c.target.object;
+                    let Some(Ok(items)) = &c.result else { return };
+                    let items: Vec<_> = items
+                        .iter()
+                        .map(|item| crate::build::task_inventory::from_inventory(object, item))
+                        .collect();
+                    if let Some(props) = self.interactions.props.get(&c.target.root) {
+                        self.build.props.insert(object, props.clone());
+                    }
+                    self.build.on_task_inventory(&self.world, object, Some(1), items.clone());
+                    // Leave the script out: different asset types still share
+                    // the folder, and an unselected script keeps the warning.
+                    let selected = items.into_iter().filter(|item| item.asset_type != 10).collect::<Vec<_>>();
+                    log::info!("demo selected contents copy: {} item(s)", selected.len());
+                    self.interactions.contents = None;
+                    self.on_build_request(crate::build::ui::Request::CopyContents { object, items: selected });
+                    return;
+                }
                 match crate::ui::object_actions::copy_request(c, self.interactions.props.get(&c.target.root), &self.world) {
                     Ok(request) => {
                         log::info!(

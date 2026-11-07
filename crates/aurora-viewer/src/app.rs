@@ -6834,7 +6834,7 @@ impl App {
                     self.send(NetCommand::PreviewInventoryItem(item));
                 }
             }
-            Request::TransferTask(request) => self.apply_inventory_action(ui::inventory::InvAction::TakeTask(request)),
+            Request::CopyContents { object, items } => self.copy_selected_contents(object, items),
             Request::ZoomFraction(f) => self.camera.set_zoom_fraction(f),
             Request::AboutLand => self.panels.about_land = true,
             // LLPanelLandInfo::onClickBuy: the land tool's selection
@@ -10614,12 +10614,13 @@ impl App {
         };
         t_part = self.scene.parts.lap(Part::ParamsLights, t_part);
         let probes = if in_world {
-            let slots = self.settings.probe_count.clamp(8, 64);
+            let slots = gfx.renderer.fitted_probe_slots(self.settings.probe_count.clamp(8, 256));
             if self.probes.slots != slots || self.probes.level != self.settings.reflection_probes {
                 self.probes.slots = slots;
                 self.probes.level = self.settings.reflection_probes.min(3);
                 self.probes.reset();
             }
+            self.probes.range = self.settings.probe_range.min(self.settings.draw_distance);
             if self.probes.hdr != self.settings.hdr_emissive {
                 self.probes.hdr = self.settings.hdr_emissive;
                 self.probes.refresh();

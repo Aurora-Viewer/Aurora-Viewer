@@ -998,6 +998,13 @@ impl Renderer {
         self.snapshot_request.map_or(self.size, |s| (s.width, s.height))
     }
 
+    /// The probe slots this device holds of the `slots` asked: the viewer
+    /// places probes in those only, a capture for a slot beyond them would
+    /// overwrite the last one.
+    pub fn fitted_probe_slots(&self, slots: u32) -> u32 {
+        crate::probes::Probes::fitted_slots(&self.device, slots)
+    }
+
     /// The largest side a photo can be drawn at in one pass.
     pub fn max_texture_dimension(&self) -> u32 {
         self.device.limits().max_texture_dimension_2d

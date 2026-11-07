@@ -2240,6 +2240,15 @@ No real L$ and no connection to a grid.
   After confirmation (`open-copy-yes`), the inventory footer confirms the
   three actual arrivals, then clears after five seconds (capture at frame 650
   for success, 1050 after expiry, with `--fps-limit 60`).
+- `open-selected-copy`, `open-selected-copy-yes` (#1410): at frame 420,
+  send the editor's selected-items Copy to inventory request for the notecard
+  and no-copy spare cube, leaving the script out. One new folder named after
+  the object receives both selected types. The same scripted-object move
+  warning and verified completion feedback as `open-copy` apply; `-yes`
+  confirms at 480, and the inventory opens at 540. Capture at 650 with
+  `--fps-limit 60` for the two-item result. Native pointer regressions exercise
+  the real context menu for one item and a mixed-type selection in both
+  editor layouts, while the Open window's full-copy button still takes all items.
 - `open-copy-timeout-yes` (#1410): the offline simulator withholds the spare
   cube; frame 600 advances the copy observer's deadline. The footer reports
   an unconfirmed copy with two of three items received, then clears after
@@ -4324,7 +4333,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_REZ_EFFECT=1\|loop\|styles\|cold` | The rez effect: objects and an avatar appearing, dressing and leaving in front of the camera; `styles`: its three looks side by side; `cold`: a cold arrival with slow textures |
 | `AURORA_REZ_EFFECT=0\|1` | The rez effect off or on, whatever the setting (Preferences › Aurora) |
 | `AURORA_REZ_STYLE=1\|2\|3` | The rez effect's look: grid, scanlines, wireframe (3, the one chosen, by default) |
-| `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
+| `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1][,meshfail=<s>]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
 | `AURORA_DEMO_HALO=1` | A wide translucent pane 3 m ahead of the start position, facing the camera (#556) |
 | `AURORA_DEMO_BLEND_AO=1` | A face whose two halves differ in alpha mode, under a hat brim, ahead and left of the start position (#882) |
@@ -4750,8 +4759,14 @@ both open states and the selection count. Capture at frame 620.
     spaced accordingly: their textures cover more of the screen and ask
     for finer levels, as the walls and floors of a region do. 400 objects
     of 3 m give levels close to those of a grid arrival.
-- **`AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1]`**:
+- **`AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1][,meshfail=<s>]`**:
   an arrival in a busy region, to measure what the loading shows first.
+  With `meshfail=`, the server answers 403 to every mesh request for that
+  many seconds, then serves them: the meshes that failed four times are
+  asked again, 30 s later at most for the first time, and show. The
+  `mesh load:` lines go from `88 failed` to `88 meshes loaded, 0 failed`, and
+  `demo arrival: worn` and `all` reach the level they reach without the
+  option (with `avatars=8,worn=6`, 90 %).
   `n` objects (1,200 by default) arrive all around our avatar, the nearest
   first and 600 a second, from 3 to 120 m away and larger with the
   distance; one in three is a mesh and each has its own texture. `avatars`

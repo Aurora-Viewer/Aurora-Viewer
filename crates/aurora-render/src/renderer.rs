@@ -5661,7 +5661,7 @@ impl Backend {
             self.pipelines = scene;
             self.impostors.set_pipelines(impostors);
         }
-        let slots = s.probe_slots.clamp(1, crate::probes::MAX_PROBES as u32);
+        let slots = crate::probes::Probes::fitted_slots(&self.device, s.probe_slots);
         let probes_dirty = slots != self.probes.slots;
         if probes_dirty {
             self.probes = crate::probes::Probes::new(&self.device, slots);
@@ -6854,12 +6854,19 @@ impl Backend {
         // reflection probes by screen tile and depth, for the main view
         // (probes::tiles), and how its fragments walk them (sample_probes_pair)
         let probe_walk = crate::probes::ProbeWalk::from_env();
+        // (the viewer asks for what the device holds, `fitted_probe_slots`:
+        // this is for the frames until a new number of slots is applied)
+        let probe_list: std::borrow::Cow<[crate::types::ProbeGpu]> = if f.probes.probes.iter().any(|p| p.slot[0] >= self.probes.slots) {
+            f.probes.probes.iter().filter(|p| p.slot[0] < self.probes.slots).copied().collect()
+        } else {
+            std::borrow::Cow::Borrowed(&f.probes.probes)
+        };
         let probe_sets = if f.probes.enabled && probe_walk.tiles(f.probe_walk_list) {
             let size = [world_size.0, world_size.1];
             let eye = Vec3::from_slice(&main.camera_pos[..3]);
-            crate::probes::tiles(fu.view, fu.proj, eye, size, &f.probes.probes)
+            crate::probes::tiles(fu.view, fu.proj, eye, size, &probe_list)
         } else {
-            LightSets::whole()
+            crate::probes::ProbeSets::whole()
         };
         main.light_sets.mode[3] = probe_walk.shader_mode(f.probe_walk_list, f.debug.check_probe_sets);
         // the view shown instead of the image (debug_view in common.wgsl):
@@ -7028,7 +7035,7 @@ impl Backend {
             self.queue.write_buffer(&self.refl_buffers[1], 0, bytemuck::bytes_of(&u));
         }
         // ---- reflection probes: list for the shaders, face capture uniforms
-        self.probes.upload(&self.queue, f.probes.enabled, &f.probes.probes, &probe_sets);
+        self.probes.upload(&self.queue, f.probes.enabled, &probe_list, &probe_sets);
         let capture = f.probes.capture;
         // skies with a probe ambiance light with the probes' irradiance
         // (shade_pbr), which gets a capture of its own
@@ -7431,6 +7438,9 @@ impl Backend {
                 spot_vp,
                 flags,
             );
+            if let Some(c) = &capture {
+                frame.probe_eye = c.origin.extend(c.reach).to_array();
+            }
             if do_water_air {
                 frame.water_air = crate::gpu_cull::view_planes(air_vp).map(|p| p.to_array());
                 frame.dist[1] = frame.dist[1].max(g.draw_distance.min(200.0));
@@ -7456,8 +7466,14 @@ impl Backend {
         rg.select_faces = push(cpu, &lists.select_faces);
         let imp_ranges: Vec<((u64, u32), (u64, u32))> = imp_caps.iter().map(|c| (push(cpu, &c.opaque), push(cpu, &c.blend))).collect();
         // reflection passes: each culled to its own frustum
-        if capture.is_some() {
-            rg.probe = push(cpu, &cull_to_view(probe_vp, &lists.probe));
+        if let Some(c) = &capture {
+            let reached: Vec<ShadowCaster> = lists
+                .probe
+                .iter()
+                .filter(|o| o.center.distance(c.origin) - o.radius < c.reach)
+                .copied()
+                .collect();
+            rg.probe = push(cpu, &cull_to_view(probe_vp, &reached));
         }
         if do_water_refl {
             rg.refl_water = push(cpu, &cull_to_view(water_vp, &lists.reflection));
