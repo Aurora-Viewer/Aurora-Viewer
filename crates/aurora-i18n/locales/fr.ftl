@@ -272,14 +272,6 @@ omnifilter-up-tip = La règle sélectionnée est déplacée d'une position vers 
 omnifilter-down = Bas
 omnifilter-down-tip = La règle sélectionnée est déplacée d'une position vers le bas.
 omnifilter-log-time = Heure (SLT)
-omnifilter-import-legacy = Importer les règles Legacy
-omnifilter-import-legacy-tip = Ajoute les jeux de règles de l'omnifiltre du Legacy Viewer de cet ordinateur.
-omnifilter-imported = { $count ->
-    [one] { $count } jeu de règles importé.
-   *[other] { $count } jeux de règles importés.
-    }
-omnifilter-import-none = Aucune règle du Legacy Viewer sur cet ordinateur.
-omnifilter-import-failed = Les règles du Legacy Viewer n'ont pas pu être lues : { $error }
 omnifilter-rule-name = Nom de la règle
 omnifilter-sender = Émetteur
 omnifilter-sender-tip = Le nom de l'avatar ou de l'objet dont provient le message

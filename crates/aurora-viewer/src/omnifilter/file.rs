@@ -11,7 +11,6 @@
 
 use super::{MatchType, Rule, RuleSet};
 use aurora_llsd::Llsd;
-use std::path::PathBuf;
 
 /// The rule sets of a file, in their order.
 pub fn parse(bytes: &[u8]) -> Result<Vec<RuleSet>, String> {
@@ -140,14 +139,4 @@ pub fn to_llsd(sets: &[RuleSet]) -> Llsd {
 
 pub fn to_xml(sets: &[RuleSet]) -> String {
     aurora_llsd::to_xml_string(&to_llsd(sets))
-}
-
-/// The Legacy Viewer's files on this computer, `user_settings/omnifilter.xml`
-/// of each of its application folders that has one (the 64-bit one first).
-pub fn legacy_files() -> Vec<PathBuf> {
-    crate::legacy_profile::app_folders()
-        .into_iter()
-        .map(|app| app.join("user_settings").join("omnifilter.xml"))
-        .filter(|p| p.is_file())
-        .collect()
 }

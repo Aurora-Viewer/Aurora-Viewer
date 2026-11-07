@@ -6007,8 +6007,8 @@ failure. Grid validation and any paid upload are performed by the human.
   `object message from … dropped`. Capture around frame 1000.
 - **`AURORA_DEMO_OMNIFILTER=1`**: the Omnifilter (Communicate ›
   Omnifilter) on for this run with five rules of its own in the Default
-  set, kept in memory only (the user's `omnifilter.xml` and the saved
-  switch are not touched). The Rules Editor opens at frame 640; at 60
+  set, kept in memory only (`omnifilter.xml` is not touched; the switch
+  is saved in the demo's own profile only). The Rules Editor opens at frame 640; at 60
   frames a second, from frame 700: a resident "Shouty McShout" whose line
   is hidden, an object's advertising line replaced by
   "Omnifilter Replacement: (advertising hidden)", an ordinary line that

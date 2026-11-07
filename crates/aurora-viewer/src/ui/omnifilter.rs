@@ -11,10 +11,10 @@
 //!
 //! The Legacy Viewer asks for a new set's name in a notification; here it
 //! is a field of the window. Its notecard export and import are not here
-//! yet; "Import Legacy rules" reads its own file instead.
+//! yet.
 
 use super::widgets::{self, Floater};
-use crate::omnifilter::{Engine, Imported, MatchType, NameError, Rule, Source};
+use crate::omnifilter::{Engine, MatchType, NameError, Rule, Source};
 use crate::settings::Settings;
 use crate::theme::Palette;
 use egui::Vec2;
@@ -328,9 +328,9 @@ impl OmnifilterUi {
     fn rules_column(&mut self, ui: &mut egui::Ui, p: &Palette, engine: &mut Engine, settings: &mut Settings, height: f32) {
         widgets::checkbox(ui, p, &mut settings.omnifilter.enabled, aurora_i18n::tr!("omnifilter-enable"));
         ui.add_space(4.0);
-        // the switch, the buttons, the log's header, the import and its
-        // result take the rest: the lists share what is left
-        let lists = (height - 170.0).max(80.0);
+        // the switch, the buttons and the log's header take the rest: the
+        // rules get half of what is left, the log the other half
+        let lists = (height - 110.0).max(80.0);
         let list_height = lists * 0.5;
         let mut toggled = None;
         egui::ScrollArea::vertical()
@@ -396,7 +396,7 @@ impl OmnifilterUi {
                 (aurora_i18n::tr!("omnifilter-rule"), 160.0),
             ],
         );
-        let log_height = lists * 0.5;
+        let log_height = (lists * 0.5).min(ui.available_height()).max(0.0);
         egui::ScrollArea::vertical()
             .id_salt("omnifilter_log")
             .max_height(log_height)
@@ -412,35 +412,6 @@ impl OmnifilterUi {
                     });
                 }
             });
-        ui.horizontal(|ui| {
-            let busy = engine.importing();
-            if widgets::action_button_if(
-                ui,
-                p,
-                "file-import",
-                aurora_i18n::tr!("omnifilter-import-legacy"),
-                widgets::ActionKind::Flat,
-                Vec2::new(0.0, 26.0),
-                !busy,
-            )
-            .on_hover_text(aurora_i18n::tr!("omnifilter-import-legacy-tip"))
-            .clicked()
-            {
-                engine.import_legacy();
-            }
-        });
-        match &engine.imported {
-            Some(Imported::Sets(n)) => {
-                ui.label(aurora_i18n::tr!("omnifilter-imported", count = *n));
-            }
-            Some(Imported::NoFile) => {
-                ui.label(aurora_i18n::tr!("omnifilter-import-none"));
-            }
-            Some(Imported::Failed(e)) => {
-                ui.colored_label(p.danger, aurora_i18n::tr!("omnifilter-import-failed", error = e.clone()));
-            }
-            None => {}
-        }
     }
 
     fn details(&mut self, ui: &mut egui::Ui, p: &Palette, engine: &mut Engine) {
@@ -614,7 +585,7 @@ mod tests {
         crate::ui::widgets::steady_tests::assert_window_steady(
             WINDOW,
             &[Vec2::new(860.0, 560.0), Vec2::new(800.0, 440.0)],
-            aurora_i18n::tr!("omnifilter-import-legacy"),
+            aurora_i18n::tr!("omnifilter-log-time"),
             OmnifilterUi::default,
             |ui, ctx, p| ui.show(ctx, p, &mut engine, &mut settings, &mut true),
         );

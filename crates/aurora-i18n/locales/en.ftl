@@ -272,14 +272,6 @@ omnifilter-up-tip = Selected rule is moved up one position.
 omnifilter-down = Down
 omnifilter-down-tip = Selected rule is moved down one position.
 omnifilter-log-time = Time (SLT)
-omnifilter-import-legacy = Import Legacy rules
-omnifilter-import-legacy-tip = Adds the rule sets of the Legacy Viewer's Omnifilter on this computer.
-omnifilter-imported = { $count ->
-    [one] { $count } rule set imported.
-   *[other] { $count } rule sets imported.
-    }
-omnifilter-import-none = No Legacy Viewer rules on this computer.
-omnifilter-import-failed = The Legacy Viewer's rules could not be read: { $error }
 omnifilter-rule-name = Rule name
 omnifilter-sender = Sender name
 omnifilter-sender-tip = The avatar or object name the message comes from

@@ -27,7 +27,7 @@ mod file;
 #[cfg(test)]
 mod tests;
 
-pub use file::{legacy_files, parse, to_xml};
+pub use file::{parse, to_xml};
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant, SystemTime};
@@ -346,21 +346,6 @@ pub struct Engine {
     loading: Option<parking_lot::Mutex<std::sync::mpsc::Receiver<Vec<RuleSet>>>>,
     /// Where the rules are saved; None (tests, demo): nowhere.
     path: Option<std::path::PathBuf>,
-    /// The Legacy Viewer's file being read for an import.
-    importing: Option<parking_lot::Mutex<std::sync::mpsc::Receiver<Result<Vec<RuleSet>, String>>>>,
-    /// How the last import went, for the editor.
-    pub imported: Option<Imported>,
-}
-
-/// How an import of the Legacy Viewer's rules went.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Imported {
-    /// This many rule sets added.
-    Sets(usize),
-    /// No Legacy Viewer file on this computer.
-    NoFile,
-    /// The file could not be read.
-    Failed(String),
 }
 
 impl Default for Engine {
@@ -375,8 +360,6 @@ impl Default for Engine {
             dirty_since: None,
             loading: None,
             path: None,
-            importing: None,
-            imported: None,
         }
     }
 }
@@ -606,9 +589,9 @@ impl Engine {
         self.stale = true;
     }
 
-    /// Adds sets from another file (the Legacy Viewer's): a name already
-    /// used takes " (2)", " (3)"…; their Default set comes in as
-    /// "Default (2)"… Returns how many sets were added.
+    /// Adds sets from a file read after edits were made: a name already
+    /// used takes " (2)", " (3)"…; an empty Default set is left out.
+    /// Returns how many sets were added.
     pub fn import(&mut self, sets: Vec<RuleSet>) -> usize {
         let mut added = 0;
         for mut set in sets {
@@ -663,56 +646,9 @@ impl Engine {
         }
     }
 
-    /// Adds the rule sets of the Legacy Viewer's own file, read on a thread
-    /// (the first of `legacy_files`).
-    pub fn import_legacy(&mut self) {
-        if self.importing.is_some() {
-            return;
-        }
-        let (tx, rx) = std::sync::mpsc::channel();
-        self.importing = Some(parking_lot::Mutex::new(rx));
-        self.imported = None;
-        let spawned = std::thread::Builder::new().name("aurora-omnifilter-import".into()).spawn(move || {
-            let result = match legacy_files().first() {
-                None => Ok(Vec::new()),
-                Some(path) => std::fs::read(path)
-                    .map_err(|e| e.to_string())
-                    .and_then(|bytes| parse(&bytes))
-                    .map_err(|e| {
-                        log::warn!("omnifilter: {}: {e}", path.display());
-                        e
-                    }),
-            };
-            let _ = tx.send(result);
-        });
-        if let Err(e) = spawned {
-            log::warn!("omnifilter: no thread: {e}");
-            self.importing = None;
-        }
-    }
-
-    pub fn importing(&self) -> bool {
-        self.importing.is_some()
-    }
-
     /// Once a frame: takes the file read, saves what changed 5 s ago
     /// (OmnifilterEngine::tick).
     pub fn update(&mut self, now: Instant) {
-        if let Some(rx) = &self.importing {
-            let got = rx.lock().try_recv();
-            match got {
-                Ok(result) => {
-                    self.importing = None;
-                    self.imported = Some(match result {
-                        Ok(sets) if sets.is_empty() => Imported::NoFile,
-                        Ok(sets) => Imported::Sets(self.import(sets)),
-                        Err(e) => Imported::Failed(e),
-                    });
-                }
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.importing = None,
-                Err(std::sync::mpsc::TryRecvError::Empty) => {}
-            }
-        }
         if let Some(rx) = &self.loading {
             let got = rx.lock().try_recv();
             match got {
