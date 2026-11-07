@@ -355,7 +355,13 @@ pub(super) fn card(
     aurora: bool,
 ) -> Option<Response> {
     let mut out = None;
-    let (icon, accent) = kind_style(p, n.kind);
+    // a new version: the updates' icon (the menu's "Check for updates")
+    let update = matches!(n.data, Data::Update { .. });
+    let (icon, accent) = if update {
+        ("download-filled", p.violet)
+    } else {
+        kind_style(p, n.kind)
+    };
     let insignia = match &n.data {
         Data::GroupNotice { group, .. } => super::chat::group_insignia(world, group),
         _ => None,
@@ -408,7 +414,12 @@ pub(super) fn card(
                 let time = super::chat::hhmm(n.time);
                 let w = (ui.available_width() - 34.0 - time_width(ui, &time)).max(40.0);
                 ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
-                    text::show(ui, p, &n.title, &n.name_links, 12.5, p.ink, true, true);
+                    if update && aurora {
+                        let title = super::notification_center::aurora::title(ui, p, &n.title, 12.5);
+                        ui.add(egui::Label::new(title).wrap());
+                    } else {
+                        text::show(ui, p, &n.title, &n.name_links, 12.5, p.ink, true, true);
+                    }
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let (r, resp) = ui.allocate_exact_size(Vec2::splat(16.0), egui::Sense::click());
@@ -644,6 +655,17 @@ pub(super) fn card(
                 Data::Url(_) => buttons.push((aurora_i18n::tr!("ui-notifications-open-link").into(), Response::OpenUrl, true)),
                 Data::Delivery { .. } => {
                     buttons.push((aurora_i18n::tr!("ui-notifications-show-in-inventory").into(), Response::Open, true));
+                }
+                // Update downloads it in the update window; once downloaded,
+                // Install opens that window, which says what installing does
+                Data::Update { ready, .. } => {
+                    let primary = if *ready {
+                        aurora_i18n::tr!("update-notice-install")
+                    } else {
+                        aurora_i18n::tr!("update-install")
+                    };
+                    buttons.push((primary.into(), Response::Accept, true));
+                    buttons.push((aurora_i18n::tr!("update-later").into(), Response::Decline, false));
                 }
                 Data::Dialog {
                     buttons: b, own_object, ..

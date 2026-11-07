@@ -55,6 +55,7 @@ pub fn try_texture(
     desc: &wgpu::TextureDescriptor,
     view: &wgpu::TextureViewDescriptor,
     bytes: u64,
+    integrated: bool,
 ) -> Result<(wgpu::Texture, wgpu::TextureView), String> {
     if let Some(e) = injected_failure(bytes) {
         return Err(e);
@@ -64,7 +65,7 @@ pub fn try_texture(
     // in memory of its own when it can (dedicated.rs), else carved out of
     // wgpu's blocks, as when the driver refuses it there (the blocks may
     // still have room)
-    let texture = match crate::dedicated::texture(device, desc) {
+    let texture = match crate::dedicated::texture(device, desc, integrated) {
         Some(Ok(texture)) => texture,
         Some(Err(e)) => {
             log::debug!("texture '{}' in wgpu's memory blocks: {e}", desc.label.unwrap_or("?"));

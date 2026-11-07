@@ -160,7 +160,7 @@ impl App {
                     _ => 971,
                 };
                 self.world.objects.index_of_uuid(&crate::demo::action_id(local)).and_then(|idx| {
-                    let pos = if mode == "worn-mesh"
+                    let pos = if mode.starts_with("worn-mesh")
                         || mode.starts_with("worn-own")
                         || (mode.starts_with("worn-other") && mode != "worn-other-link")
                     {
@@ -174,7 +174,7 @@ impl App {
                         let pose = *self.world.avatar_poses.get(&avatar.full_id)?.get(joint)?;
                         let rest = self.world.avatar_lib.attach_points.get(&1)?.skel_position;
                         let (pos, rot, _) = Scene::object_transform(&self.world, wearer, Instant::now(), 0)?;
-                        let offset = if mode == "worn-mesh" {
+                        let offset = if mode.starts_with("worn-mesh") {
                             Vec3::new(0.30, 0.0, 0.0)
                         } else if mode == "worn-own-animesh" {
                             OWN_ANIMESH
@@ -472,7 +472,11 @@ impl App {
             let clear = mode.starts_with("worn-other-clear");
             let unrigged_mesh = matches!(
                 mode,
-                "worn-other-mesh" | "worn-other-hidden-mesh" | "worn-other-hidden-mesh-under" | "worn-other-clear-mesh"
+                "worn-other-mesh"
+                    | "worn-other-hidden-mesh"
+                    | "worn-other-hidden-mesh-under"
+                    | "worn-other-clear-mesh"
+                    | "worn-other-mask-mesh"
             );
             if unrigged_mesh && let Some(g) = self.gfx.as_mut() {
                 // a mesh without a skin, placed by its attachment point
@@ -500,13 +504,16 @@ impl App {
                     &mut self.world.agent,
                     &self.settings.camera,
                 );
+                // Start the fixture at rest: a frame-counted aim can outpace
+                // camera smoothing when the viewer runs without an FPS cap.
+                self.camera.snap();
             }
             // `worn-own-mesh`: the scripted rigged mesh on our own chest;
             // `worn-own-animesh`: the same mesh as an animesh we wear, with
             // a skeleton of its own (a pet on the head)
             let own_animesh = mode == "worn-own-animesh";
             let own_mesh = mode.starts_with("worn-own-mesh") || own_animesh;
-            let mut events = if mode == "worn-mesh" || own_mesh {
+            let mut events = if mode.starts_with("worn-mesh") || own_mesh {
                 if let Some(g) = self.gfx.as_mut() {
                     self.scene.install_demo_animesh(&mut g.renderer);
                 }
@@ -608,6 +615,20 @@ impl App {
                     events.push(event);
                 }
             }
+            if mode.contains("-mask") {
+                for event in &mut events {
+                    if let NetEvent::ObjectUpdates { objects, .. } = event {
+                        for o in objects.iter_mut().filter(|o| o.local_id == 975) {
+                            if let Some(te) = o.texture_entry.as_mut() {
+                                for face in &mut Arc::make_mut(te).faces {
+                                    face.texture = crate::demo::TEX_PICK_ZERO;
+                                    face.material_id = crate::demo::MAT_MASK;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             for event in events {
                 self.world.apply(event);
             }
@@ -635,6 +656,12 @@ impl App {
             for mut event in crate::demo::action_events() {
                 if let NetEvent::ObjectUpdates { objects, .. } = &mut event {
                     objects.retain(|o| o.local_id == 971);
+                    if mode.starts_with("panel-linked-") {
+                        for root in &mut *objects {
+                            root.click_action = crate::interaction::code::TOUCH;
+                            root.update_flags = ui::context::flags::HANDLE_TOUCH;
+                        }
+                    }
                     point = objects.first().map(|o| o.position).or(point);
                     self.world.apply(event);
                 }
@@ -645,7 +672,9 @@ impl App {
         let direction = (self.camera.position - point).normalize_or(-Vec3::X);
         let pos = point + direction * 2.0;
         let rotation = glam::Quat::from_rotation_arc(Vec3::X, direction);
-        let mut overlay = if mode.starts_with("plate-wall") {
+        let mut overlay = if mode.starts_with("panel-") && mode.ends_with("-mask") {
+            crate::demo::alpha_click_overlay("mask-zero", pos, rotation)
+        } else if mode.starts_with("plate-wall") || mode.starts_with("panel-") {
             crate::demo::action_overlay(976, pos, rotation)
         } else {
             let alpha = match mode {
@@ -659,6 +688,32 @@ impl App {
         if let NetEvent::ObjectUpdates { objects, .. } = &mut overlay {
             for o in objects {
                 o.scale = Vec3::new(0.12, 5.0, 5.0);
+                if mode.starts_with("panel-") {
+                    let linked = mode.starts_with("panel-linked-");
+                    o.click_action = if linked {
+                        crate::interaction::code::NONE
+                    } else {
+                        crate::interaction::code::TOUCH
+                    };
+                    o.update_flags = if linked { 0 } else { ui::context::flags::HANDLE_TOUCH };
+                    o.text.clear();
+                    if linked {
+                        o.parent_id = 971;
+                        o.position -= point;
+                    }
+                    if let Some(te) = o.texture_entry.as_mut() {
+                        for face in &mut Arc::make_mut(te).faces {
+                            face.texture = if mode.ends_with("-mask") {
+                                crate::demo::TEX_PICK_ZERO
+                            } else if mode.ends_with("-texture") {
+                                aurora_prim::te::TRANSPARENT_TEXTURE
+                            } else {
+                                aurora_prim::te::BLANK_TEXTURE
+                            };
+                            face.color[3] = if mode.ends_with("-te") { 0.0 } else { 1.0 };
+                        }
+                    }
+                }
                 if mode == "camera-te" {
                     o.update_flags = ui::context::flags::HANDLE_TOUCH;
                     if let Some(te) = o.texture_entry.as_mut() {

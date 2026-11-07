@@ -104,7 +104,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
                 })
                 .map(|item| (item.id, item.name.clone()))
                 .collect();
-            items.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+            items.sort_by(|a, b| crate::natural_order::cmp(&a.1, &b.1).then(a.0.cmp(&b.0)));
             egui::ScrollArea::vertical()
                 .id_salt("layout-notecard-list")
                 .max_height(260.0)
