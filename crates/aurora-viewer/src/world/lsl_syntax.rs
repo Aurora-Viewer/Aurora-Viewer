@@ -76,6 +76,7 @@ mod tests {
             materials_rate: None,
             materials_max: None,
             lsl_syntax_id: id,
+            lua_scripts: true,
             grid_status_feed: String::new(),
             grid_status_page: String::new(),
             currency_base_uri: String::new(),
@@ -90,6 +91,7 @@ mod tests {
     fn a_region_syntax_is_asked_once() {
         let id = Uuid::from_u128(0x1515);
         let mut w = world(id);
+        assert!(w.main().is_some_and(|r| r.lua_scripts));
         match w.follow_lsl_syntax() {
             Some(NetCommand::FetchLslSyntax { id: asked, cache_dir }) => {
                 assert_eq!(asked, id);

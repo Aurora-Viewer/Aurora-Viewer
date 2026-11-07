@@ -59,6 +59,8 @@ struct ScriptInfo {
     asset: Uuid,
     can_read: bool,
     can_edit: bool,
+    /// The item's flags: its low byte is the script language.
+    flags: u32,
 }
 
 fn permissions(mask: u32, library: bool) -> (bool, bool) {
@@ -430,6 +432,7 @@ impl App {
                 asset: it.asset_id,
                 can_read,
                 can_edit,
+                flags: it.flags,
             })
         } else {
             let idx = self.world.objects.index_of_uuid(&target.object)?;
@@ -456,6 +459,7 @@ impl App {
                 asset: it.asset_id,
                 can_read,
                 can_edit,
+                flags: it.flags,
             })
         }
     }
@@ -465,7 +469,9 @@ impl App {
             return;
         }
         let Some(info) = self.script_info(target) else { return };
-        if let Some(request) = self.script_editors.open(target, info.name, info.can_read, info.can_edit) {
+        let opened = self.script_editors.open(target, info.name, info.can_read, info.can_edit);
+        self.script_editors.item_flags(target, info.flags);
+        if let Some(request) = opened {
             self.send(NetCommand::LoadScript {
                 request,
                 target,
@@ -725,7 +731,7 @@ impl App {
                 self.demo_script_sources.insert(*target, source.clone());
                 self.demo_script_experiences.insert(*target, options.experience);
                 self.build_demo
-                    .save_script(*target, asset, compiled && options.running, options.mono);
+                    .save_script(*target, asset, compiled && options.running, options.compile);
                 let result = Ok(ScriptSaved {
                     asset,
                     compiled,

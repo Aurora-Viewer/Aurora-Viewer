@@ -423,7 +423,25 @@ fn footer(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, actions: &mut 
         ui.add_enabled_ui(
             e.can_edit && e.loaded && e.saving.is_none() && (e.target.object.is_nil() || e.running.is_some()),
             |ui| {
-                crate::ui::widgets::checkbox(ui, p, &mut e.mono, "Mono").on_hover_text(aurora_i18n::tr!("script-mono-hint"));
+                use aurora_net::scripts::CompileTarget;
+                match e.compile {
+                    CompileTarget::Mono | CompileTarget::Lsl2 => {
+                        let mut mono = e.compile == CompileTarget::Mono;
+                        if crate::ui::widgets::checkbox(ui, p, &mut mono, "Mono")
+                            .on_hover_text(aurora_i18n::tr!("script-mono-hint"))
+                            .changed()
+                        {
+                            e.compile = if mono { CompileTarget::Mono } else { CompileTarget::Lsl2 };
+                        }
+                    }
+                    // shortcut: read-only until the Phase 2 target dropdown
+                    CompileTarget::Luau => {
+                        ui.label(aurora_i18n::tr!("script-target-luau"));
+                    }
+                    CompileTarget::LslLuau => {
+                        ui.label(aurora_i18n::tr!("script-target-lsl-luau"));
+                    }
+                }
             },
         );
     });
@@ -823,7 +841,7 @@ pub(super) fn dialogs(
                 if flat_button(ui, p, aurora_i18n::tr!("script-menu-revert")).clicked() {
                     let end = e.source.chars().count();
                     editing::replace(ctx, original_id, &mut e.source, 0..end, &e.baseline);
-                    e.mono = e.baseline_mono;
+                    e.compile = e.baseline_compile;
                     e.experience.selected = e.experience.baseline;
                     e.tools.revert = false;
                 }
@@ -1012,7 +1030,7 @@ mod tests {
                 e.saving = Some(super::super::PendingSave {
                     request: Uuid::from_u128(11),
                     source: String::new(),
-                    mono: true,
+                    compile: aurora_net::scripts::CompileTarget::Mono,
                     experience: None,
                     running: false,
                 });

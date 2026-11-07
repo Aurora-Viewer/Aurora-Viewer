@@ -612,6 +612,8 @@ pub enum NetEvent {
         /// "LSLSyntaxId": the LSL keywords in use (lsl_syntax.rs); nil
         /// when the region names none.
         lsl_syntax_id: Uuid,
+        /// "LuaScriptsEnabled": the region runs SLua scripts.
+        lua_scripts: bool,
         /// "OpenSimExtras" "GridStatusRSS" and "GridStatus": an OpenSim
         /// grid's status feed and page (Help › Grid status); empty when
         /// not given, always on Second Life.
@@ -1354,12 +1356,12 @@ pub enum NetEvent {
         serial: Option<i16>,
         result: Result<Vec<crate::build::TaskItem>, String>,
     },
-    /// ScriptRunningReply (and the event queue's Mono flag when given).
+    /// ScriptRunningReply (and the event queue's VM flags when given).
     ScriptRunning {
         object_id: Uuid,
         item_id: Uuid,
         running: bool,
-        mono: Option<bool>,
+        compile: Option<crate::scripts::CompileTarget>,
     },
     /// ObjectPhysicsProperties (event queue): physics shape and material
     /// values of selected prims.
