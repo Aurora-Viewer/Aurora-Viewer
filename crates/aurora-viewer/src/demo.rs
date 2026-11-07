@@ -4683,17 +4683,27 @@ pub fn events() -> Vec<NetEvent> {
     // the screen (#2459). A tall wall just ahead covers the left half of the
     // start view, and cubes stand in the open right half, behind the wall's
     // depth: every cube is in plain view and none may be culled. From
-    // AURORA_DEMO_POS="x,y" (default an open place, 80,100).
+    // AURORA_DEMO_POS="x,y" (default an open place, 80,100) along the start
+    // view, or `edge,<x>,<y>,<heading in degrees>` for another camera.
     let occlusion_mode = std::env::var("AURORA_DEMO_OCCLUSION").ok();
-    if occlusion_mode.as_deref() == Some("edge") {
-        let look = Vec3::new(0.8, 0.4, 0.0).normalize();
+    let edge = occlusion_mode.as_deref().and_then(|m| {
+        let mut parts = m.split(',');
+        (parts.next()? == "edge").then(|| parts.filter_map(|s| s.trim().parse::<f32>().ok()).collect::<Vec<_>>())
+    });
+    if let Some(at) = &edge {
+        let (eye, look) = if let [x, y, heading] = at[..] {
+            let h = heading.to_radians();
+            (Vec3::new(x, y, 0.0), Vec3::new(h.cos(), h.sin(), 0.0))
+        } else {
+            let eye = std::env::var("AURORA_DEMO_POS")
+                .ok()
+                .map(|v| v.split(',').filter_map(|s| s.trim().parse::<f32>().ok()).collect::<Vec<_>>())
+                .filter(|p| p.len() >= 2)
+                .map_or(Vec3::new(80.0, 100.0, 0.0), |p| Vec3::new(p[0], p[1], 0.0));
+            (eye, Vec3::new(0.8, 0.4, 0.0).normalize())
+        };
         let left = Vec3::new(-look.y, look.x, 0.0);
         let yaw = look.y.atan2(look.x);
-        let eye = std::env::var("AURORA_DEMO_POS")
-            .ok()
-            .map(|v| v.split(',').filter_map(|s| s.trim().parse::<f32>().ok()).collect::<Vec<_>>())
-            .filter(|p| p.len() >= 2)
-            .map_or(Vec3::new(80.0, 100.0, 0.0), |p| Vec3::new(p[0], p[1], 0.0));
         // its right edge 0.3 m right of the view's axis
         let wall = eye + look * 1.5 + left * 5.7;
         add(prim(
@@ -4728,7 +4738,7 @@ pub fn events() -> Vec<NetEvent> {
     // AURORA_DEMO_OCCLUSION=1: occlusion test, a long wall in front of the
     // start position with 360 detailed objects behind it (a few towers rise
     // above it, so some must stay visible)
-    if occlusion_mode.as_deref().is_some_and(|m| m != "edge") {
+    if occlusion_mode.is_some() && edge.is_none() {
         let wx = 158.0;
         for k in 0..4 {
             let y = 100.0 + k as f32 * 20.0;
