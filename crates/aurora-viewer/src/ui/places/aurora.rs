@@ -1891,6 +1891,120 @@ mod tests {
         assert!(opened_landmark(true, None).is_none());
     }
 
+    /// A landmark opened from outside, here one the lists do not hold: its
+    /// profile replaces the list, Back returns to a list that works, and the
+    /// wide preview asks for its line again instead of waiting on the profile
+    /// Back closed.
+    #[test]
+    fn back_from_an_opened_landmark_returns_to_a_working_list() {
+        use crate::scene::avatar::AvatarLibrary;
+        use std::collections::HashMap;
+
+        fn pointer(pos: Pos2, pressed: bool) -> Vec<egui::Event> {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        }
+
+        let library = Arc::new(AvatarLibrary::load());
+        let opened = Profile::Landmark {
+            item: id(300),
+            asset: id(3000),
+        };
+        for width in [400.0, 900.0] {
+            let wide = width >= WIDE;
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let mut world = World::new(Arc::clone(&library));
+            world.inventory = inventory();
+            let images = HashMap::new();
+            let mut emoji = crate::ui::emoji::Emoji::load();
+            let mut names = HashSet::new();
+            let mut wanted_images = HashSet::new();
+            let mut groups = HashSet::new();
+            let mut places = PlacesUi::default();
+            let mut time = 0.0;
+            let mut frame = |events, places: &mut PlacesUi, world: &mut World| {
+                time += 0.1;
+                let mut actions = Vec::new();
+                let mut back = Pos2::ZERO;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(width, 800.0))),
+                        time: Some(time),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        // the arrow, first thing inside the window's margins
+                        back = ui.max_rect().min + Vec2::new(21.0, 19.0);
+                        let env = Env {
+                            sort: PlacesSort::default(),
+                            favorites: &[id(200)],
+                        };
+                        let mut c = Ctx {
+                            p: &p,
+                            world,
+                            images: &images,
+                            emoji: &mut emoji,
+                            want_names: &mut names,
+                            wanted_images: &mut wanted_images,
+                            want_groups: &mut groups,
+                        };
+                        places.aurora_body(ui, &mut c, &env, &mut actions);
+                    },
+                );
+                output.textures_delta.clear();
+                // what the app does with them, before the next frame
+                let closed = actions.iter().any(|a| matches!(a, PlacesAction::CloseProfile));
+                for action in actions {
+                    match action {
+                        PlacesAction::OpenProfile(source) => {
+                            let w = &mut *world;
+                            w.place_details
+                                .open_panel(source, &w.map, &mut w.landmarks, std::time::Instant::now());
+                        }
+                        PlacesAction::CloseProfile => world.place_details.close_panel(),
+                        _ => {}
+                    }
+                }
+                (back, closed)
+            };
+            let source = |world: &World| world.place_details.panel.as_ref().map(|place| place.source.clone());
+
+            frame(vec![], &mut places, &mut world);
+            let line = source(&world);
+            assert_eq!(line.is_some(), wide, "the wide preview shows its first line");
+
+            let w = &mut world;
+            w.place_details
+                .open_panel(opened.clone(), &w.map, &mut w.landmarks, std::time::Instant::now());
+            places.show_profile();
+            let (back, _) = frame(vec![], &mut places, &mut world);
+            assert!(places.aurora.opened);
+            assert_eq!(source(&world).as_ref(), Some(&opened), "no line takes the profile's place");
+
+            frame(pointer(back, true), &mut places, &mut world);
+            let (_, closed) = frame(pointer(back, false), &mut places, &mut world);
+            assert!(closed, "Back closes the profile");
+            assert!(!places.aurora.opened);
+            assert_eq!(source(&world), None);
+
+            frame(vec![], &mut places, &mut world);
+            assert_eq!(source(&world), line, "the preview gets its line back");
+            assert_eq!(places.aurora.previewed, line);
+            assert_eq!(places.aurora.selected.is_some(), wide);
+        }
+    }
+
     fn folder(n: u128, parent: u128, t: i32) -> InvFolder {
         InvFolder {
             id: id(n),
