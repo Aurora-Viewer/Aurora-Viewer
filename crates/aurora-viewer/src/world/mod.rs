@@ -3498,6 +3498,9 @@ impl World {
                         // The region we arrive in can still list a seat
                         // animation that teleportCore stopped in the region
                         // left just before the request: stop it there too.
+                        // Deliberate difference: the Legacy Viewer sends no
+                        // second stop, but its AO leaves the stock sit to the
+                        // simulator and ours holds it (#2700, TASKS.md).
                         for id in std::mem::take(&mut self.teleport_seat_stops) {
                             if anims.iter().any(|a| a.0 == id) && !self.animation_stops.contains(&id) {
                                 log::info!("teleport: the arrival region still plays seat animation {id}: stop it again");
