@@ -1,5 +1,13 @@
 # Aurora Viewer architecture
 
+Object contents item menus share `ui/object_actions::task_copy_request` and
+`app/contents_copy.rs` with the Open window's full-copy button. The editor
+queues one `build::ui::Request::CopyContents` for its selection; both editor
+layouts and the Open item menu create one folder named after the object,
+retain the shared no-copy move warning and observe actual item arrivals.
+Only selected items are copied; drag and drop keeps its explicit destination.
+This menu command is Aurora's addition to LLFloaterOpenObject's folder copy.
+
 `ui/inventory.rs::TabFilters` keeps each window's finder state per tab, including
 advanced searches and the temporary filters of Find links / Find similar.
 Both layouts use `set_tab` to swap that state. `InventoryPreferences` retains

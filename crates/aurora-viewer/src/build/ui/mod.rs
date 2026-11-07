@@ -69,7 +69,10 @@ pub enum Request {
         text: String,
     },
     LoadLayoutNotecard(Uuid),
-    TransferTask(Box<super::task_inventory::TransferRequest>),
+    CopyContents {
+        object: Uuid,
+        items: Vec<aurora_net::build::TaskItem>,
+    },
     /// Focus slider moved (LLAgentCamera::setCameraZoomFraction).
     ZoomFraction(f32),
     AboutLand,
