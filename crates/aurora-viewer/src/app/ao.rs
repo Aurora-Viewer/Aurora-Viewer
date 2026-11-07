@@ -269,7 +269,7 @@ impl App {
     pub(super) fn update_ao(&mut self, now: Instant) {
         self.scene.ground_feet_native_stand = false;
         self.scene.ground_feet_own_moving = false;
-        if self.world.teleporting || !self.world.movement_complete {
+        if self.world.teleporting || !self.world.movement_complete || self.world.awaiting_own_animations(now) {
             return;
         }
         let (enabled, selected) = self
