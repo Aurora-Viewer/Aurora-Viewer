@@ -6,6 +6,9 @@
 //! and forward in its history. The search tab's browser is a private one
 //! (`WebView::private`): its cache, history and log go to a profile of its
 //! own that is deleted with the browser (`media/private_profile.rs`).
+//! A trusted browser (`WebView::trust`, LLMediaCtrl's `trusted_content`,
+//! the Avatar Welcome Pack's) may also wear folders: the folder commands its
+//! own page sends are handed to its window (`folder_commands`).
 
 use crate::media::pack::PackState;
 use crate::media::private_profile::PrivateProfile;
@@ -131,6 +134,17 @@ pub struct WebView {
     pub status: String,
     /// Load progress, 0 to 100 (MEDIA_EVENT_PROGRESS_UPDATED).
     pub progress: i32,
+    /// The origin (scheme, host, port) of the trusted page, if any.
+    trusted: Option<String>,
+    /// The origin of the document the browser has committed (NavigateComplete
+    /// or LocationChanged), cleared while a navigation to another origin is
+    /// under way: a command is trusted by the page that sends it, not by the
+    /// address that was asked.
+    document: Option<String>,
+    /// The sign-in cookie was handed to the running browser.
+    cookie_set: bool,
+    /// The folder commands the trusted page sent, for its window to take.
+    pub folder_commands: Vec<crate::slapp::FolderCommand>,
 }
 
 impl WebView {
@@ -148,6 +162,20 @@ impl WebView {
         }
     }
 
+    /// LLMediaCtrl `trusted_content`: the pages of `page`'s site may send
+    /// the folder commands an untrusted page cannot (UNTRUSTED_BLOCK), clicked
+    /// or not (LLViewerMediaImpl::handleMediaEvent dispatches them with the
+    /// browser's trust and any nav type). Their other links follow the
+    /// usual rules.
+    pub fn trust(&mut self, page: &str) {
+        let trusted = origin(page);
+        if trusted != self.trusted {
+            // commands of the previous trust must not outlive it
+            self.folder_commands.clear();
+            self.trusted = trusted;
+        }
+    }
+
     pub fn navigate(&mut self, url: &str) {
         if self.url != url {
             self.url = url.to_owned();
@@ -162,6 +190,9 @@ impl WebView {
         self.profile = None;
         self.texture = None;
         self.focused = false;
+        self.cookie_set = false;
+        self.document = None;
+        self.folder_commands.clear();
     }
 
     pub fn plugin_mut(&mut self) -> Option<&mut MediaPlugin> {
@@ -283,6 +314,7 @@ impl WebView {
                         // LLViewerMedia::getOpenIDCookie before the first page
                         if let Some(c) = cookie {
                             p.set_cookie(c);
+                            self.cookie_set = true;
                         }
                         self.plugin = Some(p);
                         self.size = px;
@@ -318,15 +350,31 @@ impl WebView {
             p.set_size(px.0, px.1);
             self.size = px;
         }
+        // a cookie that arrived after the browser started (the sign-in takes a
+        // moment): install it, and reload the page that went out without it
+        let late_cookie = !self.cookie_set && cookie.is_some();
+        if let Some(c) = cookie.filter(|_| late_cookie) {
+            p.set_cookie(c);
+            self.cookie_set = true;
+            if !self.nav_pending && !self.url.is_empty() {
+                p.browse_reload(false);
+            }
+        }
         if std::mem::take(&mut self.nav_pending) {
             p.load_uri(&self.url);
             self.nav_started = Some(Instant::now());
             self.load_secs = None;
             self.location = self.url.clone();
             self.loading = true;
+            // the old document is going away: nothing is trusted until the new one commits
+            self.document = None;
         }
         p.idle();
         for ev in p.take_events() {
+            if let Some(command) = trusted_folder_command(&ev, self.trusted.as_deref(), self.document.as_deref()) {
+                self.folder_commands.push(command);
+                continue;
+            }
             if let Some(url) = clicked_url(&ev) {
                 super::context::request(ui.ctx(), clicked_link_action(url));
                 continue;
@@ -338,17 +386,27 @@ impl WebView {
                         self.load_secs = Some(t.elapsed().as_secs_f32());
                     }
                     if !uri.is_empty() {
+                        self.document = origin(&uri);
                         self.location = uri;
                     }
                     self.loading = false;
                 }
                 MediaEvent::NavigateBegin(uri) => {
                     if !uri.is_empty() {
+                        // a navigation to another origin: the page that is
+                        // leaving no longer speaks for the browser
+                        if origin(&uri) != self.document {
+                            self.document = None;
+                        }
                         self.location = uri;
                     }
                     self.loading = true;
                 }
-                MediaEvent::LocationChanged(uri) if !uri.is_empty() => self.location = uri,
+                MediaEvent::LocationChanged(uri) if !uri.is_empty() => {
+                    // reported when the navigation commits
+                    self.document = origin(&uri);
+                    self.location = uri;
+                }
                 MediaEvent::CursorChanged(c) => self.cursor = c,
                 MediaEvent::NameChanged(name) => self.title = name,
                 MediaEvent::StatusText(text) => self.status = text,
@@ -476,6 +534,26 @@ fn clicked_url(event: &MediaEvent) -> Option<&str> {
     }
 }
 
+/// `scheme://host:port` of a web address.
+fn origin(url: &str) -> Option<String> {
+    reqwest::Url::parse(url)
+        .ok()
+        .filter(|u| matches!(u.scheme(), "http" | "https"))
+        .map(|u| u.origin().ascii_serialization())
+}
+
+/// A folder command sent by the trusted page (the committed document's
+/// origin is the trusted one, `document`), with or without a click: the welcome pack's script wears the
+/// body, then adds the clothing a moment later, without a gesture.
+fn trusted_folder_command(event: &MediaEvent, trusted: Option<&str>, document: Option<&str>) -> Option<crate::slapp::FolderCommand> {
+    let MediaEvent::ClickLinkNoFollow { url, .. } = event else {
+        return None;
+    };
+    let trusted = trusted?;
+    let command = crate::slapp::folder_command(url)?;
+    (document == Some(trusted)).then_some(command)
+}
+
 /// Follow the same SLURL and app-link rules as a clicked link in chat.
 fn clicked_link_action(url: &str) -> super::context::CtxAction {
     use super::context::CtxAction;
@@ -520,6 +598,42 @@ mod tests {
             }),
             None
         );
+    }
+
+    #[test]
+    fn only_the_trusted_page_sends_folder_commands() {
+        let wear = |nav: &str| MediaEvent::ClickLinkNoFollow {
+            url: "secondlife://app/wear_folder/?folder_name=Female%20body%20-%20A".into(),
+            nav_type: nav.into(),
+        };
+        let page = "https://pages.example/v3.0/agni/vawp/index.html";
+        let trusted = origin(page);
+        let trusted = trusted.as_deref();
+        let doc = |url: &str| origin(url);
+        // clicked or run by the page's script, from the trusted site
+        for nav in ["clicked", "navigated"] {
+            let command = trusted_folder_command(&wear(nav), trusted, doc(page).as_deref()).expect("trusted page");
+            assert_eq!(command.name.as_deref(), Some("Female body - A"));
+        }
+        // another site, or an untrusted browser: nothing worn
+        assert_eq!(
+            trusted_folder_command(&wear("clicked"), trusted, doc("https://other.example/").as_deref()),
+            None
+        );
+        assert_eq!(
+            trusted_folder_command(&wear("clicked"), trusted, doc("http://pages.example/").as_deref()),
+            None
+        );
+        assert_eq!(trusted_folder_command(&wear("clicked"), None, doc(page).as_deref()), None);
+        // no committed document (navigation under way): nothing is trusted
+        assert_eq!(trusted_folder_command(&wear("navigated"), trusted, None), None);
+        // any other link takes the usual path
+        let teleport = MediaEvent::ClickLinkNoFollow {
+            url: "secondlife:///app/teleport/Aurora/12/34/56".into(),
+            nav_type: "clicked".into(),
+        };
+        assert_eq!(trusted_folder_command(&teleport, trusted, doc(page).as_deref()), None);
+        assert_eq!(origin("file:///c:/page.html"), None);
     }
 
     #[test]

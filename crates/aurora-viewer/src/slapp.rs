@@ -232,6 +232,50 @@ pub fn parse(url: &str) -> Option<AppLink> {
     Some(link.unwrap_or(AppLink::Unsupported))
 }
 
+/// What a `wear_folder`, `add_folder` or `remove_folder` command asks, read
+/// as LLWearFolderHandler, LLAddFolderHandler and LLRemoveFolderHandler do
+/// (llappearancemgr.cpp: wear_category). They are UNTRUSTED_BLOCK: only a
+/// trusted page (the Avatar Welcome Pack, `ui/avatar_welcome.rs`) runs them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderCommand {
+    pub action: FolderAction,
+    /// `folder_name=`: a folder of the Library, found by its name.
+    pub name: Option<String>,
+    /// `folder_id=`: any folder, used when no Library folder has the name.
+    pub id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FolderAction {
+    /// `wear_folder`: the folder replaces the outfit.
+    Wear,
+    /// `add_folder`: the folder is added to the outfit.
+    Add,
+    /// `remove_folder`: what the folder holds is taken off (`folder_id` only).
+    Remove,
+}
+
+/// The folder command of `url`, None for any other link. Both
+/// `secondlife:///app/` and `secondlife://app/` (the host form, which
+/// LLSLURL reads as an app command too, and which the welcome pack's page
+/// uses) are read.
+pub fn folder_command(url: &str) -> Option<FolderCommand> {
+    let rest = [PREFIX, "secondlife://app/"]
+        .into_iter()
+        .find(|prefix| url.get(..prefix.len()).is_some_and(|p| p.eq_ignore_ascii_case(prefix)))
+        .map(|prefix| &url[prefix.len()..])?;
+    let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
+    let action = match path.trim_matches('/').to_ascii_lowercase().as_str() {
+        "wear_folder" => FolderAction::Wear,
+        "add_folder" => FolderAction::Add,
+        "remove_folder" => FolderAction::Remove,
+        _ => return None,
+    };
+    let name = query_value(query, "folder_name").filter(|n| !n.is_empty() && action != FolderAction::Remove);
+    let id = query_value(query, "folder_id").and_then(|v| id(&v)).filter(|id| !id.is_nil());
+    Some(FolderCommand { action, name, id })
+}
+
 /// `agent/<id>/<verb>[/<name>]` for the verbs that act (LLAgentHandler).
 fn agent(tokens: &[&str]) -> Option<AppLink> {
     let id = id(tokens.first()?)?;
@@ -365,5 +409,24 @@ mod tests {
         assert_eq!(parse("secondlife:///app/balance/request"), Some(AppLink::Blocked(Blocked::Balance)));
         // `+` stays a plus, as LLURI::unescape leaves it
         assert_eq!(unescape("a+b%2Bc%C3%A9"), "a+b+cé");
+    }
+
+    #[test]
+    fn folder_commands_read_both_app_forms_and_their_folder() {
+        let wear = folder_command("secondlife://app/wear_folder/?folder_name=Female%20body%20-%20A").expect("wear");
+        assert_eq!(wear.action, FolderAction::Wear);
+        assert_eq!(wear.name.as_deref(), Some("Female body - A"));
+        assert_eq!(wear.id, None);
+        let add = folder_command("SECONDLIFE:///app/add_folder?folder_name=Male look - Club").expect("add");
+        assert_eq!(add.action, FolderAction::Add);
+        assert_eq!(add.name.as_deref(), Some("Male look - Club"));
+        let id = Uuid::from_u128(7);
+        let remove = folder_command(&format!("secondlife:///app/remove_folder/?folder_id={id}&folder_name=x")).expect("remove");
+        assert_eq!(remove.action, FolderAction::Remove);
+        assert_eq!((remove.name, remove.id), (None, Some(id)));
+        // other commands and links are not folder commands
+        assert_eq!(folder_command("secondlife:///app/teleport/Region/1/2/3"), None);
+        assert_eq!(folder_command("https://example.org/wear_folder/?folder_name=x"), None);
+        assert_eq!(folder_command("secondlife://Region/1/2/3"), None);
     }
 }

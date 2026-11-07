@@ -74,7 +74,7 @@ pub const COMMANDS: &[Command] = commands![
     // Aurora's own: the photo reel's quick view, the session's photos
     "photo_roll", "carousel-horizontal-filled", "toolbar-command-photo-roll", true;
     // Firestorm's, not in Aurora yet
-    "avatar", "user-circle", "toolbar-command-avatar", false;
+    "avatar", "user-circle", "toolbar-command-avatar", true;
     "destinations", "map-2", "toolbar-command-destinations", false;
     "howto", "Command_HowTo_Icon", "toolbar-command-howto", false;
     "picks", "heart-filled", "toolbar-command-picks", true;
