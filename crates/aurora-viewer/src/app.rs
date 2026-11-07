@@ -3592,7 +3592,7 @@ impl App {
                 self.interactions.on_properties(&props);
                 self.object_profile.on_properties(&props);
                 let props = self.area_search_build_properties(props, &area_reads);
-                self.build.on_properties(props);
+                self.build.on_properties(&self.world, props);
             }
             NetEvent::PayPrice { object, default, buttons } => self.interactions.on_prices(object, default, buttons),
             NetEvent::AbuseCategories(list) => self.report_abuse.set_categories(list),
@@ -9454,7 +9454,7 @@ impl App {
                         match event {
                             NetEvent::ObjectProperties(props) => {
                                 self.world.ik_targets.on_properties(&props);
-                                self.build.on_properties(props);
+                                self.build.on_properties(&self.world, props);
                             }
                             event => {
                                 self.world.apply(event);
@@ -9762,6 +9762,7 @@ impl App {
                 over_ui,
                 mods,
             );
+            self.build.refresh_link_geometry(&self.world, &self.scene);
             let mut selection_wire = self.build.wire_selection(&self.world, &self.settings.build);
             // another avatar's attachment the open menu is about, outlined
             // like a child prim of a selection (it cannot be selected)
@@ -12800,6 +12801,14 @@ impl App {
                     crate::build::demo::Step::CloseEditor => self.build.close(&mut self.world, &mut self.settings.build),
                     crate::build::demo::Step::Select(idx) => {
                         self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
+                        self.flush_build();
+                    }
+                    crate::build::demo::Step::LinkSetup(denied) => {
+                        crate::build::demo::link_setup(&mut self.world, &mut self.build, &self.settings.build, denied);
+                        self.flush_build();
+                    }
+                    crate::build::demo::Step::Link => {
+                        self.build.link(&mut self.world);
                         self.flush_build();
                     }
                     crate::build::demo::Step::SharedRights(idx, granted) => {
