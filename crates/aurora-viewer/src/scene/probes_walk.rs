@@ -104,8 +104,11 @@ fn local_share(list: &[ProbeGpu], p: Vec3) -> f32 {
 enum Path {
     /// In a straight line.
     Straight,
-    /// Back and forth over the point where the anchor would round up.
+    /// Back and forth, far enough for the anchor to move each way.
     Shuttle,
+    /// Back and forth over the point where the anchor would round up, too
+    /// little for it to move.
+    Waver,
 }
 
 impl Path {
@@ -117,6 +120,11 @@ impl Path {
                 let phase = (WALK_SPEED * t / 12.0) % 2.0;
                 10.0 + 12.0 * if phase < 1.0 { phase } else { 2.0 - phase }
             }
+            Path::Waver => {
+                // 13 to 19 m, across x = 16
+                let phase = (WALK_SPEED * t / 6.0) % 2.0;
+                13.0 + 6.0 * if phase < 1.0 { phase } else { 2.0 - phase }
+            }
         };
         Vec3::new(x, 3.0, EYE_HEIGHT)
     }
@@ -125,6 +133,7 @@ impl Path {
         match self {
             Path::Straight => "straight",
             Path::Shuttle => "shuttle",
+            Path::Waver => "waver",
         }
     }
 }
@@ -139,6 +148,9 @@ struct Walk {
     /// Probes waiting for a first capture: the most, and on average.
     waiting_max: usize,
     waiting_mean: f32,
+    /// Frames with a probe waiting to be captured again though it was shown
+    /// (its bounds moved).
+    redrawn: usize,
     /// Seconds to the first capture of every probe that has a slot.
     warm_up: f32,
 }
@@ -167,7 +179,7 @@ fn walk(scene: &Scene, world: &World, samples: &[Vec3], slots: u32, fps: f32, pa
     let mut before: Vec<Option<f32>> = vec![None; samples.len()];
     let (mut t, mut next_tick) = (0.0, 0.0);
     let (mut flashes, mut seen, mut worst, mut total) = (0u64, 0u64, 0.0f32, 0.0f64);
-    let (mut waiting_max, mut waiting_sum, mut frames) = (0, 0usize, 0usize);
+    let (mut waiting_max, mut waiting_sum, mut frames, mut redrawn) = (0, 0usize, 0usize, 0usize);
     while t < WALK_SECONDS {
         let eye = path.eye(t);
         let frame = m.update(scene, world, eye, 0.0, now);
@@ -177,6 +189,7 @@ fn walk(scene: &Scene, world: &World, samples: &[Vec3], slots: u32, fps: f32, pa
         waiting_max = waiting_max.max(w);
         waiting_sum += w;
         frames += 1;
+        redrawn += usize::from(m.probes.values().any(|p| p.complete && p.last_update.is_none()));
         if t < next_tick {
             continue;
         }
@@ -204,6 +217,7 @@ fn walk(scene: &Scene, world: &World, samples: &[Vec3], slots: u32, fps: f32, pa
         share: (total / seen.max(1) as f64) as f32,
         waiting_max,
         waiting_mean: waiting_sum as f32 / frames.max(1) as f32,
+        redrawn,
         warm_up,
     }
 }
@@ -388,4 +402,15 @@ fn walking_through_a_forest_does_not_flash() {
         assert!(w.flashes_per_minute <= flashes, "{case}: {} flashes a minute", w.flashes_per_minute);
         assert!(w.share >= share, "{case}: a local share of {}", w.share);
     }
+}
+
+/// A camera wavering over the anchor's rounding point changes nothing: no cell
+/// changes size, and no bounds move as objects cross the range.
+#[test]
+fn wavering_over_the_anchor_captures_nothing_again() {
+    let (scene, world, samples) = forest();
+    let w = walk(&scene, &world, &samples, 128, 60.0, Path::Waver);
+    assert_eq!(w.waiting_max, 0, "cells changed");
+    assert_eq!(w.redrawn, 0, "bounds moved");
+    assert_eq!(w.flashes_per_minute, 0.0);
 }
