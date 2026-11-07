@@ -1,7 +1,7 @@
-//! Click actions and held touches, following LLToolPie / LLToolGrabBase
-//! (Firestorm indra/newview, originally LGPL 2.1).
+//! Click actions and held touches, following Legacy Viewer LLToolPie / LLToolGrabBase
+//! (indra/newview, originally LGPL 2.1).
 use super::*;
-use crate::interaction::{self, Action, Contents, Held, Target};
+use crate::interaction::{self, Action, Contents, GrabMotion, Held, Target};
 
 /// A held touch on a surface the GPU alone poses asks for the drawn faces
 /// once per `ASK_EVERY`, `ASK_LEAD` before the next update falls due:
@@ -119,10 +119,16 @@ impl App {
                     .objects
                     .get(root)
                     .is_some_and(|o| o.parent_id == 0 && o.update_flags & 1 != 0 && o.update_flags & (1 << 8) != 0);
+                let hud = self.scene.gpu.get(idx).is_some_and(|g| g.hud);
+                // Scene HUD transforms are in the wearer's render frame;
+                // LLViewerObject::getPositionGlobal adds that frame to the
+                // wearer position before deriving the region grab point.
+                let start = if hud && !physical { self.world.agent.position + pos } else { pos };
                 self.interactions.held = Some(Held {
                     target,
                     offset,
-                    position: pos,
+                    position: start,
+                    grab_motion: (!physical).then(|| GrabMotion::new(start, self.camera.position, self.cursor_pos)),
                     surface,
                     shown: shown.is_some(),
                     drawn: None,
@@ -242,11 +248,18 @@ impl App {
                 .and_then(|ray| self.scene.left_touch_surface(&self.world, idx, ray))
                 .unwrap_or_default()
         };
-        if self.cursor_pos == h.cursor && surface == h.surface {
-            return;
-        }
         let Some(h) = self.interactions.held.as_mut() else { return };
-        if !self.scene.gpu.get(idx).is_some_and(|g| g.hud) {
+        let hud = self.scene.gpu.get(idx).is_some_and(|g| g.hud);
+        let previous_position = h.position;
+        if let Some(motion) = h.grab_motion.as_mut() {
+            h.position = motion.update(
+                self.cursor_pos,
+                self.camera.position,
+                self.camera.forward(),
+                self.ctrl,
+                self.egui_ctx.pixels_per_point(),
+            );
+        } else if !hud {
             let forward = self.camera.forward();
             let left = Vec3::Z.cross(forward).normalize_or(Vec3::Y);
             let vertical = forward.cross(left).normalize_or(Vec3::Z);
@@ -261,22 +274,13 @@ impl App {
             let dy = (h.cursor.1 - self.cursor_pos.1) / ppp;
             h.position += (left * (-dx) + y_axis * dy) * 0.0075;
         }
+        if self.cursor_pos == h.cursor && surface == h.surface && h.position == previous_position {
+            return;
+        }
         let Some(region) = self.world.region_offset(h.target.key.region) else {
             return;
         };
-        let cmd = NetCommand::ObjectGrabUpdate {
-            handle: h.target.key.region,
-            object: h.target.object,
-            offset: h.offset,
-            position: h.position
-                - if self.scene.gpu.get(idx).is_some_and(|g| g.hud) {
-                    Vec3::ZERO
-                } else {
-                    region
-                },
-            elapsed_ms: h.last.elapsed().as_millis().min(u32::MAX as u128) as u32,
-            surface,
-        };
+        let cmd = grab_update_command(h, region, hud, surface, h.last.elapsed().as_millis().min(u32::MAX as u128) as u32);
         h.cursor = self.cursor_pos;
         h.surface = surface;
         h.last = Instant::now();
@@ -335,6 +339,21 @@ impl App {
     }
 }
 
+fn grab_update_command(held: &Held, region: Vec3, hud: bool, surface: aurora_net::TouchSurface, elapsed_ms: u32) -> NetCommand {
+    NetCommand::ObjectGrabUpdate {
+        handle: held.target.key.region,
+        object: held.target.object,
+        offset: held.offset,
+        position: if hud && held.grab_motion.is_none() {
+            held.position
+        } else {
+            held.position - region
+        },
+        elapsed_ms,
+        surface,
+    }
+}
+
 /// Whether a surface drawn at `point` on the ray (`origin`, unit `dir`)
 /// lies in front of a sphere the ray goes through: what is drawn there
 /// hides the sphere's object rather than missing it.
@@ -347,6 +366,72 @@ fn hidden_behind(origin: Vec3, dir: Vec3, point: Vec3, center: Vec3, radius: f32
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn virtual_grab_moves_hud_and_world_points_in_camera_frame() {
+        let camera = Vec3::new(100.0, 200.0, 30.0);
+        let start = Vec3::new(104.0, 198.0, 31.0);
+        let mut grab = GrabMotion::new(start, camera, (10.0, 10.0));
+        let forward = Vec3::X;
+        let moved = grab.update((20.0, 10.0), camera, forward, false, 1.0);
+        assert!(moved.distance(start) > 0.07);
+        assert!((moved - start).z.abs() < 1e-6);
+
+        // A stationary cursor still follows the camera, as the Legacy
+        // Viewer computes camera position + the hidden camera-relative offset.
+        let translated = grab.update((20.0, 10.0), camera + Vec3::Y, forward, false, 1.0);
+        assert!(translated.distance(moved) > 0.99);
+    }
+
+    #[test]
+    fn virtual_grab_vertical_axis_and_ui_scale_are_respected() {
+        let mut horizontal = GrabMotion::new(Vec3::ZERO, Vec3::ZERO, (0.0, 0.0));
+        let mut vertical = horizontal;
+        let forward = Vec3::X;
+        let h = horizontal.update((0.0, -10.0), Vec3::ZERO, forward, false, 2.0);
+        let v = vertical.update((0.0, -10.0), Vec3::ZERO, forward, true, 2.0);
+        assert!(h.distance(v) > 0.05);
+        assert!(h.is_finite() && v.is_finite());
+    }
+
+    #[test]
+    fn virtual_grab_motion_is_sent_in_object_grab_update() {
+        let camera = Vec3::new(100.0, 200.0, 30.0);
+        let start = Vec3::new(104.0, 198.0, 31.0);
+        let mut motion = GrabMotion::new(start, camera, (0.0, 0.0));
+        let moved = motion.update((12.0, 0.0), camera, Vec3::X, false, 1.0);
+        let key = crate::world::objects::ObjKey { region: 7, local_id: 2 };
+        let id = uuid::Uuid::nil();
+        let target = Target {
+            action: Action::Touch,
+            clicked: key,
+            clicked_id: id,
+            key,
+            object: id,
+            root: id,
+            menu: false,
+        };
+        let held = Held {
+            target,
+            offset: Vec3::ZERO,
+            position: moved,
+            grab_motion: Some(motion),
+            surface: aurora_net::TouchSurface::default(),
+            shown: false,
+            drawn: None,
+            asked: std::time::Instant::now(),
+            latest: (aurora_net::TouchSurface::default(), (12.0, 0.0)),
+            cursor: (12.0, 0.0),
+            last: std::time::Instant::now(),
+            physical: false,
+        };
+        let packet = grab_update_command(&held, Vec3::new(100.0, 190.0, 20.0), true, held.surface, 100);
+        let NetCommand::ObjectGrabUpdate { position, .. } = packet else {
+            panic!("expected grab update")
+        };
+        assert_eq!(position, moved - Vec3::new(100.0, 190.0, 20.0));
+        assert_ne!(position, start);
+    }
 
     #[test]
     fn sit_offsets_keep_world_axes_and_the_clicked_child_origin() {
