@@ -47,7 +47,11 @@ pub(super) fn read(path: &Path, convert_tabs: bool) -> Result<String, String> {
 pub(super) fn open(convert_tabs: bool) -> Job {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let done = match rfd::FileDialog::new().add_filter("LSL", &["lsl", "txt"]).pick_file() {
+        // LLFilePicker's script filter: LSL and SLua (*.lsl; *.lua; *.luau)
+        let done = match rfd::FileDialog::new()
+            .add_filter("LSL / SLua", &["lsl", "luau", "lua", "txt"])
+            .pick_file()
+        {
             None => Done::Cancelled,
             Some(path) => match read(&path, convert_tabs) {
                 Ok(source) => Done::Opened(source),
@@ -59,12 +63,18 @@ pub(super) fn open(convert_tabs: bool) -> Job {
     Job(rx)
 }
 
-pub(super) fn save(name: String, source: String) -> Job {
+/// The file extension of a script: `.luau` for SLua (LLPreviewLSL /
+/// LLLiveLSLEditor::onSaveToFile's script_extension).
+fn extension(lua: bool) -> &'static str {
+    if lua { "luau" } else { "lsl" }
+}
+
+pub(super) fn save(name: String, source: String, lua: bool) -> Job {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let done = match rfd::FileDialog::new()
-            .set_file_name(format!("{}.lsl", safe_name(&name)))
-            .add_filter("LSL", &["lsl"])
+            .set_file_name(format!("{}.{}", safe_name(&name), extension(lua)))
+            .add_filter(if lua { "SLua" } else { "LSL" }, &[extension(lua)])
             .save_file()
         {
             None => Done::Cancelled,
@@ -180,11 +190,11 @@ impl Drop for Watch {
     }
 }
 
-pub(super) fn external(name: String, source: String, command_line: String, convert_tabs: bool) -> Job {
+pub(super) fn external(name: String, source: String, command_line: String, convert_tabs: bool, lua: bool) -> Job {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let directory = std::env::temp_dir().join(format!("AuroraScript-{}", uuid::Uuid::new_v4()));
-        let path = directory.join(format!("{}.lsl", safe_name(&name)));
+        let path = directory.join(format!("{}.{}", safe_name(&name), extension(lua)));
         let command_line = if command_line.trim().is_empty() {
             std::env::var("LL_SCRIPT_EDITOR").unwrap_or_default()
         } else {

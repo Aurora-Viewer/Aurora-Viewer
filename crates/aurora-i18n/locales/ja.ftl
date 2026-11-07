@@ -8459,6 +8459,7 @@ script-search-not-found = 一致するものは見つかりませんでした。
 script-search-replaced = { $count }件置換しました。
 script-goto = 行に移動…
 script-goto-line = 行（0から開始）
+script-goto-line-lua = 行（1から開始）
 script-goto-go = 実行
 script-position = 行{ $line }、{ $column }列目
 script-insert = 挿入…

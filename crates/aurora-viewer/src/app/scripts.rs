@@ -41,6 +41,21 @@ default
 }
 "#;
 
+const SLUA_DEMO_SOURCE: &str = r#"--[[ SLua: comments, strings and library calls ]]
+local count = 0
+local delay = 1.5
+
+local function greet(resident: string): string
+    return `Hello, {ll.Key2Name(resident)}!`
+end
+
+LLEvents:on("touch_start", function(events)
+    count += 1
+    ll.Say(PUBLIC_CHANNEL, greet(events[1]:getKey()))
+    ll.SetText(string.format("%d touches", count), vector(1, 1, 1), 1.0)
+end)
+"#;
+
 const WORD_WRAP_DEMO_SOURCE: &str = r#"// A long comment stays readable when the editor is resized: each continuation belongs to the same source line, and saving or copying keeps the original text exactly as written.
 string message = "This long string wraps visually inside the script editor without inserting any newline into the script or changing the string sent to nearby chat.";
 default
@@ -214,6 +229,7 @@ impl App {
                 | "word-wrap"
                 | "no-word-wrap"
                 | "word-wrap-preferences"
+                | "slua"
         );
         if self.frame_count == 280 {
             self.panels.perf = false;
@@ -240,6 +256,15 @@ impl App {
             ) {
                 crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
                 let item = Uuid::from_u128(8102);
+                if mode == "slua" {
+                    // SST_LUA in the item's flags, on a region that runs SLua
+                    if let Some(it) = self.world.inventory.items.get_mut(&item) {
+                        it.flags |= 1;
+                    }
+                    if let Some(region) = self.world.main_region.and_then(|h| self.world.regions.get_mut(&h)) {
+                        region.lua_scripts = true;
+                    }
+                }
                 if mode == "readonly"
                     && let Some(it) = self.world.inventory.items.get_mut(&item)
                 {
@@ -266,6 +291,8 @@ impl App {
                             COLORS_DEMO_SOURCE
                         } else if matches!(mode.as_str(), "word-wrap" | "no-word-wrap" | "word-wrap-preferences") {
                             WORD_WRAP_DEMO_SOURCE
+                        } else if mode == "slua" {
+                            SLUA_DEMO_SOURCE
                         } else {
                             SYNTAX_DEMO_SOURCE
                         }

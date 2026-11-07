@@ -73,7 +73,9 @@ pub fn keywords(doc: &Llsd) -> Option<Vec<Keyword>> {
             continue;
         };
         for (name, entry) in section {
-            if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            // SLua names carry their library: `ll.Say`, `bit32.band`
+            // (LLKeywords::findSegments reads dots in Lua words)
+            if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.') {
                 continue;
             }
             out.push(keyword(name, group, entry));

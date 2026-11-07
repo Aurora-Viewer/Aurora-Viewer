@@ -64,6 +64,22 @@ impl Catalog {
 
     /// A simulator's keywords (aurora_net::lsl_syntax::keywords, sorted).
     pub fn from_keywords(id: Uuid, keywords: Vec<aurora_net::lsl_syntax::Keyword>) -> Catalog {
+        let (words, entries) = Self::collect(keywords);
+        Catalog::with_extras(Some(id), words, entries)
+    }
+
+    /// The bundled SLua keywords: keywords_lua_default.xml of
+    /// secondlife/lsl-definitions, the file LLSyntaxDefCache falls back to
+    /// (FILENAME_DEFAULT_LUA, indra/newview/llsyntaxid.cpp). No LSL extras.
+    fn lua() -> Catalog {
+        // Invariant: a bundled, tested build-time asset, not input.
+        let doc = aurora_llsd::from_xml(include_bytes!("../assets/slua/keywords_lua_default.xml")).expect("valid bundled SLua keywords");
+        let keywords = aurora_net::lsl_syntax::keywords(&doc).expect("bundled SLua keywords of the expected version");
+        let (words, entries) = Self::collect(keywords);
+        Catalog { id: None, words, entries }
+    }
+
+    fn collect(keywords: Vec<aurora_net::lsl_syntax::Keyword>) -> (HashMap<String, Group>, Vec<Entry>) {
         use aurora_net::lsl_syntax::Group as G;
         let mut words = HashMap::with_capacity(keywords.len());
         let mut entries = Vec::with_capacity(keywords.len());
@@ -85,7 +101,7 @@ impl Catalog {
             });
         }
         entries.sort_by(|a, b| a.name.cmp(&b.name));
-        Catalog::with_extras(Some(id), words, entries)
+        (words, entries)
     }
 
     /// The bundled catalog.
@@ -181,6 +197,12 @@ fn registry() -> &'static Registry {
     REGISTRY.get_or_init(Registry::default)
 }
 
+/// The SLua catalog, parsed on first use (about 700 KB of XML).
+pub fn lua() -> &'static Catalog {
+    static LUA: OnceLock<Catalog> = OnceLock::new();
+    LUA.get_or_init(Catalog::lua)
+}
+
 /// The catalog in use.
 pub fn current() -> &'static Catalog {
     registry().current()
@@ -229,6 +251,21 @@ mod tests {
             Some("void llSay(integer Channel, string Text)")
         );
         assert_eq!(c.id, None);
+    }
+
+    #[test]
+    fn the_slua_catalog_keeps_library_names_and_no_lsl_words() {
+        let started = std::time::Instant::now();
+        let c = Catalog::lua();
+        eprintln!("SLua catalog parsed in {:?}", started.elapsed());
+        assert!(c.entries().len() > 1500);
+        assert!(c.entries().windows(2).all(|w| w[0].name < w[1].name));
+        assert_eq!(c.word("ll.Say"), Some(Group::Function));
+        assert_eq!(c.word("local"), Some(Group::Control));
+        assert_eq!(c.word("nil"), Some(Group::Constant));
+        assert_eq!(c.word("default"), None, "no LSL state");
+        assert_eq!(c.word("llSay"), None);
+        assert!(c.entry("ll.Say").is_some_and(|e| e.signature.contains("ll.Say(")));
     }
 
     #[test]

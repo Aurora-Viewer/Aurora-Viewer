@@ -8469,6 +8469,7 @@ script-search-not-found = No match found.
 script-search-replaced = { $count } replacement(s).
 script-goto = Go to line…
 script-goto-line = Line (starting at 0)
+script-goto-line-lua = Line (starting at 1)
 script-goto-go = Go
 script-position = Line { $line }, column { $column }
 script-insert = Insert…

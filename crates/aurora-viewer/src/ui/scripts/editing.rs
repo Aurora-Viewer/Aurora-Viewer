@@ -385,9 +385,10 @@ pub(super) fn error_location(error: &str) -> Option<(usize, usize)> {
     Some((line.trim().parse().ok()?, column.trim().parse().ok()?))
 }
 
-pub(super) fn word(source: &str, at: usize) -> &str {
+/// The word around `at`; an SLua word keeps its library (`ll.Say`).
+pub(super) fn word(source: &str, at: usize, lua: bool) -> &str {
     let byte = source.byte_index_from_char_index(CharIndex(at)).0;
-    let is_word = |c: char| c == '_' || c.is_alphanumeric();
+    let is_word = |c: char| c == '_' || c.is_alphanumeric() || (lua && c == '.');
     let start = source[..byte]
         .char_indices()
         .rev()
@@ -583,6 +584,7 @@ mod tests {
         assert_eq!(line_cursor("é\r\nあx", 99, 0), 5);
         assert_eq!(error_location("(3, 7) : ERROR : Syntax error"), Some((3, 7)));
         assert_eq!(error_location("network error"), None);
-        assert_eq!(word("é llSay(0)", 4), "llSay");
+        assert_eq!(word("é llSay(0)", 4, false), "llSay");
+        assert_eq!(word("x = ll.Say(0)", 8, true), "ll.Say");
     }
 }

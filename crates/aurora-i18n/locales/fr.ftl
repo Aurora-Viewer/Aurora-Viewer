@@ -8462,6 +8462,7 @@ script-search-not-found = Aucune occurrence trouvée.
 script-search-replaced = { $count } remplacement(s).
 script-goto = Aller à la ligne…
 script-goto-line = Ligne (à partir de 0)
+script-goto-line-lua = Ligne (à partir de 1)
 script-goto-go = Aller
 script-position = Ligne { $line }, colonne { $column }
 script-insert = Insérer…
