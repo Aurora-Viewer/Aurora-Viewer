@@ -69,7 +69,10 @@ pub enum Request {
         text: String,
     },
     LoadLayoutNotecard(Uuid),
-    TransferTask(Box<super::task_inventory::TransferRequest>),
+    CopyContents {
+        object: Uuid,
+        items: Vec<aurora_net::build::TaskItem>,
+    },
     /// Focus slider moved (LLAgentCamera::setCameraZoomFraction).
     ZoomFraction(f32),
     AboutLand,
@@ -197,6 +200,7 @@ pub struct FloaterState {
     pub group_picker_open: bool,
     pub media_settings: Option<MediaSettingsState>,
     pub confirm: Option<Confirm>,
+    pub link_error: Option<String>,
     pub picker: TexturePicker,
     pub pick_target: Option<PickTarget>,
     /// A texture or material dropped on a Texture tab slot, applied next
@@ -233,6 +237,9 @@ pub(crate) const INSPECTOR_ID: &str = "build_tools_inspector_c3";
 /// Build shortcuts (menu_viewer.xml): Ctrl+B, Ctrl+1..5, delete, duplicate,
 /// link, edit linked parts, grid, undo...
 pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings) {
+    if tool.ui.link_error.is_some() {
+        return;
+    }
     tool.ui.legacy_window = s.legacy_window;
     if tool.ui.layout.organizing || tool.ui.notecards.open.is_some() {
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
@@ -300,6 +307,7 @@ pub fn show(
     mods: super::Mods,
     env: &mut Env,
 ) -> bool {
+    floaters::link_error(ctx, p, tool);
     contents_selection::finish_if_hidden_or_blurred(ctx, tool, world);
     if !tool.open {
         tool.dismiss_texture_picker();
