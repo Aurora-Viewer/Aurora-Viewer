@@ -9,6 +9,9 @@ use uuid::Uuid;
 impl App {
     /// Right click on the world: the menu of what is under the cursor.
     pub(super) fn open_context_menu(&mut self) {
+        if self.photo_full_frame() {
+            return;
+        }
         self.click(click_pick::Click::Menu);
     }
 
