@@ -88,7 +88,7 @@ impl AvatarPicker {
                         .iter()
                         .map(|f| (f.id, world.social.name_of(&f.id), String::new()))
                         .collect();
-                    v.sort_by_key(|r| r.1.to_lowercase());
+                    v.sort_by_key(|r| crate::natural_order::key(&r.1));
                     v
                 }
                 TAB_NEAR => super::people::nearby(world)

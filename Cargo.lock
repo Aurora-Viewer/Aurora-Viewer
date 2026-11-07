@@ -589,6 +589,7 @@ dependencies = [
  "libc",
  "log",
  "pulseaudio",
+ "rfd",
  "windows-sys 0.61.2",
 ]
 

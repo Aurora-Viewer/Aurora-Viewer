@@ -274,6 +274,7 @@ impl App {
                     }
                     self.world.social.session_mut(session);
                     self.world.social.focus_im = Some(session);
+                    self.chat_ui.conv_focus_request = true;
                     crate::ui::notifications::open_conversations(&self.egui_ctx, &mut self.panels.chat);
                 }
                 Some(Open::NearbyChat) => {

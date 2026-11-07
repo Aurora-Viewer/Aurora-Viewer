@@ -111,36 +111,36 @@ while rethinking the user interface.
   </tr>
 </table>
 
-### New in 0.9.0 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+### New in 0.9.3 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>OpenSim and Hypergrid, for real</h3>
-      Your avatar bakes on grids that do not, large regions show past
-      256 m, and the inventory, outfits and profiles save without AIS.
-      The grid's own currency and money symbol, and a viewer that follows
-      the grid you are on after a Hypergrid teleport.
+      <h3>AMD FSR 3.1</h3>
+      Choose FSR 3.1 under Anti-aliasing: smooth edges at the window's
+      size, or a world drawn smaller and rebuilt sharp, for more frames per
+      second. Animated textures and transparent surfaces stay clean.
     </td>
     <td width="50%" valign="top">
-      <h3>Snap to objects, place on surface</h3>
-      Moved objects go flush against their neighbours, with purple guides
-      on the faces that meet. Press P to place the selection on any surface
-      or the ground, previewed as a hologram.
+      <h3>Steadier on every graphics card</h3>
+      After a graphics card reset, Aurora reopens its window and keeps you
+      logged in. Intel 6th to 9th generation integrated GPUs and AMD +
+      NVIDIA laptops start again, and integrated GPUs count their shared
+      memory in the texture budget.
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <h3>The Legacy toolbar, complete</h3>
-      Quick preferences, a built-in web browser, the voice controls,
-      Statistics, Picks, Beacons and Show Friends Only on the toolbar, the
-      Legacy Viewer's menu shortcuts, and the fly override (Ctrl+Alt+V).
+      <h3>Updates and your computer</h3>
+      Aurora tells you when a new version is out, while it runs. Remove
+      Aurora from this computer takes away what it registered outside its
+      folders, and the web and media pack downloads only once you agree.
     </td>
     <td valign="top">
-      <h3>Steadier on your graphics card</h3>
-      Intel Iris Xe starts again, the card is shared fairly with other
-      viewers and programs, and Photo quality climbs as far as the video
-      memory allows instead of losing the card.
+      <h3>Clicks that land</h3>
+      Clicks go through alpha textures and invisible prims like the Legacy
+      Viewer, Shift or Ctrl + right click extends the build selection, and
+      the teleport history survives a crash.
     </td>
   </tr>
 </table>

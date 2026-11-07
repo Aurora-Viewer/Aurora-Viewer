@@ -135,6 +135,7 @@ mod teleport_screen;
 mod texture_library;
 mod texture_refresh;
 mod uninstall;
+mod update_notice;
 mod viewer_stats;
 mod viewfinder;
 mod wearable_editor;
@@ -1260,13 +1261,8 @@ fn apply_test_overrides(settings: &mut Settings) {
     {
         level.apply(settings);
     }
-    if let Some(v) = std::env::var("AURORA_FPS_LIMIT")
-        .ok()
-        .and_then(|v| v.parse::<u32>().ok())
-        .filter(|&v| v > 0)
-    {
-        settings.fps_cap = true;
-        settings.fps_limit = v.clamp(10, 500);
+    if let Ok(value) = std::env::var("AURORA_FPS_LIMIT") {
+        apply_test_fps_limit(settings, &value);
     }
     if let Some(v) = std::env::var("AURORA_AA").ok().and_then(|v| v.parse().ok()) {
         settings.antialiasing = v;
@@ -1307,6 +1303,37 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Ok(v) = std::env::var("AURORA_OCCLUSION") {
         settings.occlusion_culling = v != "0";
     }
+}
+
+/// Shows `conversation` with its field taking the keyboard, ready to type
+/// in, as Firestorm's floater shown with the focus (LLFloaterReg::showInstance,
+/// LLFloater::setFocus → focusFirstItem).
+fn show_conversation_to_type(
+    ctx: &egui::Context,
+    world: &mut crate::world::World,
+    chat: &mut ui::chat::ChatUi,
+    conversations_open: &mut bool,
+    conversation: uuid::Uuid,
+) {
+    world.social.focus_im = Some(conversation);
+    chat.conv_focus_request = true;
+    ui::notifications::open_conversations(ctx, conversations_open);
+}
+
+/// A conversation's toast or card clicked: acknowledges the notification and
+/// shows its conversation ready to type in, as the Legacy Viewer's IM toast
+/// (FSFloaterIM::show → setFocus(true) → focusFirstItem,
+/// indra/newview/fsfloaterim.cpp). Returns the conversation opened.
+fn open_notification_to_type(
+    ctx: &egui::Context,
+    world: &mut crate::world::World,
+    chat: &mut ui::chat::ChatUi,
+    conversations_open: &mut bool,
+    id: u64,
+) -> Option<uuid::Uuid> {
+    let conversation = world.open_from_notification(id)?;
+    show_conversation_to_type(ctx, world, chat, conversations_open, conversation);
+    Some(conversation)
 }
 
 impl App {
@@ -4786,7 +4813,7 @@ impl App {
             log::info!(
                 "demo action pick: hit={hit:?}, avatar={on_avatar}, picked={:?}",
                 hit.zip(ray)
-                    .and_then(|(p, r)| self.scene.interaction_at_ray(&self.world, p, r, true))
+                    .and_then(|(p, r)| self.scene.left_interaction_at_ray(&self.world, p, r, true))
                     .and_then(|i| self.world.objects.get(i))
                     .map(|o| (o.key.local_id, o.click_action))
             );
@@ -4821,7 +4848,7 @@ impl App {
             && !self.camera.mouselook()
             && let Some(point) = hit
             && let Some(pick_ray) = ray
-            && let Some(idx) = self.scene.interaction_at_ray(&self.world, point, pick_ray, true)
+            && let Some(idx) = self.scene.left_interaction_at_ray(&self.world, point, pick_ray, true)
             && (!on_avatar || self.own_attachment(idx))
             && let Some(target) = crate::interaction::target(&self.world, idx, &self.interactions.props)
         {
@@ -6608,7 +6635,7 @@ impl App {
                     self.send(NetCommand::PreviewInventoryItem(item));
                 }
             }
-            Request::TransferTask(request) => self.apply_inventory_action(ui::inventory::InvAction::TakeTask(request)),
+            Request::CopyContents { object, items } => self.copy_selected_contents(object, items),
             Request::ZoomFraction(f) => self.camera.set_zoom_fraction(f),
             Request::AboutLand => self.panels.about_land = true,
             // LLPanelLandInfo::onClickBuy: the land tool's selection
@@ -7437,9 +7464,13 @@ impl App {
             self.world.met(id);
             self.world.ui_sounds.push(UiSound::StartIm);
         }
-        self.world.social.focus_im = Some(id);
-        self.chat_ui.conv_focus_request = true;
-        self.show_conversations();
+        self.show_conversation_to_type(id);
+    }
+
+    /// Shows a conversation the user asked for with its field ready to type
+    /// in (a notification's toast or card, `show_conversation_to_type`).
+    fn show_conversation_to_type(&mut self, id: uuid::Uuid) {
+        show_conversation_to_type(&self.egui_ctx, &mut self.world, &mut self.chat_ui, &mut self.panels.chat, id);
     }
 
     /// The Conversations window for a conversation the user asked for (Send
@@ -8734,6 +8765,7 @@ impl App {
             self.shutdown(event_loop);
             return;
         }
+        self.update_notice();
         // Aurora's media plugins: downloaded once, when none are found (the
         // web pages of the profiles need them even with media disabled), and
         // only once the user agreed (the card of `ui::media_pack`, or a
@@ -10373,12 +10405,13 @@ impl App {
         };
         t_part = self.scene.parts.lap(Part::ParamsLights, t_part);
         let probes = if in_world {
-            let slots = self.settings.probe_count.clamp(8, 64);
+            let slots = gfx.renderer.fitted_probe_slots(self.settings.probe_count.clamp(8, 256));
             if self.probes.slots != slots || self.probes.level != self.settings.reflection_probes {
                 self.probes.slots = slots;
                 self.probes.level = self.settings.reflection_probes.min(3);
                 self.probes.reset();
             }
+            self.probes.range = self.settings.probe_range.min(self.settings.draw_distance);
             if self.probes.hdr != self.settings.hdr_emissive {
                 self.probes.hdr = self.settings.hdr_emissive;
                 self.probes.refresh();
@@ -11802,10 +11835,8 @@ impl App {
                     crate::world::notifications::Data::Message { session, .. } if session == crate::demo::DEMO_NOVA => Some(n.id),
                     _ => None,
                 });
-                if let Some(id) = nova
-                    && self.world.open_from_notification(id).is_some()
-                {
-                    ui::notifications::open_conversations(&self.egui_ctx, &mut self.panels.chat);
+                if let Some(id) = nova {
+                    open_notification_to_type(&self.egui_ctx, &mut self.world, &mut self.chat_ui, &mut self.panels.chat, id);
                 }
             }
         }
@@ -12632,7 +12663,7 @@ impl App {
                             && let Some(inv) = self.build.contents.objects.get(&object)
                         {
                             let mut items: Vec<_> = inv.items.iter().filter(|it| !it.is_folder).collect();
-                            items.sort_by_key(|it| it.name.to_lowercase());
+                            items.sort_by_key(|it| crate::natural_order::key(&it.name));
                             let ids: Vec<_> = items.iter().take(if rename { 1 } else { 2 }).map(|it| it.item_id).collect();
                             self.build.ui.contents_selection.items = ids.iter().copied().collect();
                             if rename && let Some(id) = ids.first() {
@@ -12766,7 +12797,7 @@ impl App {
                             && let Some(inv) = self.build.contents.objects.get(&object)
                         {
                             let mut items: Vec<_> = inv.items.iter().filter(|it| !it.is_folder).cloned().collect();
-                            items.sort_by_key(|it| it.name.to_lowercase());
+                            items.sort_by_key(|it| crate::natural_order::key(&it.name));
                             self.build.ui.contents_selection.items = items.iter().map(|it| it.item_id).collect();
                             // what a drop of the selection on the folder sends (task_drop::target)
                             for item in items {
@@ -16862,6 +16893,7 @@ impl App {
                     if self.region_restart_bell_answer(id, &r) {
                         continue;
                     }
+                    self.update_notice_answer(id, &r);
                     if matches!(r, crate::world::notifications::Response::Open)
                         && let Some(object) = self.world.notifications.list.iter().find_map(|n| match n.data {
                             crate::world::notifications::Data::Delivery { object } if n.id == id => Some(object),
@@ -16878,11 +16910,10 @@ impl App {
                             .list
                             .iter()
                             .any(|n| n.id == id && matches!(n.data, crate::world::notifications::Data::Presence { .. }));
-                        if self.world.open_from_notification(id).is_some() {
-                            if presence {
-                                self.world.ui_sounds.push(UiSound::StartIm);
-                            }
-                            ui::notifications::open_conversations(&ctx, &mut self.panels.chat);
+                        if open_notification_to_type(&ctx, &mut self.world, &mut self.chat_ui, &mut self.panels.chat, id).is_some()
+                            && presence
+                        {
+                            self.world.ui_sounds.push(UiSound::StartIm);
                         }
                         continue;
                     }
@@ -20091,6 +20122,12 @@ impl ApplicationHandler for App {
             }
             if let Ok(mode) = std::env::var("AURORA_DEMO_HUDS") {
                 let faces = matches!(mode.as_str(), "faces" | "faces-turned" | "faces-alpha");
+                let mask_cutoff = matches!(mode.as_str(), "mask-cutoff" | "mask-cutoff-zoom");
+                if mask_cutoff {
+                    for (id, material) in crate::demo::hud::mask_cutoff_materials() {
+                        self.scene.legacy_mats.insert(id, material);
+                    }
+                }
                 if mode == "blend-opacity" {
                     self.scene
                         .legacy_mats
@@ -20107,7 +20144,9 @@ impl ApplicationHandler for App {
                         self.scene.materials.insert(id, material);
                     }
                 }
-                let events = if mode == "blend-opacity" {
+                let events = if mask_cutoff {
+                    crate::demo::hud::mask_cutoff_events()
+                } else if mode == "blend-opacity" {
                     crate::demo::hud::opacity_events()
                 } else if matches!(mode.as_str(), "edit-no-mod" | "rotate-no-mod") {
                     crate::demo::hud::no_modify_events()
@@ -20147,6 +20186,10 @@ impl ApplicationHandler for App {
                 if matches!(mode.as_str(), "blend-opacity" | "edit-no-mod" | "rotate-no-mod") {
                     self.world.hud_scales = crate::world::hud_scale::HudScales::default();
                     self.world.hud_zoom = 1.0;
+                }
+                if mask_cutoff {
+                    self.world.hud_scales = crate::world::hud_scale::HudScales::default();
+                    self.world.hud_zoom = if mode == "mask-cutoff-zoom" { 0.5 } else { 1.0 };
                 }
                 if matches!(mode.as_str(), "edit-no-mod" | "rotate-no-mod") {
                     self.settings.build.edit_linked = false;
@@ -20873,6 +20916,17 @@ fn frame_cap(s: &Settings, focused: bool, in_world: bool, monitor_hz: f32, timed
     if cap.is_finite() { cap } else { 0.0 }
 }
 
+/// Zero explicitly disables the user cap for reproducible uncapped tests;
+/// malformed values leave the user's controls intact.
+fn apply_test_fps_limit(settings: &mut Settings, value: &str) {
+    if let Ok(limit) = value.parse::<u32>() {
+        settings.fps_cap = limit > 0;
+        if limit > 0 {
+            settings.fps_limit = limit.clamp(10, 500);
+        }
+    }
+}
+
 /// agent_jump (indra/newview/llviewerinput.cpp): AutomaticFly. Turning the
 /// option off clears the hold, so enabling it cannot reuse an old press.
 fn automatic_fly_held(since: &mut Option<Instant>, up: bool, enabled: bool, now: Instant) -> bool {
@@ -21209,6 +21263,22 @@ mod tests {
     }
 
     #[test]
+    fn test_fps_override_disables_caps_and_keeps_positive_limits_bounded() {
+        for (value, enabled, limit) in [("0", false, 120), ("1", true, 10), ("999", true, 500), ("invalid", true, 120)] {
+            let mut settings = Settings {
+                fps_cap: true,
+                fps_limit: 120,
+                ..Settings::default()
+            };
+            super::apply_test_fps_limit(&mut settings, value);
+            assert_eq!((settings.fps_cap, settings.fps_limit), (enabled, limit), "{value}");
+            if !enabled {
+                assert_eq!(frame_cap(&settings, false, true, 144.0, true, None), 0.0);
+            }
+        }
+    }
+
+    #[test]
     fn frame_cap_rules() {
         let free = Settings {
             fps_cap: false,
@@ -21258,6 +21328,33 @@ mod tests {
             capture_files(Path::new("c/a.png"), "2560, 2500"),
             vec![(2500, PathBuf::from("c/a-2500.png")), (2560, PathBuf::from("c/a-2560.png"))]
         );
+    }
+
+    /// A clicked IM toast or card opens its conversation with the field
+    /// taking the keyboard, not the nearby chat.
+    #[test]
+    fn a_clicked_notification_opens_its_conversation_ready_to_type() {
+        use super::open_notification_to_type;
+        let ctx = egui::Context::default();
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut chat = crate::ui::chat::ChatUi::default();
+        let mut open = false;
+        let jane = uuid::Uuid::from_u128(0x2285);
+        let id = world.notifications.push_message(jane, jane, "Jane Doe", "hello", true);
+        assert_eq!(open_notification_to_type(&ctx, &mut world, &mut chat, &mut open, id), Some(jane));
+        assert!(open, "the Conversations window opens");
+        assert!(chat.conv_focus_request, "the conversation's field takes the keyboard");
+        assert_eq!(world.social.focus_im, Some(jane), "the Conversations window shows that tab");
+        assert!(
+            !world.notifications.list.iter().any(|n| n.id == id),
+            "the click acknowledges the card"
+        );
+        // an offline friend is a toast that opens nothing and takes no keyboard
+        chat.conv_focus_request = false;
+        open = false;
+        let off = world.notifications.push_presence(jane, "Jane Doe is offline.", false);
+        assert_eq!(open_notification_to_type(&ctx, &mut world, &mut chat, &mut open, off), None);
+        assert!(!open && !chat.conv_focus_request);
     }
 
     #[test]

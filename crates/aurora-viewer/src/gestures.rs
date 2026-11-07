@@ -204,7 +204,7 @@ impl Manager {
             })
             .map(|e| (e.definition.trigger.clone(), e.definition.replacement.clone()))
             .collect();
-        found.sort_by_cached_key(|(t, _)| (t.to_lowercase(), t.clone()));
+        found.sort_by_cached_key(|(t, _)| (crate::natural_order::key(t), t.clone()));
         found.dedup_by(|a, b| a.0.to_lowercase() == b.0.to_lowercase());
         found
     }
