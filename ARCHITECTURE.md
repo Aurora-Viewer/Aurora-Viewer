@@ -227,7 +227,7 @@ and reduce 16-bit samples to their high byte, following
 
 World Blend left picking (#1574) uses an exact alpha > 32 bit plane in
 `scene/textures.rs::PickMask`, prepared on decode workers and retained by
-version 5 of the transcoded cache. Its legacy 2x2 plane still serves the
+the transcoded cache since version 5. Its legacy 2x2 plane still serves the
 existing HUD and inventory rules. `scene/picking.rs::FacePick` carries the
 left-button policy through actions and build selection, excluding worn
 objects. GPU left/camera pick variants apply the same legacy alpha threshold to
@@ -2658,6 +2658,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `scene/sound_reverb.rs` | The reverb of the surroundings (Aurora's own, Preferences › Sound, off): about three times a second, 48 rays from the camera in fixed Fibonacci-lattice directions up to 40 m; the main thread gathers the objects in range from the pick index (`PickIndex::sphere_candidates`, the 160 that look largest kept), their transforms and shared geometry (`Scene::sound_surface`, the occlusion's rule) and the terrain and water along the rays; a background job finds each ray's nearest hit (`Accel::nearest` for large faces). Enclosure, openness and mean distance, glided over ~1.2 s, become the decay (Sabine), pre-delay, damping, mean free path and level sent to the mixer (`AudioEngine::set_reverb`); each world sound's send factor grows with its distance (`AudioEngine::world_reverb_send`). `AURORA_DEMO_SOUND_REVERB` |
 | `media/` | Media of prims and parcels (objects with media kept up to date by the change stream of the `ObjectStore`, with no pass over all the objects), OpenID cookie of the grid's web pages (`openid.rs`), private browser profile deleted after use for the Web tab of "Search" (`private_profile.rs`: its own folder under `cache\web-private`, usage lock, deletion when the browser stops, on exit and at the next startup), shared browser cache emptied at every start (`cef_cache.rs`: the plugin's `cache/cef/cef_cache/<pid>` profiles of the earlier runs renamed `_old` before the first browser, then deleted in the background), download of Aurora's media plugins pack when no plugins are found, once the user agreed (the answer kept in the settings), with retries (`pack.rs`), the media filter (`filter.rs`: the account's allow / deny list of sites, `medialist.xml`, and the questions; checked before a parcel media, a prim media or the parcel music reaches a site) |
 | `demo_tex_refresh.rs` | `AURORA_DEMO_TEXREFRESH` scenario: a panel whose texture file in the disk cache is stale, the right one on the local asset server (`demo_asset_server.rs`); "Refresh textures" (or `auto`) downloads it again |
+| `demo_mask_255.rs` | `AURORA_DEMO_MASK_255` scenario: a real `.j2c` of flat alpha 250-254 in the disk cache, on a panel with no material and on one with a Mask of cutoff 255, hidden; 255: no alpha channel, shown whole |
 | `demo_aa_switch.rs` | `AURORA_DEMO_AA_SWITCH`: the anti-aliasing changed at given frames, to watch the pipelines for new MSAA samples compile on their worker without a long frame |
 | `demo_blend_shadows.rs` | `AURORA_DEMO_BLEND_SHADOWS` scenario: alpha-blended panels in the sun (greenhouse pane with opaque frame, face and texture alpha above and under the shadow cutoffs), or 400 greenhouse panes for the cost of blended casters |
 | `demo_plants.rs` | `AURORA_DEMO_PLANTS` scenario: the 21 tree species and 6 grass species near or far along the start view, or a forest of about 600 trees and 400 grass tufts; stand-in species textures drawn under their ids, in this scenario only |
@@ -4462,3 +4463,5 @@ array atlas from one to four 64-tile pages (32 to 128 MiB), preserving existing
 pictures by GPU copy. The two-capture frame budget and full-avatar limit remain
 independent. Pending or over-budget avatars draw neutral silhouette cards rather
 than disappearing; cards have a dynamically sized instance buffer.
+
+`build/linking.rs` follows LLSelectMgr::enableLinkObjects / linkObjects: full selection properties and effective rights are checked before sending, with permanent-object, region, owner, RLVa and animated-mesh limits shared by both layouts and the object menu. Scene mesh-header estimates are refreshed before editor input. `aurora-net::build::link_batches` retains the root in every 254-object packet; confirmation accounts for later batches preceding earlier children. OpenRegionInfo supplies the region link limit; SimulatorFeatures supplies the animated-object triangle budget.
