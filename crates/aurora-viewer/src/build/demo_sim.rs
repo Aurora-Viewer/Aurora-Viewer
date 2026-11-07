@@ -158,6 +158,8 @@ impl DemoSim {
                 category: 0,
                 inventory_serial: 1,
                 folder_id,
+                // the demo's objects are rezzed by hand
+                from_task_id: Uuid::nil(),
                 name,
                 description: String::new(),
                 touch_name: touch_name.into(),

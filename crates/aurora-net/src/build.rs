@@ -562,6 +562,10 @@ pub struct ObjectProps {
     /// Inventory folder the object was rezzed from (full properties only;
     /// nil when unknown). Take sends it back there (handle_take).
     pub folder_id: Uuid,
+    /// The object whose contents rezzed this one (full properties only;
+    /// nil when rezzed by hand): "Save back to object contents" goes there
+    /// (LLSelectNode::mFromTaskID).
+    pub from_task_id: Uuid,
     pub name: String,
     pub description: String,
     pub touch_name: String,

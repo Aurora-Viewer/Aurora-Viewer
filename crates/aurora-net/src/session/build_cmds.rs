@@ -919,6 +919,7 @@ pub(super) fn parse_properties(m: &msgs::ObjectProperties) -> Vec<ObjectProps> {
             category: b.category,
             inventory_serial: b.inventory_serial,
             folder_id: b.folder_id,
+            from_task_id: b.from_task_id,
             name: field_str(&b.name),
             description: field_str(&b.description),
             touch_name: field_str(&b.touch_name),
@@ -947,5 +948,30 @@ pub(super) fn parse_family(m: &msgs::ObjectPropertiesFamily) -> ObjectProps {
         name: field_str(&b.name),
         description: field_str(&b.description),
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn object_properties_keep_the_rezzing_object() {
+        let m = ObjectProperties {
+            object_data: vec![object_properties::ObjectData {
+                object_id: uuid::Uuid::from_u128(1),
+                folder_id: uuid::Uuid::from_u128(2),
+                from_task_id: uuid::Uuid::from_u128(3),
+                ..Default::default()
+            }],
+        };
+        let props = parse_properties(&m);
+        assert_eq!(props.len(), 1);
+        assert_eq!(
+            (props[0].object_id, props[0].folder_id, props[0].from_task_id),
+            (uuid::Uuid::from_u128(1), uuid::Uuid::from_u128(2), uuid::Uuid::from_u128(3))
+        );
+        // ObjectPropertiesFamily has no FromTaskID
+        assert!(parse_family(&ObjectPropertiesFamily::default()).from_task_id.is_nil());
     }
 }
