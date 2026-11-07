@@ -268,6 +268,8 @@ impl World {
     /// is not a way around them), and the transcript stays without them.
     fn received_notice(&mut self, from: Uuid, group: bool, kind: i32, amount: i32, item: &str) {
         let name = if group {
+            // asks for a name the viewer does not know yet
+            self.land.group_name(&from, &self.groups.groups);
             format!("secondlife:///app/group/{from}/about")
         } else {
             self.social.want_name(from);

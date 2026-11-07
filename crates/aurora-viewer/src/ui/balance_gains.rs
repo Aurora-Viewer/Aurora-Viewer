@@ -137,7 +137,7 @@ impl BalanceGains {
         if let Some(last) = self.last
             && real > last
         {
-            let matched = i64::from(real - last).min(self.unmatched);
+            let matched = (i64::from(real) - i64::from(last)).min(self.unmatched);
             self.unmatched -= matched;
             self.held += matched;
         }
@@ -386,6 +386,17 @@ mod tests {
         // and a later rise is not taken for it
         run.balance += 50;
         assert_eq!(run.wait(AFTER).balance, Some(1050));
+    }
+
+    /// The balance comes from the grid: any two values of it.
+    #[test]
+    fn extreme_balances_do_not_overflow() {
+        let mut run = Run::new(-2_000_000_000);
+        run.gains.push(100, run.now);
+        run.balance = 2_000_000_000;
+        assert_eq!(run.wait(AFTER).balance, Some(1_999_999_900));
+        let frame = run.wait(HOLD + FLY + COUNT + STEP);
+        assert_eq!(frame, Frame { balance: Some(2_000_000_000), rows: Vec::new() });
     }
 
     #[test]
