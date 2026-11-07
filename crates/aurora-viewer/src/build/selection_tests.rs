@@ -1203,6 +1203,61 @@ fn select_by_surrounding_takes_only_what_the_rectangle_surrounds() {
 }
 
 #[test]
+fn a_rectangle_started_on_an_object_takes_it_only_if_the_rectangle_does() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let first = object(&world, 99610);
+    let other = object(&world, 99614);
+    tool.cam = geom::Cam::new(Vec3::ZERO, Vec3::X, glam::Mat4::IDENTITY, 1.0, 800.0, 800.0, 1.0);
+    let id = |world: &World, idx: usize| world.objects.get(root_of(world, idx)).unwrap().key.local_id;
+    let (first_id, other_id) = (id(&world, first), id(&world, other));
+    settings.select_surrounding = true;
+    let press = |tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, mods: Mods| {
+        tool.mouse_down(world, s, None, Some(first), None, (10.0, 10.0), mods);
+    };
+    let hover = |tool: &mut BuildTool, world: &mut World, s: &BuildSettings, to: (f32, f32), mods: Mods| {
+        tool.update(world, s, None, to, false, mods);
+    };
+
+    // a click selects the object under it, on release
+    press(&mut tool, &mut world, &mut settings, Mods::default());
+    assert!(tool.selection.is_empty(), "the press alone selects nothing");
+    hover(&mut tool, &mut world, &settings, (11.0, 11.0), Mods::default());
+    tool.mouse_up(&mut world, &settings, None);
+    assert_eq!(selected(&tool), [first_id], "a movement inside the slop is still a click");
+
+    // a drag starts over: nothing is left of the press or of the selection
+    tool.click_select(&mut world, &settings, Some(other), false);
+    press(&mut tool, &mut world, &mut settings, Mods::default());
+    hover(&mut tool, &mut world, &settings, (30.0, 30.0), Mods::default());
+    assert!(
+        tool.selection.is_empty(),
+        "a drag clears the selection, as LLToolSelectRect::handleHover"
+    );
+    tool.mouse_up(&mut world, &settings, None);
+    assert!(
+        !selected(&tool).contains(&first_id),
+        "the object under the press is not taken for being there"
+    );
+
+    // Shift keeps what was selected, and does not toggle the press's object
+    tool.deselect_all(&world);
+    tool.click_select(&mut world, &settings, Some(other), false);
+    let shift = Mods {
+        shift: true,
+        ..Mods::default()
+    };
+    press(&mut tool, &mut world, &mut settings, shift);
+    hover(&mut tool, &mut world, &settings, (30.0, 30.0), shift);
+    tool.mouse_up(&mut world, &settings, None);
+    assert_eq!(selected(&tool), [other_id]);
+
+    // a click with Shift still adds
+    press(&mut tool, &mut world, &mut settings, shift);
+    tool.mouse_up(&mut world, &settings, None);
+    assert!(selected(&tool).contains(&first_id));
+}
+
+#[test]
 fn select_by_surrounding_is_saved_and_on_when_a_profile_lacks_it() {
     let settings = BuildSettings {
         select_surrounding: false,

@@ -815,6 +815,11 @@ pub struct BuildTool {
     pending_create: Option<(Instant, HashSet<Uuid>)>,
     /// Selection rectangle being dragged (start, current in pixels, extend).
     pub rect: Option<((f32, f32), (f32, f32), bool)>,
+    /// The press behind `rect`, until it is known to be a click: the object
+    /// under it, selected on release (LLToolSelect::handleMouseUp). A drag
+    /// past the slop drops it, so the object it started on has to be taken
+    /// by the rectangle like any other (LLToolSelectRect::handleHover).
+    press: Option<Option<ObjKey>>,
     /// Compact section (Rights, Transform, Features, Materials, Contents, Shape).
     pub tab: usize,
     /// Last message for the floater's status line.
@@ -866,6 +871,7 @@ impl Default for BuildTool {
             silhouettes: silhouette::Cache::default(),
             pending_create: None,
             rect: None,
+            press: None,
             tab: 6,
             status: String::new(),
             last_frame: None,
@@ -988,6 +994,11 @@ pub fn family(world: &World, root: usize) -> Vec<usize> {
         i += 1;
     }
     out
+}
+
+/// Whether a press moved from `a` to `b` is a rectangle and not a click.
+fn rect_dragged(a: (f32, f32), b: (f32, f32)) -> bool {
+    (a.0 - b.0).abs() >= 3.0 || (a.1 - b.1).abs() >= 3.0
 }
 
 /// Object indices of a selection with their highlight (true = root color):
@@ -1867,8 +1878,8 @@ impl BuildTool {
     /// Without `scene` (tests) or geometry yet, a prim across the edge is
     /// taken only without "Select by surrounding".
     fn rect_select(&mut self, world: &mut World, s: &BuildSettings, scene: Option<&Scene>, a: (f32, f32), b: (f32, f32), extend: bool) {
-        if (a.0 - b.0).abs() < 3.0 && (a.1 - b.1).abs() < 3.0 {
-            return; // a click, already handled
+        if !rect_dragged(a, b) {
+            return; // a click, handled by `mouse_up`
         }
         let rect = egui::Rect::from_two_pos(egui::pos2(a.0, a.1), egui::pos2(b.0, b.1));
         let now = Instant::now();
@@ -2011,9 +2022,7 @@ impl BuildTool {
                         self.send_stretch_materials(world, scene, idx, s.scale_stretch_textures);
                     }
                 }
-                if let Some(r) = self.rect.as_mut() {
-                    r.1 = cursor;
-                }
+                self.drag_rect(world, cursor);
             }
             Tool::Grab => self.grab_hover(world, cursor, mods),
             Tool::Land => {
@@ -2023,11 +2032,19 @@ impl BuildTool {
                     self.send(c);
                 }
             }
-            Tool::Create | Tool::Focus => {
-                if let Some(r) = self.rect.as_mut() {
-                    r.1 = cursor;
-                }
-            }
+            Tool::Create | Tool::Focus => self.drag_rect(world, cursor),
+        }
+    }
+
+    /// LLToolSelectRect::handleHover: a press that leaves the slop is a
+    /// rectangle and not a click; without Shift or Ctrl it starts from an
+    /// empty selection.
+    fn drag_rect(&mut self, world: &World, cursor: (f32, f32)) {
+        let Some(r) = self.rect.as_mut() else { return };
+        r.1 = cursor;
+        let (dragged, extend) = (rect_dragged(r.0, r.1), r.2);
+        if dragged && self.press.take().is_some() && !extend {
+            self.deselect_all(world);
         }
     }
 
@@ -2104,7 +2121,7 @@ impl BuildTool {
                         // not on a handle: select, or drag a selection rectangle
                         // (LLToolCompTranslate -> LLToolSelectRect)
                         let extend = mods.shift || mods.ctrl;
-                        self.click_select(world, s, pick, extend);
+                        self.press = Some(pick.and_then(|idx| world.objects.get(idx)).map(|o| o.key));
                         self.rect = Some((cursor, cursor, extend));
                         true
                     }
@@ -2231,7 +2248,13 @@ impl BuildTool {
     /// `scene` gives the selection rectangle the drawn vertices of the prims.
     pub fn mouse_up(&mut self, world: &mut World, s: &BuildSettings, scene: Option<&Scene>) {
         if let Some((a, b, extend)) = self.rect.take() {
-            self.rect_select(world, s, scene, a, b, extend);
+            match self.press.take() {
+                Some(pick) => {
+                    let pick = pick.and_then(|key| world.objects.index_of(&key));
+                    self.click_select(world, s, pick, extend);
+                }
+                None => self.rect_select(world, s, scene, a, b, extend),
+            }
         }
         let mut cmds = Vec::new();
         self.manip.release(world, s, self.selection_linked, &mut cmds);
