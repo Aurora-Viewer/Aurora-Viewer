@@ -1,4 +1,5 @@
-//! Click actions and held touches, following Legacy Viewer LLToolPie / LLToolGrabBase.
+//! Click actions and held touches, following Legacy Viewer LLToolPie / LLToolGrabBase
+//! (indra/newview, originally LGPL 2.1).
 use super::*;
 use crate::interaction::{self, Action, Contents, GrabMotion, Held, Target};
 
