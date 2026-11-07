@@ -26,6 +26,36 @@ Une ligne vide commence un nouveau paragraphe.
 
 # Actualités d'Aurora Viewer
 
+## 2026-11-06 — Aurora 0.9.3 : AMD FSR 3.1, et plus stable sur toutes les cartes graphiques
+Choisissez FSR 3.1 sous Anticrénelage dans Préférences › Graphismes : des bords lissés à la taille de la fenêtre, ou un monde dessiné plus petit puis reconstruit net, pour plus d'images par seconde. Après une réinitialisation de la carte graphique, Aurora rouvre sa fenêtre sans vous déconnecter (désactivable dans les Préférences). Les GPU intégrés Intel de 6e à 9e génération démarrent de nouveau, comme les portables AMD + NVIDIA ; les GPU intégrés comptent leur mémoire partagée dans le budget des textures. Le cache est vidé une fois au premier lancement de la 0.9.3 ; vos réglages sont gardés.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.3)
+
+## 2026-11-06 — Mises à jour, votre ordinateur, et des clics qui tombent juste
+Aurora vous prévient désormais qu'une nouvelle version est sortie, pendant qu'il tourne. Préférences › Langue et mises à jour › Retirer Aurora de cet ordinateur enlève ce qu'Aurora a inscrit hors de ses propres dossiers, puis liste les dossiers restants. Le pack web et médias ne se télécharge qu'après votre accord. Les clics traversent les textures alpha et les prims invisibles comme dans le Legacy Viewer, et Maj ou Ctrl + clic droit étend la sélection de construction.
+
+## 2026-11-06 — Caméra, inventaire et correctifs
+Les limites de la caméra sont de nouveau actives par défaut, comme dans le Legacy Viewer : une carte à la connexion indique où les désactiver. L'historique des téléportations survit à un plantage, et ni l'écriture du journal ni la coupure de la voix ne peuvent figer le viewer. Les bords du terrain rejoignent la région voisine, les photos de profil restent nettes, les Favoris listent les éléments étoilés et le survol de l'inventaire a un interrupteur. Merci à ClifHofmann, chrzang, circuskid, emmelinedevere, Gaalrauch, iGao, KanikaBreed, Marakiinfinity, Odessa-Draekavik et xWynt3r.
+
+## 2026-11-05 — Aurora 0.9.2 : votre historique de chat vous suit, et un mode plein écran
+Préférences › Chat › Historique importe vos conversations du Legacy Viewer et des autres viewers approuvés qui écrivent les mêmes fichiers. Les messages rejoignent votre historique Aurora dans l'ordre, chaque connexion n'ajoute que les nouveaux, et les fichiers de l'autre viewer sont seulement lus. Préférences › Graphismes gagne un plein écran sans bordure, et Alt+Entrée l'active ou le coupe aussitôt, sans redémarrer : une image nette pour les vidéos, et la fenêtre revient telle qu'elle était.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.2)
+
+## 2026-11-05 — Mouvements plus nets, clics plus légers
+Avec le TAA, les avatars, animesh et objets qui bougent ne bavent plus : l'anticrénelage suit le mouvement propre de chaque pixel. L'occlusion ambiante passe aussi en demi-résolution dans une fenêtre en 1440p, soit environ 14 % d'images par seconde en plus dans une foule, pour la même image. Dans les régions chargées, un clic sur le monde coûte dix fois moins, et le curseur de survol ignore les maillages riggés portés qu'il ne peut jamais viser. Les escalators et autres objets en boucle keyframed bouclent sans glisser en arrière.
+
+## 2026-11-05 — Construction, carte graphique et correctifs
+La pipette de texture et les textures locales reviennent dans les éditeurs de construction et d'apparence, les dépôts sur une face clignotent et atteignent les faces transparentes, et la fenêtre de construction Legacy montre le numéro de lien et de face. La capture de jeu d'OBS Studio reste à l'écart sauf overlays autorisés, une fenêtre derrière met sa 3D en pause quand un autre programme occupe la carte, et Qualité photo se coupe après un plantage. Plus de triangles étirés sur les cheveux et les plantes. Merci à circuskid, Gaalrauch, KanikaBreed, Marakiinfinity et Odessa-Draekavik.
+
+## 2026-11-04 — Aurora 0.9.1 : connexions, téléportations et tenues plus sûres
+Une région lente à confirmer votre arrivée ne termine plus la session, et un code de double authentification refusé ne bloque plus le champ du code à la connexion. Les changements de tenue envoient une demande d'apparence à la fois, pour la version la plus récente : les produits et RLVa qui changent vite la tenue ne noient plus votre apparence sous les mises à jour ratées. Une touche jamais vue enfoncée ne fait plus sauter ni voler l'avatar après un changement de fenêtre. Les ciels Windlight importés s'enregistrent dans l'inventaire.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.1)
+
+## 2026-11-04 — Pellicule photo, ombres des projecteurs, lieux chargés plus fluides
+Le mode photo garde les 10 dernières photos de la session dans une petite pile du viseur : parcourez-les, puis envoyez, expédiez par e-mail ou supprimez l'une d'elles. Choisissez combien de projecteurs portent une ombre, de 1 à 16, dans Préférences › Graphismes › Lumière (2 par défaut). Dans les régions chargées, la carte graphique place les objets qui tournent ou bougent seuls, les prims flexibles hors de vue gardent leur maillage, et les écritures de l'image partent ensemble : plus d'images par seconde, la même image.
+
+## 2026-11-04 — Construction, avatars et rapports de plantage
+Les lanternes en papier et les autres sphères tordues gardent leur forme, la construction Legacy retrouve Inclinaison, Rayon et Révolutions, et les objets posés depuis l'inventaire s'éditent et se cadrent tout de suite. Les objets portés suivent les animations qui déplacent leur point d'attache, un avatar caché par une animation quitte l'écran comme dans le Legacy Viewer, et le Poser marche sur toutes les formes. Les rapports après une carte graphique perdue disent ce qui tournait. Merci à anne-skydancer, Gaalrauch, Marakiinfinity et Odessa-Draekavik.
+
 ## 2026-11-04 — Aurora 0.9.0 : OpenSim et l'Hypergrid, pour de bon
 Sur les grilles OpenSim, votre avatar est maintenant cuit et se voit tel que vous l'habillez, le terrain des grandes régions va au-delà de 256 m, et l'inventaire, les tenues et les profils s'enregistrent sur les grilles sans AIS. Les achats et les prix prennent la monnaie et le symbole de la grille. Après une téléportation Hypergrid, Aurora suit la grille où vous êtes, demande avant un voyage qui laisserait des objets portés, et propose d'ajouter une grille inconnue depuis un lien.
 [En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.0)

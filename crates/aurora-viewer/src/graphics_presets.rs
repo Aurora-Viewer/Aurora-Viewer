@@ -122,7 +122,7 @@ impl Preset {
                 mirrors: 0,
                 ssr: false,
                 reflection_probes: 0,
-                probe_count: 16,
+                probe_count: 32,
                 antialiasing: 0,
                 anisotropy: 1,
                 sharpen: 0.0,
@@ -151,7 +151,7 @@ impl Preset {
                 mirrors: 0,
                 ssr: false,
                 reflection_probes: 1,
-                probe_count: 32,
+                probe_count: 64,
                 antialiasing: 1,
                 anisotropy: 8,
                 sharpen: 0.0,
@@ -182,7 +182,7 @@ impl Preset {
                 mirrors: 0,
                 ssr: false,
                 reflection_probes: 2,
-                probe_count: 32,
+                probe_count: 128,
                 antialiasing: 6,
                 anisotropy: 8,
                 sharpen: 0.4,
@@ -219,7 +219,7 @@ impl Preset {
                 mirrors: 1,
                 ssr: false,
                 reflection_probes: 3,
-                probe_count: 64,
+                probe_count: 256,
                 antialiasing: 6,
                 anisotropy: 16,
                 sharpen: 0.4,
@@ -907,7 +907,7 @@ mod tests {
             assert!(v.shadow_quality <= 4 && v.ssao <= 2 && v.reflection_probes <= 3);
             assert!(v.ao_method <= 1 && v.gtao_quality <= 3);
             assert!(v.water_reflections <= 4 && v.mirrors <= 4);
-            assert!((8..=64).contains(&v.probe_count) && v.probe_count % 8 == 0);
+            assert!((8..=256).contains(&v.probe_count) && v.probe_count % 8 == 0);
             assert!(v.antialiasing <= 6);
             assert!([1, 2, 4, 8, 16].contains(&v.anisotropy));
             assert!(crate::settings::MAX_TEXTURE_RESOLUTIONS.contains(&v.max_texture_resolution));
