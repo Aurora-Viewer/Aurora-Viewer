@@ -6619,7 +6619,7 @@ impl App {
                     self.send(NetCommand::PreviewInventoryItem(item));
                 }
             }
-            Request::TransferTask(request) => self.apply_inventory_action(ui::inventory::InvAction::TakeTask(request)),
+            Request::CopyContents { object, items } => self.copy_selected_contents(object, items),
             Request::ZoomFraction(f) => self.camera.set_zoom_fraction(f),
             Request::AboutLand => self.panels.about_land = true,
             // LLPanelLandInfo::onClickBuy: the land tool's selection

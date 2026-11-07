@@ -2240,6 +2240,15 @@ No real L$ and no connection to a grid.
   After confirmation (`open-copy-yes`), the inventory footer confirms the
   three actual arrivals, then clears after five seconds (capture at frame 650
   for success, 1050 after expiry, with `--fps-limit 60`).
+- `open-selected-copy`, `open-selected-copy-yes` (#1410): at frame 420,
+  send the editor's selected-items Copy to inventory request for the notecard
+  and no-copy spare cube, leaving the script out. One new folder named after
+  the object receives both selected types. The same scripted-object move
+  warning and verified completion feedback as `open-copy` apply; `-yes`
+  confirms at 480, and the inventory opens at 540. Capture at 650 with
+  `--fps-limit 60` for the two-item result. Native pointer regressions exercise
+  the real context menu for one item and a mixed-type selection in both
+  editor layouts, while the Open window's full-copy button still takes all items.
 - `open-copy-timeout-yes` (#1410): the offline simulator withholds the spare
   cube; frame 600 advances the copy observer's deadline. The footer reports
   an unconfirmed copy with two of three items received, then clears after

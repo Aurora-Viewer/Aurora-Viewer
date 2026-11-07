@@ -376,11 +376,9 @@ fn item_row(
             } else {
                 aurora_i18n::tr!("build-ui-contents-copy-to-inventory")
             };
-            let take_tip = aurora_i18n::tr!("build-ui-contents-like-dragging-the-item-to-inventory");
+            let take_tip = aurora_i18n::tr!("contents-copy-selection-tip");
             if menu::item_tip(ui, p, "briefcase-filled", take, can_take, take_tip) {
-                for it in &taken {
-                    tool.copy_item_to_inventory(world, idx, it, uuid::Uuid::nil());
-                }
+                tool.copy_contents_to_inventory(world, idx, &taken);
             }
             if item.asset_type == AT_LSL_TEXT {
                 menu::separator(ui, p);
