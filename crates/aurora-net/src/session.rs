@@ -1910,8 +1910,12 @@ impl Session<'_> {
                 folder,
                 sale_type,
                 price,
+                group_id,
             } => {
-                // Port of LLSelectMgr::sendBuy / packBuyObjectIDs (llselectmgr.cpp).
+                // Port of LLSelectMgr::sendBuy / packBuyObjectIDs and
+                // packAgentGroupAndCatID (indra/newview/llselectmgr.cpp): the
+                // AgentData carries gAgent.getGroupID(), the active group,
+                // which the simulator gives the bought object (#2793).
                 if (1..=3).contains(&sale_type)
                     && price >= 0
                     && !folder.is_nil()
@@ -1920,6 +1924,7 @@ impl Session<'_> {
                     let mut m = ObjectBuy::default();
                     m.agent_data.agent_id = self.agent_id();
                     m.agent_data.session_id = self.session_id();
+                    m.agent_data.group_id = group_id;
                     m.agent_data.category_id = folder;
                     m.object_data.push(object_buy::ObjectData {
                         object_local_id: local_id,
@@ -6713,6 +6718,47 @@ mod script_dialog_tests {
         assert_eq!(message.report_data.summary, str_field(&report.summary));
         assert_eq!(message.report_data.details, str_field(&report.details));
         assert!(received.try_iter().any(|(_, e)| matches!(e, NetEvent::AbuseReportSent(Ok(())))));
+    }
+
+    /// LLSelectMgr::sendBuy packs the AgentData with packAgentGroupAndCatID:
+    /// the active group (nil for none) and the destination folder, one
+    /// reliable ObjectBuy to the object's region (#2793).
+    #[tokio::test]
+    async fn object_buy_carries_the_active_group_and_the_folder() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let sim = UdpSocket::bind("127.0.0.1:0").await.expect("simulator");
+        let sim_addr = sim.local_addr().expect("simulator address");
+        let (events, _) = crossbeam_channel::unbounded();
+        let sh = test_shared(events);
+        let mut session = test_session(&sh, sock.clone(), [(sim_addr, Sim::new(sim_addr, 10))].into(), sim_addr);
+        sock.writable().await.expect("socket ready");
+        let folder = Uuid::from_u128(60);
+        for group_id in [Uuid::from_u128(77), Uuid::nil()] {
+            session.on_command(NetCommand::BuyObject {
+                handle: 10,
+                local_id: 971,
+                folder,
+                sale_type: 2,
+                price: 10,
+                group_id,
+            });
+            let mut bytes = [0; 1500];
+            let (size, _) = tokio::time::timeout(Duration::from_secs(2), sim.recv_from(&mut bytes))
+                .await
+                .expect("purchase reaches the simulator")
+                .expect("datagram");
+            let packet = parse_packet(&bytes[..size]).expect("packet");
+            assert_eq!(packet.id, ObjectBuy::ID);
+            assert!(packet.reliable());
+            let m: ObjectBuy = packet.decode().expect("ObjectBuy");
+            assert_eq!(m.agent_data.agent_id, Uuid::from_u128(1));
+            assert_eq!(m.agent_data.session_id, Uuid::from_u128(2));
+            assert_eq!(m.agent_data.group_id, group_id);
+            assert_eq!(m.agent_data.category_id, folder);
+            assert_eq!(m.object_data.len(), 1);
+            let o = &m.object_data[0];
+            assert_eq!((o.object_local_id, o.sale_type, o.sale_price), (971, 2, 10));
+        }
     }
 
     /// #2810: AgentUpdate's Far is the draw distance of the viewer's

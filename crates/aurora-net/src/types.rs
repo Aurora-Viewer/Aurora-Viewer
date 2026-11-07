@@ -1810,12 +1810,15 @@ pub enum NetCommand {
         object: Uuid,
     },
     /// Sent only after the user confirms the displayed price (ObjectBuy).
+    /// `group_id` is the agent's active group at that moment (nil for
+    /// none): the simulator sets it as the bought object's group.
     BuyObject {
         handle: RegionHandle,
         local_id: u32,
         folder: Uuid,
         sale_type: u8,
         price: i32,
+        group_id: Uuid,
     },
     /// Payment to the clicked prim, not directly to its owner.
     PayObject {
