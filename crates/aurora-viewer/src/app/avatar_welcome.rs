@@ -181,6 +181,15 @@ impl App {
         }
         // one outfit change at a time: a wear sent meanwhile would be dropped
         let busy = self.appearance_ui.pending.is_some();
+        // fetch the subtree and the link targets until the job can go on
+        if let Some(folder) = job_folder(&self.world.inventory, &job) {
+            for command in self
+                .appearance_ui
+                .prepare_contents(&mut self.world.inventory, self.world.agent_id, folder)
+            {
+                self.send(command);
+            }
+        }
         let step = welcome_step(&mut self.world.inventory, &mut job, busy);
         match step {
             Step::Keep => self.welcome_wears.job = Some(job),
@@ -227,6 +236,16 @@ impl App {
     }
 }
 
+/// The agent's folder a job works on once it is in the agent's inventory:
+/// the folder to take off, or the (copied) folder to wear.
+fn job_folder(inv: &Inventory, job: &Job) -> Option<Uuid> {
+    match job.stage {
+        Stage::Find if job.command.action == FolderAction::Remove => folder_of(inv, &job.command),
+        Stage::Wear { folder, .. } => Some(folder),
+        _ => None,
+    }
+}
+
 /// The next step of `job` (LLWearFolderHandler / LLAddFolderHandler /
 /// LLRemoveFolderHandler, wear_category).
 fn welcome_step(inv: &mut Inventory, job: &mut Job, busy: bool) -> Step {
@@ -242,7 +261,9 @@ fn welcome_step(inv: &mut Inventory, job: &mut Job, busy: bool) -> Step {
                 return Step::Done;
             };
             if job.command.action == FolderAction::Remove {
-                return if busy {
+                // the whole subtree and its link targets must have arrived
+                // (wearable_contents is what the take-off plans from)
+                return if busy || crate::world::appearance::wearable_contents(inv, folder).is_err() {
                     Step::Keep
                 } else {
                     Step::Appearance(crate::world::appearance::Action::RemoveOutfit(folder))
@@ -272,10 +293,10 @@ fn welcome_step(inv: &mut Inventory, job: &mut Job, busy: bool) -> Step {
         Stage::Copy { .. } => Step::Keep,
         Stage::Wear { folder, count } => {
             let arrived = inv.folders.get(&folder).map_or(0, |f| f.items.len());
-            let complete = crate::world::appearance::complete(inv, folder);
-            if arrived >= count && !complete {
-                inv.request(folder);
-            }
+            // recursive: sub-folders and the originals of their links, not
+            // only the root folder (LLWearFolderHandler waits for the whole
+            // category's descendants)
+            let complete = crate::world::appearance::wearable_contents(inv, folder).is_ok();
             if arrived >= count && complete && !busy {
                 let mode = match job.command.action {
                     FolderAction::Add => WearMode::Append,
@@ -397,6 +418,50 @@ mod tests {
         let mut loading = inventory();
         loading.folders.get_mut(&id(12)).expect("body").state = FetchState::Fetching;
         assert!(copy_plan(&loading, id(12), id(2)).is_err());
+    }
+
+    #[test]
+    fn a_take_off_waits_for_the_subfolders_and_their_link_targets() {
+        let mut inv = inventory();
+        folder(&mut inv, 40, id(1), "Outfit", false);
+        folder(&mut inv, 41, id(40), "Layers", false);
+        // a link in the sub-folder whose original has not arrived
+        inv.add_items(vec![InvItem {
+            id: id(50),
+            parent: id(41),
+            name: "Jacket link".into(),
+            asset_type: 24,
+            asset_id: id(51),
+            inv_type: 18,
+            ..Default::default()
+        }]);
+        inv.folders.get_mut(&id(41)).expect("layers").items = vec![id(50)];
+        let mut job = Job {
+            command: FolderCommand {
+                action: FolderAction::Remove,
+                name: None,
+                id: Some(id(40)),
+            },
+            since: Instant::now(),
+            stage: Stage::Find,
+        };
+        assert_eq!(job_folder(&inv, &job), Some(id(40)));
+        assert!(matches!(welcome_step(&mut inv, &mut job, false), Step::Keep));
+        // the sub-folder still loading
+        inv.folders.get_mut(&id(41)).expect("layers").state = FetchState::Fetching;
+        assert!(matches!(welcome_step(&mut inv, &mut job, false), Step::Keep));
+        inv.folders.get_mut(&id(41)).expect("layers").state = FetchState::Fetched;
+        // the original arrives
+        inv.add_items(vec![InvItem {
+            id: id(51),
+            parent: id(2),
+            owner: id(1),
+            name: "Jacket".into(),
+            asset_type: 5,
+            inv_type: 18,
+            ..Default::default()
+        }]);
+        assert!(matches!(welcome_step(&mut inv, &mut job, false), Step::Appearance(_)));
     }
 
     #[test]
