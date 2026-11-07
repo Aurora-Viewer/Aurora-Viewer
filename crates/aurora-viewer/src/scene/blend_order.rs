@@ -118,11 +118,27 @@ fn rig_cmp(a: Option<RigOrder>, b: Option<RigOrder>) -> Ordering {
     }
 }
 
+/// Legacy Viewer LLSpatialPartition::calcDistance
+/// (indra/newview/llspatialpartition.cpp): alpha groups use view-axis depth
+/// with a quarter-extent bias toward the camera. Aurora uses the object's
+/// bounding sphere for that extent; `forward` is the normalized camera axis.
+/// Separated rigged groups retain their shared skeleton distance and attachment
+/// order. The diagnostic mixed list uses skeleton view depth, without a per-mesh
+/// radius bias that would split one skeleton’s attachments.
+pub fn distance(center: glam::Vec3, radius: f32, eye: glam::Vec3, forward: glam::Vec3, rigged: bool, rigged_apart: bool) -> f32 {
+    let relative = center - eye;
+    if rigged && rigged_apart {
+        relative.length()
+    } else {
+        relative.dot(forward) - if rigged { 0.0 } else { 0.25 * radius }
+    }
+}
+
 /// One blended face of the frame.
 #[derive(Clone, Copy, Debug)]
 pub struct BlendEntry {
-    /// Distance from the eye to the centre of its object, or of its
-    /// skeleton for a rigged mesh (`rig`).
+    /// View-axis depth biased toward the object's near bound. Rigged meshes
+    /// share a skeleton key: distance when separated, depth when mixed.
     pub distance: f32,
     pub cmd: DrawCmd,
     /// The face has glow (drawn into the glow right after it).
@@ -383,6 +399,85 @@ mod tests {
 
     fn records(e: &[BlendEntry]) -> Vec<u32> {
         e.iter().map(|e| e.cmd.record).collect()
+    }
+
+    #[test]
+    fn alpha_view_depth_draws_a_small_foreground_card_after_a_large_plane() {
+        use glam::Vec3;
+        // The foreground card is off-axis, so its straight-line distance is
+        // greater even though it overlaps the nearer side of the large plane.
+        let mut faces = [
+            entry(1, distance(Vec3::new(10.0, 0.0, 0.0), 8.0, Vec3::ZERO, Vec3::X, false, true), false),
+            entry(2, distance(Vec3::new(7.8, 7.0, 0.0), 0.25, Vec3::ZERO, Vec3::X, false, true), false),
+        ];
+        assert_eq!(sort(&mut faces, true), 0);
+        assert_eq!(records(&faces), [1, 2], "the foreground card must be composited last");
+    }
+
+    #[test]
+    fn alpha_view_depth_keeps_point_sorted_effects_in_the_same_depth_space() {
+        use glam::Vec3;
+        let mut faces = [
+            entry(1, distance(Vec3::new(10.0, 0.0, 0.0), 0.0, Vec3::ZERO, Vec3::X, false, true), false),
+            entry(2, distance(Vec3::new(9.0, 7.0, 0.0), 0.25, Vec3::ZERO, Vec3::X, false, true), false),
+        ];
+        sort(&mut faces, true);
+        assert_eq!(
+            records(&faces),
+            [1, 2],
+            "portal and ban-line sort points must use the ordinary alpha depth axis"
+        );
+    }
+
+    #[test]
+    fn alpha_view_depth_uses_camera_axis_and_radius_without_origin_dependence() {
+        use glam::Vec3;
+        let eye = Vec3::new(250.0, -500.0, 20.0);
+        let offset = Vec3::new(256.0, 512.0, 0.0);
+        let center = eye + Vec3::new(5.0, 10.0, 0.0);
+        assert_eq!(distance(center, 4.0, eye, Vec3::X, false, true), 4.0);
+        assert_eq!(distance(center, 4.0, eye, Vec3::Y, false, true), 9.0);
+        assert_eq!(distance(center + offset, 4.0, eye + offset, Vec3::Y, false, true), 9.0);
+        assert_eq!(distance(center, 8.0, eye, Vec3::Y, false, true), 8.0);
+        assert_eq!(distance(center, 4.0, eye, -Vec3::Y, false, true), -11.0);
+    }
+
+    #[test]
+    fn alpha_view_depth_mixed_mode_uses_skeleton_depth_without_splitting_attachments() {
+        use glam::Vec3;
+        let skeleton = Vec3::new(9.0, 7.0, 0.0);
+        let mut faces = [
+            entry(
+                1,
+                distance(Vec3::new(10.0, 0.0, 0.0), 0.0, Vec3::ZERO, Vec3::X, false, false),
+                false,
+            ),
+            worn(2, distance(skeleton, 2.0, Vec3::ZERO, Vec3::X, true, false), 7, 2, 200, 200),
+            worn(3, distance(skeleton, 20.0, Vec3::ZERO, Vec3::X, true, false), 7, 1, 300, 300),
+        ];
+        assert_eq!(faces[1].distance, faces[2].distance, "one skeleton keeps a common key");
+        assert_eq!(sort(&mut faces, false), 0);
+        assert_eq!(records(&faces), [1, 2, 3]);
+        assert_eq!(distance(skeleton, 20.0, Vec3::ZERO, Vec3::X, true, true), skeleton.length());
+    }
+
+    #[test]
+    fn alpha_view_depth_keeps_rigged_skeleton_distance_and_stable_face_ties() {
+        use glam::Vec3;
+        assert_eq!(distance(Vec3::new(3.0, 4.0, 0.0), 100.0, Vec3::ZERO, Vec3::Y, true, true), 5.0);
+        let d = distance(Vec3::new(10.0, 5.0, 0.0), 4.0, Vec3::ZERO, Vec3::X, false, true);
+        let mut faces = [face(12, 2, 9, 300), face(8, 1, 4, 0), face(12, 1, 7, 0), face(12, 2, 9, 0)];
+        for f in &mut faces {
+            f.rigged = false;
+            f.distance = d;
+        }
+        let mut reversed = faces;
+        reversed.reverse();
+        sort(&mut faces, true);
+        sort(&mut reversed, true);
+        let order = |entries: &[BlendEntry]| entries.iter().map(|e| (e.object, e.face, e.cmd.first_index)).collect::<Vec<_>>();
+        assert_eq!(order(&faces), [(8, 1, 0), (12, 1, 0), (12, 2, 0), (12, 2, 300)]);
+        assert_eq!(order(&faces), order(&reversed));
     }
 
     #[test]

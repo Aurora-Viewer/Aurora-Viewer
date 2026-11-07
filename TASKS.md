@@ -1166,6 +1166,9 @@ Suggested order (1, 2, 5, 7, 8, 10, 11, 13 and 15 are done): 17 and 19, then the
 
 ## Rendering
 
+- 🔧 Alpha object sorting ([#2575](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/2575), refs [#2165](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/2165)): use view-axis depth with the Legacy Viewer’s quarter-extent bias, adapted to Aurora’s bounding spheres, for non-rigged blended objects. Preserve rigged attachment ordering and deterministic object/face ties; use comparable view-depth keys for portal/ban-line effects and the experimental mixed list. Per-face depth sorting remains a separate follow-up after human reproduction.
+
+
 - 🟡 Terrain cracks at region borders ([#2338](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/2338), task `terrain-region-edges-2338`; validated by the human on the grid on 2026-11-05): build adjoining terrain edge vertices from received neighbour patches, rebuild dependent edge chunks as variable-sized regions and patches arrive or disappear, and retain the local edge while neighbour samples are unavailable.
   - ⬜ Later: edge normals still sample only the region's own heightmap (`terrain_normal`); the Legacy Viewer's `LLSurfacePatch::calcNormal` reads neighbour patches, so a faint lighting line may remain along a border at low sun.
 - 🟡 Long stretched triangles across the scene (tester reports on 0.9.1 and 0.9.2-beta, NVIDIA and Intel; no issue; task `geometry-double-upload`): a geometry pending longer than `GEOM_KEEP_FRAMES` was collected and built by a second job; that copy replaced the first one and freed its arena ranges while objects still drew from them, so they drew other meshes' vertices. The second copy is now dropped (`Scene::geom_drawn`). Reproduced in demo with the new `AURORA_DEBUG_GEOM_DELAY=15` (2 runs of 2 with spikes before, none after). QA to check on the grid that the spikes are gone in a busy region on a slow PC.
