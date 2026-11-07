@@ -282,6 +282,12 @@ pub struct Renderer {
     /// The answer to the last photo: its image (width, height, RGBA8), or
     /// None when it could not be drawn.
     pub snapshot: Option<Option<(u32, u32, Vec<u8>)>>,
+    /// The six faces of a 360° snapshot to project with the next frame
+    /// (equirect.rs), their panorama in `equirect` a frame or two later.
+    pub equirect_request: Option<Box<crate::EquirectJob>>,
+    /// The answer to the last panorama asked (width, height, RGBA8), or
+    /// None when it could not be made.
+    pub equirect: Option<Option<(u32, u32, Vec<u8>)>>,
     /// The photo asked left with a frame the GPU had not finished within
     /// `CAPTURE_WAIT`: its answer comes with a later frame, which does not
     /// draw it again (a second answer would be taken for the next part).
@@ -761,6 +767,8 @@ impl Renderer {
             captured: None,
             snapshot_request: None,
             snapshot: None,
+            equirect_request: None,
+            equirect: None,
             snapshot_sent: false,
             snapshot_dropped: false,
             histogram_request: None,
@@ -1243,6 +1251,9 @@ impl Renderer {
             self.drawn_answers.drain(..self.drawn_answers.len() - KEPT);
         }
         self.cull.last = r.cull;
+        if let Some(e) = r.equirect.take() {
+            self.equirect = Some(e);
+        }
         if r.snapshot && std::mem::take(&mut self.snapshot_dropped) {
             // the answer of a photo given up: a photo asked since is drawn
             // with the next frame
@@ -1450,6 +1461,7 @@ impl Renderer {
             picks: std::mem::take(&mut self.pick_requests),
             drawn: std::mem::take(&mut self.drawn_requests),
             capture,
+            equirect: self.equirect_request.take(),
             histogram: self.histogram_request.take(),
             motion_cut: std::mem::take(&mut self.motion_cut),
             input_at: self.input_at.take(),

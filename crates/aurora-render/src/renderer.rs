@@ -1617,6 +1617,8 @@ pub(crate) struct Backend {
     hud_selection: Option<crate::selection::Overlay>,
     /// The coverage pass of cut-out photos (cutout.rs), made on first use.
     cutout: Option<crate::cutout::Cutout>,
+    /// The 360° snapshot's panorama pass (equirect.rs), made on first use.
+    equirect: Option<crate::equirect::Equirect>,
     frame_layout: wgpu::BindGroupLayout,
     records_layout: wgpu::BindGroupLayout,
     /// Layout of the scene's texture pages (textures.rs), for the pipelines.
@@ -3251,6 +3253,7 @@ impl Backend {
             previews: Default::default(),
             selection: None,
             cutout: None,
+            equirect: None,
             hud_selection: None,
             frame_layout,
             records_layout,
@@ -5585,6 +5588,7 @@ impl Backend {
             cull: self.cull.last,
             captured,
             snapshot,
+            equirect: None,
             histogram: self.histogram.take(),
             spent,
         }
@@ -5753,6 +5757,7 @@ impl Backend {
             picks: Vec::new(),
             drawn: Vec::new(),
             capture: None,
+            equirect: None,
             histogram: None,
             motion_cut: packet.motion_cut,
             input_at: None,
@@ -5804,7 +5809,19 @@ impl Backend {
         Ok(first)
     }
 
-    pub fn render(&mut self, packet: FramePacket) -> FrameResult {
+    pub fn render(&mut self, mut packet: FramePacket) -> FrameResult {
+        // the 360° snapshot's panorama, before the frame: its faces are
+        // uploaded, projected and read back here (equirect.rs)
+        let equirect = packet.equirect.take().map(|job| {
+            let pass = self.equirect.get_or_insert_with(|| crate::equirect::Equirect::new(&self.device));
+            pass.run(&self.device, &self.queue, &self.lost, packet.index, *job)
+        });
+        let mut result = self.render_frame(packet);
+        result.equirect = equirect;
+        result
+    }
+
+    fn render_frame(&mut self, packet: FramePacket) -> FrameResult {
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         if self.xr_world.is_none() && !self.vr.wanted() && self.vr.state() == crate::VrState::Stopping {
             self.vr.finish(false);
@@ -5849,6 +5866,8 @@ impl Backend {
             picks,
             drawn,
             capture: wanted,
+            // (taken by `render` before the frame)
+            equirect: _,
             histogram,
             motion_cut,
             input_at,
