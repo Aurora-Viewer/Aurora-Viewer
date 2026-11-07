@@ -396,7 +396,13 @@ mod tests {
         run.balance = 2_000_000_000;
         assert_eq!(run.wait(AFTER).balance, Some(1_999_999_900));
         let frame = run.wait(HOLD + FLY + COUNT + STEP);
-        assert_eq!(frame, Frame { balance: Some(2_000_000_000), rows: Vec::new() });
+        assert_eq!(
+            frame,
+            Frame {
+                balance: Some(2_000_000_000),
+                rows: Vec::new()
+            }
+        );
     }
 
     #[test]
