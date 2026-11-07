@@ -481,7 +481,7 @@ fn rows(world: &mut World, list: List, access: &EstateAccess) -> Vec<Row> {
             .collect(),
     };
     // sortByName
-    out.sort_by_key(|r| r.name.to_lowercase());
+    out.sort_by_key(|r| crate::natural_order::key(&r.name));
     out
 }
 

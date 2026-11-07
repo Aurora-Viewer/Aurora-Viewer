@@ -333,6 +333,9 @@ pub struct CullFrame {
     pub water_air: [[f32; 4]; 6],
     pub mirror: [[f32; 4]; 6],
     pub probe: [[f32; 4]; 6],
+    /// The probe capture's origin and how far it draws objects
+    /// (`ProbeCapture::reach`).
+    pub probe_eye: [f32; 4],
     /// Frustums of the projector shadow maps (`frame_flags::SPOT`).
     pub spots: [[[f32; 4]; 6]; SPOT_SHADOWS],
     pub cascades: [[[f32; 4]; 4]; 3],
@@ -386,6 +389,7 @@ impl CullFrame {
             water_air: planes(Mat4::IDENTITY),
             mirror: planes(mirror),
             probe: planes(probe),
+            probe_eye: [0.0; 4],
             // (a depth of 0 to 1: the fifth plane is the far one, and
             // nothing is left out for being before the near one)
             spots: spots.map(|s| planes(s.unwrap_or(Mat4::IDENTITY))),
@@ -476,17 +480,25 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
         return (0, false);
     }
     let fl = frame.sizes[3];
-    let in_view = sphere_in(&frame.planes, c, r)
+    let viewed = sphere_in(&frame.planes, c, r)
         && !(own_first_person && (o.flags & object_flags::FIRST_PERSON_HIDDEN != 0 || f.bits & FACE_FIRST_PERSON_HIDDEN != 0));
-    let casts = fl & frame_flags::SHADOWS != 0 && d - r < frame.dist[0];
-    let reflects = fl & frame_flags::REFLECTIONS != 0 && d - r < frame.dist[1];
-    if !in_view && !casts && !reflects {
+    let shadow_reach = fl & frame_flags::SHADOWS != 0 && d - r < frame.dist[0];
+    let reflect_reach = fl & frame_flags::REFLECTIONS != 0 && d - r < frame.dist[1];
+    // a capture measures from its probe, not from the camera
+    let captured = fl & frame_flags::REFLECTIONS != 0
+        && fl & frame_flags::PROBE != 0
+        && o.flags & object_flags::NO_PROBE == 0
+        && (c - Vec3::new(frame.probe_eye[0], frame.probe_eye[1], frame.probe_eye[2])).length() - r < frame.probe_eye[3]
+        && sphere_in(&frame.probe, c, r);
+    if !viewed && !shadow_reach && !reflect_reach && !captured {
         return (0, false);
     }
-    let px = r * frame.dist[2] / d.max(0.1);
-    if px < 1.5 && !is_avatar {
+    // small object culling is the camera's too
+    let large = r * frame.dist[2] / d.max(0.1) >= 1.5 || is_avatar;
+    if !large && !captured {
         return (0, false);
     }
+    let (in_view, casts, reflects) = (viewed && large, shadow_reach && large, reflect_reach && large);
     let visible = in_view && f.bits & FACE_FIRST != 0;
     let p = f.bits & pass::BITS;
     if p == pass::HIDDEN {
@@ -529,9 +541,9 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
         if fl & frame_flags::MIRROR != 0 && sphere_in(&frame.mirror, c, r) {
             m |= 1 << BIN_REFL_MIRROR;
         }
-        if fl & frame_flags::PROBE != 0 && o.flags & object_flags::NO_PROBE == 0 && sphere_in(&frame.probe, c, r) {
-            m |= 1 << BIN_PROBE;
-        }
+    }
+    if captured && solid {
+        m |= 1 << BIN_PROBE;
     }
     if in_view && solid {
         m |= 1 << (p - pass::OPAQUE);
@@ -1382,10 +1394,10 @@ mod tests {
         assert!(src.contains(&format!("const POSED_RADIUS_MAX: f32 = {POSED_RADIUS_MAX:?};")));
         assert!(src.contains("const POSED_COORD_MAX: f32 = 1.0e6;") && POSED_COORD_MAX == 1.0e6);
         // Main, water reflection/exterior, mirror, probe and spot frusta;
-        // then 3 matrices, 3 x 12 shadow planes and 4 vectors.
+        // the capture's origin; then 3 matrices, 3 x 12 shadow planes and 4 vectors.
         assert_eq!(
             std::mem::size_of::<CullFrame>(),
-            (5 + SPOT_SHADOWS) * 6 * 16 + 3 * 64 + 3 * SHADOW_PLANES * 16 + 4 * 16
+            (5 + SPOT_SHADOWS) * 6 * 16 + 16 + 3 * 64 + 3 * SHADOW_PLANES * 16 + 4 * 16
         );
         assert_eq!(
             wgsl_fields(src, "CullFrame"),
@@ -1395,6 +1407,7 @@ mod tests {
                 "water_air",
                 "mirror",
                 "probe",
+                "probe_eye",
                 "spots",
                 "cascades",
                 "shadow_planes",
@@ -1674,6 +1687,7 @@ mod tests {
             water_air: planes,
             mirror: planes,
             probe: planes,
+            probe_eye: [0.0; 4],
             spots: [planes; SPOT_SHADOWS],
             cascades: [cascade.to_cols_array_2d(); 3],
             shadow_planes: [crate::shadow_cull::CASTER_PLANES_ALL; 3],
@@ -1737,6 +1751,45 @@ mod tests {
         let (mask, visible) = face_bins(&frame, &faces, &objects, &spheres, 0);
         assert_ne!(mask & (1 << BIN_REFL_WATER), 0, "offscreen exterior must reach its render pass");
         assert!(!visible, "exterior visibility must not make the object visible in the main view");
+    }
+
+    #[test]
+    fn a_probe_capture_measures_from_its_probe() {
+        let mut frame = frame_for_tests();
+        frame.sizes[3] |= frame_flags::PROBE;
+        let bin = 1 << BIN_PROBE;
+        let object = |radius: f32| CullObject {
+            sphere: [50.0, 0.0, 0.0, radius],
+            flags: object_flags::ACTIVE,
+            ..CullObject::NONE
+        };
+        let faces = [CullFace {
+            index_count: 30,
+            object: 0,
+            bits: pass::OPAQUE | FACE_FIRST,
+            ..CullFace::NONE
+        }];
+        let bins = |frame: &CullFrame, radius: f32| {
+            let objects = [object(radius)];
+            let spheres = world_spheres(&objects, &[], &[], &[]);
+            face_bins(frame, &faces, &objects, &spheres, 0)
+        };
+        // 50 m from the camera, past its reflection distance of 32 m, and in
+        // reach of a probe beside it
+        frame.probe_eye = [45.0, 0.0, 0.0, 64.0];
+        assert_ne!(bins(&frame, 1.0).0 & bin, 0);
+        assert_eq!(bins(&frame, 1.0).0 & (1 << BIN_REFL_WATER), 0);
+        // out of the probe's reach, near as the camera is
+        frame.probe_eye = [45.0, 0.0, 0.0, 2.0];
+        assert_eq!(bins(&frame, 1.0).0 & bin, 0);
+        frame.dist[1] = 64.0;
+        assert_eq!(bins(&frame, 1.0).0 & bin, 0);
+        // too small for the camera: in the capture and nowhere else
+        frame.probe_eye = [45.0, 0.0, 0.0, 64.0];
+        assert_eq!(bins(&frame, 0.01), (bin, false));
+        // and no capture this frame: not drawn at all
+        frame.sizes[3] &= !frame_flags::PROBE;
+        assert_eq!(bins(&frame, 0.01), (0, false));
     }
 
     #[test]
@@ -2244,6 +2297,7 @@ mod tests {
                 * glam::camera::rh::view::look_at_mat4(Vec3::ZERO, Vec3::Y, Vec3::Z),
         )
         .map(|p| p.to_array());
+        frame.probe_eye = [0.0, 40.0, 0.0, 40.0];
         cull.prepare(&device, &queue, n_faces, tables.objects.len(), frame);
         let mut f = frame;
         f.sizes[0] = n_faces as u32;
