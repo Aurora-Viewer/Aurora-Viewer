@@ -26,6 +26,16 @@ An empty line starts a new paragraph.
 
 # Aurora Viewer news
 
+## 2026-11-06 — Aurora 0.9.3: AMD FSR 3.1, and steadier on every graphics card
+Choose FSR 3.1 under Anti-aliasing in Preferences › Graphics: smooth edges at the window's size, or a world drawn smaller and rebuilt sharp, for more frames per second. After a graphics card reset Aurora reopens its window and keeps you logged in (a switch in Preferences turns it off). Intel 6th to 9th generation integrated GPUs start again, and so do AMD + NVIDIA laptops; integrated GPUs count their shared memory in the texture budget. The cache is cleared once at the first start of 0.9.3; your settings are kept.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.3)
+
+## 2026-11-06 — Updates, your computer, and clicks that land
+Aurora now tells you when a new version is out, while it runs. Preferences › Language and updates › Remove Aurora from this computer takes away what Aurora registered outside its own folders, then lists the folders left. The web and media pack downloads only once you agree. Clicks go through alpha textures and invisible prims like the Legacy Viewer, and Shift or Ctrl + right click extends the build selection.
+
+## 2026-11-06 — Camera, inventory and fixes
+The camera limits are back on by default, like the Legacy Viewer: a card at login says where to turn them off. The teleport history survives a crash, and neither writing the log nor turning voice off can freeze the viewer. Terrain edges meet the next region, profile pictures stay sharp, Favorites lists starred items and the hover popups of the inventory have a switch. Thanks to ClifHofmann, chrzang, circuskid, emmelinedevere, Gaalrauch, iGao, KanikaBreed, Marakiinfinity, Odessa-Draekavik and xWynt3r.
+
 ## 2026-11-05 — Aurora 0.9.2: your chat history comes along, and a fullscreen mode
 Preferences › Chat › History imports your conversations from the Legacy Viewer and the other approved viewers that write the same files. The messages join your Aurora history in time order, each login adds only what is new, and the other viewer's files are only read. Preferences › Graphics gets a borderless fullscreen mode, and Alt+Enter turns it on or off at once, without a restart: a clean frame for videos, and the window comes back exactly as it was.
 [Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.2)
