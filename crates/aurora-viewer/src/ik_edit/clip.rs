@@ -700,7 +700,7 @@ impl Editor {
         self.tab = 2;
         self.visibility.body();
         if mode == "clip-import" {
-            self.queue_studio_file_action(files::Action::Import);
+            self.queue_studio_file_action(files::Action::Import { last_key_only: false });
         }
     }
     pub fn take_clip_imports(&mut self) -> Vec<Prepared> {

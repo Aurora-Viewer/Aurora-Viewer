@@ -845,6 +845,37 @@ fn loop_end_uses_the_last_enabled_authored_rotation_or_position_key() {
 }
 
 #[test]
+fn upload_export_ends_at_the_last_authored_key_when_last_key_looping_is_selected() {
+    let lib = AvatarLibrary::load();
+    let rig = &lib.rig;
+    let head = rig.names["mHead"];
+    let mut document = Document::new();
+    document.range(0, 30 * 30);
+    document
+        .record(rig, &frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale), 0, &[head], &[])
+        .unwrap();
+    let mut rotations = rig.local_rot.clone();
+    rotations[head] = Quat::from_rotation_z(0.6) * rotations[head];
+    document
+        .record(rig, &frame(&lib, &rotations, &rig.local_pos, &rig.scale), 30, &[head], &[])
+        .unwrap();
+
+    let full = document.animation_for_export(false).unwrap();
+    assert_eq!(full.duration, 30.0);
+    assert_eq!(document.end, 900, "export preparation must not shorten the editable project");
+
+    let last_key_loop = document.animation_for_export(true).unwrap();
+    let expected_duration = 31.0 / 30.0;
+    assert!((last_key_loop.duration - expected_duration).abs() < 0.0001);
+    assert_eq!(last_key_loop.loop_out, last_key_loop.duration);
+    assert!(last_key_loop.looping);
+    let encoded = aurora_assets::import_animation::encode(&last_key_loop).unwrap();
+    let uploaded = aurora_assets::anim::parse_animation_upload(&encoded).unwrap();
+    assert!((uploaded.duration - expected_duration).abs() < 0.0001);
+    assert_eq!(document.end, 900, "the editor timeline remains at its original length");
+}
+
+#[test]
 fn playback_pause_resumes_fractional_time_and_restarts_from_clip_start_at_the_end() {
     let mut document = Document::new();
     document.range(10, 40);

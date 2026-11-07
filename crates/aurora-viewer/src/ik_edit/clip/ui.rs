@@ -1345,14 +1345,16 @@ impl Editor {
                 .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("anim-edit-save")))
                 .clicked()
             {
-                self.queue_studio_file_action(files::Action::Save);
+                let last_key_only = self.clip.timeline_looping && self.clip.timeline_loop_last_key;
+                self.queue_studio_file_action(files::Action::Save { last_key_only });
             }
             if ui
                 .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("anim-edit-upload")))
                 .on_hover_text(aurora_i18n::tr!("anim-edit-upload-hint"))
                 .clicked()
             {
-                self.queue_studio_file_action(files::Action::Import);
+                let last_key_only = self.clip.timeline_looping && self.clip.timeline_loop_last_key;
+                self.queue_studio_file_action(files::Action::Import { last_key_only });
             }
         });
         if self.clip.busy {

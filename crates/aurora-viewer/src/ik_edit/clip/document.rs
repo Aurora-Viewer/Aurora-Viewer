@@ -829,6 +829,19 @@ impl Document {
     pub fn animation(&self) -> Result<Animation, &'static str> {
         self.build(false)
     }
+    /// Keep the editor's full timeline intact while matching file exports to
+    /// the active last-authored-key loop range when the user requests it.
+    pub fn animation_for_export(&self, last_key_only: bool) -> Result<Animation, &'static str> {
+        if !last_key_only {
+            return self.animation();
+        }
+        let Some(last_key) = self.last_authored_keyframe() else {
+            return self.animation();
+        };
+        let mut export = self.clone();
+        export.range(self.start, last_key.saturating_add(1).min(self.max_frame()));
+        export.animation()
+    }
     /// An empty preview releases every keyed channel. An empty upload remains
     /// invalid, but turning off the final track must not retain a stale sample.
     pub fn preview(&self) -> Result<Animation, &'static str> {
