@@ -28,6 +28,20 @@ pub enum EnvAction {
     Shared,
     /// A time of day preset (1..=4).
     Preset(u8),
+    /// Keep the local environment for the parcel under the agent.
+    SaveParcel,
+    /// Forget what is kept for that parcel.
+    ForgetParcel,
+}
+
+/// What can be done for the parcel under the agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ParcelChoice {
+    /// No local environment to keep, or no parcel yet.
+    #[default]
+    Nothing,
+    Save,
+    Saved,
 }
 
 /// LLFloaterEnvironmentAdjust slider scales.
@@ -59,6 +73,8 @@ pub struct EnvironmentUi {
     /// Where the real night sky is seen from (kept by the app in the
     /// settings; `None` with the Legacy Viewer's stars).
     pub night: Option<NightSkyPick>,
+    /// The parcel button (kept by the app).
+    pub parcel_choice: ParcelChoice,
     /// Open this list's drop-down on the next frame (demo captures).
     pub open_list: Option<SettingsKind>,
     /// Type this into an open list's search field (demo captures).
@@ -188,6 +204,19 @@ impl EnvironmentUi {
                     true,
                 ) {
                     out.push(EnvAction::Shared);
+                }
+                if self.parcel_choice == ParcelChoice::Saved {
+                    if widgets::icon_toggle(ui, p, "map-pin-filled", aurora_i18n::tr!("parcel-environment-forget"), true) {
+                        out.push(EnvAction::ForgetParcel);
+                    }
+                } else if widgets::icon_button(
+                    ui,
+                    p,
+                    "map-pin-filled",
+                    aurora_i18n::tr!("parcel-environment-save"),
+                    self.parcel_choice == ParcelChoice::Save,
+                ) {
+                    out.push(EnvAction::SaveParcel);
                 }
             });
         });

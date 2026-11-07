@@ -70,6 +70,7 @@ pub mod outfit;
 pub mod outfit_backup;
 pub mod outfit_folders;
 pub mod outfit_paste;
+pub mod parcel_env;
 pub mod parcel_visibility;
 pub mod parked;
 pub mod particle_filters;
@@ -582,6 +583,8 @@ pub struct World {
     /// Full description of that parcel (navigation bar icons, media, voice).
     pub parcel: Option<Arc<aurora_net::ParcelInfo>>,
     pub parcel_visibility: parcel_visibility::Visibility,
+    /// Environments saved for parcels.
+    pub parcel_env: parcel_env::ParcelEnv,
     /// The photo's isolation (`snapshot::isolate`): read with the parcel
     /// filter by `parcel_object_visibility`.
     pub photo_isolation: crate::snapshot::isolate::Isolation,
@@ -869,6 +872,7 @@ impl World {
             sky_directions: (glam::Vec3::Z, glam::Vec3::NEG_Z),
             parcel_name: String::new(),
             parcel_visibility: Default::default(),
+            parcel_env: Default::default(),
             photo_isolation: Default::default(),
             parcel: None,
             land: land::Land::default(),
@@ -3602,6 +3606,9 @@ impl World {
                 None
             }
             NetEvent::Land(ev) => {
+                if let aurora_net::land::LandEvent::ParcelId { handle, local_id, id } = ev {
+                    self.parcel_env.on_parcel_id(handle, local_id, id);
+                }
                 if let aurora_net::land::LandEvent::AttachmentScripts(result) = &ev {
                     match result {
                         Ok((_, attachments)) => {
