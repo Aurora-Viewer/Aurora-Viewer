@@ -57,9 +57,12 @@ pub enum PackGrid<'a> {
     SecondLife,
     /// Second Life's beta grid (grid id "Aditi").
     SecondLifeBeta,
-    /// Another grid: the page it names, the region's first.
+    /// Another grid: the page it names, the region's first. `region` is
+    /// `None` when the region does not give the key at all: then (and only
+    /// then) the login response's page counts, as in
+    /// LFSimFeatureHandler::setSupportedFeatures.
     OpenSim {
-        region: &'a str,
+        region: Option<&'a str>,
         login: &'a str,
         /// The grid's id ([GRID_LOWERCASE]): its saved nickname.
         id: &'a str,
@@ -77,7 +80,10 @@ pub fn pack_url(grid: PackGrid, language: &str) -> Option<String> {
         PackGrid::SecondLife => (SECOND_LIFE_PAGE, "agni"),
         PackGrid::SecondLifeBeta => (SECOND_LIFE_PAGE, "aditi"),
         PackGrid::OpenSim { region, login, id } => {
-            let template = [region, login].into_iter().map(str::trim).find(|u| !u.is_empty())?;
+            let template = region.unwrap_or(login).trim();
+            if template.is_empty() {
+                return None;
+            }
             (template, id)
         }
     };
@@ -223,8 +229,8 @@ mod tests {
 
     #[test]
     fn another_grid_names_its_own_page_or_has_none() {
-        let grid = |region, login| PackGrid::OpenSim {
-            region,
+        let grid = |region: &'static str, login| PackGrid::OpenSim {
+            region: Some(region).filter(|r| *r != "<absent>"),
             login,
             id: "MyGrid",
         };
@@ -234,11 +240,13 @@ mod tests {
             Some("https://r.example/mygrid/ja")
         );
         assert_eq!(
-            pack_url(grid("", "https://l.example/p?x=a b"), "en").as_deref(),
+            pack_url(grid("<absent>", "https://l.example/p?x=a b"), "en").as_deref(),
             Some("https://l.example/p?x=a%20b")
         );
+        // the region's key given empty: no welcome pack, whatever the login says
+        assert_eq!(pack_url(grid("", "https://l.example/"), "en"), None);
         // none named, or not a web page: no welcome pack
-        assert_eq!(pack_url(grid("", ""), "en"), None);
+        assert_eq!(pack_url(grid("<absent>", ""), "en"), None);
         assert_eq!(pack_url(grid("javascript:alert(1)", ""), "en"), None);
         assert_eq!(pack_url(grid("file:///c:/pack.html", ""), "en"), None);
         assert_eq!(pack_url(grid("https://", ""), "en"), None);
@@ -247,7 +255,7 @@ mod tests {
     #[test]
     fn the_session_never_goes_into_the_address() {
         let grid = PackGrid::OpenSim {
-            region: "https://g.example/?sid=[SESSION_ID]&grid=[GRID]",
+            region: Some("https://g.example/?sid=[SESSION_ID]&grid=[GRID]"),
             login: "",
             id: "",
         };

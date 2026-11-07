@@ -14274,7 +14274,7 @@ impl App {
             crate::settings::GridChoice::SecondLife => pack_url(PackGrid::SecondLife, language),
             crate::settings::GridChoice::SecondLifeBeta => pack_url(PackGrid::SecondLifeBeta, language),
             crate::settings::GridChoice::Custom => {
-                let region = self.world.opensim_extras().map(|e| e.avatar_picker_url.as_str()).unwrap_or("");
+                let region = self.world.opensim_extras().and_then(|e| e.avatar_picker_url.as_deref());
                 let login = self.world.login.as_ref().map(|l| l.raw["avatar-picker-url"].as_str()).unwrap_or("");
                 let id = crate::grids::active(&self.settings)
                     .map(|g| {
