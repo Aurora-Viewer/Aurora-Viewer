@@ -3698,7 +3698,7 @@ ui-profile-this-user-has-no-picks = This user has no picks
 ui-profile-this-user-has-no-classified-listings = This user has no classified listings
 ui-inventory-controls-library = Library
 ui-options-camera-the-camera-can-move-beyond-the-draw-distance-below = The camera can move beyond the draw distance, below ground and closer to objects
-ui-options-camera-the-camera-returns-behind-your-avatar-on-arrival = The camera returns behind your avatar on arrival
+ui-options-camera-after-a-teleport-in-the-region-the-camera-returns = After a teleport within the region, the camera returns behind your avatar. Off, it stays where it is.
 ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag = The camera follows your avatar with a slight lag (1 by default, 0 = none)
 ui-options-camera-the-camera-follows-the-object-it-is-focused-on = The camera follows the object it is focused on as the object moves
 app-inventory-thumbnail-invalid-capture = Invalid capture.
@@ -5141,7 +5141,7 @@ ui-bars-back = { "Back: " }{ $d }
 keybinds-backspace-2 = Backspace
 ui-appearance-back-to-worn-items = Back to worn items
 ui-land-covenant-resell = Resell:
-ui-options-camera-return-after-teleporting = Return after teleporting
+ui-options-camera-return-after-a-teleport-in-the-region = Return after a teleport in the region
 ui-appearance-back-to-outfits = Back to outfits
 ui-options-camera-return-when-moving = Return when moving
 keybinds-return-to-avatar = Return to avatar
