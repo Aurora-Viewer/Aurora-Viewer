@@ -223,7 +223,7 @@ const SORT_STATUS: u8 = 2;
 fn sort_friends(friends: &mut [Friend], sort: u8, name: impl Fn(&Uuid) -> String, username: impl Fn(&Uuid) -> String) {
     friends.sort_by_cached_key(|f| {
         let key = if sort == SORT_USERNAME { username(&f.id) } else { name(&f.id) };
-        (sort == SORT_STATUS && !f.online, key.to_lowercase())
+        (sort == SORT_STATUS && !f.online, crate::natural_order::key(&key))
     });
 }
 

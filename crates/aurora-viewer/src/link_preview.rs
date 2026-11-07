@@ -9,7 +9,8 @@
 //! * nothing is fetched before the rules allow it (`decide`): by default
 //!   only links to the trusted sites of `link_trust.rs` load by themselves;
 //!   the others wait for a click, as loading a picture tells its site our
-//!   address;
+//!   address; so do, whatever the settings, the links an object sends and
+//!   the links to a region or a script's HTTP-in address (`waits_for_click`);
 //! * a link that hides or fakes its destination never gets a preview;
 //! * no cookie and no referrer are sent; when the trust of the site is what
 //!   allowed the load, redirects must stay on trusted sites;
@@ -597,9 +598,50 @@ pub fn configure_sites(user: &[String], extra: &[&str]) {
     services::set_sites(sites);
 }
 
+/// Who wrote the message a link is in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sender {
+    /// A resident (an IM, a group's or the nearby chat's line).
+    Resident,
+    /// An object or a script (its chat, its owner-say, its IMs) or the
+    /// viewer's notices: its previews always wait for a click.
+    Object,
+}
+
+/// Hosts of regions and of their scripts' HTTP-in addresses: a simulator
+/// (`simhost-….agni.secondlife.io`, `sim….aditi.lindenlab.com`) and the
+/// relay CasperTech keeps to such addresses (`casperdns.com`). A request to
+/// one reaches the region's script, which sees where it came from.
+const REGION_DOMAINS: &[&str] = &[
+    "agni.secondlife.io",
+    "aditi.secondlife.io",
+    "agni.lindenlab.com",
+    "aditi.lindenlab.com",
+    "casperdns.com",
+];
+
+/// The link leads to a region rather than to a site: a host of
+/// `REGION_DOMAINS` or a `simhost` one, a port other than the scheme's
+/// (scripts' HTTP-in listen on 12043 and 12046), or a capability path
+/// (`/cap/<id>`). Its preview never loads by itself, whatever the trust of
+/// its domain. Read on the URL alone, when a line's previews are decided.
+pub fn waits_for_click(url: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url.trim()) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str().map(|h| h.trim_end_matches('.').to_ascii_lowercase()) else {
+        return false;
+    };
+    parsed.port().is_some()
+        || parsed.path().to_ascii_lowercase().contains("/cap/")
+        || host.split('.').any(|label| label.starts_with("simhost"))
+        || REGION_DOMAINS.iter().any(|domain| in_domain(&host, domain))
+}
+
 /// The preview a link of a message gets in a conversation: none, or what it
-/// shows and whether it loads by itself.
-pub fn decide(s: &Settings, place: Place, url: &str) -> Option<(Target, Start)> {
+/// shows and whether it loads by itself. Links of objects and links to
+/// regions (`waits_for_click`) wait for a click whatever the settings.
+pub fn decide(s: &Settings, place: Place, from: Sender, url: &str) -> Option<(Target, Start)> {
     let on = match place {
         Place::Im => s.ims,
         Place::Group => s.groups,
@@ -619,7 +661,9 @@ pub fn decide(s: &Settings, place: Place, url: &str) -> Option<(Target, Start)> 
         Trust::Unknown if s.load == Load::All => Start::Load,
         _ => Start::Ask,
     };
-    Some((target, start))
+    // only a preview about to load by itself is looked at further
+    let by_itself = start == Start::Load && from == Sender::Resident && !waits_for_click(url);
+    Some((target, if by_itself { Start::Load } else { Start::Ask }))
 }
 
 /// A picture decoded for its card.
@@ -692,14 +736,17 @@ fn builder(trusted_only: bool) -> reqwest::ClientBuilder {
     let policy = reqwest::redirect::Policy::custom(move |attempt| {
         let to = attempt.url().as_str();
         let off_trusted = trusted_only && crate::link_trust::classify(to) != Trust::Trusted;
-        if attempt.previous().len() >= MAX_REDIRECTS || off_trusted || crate::link_trust::leads_to_local_network(to) {
+        // a redirect never leads a preview to a region (`waits_for_click`):
+        // only a link the user clicked may name one
+        if attempt.previous().len() >= MAX_REDIRECTS || off_trusted || waits_for_click(to) || crate::link_trust::leads_to_local_network(to)
+        {
             attempt.stop()
         } else {
             attempt.follow()
         }
     });
     reqwest::Client::builder()
-        .user_agent(concat!("AuroraViewer/", env!("CARGO_PKG_VERSION"), " (link preview)"))
+        .user_agent(format!("{} (link preview)", aurora_version::user_agent()))
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(20))
         .retry(reqwest::retry::never())
@@ -898,6 +945,7 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
     match crate::link_trust::classify(&source) {
         Trust::Dangerous(_) => return Err(Failure::Unavailable),
         Trust::Unknown if trusted_only => return Err(Failure::Unavailable),
+        _ if waits_for_click(&source) => return Err(Failure::Unavailable),
         _ => {}
     }
     let picture = fetch_picture(client, &source).await?;
@@ -1263,12 +1311,18 @@ mod tests {
         assert_eq!(target("https://videos.example.net/clip.gifv"), None);
         // a trusted clip loads by itself, or waits for a click as set
         let s = Settings::default();
-        assert_eq!(decide(&s, Place::Im, gyazo), Some((clip(gyazo).unwrap(), Start::Load)));
+        assert_eq!(
+            decide(&s, Place::Im, Sender::Resident, gyazo),
+            Some((clip(gyazo).unwrap(), Start::Load))
+        );
         let never = Settings {
             load: Load::Never,
             ..Settings::default()
         };
-        assert_eq!(decide(&never, Place::Im, gyazo), Some((clip(gyazo).unwrap(), Start::Ask)));
+        assert_eq!(
+            decide(&never, Place::Im, Sender::Resident, gyazo),
+            Some((clip(gyazo).unwrap(), Start::Ask))
+        );
     }
 
     /// A Gyazo video capture leads to its file and its thumbnail, a 640
@@ -1319,7 +1373,11 @@ mod tests {
             ("https://twitter.com/AuroraDemo/status/1850000000000000001", Service::X),
         ] {
             assert_eq!(target(url), Some(Target::Page(service)), "{url}");
-            assert_eq!(decide(&s, Place::Im, url), Some((Target::Page(service), Start::Load)), "{url}");
+            assert_eq!(
+                decide(&s, Place::Im, Sender::Resident, url),
+                Some((Target::Page(service), Start::Load)),
+                "{url}"
+            );
         }
         for url in [
             "https://i.redd.it/demo01picture.jpeg",
@@ -1327,14 +1385,18 @@ mod tests {
             "https://live.staticflickr.com/65535/1_2_c.jpg",
             "https://image.prntscr.com/image/Dm0Aur0raExample.png",
         ] {
-            assert_eq!(decide(&s, Place::Im, url), Some((Target::Picture, Start::Load)), "{url}");
+            assert_eq!(
+                decide(&s, Place::Im, Sender::Resident, url),
+                Some((Target::Picture, Start::Load)),
+                "{url}"
+            );
         }
         // a hidden site hides its pages too
         let hidden = Settings {
             hidden_sites: vec!["prnt.sc".into()],
             ..s
         };
-        assert_eq!(decide(&hidden, Place::Im, "https://prnt.sc/demo42"), None);
+        assert_eq!(decide(&hidden, Place::Im, Sender::Resident, "https://prnt.sc/demo42"), None);
     }
 
     /// A page or a feed is read up to its head only, and the pause a rate
@@ -1449,31 +1511,90 @@ mod tests {
         let s = Settings::default();
         let trusted = "https://i.imgur.com/a.png";
         let unknown = "https://pics.example.net/a.png";
-        assert_eq!(decide(&s, Place::Im, trusted), Some((Target::Picture, Start::Load)));
-        assert_eq!(decide(&s, Place::Im, unknown), Some((Target::Picture, Start::Ask)));
+        assert_eq!(
+            decide(&s, Place::Im, Sender::Resident, trusted),
+            Some((Target::Picture, Start::Load))
+        );
+        assert_eq!(
+            decide(&s, Place::Im, Sender::Resident, unknown),
+            Some((Target::Picture, Start::Ask))
+        );
         // the nearby chat is off by default, groups on
-        assert_eq!(decide(&s, Place::Nearby, trusted), None);
-        assert_eq!(decide(&s, Place::Group, trusted), Some((Target::Picture, Start::Load)));
+        assert_eq!(decide(&s, Place::Nearby, Sender::Resident, trusted), None);
+        assert_eq!(
+            decide(&s, Place::Group, Sender::Resident, trusted),
+            Some((Target::Picture, Start::Load))
+        );
         // a link that hides its destination never gets one
-        assert_eq!(decide(&s, Place::Im, "https://bit.ly/a.png"), None);
-        assert_eq!(decide(&s, Place::Im, "http://192.168.1.2/a.png"), None);
+        assert_eq!(decide(&s, Place::Im, Sender::Resident, "https://bit.ly/a.png"), None);
+        assert_eq!(decide(&s, Place::Im, Sender::Resident, "http://192.168.1.2/a.png"), None);
         let never = Settings {
             load: Load::Never,
             ..s.clone()
         };
-        assert_eq!(decide(&never, Place::Im, trusted), Some((Target::Picture, Start::Ask)));
+        assert_eq!(
+            decide(&never, Place::Im, Sender::Resident, trusted),
+            Some((Target::Picture, Start::Ask))
+        );
         let all = Settings {
             load: Load::All,
             ..s.clone()
         };
-        assert_eq!(decide(&all, Place::Im, unknown), Some((Target::Picture, Start::Load)));
+        assert_eq!(
+            decide(&all, Place::Im, Sender::Resident, unknown),
+            Some((Target::Picture, Start::Load))
+        );
         // a hidden site, its subdomains included, not a look-alike
         let hidden = Settings {
             hidden_sites: vec!["imgur.com".into()],
             ..s
         };
-        assert_eq!(decide(&hidden, Place::Im, trusted), None);
-        assert!(decide(&hidden, Place::Im, "https://notimgur.com/a.png").is_some());
+        assert_eq!(decide(&hidden, Place::Im, Sender::Resident, trusted), None);
+        assert!(decide(&hidden, Place::Im, Sender::Resident, "https://notimgur.com/a.png").is_some());
+    }
+
+    /// The links of objects and the links to regions (a simulator, a
+    /// script's HTTP-in address, another port, a capability path) wait for
+    /// a click, whatever the trust of their domain and the settings.
+    #[test]
+    fn link_previews_wait_for_a_click_on_region_hosts_and_object_links() {
+        let all = Settings {
+            load: Load::All,
+            ..Settings::default()
+        };
+        let trusted = "https://i.imgur.com/a.png";
+        for place in [Place::Im, Place::Group] {
+            assert_eq!(decide(&all, place, Sender::Object, trusted), Some((Target::Picture, Start::Ask)));
+            assert_eq!(decide(&all, place, Sender::Resident, trusted), Some((Target::Picture, Start::Load)));
+        }
+        for url in [
+            "https://simhost-0a1b2c3d4e5f6a7b8.agni.secondlife.io:12043/cap/00000000-0000-0000-0000-000000000000/a.png",
+            "http://simhost-0a1b2c3d4e5f6a7b8.agni.secondlife.io/a.png",
+            "https://simhost-0a1b2c3d4e5f6a7b8.aditi.secondlife.io/a.png",
+            "https://sim1234.agni.lindenlab.com/a.png",
+            "https://sim1234.aditi.lindenlab.com/a.png",
+            "https://demo.casperdns.com/a.png",
+            "https://i.imgur.com:8443/a.png",
+            "https://pics.example.net:12046/a.png",
+            "https://secondlife.com/CAP/demo/a.png",
+        ] {
+            assert!(waits_for_click(url), "{url}");
+            for s in [Settings::default(), all.clone()] {
+                assert_eq!(
+                    decide(&s, Place::Im, Sender::Resident, url),
+                    Some((Target::Picture, Start::Ask)),
+                    "{url}"
+                );
+            }
+        }
+        for url in [
+            trusted,
+            "https://secondlife.com/a.png",
+            "https://i.imgur.com:443/a.png",
+            "https://pics.example.net/capture/a.png",
+        ] {
+            assert!(!waits_for_click(url), "{url}");
+        }
     }
 
     /// A picture site's page gets a card (#1063), which waits for a click
@@ -1487,9 +1608,15 @@ mod tests {
         );
         let page = "https://cloud.example.org/s/DemoShare7xKq2";
         let s = Settings::default();
-        assert_eq!(decide(&s, Place::Im, page), Some((Target::Page(Service::Site), Start::Ask)));
+        assert_eq!(
+            decide(&s, Place::Im, Sender::Resident, page),
+            Some((Target::Page(Service::Site), Start::Ask))
+        );
         let all = Settings { load: Load::All, ..s };
-        assert_eq!(decide(&all, Place::Im, page), Some((Target::Page(Service::Site), Start::Load)));
+        assert_eq!(
+            decide(&all, Place::Im, Sender::Resident, page),
+            Some((Target::Page(Service::Site), Start::Load))
+        );
         assert_eq!(target("https://other.example.net/s/DemoShare7xKq2"), None);
     }
 

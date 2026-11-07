@@ -235,31 +235,14 @@ impl BuildTool {
         self.contents_changed(object_id);
     }
 
-    /// MoveTaskInventory into the agent's inventory (drag out of the
-    /// object: LLViewerObject::moveInventory). `folder`: the destination,
-    /// nil for the default folder of the item's type.
-    pub fn copy_item_to_inventory(&mut self, world: &World, idx: usize, item: &TaskItem, folder: Uuid) {
+    /// Aurora's selected-items menu uses the Open window's folder copy
+    /// (LLFloaterOpenObject::moveToInventory), rather than sorting by type.
+    pub fn copy_contents_to_inventory(&mut self, world: &World, idx: usize, items: &[TaskItem]) {
         let Some(o) = world.objects.get(idx) else { return };
-        let folder = if folder.is_nil() {
-            world
-                .inventory
-                .folders
-                .values()
-                .find(|f| !f.library && f.info.type_default == item.asset_type as i32)
-                .map(|f| f.info.id)
-                .unwrap_or(world.inventory.root)
-        } else {
-            folder
-        };
-        self.ui
-            .requests
-            .push(super::ui::Request::TransferTask(Box::new(super::task_inventory::TransferRequest {
-                object: o.full_id,
-                item: item.clone(),
-                folder,
-                approved: None,
-                ignore_warning: false,
-            })));
+        self.ui.requests.push(super::ui::Request::CopyContents {
+            object: o.full_id,
+            items: items.to_vec(),
+        });
     }
 
     /// "Reset scripts": ScriptReset for every script of every selected
