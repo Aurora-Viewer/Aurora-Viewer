@@ -374,6 +374,9 @@ pub struct OpenSimExtras {
     pub search_url: String,
     /// "map-server-url": the grid's map tile server.
     pub map_url: String,
+    /// "destination-guide-url": the grid's Destination Guide page
+    /// (LFSimFeatureHandler::destinationGuideURL).
+    pub destination_guide_url: String,
     /// "whisper-range", "say-range", "shout-range": how far the region's
     /// chat carries, in meters (None: the usual 10, 20 and 100 m).
     pub whisper_range: Option<f32>,
@@ -416,6 +419,7 @@ impl OpenSimExtras {
             grid_url: grid_url.trim().to_owned(),
             search_url: extras["search-server-url"].to_string_value().trim().to_owned(),
             map_url: extras["map-server-url"].to_string_value().trim().to_owned(),
+            destination_guide_url: extras["destination-guide-url"].to_string_value().trim().to_owned(),
             whisper_range: figure("whisper-range"),
             say_range: figure("say-range"),
             shout_range: figure("shout-range"),
@@ -2420,6 +2424,7 @@ mod opensim_extras_tests {
                 ("GridURL", "http://hg.osgrid.org:80/"),
                 ("search-server-url", " https://search.example/?q=[QUERY] "),
                 ("map-server-url", "https://maps.example/"),
+                ("destination-guide-url", " https://guide.example/[GRID_LOWERCASE]/ "),
             ]
             .into_iter()
             .map(|(k, v)| (k.to_owned(), Llsd::String(v.to_owned())))
@@ -2429,6 +2434,7 @@ mod opensim_extras_tests {
         assert_eq!(read.grid_url, "hg.osgrid.org:80/");
         assert_eq!(read.search_url, "https://search.example/?q=[QUERY]");
         assert_eq!(read.map_url, "https://maps.example/");
+        assert_eq!(read.destination_guide_url, "https://guide.example/[GRID_LOWERCASE]/");
         // a GridURL given without a scheme, as most grids do
         let bare = Llsd::Map(
             [("GridURL".to_owned(), Llsd::String("grid.example:8002".to_owned()))]
