@@ -13337,6 +13337,25 @@ ui-options-camera-vr-at-start-help = オンにすると、VRボタンですぐ�
 
 app-vr-leave = { $key } キーでデスクトップモードに戻ります
 
+ui-options-legacy-lists = Legacy Viewer からリストをインポート
+ui-options-legacy-lists-help = このアカウントのテレポート履歴、アセットのブロックリスト、メディアフィルターのリスト、コンタクトセットを追加します。Legacy Viewer のファイルは読み取るだけです。
+ui-options-legacy-lists-button = Legacy Viewer からインポート…
+ui-options-legacy-lists-title = Legacy Viewer からインポート
+ui-options-legacy-lists-text = すべてこのアカウントのリストに追加され、ここにあるものは削除されません。アセットのブロックリストの対象はすぐにワールドから消えます。再度インポートすると、ここで削除した項目が戻ります。
+ui-options-legacy-lists-searching = Legacy Viewer のフォルダーを探しています…
+ui-options-legacy-lists-none = このアカウントのリストがある Legacy Viewer のフォルダーは見つかりませんでした。
+ui-options-legacy-lists-teleports = テレポート履歴（{ $count }）
+ui-options-legacy-lists-derender = アセットのブロックリスト（{ $count }）
+ui-options-legacy-lists-media = メディアフィルターのリスト（{ $count }）
+ui-options-legacy-lists-contact-sets = コンタクトセット（{ $count }）
+ui-options-legacy-lists-confirm = インポート
+ui-options-legacy-lists-imported = 追加または更新：テレポート履歴 { $teleports }、ブロックリスト { $derender }、メディアフィルター { $media }、コンタクトセット { $sets }。
+ui-options-legacy-lists-nothing = 新しい項目はありません。このアカウントにはすでにこれらのリストがあります。
+ui-options-legacy-lists-not-saved = コンタクトセットを保存できませんでした。
+ui-options-legacy-lists-failed = 読み取れません：{ $files }。
+ui-options-legacy-lists-unsaved = 保存できず、変更しませんでした：{ $files }。
+ui-options-legacy-lists-other-grid = このグリッドでは、同じ名前のフォルダーが別のグリッドのものである場合があります。正しいフォルダーか確認してください。
+
 picker-pipette-hint = オブジェクトの面をクリックして、インベントリからそのテクスチャまたはマテリアルを選択します。
 
 picker-pipette-no-texture = コピー可能なテクスチャがインベントリにありません。

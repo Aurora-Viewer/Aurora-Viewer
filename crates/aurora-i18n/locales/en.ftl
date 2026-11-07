@@ -13364,6 +13364,25 @@ ui-options-camera-vr-at-start-help = The VR button then enters VR at once. Off, 
 
 app-vr-leave = Press { $key } to return to desktop mode
 
+ui-options-legacy-lists = Import lists from the Legacy Viewer
+ui-options-legacy-lists-help = Adds this account's teleport history, asset blacklist, media filter list and contact sets. The Legacy Viewer's files are only read.
+ui-options-legacy-lists-button = Import from the Legacy Viewer…
+ui-options-legacy-lists-title = Import from the Legacy Viewer
+ui-options-legacy-lists-text = Everything is added to this account's lists and nothing here is removed. What the asset blacklist names leaves the world at once. Importing again brings back what you removed here.
+ui-options-legacy-lists-searching = Looking for the Legacy Viewer's folders…
+ui-options-legacy-lists-none = No Legacy Viewer folder with lists was found for this account.
+ui-options-legacy-lists-teleports = Teleport history ({ $count })
+ui-options-legacy-lists-derender = Asset blacklist ({ $count })
+ui-options-legacy-lists-media = Media filter list ({ $count })
+ui-options-legacy-lists-contact-sets = Contact sets ({ $count })
+ui-options-legacy-lists-confirm = Import
+ui-options-legacy-lists-imported = Added or updated: { $teleports } teleport history, { $derender } asset blacklist, { $media } media filter, { $sets } contact sets.
+ui-options-legacy-lists-nothing = Nothing new: this account already has these lists.
+ui-options-legacy-lists-not-saved = Could not save the contact sets.
+ui-options-legacy-lists-failed = Could not read: { $files }.
+ui-options-legacy-lists-unsaved = Could not save, left as it was: { $files }.
+ui-options-legacy-lists-other-grid = On this grid a folder of the same name can belong to another grid: check that it is the right one.
+
 picker-pipette-hint = Click an object face to select its texture or material from your inventory.
 
 picker-pipette-no-texture = No copyable texture found in your inventory.
