@@ -6,6 +6,9 @@
 //! and forward in its history. The search tab's browser is a private one
 //! (`WebView::private`): its cache, history and log go to a profile of its
 //! own that is deleted with the browser (`media/private_profile.rs`).
+//! A trusted browser (`WebView::trust`, LLMediaCtrl's `trusted_content`,
+//! the Avatar Welcome Pack's) may also wear folders: the folder commands its
+//! own page sends are handed to its window (`folder_commands`).
 
 use crate::media::pack::PackState;
 use crate::media::private_profile::PrivateProfile;
@@ -131,6 +134,10 @@ pub struct WebView {
     pub status: String,
     /// Load progress, 0 to 100 (MEDIA_EVENT_PROGRESS_UPDATED).
     pub progress: i32,
+    /// The origin (scheme, host, port) of the trusted page, if any.
+    trusted: Option<String>,
+    /// The folder commands the trusted page sent, for its window to take.
+    pub folder_commands: Vec<crate::slapp::FolderCommand>,
 }
 
 impl WebView {
@@ -146,6 +153,15 @@ impl WebView {
             private_root: Some(root),
             ..Default::default()
         }
+    }
+
+    /// LLMediaCtrl `trusted_content`: the pages of `page`'s site may send
+    /// the folder commands an untrusted page cannot (UNTRUSTED_BLOCK), clicked
+    /// or not (LLViewerMediaImpl::handleMediaEvent dispatches them with the
+    /// browser's trust and any nav type). Their other links follow the
+    /// usual rules.
+    pub fn trust(&mut self, page: &str) {
+        self.trusted = origin(page);
     }
 
     pub fn navigate(&mut self, url: &str) {
@@ -327,6 +343,10 @@ impl WebView {
         }
         p.idle();
         for ev in p.take_events() {
+            if let Some(command) = trusted_folder_command(&ev, self.trusted.as_deref(), &self.location) {
+                self.folder_commands.push(command);
+                continue;
+            }
             if let Some(url) = clicked_url(&ev) {
                 super::context::request(ui.ctx(), clicked_link_action(url));
                 continue;
@@ -476,6 +496,26 @@ fn clicked_url(event: &MediaEvent) -> Option<&str> {
     }
 }
 
+/// `scheme://host:port` of a web address.
+fn origin(url: &str) -> Option<String> {
+    reqwest::Url::parse(url)
+        .ok()
+        .filter(|u| matches!(u.scheme(), "http" | "https"))
+        .map(|u| u.origin().ascii_serialization())
+}
+
+/// A folder command sent by the trusted page (its address on the trusted
+/// origin), with or without a click: the welcome pack's script wears the
+/// body, then adds the clothing a moment later, without a gesture.
+fn trusted_folder_command(event: &MediaEvent, trusted: Option<&str>, location: &str) -> Option<crate::slapp::FolderCommand> {
+    let MediaEvent::ClickLinkNoFollow { url, .. } = event else {
+        return None;
+    };
+    let trusted = trusted?;
+    let command = crate::slapp::folder_command(url)?;
+    (origin(location).as_deref() == Some(trusted)).then_some(command)
+}
+
 /// Follow the same SLURL and app-link rules as a clicked link in chat.
 fn clicked_link_action(url: &str) -> super::context::CtxAction {
     use super::context::CtxAction;
@@ -520,6 +560,33 @@ mod tests {
             }),
             None
         );
+    }
+
+    #[test]
+    fn only_the_trusted_page_sends_folder_commands() {
+        let wear = |nav: &str| MediaEvent::ClickLinkNoFollow {
+            url: "secondlife://app/wear_folder/?folder_name=Female%20body%20-%20A".into(),
+            nav_type: nav.into(),
+        };
+        let page = "https://pages.example/v3.0/agni/vawp/index.html";
+        let trusted = origin(page);
+        let trusted = trusted.as_deref();
+        // clicked or run by the page's script, from the trusted site
+        for nav in ["clicked", "navigated"] {
+            let command = trusted_folder_command(&wear(nav), trusted, page).expect("trusted page");
+            assert_eq!(command.name.as_deref(), Some("Female body - A"));
+        }
+        // another site, or an untrusted browser: nothing worn
+        assert_eq!(trusted_folder_command(&wear("clicked"), trusted, "https://other.example/"), None);
+        assert_eq!(trusted_folder_command(&wear("clicked"), trusted, "http://pages.example/"), None);
+        assert_eq!(trusted_folder_command(&wear("clicked"), None, page), None);
+        // any other link takes the usual path
+        let teleport = MediaEvent::ClickLinkNoFollow {
+            url: "secondlife:///app/teleport/Aurora/12/34/56".into(),
+            nav_type: "clicked".into(),
+        };
+        assert_eq!(trusted_folder_command(&teleport, trusted, page), None);
+        assert_eq!(origin("file:///c:/page.html"), None);
     }
 
     #[test]
