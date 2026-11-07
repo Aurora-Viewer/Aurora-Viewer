@@ -409,8 +409,8 @@ pub struct OptionsUi {
     /// Disk cache usage (bytes) and whether a clear is running; set by the app.
     pub cache_usage: u64,
     pub cache_clearing: bool,
-    /// Detected video memory (MB) and integrated GPU; set by the app.
-    pub vram: (Option<u64>, bool),
+    /// Detected dedicated/shared heaps (MB) and integrated GPU; set by the app.
+    pub vram: (Option<u64>, Option<u64>, bool),
     /// The GPUs that can draw the viewer, the one in use, and why the
     /// dedicated one may not be drawing; set by the app as soon as the
     /// renderer is created, so the login screen has them too (#894). The
@@ -1057,6 +1057,30 @@ fn run_page(cx: &mut Cx, page: Page, tab: Option<usize>) {
     }
 }
 
+/// What Preferences says of each setting, in the interface's language: its
+/// path (`camera.fov`, with no space), the row's label and its hint. For the
+/// Debug Settings window, whose list is the settings themselves.
+pub fn describe_settings() -> Vec<(String, String, String)> {
+    let ctx = egui::Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let mut s = Settings::default();
+    let d = Settings::default();
+    let mut st = OptionsUi::default();
+    let mut r = OptionsResult::default();
+    let mut out = Vec::new();
+    run_ui(&ctx, egui::RawInput::default(), |ui| {
+        let mut cx = Cx::new(ui, p, &mut s, &d, &mut st, &mut r, Mode::Collect, "");
+        for page in Page::ALL {
+            run_page(&mut cx, page, None);
+        }
+        out = std::mem::take(&mut cx.described)
+            .into_iter()
+            .map(|(path, label, hint)| (path.replace(' ', ""), label, hint))
+            .collect();
+    });
+    out
+}
+
 /// The pages counted (modified rows, search hits), nothing drawn.
 fn count(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, d: &Settings, st: &mut OptionsUi, r: &mut OptionsResult) {
     let query = st.query.clone();
@@ -1107,9 +1131,8 @@ fn count_due(st: &OptionsUi, now: f64, input: bool) -> bool {
             .is_none_or(|(at, query)| now - at >= COUNT_REFRESH || now < *at || *query != st.query)
 }
 
-/// One frame of `body` outside the window (tests), its textures dropped as
-/// a renderer would take them.
-#[cfg(test)]
+/// One frame of `body` outside the window (tests, `describe_settings`), its
+/// textures dropped as a renderer would take them.
 pub(crate) fn run_ui(ctx: &egui::Context, raw: egui::RawInput, body: impl FnMut(&mut egui::Ui)) {
     let mut output = ctx.run_ui(raw, body);
     output.textures_delta.clear();

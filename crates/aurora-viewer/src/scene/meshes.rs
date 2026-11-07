@@ -57,6 +57,30 @@ fn first_request(finest_wanted: u8) -> Option<usize> {
         _ => None,
     }
 }
+/// Failures after which a mesh is no longer waited for: its wearer stops
+/// waiting (`MeshStreamer::failed`), a missing asset is no longer asked.
+const EXPECTED_FAILURES: u32 = 3;
+
+/// Delay before a download that failed `failures` times in a row is asked
+/// again: soon while the mesh is still expected, then slower and slower. A
+/// failure here already went through the fetcher's own retries.
+///
+/// **Different from the Legacy Viewer, deliberately:** a failed download is
+/// not retried there (LLMeshHeaderHandler::processFailure and
+/// LLMeshLODHandler::processFailure, llmeshrepository.cpp), but the mesh is
+/// loaded again as soon as an object sets its volume while it is not loaded
+/// (LLVOVolume::setVolume, llvovolume.cpp), a change of level of detail for
+/// one. The scene asks for a geometry once, so a timer stands for that here:
+/// without it, a burst of errors left a mesh missing until the next session.
+fn retry_delay(failures: u32) -> Duration {
+    let slow = failures.saturating_sub(EXPECTED_FAILURES + 1).min(4);
+    Duration::from_secs(if failures <= EXPECTED_FAILURES {
+        5
+    } else {
+        (30u64 << slow).min(300)
+    })
+}
+
 /// Two missing blocks this close are asked for in one request.
 const JOIN_GAP: usize = 4096;
 
@@ -171,6 +195,12 @@ impl MeshEntry {
                 .any(|&lod| self.lod_block(lod).is_some_and(|b| self.bytes.holds(b)))
     }
 
+    /// A failed download is asked again at its retry time: while an object
+    /// wants the mesh, and a missing asset only a few times.
+    fn retries(&self) -> bool {
+        (self.failures <= EXPECTED_FAILURES || !self.gone) && (!self.wanted_lods.is_empty() || self.wanted_physics)
+    }
+
     /// `MeshStreamer::update` has something to do for it, now or at its
     /// retry time: a new mesh to read from the disk cache, a header to
     /// download, a block to download or a level to build.
@@ -178,7 +208,7 @@ impl MeshEntry {
         match self.stage {
             Stage::New | Stage::ToFetch => true,
             Stage::Known => self.buildable() || (!self.local && !self.uncovered().is_empty()),
-            Stage::Failed => self.failures <= 3,
+            Stage::Failed => self.retries(),
             Stage::Reading | Stage::Fetching | Stage::Unwanted => false,
         }
     }
@@ -406,6 +436,17 @@ impl MeshStreamer {
         })
     }
 
+    /// LLMeshRepository::getEstTrianglesMax / LLMeshCostData::init: the
+    /// largest LOD estimate, also before skin data arrives. Unknown is zero.
+    pub fn estimated_max_triangles(&self, id: &Uuid) -> f32 {
+        self.entries.get(id).and_then(|e| e.header.as_ref()).map_or(0.0, |h| {
+            h.lods
+                .iter()
+                .map(|lod| (lod.map_or(0, |(_, size)| size) as f32 - 384.0).max(16.0) / 16.0)
+                .fold(0.0, f32::max)
+        })
+    }
+
     pub fn meta(&self, id: &Uuid) -> Option<MeshMeta> {
         let e = self.entries.get(id).filter(|e| e.ready())?;
         let h = e.header.as_ref()?;
@@ -493,11 +534,11 @@ impl MeshStreamer {
 
     /// The mesh asset is not expected any more: missing on the asset server
     /// or invalid (LLMeshHeaderHandler::processFailure marks every LOD
-    /// unavailable at once), or its download failed again and again.
+    /// unavailable at once), or its download failed again and again. It may
+    /// still come (`retry_delay`): until then, the retries under way do not
+    /// put its wearer back in the cloud.
     pub fn failed(&self, id: &Uuid) -> bool {
-        self.entries
-            .get(id)
-            .is_some_and(|e| e.stage == Stage::Failed && (e.gone || e.failures > 3))
+        self.entries.get(id).is_some_and(|e| e.gone || e.failures > EXPECTED_FAILURES)
     }
 
     /// Diagnostic: the state of a mesh asset, without requesting it.
@@ -597,7 +638,7 @@ impl MeshStreamer {
                         });
                         break 'visit;
                     }
-                    Stage::Failed if e.failures <= 3 => {
+                    Stage::Failed if e.retries() => {
                         e.retry_at = None;
                         e.stage = if e.header.is_some() { Stage::Known } else { Stage::ToFetch };
                     }
@@ -736,14 +777,18 @@ impl MeshStreamer {
                 });
             }
             _ => {
+                let missing = r.status == 404;
+                let backoff = if missing {
+                    Duration::from_secs(600)
+                } else {
+                    retry_delay(e.failures + 1)
+                };
                 let why = match &r.data {
                     Err(e) => e.clone(),
                     Ok(_) => "empty response".to_owned(),
                 };
                 self.log_failure(format_args!("mesh {id}: download failed (HTTP {}, {why})", r.status));
-                let missing = r.status == 404;
-                let backoff = if missing { 600 } else { 5 };
-                self.fail(id, Duration::from_secs(backoff), missing);
+                self.fail(id, backoff, missing);
             }
         }
     }
@@ -858,13 +903,14 @@ impl MeshStreamer {
 
     /// A download that failed, asked again after `backoff`; `gone` when the
     /// asset is missing or invalid (see `failed`). A block that failed more
-    /// than three times leaves the mesh failed, as its header does.
+    /// than three times leaves the mesh failed, as its header does, until
+    /// its next retry.
     fn fail(&mut self, id: Uuid, backoff: Duration, gone: bool) {
         if let Some(e) = self.entries.get_mut(&id) {
             e.failures += 1;
             e.gone = gone;
             e.retry_at = Some(Instant::now() + backoff);
-            if e.header.is_none() || gone || e.failures > 3 {
+            if e.header.is_none() || gone || e.failures > EXPECTED_FAILURES {
                 e.stage = Stage::Failed;
             }
             Self::attend(&mut self.todo, id, e);
@@ -1382,6 +1428,34 @@ mod tests {
     }
 
     #[test]
+    fn linking_triangle_estimates_use_header_sizes_before_skin_arrives() {
+        let mut streamer = MeshStreamer::new(PathBuf::new());
+        let id = Uuid::from_u128(2706);
+        assert_eq!(streamer.estimated_max_triangles(&id), 0.0);
+        let header = MeshHeader {
+            header_size: 100,
+            lods: [None, Some((100, 400)), Some((500, 1984)), Some((2484, 1184))],
+            skin: Some((3668, 100)),
+            physics_convex: None,
+            physics_mesh: None,
+            version: 1,
+        };
+        streamer.entries.insert(
+            id,
+            MeshEntry {
+                header: Some(header),
+                ..Default::default()
+            },
+        );
+        assert!(streamer.meta(&id).is_none(), "skin is not loaded");
+        assert_eq!(
+            streamer.estimated_max_triangles(&id),
+            100.0,
+            "largest LOD, minus 384 metadata bytes, at 16 bytes per triangle"
+        );
+    }
+
+    #[test]
     fn a_far_mesh_comes_by_parts_and_a_near_one_whole() {
         let (jobs, rx) = Jobs::new();
         let (_rt, fetcher) = idle_fetcher();
@@ -1615,7 +1689,7 @@ mod tests {
         s.update(&jobs, &fetcher, CAP, &rig);
         assert_eq!(s.entries[&id].stage, Stage::Fetching);
         assert!(s.todo.is_empty());
-        // given up after the fourth failure: off the list for good
+        // no longer expected after the fourth failure, still asked again
         for _ in 0..3 {
             let key = *s.by_key.keys().next().expect("download");
             s.on_fetch(failed(key, 503), &jobs);
@@ -1623,6 +1697,25 @@ mod tests {
             s.update(&jobs, &fetcher, CAP, &rig);
         }
         assert!(s.failed(&id));
+        assert_eq!(s.entries[&id].stage, Stage::Fetching);
+        assert!(s.todo.is_empty());
+        // no object wants it any more: off the list until one does
+        let key = *s.by_key.keys().next().expect("download");
+        s.on_fetch(failed(key, 503), &jobs);
+        s.unwant(&id);
+        s.entries.get_mut(&id).expect("entry").retry_at = Some(Instant::now());
+        s.update(&jobs, &fetcher, CAP, &rig);
+        assert_eq!(s.entries[&id].stage, Stage::Failed);
+        assert_eq!(s.fetching, 0);
+        assert!(s.todo.is_empty());
+        s.want(id, 2);
+        assert_eq!(s.todo, [id]);
+        s.update(&jobs, &fetcher, CAP, &rig);
+        assert_eq!(s.entries[&id].stage, Stage::Fetching);
+        let key = *s.by_key.keys().next().expect("download");
+        s.on_fetch(failed(key, 503), &jobs);
+        s.unwant(&id);
+        s.update(&jobs, &fetcher, CAP, &rig);
         assert!(s.todo.is_empty());
 
         // a LOD asked of a loaded mesh lists it for the frame that builds it
@@ -1715,6 +1808,125 @@ mod tests {
         take_part(&mut s, &jobs, &rx);
         assert!(s.failed(&junk));
         assert_eq!(s.describe(&Uuid::from_u128(4)), "not requested");
+    }
+
+    /// A rigged mesh asset with its high level of detail.
+    fn rigged_asset(lib: &crate::scene::avatar::AvatarLibrary) -> Vec<u8> {
+        let mut model = crate::demo::auto_hover::rigged_model(lib);
+        model.normalize().expect("model");
+        aurora_assets::import_mesh::encode::asset(
+            &[None, None, None, Some(model)],
+            None,
+            &aurora_assets::import_mesh::process::Physics::default(),
+            aurora_assets::import_mesh::encode::Options {
+                skin: true,
+                ..Default::default()
+            },
+        )
+        .expect("asset")
+    }
+
+    #[test]
+    fn retries_slow_down_and_never_stop_for_long() {
+        let secs: Vec<u64> = (1..=9).map(|n| retry_delay(n).as_secs()).collect();
+        assert_eq!(secs, [5, 5, 5, 30, 60, 120, 240, 300, 300]);
+        assert_eq!(retry_delay(u32::MAX).as_secs(), 300);
+    }
+
+    #[test]
+    fn a_mesh_that_failed_again_and_again_still_arrives() {
+        let (jobs, rx) = Jobs::new();
+        let (_rt, fetcher) = idle_fetcher();
+        let lib = crate::scene::avatar::AvatarLibrary::load();
+        let asset = rigged_asset(&lib);
+        let mut s = mesh_streamer();
+        let id = Uuid::from_u128(1);
+        // (403: what the fetcher does not retry itself)
+        for _ in 0..=EXPECTED_FAILURES {
+            let key = mesh_fetching(&mut s, id);
+            s.on_fetch(failed(key, 403), &jobs);
+        }
+        assert!(s.failed(&id), "its wearer no longer waits for it");
+        let wait = s.entries[&id].retry_at.expect("retry time") - Instant::now();
+        assert!(wait > Duration::from_secs(5) && wait <= Duration::from_secs(30), "{wait:?}");
+
+        // not before its time, then asked again, and still not waited for
+        s.update(&jobs, &fetcher, CAP, &lib.rig);
+        assert_eq!(s.entries[&id].stage, Stage::Failed);
+        assert_eq!(s.todo, [id]);
+        s.entries.get_mut(&id).expect("entry").retry_at = Some(Instant::now());
+        s.update(&jobs, &fetcher, CAP, &lib.rig);
+        assert_eq!(s.entries[&id].stage, Stage::Fetching);
+        assert!(s.failed(&id), "a retry does not put its wearer back in the cloud");
+
+        // the asset server answers at last: expected and loaded again
+        let key = *s.by_key.keys().next().expect("download");
+        s.on_fetch(
+            FetchResult {
+                key,
+                status: 200,
+                complete: true,
+                offset: 0,
+                data: Ok(asset),
+            },
+            &jobs,
+        );
+        take_part(&mut s, &jobs, &rx);
+        assert!(!s.failed(&id));
+        assert_eq!(s.entries[&id].stage, Stage::Known);
+        assert_eq!(s.entries[&id].failures, 0);
+        assert!(s.entries[&id].ready());
+    }
+
+    #[test]
+    fn a_block_that_failed_again_and_again_is_asked_again() {
+        let (jobs, _rx) = Jobs::new();
+        let (_rt, fetcher) = idle_fetcher();
+        let lib = crate::scene::avatar::AvatarLibrary::load();
+        let asset = rigged_asset(&lib);
+        let mut s = mesh_streamer();
+        let id = Uuid::from_u128(1);
+        s.want(id, 3);
+        let e = s.entries.get_mut(&id).expect("entry");
+        e.header = Some(aurora_assets::parse_mesh_header(&asset).expect("header"));
+        e.stage = Stage::Known;
+        while s.entries[&id].failures <= EXPECTED_FAILURES {
+            s.entries.get_mut(&id).expect("entry").retry_at = Some(Instant::now());
+            s.update(&jobs, &fetcher, CAP, &lib.rig);
+            assert_eq!(s.entries[&id].stage, Stage::Known);
+            let keys: Vec<u64> = s.by_key.keys().copied().collect();
+            assert!(!keys.is_empty(), "its blocks are asked");
+            for key in keys {
+                s.on_fetch(failed(key, 503), &jobs);
+            }
+        }
+        assert_eq!(s.entries[&id].stage, Stage::Failed);
+        assert!(s.failed(&id));
+        s.entries.get_mut(&id).expect("entry").retry_at = Some(Instant::now());
+        s.update(&jobs, &fetcher, CAP, &lib.rig);
+        assert_eq!(s.entries[&id].stage, Stage::Known);
+        assert!(!s.by_key.is_empty(), "its blocks are asked again");
+    }
+
+    #[test]
+    fn a_missing_mesh_is_only_asked_a_few_times() {
+        let (jobs, _rx) = Jobs::new();
+        let (_rt, fetcher) = idle_fetcher();
+        let rig = crate::scene::avatar::AvatarLibrary::load().rig.clone();
+        let mut s = mesh_streamer();
+        let id = Uuid::from_u128(1);
+        for attempt in 1..=EXPECTED_FAILURES + 1 {
+            let key = mesh_fetching(&mut s, id);
+            s.on_fetch(failed(key, 404), &jobs);
+            let e = &s.entries[&id];
+            assert!(e.retry_at.expect("retry time") - Instant::now() > Duration::from_secs(590));
+            assert_eq!(e.retries(), attempt <= EXPECTED_FAILURES, "attempt {attempt}");
+        }
+        s.entries.get_mut(&id).expect("entry").retry_at = Some(Instant::now());
+        s.update(&jobs, &fetcher, CAP, &rig);
+        assert_eq!(s.entries[&id].stage, Stage::Failed);
+        assert!(s.todo.is_empty());
+        assert!(s.by_key.is_empty());
     }
 
     fn denim_override() -> PbrOverride {

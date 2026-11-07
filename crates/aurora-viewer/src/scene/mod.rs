@@ -64,6 +64,7 @@ pub mod still_check;
 mod sync_check;
 mod sync_plan;
 mod sync_slow;
+mod tree_detail;
 mod world_overlays;
 pub use sync_plan::LodInfo;
 pub mod sync_sets;
@@ -587,6 +588,10 @@ struct ObjVis {
     in_view: bool,
     casts: bool,
     reflects: bool,
+    /// In the probe captures' list: they measure from the probe, which the
+    /// renderer knows (`ProbeCapture::reach`), so the camera's reach and
+    /// small object culling do not apply.
+    probes: bool,
 }
 
 /// Object tests of the CPU lists, the same as `face_mask` in cull.wgsl:
@@ -624,18 +629,21 @@ fn object_visibility(
     let in_view = ctx.view.sphere_visible(sc, sr);
     let casts = ctx.shadows && d - sr < ctx.shadow_distance;
     let reflects = ctx.reflections && d - sr < ctx.reflection_distance;
-    if !in_view && !casts && !reflects {
+    let probes = ctx.reflections;
+    if !in_view && !casts && !reflects && !probes {
         return None;
     }
     // tiny objects far away are culled (LL-like small object culling)
-    if ctx.view.pixel_size(sc, sr) < 1.5 && !g.is_avatar {
+    let large = ctx.view.pixel_size(sc, sr) >= 1.5 || g.is_avatar;
+    if !large && !probes {
         return None;
     }
     Some(ObjVis {
         sphere: (sc, sr),
-        in_view,
-        casts,
-        reflects,
+        in_view: in_view && large,
+        casts: casts && large,
+        reflects: reflects && large,
+        probes,
     })
 }
 
@@ -865,6 +873,8 @@ pub struct Scene {
     /// class only the faces using it are classified again.
     slot_users: std::collections::BTreeSet<(u32, u32)>,
     alpha_changes_tmp: Vec<u32>,
+    /// `rebuild_reslotted`'s list, kept for its room.
+    reslotted_tmp: Vec<Uuid>,
     /// Main-thread time a frame gives to the full syncs that can wait
     /// (new objects, geometry bound, faces rebuilt); the others wait in
     /// the backlog (sync_sets.rs). Set by the app from the frame time.
@@ -1009,6 +1019,8 @@ pub struct Scene {
     last_sync: Option<Instant>,
     frame: u32,
     pub lod_factor: f32,
+    /// RenderTreeLODFactor (`tree_detail.rs`).
+    pub tree_lod_factor: f32,
     pub draw_distance: f32,
     last_origin: Option<(u32, u32)>,
     blend_tmp: Vec<blend_order::BlendEntry>,
@@ -1188,6 +1200,12 @@ pub fn lod_for(radius: f32, distance: f32, lod_factor: f32, fov_y: f32) -> u8 {
     } else {
         0
     }
+}
+
+/// The detail level of object `o`: a plant's (`plants::plant_lod`), else
+/// a volume's (`lod_for`).
+pub(super) fn object_lod(o: &Object, radius: f32, distance: f32, lod_factor: f32, tree_factor: f32, fov_y: f32) -> u8 {
+    plants::plant_lod(o, distance, tree_factor, lod_factor).unwrap_or_else(|| lod_for(radius, distance, lod_factor, fov_y))
 }
 
 /// Prim material code of light sources (material_codes.h LL_MCODE_LIGHT).
@@ -1503,6 +1521,7 @@ impl Scene {
             preview_images: HashMap::new(),
             slot_users: Default::default(),
             alpha_changes_tmp: Vec::new(),
+            reslotted_tmp: Vec::new(),
             sync_budget: std::time::Duration::from_millis(1),
             geom_trash: Default::default(),
             pick: Default::default(),
@@ -1573,6 +1592,7 @@ impl Scene {
             last_sync: None,
             frame: 0,
             lod_factor: 2.0,
+            tree_lod_factor: 0.5,
             draw_distance: 96.0,
             last_origin: None,
             blend_tmp: Vec::new(),
@@ -2374,9 +2394,16 @@ impl Scene {
                     .tree_species
                     .filter(|&s| (s as usize) < aurora_prim::tree::TREE_SPECIES.len())
                     .unwrap_or(0);
+                // (a trunk past the finest four: not drawn, tree_detail.rs)
+                if lod == plants::NOT_DRAWN {
+                    return None;
+                }
                 return Some(GeomKey::Tree { species, lod: lod.min(3) });
             }
             LL_PCODE_LEGACY_GRASS => {
+                if lod == plants::NOT_DRAWN {
+                    return None;
+                }
                 return Some(GeomKey::Grass {
                     id: o.full_id,
                     hash: plants::grass_hash(o),
@@ -2650,6 +2677,7 @@ impl Scene {
                 }
             }
         }
+        self.rebuild_reslotted(world);
         use crate::frame_profile::Part;
         let t0 = Instant::now();
         let mut slow = self.sync_slow.map(|limit| sync_slow::SlowSync::new(limit, t0));
@@ -2764,7 +2792,7 @@ impl Scene {
         // detail level checks: by events, or the slice of every object
         let events = !sync_sets::slice_mode();
         let dt = self.last_sync.replace(now).map_or(0.0, |last| (now - last).as_secs_f32());
-        let camera_moved = self.sets.lod.advance(view.eye, self.lod_factor, self.fov_y);
+        let camera_moved = self.sets.lod.advance(view.eye, self.lod_factor, self.fov_y, self.tree_lod_factor);
         if events {
             self.note_hud_changes(world);
         }
@@ -3010,6 +3038,45 @@ impl Scene {
         }
     }
 
+    /// Textures that went without a slot (a full texture table) and have one
+    /// now (`TextureStreamer::take_reslotted`): the objects and avatars
+    /// whose faces draw them still hold the white texture, and are built
+    /// again. One pass over the objects, only in a frame that follows such
+    /// a round (a few times a second at most, and only after a full table).
+    fn rebuild_reslotted(&mut self, world: &mut World) {
+        let mut ids = std::mem::take(&mut self.reslotted_tmp);
+        self.textures.take_reslotted(&mut ids);
+        if !ids.is_empty() {
+            let t0 = Instant::now();
+            let wanted: std::collections::HashSet<Uuid> = ids.iter().copied().collect();
+            let mut rebuilt = 0;
+            for (idx, g) in self.gpu.iter_mut().enumerate() {
+                if !g.tex_ids.iter().any(|t| wanted.contains(t)) {
+                    continue;
+                }
+                let Some(o) = world.objects.get_mut_untracked(idx) else {
+                    continue;
+                };
+                o.render.needs_records = true;
+                o.material_dirty = true;
+                if g.is_avatar {
+                    // (the body parts: `needs_full`)
+                    g.tex_generation = u64::MAX;
+                }
+                self.sets.dirty.insert(idx);
+                rebuilt += 1;
+            }
+            log::info!(
+                "texture table: {rebuilt} objects drawing {} textures given a slot again are built again ({} objects looked at in {:.2} ms)",
+                wanted.len(),
+                self.gpu.len(),
+                t0.elapsed().as_secs_f64() * 1000.0
+            );
+            ids.clear();
+        }
+        self.reslotted_tmp = ids;
+    }
+
     /// Classify again the faces whose base texture is in one of `slots`
     /// (found through `slot_users`, not by a pass over every face of the
     /// scene, which ran in most frames while textures arrive); the changed
@@ -3160,7 +3227,7 @@ impl Scene {
         }
         self.anchors.placed(world, idx, m.anchor);
         if let Some((radius, distance)) = m.lod {
-            self.watch_lod(idx, m.anchor.is_some(), radius, distance);
+            self.watch_lod(world, idx, m.anchor.is_some(), radius, distance);
         }
         if m.clear_flags
             && let Some(o) = world.objects.get_mut_untracked(idx)
@@ -3175,11 +3242,15 @@ impl Scene {
     /// turn (sync_sets.rs); the others when the camera has travelled far
     /// enough to change their level (lod_watch.rs). An object whose turn
     /// came before that keeps the wait it has.
-    fn watch_lod(&mut self, idx: usize, anchored: bool, radius: f32, distance: f32) {
+    fn watch_lod(&mut self, world: &World, idx: usize, anchored: bool, radius: f32, distance: f32) {
         if anchored || self.sets.follows_motion(idx) {
             self.sets.lod.forget(idx);
         } else if !(self.sets.only_checked(idx) && self.sets.lod.is_watched(idx)) {
-            let slack = lod_watch::lod_slack(radius, distance, self.lod_factor, self.fov_y);
+            let plant = world
+                .objects
+                .get(idx)
+                .and_then(|o| plants::plant_slack(o, distance, self.tree_lod_factor, self.lod_factor));
+            let slack = plant.unwrap_or_else(|| lod_watch::lod_slack(radius, distance, self.lod_factor, self.fov_y));
             self.sets.lod.watch(idx, slack);
         }
     }
@@ -3390,14 +3461,31 @@ impl Scene {
             &self.mesh_lod_overrides,
             o,
             hud,
-            lod_for(lod_radius, lod_dist, self.lod_factor, self.fov_y),
+            object_lod(o, lod_radius, lod_dist, self.lod_factor, self.tree_lod_factor, self.fov_y),
         );
         // (whatever comes of this sync; what the GPU places leaves below)
-        self.watch_lod(idx, false, lod_radius, lod_dist);
+        self.watch_lod(world, idx, false, lod_radius, lod_dist);
         let Some(o) = world.objects.get(idx) else {
             return;
         };
         let wanted = Self::object_geom_key(o, lod);
+        if lod == plants::NOT_DRAWN {
+            // a plant the trees' detail stops (tree_detail.rs): its drawing
+            // goes, as for a parcel that hides it, but it stays watched so
+            // that a higher factor brings it back
+            if let Some(mut g) = self.gpu.get_mut(idx).map(std::mem::take) {
+                self.release_obj(renderer, idx, &mut g);
+            }
+            self.anchors.forget(idx);
+            self.pick.remove(idx);
+            self.list_index.remove(idx);
+            if let Some(object) = world.objects.get_mut_untracked(idx) {
+                object.render.needs_records = false;
+                object.shape_dirty = false;
+                object.material_dirty = false;
+            }
+            return;
+        }
         let wearer = Self::wearer_avatar(world, idx);
         let owner_avatar = wearer.map(|(_, i)| i);
         let first_person_hidden = Self::attachment_first_person_hidden(world, idx);
@@ -3900,6 +3988,9 @@ impl Scene {
                 }
             }
             rec.set_hud_zoom(hud_zoom);
+            if !g.hud {
+                rec.flags[3] |= flags::OBJECT_MASK_PICK;
+            }
             rec.set_world_blend_pick(
                 !g.hud
                     && wearer.is_none()
@@ -4681,6 +4772,7 @@ impl Scene {
                 in_view,
                 casts,
                 reflects,
+                probes,
             }) = object_visibility(
                 g,
                 idx,
@@ -4775,15 +4867,17 @@ impl Scene {
                             alpha: pass.record_flags() != 0,
                         });
                     }
-                    if reflects && matches!(pass, Pass::Opaque | Pass::OpaqueTwoSided | Pass::Mask | Pass::MaskTwoSided) {
+                    if matches!(pass, Pass::Opaque | Pass::OpaqueTwoSided | Pass::Mask | Pass::MaskTwoSided) {
                         let c = ShadowCaster {
                             cmd,
                             center: sc,
                             radius: sr,
                             alpha: false,
                         };
-                        l.refl.push(c);
-                        if avatar.is_none() && g.skeleton_owner.is_none() {
+                        if reflects {
+                            l.refl.push(c);
+                        }
+                        if probes && avatar.is_none() && g.skeleton_owner.is_none() {
                             l.probe.push(c);
                         }
                     }
@@ -7198,10 +7292,12 @@ mod tests {
             0.0,
             [Mat4::IDENTITY; 3],
             [None; aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS],
+            None,
             flags,
         );
         frame.water = [[0.0, 0.0, 0.0, 1.0]; 6];
         frame.probe = frame.water;
+        frame.probe_eye = [0.0, 0.0, 0.0, 1e9];
         frame.sizes[1] = n as u32;
         let objects: Vec<CullObject> = gpu.iter().enumerate().map(|(i, g)| g.cull_object(i)).collect();
         let spheres = aurora_render::gpu_cull::world_spheres(&objects, &palettes, &[], &[]);
@@ -7225,7 +7321,7 @@ mod tests {
                     v.in_view && solid,
                     v.casts && f.pass != Pass::Hidden,
                     v.reflects && solid,
-                    v.reflects && solid && g.avatar(i).is_none() && g.skeleton_owner.is_none(),
+                    v.probes && solid && g.avatar(i).is_none() && g.skeleton_owner.is_none(),
                     v.in_view,
                 ),
                 None => (false, false, false, false, false),

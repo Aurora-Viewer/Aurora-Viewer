@@ -873,7 +873,7 @@ impl WorldMapUi {
             .filter(|i| i.asset_type == 3 && !i.asset_id.is_nil())
             .map(|i| (i.id, i.asset_id, i.name.clone()))
             .collect();
-        lms.sort_by_key(|l| l.2.to_lowercase());
+        lms.sort_by_key(|l| crate::natural_order::key(&l.2));
         let current = self
             .landmark
             .as_ref()
