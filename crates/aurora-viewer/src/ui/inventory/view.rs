@@ -1065,9 +1065,20 @@ impl TreeState {
         !self.closed[tab.min(4)].contains(&id)
     }
 
-    pub fn set_open(&mut self, id: Uuid, tab: usize, open: bool) {
-        if self.is_open(id, tab) != open {
-            self.toggle(id, tab);
+    /// Open or close a folder of the inventory's results, which show open
+    /// unless closed: an opened folder shows one level, its own folders
+    /// closed, as LLFolderViewFolder::setOpen opens the folder alone.
+    pub fn set_open(&mut self, view: &ViewCache, id: Uuid, tab: usize, open: bool) {
+        let closed = &mut self.closed[tab.min(4)];
+        if !open {
+            if closed.insert(id) {
+                self.key = None;
+            }
+        } else if closed.remove(&id) {
+            if let Some(children) = view.result_children.get(&id) {
+                closed.extend(children.iter().filter(|id| view.folders.contains(id)).copied());
+            }
+            self.key = None;
         }
     }
 
@@ -1724,6 +1735,48 @@ mod tests {
         assert!(tree.order.contains(&id(20)));
         tree.prepare(&view, id(2), 0, false);
         assert_eq!(tree.order, [id(7), id(20)]);
+    }
+
+    #[test]
+    fn a_result_folder_reopens_one_level_deep() {
+        let (mut inv, facts) = fixture();
+        folder(&mut inv, 7, id(2), -1, "nested textures");
+        let mut texture = item(20, id(7), "texture", 500);
+        texture.inv_type = 0;
+        texture.asset_type = 0;
+        inv.add_items(vec![texture]);
+        let filters = Filters {
+            types: 1,
+            ..Default::default()
+        };
+        let mut view = ViewCache::default();
+        view.search(
+            &inv,
+            inv.root,
+            "",
+            &InventoryPreferences::default(),
+            &filters,
+            0,
+            None,
+            &facts,
+            facts.agent,
+            1000,
+        );
+        let mut tree = TreeState::default();
+        tree.prepare(&view, inv.root, 0, true);
+        assert_eq!(tree.order, [id(1), id(2), id(7), id(20)], "a search opens the matches' folders");
+        tree.set_open(&view, id(2), 0, false);
+        tree.set_open(&view, id(2), 0, true);
+        assert!(tree.is_open(id(2), 0) && !tree.is_open(id(7), 0));
+        tree.prepare(&view, inv.root, 0, true);
+        assert_eq!(tree.order, [id(1), id(2), id(7)]);
+        tree.set_open(&view, id(7), 0, true);
+        tree.prepare(&view, inv.root, 0, true);
+        assert_eq!(tree.order, [id(1), id(2), id(7), id(20)]);
+        tree.set_all(&view, inv.root, 0, false);
+        tree.set_all(&view, inv.root, 0, true);
+        tree.prepare(&view, inv.root, 0, true);
+        assert_eq!(tree.order, [id(1), id(2), id(7), id(20)], "Expand all still opens every level");
     }
 
     #[test]

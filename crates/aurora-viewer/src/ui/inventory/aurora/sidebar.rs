@@ -62,6 +62,14 @@ impl Sidebar {
         }
     }
 
+    /// Close a folder and its folders: it opens again one level deep, as
+    /// in the tree.
+    fn collapse(&mut self, view: &ViewCache, inv: &Inventory, id: Uuid) {
+        for id in super::super::rows::folders(view, inv, id, true, true) {
+            self.set_open(id, false);
+        }
+    }
+
     /// The folders under the root, in the inventory's order, the Trash
     /// left for the foot of the column.
     fn prepare(&mut self, view: &ViewCache, inv: &Inventory, base: Uuid, show_library: bool) {
@@ -465,13 +473,14 @@ pub(super) fn show(
                 open = !open;
             }
             folder_target(ui, p, inv, row.id, &response, &mut open, st, prefs, facts, actions);
-            if open != row.open {
-                st.side.set_open(row.id, open);
-                if open
-                    && inv
-                        .folders
-                        .get(&row.id)
-                        .is_some_and(|f| matches!(f.state, FetchState::Unknown | FetchState::Failed))
+            if row.open && !open {
+                st.side.collapse(&st.view, inv, row.id);
+            } else if open && !row.open {
+                st.side.set_open(row.id, true);
+                if inv
+                    .folders
+                    .get(&row.id)
+                    .is_some_and(|f| matches!(f.state, FetchState::Unknown | FetchState::Failed))
                 {
                     inv.request(row.id);
                 }
@@ -571,5 +580,10 @@ mod tests {
         side.prepare(&view, &inv, inv.root, true);
         let listed: Vec<_> = side.rows.iter().map(|r| (r.id.as_u128(), r.depth)).collect();
         assert_eq!(listed, [(10, 0), (11, 1), (20, 0)]);
+        // Closing a folder closes its folders: it reopens one level deep.
+        side.set_open(id(11), true);
+        side.collapse(&view, &inv, id(10));
+        side.set_open(id(10), true);
+        assert!(!side.open.contains(&id(11)));
     }
 }

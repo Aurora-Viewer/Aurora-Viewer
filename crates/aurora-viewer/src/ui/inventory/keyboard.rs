@@ -76,9 +76,11 @@ fn fold(inv: &Inventory, st: &mut InventoryUi, filtered: bool, right: bool) {
     if right || open {
         if folder {
             if filtered {
-                st.result_tree.set_open(current, st.tab, right);
+                st.result_tree.set_open(&st.view, current, st.tab, right);
+            } else if right {
+                st.plain.set_open(current, true);
             } else {
-                st.plain.set_open(current, right);
+                st.plain.collapse(&st.view, inv, current);
             }
         }
         return;
@@ -243,8 +245,11 @@ mod tests {
         assert!(st.plain.is_open(id(10)), "its parent stays open");
         fold(&inv, &mut st, false, false);
         assert_eq!(st.selection, HashSet::from([id(10)]), "Left on a closed folder climbs");
+        st.view.prepare(&inv, view::Sort::default());
+        st.plain.set_open(id(11), true);
         fold(&inv, &mut st, false, false);
         assert!(!st.plain.is_open(id(10)));
+        assert!(!st.plain.is_open(id(11)), "closing a folder closes its folders");
         fold(&inv, &mut st, false, false);
         assert_eq!(st.selected, Some(id(10)), "no row above a top folder of a hidden root");
         assert!(!st.plain.is_open(id(1)));
