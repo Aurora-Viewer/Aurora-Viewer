@@ -275,6 +275,17 @@ fn reflection_probe_selection_toggle_controls_rectangles_and_resets_at_startup()
     );
 }
 
+fn receive_link_properties(world: &World, tool: &mut BuildTool) {
+    let mut sim = demo_sim::DemoSim::default();
+    for (handle, local_ids) in tool.group_by_region(world, &tool.roots(world)) {
+        for event in sim.reply(world, &BuildCmd::Select { handle, local_ids }) {
+            if let NetEvent::ObjectProperties(props) = event {
+                tool.on_properties(world, props);
+            }
+        }
+    }
+}
+
 #[test]
 fn confirmed_link_reconciles_selection_colors_and_packet_order() {
     let (mut world, mut tool, settings) = fixture();
@@ -295,6 +306,7 @@ fn confirmed_link_reconciles_selection_colors_and_packet_order() {
         let idx = object(&world, id);
         tool.click_select(&mut world, &settings, Some(idx), extend);
     }
+    receive_link_properties(&world, &mut tool);
     tool.link(&mut world);
     assert_eq!(tool.status, aurora_i18n::tr!("build-link-pending"));
     assert_eq!(tool.highlighted(&world).iter().filter(|(_, root)| *root).count(), 2);
@@ -341,6 +353,7 @@ fn linked_three(world: &mut World, tool: &mut BuildTool, settings: &BuildSetting
         let idx = object(world, *id);
         tool.click_select(world, settings, Some(idx), i > 0);
     }
+    receive_link_properties(world, tool);
     tool.link(world);
     run_sim(world, tool, sim);
     tool.advance_link(world, Instant::now());
@@ -1433,6 +1446,7 @@ fn duplicate_copies_only_roots_with_copy_and_link_needs_modify() {
     assert!(copyable_object(&world, a) && !copyable_object(&world, b));
     tool.duplicate(&mut world, &settings, Vec3::X, false);
     assert_eq!(duplicates(&tool), [vec![99610]], "the no-copy object stays behind");
+    receive_link_properties(&world, &mut tool);
     // Link and Unlink: one object we may modify
     assert!(!tool.can_link(&world) && !tool.can_unlink(&world));
     tool.out.clear();
