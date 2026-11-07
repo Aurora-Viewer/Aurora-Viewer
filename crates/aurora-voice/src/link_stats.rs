@@ -13,7 +13,10 @@
 //! trip of the media streams (`RTCRemoteInboundRtpStreamStats::round_trip_time`
 //! is always 0) and the packets it drops from a full track queue
 //! (`packets_discarded`). The ICE round trip stands in for the first; the
-//! largest queue seen at once and the missing packets for the second.
+//! largest queue seen at once and the missing packets for the second. It
+//! also counts only standalone receiver reports: a peer that sends media
+//! too may carry its reports inside its sender reports, and then the
+//! server's view of our stream stays "-" (seen in the loopback test).
 
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
