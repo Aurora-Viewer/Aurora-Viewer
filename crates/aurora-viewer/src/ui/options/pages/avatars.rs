@@ -315,6 +315,11 @@ pub fn page(cx: &mut Cx, tab: usize) {
             // ANIM_AGENT_CUSTOMIZE, always played by the Legacy Viewer
             cx.group(tr!("ui-options-appearance-editing"), |cx| {
                 cx.toggle(
+                    tr!("appearance-editor-camera"),
+                    tr!("ui-options-appearance-camera-hint"),
+                    &field!(appearance_camera_movement),
+                );
+                cx.toggle(
                     tr!("ui-options-customize-animation"),
                     tr!("ui-options-customize-animation-hint"),
                     &field!(customize_animation),

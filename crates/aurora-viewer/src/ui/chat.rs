@@ -3181,7 +3181,7 @@ fn classic_pane(
                         (*id, world.social.name_of(id), info.moderators.contains(id))
                     })
                     .collect();
-                names.sort_by_key(|(_, n, _)| n.to_lowercase());
+                names.sort_by_key(|(_, n, _)| crate::natural_order::key(n));
                 if names.is_empty() {
                     ui.label(
                         RichText::new(aurora_i18n::tr!("ui-chat-loading-participants"))
