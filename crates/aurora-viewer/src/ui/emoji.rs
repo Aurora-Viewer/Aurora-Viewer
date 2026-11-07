@@ -49,6 +49,7 @@ fn single_char(s: &str) -> Option<char> {
 }
 
 pub mod codes;
+pub mod recent;
 
 /// Replace `:shortcode:` (GitHub / gemoji names, e.g. `:hearts:`, `:smile:`)
 /// by the emoji, by the rules of the chat fields ([`codes::expand`]: not
@@ -453,6 +454,38 @@ impl Emoji {
         out
     }
 
+    /// A clickable emoji in the rect of `resp`, the picker's and the recent
+    /// row's: the pill under the pointer, the picture, its shortcode.
+    fn cell(&mut self, ui: &egui::Ui, p: &Palette, c: char, resp: egui::Response) -> egui::Response {
+        let rect = resp.rect;
+        if resp.hovered() {
+            ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
+        }
+        if let Some(t) = self.texture(ui.ctx(), c) {
+            // keep the image's proportions: the 2D font's bitmaps are wider
+            // than tall (136 × 128)
+            let slot = rect.shrink(3.0);
+            let size = t.size_vec2();
+            let ir = egui::Rect::from_center_size(slot.center(), size * (slot.width() / size.x).min(slot.height() / size.y));
+            ui.painter().image(
+                t.id(),
+                ir,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                crate::ui::widgets::PICTURE_TINT,
+            );
+        }
+        // tooltip: shortcode to type it in chat
+        let s = c.to_string();
+        let info = emojis::get(&s).or_else(|| emojis::get(&format!("{s}\u{FE0F}")));
+        match info {
+            Some(e) => match e.shortcode() {
+                Some(code) => resp.on_hover_text(format!(":{code}:  {}", e.name())),
+                None => resp.on_hover_text(e.name()),
+            },
+            None => resp,
+        }
+    }
+
     /// Emoji picker grid. Opened, its search takes the keyboard (typing
     /// filters at once) and keeps it while nothing else has it; Escape is
     /// taken here, before the search field or anything after the picker sees
@@ -533,35 +566,8 @@ impl Emoji {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 2.0;
                         for c in list.iter().skip(r * cols).take(cols) {
-                            let (rect, resp) = ui.allocate_exact_size(egui::vec2(cell, cell), egui::Sense::click());
-                            if resp.hovered() {
-                                ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
-                            }
-                            if let Some(t) = self.texture(ui.ctx(), *c) {
-                                // keep the image's proportions: the 2D font's
-                                // bitmaps are wider than tall (136 × 128)
-                                let slot = rect.shrink(3.0);
-                                let size = t.size_vec2();
-                                let ir =
-                                    egui::Rect::from_center_size(slot.center(), size * (slot.width() / size.x).min(slot.height() / size.y));
-                                ui.painter().image(
-                                    t.id(),
-                                    ir,
-                                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                                    crate::ui::widgets::PICTURE_TINT,
-                                );
-                            }
-                            // tooltip: shortcode to type it in chat
-                            let s = c.to_string();
-                            let info = emojis::get(&s).or_else(|| emojis::get(&format!("{s}\u{FE0F}")));
-                            let resp = match info {
-                                Some(e) => match e.shortcode() {
-                                    Some(code) => resp.on_hover_text(format!(":{code}:  {}", e.name())),
-                                    None => resp.on_hover_text(e.name()),
-                                },
-                                None => resp,
-                            };
-                            if resp.clicked() {
+                            let (_, resp) = ui.allocate_exact_size(egui::vec2(cell, cell), egui::Sense::click());
+                            if self.cell(ui, p, *c, resp).clicked() {
                                 chosen = Some(*c);
                             }
                         }
