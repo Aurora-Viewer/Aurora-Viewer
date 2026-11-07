@@ -872,6 +872,8 @@ pub struct Scene {
     /// class only the faces using it are classified again.
     slot_users: std::collections::BTreeSet<(u32, u32)>,
     alpha_changes_tmp: Vec<u32>,
+    /// `rebuild_reslotted`'s list, kept for its room.
+    reslotted_tmp: Vec<Uuid>,
     /// Main-thread time a frame gives to the full syncs that can wait
     /// (new objects, geometry bound, faces rebuilt); the others wait in
     /// the backlog (sync_sets.rs). Set by the app from the frame time.
@@ -1510,6 +1512,7 @@ impl Scene {
             preview_images: HashMap::new(),
             slot_users: Default::default(),
             alpha_changes_tmp: Vec::new(),
+            reslotted_tmp: Vec::new(),
             sync_budget: std::time::Duration::from_millis(1),
             geom_trash: Default::default(),
             pick: Default::default(),
@@ -2657,6 +2660,7 @@ impl Scene {
                 }
             }
         }
+        self.rebuild_reslotted(world);
         use crate::frame_profile::Part;
         let t0 = Instant::now();
         let mut slow = self.sync_slow.map(|limit| sync_slow::SlowSync::new(limit, t0));
@@ -3015,6 +3019,36 @@ impl Scene {
                 log::info!("{line}");
             }
         }
+    }
+
+    /// Textures that went without a slot (a full texture table) and have one
+    /// now (`TextureStreamer::take_reslotted`): the objects and avatars
+    /// whose faces draw them still hold the white texture, and are built
+    /// again. One pass over the objects, only in a frame that follows such
+    /// a round (a few times a second at most, and only after a full table).
+    fn rebuild_reslotted(&mut self, world: &mut World) {
+        let mut ids = std::mem::take(&mut self.reslotted_tmp);
+        self.textures.take_reslotted(&mut ids);
+        if !ids.is_empty() {
+            let wanted: std::collections::HashSet<Uuid> = ids.iter().copied().collect();
+            for (idx, g) in self.gpu.iter_mut().enumerate() {
+                if !g.tex_ids.iter().any(|t| wanted.contains(t)) {
+                    continue;
+                }
+                let Some(o) = world.objects.get_mut_untracked(idx) else {
+                    continue;
+                };
+                o.render.needs_records = true;
+                o.material_dirty = true;
+                if g.is_avatar {
+                    // (the body parts: `needs_full`)
+                    g.tex_generation = u64::MAX;
+                }
+                self.sets.dirty.insert(idx);
+            }
+            ids.clear();
+        }
+        self.reslotted_tmp = ids;
     }
 
     /// Classify again the faces whose base texture is in one of `slots`
