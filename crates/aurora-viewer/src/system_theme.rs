@@ -11,9 +11,8 @@
 //!   leaves the skin's accent; without a portal the option does nothing.
 //! - Windows and macOS: the mode from winit (`Window::theme`,
 //!   `WindowEvent::ThemeChanged`). The accent is read again once a second
-//!   (`UISettings`, `NSColor::controlAccentColor`), like the skin's files:
-//!   neither system documents its change notice for a program like this
-//!   one (unpackaged on Windows, an accent-only change on macOS).
+//!   (`UISettings`, `NSColor::controlAccentColor`), like the skin's files;
+//!   a change notice is a later step (TASKS.md).
 //!
 //! A colour the user chose in Preferences wins over the system's (`colors`).
 //! Dark keeps the skin's own background and text; a system with no
@@ -110,6 +109,17 @@ pub fn start(wait: bool) {
     });
 }
 
+/// Whether the option is on now (every frame): the thread outlives it, and
+/// a read that repeats stops while nothing follows it.
+pub fn set_active(on: bool) {
+    ACTIVE.store(on, Ordering::Relaxed);
+}
+
+#[cfg(any(windows, test))]
+fn active() -> bool {
+    ACTIVE.load(Ordering::Relaxed)
+}
+
 /// Once a frame while following.
 pub fn tick() {
     if !scripted() {
@@ -157,9 +167,12 @@ fn demo_active() -> bool {
     *ACTIVE.get_or_init(|| std::env::var_os("AURORA_DEMO").is_some() && std::env::var_os("AURORA_DEMO_SYSTEM_THEME").is_some())
 }
 
-/// Whether a demo run follows its scenario, whatever the settings say.
-pub fn demo_follows() -> bool {
-    demo_active()
+static ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Whether the interface follows the system: the option, or a demo run's
+/// scenario, whatever the settings say.
+pub fn following(settings: &crate::settings::Settings) -> bool {
+    settings.follow_system_theme || demo_active()
 }
 
 /// The scenario's looks; `system` follows the real system in a demo run.
@@ -196,8 +209,9 @@ fn parse_demo(raw: &str) -> DemoLooks {
         if let Some(secs) = part.trim().strip_prefix("secs=") {
             if let Ok(secs) = secs.parse::<f32>()
                 && secs > 0.0
+                && let Ok(every) = Duration::try_from_secs_f32(secs)
             {
-                demo.every = Duration::from_secs_f32(secs);
+                demo.every = every;
             }
             continue;
         }
@@ -323,7 +337,7 @@ mod backend {
 
 #[cfg(windows)]
 mod backend {
-    use super::update;
+    use super::{active, update};
     use std::sync::mpsc::Sender;
     use std::time::Duration;
     use windows::UI::ViewManagement::{UIColorType, UISettings};
@@ -351,7 +365,9 @@ mod backend {
         let _ = ready.send(());
         loop {
             std::thread::sleep(Duration::from_secs(1));
-            read();
+            if active() {
+                read();
+            }
         }
     }
 

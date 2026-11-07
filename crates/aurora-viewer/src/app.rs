@@ -34,6 +34,7 @@ mod audio_mute;
 mod avatar_render_settings;
 mod bridge;
 mod busy_pause;
+mod follow_system;
 mod gaming_mode;
 mod movelock;
 mod object_export;
@@ -1515,11 +1516,6 @@ fn wanted_disable_glass(settings: &Settings) -> bool {
     settings.disable_glass
 }
 
-/// Whether the interface follows the system (`crate::system_theme`).
-fn following_system(settings: &Settings) -> bool {
-    settings.follow_system_theme || crate::system_theme::demo_follows()
-}
-
 /// The interface colours: the preferences', with the system's when they
 /// are followed, or in demo mode `AURORA_DEMO_COLORS` (a capture's, never
 /// saved).
@@ -1529,7 +1525,7 @@ fn wanted_interface_colors(settings: &Settings) -> crate::interface_colors::Inte
     {
         return colors;
     }
-    if following_system(settings) {
+    if crate::system_theme::following(settings) {
         return crate::system_theme::colors(crate::system_theme::current(), &settings.interface_colors);
     }
     settings.interface_colors.clone()
@@ -1789,7 +1785,7 @@ impl App {
         crate::colorblind::set(wanted_vision(&settings));
         crate::high_contrast::set(wanted_high_contrast(&settings));
         crate::disable_glass::set(wanted_disable_glass(&settings));
-        if following_system(&settings) {
+        if crate::system_theme::following(&settings) {
             crate::system_theme::start(true);
         }
         crate::interface_colors::set(wanted_interface_colors(&settings));
