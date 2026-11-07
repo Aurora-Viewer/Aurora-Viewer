@@ -35,9 +35,12 @@ pub enum GuideGrid<'a> {
     SecondLife,
     /// Second Life's beta grid (grid id "Aditi").
     SecondLifeBeta,
-    /// Another grid: the guide it names, the region's first.
+    /// Another grid: the guide it names, the region's first. `region` is
+    /// `None` when the region does not give the key at all: then (and only
+    /// then) the login response's page counts, as in
+    /// LFSimFeatureHandler::setSupportedFeatures.
     OpenSim {
-        region: &'a str,
+        region: Option<&'a str>,
         login: &'a str,
         /// The grid's id ([GRID_LOWERCASE]): its saved nickname.
         id: &'a str,
@@ -55,7 +58,10 @@ pub fn guide_url(grid: GuideGrid, language: &str) -> Option<String> {
         GuideGrid::SecondLife => (SECOND_LIFE_GUIDE, "agni"),
         GuideGrid::SecondLifeBeta => (SECOND_LIFE_GUIDE, "aditi"),
         GuideGrid::OpenSim { region, login, id } => {
-            let template = [region, login].into_iter().map(str::trim).find(|u| !u.is_empty())?;
+            let template = region.unwrap_or(login).trim();
+            if template.is_empty() {
+                return None;
+            }
             (template, id)
         }
     };
@@ -136,6 +142,12 @@ impl DestinationsUi {
 
     fn contents(&mut self, ui: &mut egui::Ui, p: &Palette, env: &GuideWeb) {
         let Some(url) = env.url else {
+            // the guide is gone (a Hypergrid teleport): stop the browser so
+            // that no focus or key stays with a page that is not drawn
+            if self.web.running() || self.web.focused || !self.loaded.is_empty() {
+                self.web.close();
+                self.loaded.clear();
+            }
             ui.add_space(24.0);
             ui.vertical_centered(|ui| {
                 ui.label(
@@ -174,8 +186,8 @@ mod tests {
 
     #[test]
     fn another_grid_names_its_own_guide_or_has_none() {
-        let grid = |region, login| GuideGrid::OpenSim {
-            region,
+        let grid = |region: &'static str, login| GuideGrid::OpenSim {
+            region: Some(region).filter(|r| *r != "<absent>"),
             login,
             id: "MyGrid",
         };
@@ -185,11 +197,17 @@ mod tests {
             Some("https://r.example/mygrid/ja")
         );
         assert_eq!(
-            guide_url(grid("", "https://l.example/g?x=a b"), "en").as_deref(),
+            guide_url(grid("<absent>", "https://l.example/g?x=a b"), "en").as_deref(),
+            Some("https://l.example/g?x=a%20b")
+        );
+        // the region's key given empty: no guide, whatever the login says
+        assert_eq!(guide_url(grid("", "https://l.example/"), "en"), None);
+        assert_eq!(
+            guide_url(grid("<absent>", "https://l.example/g?x=a b"), "en").as_deref(),
             Some("https://l.example/g?x=a%20b")
         );
         // none named, or not a web page: no guide
-        assert_eq!(guide_url(grid("", ""), "en"), None);
+        assert_eq!(guide_url(grid("<absent>", ""), "en"), None);
         assert_eq!(guide_url(grid("javascript:alert(1)", ""), "en"), None);
         assert_eq!(guide_url(grid("file:///c:/guide.html", ""), "en"), None);
         assert_eq!(guide_url(grid("https://", ""), "en"), None);
@@ -198,7 +216,7 @@ mod tests {
     #[test]
     fn the_session_never_goes_into_the_address() {
         let grid = GuideGrid::OpenSim {
-            region: "https://g.example/?sid=[SESSION_ID]&grid=[GRID]",
+            region: Some("https://g.example/?sid=[SESSION_ID]&grid=[GRID]"),
             login: "",
             id: "",
         };

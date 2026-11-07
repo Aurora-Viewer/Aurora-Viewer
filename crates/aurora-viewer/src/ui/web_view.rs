@@ -119,6 +119,8 @@ pub struct WebView {
     pub load_secs: Option<f32>,
     cursor: String,
     scratch: Vec<Color32>,
+    /// The sign-in cookie was handed to the running browser.
+    cookie_set: bool,
     /// Address of the page shown, as the browser reports it (it follows the
     /// links clicked in the page).
     pub location: String,
@@ -162,6 +164,7 @@ impl WebView {
         self.profile = None;
         self.texture = None;
         self.focused = false;
+        self.cookie_set = false;
     }
 
     pub fn plugin_mut(&mut self) -> Option<&mut MediaPlugin> {
@@ -283,6 +286,7 @@ impl WebView {
                         // LLViewerMedia::getOpenIDCookie before the first page
                         if let Some(c) = cookie {
                             p.set_cookie(c);
+                            self.cookie_set = true;
                         }
                         self.plugin = Some(p);
                         self.size = px;
@@ -317,6 +321,16 @@ impl WebView {
         if self.size != px {
             p.set_size(px.0, px.1);
             self.size = px;
+        }
+        // a cookie that arrived after the browser started (the sign-in takes a
+        // moment): install it, and reload the page that went out without it
+        let late_cookie = !self.cookie_set && cookie.is_some();
+        if let Some(c) = cookie.filter(|_| late_cookie) {
+            p.set_cookie(c);
+            self.cookie_set = true;
+            if !self.nav_pending && !self.url.is_empty() {
+                p.browse_reload(false);
+            }
         }
         if std::mem::take(&mut self.nav_pending) {
             p.load_uri(&self.url);

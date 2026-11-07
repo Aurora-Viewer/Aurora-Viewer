@@ -14263,7 +14263,7 @@ impl App {
             crate::settings::GridChoice::SecondLife => guide_url(GuideGrid::SecondLife, language),
             crate::settings::GridChoice::SecondLifeBeta => guide_url(GuideGrid::SecondLifeBeta, language),
             crate::settings::GridChoice::Custom => {
-                let region = self.world.opensim_extras().map(|e| e.destination_guide_url.as_str()).unwrap_or("");
+                let region = self.world.opensim_extras().and_then(|e| e.destination_guide_url.as_deref());
                 let login = self
                     .world
                     .login
