@@ -285,9 +285,8 @@ fn main_column(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: 
         if v.can(powers::LAND_CHANGE_IDENTITY) {
             let width = (ui.available_width() * 0.6).min(330.0);
             let r = super::parcel_name_field(ui, true, &mut s.name, width).on_hover_text(aurora_i18n::tr!("common-name-2"));
-            if let Some(name) = s.name.after(&r) {
-                world.land.update(|u| u.name = name);
-            }
+            let pending = s.name.after(&r);
+            s.apply_name(world, pending);
         } else {
             ui.add(egui::Label::new(semibold(ui, &parcel.name, 19.0, p.ink)).truncate());
         }

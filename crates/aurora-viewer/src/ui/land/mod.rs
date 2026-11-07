@@ -21,6 +21,8 @@ pub(crate) use access::import_csv;
 mod general;
 mod manage;
 mod media;
+#[cfg(test)]
+mod name_tests;
 mod objects;
 mod options;
 mod overview;
@@ -349,21 +351,40 @@ impl LandUi {
     }
 
     fn commit_name(&mut self, world: &mut World) {
+        let pending = self.name.take_pending();
+        self.apply_name(world, pending);
+    }
+
+    fn apply_name(&mut self, world: &mut World, pending: Option<String>) {
+        let Some(name) = pending else {
+            return;
+        };
         let selected = world.land.sel.as_ref().and_then(|selection| {
             selection
                 .parcel
                 .as_deref()
-                .map(|parcel| ((selection.handle, parcel.local_id), parcel.name.as_str()))
+                .map(|parcel| ((selection.handle, parcel.local_id), parcel))
         });
         let target = selected.map(|(target, _)| target);
-        if target != self.name_target {
-            self.name.reset(selected.map_or("", |(_, name)| name));
+        // LLPanelLandGeneral::refresh / isParcelModifiableByAgent with
+        // GP_LAND_CHANGE_IDENTITY (llfloaterland.cpp, llviewerparcelmgr.cpp).
+        // Ownership, group powers and lease status may change while typing.
+        let can_identity = selected.is_some_and(|(_, parcel)| {
+            modifiable_by_agent(
+                parcel,
+                &AgentRights {
+                    id: world.agent_id,
+                    groups: &world.groups.groups,
+                },
+                crate::world::land::powers::LAND_CHANGE_IDENTITY,
+            )
+        });
+        if target != self.name_target || !can_identity {
+            self.name.reset(selected.map_or("", |(_, parcel)| parcel.name.as_str()));
             self.name_target = target;
             return;
         }
-        if let Some(name) = self.name.take_pending() {
-            world.land.update(|u| u.name = name);
-        }
+        world.land.update(|u| u.name = name);
     }
 
     fn commit_name_for_transition(&mut self, page: Page, view_as_visitor: bool, world: &mut World) {
@@ -1105,11 +1126,13 @@ mod tests {
 
     fn selected_world() -> World {
         let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(1);
         world.land.select_at(LAND_HANDLE, glam::Vec3::ZERO, (256.0, 256.0));
         let parcel = Arc::new(ParcelInfo {
             local_id: 3,
             name: "Old name".into(),
             owner_id: world.agent_id,
+            status: aurora_net::land::OS_LEASED,
             ..Default::default()
         });
         world.land.apply(
