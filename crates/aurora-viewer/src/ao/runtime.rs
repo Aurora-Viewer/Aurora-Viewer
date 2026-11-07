@@ -25,6 +25,8 @@ pub struct Frame<'a> {
     pub seat_animations: bool,
     pub underwater: bool,
     pub region: Option<u64>,
+    /// Teleports completed so far (`World::teleport_arrivals`).
+    pub teleports: u64,
 }
 
 #[derive(Default)]
@@ -59,6 +61,7 @@ pub struct Runtime {
     restoring: Option<(State, PlayingAnimation, Instant)>,
     anchor_blend: super::anchor_blend::Blend,
     anchor_signal: Option<PlayingAnimation>,
+    teleports: u64,
 }
 
 impl Default for Runtime {
@@ -85,6 +88,7 @@ impl Default for Runtime {
             restoring: None,
             anchor_blend: Default::default(),
             anchor_signal: None,
+            teleports: 0,
         }
     }
 }
@@ -376,6 +380,19 @@ impl Runtime {
             self.anchor_signal = None;
             self.raw_hold = None;
             self.suppressed.clear();
+            self.restoring = None;
+        }
+        // LLAgent::teleportCore (indra/newview/llagent.cpp) gets a seated
+        // agent off its seat, and the Legacy AO ends its sit override when
+        // the arrival's animation list no longer has the stock sit
+        // (AOEngine::override(ANIM_AGENT_SIT, false), aoengine.cpp). Ours
+        // stopped that stock sit itself and holds it: a teleport that left
+        // us off any seat ends that hold, and the sit override with it, even
+        // when no new stock state follows (issue #2700).
+        let teleported = frame.teleports != self.teleports;
+        self.teleports = frame.teleports;
+        if teleported && !frame.on_object && matches!(self.raw_hold, Some((State::Sitting, _))) {
+            self.raw_hold = None;
             self.restoring = None;
         }
         self.restoring = self

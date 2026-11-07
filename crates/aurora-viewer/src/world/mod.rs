@@ -454,6 +454,9 @@ pub struct World {
     pub object_im_filter: object_im_filter::Settings,
     pub anti_spam: anti_spam::Registry,
     pub teleporting: bool,
+    /// Teleports completed this session (their AgentMovementComplete): the
+    /// AO ends a sit the teleport ended (`ao::runtime::Frame::teleports`).
+    pub teleport_arrivals: u64,
     /// Only a teleport to another region needs a loading screen. Unknown
     /// destinations wait for TeleportFinish to identify the destination.
     pub tp_show_progress: bool,
@@ -812,6 +815,7 @@ impl World {
             tp_progress: 0.0,
             tp_status: String::new(),
             tp_failed: false,
+            teleport_arrivals: 0,
             outfit: Default::default(),
             diag_reported: HashSet::new(),
             events_this_frame: 0,
@@ -2740,6 +2744,7 @@ impl World {
                 }
                 self.arrived_once = true;
                 if self.teleporting {
+                    self.teleport_arrivals += 1;
                     self.friends_only_teleport_arrival();
                 }
                 self.teleporting = false;
@@ -6620,6 +6625,33 @@ mod motion_tests {
         assert_eq!((o.parent_id, o.position), (0, Vec3::new(40.0, 50.0, 30.0)));
         assert!(!world.agent.is_sitting());
         assert_eq!(world.agent.position, Vec3::new(40.0, 50.0, 30.0));
+        assert_eq!(world.teleport_arrivals, 1, "the AO learns the teleport ended (#2700)");
+    }
+
+    /// Only a completed teleport counts for the AO (`ao::runtime::Frame::teleports`):
+    /// not the login, a failed teleport nor a walk into the neighbour region.
+    #[test]
+    fn only_completed_teleports_count_as_arrivals() {
+        let (mut world, handle) = teleport_fixture();
+        let arrive = |world: &mut World| {
+            world.apply(NetEvent::AgentMovementComplete {
+                handle,
+                position: Vec3::new(40.0, 50.0, 30.0),
+                look_at: Vec3::X,
+            });
+        };
+        arrive(&mut world);
+        assert_eq!(world.teleport_arrivals, 0, "a crossing or the login");
+        world.begin_teleport(false);
+        world.apply(NetEvent::TeleportFailed {
+            reason: "Offline test".into(),
+        });
+        assert_eq!(world.teleport_arrivals, 0, "a failed teleport arrives nowhere");
+        world.begin_teleport(false);
+        arrive(&mut world);
+        assert_eq!(world.teleport_arrivals, 1);
+        arrive(&mut world);
+        assert_eq!(world.teleport_arrivals, 1, "a repeated confirmation is no new teleport");
     }
 
     #[test]
