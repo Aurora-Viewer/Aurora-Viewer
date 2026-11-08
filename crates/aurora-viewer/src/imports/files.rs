@@ -526,10 +526,13 @@ pub(super) fn localize(entries: &mut [Entry], prefs: &Preferences) {
     for entry in entries {
         entry.local = true;
         entry.local_assume_meters = prefs.local_assume_meters;
-        let mut paths = vec![entry.path.clone()];
+        // Some loaders already know source dependencies that are not retained
+        // on decoded image data (notably glTF material map URIs). Keep those
+        // watches when the entry is made local.
+        let mut paths = entry.watch.take().map_or_else(|| vec![entry.path.clone()], |watch| watch.paths);
         if let Some(Source::Mesh(draft)) = &entry.source {
             entry.local_live = prefs.local_mesh_auto_reload;
-            paths = mesh_dependencies(&entry.path, &draft.scene);
+            paths.extend(mesh_dependencies(&entry.path, &draft.scene));
             for lod in &draft.lods {
                 if let Some(path) = &lod.path {
                     paths.extend(
@@ -1130,7 +1133,7 @@ mod tests {
         );
     }
     #[test]
-    fn texture_picker_local_files_watch_the_source_for_prim_and_mesh_face_refresh() {
+    fn local_textures_and_materials_watch_their_source_files() {
         let files = Files::new();
         let path = files.0.join("texture-demo.png");
         let mut entries = load(&path, Choice::Texture, Default::default(), 30, &Preferences::default(), true).expect("local texture");
@@ -1143,8 +1146,22 @@ mod tests {
         assert_eq!(watch.paths.as_slice(), std::slice::from_ref(&path));
         let before = watch.stamp.clone();
 
-        std::fs::write(&path, b"updated local texture file").expect("change source file");
+        image::save_buffer(&path, &[180u8; 16 * 16 * 4], 16, 16, image::ColorType::Rgba8).expect("change source image");
         assert_ne!(before, super::super::local::stamp(&watch.paths));
+
+        let material_path = files.0.join("material-demo.gltf");
+        let mut materials = files.load("material-demo.gltf", Choice::Local);
+        localize(&mut materials, &Preferences::default());
+        let entry = &materials[0];
+        assert!(matches!(entry.source, Some(Source::Material { .. })));
+        let watch = entry.watch.as_ref().expect("local material file watch");
+        assert!(watch.paths.contains(&material_path));
+        let map_path = files.0.join("texture-demo.png").canonicalize().expect("map path");
+        assert!(
+            watch.paths.contains(&map_path),
+            "watched paths: {:?}; expected map: {map_path:?}",
+            watch.paths
+        );
     }
     #[test]
     fn long_wav_sources_enable_bounded_splitting_instead_of_uploading_an_oversized_asset() {
