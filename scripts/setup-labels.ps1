@@ -48,7 +48,7 @@ $labels = @(
     @{ Name = 'on-hold'; Color = '94A3B8'; Desc = 'PR paused by a maintainer: not reviewed nor merged until the label is removed' },
     # PR whose description misses parts of the template (PR description
     # workflow, scripts/check-pr-description.ps1, which creates it if missing)
-    @{ Name = 'needs-description'; Color = '94A3B8'; Desc = 'PR description incomplete: not reviewed until it follows the template (set by the PR description workflow)' },
+    @{ Name = 'needs-description'; Color = '94A3B8'; Desc = 'PR description incomplete: not reviewed until it follows the template' },
     # crash report signed by the Crash triage workflow (docs/BUG_REPORTING.md)
     @{ Name = 'crash-triaged'; Color = '94A3B8'; Desc = 'Crash report signed by the Crash triage workflow (set by the workflow)' }
 )
