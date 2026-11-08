@@ -223,7 +223,16 @@ impl ConversationLogUi {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn row(&mut self, ui: &mut egui::Ui, p: &Palette, input: &Inputs, c: &Conversation, name: &str, filter: &str, action: &mut Option<Action>) {
+    fn row(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        input: &Inputs,
+        c: &Conversation,
+        name: &str,
+        filter: &str,
+        action: &mut Option<Action>,
+    ) {
         let world = input.world;
         let key = (c.session, c.time);
         // the ids follow the entry, not its place in the list: a sort while

@@ -793,15 +793,9 @@ mod tests {
             show_blocked: false,
             filter: "",
         };
-        assert_eq!(
-            names(show(&list, view, &none, &none)),
-            ["Alice", "bob", "Carol's group", "dave"]
-        );
+        assert_eq!(names(show(&list, view, &none, &none)), ["Alice", "bob", "Carol's group", "dave"]);
         let by_date = View { sort: Sort::Date, ..view };
-        assert_eq!(
-            names(show(&list, by_date, &none, &none)),
-            ["dave", "bob", "Carol's group", "Alice"]
-        );
+        assert_eq!(names(show(&list, by_date, &none, &none)), ["dave", "bob", "Carol's group", "Alice"]);
         let friends = View {
             friends_first: true,
             ..view
@@ -920,7 +914,13 @@ mod tests {
         let mut log = logging();
         log.log(entry(10, Kind::Private, "Jane", 1));
         log.log(entry(20, Kind::Private, "Bob", 2));
-        let theirs = || vec![entry(10, Kind::Private, "Jane", 1), entry(20, Kind::Private, "Bob", 2), entry(30, Kind::Group, "New", 3)];
+        let theirs = || {
+            vec![
+                entry(10, Kind::Private, "Jane", 1),
+                entry(20, Kind::Private, "Bob", 2),
+                entry(30, Kind::Group, "New", 3),
+            ]
+        };
         // a removal: only that entry is held back
         log.watch_removals();
         log.remove(Uuid::from_u128(1), 10);

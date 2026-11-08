@@ -768,16 +768,14 @@ mod tests {
         let dir = temp();
         let (old, new) = (dir.join("old"), dir.join("new"));
         std::fs::create_dir_all(&old).unwrap();
-        std::fs::write(old.join("Jane Doe.txt"), b"a
-").unwrap();
+        std::fs::write(old.join("Jane Doe.txt"), b"a\n").unwrap();
         std::fs::write(old.join(super::super::conversations::FILE), b"log").unwrap();
         // a folder where the log should land: it cannot be replaced
         std::fs::create_dir_all(new.join(super::super::conversations::FILE)).unwrap();
         let w = Worker::start().unwrap();
         let moved = w.relocate(old.clone(), new.clone()).recv_timeout(Duration::from_secs(10)).unwrap();
         assert!(moved.is_err());
-        assert_eq!(std::fs::read(old.join("Jane Doe.txt")).unwrap(), b"a
-");
+        assert_eq!(std::fs::read(old.join("Jane Doe.txt")).unwrap(), b"a\n");
         assert_eq!(std::fs::read(old.join(super::super::conversations::FILE)).unwrap(), b"log");
         assert!(!new.join("Jane Doe.txt").exists());
         std::fs::remove_dir_all(&dir).unwrap();
