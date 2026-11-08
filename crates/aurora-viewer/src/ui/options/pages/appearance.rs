@@ -187,87 +187,93 @@ fn font(cx: &mut Cx) {
                     .map_or_else(|| tr!("ui-options-no-system-font").to_owned(), |f| f.name.clone());
                 let mut changed = false;
                 let salt = ui.scope_id().with("system-font");
+                let popup = system_font_popup(ui, salt);
+                let opening = !egui::Popup::is_id_open(ui.ctx(), popup);
                 if st.demo_font_list.is_some() {
-                    egui::Popup::open_id(ui.ctx(), ui.make_persistent_id(egui::IdSalt::new(salt)).with("popup"));
+                    egui::Popup::open_id(ui.ctx(), popup);
                 }
-                egui::ComboBox::from_id_salt(salt)
-                    .width(COMBO_W)
-                    .selected_text(shown)
-                    .truncate()
-                    .height(FONT_LIST_H + 40.0)
-                    .show_ui(ui, |ui| {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut st.font_filter)
-                                .hint_text(tr!("ui-options-search-fonts"))
-                                .desired_width(ui.available_width()),
-                        );
-                        let filter = st.font_filter.to_lowercase();
-                        let shown: Vec<&fonts::SystemFont> = list
-                            .iter()
-                            .filter(|f| filter.is_empty() || f.name.to_lowercase().contains(&filter))
-                            .collect();
-                        // only the rows on screen are laid out, at one height,
-                        // each name drawn in its own face by a thread as it
-                        // scrolls into view (`fonts::preview`)
-                        // no shorter than a button, or rows would drift from
-                        // where `show_rows` puts them
-                        let row_h = (ui.text_style_height(&egui::TextStyle::Body) * 1.5).max(ui.spacing().interact_size.y);
-                        // one width: a wide face truncates, never widens the list
-                        let width = FONT_LIST_W;
-                        let pad = ui.spacing().button_padding.x;
-                        // the size a row's button gives its text
-                        let size = egui::TextStyle::Button.resolve(ui.style()).size * fonts::scale(ui.ctx());
-                        let mut previews = fonts::preview::Previews::begin(ui.ctx(), size, width - 2.0 * pad);
-                        egui::ScrollArea::vertical()
-                            .max_height(FONT_LIST_H)
-                            .show_rows(ui, row_h, shown.len(), |ui, rows| {
-                                for i in rows {
-                                    let f = shown[i];
-                                    let key = format!("system:{}", f.path.display());
-                                    let sel = s.font == key;
-                                    let drawn = previews.drawn(f);
-                                    let mut name = RichText::new(&f.name);
-                                    if drawn.is_some() {
-                                        // laid out for the row's size and its
-                                        // screen reader label, its picture
-                                        // painted in its place
-                                        name = name.color(egui::Color32::TRANSPARENT);
-                                    }
-                                    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, row_h), egui::Sense::hover());
-                                    let layout = egui::Layout::top_down_justified(egui::Align::Min);
-                                    // a child leaves the cursor where the row's own
-                                    // allocation put it, clipped to the row whatever
-                                    // the face's height
-                                    let mut row_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(layout));
-                                    row_ui.set_clip_rect(rect.intersect(ui.clip_rect()));
-                                    let row = row_ui.add(egui::Button::selectable(sel, name).truncate().min_size(rect.size()));
-                                    if let Some(drawn) = drawn {
-                                        // the colour the row's text would take
-                                        // (hovered, selected), on whole pixels
-                                        let color = row_ui.style().interact_selectable(&row, sel).text_color();
-                                        let ppp = ui.ctx().pixels_per_point();
-                                        let top = rect.center().y - drawn.size.y / 2.0 + drawn.y_offset;
-                                        let min = egui::pos2(((rect.left() + pad) * ppp).round(), (top * ppp).round()) / ppp;
-                                        row_ui.painter().image(
-                                            drawn.texture(),
-                                            egui::Rect::from_min_size(min, drawn.size),
-                                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                                            color,
-                                        );
-                                    }
-                                    previews.visible(i);
-                                    if row.clicked() && !sel {
+                let_font_list_grow(ui.ctx(), popup, opening);
+                system_font_combo(salt, shown).show_ui(ui, |ui| {
+                    if opening {
+                        // each opening starts on the whole list
+                        st.font_filter.clear();
+                    }
+                    system_font_search(ui, &mut st.font_filter, opening);
+                    let filter = st.font_filter.to_lowercase();
+                    let shown: Vec<&fonts::SystemFont> = list
+                        .iter()
+                        .filter(|f| filter.is_empty() || f.name.to_lowercase().contains(&filter))
+                        .collect();
+                    // only the rows on screen are laid out, at one height,
+                    // each name drawn in its own face by a thread as it
+                    // scrolls into view (`fonts::preview`)
+                    // no shorter than a button, or rows would drift from
+                    // where `show_rows` puts them
+                    let row_h = (ui.text_style_height(&egui::TextStyle::Body) * 1.5).max(ui.spacing().interact_size.y);
+                    // one width: a wide face truncates, never widens the list
+                    let width = FONT_LIST_W;
+                    let pad = ui.spacing().button_padding.x;
+                    // the size a row's button gives its text
+                    let size = egui::TextStyle::Button.resolve(ui.style()).size * fonts::scale(ui.ctx());
+                    let mut previews = fonts::preview::Previews::begin(ui.ctx(), size, width - 2.0 * pad);
+                    let list_area = egui::ScrollArea::vertical()
+                        .max_height(FONT_LIST_H)
+                        .show_rows(ui, row_h, shown.len(), |ui, rows| {
+                            for i in rows {
+                                let f = shown[i];
+                                let key = format!("system:{}", f.path.display());
+                                let sel = s.font == key;
+                                let drawn = previews.drawn(f);
+                                let mut name = RichText::new(&f.name);
+                                if drawn.is_some() {
+                                    // laid out for the row's size and its
+                                    // screen reader label, its picture
+                                    // painted in its place
+                                    name = name.color(egui::Color32::TRANSPARENT);
+                                }
+                                let (rect, _) = ui.allocate_exact_size(egui::vec2(width, row_h), egui::Sense::hover());
+                                let layout = egui::Layout::top_down_justified(egui::Align::Min);
+                                // a child leaves the cursor where the row's own
+                                // allocation put it, clipped to the row whatever
+                                // the face's height
+                                let mut row_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(layout));
+                                row_ui.set_clip_rect(rect.intersect(ui.clip_rect()));
+                                let row = row_ui.add(egui::Button::selectable(sel, name).truncate().min_size(rect.size()));
+                                if let Some(drawn) = drawn {
+                                    // the colour the row's text would take
+                                    // (hovered, selected), on whole pixels
+                                    let color = row_ui.style().interact_selectable(&row, sel).text_color();
+                                    let ppp = ui.ctx().pixels_per_point();
+                                    let top = rect.center().y - drawn.size.y / 2.0 + drawn.y_offset;
+                                    let min = egui::pos2(((rect.left() + pad) * ppp).round(), (top * ppp).round()) / ppp;
+                                    row_ui.painter().image(
+                                        drawn.texture(),
+                                        egui::Rect::from_min_size(min, drawn.size),
+                                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                                        color,
+                                    );
+                                }
+                                previews.visible(i);
+                                if row.clicked() {
+                                    if !sel {
                                         s.font = key;
                                         r.font_changed = true;
                                         changed = true;
                                     }
+                                    ui.close();
                                 }
-                                if st.demo_font_list == Some(true) {
-                                    ui.scroll_with_delta(egui::vec2(0.0, -6.0));
-                                }
-                            });
-                        previews.finish(ui.ctx(), &shown);
-                    });
+                            }
+                            if st.demo_font_list == Some(true) {
+                                ui.scroll_with_delta(egui::vec2(0.0, -6.0));
+                            }
+                        });
+                    // rows cut off by the popup's last size: room next frame
+                    if list_area.inner_rect.height() + 0.5 < list_area.content_size.y.min(FONT_LIST_H) {
+                        ui.ctx().data_mut(|d| d.insert_temp(popup.with("grow"), true));
+                        ui.ctx().request_repaint();
+                    }
+                    previews.finish(ui.ctx(), &shown);
+                });
                 changed
             },
         );
@@ -367,4 +373,131 @@ fn colors(cx: &mut Cx) {
             reset
         });
     });
+}
+
+/// The System fonts list's popup, which the demo keeps open.
+fn system_font_popup(ui: &egui::Ui, salt: egui::Id) -> egui::Id {
+    ui.make_persistent_id(egui::IdSalt::new(salt)).with("popup")
+}
+
+/// Room for the System fonts list to grow back as its search is erased.
+/// egui lays a popup out in its last frame's size, so a list the filter
+/// had shrunk kept that size (#2136). On a frame after rows were cut off,
+/// the popup gets back the height of the whole list, measured as it opens,
+/// and fits its rows again once drawn. Only then: the room counts as the
+/// popup's for clicks, and above its button it would set the rows apart.
+fn let_font_list_grow(ctx: &egui::Context, popup: egui::Id, opening: bool) {
+    let whole = popup.with("whole-height");
+    let grow = popup.with("grow");
+    if opening {
+        ctx.data_mut(|d| {
+            d.remove::<f32>(whole);
+            d.remove::<bool>(grow);
+        });
+        return;
+    }
+    let Some(mut area) = egui::AreaState::load(ctx, popup) else {
+        return;
+    };
+    let Some(size) = area.size.as_mut() else {
+        return;
+    };
+    let (height, cut) = ctx.data_mut(|d| {
+        let height = d.get_temp_mut_or_default::<f32>(whole);
+        *height = height.max(size.y);
+        (*height, d.remove_temp::<bool>(grow).unwrap_or(false))
+    });
+    if cut && size.y < height {
+        size.y = height;
+        ctx.memory_mut(|m| m.areas_mut().set_state(egui::LayerId::new(egui::Order::Foreground, popup), area));
+    }
+}
+
+/// The System fonts list. A click in its search field must not close it
+/// (#2136): only a click outside does, or a picked font (`ui.close()`).
+fn system_font_combo(salt: egui::Id, shown: String) -> egui::ComboBox<'static> {
+    egui::ComboBox::from_id_salt(salt)
+        .width(COMBO_W)
+        .selected_text(shown)
+        .truncate()
+        .height(FONT_LIST_H + 40.0)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+}
+
+/// The list's search field, focused as the list opens so typing filters
+/// at once.
+fn system_font_search(ui: &mut egui::Ui, filter: &mut String, opening: bool) -> egui::Response {
+    let width = ui.available_width();
+    let search = crate::ui::widgets::search_field(ui, filter, aurora_i18n::tr!("ui-options-search-fonts"), width);
+    if opening {
+        search.request_focus();
+    }
+    search
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One frame of the System fonts list, open, with a search field and a
+    /// font row; returns their rectangles and whether the list is open.
+    fn frame(ctx: &egui::Context, events: Vec<egui::Event>, filter: &mut String) -> (egui::Rect, egui::Rect, bool) {
+        let mut rects = (egui::Rect::NOTHING, egui::Rect::NOTHING);
+        let mut popup = egui::Id::NULL;
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+            events,
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            let salt = ui.scope_id().with("system-font");
+            popup = system_font_popup(ui, salt);
+            system_font_combo(salt, "Font".into()).show_ui(ui, |ui| {
+                rects.0 = system_font_search(ui, filter, false).rect;
+                let row = ui.button("Some font");
+                rects.1 = row.rect;
+                if row.clicked() {
+                    ui.close();
+                }
+            });
+        });
+        output.textures_delta.clear();
+        (rects.0, rects.1, egui::Popup::is_id_open(ctx, popup))
+    }
+
+    fn click(at: egui::Pos2) -> Vec<Vec<egui::Event>> {
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        vec![vec![egui::Event::PointerMoved(at)], vec![button(true)], vec![button(false)], vec![]]
+    }
+
+    /// #2136: a click in the search field keeps the list open; a pick closes it.
+    #[test]
+    fn search_click_keeps_the_font_list_open() {
+        let ctx = egui::Context::default();
+        let mut filter = String::new();
+        let (_, _, open) = frame(&ctx, vec![], &mut filter);
+        assert!(!open);
+        // open it as the combo's own button would
+        let mut popup = egui::Id::NULL;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            popup = system_font_popup(ui, ui.scope_id().with("system-font"));
+        });
+        output.textures_delta.clear();
+        egui::Popup::open_id(&ctx, popup);
+        let (search, row, open) = frame(&ctx, vec![], &mut filter);
+        assert!(open, "the list opens");
+        for events in click(search.center()) {
+            let (_, _, open) = frame(&ctx, events, &mut filter);
+            assert!(open, "a click in the search field keeps the list open");
+        }
+        for events in click(row.center()) {
+            frame(&ctx, events, &mut filter);
+        }
+        assert!(!frame(&ctx, vec![], &mut filter).2, "picking a font closes the list");
+    }
 }
