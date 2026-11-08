@@ -792,6 +792,10 @@ mod tests {
             true,
         );
         assert_eq!(form.accounts.len(), 1);
-        assert_eq!(settings.last_login, Some(form.accounts[0].key()), "another account's removal keeps it");
+        assert_eq!(
+            settings.last_login,
+            Some(form.accounts[0].key()),
+            "another account's removal keeps it"
+        );
     }
 }
