@@ -4504,6 +4504,7 @@ world-appearance-pants = ズボン
 world-appearance-black-pants = 黒いズボン
 ui-avatar-picker-by-uuid = ＵＵＩＤで
 ui-options-system-default = システムデフォルト
+ui-options-listing-devices = デバイスを確認中…
 common-by-name = 名前で
 demo-env-settings = 設定
 ui-inventory-view-eep-settings = ＥＥＰ設定

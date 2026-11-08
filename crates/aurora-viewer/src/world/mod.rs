@@ -3506,7 +3506,18 @@ impl World {
                     let before = self.animations.get(&avatar).map(Vec::as_slice).unwrap_or_default();
                     let started: Vec<_> = anims.iter().map(|a| a.0).filter(|id| !before.iter().any(|p| p.id == *id)).collect();
                     let stopped: Vec<_> = before.iter().map(|p| p.id).filter(|id| !anims.iter().any(|a| a.0 == *id)).collect();
-                    log::info!("own animations: {} playing, started {started:?}, stopped {stopped:?}", anims.len());
+                    // a new sequence id on a still-listed animation is a
+                    // restart (LLVOAvatar::processAnimationStateChanges), which
+                    // neither list above shows (#2869)
+                    let restarted: Vec<_> = anims
+                        .iter()
+                        .filter(|(id, seq)| before.iter().any(|p| p.id == *id && p.sequence != *seq))
+                        .map(|a| a.0)
+                        .collect();
+                    log::info!(
+                        "own animations: {} playing, started {started:?}, stopped {stopped:?}, restarted {restarted:?}",
+                        anims.len()
+                    );
                     self.own_animations_awaited = None;
                     self.agent.ground_sit = anims.iter().any(|(id, _)| *id == body::ANIM_SIT_GROUND_CONSTRAINED);
                     // Firestorm process_avatar_animation / processAnimationStateChanges:

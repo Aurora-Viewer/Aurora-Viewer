@@ -66,11 +66,13 @@ mod tests {
             let mut storage = vec![0; offset];
             storage.extend_from_slice(&word_bytes);
             assert_eq!(u32s(&storage[offset..]), words);
+            assert_eq!(u32_array::<3>(&storage[offset..]), words);
             assert_eq!(f32s(&storage[offset..])[2].to_bits(), words[2]);
             storage.clear();
             storage.resize(offset, 0);
             storage.extend_from_slice(&wide_bytes);
             assert_eq!(u64s(&storage[offset..]), wide);
+            assert_eq!(u64_array::<2>(&storage[offset..]), wide);
         }
     }
 
@@ -142,7 +144,8 @@ mod tests {
         for offset in 1..8 {
             let mut storage = vec![0; offset];
             storage.extend_from_slice(&bytes);
-            let decoded = u64s(&storage[offset..]);
+            // The timer decodes with `u64_array`, so test that path.
+            let decoded = u64_array::<3>(&storage[offset..]);
             assert_eq!(elapsed_gpu_ms(&decoded, 0, 2, 1.25), expected);
         }
     }

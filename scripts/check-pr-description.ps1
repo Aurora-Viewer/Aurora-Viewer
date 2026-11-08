@@ -67,7 +67,7 @@ function Set-Label([int]$Number, [bool]$On, $Labels) {
     if ($On -and -not $has) {
         & gh api "repos/$repo/labels/$PrDescriptionLabel" --silent 2>$null
         if ($LASTEXITCODE -ne 0) {
-            Invoke-Gh api "repos/$repo/labels" -f "name=$PrDescriptionLabel" -f 'color=94A3B8' -f 'description=PR description incomplete: not reviewed until it follows the template (set by the PR description workflow)' | Out-Null
+            Invoke-Gh api "repos/$repo/labels" -f "name=$PrDescriptionLabel" -f 'color=94A3B8' -f 'description=PR description incomplete: not reviewed until it follows the template' | Out-Null
         }
         Invoke-Gh api -X POST "repos/$repo/issues/$Number/labels" -f "labels[]=$PrDescriptionLabel" | Out-Null
     } elseif (-not $On -and $has) {
