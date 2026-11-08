@@ -206,8 +206,10 @@ pub(in crate::app) fn preview(ctx: &egui::Context, p: &Palette, point: egui::Pos
                 // area: an area lays its content out in the size it kept from
                 // the previous frame, so a wrapping label kept the narrower box
                 // of the other Shift text, taller at each toggle and on the
-                // next drag (#2636). Wider than the screen, it still wraps.
-                let width = (ui.ctx().content_rect().width() - 64.0).max(160.0);
+                // next drag (#2636). Wider than the screen, it still wraps,
+                // inside its margins even in a very narrow window.
+                let screen = ui.ctx().content_rect().width();
+                let width = (screen - 64.0).max(160.0).min(screen - 24.0).max(1.0);
                 let text = egui::WidgetText::from(if !ready {
                     aurora_i18n::tr!("portal-bridge-required")
                 } else if shift {
@@ -276,11 +278,12 @@ mod tests {
 
     /// #2636: toggling Shift during a held landmark drag keeps the tooltip
     /// fitted to its current text, and a later drag starts at that size; on
-    /// a screen narrower than the text it wraps, the same at every toggle.
+    /// a screen narrower than the text it wraps, the same at every toggle,
+    /// and stays inside a window narrower than its usual minimum width.
     #[test]
     fn portal_drag_preview_fits_its_text_across_shift_toggles_and_drags() {
         let palette = crate::theme::Theme::default().palette();
-        for screen in [egui::vec2(1000.0, 700.0), egui::vec2(300.0, 700.0)] {
+        for screen in [egui::vec2(1000.0, 700.0), egui::vec2(300.0, 700.0), egui::vec2(150.0, 700.0)] {
             let point = egui::pos2(screen.x * 0.65, 400.0);
             let frame = |ctx: &egui::Context, shift: Option<bool>| {
                 let mut output = ctx.run_ui(

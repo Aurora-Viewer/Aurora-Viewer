@@ -169,11 +169,12 @@ props. The landmark stays in inventory. Ctrl insertion and other inventory drops
 retain their normal behavior.
 `drop-focus` keeps the inventory open with keyboard focus during the drag;
 after release it stays open and logs that keyboard focus returned to the scene.
-`drop-toggle|drop-toggle-public` hold the landmark and press and release Shift
-every eight frames from 490 to 553, then rest on Friends or Public: capture
-around 600 and compare with `drop-friends-hover` or `drop-public-hover`. The
-access hint must keep the size of its text, on one line, however many toggles
-came before (#2636).
+`drop-toggle|drop-toggle-public` hold the landmark and press Shift at frame 498,
+release it eight frames later and repeat, four presses in all; `drop-toggle`
+releases the last one at 554 and rests on Friends, `drop-toggle-public` keeps it
+held and rests on Public. Capture around 600 and compare with
+`drop-friends-hover` or `drop-public-hover`: the access hint must keep the size
+of its text, on one line, however many toggles came before (#2636).
 
 `drop-places|drop-places-hover|drop-favorites|drop-favorites-public|drop-favorites-hover`
 uses the shared Places/Favorites landmark cargo with Places open. Hover modes

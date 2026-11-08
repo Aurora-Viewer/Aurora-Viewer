@@ -18,10 +18,10 @@ fn drop_mode() -> Option<&'static str> {
         .as_deref()
 }
 
-/// Shift during a scripted drop. `drop-toggle` presses and releases it every
-/// eight frames from 490 while the landmark stays held (#2636), then ends on
-/// Friends, `drop-toggle-public` on Public; the other public modes hold it
-/// from frame 500.
+/// Shift during a scripted drop. `drop-toggle` presses it at frame 498 and
+/// releases it eight frames later, four times, while the landmark stays held
+/// (#2636), then rests on Friends; `drop-toggle-public` keeps the fourth press
+/// and rests on Public. The other public modes hold it from frame 500.
 fn drop_shift(mode: &str, frame: u64) -> bool {
     if mode.starts_with("drop-toggle") {
         match frame {
