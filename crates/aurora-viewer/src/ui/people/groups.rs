@@ -87,7 +87,7 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, _data: &super::RadarData, st: &mut Peopl
                     &aurora_i18n::tr!("ui-contacts-no-group-containing-was-found", value0 = query.clone()),
                 );
             }
-            for g in &plan.items {
+            for &g in &plan.items {
                 row(ui, c, st, g);
             }
         });

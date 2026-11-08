@@ -126,53 +126,7 @@ impl GroupChats {
         v.sort_by_cached_key(|g| (!self.favorites.contains(&g.id), g.name.to_uppercase()));
         v
     }
-}
 
-/// The presentation layout of a groups list given the member groups and a search filter.
-///
-/// Shared rule across Contacts › Groups, People › Groups (Legacy look),
-/// and People › Groups (Aurora look):
-/// - "None (no group tag)" stays visible while filtering whenever the resident
-///   has at least one group (`count > 0`, like LLGroupList::refresh), so they
-///   can always clear their active tag while searching (#2788).
-/// - If a filter matches no groups, the "none" row stays visible on top and
-///   the empty filter notice shows below it.
-#[derive(Debug, PartialEq, Eq)]
-pub struct GroupListPlan<T> {
-    /// Whether to display the "None (no group tag)" entry on top.
-    pub show_none: bool,
-    /// When a filter is set and matches no groups, contains the query string to display in the notice.
-    pub no_match: Option<String>,
-    /// The groups matching the filter.
-    pub items: Vec<T>,
-}
-
-pub fn plan_group_list<T: Clone>(groups: &[T], filter: &str, name_of: impl Fn(&T) -> &str) -> GroupListPlan<T> {
-    let trimmed = filter.trim();
-    let filter_lc = trimmed.to_lowercase();
-    let show_none = !groups.is_empty();
-    let items: Vec<T> = if filter_lc.is_empty() {
-        groups.to_vec()
-    } else {
-        groups
-            .iter()
-            .filter(|g| name_of(g).to_lowercase().contains(&filter_lc))
-            .cloned()
-            .collect()
-    };
-    let no_match = if !groups.is_empty() && !trimmed.is_empty() && items.is_empty() {
-        Some(trimmed.to_string())
-    } else {
-        None
-    };
-    GroupListPlan {
-        show_none,
-        no_match,
-        items,
-    }
-}
-
-impl GroupChats {
     /// FSFavoriteGroups::loadFavorites (an LLSD array of group ids).
     pub fn load_favorites(&mut self, path: PathBuf) {
         self.favorites = std::fs::read(&path)
@@ -268,6 +222,47 @@ fn line(from: String, text: String, kind: ChatKind, source: Uuid, time: SystemTi
         kind,
         source,
         origin: Origin::Live,
+    }
+}
+
+/// The presentation layout of a groups list given the member groups and a search filter.
+///
+/// Shared rule across Contacts › Groups, People › Groups (Legacy look),
+/// and People › Groups (Aurora look):
+/// - "None (no group tag)" stays visible while filtering whenever the resident
+///   has at least one group (`count > 0`, like LLGroupList::refresh), so they
+///   can always clear their active tag while searching (#2788).
+/// - If a filter matches no groups, the "none" row stays visible on top and
+///   the empty filter notice shows below it with the typed query.
+#[derive(Debug, PartialEq, Eq)]
+pub struct GroupListPlan<'a, T> {
+    /// Whether to display the "None (no group tag)" entry on top.
+    pub show_none: bool,
+    /// When a filter is set and matches no groups, contains the query string to display in the notice.
+    pub no_match: Option<String>,
+    /// The groups matching the filter.
+    pub items: Vec<&'a T>,
+}
+
+/// Compute the display plan for a groups list against an active filter query.
+pub fn plan_group_list<'a, T>(groups: &'a [T], filter: &str, name_of: impl Fn(&T) -> &str) -> GroupListPlan<'a, T> {
+    let trimmed = filter.trim();
+    let filter_lc = trimmed.to_lowercase();
+    let show_none = !groups.is_empty();
+    let items: Vec<&'a T> = if filter_lc.is_empty() {
+        groups.iter().collect()
+    } else {
+        groups.iter().filter(|g| name_of(g).to_lowercase().contains(&filter_lc)).collect()
+    };
+    let no_match = if !groups.is_empty() && !trimmed.is_empty() && items.is_empty() {
+        Some(trimmed.to_string())
+    } else {
+        None
+    };
+    GroupListPlan {
+        show_none,
+        no_match,
+        items,
     }
 }
 
@@ -1272,10 +1267,10 @@ mod tests {
         assert_eq!(plan.items.len(), 1);
         assert_eq!(plan.items[0].name, "Marketplace Sellers");
 
-        // Non-matching filter: keeps "None" row and sets no_match query
-        let plan = plan_group_list(&list, "nomatch", |g| &g.name);
+        // Non-matching filter: keeps "None" row and preserves raw case in no_match
+        let plan = plan_group_list(&list, "  ZzzzZ  ", |g| &g.name);
         assert!(plan.show_none);
-        assert_eq!(plan.no_match.as_deref(), Some("nomatch"));
+        assert_eq!(plan.no_match.as_deref(), Some("ZzzzZ"));
         assert!(plan.items.is_empty());
     }
 }

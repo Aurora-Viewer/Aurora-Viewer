@@ -1353,7 +1353,7 @@ fn group_list(
                 .min_scrolled_height(list_h)
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
-                    let plan = crate::world::groups::plan_group_list(groups, filter, |g| &g.name);
+                    let plan = crate::world::groups::plan_group_list(groups, &st.group_filter, |g| &g.name);
                     // "None (no group tag)" row on top.
                     // Differs from LLGroupList::refresh (indra/newview/llgrouplist.cpp):
                     // 1) LLGroupList only adds "none" when !have_filter; Aurora deliberately keeps
@@ -1380,7 +1380,7 @@ fn group_list(
                         );
                     }
                     let pinned = plan.items.iter().filter(|g| world.groups.favorites.contains(&g.id)).count();
-                    for (i, g) in plan.items.iter().enumerate() {
+                    for (i, &g) in plan.items.iter().enumerate() {
                         if filter.is_empty() && pinned > 0 && i == pinned && pinned < plan.items.len() {
                             // LLGroupListSeparator after the pinned groups
                             let (r, _) = ui.allocate_exact_size(Vec2::new(rows_w, 7.0), Sense::hover());

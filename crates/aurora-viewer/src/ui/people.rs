@@ -475,7 +475,7 @@ pub fn people_window(
                 ui.add_space(4.0);
                 let filter = st.filter.trim().to_lowercase();
                 if panels.people_tab == 2 {
-                    groups_tab(ui, p, world, &filter, &mut actions);
+                    groups_tab(ui, p, world, &st.filter, &mut actions);
                 } else {
                     blocked_tab(ui, p, world, st, &filter, &mut actions);
                 }
@@ -875,7 +875,7 @@ fn groups_tab(ui: &mut egui::Ui, p: &Palette, world: &World, filter: &str, actio
                 .color(p.muted),
             );
         }
-        for g in &plan.items {
+        for &g in &plan.items {
             ui.horizontal(|ui| {
                 ui.set_min_height(22.0);
                 let blocked = world.mutes.group_chat_muted(&g.id);
