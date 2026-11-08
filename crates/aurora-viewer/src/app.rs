@@ -18660,7 +18660,11 @@ impl ApplicationHandler for App {
                 // words separated by commas: search:<text> (the search with its
                 // suggestions), drawer:<landmarks|history|friends>, landmarks
                 // (212 of them, the drawer open), friend (Nova followed),
-                // legacy (the side panel layout, the setting untouched)
+                // legacy (the side panel layout, the setting untouched),
+                // show-on-map (a place in the region north, shown as Places
+                // does: the map opens on it), show-link (the same place from
+                // a place link, by region name: the map waits for the
+                // region's answer instead of centring on the previous track)
                 for word in scenario.split(',').map(str::trim) {
                     if let Some(text) = word.strip_prefix("search:") {
                         self.worldmap_ui.demo_search(&mut self.world, text);
@@ -18674,6 +18678,11 @@ impl ApplicationHandler for App {
                         self.worldmap_ui.demo_style = Some(crate::settings::WorldMapStyle::Legacy);
                     } else if word == "show-on-map" {
                         self.world.map.show_location(256000.0 + 128.0, 256256.0 + 128.0, 25.0);
+                    } else if word == "show-link" {
+                        self.on_ctx_action(ui::context::CtxAction::ShowPlace(
+                            "Nordheim".into(),
+                            glam::Vec3::new(128.0, 128.0, 25.0),
+                        ));
                     }
                 }
             }
