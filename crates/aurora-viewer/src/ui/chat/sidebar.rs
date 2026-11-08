@@ -323,7 +323,20 @@ pub(super) fn show(
     let voice = voice_panel_wanted(world, st);
     let voice_h = if voice { voice_panel_h(rail) + 2.0 * VOICE_PANEL_GAP } else { 0.0 };
     let room = column.bottom() - ui.cursor().top();
-    let foot = has_foot(room, voice_h);
+    // the list's top to the bottom of its second entry, headings and
+    // spacing included, as last frame laid it out (`TwoEntries`); before
+    // that, two entries and their spacing
+    let two = ui
+        .data(|d| d.get_temp::<TwoEntries>(two_entries_id()))
+        .and_then(TwoEntries::height)
+        .unwrap_or_else(|| {
+            let gap = crate::ui::widgets::two_lines_gap(ui, &egui::FontId::proportional(13.0), &egui::FontId::proportional(11.0), LINE_GAP);
+            2.0 * (ENTRY_H + gap - LINE_GAP) + ui.spacing().item_spacing.y
+        });
+    let foot = has_foot(room, voice_h, two);
+    // what the window's least height keeps: those two above a call's panel,
+    // whether a call is on or not (`ui/chat.rs`)
+    st.column_short = Some(two + voice_panel_h(rail) + 2.0 * VOICE_PANEL_GAP + BARE_FOOT - room);
     let list_h = (room - voice_h - if foot { FOOT_H } else { BARE_FOOT }).max(ENTRY_H);
     egui::ScrollArea::vertical()
         .id_salt("conversation_column")
@@ -331,6 +344,19 @@ pub(super) fn show(
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
+            let top = ui.cursor().top();
+            let layer = ui.layer_id();
+            ui.data_mut(|d| {
+                d.insert_temp(
+                    two_entries_id(),
+                    TwoEntries {
+                        layer,
+                        top,
+                        drawn: 0,
+                        bottom: top,
+                    },
+                )
+            });
             // Contacts and the nearby chat, pinned
             if show_contacts_tab && docked && matches(aurora_i18n::tr!("common-contacts")) {
                 let e = Entry {
@@ -547,12 +573,35 @@ const FOOT_H: f32 = super::compose::BOX_H + super::compose::UNDER_BOX;
 /// The margin under the list without the button's row, as before it.
 const BARE_FOOT: f32 = 6.0;
 
-/// The column has the button's row when it still holds one entry of the
-/// list above the call panel (`voice_h`, with its gaps, or 0) and the row.
-/// A shorter column lays out as before the button, without it, so that the
-/// call panel never covers the list; the button is back with the room.
-pub(super) fn has_foot(room: f32, voice_h: f32) -> bool {
-    room - voice_h - FOOT_H >= ENTRY_H
+/// Where the list's second entry ends below its top, measured while `entry`
+/// lays the entries out (the scroll offset moves both alike).
+/// Only the list's layer counts, not a dragged entry's ghost.
+#[derive(Clone, Copy, Debug)]
+struct TwoEntries {
+    layer: egui::LayerId,
+    top: f32,
+    drawn: u32,
+    bottom: f32,
+}
+
+impl TwoEntries {
+    fn height(self) -> Option<f32> {
+        (self.drawn >= 2).then_some(self.bottom - self.top)
+    }
+}
+
+fn two_entries_id() -> egui::Id {
+    egui::Id::unique("conversation_column_two_entries")
+}
+
+/// The column has the button's row when it still holds two whole entries of
+/// the list (`two`, as laid out) above the call panel (`voice_h`, with its
+/// gaps, or 0) and the row. A shorter column (a short window during a
+/// call) lays out as before the button, without it, and its two entries
+/// stay whole; the button is back with the room. The window's least height
+/// keeps those two entries (`ChatUi::column_short`).
+pub(super) fn has_foot(room: f32, voice_h: f32, two: f32) -> bool {
+    room - voice_h - FOOT_H >= two
 }
 
 /// The button that collapses and expands the column, at the bottom left of
@@ -833,6 +882,16 @@ fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) ->
     let width = ui.available_width();
     let gap = crate::ui::widgets::two_lines_gap(ui, &egui::FontId::proportional(13.0), &egui::FontId::proportional(11.0), LINE_GAP);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, ENTRY_H + gap - LINE_GAP), egui::Sense::hover());
+    let layer = ui.layer_id();
+    ui.data_mut(|d| {
+        if let Some(mut two) = d.get_temp::<TwoEntries>(two_entries_id()).filter(|two| two.layer == layer) {
+            two.drawn += 1;
+            if two.drawn == 2 {
+                two.bottom = rect.bottom();
+            }
+            d.insert_temp(two_entries_id(), two);
+        }
+    });
     // a conversation's entry drags, to its place or out of the window; the
     // nearby chat's, pinned, out of the window (#910)
     let sense = if e.close.is_some() || id == entry_id(Pinned::Local) {

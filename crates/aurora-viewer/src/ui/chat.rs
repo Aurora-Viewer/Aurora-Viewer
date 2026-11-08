@@ -177,6 +177,10 @@ pub struct ChatUi {
     /// window resized around one does not flip at every point.
     layout_narrow: Option<bool>,
     layout_members_room: Option<bool>,
+    /// How much taller the column needs to be to keep two whole entries
+    /// above a call's panel (negative: to spare), measured with the fonts of
+    /// last frame (`sidebar::show`); the window's least height follows it.
+    column_short: Option<f32>,
     /// The workspace's width last frame, and whether this frame's change of
     /// it comes from a drag of the window's edge: the layout then follows
     /// the edge at once, without easing (`workspace::ease`).
@@ -2947,8 +2951,18 @@ pub fn show(
     // workspace's rail, head, 60 points of messages and field; the Legacy
     // style's tabs and field): smaller, it grew back to its content during
     // a resize and the messages, laid out for the smaller size first,
-    // hopped for a frame
-    let least = egui::vec2(if style.workspace() { 300.0 } else { 0.0 }, 240.0);
+    // hopped for a frame. The workspace's column also keeps two whole
+    // entries above a call's panel, call or not (`ChatUi::column_short`).
+    let mut least = egui::vec2(if style.workspace() { 300.0 } else { 0.0 }, 240.0);
+    // the column grows 1:1 with the window: its shortfall is how much the
+    // least height must be above the window's own
+    if let (true, Some(short), Some(now)) = (
+        style.workspace(),
+        st.column_short,
+        ctx.memory(|m| m.area_rect(egui::Id::unique("conversations"))),
+    ) {
+        least.y = least.y.max(now.height() + short);
+    }
     floater.min_size = floater.min_size.max(least);
     let image_bounds = floater.show(ctx, p, open, |ui| {
         let bounds = ui.available_rect_before_wrap().intersect(ui.clip_rect());

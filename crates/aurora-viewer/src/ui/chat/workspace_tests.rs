@@ -1289,16 +1289,61 @@ fn the_buttons_choice_lives_in_the_settings() {
     assert!(!shows_rail(&demo), "the session's state stands in for the settings");
 }
 
-/// A column too short for one entry of the list, the call panel and the
-/// button's row lays out as before the button, without it: the call panel
-/// never covers the list. The button is back with the room.
+/// At the window's least height, during a call, the list still shows its
+/// first two entries whole above the call panel, in the rail and in the
+/// full column (`ui/chat.rs`, the floater's least size).
+#[test]
+fn the_least_window_shows_two_entries_above_the_call() {
+    // with and without the Contacts tab (Contacts pinned over Nearby chat,
+    // or Nearby chat then a section's head)
+    for contacts in [false, true] {
+        let mut h = Harness::new(ChatStyle::Aurora);
+        h.show_contacts = contacts;
+        h.world.start_call(JANE);
+        h.settle();
+        // Nearby chat shown, as in AURORA_DEMO_CONV=aurora:call-away
+        h.st.selected = None;
+        for width in [460.0, 700.0] {
+            // asked smaller than the least: the floater keeps its least size
+            crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(width, 120.0));
+            for _ in 0..30 {
+                h.frame(Vec::new());
+            }
+            assert!(
+                h.frames
+                    .ctx
+                    .read_response(super::super::sidebar::control_id("panel-hang-up"))
+                    .is_some(),
+                "contacts={contacts} width {width}: the call panel is in the column"
+            );
+            let whole = [
+                Pinned::Contacts,
+                Pinned::Local,
+                Pinned::Conversation(BOB),
+                Pinned::Conversation(JANE),
+            ]
+            .into_iter()
+            .filter_map(|entry| h.frames.ctx.read_response(entry_id(entry)))
+            .filter(|entry| entry.interact_rect == entry.rect)
+            .count();
+            assert!(
+                whole >= 2,
+                "contacts={contacts} width {width}: {whole} whole entries above the call panel"
+            );
+        }
+    }
+}
+
+/// A column too short for two whole entries of the list, the call panel and
+/// the button's row lays out as before the button, without it. The button
+/// is back with the room.
 #[test]
 fn a_short_column_leaves_the_button_out() {
     use super::super::sidebar::has_foot;
-    // no call: one entry (44) and the row (54)
-    assert!(has_foot(98.0, 0.0) && !has_foot(97.0, 0.0));
+    // no call: two entries (here 100 as laid out) and the row (54)
+    assert!(has_foot(154.0, 0.0, 100.0) && !has_foot(153.0, 0.0, 100.0));
     // a call on the rail: its panel and gaps (120) too
-    assert!(has_foot(218.0, 120.0) && !has_foot(217.0, 120.0));
+    assert!(has_foot(274.0, 120.0, 100.0) && !has_foot(273.0, 120.0, 100.0));
 
     // a call with Jane while Bob's conversation is shown: the call panel
     // stands in the column
