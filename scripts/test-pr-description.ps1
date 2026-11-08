@@ -96,4 +96,13 @@ Assert-Pr ((Format-PrDescriptionClose 'u' 'someone').Contains($PrDescriptionMark
 Assert-Pr ((Test-PrTeamAuthor 'MEMBER') -and (Test-PrTeamAuthor 'OWNER') -and (Test-PrTeamAuthor 'COLLABORATOR')) 'The team is never closed.'
 Assert-Pr (-not (Test-PrTeamAuthor 'CONTRIBUTOR') -and -not (Test-PrTeamAuthor 'FIRST_TIME_CONTRIBUTOR') -and -not (Test-PrTeamAuthor 'NONE')) 'Outside contributors may be closed.'
 
+# GitHub refuses a label description over 100 characters: the workflow creates
+# the label itself, so a longer one fails the first incomplete PR
+$labelLines = @(Select-String -Path (Join-Path $PSScriptRoot 'setup-labels.ps1'), (Join-Path $PSScriptRoot 'check-pr-description.ps1') -Pattern "(?:Desc = |description=)'?([^']+)'" -AllMatches)
+foreach ($m in $labelLines.Matches) {
+    $d = $m.Groups[1].Value
+    Assert-Pr ($d.Length -le 100) "Label description over 100 characters ($($d.Length)): $d"
+}
+Assert-Pr ($labelLines.Count -ge 2) 'The label descriptions were not found.'
+
 Write-Host 'PR description fixtures: all passed.'
