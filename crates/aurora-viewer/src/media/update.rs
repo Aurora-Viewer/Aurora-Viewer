@@ -517,6 +517,11 @@ impl MediaManager {
                 if !f.window_focused && p > Priority::Low {
                     p = Priority::Low;
                 }
+                // gaming mode: loaded but not drawn, the sound going on
+                // (app/gaming_mode.rs; not in the Legacy Viewer)
+                if f.gaming_mode && p > Priority::Hidden {
+                    p = Priority::Hidden;
+                }
             }
             m.priority = p;
         }
@@ -1051,6 +1056,7 @@ mod tests {
                 channel_volume: 1.0,
                 agent_speed: 0.0,
                 window_focused: true,
+                gaming_mode: false,
                 net: None,
                 cache_dir: std::path::Path::new(""),
                 language: "en",

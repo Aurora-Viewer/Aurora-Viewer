@@ -239,6 +239,11 @@ fn frames_per_second(cx: &mut Cx) {
             tr!("ui-options-gpu-recovery-tip"),
             &field!(gpu_recovery),
         );
+        cx.unfolded().toggle(
+            tr!("ui-options-gaming-mode-leave-on-focus"),
+            tr!("ui-options-gaming-mode-leave-on-focus-tip"),
+            &field!(gaming_mode_leave_on_focus),
+        );
     });
 }
 
