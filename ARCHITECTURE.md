@@ -3358,7 +3358,9 @@ preferences, and name colours use contact-set UI-name appearance and priority. T
 table keeps its column/name options and optional list pictures/colouring in its own Options
 menu; its search is permanent too. `ui/people/rows.rs` holds what their rows share (faces, names, a right
 end that never covers anything, quick actions, Ctrl / Shift selection and the 0.5-second
-hold that opens contact settings in People and Conversations › Contacts), `world/recent.rs` the
+hold that opens contact settings in People and Conversations › Contacts). Resident row
+interaction IDs include the UUID, so their right-click popups retain their target and
+position across sorting and roster updates, like the More buttons. `world/recent.rs` holds the
 residents met lately (LLRecentPeople), `demo_people.rs` their offline scenario; `ui/people.rs`
 the window, its tabs, and the simple Friends, Groups and Blocked lists of Firestorm's look.
 `ui/widgets/pills.rs` shares the tabs in pills, the filter pills and the search box of the

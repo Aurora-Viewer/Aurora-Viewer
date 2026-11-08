@@ -871,9 +871,10 @@ pub fn tab(
         let radius = ui.visuals().window_corner_radius;
         for row in &list {
             // dragged onto a conversation, the resident joins it
-            let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::click_and_drag());
+            let (rect, resp) = super::rows::allocate(ui, row.id, Vec2::new(ui.available_width(), 22.0));
             resp.dnd_set_drag_payload(crate::ui::call_invite::PersonDrag(row.id));
             if !ui.is_rect_visible(rect) {
+                super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
                 continue;
             }
             let selected = st.radar_selected.contains(&row.id);
@@ -913,15 +914,7 @@ pub fn tab(
                 }
             }
             // menu_fs_radar.xml, menu_fs_radar_multiselect.xml for several
-            let several = st.radar_selected.len() > 1 && st.radar_selected.contains(&row.id);
-            let chosen = st.radar_selected.clone();
-            menu::context_menu(&resp, p, |ui| {
-                if several {
-                    context::avatars_menu(ui, p, world, &chosen);
-                } else {
-                    context::avatar_list_menu(ui, p, world, row.id, AvatarList::Nearby);
-                }
-            });
+            super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
             if let Some(tip) = tip {
                 resp.on_hover_text(tip);
             }
