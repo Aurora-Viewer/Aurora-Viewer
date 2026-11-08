@@ -180,13 +180,28 @@ mod win {
         Ok(())
     }
 
-    fn unregister_scheme(scheme: &str) -> Result<(), String> {
-        let class = format!(r"Software\Classes\{scheme}");
-        let ours = read(HKEY_CURRENT_USER, &format!(r"{class}\shell\open\command"), None)
+    /// Whether the user's class opens this executable (never another
+    /// viewer's).
+    fn ours(class: &str) -> bool {
+        read(HKEY_CURRENT_USER, &format!(r"{class}\shell\open\command"), None)
             .and_then(|c| command_exe(&c))
             .zip(std::env::current_exe().ok())
-            .is_some_and(|(exe, this)| same_file(&exe, &this));
-        if !ours {
+            .is_some_and(|(exe, this)| same_file(&exe, &this))
+    }
+
+    /// The classes `unregister` would remove.
+    pub fn registrations() -> Vec<String> {
+        SCHEMES
+            .iter()
+            .map(|scheme| format!(r"Software\Classes\{scheme}"))
+            .filter(|class| ours(class))
+            .map(|class| format!(r"HKEY_CURRENT_USER\{class}"))
+            .collect()
+    }
+
+    fn unregister_scheme(scheme: &str) -> Result<(), String> {
+        let class = format!(r"Software\Classes\{scheme}");
+        if !ours(&class) {
             return Ok(());
         }
         let key = wide(&class);
@@ -220,7 +235,7 @@ mod win {
 }
 
 #[cfg(windows)]
-pub use win::{register, unregister};
+pub use win::{register, registrations, unregister};
 
 #[cfg(target_os = "linux")]
 mod xdg {
@@ -572,18 +587,42 @@ mod xdg {
         Ok(())
     }
 
-    /// Removes this viewer's defaults and entry; another handler of the
-    /// lists or of the system takes the links again. An entry left by
-    /// another Aurora executable stays.
-    pub fn unregister() -> Result<(), String> {
+    /// Aurora's entry, when it opens this executable.
+    fn own_entry_if_ours() -> Result<Option<PathBuf>, String> {
         let entry = own_entry()?;
         let text = std::fs::read_to_string(&entry).unwrap_or_default();
         let ours = value(&text, "Desktop Entry", "Exec")
             .and_then(exec_program)
             .is_some_and(|p| is_this(&p));
-        if !ours {
-            return Ok(());
+        Ok(ours.then_some(entry))
+    }
+
+    /// The entry and the defaults `unregister` would remove.
+    pub fn registrations() -> Vec<String> {
+        let Ok(Some(entry)) = own_entry_if_ours() else {
+            return Vec::new();
+        };
+        let mut found = vec![entry.display().to_string()];
+        if let Ok(list) = mimeapps()
+            && let Ok(text) = std::fs::read_to_string(&list)
+        {
+            found.extend(SCHEMES.iter().filter_map(|scheme| {
+                let key = format!("x-scheme-handler/{scheme}");
+                ids(value(&text, DEFAULTS, &key))
+                    .any(|id| id == DESKTOP_ID)
+                    .then(|| format!("{} ({key})", list.display()))
+            }));
         }
+        found
+    }
+
+    /// Removes this viewer's defaults and entry; another handler of the
+    /// lists or of the system takes the links again. An entry left by
+    /// another Aurora executable stays.
+    pub fn unregister() -> Result<(), String> {
+        let Some(entry) = own_entry_if_ours()? else {
+            return Ok(());
+        };
         let list = mimeapps()?;
         if let Ok(old) = std::fs::read_to_string(&list) {
             let mut text = old.clone();
@@ -625,7 +664,7 @@ mod xdg {
 }
 
 #[cfg(target_os = "linux")]
-pub use xdg::{register, unregister};
+pub use xdg::{register, registrations, unregister};
 
 #[cfg(not(any(windows, target_os = "linux")))]
 pub fn register() -> Result<(), String> {
@@ -635,6 +674,13 @@ pub fn register() -> Result<(), String> {
 #[cfg(not(any(windows, target_os = "linux")))]
 pub fn unregister() -> Result<(), String> {
     Ok(())
+}
+
+/// Nothing registered elsewhere (macOS): the bundle declares no scheme yet,
+/// and once it does, Launch Services forgets it with the application.
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn registrations() -> Vec<String> {
+    Vec::new()
 }
 
 static CACHE: std::sync::Mutex<Option<(std::time::Instant, Handler)>> = std::sync::Mutex::new(None);

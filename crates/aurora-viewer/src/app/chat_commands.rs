@@ -96,7 +96,6 @@ impl App {
                 let d = amount.apply(self.settings.draw_distance);
                 // the slider's range (the Legacy Viewer does not clamp here)
                 self.settings.draw_distance = d.clamp(crate::settings::DRAW_DISTANCE_MIN, crate::settings::DRAW_DISTANCE_MAX);
-                self.net.send(NetCommand::SetDrawDistance(self.settings.draw_distance));
                 self.report_command(aurora_i18n::tr!(
                     "app-chat-commands-draw-distance-set-to-m",
                     value0 = format!("{:.0}", self.settings.draw_distance)

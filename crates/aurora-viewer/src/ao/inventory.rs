@@ -295,7 +295,8 @@ impl Catalog {
                 }
             }
         }
-        self.sets.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
+        self.sets
+            .sort_by(|a, b| crate::natural_order::cmp(&a.name, &b.name).then_with(|| a.id.cmp(&b.id)));
         self.missing.sort();
         self.missing.dedup();
     }
@@ -559,8 +560,17 @@ pub fn add(inv: &Inventory, set: &Set, state: State, item: Uuid, container: Opti
     Ok(finish(change))
 }
 
+/// AOEngine::updateSortOrder: only an entry whose stored order differs from
+/// its position is rewritten, so a plain add is a single request.
+fn in_place(stored: i32, index: usize) -> bool {
+    usize::try_from(stored).ok() == Some(index)
+}
+
 fn normalize_steps(inv: &Inventory, change: &mut Mutation, steps: &[Step]) -> Result<(), String> {
     for (order, step) in steps.iter().enumerate() {
+        if in_place(step.order, order) {
+            continue;
+        }
         let body = if step.group {
             llsd_map! { "name" => format!("{}:OR{order}", step.name) }
         } else {
@@ -575,6 +585,9 @@ fn normalize_steps(inv: &Inventory, change: &mut Mutation, steps: &[Step]) -> Re
 
 fn normalize_members(inv: &Inventory, change: &mut Mutation, members: &[Animation]) -> Result<(), String> {
     for (order, a) in members.iter().enumerate() {
+        if in_place(a.order, order) {
+            continue;
+        }
         let patch = actions::patch(inv, a.link, llsd_map! { "desc" => order.to_string() })?;
         change.operations.extend(patch.operations);
         change.refresh.extend(patch.refresh);
