@@ -2974,6 +2974,9 @@ impl App {
         self.login_form.busy = true;
         self.login_form.error = None;
         self.login_progress = Some((aurora_i18n::tr!("app-connecting").into(), 0.05));
+        // FSPanelLogin::onClickConnect: UserLoginInfo names the account the
+        // login screen selects next time
+        self.settings.last_login = Some(self.settings.login_key());
         self.settings.save();
         self.net.send(NetCommand::Login(Box::new(req)));
     }
@@ -18068,6 +18071,15 @@ impl ApplicationHandler for App {
                         .accounts
                         .first()
                         .map_or_else(String::new, |account| account.username.clone());
+                    // AURORA_DEMO_LOGIN_LAST=<n>: the demo account of the
+                    // last login, which the cards select (the second one by
+                    // default, or the only one)
+                    let last = std::env::var("AURORA_DEMO_LOGIN_LAST")
+                        .ok()
+                        .and_then(|n| n.trim().parse::<usize>().ok())
+                        .map_or(1, |n| n.saturating_sub(1))
+                        .min(self.login_form.accounts.len().saturating_sub(1));
+                    self.settings.last_login = self.login_form.accounts.get(last).map(crate::login_accounts::Account::key);
                     self.settings.remember_password = !self.login_form.accounts.is_empty();
                     if matches!(
                         mode.as_str(),
