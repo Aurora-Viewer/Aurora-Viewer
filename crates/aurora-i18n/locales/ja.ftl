@@ -11804,6 +11804,9 @@ poser-finger-col-middle = 中間
 poser-finger-col-tip = 先端
 poser-hint-rotation = 度、親の座標系
 poser-hint-position = メートル、アバターの軸・チェーンが追従
+poser-hint-position-only = メートル、アバターの軸・この関節のみ
+poser-move-joint-only = この関節のみ動かす
+poser-move-joint-only-hint = チェーンを曲げずにこの関節を直接動かします。ミラーでは反対側の関節も動きます。
 poser-hint-scale = 倍率・中央の立方体 = 均等
 poser-ball-rotation = ドラッグで回転・カメラに合わせる
 poser-ball-position = ワールド内でハンドルをドラッグ・チェーンが曲がる

@@ -38,6 +38,8 @@ pub struct Config {
     pub confirm_overwrite: bool,
     /// Ask before a close that stops the pose and loses its edited joints.
     pub confirm_close: bool,
+    /// Move a position-edited joint directly instead of solving its chain.
+    pub move_joint_only: bool,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -51,6 +53,7 @@ impl Default for Config {
             unlock_pelvis: false,
             confirm_overwrite: false,
             confirm_close: true,
+            move_joint_only: false,
         }
     }
 }
