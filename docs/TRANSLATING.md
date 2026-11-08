@@ -93,7 +93,8 @@ Japanese, beyond the plural:
   the user types or compares with another text: key names (Ctrl, WASD), chat
   commands, file names and extensions, the identifiers of the Dev Toolbox
   tools (J2, L1).
-- Terms: アバター, インベントリ, フレンド, グループ, 区画 (parcel),
+- Terms: アバター, インベントリ, フレンド, グループ, 人物 (People, the
+  window or tab; never 人々), 区画 (parcel),
   リージョン, 不動産 (estate), オブジェクト, 装着 (attach), 装着物
   (attachment), アウトフィット, 容姿 (appearance), 所有者 (owner),
   初期設定 (Preferences), 設定 (Aurora's own settings), 近くのチャット,
@@ -124,6 +125,14 @@ Japanese, beyond the plural:
   name where the user has to find it: Aurora LiveMesh.
 - A label quoted in a hint (「…」) is the exact text of that label in
   `ja.ftl`.
+- A menu or settings path uses the full-width ＞ with each step between 「」
+  and no space (「初期設定」＞「Aurora」＞「通知」), as the Legacy Viewer's
+  Japanese interface does; a step can carry a word after its bracket
+  (「ワールド」メニュー＞「…」, 「土地情報」＞「一般」タブ). Never ›, > or → for a
+  path. The same ＞ ends a text link that opens more (すべて読む＞) and
+  separates the levels of a category (年齢＞年齢偽証), without brackets. →
+  stays for a change or an order (あなた→次の所有者, 名前：A→Z). The comments
+  of the catalogues stay in English and keep ›.
 - A continuation line of a multi-line message cannot start with `*`, `[`
   or `.`: Fluent reads it as a variant. Reword it (Japanese often starts
   with the Markdown bold of the English, `**…**`).
