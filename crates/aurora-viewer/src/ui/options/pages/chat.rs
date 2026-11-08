@@ -145,17 +145,26 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-send-typing-hint"),
                     &field!(send_typing_state),
                 );
-                // a direct payment's card in the payer's conversation (#1198)
-                cx.toggle(
+                // whose direct payment opens a closed conversation on its
+                // card (#1198), one choice per direction (#2638); the Legacy
+                // Viewer never opens one (Never in both)
+                use crate::world::payments::Opens;
+                let opens = [
+                    (Opens::Never, tr!("ui-options-payment-opens-never")),
+                    (Opens::Friends, tr!("ui-options-payment-opens-friends")),
+                    (Opens::Anyone, tr!("ui-options-payment-opens-anyone")),
+                ];
+                cx.combo(
                     tr!("ui-options-payment-opens-conversation"),
                     tr!("ui-options-payment-opens-conversation-hint"),
-                    &field!(payment_opens_conversation),
+                    &field!(payment_received_opens),
+                    &opens,
                 );
-                // and our own payment's card in the payee's conversation
-                cx.toggle(
+                cx.combo(
                     tr!("ui-options-payment-sent-opens-conversation"),
                     tr!("ui-options-payment-sent-opens-conversation-hint"),
-                    &field!(payment_sent_opens_conversation),
+                    &field!(payment_sent_opens),
+                    &opens,
                 );
                 // the tab of a conversation with news flashes
                 // (FSFloaterIMContainer::startFlashingTab), in violet and softly

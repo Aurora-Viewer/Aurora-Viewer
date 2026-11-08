@@ -665,14 +665,20 @@ pub struct Settings {
     /// The money tracker records the payments even while it is closed
     /// (FSAlwaysTrackPayments, off by default).
     pub always_track_payments: bool,
-    /// Preferences › Chat › Conversations: a friend's direct payment opens
-    /// their conversation on its card (#1198); a payment from anyone else
-    /// shows there only when it is open. On by default.
-    pub payment_opens_conversation: bool,
-    /// Preferences › Chat › Conversations: our own direct payment to a
-    /// resident opens their conversation on its card (#1198); otherwise it
-    /// shows there only when it is open. Off by default.
-    pub payment_sent_opens_conversation: bool,
+    /// Preferences › Chat › Conversations: whose direct payment to us opens
+    /// their conversation on its card (#1198, #2638); otherwise it shows
+    /// there only when it is open. Friends by default.
+    pub payment_received_opens: crate::world::payments::Opens,
+    /// The former switch, read once: on was a friend's payment received.
+    #[serde(rename = "payment_opens_conversation", skip_serializing)]
+    pub(crate) former_payment_opens_conversation: Option<bool>,
+    /// Preferences › Chat › Conversations: whose conversation our own direct
+    /// payment opens on its card (#1198, #2638); otherwise it shows there
+    /// only when it is open. Never by default.
+    pub payment_sent_opens: crate::world::payments::Opens,
+    /// The former switch, read once: on was any resident we paid.
+    #[serde(rename = "payment_sent_opens_conversation", skip_serializing)]
+    pub(crate) former_payment_sent_opens_conversation: Option<bool>,
     /// Mini-map and world map options (Firestorm MiniMap* / Map* settings).
     pub maps: MapSettings,
     /// "Search": last tab, rating boxes and land limits.
@@ -1898,8 +1904,10 @@ impl Default for Settings {
             confirm_payments: true,
             payment_confirm_threshold: 200,
             always_track_payments: false,
-            payment_opens_conversation: true,
-            payment_sent_opens_conversation: false,
+            payment_received_opens: crate::world::payments::Opens::Friends,
+            former_payment_opens_conversation: None,
+            payment_sent_opens: crate::world::payments::Opens::Never,
+            former_payment_sent_opens_conversation: None,
             maps: MapSettings::default(),
             search: Default::default(),
             show_people: true,
@@ -2490,6 +2498,17 @@ impl Settings {
         }
         if std::mem::take(&mut self.former_hide_own_group_title) {
             self.group_titles = crate::world::names::GroupTitles::AllExceptMine;
+        }
+        // the payments' two switches became a choice each (#2638), with
+        // what they did: friends' payments received, and ours to anyone
+        {
+            use crate::world::payments::Opens;
+            if let Some(on) = self.former_payment_opens_conversation.take() {
+                self.payment_received_opens = if on { Opens::Friends } else { Opens::Never };
+            }
+            if let Some(on) = self.former_payment_sent_opens_conversation.take() {
+                self.payment_sent_opens = if on { Opens::Anyone } else { Opens::Never };
+            }
         }
         // the shutter's switch of the interface sounds became the photos'
         // own ("Quiet snapshots"): a shutter turned off there stays off
@@ -3433,6 +3452,37 @@ mod tests {
                 let reloaded: super::Settings = serde_json::from_value(saved).expect("reload title choice");
                 assert_eq!(reloaded.sanitized().group_titles, expected);
             }
+        }
+    }
+
+    #[test]
+    fn the_former_payment_switches_keep_what_they_did() {
+        use crate::world::payments::Opens;
+
+        let fresh: super::Settings = serde_json::from_str("{}").expect("fresh settings");
+        let fresh = fresh.sanitized();
+        assert_eq!(
+            (fresh.payment_received_opens, fresh.payment_sent_opens),
+            (Opens::Friends, Opens::Never)
+        );
+        for (received, sent) in [(false, false), (true, false), (false, true), (true, true)] {
+            let old: super::Settings = serde_json::from_value(serde_json::json!({
+                "payment_opens_conversation": received,
+                "payment_sent_opens_conversation": sent,
+            }))
+            .expect("former payment switches");
+            let migrated = old.sanitized();
+            let expected = (
+                if received { Opens::Friends } else { Opens::Never },
+                if sent { Opens::Anyone } else { Opens::Never },
+            );
+            assert_eq!((migrated.payment_received_opens, migrated.payment_sent_opens), expected);
+            let saved = serde_json::to_value(&migrated).expect("save payment choices");
+            assert!(saved.get("payment_opens_conversation").is_none(), "only the choices are saved");
+            assert!(saved.get("payment_sent_opens_conversation").is_none(), "only the choices are saved");
+            let reloaded: super::Settings = serde_json::from_value(saved).expect("reload payment choices");
+            let reloaded = reloaded.sanitized();
+            assert_eq!((reloaded.payment_received_opens, reloaded.payment_sent_opens), expected);
         }
     }
 
