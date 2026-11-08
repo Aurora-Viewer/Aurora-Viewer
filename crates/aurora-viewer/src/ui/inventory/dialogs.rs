@@ -2215,6 +2215,32 @@ mod tests {
         }
     }
 
+    /// Tab reaches the buttons (`LLPanel::handleKeyHere`: a focused button
+    /// clicks itself on Return): Delete first, then Cancel.
+    #[test]
+    fn tab_moves_between_the_confirmation_buttons_and_enter_answers_the_focused_one() {
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        for (tabs, deletes) in [(1, true), (2, false)] {
+            let ctx = egui::Context::default();
+            let mut st = InventoryUi {
+                dialog: Some(EditDialog::Delete(vec![Uuid::from_u128(8100)], false)),
+                ..Default::default()
+            };
+            for _ in 0..3 {
+                confirmation_pass(&ctx, &inv, &mut st, Vec::new());
+            }
+            for _ in 0..tabs {
+                confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Tab)]);
+                confirmation_pass(&ctx, &inv, &mut st, Vec::new());
+            }
+            let mut actions = confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Enter)]);
+            actions.extend(confirmation_pass(&ctx, &inv, &mut st, Vec::new()));
+            assert_eq!(actions.len(), usize::from(deletes), "{tabs} Tab: Enter answers the focused button");
+            assert!(st.dialog.is_none());
+        }
+    }
+
     /// The give confirmation (#627): the resident by name, the entries with
     /// the one that cannot be copied marked and counted, Give gives, Escape
     /// gives nothing.
