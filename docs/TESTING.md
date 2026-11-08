@@ -9148,6 +9148,13 @@ separate searches enabled and disabled; that preference controls only the text.
   opening of the destination folder; screenshot after 800. No activation
   of the native window and no reading of the system clipboard during these
   automatic scenarios.
+  Cut feedback: capture `clipboard-cut` at frame 710 (the two source rows
+  faded) and 800 (move finished, no cut feedback). `clipboard-cut-hold`
+  leaves the cut pending; `clipboard-cut-cancel` presses Escape at 730.
+  `clipboard-cut-folder-hold` fades the folder and its visible descendants.
+  Prefix these modes with `aurora-` for Aurora's layout. A new copy or cut
+  replaces the previous feedback; a refused paste keeps it. Returning from
+  another app after replacing the system clipboard cancels the old cut.
   `clipboard-progress` illustrates the possible states of the status line:
   update at frames 650–749, copy with a 2/3 counter at frames
   800–849, verification at frames 850–919, then end confirmation from 920.
