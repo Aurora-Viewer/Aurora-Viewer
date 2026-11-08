@@ -551,8 +551,8 @@ const FOOT_H: f32 = super::compose::BOX_H + super::compose::UNDER_BOX;
 /// size of its buttons. Lit while the column is what a click asked
 /// (`ColumnChoice::by_hand`), plain while it follows the window, greyed out
 /// in a window too narrow for the column (`workspace::OPEN_FROM`), as a head
-/// tool without its panel's room. The rail has no search field to clear a
-/// search from: collapsing ends it.
+/// tool without its panel's room. Collapsing ends a search
+/// (`workspace::show`).
 fn column_toggle(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, actions: &mut Vec<ConvAction>, column: egui::Rect, narrow: bool) {
     let rail = st.column.rail(narrow);
     let fits = st.layout_width.is_some_and(|w| w >= super::workspace::OPEN_FROM);
@@ -599,9 +599,6 @@ fn column_toggle(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, actions: &mut 
         st.column = st.column.toggled(narrow);
         if st.column.collapsed != was {
             actions.push(ConvAction::ColumnCollapsed(st.column.collapsed));
-        }
-        if !rail {
-            st.side_filter.clear();
         }
     }
 }

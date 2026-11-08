@@ -16224,7 +16224,7 @@ impl App {
                 self.chat_ui.send_typing = self.settings.send_typing_state;
                 self.chat_ui.typing_chevron = self.settings.typing_chevron;
                 self.chat_ui.flash_unread = self.settings.flash_unread_conversations;
-                self.chat_ui.column.collapsed = self.settings.chat_column_collapsed || self.chat_ui.demo_column_collapsed;
+                self.chat_ui.follow_column_setting(self.settings.chat_column_collapsed);
                 self.chat_ui.own_windows = self.settings.conversations_own_windows
                     || (self.demo && crate::demo::popout_scenario() == Some(crate::demo::Popout::Option));
                 // AURORA_DEMO_CONV_POPOUT: at frame 640, the friend's IM and
@@ -16418,8 +16418,8 @@ impl App {
                 for c in conversation_actions {
                     match c {
                         ui::chat::ConvAction::ColumnCollapsed(collapsed) => {
-                            self.chat_ui.demo_column_collapsed = false;
-                            self.settings.chat_column_collapsed = collapsed;
+                            self.chat_ui
+                                .column_collapsed_by_button(&mut self.settings.chat_column_collapsed, collapsed);
                             self.settings.save();
                         }
                         ui::chat::ConvAction::Local(out) => a.chat = Some(out),

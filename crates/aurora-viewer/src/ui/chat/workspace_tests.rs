@@ -47,6 +47,8 @@ struct Harness {
     friends: crate::ui::people::FriendsSettings,
     /// The window is open (its cross or Ctrl+W closes it).
     open: bool,
+    /// `Settings::chat_column_collapsed`, given every frame as the app does.
+    column_setting: bool,
 }
 
 impl Harness {
@@ -74,6 +76,7 @@ impl Harness {
             people: Default::default(),
             friends: Default::default(),
             open: true,
+            column_setting: false,
         }
     }
 
@@ -95,7 +98,11 @@ impl Harness {
             people,
             friends,
             open,
+            column_setting,
         } = self;
+        // as the app does every frame, and with what the button asked
+        st.follow_column_setting(*column_setting);
+        let asked = actions.len();
         let radar = crate::world::radar::Radar::default();
         let mut radar_settings = crate::ui::people::RadarSettings::default();
         let voice = HashMap::new();
@@ -107,7 +114,7 @@ impl Harness {
             now: 0.0,
             pics: &pics,
         };
-        frames.run(events, |ui| {
+        let texts = frames.run(events, |ui| {
             // as the app does before any window
             crate::ui::close_key::begin(ui.ctx());
             actions.extend(show(
@@ -131,7 +138,13 @@ impl Harness {
                 }),
                 open,
             ));
-        })
+        });
+        for action in &actions[asked..] {
+            if let ConvAction::ColumnCollapsed(collapsed) = action {
+                st.column_collapsed_by_button(column_setting, *collapsed);
+            }
+        }
+        texts
     }
 
     fn settle(&mut self) -> Vec<crate::ui::widgets::elide_tests::Text> {
@@ -1196,6 +1209,69 @@ fn collapsed_asked(h: &Harness) -> Vec<bool> {
         .collect()
 }
 
+/// The rail has no search field: a search ends whenever the column becomes
+/// a rail, not only when its button collapses it. A window narrowed past
+/// the rail's width, and a column opened by hand in a narrow window that is
+/// then narrowed below `OPEN_FROM`, leave no hidden search filtering the
+/// rail's pictures.
+#[test]
+fn a_search_ends_whenever_the_column_becomes_a_rail() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    resize(&mut h, 700.0);
+    h.st.side_filter = "nobody".into();
+    h.frame(Vec::new());
+    assert_eq!(h.st.side_filter, "nobody", "the column keeps its search");
+    resize(&mut h, 460.0);
+    assert!(shows_rail(&h));
+    assert_eq!(h.st.side_filter, "", "a narrower window made it a rail");
+
+    resize(&mut h, 580.0);
+    toggle_column(&mut h);
+    assert!(h.st.column.opened && !shows_rail(&h), "opened by hand at 580");
+    h.st.side_filter = "nobody".into();
+    h.frame(Vec::new());
+    assert_eq!(h.st.side_filter, "nobody");
+    resize(&mut h, 540.0);
+    assert!(shows_rail(&h) && !h.st.column.opened, "no room left: closed");
+    assert_eq!(h.st.side_filter, "", "the end of the opened column");
+}
+
+/// The button's choice goes through the settings the app gives back every
+/// frame (`ChatUi::follow_column_setting`): a collapse is kept on the next
+/// frames and after a relog, an expand is not undone by the setting, and the
+/// demo's own collapse ends with the button.
+#[test]
+fn the_buttons_choice_lives_in_the_settings() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    resize(&mut h, 700.0);
+    toggle_column(&mut h);
+    assert!(h.column_setting, "the setting keeps the collapse");
+    resize(&mut h, 700.0);
+    assert!(shows_rail(&h), "still collapsed on the frames after");
+
+    // a relog: a new window state, the saved setting
+    let mut relog = Harness::new(ChatStyle::Aurora);
+    relog.column_setting = h.column_setting;
+    resize(&mut relog, 700.0);
+    assert!(shows_rail(&relog), "collapsed after a relog");
+    toggle_column(&mut relog);
+    assert!(!relog.column_setting && !shows_rail(&relog), "expanded");
+    resize(&mut relog, 700.0);
+    assert!(!shows_rail(&relog), "the setting does not collapse it again");
+
+    // AURORA_DEMO_CONV=aurora:collapsed, the preferences untouched
+    let mut demo = Harness::new(ChatStyle::Aurora);
+    demo.st.demo_column_collapsed = true;
+    resize(&mut demo, 700.0);
+    assert!(shows_rail(&demo) && !demo.column_setting);
+    toggle_column(&mut demo);
+    resize(&mut demo, 700.0);
+    assert!(
+        !demo.st.demo_column_collapsed && !shows_rail(&demo),
+        "the button ends the demo's collapse"
+    );
+}
+
 /// All false is the automatic layout; each click departs from it or comes
 /// back to it, whatever the width.
 #[test]
@@ -1309,7 +1385,7 @@ fn the_button_is_greyed_out_when_the_column_does_not_fit() {
     assert!(shows_rail(&h), "room again: still automatic");
 
     // collapsed by hand it stays so, greyed out until the room is back
-    h.st.column.collapsed = true;
+    h.column_setting = true;
     resize(&mut h, 460.0);
     toggle_column(&mut h);
     assert!(h.st.column.collapsed);
@@ -1341,7 +1417,7 @@ fn the_column_button_is_level_with_the_box() {
 #[test]
 fn a_collapsed_column_keeps_the_members_panel() {
     let mut h = Harness::new(ChatStyle::Aurora);
-    h.st.column.collapsed = true;
+    h.column_setting = true;
     resize(&mut h, 700.0);
     assert!(h.st.layout_members_room == Some(true), "room in a wide window, rail or not");
     resize(&mut h, 560.0);

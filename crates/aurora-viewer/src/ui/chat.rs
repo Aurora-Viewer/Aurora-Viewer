@@ -295,6 +295,20 @@ pub(crate) fn line_style(style: crate::settings::ChatStyle, group: Option<bool>)
 }
 
 impl ChatUi {
+    /// The column's saved state, given every frame by the app
+    /// (`Settings::chat_column_collapsed`), or the demo's own collapse.
+    pub fn follow_column_setting(&mut self, saved: bool) {
+        self.column.collapsed = saved || self.demo_column_collapsed;
+    }
+
+    /// The column's button changed `ColumnChoice::collapsed`
+    /// (`ConvAction::ColumnCollapsed`): the setting keeps it, and the demo's
+    /// own collapse ends with it.
+    pub fn column_collapsed_by_button(&mut self, saved: &mut bool, collapsed: bool) {
+        self.demo_column_collapsed = false;
+        *saved = collapsed;
+    }
+
     /// Recreate only the account-independent nearby window. IMs, messages,
     /// drafts and focus never cross sessions. Its stable floater id lets the
     /// existing layout restore position, size and minimized state.
