@@ -646,7 +646,7 @@ mod tests {
             let mut text = String::new();
             shown.1 = chat
                 .show(ui.ctx(), &p, &mut b, |ui| {
-                    ui.add(egui::TextEdit::singleline(&mut text).id(Id::new("field")));
+                    ui.add(egui::TextEdit::singleline(&mut text).id(Id::unique("field")));
                 })
                 .is_some();
         });
@@ -662,9 +662,9 @@ mod tests {
         let ctx = egui::Context::default();
         let mut ui = Interface::default();
         assert_eq!(mouselook_frame(&ctx), (true, true));
-        ctx.memory_mut(|m| m.request_focus(Id::new("field")));
+        ctx.memory_mut(|m| m.request_focus(Id::unique("field")));
         mouselook_frame(&ctx);
-        assert!(ctx.memory(|m| m.has_focus(Id::new("field"))), "typing in the chat");
+        assert!(ctx.memory(|m| m.has_focus(Id::unique("field"))), "typing in the chat");
         assert_eq!(ui.follow_mouselook(&ctx, false, false), None, "no change");
         assert_eq!(ui.follow_mouselook(&ctx, true, false), Some(true));
         assert_eq!(ctx.memory(|m| m.focused()), None, "the keyboard moves the avatar");
@@ -683,7 +683,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut ui = Interface::default();
         mouselook_frame(&ctx);
-        ctx.memory_mut(|m| m.request_focus(Id::new("field")));
+        ctx.memory_mut(|m| m.request_focus(Id::unique("field")));
         mouselook_frame(&ctx);
         ui.follow_mouselook(&ctx, true, true);
         assert_eq!(ctx.memory(|m| m.focused()), None);
