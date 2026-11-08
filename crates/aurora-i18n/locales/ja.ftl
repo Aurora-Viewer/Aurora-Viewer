@@ -2722,6 +2722,8 @@ ui-land-dialogs-ban-duration = アクセス禁止期間
 ui-land-dialogs-ban-duration-2 = アクセス禁止期間：
 ui-land-environment-day-length-hours = １日の長さ（時間）
 ui-options-chat-bubble-duration = フキダシの表示時間
+ui-options-chat-console-max-lines = チャットバーの上に表示する最大行数
+ui-options-chat-console-max-lines-hint = 折り返したテキストの行数を数えます。カードの見出しは含みません。最新のメッセージを途中で切らずに表示します。０にすると表示しません。
 ui-options-chat-bubbles = アバターの上にフキダシチャットを表示
 ui-options-chat-bubbles-hint = 住人の近くの発言を、名前の下に２４秒間表示します。
 ui-options-chat-bubbles-hide-console = チャットバーの上には表示しない
@@ -13404,17 +13406,7 @@ ui-options-build-physical = 物理
 ui-options-build-temporary = 一時的
 ui-options-build-new-faces = 新しいオブジェクトの外観
 
-# Preferences › Controls: FSAvatarTurnSpeed
-ui-options-avatar-turn-speed = アバターの回転速度
-ui-options-avatar-turn-speed-help = 歩いているときや立っているときに、アバターが進む方向へ向き直る速さを上げます（デフォルトは0%）。この画面のみに反映されます。
 
-# Preferences › Mouse and keyboard: FSRevokePerms
-ui-options-revoke-permissions = 座ったオブジェクトの許可を取り消す
-ui-options-revoke-permissions-help = 自分が所有していないオブジェクトに座るとき、または立ち上がるときに、そのスクリプトに与えた許可（アバターのアニメーションなど）を取り消します。
-ui-options-revoke-never = しない
-ui-options-revoke-on-sit = 座ったとき
-ui-options-revoke-on-stand = 立ち上がったとき
-ui-options-revoke-on-sit-and-stand = 座ったときと立ち上がったとき
 
 # Preferences › Protections: large surface protection (RenderVolumeSAProtection)
 large-surface-title = 大きな表面
@@ -13423,9 +13415,10 @@ large-surface-enable-hint = グラフィックカードに過負荷をかける�
 large-surface-frame-max = 描画する表面積の合計
 large-surface-frame-max-hint = 最も大きいものが隠されるまでに描画する、大きなオブジェクトの表面積です（デフォルトは5,000）。
 
-# Preferences: visibility switches (RenderAttachedParticles, RenderParcelSelection)
+# Preferences › Graphics: RenderAttachedParticles
 ui-options-attached-particles = 装着物のパーティクル
 ui-options-attached-particles-hint = アバターが装着しているもののパーティクル（きらめき、煙、炎など）を描画します。
-ui-options-build-land = 土地
-ui-options-parcel-selection-outline = 選択した区画の境界を強調表示
-ui-options-parcel-selection-outline-hint = 土地ツールや「土地情報」で選択した区画の周りに黄色い壁を表示します。
+
+# Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
+ui-options-draw-distance-stepping = 描画距離を段階的に広げる
+ui-options-draw-distance-stepping-hint = ログイン後と別のリージョンへのテレポート後、描画距離を32mから始めて設定値まで倍々に広げ、近くのものから読み込みます。

@@ -553,6 +553,16 @@ Labels (created by `scripts/setup-labels.ps1`):
   completes the description first. An outside contributor's PR that still
   carries it 3 days after the workflow's comment is closed by the
   workflow's daily sweep; the team's PRs never are.
+- **`waiting-for-slot`**, set and removed by the Review slots workflow:
+  an outside contributor has at most 10 PRs in review, the others carry
+  this label and come back on their own, oldest first, when a slot frees
+  up. The PR panel of `aurora-tools.cmd` hides them, like `on-hold`. Do not
+  review a PR that carries it. Never add it by hand; removing it by hand
+  is how a maintainer gives that PR a slot (when its author asks, or the
+  human wants it reviewed first): the author's newest other PR in review
+  then waits instead. A PR a maintainer has started reviewing (a team
+  `## Review`, `## Maintainer review` or `## Changes requested` comment),
+  or that is in the merge queue, keeps its slot.
 
 ### Link the PR and its issues
 
