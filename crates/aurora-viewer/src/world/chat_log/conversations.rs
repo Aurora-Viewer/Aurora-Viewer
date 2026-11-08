@@ -600,25 +600,27 @@ pub struct View<'a> {
 /// (rebuildList then sort): those whose name or time contain the filter
 /// (any case), without those of blocked residents unless asked; friends
 /// first when asked, then by name (A to Z) or by date (newest first).
-pub fn shown(list: &[Conversation], view: View, is_friend: impl Fn(&Uuid) -> bool, blocked: &HashSet<Uuid>) -> Vec<usize> {
+/// `names` are the names the window shows, one per entry of `list`.
+pub fn shown(list: &[Conversation], names: &[String], view: View, friends: &HashSet<Uuid>, blocked: &HashSet<Uuid>) -> Vec<usize> {
+    debug_assert_eq!(list.len(), names.len());
     let filter = view.filter.trim_start().to_uppercase();
+    let upper: Vec<String> = names.iter().map(|n| n.to_uppercase()).collect();
     let mut out: Vec<usize> = (0..list.len())
         .filter(|&i| {
             let c = &list[i];
-            let found = filter.is_empty() || c.name.to_uppercase().contains(&filter) || timestamp(c.time).to_uppercase().contains(&filter);
+            let found = filter.is_empty() || upper[i].contains(&filter) || timestamp(c.time).to_uppercase().contains(&filter);
             found && (view.show_blocked || !blocked.contains(&c.participant))
         })
         .collect();
-    let names: Vec<String> = list.iter().map(|c| c.name.to_uppercase()).collect();
     out.sort_by(|&a, &b| {
         let (x, y) = (&list[a], &list[b]);
         let friends = if view.friends_first {
-            is_friend(&y.participant).cmp(&is_friend(&x.participant))
+            friends.contains(&y.participant).cmp(&friends.contains(&x.participant))
         } else {
             std::cmp::Ordering::Equal
         };
         friends.then_with(|| match view.sort {
-            Sort::Name => names[a].cmp(&names[b]),
+            Sort::Name => upper[a].cmp(&upper[b]),
             Sort::Date => y.time.cmp(&x.time),
         })
     });
@@ -642,6 +644,29 @@ mod tests {
             participant: Uuid::from_u128(session + 1000),
             offline: false,
         }
+    }
+
+    /// `shown` with the names the entries carry.
+    fn show(list: &[Conversation], view: View, friends: &HashSet<Uuid>, blocked: &HashSet<Uuid>) -> Vec<usize> {
+        let names: Vec<String> = list.iter().map(|c| c.name.clone()).collect();
+        shown(list, &names, view, friends, blocked)
+    }
+
+    #[test]
+    fn the_filter_and_the_sort_use_the_names_the_window_shows() {
+        // an RLVa privacy name replaces the logged one in the filter too
+        let list = vec![entry(1, Kind::Private, "Jane Doe", 1), entry(2, Kind::Private, "Bob", 2)];
+        let shown_names = vec!["Anonymous 7".to_owned(), "Bob".to_owned()];
+        let view = |filter| View {
+            sort: Sort::Name,
+            friends_first: false,
+            show_blocked: true,
+            filter,
+        };
+        let none = HashSet::new();
+        assert!(shown(&list, &shown_names, view("jane"), &none, &none).is_empty());
+        assert_eq!(shown(&list, &shown_names, view("anonymous"), &none, &none), [0]);
+        assert_eq!(shown(&list, &shown_names, view(""), &none, &none), [0, 1]);
     }
 
     #[test]
@@ -769,12 +794,12 @@ mod tests {
             filter: "",
         };
         assert_eq!(
-            names(shown(&list, view, |_| false, &none)),
+            names(show(&list, view, &none, &none)),
             ["Alice", "bob", "Carol's group", "dave"]
         );
         let by_date = View { sort: Sort::Date, ..view };
         assert_eq!(
-            names(shown(&list, by_date, |_| false, &none)),
+            names(show(&list, by_date, &none, &none)),
             ["dave", "bob", "Carol's group", "Alice"]
         );
         let friends = View {
@@ -782,7 +807,7 @@ mod tests {
             ..view
         };
         assert_eq!(
-            names(shown(&list, friends, |id| *id == friend, &none)),
+            names(show(&list, friends, &HashSet::from([friend]), &none)),
             ["dave", "Alice", "bob", "Carol's group"]
         );
     }
@@ -800,16 +825,16 @@ mod tests {
             show_blocked: false,
             filter,
         };
-        assert_eq!(shown(&list, view("  jane"), |_| false, &none), [0]);
-        assert_eq!(shown(&list, view("12/31"), |_| false, &none), [1]);
-        assert_eq!(shown(&list, view("nobody"), |_| false, &none).len(), 0);
+        assert_eq!(show(&list, view("  jane"), &none, &none), [0]);
+        assert_eq!(show(&list, view("12/31"), &none, &none), [1]);
+        assert_eq!(show(&list, view("nobody"), &none, &none).len(), 0);
         let blocked: HashSet<Uuid> = [list[1].participant].into();
-        assert_eq!(shown(&list, view(""), |_| false, &blocked), [0]);
+        assert_eq!(show(&list, view(""), &none, &blocked), [0]);
         let all = View {
             show_blocked: true,
             ..view("")
         };
-        assert_eq!(shown(&list, all, |_| false, &blocked), [0, 1]);
+        assert_eq!(show(&list, all, &none, &blocked), [0, 1]);
     }
 
     #[test]

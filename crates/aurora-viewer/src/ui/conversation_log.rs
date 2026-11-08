@@ -42,8 +42,29 @@ pub enum Action {
     Remove { session: Uuid, time: i64 },
 }
 
+/// What the order below was made from: it is made again only when one of
+/// these changes, not every frame.
+#[derive(PartialEq)]
+struct Signature {
+    revision: u64,
+    by_date: bool,
+    friends_first: bool,
+    show_blocked: bool,
+    filter: String,
+    /// Friends, blocked residents and the names RLVa hides.
+    social: u64,
+}
+
+/// The rows shown, in order, with the names they show.
+struct Cache {
+    signature: Signature,
+    order: Vec<usize>,
+    names: Vec<String>,
+}
+
 #[derive(Default)]
 pub struct ConversationLogUi {
+    cache: Option<Cache>,
     filter: String,
     /// The selected entry: its session and time.
     selected: Option<(Uuid, i64)>,
@@ -90,23 +111,19 @@ impl ConversationLogUi {
         floater.show(ctx, p, open, |ui| {
             let world = input.world;
             let log = &world.chat_log.conversations;
-            let blocked: HashSet<Uuid> = log
-                .list
-                .iter()
-                .map(|c| c.participant)
-                .filter(|id| !id.is_nil() && world.is_avatar_blocked(id))
-                .collect();
-            let order = conversations::shown(
-                &log.list,
-                View {
-                    sort: if view.by_date { Sort::Date } else { Sort::Name },
-                    friends_first: view.friends_first,
-                    show_blocked: view.show_blocked,
-                    filter: &self.filter,
-                },
-                |id| world.social.is_friend(id),
-                &blocked,
-            );
+            let signature = Signature {
+                revision: log.revision,
+                by_date: view.by_date,
+                friends_first: view.friends_first,
+                show_blocked: view.show_blocked,
+                filter: self.filter.clone(),
+                social: social_signature(world, &log.list),
+            };
+            if self.cache.as_ref().is_none_or(|c| c.signature != signature) {
+                self.cache = Some(Self::sorted(world, signature));
+            }
+            let Some(cache) = self.cache.take() else { return };
+            let (order, names) = (&cache.order, &cache.names);
             // the selection stays on its entry while it is shown
             if let Some((session, time)) = self.selected
                 && !order.iter().any(|&i| log.list[i].session == session && log.list[i].time == time)
@@ -150,7 +167,9 @@ impl ConversationLogUi {
             });
             ui.add_space(4.0);
             if order.is_empty() {
-                let text = match (log.logging, log.list.is_empty()) {
+                let empty = (log.logging, log.list.is_empty());
+                self.cache = Some(cache);
+                let text = match empty {
                     (false, true) => Some(aurora_i18n::tr!("conversation-log-disabled-empty")),
                     (false, false) => Some(aurora_i18n::tr!("conversation-log-disabled-not-empty")),
                     (true, true) => Some(aurora_i18n::tr!("conversation-log-enabled-empty")),
@@ -170,17 +189,49 @@ impl ConversationLogUi {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     for &i in &order[range] {
                         let c = &log.list[i];
-                        self.row(ui, p, input, c, &filter, &mut action);
+                        self.row(ui, p, input, c, &names[i], &filter, &mut action);
                     }
                 });
+            self.cache = Some(cache);
         });
         (action, changed)
     }
 
-    fn row(&mut self, ui: &mut egui::Ui, p: &Palette, input: &Inputs, c: &Conversation, filter: &str, action: &mut Option<Action>) {
+    /// The order of the rows and the names they show, for the log as it is.
+    fn sorted(world: &World, signature: Signature) -> Cache {
+        let list = &world.chat_log.conversations.list;
+        let names: Vec<String> = list.iter().map(|c| world.conversation_display_name(c)).collect();
+        let friends: HashSet<Uuid> = world.social.friends.iter().map(|f| f.id).collect();
+        let blocked: HashSet<Uuid> = list
+            .iter()
+            .map(|c| c.participant)
+            .filter(|id| !id.is_nil() && world.is_avatar_blocked(id))
+            .collect();
+        let order = conversations::shown(
+            list,
+            &names,
+            View {
+                sort: if signature.by_date { Sort::Date } else { Sort::Name },
+                friends_first: signature.friends_first,
+                show_blocked: signature.show_blocked,
+                filter: &signature.filter,
+            },
+            &friends,
+            &blocked,
+        );
+        Cache { signature, order, names }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn row(&mut self, ui: &mut egui::Ui, p: &Palette, input: &Inputs, c: &Conversation, name: &str, filter: &str, action: &mut Option<Action>) {
         let world = input.world;
-        let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::click());
         let key = (c.session, c.time);
+        // the ids follow the entry, not its place in the list: a sort while
+        // a menu is open keeps the menu on its resident
+        // (people/rows.rs::allocate)
+        let id = ui.scope_id().with(("conversation-log-row", key));
+        let (_, rect) = ui.allocate_space(Vec2::new(ui.available_width(), ROW_H));
+        let resp = ui.interact(rect, id, Sense::click());
         let selected = self.selected == Some(key);
         let hot = ui.rect_contains_pointer(rect);
         if selected || hot {
@@ -217,7 +268,7 @@ impl ConversationLogUi {
                 if !c.participant.is_nil() && ui.is_rect_visible(rect) {
                     self.wanted_pics.insert(c.participant);
                 }
-                widgets::avatar_disc(ui, p, pic, input.pics.get(&c.participant), &c.name, false);
+                widgets::avatar_disc(ui, p, pic, input.pics.get(&c.participant), name, false);
             }
         }
         x = pic.right() + 6.0;
@@ -225,7 +276,7 @@ impl ConversationLogUi {
         let cross = Rect::from_center_size(egui::pos2(rect.right() - 12.0, rect.center().y), Vec2::splat(18.0));
         let mut over_cross = false;
         if hot || selected {
-            let hit = ui.interact(cross, egui::Id::unique(("conversation_log_remove", key)), Sense::click());
+            let hit = ui.interact(cross, id.with("remove"), Sense::click());
             over_cross = hit.hovered();
             if let Some(t) = super::icons::global("x") {
                 let uv = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
@@ -253,13 +304,13 @@ impl ConversationLogUi {
             );
         }
         let name_color = crate::ui::colors::resident_name(world, &c.participant, p.ink);
-        let name_job = highlighted(&c.name, filter, egui::FontId::proportional(12.5), name_color, p.violet, name_width);
+        let name_job = highlighted(name, filter, egui::FontId::proportional(12.5), name_color, p.violet, name_width);
         let name_galley = ui.fonts_mut(|f| f.layout_job(name_job));
         let cut = name_galley.elided;
         ui.painter()
             .galley(egui::pos2(x, rect.center().y - name_galley.size().y * 0.5), name_galley, name_color);
         if cut && !over_cross {
-            resp.clone().on_hover_text(&c.name);
+            resp.clone().on_hover_text(name);
         }
         if (resp.clicked() || resp.secondary_clicked()) && !over_cross {
             self.selected = Some(key);
@@ -275,6 +326,20 @@ impl ConversationLogUi {
         }
         menu::context_menu(&resp, p, |ui| actions_menu(ui, p, world, c, action));
     }
+}
+
+/// What the cached order depends on besides the log: who is a friend, who
+/// is blocked and whose name RLVa hides.
+fn social_signature(world: &World, list: &[Conversation]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    world.social.friends.iter().for_each(|f| f.id.hash(&mut hash));
+    for c in list {
+        if !c.participant.is_nil() {
+            (world.is_avatar_blocked(&c.participant), world.rlva_can_name(c.participant)).hash(&mut hash);
+        }
+    }
+    hash.finish()
 }
 
 /// A toolbar button of the window (People's, with its menu).

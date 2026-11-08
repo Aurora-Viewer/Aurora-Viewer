@@ -419,6 +419,16 @@ impl World {
         }
     }
 
+    /// The name an entry of the conversation log shows: with RLVa @shownames
+    /// a resident's name stays hidden also when it was logged before the
+    /// restriction or imported. Display only: the log keeps the real name.
+    pub fn conversation_display_name(&self, c: &Conversation) -> String {
+        if c.kind == Kind::Private && !c.participant.is_nil() && !self.rlva_can_name(c.participant) {
+            return super::rlva::privacy::anonymous(c.participant).display_name.clone();
+        }
+        c.name.clone()
+    }
+
     /// Title and transcript of a conversation log's entry, for the History
     /// window: the file of the resident or group as it is named now, else
     /// the one the entry was logged with (a conference's, an import's).
@@ -435,7 +445,7 @@ impl World {
                 .then(|| self.chat_log.history_file_of(&c.history_file))
                 .flatten()
         });
-        (c.name.clone(), file)
+        (self.conversation_display_name(c), file)
     }
 
     /// Every frame: histories asked for, histories read.
