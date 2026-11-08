@@ -48,6 +48,8 @@ mod action_marker_tests;
 #[cfg(test)]
 mod buttons_tests;
 #[cfg(test)]
+mod chat_lines_tests;
+#[cfg(test)]
 mod contact_visual_tests;
 #[cfg(test)]
 mod volume_tests;
@@ -3530,6 +3532,59 @@ fn said_by_resident(line: &crate::world::ChatLine) -> bool {
     matches!(line.kind, ChatKind::Local(_) | ChatKind::Own(_))
 }
 
+/// Where the nearby chat lines were laid out from in their area, anchored
+/// by its bottom: `held` before them, `settle` after keeps their bottom on
+/// that anchor in the frame where their height changes.
+///
+/// An area anchored by its bottom places its content with the height it
+/// had the frame before (egui's `AreaState::size`): the frame a line's fade
+/// ends and it leaves, the others were laid out its height too high, and
+/// the frame one arrives, too low; the next frame put them back. That is
+/// the flicker of #2544. The Legacy Viewer stacks its lines from the
+/// bottom in the frame it draws them (`LLConsole::draw`, `y_pos` from the
+/// bottom, indra/llui/llconsole.cpp), so they never move but to make room.
+/// Here the lines are laid out as before, then everything they painted
+/// (text, cards, glass) is moved by the difference of the two heights; in
+/// a frame where the height does not change, nothing moves.
+struct Held {
+    /// The anchor: the bottom of the area at the height of the frame before.
+    bottom: f32,
+    /// The first shape the lines painted on the area's layer.
+    start: usize,
+}
+
+impl Held {
+    /// Before the lines, at the start of the area's `ui`.
+    fn new(ui: &egui::Ui) -> Self {
+        let layer = ui.layer_id();
+        Self {
+            bottom: ui.max_rect().bottom(),
+            start: ui.ctx().graphics(|g| g.get(layer).map_or(0, |l| l.next_idx().0)),
+        }
+    }
+
+    /// After the lines: moves what they painted onto the anchor, and returns
+    /// the move, for the click areas laid over them.
+    fn settle(self, ui: &egui::Ui) -> egui::Vec2 {
+        use egui::emath::GuiRounding as _;
+        let shift = egui::vec2(0.0, (self.bottom - ui.min_rect().bottom()).round_to_pixels(ui.pixels_per_point()));
+        if shift.y != 0.0 {
+            let moved = egui::emath::TSTransform::from_translation(shift);
+            let layer = ui.layer_id();
+            ui.ctx().graphics_mut(|g| {
+                let list = g.entry(layer);
+                for i in self.start..list.next_idx().0 {
+                    // the shapes alone: the clip stays the area's, the
+                    // screen's (moved too, it could cut off a line that just
+                    // arrived)
+                    list.mutate_shape(egui::layers::ShapeIdx(i), |s| s.shape.transform(moved));
+                }
+            });
+        }
+        shift
+    }
+}
+
 /// Recent chat lines floating above the chat bar (fade out after 20 s);
 /// names of linked avatars and pictures of the senders are asked through
 /// `want_names` / `wanted_pics`. `cards`: Aurora's cards grouped by sender
@@ -3581,6 +3636,7 @@ pub fn toasts(
     }
     let mut links: Vec<(egui::Rect, Link, Color32)> = Vec::new();
     let mut names: Vec<(egui::Rect, &crate::world::ChatLine)> = Vec::new();
+    let mut shift = egui::Vec2::ZERO;
     egui::Area::new(egui::Id::unique("chat_toasts"))
         .anchor(
             egui::Align2::LEFT_BOTTOM,
@@ -3589,6 +3645,9 @@ pub fn toasts(
         .interactable(false)
         .order(egui::Order::Background)
         .show(ctx, |ui| {
+            // a line that leaves or arrives moves the others in this frame
+            // only (#2544)
+            let held = Held::new(ui);
             ui.set_max_width(560.0);
             // the islands' pills: the mockup's 12 px text, 9 × 4 margins and
             // 4 px between two lines
@@ -3668,12 +3727,13 @@ pub fn toasts(
                 }
                 ui.add_space(gap);
             }
+            shift = held.settle(ui);
         });
     for (k, (rect, link, col)) in links.iter().enumerate() {
-        bubble_link(ctx, p, world, k, *rect, link, *col);
+        bubble_link(ctx, p, world, k, rect.translate(shift), link, *col);
     }
     for (k, (rect, line)) in names.into_iter().enumerate() {
-        bubble_sender_link(ctx, p, world, k, rect, line);
+        bubble_sender_link(ctx, p, world, k, rect.translate(shift), line);
     }
 }
 
