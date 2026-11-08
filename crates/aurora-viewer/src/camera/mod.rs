@@ -2409,12 +2409,16 @@ impl Camera {
             &mut self.position,
             &mut self.target,
             &mut self.virtual_position,
-            &mut self.smoothing_last_global,
             &mut self.focus_target,
         ] {
             *p = point(*p);
         }
-        self.smoothing_last_agent = rotation * self.smoothing_last_agent;
+        let rotation64 = rotation.as_dquat();
+        for p in [&mut self.smoothing_last_global, &mut self.smoothing_goal_global] {
+            *p = new.as_dvec3() + rotation64 * (*p - old.as_dvec3());
+        }
+        self.smoothing_last_agent = rotation64 * self.smoothing_last_agent;
+        self.smoothing_goal_agent = rotation64 * self.smoothing_goal_agent;
         self.focus_offset = rotation * self.focus_offset;
         self.focus_offset_target = rotation * self.focus_offset_target;
         self.focus_object_offset = rotation * self.focus_object_offset;

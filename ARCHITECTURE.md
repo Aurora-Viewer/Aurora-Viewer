@@ -1846,7 +1846,7 @@ the native travel timing with preserved view heading rather than a target-front
 turn. Native focus height and explicit vertical pan are retained; the VR layer
 does not replace travel with a separate slow framing controller.
 
-`ui/options/pages/vr.rs` owns headset mode, optional horizontal mouse look and
+The toolbar VR popup selects the entry mode. `ui/options/pages/vr.rs` owns optional horizontal mouse look and
 per-eye resolution settings. Resolution is passed to `xr_frame::Session::new`
 and bounded by runtime and device limits at creation.
 
@@ -3350,8 +3350,8 @@ separate Avatar Mode, First person and Flycam sections: each mode can choose its
 camera sticks, while buttons and analog triggers are selected from the connected
 controller's available inputs. Older joystick profiles can retain inherited avatar up/down bindings until
 the user assigns a flycam-specific input. Gamepad defaults resolve A/B and bumpers through native control metadata rather
-than fixed button indices. Avatar fly-up/down default to RB/R1 and LB/L1; flycam uses D-pad up
-for up and D-pad down for down. Avatar and Flycam camera gains default to 4.0, first
+than fixed button indices. Avatar flight and Flycam use B/Circle to ascend and X/Square to descend.
+RB/R1 and LB/L1 select the next and previous nearby avatars. Avatar and Flycam camera gains default to 4.0, first
 person to 1.875 in the Gamepad profile. Gamepad Settings exposes a
 gamepad-only flycam travel-speed multiplier and the existing Keep the flycam
 level setting. Leveling uses the original feathered return when enabled and
@@ -3367,15 +3367,15 @@ frame, gamepad input takes priority. Flycam keeps the profile that entered it.
 Legacy settings files keep their joystick axes and button numbers and get a
 separate disabled Gamepad profile.
 Avatar-mode camera bindings expose pressure-sensitive trigger zoom, D-pad
-vertical pan, and nearest/previous avatar cycling. Cycling calls
+four-way pan, and nearest/previous avatar cycling. Cycling calls
 `ui::people::nearby` for its existing nearest-first ordering and dispatches the
 same `CtxAction::ZoomAvatar` used by People. The player is a stop between the
 nearest and furthest ends of that list in both directions. The selected avatar starts at the
 posed head from `Scene::head_world`, then uses the camera's existing object
 tracking and orbit/pan paths. Movement returns to the player through
 `Camera::reset_view`. Vertical pan uses the existing unlocked camera focus and
-is temporary for every avatar: movement or Reset camera restores the player's
-configured camera preset offsets. On the player, panning unlocks around the
+persists through movement, orbit and zoom. Reset camera, mode changes and explicit
+target cycling clear pan; movement returns to the player while preserving pan. On the player, panning unlocks around the
 avatar's horizontal center, not the preset's forward aim offset, preserving the
 eye and focus height. Entering that pivot retains the existing focus animation
 with `CameraSettings::zoom_time`; continued pan updates its destination without
@@ -3387,7 +3387,7 @@ nonzero minimum orbit radius even with mouse constraints disabled; mouse-wheel
 mode switching remains unchanged. No extra player height is serialized.
 Digital D-pads and native hat axes share semantic bindings; the backend
 normalizes their platform-specific vertical sign.
-The gamepad view button cycles Avatar → First person → Flycam → Avatar through
+The gamepad view button cycles First person → Avatar → Flycam → First person through
 existing mouselook, flycam and reset transitions. Disabled modes are skipped.
 `joystick.first_person` contains independent stick/button bindings and signed
 axis gains; look input feeds the existing `AgentState` yaw/pitch path.

@@ -140,16 +140,16 @@ cannot show headset streaming/compositor-only artifacts.
 
 ## Movement and camera preferences
 
-Preferences > VR selects Avatar mode, First person (default), or Flycam. The
-gamepad view button cycles through the same three modes as on desktop.
+The toolbar VR popup enters First Person, Avatar Mode, or Flycam. The
+gamepad view button cycles First Person → Avatar Mode → Flycam on desktop and in VR.
 
 Avatar mode reuses the normal gamepad camera: horizontal orbit, vertical pan,
 zoom, focus height and target-travel animation. Intentional controller orbit
 turns the view around the avatar. Starting a movement or camera input samples
 the headset for a gentle horizontal translation that preserves camera height
-and zoom. Continuing to hold that input leaves the sampled framing goal alone. D-pad selection uses the normal
+and zoom. Continuing to hold that input leaves the sampled framing goal alone. Bumper target selection uses the normal
 move through space and timing, with a VR destination/view heading that avoids
-the automatic turn toward the other avatar's front. People and D-pad use the
+the automatic turn toward the other avatar's front. People and bumper target selection use the
 same tracked focus point. Arrival corrects framing by translation if the
 headset moved during travel. Zoom remains parallel to
 the ground and does not lower the camera during its settling frames.
@@ -204,7 +204,7 @@ The runtime and GPU texture limits may reduce the requested dimensions.
 
 Headset validation: check native Avatar orbit and vertical pan, then framing
 while moving, using camera controls,
-changing D-pad targets and zooming. Zoom must retain height, and the rig must
+changing avatar targets with the bumpers and zooming. Zoom must retain height, and the rig must
 not rotate to face a target. In Flycam, move physically 30 cm sideways and check
 1:1 view displacement and steering about the new head position. In First
 person, step outside the follow threshold and stop: the avatar should walk
