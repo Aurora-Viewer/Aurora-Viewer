@@ -180,9 +180,9 @@ pub(super) fn geometry(screen: Rect, pos: Pos2) -> (Pos2, f32) {
     (center, radius)
 }
 
-/// A secondary click beyond the visible pie belongs to the world, where it
-/// opens a fresh menu. The full-screen area still captures other pointer input.
-pub(super) fn right_click_reopens_world(screen: Rect, pos: Pos2, pointer: Pos2, voice_panel: Option<Rect>) -> bool {
+/// A world click beyond the visible pie passes through its full-screen input
+/// area. Right-click opens a fresh world menu; left-click performs its action.
+pub(super) fn click_outside_pie_reaches_world(screen: Rect, pos: Pos2, pointer: Pos2, voice_panel: Option<Rect>) -> bool {
     let (center, radius) = geometry(screen, pos);
     pointer.distance(center) > radius && !voice_panel.is_some_and(|panel| panel.contains(pointer))
 }
@@ -506,14 +506,29 @@ mod tests {
     }
 
     #[test]
-    fn right_click_outside_the_pie_reaches_the_world_but_not_the_menu_or_voice_panel() {
+    fn clicks_outside_the_pie_reach_the_world_but_not_the_menu_or_voice_panel() {
         let screen = Rect::from_min_size(Pos2::ZERO, egui::vec2(1280.0, 900.0));
         let menu_pos = egui::pos2(400.0, 400.0);
         let panel = Rect::from_min_size(egui::pos2(700.0, 700.0), egui::vec2(250.0, 38.0));
 
-        assert!(!right_click_reopens_world(screen, menu_pos, egui::pos2(500.0, 400.0), Some(panel)));
-        assert!(!right_click_reopens_world(screen, menu_pos, egui::pos2(800.0, 710.0), Some(panel)));
-        assert!(right_click_reopens_world(screen, menu_pos, egui::pos2(900.0, 400.0), Some(panel)));
+        assert!(!click_outside_pie_reaches_world(
+            screen,
+            menu_pos,
+            egui::pos2(500.0, 400.0),
+            Some(panel)
+        ));
+        assert!(!click_outside_pie_reaches_world(
+            screen,
+            menu_pos,
+            egui::pos2(800.0, 710.0),
+            Some(panel)
+        ));
+        assert!(click_outside_pie_reaches_world(
+            screen,
+            menu_pos,
+            egui::pos2(900.0, 400.0),
+            Some(panel)
+        ));
     }
 
     #[test]

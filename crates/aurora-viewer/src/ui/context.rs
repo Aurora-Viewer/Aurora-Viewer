@@ -647,9 +647,9 @@ pub fn show(
     *prefs != saved_before
 }
 
-/// Whether a right-click should pass through the open radial menu to pick a
-/// new world target. List menus and the pie's visible controls keep ownership.
-pub(crate) fn right_click_reopens_world(
+/// Whether a world click should pass through the open radial menu. List menus
+/// and the pie's visible controls keep ownership.
+pub(crate) fn click_outside_pie_reaches_world(
     ctx: &egui::Context,
     menu: &ContextMenu,
     facts: &Facts,
@@ -668,7 +668,7 @@ pub(crate) fn right_click_reopens_world(
         }
         _ => None,
     };
-    pie::right_click_reopens_world(screen, menu.pos, pointer, voice_panel)
+    pie::click_outside_pie_reaches_world(screen, menu.pos, pointer, voice_panel)
 }
 
 /// Where an avatar menu of a list is opened: each place has its own

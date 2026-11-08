@@ -20881,7 +20881,7 @@ impl ApplicationHandler for App {
                 }
                 let pressed = *state == ElementState::Pressed;
                 let mut over_ui = self.ui_takes_pointer();
-                if *button == MouseButton::Right
+                if matches!(*button, MouseButton::Left | MouseButton::Right)
                     && let Some(menu) = self.context_menu.as_ref()
                 {
                     let use_pie = if self.demo {
@@ -20895,7 +20895,7 @@ impl ApplicationHandler for App {
                     };
                     let ppp = self.egui_ctx.pixels_per_point().max(0.1);
                     let pointer = egui::pos2(self.cursor_pos.0 / ppp, self.cursor_pos.1 / ppp);
-                    if ui::context::right_click_reopens_world(
+                    if ui::context::click_outside_pie_reaches_world(
                         &self.egui_ctx,
                         menu,
                         &self.context_facts(),
