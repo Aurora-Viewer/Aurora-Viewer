@@ -4694,7 +4694,7 @@ enabled. Grid validation is performed by the human, without sharing credentials.
 Keep a Build/Inspect selection while requests are arriving: it must stay selected.
 Objects outside the viewer's received scene cannot be enumerated by this window.
 
-`AURORA_DEMO_TOOLBAR=chrome|appearance|menu-layout|address` exercises the shared
+`AURORA_DEMO_TOOLBAR=chrome|appearance|menu-layout|address|top-drag` exercises the shared
 main-menu catalogue and all four edges without changing saved toolbar settings.
 `chrome` opens the editor over mixed icon/text buttons, with Import and Environment
 in the top bar and other menu commands on the sides. `appearance` opens Import's
@@ -4705,8 +4705,31 @@ to see the selected current URL, then the closed address island. Other modes use
 frame 620; top buttons must not overlap the account or status islands.
 The configurable SLURL shortcut is Ctrl+L by default: it reopens a hidden address
 bar and selects the current URL; the toolbar button toggles it in either direction.
+`top-drag` opens the native Aurora menu and drags Import past the existing SLURL
+button. Capture at frame 620 to inspect the expanded **Drop here** destination,
+insertion marker and address/status spacing; repeat with `AURORA_DEMO_BARS=legacy`.
+`categories` opens the World category with one About Land tile, retaining any
+placed menu-command variant. `resized` opens all categories and drags the window's
+bottom-right corner at frames 500–502; compare frame 420 with 620 for size and grid
+reflow. `menu-hover` hovers Aurora from frame 500: capture at 620 and check that
+exactly one tooltip is shown. Category headings, the filter and collapsed toolbar
+settings must use the shared theme, and narrow windows must keep their tiles clear
+of the scrollbar.
 
 `AURORA_DEMO_TOOLBAR`: `1` opens the "Buttons and menus" window at frame 300;
+`separators` shows the fully composed top row and independent gaps on all edges;
+`separators-editor` opens the filtered separator palette at frame 300.
+`separators-bottom` moves navigation and the bell to the bottom;
+`separators-side` moves account to the left and system/bell to the right.
+Both moved-bell modes click it at frames 500–501: capture at 620 and check that
+the list opens inside the viewport. Repeat with `AURORA_DEMO_BARS=legacy`.
+Gaps split glass surfaces without rules; editing reveals their drag handles.
+Drag multiple separators from Interface to each edge, move/remove one, relock,
+restart and confirm independent identities and saved positions. Native blocks
+must keep their normal actions, privacy guards and popup behavior on every edge.
+Combine `separators` with `AURORA_DEMO_CONV=many` and
+`AURORA_DEMO_THUMBNAILS=top` to exercise a crowded top row. Horizontal overflow
+must keep the full control height; conversation badges stay inside the bar's clip.
 `drag` holds Friends over the toolbar with an insertion marker (the empty
 side toolbars show where a button can go), `add` releases it, `reorder`
 moves Preferences beside Inventory, and `menu` opens a button's context

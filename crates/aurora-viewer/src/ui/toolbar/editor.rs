@@ -2,7 +2,8 @@
 //! the layout of the bars mockup: the commands in a grid of tiles with a
 //! filter, each toolbar's mode, alignment and size, Locked, Clear all and
 //! Restore defaults. A command already in a toolbar stays in the grid,
-//! hollow, and cannot be added twice (LLFloaterToybox::draw); one Aurora
+//! hollow, and cannot be added twice (LLFloaterToybox::draw); dragging it
+//! moves the existing button to another bar. A command Aurora
 //! does not have yet is dimmed. A click on a free tile adds it at the end
 //! of the bottom toolbar (Aurora's, for the keyboard).
 
@@ -16,8 +17,12 @@ use egui::{Rect, Vec2};
 
 /// The window's id, for its layout.
 pub(crate) const WINDOW: &str = "toolbar_editor";
-/// The tiles: five a row, 4 px apart.
-const COLUMNS: usize = 5;
+/// Responsive tiles: five across at the default width, 4 px apart.
+const MIN_TILE_W: f32 = 144.0;
+
+pub(super) fn columns(width: f32) -> usize {
+    ((width + TILE_GAP) / (MIN_TILE_W + TILE_GAP)).floor().clamp(1.0, 8.0) as usize
+}
 const TILE_GAP: f32 = 4.0;
 const TILE_H: f32 = 27.0;
 const TILE_ICON: f32 = 15.0;
@@ -30,10 +35,10 @@ fn width(screen: Rect) -> f32 {
     wanted.min(screen.width() - 32.0).max(320.0)
 }
 
-/// The rows of tiles the grid shows before it scrolls: the mockup's six (five
-/// on a screen under 1408 px).
-fn rows_shown(screen: Rect) -> usize {
-    if screen.width() < 1408.0 { 5 } else { 6 }
+fn default_height(screen: Rect) -> f32 {
+    // Leave the dock reachable on compact screens, including before the
+    // first frame reports the bars' exact work area.
+    (screen.height() - 180.0).clamp(360.0, 600.0)
 }
 
 /// Where it opens: centred (floater_toybox.xml `positioning="centered"`),
@@ -66,9 +71,11 @@ enum Tile {
 }
 
 /// One tile of the grid: its icon and label on the face the state gives.
-fn tile(ui: &mut egui::Ui, p: &Palette, rect: Rect, button: &ToolButton, state: Tile) -> egui::Response {
+fn tile(ui: &mut egui::Ui, p: &Palette, rect: Rect, button: &ToolButton, display: &str, state: Tile, movable: bool) -> egui::Response {
     let sense = if state == Tile::Free {
         egui::Sense::click_and_drag()
+    } else if state == Tile::Placed && movable {
+        egui::Sense::drag()
     } else {
         egui::Sense::hover()
     };
@@ -119,7 +126,7 @@ fn tile(ui: &mut egui::Ui, p: &Palette, rect: Rect, button: &ToolButton, state: 
     let text_left = icon.right() + 7.0;
     widgets::paint_elided(
         ui,
-        label(button),
+        display,
         egui::pos2(text_left, rect.center().y),
         rect.right() - TILE_PAD / 2.0 - text_left,
         egui::FontId::proportional(TILE_FONT),
@@ -140,7 +147,7 @@ fn style_row(ui: &mut egui::Ui, p: &Palette, bar: Bar, islands: bool, saved: Bar
         Bar::Top => aurora_i18n::tr!("toolbar-bar-top"),
     };
     let mut out = None;
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 14.0;
         let (rect, _) = ui.allocate_exact_size(Vec2::new(108.0, 24.0), egui::Sense::hover());
         ui.painter().text(
@@ -211,57 +218,124 @@ impl ToolbarUi {
         let dragged = egui::DragAndDrop::payload::<Drag>(ctx);
         let was_open = self.open;
         let mut open = self.open;
-        widgets::Floater::new(WINDOW, aurora_i18n::tr!("toolbar-title"), default_pos(ctx), Vec2::new(w, 420.0))
-            .help(aurora_i18n::tr!("toolbar-help-modes"))
-            .auto_height()
-            .show(ctx, p, &mut open, |ui| {
-                ui.set_width(ui.available_width());
-                ui.spacing_mut().item_spacing.y = 8.0;
-                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                ui.label(
-                    egui::RichText::new(if islands {
-                        aurora_i18n::tr!("toolbar-help")
-                    } else {
-                        aurora_i18n::tr!("toolbar-help-classic")
-                    })
-                    .size(12.0)
-                    .color(p.muted),
-                );
-                let mut all = super::catalogue(layout);
-                all.extend(
-                    super::commands::catalogue(ui.ctx())
-                        .entries
-                        .iter()
-                        .filter(|entry| !entry.info && !entry.separator && entry.button.command.starts_with(super::commands::PREFIX))
-                        .map(|entry| entry.button.clone()),
-                );
-                all.sort_by_cached_key(|button| super::sort_key(super::label(button)));
-                let hint = aurora_i18n::tr!("toolbar-search", count = all.len().to_string());
-                // in a row: the field's own layout would take the window's height
-                ui.horizontal(|ui| {
-                    widgets::pills::search_box(ui, p, &mut self.search, &hint, ui.available_width());
+        let mut window = widgets::Floater::new(
+            WINDOW,
+            aurora_i18n::tr!("toolbar-title"),
+            default_pos(ctx),
+            Vec2::new(w, default_height(screen)),
+        )
+        .help(aurora_i18n::tr!("toolbar-help-modes"))
+        .steady_size();
+        window.min_size = Vec2::new(560.0, 360.0);
+        window.show(ctx, p, &mut open, |ui| {
+            ui.spacing_mut().item_spacing.y = 8.0;
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+            ui.label(
+                egui::RichText::new(if islands {
+                    aurora_i18n::tr!("toolbar-help")
+                } else {
+                    aurora_i18n::tr!("toolbar-help-classic")
+                })
+                .size(12.0)
+                .color(p.muted),
+            );
+            let all = super::catalogue_view::entries(layout, settings, &super::commands::catalogue(ctx));
+            let hint = aurora_i18n::tr!("toolbar-search", count = all.len().to_string());
+            ui.horizontal(|ui| {
+                widgets::pills::search_box(ui, p, &mut self.search, &hint, ui.available_width());
+            });
+            ui.horizontal_wrapped(|ui| {
+                let selected = self
+                    .category
+                    .map_or(aurora_i18n::tr!("toolbar-category-all"), |category| category.label());
+                super::menu::button(ui, p, egui::Button::new(selected), |ui| {
+                    if super::menu::check(
+                        ui,
+                        p,
+                        "layout-grid-filled",
+                        aurora_i18n::tr!("toolbar-category-all"),
+                        self.category.is_none(),
+                        true,
+                    ) {
+                        self.category = None;
+                    }
+                    for category in super::catalogue_view::Category::ALL {
+                        if super::menu::check(ui, p, category.icon(), category.label(), self.category == Some(category), true) {
+                            self.category = Some(category);
+                        }
+                    }
                 });
-                let filter = super::sort_key(self.search.trim());
-                let shown: Vec<&ToolButton> = all
-                    .iter()
-                    .filter(|b| filter.is_empty() || super::sort_key(label(b)).contains(&filter) || b.command.contains(&filter))
-                    .collect();
-                // the grid of tiles
-                let full = ui.available_width();
-                let tile_w = ((full - TILE_GAP * (COLUMNS - 1) as f32) / COLUMNS as f32).floor();
-                let rows = shown.len().div_ceil(COLUMNS).max(1);
-                let height = rows as f32 * TILE_H + (rows - 1) as f32 * TILE_GAP;
-                let shown_rows = rows_shown(screen);
-                let window = shown_rows as f32 * TILE_H + (shown_rows - 1) as f32 * TILE_GAP;
-                egui::ScrollArea::vertical()
-                    .id_salt("toolbar_tiles")
-                    .max_height(window)
-                    .min_scrolled_height(window)
-                    .auto_shrink([false, true])
-                    .show(ui, |ui| {
+                let mut locked = settings.locked;
+                if widgets::checkbox(ui, p, &mut locked, aurora_i18n::tr!("toolbar-locked-bars")).changed() {
+                    self.pending = Some(Edit::Lock);
+                }
+                if ui
+                    .add_enabled(!settings.locked, egui::Button::new(aurora_i18n::tr!("toolbar-clear")))
+                    .clicked()
+                {
+                    self.confirm = Some(false);
+                }
+                if ui
+                    .add_enabled(!settings.locked, egui::Button::new(aurora_i18n::tr!("toolbar-restore")))
+                    .clicked()
+                {
+                    self.confirm = Some(true);
+                }
+            });
+            widgets::collapsing(
+                ui,
+                p,
+                "toolbar_bar_settings",
+                aurora_i18n::tr!("toolbar-bar-settings"),
+                false,
+                |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("toolbar_style_scroll")
+                        .max_height((ui.available_height() * 0.45).max(60.0))
+                        .min_scrolled_height(0.0)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            let mut card = crate::ui::sheet::card_begin(ui);
+                            card.child.spacing_mut().item_spacing.y = 8.0;
+                            for bar in Bar::ALL {
+                                if (matches!(bar, Bar::Bottom | Bar::Top) || !settings.bar(bar, layout).is_empty())
+                                    && let Some(next) = style_row(&mut card.child, p, bar, islands, settings.style(bar))
+                                {
+                                    self.pending = Some(Edit::Style(bar, next));
+                                }
+                            }
+                            crate::ui::sheet::card_end(ui, p, card);
+                        });
+                },
+            );
+            let filter = super::sort_key(self.search.trim());
+            egui::ScrollArea::vertical()
+                .id_salt("toolbar_tiles")
+                .max_height(ui.available_height().max(0.0))
+                .min_scrolled_height(0.0)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let full = ui.available_width();
+                    let columns = columns(full);
+                    let tile_w = ((full - TILE_GAP * (columns - 1) as f32) / columns as f32).floor();
+                    for category in super::catalogue_view::Category::ALL {
+                        if self.category.is_some_and(|selected| selected != category) {
+                            continue;
+                        }
+                        let shown: Vec<_> = all
+                            .iter()
+                            .filter(|entry| entry.category == category && entry.matches(&filter))
+                            .collect();
+                        if shown.is_empty() {
+                            continue;
+                        }
+                        widgets::section_header(ui, p, category.icon(), category.label());
+                        let rows = shown.len().div_ceil(columns);
+                        let height = rows as f32 * TILE_H + rows.saturating_sub(1) as f32 * TILE_GAP;
                         let (grid, _) = ui.allocate_exact_size(Vec2::new(full, height), egui::Sense::hover());
-                        for (i, button) in shown.iter().enumerate() {
-                            let (row, col) = (i / COLUMNS, i % COLUMNS);
+                        for (i, entry) in shown.iter().enumerate() {
+                            let button = &entry.button;
+                            let (row, col) = (i / columns, i % columns);
                             let rect = Rect::from_min_size(
                                 grid.min + Vec2::new(col as f32 * (tile_w + TILE_GAP), row as f32 * (TILE_H + TILE_GAP)),
                                 Vec2::new(tile_w, TILE_H),
@@ -284,22 +358,34 @@ impl ToolbarUi {
                             } else {
                                 state
                             };
-                            let response = tile(ui, p, rect, button, state);
-                            self.appearance_context(&response, p, button, settings.locked);
-                            ui.ctx()
-                                .data_mut(|d| d.insert_temp(egui::Id::unique(("toolbar_catalogue", &button.command)), rect));
+                            let response = tile(ui, p, rect, button, &entry.label(), state, !settings.locked);
+                            if (super::structure::is_block(&button.command) || super::structure::is_separator(&button.command))
+                                && let Some(bar) = placed
+                            {
+                                self.context(
+                                    &response,
+                                    p,
+                                    bar,
+                                    settings.style(bar).resolve(bar, islands),
+                                    Some(button),
+                                    settings.locked,
+                                );
+                            } else {
+                                self.appearance_context(&response, p, button, settings.locked);
+                            }
+                            ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("toolbar_catalogue", &button.command)), rect));
+                            if !settings.locked && response.drag_started_by(egui::PointerButton::Primary) {
+                                response.dnd_set_drag_payload(Drag {
+                                    button: button.clone(),
+                                    from: None,
+                                });
+                            }
                             match state {
                                 Tile::Free => {
-                                    if response.drag_started_by(egui::PointerButton::Primary) {
-                                        response.dnd_set_drag_payload(Drag {
-                                            button: (*button).clone(),
-                                            from: None,
-                                        });
-                                    }
                                     if response.clicked() {
-                                        let at = settings.buttons(layout).len();
-                                        self.pending = Some(Edit::Insert(Bar::Bottom, (*button).clone(), at));
+                                        self.pending = Some(Edit::Insert(Bar::Bottom, button.clone(), settings.buttons(layout).len()));
                                     }
+                                    response.on_hover_text(entry.label());
                                 }
                                 Tile::Placed => {
                                     if let Some(bar) = placed {
@@ -312,40 +398,9 @@ impl ToolbarUi {
                                 Tile::Dragged => {}
                             }
                         }
-                    });
-                // each toolbar's settings: the bottom one, and a side one
-                // that holds buttons
-                let mut card = crate::ui::sheet::card_begin(ui);
-                card.child.spacing_mut().item_spacing.y = 8.0;
-                for bar in Bar::ALL {
-                    if (matches!(bar, Bar::Bottom | Bar::Top) || !settings.bar(bar, layout).is_empty())
-                        && let Some(next) = style_row(&mut card.child, p, bar, islands, settings.style(bar))
-                    {
-                        self.pending = Some(Edit::Style(bar, next));
                     }
-                }
-                crate::ui::sheet::card_end(ui, p, card);
-                ui.horizontal(|ui| {
-                    let mut locked = settings.locked;
-                    if widgets::checkbox(ui, p, &mut locked, aurora_i18n::tr!("toolbar-locked-bars")).changed() {
-                        self.pending = Some(Edit::Lock);
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .add_enabled(!settings.locked, egui::Button::new(aurora_i18n::tr!("toolbar-restore")))
-                            .clicked()
-                        {
-                            self.confirm = Some(true);
-                        }
-                        if ui
-                            .add_enabled(!settings.locked, egui::Button::new(aurora_i18n::tr!("toolbar-clear")))
-                            .clicked()
-                        {
-                            self.confirm = Some(false);
-                        }
-                    });
                 });
-            });
+        });
         self.open = open;
         self.show_appearance(ctx, p, settings);
         // a toolbar button dropped on the window goes back to it
@@ -459,7 +514,55 @@ fn ghost(ctx: &egui::Context, p: &Palette, button: &ToolButton, pointer: egui::P
 /// bar's labels. Never saved.
 pub fn demo_settings(settings: &mut ToolbarSettings, layout: &Layout) {
     let Some(mode) = demo_mode() else { return };
-    if matches!(mode, "chrome" | "appearance" | "menu-layout" | "address") {
+    if mode.starts_with("separators") {
+        let button = |id: &str| {
+            let command = catalogue::find(id).expect("internal toolbar demo command");
+            ToolButton {
+                command: id.into(),
+                icon: command.icon.into(),
+                tooltip: String::new(),
+            }
+        };
+        settings.top = super::structure::top_buttons(&[button("location_bar"), button("snapshot")]);
+        settings.buttons = Some(vec![
+            button("inventory"),
+            super::structure::separator("demo-bottom"),
+            button("people"),
+            button("preferences"),
+        ]);
+        settings.left = vec![button("worldmap"), super::structure::separator("demo-left"), button("build")];
+        settings.right = vec![button("radar"), super::structure::separator("demo-right"), button("search")];
+        settings.composed = true;
+        settings.locked = false;
+        settings.address_visible = Some(true);
+        settings.appearance.clear();
+        if matches!(mode, "separators-bottom" | "separators-side") {
+            let bottom = mode == "separators-bottom";
+            let commands: &[&str] = if bottom {
+                &["bar_navigation", "bar_notifications"]
+            } else {
+                &["bar_account", "bar_system", "bar_notifications"]
+            };
+            for (index, command) in commands.iter().enumerate() {
+                settings.top.retain(|button| button.command != *command);
+                let list = if bottom {
+                    settings.buttons.as_mut().expect("demo bottom")
+                } else if index == 0 {
+                    &mut settings.left
+                } else {
+                    &mut settings.right
+                };
+                list.push(super::structure::separator(&format!("demo-block-{index}")));
+                list.push(button(command));
+            }
+        }
+        return;
+    }
+    if matches!(
+        mode,
+        "chrome" | "appearance" | "menu-layout" | "address" | "top-drag" | "categories" | "resized" | "menu-hover"
+    ) {
+        settings.composed = false;
         let catalogue = super::commands::current();
         let button = |id: &str| {
             catalogue.find(id).map(|entry| entry.button.clone()).or_else(|| {
@@ -516,6 +619,13 @@ pub fn demo_settings(settings: &mut ToolbarSettings, layout: &Layout) {
         );
         settings.address_visible = Some(mode == "address" && settings.address_visible.unwrap_or(false));
         settings.locked = false;
+        if mode == "top-drag" {
+            settings.top.truncate(1);
+            settings.left.clear();
+            settings.right.clear();
+            settings.appearance.clear();
+            settings.address_visible = Some(true);
+        }
         return;
     }
     if matches!(mode, "empty-left" | "empty-right") {
@@ -570,14 +680,122 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, state: &mut ToolbarUi) -> Ve
     let Some(mode) = demo_mode() else {
         return Vec::new();
     };
-    if matches!(mode, "chrome" | "appearance" | "menu-layout" | "address") {
+    if mode.starts_with("separators") {
+        if mode == "separators-editor" && frame == 300 {
+            state.open = true;
+            state.search = aurora_i18n::tr!("toolbar-separator").into();
+            state.category = None;
+        }
+        if matches!(mode, "separators-bottom" | "separators-side")
+            && matches!(frame, 500 | 501)
+            && let Some(response) = ctx.read_response(crate::ui::bars::tool_button_id("bar_notifications"))
+        {
+            let pos = response.rect.center();
+            return vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: frame == 500,
+                    modifiers: Default::default(),
+                },
+            ];
+        }
+        return Vec::new();
+    }
+    if mode == "top-drag" {
+        let pointer = |pos, pressed| {
+            let mut events = vec![egui::Event::PointerMoved(pos)];
+            if let Some(pressed) = pressed {
+                events.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                });
+            }
+            events
+        };
+        if matches!(frame, 400 | 401) {
+            let opener = ctx
+                .read_response(egui::Id::unique("bars_island_menu"))
+                .or_else(|| ctx.read_response(egui::Id::unique("classic_main_menu")));
+            if let Some(opener) = opener {
+                return pointer(opener.rect.center(), Some(frame == 400));
+            }
+        }
+        let source_id = egui::Id::unique("demo_top_drag_source");
+        let target_id = egui::Id::unique("demo_top_drag_target");
+        if frame == 500 {
+            let source = ctx.data(|data| data.get_temp::<Rect>(egui::Id::unique(("main_menu_entry", "menu:common-build/import-menu"))));
+            if let (Some(source), Some(bar)) = (source, ctx.read_response(egui::Id::unique("top_toolbar_background"))) {
+                let target = if ctx.read_response(egui::Id::unique("classic_main_menu")).is_some() {
+                    bar.rect.center()
+                } else {
+                    egui::pos2(bar.rect.right() + 24.0, bar.rect.center().y)
+                };
+                ctx.data_mut(|data| {
+                    data.insert_temp(source_id, source.center());
+                    data.insert_temp(target_id, target);
+                });
+                return pointer(source.center(), Some(true));
+            }
+        }
+        if frame == 501
+            && let Some(source) = ctx.data(|data| data.get_temp::<egui::Pos2>(source_id))
+        {
+            return pointer(source + Vec2::new(12.0, 0.0), None);
+        }
+        if (502..=680).contains(&frame)
+            && let Some(target) = ctx.data(|data| data.get_temp::<egui::Pos2>(target_id))
+        {
+            return pointer(target, (frame == 680).then_some(false));
+        }
+        return Vec::new();
+    }
+    if matches!(
+        mode,
+        "chrome" | "appearance" | "menu-layout" | "address" | "categories" | "resized" | "menu-hover"
+    ) {
         if frame == 300 {
-            state.open = mode == "chrome";
+            state.open = matches!(mode, "chrome" | "categories" | "resized");
+            if matches!(mode, "categories" | "resized") {
+                widgets::place_floater(ctx, WINDOW, default_pos(ctx), Vec2::new(width(ctx.content_rect()), 600.0));
+                state.category = (mode == "categories").then_some(super::catalogue_view::Category::World);
+                state.search.clear();
+            }
             if mode == "appearance"
                 && let Some(entry) = super::commands::catalogue(ctx).find("menu:common-build/import-menu")
             {
                 state.edit_button(&entry.button);
                 state.appearance_editor.filter("star");
+            }
+        }
+        if mode == "menu-hover"
+            && frame == 500
+            && let Some(response) = ctx.read_response(egui::Id::unique("bars_island_menu"))
+        {
+            return vec![egui::Event::PointerMoved(response.rect.center())];
+        }
+        if mode == "resized" && matches!(frame, 500..=502) {
+            let id = egui::Id::unique("demo_toolbar_resize_grip");
+            if frame == 500
+                && let Some(rect) = ctx.memory(|memory| memory.area_rect(egui::Id::unique(WINDOW)))
+            {
+                ctx.data_mut(|data| data.insert_temp(id, rect.right_bottom() - Vec2::splat(1.0)));
+            }
+            if let Some(grip) = ctx.data(|data| data.get_temp::<egui::Pos2>(id)) {
+                let pos = if frame == 500 { grip } else { grip + Vec2::new(170.0, 70.0) };
+                let mut events = vec![egui::Event::PointerMoved(pos)];
+                if frame != 501 {
+                    events.push(egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed: frame == 500,
+                        modifiers: Default::default(),
+                    });
+                }
+                return events;
             }
         }
         if mode == "address"

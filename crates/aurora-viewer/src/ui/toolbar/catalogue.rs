@@ -27,6 +27,12 @@ macro_rules! commands {
 /// Every command, in no particular order (the window sorts them by their
 /// label in the interface's language, like LLFloaterToybox::postBuild).
 pub const COMMANDS: &[Command] = commands![
+    "toolbar_separator", "separator-vertical", "toolbar-separator", true;
+    "bar_navigation", "map-pin-filled", "toolbar-block-navigation", true;
+    "bar_account", "user-filled", "toolbar-block-account", true;
+    "bar_system", "gauge-filled", "toolbar-block-system", true;
+    "bar_notifications", "bell-filled", "toolbar-block-notifications", true;
+    "bar_conversations", "messages-filled", "toolbar-block-conversations", true;
     "report_bug", "bug-filled", "bug-title", true;
     "location_bar", "map-pin-filled", "toolbar-location-bar", true;
     "aurora_menu", "wolf", "ui-bars-aurora-menu", true;

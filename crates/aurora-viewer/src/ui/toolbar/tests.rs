@@ -2,7 +2,7 @@ use super::*;
 use crate::ui::{Panels, bars, chat::ChatUi, icons::Icons};
 use egui::Vec2;
 
-fn button(command: &str) -> ToolButton {
+pub(super) fn button(command: &str) -> ToolButton {
     ToolButton {
         command: command.into(),
         icon: "test-icon".into(),
@@ -10,11 +10,108 @@ fn button(command: &str) -> ToolButton {
     }
 }
 
+#[test]
+fn the_address_button_restores_removed_navigation_and_keeps_existing_placements() {
+    let layout = layout();
+    let mut settings = ToolbarSettings::default();
+    settings.compose_top();
+    let mut state = ToolbarUi {
+        pending: Some(Edit::Remove("bar_navigation".into())),
+        ..Default::default()
+    };
+    assert!(state.commit(&layout, &mut settings));
+    assert_eq!(settings.address_visible, Some(false));
+    settings.show_address_bar(true);
+    assert_eq!(settings.location("bar_navigation", &layout), Some(Bar::Top));
+    state.pending = Some(Edit::Insert(Bar::Bottom, button("bar_navigation"), 0));
+    assert!(state.commit(&layout, &mut settings));
+    settings.show_address_bar(false);
+    settings.show_address_bar(true);
+    assert_eq!(settings.location("bar_navigation", &layout), Some(Bar::Bottom));
+}
+
 fn layout() -> Layout {
     Layout {
         toolbar: vec![button("inventory"), button("people"), button("preferences")],
         ..Default::default()
     }
+}
+
+#[test]
+fn repeated_separators_move_remove_and_round_trip_independently() {
+    let layout = layout();
+    let mut settings = ToolbarSettings::default();
+    let mut state = ToolbarUi::default();
+    for rank in [1, 2] {
+        state.pending = Some(Edit::Insert(Bar::Bottom, button(structure::SEPARATOR), rank));
+        assert!(state.commit(&layout, &mut settings));
+    }
+    let gaps: Vec<_> = settings
+        .buttons(&layout)
+        .iter()
+        .filter(|b| structure::is_separator(&b.command))
+        .cloned()
+        .collect();
+    assert_eq!(gaps.len(), 2);
+    assert_ne!(gaps[0].command, gaps[1].command);
+    state.pending = Some(Edit::Insert(Bar::Left, gaps[0].clone(), 0));
+    assert!(state.commit(&layout, &mut settings));
+    assert_eq!(settings.location(&gaps[0].command, &layout), Some(Bar::Left));
+    state.pending = Some(Edit::Remove(gaps[1].command.clone()));
+    assert!(state.commit(&layout, &mut settings));
+    let mut restored: ToolbarSettings = serde_json::from_str(&serde_json::to_string(&settings).expect("settings")).expect("round trip");
+    restored.sanitize();
+    assert_eq!(restored.left, settings.left);
+    assert_eq!(restored.location(&gaps[1].command, &layout), None);
+    restored.locked = true;
+    state.pending = Some(Edit::Remove(gaps[0].command.clone()));
+    assert!(!state.commit(&layout, &mut restored));
+}
+
+#[test]
+fn top_composition_migrates_once_and_keeps_custom_buttons_and_appearance() {
+    let mut settings = ToolbarSettings {
+        top: vec![button("inventory"), button("people")],
+        left: vec![button("preferences")],
+        ..Default::default()
+    };
+    settings.appearance.insert(
+        "inventory".into(),
+        appearance::Appearance {
+            mode: Some(ButtonMode::TextOnly),
+            icon: Some("star-filled".into()),
+        },
+    );
+    assert!(settings.compose_top());
+    let custom: Vec<_> = settings
+        .top
+        .iter()
+        .filter(|button| matches!(button.command.as_str(), "inventory" | "people"))
+        .map(|b| b.command.as_str())
+        .collect();
+    assert_eq!(custom, ["inventory", "people"]);
+    for command in [
+        "aurora_menu",
+        "report_bug",
+        "bar_navigation",
+        "bar_account",
+        "bar_system",
+        "bar_notifications",
+        "bar_conversations",
+    ] {
+        assert!(settings.top.iter().any(|button| button.command == command));
+    }
+    assert_eq!(settings.left, [button("preferences")]);
+    assert_eq!(settings.appearance["inventory"].mode, Some(ButtonMode::TextOnly));
+    let old = settings.top.clone();
+    assert!(!settings.compose_top());
+    assert_eq!(settings.top, old);
+    settings.top.extend([button(structure::SEPARATOR), button(structure::SEPARATOR)]);
+    settings.sanitize();
+    assert_ne!(
+        settings.top[settings.top.len() - 2].command,
+        settings.top[settings.top.len() - 1].command
+    );
 }
 
 #[test]
@@ -296,6 +393,83 @@ struct Bench {
     islands: bool,
 }
 
+#[test]
+fn toolbar_editor_resizes_by_its_corner_reflows_and_keeps_its_size() {
+    let mut bench = Bench::default();
+    bench.state.open = true;
+    for _ in 0..8 {
+        bench.frame(vec![]);
+    }
+    let rect = |bench: &Bench| {
+        bench
+            .ctx
+            .memory(|memory| memory.area_rect(egui::Id::unique(editor::WINDOW)))
+            .expect("editor")
+    };
+    let original = rect(&bench);
+    let grip = original.right_bottom() - Vec2::splat(1.0);
+    bench.frame(vec![egui::Event::PointerMoved(grip)]);
+    bench.pointer(grip, true, false);
+    let target = grip - Vec2::new(130.0, 100.0);
+    bench.frame(vec![egui::Event::PointerMoved(target)]);
+    bench.pointer(target, false, false);
+    for _ in 0..8 {
+        bench.frame(vec![]);
+    }
+    let resized = rect(&bench);
+    assert!(resized.width() < original.width() - 80.0, "{original:?} -> {resized:?}");
+    assert!(resized.height() < original.height() - 60.0, "{original:?} -> {resized:?}");
+    assert!(editor::columns(resized.width() - 22.0) < editor::columns(original.width() - 22.0));
+    bench.state.open = false;
+    bench.frame(vec![]);
+    bench.state.open = true;
+    for _ in 0..8 {
+        bench.frame(vec![]);
+    }
+    assert!((rect(&bench).width() - resized.width()).abs() < 1.0);
+    assert!((rect(&bench).height() - resized.height()).abs() < 1.0);
+}
+
+#[test]
+fn toolbar_editor_category_choice_filters_tiles_and_searches_within_the_category() {
+    let mut bench = Bench::default();
+    bench.state.open = true;
+    for _ in 0..4 {
+        bench.frame(vec![]);
+    }
+    let categories = bench.text(aurora_i18n::tr!("toolbar-category-all"));
+    bench.pointer(categories, true, false);
+    bench.pointer(categories, false, false);
+    fn menu_text(shape: &egui::Shape, ctx: &egui::Context, wanted: &str) -> Option<egui::Pos2> {
+        match shape {
+            egui::Shape::Text(text) if text.galley.text() == wanted => {
+                let pos = text.pos + Vec2::new(4.0, 7.0);
+                ctx.layer_id_at(pos)
+                    .is_some_and(|layer| layer.order == egui::Order::Foreground)
+                    .then_some(pos)
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().find_map(|shape| menu_text(shape, ctx, wanted)),
+            _ => None,
+        }
+    }
+    bench.frame(vec![]);
+    let output = bench.frame(vec![]);
+    let world = output
+        .shapes
+        .iter()
+        .find_map(|shape| menu_text(&shape.shape, &bench.ctx, catalogue_view::Category::World.label()))
+        .expect("World category menu row");
+    bench.pointer(world, true, false);
+    bench.pointer(world, false, false);
+    assert_eq!(bench.state.category, Some(catalogue_view::Category::World));
+    bench.state.search = "aboutland".into();
+    for _ in 0..3 {
+        bench.frame(vec![]);
+    }
+    assert!(bench.ctx.read_response(egui::Id::unique(("toolbar_tile", "aboutland"))).is_some());
+    assert!(bench.ctx.read_response(egui::Id::unique(("toolbar_tile", "inventory"))).is_none());
+}
+
 impl Default for Bench {
     fn default() -> Self {
         let settings = crate::settings::Settings {
@@ -338,6 +512,7 @@ impl Bench {
                     ui,
                     &self.settings,
                     Rect::from_min_size(egui::pos2(8.0, 8.0), Vec2::new(884.0, 36.0)),
+                    80.0,
                 );
                 bars::bottom_bar(
                     ui,
@@ -896,12 +1071,12 @@ fn toolbar_sanitize_keeps_each_command_once_over_the_three_toolbars() {
 fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
     let skin = Layout::default();
     let all = catalogue(&skin);
-    assert_eq!(all.len(), 78);
-    assert_eq!(COMMANDS.len(), 78);
+    assert_eq!(all.len(), 84);
+    assert_eq!(COMMANDS.len(), 84);
     let mut ids: Vec<_> = COMMANDS.iter().map(|c| c.id).collect();
     ids.sort_unstable();
     ids.dedup();
-    assert_eq!(ids.len(), 78, "each command once");
+    assert_eq!(ids.len(), 84, "each command once");
     assert!(ready("texture_library"));
     assert!(ready("movelock") && ready("move_lock") && ready("movement") && ready("water_walk"));
     assert_eq!(catalogue::find("move_lock").map(|c| c.id), Some("movelock"));
@@ -919,7 +1094,10 @@ fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
             assert_ne!(command.label_in(language), command.key, "{}: no label in {language}", command.id);
         }
         // Speak, Favorites and the AO's toggle have buttons of their own
-        if matches!(command.id, "speak" | "favorites" | "aurora_menu") {
+        if matches!(command.id, "speak" | "favorites" | "aurora_menu")
+            || structure::is_separator(command.id)
+            || structure::is_block(command.id)
+        {
             continue;
         }
         let mut panels = Panels::from_settings(&crate::settings::Settings::default());
@@ -930,6 +1108,48 @@ fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
     }
     assert!(!ready("flickr"));
     assert!(ready("a_skin_command"));
+}
+
+#[test]
+fn a_placed_catalogue_tile_can_move_to_the_top_without_duplicating_its_button() {
+    for locked in [false, true] {
+        let mut bench = Bench {
+            islands: true,
+            ..Default::default()
+        };
+        bench.state.open = true;
+        bench.settings.locked = locked;
+        let source = bench.tile("inventory");
+        assert_eq!(bench.settings.location("inventory", &layout()), Some(Bar::Bottom));
+        bench.pointer(source, true, false);
+        bench.frame(vec![egui::Event::PointerMoved(source + Vec2::new(0.0, 30.0))]);
+        assert_eq!(ToolbarUi::dragging(&bench.ctx), !locked);
+        if locked {
+            continue;
+        }
+        bench.frame(vec![]);
+        let zone = bench
+            .ctx
+            .read_response(egui::Id::unique("top_toolbar_drop"))
+            .expect("top drop zone")
+            .rect;
+        let target = egui::pos2(zone.right() - 8.0, zone.center().y);
+        for _ in 0..3 {
+            bench.frame(vec![egui::Event::PointerMoved(target)]);
+        }
+        assert_eq!(bench.saves, 0);
+        bench.pointer(target, false, false);
+        assert_eq!(bench.saves, 1);
+        assert_eq!(bench.settings.location("inventory", &layout()), Some(Bar::Top));
+        assert_eq!(
+            Bar::ALL
+                .iter()
+                .flat_map(|&bar| bench.settings.bar(bar, &layout()).to_vec())
+                .filter(|button| button.command == "inventory")
+                .count(),
+            1
+        );
+    }
 }
 
 /// A saved button of a command Aurora does not have yet stays in its

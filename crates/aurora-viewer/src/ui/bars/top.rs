@@ -40,6 +40,18 @@ pub fn native(
     rect: Rect,
     id: Id,
 ) -> egui::Response {
+    native_styled(ui, p, icons, button, rect, id, settings.top_style.resolve(Bar::Top, true).mode)
+}
+
+pub fn native_styled(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    button: &crate::ui::skin::ToolButton,
+    rect: Rect,
+    id: Id,
+    mode: crate::ui::toolbar::ButtonMode,
+) -> egui::Response {
     let response = ui.interact(rect, id, egui::Sense::click_and_drag());
     let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
     islands::slot_face(ui, p, rect, response.hovered() || open, false);
@@ -48,7 +60,7 @@ pub fn native(
         size: rect.size(),
         icon: islands::ICON,
         dock: true,
-        mode: appearance.mode.unwrap_or(settings.top_style.resolve(Bar::Top, true).mode),
+        mode: appearance.mode.unwrap_or(mode),
         left: false,
         opens: egui::RectAlign::BOTTOM_START,
         editing: false,
@@ -82,19 +94,39 @@ fn rect_id() -> Id {
     Id::unique("custom_top_toolbar_rect")
 }
 
-pub fn reserve(ui: &egui::Ui, settings: &ToolbarSettings, mut span: Rect) -> Rect {
+pub fn reserve(ui: &egui::Ui, settings: &ToolbarSettings, mut span: Rect, minimum_place: f32) -> Rect {
     let style = settings.top_style.resolve(Bar::Top, true);
-    let widths: f32 = settings
+    let dragging = ToolbarUi::dragging(ui.ctx()) && !settings.locked;
+    let natural: Vec<_> = settings
         .top
         .iter()
         .map(|button| natural_width(ui.ctx(), button, style.mode, islands::SLOT, islands::ICON, 38.0))
-        .sum();
-    let width = if settings.top.is_empty() && !ToolbarUi::dragging(ui.ctx()) {
+        .collect();
+    let room = (span.width()
+        - if settings.address_visible.unwrap_or(true) {
+            minimum_place + islands::MARGIN
+        } else {
+            0.0
+        })
+    .max(36.0);
+    let widths = sizing::fit(
+        &natural,
+        style.sizing,
+        style.mode != crate::ui::toolbar::ButtonMode::IconsOnly,
+        room - islands::PAD * 2.0,
+        islands::GAP,
+        islands::SLOT,
+    );
+    let width = if settings.top.is_empty() && !dragging {
         0.0
+    } else if dragging || style.sizing == crate::ui::toolbar::Sizing::Fill {
+        // LLToolBarView::draw exposes the whole destination during a drag.
+        // The compact island alone leaves no room to append another button.
+        room
     } else {
-        (widths + islands::GAP * settings.top.len().saturating_sub(1) as f32 + islands::PAD * 2.0)
+        (widths.iter().sum::<f32>() + islands::GAP * settings.top.len().saturating_sub(1) as f32 + islands::PAD * 2.0)
             .max(36.0)
-            .min((span.width() - 80.0).max(36.0))
+            .min(room)
     };
     let rect = Rect::from_min_size(span.min, Vec2::new(width, span.height()));
     ui.ctx().data_mut(|data| data.insert_temp(rect_id(), rect));
@@ -117,7 +149,11 @@ pub fn show(
     base: &Row,
     classic: bool,
 ) -> BarAction {
-    if settings.top.is_empty() && !ToolbarUi::dragging(ui.ctx()) {
+    if settings.composed {
+        return composed(ui, p, icons, toolbar, settings, panels, mic, base, classic);
+    }
+    let dragging = ToolbarUi::dragging(ui.ctx()) && !settings.locked;
+    if settings.top.is_empty() && !dragging {
         return BarAction::None;
     }
     let style = settings.top_style.resolve(Bar::Top, !classic);
@@ -131,8 +167,9 @@ pub fn show(
         let zone = ui.max_rect();
         let target = ui.interact(zone, Id::unique("top_toolbar_background"), egui::Sense::click());
         toolbar.context(&target, p, Bar::Top, style, None, settings.locked);
-        egui::ScrollArea::horizontal()
+        let rects = egui::ScrollArea::horizontal()
             .id_salt("top_toolbar_scroll")
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
@@ -142,9 +179,23 @@ pub fn show(
                         .iter()
                         .map(|button| natural_width(ui.ctx(), button, style.mode, islands::SLOT, islands::ICON, 38.0))
                         .collect();
-                    let widths = sizing::fit(&natural, style.sizing, true, zone.width(), islands::GAP, islands::SLOT);
+                    let widths = sizing::fit(
+                        &natural,
+                        style.sizing,
+                        style.mode != crate::ui::toolbar::ButtonMode::IconsOnly,
+                        zone.width(),
+                        islands::GAP,
+                        islands::SLOT,
+                    );
                     let total = widths.iter().sum::<f32>() + islands::GAP * settings.top.len().saturating_sub(1) as f32;
-                    ui.add_space(sizing::place(style.align, 0.0, zone.width(), total));
+                    // Expanding the destination must not move existing compact
+                    // buttons away from the pointer that began the drag.
+                    let aligned_width = if !classic && dragging && style.sizing != crate::ui::toolbar::Sizing::Fill {
+                        total.min(zone.width())
+                    } else {
+                        zone.width()
+                    };
+                    ui.add_space(sizing::place(style.align, 0.0, aligned_width, total));
                     let look = |button: &crate::ui::skin::ToolButton| {
                         let index = settings
                             .top
@@ -162,10 +213,27 @@ pub fn show(
                         }
                     };
                     let rects = toolbar_row(ui, p, icons, &settings.top, look, toolbar, panels, mic, &row, &mut action);
-                    let drop = ui.interact(zone, Id::unique("top_toolbar_drop"), egui::Sense::hover());
-                    toolbar.drop_bar(&drop, Bar::Top, &rects, p, settings.locked);
-                });
-            });
+                    if dragging {
+                        let left = rects.last().map_or(zone.left(), |rect| rect.right() + islands::MARGIN);
+                        crate::ui::widgets::paint_elided(
+                            ui,
+                            aurora_i18n::tr!("toolbar-drop-here"),
+                            egui::pos2(left, zone.center().y),
+                            (zone.right() - left).max(0.0),
+                            egui::FontId::proportional(super::sizing::LABEL_FONT),
+                            p.muted,
+                        );
+                    }
+                    rects
+                })
+                .inner
+            })
+            .inner;
+        // Handle the destination outside the scroller: its content clip must
+        // not exclude blank space or the island's padding from a menu drop.
+        let drop_zone = if classic { zone } else { zone.expand(islands::PAD) };
+        let drop = ui.interact(drop_zone, Id::unique("top_toolbar_drop"), egui::Sense::hover());
+        toolbar.drop_bar(&drop, Bar::Top, &rects, p, settings.locked);
     };
     if classic {
         let shown = egui::Panel::top("custom_top_toolbar")
@@ -186,6 +254,106 @@ pub fn show(
                 body(&mut child);
             });
         }
+    }
+    action
+}
+
+#[allow(clippy::too_many_arguments)]
+fn composed(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    toolbar: &mut ToolbarUi,
+    settings: &ToolbarSettings,
+    panels: &mut Panels,
+    mic: &mut MicButton,
+    base: &Row,
+    classic: bool,
+) -> BarAction {
+    let style = settings.top_style.resolve(Bar::Top, !classic);
+    let row = Row {
+        bar: Bar::Top,
+        style,
+        ..*base
+    };
+    let display = crate::ui::toolbar::structure::Display::for_bar(ui.ctx(), Bar::Top, &settings.top, row.editing);
+    let buttons = display.buttons();
+    let mut action = BarAction::None;
+    let split = buttons
+        .iter()
+        .any(|button| crate::ui::toolbar::structure::is_separator(&button.command));
+    let mut body = |ui: &mut egui::Ui, rect: Rect| {
+        let target = ui.interact(rect, Id::unique("top_toolbar_background"), egui::Sense::click());
+        toolbar.context(&target, p, Bar::Top, style, None, settings.locked);
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(Vec2::new(islands::PAD, 0.0))));
+        child.set_clip_rect(rect);
+        let rects = egui::ScrollArea::horizontal()
+            .id_salt("composed_top_toolbar_scroll")
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+            .auto_shrink([false, false])
+            .show(&mut child, |ui| {
+                ui.horizontal_centered(|ui| {
+                    ui.spacing_mut().item_spacing.x = islands::GAP;
+                    let natural: Vec<_> = buttons
+                        .iter()
+                        .map(|button| natural_width(ui.ctx(), button, style.mode, islands::SLOT, islands::ICON, 38.0))
+                        .collect();
+                    let mut widths = sizing::toolbar(
+                        buttons,
+                        &natural,
+                        style.sizing,
+                        style.mode != crate::ui::toolbar::ButtonMode::IconsOnly,
+                        rect.width() - islands::PAD * 2.0,
+                        islands::GAP,
+                        islands::SLOT,
+                    );
+                    let total = widths.iter().sum::<f32>() + islands::GAP * buttons.len().saturating_sub(1) as f32;
+                    if let Some(index) = buttons.iter().position(|button| button.command == "bar_navigation")
+                        && widths[index] > 0.0
+                    {
+                        widths[index] += (rect.width() - islands::PAD * 2.0 - total).max(0.0);
+                    }
+                    let total = widths.iter().sum::<f32>() + islands::GAP * buttons.len().saturating_sub(1) as f32;
+                    ui.add_space(sizing::place(style.align, 0.0, rect.width() - islands::PAD * 2.0, total));
+                    let look = |button: &crate::ui::skin::ToolButton| {
+                        let index = buttons
+                            .iter()
+                            .position(|candidate| candidate.command == button.command)
+                            .unwrap_or(0);
+                        ButtonLook {
+                            size: Vec2::new(widths.get(index).copied().unwrap_or(islands::SLOT), islands::SLOT),
+                            icon: islands::ICON,
+                            dock: !classic,
+                            mode: style.mode,
+                            left: false,
+                            opens: egui::RectAlign::BOTTOM_START,
+                            editing: row.editing,
+                        }
+                    };
+                    toolbar_row(ui, p, icons, buttons, look, toolbar, panels, mic, &row, &mut action)
+                })
+                .inner
+            })
+            .inner;
+        let drop = ui.interact(rect, Id::unique("top_toolbar_drop"), egui::Sense::hover());
+        toolbar.drop_bar(&drop, Bar::Top, &display.full_rects(&rects), p, settings.locked);
+    };
+    if classic {
+        egui::Panel::top("composed_top_toolbar")
+            .frame(super::bar_frame(p).inner_margin(egui::Margin::ZERO))
+            .exact_size(islands::HEIGHT)
+            .show(ui, |ui| {
+                body(ui, ui.max_rect());
+            });
+    } else {
+        let screen = ui.ctx().content_rect();
+        let rect = Rect::from_min_size(
+            screen.min + Vec2::splat(islands::MARGIN),
+            Vec2::new(screen.width() - islands::MARGIN * 2.0, islands::HEIGHT),
+        );
+        let ctx = ui.ctx().clone();
+        ctx.data_mut(|data| data.insert_temp(rect_id(), rect));
+        islands::area_surface(&ctx, p, "composed_top_toolbar", rect, !split, |ui| body(ui, rect));
     }
     action
 }

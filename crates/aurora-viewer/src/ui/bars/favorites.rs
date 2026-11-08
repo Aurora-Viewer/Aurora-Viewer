@@ -578,7 +578,9 @@ fn pill_width(ui: &egui::Ui, fav: &Favorite) -> f32 {
 /// rectangle.
 pub fn row(ctx: &egui::Context, p: &Palette, icons: &Icons, view: &View, under: Rect) -> (Rect, Option<BarAction>) {
     let mut out = None;
-    let top = under.bottom() + super::islands::MARGIN;
+    // A moved navigation block keeps its favourites inside the viewport.
+    let (anchor, above, _) = crate::ui::widgets::popup_vertical(ctx.content_rect(), under, ROW_HEIGHT, super::islands::MARGIN);
+    let top = if above { anchor - ROW_HEIGHT } else { anchor };
     if view.folded {
         // a tab under the place island's left end
         let rect = Rect::from_min_size(Pos2::new(under.left(), top), Vec2::new(PAD * 2.0 + SLOT + 14.0, ROW_HEIGHT));

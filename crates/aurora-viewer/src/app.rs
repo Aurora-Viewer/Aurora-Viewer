@@ -14956,7 +14956,14 @@ impl App {
                 self.toolbar_ui.favorites_access = self.favorites_access();
                 self.toolbar_ui.flash_nearby = self.flash_nearby();
                 self.chat_ui.flash_nearby = self.flash_nearby();
-                let toolbar_migrated = self.settings.migrate_toolbar(self.world.agent_id);
+                let mut toolbar_migrated = self.settings.migrate_toolbar(self.world.agent_id);
+                let current_toolbar = self.settings.toolbar.get_or_insert_default();
+                let composed_now = current_toolbar.compose_top();
+                toolbar_migrated |= composed_now;
+                if composed_now && !self.settings.show_bug_report {
+                    current_toolbar.top.retain(|button| button.command != "report_bug");
+                }
+                toolbar_migrated |= current_toolbar.set_bug_visible(layout, self.settings.show_bug_report);
                 let mut demo_toolbar = None;
                 // AURORA_DEMO_TOOLBAR=custom|side|labels|right: the mockup's
                 // side bar, for this run only
@@ -14968,6 +14975,7 @@ impl App {
                     };
                     let mut t = self.settings.toolbar.clone().unwrap_or_default();
                     ui::toolbar::demo_settings(&mut t, layout);
+                    t.compose_top();
                     demo_toolbar = Some(t);
                 }
                 if self.demo && ui::bars::demo::get().access == Some(crate::settings::FavoritesAccess::Dock) {
@@ -15025,7 +15033,8 @@ impl App {
                     self.dock_layout.of(layout, autohide_chat_bar)
                 };
                 self.toolbar_ui.prepare(&ctx, toolbar_settings);
-                if chrome.top {
+                ui::bars::chrome::prepare(ui, &p, &status, toolbar_settings, self.toolbar_ui.open && !toolbar_settings.locked);
+                if chrome.top && !toolbar_settings.composed {
                     let (bar, audio_action) = ui::bars::top_bars(
                         ui,
                         &p,
@@ -15170,6 +15179,31 @@ impl App {
                     sides,
                 );
                 area = room;
+                if toolbar_settings.composed {
+                    let (bar, audio_action) = ui::bars::chrome::show(
+                        ui,
+                        &p,
+                        icons,
+                        &mut self.panels,
+                        &status,
+                        &mut self.settings.audio,
+                        &mut self.audio_ui,
+                        media,
+                        &mut self.notif_ui,
+                        bell,
+                        &mut self.toolbar_ui,
+                        toolbar_settings,
+                    );
+                    if !matches!(bar, BarAction::None) {
+                        a.bar = bar;
+                    }
+                    if !matches!(audio_action, ui::audio::AudioAction::None) {
+                        a.audio = Some(audio_action);
+                    }
+                    if let Some(bottom) = ui::bars::islands::favorites_row_bottom(ui.ctx()) {
+                        area.min.y = area.top().max(bottom + ui::bars::islands::MARGIN);
+                    }
+                }
                 // without the bars, the windows keep the room they left
                 if chrome.top && chrome.bottom {
                     self.interface.last_room = Some((area, bottom_top));
@@ -15190,7 +15224,7 @@ impl App {
                     &self.avatar_pics,
                     &self.ui_images,
                     area,
-                    chrome.top,
+                    chrome.top && (!toolbar_settings.composed || toolbar_settings.location("bar_conversations", bar_layout).is_some()),
                 );
                 // the islands leave room between them, above and below: the
                 // windows move over the whole screen; the Legacy Viewer's
@@ -15213,7 +15247,28 @@ impl App {
                 ui::layout::set_window_edges(ui.ctx(), edges);
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
                 self.toolbar_ui.show(ui.ctx(), &p, bar_layout, toolbar_settings);
-                if self.toolbar_ui.commit(bar_layout, toolbar_settings) || chat_width_set || toolbar_migrated {
+                let conversation_slot = |settings: &ui::toolbar::ToolbarSettings| {
+                    ui::toolbar::Bar::ALL.into_iter().find_map(|bar| {
+                        settings
+                            .bar(bar, bar_layout)
+                            .iter()
+                            .position(|button| button.command == "bar_conversations")
+                            .map(|index| (bar, index))
+                    })
+                };
+                let previous_conversations = conversation_slot(toolbar_settings);
+                let toolbar_changed = self.toolbar_ui.commit(bar_layout, toolbar_settings);
+                if toolbar_changed && previous_conversations != conversation_slot(toolbar_settings) {
+                    self.settings.chat_thumbnails = if conversation_slot(toolbar_settings).is_some() {
+                        crate::settings::ChatThumbnails::TopRight
+                    } else {
+                        crate::settings::ChatThumbnails::Off
+                    };
+                }
+                if toolbar_changed || chat_width_set || toolbar_migrated {
+                    if toolbar_settings.composed {
+                        self.settings.show_bug_report = toolbar_settings.location("report_bug", bar_layout).is_some();
+                    }
                     self.settings.save();
                 }
                 // the Favorites button's right click: where the favourites live

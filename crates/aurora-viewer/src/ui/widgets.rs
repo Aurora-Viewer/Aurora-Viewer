@@ -202,6 +202,36 @@ fn fit_in(area: egui::Rect, pos: egui::Pos2, size: Vec2) -> egui::Pos2 {
     pos.clamp(area.min, max)
 }
 
+/// Anchor a popup on the roomier side when it cannot fit below its control.
+/// The returned y belongs to the top pivot, or the bottom pivot when `above`.
+pub fn popup_vertical(screen: egui::Rect, control: egui::Rect, wanted: f32, gap: f32) -> (f32, bool, f32) {
+    let below = (screen.bottom() - control.bottom() - gap).max(0.0);
+    let above = (control.top() - screen.top() - gap).max(0.0);
+    let opens_above = below < wanted && above > below;
+    if opens_above {
+        (control.top() - gap, true, above)
+    } else {
+        (control.bottom() + gap, false, below)
+    }
+}
+
+#[test]
+fn moved_controls_open_popups_towards_available_space() {
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0));
+    for (y, above) in [(8.0, false), (650.0, true), (330.0, false)] {
+        let control = egui::Rect::from_min_size(egui::pos2(8.0, y), egui::vec2(220.0, 36.0));
+        let (anchor, actual, room) = popup_vertical(screen, control, 280.0, 8.0);
+        assert_eq!(actual, above);
+        let height = room.min(280.0);
+        assert!(anchor >= screen.top() && anchor <= screen.bottom());
+        assert!(if above {
+            anchor - height >= screen.top()
+        } else {
+            anchor + height <= screen.bottom()
+        });
+    }
+}
+
 /// Width of a minimized floater: its icon, a title cut short and its
 /// buttons. Firestorm's is fixed (UIMinimizedWidth, 160) for a smaller
 /// title font; a narrower window keeps its own width.

@@ -157,6 +157,8 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "rss",
     "run",
     "select-all",
+    "separator-horizontal",
+    "separator-vertical",
     "scissors",
     "shape",
     "share",

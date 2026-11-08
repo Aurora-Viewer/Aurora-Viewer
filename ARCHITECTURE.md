@@ -7,6 +7,15 @@ menu handler. Layout overrides preserve semantic IDs across locales and new comm
 icon picker; menu entries have overrides independent of their toolbar copies. `ui/bars/top.rs` shares the toolbar renderer and drag payload with the
 bottom and side bars. Global toolbar preferences also hold main-menu order and the
 reversible SLURL address-bar visibility.
+`ui/toolbar/catalogue_view.rs` groups the editor's commands by purpose and merges
+explicit aliases of menu and toolbar actions while preserving saved command IDs.
+Its resizable editor reflows the tile grid and filters categories independently
+of the search text.
+`ui/toolbar/structure.rs` owns uniquely identified gap separators, visible-group
+layout and the one-time migration of the complete top row. `ui/bars/chrome.rs`
+measures live navigation, account, system, notification and conversation blocks,
+then renders them in toolbar slots on any edge using the original widget handlers
+and layer. Glass surfaces split at gaps; hidden blocks leave no empty groups.
 
 
 `ui/widgets/local_texture.rs` shares local asset/image identity and the Local previews eye badge across texture controls. Swatches keep their original click and drag response; the mark is painted inside their lower-right corner, including pending images.

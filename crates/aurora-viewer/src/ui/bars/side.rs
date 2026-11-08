@@ -8,7 +8,7 @@
 //! (LLToolBarView::draw), without taking room from the windows.
 
 use super::dock::{BUTTON_ICON, MIN_BUTTON, narrow};
-use super::islands::{GAP, MARGIN, PAD, area};
+use super::islands::{GAP, MARGIN, PAD};
 use super::{BarAction, ButtonLook, DOCK_MIC_W, MicButton, Row, bar_frame, natural_width, sizing, toolbar_row};
 use crate::theme::Palette;
 use crate::ui::Panels;
@@ -30,12 +30,41 @@ const CLASSIC_PAD: f32 = 3.0;
 /// and bottom bars) by `style.align`; 8 px from the screen's edge. When it
 /// is too tall, its buttons take the reduced size. Returns the island, the
 /// button height and the buttons' width.
+#[cfg(test)]
 pub fn geometry(screen: Rect, room: Rect, bar: Bar, style: Style, natural: impl Fn(f32) -> Vec<f32>) -> (Rect, f32, f32) {
+    geometry_fixed(screen, room, bar, style, natural, &[])
+}
+
+fn geometry_fixed(
+    screen: Rect,
+    room: Rect,
+    bar: Bar,
+    style: Style,
+    natural: impl Fn(f32) -> Vec<f32>,
+    blocks: &[bool],
+) -> (Rect, f32, f32) {
     let column = |button: f32| {
         let widths = natural(button);
         let n = widths.len().max(1);
         let width = widths.iter().copied().fold(button, f32::max);
-        (width, n as f32 * button + GAP * (n - 1) as f32 + V_PAD * 2.0)
+        let height = if widths.is_empty() {
+            button
+        } else {
+            widths
+                .iter()
+                .enumerate()
+                .map(|(i, width)| {
+                    if *width == crate::ui::toolbar::structure::GAP {
+                        *width
+                    } else if blocks.get(i).copied().unwrap_or(false) {
+                        button.max(super::islands::HEIGHT)
+                    } else {
+                        button
+                    }
+                })
+                .sum()
+        };
+        (width, height + GAP * (n - 1) as f32 + V_PAD * 2.0)
     };
     let mut button = if narrow(screen) { 32.0 } else { 34.0 };
     let (mut width, mut height) = column(button);
@@ -87,20 +116,21 @@ pub(crate) fn bars(
     let mut edges = [screen.left(), screen.right()];
     let dragging = ToolbarUi::dragging(ui.ctx()) && !settings.locked;
     for (bar, shown) in [(Bar::Left, shown[0]), (Bar::Right, shown[1])] {
-        let buttons = settings.bar(bar, layout);
+        let display = crate::ui::toolbar::structure::Display::for_bar(ui.ctx(), bar, settings.bar(bar, layout), base.editing);
+        let buttons = display.buttons();
         if !shown || (buttons.is_empty() && !dragging) {
             continue;
         }
         let style = settings.style(bar).resolve(bar, islands);
         let row = Row { bar, style, ..*base };
         if islands || buttons.is_empty() {
-            let island = column(ui, p, icons, buttons, toolbar, panels, mic, &row, room, &mut action);
+            let island = column(ui, p, icons, buttons, toolbar, panels, mic, &row, room, &mut action, &display);
             if !buttons.is_empty() {
                 room = room_beside(room, bar, island);
                 edges[usize::from(bar == Bar::Right)] = if bar == Bar::Left { island.right() } else { island.left() };
             }
         } else {
-            let width = classic(ui, p, icons, buttons, toolbar, panels, mic, &row, &mut action);
+            let width = classic(ui, p, icons, buttons, toolbar, panels, mic, &row, &mut action, &display);
             match bar {
                 Bar::Left => room.min.x += width,
                 _ => room.max.x -= width,
@@ -142,6 +172,7 @@ fn column(
     row: &Row,
     room: Rect,
     action: &mut BarAction,
+    display: &crate::ui::toolbar::structure::Display,
 ) -> Rect {
     let ctx = ui.ctx().clone();
     let screen = ctx.content_rect();
@@ -152,9 +183,16 @@ fn column(
             .map(|b| natural_width(&ctx, b, style.mode, square, BUTTON_ICON.min(square - 6.0), DOCK_MIC_W))
             .collect()
     };
-    let (island, button, width) = geometry(screen, room, row.bar, style, natural);
+    let blocks: Vec<_> = buttons
+        .iter()
+        .map(|button| crate::ui::toolbar::structure::is_block(&button.command))
+        .collect();
+    let (island, button, width) = geometry_fixed(screen, room, row.bar, style, natural, &blocks);
     let name = if row.bar == Bar::Left { "toolbar_left" } else { "toolbar_right" };
-    area(&ctx, p, name, island, |ui| {
+    let split = buttons
+        .iter()
+        .any(|button| crate::ui::toolbar::structure::is_separator(&button.command));
+    super::islands::area_surface(&ctx, p, name, island, !split, |ui| {
         let target = ui.interact(island, Id::unique(("toolbar_background", name)), Sense::click());
         toolbar.context(&target, p, row.bar, style, None, row.locked);
         let inner = island.shrink2(Vec2::new(PAD, V_PAD));
@@ -180,7 +218,7 @@ fn column(
             Id::unique(("toolbar_drop", name)),
             Sense::hover(),
         );
-        toolbar.drop_bar(&drop, row.bar, &rects, p, row.locked);
+        toolbar.drop_bar(&drop, row.bar, &display.full_rects(&rects), p, row.locked);
     });
     island
 }
@@ -198,6 +236,7 @@ fn classic(
     mic: &mut MicButton,
     row: &Row,
     action: &mut BarAction,
+    display: &crate::ui::toolbar::structure::Display,
 ) -> f32 {
     let style = row.style;
     let labelled = style.mode != ButtonMode::IconsOnly;
@@ -223,7 +262,19 @@ fn classic(
             let target = ui.interact(zone, Id::unique(("toolbar_background", id)), Sense::click());
             toolbar.context(&target, p, row.bar, style, None, row.locked);
             let n = buttons.len().max(1) as f32;
-            let height = n * CLASSIC_H + (n - 1.0) * GAP;
+            let height = buttons
+                .iter()
+                .map(|button| {
+                    if crate::ui::toolbar::structure::is_separator(&button.command) {
+                        crate::ui::toolbar::structure::GAP
+                    } else if crate::ui::toolbar::structure::is_block(&button.command) {
+                        super::islands::HEIGHT
+                    } else {
+                        CLASSIC_H
+                    }
+                })
+                .sum::<f32>()
+                + (n - 1.0) * GAP;
             let top = sizing::place(style.align, zone.top(), zone.bottom(), height);
             let mut child = ui.new_child(
                 egui::UiBuilder::new()
@@ -241,7 +292,7 @@ fn classic(
                 editing: row.editing,
             };
             let rects = toolbar_row(&mut child, p, icons, buttons, look, toolbar, panels, mic, row, action);
-            toolbar.drop_bar(&target, row.bar, &rects, p, row.locked);
+            toolbar.drop_bar(&target, row.bar, &display.full_rects(&rects), p, row.locked);
         });
     if let Some((painter, slot)) = glass {
         crate::ui::widgets::finish_bar_glass(&painter, slot, resp.response.rect, p);

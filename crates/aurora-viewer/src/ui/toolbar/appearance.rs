@@ -71,6 +71,9 @@ impl ToolbarUi {
     }
 
     pub fn appearance_context(&mut self, response: &egui::Response, p: &Palette, button: &ToolButton, locked: bool) {
+        if super::structure::is_separator(&button.command) || super::structure::is_block(&button.command) {
+            return;
+        }
         self.appearance_context_for(response, p, button, locked, &button.command);
     }
 
@@ -142,13 +145,15 @@ impl ToolbarUi {
                         value.icon = None;
                     }
                 });
-                widgets::clearable_search_box(
-                    ui,
-                    p,
-                    &mut self.appearance_editor.search,
-                    aurora_i18n::tr!("toolbar-icon-search"),
-                    ui.available_width(),
-                );
+                ui.horizontal(|ui| {
+                    widgets::clearable_search_box(
+                        ui,
+                        p,
+                        &mut self.appearance_editor.search,
+                        aurora_i18n::tr!("toolbar-icon-search"),
+                        ui.available_width(),
+                    );
+                });
                 let filter = self.appearance_editor.search.to_lowercase();
                 let names: Vec<_> = self
                     .appearance_editor
@@ -157,9 +162,10 @@ impl ToolbarUi {
                     .filter(|name| filter.is_empty() || name.contains(&filter))
                     .collect();
                 const COLS: usize = 8;
+                let icon_height = ui.available_height().clamp(64.0, 290.0);
                 egui::ScrollArea::vertical()
                     .id_salt("button_icon_picker")
-                    .max_height(290.0)
+                    .max_height(icon_height)
                     .show_rows(ui, 34.0, names.len().div_ceil(COLS), |ui, rows| {
                         for row in rows {
                             ui.horizontal(|ui| {

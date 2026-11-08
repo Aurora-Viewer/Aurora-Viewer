@@ -49,7 +49,10 @@ impl Catalogue {
     pub fn can_place(&self, command: &str, parent: &str, layout: &BTreeMap<String, Vec<String>>) -> bool {
         // These are interactive surfaces, not menu actions. Their toolbar
         // versions continue to work on all four edges.
-        if matches!(command, "aurora_menu" | "speak" | "favorites") {
+        if matches!(command, "aurora_menu" | "speak" | "favorites")
+            || super::structure::is_separator(command)
+            || super::structure::is_block(command)
+        {
             return false;
         }
         if self.find(command).is_none() || (!parent.is_empty() && !self.find(parent).is_some_and(|entry| entry.group)) {

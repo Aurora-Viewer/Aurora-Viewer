@@ -101,6 +101,7 @@ pub fn geometry(screen: Rect, chat_width: f32, buttons: usize, mic: bool) -> Geo
 /// `thumbs(room, button, height)` after the chat island, within the room
 /// the dock leaves at its size: the dock keeps its place unless it would
 /// cover them, then stands right after them.
+#[cfg(test)]
 pub fn geometry_styled(
     screen: Rect,
     chat_width: f32,
@@ -108,19 +109,45 @@ pub fn geometry_styled(
     natural: impl Fn(f32) -> Vec<f32>,
     thumbs: impl Fn(f32, f32, f32) -> f32,
 ) -> Geometry {
+    geometry_fixed(screen, chat_width, style, natural, thumbs, &[], false)
+}
+
+fn geometry_fixed(
+    screen: Rect,
+    chat_width: f32,
+    style: Style,
+    natural: impl Fn(f32) -> Vec<f32>,
+    thumbs: impl Fn(f32, f32, f32) -> f32,
+    fixed: &[bool],
+    blocks: bool,
+) -> Geometry {
     let bottom = screen.bottom() - MARGIN;
     let left = screen.left() + MARGIN;
     let right = screen.right() - MARGIN;
     let labelled = style.mode != ButtonMode::IconsOnly;
     let least = natural(MIN_BUTTON);
-    let least = if labelled { vec![MIN_BUTTON; least.len()] } else { least };
+    let least = if labelled {
+        least
+            .iter()
+            .enumerate()
+            .map(|(i, width)| {
+                if fixed.get(i).copied().unwrap_or(false) {
+                    *width
+                } else {
+                    MIN_BUTTON
+                }
+            })
+            .collect()
+    } else {
+        least
+    };
     let wanted = if chat_width > 0.0 { chat_width } else { default_chat_width(screen) };
     let max_chat = (right - left - AFTER_CHAT - row_width(&least, MIN_BUTTON)).max(MIN_CHAT);
     let chat_w = wanted.clamp(MIN_CHAT, max_chat);
     let chat_right = left + chat_w;
     let start = chat_right + AFTER_CHAT;
     let room = right - start;
-    let row = |button: f32| sizing::fit(&natural(button), style.sizing, labelled, room - PAD * 2.0, GAP, MIN_BUTTON);
+    let row = |button: f32| sizing::fit_fixed(&natural(button), fixed, style.sizing, labelled, room - PAD * 2.0, GAP, MIN_BUTTON);
     let mut button = if narrow(screen) { 32.0 } else { 34.0 };
     let mut widths = row(button);
     if row_width(&widths, button) > room {
@@ -128,7 +155,7 @@ pub fn geometry_styled(
         widths = row(button);
     }
     let width = row_width(&widths, button);
-    let height = button + V_PAD * 2.0;
+    let height = button.max(if blocks { super::islands::HEIGHT } else { 0.0 }) + V_PAD * 2.0;
     let thumbs_w = thumbs(right - start - width - AFTER_CHAT, button, height).max(0.0);
     let dock_start = if thumbs_w > 0.0 { start + thumbs_w + AFTER_CHAT } else { start };
     let x = match style.align {
@@ -170,11 +197,19 @@ pub fn bottom(
 ) -> (Option<crate::ui::chat::OutgoingChat>, BarAction, f32, bool) {
     let ctx = ui.ctx().clone();
     let screen = ui.max_rect();
-    let buttons = toolbar_settings.buttons(layout);
+    let display = crate::ui::toolbar::structure::Display::for_bar(&ctx, row.bar, toolbar_settings.buttons(layout), row.editing);
+    let buttons = display.buttons();
     let style = row.style;
     // the conversations' thumbnails as high as the chat island's button
     let thumb = |button: f32| button - 4.0;
-    let mut geo = geometry_styled(
+    let fixed: Vec<_> = buttons
+        .iter()
+        .map(|button| crate::ui::toolbar::structure::fixed_width(&button.command))
+        .collect();
+    let blocks = buttons
+        .iter()
+        .any(|button| crate::ui::toolbar::structure::is_block(&button.command));
+    let mut geo = geometry_fixed(
         screen,
         *chat_width,
         style,
@@ -185,6 +220,8 @@ pub fn bottom(
                 .collect()
         },
         |room, button, height| chat.thumbnails.bar_width(thumb(button), (height - thumb(button)) / 2.0, room),
+        &fixed,
+        blocks,
     );
     let mut action = BarAction::None;
     let mut committed = false;
@@ -242,7 +279,10 @@ pub fn bottom(
     if buttons.is_empty() && (!crate::ui::toolbar::ToolbarUi::dragging(&ctx) || row.locked) {
         return (out, action, screen.bottom() - geo.reserved(), committed);
     }
-    area(&ctx, p, "dock", geo.dock, |ui| {
+    let split = buttons
+        .iter()
+        .any(|button| crate::ui::toolbar::structure::is_separator(&button.command));
+    super::islands::area_surface(&ctx, p, "dock", geo.dock, !split, |ui| {
         // the dock's background: its right-click menu and the drop target
         let target = ui.interact(geo.dock, Id::unique("toolbar_background"), Sense::click());
         toolbar.context(&target, p, row.bar, style, None, row.locked);
@@ -257,7 +297,7 @@ pub fn bottom(
         let look = |b: &crate::ui::skin::ToolButton| {
             let at = buttons.iter().position(|x| x.command == b.command).unwrap_or(0);
             ButtonLook {
-                size: Vec2::new(geo.widths.get(at).copied().unwrap_or(geo.button), geo.button),
+                size: Vec2::new(geo.widths.get(at).copied().unwrap_or(geo.button), geo.height - V_PAD * 2.0),
                 icon: BUTTON_ICON.min(geo.button - 6.0),
                 dock: true,
                 mode: style.mode,
@@ -284,7 +324,7 @@ pub fn bottom(
             drop_rect.min.x = drop_rect.min.x.max(geo.thumbs.right());
         }
         let drop = ui.interact(drop_rect, Id::unique("dock_drop"), Sense::hover());
-        toolbar.drop_bar(&drop, row.bar, &rects, p, row.locked);
+        toolbar.drop_bar(&drop, row.bar, &display.full_rects(&rects), p, row.locked);
     });
     (out, action, screen.bottom() - geo.reserved(), committed)
 }

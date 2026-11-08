@@ -92,6 +92,109 @@ fn menu_layout_reparents_groups_preserves_new_entries_and_rejects_cycles() {
 }
 
 #[test]
+fn aurora_menu_hover_shows_one_tooltip() {
+    let ctx = egui::Context::default();
+    ctx.all_styles_mut(|style| {
+        style.interaction.tooltip_delay = 0.0;
+        style.interaction.show_tooltips_only_when_still = false;
+    });
+    let p = crate::theme::Theme::default().palette();
+    let settings = ToolbarSettings::default();
+    let st = islands::tests::status(true, true);
+    let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+    let mut state = ToolbarUi::default();
+    let mut count = 0;
+    fn occurrences(shape: &egui::Shape, label: &str) -> usize {
+        match shape {
+            egui::Shape::Text(text) => usize::from(text.galley.text() == label),
+            egui::Shape::Vec(shapes) => shapes.iter().map(|shape| occurrences(shape, label)).sum(),
+            _ => 0,
+        }
+    }
+    for frame in 0..10 {
+        let pointer = ctx
+            .read_response(egui::Id::unique("bars_island_menu"))
+            .map_or(egui::pos2(26.0, 26.0), |response| response.rect.center());
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1200.0, 700.0))),
+                time: Some(frame as f64 * 0.3),
+                events: if frame < 3 {
+                    vec![egui::Event::PointerMoved(pointer)]
+                } else {
+                    Vec::new()
+                },
+                ..Default::default()
+            },
+            |ui| {
+                state.prepare(&ctx, &settings);
+                islands::top(
+                    ui,
+                    &p,
+                    &Icons::default(),
+                    &mut panels,
+                    &st,
+                    &mut Default::default(),
+                    &mut Default::default(),
+                    Default::default(),
+                    &mut Default::default(),
+                    Default::default(),
+                    &mut state,
+                    &settings,
+                );
+            },
+        );
+        count = output
+            .shapes
+            .iter()
+            .map(|shape| occurrences(&shape.shape, aurora_i18n::tr!("ui-bars-aurora-menu")))
+            .sum();
+    }
+    assert!(
+        ctx.read_response(egui::Id::unique("bars_island_menu"))
+            .expect("Aurora button")
+            .hovered()
+    );
+    assert_eq!(count, 1, "a single label in the tooltip");
+}
+
+#[test]
+fn categorized_catalogue_merges_about_land_and_preserves_a_saved_menu_copy() {
+    let ctx = egui::Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let layout = Layout::default();
+    let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+    let st = islands::tests::status(true, true);
+    let _ = ctx.run_ui(Default::default(), |ui| collect_menu(ui, &p, &mut panels, &st));
+    let catalogue = commands::catalogue(&ctx);
+    let mut settings = ToolbarSettings::default();
+    let about = "menu:common-world/common-about-land";
+    let menu_button = catalogue.find(about).expect("About Land menu entry").button.clone();
+    settings.top.push(menu_button.clone());
+    let entries = toolbar::catalogue_view::entries(&layout, &settings, &catalogue);
+    let about_entries: Vec<_> = entries
+        .iter()
+        .filter(|entry| matches!(entry.button.command.as_str(), "aboutland" | "menu:common-world/common-about-land"))
+        .collect();
+    assert_eq!(about_entries.len(), 1, "one feature, one catalogue tile");
+    assert_eq!(about_entries[0].button, menu_button, "keep the placed menu command's ID and icon");
+    assert_eq!(about_entries[0].category, toolbar::catalogue_view::Category::World);
+    assert!(catalogue.find(about).is_some(), "the original menu is unchanged");
+    let gesture_count = entries.iter().filter(|entry| entry.button.command == "gestures").count();
+    assert_eq!(gesture_count, 1, "both menu locations share the gesture tile");
+    let group = entries
+        .iter()
+        .find(|entry| entry.button.command == "menu:common-build")
+        .expect("build submenu");
+    assert!(group.group);
+    assert_ne!(
+        group.label(),
+        aurora_i18n::text("common-build"),
+        "submenus are distinguished from actions"
+    );
+}
+
+#[test]
 fn mixed_button_modes_inherit_only_when_requested_and_round_trip_with_icons() {
     let ctx = egui::Context::default();
     let p = crate::theme::Theme::default().palette();
@@ -126,4 +229,156 @@ fn mixed_button_modes_inherit_only_when_requested_and_round_trip_with_icons() {
     assert_eq!(saved.appearance["inventory"].mode, None);
     assert!(saved.top.iter().any(|button| button.command == "location_bar"));
     assert!(!Bar::Top.vertical());
+}
+
+#[test]
+fn top_toolbar_keeps_a_labelled_override_wide_beside_icon_only_buttons() {
+    let ctx = egui::Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let mut settings = ToolbarSettings {
+        address_visible: Some(false),
+        ..Default::default()
+    };
+    settings.top = ["location_bar", "preferences", "home"]
+        .into_iter()
+        .map(|id| {
+            let command = toolbar::COMMANDS.iter().find(|command| command.id == id).expect("command");
+            crate::ui::skin::ToolButton {
+                command: id.into(),
+                icon: command.icon.into(),
+                tooltip: String::new(),
+            }
+        })
+        .collect();
+    settings.appearance.insert(
+        "preferences".into(),
+        toolbar::appearance::Appearance {
+            mode: Some(ButtonMode::IconsWithText),
+            icon: None,
+        },
+    );
+    let mut state = ToolbarUi::default();
+    let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+    let mut expected = 0.0;
+    let _ = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1200.0, 700.0))),
+            ..Default::default()
+        },
+        |ui| {
+            state.prepare(ui.ctx(), &settings);
+            expected = natural_width(
+                ui.ctx(),
+                &settings.top[1],
+                ButtonMode::IconsOnly,
+                islands::SLOT,
+                islands::ICON,
+                38.0,
+            );
+            top::reserve(
+                ui,
+                &settings,
+                egui::Rect::from_min_size(egui::pos2(80.0, 8.0), Vec2::new(1000.0, 36.0)),
+                80.0,
+            );
+            let favorites = favorites::View::default();
+            let row = Row {
+                unread: 0,
+                latest_unread: None,
+                flash: 0.0,
+                flying: false,
+                seated: false,
+                mouselook: false,
+                ao_active: false,
+                locked: false,
+                favorites: &favorites,
+                bar: Bar::Top,
+                style: Default::default(),
+                editing: false,
+            };
+            top::show(
+                ui,
+                &p,
+                &Icons::default(),
+                &Layout::default(),
+                &mut state,
+                &settings,
+                &mut panels,
+                &mut MicButton::default(),
+                &row,
+                false,
+            );
+        },
+    );
+    let response = ctx.read_response(tool_button_id("preferences")).expect("top preferences");
+    assert!(expected > islands::SLOT);
+    assert!(response.rect.width() >= expected - 0.5, "{} < {expected}", response.rect.width());
+    assert_eq!(
+        ctx.read_response(tool_button_id("location_bar"))
+            .expect("location button")
+            .rect
+            .width(),
+        islands::SLOT
+    );
+}
+
+#[test]
+fn a_crowded_top_toolbar_preserves_the_address_and_status_islands() {
+    let ctx = egui::Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let mut settings = ToolbarSettings {
+        address_visible: Some(true),
+        ..Default::default()
+    };
+    settings.top_style.mode = Some(ButtonMode::IconsWithText);
+    settings.top = toolbar::COMMANDS
+        .iter()
+        .take(12)
+        .map(|command| crate::ui::skin::ToolButton {
+            command: command.id.into(),
+            icon: command.icon.into(),
+            tooltip: String::new(),
+        })
+        .collect();
+    let st = islands::tests::status(true, true);
+    let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+    let mut toolbar = ToolbarUi::default();
+    let mut minimum = 0.0;
+    for _ in 0..4 {
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1000.0, 700.0))),
+                ..Default::default()
+            },
+            |ui| {
+                toolbar.prepare(ui.ctx(), &settings);
+                minimum = super::place::minimum_width(ui, &st);
+                islands::top(
+                    ui,
+                    &p,
+                    &Icons::default(),
+                    &mut panels,
+                    &st,
+                    &mut Default::default(),
+                    &mut Default::default(),
+                    Default::default(),
+                    &mut Default::default(),
+                    Default::default(),
+                    &mut toolbar,
+                    &settings,
+                );
+            },
+        );
+    }
+    let rect = |name| {
+        ctx.memory(|memory| memory.area_rect(egui::Id::unique(("bars_island", name))))
+            .expect("island")
+    };
+    let top = ctx
+        .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique("custom_top_toolbar_rect")))
+        .expect("toolbar");
+    assert!(rect("bug").right() + islands::MARGIN <= top.left() + 0.5);
+    assert!(top.right() + islands::MARGIN <= rect("place").left() + 0.5);
+    assert!(rect("place").right() + islands::MARGIN <= rect("account").left() + 0.5);
+    assert!(rect("place").width() + 0.5 >= minimum);
 }

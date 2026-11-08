@@ -270,7 +270,19 @@ pub fn top(
     let left = screen.left() + MARGIN;
     let main_button = super::top::button("aurora_menu", "wolf");
     let bug_button = super::top::button("report_bug", "bug-filled");
-    let menu_rect = row(screen, left, left + PAD * 2.0 + super::top::width(ui, settings, &main_button));
+    let minimum_place = if settings.address_visible.unwrap_or(true) {
+        super::place::minimum_width(ui, st)
+    } else {
+        0.0
+    };
+    let native = [
+        super::top::width(ui, settings, &main_button),
+        super::top::width(ui, settings, &bug_button),
+    ];
+    let count = if st.show_bug_report { 2 } else { 1 };
+    let native_room = right - left - minimum_place - 36.0 - MARGIN * (count + 1) as f32 - PAD * 2.0 * count as f32;
+    let widths = super::sizing::fit(&native[..count], crate::ui::toolbar::Sizing::Auto, true, native_room, MARGIN, SLOT);
+    let menu_rect = row(screen, left, left + PAD * 2.0 + widths[0]);
     // the bug report in an island of its own after the wolf's (the human's
     // request: in one island the two read as one button); hidden, the place
     // follows the wolf 8 px away
@@ -278,11 +290,11 @@ pub fn top(
         row(
             screen,
             menu_rect.right() + MARGIN,
-            menu_rect.right() + MARGIN + PAD * 2.0 + super::top::width(ui, settings, &bug_button),
+            menu_rect.right() + MARGIN + PAD * 2.0 + widths[1],
         )
     });
     let span = row(screen, bug_rect.unwrap_or(menu_rect).right() + MARGIN, right);
-    let span = super::top::reserve(ui, settings, span);
+    let span = super::top::reserve(ui, settings, span, minimum_place);
     let (place_rect, detail) = super::place::layout(ui, st, span);
 
     // each island is an area of its own: the pointer over it is over the
@@ -338,7 +350,6 @@ pub fn top(
                 menu::searchable(ui, p, |ui| crate::ui::toolbar::commands::show(ui, p, toolbar, settings, ""));
             },
         );
-        resp.on_hover_text(aurora_i18n::tr!("ui-bars-aurora-menu"));
     });
     if let Some(bug_rect) = bug_rect {
         area(&ctx, p, "bug", bug_rect, |ui| {
@@ -381,7 +392,7 @@ pub fn top(
 /// Right-click menu of the menu island: the bug report button, also in
 /// Preferences › Interface ("Report a bug in the top bar", on by default
 /// during the alpha).
-fn menu_options(
+pub(super) fn menu_options(
     resp: &egui::Response,
     p: &Palette,
     st: &StatusInfo,
@@ -409,6 +420,17 @@ fn menu_options(
 /// One island in an area of its own at `rect`, its surface under what
 /// `body` draws there (in screen coordinates).
 pub(crate) fn area<R>(ctx: &egui::Context, p: &Palette, name: &'static str, rect: Rect, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    area_surface(ctx, p, name, rect, true, body)
+}
+
+pub(crate) fn area_surface<R>(
+    ctx: &egui::Context,
+    p: &Palette,
+    name: &'static str,
+    rect: Rect,
+    surface: bool,
+    body: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
     // (the windows keep their title clear of it: `layout::clear_of_islands`)
     crate::ui::layout::island_drawn(ctx, rect);
     egui::Area::new(Id::unique(("bars_island", name)))
@@ -417,7 +439,9 @@ pub(crate) fn area<R>(ctx: &egui::Context, p: &Palette, name: &'static str, rect
         .constrain(false)
         .fade_in(false)
         .show(ctx, |ui| {
-            ui.painter().add(crate::ui::widgets::island_shape(ui.ctx(), p, rect));
+            if surface {
+                ui.painter().add(crate::ui::widgets::island_shape(ui.ctx(), p, rect));
+            }
             ui.set_min_size(rect.size());
             body(ui)
         })
@@ -443,14 +467,14 @@ fn account_slot_width(balance: Option<&std::sync::Arc<egui::Galley>>) -> f32 {
     4.0 + DISC + balance.map_or(0.0, |g| 6.0 + g.size().x.ceil()) + 8.0
 }
 
-fn account_width(ui: &egui::Ui, p: &Palette, st: &StatusInfo) -> f32 {
+pub(super) fn account_width(ui: &egui::Ui, p: &Palette, st: &StatusInfo) -> f32 {
     PAD * 2.0 + account_slot_width(balance_galley(ui, p, st).as_ref())
 }
 
 /// The account island: our picture with the online status on it (a click
 /// opens the status menu), the balance (a click buys L$). A right click on
 /// either shows or hides the balance (#1340): hidden, the picture stays.
-fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action: &mut BarAction) {
+pub(super) fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action: &mut BarAction) {
     let balance = balance_galley(ui, p, st);
     let w = account_slot_width(balance.as_ref());
     let rect = Rect::from_min_size(Pos2::new(island.left() + PAD, island.center().y - SLOT / 2.0), Vec2::new(w, SLOT));
@@ -578,7 +602,7 @@ fn item_width(ui: &egui::Ui, texts: &Readouts, item: Item) -> f32 {
 }
 
 /// The island's width: its items 2 px apart, no hole where one is hidden.
-fn system_width(ui: &egui::Ui, st: &StatusInfo) -> f32 {
+pub(super) fn system_width(ui: &egui::Ui, st: &StatusInfo) -> f32 {
     let texts = readouts(st);
     let items = items(st);
     let slots: f32 = items.iter().map(|item| item_width(ui, &texts, *item)).sum();
@@ -617,7 +641,7 @@ pub(super) fn loss_color(p: &Palette, loss: f32) -> Color32 {
 /// controls' action and whether the pointer is over the readouts (the
 /// detailed tooltip, `system_tip`).
 #[allow(clippy::too_many_arguments)]
-fn system(
+pub(super) fn system(
     ui: &mut egui::Ui,
     p: &Palette,
     icons: &Icons,
@@ -913,7 +937,7 @@ const TIP_CURVE: f32 = 28.0;
 /// pointer goes down into it, whose network row opens Performance on its
 /// Network section; a menu or the volume panel closes it.
 #[allow(clippy::too_many_arguments)]
-fn system_tip(
+pub(super) fn system_tip(
     ctx: &egui::Context,
     p: &Palette,
     icons: &Icons,
@@ -930,7 +954,12 @@ fn system_tip(
     // from the readouts down into the tooltip, over the 8 px between them
     let keep = was_open
         && ctx.memory(|m| m.area_rect(id)).is_some_and(|tip| {
-            let bridge = Rect::from_min_max(Pos2::new(tip.left(), island.center().y), Pos2::new(tip.right(), tip.top() + 1.0));
+            let edge = if tip.top() >= island.center().y {
+                tip.top() + 1.0
+            } else {
+                tip.bottom() - 1.0
+            };
+            let bridge = Rect::from_two_pos(Pos2::new(tip.left(), island.center().y), Pos2::new(tip.right(), edge));
             ctx.pointer_latest_pos()
                 .is_some_and(|pos| tip.contains(pos) || bridge.contains(pos))
         });
@@ -958,9 +987,18 @@ fn system_tip(
     if !open {
         return;
     }
+    let wanted = ctx
+        .memory(|memory| memory.area_rect(id))
+        .map_or(TIP_ROW * 14.0 + TIP_CURVE, |rect| rect.height());
+    let (anchor_y, above, _) = crate::ui::widgets::popup_vertical(ctx.content_rect(), island, wanted, MARGIN);
     egui::Area::new(id)
         .order(egui::Order::Foreground)
-        .fixed_pos(Pos2::new(island.right() - TIP_W, island.bottom() + MARGIN))
+        .pivot(if above {
+            egui::Align2::RIGHT_BOTTOM
+        } else {
+            egui::Align2::RIGHT_TOP
+        })
+        .fixed_pos(Pos2::new(island.right(), anchor_y))
         .constrain(true)
         .fade_in(false)
         .show(ctx, |ui| {

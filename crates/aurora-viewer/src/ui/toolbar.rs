@@ -12,8 +12,10 @@
 
 pub(crate) mod appearance;
 mod catalogue;
+pub(crate) mod catalogue_view;
 pub(crate) mod commands;
 mod editor;
+pub(crate) mod structure;
 
 pub use catalogue::COMMANDS;
 
@@ -107,6 +109,12 @@ impl BarStyle {
     /// bars: icons, centred (skins/default/toolbars.xml).
     pub fn resolve(&self, bar: Bar, islands: bool) -> Style {
         let default = match (bar, islands) {
+            // Keep Aurora at the left when the address block folds. An
+            // explicitly selected alignment still applies to the whole row.
+            (Bar::Top, _) => Style {
+                align: Align::Start,
+                ..Default::default()
+            },
             (Bar::Bottom, false) => Style {
                 mode: ButtonMode::IconsOnly,
                 align: Align::Start,
@@ -145,6 +153,8 @@ pub struct ToolbarSettings {
     pub menu_layout: std::collections::BTreeMap<String, Vec<String>>,
     /// None preserves the existing visible address bar.
     pub address_visible: Option<bool>,
+    /// Older layouts acquire the native top controls once, keeping their buttons.
+    pub composed: bool,
 }
 
 impl Default for ToolbarSettings {
@@ -167,11 +177,81 @@ impl Default for ToolbarSettings {
             appearance: Default::default(),
             menu_layout: Default::default(),
             address_visible: None,
+            composed: false,
         }
     }
 }
 
 impl ToolbarSettings {
+    pub fn show_address_bar(&mut self, visible: bool) {
+        self.address_visible = Some(visible);
+        if visible
+            && self.composed
+            && !self
+                .buttons
+                .iter()
+                .flatten()
+                .chain(&self.top)
+                .chain(&self.left)
+                .chain(&self.right)
+                .any(|button| button.command == "bar_navigation")
+        {
+            if !self.top.is_empty() {
+                self.top.push(structure::separator(&uuid::Uuid::new_v4().to_string()));
+            }
+            self.top.push(crate::ui::bars::top::button("bar_navigation", "map-pin-filled"));
+        }
+    }
+    pub fn compose_top(&mut self) -> bool {
+        if self.composed {
+            return false;
+        }
+        self.top = structure::top_buttons(&self.top);
+        self.composed = true;
+        self.sanitize();
+        true
+    }
+
+    pub fn set_bug_visible(&mut self, layout: &Layout, shown: bool) -> bool {
+        if self.location("report_bug", layout).is_some() == shown {
+            return false;
+        }
+        if shown {
+            let at = self
+                .top
+                .iter()
+                .position(|button| button.command == "aurora_menu")
+                .map_or(0, |index| index + 1);
+            let button = ToolButton {
+                command: "report_bug".into(),
+                icon: "bug-filled".into(),
+                tooltip: String::new(),
+            };
+            if at > 0 {
+                self.top.insert(at, structure::separator(&uuid::Uuid::new_v4().to_string()));
+                self.top.insert(at + 1, button);
+            } else {
+                self.top.insert(0, button);
+                if self.top.len() > 1 {
+                    self.top.insert(1, structure::separator(&uuid::Uuid::new_v4().to_string()));
+                }
+            }
+        } else {
+            if self.buttons(layout).iter().any(|button| button.command == "report_bug") {
+                self.buttons = Some(
+                    self.buttons(layout)
+                        .iter()
+                        .filter(|button| button.command != "report_bug")
+                        .cloned()
+                        .collect(),
+                );
+            }
+            for buttons in [&mut self.top, &mut self.left, &mut self.right] {
+                buttons.retain(|button| button.command != "report_bug");
+            }
+        }
+        true
+    }
     pub fn migrate_vr_button(&mut self) -> bool {
         if self.vr_button_migrated {
             return false;
@@ -238,9 +318,19 @@ impl ToolbarSettings {
     pub fn sanitize(&mut self) {
         let mut seen = std::collections::HashSet::new();
         if let Some(buttons) = &mut self.buttons {
+            for button in buttons.iter_mut() {
+                if button.command == structure::SEPARATOR {
+                    *button = structure::instantiate(button.clone());
+                }
+            }
             buttons.retain(|b| !b.command.is_empty() && seen.insert(b.command.clone()));
         }
         for side in [&mut self.left, &mut self.right, &mut self.top] {
+            for button in side.iter_mut() {
+                if button.command == structure::SEPARATOR {
+                    *button = structure::instantiate(button.clone());
+                }
+            }
             side.retain(|b| !b.command.is_empty() && seen.insert(b.command.clone()));
         }
     }
@@ -255,6 +345,7 @@ struct Drag {
 
 enum Edit {
     Insert(Bar, ToolButton, usize),
+    SeparatorAfter(Bar, Option<String>),
     Remove(String),
     Restore,
     Clear,
@@ -339,12 +430,16 @@ pub struct ToolbarUi {
     confirm: Option<bool>,
     /// The window's filter.
     search: String,
+    category: Option<catalogue_view::Category>,
     appearance_editor: appearance::Editor,
 }
 
 /// Built-in labels stay live when the language changes, including saved
 /// buttons; a skin may rename a command, and keeps its name.
 pub fn label(button: &ToolButton) -> &str {
+    if structure::is_separator(&button.command) {
+        return aurora_i18n::text("toolbar-separator");
+    }
     if button.command.starts_with(commands::PREFIX)
         && let Some(key) = button.tooltip.strip_prefix('@')
         && let Some(text) = aurora_i18n::lookup(key)
@@ -440,6 +535,8 @@ impl ToolbarUi {
         // Buttons such as Favorites also own a left-click dropdown.
         menu::context_menu_of_button(response, p, |ui| {
             if let Some(button) = button
+                && !structure::is_separator(&button.command)
+                && !structure::is_block(&button.command)
                 && !locked
                 && menu::item(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-button-appearance"))
             {
@@ -453,6 +550,10 @@ impl ToolbarUi {
             }
             if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("toolbar-edit")) {
                 self.open = true;
+            }
+            if !locked && menu::item(ui, p, "separator-vertical", aurora_i18n::tr!("toolbar-add-separator")) {
+                self.open = true;
+                self.pending = Some(Edit::SeparatorAfter(bar, button.map(|button| button.command.clone())));
             }
             if button.is_some_and(|b| b.command == "speak")
                 && menu::item(ui, p, "microphone-filled", aurora_i18n::tr!("ui-bars-microphone-options"))
@@ -520,6 +621,10 @@ impl ToolbarUi {
 
     pub fn button(&mut self, response: &Response, bar: Bar, style: Style, button: &ToolButton, p: &Palette, locked: bool) {
         self.context(response, p, bar, style, Some(button), locked);
+        self.bar_source(response, button, bar, locked);
+    }
+
+    pub fn bar_source(&self, response: &Response, button: &ToolButton, bar: Bar, locked: bool) {
         if !locked && response.drag_started_by(egui::PointerButton::Primary) {
             response.dnd_set_drag_payload(Drag {
                 button: button.clone(),
@@ -568,6 +673,15 @@ impl ToolbarUi {
     /// Save once for a real edit, never on hover, during dragging or on a no-op.
     pub fn commit(&mut self, layout: &Layout, settings: &mut ToolbarSettings) -> bool {
         let Some(edit) = self.pending.take() else { return false };
+        if let Edit::SeparatorAfter(bar, anchor) = edit {
+            let list = settings.bar(bar, layout);
+            let rank = anchor
+                .as_ref()
+                .and_then(|anchor| list.iter().position(|button| button.command == *anchor))
+                .map_or(list.len(), |index| index + 1);
+            self.pending = Some(Edit::Insert(bar, structure::separator(&uuid::Uuid::new_v4().to_string()), rank));
+            return self.commit(layout, settings);
+        }
         match edit {
             Edit::Lock => {
                 settings.locked = !settings.locked;
@@ -643,6 +757,7 @@ impl ToolbarUi {
         let mut next = old.clone();
         match edit {
             Edit::Insert(bar, button, rank) => {
+                let button = structure::instantiate(button);
                 let list = &next[bar.index()];
                 let before = list.iter().take(rank).filter(|b| b.command == button.command).count();
                 for list in &mut next {
@@ -658,12 +773,16 @@ impl ToolbarUi {
                 }
             }
             Edit::Clear => next.iter_mut().for_each(Vec::clear),
-            Edit::Restore | Edit::Lock | Edit::Style(..) | Edit::Appearance(..) | Edit::MenuInsert(..) => {
+            Edit::Restore | Edit::Lock | Edit::Style(..) | Edit::Appearance(..) | Edit::MenuInsert(..) | Edit::SeparatorAfter(..) => {
                 unreachable!()
             }
         }
         if next == old {
             return false;
+        }
+        let navigation = |bars: &[Vec<ToolButton>; 4]| bars.iter().flatten().any(|button| button.command == "bar_navigation");
+        if navigation(&next) != navigation(&old) {
+            settings.address_visible = Some(navigation(&next));
         }
         let [bottom, left, right, top] = next;
         // an untouched bottom toolbar keeps following the skin

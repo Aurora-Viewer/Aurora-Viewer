@@ -61,6 +61,8 @@ struct Slot {
     rect: Rect,
     size: f32,
     island: bool,
+    layer: Option<egui::LayerId>,
+    clip: Option<Rect>,
 }
 
 impl Thumbnails {
@@ -80,7 +82,13 @@ impl Thumbnails {
     /// The bottom bar left them `rect` (`bar_width` wide).
     pub fn reserve(&mut self, rect: Rect, size: f32, island: bool) {
         if rect.width() > 0.0 {
-            self.slot = Some(Slot { rect, size, island });
+            self.slot = Some(Slot {
+                rect,
+                size,
+                island,
+                layer: None,
+                clip: None,
+            });
         }
     }
 
@@ -112,7 +120,40 @@ fn top_id() -> egui::Id {
 pub fn reserve_top(ctx: &egui::Context, rect: Rect, size: f32, island: bool) {
     // (the frame read outside: the context is locked within `data_mut`)
     let frame = ctx.cumulative_frame_nr();
-    ctx.data_mut(|d| d.insert_temp(top_id(), (frame, Slot { rect, size, island })));
+    ctx.data_mut(|d| {
+        d.insert_temp(
+            top_id(),
+            (
+                frame,
+                Slot {
+                    rect,
+                    size,
+                    island,
+                    layer: None,
+                    clip: None,
+                },
+            ),
+        )
+    });
+}
+
+pub fn reserve_toolbar(ctx: &egui::Context, rect: Rect, size: f32, layer: egui::LayerId, clip: Rect) {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|data| {
+        data.insert_temp(
+            top_id(),
+            (
+                frame,
+                Slot {
+                    rect,
+                    size,
+                    island: false,
+                    layer: Some(layer),
+                    clip: Some(clip),
+                },
+            ),
+        )
+    });
 }
 
 /// What `reserve_top` left this frame.
@@ -243,7 +284,13 @@ pub fn show(
             }
             let width = row_width(n, size, pad);
             let rect = Rect::from_min_size(Pos2::new(work.right() - width, work.top()), Vec2::new(width, height));
-            Slot { rect, size, island: true }
+            Slot {
+                rect,
+                size,
+                island: true,
+                layer: None,
+                clip: None,
+            }
         }
     };
     let now = ctx.input(|i| i.time);
@@ -257,10 +304,11 @@ pub fn show(
         let mut child = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(slot.rect)
+                .layer_id(slot.layer.unwrap_or(ui.layer_id()))
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
         // the counters overhang the bar's thumbnails
-        child.set_clip_rect(slot.rect.expand(8.0));
+        child.set_clip_rect(slot.rect.expand(8.0).intersect(slot.clip.unwrap_or(Rect::EVERYTHING)));
         moving = row(&mut child, p, world, st, panels, pics, images, slot, now);
     }
     if moving {

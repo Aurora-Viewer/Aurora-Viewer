@@ -967,11 +967,24 @@ move them, or back into the catalogue to remove them. Empty bars show drop zones
 while dragging. Drag inside the Aurora menu to reorder entries or move them into
 another submenu; a group cannot be moved inside itself.
 
+The entire top row is one toolbar. Its navigation/SLURL, account, system,
+notification and conversation blocks can also move to the bottom or sides.
+The top row starts at the left by default, keeping Aurora in place when the
+address closes; an explicitly selected alignment applies to the whole row.
+A hollow catalogue tile can be dragged to move its existing toolbar entry.
+Drag **Separator** from the Interface category as often as needed, or choose
+**Add separator** from a bar's context menu. Each separator splits glass groups
+with a gap and can be moved or removed like a button. Open the editor to reveal
+all separator handles, including empty groups.
+The catalogue groups commands by category, with a category filter and a search
+across labels. Known menu/toolbar aliases appear once. Drag the window's edges to
+resize it; the grid reflows, and **Toolbar settings** unfolds each bar's options.
+
 Each bar has its own alignment, sizing and icon / label mode. Right-click a
 button or menu entry and choose **Button appearance** to override just that
 command: icon, label, both, or the bar's default. The menu entry and its toolbar copy have independent overrides. The searchable
 icon grid picks another bundled or skin icon; **Restore default icon** clears that override.
-The fixed report-bug button retains its right-click version copy: customize its
+The report-bug button retains its right-click version copy: customize its
 **Report a bug** entry from the catalogue.
 
 The **SLURL address bar** button shows or hides the current address island. Opening

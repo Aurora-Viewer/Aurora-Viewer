@@ -73,6 +73,46 @@ pub fn fit(natural: &[f32], sizing: Sizing, labelled: bool, room: f32, gap: f32,
     widths
 }
 
+/// Gaps and live widget blocks keep their intrinsic sizes in every bar mode.
+pub fn toolbar(
+    buttons: &[crate::ui::skin::ToolButton],
+    natural: &[f32],
+    sizing: Sizing,
+    labelled: bool,
+    room: f32,
+    gap: f32,
+    min: f32,
+) -> Vec<f32> {
+    let fixed: Vec<_> = buttons
+        .iter()
+        .map(|button| crate::ui::toolbar::structure::fixed_width(&button.command))
+        .collect();
+    fit_fixed(natural, &fixed, sizing, labelled, room, gap, min)
+}
+
+pub fn fit_fixed(natural: &[f32], fixed: &[bool], sizing: Sizing, labelled: bool, room: f32, gap: f32, min: f32) -> Vec<f32> {
+    let fixed_at = |i: usize| fixed.get(i).copied().unwrap_or(false);
+    let variable: Vec<_> = natural
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !fixed_at(*i))
+        .map(|(_, width)| *width)
+        .collect();
+    let reserved: f32 = natural
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| fixed_at(*i))
+        .map(|(_, width)| width)
+        .sum();
+    let extra_gaps = natural.len().saturating_sub(1).saturating_sub(variable.len().saturating_sub(1)) as f32 * gap;
+    let mut widths = fit(&variable, sizing, labelled, room - reserved - extra_gaps, gap, min).into_iter();
+    natural
+        .iter()
+        .enumerate()
+        .map(|(i, width)| if fixed_at(i) { *width } else { widths.next().unwrap_or(*width) })
+        .collect()
+}
+
 /// Where a row `width` wide starts in `[start, end]`, by its alignment
 /// (never before `start`).
 pub fn place(align: crate::ui::toolbar::Align, start: f32, end: f32, width: f32) -> f32 {
@@ -88,6 +128,33 @@ pub fn place(align: crate::ui::toolbar::Align, start: f32, end: f32, width: f32)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn separators_and_live_blocks_keep_intrinsic_sizes_in_every_mode() {
+        for sizing in [Sizing::Auto, Sizing::Fixed, Sizing::Fill] {
+            let widths = fit_fixed(
+                &[40.0, 12.0, 220.0, 80.0],
+                &[false, true, true, false],
+                sizing,
+                true,
+                600.0,
+                2.0,
+                28.0,
+            );
+            assert_eq!(widths[1..3], [12.0, 220.0]);
+            assert!(widths.iter().sum::<f32>() + 6.0 <= 600.0);
+        }
+        let crowded = fit_fixed(
+            &[40.0, 12.0, 220.0, 80.0],
+            &[false, true, true, false],
+            Sizing::Fill,
+            true,
+            100.0,
+            2.0,
+            28.0,
+        );
+        assert_eq!(crowded, [28.0, 12.0, 220.0, 28.0]);
+    }
 
     #[test]
     fn icons_keep_their_square_and_labels_their_text() {

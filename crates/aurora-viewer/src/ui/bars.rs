@@ -4,6 +4,7 @@
 //! over the world, is in `islands.rs` and `place.rs`; these full-width bars
 //! are its Firestorm look (Preferences › Aurora).
 
+pub(crate) mod chrome;
 pub(crate) mod clock;
 pub(crate) mod demo;
 pub mod dock;
@@ -2423,6 +2424,12 @@ pub(crate) fn natural_width(
     icon: f32,
     mic: f32,
 ) -> f32 {
+    if super::toolbar::structure::is_separator(&b.command) {
+        return super::toolbar::structure::GAP;
+    }
+    if let Some(width) = chrome::width(ctx, &b.command) {
+        return width;
+    }
     let mode = super::toolbar::appearance::get(ctx, &b.command).mode.unwrap_or(mode);
     let speak = b.command == "speak";
     if mode == super::toolbar::ButtonMode::IconsOnly {
@@ -3034,7 +3041,43 @@ pub(crate) fn toolbar_row(
         resolved
     };
     let mut rects = Vec::with_capacity(buttons.len());
+    let split = toolbar.islands
+        && buttons
+            .iter()
+            .any(|button| super::toolbar::structure::is_separator(&button.command));
+    let underlay = split.then(|| ui.painter().add(egui::Shape::Noop));
     for b in buttons {
+        if super::toolbar::structure::is_separator(&b.command) {
+            let mut size = look(b).size;
+            if row.bar.vertical() {
+                size.y = super::toolbar::structure::GAP;
+            } else {
+                size.x = super::toolbar::structure::GAP;
+            }
+            let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+            let response = ui.interact(rect, tool_button_id(&b.command), egui::Sense::click_and_drag());
+            if row.editing || response.hovered() {
+                super::widgets::paint_glyph(
+                    ui.painter(),
+                    if row.bar.vertical() {
+                        "separator-horizontal"
+                    } else {
+                        "separator-vertical"
+                    },
+                    rect.center(),
+                    10.0,
+                    p.muted,
+                );
+            }
+            toolbar.button(&response, row.bar, row.style, b, p, row.locked);
+            response.on_hover_text(super::toolbar::label(b));
+            rects.push(rect);
+            continue;
+        }
+        if let Some(rect) = chrome::register(ui, b, row, look(b).size) {
+            rects.push(rect);
+            continue;
+        }
         if b.command == "speak" {
             let open_voice = std::mem::take(&mut toolbar.voice_options);
             let response = mic_button(ui, p, icons, look(b), super::toolbar::label(b), mic, true, open_voice);
@@ -3180,6 +3223,17 @@ pub(crate) fn toolbar_row(
             }
         }
     }
+    if let Some(underlay) = underlay {
+        let bounds = rects.iter().copied().filter(|rect| rect.is_positive()).reduce(egui::Rect::union);
+        if let Some(bounds) = bounds {
+            let outer = bounds.expand(4.0).intersect(ui.clip_rect());
+            let shapes = super::toolbar::structure::groups(buttons, &rects, outer, row.bar.vertical())
+                .into_iter()
+                .map(|rect| super::widgets::island_shape(ui.ctx(), p, rect))
+                .collect();
+            ui.painter().set(underlay, egui::Shape::Vec(shapes));
+        }
+    }
     rects
 }
 
@@ -3260,7 +3314,14 @@ pub fn bottom_bar(
     } else {
         0.0
     };
-    let bar_height = layout.bottom_bar_height.max(editor_height + 6.0);
+    let display = super::toolbar::structure::Display::for_bar(ui.ctx(), bar, toolbar_settings.buttons(layout), editing);
+    let buttons = display.buttons();
+    let row_height: f32 = if buttons.iter().any(|button| super::toolbar::structure::is_block(&button.command)) {
+        islands::HEIGHT
+    } else {
+        22.0
+    };
+    let bar_height = layout.bottom_bar_height.max(editor_height + 6.0).max(row_height + 6.0);
     let resp = egui::Panel::bottom("bottom_bar")
         .frame(bar_frame(p).inner_margin(egui::Margin::symmetric(8, 3)))
         .exact_size(bar_height)
@@ -3269,7 +3330,6 @@ pub fn bottom_bar(
             ui.set_min_width(ui.available_width());
             ui.horizontal_centered(|ui| {
                 let total = ui.available_width();
-                let buttons = toolbar_settings.buttons(layout);
                 let n = buttons.len().max(1) as f32;
                 // the toolbar keeps at least a narrow button per command
                 const MIN_BTN: f32 = 22.0;
@@ -3338,11 +3398,11 @@ pub fn bottom_bar(
                     .iter()
                     .map(|b| natural_width(ui.ctx(), b, style.mode, square, 16.0, square))
                     .collect();
-                let widths = sizing::fit(&natural, style.sizing, labelled, remaining - 1.0, gap, MIN_BTN);
+                let widths = sizing::toolbar(buttons, &natural, style.sizing, labelled, remaining - 1.0, gap, MIN_BTN);
                 let widths: Vec<f32> = widths.into_iter().map(|w| w.max(MIN_BTN)).collect();
                 let used = widths.iter().sum::<f32>() + gap * (n - 1.0);
                 let lead = (sizing::place(style.align, 0.0, remaining - 1.0, used)).max(0.0);
-                let zone = egui::Rect::from_min_size(ui.cursor().min, Vec2::new(remaining.max(4.0), 22.0));
+                let zone = egui::Rect::from_min_size(ui.cursor().min, Vec2::new(remaining.max(4.0), row_height));
                 let target = ui.interact(zone, egui::Id::unique("toolbar_background"), egui::Sense::click());
                 toolbar.context(&target, p, bar, style, None, toolbar_settings.locked);
                 let mut rects = Vec::new();
@@ -3350,7 +3410,7 @@ pub fn bottom_bar(
                     .id_salt("toolbar_scroll")
                     .auto_shrink([false, false])
                     .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-                    .max_height(22.0)
+                    .max_height(row_height)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = gap;
@@ -3378,13 +3438,14 @@ pub fn bottom_bar(
                                     icon: if labelled { 16.0 } else { (w - 6.0).clamp(10.0, 16.0) },
                                     mode: style.mode,
                                     editing,
+                                    size: Vec2::new(w, row_height),
                                     ..ButtonLook::bar(w)
                                 }
                             };
                             rects = toolbar_row(ui, p, icons, buttons, look, toolbar, panels, mic, &row, &mut action);
                         });
                     });
-                toolbar.drop_bar(&target, bar, &rects, p, toolbar_settings.locked);
+                toolbar.drop_bar(&target, bar, &display.full_rects(&rects), p, toolbar_settings.locked);
             });
         });
     if let Some((painter, slot)) = glass {
