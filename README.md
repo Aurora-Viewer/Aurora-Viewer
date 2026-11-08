@@ -1255,7 +1255,9 @@ Pull requests follow the [pull request template](.github/pull_request_template.m
 a check lists what a description is missing, and maintainers review a PR
 once its description and its CI are complete. An outside contributor's PR
 still incomplete 3 days later is closed, and can be reopened once it is
-complete.
+complete. Each outside contributor has up to 10 pull requests in review at
+a time; the others wait as drafts and come back to review on their own,
+oldest first.
 
 Behaviour follows the Legacy Viewer: its sources are expected next to the repository
 (`../phoenix-firestorm`, cloned from

@@ -553,6 +553,13 @@ Labels (created by `scripts/setup-labels.ps1`):
   completes the description first. An outside contributor's PR that still
   carries it 3 days after the workflow's comment is closed by the
   workflow's daily sweep; the team's PRs never are.
+- **`waiting-for-slot`**, set and removed by the Review slots workflow,
+  never by hand: an outside contributor has at most 10 PRs in review, the
+  others wait as drafts with this label and come back on their own, oldest
+  first, when a slot frees up. Do not review or mark ready a PR that
+  carries it. A PR a maintainer has started reviewing (a `## Review`,
+  `## Maintainer review` or `## Changes requested` comment of the team), or
+  that is in the merge queue, keeps its slot.
 
 ### Link the PR and its issues
 
