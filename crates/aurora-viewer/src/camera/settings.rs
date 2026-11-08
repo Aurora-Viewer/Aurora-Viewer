@@ -363,7 +363,7 @@ pub struct CameraSettings {
     /// Move the third-person avatar camera and focus with this animated joint.
     pub third_person_follow_joint: Option<CameraFollowJoint>,
     /// Strength of the selected joint's translation, in percent (100 = full).
-    pub third_person_follow_intensity: u8,
+    pub third_person_follow_intensity: u16,
     /// FSScrollWheelExitsMouselook.
     pub wheel_exits_mouselook: bool,
     /// The angle of the right-button zoom in mouselook, remembered from one

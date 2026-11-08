@@ -236,7 +236,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     &field!(camera.third_person_follow_intensity),
                     |ui, s| {
                         ui.add_enabled_ui(s.camera.third_person_follow_joint.is_some(), |ui| {
-                            super::super::slider(ui, &mut s.camera.third_person_follow_intensity, 0..=200, "%")
+                            super::super::slider(ui, &mut s.camera.third_person_follow_intensity, 0..=500, "%")
                         })
                         .inner
                     },

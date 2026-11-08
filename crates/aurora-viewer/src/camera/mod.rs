@@ -419,8 +419,8 @@ impl Default for Camera {
     }
 }
 
-fn follow_joint_intensity_scale(percent: u8) -> f32 {
-    f32::from(percent.min(200)) / 100.0
+fn follow_joint_intensity_scale(percent: u16) -> f32 {
+    f32::from(percent.min(500)) / 100.0
 }
 
 impl Camera {
@@ -2196,7 +2196,8 @@ mod tests {
         assert_eq!(follow_joint_intensity_scale(50), 0.5);
         assert_eq!(follow_joint_intensity_scale(100), 1.0);
         assert_eq!(follow_joint_intensity_scale(200), 2.0);
-        assert_eq!(follow_joint_intensity_scale(u8::MAX), 2.0);
+        assert_eq!(follow_joint_intensity_scale(500), 5.0);
+        assert_eq!(follow_joint_intensity_scale(u16::MAX), 5.0);
     }
 
     #[test]
