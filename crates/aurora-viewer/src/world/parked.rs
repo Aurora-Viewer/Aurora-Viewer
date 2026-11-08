@@ -29,8 +29,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 /// Farther than this from the agent's region, nothing of a region can be
-/// drawn: the draw distance stops at 512 m, and what a region holds stays
-/// within a few tens of metres of its borders.
+/// drawn: the draw distance stops at 1024 m, measured from the agent within
+/// that region, so objects beyond this gap are out of reach.
 pub const OUT_OF_REACH: f64 = 1024.0;
 
 /// Metres between two regions, from their handles and sizes (0 when they
@@ -242,7 +242,7 @@ mod tests {
         assert_eq!(region_gap(main, at(1002, 1000)), 256.0);
         assert_eq!(region_gap(at(1002, 1000), main), 256.0);
         assert_eq!(region_gap(main, at(997, 996)), 512.0f64.hypot(768.0));
-        // what a draw distance of 512 m can show is in reach, a teleport
+        // what a draw distance of 1024 m can show is in reach, a teleport
         // across the map is not
         assert!(region_gap(main, at(1003, 1003)) < OUT_OF_REACH);
         assert!(region_gap(main, at(1006, 1000)) > OUT_OF_REACH);
