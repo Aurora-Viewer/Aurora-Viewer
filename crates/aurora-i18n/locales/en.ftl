@@ -3699,7 +3699,7 @@ ui-profile-this-user-has-no-classified-listings = This user has no classified li
 ui-inventory-controls-library = Library
 ui-options-camera-the-camera-can-move-beyond-the-draw-distance-below = The camera can move beyond the draw distance, below ground and closer to objects
 ui-options-camera-after-a-teleport-in-the-region-the-camera-returns = After a teleport within the region, the camera returns behind your avatar. Off, it stays where it is.
-ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag = The camera follows your avatar with a slight lag (1 by default, 0 = none)
+ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag = The camera follows your avatar with a lag: higher values move it more smoothly and slowly (1 by default, 0 = none)
 ui-options-camera-the-camera-follows-the-object-it-is-focused-on = The camera follows the object it is focused on as the object moves
 app-inventory-thumbnail-invalid-capture = Invalid capture.
 ui-land-dialogs-deeding-this-parcel-requires-the-group-to-permanently-have = Deeding this parcel requires the group to permanently have enough land use credit.{ $contribution }{ " The purchase price is not refunded to the owner. If deeded land is sold, the proceeds are split equally among group members.\u000A\u000ADeed these " }{ $value0 }{ " m² of land to group '" }{ $group }'?
@@ -13411,3 +13411,26 @@ debug-settings-type-color = Colour
 # Preferences › Graphics: the trees' detail (RenderTreeLODFactor)
 ui-options-trees = Trees
 ui-options-trees-hint = Detail of Linden trees at a distance (0.5 by default). At 0, trees and grass are not drawn.
+
+# Preferences › Build (the Legacy Viewer's Build preferences)
+ui-options-about-build = What a prim made with the Create tool starts as.
+ui-options-build-new-objects = New objects
+ui-options-build-new-objects-note = A prim made with the Create tool takes these settings when it appears.
+ui-options-build-size-hint = Width, depth and height in meters (0.01 to 10)
+ui-options-build-material = Material
+ui-options-build-flesh = Flesh
+ui-options-build-physical = Physical
+ui-options-build-temporary = Temporary
+ui-options-build-new-faces = Look of new objects
+
+# Preferences › Controls: FSAvatarTurnSpeed
+ui-options-avatar-turn-speed = Avatar turn speed
+ui-options-avatar-turn-speed-help = How much faster avatars turn to face where they go while walking or standing (0 % by default). Only on this screen.
+
+# Preferences › Mouse and keyboard: FSRevokePerms
+ui-options-revoke-permissions = Revoke the seat's permissions
+ui-options-revoke-permissions-help = When you sit on or stand up from an object you do not own, take back what its scripts were allowed to do, such as animating you.
+ui-options-revoke-never = Never
+ui-options-revoke-on-sit = When I sit
+ui-options-revoke-on-stand = When I stand up
+ui-options-revoke-on-sit-and-stand = When I sit and stand up

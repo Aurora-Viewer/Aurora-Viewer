@@ -905,9 +905,15 @@ impl PageStore {
     /// arrive (`replace` / `replace_staged`): nothing is written and no
     /// layer is taken.
     fn create_placeholder(&mut self) -> Option<u32> {
+        self.create_shared(PLACEHOLDER)
+    }
+
+    /// A derived normal loads through a stable slot, sampling the reserved
+    /// flat normal until its first upload. Shared slots allocate no layer.
+    fn create_shared(&mut self, reserved: u32) -> Option<u32> {
         let (key, page, layer) = self
             .slots
-            .get(PLACEHOLDER as usize)
+            .get(reserved as usize)
             .and_then(Option::as_ref)
             .map(|s| (s.key, s.page, s.layer))?;
         let slot = match self.free_slots.pop() {
@@ -1523,6 +1529,11 @@ impl TextureTable {
     /// gives it texels. Costs no GPU work.
     pub fn create_placeholder(&mut self) -> Option<u32> {
         self.store.create_placeholder()
+    }
+
+    /// A streamed derived normal, flat until ready, without allocating texels.
+    pub fn create_normal_placeholder(&mut self) -> Option<u32> {
+        self.store.create_shared(FLAT_NORMAL)
     }
 
     /// A texture that will not come: its slot, while it still shows the
@@ -2171,6 +2182,17 @@ mod tests {
         // the reserved slots are never handed out nor freed
         store.free(WHITE);
         assert_eq!(store.create_placeholder(), None);
+    }
+
+    #[test]
+    fn bump_normal_placeholder_shares_the_flat_normal_without_allocating_texels() {
+        let mut store = bare_store(64, 64);
+        store.slots[FLAT_NORMAL as usize].as_mut().unwrap().layer = 1;
+        let slot = store.create_shared(FLAT_NORMAL).unwrap();
+        assert_eq!(store.loc[slot as usize], pack(0, 1));
+        assert_eq!((store.bytes, store.pages.len(), store.live), (0, 0, 1));
+        store.free(slot);
+        assert_eq!((store.bytes, store.live), (0, 0));
     }
 
     #[test]

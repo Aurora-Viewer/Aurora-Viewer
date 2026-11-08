@@ -438,7 +438,7 @@ FSAutoOrderIMTabsAtTop,Boolean,to-add,low,,Add new IM tabs as first in their cha
 FSAutoOrderIMTabsPriorities,String,to-add,low,,Priority for automatic ordering IM tabs. Higher priority means the tab will be inserted before lower priority. Default is Groups[0]=2 Confer
 FSAutoUnmuteAmbient,Boolean,to-add,low,,"If Ambient sounds are muted, unmute on TP. Default (false)"
 FSAutoUnmuteSounds,Boolean,to-add,low,,"If Sound Effects are muted, unmute on TP. Default (false)"
-FSAvatarTurnSpeed,F32,to-add,high,,Modify the speed at which the avatar responds to turning movements. 0-100 percent of max rate. Default is 0.
+FSAvatarTurnSpeed,F32,in-aurora,,avatar_turn_speed,Modify the speed at which the avatar responds to turning movements. 0-100 percent of max rate. Default is 0.
 FSBeamColorFile,String,to-add,low,,Beam file for the shape of your beam
 FSBeamShape,String,to-add,low,,Beam file for the shape of your beam
 FSBeamShapeScale,F32,to-add,low,,How Big You Want to let the beam be
@@ -448,21 +448,21 @@ FSBlockClickSit,Boolean,in-aurora,,block_click_sit,Prevents sitting on left-clic
 FSBrowserHomePage,String,in-aurora,,browser_home_page,Home page for the built in web browser
 FSBubblesHideConsoleAndToasts,Boolean,in-aurora,,chat_bubbles_hide_console,"If enabled, using bubble chat will hide the chat output in the Nearby Chat console and toasts"
 FSBuildPrefs_ActualRoot,Boolean,in-aurora,,build.actual_root,Show the axis on the actual root of a linkset instead of mass center
-FSBuildPrefs_Alpha,F32,to-add,high,new objects' defaults,New object created default alpha
-FSBuildPrefs_Color,Color4,to-add,high,new objects' defaults,New object created default color
+FSBuildPrefs_Alpha,F32,in-aurora,,build.new_prim_transparency,New object created default alpha
+FSBuildPrefs_Color,Color4,in-aurora,,build.new_prim_color,New object created default color
 FSBuildPrefs_EditHandleScaling,F32,in-aurora,,build.gizmo_scale,Factor to scale editing handles.
 FSBuildPrefs_EditTextShadowing,Boolean,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)",Whether the hint-text while building has a drop-shadow.
-FSBuildPrefs_FullBright,Boolean,to-add,high,new objects' defaults,New object created default fullbright
-FSBuildPrefs_Glow,F32,to-add,high,new objects' defaults,New object created default glow
+FSBuildPrefs_FullBright,Boolean,in-aurora,,build.new_prim_fullbright,New object created default fullbright
+FSBuildPrefs_Glow,F32,in-aurora,,build.new_prim_glow,New object created default glow
 FSBuildPrefs_Material,String,in-aurora,,build.new_prim_material,"Default Setting For New Objects to be created, physical flag"
-FSBuildPrefs_Phantom,Boolean,to-add,high,new objects' defaults,New object created default of phantom
-FSBuildPrefs_Physical,Boolean,to-add,high,new objects' defaults,New object created default of physical
+FSBuildPrefs_Phantom,Boolean,in-aurora,,build.new_prim_phantom,New object created default of phantom
+FSBuildPrefs_Physical,Boolean,in-aurora,,build.new_prim_physical,New object created default of physical
 FSBuildPrefs_PivotIsPercent,Boolean,to-add,low,,Consider the Pivot points values as a percentage
 FSBuildPrefs_PivotX,F32,to-add,low,,Pivot point on the X axis
 FSBuildPrefs_PivotY,F32,to-add,low,,Pivot point on the Y axis
 FSBuildPrefs_PivotZ,F32,to-add,low,,Pivot point on the Z axis
-FSBuildPrefs_Shiny,String,to-add,high,new objects' defaults,New object created default shiny
-FSBuildPrefs_Temporary,Boolean,to-add,high,new objects' defaults,New object created default of temporary
+FSBuildPrefs_Shiny,String,in-aurora,,build.new_prim_shiny,New object created default shiny
+FSBuildPrefs_Temporary,Boolean,in-aurora,,build.new_prim_temporary,New object created default of temporary
 FSBuildPrefs_Xsize,F32,in-aurora,,build.new_prim_size,Default Size For New Objects to be created X
 FSBuildPrefs_Ysize,F32,in-aurora,,build.new_prim_size,Default Size For New Objects to be created Y
 FSBuildPrefs_Zsize,F32,in-aurora,,build.new_prim_size,Default Size For New Objects to be created Z
@@ -788,7 +788,7 @@ FSResetCameraOnMovement,Boolean,in-aurora,,camera.reset_on_movement,"If true, th
 FSResetCameraOnTP,Boolean,in-aurora,,camera.reset_on_teleport,If true the camera will be reset to behind the avatar on teleporting
 FSResetSkeletonOnStandUp,Boolean,to-add,low,,Resets own avatar skeleton upon standing up and sends the reset to all surrounding avatars
 FSRestoreOpenIMs,Boolean,in-aurora,,reopen_ims,Restore open IM windows from the previous session on startup.
-FSRevokePerms,U32,to-add,high,,"Revokes objects anim perms on your avatar on: 0) never, 1) on sit, 2) on stand, 3) on sit and stand."
+FSRevokePerms,U32,in-aurora,,revoke_permissions,"Revokes objects anim perms on your avatar on: 0) never, 1) on sit, 2) on stand, 3) on sit and stand."
 FSRowsPerScriptDialog,S32,to-add,low,,The number of rows visible in a script dialog
 FSSaveInventoryScriptsAsMono,Boolean,to-add,low,,Saves scripts edited directly from inventory as Mono instead of LSL
 FSSavedRenderFarClip,F32,not-applicable,,internal state of FSRenderFarClipStepping,Saved draw distance (used in case of logout during progressive draw distance stepping)

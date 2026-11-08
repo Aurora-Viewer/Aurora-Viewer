@@ -347,7 +347,6 @@ impl App {
                 self.world.agent.position.z < water
             },
             region: self.world.main_region,
-            teleports: self.world.teleport_arrivals,
         };
         let anims = &mut self.scene.anims;
         self.ao_runtime.prefetch(

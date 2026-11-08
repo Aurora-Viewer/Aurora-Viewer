@@ -1331,9 +1331,9 @@ when unfocused") is ignored during a screenshot.
   (before the fix: `parent 150, seat animation true`, the avatar drawn
   seated far out of the region).
   `ao-local` and `ao-region` do the same with the demo's AO turned on at
-  frame 240: the seat plays the stock sit, which the AO overrides and stops,
-  and the simulator keeps the AO's animations through the teleport and
-  sends no new stock state, as a simulator can (#2700). Capture frame 380:
+  frame 240: the seat plays the stock sit, which the AO overrides and leaves
+  to the simulator, as the Legacy AO does; the teleport unseats us and the
+  simulator drops the stock sit but keeps the AO's animations (#2700). Capture frame 380:
   seated in the AO's sit; frame 720: standing at the destination. The log
   ends `AO state None, AO sit cover false` (before the fix: `AO state
   Some(Sitting), AO sit cover true`, the avatar standing in the AO's sit).
@@ -4345,6 +4345,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_SHEER=1` | Our avatar wears a sheer knit dress over a red layer drawn after it (#1300) |
 | `AURORA_DEMO_SOFT_MASK=1` | Our avatar wears a skin-tone Mask disc on the groin; soft fringe must stay visible (#1492) |
 | `AURORA_DEMO_BUMP=tall`, `wide` or `sphere` | The normal-mapped test panel stretched 4:1, its normal map denser across or along it; or a low-poly ball with a baked normal map (tangent frame) |
+| `AURORA_DEMO_LEGACY_BUMP=1` or `matrix` | Legacy bump presets and normal-map precedence; `matrix` covers all four Shininess levels |
 | `AURORA_DEMO_MASK_ZERO=1` | The holed test panel with a Mask legacy material whose cutoff is 0: drawn whole |
 | `AURORA_DEMO_MASK_255=<alpha>` | A texture of flat alpha 250-254 on two panels; the one with a Mask of cutoff 255 is hidden; 255: no alpha channel, shown whole (#2276) |
 | `AURORA_DEMO_RIGGED_PROP=1` | A rigged mesh chain rezzed on a cube ahead of the start position, and the same chain worn by our avatar |
@@ -4522,6 +4523,36 @@ both open states and the selection count. Capture at frame 620.
   from the start position: `AURORA_DEMO_CAMERA=close,652,455,30`, capture
   at frame 720; `AURORA_GRAPHICS_PRESET=low` leaves out the self-shadow line
   the sun draws across a low-poly ball.
+- **`AURORA_DEMO_LEGACY_BUMP=1`**: after frame 180, the plaza gets 18 panels
+  ordered by their texture-entry bump code, 0–17, followed by an explicit
+  legacy normal-map control and a PBR normal-map control. Check that 0 stays
+  flat, brightness/darkness and each standard pattern show relief, and the
+  two explicit-normal controls retain their own map. The standard panels use
+  synthetic height patterns under the preset IDs; compare the real preset
+  artwork on a grid, not against these demo patterns. Change Shininess through
+  None/Low/Medium/High on the same test face to ensure the stored shine value
+  and highlights remain independent of the bump preset. The generated maps
+  load with their source textures and improve as finer source levels arrive;
+  revisiting a face should reuse its cached map. Legacy Viewer references:
+  `LLDrawPoolBump::bindBumpMap`, `std_bump.ini`,
+  `LLBumpImageList::generateNormalMapFromAlpha` and `normgenF.glsl`.
+  With `matrix`, all 18 presets appear at None/Low/Medium/High Shininess in
+  four rows, ordered None/Low/Medium/High from the ground up. Both explicit-normal controls carry competing bump 9;
+  they must retain their own maps. Compare fixed camera, lighting, UV repeats,
+  mirrored/planar mapping and material settings against the reference. Synthetic
+  demo artwork validates the pipeline, not the real grid preset artwork.
+  Normals keep a stable streamed slot while finer source data arrives and use
+  the normal texture memory budget, including when minimized or after a GPU
+  recovery. No full-size CPU normal images persist after upload. Regression
+  tests cover BC7-only source pixels, source-refresh epochs, shared identities,
+  normal placeholders, memory reduction and final-user eviction.
+  For captures, start at `AURORA_DEMO_POS=168,118` for the compact wall or
+  `155,112` for the matrix. The wall is east of the plaza exhibits. Panels
+  share a vertical plane so no preset hides another. The two explicit-normal
+  controls sit above the preset rows.
+  For grid diagnosis, `AURORA_DEBUG_LEGACY_BUMP=1` logs standard preset
+  requests, source component counts, generated texture sizes and stable slots
+  by bump code. It does not log asset URLs or locations.
 - **`AURORA_DEMO_RIGGED_PROP=1`**: a five-link chain modelled down the
   back of the default skeleton, bound to the chest, and encoded as an
   upload does it (vertices normalized, the bind shape bringing them back

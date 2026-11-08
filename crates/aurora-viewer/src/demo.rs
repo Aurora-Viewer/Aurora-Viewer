@@ -144,6 +144,10 @@ pub mod keywords;
 /// About Land answers (AURORA_DEMO_LAND).
 #[path = "demo_land.rs"]
 pub mod land;
+/// Legacy texture-entry bump presets and normal-map precedence
+/// (AURORA_DEMO_LEGACY_BUMP).
+#[path = "demo_legacy_bump.rs"]
+pub mod legacy_bump;
 #[path = "demo_link.rs"]
 pub mod link;
 /// A Mask of cutoff 255 over an alpha just under opaque (AURORA_DEMO_MASK_255).
@@ -487,6 +491,8 @@ pub fn build_rez(p: &aurora_net::build::NewPrim) -> ObjectUpdate {
         | crate::ui::context::flags::OBJECT_MODIFY
         | crate::ui::context::flags::OBJECT_COPY
         | crate::ui::context::flags::OBJECT_MOVE
+        // a prim we create is ours with every right, transfer included
+        | crate::ui::context::flags::OBJECT_TRANSFER
         | p.add_flags;
     object
 }
@@ -8583,6 +8589,9 @@ fn alpha_panels() -> [(Uuid, Option<Uuid>, &'static str); 6] {
 
 /// Pixels and dimensions of a procedural demo texture (RGBA8).
 pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
+    if let Some(texture) = legacy_bump::texture(id) {
+        return Some(texture);
+    }
     if *id == hud::TEX_MASK_PANEL {
         return Some(hud::mask_cutoff_texture());
     }
@@ -8791,6 +8800,9 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
             ..Default::default()
         },
     )];
+    if legacy_bump::enabled() {
+        list.push((legacy_bump::PBR_MATERIAL, legacy_bump::pbr_material()));
+    }
     for (mat, double_sided) in MAT_PBR_SIDED.into_iter().zip([false, true]) {
         list.push((
             mat,
@@ -8885,7 +8897,7 @@ pub fn legacy_materials() -> Vec<(Uuid, crate::scene::legacy_mat::LegacyMaterial
         diffuse_alpha_mode: alpha_mode::BLEND,
         alpha_cutoff: 0,
     };
-    vec![
+    let mut list = vec![
         (tangents::MAT, tangents::material()),
         (MAT_BLEND, base.clone()),
         (
@@ -8948,7 +8960,11 @@ pub fn legacy_materials() -> Vec<(Uuid, crate::scene::legacy_mat::LegacyMaterial
                 ..base
             },
         ),
-    ]
+    ];
+    if legacy_bump::enabled() {
+        list.push((legacy_bump::LEGACY_MATERIAL, legacy_bump::legacy_material()));
+    }
+    list
 }
 
 /// AURORA_DEMO_CAMERA="sit": a seat with a sit camera (llSetCameraEyeOffset
