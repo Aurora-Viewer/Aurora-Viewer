@@ -431,6 +431,8 @@ pub struct OptionsUi {
     /// Audio devices (set by the app) and microphone level (0..1).
     pub output_devices: Vec<String>,
     pub input_devices: Vec<String>,
+    /// The device lists are being read again (set by the app).
+    pub devices_listing: bool,
     pub mic_level: f32,
     /// Media plugins folder found (empty: none) and plugins running.
     pub media_plugins: String,
@@ -934,8 +936,19 @@ fn preset_choice(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
 
 /// Device combo: "" = system default. Returns (a device was chosen, the
 /// list is unfolded).
-pub(super) fn device_combo(ui: &mut egui::Ui, id: &str, value: &mut String, devices: &[String], width: f32) -> (bool, bool) {
-    named_combo(ui, id, value, devices, width, aurora_i18n::tr!("ui-options-system-default"))
+/// `listing`: the devices are being listed again (off the UI thread); the
+/// list shows the last ones and says so, and the current choice is not
+/// called missing meanwhile.
+pub(super) fn device_combo(ui: &mut egui::Ui, id: &str, value: &mut String, devices: &[String], width: f32, listing: bool) -> (bool, bool) {
+    choice_combo(
+        ui,
+        id,
+        value,
+        devices,
+        width,
+        aurora_i18n::tr!("ui-options-system-default"),
+        listing,
+    )
 }
 
 /// `device_combo` whose empty choice reads `default_label`.
@@ -946,6 +959,18 @@ pub(super) fn named_combo(
     devices: &[String],
     width: f32,
     default_label: &str,
+) -> (bool, bool) {
+    choice_combo(ui, id, value, devices, width, default_label, false)
+}
+
+fn choice_combo(
+    ui: &mut egui::Ui,
+    id: &str,
+    value: &mut String,
+    devices: &[String],
+    width: f32,
+    default_label: &str,
+    listing: bool,
 ) -> (bool, bool) {
     let mut changed = false;
     let shown = if value.is_empty() {
@@ -962,7 +987,9 @@ pub(super) fn named_combo(
             for d in devices {
                 changed |= ui.selectable_value(value, d.clone(), d).changed();
             }
-            if !value.is_empty() && !devices.contains(value) {
+            if listing {
+                ui.label(RichText::new(aurora_i18n::tr!("ui-options-listing-devices")).size(12.0).weak());
+            } else if !value.is_empty() && !devices.contains(value) {
                 ui.label(
                     RichText::new(aurora_i18n::tr!("status-value-missing", value = value.to_string()))
                         .size(12.0)

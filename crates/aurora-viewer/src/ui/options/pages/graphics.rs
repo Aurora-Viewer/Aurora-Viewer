@@ -311,6 +311,12 @@ fn quality(cx: &mut Cx) {
             32.0..=512.0,
             " m",
         );
+        // FSRenderFarClipStepping; its interval in Debug Settings (clean menus)
+        cx.keywords("FSRenderFarClipStepping progressive").toggle(
+            tr!("ui-options-draw-distance-stepping"),
+            tr!("ui-options-draw-distance-stepping-hint"),
+            &field!(draw_distance_stepping),
+        );
         cx.row(
             tr!("ui-options-level-of-detail-lod"),
             tr!("ui-options-lod-factor-for-sl-objects-and-meshes-2-by"),

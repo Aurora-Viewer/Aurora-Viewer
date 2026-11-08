@@ -81,6 +81,7 @@ mod gpu_recovery;
 mod gpu_stall;
 pub(crate) use gpu_stall::withdraw_all as withdraw_gpu_notices;
 mod debug_settings;
+mod draw_stepping;
 mod graphics_start;
 mod grid_status;
 mod group_titles;
@@ -764,6 +765,8 @@ pub struct App {
     quick_prefs_demo_done: bool,
     /// The prim our avatar sat on last frame (app/revoke_on_sit.rs).
     last_seat: Option<uuid::Uuid>,
+    /// The login's first arrival is past (app/draw_stepping.rs).
+    first_arrival_done: bool,
     /// Report Abuse (LLFloaterReporter).
     report_abuse: ui::report_abuse::ReportAbuseUi,
     /// The depth of field's focus distance and its transition.
@@ -923,6 +926,8 @@ pub struct App {
     sound_changes: Vec<usize>,
     /// Audio devices listed for the preferences.
     devices_listed: bool,
+    /// Lists the audio devices off the UI thread.
+    device_lister: aurora_audio::DeviceLister,
     /// Color emoji (Noto Color Emoji) for chat and the picker.
     emoji: ui::emoji::Emoji,
     /// The system's fallback fonts were still being looked for when the
@@ -1699,6 +1704,7 @@ impl App {
             quick_prefs_ui: Default::default(),
             quick_prefs_demo_done: false,
             last_seat: None,
+            first_arrival_done: false,
             follow_ui: Default::default(),
             portal_ui: Default::default(),
             particle_editor: Default::default(),
@@ -1808,6 +1814,7 @@ impl App {
             sound_blocks: Default::default(),
             sound_changes: Vec::new(),
             devices_listed: false,
+            device_lister: aurora_audio::DeviceLister::default(),
             emoji: ui::emoji::Emoji::load(),
             system_fonts_pending,
             avatar_pics: Default::default(),
@@ -2982,6 +2989,12 @@ impl App {
     }
 
     fn back_to_login(&mut self, error: Option<String>) {
+        // the next login's arrival steps again; steps under way end with
+        // the session, the user's draw distance back
+        self.first_arrival_done = false;
+        if let Some(steps) = self.settings.draw_stepping.take() {
+            self.settings.draw_distance = steps.user;
+        }
         // the login screen and Preferences say "L$" again, not the last grid's money
         aurora_i18n::set_currency("");
         // Capture the layout before replacing account-specific UI state.
@@ -3892,6 +3905,8 @@ impl App {
             }
             NetEvent::TeleportFinished { .. } => {
                 self.stop_local_typing();
+                // (TeleportFinish is the arrival in another region)
+                self.start_draw_stepping("teleport");
                 if self.world.tp_show_progress && matches!(self.screen, Screen::World) && !self.was_teleporting {
                     // Finish and arrival can be drained in the same frame.
                     // Start the screen here so a fast remote teleport still
@@ -3900,6 +3915,11 @@ impl App {
                 }
             }
             NetEvent::AgentMovementComplete { .. } => {
+                if std::mem::replace(&mut self.first_arrival_done, true) {
+                    self.draw_stepping_arrived();
+                } else {
+                    self.start_draw_stepping("login");
+                }
                 if let Some(journey) = &mut self.portal_journey {
                     journey.arrived = true;
                 }
@@ -6496,14 +6516,20 @@ impl App {
     /// Voice session for the current region / parcel, microphone, push-to-talk.
     fn update_voice(&mut self) {
         let tuning = self.panels.settings && self.options_ui.page == ui::options::Page::Sound;
-        // device lists for the preferences (listed once per opening)
+        // device lists for the preferences (listed once per opening), on a
+        // worker: the OS can take seconds to answer (#2867); the last lists
+        // stay shown meanwhile
         if tuning && !self.devices_listed {
-            self.options_ui.output_devices = aurora_audio::output_devices();
-            self.options_ui.input_devices = aurora_audio::input_devices();
+            self.device_lister.request();
             self.devices_listed = true;
         } else if !self.panels.settings {
             self.devices_listed = false;
         }
+        if let Some(lists) = self.device_lister.poll() {
+            self.options_ui.output_devices = lists.outputs;
+            self.options_ui.input_devices = lists.inputs;
+        }
+        self.options_ui.devices_listing = self.device_lister.listing();
         let main = self.world.main();
         // global coordinates: region origin (from its handle) + local position
         let origin = self
@@ -9618,6 +9644,7 @@ impl App {
         // ---- scene
         let in_world = self.in_world();
         if in_world {
+            self.step_draw_distance();
             self.scene.draw_distance = self.settings.draw_distance;
             self.scene.synchronize_animations = self.settings.synchronize_animations;
             self.scene.ground_avatar_feet = self.settings.ground_avatar_feet;
@@ -9749,7 +9776,7 @@ impl App {
                     self.send(NetCommand::OneShotControl(flags));
                 }
                 self.send(NetCommand::AgentAnimation { anim, start: false });
-                log::debug!("own animation timed stop: {anim}, finish_anim={}", flags != 0);
+                log::info!("own animation timed stop: {anim}, finish_anim={}", flags != 0);
             }
             self.frame_profile.lap(Lap::Poses);
             let mut exceptions = self.settings.render_exceptions_map();
@@ -15638,6 +15665,7 @@ impl App {
                     output_device: self.settings.audio.output_device.clone(),
                     input_devices: &self.options_ui.input_devices,
                     output_devices: &self.options_ui.output_devices,
+                    devices_listing: self.options_ui.devices_listing,
                     voice_dot: (!classic_bars).then(|| {
                         if demo_bars.on {
                             (crate::voice::VoiceLight::Connected, String::new())
@@ -15900,8 +15928,7 @@ impl App {
                 }
                 let (open_prefs, list_devices, open_processing) = (mic.open_prefs, mic.list_devices, mic.open_processing);
                 if list_devices {
-                    self.options_ui.output_devices = aurora_audio::output_devices();
-                    self.options_ui.input_devices = aurora_audio::input_devices();
+                    self.device_lister.request();
                 }
                 if open_prefs {
                     self.panels.settings = true;
@@ -16103,6 +16130,7 @@ impl App {
                         } else {
                             self.settings.chat_toast_seconds
                         },
+                        self.settings.chat_console_max_lines,
                         self.settings.chat_timestamps_nearby,
                         !classic_bars,
                         // AURORA_DEMO_CHAT_LINES=legacy: the one-line look
@@ -16470,7 +16498,7 @@ impl App {
                             self.settings.save();
                         }
                         ui::chat::ConvAction::ListOutputDevices => {
-                            self.options_ui.output_devices = aurora_audio::output_devices();
+                            self.device_lister.request();
                         }
                         // done by the window before it returns
                         ui::chat::ConvAction::PopOut(_) | ui::chat::ConvAction::DockBack(_) | ui::chat::ConvAction::PopOutAt(..) => {}
@@ -18498,6 +18526,9 @@ impl ApplicationHandler for App {
             // local chat)
             if crate::demo::chat_lines_scenario().is_some() {
                 self.panels.chat = false;
+                if let Some(lines) = crate::demo::chat_lines_limit() {
+                    self.settings.chat_console_max_lines = lines;
+                }
                 self.panels.people = false;
                 self.panels.inventory = false;
             }
@@ -20473,6 +20504,8 @@ impl ApplicationHandler for App {
     /// closed connection and every exit ended in a segmentation fault (before
     /// the browsers' private profiles were cleaned up).
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        #[cfg(windows)]
+        crate::slurl_handoff::release();
         self.gfx = None;
     }
 
@@ -20647,6 +20680,7 @@ impl ApplicationHandler for App {
                 self.occluded = *hidden;
             }
             WindowEvent::Focused(true) => {
+                crate::slurl_handoff::focused();
                 self.focused = true;
                 if !self.demo
                     && matches!(self.screen, Screen::Login)

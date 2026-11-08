@@ -1221,20 +1221,28 @@ pub fn bubbles_events() -> Vec<NetEvent> {
 /// see the lines above the chat bar (`ui/chat/console.rs`): two lines of
 /// one resident, an emote, an object's line, a long line with a link, a
 /// shout. `legacy` shows them as the Legacy Viewer's lines for the session
-/// (nothing is saved). Some(true) for `legacy`.
+/// (nothing is saved). An optional `:0` through `:50` overrides the maximum
+/// wrapped text lines for this demo. Some(true) for `legacy`.
 pub fn chat_lines_scenario() -> Option<bool> {
-    match std::env::var("AURORA_DEMO_CHAT_LINES").ok()?.as_str() {
+    let mode = std::env::var("AURORA_DEMO_CHAT_LINES").ok()?;
+    match mode.split(':').next()? {
         "legacy" => Some(true),
         "" | "0" => None,
         _ => Some(false),
     }
 }
 
+pub fn chat_lines_limit() -> Option<u32> {
+    let mode = std::env::var("AURORA_DEMO_CHAT_LINES").ok()?;
+    mode.split_once(':')?.1.parse::<u32>().ok().map(|lines| lines.min(50))
+}
+
 /// Show the same six messages in Conversations and above the bar (#1323).
 pub fn chat_volume_comparison() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| {
-        std::env::var_os("AURORA_DEMO").is_some() && std::env::var("AURORA_DEMO_CHAT_LINES").is_ok_and(|mode| mode == "volumes")
+        std::env::var_os("AURORA_DEMO").is_some()
+            && std::env::var("AURORA_DEMO_CHAT_LINES").is_ok_and(|mode| mode.split(':').next() == Some("volumes"))
     })
 }
 
@@ -6391,6 +6399,7 @@ pub fn idle_animation() -> aurora_assets::Animation {
         loop_in: 0.0,
         loop_out: 4.0,
         looping: true,
+        ends_after: None,
         ease_in: 0.3,
         ease_out: 0.3,
         // relaxed, the upload window's default (hands at rest)
@@ -6469,6 +6478,7 @@ pub fn typing_animation() -> aurora_assets::Animation {
         loop_in: 0.0,
         loop_out: 1.0,
         looping: true,
+        ends_after: None,
         ease_in: 0.3,
         ease_out: 0.3,
         hand_pose: 0,
