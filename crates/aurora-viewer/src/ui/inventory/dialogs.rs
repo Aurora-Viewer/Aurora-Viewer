@@ -63,28 +63,6 @@ pub(super) fn show(
         },
         st.ui_id
     );
-    let mut floater = if properties {
-        super::properties::window(ctx, &window_id)
-    } else {
-        Floater::new(
-            &window_id,
-            title,
-            ctx.content_rect().center()
-                - if document_confirmation {
-                    egui::vec2(220.0, 70.0)
-                } else {
-                    egui::vec2(210.0, 130.0)
-                },
-            if document_confirmation {
-                Vec2::new(440.0, 140.0)
-            } else {
-                Vec2::new(420.0, 260.0)
-            },
-        )
-    };
-    if document_confirmation {
-        floater = floater.fixed();
-    }
     let mut body = |ui: &mut egui::Ui| {
         match &mut dialog {
             EditDialog::Properties(id) => {
@@ -314,15 +292,43 @@ pub(super) fn show(
         // alerts (indra/newview/llinventoryfunctions.cpp,
         // skins/default/xui/en/notifications.xml): modal, with the affirmative
         // answer as the default button, so Enter confirms and Escape cancels.
-        let modal = Modal::new(egui::Id::unique(window_id.as_str())).show(ctx, |ui| {
+        Modal::new(egui::Id::unique(window_id.as_str())).show(ctx, |ui| {
             ui.set_width(384.0);
             widgets::section_header(ui, p, "trash-filled", title);
             body(ui);
         });
-        if modal.should_close() {
-            done = true;
+        // Only Escape or a button closes it: a click on the dimmed world
+        // behind answers nothing (LLModalDialog::handleMouseDown,
+        // indra/llui/llmodaldialog.cpp). Once answered, the list gets the
+        // keyboard back (LLToastAlertPanel restores the focus it saved,
+        // indra/newview/lltoastalertpanel.cpp), so arrows, Delete and the
+        // clipboard keys work again without a click.
+        if done {
+            super::clipboard::return_focus(ctx, st);
         }
     } else {
+        let mut floater = if properties {
+            super::properties::window(ctx, &window_id)
+        } else {
+            Floater::new(
+                &window_id,
+                title,
+                ctx.content_rect().center()
+                    - if document_confirmation {
+                        egui::vec2(220.0, 70.0)
+                    } else {
+                        egui::vec2(210.0, 130.0)
+                    },
+                if document_confirmation {
+                    Vec2::new(440.0, 140.0)
+                } else {
+                    Vec2::new(420.0, 260.0)
+                },
+            )
+        };
+        if document_confirmation {
+            floater = floater.fixed();
+        }
         floater.show(ctx, p, &mut open, body);
     }
     if open && !done {
