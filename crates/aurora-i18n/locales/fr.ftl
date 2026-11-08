@@ -13384,7 +13384,6 @@ picker-pipette-no-material = Aucun matériau copiable trouvé dans votre inventa
 
 local-texture-preview-hint = Texture locale — aperçu d’un fichier de cet ordinateur.
 
-<<<<<<< HEAD
 # La fenêtre Photo 360° (LLFloater360Capture, floater_360capture.xml)
 capture-360-quality-label = Qualité
 capture-360-quality-preview = Aperçu (rapide)
@@ -13404,7 +13403,6 @@ capture-360-saved = { $name } enregistrée
 capture-360-failed = L'image 360° n'a pas pu être créée.
 capture-360-save-failed = L'image 360° n'a pas pu être enregistrée : { $error }
 capture-360-save-dialog = Enregistrer l'image 360°
-=======
 # Object linking: LLSelectMgr::linkObjects
 build-link-error-title = Impossible de lier les objets
 build-link-downloading = Les informations des objets sont en cours de téléchargement. Veuillez patienter puis réessayer.
@@ -13468,4 +13466,3 @@ ui-options-attached-particles-hint = Affiche les particules de ce que portent le
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = Distance d'affichage progressive
 ui-options-draw-distance-stepping-hint = Après la connexion et après une téléportation vers une autre région, la distance d'affichage part de 32 m et double jusqu'à la vôtre, pour que ce qui est proche se charge d'abord.
->>>>>>> upstream/main

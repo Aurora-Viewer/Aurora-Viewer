@@ -13361,7 +13361,6 @@ picker-pipette-no-material = コピー可能なマテリアルがインベント
 
 local-texture-preview-hint = ローカルテクスチャ — このコンピューターのファイルのプレビュー。
 
-<<<<<<< HEAD
 # ３６０度スナップショットのウィンドウ（LLFloater360Capture, floater_360capture.xml）
 capture-360-quality-label = 品質
 capture-360-quality-preview = プレビュー（高速）
@@ -13381,7 +13380,6 @@ capture-360-saved = { $name }を保存しました
 capture-360-failed = ３６０度画像を作成できませんでした。
 capture-360-save-failed = ３６０度画像を保存できませんでした：{ $error }
 capture-360-save-dialog = ３６０度画像を保存
-=======
 # Object linking: LLSelectMgr::linkObjects
 build-link-error-title = オブジェクトをリンクできません
 build-link-downloading = オブジェクト情報をダウンロード中です。しばらく待ってから再度リンクしてください。
@@ -13445,4 +13443,3 @@ ui-options-attached-particles-hint = アバターが装着しているものの�
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = 描画距離を段階的に広げる
 ui-options-draw-distance-stepping-hint = ログイン後と別のリージョンへのテレポート後、描画距離を32mから始めて設定値まで倍々に広げ、近くのものから読み込みます。
->>>>>>> upstream/main

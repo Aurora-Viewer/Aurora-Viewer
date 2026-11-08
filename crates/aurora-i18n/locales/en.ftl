@@ -13388,7 +13388,6 @@ picker-pipette-no-material = No copyable material found in your inventory.
 
 local-texture-preview-hint = Local texture — preview from a file on this computer.
 
-<<<<<<< HEAD
 # The 360° snapshot window (LLFloater360Capture, floater_360capture.xml)
 capture-360-quality-label = Quality level
 capture-360-quality-preview = Preview (fast)
@@ -13408,7 +13407,6 @@ capture-360-saved = Saved { $name }
 capture-360-failed = The 360° image could not be made.
 capture-360-save-failed = The 360° image could not be saved: { $error }
 capture-360-save-dialog = Save the 360° image
-=======
 # Object linking: LLSelectMgr::linkObjects
 build-link-error-title = Unable to link objects
 build-link-downloading = Object information is still downloading. Please wait and try linking again.
@@ -13472,4 +13470,3 @@ ui-options-attached-particles-hint = Draw the particles of what avatars wear: sp
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = Progressive draw distance
 ui-options-draw-distance-stepping-hint = After logging in and after a teleport to another region, the draw distance starts at 32 m and doubles back up to yours, so that what is near loads first.
->>>>>>> upstream/main
