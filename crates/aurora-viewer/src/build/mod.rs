@@ -192,6 +192,9 @@ pub struct BuildSettings {
     pub new_prim_temporary: bool,
     /// New prim phantom (FSBuildPrefs_Phantom, off).
     pub new_prim_phantom: bool,
+    /// RenderParcelSelection: the selected parcel's yellow walls (on; Debug
+    /// Settings only, to keep Preferences short).
+    pub parcel_selection_outline: bool,
     /// Land tool: 0..5 brush actions (RadioLandBrushAction), 6 select land.
     pub land_action: u8,
     /// LandBrushSize (m).
@@ -633,6 +636,7 @@ impl Default for BuildSettings {
             new_prim_physical: false,
             new_prim_temporary: false,
             new_prim_phantom: false,
+            parcel_selection_outline: true,
             land_action: 6,
             land_brush_size: 2.0,
             land_brush_force: 1.0,

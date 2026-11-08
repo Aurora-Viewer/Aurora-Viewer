@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 pub mod area_search;
 pub mod backup;
+pub mod draw_stepping;
 mod hover_height;
 pub mod registry;
 mod saver;
@@ -513,6 +514,13 @@ pub struct Settings {
     pub script_editor: crate::ui::scripts::settings::ScriptSettings,
     pub username: String,
     pub remember_username: bool,
+    /// The saved account of the last login, as (login URI, lowercase user
+    /// name): the login screen selects it first (UserLoginInfo, written by
+    /// FSPanelLogin::onClickConnect and selected by
+    /// FSPanelLogin::addUsersToCombo, indra/newview/fspanellogin.cpp).
+    /// Browsing the cards changes `username`, never this; it is not saved
+    /// when the user name is not remembered.
+    pub last_login: Option<(String, String)>,
     /// Remember the password (its login hash, in the system credential
     /// store; Firestorm "Remember password"). Off by default.
     pub remember_password: bool,
@@ -523,6 +531,16 @@ pub struct Settings {
     pub start_location: String,
     pub start_region: String,
     pub draw_distance: f32,
+    /// FSRenderFarClipStepping: after the login and a teleport to another
+    /// region, the draw distance starts at 32 m and doubles every
+    /// `draw_distance_stepping_interval` seconds (settings/draw_stepping.rs;
+    /// off).
+    pub draw_distance_stepping: bool,
+    /// FSRenderFarClipSteppingInterval: 20 s, 5 to 30 (Debug Settings only).
+    pub draw_distance_stepping_interval: u32,
+    /// The steps under way; the file keeps the user's draw distance.
+    #[serde(skip)]
+    pub draw_stepping: Option<draw_stepping::Stepping>,
     /// The GPU to draw with (Preferences › Graphics; #894): empty for the
     /// automatic choice (discrete first), or the adapter's name; read at
     /// startup (`aurora_render::adapter_choice`), `AURORA_GPU` overrides it.
@@ -665,14 +683,20 @@ pub struct Settings {
     /// The money tracker records the payments even while it is closed
     /// (FSAlwaysTrackPayments, off by default).
     pub always_track_payments: bool,
-    /// Preferences › Chat › Conversations: a friend's direct payment opens
-    /// their conversation on its card (#1198); a payment from anyone else
-    /// shows there only when it is open. On by default.
-    pub payment_opens_conversation: bool,
-    /// Preferences › Chat › Conversations: our own direct payment to a
-    /// resident opens their conversation on its card (#1198); otherwise it
-    /// shows there only when it is open. Off by default.
-    pub payment_sent_opens_conversation: bool,
+    /// Preferences › Chat › Conversations: whose direct payment to us opens
+    /// their conversation on its card (#1198, #2638); otherwise it shows
+    /// there only when it is open. Friends by default.
+    pub payment_received_opens: crate::world::payments::Opens,
+    /// The former switch, read once: on was a friend's payment received.
+    #[serde(rename = "payment_opens_conversation", skip_serializing)]
+    pub(crate) former_payment_opens_conversation: Option<bool>,
+    /// Preferences › Chat › Conversations: whose conversation our own direct
+    /// payment opens on its card (#1198, #2638); otherwise it shows there
+    /// only when it is open. Never by default.
+    pub payment_sent_opens: crate::world::payments::Opens,
+    /// The former switch, read once: on was any resident we paid.
+    #[serde(rename = "payment_sent_opens_conversation", skip_serializing)]
+    pub(crate) former_payment_sent_opens_conversation: Option<bool>,
     /// Mini-map and world map options (Firestorm MiniMap* / Map* settings).
     pub maps: MapSettings,
     /// "Search": last tab, rating boxes and land limits.
@@ -837,6 +861,8 @@ pub struct Settings {
     /// The same notifications while the window is in front (FSGrowlWhenActive, off).
     pub system_notifications_when_active: bool,
     pub chat_toast_seconds: f32,
+    /// Wrapped text rows above the chat bar (ConsoleMaxLines, 40; 0 hides them).
+    pub chat_console_max_lines: u32,
     /// Toast when a friend comes online or goes offline (ChatOnlineNotification, on).
     pub toast_friends_online: bool,
     /// The same notices as a line of nearby chat (OnlineOfflinetoNearbyChat;
@@ -1170,7 +1196,8 @@ pub struct Settings {
     /// default.
     pub walk_backwards_without_turning: bool,
     /// FSAvatarTurnSpeed: how much faster avatars turn while walking or
-    /// standing, 0 (the default lag) to 100 % (world/body.rs).
+    /// standing, 0 (the default lag) to 100 % (world/body.rs; Debug Settings
+    /// only).
     pub avatar_turn_speed: f32,
     /// Hold Up to start flying (agent_jump, indra/newview/llviewerinput.cpp).
     /// Aurora splits AutomaticFly into independent takeoff/landing choices;
@@ -1206,11 +1233,13 @@ pub struct Settings {
     pub large_surface_frame_max: f32,
     /// FSRevokePerms: revoke the permissions of an object we do not own
     /// when we sit on it (1), stand up from it (2), both (3) or never (0,
-    /// the default) (app/revoke_on_sit.rs).
+    /// the default) (app/revoke_on_sit.rs; Debug Settings only).
     pub revoke_permissions: u8,
     /// What a double click on the ground does (Preferences › Controls, the
-    /// wolf menu › Me): nothing by default, as in Firestorm.
+    /// wolf menu › Me): nothing by default, as in the Legacy Viewer.
     pub double_click: crate::autopilot::DoubleClick,
+    /// Allow the configured double-click action on scripted objects, except Sit (Legacy Viewer default: on).
+    pub double_click_scripted: bool,
     pub follow: crate::autopilot::FollowSettings,
     /// Look-at: what we send of where we look, the crosshairs of where the
     /// avatars look, how our head follows the cursor (Preferences ›
@@ -1290,6 +1319,12 @@ pub struct Settings {
     pub gpu_recovery: bool,
     /// Maximum live particles (0 = particles off).
     pub max_particles: u32,
+    /// RenderAttachedParticles: the particles of what avatars wear (on;
+    /// Preferences › Graphics, as the Legacy Viewer's).
+    pub attached_particles: bool,
+    /// RenderTrackerBeacon: the beacon and marker of a place or a friend
+    /// tracked from the map (on; Debug Settings only, as there).
+    pub tracker_beacon: bool,
     /// Avatars drawn (the nearest ones).
     pub max_avatars: u32,
     /// Ambient occlusion: 0 off, 1 low, 2 high (the levels of the Legacy
@@ -1827,6 +1862,7 @@ impl Default for Settings {
             script_editor: Default::default(),
             username: String::new(),
             remember_username: true,
+            last_login: None,
             remember_password: false,
             debug_settings_changed_only: false,
             debug_settings_warning_ignored: false,
@@ -1836,6 +1872,9 @@ impl Default for Settings {
             start_location: "last".into(),
             start_region: String::new(),
             draw_distance: 96.0,
+            draw_distance_stepping: false,
+            draw_distance_stepping_interval: 20,
+            draw_stepping: None,
             gpu_adapter: String::new(),
             gpu_driver_dismissed: String::new(),
             allow_overlays: false,
@@ -1898,8 +1937,10 @@ impl Default for Settings {
             confirm_payments: true,
             payment_confirm_threshold: 200,
             always_track_payments: false,
-            payment_opens_conversation: true,
-            payment_sent_opens_conversation: false,
+            payment_received_opens: crate::world::payments::Opens::Friends,
+            former_payment_opens_conversation: None,
+            payment_sent_opens: crate::world::payments::Opens::Never,
+            former_payment_sent_opens_conversation: None,
             maps: MapSettings::default(),
             search: Default::default(),
             show_people: true,
@@ -1965,6 +2006,7 @@ impl Default for Settings {
             system_notifications: false,
             system_notifications_when_active: false,
             chat_toast_seconds: 20.0,
+            chat_console_max_lines: 40,
             toast_friends_online: true,
             friends_online_in_chat: false,
             presence_position: PresencePosition::TopRight,
@@ -2097,6 +2139,7 @@ impl Default for Settings {
             large_surface_frame_max: 5000.0,
             revoke_permissions: 0,
             double_click: crate::autopilot::DoubleClick::Nothing,
+            double_click_scripted: true,
             follow: Default::default(),
             lookat: Default::default(),
             former_look_at: None,
@@ -2123,6 +2166,8 @@ impl Default for Settings {
             background_gpu_pause: true,
             gpu_recovery: true,
             max_particles: 4096,
+            attached_particles: true,
+            tracker_beacon: true,
             max_avatars: 16,
             ssao: 1,
             ao_method: 0,
@@ -2491,6 +2536,17 @@ impl Settings {
         if std::mem::take(&mut self.former_hide_own_group_title) {
             self.group_titles = crate::world::names::GroupTitles::AllExceptMine;
         }
+        // the payments' two switches became a choice each (#2638), with
+        // what they did: friends' payments received, and ours to anyone
+        {
+            use crate::world::payments::Opens;
+            if let Some(on) = self.former_payment_opens_conversation.take() {
+                self.payment_received_opens = if on { Opens::Friends } else { Opens::Never };
+            }
+            if let Some(on) = self.former_payment_sent_opens_conversation.take() {
+                self.payment_sent_opens = if on { Opens::Anyone } else { Opens::Never };
+            }
+        }
         // the shutter's switch of the interface sounds became the photos'
         // own ("Quiet snapshots"): a shutter turned off there stays off
         if self.audio.ui.play.remove("Snapshot") == Some(false) {
@@ -2772,6 +2828,7 @@ impl Settings {
             self.chat_island_width = 0.0;
         }
         self.draw_distance = self.draw_distance.clamp(32.0, 512.0);
+        self.draw_distance_stepping_interval = self.draw_distance_stepping_interval.clamp(5, 30);
         self.chat_commands.sanitize();
         if let Some(toolbar) = &mut self.toolbar {
             toolbar.sanitize();
@@ -2863,6 +2920,7 @@ impl Settings {
             TONEMAP_MIX
         };
         self.chat_toast_seconds = self.chat_toast_seconds.clamp(0.0, 60.0);
+        self.chat_console_max_lines = self.chat_console_max_lines.min(50);
         self.chat_bubble_opacity = if self.chat_bubble_opacity.is_finite() {
             self.chat_bubble_opacity.clamp(0.0, 1.0)
         } else {
@@ -2904,6 +2962,7 @@ impl Settings {
         *self = Settings {
             username: old.username,
             remember_username: old.remember_username,
+            last_login: old.last_login,
             grid: old.grid,
             custom_login_uri: old.custom_login_uri,
             grids: old.grids,
@@ -2960,8 +3019,13 @@ impl Settings {
             held.sync(&copy);
             held.restore(&mut copy);
         }
+        // the draw distance being stepped: the user's
+        if let Some(steps) = copy.draw_stepping.take() {
+            copy.draw_distance = steps.user;
+        }
         if !copy.remember_username {
             copy.username.clear();
+            copy.last_login = None;
         }
         copy
     }
@@ -2997,6 +3061,12 @@ impl Settings {
             GridChoice::SecondLifeBeta => aurora_net::login::SL_BETA_GRID.into(),
             GridChoice::Custom => self.custom_login_uri.trim().to_owned(),
         }
+    }
+
+    /// The account the login fields name, as `login_accounts::Account::key`
+    /// writes it: (login URI, lowercase user name).
+    pub fn login_key(&self) -> (String, String) {
+        (self.login_uri(), self.username.trim().to_lowercase())
     }
 
     /// Texture memory budget (MB): the manual value, or in automatic mode a
@@ -3243,6 +3313,23 @@ impl WaterEffectsSettings {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn console_max_lines_defaults_persist_and_sanitize() {
+        let old: super::Settings = serde_json::from_str("{}").expect("old synthetic settings");
+        assert_eq!(old.chat_console_max_lines, 40);
+        for (saved, expected) in [(0, 0), (3, 3), (50, 50), (u32::MAX, 50)] {
+            let settings = super::Settings {
+                chat_console_max_lines: saved,
+                ..Default::default()
+            }
+            .sanitized();
+            assert_eq!(settings.chat_console_max_lines, expected);
+            let json = serde_json::to_string(&settings).expect("synthetic settings JSON");
+            let loaded: super::Settings = serde_json::from_str(&json).expect("saved synthetic settings");
+            assert_eq!(loaded.chat_console_max_lines, expected);
+        }
+    }
+
+    #[test]
     fn automatic_texture_budget_uses_shared_heap_only_for_integrated_gpus() {
         use super::auto_texture_budget;
         assert_eq!(auto_texture_budget(Some(512), Some(7800), true), 3900);
@@ -3251,6 +3338,27 @@ mod tests {
         // When the system heap cannot be identified, the existing safe
         // integrated default remains in force.
         assert_eq!(auto_texture_budget(Some(512), None, true), 2048);
+    }
+
+    #[test]
+    fn the_last_login_survives_a_restart_only_with_the_user_name() {
+        use super::Settings;
+        let old: Settings = serde_json::from_str("{}").expect("older preferences");
+        assert_eq!(old.last_login, None);
+        for remember in [true, false] {
+            let settings = Settings {
+                username: "synthetic-browsed".into(),
+                remember_username: remember,
+                last_login: Some(("synthetic-grid".into(), "synthetic-last".into())),
+                ..Settings::default()
+            };
+            let bytes = serde_json::to_vec(&settings.to_saved()).expect("save preferences");
+            let restored: Settings = serde_json::from_slice(&bytes).expect("restart");
+            assert_eq!(
+                restored.last_login,
+                remember.then(|| ("synthetic-grid".to_owned(), "synthetic-last".to_owned()))
+            );
+        }
     }
 
     #[test]
@@ -3437,6 +3545,37 @@ mod tests {
     }
 
     #[test]
+    fn the_former_payment_switches_keep_what_they_did() {
+        use crate::world::payments::Opens;
+
+        let fresh: super::Settings = serde_json::from_str("{}").expect("fresh settings");
+        let fresh = fresh.sanitized();
+        assert_eq!(
+            (fresh.payment_received_opens, fresh.payment_sent_opens),
+            (Opens::Friends, Opens::Never)
+        );
+        for (received, sent) in [(false, false), (true, false), (false, true), (true, true)] {
+            let old: super::Settings = serde_json::from_value(serde_json::json!({
+                "payment_opens_conversation": received,
+                "payment_sent_opens_conversation": sent,
+            }))
+            .expect("former payment switches");
+            let migrated = old.sanitized();
+            let expected = (
+                if received { Opens::Friends } else { Opens::Never },
+                if sent { Opens::Anyone } else { Opens::Never },
+            );
+            assert_eq!((migrated.payment_received_opens, migrated.payment_sent_opens), expected);
+            let saved = serde_json::to_value(&migrated).expect("save payment choices");
+            assert!(saved.get("payment_opens_conversation").is_none(), "only the choices are saved");
+            assert!(saved.get("payment_sent_opens_conversation").is_none(), "only the choices are saved");
+            let reloaded: super::Settings = serde_json::from_value(saved).expect("reload payment choices");
+            let reloaded = reloaded.sanitized();
+            assert_eq!((reloaded.payment_received_opens, reloaded.payment_sent_opens), expected);
+        }
+    }
+
+    #[test]
     fn the_former_show_time_switch_goes_to_both_and_is_not_saved_again() {
         let fresh: super::Settings = serde_json::from_str("{}").expect("fresh settings");
         let fresh = fresh.sanitized();
@@ -3461,6 +3600,18 @@ mod tests {
         .expect("separate switches");
         let apart = apart.sanitized();
         assert_eq!((apart.chat_timestamps_nearby, apart.chat_timestamps_im), (false, true));
+    }
+
+    #[test]
+    fn scripted_object_double_click_defaults_on_and_round_trips() {
+        let missing: Settings = serde_json::from_str("{}").expect("old settings without preference");
+        assert!(missing.double_click_scripted);
+
+        let mut changed = missing;
+        changed.double_click_scripted = false;
+        let saved = serde_json::to_value(&changed).expect("save preference");
+        let loaded: Settings = serde_json::from_value(saved).expect("reload preference");
+        assert!(!loaded.double_click_scripted);
     }
 
     #[test]

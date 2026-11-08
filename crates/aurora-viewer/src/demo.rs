@@ -1221,11 +1221,13 @@ pub fn bubbles_events() -> Vec<NetEvent> {
 /// see the lines above the chat bar (`ui/chat/console.rs`): two lines of
 /// one resident, an emote, an object's line, a long line with a link, a
 /// shout. `legacy` shows them as the Legacy Viewer's lines for the session
-/// (nothing is saved). Some(true) for `legacy`. `stagger` and
+/// (nothing is saved). An optional `:0` through `:50` overrides the maximum
+/// wrapped text lines for this demo. Some(true) for `legacy`. `stagger` and
 /// `legacy:stagger` say them one at a time (`chat_lines_due`).
 pub fn chat_lines_scenario() -> Option<bool> {
-    match std::env::var("AURORA_DEMO_CHAT_LINES").ok()?.as_str() {
-        "legacy" | "legacy:stagger" => Some(true),
+    let mode = std::env::var("AURORA_DEMO_CHAT_LINES").ok()?;
+    match mode.split(':').next()? {
+        "legacy" => Some(true),
         "" | "0" => None,
         _ => Some(false),
     }
@@ -1262,11 +1264,17 @@ pub fn chat_lines_due() -> Option<NetEvent> {
     Some(line)
 }
 
+pub fn chat_lines_limit() -> Option<u32> {
+    let mode = std::env::var("AURORA_DEMO_CHAT_LINES").ok()?;
+    mode.split_once(':')?.1.parse::<u32>().ok().map(|lines| lines.min(50))
+}
+
 /// Show the same six messages in Conversations and above the bar (#1323).
 pub fn chat_volume_comparison() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| {
-        std::env::var_os("AURORA_DEMO").is_some() && std::env::var("AURORA_DEMO_CHAT_LINES").is_ok_and(|mode| mode == "volumes")
+        std::env::var_os("AURORA_DEMO").is_some()
+            && std::env::var("AURORA_DEMO_CHAT_LINES").is_ok_and(|mode| mode.split(':').next() == Some("volumes"))
     })
 }
 
@@ -5276,7 +5284,12 @@ pub fn events() -> Vec<NetEvent> {
             (true, 126.0, aurora_i18n::tr!("common-wind")),
             (false, 130.0, aurora_i18n::tr!("demo-smoke")),
         ] {
-            if (mode == "wind" && !wind) || (mode == "smoke" && wind) || (mode == "legacy" && !wind) || mode == "leash" {
+            if (mode == "wind" && !wind)
+                || (mode == "smoke" && wind)
+                || (mode == "legacy" && !wind)
+                || mode == "leash"
+                || (mode == "worn" && wind)
+            {
                 continue;
             }
             let mut o = prim(
@@ -5296,6 +5309,13 @@ pub fn events() -> Vec<NetEvent> {
             };
             if let Some(particles) = particles {
                 o.particles = particles;
+            }
+            // `worn`: the smoke worn on our avatar's chest instead, for
+            // RenderAttachedParticles (Preferences › Graphics)
+            if mode == "worn" {
+                o.parent_id = action_avatar(false).local_id;
+                o.state = 0x10; // chest
+                o.position = Vec3::new(0.0, 0.0, 0.3);
             }
             add(o);
             id += 1;
@@ -6419,6 +6439,7 @@ pub fn idle_animation() -> aurora_assets::Animation {
         loop_in: 0.0,
         loop_out: 4.0,
         looping: true,
+        ends_after: None,
         ease_in: 0.3,
         ease_out: 0.3,
         // relaxed, the upload window's default (hands at rest)
@@ -6497,6 +6518,7 @@ pub fn typing_animation() -> aurora_assets::Animation {
         loop_in: 0.0,
         loop_out: 1.0,
         looping: true,
+        ends_after: None,
         ease_in: 0.3,
         ease_out: 0.3,
         hand_pose: 0,

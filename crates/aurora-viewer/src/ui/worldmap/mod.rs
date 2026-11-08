@@ -159,6 +159,16 @@ impl WorldMapUi {
         self.pan_tau = PAN_TAU_CENTER;
     }
 
+    /// Show on map, llMapDestination's BEACON_FOCUS_MAP, a followed friend:
+    /// centre on the place as soon as its region is known
+    /// (LLFloaterWorldMap autofocus, centerOnTarget).
+    fn focus(&mut self, world: &mut World, cam: &MapCamera) {
+        if let Some((x, y)) = world.map.focus_target() {
+            world.map.focus_track = false;
+            self.center_on(world, cam, x, y);
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
@@ -186,14 +196,7 @@ impl WorldMapUi {
             self.target_zoom = self.zoom;
             world.map.reload_items(false);
         }
-        // llMapDestination's BEACON_FOCUS_MAP: centre on the place as soon as
-        // its region is known (LLFloaterWorldMap autofocus, centerOnTarget)
-        if world.map.focus_track
-            && let Some((x, y)) = world.map.track.as_ref().filter(|t| !t.pending).map(|t| (t.x, t.y))
-        {
-            world.map.focus_track = false;
-            self.center_on(world, cam, x, y);
-        }
+        self.focus(world, cam);
         let screen = ctx.content_rect();
         if self.demo_style.unwrap_or(style) == WorldMapStyle::Aurora {
             // the mockup's window: a map twice the side panel layout's
@@ -1465,6 +1468,66 @@ mod coordinate_tests {
         let t = b.world.map.track.as_ref().expect("new typed destination");
         assert_eq!((t.x, t.y, t.z), (256064.0, 256048.0, 70.0));
         assert!(b.world.map.take_commands().is_empty());
+    }
+
+    fn camera() -> MapCamera {
+        MapCamera {
+            pos: glam::Vec3::new(32.0, 48.0, 70.0),
+            dir: glam::Vec3::X,
+            hfov: 1.0,
+            far: 64.0,
+        }
+    }
+
+    /// The pan `center_on` aims at for a place `dx`, `dy` metres from the
+    /// camera, at the map's zoom.
+    fn pan_to(map: &WorldMapUi, dx: f32, dy: f32) -> Vec2 {
+        let s = map.zoom.exp2();
+        vec2(-(dx * s).floor(), (dy * s).floor())
+    }
+
+    #[test]
+    fn show_on_map_centres_on_the_place_and_a_beacon_alone_does_not() {
+        let mut b = Bench::new();
+        let cam = camera();
+        b.world.map.track_location(256_132.0, 256_148.0, 70.0, false);
+        b.map.focus(&mut b.world, &cam);
+        assert_eq!(b.map.target_pan, Vec2::ZERO, "the minimap's beacon leaves the map on the agent");
+        b.world.map.show_location(256_132.0, 256_148.0, 70.0);
+        b.map.focus(&mut b.world, &cam);
+        assert_eq!(b.map.target_pan, pan_to(&b.map, 100.0, 100.0));
+        assert!(!b.world.map.focus_track, "centred once, then the map is the resident's");
+    }
+
+    #[test]
+    fn a_place_link_centres_on_the_new_place_not_the_previous_track() {
+        let mut b = Bench::new();
+        let cam = camera();
+        b.world.map.show_location(256_132.0, 256_148.0, 70.0);
+        b.map.focus(&mut b.world, &cam);
+        let first = b.map.target_pan;
+        // a link to a region not known yet: the previous place stays tracked
+        // until the MapNameRequest answer, and the map must not go back to it
+        b.world.map.show_region("Far Region", glam::Vec3::new(10.0, 20.0, 30.0));
+        assert!(b.world.map.track.as_ref().is_some_and(|t| (t.x, t.y) == (256_132.0, 256_148.0)));
+        b.map.target_pan = Vec2::ZERO;
+        b.map.focus(&mut b.world, &cam);
+        assert_eq!(b.map.target_pan, Vec2::ZERO, "waits for the region named in the link");
+        b.world.map.apply_blocks(vec![aurora_net::MapBlock {
+            x: 1001,
+            y: 1000,
+            name: "Far Region".into(),
+            access: 13,
+            region_flags: 0,
+            water_height: 20,
+            agents: 0,
+            map_image_id: Uuid::nil(),
+            size_x: 256,
+            size_y: 256,
+        }]);
+        b.map.focus(&mut b.world, &cam);
+        assert_eq!(b.map.target_pan, pan_to(&b.map, 256.0 + 10.0 - 32.0, 20.0 - 48.0));
+        assert_ne!(b.map.target_pan, first);
     }
 
     #[test]
