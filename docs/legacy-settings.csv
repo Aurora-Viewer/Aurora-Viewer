@@ -395,7 +395,7 @@ FMODProfilerEnable,Boolean,unreviewed,,,Enable profiler tool if using FMOD Studi
 FMODResampleMethod,U32,unreviewed,,,"Sets the method used for internal resampler 0(Linear), 1(Cubic), 2(Spline) for FMOD Studio"
 FSAdvancedTooltips,Boolean,check,,hover_tips.form may cover it,Show extended information in hovertips about objects (classic Phoenix style)
 FSAdvancedWorldmapRegionInfo,Boolean,to-add,low,,Shows additional region infos on the world map (agent count and maturity level)
-FSAllowDoubleClickOnScriptedObjects,Boolean,to-add,low,,"If enabled, allows double-click movement action (walk/teleport) to scripted objects"
+FSAllowDoubleClickOnScriptedObjects,Boolean,in-aurora,,double_click_scripted,"If enabled, allows double-click movement action (walk/teleport) to scripted objects"
 FSAllowEEPWaterDerender,Boolean,to-add,low,,Allow EEP assets to disable water rendering to increase FPS
 FSAlwaysFly,Boolean,in-aurora,,"a session toggle (fly override), not saved, as in the Legacy Viewer","Fly Override, for no-fly zones. Must be activated each time."
 FSAlwaysShowInboxButton,Boolean,to-add,low,,"If enabled, the Received Items folder aka Inbox is always shown at the bottom of the inventory, even if it is shown as folder in the invento"
