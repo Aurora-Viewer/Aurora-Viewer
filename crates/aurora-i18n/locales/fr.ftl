@@ -4510,6 +4510,7 @@ world-appearance-pants = Pantalon
 world-appearance-black-pants = Pantalon noir
 ui-avatar-picker-by-uuid = Par UUID
 ui-options-system-default = Par défaut du système
+ui-options-listing-devices = Recherche des périphériques…
 common-by-name = Par nom
 demo-env-settings = Paramètres
 ui-inventory-view-eep-settings = Paramètres EEP

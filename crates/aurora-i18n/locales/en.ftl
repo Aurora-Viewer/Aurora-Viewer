@@ -4507,6 +4507,7 @@ world-appearance-pants = Pants
 world-appearance-black-pants = Black pants
 ui-avatar-picker-by-uuid = By UUID
 ui-options-system-default = System default
+ui-options-listing-devices = Listing devices…
 common-by-name = By name
 demo-env-settings = Settings
 ui-inventory-view-eep-settings = EEP settings

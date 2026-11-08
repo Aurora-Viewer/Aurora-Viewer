@@ -923,6 +923,8 @@ pub struct App {
     sound_changes: Vec<usize>,
     /// Audio devices listed for the preferences.
     devices_listed: bool,
+    /// Lists the audio devices off the UI thread.
+    device_lister: aurora_audio::DeviceLister,
     /// Color emoji (Noto Color Emoji) for chat and the picker.
     emoji: ui::emoji::Emoji,
     /// The system's fallback fonts were still being looked for when the
@@ -1808,6 +1810,7 @@ impl App {
             sound_blocks: Default::default(),
             sound_changes: Vec::new(),
             devices_listed: false,
+            device_lister: aurora_audio::DeviceLister::default(),
             emoji: ui::emoji::Emoji::load(),
             system_fonts_pending,
             avatar_pics: Default::default(),
@@ -6496,14 +6499,20 @@ impl App {
     /// Voice session for the current region / parcel, microphone, push-to-talk.
     fn update_voice(&mut self) {
         let tuning = self.panels.settings && self.options_ui.page == ui::options::Page::Sound;
-        // device lists for the preferences (listed once per opening)
+        // device lists for the preferences (listed once per opening), on a
+        // worker: the OS can take seconds to answer (#2867); the last lists
+        // stay shown meanwhile
         if tuning && !self.devices_listed {
-            self.options_ui.output_devices = aurora_audio::output_devices();
-            self.options_ui.input_devices = aurora_audio::input_devices();
+            self.device_lister.request();
             self.devices_listed = true;
         } else if !self.panels.settings {
             self.devices_listed = false;
         }
+        if let Some(lists) = self.device_lister.poll() {
+            self.options_ui.output_devices = lists.outputs;
+            self.options_ui.input_devices = lists.inputs;
+        }
+        self.options_ui.devices_listing = self.device_lister.listing();
         let main = self.world.main();
         // global coordinates: region origin (from its handle) + local position
         let origin = self
@@ -15633,6 +15642,7 @@ impl App {
                     output_device: self.settings.audio.output_device.clone(),
                     input_devices: &self.options_ui.input_devices,
                     output_devices: &self.options_ui.output_devices,
+                    devices_listing: self.options_ui.devices_listing,
                     voice_dot: (!classic_bars).then(|| {
                         if demo_bars.on {
                             (crate::voice::VoiceLight::Connected, String::new())
@@ -15895,8 +15905,7 @@ impl App {
                 }
                 let (open_prefs, list_devices, open_processing) = (mic.open_prefs, mic.list_devices, mic.open_processing);
                 if list_devices {
-                    self.options_ui.output_devices = aurora_audio::output_devices();
-                    self.options_ui.input_devices = aurora_audio::input_devices();
+                    self.device_lister.request();
                 }
                 if open_prefs {
                     self.panels.settings = true;
@@ -16465,7 +16474,7 @@ impl App {
                             self.settings.save();
                         }
                         ui::chat::ConvAction::ListOutputDevices => {
-                            self.options_ui.output_devices = aurora_audio::output_devices();
+                            self.device_lister.request();
                         }
                         // done by the window before it returns
                         ui::chat::ConvAction::PopOut(_) | ui::chat::ConvAction::DockBack(_) | ui::chat::ConvAction::PopOutAt(..) => {}
