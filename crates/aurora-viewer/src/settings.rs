@@ -1169,6 +1169,9 @@ pub struct Settings {
     /// Legacy Viewer's `FSDisableTurningAroundWhenWalkingBackwards`, off by
     /// default.
     pub walk_backwards_without_turning: bool,
+    /// FSAvatarTurnSpeed: how much faster avatars turn while walking or
+    /// standing, 0 (the default lag) to 100 % (world/body.rs).
+    pub avatar_turn_speed: f32,
     /// Hold Up to start flying (agent_jump, indra/newview/llviewerinput.cpp).
     /// Aurora splits AutomaticFly into independent takeoff/landing choices;
     /// both default to on.
@@ -2066,6 +2069,7 @@ impl Default for Settings {
             arrow_keys_always_move: false,
             letter_keys_move: true,
             walk_backwards_without_turning: false,
+            avatar_turn_speed: 0.0,
             automatic_fly: true,
             automatic_land: true,
             fly_after_teleport: false,
@@ -2775,6 +2779,11 @@ impl Settings {
             BLOOM_STRENGTH
         };
         self.lod_factor = self.lod_factor.clamp(0.5, 4.0);
+        self.avatar_turn_speed = if self.avatar_turn_speed.is_finite() {
+            self.avatar_turn_speed.clamp(0.0, 100.0)
+        } else {
+            0.0
+        };
         // the ranges of the Legacy Viewer's Build preferences
         let b = &mut self.build;
         b.new_prim_transparency = if b.new_prim_transparency.is_finite() {

@@ -3762,7 +3762,7 @@ mod tests {
                     cam.set_focus_on_avatar(true, false, false, &mut w.agent, &s);
                     settle(&mut cam, &mut w, &s);
                 }
-                w.update_bodies(Instant::now(), 1.0 / 60.0, cam.forward(), false, false);
+                w.update_bodies(Instant::now(), 1.0 / 60.0, cam.forward(), false, false, 0.0);
                 let heading = w.agent.yaw;
                 let body = w.bodies[&w.agent_id].rotation;
                 let focus = (cam.focus_point(), cam.focus_object_id());
@@ -3782,7 +3782,7 @@ mod tests {
                         ..frame(1.0 / 60.0)
                     };
                     cam.update(&mut w, &s, &input);
-                    let turn = w.update_bodies(input.now, input.dt, cam.forward(), false, false);
+                    let turn = w.update_bodies(input.now, input.dt, cam.forward(), false, false, 0.0);
                     turning |= turn == if dx < 0.0 { 1 } else { -1 };
                 }
                 assert!(turning, "the drawn body must request the matching turn animation");

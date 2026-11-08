@@ -13422,3 +13422,7 @@ ui-options-build-flesh = Flesh
 ui-options-build-physical = Physical
 ui-options-build-temporary = Temporary
 ui-options-build-new-faces = Look of new objects
+
+# Preferences › Controls: FSAvatarTurnSpeed
+ui-options-avatar-turn-speed = Avatar turn speed
+ui-options-avatar-turn-speed-help = How much faster avatars turn to face where they go while walking or standing (0 % by default). Only on this screen.

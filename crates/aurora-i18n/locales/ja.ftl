@@ -13395,3 +13395,7 @@ ui-options-build-flesh = 肉
 ui-options-build-physical = 物理
 ui-options-build-temporary = 一時的
 ui-options-build-new-faces = 新しいオブジェクトの外観
+
+# Preferences › Controls: FSAvatarTurnSpeed
+ui-options-avatar-turn-speed = アバターの回転速度
+ui-options-avatar-turn-speed-help = 歩いているときや立っているときに、アバターが進む方向へ向き直る速さを上げます（デフォルトは0%）。この画面のみに反映されます。

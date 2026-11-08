@@ -13418,3 +13418,7 @@ ui-options-build-flesh = Chair
 ui-options-build-physical = Physique
 ui-options-build-temporary = Temporaire
 ui-options-build-new-faces = Aspect des nouveaux objets
+
+# Preferences › Controls: FSAvatarTurnSpeed
+ui-options-avatar-turn-speed = Vitesse de rotation des avatars
+ui-options-avatar-turn-speed-help = Rapidité supplémentaire avec laquelle les avatars se tournent vers leur direction en marchant ou debout (0 % par défaut). Uniquement sur cet écran.
