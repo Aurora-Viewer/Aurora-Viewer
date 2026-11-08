@@ -146,7 +146,6 @@ toolbar-command-block-list = Liste de blocage
 toolbar-command-contact-sets = Cercles de contacts
 toolbar-command-avatar = Pack de bienvenue pour avatars
 toolbar-command-destinations = Destinations
-toolbar-command-howto = Aide rapide
 toolbar-command-picks = Favoris du profil
 toolbar-command-poser = Poseur
 toolbar-command-flickr = Flickr

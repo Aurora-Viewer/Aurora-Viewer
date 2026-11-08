@@ -1,5 +1,5 @@
 //! The commands of the "Toolbar buttons" window: Firestorm's toybox
-//! (indra/newview/app_settings/commands.xml, the 67 commands with
+//! (indra/newview/app_settings/commands.xml, the commands with
 //! `available_in_toybox`, originally LGPL 2.1) and Aurora's own (friends,
 //! home, favourites, immersive mode). Aurora keeps its command names where it had one
 //! (`conversations` for Firestorm's `chat`, `worldmap` for `map`…), so that
@@ -76,7 +76,6 @@ pub const COMMANDS: &[Command] = commands![
     // Firestorm's, not in Aurora yet
     "avatar", "user-circle", "toolbar-command-avatar", false;
     "destinations", "map-2", "toolbar-command-destinations", true;
-    "howto", "Command_HowTo_Icon", "toolbar-command-howto", false;
     "picks", "heart-filled", "toolbar-command-picks", true;
     "poser", "wand", "toolbar-command-poser", true;
     "flickr", "brand-flickr", "toolbar-command-flickr", false;
@@ -117,6 +116,16 @@ impl Command {
     pub fn label_in(&self, language: &str) -> &'static str {
         aurora_i18n::text_in(language, self.key)
     }
+}
+
+/// Commands the Legacy Viewer dropped: only stale entries of its skins'
+/// toolbars.xml name them, and it skips them. A saved layout (older Aurora,
+/// imported) that still has one drops it, with no empty button.
+const RETIRED: &[&str] = &["howto"];
+
+/// Whether `id` names a command that no longer exists.
+pub fn retired(id: &str) -> bool {
+    RETIRED.contains(&id)
 }
 
 /// The catalogue's entry of a command.

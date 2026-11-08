@@ -146,7 +146,6 @@ toolbar-command-block-list = Block list
 toolbar-command-contact-sets = Contact sets
 toolbar-command-avatar = Avatar welcome pack
 toolbar-command-destinations = Destinations
-toolbar-command-howto = Guidebook
 toolbar-command-picks = Picks
 toolbar-command-poser = Poser
 toolbar-command-flickr = Flickr

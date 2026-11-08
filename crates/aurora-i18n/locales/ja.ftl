@@ -146,7 +146,6 @@ toolbar-command-block-list = ブロックリスト
 toolbar-command-contact-sets = コンタクトセット
 toolbar-command-avatar = アバターウェルカムパック
 toolbar-command-destinations = 行き先
-toolbar-command-howto = ガイドブック
 toolbar-command-picks = ピック
 toolbar-command-poser = ポーザー
 toolbar-command-flickr = Flickr
