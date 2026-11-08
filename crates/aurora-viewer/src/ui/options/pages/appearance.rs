@@ -449,7 +449,7 @@ mod tests {
             events,
             ..Default::default()
         };
-        let _ = ctx.run_ui(input, |ui| {
+        let mut output = ctx.run_ui(input, |ui| {
             let salt = ui.scope_id().with("system-font");
             popup = system_font_popup(ui, salt);
             system_font_combo(salt, "Font".into()).show_ui(ui, |ui| {
@@ -461,6 +461,7 @@ mod tests {
                 }
             });
         });
+        output.textures_delta.clear();
         (rects.0, rects.1, egui::Popup::is_id_open(ctx, popup))
     }
 
@@ -483,9 +484,10 @@ mod tests {
         assert!(!open);
         // open it as the combo's own button would
         let mut popup = egui::Id::NULL;
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             popup = system_font_popup(ui, ui.scope_id().with("system-font"));
         });
+        output.textures_delta.clear();
         egui::Popup::open_id(&ctx, popup);
         let (search, row, open) = frame(&ctx, vec![], &mut filter);
         assert!(open, "the list opens");

@@ -1684,7 +1684,7 @@ fn font_search(screen_h: f32) {
     let mut frame = 0;
     let mut draw = |events: Vec<egui::Event>, state: &mut OptionsUi, settings: &mut Settings| -> Vec<(String, egui::Rect)> {
         frame += 1;
-        let output = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, screen_h))),
                 time: Some(frame as f64 / 60.0),
@@ -1696,6 +1696,7 @@ fn font_search(screen_h: f32) {
                 show(&ctx, &p, &Icons::default(), settings, state, &mut open);
             },
         );
+        output.textures_delta.clear();
         output
             .shapes
             .iter()
