@@ -1,5 +1,10 @@
 # Aurora Viewer architecture
 
+`Theme::apply` configures IME composition visuals for all text fields: no
+selection fill, a strong active-segment underline and thinner inactive
+underlines, using the resolved palette. egui retains composition, cursor,
+commit and cancellation state; the native input bridge is unchanged (#2608).
+
 Object contents item menus share `ui/object_actions::task_copy_request` and
 `app/contents_copy.rs` with the Open window's full-copy button. The editor
 queues one `build::ui::Request::CopyContents` for its selection; both editor

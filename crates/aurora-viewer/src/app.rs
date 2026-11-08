@@ -10623,6 +10623,13 @@ impl App {
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
         raw.events.extend(self.alt_text.drain(..).map(egui::Event::Text));
         self.demo_script_input(&mut raw);
+        // Synthetic preedit uses the ordinary focused Conversations editor.
+        if self.demo && self.frame_count == 710 && std::env::var("AURORA_DEMO_CHAT_INPUT").is_ok_and(|mode| mode == "ime") {
+            raw.events.push(egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: "日本語の変換中の文節を確認します".into(),
+                active_range_chars: Some(4..7),
+            }));
+        }
         if self.demo && std::env::var("AURORA_DEMO_OPTIONS").is_ok_and(|mode| mode == "1:scale-keys") {
             raw.focused = true;
             raw.events.retain(|event| !matches!(event, egui::Event::WindowFocused(false)));
@@ -20128,6 +20135,8 @@ impl ApplicationHandler for App {
                 self.panels.chat = true;
                 let text = if mode == "long" {
                     "A long paragraph with café and emoji 🙂 that wraps within the chat field.\n".repeat(12)
+                } else if mode == "ime" {
+                    String::new()
                 } else {
                     "First paragraph with café 🙂\n\nSecond paragraph\nCtrl+Shift+Enter adds a new line".into()
                 };
