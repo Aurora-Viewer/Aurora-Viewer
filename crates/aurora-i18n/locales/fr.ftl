@@ -13442,3 +13442,10 @@ large-surface-enable = Masquer les objets à la surface démesurée
 large-surface-enable-hint = Protège votre carte graphique des objets conçus pour la surcharger : au-delà du total ci-dessous, les prims et sculpties à la plus grande surface ne sont pas affichés. Peut masquer des objets légitimes.
 large-surface-frame-max = Surface totale affichée
 large-surface-frame-max-hint = La surface des grands objets affichée avant que les plus grands soient masqués (5 000 par défaut).
+
+# Preferences: visibility switches (RenderAttachedParticles, RenderParcelSelection)
+ui-options-attached-particles = Particules des objets portés
+ui-options-attached-particles-hint = Affiche les particules de ce que portent les avatars : étincelles, fumée, feu.
+ui-options-build-land = Terrain
+ui-options-parcel-selection-outline = Mettre en évidence les limites de la parcelle sélectionnée
+ui-options-parcel-selection-outline-hint = Murs jaunes autour d'une parcelle sélectionnée avec l'outil terrain ou À propos du terrain.

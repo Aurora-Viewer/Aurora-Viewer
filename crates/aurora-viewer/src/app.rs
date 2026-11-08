@@ -10439,6 +10439,7 @@ impl App {
                 self.camera.position,
                 max_particles,
                 self.settings.draw_distance,
+                self.settings.attached_particles,
                 &self.settings.particle_filters,
                 &mut out,
                 &mut scene.parts,
@@ -15349,8 +15350,11 @@ impl App {
                         }),
                     )
                 };
-                if !self.camera.mouselook() && !held {
+                // RenderTrackerBeacon (LLTracker::render3D, renderBeacon)
+                if !self.camera.mouselook() && !held && self.settings.tracker_beacon {
                     self.beacon_hit = ui::minimap::draw_beacon(&ctx, &p, &self.world, projector, beacon_hovered);
+                } else {
+                    self.beacon_hit = None;
                 }
                 // the hover tips of what the pointer rested on (none in
                 // mouselook nor over a held photo)

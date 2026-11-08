@@ -1305,6 +1305,12 @@ pub struct Settings {
     pub gpu_recovery: bool,
     /// Maximum live particles (0 = particles off).
     pub max_particles: u32,
+    /// RenderAttachedParticles: the particles of what avatars wear (on;
+    /// Preferences › Graphics, as the Legacy Viewer's).
+    pub attached_particles: bool,
+    /// RenderTrackerBeacon: the beacon and marker of a place or a friend
+    /// tracked from the map (on; Debug Settings only, as there).
+    pub tracker_beacon: bool,
     /// Avatars drawn (the nearest ones).
     pub max_avatars: u32,
     /// Ambient occlusion: 0 off, 1 low, 2 high (the levels of the Legacy
@@ -2142,6 +2148,8 @@ impl Default for Settings {
             background_gpu_pause: true,
             gpu_recovery: true,
             max_particles: 4096,
+            attached_particles: true,
+            tracker_beacon: true,
             max_avatars: 16,
             ssao: 1,
             ao_method: 0,

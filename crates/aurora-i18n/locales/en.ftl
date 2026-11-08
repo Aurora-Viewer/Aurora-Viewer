@@ -13446,3 +13446,10 @@ large-surface-enable = Hide objects with a huge surface
 large-surface-enable-hint = Protects your graphics card from objects made to overload it: past the total below, the prims and sculpts with the largest surface are not drawn. May hide some legitimate objects.
 large-surface-frame-max = Total surface drawn
 large-surface-frame-max-hint = The surface of large objects drawn before the largest are hidden (5,000 by default).
+
+# Preferences: visibility switches (RenderAttachedParticles, RenderParcelSelection)
+ui-options-attached-particles = Particles from worn objects
+ui-options-attached-particles-hint = Draw the particles of what avatars wear: sparkles, smoke, fire.
+ui-options-build-land = Land
+ui-options-parcel-selection-outline = Highlight the selected parcel's boundary
+ui-options-parcel-selection-outline-hint = Yellow walls around a parcel selected with the land tool or About Land.
