@@ -806,7 +806,7 @@ setting is on by default, like the Legacy Viewer. The translations are in
 
 ### Frame limiter
 
-The frame limiter is enabled at **120 fps by default** and can be disabled
+The frame limiter is enabled at **60 fps by default** and can be disabled
 or adjusted in Preferences › Graphics › Smoothness. Saved preferences are
 preserved.
 
