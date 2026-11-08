@@ -140,6 +140,8 @@ pub enum JobResult {
         geom: PreparedGeom,
         /// LLVolume::getSurfaceArea (sculpts; 1 otherwise).
         area: f32,
+        /// The swept grid's area of prims and sculpts (surface_area.rs).
+        grid_area: f32,
     },
     GeometryFailed {
         key: GeomKey,
@@ -247,12 +249,18 @@ fn below_normal_priority() {
 
 impl JobResult {
     /// A geometry built by a job, prepared for the GPU on the job's thread.
-    pub fn geometry(key: GeomKey, (faces, min, max): (Vec<FaceData>, Vec3, Vec3), area: f32, pool: Option<&StagingPool>) -> Self {
+    pub fn geometry(
+        key: GeomKey,
+        (faces, min, max): (Vec<FaceData>, Vec3, Vec3),
+        (area, grid_area): (f32, f32),
+        pool: Option<&StagingPool>,
+    ) -> Self {
         let pick = !matches!(key, GeomKey::AvatarPart(_) | GeomKey::AvatarMorph { .. });
         JobResult::Geometry {
             key,
             geom: PreparedGeom::new(faces, min, max, pick, pool),
             area,
+            grid_area,
         }
     }
 }
