@@ -53,6 +53,15 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-walk-backwards-without-turning-help"),
             &field!(walk_backwards_without_turning),
         );
+        // FSAvatarTurnSpeed (panel_preferences_move.xml av_turn_spd: 0 to
+        // 100, steps of 0.5)
+        cx.keywords("FSAvatarTurnSpeed rotation").slider(
+            tr!("ui-options-avatar-turn-speed"),
+            tr!("ui-options-avatar-turn-speed-help"),
+            &field!(avatar_turn_speed),
+            0.0..=100.0,
+            " %",
+        );
         // AutomaticFly (agent_jump / LLAgent::propagate), split into two
         // independent choices at the human's request.
         cx.toggle(
