@@ -129,13 +129,15 @@ fn plain(text: &str) -> String {
 
 /// reason_from_transaction_type for L$ received: what they were for, empty
 /// without a reason to give. Unlike there, an object paid names the object.
+/// An object paying us (`OBJECT_PAYS`, llGiveMoney) gives no reason, as
+/// there: its name read as what we sold.
 fn reason_of(kind: i32, item: &str) -> String {
     let named = |item: &str| match plain(item) {
         item if item.is_empty() => String::new(),
         item => aurora_i18n::tr!("world-payments-for-item", item = item),
     };
     match kind {
-        trans::OBJECT_SALE | trans::PAY_OBJECT | trans::OBJECT_PAYS => named(item),
+        trans::OBJECT_SALE | trans::PAY_OBJECT => named(item),
         trans::LAND_SALE => aurora_i18n::tr!("world-payments-for-land").into(),
         trans::LAND_PASS_SALE => aurora_i18n::tr!("world-payments-for-land-pass").into(),
         trans::GROUP_LAND_DEED => aurora_i18n::tr!("world-payments-for-land-deed").into(),
@@ -493,7 +495,9 @@ mod tests {
         let mut w = noticing();
         w.payment(&received(40, trans::OBJECT_SALE, JANE, 100, "Steel helmet"));
         w.payment(&received(41, trans::PAY_OBJECT, JANE, 25, "Tip jar"));
-        w.payment(&received(42, trans::OBJECT_PAYS, JANE, 5, ""));
+        // an object paying us: its name is not what we sold (no reason, as
+        // reason_from_transaction_type)
+        w.payment(&received(42, trans::OBJECT_PAYS, JANE, 5, "Camping chair"));
         assert_eq!(
             notices(&w),
             [

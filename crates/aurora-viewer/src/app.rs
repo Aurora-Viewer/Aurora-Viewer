@@ -3051,6 +3051,9 @@ impl App {
         self.gesture_state = Default::default();
         self.buy_currency_ui = Default::default();
         self.money_tracker_ui = Default::default();
+        // the next session's first balance is its starting point, not a
+        // change from the last account's (a relog showed a false gain or loss)
+        self.balance_gains = Default::default();
         // the next session signs in with its own cookie (the browser stops)
         self.marketplace_ui = Default::default();
         self.web_browser_ui = Default::default();
