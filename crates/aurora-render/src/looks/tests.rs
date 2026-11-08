@@ -519,7 +519,7 @@ fn draw(
     });
     let read = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("photo look test"),
-        size: (padded * size.1) as u64,
+        size: crate::readback::readback_size((padded * size.1) as u64),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
