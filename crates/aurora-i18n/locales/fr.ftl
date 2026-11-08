@@ -13430,3 +13430,10 @@ ui-options-revoke-never = Jamais
 ui-options-revoke-on-sit = Quand je m'assois
 ui-options-revoke-on-stand = Quand je me lève
 ui-options-revoke-on-sit-and-stand = Quand je m'assois et me lève
+
+# Preferences › Protections: large surface protection (RenderVolumeSAProtection)
+large-surface-title = Grandes surfaces
+large-surface-enable = Masquer les objets à la surface démesurée
+large-surface-enable-hint = Protège votre carte graphique des objets conçus pour la surcharger : au-delà du total ci-dessous, les prims et sculpties à la plus grande surface ne sont pas affichés. Peut masquer des objets légitimes.
+large-surface-frame-max = Surface totale affichée
+large-surface-frame-max-hint = La surface des grands objets affichée avant que les plus grands soient masqués (5 000 par défaut).

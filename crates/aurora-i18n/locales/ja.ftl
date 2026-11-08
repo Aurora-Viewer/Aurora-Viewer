@@ -13407,3 +13407,10 @@ ui-options-revoke-never = しない
 ui-options-revoke-on-sit = 座ったとき
 ui-options-revoke-on-stand = 立ち上がったとき
 ui-options-revoke-on-sit-and-stand = 座ったときと立ち上がったとき
+
+# Preferences › Protections: large surface protection (RenderVolumeSAProtection)
+large-surface-title = 大きな表面
+large-surface-enable = 表面積が極端に大きいオブジェクトを隠す
+large-surface-enable-hint = グラフィックカードに過負荷をかけるために作られたオブジェクトから保護します。下の合計を超えると、表面積が最も大きいプリムとスカルプトは描画されません。正当なオブジェクトが隠れることもあります。
+large-surface-frame-max = 描画する表面積の合計
+large-surface-frame-max-hint = 最も大きいものが隠されるまでに描画する、大きなオブジェクトの表面積です（デフォルトは5,000）。

@@ -13434,3 +13434,10 @@ ui-options-revoke-never = Never
 ui-options-revoke-on-sit = When I sit
 ui-options-revoke-on-stand = When I stand up
 ui-options-revoke-on-sit-and-stand = When I sit and stand up
+
+# Preferences › Protections: large surface protection (RenderVolumeSAProtection)
+large-surface-title = Large surfaces
+large-surface-enable = Hide objects with a huge surface
+large-surface-enable-hint = Protects your graphics card from objects made to overload it: past the total below, the prims and sculpts with the largest surface are not drawn. May hide some legitimate objects.
+large-surface-frame-max = Total surface drawn
+large-surface-frame-max-hint = The surface of large objects drawn before the largest are hidden (5,000 by default).

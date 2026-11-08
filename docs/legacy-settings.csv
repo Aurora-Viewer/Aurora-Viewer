@@ -1667,7 +1667,7 @@ RenderAnisotropicLevel,U32,in-aurora,,anisotropy,"Anisotropic filtering strength
 RenderAppleUseMultGL,Boolean,not-applicable,,"OpenGL only, Aurora draws with Vulkan or Metal",Whether we want to use multi-threaded OpenGL on Apple hardware (requires restart of SL).
 RenderAttachedLights,Boolean,fixed,,the Legacy default is built into Aurora: aurora-viewer/src/snapshot/light.rs:8,Render lighted prims that are attached to avatars
 RenderAttachedParticles,Boolean,to-add,high,,Render particle systems that are attached to avatars
-RenderAutoHideSurfaceAreaLimit,F32,to-add,high,,Maximum surface area of a set of proximal objects inworld before automatically hiding geometry to prevent system overload.
+RenderAutoHideSurfaceAreaLimit,F32,not-applicable,,its default (10 million) never hides anything and the Legacy Viewer shows no control for it; the large surface protection covers the need,Maximum surface area of a set of proximal objects inworld before automatically hiding geometry to prevent system overload.
 RenderAutoMaskAlphaDeferred,Boolean,to-add,low,,Use alpha masks where appropriate in the Advanced Lighting Model
 RenderAutoMaskAlphaNonDeferred,Boolean,not-applicable,,marked obsolete or deprecated by the Legacy Viewer,Use alpha masks where appropriate when not using the Advanced Lighting Model
 RenderAutoMuteLogging,Boolean,not-applicable,,read nowhere in the Legacy sources,Show extra information in viewer logs about avatar rendering costs
@@ -1677,7 +1677,7 @@ RenderAvatarCloth,Boolean,to-add,low,,Controls if system avatar clothes use wavy
 RenderAvatarComplexityMode,S32,in-aurora,,complexity_mode,"0 - complexity limit applies to everyone, 1 - always show friends, 2 - only show friends"
 RenderAvatarFriendsOnly,Boolean,in-aurora,,"friends_only (per account, not listed in Debug Settings)","When enabled hides all avatars that aren't friends. Does not affect inworld control avatars (animeshes), nor self."
 RenderAvatarLODFactor,F32,fixed,,"Aurora always draws avatar bodies at full detail (it loads no lower body mesh), the Legacy slider at its top",Controls level of detail of avatars (multiplier for current screen area when calculated level of detail)
-RenderAvatarMaxART,F32,to-add,high,,Render Time Limit in microseconds (0.0 = no limit)
+RenderAvatarMaxART,F32,to-add,low,"needs a render time measured per avatar, which Aurora's renderer does not take; the complexity limit covers most of the need (a renderer task of its own)",Render Time Limit in microseconds (0.0 = no limit)
 RenderAvatarMaxComplexity,U32,in-aurora,,max_complexity,"Maximum Avatar Complexity; above this value, the avatar is rendered as a solid color outline (0 to disable this limit)."
 RenderAvatarMaxNonImpostors,U32,in-aurora,,max_avatars,Maximum number of avatars to fully render at one time; over this limit uses impostor rendering (simplified rendering with less frequent upda
 RenderAvatarMaxVisible,S32,not-applicable,,marked obsolete or deprecated by the Legacy Viewer,OBSOLETE and UNUSED. See RenderAvatarMaxNonImpostors
@@ -1839,7 +1839,7 @@ RenderScreenSpaceReflectionGlossySamples,S32,to-add,low,,Maximum number of sampl
 RenderScreenSpaceReflectionIterations,S32,to-add,low,,Number of times the ray march algorithm runs to find a potential hit.
 RenderScreenSpaceReflectionRayStep,F32,to-add,low,,How big the step is between each run.
 RenderScreenSpaceReflections,Boolean,in-aurora,,ssr,Renders screen space reflections to better account for dynamic objects with reflection probes.
-RenderSculptSAThreshold,F32,to-add,high,,The surface area at which sculpts begin to be considered for being made invisible.
+RenderSculptSAThreshold,F32,in-aurora,,large_surface_sculpt_threshold,The surface area at which sculpts begin to be considered for being made invisible.
 RenderShaderCacheEnabled,Boolean,not-applicable,,"OpenGL only, Aurora draws with Vulkan or Metal",Enable binary shader cache
 RenderShaderCacheVersion,String,not-applicable,,"OpenGL only, Aurora draws with Vulkan or Metal",Current version hash for shader cache
 RenderShaderLODThreshold,F32,not-applicable,,read nowhere in the Legacy sources,Fraction of draw distance defining the switch to a different shader LOD
@@ -1910,9 +1910,9 @@ RenderVBOEnable,Boolean,not-applicable,,"OpenGL only, Aurora draws with Vulkan o
 RenderVBOMappingDisable,Boolean,not-applicable,,read nowhere in the Legacy sources,Disable VBO glMapBufferARB
 RenderVSyncEnable,Boolean,in-aurora,,vsync,Update frames between display scans (FALSE = Update frames as fast as possible).
 RenderVolumeLODFactor,F32,in-aurora,,lod_factor,Influences the distance at which the viewer will display a lower detail model. Higher values = more lag. IMPORTANT: Please disregard advice 
-RenderVolumeSAFrameMax,F32,to-add,high,,The limit(per frame) at which the sum of all volumes above the surface area threshold that causes all further sculpts/volumes above the thre
-RenderVolumeSAProtection,Boolean,to-add,high,,Enables automatic derendering of prims with high surface area (can protect against some video card crashers)
-RenderVolumeSAThreshold,F32,to-add,high,,The surface area at which volumes begin to be considered for being made invisible.
+RenderVolumeSAFrameMax,F32,in-aurora,,large_surface_frame_max,The limit(per frame) at which the sum of all volumes above the surface area threshold that causes all further sculpts/volumes above the thre
+RenderVolumeSAProtection,Boolean,in-aurora,,large_surface_protection,Enables automatic derendering of prims with high surface area (can protect against some video card crashers)
+RenderVolumeSAThreshold,F32,in-aurora,,large_surface_prim_threshold,The surface area at which volumes begin to be considered for being made invisible.
 RenderWater,Boolean,fixed,,the Legacy default is built into Aurora: aurora-viewer/src/ui/monitor/model.rs:121,Display water
 RenderWaterMaterials,S32,not-applicable,,read nowhere in the Legacy sources,Water planar reflections include materials rendering.
 RenderWaterMipNormal,Boolean,not-applicable,,"OpenGL only, Aurora draws with Vulkan or Metal",Use mip maps for water normal map.

@@ -1536,7 +1536,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_MOVELOCK=<mode>` | Bridge lifecycle/lock and native sitting choice; see details below |
 | `AURORA_DEMO_BRIDGE_QUERY=radar\|scripts\|object\|error` | Bridge altitude correction, basic script and extended object-information reports |
 | `AURORA_DEMO_MOVEMENT=surface\|underwater\|breaststroke\|backstroke\|crawl\|independent\|float-low\|float-high\|off\|run-fall\|run-ao\|run-drop\|passage-blocked\|passage-reached\|passage-pending\|passage-refused` | Movement options, local swimming poses, synthetic passage feedback and a refused passage |
-| `AURORA_DEMO_FLEXIBLE=1` | Flexible prims: gravity, tension, wind, force and moving parent |
+| `AURORA_DEMO_FLEXIBLE=1\|missing-params` | Flexible prims: gravity, tension, wind, force, moving parent and default-parameter fallback |
 | `AURORA_DEMO_TEXREFRESH=1\|auto` | "Refresh textures" on a panel whose cached texture is stale |
 | `AURORA_DEMO_SCULPT_ZERO=1` | Subtype-zero sculpt classification beside torus and sphere controls |
 | `AURORA_DEMO_SCULPT_MISSING=1\|late` | A sculpt whose map is missing: the sphere placeholder, then its torus with `late` |
@@ -2007,6 +2007,11 @@ folders for the texture. On the grid, the human also checks the group
 permissions, the contents of another owner and the non-copyable items of
 worn objects.
 
+`AURORA_DEMO_BUILD=multi-rename,118,151` selects two independent roots,
+opens Edit > General, and applies the shared name `Shared edit`. Capture at
+620, 650 and 660: both selected roots before the edit, then each root in turn
+with its General name field showing the committed shared name.
+
 `AURORA_DEMO_BUILD=faces,object:99620` adds three cubes: two linked parts
 (A / A2) and a separate object (B). In Materials
 (`AURORA_DEMO_BUILD_TAB=texture:bp`), the script selects a face at 625, adds
@@ -2102,10 +2107,13 @@ indication. The profile and terrain pickers keep their usual validation.
 
 `AURORA_DEMO_FLEXIBLE` replaces the objects of the plaza with six prims with
 four levels of softness, square / circular profiles, hollow, twist and
-non-uniform sizes. The last one follows a rotating root. `rigid` gives the
-comparison without simulation; an integer (6–2000) adds prims to measure the
-cost. The synthetic wind goes through the same event as the grid. `edit`
-isolates a tilted plate for the build tools. To check editing, add
+non-uniform sizes. The last one follows a rotating root. `missing-params`
+keeps the flexible path but omits `PARAMS_FLEXIBLE`, reproducing the reported
+grid state; those prims should still move with the default parameters.
+`rigid` changes the path to a straight line for a no-flex comparison. An
+integer (6–2000) adds prims to measure the cost. The synthetic wind goes
+through the same event as the grid. `edit` isolates a tilted plate for the
+build tools. To check editing, add
 `AURORA_DEMO_BUILD=move,object:90000` or `stretch,object:90000`: pivot on
 the base, deformed outline, translucent straight box and size handles.
 `stretch,object:90000,fz,100,0` pulls the face opposite the base; the
