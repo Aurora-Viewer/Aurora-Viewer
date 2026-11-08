@@ -20,10 +20,15 @@ fn vs_volumetric(@builtin(vertex_index) vi: u32) -> VolOut {
 // Steps along each ray; the per-pixel offset turns their banding into noise
 // that TAA (or the half-resolution filtering) smooths.
 const VOL_STEPS: u32 = 24u;
-// How much light the air scatters per metre.
-const VOL_DENSITY: f32 = 0.008;
-// Henyey-Greenstein forward scattering: brightest looking toward the sun\n// (without its 1/4pi: an artistic gain, 1 looking across the light).
-const VOL_G: f32 = 0.6;
+// The settings (renderer.rs VolU): the light the air scatters per metre,
+// and the Henyey-Greenstein forward scattering, how tightly the glow
+// gathers around the sun (0 even all around, toward 1 a tight glow).
+struct VolParams {
+    density: f32,
+    g: f32,
+    _pad: vec2<f32>,
+};
+@group(3) @binding(0) var<uniform> vol: VolParams;
 
 // Whether `p` sees the sun: one compare tap in its cascade (no filter, the
 // march averages many), 1 past the cascades.
@@ -77,8 +82,10 @@ fn fs_volumetric(in: VolOut) -> @location(0) vec4<f32> {
     }
     lit /= f32(VOL_STEPS);
     let cos_t = dot(dir, normalize(frame.sun_dir.xyz));
-    let g2 = VOL_G * VOL_G;
-    let phase = (1.0 - g2) / (pow(max(1.0 + g2 - 2.0 * VOL_G * cos_t, 1e-4), 1.5));
-    let scattered = 1.0 - exp(-len * VOL_DENSITY);
+    // the phase without its 1/4pi: an artistic gain, 1 across the light
+    // with no forward scattering
+    let g2 = vol.g * vol.g;
+    let phase = (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * vol.g * cos_t, 1e-4), 1.5);
+    let scattered = 1.0 - exp(-len * vol.density);
     return vec4<f32>(frame.sun_color.rgb * (light * lit * phase * scattered), 1.0);
 }

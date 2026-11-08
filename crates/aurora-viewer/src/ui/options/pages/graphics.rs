@@ -687,6 +687,34 @@ fn light(cx: &mut Cx) {
                     .changed()
                 },
             );
+            cx.row(
+                tr!("ui-options-god-rays-haze"),
+                tr!("ui-options-god-rays-haze-help"),
+                &field!(god_rays_haze),
+                |ui, s| {
+                    ui.add(
+                        egui::Slider::new(&mut s.god_rays_haze, 0.1..=3.0)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .step_by(0.05)
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                },
+            );
+            cx.row(
+                tr!("ui-options-god-rays-glow"),
+                tr!("ui-options-god-rays-glow-help"),
+                &field!(god_rays_glow),
+                |ui, s| {
+                    ui.add(
+                        egui::Slider::new(&mut s.god_rays_glow, 0.0..=0.9)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .step_by(0.05)
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                },
+            );
         });
     });
 }

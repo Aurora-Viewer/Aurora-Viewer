@@ -39,10 +39,8 @@ struct PostParams {
 @group(0) @binding(2) var<uniform> post: PostParams;
 // Blurred glow (512x512, display space), see glow.wgsl.
 @group(0) @binding(3) var glow_tex: texture_2d<f32>;
-// The scene depth (reversed: 0 where nothing was drawn, the sky).
-@group(0) @binding(4) var scene_depth: texture_depth_2d;
 // The volumetric sun rays (volumetric.wgsl), half resolution, scene units.
-@group(0) @binding(5) var rays_tex: texture_2d<f32>;
+@group(0) @binding(4) var rays_tex: texture_2d<f32>;
 // The bloom levels added up (half resolution, scene units), see bloom.wgsl.
 @group(1) @binding(0) var bloom_tex: texture_2d<f32>;
 

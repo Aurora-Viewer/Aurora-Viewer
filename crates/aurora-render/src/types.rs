@@ -1361,6 +1361,10 @@ pub struct FrameParams {
     /// Light shafts from the sun through the bright parts of the image
     /// (0 = off, up to 2).
     pub god_rays: f32,
+    /// How thick the air of the sun rays is (1 = the default haze).
+    pub god_rays_haze: f32,
+    /// How tightly their glow gathers around the sun (0 to 0.9).
+    pub god_rays_glow: f32,
     pub water_height: f32,
     pub shadows: bool,
     /// Distance covered by the shadow cascades.

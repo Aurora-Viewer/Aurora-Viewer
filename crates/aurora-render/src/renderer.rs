@@ -1651,7 +1651,7 @@ pub(crate) struct Backend {
     bloom: crate::bloom::Bloom,
     /// The volumetric sun rays (volumetric.wgsl) and whether this frame
     /// draws them.
-    volumetric: wgpu::RenderPipeline,
+    volumetric: Volumetric,
     volumetric_on: bool,
     /// The automatic exposure of skies that are not classic (exposure.rs).
     exposure: crate::exposure::Exposure,
@@ -2614,8 +2614,27 @@ fn whole_proj(proj: Mat4, photo_tile: Mat4) -> Mat4 {
 /// Format of the volumetric sun rays (scene units, added by the post pass).
 const VOL_RAYS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
-/// The half-resolution pass of the volumetric sun rays (volumetric.wgsl).
-fn make_volumetric(device: &wgpu::Device, frame_layout: &wgpu::BindGroupLayout) -> wgpu::RenderPipeline {
+/// The light the air of the sun rays scatters per metre at a haze of 1.
+const VOL_DENSITY: f32 = 0.008;
+
+/// volumetric.wgsl VolParams.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct VolU {
+    density: f32,
+    g: f32,
+    _pad: [f32; 2],
+}
+
+/// The half-resolution pass of the volumetric sun rays (volumetric.wgsl)
+/// and its settings.
+struct Volumetric {
+    pipeline: wgpu::RenderPipeline,
+    params: wgpu::Buffer,
+    group: wgpu::BindGroup,
+}
+
+fn make_volumetric(device: &wgpu::Device, frame_layout: &wgpu::BindGroupLayout) -> Volumetric {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("volumetric rays"),
         source: wgpu::ShaderSource::Wgsl(
@@ -2628,12 +2647,30 @@ fn make_volumetric(device: &wgpu::Device, frame_layout: &wgpu::BindGroupLayout) 
             .into(),
         ),
     });
+    let params_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("volumetric rays"),
+        entries: &[uniform_entry(0, wgpu::ShaderStages::FRAGMENT)],
+    });
+    let params = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("volumetric rays"),
+        size: std::mem::size_of::<VolU>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("volumetric rays"),
+        layout: &params_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: params.as_entire_binding(),
+        }],
+    });
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("volumetric rays"),
-        bind_group_layouts: &[Some(frame_layout)],
+        bind_group_layouts: &[Some(frame_layout), None, None, Some(&params_layout)],
         immediate_size: 0,
     });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
         label: Some("volumetric rays"),
         layout: Some(&layout),
         vertex: wgpu::VertexState {
@@ -2653,7 +2690,8 @@ fn make_volumetric(device: &wgpu::Device, frame_layout: &wgpu::BindGroupLayout) 
         multisample: wgpu::MultisampleState::default(),
         multiview_mask: None,
         cache: None,
-    })
+    });
+    Volumetric { pipeline, params, group }
 }
 
 fn photo_part(photo_tile: Mat4) -> [f32; 4] {
@@ -3063,10 +3101,8 @@ impl Backend {
                 },
                 uniform_entry(2, wgpu::ShaderStages::FRAGMENT),
                 float_tex(3),
-                // the scene depth: the sky the sun rays start from
-                tex_entry(4, wgpu::TextureSampleType::Depth),
                 // the volumetric sun rays, half resolution (volumetric.wgsl)
-                float_tex(5),
+                float_tex(4),
             ],
         });
         let gbuf_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -4513,8 +4549,7 @@ impl Backend {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(glow_view),
                 },
-                tex(4, &depth_ss),
-                tex(5, &vol_rays),
+                tex(4, &vol_rays),
             ],
         });
         Targets {
@@ -5386,8 +5421,7 @@ impl Backend {
                         binding: 3,
                         resource: wgpu::BindingResource::TextureView(&self.glow.views[1]),
                     },
-                    tex(4, &self.targets.depth_ss),
-                    tex(5, &self.targets.vol_rays),
+                    tex(4, &self.targets.vol_rays),
                 ],
             })
         };
@@ -6592,6 +6626,14 @@ impl Backend {
             0.0
         };
         self.volumetric_on = god_rays > 0.0;
+        if self.volumetric_on {
+            let u = VolU {
+                density: VOL_DENSITY * f.god_rays_haze.clamp(0.0, 4.0),
+                g: f.god_rays_glow.clamp(0.0, 0.95),
+                _pad: [0.0; 2],
+            };
+            self.queue.write_buffer(&self.volumetric.params, 0, bytemuck::bytes_of(&u));
+        }
         let post = PostU {
             exposure: if hdr { f.exposure } else { 1.0 },
             // SMAA works on a gamma-encoded 8-bit image
@@ -8479,9 +8521,10 @@ impl Backend {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.volumetric);
+            pass.set_pipeline(&self.volumetric.pipeline);
             // the frame group with the scene depth and the sun's cascades
             pass.set_bind_group(0, &self.groups.b, &[]);
+            pass.set_bind_group(3, &self.volumetric.group, &[]);
             pass.draw(0..3, 0..1);
         }
         // ---- temporal anti-aliasing
@@ -8583,7 +8626,6 @@ impl Backend {
                         sampler: &self.post_sampler,
                         buffer: &self.post_buffer,
                         glow: &self.glow.views[1],
-                        depth: &self.targets.depth_ss,
                         rays: &self.targets.vol_rays,
                     },
                     f.cutout,

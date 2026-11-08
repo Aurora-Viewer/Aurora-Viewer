@@ -67,7 +67,6 @@ pub(crate) struct PostInputs<'a> {
     pub sampler: &'a wgpu::Sampler,
     pub buffer: &'a wgpu::Buffer,
     pub glow: &'a wgpu::TextureView,
-    pub depth: &'a wgpu::TextureView,
     pub rays: &'a wgpu::TextureView,
 }
 
@@ -95,10 +94,6 @@ fn post_bind_group(device: &wgpu::Device, post: &PostInputs, out: &wgpu::Texture
             },
             wgpu::BindGroupEntry {
                 binding: 4,
-                resource: wgpu::BindingResource::TextureView(post.depth),
-            },
-            wgpu::BindGroupEntry {
-                binding: 5,
                 resource: wgpu::BindingResource::TextureView(post.rays),
             },
         ],
@@ -237,7 +232,7 @@ impl Dof {
                 post_bg,
             });
         } else if let Some(t) = &mut self.targets {
-            // the scene depth may be a new view at the same size
+            // the rays may be a new view at the same size
             t.post_bg = post_bind_group(device, post, &t.out);
         }
     }

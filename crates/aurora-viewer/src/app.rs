@@ -10501,6 +10501,8 @@ impl App {
             } else {
                 0.0
             },
+            god_rays_haze: self.settings.god_rays_haze,
+            god_rays_glow: self.settings.god_rays_glow,
             water_height: self.world.main_water_height(),
             shadows: self.settings.shadow_quality > 0 && matches!(self.screen, Screen::World),
             shadow_distance: self.settings.shadow_params().1,
