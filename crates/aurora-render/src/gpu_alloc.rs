@@ -83,6 +83,35 @@ pub fn try_texture(
     }
 }
 
+/// `DeviceExt::create_buffer_init` without its panic: wgpu's helper maps the
+/// new buffer and `expect`s the mapping, so a buffer the full card refused
+/// ended the viewer ("night sky stars" at start with the card full, "water
+/// effects" on a lost device, #1892). Here a refused buffer comes back
+/// invalid and unfilled, like any other object the memory refused, and the
+/// error scopes around it see the failure.
+pub fn buffer_init(device: &wgpu::Device, label: &str, contents: &[u8], usage: wgpu::BufferUsages) -> wgpu::Buffer {
+    let align = wgpu::COPY_BUFFER_ALIGNMENT;
+    let size = (contents.len() as u64).div_ceil(align).max(1) * align;
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: if contents.is_empty() { 0 } else { size },
+        usage,
+        mapped_at_creation: !contents.is_empty(),
+    });
+    if contents.is_empty() {
+        return buffer;
+    }
+    match buffer.get_mapped_range_mut(..) {
+        Ok(mut view) => {
+            view.slice(..contents.len()).copy_from_slice(contents);
+            drop(view);
+            buffer.unmap();
+        }
+        Err(e) => log::warn!("{label}: buffer refused ({})", reason(&e.to_string())),
+    }
+    buffer
+}
+
 /// Runs `make`, which makes GPU objects with no check of their own (a set
 /// of render targets and what binds them), and says whether the memory
 /// refused them. Whatever came back invalid is `make`'s to drop: unlike

@@ -539,14 +539,7 @@ impl Glow {
                 strength: Self::STRENGTH,
                 _pad: 0.0,
             };
-            wgpu::util::DeviceExt::create_buffer_init(
-                device,
-                &wgpu::util::BufferInitDescriptor {
-                    label: Some("glow params"),
-                    contents: bytemuck::bytes_of(&u),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                },
-            )
+            crate::gpu_alloc::buffer_init(device, "glow params", bytemuck::bytes_of(&u), wgpu::BufferUsages::UNIFORM)
         };
         let h = ubuf([Self::DELTA, 0.0]);
         let v = ubuf([0.0, Self::DELTA]);
@@ -800,10 +793,11 @@ pub enum RenderError {
     DeviceLost,
 }
 
-/// A device lost while the backend is being made: the error, before the next
-/// `create_buffer_init`, whose mapping panics on a buffer that could not be
-/// made ("water effects" on Intel Iris Xe, #1892). Nothing fails before that:
-/// a lost device takes every other call without a word. As in `Backend`'s
+/// A device lost while the backend is being made: the error, at the points
+/// where wgpu's `create_buffer_init` used to panic on a buffer that could
+/// not be made ("water effects" on Intel Iris Xe, #1892;
+/// `gpu_alloc::buffer_init` no longer panics there). Nothing fails on its
+/// own: a lost device takes every call without a word. As in `Backend`'s
 /// `Drop` (#1650), the surface is left to the process.
 fn lost_at_start(lost: &crate::device_lost::DeviceLost, surface: &Arc<wgpu::Surface<'static>>) -> Result<(), RenderError> {
     if !lost.get() {
@@ -3215,13 +3209,11 @@ impl Backend {
         let mut histogram = crate::histogram::Histogram::new(&device);
         histogram.bind(&device, &targets.color);
         lost_at_start(&lost, &surface)?;
-        let stars = wgpu::util::DeviceExt::create_buffer_init(
+        let stars = crate::gpu_alloc::buffer_init(
             &device,
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("night sky stars"),
-                contents: &crate::stars::buffer_contents(),
-                usage: wgpu::BufferUsages::STORAGE,
-            },
+            "night sky stars",
+            &crate::stars::buffer_contents(),
+            wgpu::BufferUsages::STORAGE,
         );
         let groups = Self::make_frame_groups(
             &device,

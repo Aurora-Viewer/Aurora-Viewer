@@ -9,7 +9,6 @@ use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Weak},
 };
-use wgpu::util::DeviceExt;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable, Default)]
@@ -437,13 +436,7 @@ impl Target {
             if part.vertices.is_empty() || part.indices.is_empty() {
                 continue;
             }
-            let buffer = |label, bytes: &[u8], usage| {
-                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some(label),
-                    contents: bytes,
-                    usage,
-                })
-            };
+            let buffer = |label, bytes: &[u8], usage| crate::gpu_alloc::buffer_init(device, label, bytes, usage);
             let key = Arc::as_ptr(&part.vertices) as *const () as usize;
             let vertices = if let Some((owner, buffer)) = assets.vertices.get(&key)
                 && owner.strong_count() > 0
@@ -808,6 +801,7 @@ impl Cache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wgpu::util::DeviceExt;
 
     #[test]
     fn large_preview_targets_keep_the_shape_of_their_rectangle() {
