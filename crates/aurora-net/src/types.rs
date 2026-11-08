@@ -489,6 +489,11 @@ pub enum NetEvent {
     /// The ReadOfflineMsgs capability failed: Firestorm then asks by
     /// message (`NetCommand::RequestOfflineMessagesLegacy`).
     OfflineMessagesFailed,
+    /// Read-only discovery, fenced by a viewer-generated login request id.
+    RecentParticipants {
+        request: Uuid,
+        people: Vec<crate::persistent_chat::Participant>,
+    },
     /// An offline group invitation was accepted by capability: the group
     /// list is to ask again.
     OfflineGroupInviteAccepted(Uuid),
@@ -1502,6 +1507,10 @@ pub enum NetCommand {
     /// login (LLIMProcessing::requestOfflineMessages: the ReadOfflineMsgs
     /// capability, else RetrieveInstantMessages).
     RequestOfflineMessages,
+    /// Chat Modernization participant list; no IM sessions are opened.
+    RequestRecentParticipants {
+        request: Uuid,
+    },
     /// The same by the RetrieveInstantMessages message only (after
     /// `NetEvent::OfflineMessagesFailed`).
     RequestOfflineMessagesLegacy,

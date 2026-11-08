@@ -2816,6 +2816,15 @@ impl App {
     /// the login which grid it is made on (the demo is a grid of its own).
     fn sync_chat_log(&mut self) {
         let s = &self.settings;
+        if self.world.agent_id.is_nil() {
+            self.world.social_grid = if self.demo && crate::demo::people::persistence().is_some() {
+                "demo-recent-people".into()
+            } else if self.demo {
+                String::new()
+            } else {
+                crate::world::social_history::grid_key(&s.grid, &s.custom_login_uri)
+            };
+        }
         let log = &mut self.world.chat_log;
         log.cfg = crate::world::chat_log::Config {
             log_im: s.log_im,
@@ -5998,7 +6007,7 @@ impl App {
             return;
         }
         if self.in_world() {
-            self.world.save_open_ims();
+            self.world.save_social_history();
         }
         if self.in_world() && !self.demo {
             self.record_inventory_logout();
@@ -6072,6 +6081,7 @@ impl App {
         self.settings.save();
         // the last lines of the conversations reach their files
         self.world.chat_log.flush(Duration::from_secs(2));
+        self.world.flush_social_history();
         // and the settings theirs (written by the save thread), before a
         // restarted viewer reads them
         Settings::wait_saved(Duration::from_secs(5));
@@ -9115,9 +9125,14 @@ impl App {
             {
                 self.world.apply(event);
             }
+            self.world.poll_social_history();
             self.world.restore_open_ims(
-                self.settings.reopen_ims || (self.demo && crate::demo::chatlog::mode() == Some(crate::demo::chatlog::Mode::Restore)),
+                self.settings.reopen_ims
+                    || (self.demo
+                        && (crate::demo::people::persistence().is_some()
+                            || crate::demo::chatlog::mode() == Some(crate::demo::chatlog::Mode::Restore))),
             );
+            self.world.save_social_history();
             // AURORA_DEMO_OBJECT_IM: a filter for this run only
             self.world.object_im_filter = crate::demo::object_im::settings()
                 .filter(|_| self.demo)

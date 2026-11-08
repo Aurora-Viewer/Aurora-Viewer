@@ -27,6 +27,7 @@ impl World {
             self.restore_deferred_group_chats();
         }
         self.request_offline_messages_once();
+        self.poll_recent_participants();
     }
 
     /// LLIMProcessing::requestOfflineMessages, polled every frame: once our
