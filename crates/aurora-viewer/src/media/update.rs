@@ -21,6 +21,20 @@ pub fn debug_on() -> bool {
 
 /// Upload budget per frame (bytes): a 1024² media is 4 MB.
 const UPLOAD_BUDGET: usize = 16 << 20;
+const RECENTLY_SHOWN: Duration = Duration::from_secs(60);
+const FLAGS_LOST_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn request_priority(e: &ObjMedia, shown: bool) -> u8 {
+    if shown {
+        entry::SHOWN
+    } else if e.hud {
+        entry::HUD
+    } else if e.on_own_avatar {
+        entry::ATTACHMENT
+    } else {
+        entry::WORLD
+    }
+}
 
 impl MediaManager {
     /// Update running plugins immediately, including while the native window
@@ -138,10 +152,11 @@ impl MediaManager {
                 if let Some(e) = self.objects.remove(&id) {
                     forget_slot(&mut self.slot_ids, e.idx, &id);
                 }
+                self.client.cancel(&id);
             }
         }
         for &idx in &changes {
-            self.visit(world, idx, hud);
+            self.visit(world, idx, hud, now);
         }
         changes.clear();
         self.changes = changes;
@@ -158,7 +173,7 @@ impl MediaManager {
 
     /// One slot of the store: what it held is forgotten if the object is
     /// gone, its media state is read again if it is (still) a media object.
-    fn visit(&mut self, world: &World, idx: usize, hud: &dyn Fn(usize) -> bool) {
+    fn visit(&mut self, world: &World, idx: usize, hud: &dyn Fn(usize) -> bool, now: Instant) {
         let obj = world.objects.get(idx);
         if let Some(old) = self.slot_ids.get(&idx).copied()
             && obj.is_none_or(|o| o.full_id != old)
@@ -174,6 +189,7 @@ impl MediaManager {
                 }
                 None => {
                     self.objects.remove(&old);
+                    self.client.cancel(&old);
                 }
             }
         }
@@ -192,13 +208,51 @@ impl MediaManager {
         let has_media =
             o.te.as_ref()
                 .is_some_and(|te| local.is_some() || te.faces.iter().any(|f| f.media_flags & 1 != 0));
-        if !has_media {
+        let fetched_media = self
+            .objects
+            .get(&o.full_id)
+            .is_some_and(|e| e.data.as_ref().is_some_and(|d| d.faces.iter().any(Option::is_some)));
+        let flags_lost_expired = self.objects.get(&o.full_id).is_some_and(|e| {
+            e.flags_lost_since
+                .is_some_and(|since| now.saturating_duration_since(since) >= FLAGS_LOST_TIMEOUT)
+        });
+        if !has_media && fetched_media && o.te.is_some() && !flags_lost_expired {
+            if let Some(e) = self.objects.get_mut(&o.full_id)
+                && e.flags_lost_since.is_none()
+            {
+                e.flags_lost_since = Some(now);
+                e.fetched_version = None;
+                e.asked_version = None;
+                log::info!("media: {} media flags cleared, asking its media again", o.full_id);
+            }
+        } else if !has_media {
             if let Some(e) = self.objects.remove(&o.full_id) {
+                log::info!(
+                    "media: {} has no media face any more ({}, hud {})",
+                    o.full_id,
+                    if o.te.is_some() {
+                        "texture entry without media"
+                    } else {
+                        "no texture entry"
+                    },
+                    e.hud
+                );
                 forget_slot(&mut self.slot_ids, e.idx, &o.full_id);
             }
+            self.client.cancel(&o.full_id);
             forget_slot(&mut self.slot_ids, idx, &o.full_id);
             return;
         }
+        let showing = self
+            .impls
+            .iter()
+            .any(|m| matches!(m.key, MediaKey::Prim { object, .. } if object == o.full_id) && m.interest > 0.0);
+        if showing {
+            self.recently_shown.insert(o.full_id, now);
+        }
+        self.recently_shown
+            .retain(|_, at| now.saturating_duration_since(*at) < RECENTLY_SHOWN);
+        let shown = showing || self.recently_shown.contains_key(&o.full_id);
         let avatar = attachment_avatar(world, idx);
         let on_other_avatar = avatar.is_some_and(|a| a != world.agent_id);
         let on_own_avatar = !world.agent_id.is_nil() && avatar == Some(world.agent_id);
@@ -212,6 +266,9 @@ impl MediaManager {
         e.on_other_avatar = on_other_avatar;
         e.on_own_avatar = on_own_avatar;
         e.changed_by = entry::media_version_agent(&o.media_url);
+        if has_media {
+            e.flags_lost_since = None;
+        }
         if let Some(local) = local {
             if e.data.is_none() {
                 e.fetched_version = Some(local.version);
@@ -230,12 +287,16 @@ impl MediaManager {
             (Some(have), Some(v)) => v > have,
             (Some(_), None) => false,
         } && e.asked_version.is_none_or(|asked| version.unwrap_or(0) > asked);
+        let priority = request_priority(e, shown);
+        if self.client.is_queued(&o.full_id) {
+            self.client.prioritize(&o.full_id, priority);
+        }
         if need
             && !self.client.is_queued(&o.full_id)
             && let Some(cap) = world.regions.get(&o.key.region).and_then(|r| r.caps.get("ObjectMedia"))
         {
             e.asked_version = Some(version.unwrap_or(0));
-            self.client.request(o.full_id, cap, e.fetched_version.is_some());
+            self.client.request(o.full_id, cap, e.fetched_version.is_some(), priority);
         }
     }
 
@@ -288,6 +349,11 @@ impl MediaManager {
                 Err(err) => {
                     // not asked again until the version changes (asked_version)
                     log::info!("media: ObjectMedia for {} failed: {err}", got.object);
+                    if e.flags_lost_since.take().is_some() {
+                        // A terminal confirmation failure cannot justify
+                        // keeping the stale media implementation alive.
+                        e.data = None;
+                    }
                 }
             }
         }
@@ -1237,6 +1303,40 @@ mod tests {
         set_url(&mut w, 6);
         track(&mut m, &mut w);
         assert!(m.client.is_queued(&screen), "newer version: fetched");
+    }
+
+    #[test]
+    fn visibility_expiry_demotes_an_already_queued_refresh_below_a_hud_load() {
+        let (mut w, screen) = world();
+        let idx = w.objects.index_of_uuid(&screen).expect("screen");
+        let mut m = MediaManager::default();
+        track(&mut m, &mut w);
+        m.client.clear();
+        m.client.request(screen, "cap", true, entry::WORLD);
+        let entry = m.objects.get_mut(&screen).expect("tracked screen");
+        entry.fetched_version = Some(0);
+        entry.asked_version = Some(0);
+        let shown_at = Instant::now();
+        let mut media = MediaImpl::new(
+            MediaKey::Prim { object: screen, face: 0 },
+            "https://example.invalid".into(),
+            String::new(),
+        );
+        media.interest = 10.0;
+        m.impls.push(media);
+        m.visit(&w, idx, &|_| false, shown_at);
+        assert_eq!(m.client.queued_priority(&screen), Some(entry::SHOWN));
+        m.impls[0].interest = 0.0;
+
+        // Visiting after the 60-second window removes the stale shown boost
+        // from the existing request, even though its version was already asked.
+        let expired = shown_at + RECENTLY_SHOWN + Duration::from_millis(1);
+        m.visit(&w, idx, &|_| false, expired);
+        assert_eq!(m.client.queued_priority(&screen), Some(entry::WORLD));
+
+        let hud = Uuid::from_u128(0x2260);
+        m.client.request(hud, "cap", false, entry::HUD);
+        assert_eq!(m.client.next_due_object(expired, |_| Some((0.0, 1.0))), Some(hud));
     }
 
     #[test]

@@ -4768,10 +4768,16 @@ impl App {
                     command: false,
                 };
                 let distance = (point - hud_ray.0).dot(hud_ray.1);
-                if self
-                    .media
-                    .on_click(&self.world, &self.scene, hud_ray, Some(distance), &self.settings.media, mods, true)
-                {
+                if self.media.on_click(
+                    &self.world,
+                    &self.scene,
+                    hud_ray,
+                    Some(distance),
+                    &self.settings.media,
+                    mods,
+                    true,
+                    Some(idx),
+                ) {
                     return;
                 }
                 if let Some(target) = crate::interaction::target(&self.world, idx, &self.interactions.props) {
@@ -4852,7 +4858,7 @@ impl App {
                 };
                 if self
                     .media
-                    .on_click(&self.world, &self.scene, ray, depth_t, &self.settings.media, mods, false)
+                    .on_click(&self.world, &self.scene, ray, depth_t, &self.settings.media, mods, false, None)
                 {
                     return;
                 }
