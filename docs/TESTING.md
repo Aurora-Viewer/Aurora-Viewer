@@ -5159,7 +5159,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LINK=stall:<frame>[:<seconds>],lost:<frame>` | The region goes silent (the unsteady-connection pill and its count), or the link is lost (login screen offering to go back to the same place) |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
-| `AURORA_DEMO_CHAT_LINES=1\|legacy\|volumes` | Nearby chat lines above the chat bar: cards by sender, or the one-line look |
+| `AURORA_DEMO_CHAT_LINES=1\|legacy\|volumes\|stagger\|legacy:stagger` | Nearby chat lines above the chat bar: cards by sender, or the one-line look; `stagger` says them one at a time |
 | `AURORA_DEMO_OBJECT_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:on][:im][:imlines]` | Residents talking among objects in the nearby chat, in a style; `on` makes what no person sent compact and quiet; `im` the friend's conversation, `imlines` its system lines compact |
 | `AURORA_DEMO_TYPING=1` | We type in the nearby chat from our arrival on: typing animation, dots on our plate |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
@@ -7318,7 +7318,17 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `volumes` shows the same normal, whispered and shouted messages from us
   and an object in both the cards and Conversations, visible together to
   compare their colours, whisper italics and shout weight. These demo cards
-  remain visible for an hour without changing the saved timeout.
+  remain visible for an hour without changing the saved timeout. `stagger`
+  (cards) and `legacy:stagger` (one-line look) say the same lines one at a
+  time, every 2 s from 3 s after the arrival, so that each leaves on its
+  own at the end of its fade (20 s by default, then 3 s of fade), as in a
+  busy region (#2544). What to see: when a line leaves, or a new one
+  comes, the others move once to their new place and stay there, never a
+  line's height up or down for a frame and back. A still frame does not
+  show it: capture consecutive frames across a departure
+  (`AURORA_FPS_LIMIT=60`, `AURORA_CAPTURE_FRAMES` listing every frame from
+  about 23 s to 31 s after the arrival) and compare the lines' bottom frame
+  by frame.
 
 - **`AURORA_DEMO_OBJECT_CHAT=aurora|compact|bubbles|legacy|lines[:on][:im][:imlines]`**
   (#475, #741): nearby chat said at the arrival, two residents among a
