@@ -311,6 +311,12 @@ fn quality(cx: &mut Cx) {
             32.0..=512.0,
             " m",
         );
+        // FSRenderFarClipStepping; its interval in Debug Settings (clean menus)
+        cx.keywords("FSRenderFarClipStepping progressive").toggle(
+            tr!("ui-options-draw-distance-stepping"),
+            tr!("ui-options-draw-distance-stepping-hint"),
+            &field!(draw_distance_stepping),
+        );
         cx.row(
             tr!("ui-options-level-of-detail-lod"),
             tr!("ui-options-lod-factor-for-sl-objects-and-meshes-2-by"),
@@ -318,6 +324,24 @@ fn quality(cx: &mut Cx) {
             |ui, s| {
                 ui.add(
                     egui::Slider::new(&mut s.lod_factor, 0.5..=4.0)
+                        .custom_parser(aurora_i18n::parse_number)
+                        .step_by(0.125)
+                        .trailing_fill(true),
+                )
+                .changed()
+            },
+        );
+        // TreeMeshDetail (panel_preferences_graphics1.xml). From 0, where the
+        // Legacy slider starts at 0.125: 0 turns trees and grass off, as the
+        // Potato level and Debug Settings do (the human's decision,
+        // 2026-11-07)
+        cx.keywords("RenderTreeLODFactor LOD").row(
+            tr!("ui-options-trees"),
+            tr!("ui-options-trees-hint"),
+            &field!(tree_lod_factor),
+            |ui, s| {
+                ui.add(
+                    egui::Slider::new(&mut s.tree_lod_factor, 0.0..=1.0)
                         .custom_parser(aurora_i18n::parse_number)
                         .step_by(0.125)
                         .trailing_fill(true),
@@ -338,6 +362,12 @@ fn quality(cx: &mut Cx) {
                 )
                 .changed()
             },
+        );
+        // RenderAttachedParticles (panel_preferences_graphics1.xml)
+        cx.keywords("RenderAttachedParticles").toggle(
+            tr!("ui-options-attached-particles"),
+            tr!("ui-options-attached-particles-hint"),
+            &field!(attached_particles),
         );
         cx.toggle(
             tr!("ui-options-occlusion"),

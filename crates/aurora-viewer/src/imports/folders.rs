@@ -412,8 +412,88 @@ pub(super) fn discover(root: &Path, limit: usize) -> Result<Vec<(PathBuf, Vec<St
             }
         }
     }
-    files.sort_by(|a, b| a.0.cmp(&b.0));
+    // Directory enumeration order is not stable, and PathBuf's platform
+    // ordering is a byte/UTF-16 ordering rather than the name order people
+    // expect in Explorer (for example, `texture10` before `texture2`).
+    files.sort_by(|a, b| explorer_path_cmp(&a.1, &a.0, &b.1, &b.0));
     Ok(files)
+}
+
+/// Compare path components by case-insensitive, natural name order. This
+/// gives folder scans a stable Explorer-like order on every platform.
+fn explorer_path_cmp(left_folders: &[String], left_path: &Path, right_folders: &[String], right_path: &Path) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+
+    let left_file = left_path.file_name().unwrap_or_default().to_string_lossy();
+    let right_file = right_path.file_name().unwrap_or_default().to_string_lossy();
+    let count = left_folders.len().max(right_folders.len()) + 1;
+    for index in 0..count {
+        let left_name = left_folders
+            .get(index)
+            .map(String::as_str)
+            .or((index == left_folders.len()).then_some(left_file.as_ref()));
+        let right_name = right_folders
+            .get(index)
+            .map(String::as_str)
+            .or((index == right_folders.len()).then_some(right_file.as_ref()));
+        let (Some(left_name), Some(right_name)) = (left_name, right_name) else {
+            return left_name.is_some().cmp(&right_name.is_some()).reverse();
+        };
+        let left_is_folder = index < left_folders.len();
+        let right_is_folder = index < right_folders.len();
+        if left_name != right_name {
+            // Explorer groups directories before files when sorting by Name.
+            if left_is_folder != right_is_folder {
+                return if left_is_folder { Ordering::Less } else { Ordering::Greater };
+            }
+            let order = explorer_name_cmp(left_name, right_name);
+            if order != Ordering::Equal {
+                return order;
+            }
+        }
+    }
+    left_path.as_os_str().cmp(right_path.as_os_str())
+}
+
+pub(super) fn explorer_name_cmp(left: &str, right: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+
+    let mut a = left.chars().peekable();
+    let mut b = right.chars().peekable();
+    loop {
+        match (a.peek().copied(), b.peek().copied()) {
+            (Some(x), Some(y)) if x.is_ascii_digit() && y.is_ascii_digit() => {
+                let mut a_digits = String::new();
+                let mut b_digits = String::new();
+                while a.peek().is_some_and(char::is_ascii_digit) {
+                    a_digits.push(a.next().unwrap());
+                }
+                while b.peek().is_some_and(char::is_ascii_digit) {
+                    b_digits.push(b.next().unwrap());
+                }
+                let a_significant = a_digits.trim_start_matches('0');
+                let b_significant = b_digits.trim_start_matches('0');
+                let order = a_significant
+                    .len()
+                    .cmp(&b_significant.len())
+                    .then_with(|| a_significant.cmp(b_significant));
+                if order != Ordering::Equal {
+                    return order;
+                }
+            }
+            (Some(x), Some(y)) => {
+                let order = x.to_lowercase().cmp(y.to_lowercase());
+                if order != Ordering::Equal {
+                    return order;
+                }
+                a.next();
+                b.next();
+            }
+            (Some(_), None) => return Ordering::Greater,
+            (None, Some(_)) => return Ordering::Less,
+            (None, None) => return left.cmp(right),
+        }
+    }
 }
 
 #[cfg(test)]

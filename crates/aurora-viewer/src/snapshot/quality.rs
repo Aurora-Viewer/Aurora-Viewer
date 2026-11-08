@@ -155,6 +155,8 @@ fn photo_maxima() -> Values {
     Values {
         draw_distance: 512.0,
         lod_factor: 4.0,
+        // the top of Preferences' Trees slider
+        tree_lod_factor: 1.0,
         max_avatars: 100,
         max_complexity: 0,
         shadow_quality: 4,
@@ -185,6 +187,7 @@ pub fn boosted(user: Values) -> Values {
         antialiasing: MSAA_8X,
         draw_distance: user.draw_distance.max(top.draw_distance),
         lod_factor: user.lod_factor.max(top.lod_factor),
+        tree_lod_factor: user.tree_lod_factor.max(top.tree_lod_factor),
         max_avatars: user.max_avatars.max(top.max_avatars),
         max_complexity: top.max_complexity,
         shadow_quality: user.shadow_quality.max(top.shadow_quality),

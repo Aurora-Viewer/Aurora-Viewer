@@ -1002,7 +1002,7 @@ pub fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
         ui,
         p,
         "circle-check-filled",
-        aurora_i18n::tr!("common-enable"),
+        aurora_i18n::tr!("common-activate"),
         world.groups.active != id,
     ) {
         act(CtxAction::ActivateGroup(id));

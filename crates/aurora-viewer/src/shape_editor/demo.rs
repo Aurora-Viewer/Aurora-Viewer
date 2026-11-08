@@ -23,6 +23,7 @@ pub fn customize_animation(done: bool) -> aurora_assets::Animation {
         loop_in: 1.35,
         loop_out: 2.0,
         looping: !done,
+        ends_after: None,
         ease_in: if done { 1.35 } else { 0.0 },
         ease_out: 1.35,
         hand_pose: 0,
