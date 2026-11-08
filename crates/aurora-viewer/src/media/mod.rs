@@ -397,11 +397,11 @@ impl Default for MediaSettings {
 struct ObjMedia {
     idx: usize,
     fetched_version: Option<u32>,
-    /// The version asked for by the request in flight: a failed request
-    /// waits for a newer one (LLMediaDataClient drops it after its retries).
-    requested_version: Option<u32>,
-    /// The texture entry lost its media flags while the fetched data still
-    /// has media: ask once and retain it only while awaiting confirmation.
+    /// Object media version of the last GET asked (0 without one): asked
+    /// once per version, like LLVOVolume::processUpdateMessage asks once per
+    /// media change, so a failed GET is not asked again until the next one.
+    asked_version: Option<u32>,
+    /// A texture entry temporarily lost media flags while cached media remains.
     flags_lost_since: Option<Instant>,
     data: Option<ObjectMediaData>,
     hud: bool,
@@ -437,8 +437,7 @@ pub struct MediaManager {
     pack_dir: Option<std::path::PathBuf>,
     pub impls: Vec<MediaImpl>,
     objects: HashMap<Uuid, ObjMedia>,
-    /// Objects whose media was on screen until lately (a HUD that clears then
-    /// sets its page): asked again first for `RECENTLY_SHOWN`.
+    /// Objects recently visible on screen, retained for their next request.
     recently_shown: HashMap<Uuid, Instant>,
     client: MediaDataClient,
     last_create: Instant,

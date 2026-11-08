@@ -390,7 +390,7 @@ impl Scene {
     /// `pick_transparent` (Select invisible objects, Show transparency),
     /// as LLVOVolume::lineSegmentIntersect takes them all then; otherwise
     /// test texture holes, including the library's Transparent texture.
-    fn build_pick(&self) -> FacePick {
+    pub(super) fn build_pick(&self) -> FacePick {
         if self.pick_transparent {
             FacePick::Surface
         } else {
@@ -403,7 +403,7 @@ impl Scene {
     /// prim itself shows the special cursor (LLVOVolume::lineSegmentIntersect,
     /// `interaction::special_hover_cursor`). Only the build picks run in
     /// Build mode here (`left_selection_pick`, `left_edit_ray_hits`).
-    fn build_hidden(&self, mode: FacePick, o: &Object) -> bool {
+    pub(super) fn build_hidden(&self, mode: FacePick, o: &Object) -> bool {
         mode != FacePick::Build || crate::interaction::special_hover_cursor(o)
     }
 
@@ -2649,6 +2649,7 @@ pub(crate) mod tests {
             base_slot: 0,
             tex_id: Uuid::nil(),
             aux_tex: [Uuid::nil(); 3],
+            bump_height_source: Uuid::nil(),
             te_alpha: 1.0,
             pbr_alpha: None,
             legacy_alpha: None,
@@ -3075,6 +3076,7 @@ pub(crate) mod tests {
     #[test]
     fn hud_left_clicks_ignore_alpha_while_move_picks_respect_texture_holes() {
         let (mut world, mut scene, front, back) = scene_with_two_objects();
+        scene.set_pick_transparent(false);
         let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
         let parent = world.objects.get(own).unwrap().key.local_id;
         for (idx, x) in [(front, 3.0), (back, 7.0)] {
@@ -3139,6 +3141,33 @@ pub(crate) mod tests {
                 let moved = if alpha >= 0.004 && texel_alpha > 32 { front } else { back };
                 assert_eq!(scene.hud_move_pick(&world, cursor), Some(moved));
                 assert_eq!(scene.hud_edit_pick(&world, cursor).unwrap().0, front);
+                if alpha < 0.004 && texel_alpha <= 32 {
+                    let (click_action, update_flags) = {
+                        let front_object = world.objects.get_mut(front).unwrap();
+                        let old = (front_object.click_action, front_object.update_flags);
+                        front_object.click_action = crate::interaction::code::NONE;
+                        front_object.update_flags = 0;
+                        old
+                    };
+                    assert_eq!(scene.hud_build_pick(&world, cursor).unwrap().0, back);
+                    // The ordinary/right-click picker keeps its legacy rule.
+                    assert_eq!(scene.hud_edit_pick(&world, cursor).unwrap().0, front);
+                    scene.set_pick_transparent(true);
+                    let (build_idx, _, build_ray) = scene.hud_build_pick(&world, cursor).unwrap();
+                    assert_eq!(build_idx, front);
+                    assert_eq!(scene.build_touch_surface(&world, front, build_ray).map(|t| t.face), Some(0));
+                    scene.set_pick_transparent(false);
+                    scene.set_debug_alpha(&mut world, Some(false));
+                    scene.set_pick_transparent(false);
+                    let (build_idx, _, build_ray) = scene.hud_build_pick(&world, cursor).unwrap();
+                    assert_eq!(build_idx, front);
+                    assert_eq!(scene.build_touch_surface(&world, front, build_ray).map(|t| t.face), Some(0));
+                    scene.set_debug_alpha(&mut world, None);
+                    scene.set_pick_transparent(false);
+                    let front_object = world.objects.get_mut(front).unwrap();
+                    front_object.click_action = click_action;
+                    front_object.update_flags = update_flags;
+                }
             }
         }
         scene.gpu[front].faces[0].te_alpha = 1.0;

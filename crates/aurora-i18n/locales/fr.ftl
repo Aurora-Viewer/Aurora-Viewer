@@ -3701,8 +3701,8 @@ ui-profile-this-user-has-no-picks = L'utilisateur n'a pas de favoris
 ui-profile-this-user-has-no-classified-listings = L'utilisateur n'a pas de petites annonces
 ui-inventory-controls-library = La bibliothèque
 ui-options-camera-the-camera-can-move-beyond-the-draw-distance-below = La caméra peut aller au-delà de la distance d'affichage, sous le sol et plus près des objets
-ui-options-camera-the-camera-returns-behind-your-avatar-on-arrival = La caméra se replace derrière l'avatar à l'arrivée
-ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag = La caméra suit l'avatar avec un léger retard (1 par défaut, 0 = aucun)
+ui-options-camera-after-a-teleport-in-the-region-the-camera-returns = Après une téléportation dans la région, la caméra se replace derrière l'avatar. Désactivé, elle reste où elle est.
+ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag = La caméra suit l'avatar avec un retard : plus la valeur est haute, plus elle bouge doucement et lentement (1 par défaut, 0 = aucun)
 ui-options-camera-the-camera-follows-the-object-it-is-focused-on = La caméra suit l'objet sur lequel elle est fixée quand il bouge
 app-inventory-thumbnail-invalid-capture = La capture est invalide.
 ui-land-dialogs-deeding-this-parcel-requires-the-group-to-permanently-have = La cession de cette parcelle requiert que le groupe dispose en permanence d'un crédit suffisant pour payer les frais d'occupation de terrain.{ $contribution }{ " Le prix d'achat du terrain n'est pas remboursé au propriétaire. Si une parcelle cédée est vendue, son prix de vente est redistribué à part égale entre les membres du groupe.\u000A\u000ACéder ces " }{ $value0 }{ " m² de terrain au groupe '" }{ $group }' ?
@@ -5146,7 +5146,7 @@ ui-bars-back = { "Retour : " }{ $d }
 keybinds-backspace-2 = Retour arrière
 ui-appearance-back-to-worn-items = Retour aux éléments portés
 ui-land-covenant-resell = Revendre :
-ui-options-camera-return-after-teleporting = Revenir après une téléportation
+ui-options-camera-return-after-a-teleport-in-the-region = Revenir après une téléportation dans la région
 ui-appearance-back-to-outfits = Revenir aux tenues
 ui-options-camera-return-when-moving = Revenir en bougeant
 keybinds-return-to-avatar = Revenir à l'avatar
@@ -5213,6 +5213,10 @@ controls-view-front = Avant
 controls-view-side = Côté
 controls-view-rear = Arrière
 controls-view-shoulder = Épaule
+controls-view-tip = { $view }. Clic droit : enregistrer la caméra ici pour cette vue, ou la rétablir.
+controls-view-save = Enregistrer la caméra ici pour « { $view } »
+controls-view-restore = Rétablir « { $view } » par défaut
+controls-view-not-saved = « { $view } » non enregistrée : éloignez d’abord la caméra de l’avatar.
 controls-turn-left = Tourner à gauche
 controls-roll-left = Incliner à gauche
 controls-roll-right = Incliner à droite
@@ -10222,7 +10226,7 @@ ui-land-manage-show-tip = Mettre ces objets en évidence dans le monde
 ui-land-people-show-tip = Mettre en évidence les objets de ce propriétaire dans le monde
 ui-land-manage-search-desc = { $fee } L$ par semaine. Catégorie, maturité, photo et description servent aux résultats.
 ui-land-manage-category-rating = Catégorie et maturité
-ui-land-manage-visibility-advanced = Avancé : nom, description, photo (aussi dans l'en-tête)
+ui-land-manage-visibility-advanced = Avancé : nom, description, photo (nom et photo aussi dans l'en-tête)
 ui-land-manage-name = Nom
 ui-land-manage-picture-desc = Montrée dans la recherche et dans l'en-tête.
 ui-land-manage-show = Afficher
@@ -12401,7 +12405,7 @@ rlva-debug-commands-hint = Conserver un journal de session limité dans la conso
 rlva-debug-hide = Masquer les entrées répétées ou déjà retirées
 rlva-debug-hide-hint = Omettre du journal reçu les restrictions répétées et les retraits de restrictions absentes. Les commandes de la console gardent leur retour.
 rlva-tools-title = Outils RLVa
-rlva-tools-hint = Examiner les restrictions, verrouillages d’inventaire, modificateurs visuels et la console locale. Fermer ces outils libère seulement les restrictions de la console.
+rlva-tools-hint = Examiner les restrictions, les exceptions, les modificateurs, les verrouillages d’inventaire et la console locale. Fermer ces outils libère seulement les restrictions de la console.
 rlva-tools-open = Ouvrir les outils RLVa
 rlva-tools-locks = Verrouillages d’inventaire
 rlva-tools-modifiers = Modificateurs
@@ -12419,6 +12423,37 @@ rlva-tools-duplicate = Déjà présente
 rlva-tools-unset = Déjà retirée
 rlva-tools-rejected = Refusée
 rlva-tools-reply = Réponse
+rlva-tools-restrictions = Restrictions
+rlva-tools-exceptions = Exceptions
+rlva-tools-no-exceptions = Aucune exception active
+rlva-tools-default = (par défaut)
+rlva-tools-col-exception = Exception
+rlva-tools-col-source = Source
+rlva-tools-col-restriction = Restriction
+rlva-tools-col-modifier = Modificateur
+rlva-tools-col-value = Valeur
+rlva-tools-col-object = Nom de l’objet
+rlva-modifier-fartouch = Distance de toucher (fartouch)
+rlva-modifier-recvim-min = Distance RecvIM (min)
+rlva-modifier-recvim-max = Distance RecvIM (max)
+rlva-modifier-sendim-min = Distance SendIM (min)
+rlva-modifier-sendim-max = Distance SendIM (max)
+rlva-modifier-startim-min = Distance StartIM (min)
+rlva-modifier-startim-max = Distance StartIM (max)
+rlva-modifier-silhouette = Caméra - Distance de silhouette
+rlva-modifier-avatar-min = Caméra - Distance à l’avatar (min)
+rlva-modifier-avatar-max = Caméra - Distance à l’avatar (max)
+rlva-modifier-focus-min = Caméra - Distance au point focal (min)
+rlva-modifier-focus-max = Caméra - Distance au point focal (max)
+rlva-modifier-eye-offset = Caméra - Décalage de l’œil
+rlva-modifier-eye-scale = Caméra - Échelle du décalage de l’œil
+rlva-modifier-focus-offset = Caméra - Décalage du point focal
+rlva-modifier-fov-min = Caméra - Champ de vision (min)
+rlva-modifier-fov-max = Caméra - Champ de vision (max)
+rlva-modifier-texture = Caméra - Texture forcée
+rlva-modifier-nametags = Noms - Distance de visibilité
+rlva-modifier-sittp = Distance SitTp
+rlva-modifier-tplocal = Distance de téléportation locale
 rlva-compatibility-hint = Entrées creator:<UUID> ou name:<expression régulière>, séparées par des points-virgules. Les attaches portées correspondantes reçoivent l’ancienne version de protocole 2.9.28 ; les noms correspondent en entier, sans tenir compte de la casse.
 rlva-env-locks-hint = Autoriser les scripts à ajouter et retirer des verrous sur les commandes d’éclairage personnel. Les commandes imposant un environnement restent disponibles, comme dans le Legacy Viewer.
 rlva-temp-controllers = Autoriser les attaches temporaires RLVa
@@ -13338,3 +13373,69 @@ picker-pipette-no-texture = Aucune texture copiable trouvée dans votre inventai
 picker-pipette-no-material = Aucun matériau copiable trouvé dans votre inventaire.
 
 local-texture-preview-hint = Texture locale — aperçu d’un fichier de cet ordinateur.
+
+# Object linking: LLSelectMgr::linkObjects
+build-link-error-title = Impossible de lier les objets
+build-link-downloading = Les informations des objets sont en cours de téléchargement. Veuillez patienter puis réessayer.
+build-link-too-many = Impossible de lier { $count } prims. Le maximum est de { $max }.
+build-link-modify = Vous devez avoir le droit de modifier chaque objet à lier.
+build-link-permanent = Un objet permanent de cette sélection ne peut pas être lié depuis une autre région.
+build-link-owners = Les objets à lier doivent avoir le même propriétaire.
+build-link-regions = Les objets à lier doivent se trouver dans la même région.
+build-link-animesh = La sélection dépasse la limite de triangles des objets animés.
+build-link-restricted = Une restriction empêche la liaison de cette sélection.
+
+# Debug Settings window (LLFloaterSettingsDebug)
+debug-settings-search = Rechercher un paramètre
+debug-settings-changed-only = Afficher uniquement les paramètres modifiés
+debug-settings-none-selected = Choisissez un paramètre dans la liste.
+debug-settings-not-in-preferences = Les Préférences n'ont pas de ligne pour ce paramètre.
+debug-settings-rlva-locked = Verrouillé par une restriction RLVa.
+debug-settings-refused = Cette valeur a été refusée :
+debug-settings-default = Par défaut : { $value }
+debug-settings-copy-name = Copier le nom
+debug-settings-copied = Copié
+debug-settings-reset = Rétablir la valeur par défaut
+debug-settings-type-bool = Activé ou désactivé
+debug-settings-type-int = Nombre entier
+debug-settings-type-float = Nombre
+debug-settings-type-text = Texte
+debug-settings-type-vector = Plusieurs nombres
+debug-settings-warning-title = Avertissement
+debug-settings-warning-text = L'utilisation de la fenêtre Paramètres de débogage n'est pas prise en charge. Modifier ces paramètres peut fortement dégrader votre expérience et entraîner une perte de données, de fonctionnalités, voire d'accès au service. Ne modifiez aucune valeur sans savoir exactement ce que vous faites.
+debug-settings-warning-ignore = Ne plus afficher cet avertissement
+debug-settings-type-color = Couleur
+
+# Preferences › Graphics: the trees' detail (RenderTreeLODFactor)
+ui-options-trees = Arbres
+ui-options-trees-hint = Détail des arbres Linden à distance (0,5 par défaut). À 0, les arbres et l'herbe ne sont pas affichés.
+
+# Preferences › Build (the Legacy Viewer's Build preferences)
+ui-options-about-build = Ce que devient un prim créé avec l'outil Créer.
+ui-options-build-new-objects = Nouveaux objets
+ui-options-build-new-objects-note = Un prim créé avec l'outil Créer prend ces réglages à son apparition.
+ui-options-build-size-hint = Largeur, profondeur et hauteur en mètres (0,01 à 10)
+ui-options-build-material = Matériau
+ui-options-build-flesh = Chair
+ui-options-build-physical = Physique
+ui-options-build-temporary = Temporaire
+ui-options-build-new-faces = Aspect des nouveaux objets
+
+# Preferences › Controls: FSAvatarTurnSpeed
+ui-options-avatar-turn-speed = Vitesse de rotation des avatars
+ui-options-avatar-turn-speed-help = Rapidité supplémentaire avec laquelle les avatars se tournent vers leur direction en marchant ou debout (0 % par défaut). Uniquement sur cet écran.
+
+# Preferences › Mouse and keyboard: FSRevokePerms
+ui-options-revoke-permissions = Révoquer les permissions du siège
+ui-options-revoke-permissions-help = Quand vous vous asseyez sur un objet qui ne vous appartient pas ou que vous vous en levez, retire à ses scripts ce qui leur avait été permis, comme vous animer.
+ui-options-revoke-never = Jamais
+ui-options-revoke-on-sit = Quand je m'assois
+ui-options-revoke-on-stand = Quand je me lève
+ui-options-revoke-on-sit-and-stand = Quand je m'assois et me lève
+
+# Preferences › Protections: large surface protection (RenderVolumeSAProtection)
+large-surface-title = Grandes surfaces
+large-surface-enable = Masquer les objets à la surface démesurée
+large-surface-enable-hint = Protège votre carte graphique des objets conçus pour la surcharger : au-delà du total ci-dessous, les prims et sculpties à la plus grande surface ne sont pas affichés. Peut masquer des objets légitimes.
+large-surface-frame-max = Surface totale affichée
+large-surface-frame-max-hint = La surface des grands objets affichée avant que les plus grands soient masqués (5 000 par défaut).

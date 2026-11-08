@@ -153,6 +153,13 @@ impl Scene {
         self.hud_pick_impl(world, cursor, true, true, picking::FacePick::Surface)
     }
 
+    /// Build's left pick follows the same transparency and hidden-face policy
+    /// as world prim selection. Right-click and ordinary HUD clicks retain
+    /// their separate legacy behavior through `hud_edit_pick` and `hud_pick`.
+    pub fn hud_build_pick(&self, world: &World, cursor: (f32, f32)) -> Option<(usize, Vec3, (Vec3, Vec3))> {
+        self.hud_pick_impl(world, cursor, false, true, self.build_pick())
+    }
+
     fn hud_pick_impl(
         &self,
         world: &World,
@@ -177,15 +184,16 @@ impl Scene {
             let (Some(g), Some(o)) = (self.gpu.get(idx), world.objects.get(idx)) else {
                 continue;
             };
+            let include_object_hidden = include_hidden || (mode == picking::FacePick::Build && self.build_hidden(mode, o));
             if !g.hud
                 || g.owner_avatar != Some(own)
-                || (!include_hidden && mode != picking::FacePick::Surface && g.faces.iter().all(|f| f.pass == Pass::Hidden))
+                || (!include_object_hidden && mode != picking::FacePick::Surface && g.faces.iter().all(|f| f.pass == Pass::Hidden))
                 || (!include_ignored && o.click_action == crate::interaction::code::IGNORE)
                 || !picking::ray_may_hit(g, ray)
             {
                 continue;
             }
-            if let Some(hit) = self.face_hit_mode(world, idx, ray, now, include_hidden, mode)
+            if let Some(hit) = self.face_hit_mode(world, idx, ray, now, include_object_hidden, mode)
                 && hit.t < nearest
             {
                 nearest = hit.t;

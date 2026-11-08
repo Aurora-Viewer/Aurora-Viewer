@@ -1,7 +1,7 @@
 //! Media on a prim: the per-face media entries (LLMediaEntry), the media
 //! version carried by object updates ("x-mv:0000000003/<agent id>",
 //! LLTextureEntry::getVersionFromMediaVersionString) and the ObjectMedia
-//! capability requests (LLMediaDataClient: GET, one object at a time).
+//! capability requests (LLMediaDataClient: GET, one object per second).
 //!
 //! Derived from indra/llprimitive/llmediaentry.cpp and
 //! indra/newview/llmediadataclient.cpp, Copyright (C) Linden Research, Inc.,
@@ -224,43 +224,58 @@ pub struct Fetched {
     pub data: Result<ObjectMediaData, String>,
 }
 
+/// One GET waiting for its turn, in flight, or waiting to be retried.
+#[derive(Debug)]
 struct Pending {
     object: Uuid,
     generation: u64,
     cap: String,
-    retries: u32,
-    not_before: Instant,
-    /// When it was first queued (the logs of our own requests).
-    queued_at: Instant,
-    /// Sent first, highest first: our HUDs (2), our other attachments (1),
-    /// the world (0), as LLMediaDataClient's sorted queue (by
-    /// getMediaInterest) puts a HUD panel ahead of a body's prims.
+    /// Attempts already made.
+    attempts: u32,
+    /// A refresh of data already received (the round-robin queue), rather
+    /// than the first load of an object (the sorted queue).
+    update: bool,
+    /// Dynamic priority: shown media, HUD, own attachment, world.
     priority: u8,
 }
 
-/// ObjectMedia GET queue (LLObjectMediaDataClient): one request per
-/// PrimMediaRequestQueueDelay (1 s), as LLMediaDataClient::serviceQueue
-/// "peels one off" per tick, failures retried after PrimMediaRetryTimerDelay
-/// (5 s) up to PrimMediaMaxRetries (4) times. Faster, a region behind a
-/// proxy answers 503 to all of them.
+/// Why a GET failed: `retry` when the simulator was busy (503, its answer
+/// to the rate limit) or the request never reached it.
+struct GetError {
+    message: String,
+    retry: bool,
+}
+
+/// ObjectMedia GET queue, as LLObjectMediaDataClient: the simulator allows
+/// about 5 requests every 5 s per agent and answers 503 beyond, so one
+/// request leaves per PrimMediaRequestQueueDelay (1 s). First loads wait in
+/// a queue sorted by interest (the face nearest the eye first), refreshes
+/// after a media change in a round-robin queue, and the two take turns so
+/// that a script changing a screen is not stuck behind a region's worth of
+/// first loads. A busy answer is retried after PrimMediaRetryTimerDelay
+/// (5 s), PrimMediaMaxRetries (4) attempts in all; the caller then waits for
+/// the next media change of the object before asking again.
 pub struct MediaDataClient {
-    queue: VecDeque<Pending>,
-    queued: HashMap<Uuid, u64>,
-    in_flight: usize,
-    tx: crossbeam_channel::Sender<(Fetched, String, u32, u8, Instant, u64)>,
-    rx: crossbeam_channel::Receiver<(Fetched, String, u32, u8, Instant, u64)>,
-    last_batch: Instant,
+    sorted: Vec<Pending>,
+    round_robin: VecDeque<Pending>,
+    /// Busy answers, re-queued at their instant (LLMediaDataClient::RetryTimer).
+    retrying: Vec<(Instant, Pending)>,
+    /// Objects queued, retrying or in flight.
+    /// Generation and latest priority for queued, retrying, or in-flight GETs.
+    queued: HashMap<Uuid, (u64, u8)>,
     next_generation: u64,
+    /// The sorted queue's turn (LLObjectMediaDataClient::swapCurrentQueue).
+    sorted_turn: bool,
+    tx: crossbeam_channel::Sender<(Pending, Result<ObjectMediaData, GetError>)>,
+    rx: crossbeam_channel::Receiver<(Pending, Result<ObjectMediaData, GetError>)>,
+    last_send: Option<Instant>,
 }
 
 const QUEUE_DELAY: Duration = Duration::from_millis(1000);
 const RETRY_DELAY: Duration = Duration::from_secs(5);
-const MAX_RETRIES: u32 = 4;
-const MAX_IN_FLIGHT: usize = 4;
-const BATCH: usize = 1;
-/// Request priorities (`Pending::priority`): media already on screen (its
-/// interest, the score LLMediaDataClient sorts by), a HUD, an attachment of
-/// ours, the world.
+/// PrimMediaMaxRetries: LLMediaDataClient::Handler::onFailure counts the
+/// first attempt, so 4 attempts in all.
+const MAX_ATTEMPTS: u32 = 4;
 pub const SHOWN: u8 = 3;
 pub const HUD: u8 = 2;
 pub const ATTACHMENT: u8 = 1;
@@ -270,163 +285,213 @@ impl Default for MediaDataClient {
     fn default() -> Self {
         let (tx, rx) = crossbeam_channel::unbounded();
         MediaDataClient {
-            queue: VecDeque::new(),
+            sorted: Vec::new(),
+            round_robin: VecDeque::new(),
+            retrying: Vec::new(),
             queued: HashMap::new(),
-            in_flight: 0,
+            next_generation: 0,
+            sorted_turn: true,
             tx,
             rx,
-            last_batch: Instant::now() - QUEUE_DELAY,
-            next_generation: 0,
+            last_send: None,
         }
     }
 }
 
 impl MediaDataClient {
     #[cfg(test)]
-    pub(super) fn queued_priorities(&self) -> Vec<(Uuid, u8)> {
-        self.queue.iter().map(|p| (p.object, p.priority)).collect()
+    pub(super) fn queued_priority(&self, object: &Uuid) -> Option<u8> {
+        self.queued.get(object).map(|(_, priority)| *priority)
+    }
+
+    #[cfg(test)]
+    pub(super) fn next_due_object(&mut self, now: Instant, interest: impl Fn(&Uuid) -> Option<(f32, f32)>) -> Option<Uuid> {
+        self.next(now, interest).map(|p| p.object)
     }
 
     pub fn is_queued(&self, object: &Uuid) -> bool {
         self.queued.contains_key(object)
     }
 
-    /// Queue a GET for an object (no-op if already queued), `priority` as
-    /// `Pending::priority`.
-    pub fn request(&mut self, object: Uuid, cap: &str, priority: u8) {
+    /// Queue a GET for an object (no-op if already queued, retrying or in
+    /// flight). `update`: the object's data was received before.
+    pub fn request(&mut self, object: Uuid, cap: &str, update: bool, priority: u8) {
         if self.queued.contains_key(&object) {
             return;
         }
         let generation = self.next_generation;
         self.next_generation = self.next_generation.wrapping_add(1);
-        self.queued.insert(object, generation);
-        if priority >= HUD {
-            let ahead = self.queue.iter().filter(|p| p.priority >= priority).count();
-            log::info!(
-                "media: ObjectMedia for our HUD {object} queued (priority {priority}, {ahead} ahead at it or above, {} in flight)",
-                self.in_flight
-            );
-        }
-        self.queue.push_back(Pending {
+        self.queued.insert(object, (generation, priority));
+        let p = Pending {
             object,
             generation,
             cap: cap.to_string(),
-            retries: 0,
-            not_before: Instant::now(),
-            queued_at: Instant::now(),
+            attempts: 0,
+            update,
             priority,
-        });
+        };
+        self.enqueue(p);
     }
 
-    /// A queued request turns out to be ours (its avatar arrived after it
-    /// was queued): it moves up to `priority`.
-    pub fn prioritize(&mut self, object: &Uuid, priority: u8) {
-        if let Some(p) = self.queue.iter_mut().find(|p| p.object == *object)
-            && p.priority < priority
-        {
-            p.priority = priority;
-            if priority >= HUD {
-                log::info!("media: ObjectMedia for our HUD {object} moved up ({} in flight)", self.in_flight);
-            }
+    fn enqueue(&mut self, p: Pending) {
+        if p.update {
+            self.round_robin.push_back(p);
+        } else {
+            self.sorted.push(p);
         }
     }
 
     pub fn clear(&mut self) {
-        self.queue.clear();
+        self.sorted.clear();
+        self.round_robin.clear();
+        self.retrying.clear();
         self.queued.clear();
     }
 
-    /// Forget a request whose object no longer has media to confirm.
-    pub fn cancel(&mut self, object: &Uuid) {
-        self.queue.retain(|p| p.object != *object);
-        self.queued.remove(object);
-    }
-
-    fn next_due(&self, now: Instant) -> Option<usize> {
-        let top = self.queue.iter().filter(|p| p.not_before <= now).map(|p| p.priority).max()?;
-        self.queue.iter().position(|p| p.not_before <= now && p.priority == top)
-    }
-
-    /// Send due requests, return the answers that arrived.
-    pub fn update(&mut self, rt: &tokio::runtime::Handle, http: &reqwest::Client) -> Vec<Fetched> {
+    /// Send the next request when its turn has come, return the answers
+    /// that arrived. `interest` ranks the first loads (pixels on screen,
+    /// then nearness); `None` drops the request of an object that is gone.
+    pub fn update(
+        &mut self,
+        rt: &tokio::runtime::Handle,
+        http: &reqwest::Client,
+        now: Instant,
+        interest: impl Fn(&Uuid) -> Option<(f32, f32)>,
+    ) -> Vec<Fetched> {
         let mut out = Vec::new();
-        while let Ok((f, cap, retries, priority, queued_at, generation)) = self.rx.try_recv() {
-            if priority >= HUD {
-                log::info!(
-                    "media: ObjectMedia for our HUD {} answered {:.1} s after it was queued ({})",
-                    f.object,
-                    queued_at.elapsed().as_secs_f32(),
-                    if f.data.is_ok() { "ok" } else { "failed" }
-                );
-            }
-            self.in_flight = self.in_flight.saturating_sub(1);
-            if self.queued.get(&f.object) != Some(&generation) {
-                continue;
-            }
-            match &f.data {
-                Err(e) if retries < MAX_RETRIES && !e.starts_with("error 8002") => {
-                    log::debug!("ObjectMedia GET {} failed ({e}), retrying", f.object);
-                    self.queue.push_back(Pending {
-                        object: f.object,
-                        generation,
-                        cap,
-                        retries: retries + 1,
-                        not_before: Instant::now() + RETRY_DELAY,
-                        queued_at,
-                        priority,
-                    });
-                }
-                _ => {
-                    self.queued.remove(&f.object);
-                    out.push(f);
-                }
+        while let Ok((p, result)) = self.rx.try_recv() {
+            if let Some(f) = self.answer(p, result, now) {
+                out.push(f);
             }
         }
-        if self.last_batch.elapsed() < QUEUE_DELAY {
-            return out;
-        }
-        let now = Instant::now();
-        let mut sent = 0;
-        while sent < BATCH && self.in_flight < MAX_IN_FLIGHT {
-            // the highest priority first, the oldest due request of it
-            let Some(i) = self.next_due(now) else {
-                break;
-            };
-            let Some(p) = self.queue.remove(i) else {
-                break;
-            };
-            if p.priority >= HUD {
-                log::info!(
-                    "media: ObjectMedia for our HUD {} sent {:.1} s after it was queued",
-                    p.object,
-                    p.queued_at.elapsed().as_secs_f32()
-                );
-            }
-            sent += 1;
-            self.in_flight += 1;
+        if let Some(p) = self.next(now, interest) {
             let (tx, http) = (self.tx.clone(), http.clone());
             rt.spawn(async move {
                 let data = get(&http, &p.cap, p.object).await;
-                let _ = tx.send((
-                    Fetched { object: p.object, data },
-                    p.cap,
-                    p.retries,
-                    p.priority,
-                    p.queued_at,
-                    p.generation,
-                ));
+                let _ = tx.send((p, data));
             });
         }
-        if sent > 0 {
-            self.last_batch = now;
-        }
         out
+    }
+
+    /// Recompute a pending request's priority in either direction.
+    pub fn prioritize(&mut self, object: &Uuid, priority: u8) {
+        if let Some((_, current)) = self.queued.get_mut(object) {
+            *current = priority;
+        }
+        for p in self
+            .sorted
+            .iter_mut()
+            .chain(&mut self.round_robin)
+            .chain(self.retrying.iter_mut().map(|(_, p)| p))
+            .filter(|p| p.object == *object)
+        {
+            p.priority = priority;
+        }
+    }
+
+    /// Cancel a removed object's queued or in-flight request.
+    pub fn cancel(&mut self, object: &Uuid) {
+        self.sorted.retain(|p| p.object != *object);
+        self.round_robin.retain(|p| p.object != *object);
+        self.retrying.retain(|(_, p)| p.object != *object);
+        self.queued.remove(object);
+    }
+
+    /// An answer: kept for a retry when the simulator was busy, else handed
+    /// to the caller.
+    fn answer(&mut self, mut p: Pending, result: Result<ObjectMediaData, GetError>, now: Instant) -> Option<Fetched> {
+        let (generation, priority) = self.queued.get(&p.object).copied()?;
+        if generation != p.generation {
+            return None;
+        }
+        p.priority = priority;
+        p.attempts += 1;
+        let data = match result {
+            Ok(d) => Ok(d),
+            Err(e) if e.retry && p.attempts < MAX_ATTEMPTS => {
+                log::debug!("ObjectMedia GET {} failed ({}), retrying in 5 s", p.object, e.message);
+                self.retrying.push((now + RETRY_DELAY, p));
+                return None;
+            }
+            Err(e) => Err(e.message),
+        };
+        self.queued.remove(&p.object);
+        Some(Fetched { object: p.object, data })
+    }
+
+    /// The request to send now, if any: one per QUEUE_DELAY, from the
+    /// queue whose turn it is (LLObjectMediaDataClient::processQueueTimer).
+    fn next(&mut self, now: Instant, interest: impl Fn(&Uuid) -> Option<(f32, f32)>) -> Option<Pending> {
+        let mut i = 0;
+        while i < self.retrying.len() {
+            if self.retrying[i].0 <= now {
+                let (_, p) = self.retrying.swap_remove(i);
+                self.enqueue(p);
+            } else {
+                i += 1;
+            }
+        }
+        if self.last_send.is_some_and(|t| now.duration_since(t) < QUEUE_DELAY) {
+            return None;
+        }
+        // objects gone since they were queued (Request::isDead)
+        let queued = &mut self.queued;
+        let mut alive = |p: &mut Pending| {
+            let keep = interest(&p.object).is_some();
+            if !keep {
+                if queued.get(&p.object).is_some_and(|(generation, _)| *generation == p.generation) {
+                    queued.remove(&p.object);
+                }
+            } else if let Some((generation, priority)) = queued.get(&p.object).copied()
+                && generation == p.generation
+            {
+                p.priority = priority;
+            }
+            keep
+        };
+        self.sorted.retain_mut(&mut alive);
+        self.round_robin.retain_mut(&mut alive);
+        let best_sorted = self
+            .sorted
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| {
+                let (ia, ib) = (interest(&a.object).unwrap_or_default(), interest(&b.object).unwrap_or_default());
+                a.priority.cmp(&b.priority).then(ia.0.total_cmp(&ib.0)).then(ib.1.total_cmp(&ia.1))
+            })
+            .map(|(i, p)| (i, p.priority));
+        let update_priority = self.round_robin.iter().map(|p| p.priority).max();
+        let best_round_robin =
+            update_priority.and_then(|priority| self.round_robin.iter().position(|p| p.priority == priority).map(|i| (i, priority)));
+        let use_sorted = match (best_sorted, best_round_robin) {
+            (None, None) => return None,
+            (Some(_), None) => true,
+            (None, Some(_)) => false,
+            (Some((_, sorted_priority)), Some((_, update_priority))) if sorted_priority > update_priority => true,
+            (Some((_, sorted_priority)), Some((_, update_priority))) if update_priority > sorted_priority => false,
+            (Some(_), Some(_)) => self.sorted_turn,
+        };
+        let p = if use_sorted {
+            self.sorted.swap_remove(best_sorted?.0)
+        } else {
+            self.round_robin.remove(best_round_robin?.0)?
+        };
+        // the other queue's turn next (swapCurrentQueue)
+        self.sorted_turn = !use_sorted;
+        self.last_send = Some(now);
+        Some(p)
     }
 }
 
 /// POST {verb: GET, object_id} → {object_id, object_media_version,
 /// object_media_data: [entry | undef per face]} or {error: {code, message}}.
-async fn get(http: &reqwest::Client, cap: &str, object: Uuid) -> Result<ObjectMediaData, String> {
+async fn get(http: &reqwest::Client, cap: &str, object: Uuid) -> Result<ObjectMediaData, GetError> {
+    let unsent = |e: reqwest::Error| GetError {
+        message: e.without_url().to_string(),
+        retry: true,
+    };
+    let fail = |message: String| GetError { message, retry: false };
     let mut m = Map::new();
     m.insert("verb".into(), Llsd::String("GET".into()));
     m.insert("object_id".into(), Llsd::Uuid(object));
@@ -438,14 +503,18 @@ async fn get(http: &reqwest::Client, cap: &str, object: Uuid) -> Result<ObjectMe
         .timeout(Duration::from_secs(30))
         .send()
         .await
-        .map_err(|e| e.without_url().to_string())?;
+        .map_err(unsent)?;
     let status = resp.status();
     if !status.is_success() {
-        return Err(format!("HTTP {status}"));
+        // LLMediaDataClient::Handler::onFailure retries HTTP_SERVICE_UNAVAILABLE only
+        return Err(GetError {
+            message: format!("HTTP {status}"),
+            retry: status == reqwest::StatusCode::SERVICE_UNAVAILABLE,
+        });
     }
-    let bytes = resp.bytes().await.map_err(|e| e.without_url().to_string())?;
-    let v = aurora_llsd::from_xml(&bytes).map_err(|e| e.to_string())?;
-    parse_get_response(&v, object)
+    let bytes = resp.bytes().await.map_err(|e| fail(e.without_url().to_string()))?;
+    let v = aurora_llsd::from_xml(&bytes).map_err(|e| fail(e.to_string()))?;
+    parse_get_response(&v, object).map_err(fail)
 }
 
 pub fn parse_get_response(v: &Llsd, object: Uuid) -> Result<ObjectMediaData, String> {
@@ -470,109 +539,6 @@ pub fn parse_get_response(v: &Llsd, object: Uuid) -> Result<ObjectMediaData, Str
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn object_media_requests_go_out_one_per_second() {
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
-        let http = reqwest::Client::new();
-        let mut client = MediaDataClient::default();
-        for n in 1..=3 {
-            client.request(
-                Uuid::from_u128(n),
-                "http://127.0.0.1:9/media",
-                if n == 3 { HUD } else { ATTACHMENT },
-            );
-        }
-        client.update(rt.handle(), &http);
-        assert_eq!(client.queue.len(), 2, "one sent, as serviceQueue peels one off");
-        assert!(client.queue.iter().all(|p| p.object != Uuid::from_u128(3)), "our HUD goes first");
-        client.update(rt.handle(), &http);
-        assert_eq!(client.queue.len(), 2, "the next waits for PrimMediaRequestQueueDelay");
-        // a request queued before its avatar was known goes first once it is
-        client.request(Uuid::from_u128(4), "http://127.0.0.1:9/media", WORLD);
-        client.prioritize(&Uuid::from_u128(4), HUD);
-        assert!(client.queue.iter().any(|p| p.object == Uuid::from_u128(4) && p.priority == HUD));
-        // a page already on screen asked again goes before every HUD prim
-        client.request(Uuid::from_u128(5), "http://127.0.0.1:9/media", SHOWN);
-        client.last_batch = Instant::now() - QUEUE_DELAY;
-        client.update(rt.handle(), &http);
-        assert!(client.queue.iter().all(|p| p.object != Uuid::from_u128(5)), "shown media first");
-    }
-
-    #[test]
-    fn a_new_hud_is_serviced_before_a_backlog_of_world_media() {
-        let mut client = MediaDataClient::default();
-        for n in 1..=8 {
-            client.request(Uuid::from_u128(n), "http://127.0.0.1:9/media", WORLD);
-        }
-        let hud = Uuid::from_u128(99);
-        client.request(hud, "http://127.0.0.1:9/media", HUD);
-        let next = client.next_due(Instant::now()).map(|i| client.queue[i].object);
-        assert_eq!(next, Some(hud), "the HUD is next despite the world backlog");
-    }
-
-    #[test]
-    fn canceled_in_flight_media_does_not_retry_after_a_late_failure() {
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
-        let http = reqwest::Client::new();
-        let mut client = MediaDataClient::default();
-        let id = Uuid::from_u128(123);
-        client.queued.insert(id, 0);
-        client.in_flight = 1;
-        client
-            .tx
-            .send((
-                Fetched {
-                    object: id,
-                    data: Err("timeout".into()),
-                },
-                String::new(),
-                0,
-                WORLD,
-                Instant::now(),
-                0,
-            ))
-            .expect("test result");
-        client.cancel(&id);
-        client.update(rt.handle(), &http);
-        assert!(!client.is_queued(&id));
-        assert!(client.queue.is_empty());
-        assert_eq!(client.in_flight, 0);
-    }
-
-    #[test]
-    fn a_late_response_cannot_retry_over_a_new_request_for_the_same_object() {
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
-        let http = reqwest::Client::new();
-        let mut client = MediaDataClient::default();
-        let id = Uuid::from_u128(123);
-        client.request(id, "https://example.invalid/old", WORLD);
-        let old_generation = client.queued[&id];
-        client.cancel(&id);
-        client.request(id, "https://example.invalid/new", WORLD);
-        let new_generation = client.queued[&id];
-        assert_ne!(old_generation, new_generation);
-        client.in_flight = 1;
-        client
-            .tx
-            .send((
-                Fetched {
-                    object: id,
-                    data: Err("timeout".into()),
-                },
-                "https://example.invalid/old".into(),
-                0,
-                WORLD,
-                Instant::now(),
-                old_generation,
-            ))
-            .expect("test result");
-        client.last_batch = Instant::now();
-        client.update(rt.handle(), &http);
-        assert_eq!(client.queued.get(&id), Some(&new_generation));
-        assert_eq!(client.queued_priorities(), vec![(id, WORLD)]);
-        assert_eq!(client.in_flight, 0);
-    }
 
     #[test]
     fn entry_round_trips() {
@@ -621,6 +587,130 @@ mod tests {
         // a HUD page locked to its home page: nobody navigates it
         e.perms_interact = 0;
         assert!(!e.may_navigate(true) && !e.may_navigate(false));
+    }
+
+    fn id(n: u128) -> Uuid {
+        Uuid::from_u128(n)
+    }
+
+    fn busy() -> Result<ObjectMediaData, GetError> {
+        Err(GetError {
+            message: "HTTP 503 Service Unavailable".into(),
+            retry: true,
+        })
+    }
+
+    #[test]
+    fn one_request_per_second_whatever_the_queue() {
+        let mut c = MediaDataClient::default();
+        for n in 1..=40 {
+            c.request(id(n), "cap", false, WORLD);
+        }
+        let t0 = Instant::now();
+        let any = |_: &Uuid| Some((0.0, 1.0));
+        let mut sent = 0;
+        // 10 s of frames at 100 Hz: 10 requests, never more than 1 a second
+        for frame in 0..1000 {
+            if c.next(t0 + Duration::from_millis(frame * 10), any).is_some() {
+                sent += 1;
+            }
+        }
+        assert_eq!(sent, 10);
+    }
+
+    #[test]
+    fn first_loads_go_by_interest_and_take_turns_with_refreshes() {
+        let mut c = MediaDataClient::default();
+        // far, near and on-screen first loads, then a refresh
+        c.request(id(1), "cap", false, WORLD);
+        c.request(id(2), "cap", false, WORLD);
+        c.request(id(3), "cap", false, WORLD);
+        c.request(id(9), "cap", true, WORLD);
+        let interest = |o: &Uuid| {
+            Some(match o.as_u128() {
+                1 => (0.0, 90.0),
+                2 => (0.0, 10.0),
+                3 => (5000.0, 30.0),
+                _ => (0.0, 50.0),
+            })
+        };
+        let t0 = Instant::now();
+        let order: Vec<u128> = (0..4)
+            .filter_map(|s| c.next(t0 + Duration::from_secs(s), interest))
+            .map(|p| p.object.as_u128())
+            .collect();
+        assert_eq!(order, [3, 9, 2, 1]);
+    }
+
+    #[test]
+    fn queued_refresh_priority_drops_after_visibility_expires_below_hud_load() {
+        let mut c = MediaDataClient::default();
+        c.request(id(1), "cap", true, SHOWN);
+        c.prioritize(&id(1), WORLD);
+        c.request(id(2), "cap", false, HUD);
+        let now = Instant::now();
+        // A newly attached HUD outranks the now off-screen round-robin refresh,
+        // even though the scheduler would otherwise favor its refresh turn.
+        assert_eq!(c.next_due_object(now, |_| Some((0.0, 1.0))), Some(id(2)));
+        c.prioritize(&id(1), SHOWN);
+        assert_eq!(c.queued.get(&id(1)).map(|(_, p)| *p), Some(SHOWN));
+    }
+
+    #[test]
+    fn cancel_invalidates_a_late_answer_and_allows_a_fresh_request() {
+        let mut c = MediaDataClient::default();
+        c.request(id(1), "cap", false, WORLD);
+        let old = c.next(Instant::now(), |_| Some((0.0, 1.0))).unwrap();
+        c.cancel(&id(1));
+        c.request(id(1), "cap", false, HUD);
+        assert!(c.answer(old, Ok(ObjectMediaData::default()), Instant::now()).is_none());
+        assert_eq!(c.queued.get(&id(1)).map(|(_, p)| *p), Some(HUD));
+    }
+
+    #[test]
+    fn busy_answers_are_retried_four_attempts_in_all() {
+        let mut c = MediaDataClient::default();
+        c.request(id(1), "cap", false, WORLD);
+        let any = |_: &Uuid| Some((0.0, 1.0));
+        let mut t = Instant::now();
+        for attempt in 1..=MAX_ATTEMPTS {
+            let p = c.next(t, any).expect("request sent");
+            assert_eq!(p.attempts, attempt - 1);
+            let got = c.answer(p, busy(), t);
+            if attempt < MAX_ATTEMPTS {
+                assert!(got.is_none() && c.is_queued(&id(1)));
+                // not before the retry delay
+                assert!(c.next(t + Duration::from_secs(2), any).is_none());
+                t += RETRY_DELAY;
+            } else {
+                assert!(got.expect("given up").data.is_err());
+                assert!(!c.is_queued(&id(1)));
+            }
+        }
+        assert!(c.next(t + Duration::from_secs(60), any).is_none(), "nothing left to send");
+    }
+
+    #[test]
+    fn other_failures_are_not_retried() {
+        let mut c = MediaDataClient::default();
+        c.request(id(1), "cap", false, WORLD);
+        let t = Instant::now();
+        let p = c.next(t, |_| Some((0.0, 1.0))).expect("request sent");
+        let refused = Err(GetError {
+            message: "HTTP 404 Not Found".into(),
+            retry: false,
+        });
+        assert!(c.answer(p, refused, t).expect("answer").data.is_err());
+        assert!(!c.is_queued(&id(1)));
+    }
+
+    #[test]
+    fn requests_of_objects_gone_are_dropped() {
+        let mut c = MediaDataClient::default();
+        c.request(id(1), "cap", false, WORLD);
+        c.request(id(2), "cap", true, WORLD);
+        assert!(c.next(Instant::now(), |_| None).is_none());
+        assert!(!c.is_queued(&id(1)) && !c.is_queued(&id(2)));
     }
 
     #[test]
