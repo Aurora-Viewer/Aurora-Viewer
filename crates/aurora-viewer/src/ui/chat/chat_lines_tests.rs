@@ -46,6 +46,8 @@ fn frame(ctx: &egui::Context, world: &World, seconds: f32, cards: bool, frame: u
             &mut wanted,
             BAR,
             seconds,
+            // ConsoleMaxLines default (`settings::chat_console_max_lines`).
+            40,
             true,
             false,
             cards,
@@ -147,6 +149,7 @@ fn painted(ctx: &egui::Context, world: &World, cards: bool, frame: u32) -> usize
             &mut wanted,
             BAR,
             200.0,
+            40,
             true,
             false,
             cards,
@@ -204,6 +207,8 @@ fn bounds(ctx: &egui::Context, world: &World, seconds: f32, cards: bool, frame: 
             &mut wanted,
             BAR,
             seconds,
+            // ConsoleMaxLines default (`settings::chat_console_max_lines`).
+            40,
             true,
             false,
             cards,
