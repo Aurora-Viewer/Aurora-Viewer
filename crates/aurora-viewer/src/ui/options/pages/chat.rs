@@ -94,6 +94,15 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     0.0..=60.0,
                     " s",
                 );
+                // ConsoleMaxLines (panel_preferences_chat.xml): count the
+                // wrapped text rows, as LLConsole::draw does.
+                cx.slider(
+                    tr!("ui-options-chat-console-max-lines"),
+                    tr!("ui-options-chat-console-max-lines-hint"),
+                    &field!(chat_console_max_lines),
+                    0..=50,
+                    "",
+                );
                 // the Legacy Viewer's Chat › Visuals (UseChatBubbles and what
                 // depends on it; ChatBubbleOpacity is in its Colors), #673
                 cx.toggle(
@@ -145,17 +154,26 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-send-typing-hint"),
                     &field!(send_typing_state),
                 );
-                // a direct payment's card in the payer's conversation (#1198)
-                cx.toggle(
+                // whose direct payment opens a closed conversation on its
+                // card (#1198), one choice per direction (#2638); the Legacy
+                // Viewer never opens one (Never in both)
+                use crate::world::payments::Opens;
+                let opens = [
+                    (Opens::Never, tr!("ui-options-payment-opens-never")),
+                    (Opens::Friends, tr!("ui-options-payment-opens-friends")),
+                    (Opens::Anyone, tr!("ui-options-payment-opens-anyone")),
+                ];
+                cx.combo(
                     tr!("ui-options-payment-opens-conversation"),
                     tr!("ui-options-payment-opens-conversation-hint"),
-                    &field!(payment_opens_conversation),
+                    &field!(payment_received_opens),
+                    &opens,
                 );
-                // and our own payment's card in the payee's conversation
-                cx.toggle(
+                cx.combo(
                     tr!("ui-options-payment-sent-opens-conversation"),
                     tr!("ui-options-payment-sent-opens-conversation-hint"),
-                    &field!(payment_sent_opens_conversation),
+                    &field!(payment_sent_opens),
+                    &opens,
                 );
                 // the tab of a conversation with news flashes
                 // (FSFloaterIMContainer::startFlashingTab), in violet and softly

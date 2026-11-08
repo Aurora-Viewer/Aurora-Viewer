@@ -436,6 +436,15 @@ impl ChatUi {
         self.focus_request || (!self.bar_hidden && (self.has_focus || !self.input.trim().is_empty()))
     }
 
+    /// The keyboard taken from every field (mouselook begun or ended,
+    /// gFocusMgr.setKeyboardFocus(NULL)): a request not served yet goes
+    /// too, so the field does not take it back next frame; the draft stays.
+    pub fn let_keyboard_go(&mut self) {
+        self.focus_request = false;
+        self.conv_focus_request = false;
+        self.has_focus = false;
+    }
+
     /// The nearby chat is in its own window (#910): the chat island's
     /// button shows and hides that window.
     pub fn nearby_apart(&self) -> bool {
@@ -3545,6 +3554,7 @@ pub fn toasts(
     wanted_pics: &mut HashSet<uuid::Uuid>,
     bottom: f32,
     seconds: f32,
+    max_lines: u32,
     times: bool,
     pills: bool,
     cards: bool,
@@ -3561,6 +3571,7 @@ pub fn toasts(
             wanted_pics,
             bottom,
             seconds,
+            max_lines,
             times,
             compact_automated,
             residents,
@@ -3568,14 +3579,25 @@ pub fn toasts(
         return;
     }
     let now = std::time::SystemTime::now();
-    let recent: Vec<_> = world
-        .chat
-        .iter()
-        .rev()
-        .filter(|l| residents || !said_by_resident(l))
-        .take(6)
-        .filter(|l| now.duration_since(l.time).map(|d| d.as_secs_f32() < seconds).unwrap_or(false))
-        .collect();
+    let size = super::fonts::chat_size(ctx, if pills { 12.0 } else { 13.0 });
+    let family = pills.then(|| super::fonts::semibold(ctx));
+    let recent = console::recent(world, now, seconds, max_lines, residents, |line| {
+        console::rows(
+            ctx,
+            line,
+            line_job(
+                ctx,
+                line,
+                p,
+                world,
+                want_names,
+                540.0,
+                size,
+                times,
+                family.as_ref().map_or(JobLook::Line, JobLook::Pill),
+            ),
+        )
+    });
     if recent.is_empty() {
         return;
     }
@@ -3601,7 +3623,7 @@ pub fn toasts(
             if pills {
                 ui.spacing_mut().item_spacing.y = 0.0;
             }
-            for line in recent.into_iter().rev() {
+            for line in recent {
                 let age = now.duration_since(line.time).map(|d| d.as_secs_f32()).unwrap_or(0.0);
                 let alpha = ((seconds - age) / 3.0).clamp(0.0, 1.0);
                 let tint = Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), (190.0 * alpha) as u8);
@@ -4754,6 +4776,7 @@ mod tests {
                         &mut HashSet::new(),
                         800.0,
                         20.0,
+                        40,
                         false,
                         true,
                         false,
