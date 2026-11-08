@@ -1693,7 +1693,7 @@ impl ObjectStore {
 
     /// A prim of a linkset worn on a HUD point (31–38). The simulator only
     /// sends the HUDs of our own avatar.
-    fn worn_on_hud(&self, mut idx: usize) -> bool {
+    pub fn worn_on_hud(&self, mut idx: usize) -> bool {
         for _ in 0..16 {
             let Some(o) = self.get(idx) else {
                 return false;

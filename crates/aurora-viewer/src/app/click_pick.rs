@@ -654,7 +654,7 @@ impl App {
         }
         match note {
             DemoNote::Camera(frame) => log::info!(
-                "demo camera f{frame}: {} (mouse {:?}, agent yaw {:.2}, right orbit={}, menu={}, down={}, cursor held={}, alt free={})",
+                "demo camera f{frame}: {} (mouse {:?}, agent yaw {:.2}, right orbit={}, menu={}, down={}, cursor held={}, alt free={}, typing={})",
                 self.camera.describe(),
                 self.mouse_mode,
                 self.world.agent.yaw,
@@ -662,7 +662,9 @@ impl App {
                 self.context_menu.is_some(),
                 self.input.down,
                 self.cursor_hold.held(),
-                self.alt_cursor.free()
+                self.alt_cursor.free(),
+                // the keys go to a field instead of moving the avatar
+                self.egui_ctx.egui_wants_keyboard_input()
             ),
             DemoNote::Action(mode) => log::info!(
                 "demo action click: {mode}; dialog={}, seated={}, contents={}, parcel_playing={}, parcel_paused={}, selected={:?}, focus={:?}, media_url={}",
