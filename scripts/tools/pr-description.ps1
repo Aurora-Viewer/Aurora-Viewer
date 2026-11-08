@@ -144,7 +144,7 @@ function Format-PrDescriptionComment([string[]]$Problems, [string]$TemplateUrl, 
         '',
         $hello,
         '',
-        "Before a maintainer starts the review, its description needs $count from the [pull request template]($TemplateUrl). With the number of pull requests we receive, reviewers rely on the description to understand in a couple of minutes what a change does, where it comes from and how it was tested. This is about the description only: nobody has judged the code yet.",
+        "Before a maintainer starts the review, its description needs $count from the [pull request template]($TemplateUrl). With the number of pull requests we receive, reviewers rely on the description to understand in a couple of minutes what a change does, where it comes from and how it was tested, so the code is not reviewed until the description is complete.",
         '',
         'Here is exactly what the automatic check found:',
         ''
@@ -168,7 +168,7 @@ function Format-PrDescriptionClose([string]$TemplateUrl, $Author) {
     @(
         "$hello this pull request is now closed automatically: $PrDescriptionGraceDays days after the comment above, its description still misses the parts it lists.",
         '',
-        "This is not a judgement of the code: we simply cannot review a change without knowing what it does and how it was tested. Complete the description from the [pull request template]($TemplateUrl), then reopen this pull request (or open a new one), and we will be glad to review it.",
+        "We do not review a change without knowing what it does and how it was tested. Complete the description from the [pull request template]($TemplateUrl), then reopen this pull request (or open a new one) to have it reviewed.",
         '',
         $PrDescriptionMarker
     ) -join "`n"
