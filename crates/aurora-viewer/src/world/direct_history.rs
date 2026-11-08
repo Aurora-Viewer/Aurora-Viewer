@@ -319,6 +319,7 @@ impl World {
         let open: HashSet<Uuid> = self.social.ims.iter().map(|s| s.other).collect();
         self.chat_service.views.retain(|id, _| open.contains(id));
         self.run_chat_service();
+        self.poll_recent_participants();
     }
 
     /// Run the manager when an input or its clock asks, and its actions
@@ -429,6 +430,7 @@ impl World {
                 self.chat_service.names.insert(id);
             }
             Action::SnapshotChanged(id) => self.direct_on_snapshot(id),
+            Action::ConversationsListed(entries) => self.on_recent_conversations(entries),
             Action::ConversationLogEntry {
                 resident,
                 newest_unix_secs,

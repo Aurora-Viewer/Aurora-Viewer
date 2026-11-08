@@ -190,6 +190,10 @@ pub enum Action {
     ResolveName(Uuid),
     /// The resident's [`Snapshot`] changed: its views compose again.
     SnapshotChanged(Uuid),
+    /// The manager accepted the complete conversation list under its ordinary
+    /// gates. Aurora also offers these participants to People > Recent; no
+    /// extra HTTP request or history replay is needed for that addition.
+    ConversationsListed(Vec<aurora_net::chat_service::ListEntry>),
     /// LLConversationLog::addServiceConversation for the resident, at the
     /// archive's newest time (`None`: now). Only when conversation logging
     /// is on.

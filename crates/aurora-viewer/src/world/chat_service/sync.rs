@@ -158,6 +158,9 @@ impl Manager {
                 return None;
             }
         };
+        // This notification shares the validated response and the manager's
+        // consent, server mute-list, deletion, epoch and pacing checks.
+        self.rt.outbox.push(Action::ConversationsListed(list.entries.clone()));
         let entries = list.entries;
         let listed: HashSet<Uuid> = entries.iter().map(|e| e.resident_id).collect();
         let mut confirm = false;

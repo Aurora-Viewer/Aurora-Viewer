@@ -3470,6 +3470,15 @@ impl App {
     /// the login which grid it is made on (the demo is a grid of its own).
     fn sync_chat_log(&mut self) {
         let s = &self.settings;
+        if self.world.agent_id.is_nil() {
+            self.world.social_grid = if self.demo && crate::demo::people::persistence().is_some() {
+                "demo-recent-people".into()
+            } else if self.demo {
+                String::new()
+            } else {
+                crate::world::social_history::grid_key(&s.grid, &s.custom_login_uri)
+            };
+        }
         // ChatServiceEnabled: the manager reads it when the login starts
         self.world.chat_service.enabled = s.chat_service_history;
         // AURORA_DEMO_CHATLOG=service: every run fetches the same history
@@ -7419,7 +7428,7 @@ impl App {
             self.hide_windows_for_exit();
         }
         if self.in_world() {
-            self.world.save_open_ims();
+            self.world.save_social_history();
         }
         if self.in_world() && !self.demo {
             self.record_inventory_logout();
@@ -7486,6 +7495,7 @@ impl App {
         // the last lines of the conversations reach their files
         self.world.chat_log.save_conversations(true);
         self.world.chat_log.flush(Duration::from_secs(2));
+        self.world.flush_social_history();
         // the recent emojis of a message sent just before
         self.chat_ui.recent_emojis.finish(Duration::from_secs(1));
         // and the files handed to the save threads theirs (the settings, the
@@ -11271,9 +11281,14 @@ impl App {
             {
                 self.world.apply(event);
             }
+            self.world.poll_social_history();
             self.world.restore_open_ims(
-                self.settings.reopen_ims || (self.demo && crate::demo::chatlog::mode() == Some(crate::demo::chatlog::Mode::Restore)),
+                self.settings.reopen_ims
+                    || (self.demo
+                        && (crate::demo::people::persistence().is_some()
+                            || crate::demo::chatlog::mode() == Some(crate::demo::chatlog::Mode::Restore))),
             );
+            self.world.save_social_history();
             // FSDisableReturnObjectNotification (AURORA_DEMO_OBJECT_IM=…,returns:
             // on for the run)
             self.world.hide_object_returns = self.settings.hide_object_returns || (self.demo && crate::demo::object_im::hide_returns());

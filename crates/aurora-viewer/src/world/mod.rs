@@ -110,6 +110,7 @@ pub mod script_dialog_limit;
 pub mod search;
 pub mod sim_console;
 pub mod social;
+pub mod social_history;
 pub mod sound_parcels;
 pub mod staff;
 pub mod status;
@@ -957,7 +958,9 @@ pub struct World {
     /// the Legacy Viewer's getSLURLString is.
     tp_back_slurl: Option<(Option<String>, String, Vec3)>,
     /// The account's list of open private and group conversations (open_ims.rs).
-    open_ims_path: Option<std::path::PathBuf>,
+    social_history: social_history::History,
+    /// Fixed before login; distinct from the transcript folder key.
+    pub social_grid: String,
     /// Conversations of the last session, read at login, that the app
     /// reopens when the setting asks for it.
     pub reopen_ims: Vec<open_ims::Conversation>,
@@ -1281,7 +1284,8 @@ impl World {
             hide_object_returns: false,
             render_exceptions: Default::default(),
             tp_back_slurl: None,
-            open_ims_path: None,
+            social_history: Default::default(),
+            social_grid: String::new(),
             reopen_ims: Vec::new(),
             cache_dir: None,
         }
@@ -1291,7 +1295,7 @@ impl World {
     /// stays for the next one: the conversations and the nearby chat go, and
     /// the transcripts close (only their writer and settings are kept).
     pub fn reset(&mut self) {
-        self.save_open_ims();
+        self.flush_social_history();
         let lib = self.avatar_lib.clone();
         let cache_dir = self.cache_dir.take();
         // LLChatServiceHistory::stop; the manager stays, so that no ticket
@@ -3352,10 +3356,8 @@ impl World {
                 if hidden > 0 {
                     log::info!("invisible: hidden again from {hidden} friend(s) the login still showed us to");
                 }
-                let open = account.join(open_ims::FILE);
+                self.social_history = social_history::History::load(&crate::settings::accounts_dir(), l.agent_id, &self.social_grid);
                 self.experiences.log = experience_log::ExperienceLog::load(account.join(experience_log::FILE), &experience_log::now().0);
-                self.reopen_ims = open_ims::load(&open);
-                self.open_ims_path = Some(open);
                 self.calls.load_volumes(account.join(calls::VOLUMES_FILE));
                 self.tp_storage = tphistory::HistoryStorage::load(account.join(tphistory::TELEPORT_HISTORY_FILE));
                 self.hud_scales = hud_scale::HudScales::load(account.join(hud_scale::FILE));

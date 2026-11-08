@@ -1109,3 +1109,47 @@ fn click_ticks_is_the_last_tick_of_its_microsecond() {
     assert_eq!(click_ticks(-1), None);
     assert_eq!(click_ticks(i64::MAX), None);
 }
+
+#[test]
+fn recent_participants_share_one_validated_paced_list() {
+    let mut h = H::new();
+    let a = h.resident(1, [1, 2]);
+    let b = h.resident(2, [3]);
+    h.login();
+    let lists: Vec<_> = h.log.iter().filter_map(|action| match action {
+        Action::ConversationsListed(entries) => Some(entries), _ => None,
+    }).collect();
+    assert_eq!(lists.len(), 1);
+    assert_eq!(lists[0].iter().map(|e| e.resident_id).collect::<Vec<_>>(), [a, b]);
+    assert_eq!(lists[0][0].last_msg_id, msg(2));
+    h.serve_all(10.0);
+    assert_eq!(h.count(|a| matches!(a, Action::Http { body: None, .. })), 1);
+    assert_eq!(h.count(|a| matches!(a, Action::ConversationsListed(_))), 1);
+}
+
+#[test]
+fn recent_participants_cannot_bypass_the_service_gates_or_accept_a_stale_list() {
+    for (enabled, consent, server_mutes) in [(false, true, true), (true, false, true), (true, true, false)] {
+        let mut h = H::new();
+        h.resident(1, [1]);
+        h.m.set_gates(Gates { consent, mute_list_server_loaded: server_mutes });
+        h.start(enabled);
+        assert!(h.next_request_within(Duration::from_secs(10)).is_none());
+        assert_eq!(h.count(|a| matches!(a, Action::ConversationsListed(_))), 0);
+    }
+    let mut h = H::new();
+    h.resident(1, [1]);
+    h.start(true);
+    let old = h.next_request();
+    let body = h.list_body();
+    h.m.set_gates(Gates { consent: false, mute_list_server_loaded: true });
+    h.answer(&old, 200, Some(body.clone()));
+    assert_eq!(h.count(|a| matches!(a, Action::ConversationsListed(_))), 0);
+    h.m.set_gates(Gates { consent: true, mute_list_server_loaded: true });
+    h.start(true);
+    h.answer(&old, 200, Some(body));
+    assert_eq!(h.count(|a| matches!(a, Action::ConversationsListed(_))), 0);
+    let current = h.next_request();
+    h.answer(&current, 200, Some(Llsd::Array(vec![Llsd::Integer(1)])));
+    assert_eq!(h.count(|a| matches!(a, Action::ConversationsListed(_))), 0);
+}
