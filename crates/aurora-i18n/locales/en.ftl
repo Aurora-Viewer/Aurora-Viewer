@@ -13388,7 +13388,6 @@ picker-pipette-no-material = No copyable material found in your inventory.
 
 local-texture-preview-hint = Local texture — preview from a file on this computer.
 
-<<<<<<< HEAD
 wearable-favorites-all = All Favorites
 wearable-favorites-empty = Drag wearable items here to add to list.
 wearable-favorites-no-match = No matching items found.
@@ -13414,7 +13413,6 @@ wearable-favorites-delete-confirm =
 wearable-favorites-invalid-name =
     Could not create Favorite Wearables folder "{ $name }".
     Folder names cannot contain / or \.
-=======
 # Object linking: LLSelectMgr::linkObjects
 build-link-error-title = Unable to link objects
 build-link-downloading = Object information is still downloading. Please wait and try linking again.
@@ -13478,4 +13476,3 @@ ui-options-attached-particles-hint = Draw the particles of what avatars wear: sp
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = Progressive draw distance
 ui-options-draw-distance-stepping-hint = After logging in and after a teleport to another region, the draw distance starts at 32 m and doubles back up to yours, so that what is near loads first.
->>>>>>> upstream/main

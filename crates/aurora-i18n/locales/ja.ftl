@@ -13361,7 +13361,6 @@ picker-pipette-no-material = コピー可能なマテリアルがインベント
 
 local-texture-preview-hint = ローカルテクスチャ — このコンピューターのファイルのプレビュー。
 
-<<<<<<< HEAD
 wearable-favorites-all = 全てのお気に入り
 wearable-favorites-empty = 装着可能な着用物やＨＵＤをドラッグしてリストに追加します。
 wearable-favorites-no-match = アイテムが見つかりませんでした。
@@ -13387,7 +13386,6 @@ wearable-favorites-delete-confirm =
 wearable-favorites-invalid-name =
     お気に入りの着用物のフォルダ「{ $name }」を作成できませんでした。
     フォルダ名に「/」または「\」を含めることはできません。
-=======
 # Object linking: LLSelectMgr::linkObjects
 build-link-error-title = オブジェクトをリンクできません
 build-link-downloading = オブジェクト情報をダウンロード中です。しばらく待ってから再度リンクしてください。
@@ -13451,4 +13449,3 @@ ui-options-attached-particles-hint = アバターが装着しているものの�
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = 描画距離を段階的に広げる
 ui-options-draw-distance-stepping-hint = ログイン後と別のリージョンへのテレポート後、描画距離を32mから始めて設定値まで倍々に広げ、近くのものから読み込みます。
->>>>>>> upstream/main

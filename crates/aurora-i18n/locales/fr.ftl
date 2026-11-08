@@ -13384,7 +13384,6 @@ picker-pipette-no-material = Aucun matériau copiable trouvé dans votre inventa
 
 local-texture-preview-hint = Texture locale — aperçu d’un fichier de cet ordinateur.
 
-<<<<<<< HEAD
 wearable-favorites-all = Tous les favoris
 wearable-favorites-empty = Faites glisser les objets ici pour les ajouter à la liste.
 wearable-favorites-no-match = Aucun élément ne correspond.
@@ -13410,7 +13409,6 @@ wearable-favorites-delete-confirm =
 wearable-favorites-invalid-name =
     Impossible de créer le dossier des vêtements préférés « { $name } ».
     Les noms de dossier ne peuvent pas contenir / ou \.
-=======
 # Object linking: LLSelectMgr::linkObjects
 build-link-error-title = Impossible de lier les objets
 build-link-downloading = Les informations des objets sont en cours de téléchargement. Veuillez patienter puis réessayer.
@@ -13474,4 +13472,3 @@ ui-options-attached-particles-hint = Affiche les particules de ce que portent le
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = Distance d'affichage progressive
 ui-options-draw-distance-stepping-hint = Après la connexion et après une téléportation vers une autre région, la distance d'affichage part de 32 m et double jusqu'à la vôtre, pour que ce qui est proche se charge d'abord.
->>>>>>> upstream/main
