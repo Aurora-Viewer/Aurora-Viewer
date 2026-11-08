@@ -1566,10 +1566,7 @@ impl TextureTable {
     /// again if video memory was full (its page could not be made), `None`
     /// if it was refused for good (size, format, table full).
     pub fn retry_after_refusal(&self) -> Option<Instant> {
-        if !self.store.refused_for_memory {
-            return None;
-        }
-        Some(self.store.page_backoff.next_try().unwrap_or_else(Instant::now))
+        retry_after(self.store.refused_for_memory, self.store.page_backoff.next_try(), Instant::now())
     }
 
     /// Size of the texture in a slot (level 0).
@@ -1900,6 +1897,13 @@ pub fn preserve_alpha_coverage(mips: &mut [(u32, u32, Vec<u8>)], cutoff: u8) {
     }
 }
 
+/// When a texture refused by `replace` is uploaded again: at the pages'
+/// next try if video memory refused its page, `now` when no try is waiting
+/// any more; `None` when it was refused for good (size, format, table).
+fn retry_after(refused_for_memory: bool, next_try: Option<Instant>, now: Instant) -> Option<Instant> {
+    refused_for_memory.then(|| next_try.unwrap_or(now))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1923,6 +1927,18 @@ mod tests {
     /// A blade colour beside an empty texel of another colour: the plain
     /// average takes both, as the Legacy Viewer's mips; the weighted one
     /// keeps the blade's.
+    #[test]
+    fn only_a_texture_refused_for_memory_is_uploaded_again() {
+        let now = Instant::now();
+        let later = now + std::time::Duration::from_secs(4);
+        // refused for its size or format, or the table full: for good
+        assert_eq!(retry_after(false, Some(later), now), None);
+        assert_eq!(retry_after(false, None, now), None);
+        // its page refused: at the pages' next try, or now if none waits
+        assert_eq!(retry_after(true, Some(later), now), Some(later));
+        assert_eq!(retry_after(true, None, now), Some(now));
+    }
+
     #[test]
     fn empty_texels_colour_blends_into_the_mips() {
         let mut px = vec![0u8; 2 * 2 * 4];

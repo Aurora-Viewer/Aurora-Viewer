@@ -105,6 +105,43 @@ const PAGE_WAITS: usize = 16;
 /// Shortest wait before a texture refused by a full video memory is
 /// decoded and sent again (the renderer's own page wait is 2 s to 30 s).
 const MEMORY_RETRY_MIN: Duration = Duration::from_secs(1);
+
+/// Textures whose upload a full video memory refused, waiting to be sent
+/// again: one warning when the first waits, one line when none waits.
+#[derive(Default)]
+struct MemoryWaits(std::collections::HashSet<Uuid>);
+
+impl MemoryWaits {
+    /// `id` was refused: true when it is the first to wait.
+    fn refused(&mut self, id: Uuid) -> bool {
+        let first = self.0.is_empty();
+        self.0.insert(id) && first
+    }
+
+    /// `id` went through: true when it was the last to wait.
+    fn uploaded(&mut self, id: Uuid) -> bool {
+        self.0.remove(&id) && self.0.is_empty()
+    }
+
+    /// Keeps the textures still wanted at that level: true when none waits
+    /// any more because of it.
+    fn retain(&mut self, keep: impl FnMut(&Uuid) -> bool) -> bool {
+        let before = self.0.len();
+        self.0.retain(keep);
+        before > 0 && self.0.is_empty()
+    }
+
+    fn ids(&self) -> impl Iterator<Item = &Uuid> {
+        self.0.iter()
+    }
+}
+
+/// When a texture refused by a full video memory is decoded and sent
+/// again: at the renderer's next page try, and never sooner than
+/// `MEMORY_RETRY_MIN` (no decode in a loop when the try is due).
+fn memory_retry_at(next_try: Instant, now: Instant) -> Instant {
+    next_try.max(now + MEMORY_RETRY_MIN)
+}
 /// Downloaded data is written to the disk cache this often.
 const HOUSEKEEPING_EVERY: Duration = Duration::from_secs(2);
 /// The memory budget is checked this often (a query to the driver).
@@ -1107,7 +1144,7 @@ pub struct TextureStreamer {
     ui_wanted: std::collections::HashSet<Uuid>,
     /// Textures whose upload a full video memory refused, waiting to be
     /// sent again (one warning while any wait, one line when all went).
-    memory_waits: std::collections::HashSet<Uuid>,
+    memory_waits: MemoryWaits,
     /// Session-long UI users, independent from the bounded hover cache.
     ui_permanent: std::collections::HashSet<Uuid>,
     ui_ready: HashMap<Uuid, (u32, u32, Vec<u8>)>,
@@ -3123,7 +3160,7 @@ impl TextureStreamer {
         let now = Instant::now();
         let ids: Vec<Uuid> = self
             .memory_waits
-            .iter()
+            .ids()
             .copied()
             .filter(|id| self.demo_needs_data(id) && self.entries.get(id).is_some_and(|e| e.retry_at.is_none_or(|t| now >= t)))
             .collect();
@@ -3304,13 +3341,10 @@ impl TextureStreamer {
                 // its pages again, instead of being settled as loaded,
                 // which left the texture blurred or grey after the memory
                 // came back. Not a failure: it would end as unavailable.
-                if !self.memory_waits.contains(&u.id) {
-                    if self.memory_waits.is_empty() {
-                        log::warn!("textures: video memory full, uploads wait until it can take them");
-                    }
-                    self.memory_waits.insert(u.id);
+                if self.memory_waits.refused(u.id) {
+                    log::warn!("textures: video memory full, uploads wait until it can take them");
                 }
-                e.retry_at = Some(at.max(Instant::now() + MEMORY_RETRY_MIN));
+                e.retry_at = Some(memory_retry_at(at, Instant::now()));
                 Self::settle(&mut self.todo, &mut self.counts, u.id, e);
                 u.retire(&mut self.trash);
                 continue;
@@ -3334,7 +3368,7 @@ impl TextureStreamer {
                 u.retire(&mut self.trash);
                 continue;
             }
-            if self.memory_waits.remove(&u.id) && self.memory_waits.is_empty() {
+            if self.memory_waits.uploaded(u.id) {
                 log::info!("textures: video memory took the uploads that waited for it");
             }
             spent += match &u.staged {
@@ -3440,8 +3474,12 @@ impl TextureStreamer {
         // (a texture refused by a full video memory that is no longer
         // wanted at that level, or gone, waits no more)
         let entries = &self.entries;
-        self.memory_waits
-            .retain(|id| entries.get(id).is_some_and(|e| e.refs > 0 && e.needs_decode(e.want)));
+        if self
+            .memory_waits
+            .retain(|id| entries.get(id).is_some_and(|e| e.refs > 0 && e.needs_decode(e.want)))
+        {
+            log::info!("textures: no upload waits for video memory any more");
+        }
         // downloaded data to persist: shared, not copied, and queued in one go
         let mut writes = Vec::new();
         let mut later = Vec::new();
@@ -4034,6 +4072,34 @@ fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &D
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_refused_upload_waits_for_the_page_try_and_at_least_a_second() {
+        let now = Instant::now();
+        let s = Duration::from_secs;
+        assert_eq!(memory_retry_at(now + s(8), now), now + s(8));
+        // a try already due: no decode again in the same second
+        assert_eq!(memory_retry_at(now, now), now + MEMORY_RETRY_MIN);
+        assert_eq!(memory_retry_at(now - s(3), now), now + MEMORY_RETRY_MIN);
+    }
+
+    #[test]
+    fn the_memory_waits_warn_once_and_say_when_none_waits() {
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let mut w = MemoryWaits::default();
+        assert!(w.refused(a), "the first refusal warns");
+        assert!(!w.refused(a), "refused again: no second warning");
+        assert!(!w.refused(b));
+        assert!(!w.uploaded(a), "one still waits");
+        assert!(!w.uploaded(a), "not waiting any more");
+        assert!(w.uploaded(b), "the last one went");
+        // a texture no longer wanted waits no more, and says so once
+        assert!(w.refused(a));
+        assert!(!w.retain(|_| true));
+        assert!(w.retain(|_| false));
+        assert!(!w.retain(|_| false), "nothing was waiting");
+        assert!(!w.uploaded(a), "a pruned texture is not counted");
+    }
 
     #[test]
     fn alpha_just_under_opaque_is_kept_though_classed_opaque() {
