@@ -331,10 +331,11 @@ pub fn search_input(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, hint: 
 /// Once a search is emptied (`searching` it was before the field), the
 /// plain list goes back to where it was, and to the selection.
 pub fn after_search(inv: &Inventory, st: &mut InventoryUi, searching: bool) {
-    if searching && st.search.trim().is_empty() {
-        // The plain list shares its scroll area with the results: it goes back
-        // to its place from before the search, unless a selection it shows is
-        // revealed below (that reveal's offset wins).
+    // The plain list shares its scroll area with the results: it goes back to
+    // its place from before the search, unless a selection it shows is
+    // revealed below (that reveal's offset wins). A tab that still shows its
+    // results (Recent, Worn, Favorites, Received, or a filter) keeps its own.
+    if searching && st.search.trim().is_empty() && !st.result_view() {
         st.plain_scroll_restore = Some(st.plain_scroll);
     }
     if searching
