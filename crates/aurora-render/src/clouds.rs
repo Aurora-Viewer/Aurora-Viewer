@@ -17,8 +17,9 @@
 //!
 //! 1. the weather map, drawn by the scene shader (env.wgsl
 //!    `fs_cloud_weather`) only when its parameters changed ([`Params::weather_key`]);
-//! 2. the noise textures, a slice of the base noise a frame for 16 frames
-//!    after the setting is turned on, then nothing;
+//! 2. the noise textures: read from the shipped file (clouds_noise.rs) by a
+//!    thread and uploaded the frame it is done, then nothing; when the file
+//!    cannot be read, a slice of the base noise a frame for 16 frames;
 //! 3. the trace: a quarter of the half resolution sky pixels, a march of 64
 //!    steps with a light march per sample;
 //! 4. the reconstruction: the half resolution image from the trace and the
@@ -398,6 +399,8 @@ pub(crate) struct Clouds {
     weather_key: Option<u64>,
     /// Frames of noise generation made; [`NOISE_FRAMES`] when complete.
     noise_frames: u32,
+    /// The thread reading the shipped noise file, until it answers.
+    loading: Option<std::sync::mpsc::Receiver<Result<crate::clouds_noise::Noise, String>>>,
     sized: Option<Sized>,
     /// The full resolution image of a still, kept for the frames of the
     /// same photo and dropped by the first live frame after it.
@@ -464,7 +467,7 @@ impl Clouds {
             trace_still: compute("trace_still"),
             recon: compute("recon"),
         };
-        let noise = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
+        let noise = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
         let view = |t: &wgpu::Texture| t.create_view(&Default::default());
         let base = texture(device, "cloud base noise", [BASE_SIZE; 3], D3, Rgba8Unorm, noise);
         let detail = texture(device, "cloud detail noise", [DETAIL_SIZE; 3], D3, Rgba8Unorm, noise);
@@ -535,6 +538,7 @@ impl Clouds {
             weather: view(&weather_tex),
             weather_key: None,
             noise_frames: 0,
+            loading: Some(Self::read_noise()),
             sized: None,
             still: None,
             latest: None,
@@ -550,6 +554,70 @@ impl Clouds {
     /// The noise is complete: the clouds can be drawn this frame.
     pub fn ready(&self) -> bool {
         self.noise_frames >= NOISE_FRAMES
+    }
+
+    /// Reads the noise file off the frame thread.
+    fn read_noise() -> std::sync::mpsc::Receiver<Result<crate::clouds_noise::Noise, String>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new().name("cloud-noise".into()).spawn({
+            let tx = tx.clone();
+            move || {
+                let start = std::time::Instant::now();
+                let noise = crate::clouds_noise::load();
+                if noise.is_ok() {
+                    log::info!("cloud noise: file read and unpacked in {} ms", start.elapsed().as_millis());
+                }
+                let _ = tx.send(noise);
+            }
+        });
+        if let Err(e) = spawned {
+            let _ = tx.send(Err(format!("cloud noise: no thread: {e}")));
+        }
+        rx
+    }
+
+    /// Takes the noise file's textures if the thread is done: uploaded, they
+    /// replace the 16 frames of generation; unreadable, the generation
+    /// starts (logged). Returns true while the thread is still reading.
+    fn poll_noise(&mut self, queue: &wgpu::Queue) -> bool {
+        use std::sync::mpsc::TryRecvError;
+        let Some(rx) = &self.loading else {
+            return false;
+        };
+        match rx.try_recv() {
+            Err(TryRecvError::Empty) => return true,
+            Ok(Ok(noise)) => {
+                let write = |view: &wgpu::TextureView, bytes: &[u8], size: [u32; 3]| {
+                    queue.write_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: view.texture(),
+                            mip_level: 0,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        bytes,
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(size[0] * 4),
+                            rows_per_image: Some(size[1]),
+                        },
+                        wgpu::Extent3d {
+                            width: size[0],
+                            height: size[1],
+                            depth_or_array_layers: size[2],
+                        },
+                    );
+                };
+                write(&self.base, &noise.base, [BASE_SIZE; 3]);
+                write(&self.detail, &noise.detail, [DETAIL_SIZE; 3]);
+                write(&self.curl, &noise.curl, [CURL_SIZE, CURL_SIZE, 1]);
+                self.noise_frames = NOISE_FRAMES;
+            }
+            Ok(Err(e)) => log::warn!("{e}; the cloud noise is generated on the GPU instead"),
+            Err(TryRecvError::Disconnected) => log::warn!("cloud noise: the reader stopped; generating on the GPU instead"),
+        }
+        self.loading = None;
+        false
     }
 
     /// The weather map must be drawn again for `key` (the first time, or the
@@ -603,7 +671,17 @@ impl Clouds {
             .create_view(&Default::default());
             self.still = Some((size, view));
         }
-        let step = noise_step(self.noise_frames);
+        let reading = self.poll_noise(queue);
+        // (while the file is read, nothing is generated: it is usually done
+        // within a frame or two, and the generation is the fallback)
+        let step = if reading {
+            NoiseStep {
+                small: false,
+                base_z: None,
+            }
+        } else {
+            noise_step(self.noise_frames)
+        };
         let [ox, oy] = p.offset_km();
         let moved = [0, 1].map(|i| (p.camera_km[i] - self.prev_camera_km[i]) as f32);
         let (hw, hh) = (size.0 / 2, size.1 / 2);
@@ -677,7 +755,9 @@ impl Clouds {
         // (the clouds are drawn from the frame after the last slice: the
         // sky shader keeps the Legacy layer until then)
         let shown = self.ready();
-        self.noise_frames = (self.noise_frames + 1).min(NOISE_FRAMES);
+        if !reading {
+            self.noise_frames = (self.noise_frames + 1).min(NOISE_FRAMES);
+        }
         if still.is_none() {
             self.frame += 1;
         }

@@ -4254,6 +4254,16 @@ both open states and the selection count. Capture at frame 620.
 - **`AURORA_CLOUDS=aurora|legacy`**: volumetric clouds or the Legacy Viewer's
   flat layer for this launch, whatever the setting says (and the demo
   scenario). Anything else changes nothing.
+- **`AURORA_CLOUD_NOISE=<file>`**: the volumetric clouds' noise textures
+  come from `assets/clouds/cloud_noise.bin`, built into the viewer and read by a
+  thread when the clouds are turned on. With this variable the file is the one
+  named; a path that does not exist, or a file that fails its magic, version,
+  size or checksum, logs a warning (`cloud noise: ...`) and the shader makes the
+  noise instead, over 16 frames, as before. To rebuild the file after a change
+  to the generators (`clouds_noise.rs`, kept equal to `gen_base`, `gen_detail`
+  and `gen_curl` of `clouds.wgsl`): `cargo run -p aurora-render --example
+  generate_cloud_noise`; the test `the_generator_is_deterministic_and_matches_the_shipped_file`
+  fails until the file and its pinned hashes are updated.
 - **`AURORA_CLOUDS_DEBUG=weather|slice`**: a measurement view of the volumetric
   clouds, for development only (off by default, not a setting). `weather`:
   the weather map's coverage as light on the sky. `slice`: three vertical
@@ -9948,6 +9958,7 @@ What the inventory must show with these scenarios:
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
 | `AURORA_CLOUDS=aurora` or `legacy` | Volumetric clouds or the Legacy Viewer's flat layer for this launch, over the setting (and over `AURORA_DEMO_CLOUDS`) |
+| `AURORA_CLOUD_NOISE=<file>` | Cloud noise file to read instead of the built-in one (a missing or damaged file tests the GPU fallback) |
 | `AURORA_CLOUDS_DEBUG=weather` or `slice` | Measurement view of the volumetric clouds (the weather map, or vertical slices of the density) |
 | `AURORA_COLORED_AMBIENT=0`, `1` or `alt` | Sky ambient softened, grey under linear and HDR skies (Legacy Viewer), coloured at full strength like the first PBR release, or one second in two |
 | `AURORA_RIGGED_BLEND=split`, `runs`, `copy`, `depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: object by object, what is half covered writing its depth as drawn, then the fainter texels, then their depth from 1/255 on a copy (default); the same without the fainter texels' depth (#1024); where nearly opaque before their colour, then point by point where half covered (#966); from 1/255 on a copy (#948); where half covered before their colour; from 1/255; none (sorted with the others); or `split` by turns |

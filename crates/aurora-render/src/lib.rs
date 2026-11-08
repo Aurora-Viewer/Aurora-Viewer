@@ -14,6 +14,7 @@ pub mod bc7;
 mod blend_tests;
 mod bloom;
 mod clouds;
+pub mod clouds_noise;
 mod contact_shadows;
 mod cutout;
 // (Vulkan only: Metal textures stay with wgpu's allocator)
