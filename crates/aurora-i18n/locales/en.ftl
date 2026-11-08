@@ -2371,10 +2371,13 @@ ui-options-compact-im-system-lines = Compact the conversations' system lines too
 ui-options-compact-im-system-lines-hint = The viewer's lines in a conversation (a call started or ended, an automatic reply sent) take the same small row, with their icon.
 ui-options-show-contacts-tab = Show the Contacts tab
 ui-options-show-contacts-tab-hint = Show Contacts in the Conversations window.
-ui-options-payment-opens-conversation = Open a conversation for a friend's payment
-ui-options-payment-opens-conversation-hint = L$ a resident pays you show as a card in your conversation with them when it is open. With this on, a friend's payment opens it.
+ui-options-payment-opens-conversation = Open the conversation when a resident pays you
+ui-options-payment-opens-conversation-hint = L$ a resident gives you with Pay, not an object paid or a sale. The payment shows as a card in your conversation with them when it is open; this chooses whose payment opens it when it is closed.
 ui-options-payment-sent-opens-conversation = Open the conversation when you pay a resident
-ui-options-payment-sent-opens-conversation-hint = Your own direct payment to a resident shows as a card in your conversation with them when it is open. With this on, it opens it.
+ui-options-payment-sent-opens-conversation-hint = L$ you give a resident with Pay, not an object paid or a purchase. Your payment shows as a card in your conversation with them when it is open; this chooses whose conversation it opens when it is closed.
+ui-options-payment-opens-never = Never
+ui-options-payment-opens-friends = Friends only
+ui-options-payment-opens-anyone = Anyone
 ui-options-conversations-own-windows = Open conversations in their own window
 ui-options-conversations-own-windows-hint = A conversation opened from a name, a notification or a call opens in its own window instead of the Conversations window. The nearby chat stays there.
 ui-options-send-typing = Say when I am typing
@@ -3646,6 +3649,8 @@ session-object-actions-inventory-too-large = Inventory too large.
 ui-options-invert-vertical-axis = Invert vertical axis
 ui-options-double-click-ground = Double-click on the ground
 ui-options-double-click-ground-help = What a double click on the ground or on an object without a click action does
+ui-options-double-click-scripted = Allow double-click action on scripted objects
+ui-options-double-click-scripted-help = Let the configured double-click action run on objects with a click action or touch script, except Sit
 ui-options-double-click-nothing = No action
 ui-options-double-click-walk = Walk there
 ui-options-double-click-run = Run there
@@ -3698,8 +3703,8 @@ ui-profile-this-user-has-no-picks = This user has no picks
 ui-profile-this-user-has-no-classified-listings = This user has no classified listings
 ui-inventory-controls-library = Library
 ui-options-camera-the-camera-can-move-beyond-the-draw-distance-below = The camera can move beyond the draw distance, below ground and closer to objects
-ui-options-camera-the-camera-returns-behind-your-avatar-on-arrival = The camera returns behind your avatar on arrival
-ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag = The camera follows your avatar with a slight lag (1 by default, 0 = none)
+ui-options-camera-after-a-teleport-in-the-region-the-camera-returns = After a teleport within the region, the camera returns behind your avatar. Off, it stays where it is.
+ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag = The camera follows your avatar with a lag: higher values move it more smoothly and slowly (1 by default, 0 = none)
 ui-options-camera-the-camera-follows-the-object-it-is-focused-on = The camera follows the object it is focused on as the object moves
 app-inventory-thumbnail-invalid-capture = Invalid capture.
 ui-land-dialogs-deeding-this-parcel-requires-the-group-to-permanently-have = Deeding this parcel requires the group to permanently have enough land use credit.{ $contribution }{ " The purchase price is not refunded to the owner. If deeded land is sold, the proceeds are split equally among group members.\u000A\u000ADeed these " }{ $value0 }{ " m² of land to group '" }{ $group }'?
@@ -5141,7 +5146,7 @@ ui-bars-back = { "Back: " }{ $d }
 keybinds-backspace-2 = Backspace
 ui-appearance-back-to-worn-items = Back to worn items
 ui-land-covenant-resell = Resell:
-ui-options-camera-return-after-teleporting = Return after teleporting
+ui-options-camera-return-after-a-teleport-in-the-region = Return after a teleport in the region
 ui-appearance-back-to-outfits = Back to outfits
 ui-options-camera-return-when-moving = Return when moving
 keybinds-return-to-avatar = Return to avatar
@@ -5904,7 +5909,7 @@ ui-options-camera-show-avatar-mouselook = Show my avatar in mouselook
 ui-options-camera-follow-eyes = Attach the camera between the eyes
 ui-options-camera-follow-eyes-tip = In mouselook, follow the animated position between your eyes. The mouse keeps control of the viewing direction. Off by default.
 ui-options-camera-show-avatar-mouselook-tip = Show your body and its attachments below the neck. Your head and attachments on the head's points stay hidden, as in the Legacy Viewer.
-ui-options-camera-show-interface-tip = The bars stay in mouselook. Otherwise they fade away and the chat only comes back to type (Enter).
+ui-options-camera-show-interface-tip = The bars and the open windows stay in mouselook. Otherwise they go away and the chat only comes back to type (Enter).
 ui-options-crosshair = Crosshair
 ui-options-crosshair-show = Show the crosshair
 ui-options-crosshair-show-tip = A mark in the middle of the screen in mouselook, where you aim and click
@@ -13412,3 +13417,37 @@ debug-settings-warning-title = Warning
 debug-settings-warning-text = The use of the Debug Settings window is unsupported. Changing debug settings can severely impact your experience and might lead to loss of data, functionality or even access to the service. Please do not change any values without knowing exactly what you are doing.
 debug-settings-warning-ignore = Do not show this warning again
 debug-settings-type-color = Colour
+
+# Preferences › Graphics: the trees' detail (RenderTreeLODFactor)
+ui-options-trees = Trees
+ui-options-trees-hint = Detail of Linden trees at a distance (0.5 by default). At 0, trees and grass are not drawn.
+
+# Preferences › Build (the Legacy Viewer's Build preferences)
+ui-options-about-build = What a prim made with the Create tool starts as.
+ui-options-build-new-objects = New objects
+ui-options-build-new-objects-note = A prim made with the Create tool takes these settings when it appears.
+ui-options-build-size-hint = Width, depth and height in meters (0.01 to 10)
+ui-options-build-material = Material
+ui-options-build-flesh = Flesh
+ui-options-build-physical = Physical
+ui-options-build-temporary = Temporary
+ui-options-build-new-faces = Look of new objects
+
+# Preferences › Controls: FSAvatarTurnSpeed
+ui-options-avatar-turn-speed = Avatar turn speed
+ui-options-avatar-turn-speed-help = How much faster avatars turn to face where they go while walking or standing (0 % by default). Only on this screen.
+
+# Preferences › Mouse and keyboard: FSRevokePerms
+ui-options-revoke-permissions = Revoke the seat's permissions
+ui-options-revoke-permissions-help = When you sit on or stand up from an object you do not own, take back what its scripts were allowed to do, such as animating you.
+ui-options-revoke-never = Never
+ui-options-revoke-on-sit = When I sit
+ui-options-revoke-on-stand = When I stand up
+ui-options-revoke-on-sit-and-stand = When I sit and stand up
+
+# Preferences › Protections: large surface protection (RenderVolumeSAProtection)
+large-surface-title = Large surfaces
+large-surface-enable = Hide objects with a huge surface
+large-surface-enable-hint = Protects your graphics card from objects made to overload it: past the total below, the prims and sculpts with the largest surface are not drawn. May hide some legitimate objects.
+large-surface-frame-max = Total surface drawn
+large-surface-frame-max-hint = The surface of large objects drawn before the largest are hidden (5,000 by default).

@@ -2367,10 +2367,13 @@ ui-options-compact-im-system-lines = 会話のシステム行もコンパクト�
 ui-options-compact-im-system-lines-hint = 会話中のビューアーからの行（通話の開始・終了、自動返信の送信など）も、アイコン付きの小さな行で表示します。
 ui-options-show-contacts-tab = コンタクトタブを表示
 ui-options-show-contacts-tab-hint = 会話ウィンドウに「コンタクト」を表示します。
-ui-options-payment-opens-conversation = 友人からの支払い時に会話を開く
-ui-options-payment-opens-conversation-hint = 住人から受け取ったL$は、その人との会話が開いているとカードで表示されます。有効にすると、友人から支払いを受けたとき会話を開きます。
+ui-options-payment-opens-conversation = 住人から支払いを受けたときに会話を開く
+ui-options-payment-opens-conversation-hint = 住人が「支払う」で渡したL$が対象で、支払われたオブジェクトや販売は含みません。支払いはその人との会話が開いているとカードで表示されます。会話が閉じているとき、だれからの支払いで会話を開くかを選びます。
 ui-options-payment-sent-opens-conversation = 住人に支払ったときに会話を開く
-ui-options-payment-sent-opens-conversation-hint = 住人への直接の支払いは、その人との会話が開いているとカードで表示されます。有効にすると、支払ったときに会話を開きます。
+ui-options-payment-sent-opens-conversation-hint = 「支払う」で住人に渡したL$が対象で、オブジェクトへの支払いや購入は含みません。支払いはその人との会話が開いているとカードで表示されます。会話が閉じているとき、だれへの支払いで会話を開くかを選びます。
+ui-options-payment-opens-never = 開かない
+ui-options-payment-opens-friends = 友人のみ
+ui-options-payment-opens-anyone = すべての住人
 ui-options-conversations-own-windows = 会話を個別のウィンドウで開く
 ui-options-conversations-own-windows-hint = 名前、通知、通話から開いた会話を、会話ウィンドウではなく個別のウィンドウに表示します。近くのチャットは会話ウィンドウに残ります。
 ui-options-send-typing = 入力中であることを通知
@@ -3643,6 +3646,8 @@ session-object-actions-inventory-too-large = 持ち物が大きすぎます。
 ui-options-invert-vertical-axis = 垂直軸を反転
 ui-options-double-click-ground = 地面をダブルクリック
 ui-options-double-click-ground-help = 地面やクリック操作のないオブジェクトをダブルクリックしたときの動作
+ui-options-double-click-scripted = スクリプト付きオブジェクトのダブルクリックを許可
+ui-options-double-click-scripted-help = Sit以外のクリック操作やタッチスクリプトがあるオブジェクトでも設定した動作を実行します
 ui-options-double-click-nothing = 何もしない
 ui-options-double-click-walk = その場所まで歩く
 ui-options-double-click-run = その場所まで走る
@@ -3695,8 +3700,8 @@ ui-profile-this-user-has-no-picks = このユーザにはピックがありま�
 ui-profile-this-user-has-no-classified-listings = このユーザにはクラシファイド出品がありません
 ui-inventory-controls-library = ライブラリ
 ui-options-camera-the-camera-can-move-beyond-the-draw-distance-below = カメラは描画距離より遠く、地面の下、オブジェクトの近くまで移動できます
-ui-options-camera-the-camera-returns-behind-your-avatar-on-arrival = 到着時にカメラをアバターの後ろに戻す
-ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag = カメラが少し遅れてアバターを追従します（デフォルトは1、0で遅れなし）
+ui-options-camera-after-a-teleport-in-the-region-the-camera-returns = リージョン内でテレポートした後、カメラをアバターの後ろに戻します。オフにすると、カメラはその場に留まります。
+ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag = カメラが遅れてアバターを追従します。値が大きいほど滑らかにゆっくり動きます（デフォルトは1、0で遅れなし）
 ui-options-camera-the-camera-follows-the-object-it-is-focused-on = 焦点を合わせたオブジェクトの移動にカメラが追従する
 app-inventory-thumbnail-invalid-capture = キャプチャが無効です。
 ui-land-dialogs-deeding-this-parcel-requires-the-group-to-permanently-have = この区画をグループに譲渡するには、グループが十分な土地利用クレジットを継続的に保有する必要があります。{ $contribution }{ "購入価格は所有者に返金されません。譲渡した土地を売却すると、売上はグループメンバーに均等に分配されます。\u000A\u000Aこの" }{ $value0 }{ "㎡の土地をグループ「" }{ $group }に譲渡しますか？
@@ -5138,7 +5143,7 @@ ui-bars-back = { "戻る：" }{ $d }
 keybinds-backspace-2 = Backspace
 ui-appearance-back-to-worn-items = 着用中のアイテムに戻る
 ui-land-covenant-resell = 再販：
-ui-options-camera-return-after-teleporting = テレポート後に戻す
+ui-options-camera-return-after-a-teleport-in-the-region = リージョン内のテレポート後に戻す
 ui-appearance-back-to-outfits = アウトフィットに戻る
 ui-options-camera-return-when-moving = 移動時に戻す
 keybinds-return-to-avatar = アバターに戻る
@@ -5897,7 +5902,7 @@ ui-options-camera-show-avatar-mouselook = マウスルック中に自分のア�
 ui-options-camera-follow-eyes = カメラを両目の間に固定
 ui-options-camera-follow-eyes-tip = マウスルック中に、アニメーションされた両目の間の位置に追従します。視線の方向はマウスで操作します。デフォルトでオフ。
 ui-options-camera-show-avatar-mouselook-tip = 首から下の体と装着物を表示します。レガシービューアと同様に、頭と頭のポイントの装着物は非表示のままです。
-ui-options-camera-show-interface-tip = マウスルック中もバーを表示します。オフの場合はフェードアウトし、チャットは入力時（Enter）にのみ戻ります。
+ui-options-camera-show-interface-tip = マウスルック中もバーと開いているウィンドウを表示します。オフの場合は非表示になり、チャットは入力時（Enter）にのみ戻ります。
 ui-options-crosshair = 照準
 ui-options-crosshair-show = 照準を表示
 ui-options-crosshair-show-tip = マウスルック中に画面中央に表示される、狙ってクリックする位置の印
@@ -13385,3 +13390,37 @@ debug-settings-warning-title = 警告
 debug-settings-warning-text = デバッグ設定ウィンドウの使用はサポートされていません。デバッグ設定を変更すると、動作に深刻な影響が出たり、データや機能、サービスへのアクセスを失ったりするおそれがあります。内容を正確に理解していない値は変更しないでください。
 debug-settings-warning-ignore = この警告を今後表示しない
 debug-settings-type-color = 色
+
+# Preferences › Graphics: the trees' detail (RenderTreeLODFactor)
+ui-options-trees = 樹木
+ui-options-trees-hint = 遠くにあるリンデンの樹木の詳細度です（デフォルトは0.5）。0にすると樹木と草は表示されません。
+
+# Preferences › Build (the Legacy Viewer's Build preferences)
+ui-options-about-build = 作成ツールで作ったプリムの初期状態です。
+ui-options-build-new-objects = 新しいオブジェクト
+ui-options-build-new-objects-note = 作成ツールで作ったプリムは、表示された時点でこれらの設定を受け取ります。
+ui-options-build-size-hint = 幅、奥行き、高さ（メートル、0.01～10）
+ui-options-build-material = 素材
+ui-options-build-flesh = 肉
+ui-options-build-physical = 物理
+ui-options-build-temporary = 一時的
+ui-options-build-new-faces = 新しいオブジェクトの外観
+
+# Preferences › Controls: FSAvatarTurnSpeed
+ui-options-avatar-turn-speed = アバターの回転速度
+ui-options-avatar-turn-speed-help = 歩いているときや立っているときに、アバターが進む方向へ向き直る速さを上げます（デフォルトは0%）。この画面のみに反映されます。
+
+# Preferences › Mouse and keyboard: FSRevokePerms
+ui-options-revoke-permissions = 座ったオブジェクトの許可を取り消す
+ui-options-revoke-permissions-help = 自分が所有していないオブジェクトに座るとき、または立ち上がるときに、そのスクリプトに与えた許可（アバターのアニメーションなど）を取り消します。
+ui-options-revoke-never = しない
+ui-options-revoke-on-sit = 座ったとき
+ui-options-revoke-on-stand = 立ち上がったとき
+ui-options-revoke-on-sit-and-stand = 座ったときと立ち上がったとき
+
+# Preferences › Protections: large surface protection (RenderVolumeSAProtection)
+large-surface-title = 大きな表面
+large-surface-enable = 表面積が極端に大きいオブジェクトを隠す
+large-surface-enable-hint = グラフィックカードに過負荷をかけるために作られたオブジェクトから保護します。下の合計を超えると、表面積が最も大きいプリムとスカルプトは描画されません。正当なオブジェクトが隠れることもあります。
+large-surface-frame-max = 描画する表面積の合計
+large-surface-frame-max-hint = 最も大きいものが隠されるまでに描画する、大きなオブジェクトの表面積です（デフォルトは5,000）。

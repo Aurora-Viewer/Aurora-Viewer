@@ -496,3 +496,138 @@ impl Occlusion {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pipeline_cache::CachedPipelines;
+    use glam::{Mat4, Vec3};
+
+    /// The occlusion test of `spheres` (camera at the origin looking down
+    /// -Z) against a depth of `w` x `h` whose columns left of `wall` hold a
+    /// near occluder and the others nothing.
+    fn visible(w: u32, h: u32, wall: u32, proj: Mat4, spheres: &[(Vec3, f32)]) -> Vec<bool> {
+        let _gpu = crate::test_gpu::lock();
+        let instance = wgpu::Instance::default();
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).expect("occlusion test requires a GPU");
+        let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("GPU device");
+        let depth = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("occlusion test depth"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let depth_view = depth.create_view(&Default::default());
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("occlusion test occluder"),
+            source: wgpu::ShaderSource::Wgsl(
+                "@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+                    let p = array<vec2<f32>, 3>(vec2<f32>(-1.0, -1.0), vec2<f32>(3.0, -1.0), vec2<f32>(-1.0, 3.0))[i];
+                    return vec4<f32>(p, 0.9, 1.0);
+                }"
+                .into(),
+            ),
+        });
+        let occluder = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
+            label: Some("occlusion test occluder"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: Default::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            fragment: None,
+            multiview_mask: None,
+            cache: None,
+        });
+        let draws: Vec<CullDraw> = spheres
+            .iter()
+            .map(|(c, r)| CullDraw {
+                sphere: [c.x, c.y, c.z, *r],
+                kind: KIND_TESTED,
+                _pad: [0; 3],
+            })
+            .collect();
+        let args: Vec<u32> = (0..spheres.len() as u32).flat_map(|i| [3, 1, 0, 0, i]).collect();
+        let main_args = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("occlusion test args"),
+            contents: bytemuck::cast_slice(&args),
+            usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        });
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("occlusion test readback"),
+            size: main_args.size(),
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut occlusion = Occlusion::new(&device);
+        occlusion.prepare(&device, &queue, &depth_view, w, h, proj, &draws, spheres.len());
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("occlusion test occluder"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        // reverse-Z: 0 is the far plane, nothing drawn
+                        load: wgpu::LoadOp::Clear(0.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            });
+            pass.set_pipeline(&occluder);
+            pass.set_scissor_rect(0, 0, wall, h);
+            pass.draw(0..3, 0..1);
+        }
+        occlusion.encode_cull(&device, &mut encoder, &main_args);
+        encoder.copy_buffer_to_buffer(&main_args, 0, &readback, 0, main_args.size());
+        queue.submit([encoder.finish()]);
+        readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("occlusion readback"));
+        device.poll(wgpu::PollType::wait_indefinitely()).expect("occlusion GPU completion");
+        let view = readback.get_mapped_range(..).expect("occlusion args");
+        let out: &[u32] = bytemuck::cast_slice(&view);
+        out.chunks(5).map(|a| a[1] != 0).collect()
+    }
+
+    /// #2459: the pyramid's levels are floor-sized, and an odd level used to
+    /// drop its source's last row and column, so at 1920 x 1080 a level
+    /// holding only the left 1024 pixels judged an object of the open right
+    /// part by the wall's depth. The pyramid now covers the whole depth.
+    #[test]
+    #[ignore = "requires a GPU"]
+    fn objects_beside_a_near_wall_stay_visible_at_any_screen_size() {
+        for (w, h) in [(1920u32, 1080u32), (1366, 768), (2560, 1440), (1374, 795), (1250, 883)] {
+            let aspect = w as f32 / h as f32;
+            let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, aspect, 0.1);
+            // a sphere centred at `ndc_x` across the screen, `dist` ahead
+            let at = |ndc_x: f32, dist: f32| Vec3::new(ndc_x * aspect * 0.5f32.tan() * dist, 0.0, -dist);
+            let wall = w * 57 / 100;
+            let open = (at(0.615, 6.0), 1.5);
+            let small_open = (at(0.8, 20.0), 0.6);
+            let behind = (at(-0.6, 6.0), 0.5);
+            let got = visible(w, h, wall, proj, &[open, small_open, behind]);
+            assert_eq!(got, [true, true, false], "{w} x {h}: open, small open, behind the wall");
+        }
+    }
+}
