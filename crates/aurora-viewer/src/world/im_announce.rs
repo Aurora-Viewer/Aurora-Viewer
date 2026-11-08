@@ -37,6 +37,7 @@ impl World {
             kind: ImKind::Private,
             session: from,
             new_session: true,
+            poke: false,
         });
         self.social.session_mut(from);
         let line = ChatLine {

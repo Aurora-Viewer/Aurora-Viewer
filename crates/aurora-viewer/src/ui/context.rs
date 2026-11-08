@@ -326,6 +326,9 @@ pub enum CtxAction {
     /// a conversation, a resident or a group.
     ShowHistory(Option<Uuid>),
     OfferTeleport(Uuid),
+    /// Poke a resident (`world/pokes.rs`): the friends list, a
+    /// conversation's head, a profile and a poke card's Poke back.
+    Poke(Uuid),
     /// A button of a teleport card in a conversation (accept or not).
     AnswerTeleport {
         invite: u64,

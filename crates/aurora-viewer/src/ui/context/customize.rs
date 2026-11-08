@@ -296,6 +296,7 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::Call(..) => "Call",
         CtxAction::ShowHistory(..) => "ShowHistory",
         CtxAction::OfferTeleport(..) => "OfferTeleport",
+        CtxAction::Poke(..) => "Poke",
         CtxAction::AnswerTeleport { .. } => "AnswerTeleport",
         CtxAction::AnswerInventoryOffer { .. } => "AnswerInventoryOffer",
         CtxAction::Profile(..) => "Profile",

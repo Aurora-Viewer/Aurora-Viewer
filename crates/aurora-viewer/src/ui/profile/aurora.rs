@@ -995,6 +995,13 @@ fn more_menu(resp: &Response, env: &Env, w: &Window, f: &Facts, compact: bool) {
     menu::dropdown(resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
         let ctx = ui.ctx().clone();
         let act = |a: CtxAction| context::request(&ctx, a);
+        // Aurora's poke (`ui/poke.rs`): in this menu, the header keeping
+        // its buttons; greyed out while they are offline or just poked
+        if let Some(b) = crate::ui::poke::button(&ctx, world, &id)
+            && menu::item_if(ui, p, crate::ui::poke::ICON, aurora_i18n::tr!("ui-poke"), b.enabled)
+        {
+            act(CtxAction::Poke(id));
+        }
         if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-map"), mappable) {
             act(CtxAction::ShowOnMap(id));
         }

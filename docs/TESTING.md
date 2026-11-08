@@ -5143,6 +5143,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and system notifications for messages, mentions and offers arriving in the background |
 | `AURORA_DEMO_BUSY_PAUSE=<frame>` | From that frame, the window counts as behind on a busy card: the Render pauses, with its notice and window title, until a click |
 | `AURORA_DEMO_IM_ANNOUNCE=1\|prefs` | Residents start typing IMs to us, then send them: the conversation announced before the message, and the unread count in the window title |
+| `AURORA_DEMO_POKE=<n>` | Nova pokes us `n` times (3 by default): the poke card, its jiggle and its count; a poke we send to a demo resident is poked back |
 | `AURORA_DEMO_MENTION=list\|names` | The chat bar's `@` list of residents to mention, or the prediction of a nearby resident's name |
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history\|object\|object-own\|object-group\|object-history\|legacy-object\|group-notice\|legacy-group-notice\|group-notice-saved\|purchase\|purchase-open\|fees\|fees-answered\|fees-short` | Notification center: cards, burst, paused bell, history, Legacy toasts, object inventory offers, group notices, a delivered purchase, a group fee and a question to take L$ |
@@ -6321,6 +6322,19 @@ failure. Grid validation and any paid upload are performed by the human.
   then `(2)` with her message, until the conversation is read. A
   conversation closed is announced again at its resident's next turn.
   `prefs` leaves both switches to Preferences › Chat, to try them by hand.
+- **`AURORA_DEMO_POKE=<n>`**: from frame 700, every 120 frames (two
+  seconds at 60 fps), Nova (shown under the display name "Tess ✨" the
+  demo gives her) sends the poke IM `/me pokes you 👉`, `n` times (3 when
+  the value is not a number). With Preferences › Chat ›
+  Conversations › "Pokes" on (the default), her line is in the
+  conversation and a poke card comes out instead of the IM toast: "👉 poked
+  you", then "(2 times)", "(3 times)", jiggling at each poke (still with
+  Reduce animations), with Poke back, Send IM and its cross. Any poke we
+  send to a demo resident (Poke back, a friend's row in People › Friends,
+  a conversation's head, a profile) is poked back 1.5 s later, so a poke
+  war plays offline; the buttons rest 2 s after each poke. With "Pokes"
+  off, her pokes are ordinary IMs with their toast and no Poke button
+  shows.
 - **`AURORA_DEMO_BUSY_PAUSE=<frame>`**: from that frame on, the window is
   taken as behind with GPU frames of 300 ms (another program keeping the
   card busy, #2355): after two of them the world is no longer drawn, its

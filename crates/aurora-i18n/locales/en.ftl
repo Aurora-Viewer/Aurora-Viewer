@@ -2375,6 +2375,16 @@ ui-options-payment-opens-conversation = Open a conversation for a friend's payme
 ui-options-payment-opens-conversation-hint = L$ a resident pays you show as a card in your conversation with them when it is open. With this on, a friend's payment opens it.
 ui-options-payment-sent-opens-conversation = Open the conversation when you pay a resident
 ui-options-payment-sent-opens-conversation-hint = Your own direct payment to a resident shows as a card in your conversation with them when it is open. With this on, it opens it.
+ui-options-pokes = Pokes
+ui-options-pokes-hint = Send and receive pokes: a one-click "hey" 👉. A poke you get shows a card with Poke back. When off, the Poke buttons are hidden and a poke arrives as an ordinary message.
+ui-poke = Poke
+ui-poke-back = Poke back
+ui-poke-offline = Offline: pokes only go to residents who are online.
+ui-poke-cooling = Just poked: wait a moment.
+notifications-poke-body = { $count ->
+    [1] 👉 poked you
+   *[other] 👉 poked you ({ $count } times)
+    }
 ui-options-conversations-own-windows = Open conversations in their own window
 ui-options-conversations-own-windows-hint = A conversation opened from a name, a notification or a call opens in its own window instead of the Conversations window. The nearby chat stays there.
 ui-options-send-typing = Say when I am typing

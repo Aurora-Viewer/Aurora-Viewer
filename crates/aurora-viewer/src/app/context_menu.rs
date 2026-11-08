@@ -586,6 +586,19 @@ impl App {
             CtxAction::Im(id) => {
                 self.open_conversation_to_type(id);
             }
+            // a refused poke (offline, cooling…) sends nothing: its button
+            // already said why
+            CtxAction::Poke(id) => {
+                if let Some(cmd) = self.world.poke(id, Instant::now()) {
+                    self.send(cmd);
+                    // the finger jabs from where it was clicked
+                    if !self.settings.reduce_motion
+                        && let Some(at) = self.egui_ctx.pointer_latest_pos()
+                    {
+                        crate::ui::poke::jab(&self.egui_ctx, at);
+                    }
+                }
+            }
             CtxAction::Call(id) => {
                 if self.settings.audio.voice_enabled {
                     self.world.start_call(id);

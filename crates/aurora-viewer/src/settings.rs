@@ -673,6 +673,11 @@ pub struct Settings {
     /// resident opens their conversation on its card (#1198); otherwise it
     /// shows there only when it is open. Off by default.
     pub payment_sent_opens_conversation: bool,
+    /// Preferences › Chat › Conversations: send and receive pokes
+    /// (`world/pokes.rs`). On by default: a poke needs both viewers to
+    /// read it. Off, no Poke button shows and a poke arrives as an
+    /// ordinary IM.
+    pub pokes: bool,
     /// Mini-map and world map options (Firestorm MiniMap* / Map* settings).
     pub maps: MapSettings,
     /// "Search": last tab, rating boxes and land limits.
@@ -1900,6 +1905,7 @@ impl Default for Settings {
             always_track_payments: false,
             payment_opens_conversation: true,
             payment_sent_opens_conversation: false,
+            pokes: true,
             maps: MapSettings::default(),
             search: Default::default(),
             show_people: true,

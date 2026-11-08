@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 pub(crate) mod aurora;
 pub(crate) mod combo;
-mod fidget;
+pub(crate) mod fidget;
 mod linden;
 pub(crate) mod mark;
 mod mesh;

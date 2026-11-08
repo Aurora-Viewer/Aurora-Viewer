@@ -241,6 +241,8 @@ pub struct ImMessage {
     pub kind: ImKind,
     pub session: Uuid,
     pub new_session: bool,
+    /// A poke (`world/pokes.rs`): its card instead of the message's toast.
+    pub poke: bool,
 }
 
 /// Per-sound choices (only the ones changed from Firestorm's defaults are
@@ -491,6 +493,7 @@ mod tests {
             kind: ImKind::Private,
             session: Uuid::nil(),
             new_session: true,
+            poke: false,
         };
         assert_eq!(s.im_sound(m, false), None);
         s.set_im_plays(S::NewIncomingImSession, true);

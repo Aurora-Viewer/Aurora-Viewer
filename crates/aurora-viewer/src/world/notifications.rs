@@ -142,6 +142,12 @@ pub fn caution_chat_line(questions: i32, prompt: &CautionPrompt, place: Option<(
 }
 
 /// The membership fee line of a group invitation (invite_bucket_t).
+/// The text of a poke card: "👉 poked you", then "(3 times)" from the
+/// second poke of a streak.
+pub fn poke_body(count: usize) -> String {
+    aurora_i18n::tr!("notifications-poke-body", count = count)
+}
+
 pub fn group_fee_line(fee: i32) -> String {
     aurora_i18n::tr!("world-notifications-group-fee", fee = aurora_i18n::integer(i64::from(fee)))
 }
@@ -282,6 +288,11 @@ pub enum Data {
         from: Uuid,
         count: usize,
     },
+    /// A resident poked us (`pokes.rs`): a toast only, one per resident,
+    /// its text counting their pokes in a row. Poke back, Send IM and Close.
+    Poke {
+        from: Uuid,
+    },
     /// A voice call invitation (VoiceInviteP2P / VoiceInviteGroup /
     /// VoiceInviteAdHoc), answered by `World::respond_notification`.
     Call {
@@ -415,6 +426,7 @@ impl Notification {
         let follow = match &self.data {
             Data::None | Data::GroupNotice { .. } | Data::RegionMessage { .. } => Follow::Restore,
             Data::Message { session, .. } => Follow::Conversation(*session),
+            Data::Poke { from, .. } => Follow::Conversation(*from),
             Data::Lure { from, .. } => place_link(&self.body).map_or(Follow::Conversation(*from), Follow::Place),
             Data::TeleportRequest { from, .. } | Data::Friend { from, .. } | Data::CallingCard { from, .. } => Follow::Conversation(*from),
             Data::Call { invite } if invite.p2p => Follow::Conversation(invite.from),
@@ -437,7 +449,12 @@ impl Notification {
     /// Needs an answer (stays until answered).
     pub fn interactive(&self) -> bool {
         match &self.data {
-            Data::None | Data::Presence { .. } | Data::Message { .. } | Data::Delivery { .. } | Data::RegionMessage { .. } => false,
+            Data::None
+            | Data::Presence { .. }
+            | Data::Message { .. }
+            | Data::Poke { .. }
+            | Data::Delivery { .. }
+            | Data::RegionMessage { .. } => false,
             Data::GroupNotice { .. } => self.offered_attachment().is_some(),
             _ => true,
         }
@@ -469,9 +486,12 @@ impl Notification {
 
     /// Clicking the card itself acts (opens the conversation): a friend
     /// online opens an IM (LLAvatarActions::startIM, respond_on_mousedown),
-    /// a message its conversation.
+    /// a message its conversation, a poke the conversation of who poked.
     pub fn opens(&self) -> bool {
-        matches!(self.data, Data::Presence { online: true, .. } | Data::Message { .. })
+        matches!(
+            self.data,
+            Data::Presence { online: true, .. } | Data::Message { .. } | Data::Poke { .. }
+        )
     }
 
     /// Closing it answers "no"; a link has no answer, a resident's
@@ -483,6 +503,7 @@ impl Notification {
             | Data::Url(_)
             | Data::Presence { .. }
             | Data::Message { .. }
+            | Data::Poke { .. }
             | Data::RegionRestart
             | Data::RegionMessage { .. }
             | Data::CallingCard { .. }
@@ -516,6 +537,8 @@ pub enum Response {
     OpenUrl,
     /// The card itself was clicked: open what it is about (`Notification::opens`).
     Open,
+    /// A poke card's Poke back: poke who poked us; the card stays.
+    Poke,
 }
 
 /// Which toasts the preferences allow (Preferences › Chat › Toasts), and
@@ -706,6 +729,18 @@ impl Notifications {
         // the same entry, not one gone to the history
         if let Some(seen) = self.seen.iter_mut().find(|(i, _)| Some(*i) == before) {
             seen.0 = id;
+        }
+        id
+    }
+
+    /// The poke card of `from`, `count` their pokes in a row: it replaces
+    /// their card still out (a new toast, so it comes out and jiggles again)
+    /// and is a toast only, never kept under the bell.
+    pub fn push_poke(&mut self, from: Uuid, name: String, count: usize) -> u64 {
+        self.list.retain(|n| !matches!(n.data, Data::Poke { from: f, .. } if f == from));
+        let id = self.push(Kind::Message, name, poke_body(count), Data::Poke { from });
+        if let Some(n) = self.list.iter_mut().find(|n| n.id == id) {
+            n.transient = true;
         }
         id
     }
@@ -1016,7 +1051,9 @@ pub(super) fn outcome_of(n: &Notification, r: &Response) -> Outcome {
         // it is in the inventory whatever the click: shown or closed, read
         _ if matches!(n.data, Data::Delivery { .. }) => Outcome::Read,
         Response::Accept if matches!(n.data, Data::Inventory { .. }) => Outcome::Kept,
-        Response::Accept | Response::Button(_) | Response::SendText | Response::OpenUrl | Response::Open => Outcome::Answered,
+        Response::Accept | Response::Button(_) | Response::SendText | Response::OpenUrl | Response::Open | Response::Poke => {
+            Outcome::Answered
+        }
         Response::Decline | Response::Block | Response::BlockExperience => Outcome::Declined,
         Response::Dismiss => match &n.data {
             Data::Dialog { .. } | Data::TextBox { .. } => Outcome::Ignored,

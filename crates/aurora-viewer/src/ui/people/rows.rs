@@ -357,6 +357,23 @@ pub(super) fn actions(
     buttons: &[(&str, &str)],
     salt: impl std::hash::Hash + std::fmt::Debug,
 ) -> Vec<egui::Response> {
+    actions_if(ui, p, slot, buttons, salt, |_| true)
+}
+
+/// `actions` where the buttons `enabled` refuses are greyed out: their
+/// tooltip (the reason) still shows. Such a button still catches the
+/// pointer, or a click on it would reach the row under it (a second quick
+/// click there is the row's double click, its IM): it senses drags too,
+/// which keeps it out of the click sound (`sound_cues`), and the caller
+/// ignores its clicks.
+pub(super) fn actions_if(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    slot: Rect,
+    buttons: &[(&str, &str)],
+    salt: impl std::hash::Hash + std::fmt::Debug,
+    enabled: impl Fn(usize) -> bool,
+) -> Vec<egui::Response> {
     let (pill, cells) = action_rects(slot, buttons.len(), BUTTON);
     ui.painter()
         .rect_filled(pill, ui.visuals().widgets.inactive.corner_radius, p.raised);
@@ -366,12 +383,18 @@ pub(super) fn actions(
         .zip(cells)
         .enumerate()
         .map(|(i, ((icon, tip), r))| {
-            let resp = ui.interact(r, id.with(i), Sense::click());
-            if resp.hovered() {
+            let on = enabled(i);
+            let resp = ui.interact(r, id.with(i), if on { Sense::click() } else { Sense::click_and_drag() });
+            if on && resp.hovered() {
                 ui.painter().rect_filled(r, widgets::inner_radius(ui.visuals()), p.bar);
             }
-            super::radar::icon(ui, icon, r, 14.0, p.ink);
-            resp.on_hover_text(*tip).on_hover_cursor(egui::CursorIcon::PointingHand)
+            super::radar::icon(ui, icon, r, 14.0, if on { p.ink } else { p.muted_dim });
+            let resp = resp.on_hover_text(*tip);
+            if on {
+                resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+            } else {
+                resp
+            }
         })
         .collect()
 }
@@ -570,6 +593,62 @@ mod tests {
                 self.frame(Vec::new());
             }
         }
+    }
+
+    /// A greyed-out quick action (a poke cooling down) still catches the
+    /// pointer: a quick double click on it never reaches the row under it
+    /// (its double click opens the IM), and it stays out of the click sound
+    /// (it senses drags). An enabled one clicks as before.
+    #[test]
+    fn a_greyed_out_quick_action_keeps_its_clicks_from_the_row() {
+        let p = crate::theme::Theme::default().palette();
+        let buttons = [("user-filled", "Profile"), (crate::ui::poke::ICON, "Just poked")];
+        let slot = Rect::from_min_size(Pos2::new(0.0, 0.0), Vec2::new(300.0, RICH_H));
+        let (_, cells) = action_rects(slot, buttons.len(), BUTTON);
+        #[derive(Default)]
+        struct Seen {
+            buttons: Vec<(bool, bool)>,
+            row_clicks: usize,
+            row_double: bool,
+        }
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        let mut frame = |events: Vec<egui::Event>, seen: &mut Seen| {
+            frames.run(events, |ui| {
+                // the row first, as in the lists: the strip lies over it
+                let row = ui.interact(slot, ui.scope_id().with("row"), Sense::click_and_drag());
+                seen.row_clicks += usize::from(row.clicked());
+                seen.row_double |= row.double_clicked();
+                seen.buttons = actions_if(ui, &p, slot, &buttons, "test", |i| i == 0)
+                    .iter()
+                    .map(|r| (r.clicked(), r.sense.senses_drag()))
+                    .collect();
+            });
+        };
+        let press = |at: Pos2, pressed: bool| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        // the greyed-out poke, clicked twice quickly
+        let mut seen = Seen::default();
+        let at = cells[1].center();
+        frame(vec![egui::Event::PointerMoved(at)], &mut seen);
+        for _ in 0..2 {
+            frame(vec![press(at, true)], &mut seen);
+            frame(vec![press(at, false)], &mut seen);
+        }
+        assert_eq!(seen.row_clicks, 0, "the row under it gets no click");
+        assert!(!seen.row_double, "nor a double click (the IM)");
+        assert!(seen.buttons[1].1, "it senses drags: no click sound");
+        // the enabled one still clicks, as a click-only button
+        let mut seen = Seen::default();
+        let at = cells[0].center();
+        frame(vec![egui::Event::PointerMoved(at)], &mut seen);
+        frame(vec![press(at, true)], &mut seen);
+        frame(vec![press(at, false)], &mut seen);
+        assert_eq!(seen.buttons[0], (true, false));
+        assert_eq!(seen.row_clicks, 0);
     }
 
     #[test]
