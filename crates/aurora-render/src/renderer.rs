@@ -200,8 +200,6 @@ struct PostU {
     god_rays: f32,
     /// The part of the photo the frame draws ([`photo_part`]).
     photo_part: [f32; 4],
-    /// The sun on screen ([`sun_on_screen`]).
-    sun_uv: [f32; 4],
 }
 
 /// Where `PostU::auto_exposure` sits in the post uniforms.
@@ -838,6 +836,10 @@ struct Targets {
     /// Single-sample depth from the prepass.
     depth_ss_tex: wgpu::Texture,
     depth_ss: wgpu::TextureView,
+    /// The volumetric sun rays (volumetric.wgsl), half the scene's size.
+    // shortcut: kept while the rays are off (4 MB at 1080p); make it on
+    // demand if the rays stay.
+    vol_rays: wgpu::TextureView,
     /// Nearest water/exclusion surface, ordered by view distance even inside near.
     water_interface: wgpu::TextureView,
     water_mask: wgpu::TextureView,
@@ -1647,6 +1649,10 @@ pub(crate) struct Backend {
     /// occlusion's depth (`AURORA_BLEND_AO`).
     blend_ao_depth: bool,
     bloom: crate::bloom::Bloom,
+    /// The volumetric sun rays (volumetric.wgsl) and whether this frame
+    /// draws them.
+    volumetric: wgpu::RenderPipeline,
+    volumetric_on: bool,
     /// The automatic exposure of skies that are not classic (exposure.rs).
     exposure: crate::exposure::Exposure,
     /// The photo viewfinder's luminance histogram (histogram.rs).
@@ -2605,19 +2611,49 @@ fn whole_proj(proj: Mat4, photo_tile: Mat4) -> Mat4 {
 /// 1 outside a tiled photo). The glow keeps the whole photo's 512 x 512
 /// texels with it: drawn on a tile's own, its halo shrank with the tile and
 /// stopped at its border, a line along every seam.
-/// Where the sun sits on screen for the light shafts: uv (y down) and a
-/// fade, 1 on screen, down to 0 a screen width past its edge, behind the
-/// camera or below the horizon (`visible`).
-// shortcut: one projection for the whole image; tiled photos and VR eyes
-// place the shafts by it, give each its own if they look off there.
-fn sun_on_screen(view_proj: Mat4, sun_dir: Vec3, visible: f32) -> [f32; 4] {
-    let c = view_proj * sun_dir.normalize_or(Vec3::Z).extend(0.0);
-    if c.w <= 1e-4 || !(visible > 0.0) {
-        return [0.5, 0.5, 0.0, 0.0];
-    }
-    let (x, y) = (c.x / c.w, c.y / c.w);
-    let fade = (2.0 - x.abs().max(y.abs())).clamp(0.0, 1.0) * visible.min(1.0);
-    [x * 0.5 + 0.5, 0.5 - y * 0.5, fade, 0.0]
+/// Format of the volumetric sun rays (scene units, added by the post pass).
+const VOL_RAYS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+/// The half-resolution pass of the volumetric sun rays (volumetric.wgsl).
+fn make_volumetric(device: &wgpu::Device, frame_layout: &wgpu::BindGroupLayout) -> wgpu::RenderPipeline {
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("volumetric rays"),
+        source: wgpu::ShaderSource::Wgsl(
+            format!(
+                "{}
+{}",
+                crate::common_shader_source(),
+                include_str!("shaders/volumetric.wgsl")
+            )
+            .into(),
+        ),
+    });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("volumetric rays"),
+        bind_group_layouts: &[Some(frame_layout)],
+        immediate_size: 0,
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("volumetric rays"),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: &module,
+            entry_point: Some("vs_volumetric"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &module,
+            entry_point: Some("fs_volumetric"),
+            compilation_options: Default::default(),
+            targets: &[Some(VOL_RAYS_FORMAT.into())],
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    })
 }
 
 fn photo_part(photo_tile: Mat4) -> [f32; 4] {
@@ -3029,6 +3065,8 @@ impl Backend {
                 float_tex(3),
                 // the scene depth: the sky the sun rays start from
                 tex_entry(4, wgpu::TextureSampleType::Depth),
+                // the volumetric sun rays, half resolution (volumetric.wgsl)
+                float_tex(5),
             ],
         });
         let gbuf_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -3161,6 +3199,7 @@ impl Backend {
         let msaa_samples = if msaa_supported.contains(&4) { 4 } else { 1 };
         let settings = RenderSettings::default();
         let bloom = crate::bloom::Bloom::new(&device, &post_layout);
+        let volumetric = make_volumetric(&device, &frame_layout);
         let pipelines = Self::make_pipelines(
             &device,
             &frame_layout,
@@ -3289,6 +3328,8 @@ impl Backend {
             motion_now: false,
             blend_ao_depth: true,
             bloom,
+            volumetric,
+            volumetric_on: false,
             exposure,
             histogram,
             glow_drawn: false,
@@ -4442,6 +4483,16 @@ impl Backend {
         let water_refl = refl("water reflection", s.water_reflection_scale, false);
         let water_air = refl("water exterior", crate::water_optics::scale(s.water_effects), true);
         let mirror = refl("mirror", s.mirror_scale, false);
+        let vol_rays = make_view(
+            device,
+            "volumetric rays",
+            w.div_ceil(2),
+            h.div_ceil(2),
+            VOL_RAYS_FORMAT,
+            1,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        )
+        .1;
         let post_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("post"),
             layout: post_layout,
@@ -4463,6 +4514,7 @@ impl Backend {
                     resource: wgpu::BindingResource::TextureView(glow_view),
                 },
                 tex(4, &depth_ss),
+                tex(5, &vol_rays),
             ],
         });
         Targets {
@@ -4473,6 +4525,7 @@ impl Backend {
             depth_msaa_tex,
             blend_layers: None,
             depth_ss,
+            vol_rays,
             water_interface,
             water_mask,
             scene_copy_tex,
@@ -5334,6 +5387,7 @@ impl Backend {
                         resource: wgpu::BindingResource::TextureView(&self.glow.views[1]),
                     },
                     tex(4, &self.targets.depth_ss),
+                    tex(5, &self.targets.vol_rays),
                 ],
             })
         };
@@ -6531,6 +6585,13 @@ impl Backend {
         // gammaCorrect, which only encodes and clamps (legacyGamma kept on
         // skies without a probe ambiance, as no_post below)
         let hdr = self.settings.hdr;
+        // the volumetric rays need the sun's shadows to cast their beams
+        let god_rays = if hdr && !f.cutout && f.shadows {
+            f.god_rays.clamp(0.0, 2.0)
+        } else {
+            0.0
+        };
+        self.volumetric_on = god_rays > 0.0;
         let post = PostU {
             exposure: if hdr { f.exposure } else { 1.0 },
             // SMAA works on a gamma-encoded 8-bit image
@@ -6587,10 +6648,8 @@ impl Backend {
                 (true, true) => 1.0,
                 (true, false) => 2.0,
             },
-            god_rays: if hdr && !f.cutout { f.god_rays.clamp(0.0, 2.0) } else { 0.0 },
+            god_rays,
             photo_part: photo_part(f.photo_tile),
-            // the sun disc the sky draws, not the light (the moon at night)
-            sun_uv: sun_on_screen(f.proj * f.view, f.sky.sun_dir, f.sun_visible),
         };
         self.queue.write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(&post));
         if let (true, Some(t)) = (self.contact_now, &self.targets.contact) {
@@ -8403,6 +8462,28 @@ impl Backend {
             self.device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame post") }),
         );
+        if self.volumetric_on {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("volumetric rays"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.targets.vol_rays,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.volumetric);
+            // the frame group with the scene depth and the sun's cascades
+            pass.set_bind_group(0, &self.groups.b, &[]);
+            pass.draw(0..3, 0..1);
+        }
         // ---- temporal anti-aliasing
         let mut post_bg = &self.targets.post_bind_group;
         let mut post_src = &self.targets.color;
@@ -8503,6 +8584,7 @@ impl Backend {
                         buffer: &self.post_buffer,
                         glow: &self.glow.views[1],
                         depth: &self.targets.depth_ss,
+                        rays: &self.targets.vol_rays,
                     },
                     f.cutout,
                 );
@@ -9196,26 +9278,6 @@ impl Backend {
 mod tests {
     use super::*;
 
-    #[test]
-    fn the_sun_lands_on_screen_and_fades_off_it() {
-        // a camera at the origin looking down +X, Z up: clip = (-y, z, 1, x)
-        let proj = Mat4::from_cols(Vec4::W, -Vec4::X, Vec4::Y, Vec4::Z);
-        let view = Mat4::IDENTITY;
-        // dead ahead: the centre, full strength
-        let s = sun_on_screen(proj * view, Vec3::X, 1.0);
-        assert!((s[0] - 0.5).abs() < 1e-5 && (s[1] - 0.5).abs() < 1e-5 && s[2] == 1.0);
-        // a little up: above the centre (uv y down)
-        assert!(sun_on_screen(proj * view, Vec3::new(1.0, 0.0, 0.2), 1.0)[1] < 0.5);
-        // behind the camera or hidden: no rays
-        assert_eq!(sun_on_screen(proj * view, -Vec3::X, 1.0)[2], 0.0);
-        assert_eq!(sun_on_screen(proj * view, Vec3::X, 0.0)[2], 0.0);
-    }
-
-    /// The occlusion's table is read by index against the main view's
-    /// arguments: a cut-out photo leaves the ground and the water out of both,
-    /// and every other list keeps its place and its kind. Otherwise the table
-    /// is longer and shifted: draws tested with the bounds of others, a black
-    /// ground around the isolated avatar, and a panic where assertions are on.
     #[test]
     fn a_cut_out_leaves_the_ground_and_the_water_out_of_the_main_lists() {
         use crate::occlusion::{KIND_NONE, KIND_PREPASS, KIND_TESTED};

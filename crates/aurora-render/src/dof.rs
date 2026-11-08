@@ -68,6 +68,7 @@ pub(crate) struct PostInputs<'a> {
     pub buffer: &'a wgpu::Buffer,
     pub glow: &'a wgpu::TextureView,
     pub depth: &'a wgpu::TextureView,
+    pub rays: &'a wgpu::TextureView,
 }
 
 /// The post pass's group 0 over the DoF's output.
@@ -95,6 +96,10 @@ fn post_bind_group(device: &wgpu::Device, post: &PostInputs, out: &wgpu::Texture
             wgpu::BindGroupEntry {
                 binding: 4,
                 resource: wgpu::BindingResource::TextureView(post.depth),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: wgpu::BindingResource::TextureView(post.rays),
             },
         ],
     })

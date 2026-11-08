@@ -1076,6 +1076,16 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
     }
 
     #[test]
+    fn volumetric_shader_is_valid() {
+        validate(&format!(
+            "{}
+{}",
+            crate::COMMON_SHADER,
+            include_str!("shaders/volumetric.wgsl")
+        ));
+    }
+
+    #[test]
     fn post_shader_is_valid() {
         validate(include_str!("shaders/post.wgsl"));
     }

@@ -35,14 +35,14 @@ struct PostParams {
     // (left, top, width, height; 0, 0, 1, 1 outside a tiled photo): the
     // glow's 512 x 512 texels are the whole photo's, as in one pass
     photo_part: vec4<f32>,
-    // the sun on screen: uv (xy), its fade (z: hidden, off screen, 0)
-    sun_uv: vec4<f32>,
 };
 @group(0) @binding(2) var<uniform> post: PostParams;
 // Blurred glow (512x512, display space), see glow.wgsl.
 @group(0) @binding(3) var glow_tex: texture_2d<f32>;
 // The scene depth (reversed: 0 where nothing was drawn, the sky).
 @group(0) @binding(4) var scene_depth: texture_depth_2d;
+// The volumetric sun rays (volumetric.wgsl), half resolution, scene units.
+@group(0) @binding(5) var rays_tex: texture_2d<f32>;
 // The bloom levels added up (half resolution, scene units), see bloom.wgsl.
 @group(1) @binding(0) var bloom_tex: texture_2d<f32>;
 
@@ -318,35 +318,6 @@ fn fs_bloom_prefilter(in: Out) -> @location(0) vec4<f32> {
     return vec4<f32>(acc.rgb / max(acc.a, 1e-5), 1.0);
 }
 
-// Light shafts (GPU Gems 3, ch. 13): the sky around the sun marched
-// toward the sun on screen, fading each step, so that what stands in front
-// of the sky (no sky in its pixels) casts darker streaks between brighter
-// ones; a per-pixel offset hides the banding of the steps.
-fn god_rays(uv: vec2<f32>, clip: vec2<f32>) -> vec3<f32> {
-    let n = 48;
-    let dims = textureDimensions(scene_depth);
-    let aspect = f32(dims.x) / f32(dims.y);
-    let dv = (uv - post.sun_uv.xy) * (0.9 / f32(n));
-    let jitter = fract(52.9829189 * fract(dot(clip, vec2<f32>(0.06711056, 0.00583715))));
-    var p = uv - dv * jitter;
-    var decay = 1.0;
-    var acc = vec3<f32>(0.0);
-    for (var i = 0; i < n; i++) {
-        p -= dv;
-        let q = clamp(p, vec2<f32>(0.0), vec2<f32>(1.0));
-        let px = min(vec2<u32>(q * vec2<f32>(dims)), dims - vec2<u32>(1u));
-        if (textureLoad(scene_depth, px, 0) <= 0.0) {
-            let s = textureSampleLevel(hdr, hdr_sampler, q, 0.0).rgb;
-            // the sky glows near the sun only, not all over
-            let d = (q - post.sun_uv.xy) * vec2<f32>(aspect, 1.0);
-            let near_sun = exp(-dot(d, d) * 12.0);
-            acc += select(min(s, vec3<f32>(64.0)), vec3<f32>(0.0), s != s) * (near_sun * decay);
-        }
-        decay *= 0.96;
-    }
-    return acc * (1.0 * post.god_rays * post.sun_uv.z / f32(n));
-}
-
 @fragment
 fn fs_post(in: Out) -> @location(0) vec4<f32> {
     var m: vec3<f32>;
@@ -358,9 +329,10 @@ fn fs_post(in: Out) -> @location(0) vec4<f32> {
     } else {
         m = tap(in.uv);
     }
-    if (post.god_rays > 0.0 && post.sun_uv.z > 0.0) {
-        // screen blend: the shafts brighten without clipping
-        m += (vec3<f32>(1.0) - min(m, vec3<f32>(1.0))) * tonemap(god_rays(in.uv, in.clip.xy));
+    if (post.god_rays > 0.0) {
+        // screen blend: the beams brighten without clipping
+        let rays = textureSampleLevel(rays_tex, hdr_sampler, in.uv, 0.0).rgb * post.god_rays;
+        m += (vec3<f32>(1.0) - min(m, vec3<f32>(1.0))) * tonemap(rays);
     }
     if (post.glow > 0.5) {
         // glowcombineF.glsl: added in display space, then clamped by the 8-bit target
