@@ -788,7 +788,7 @@ FSResetCameraOnMovement,Boolean,in-aurora,,camera.reset_on_movement,"If true, th
 FSResetCameraOnTP,Boolean,in-aurora,,camera.reset_on_teleport,If true the camera will be reset to behind the avatar on teleporting
 FSResetSkeletonOnStandUp,Boolean,to-add,low,,Resets own avatar skeleton upon standing up and sends the reset to all surrounding avatars
 FSRestoreOpenIMs,Boolean,in-aurora,,reopen_ims,Restore open IM windows from the previous session on startup.
-FSRevokePerms,U32,to-add,high,,"Revokes objects anim perms on your avatar on: 0) never, 1) on sit, 2) on stand, 3) on sit and stand."
+FSRevokePerms,U32,in-aurora,,revoke_permissions,"Revokes objects anim perms on your avatar on: 0) never, 1) on sit, 2) on stand, 3) on sit and stand."
 FSRowsPerScriptDialog,S32,to-add,low,,The number of rows visible in a script dialog
 FSSaveInventoryScriptsAsMono,Boolean,to-add,low,,Saves scripts edited directly from inventory as Mono instead of LSL
 FSSavedRenderFarClip,F32,not-applicable,,internal state of FSRenderFarClipStepping,Saved draw distance (used in case of logout during progressive draw distance stepping)

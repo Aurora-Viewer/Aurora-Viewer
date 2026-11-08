@@ -242,14 +242,17 @@ impl Object {
     pub fn visual_scale_at(&self, now: Instant) -> Vec3 {
         self.render.local_scale.unwrap_or_else(|| self.damped_scale_at(now))
     }
-    /// Ordinary flexible volumes use a simulated path; sculpt/mesh assets
-    /// retain their own geometry even if they carry stale flexible parameters.
+    /// Whether the volume has the flexible path, as LLVOVolume::isFlexible
+    /// (indra/newview/llvovolume.cpp) and isFlexibleFast classify it. This is
+    /// also the build-tool and ARC classification, including sculpt paths.
+    pub fn has_flexible_path(&self) -> bool {
+        self.pcode == aurora_prim::params::LL_PCODE_VOLUME && self.volume.path.curve_type == aurora_prim::params::LL_PCODE_PATH_FLEXIBLE
+    }
+
+    /// Whether Aurora simulates this object as a flexi. Meshes and sculpts
+    /// keep their own geometry even when their volume path is flexible.
     pub fn is_flexible(&self) -> bool {
-        self.pcode == aurora_prim::params::LL_PCODE_VOLUME
-            && self.volume.path.curve_type == aurora_prim::params::LL_PCODE_PATH_FLEXIBLE
-            && self.extra.flexible.is_some()
-            && !self.volume.is_sculpt()
-            && !self.visual_volume().is_mesh()
+        self.has_flexible_path() && !self.volume.is_sculpt() && !self.visual_volume().is_mesh()
     }
 
     pub fn from_update(region: RegionHandle, u: ObjectUpdate) -> Object {
@@ -320,7 +323,20 @@ impl Object {
         })
     }
 
-    pub fn apply_full(&mut self, u: ObjectUpdate) {
+    pub fn apply_full(&mut self, mut u: ObjectUpdate) {
+        // Like LLViewerObject::processUpdateMessage
+        // (indra/newview/llviewerobject.cpp), retain an existing flexi
+        // parameter entry when a later full update omits it while the path
+        // remains flexible. A genuinely changed path or identity does not
+        // carry the old entry forward.
+        if (u.full_id.is_nil() || u.full_id == self.full_id)
+            && self.has_flexible_path()
+            && u.pcode == aurora_prim::params::LL_PCODE_VOLUME
+            && u.volume.path.curve_type == aurora_prim::params::LL_PCODE_PATH_FLEXIBLE
+            && u.extra.flexible.is_none()
+        {
+            u.extra.flexible = self.extra.flexible;
+        }
         if !u.full_id.is_nil() && self.full_id != u.full_id {
             self.render.local_volume = None;
             self.render.local_scale = None;
@@ -1765,6 +1781,73 @@ mod tests {
             particles: Default::default(),
             sound: Default::default(),
         }
+    }
+
+    #[test]
+    fn flexible_path_simulates_without_optional_flexible_parameters() {
+        use aurora_prim::params::{LL_PCODE_PATH_FLEXIBLE, LL_PCODE_VOLUME};
+
+        let mut flexible = update(1, LL_PCODE_VOLUME, "");
+        flexible.volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+        let flexible = Object::from_update(1, flexible);
+        assert!(flexible.has_flexible_path());
+        assert!(flexible.is_flexible());
+
+        let mut rigid = update(2, LL_PCODE_VOLUME, "");
+        rigid.volume.path.curve_type = aurora_prim::params::LL_PCODE_PATH_LINE;
+        let rigid = Object::from_update(1, rigid);
+        assert!(!rigid.has_flexible_path());
+        assert!(!rigid.is_flexible());
+
+        let mut sculpt = update(3, LL_PCODE_VOLUME, "");
+        sculpt.volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+        sculpt.volume.sculpt = Some(aurora_prim::params::SculptParams::default());
+        let sculpt = Object::from_update(1, sculpt);
+        assert!(sculpt.has_flexible_path());
+        assert!(!sculpt.is_flexible());
+
+        let mut mesh = update(4, LL_PCODE_VOLUME, "");
+        mesh.volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+        mesh.volume.sculpt = Some(aurora_prim::params::SculptParams {
+            texture: Uuid::nil(),
+            sculpt_type: aurora_prim::params::LL_SCULPT_TYPE_MESH,
+        });
+        let mesh = Object::from_update(1, mesh);
+        assert!(mesh.has_flexible_path());
+        assert!(!mesh.is_flexible());
+    }
+
+    #[test]
+    fn full_update_without_flex_params_keeps_existing_values_only_while_path_stays_flexible() {
+        use aurora_prim::params::{LL_PCODE_PATH_FLEXIBLE, LL_PCODE_VOLUME};
+
+        let mut initial = update(1, LL_PCODE_VOLUME, "");
+        initial.volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+        initial.extra.flexible = Some(crate::build::edits::FLEX_DEFAULT);
+        let mut object = Object::from_update(1, initial);
+        let saved = object.extra.flexible;
+
+        let mut omitted = update(1, LL_PCODE_VOLUME, "");
+        omitted.volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+        object.apply_full(omitted);
+        assert_eq!(object.extra.flexible, saved);
+
+        let mut explicit = update(1, LL_PCODE_VOLUME, "");
+        explicit.volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+        let mut changed = crate::build::edits::FLEX_DEFAULT;
+        changed.tension += 0.5;
+        explicit.extra.flexible = Some(changed);
+        object.apply_full(explicit);
+        assert_eq!(
+            object.extra.flexible,
+            Some(changed),
+            "an explicit update replaces the retained values"
+        );
+
+        let mut rigid = update(1, LL_PCODE_VOLUME, "");
+        rigid.volume.path.curve_type = aurora_prim::params::LL_PCODE_PATH_LINE;
+        object.apply_full(rigid);
+        assert_eq!(object.extra.flexible, None);
     }
 
     #[test]
