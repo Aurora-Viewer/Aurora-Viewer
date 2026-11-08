@@ -196,7 +196,7 @@ ConnectionPort,U32,unreviewed,,,Custom connection port number
 ConnectionPortEnabled,Boolean,unreviewed,,,Use the custom connection port?
 ConsoleBackgroundOpacity,F32,unreviewed,,,"Opacity of chat console (0.0 = completely transparent, 1.0 = completely opaque)"
 ConsoleBufferSize,S32,unreviewed,,,Size of chat console transcript (lines of chat)
-ConsoleMaxLines,S32,unreviewed,,,Max number of lines of chat text visible in console.
+ConsoleMaxLines,S32,in-aurora,,field `chat_console_max_lines`; wrapped text rows in both console styles; 40 by default; 0..50,Max number of lines of chat text visible in console.
 ContactsTornOff,Boolean,unreviewed,,field `torn_off`,Show contacts window separately from Communicate window.
 ConversationSortOrder,U32,unreviewed,,,Specifies sort key for conversations
 CookiesEnabled,Boolean,unreviewed,,,Accept cookies from Web sites?
