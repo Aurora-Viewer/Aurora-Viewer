@@ -1576,6 +1576,7 @@ mod tests {
                 mouselook: false,
                 object_view: false,
                 keys: &keys,
+                views: &SavedViews::default(),
                 free: None,
             };
             let mut time = 0.0;
