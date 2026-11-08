@@ -652,7 +652,7 @@ pub fn show_flags(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
     let Some(key) = tool.selection.first().copied() else { return };
     let Some(idx) = world.objects.index_of(&key) else { return };
     let Some(o) = world.objects.get(idx) else { return };
-    let (flags, is_root, full_id, flexible) = (o.update_flags, o.parent_id == 0, o.full_id, o.extra.flexible.is_some());
+    let (flags, is_root, full_id, flexible) = (o.update_flags, o.parent_id == 0, o.full_id, o.has_flexible_path());
     let editable = tool.can_modify(world, idx);
     let self_owned = tool.props.get(&full_id).is_some_and(|pr| pr.owner_id == world.agent_id);
     ui.spacing_mut().item_spacing.y = 1.0;
@@ -712,7 +712,7 @@ pub fn show_shape(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
     let Some(key) = tool.selection.first().copied() else { return };
     let Some(idx) = world.objects.index_of(&key) else { return };
     let Some(o) = world.objects.get(idx) else { return };
-    let (volume, flexible) = (o.volume, o.extra.flexible.is_some());
+    let (volume, flexible) = (o.volume, o.has_flexible_path());
     if volume.is_mesh() {
         super::mesh::show(ui, p, tool, world, idx, env);
         return;
@@ -816,7 +816,7 @@ fn paste_params(tool: &mut BuildTool, world: &mut World, idx: usize, c: ShapeCli
         (None, Some(Some(_))) => tool.set_extra(world, idx, crate::build::edits::Extra::Sculpt(None)),
         _ => {}
     }
-    let flexible = world.objects.get(idx).is_some_and(|o| o.extra.flexible.is_some());
+    let flexible = world.objects.get(idx).is_some_and(|o| o.has_flexible_path());
     let mut v = c.volume;
     v.sculpt = c.sculpt;
     // a line path follows the object's flexible state
