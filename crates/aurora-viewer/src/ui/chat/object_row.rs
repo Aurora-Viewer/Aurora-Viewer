@@ -73,6 +73,44 @@ pub(crate) fn object_glyph(line: &ChatLine, p: &crate::theme::Palette, cube: egu
     if script_error(line) { (WARNING, p.danger) } else { ("box", cube) }
 }
 
+/// The owner whose picture stands for an object's line: a renamer, a gag or
+/// another object they wore when it spoke (`World::worn_speakers`), unless
+/// RLVa hides who they are. A script error keeps its warning sign.
+pub(crate) fn wearer(world: &World, line: &ChatLine) -> Option<uuid::Uuid> {
+    if !matches!(line.kind, ChatKind::Object(_)) || script_error(line) {
+        return None;
+    }
+    world
+        .worn_speakers
+        .get(&line.source)
+        .copied()
+        .filter(|owner| world.rlva_can_name(*owner))
+}
+
+/// Paints the wearer's picture in `rect` instead of the cube, asking for it;
+/// false while there is none (no wearer, or not loaded yet): the cube then.
+pub(crate) fn paint_wearer(
+    painter: &egui::Painter,
+    world: &World,
+    line: &ChatLine,
+    pics: &std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
+    wanted: &mut std::collections::HashSet<uuid::Uuid>,
+    rect: egui::Rect,
+    alpha: f32,
+) -> bool {
+    let Some(owner) = wearer(world, line) else {
+        return false;
+    };
+    wanted.insert(owner);
+    let Some(t) = pics.get(&owner) else {
+        return false;
+    };
+    let [w, h] = t.size();
+    let tint = crate::ui::widgets::PICTURE_TINT.gamma_multiply(alpha);
+    painter.image(t.id(), rect, crate::ui::widgets::square_crop(w, h), tint);
+    true
+}
+
 /// The text of a compact row: muted, a script error in its own colour.
 pub(super) fn text_color(line: &ChatLine, p: &crate::theme::Palette) -> egui::Color32 {
     if script_error(line) {
@@ -182,7 +220,9 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: 
         let middle = caps_middle(ui.painter(), size, baseline);
         let icon = egui::Rect::from_center_size(egui::pos2(left + icon_center, middle), egui::Vec2::splat(ICON));
         let tint = if script_error(line) { p.danger } else { p.muted_dim };
-        super::thread::paint_icon(ui.painter(), self::icon(world, line), icon, tint);
+        if !paint_wearer(ui.painter(), world, line, env.pics, env.wanted, icon, 1.0) {
+            super::thread::paint_icon(ui.painter(), self::icon(world, line), icon, tint);
+        }
         if !notice {
             let name = sender_name(world, env.own_name, line);
             // the cube names its object under the pointer and inspects it
@@ -588,6 +628,31 @@ pub(super) mod tests {
             assert_eq!(icon(&world, &notice), expected, "{topic:?}");
             assert!(crate::ui::icons::embedded(expected), "{expected} is built in");
         }
+    }
+
+    /// A worn object's line stands for its owner, unless it is a script
+    /// error or RLVa hides who the owner is.
+    #[test]
+    fn a_worn_objects_line_shows_its_owner_unless_hidden() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let owner = uuid::Uuid::from_u128(77);
+        let said = line(ChatKind::Object(ChatType::Normal), "mmph");
+        assert_eq!(wearer(&world, &said), None, "not heard worn");
+        world.worn_speakers.insert(said.source, owner);
+        assert_eq!(wearer(&world, &said), Some(owner));
+        let error = line(ChatKind::Object(ChatType::Debug), "Script run-time error");
+        assert_eq!(wearer(&world, &error), None, "the warning sign stays");
+        world.rlva.configure(true);
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Relay".into(),
+            source_id: uuid::Uuid::from_u128(5),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: ChatType::OwnerSay,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n".into(),
+        }));
+        assert_eq!(wearer(&world, &said), None, "the picture would name them");
     }
 
     #[test]

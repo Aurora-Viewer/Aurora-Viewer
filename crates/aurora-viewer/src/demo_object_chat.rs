@@ -2,7 +2,8 @@
 //! nearby chat at the arrival, residents talking among objects (#475): a
 //! greeter, a tip jar, a door's emote, a vendor's line said to us with a
 //! link, our HUD's owner-say and its script error (#1263; the tip jar's is
-//! not ours: not shown). The Conversations window shows the nearby
+//! not ours: not shown), and the gag we wear talking for us, under our
+//! picture instead of the cube. The Conversations window shows the nearby
 //! chat in the style named, or `lines` the cards above the chat bar (the
 //! window closed). `on` turns the compact object rows on for the run,
 //! nothing saved; `im` shows the friend's conversation instead, with a
@@ -76,7 +77,25 @@ pub fn events(agent: Uuid) -> Vec<NetEvent> {
     let (agent_said, object_said) = (ChatSourceType::Agent, ChatSourceType::Object);
     let normal = ChatType::Normal;
     let stranger = Uuid::from_u128(0x0B1E_C7C4_0000_0000_0000_0000_0000_0001);
+    // the gag on our mouth (attachment point 11), there before it speaks
+    let mut gag = super::outfit_attachment(&aurora_net::AttachRequest {
+        item_id: object(6),
+        owner_id: agent,
+        point: 11,
+        add: true,
+        flags: 0,
+        group_mask: 0,
+        everyone_mask: 0,
+        next_owner_mask: 0,
+        name: String::new(),
+        desc: String::new(),
+    });
+    gag.full_id = object(6);
     vec![
+        NetEvent::ObjectUpdates {
+            handle: super::HANDLE,
+            objects: vec![gag],
+        },
         say(
             super::DEMO_NOVA,
             Uuid::nil(),
@@ -150,6 +169,14 @@ pub fn events(agent: Uuid) -> Vec<NetEvent> {
             tr!("demo-object-chat-direct"),
             object_said,
             ChatType::Other(9),
+        ),
+        say(
+            object(6),
+            agent,
+            tr!("demo-object-chat-gag"),
+            tr!("demo-object-chat-gag-text"),
+            object_said,
+            normal,
         ),
         say(
             super::DEMO_NOVA,

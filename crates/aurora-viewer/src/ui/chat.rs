@@ -2478,7 +2478,9 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                     if object {
                         let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
                         let (glyph, tint) = object_row::object_glyph(line, p, super::colors::sender_color(line));
-                        if let Some(t) = env.icons.get(glyph) {
+                        if !object_row::paint_wearer(ui.painter(), world, line, env.pics, env.wanted, rect, 1.0)
+                            && let Some(t) = env.icons.get(glyph)
+                        {
                             ui.painter().image(
                                 t.id(),
                                 rect.shrink(2.0),
@@ -3486,6 +3488,7 @@ pub fn conversations_in_sight(ctx: &egui::Context, st: &ChatUi, main_open: bool)
 fn bubble_sender(
     painter: &egui::Painter,
     p: &Palette,
+    world: &World,
     pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
     wanted_pics: &mut HashSet<uuid::Uuid>,
     r: egui::Rect,
@@ -3497,7 +3500,9 @@ fn bubble_sender(
     match who {
         Sender::Object => {
             let (glyph, tint) = object_row::object_glyph(line, p, super::colors::sender_color(line));
-            if let Some(t) = super::icons::global(glyph) {
+            if !object_row::paint_wearer(painter, world, line, pics, wanted_pics, r, alpha)
+                && let Some(t) = super::icons::global(glyph)
+            {
                 painter.image(t.id(), r.shrink(1.0), uv, tint.gamma_multiply(alpha));
             }
         }
@@ -3648,7 +3653,7 @@ pub fn toasts(
                             let c = visual.left_edge(name.clone().unwrap_or(at..at)).translate(rect.min.to_vec2());
                             let r =
                                 egui::Rect::from_center_size(egui::pos2(c.min.x - 2.0 - side * 0.5, c.center().y), egui::vec2(side, side));
-                            bubble_sender(painter, p, pics, wanted_pics, r, &who, line, alpha);
+                            bubble_sender(painter, p, world, pics, wanted_pics, r, &who, line, alpha);
                         }
                         // the islands' pills: the sender's name acts like the
                         // conversations' (Firestorm's toast links it)
