@@ -2,7 +2,7 @@
 //! Follows LLFloaterProperties / LLFloaterInventory (Firestorm, LGPL 2.1).
 
 use super::*;
-use crate::ui::widgets::{Floater, flat_button};
+use crate::ui::widgets::{self, Floater, Modal, flat_button};
 use aurora_llsd::llsd_map;
 use aurora_net::inventory::operations::Operation;
 
@@ -82,10 +82,10 @@ pub(super) fn show(
             },
         )
     };
-    if confirmation || document_confirmation {
+    if document_confirmation {
         floater = floater.fixed();
     }
-    floater.show(ctx, p, &mut open, |ui| {
+    let mut body = |ui: &mut egui::Ui| {
         match &mut dialog {
             EditDialog::Properties(id) => {
                 done = super::properties::show(ui, p, icons, inv, st, facts, images, *id, actions);
@@ -308,7 +308,23 @@ pub(super) fn show(
         {
             done = true;
         }
-    });
+    };
+    if confirmation {
+        // Port of the DeleteItems, PurgeSelectedItems and ConfirmEmptyTrash
+        // alerts (indra/newview/llinventoryfunctions.cpp,
+        // skins/default/xui/en/notifications.xml): modal, with the affirmative
+        // answer as the default button, so Enter confirms and Escape cancels.
+        let modal = Modal::new(egui::Id::unique(window_id.as_str())).show(ctx, |ui| {
+            ui.set_width(384.0);
+            widgets::section_header(ui, p, "trash-filled", title);
+            body(ui);
+        });
+        if modal.should_close() {
+            done = true;
+        }
+    } else {
+        floater.show(ctx, p, &mut open, body);
+    }
     if open && !done {
         st.dialog = Some(dialog);
     }
@@ -523,7 +539,9 @@ fn confirmation_buttons(ui: &mut egui::Ui, p: &Palette, enabled: bool, label: &s
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_enabled_ui(enabled, |ui| {
-                confirm = super::super::widgets::flat_button_sized(ui, p, label, Vec2::new(120.0, 28.0)).clicked();
+                // the Legacy Viewer's default="true" OK: Enter clicks it
+                let button = widgets::flat_button_sized(ui, p, label, Vec2::new(120.0, 28.0));
+                confirm = widgets::default_button(button).clicked();
             });
             if super::super::widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), Vec2::new(96.0, 28.0)).clicked() {
                 *done = true;
@@ -2102,6 +2120,99 @@ mod tests {
                 .iter()
                 .any(|s| matches!(&s.shape, egui::epaint::Shape::Text(t) if t.galley.text() == "Fermer / Annuler"))
         );
+    }
+
+    /// One pass of the delete and Empty Trash confirmations, with `events`.
+    fn confirmation_pass(ctx: &egui::Context, inv: &Inventory, st: &mut InventoryUi, events: Vec<egui::Event>) -> Vec<InvAction> {
+        let p = crate::theme::Theme::default().palette();
+        let mut actions = Vec::new();
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0))),
+                events,
+                ..Default::default()
+            },
+            |_ui| {
+                show(
+                    ctx,
+                    &p,
+                    &Icons::default(),
+                    inv,
+                    st,
+                    &InventoryPreferences::default(),
+                    &Facts::default(),
+                    &Default::default(),
+                    &mut actions,
+                );
+            },
+        );
+        actions
+    }
+
+    fn key(key: egui::Key) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }
+    }
+
+    /// The Legacy Viewer's DeleteItems and ConfirmEmptyTrash alerts answer
+    /// OK on Return (`default="true"`): Enter confirms, Escape cancels, and
+    /// Enter does nothing while an earlier change is still pending.
+    #[test]
+    fn enter_confirms_a_deletion_and_empty_trash_and_escape_cancels() {
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let trash = rules::system(&inv, 14).expect("demo trash");
+        if let Some(folder) = inv.folders.get_mut(&trash) {
+            folder.state = FetchState::Fetched;
+        }
+        for empty in [false, true] {
+            let dialog = || {
+                if empty {
+                    EditDialog::Empty(trash)
+                } else {
+                    EditDialog::Delete(vec![Uuid::from_u128(8100), Uuid::from_u128(8109)], false)
+                }
+            };
+            let name = if empty { "Empty Trash" } else { "Delete" };
+            // Enter
+            let ctx = egui::Context::default();
+            let mut st = InventoryUi {
+                dialog: Some(dialog()),
+                ..Default::default()
+            };
+            for _ in 0..3 {
+                confirmation_pass(&ctx, &inv, &mut st, Vec::new());
+            }
+            let mut actions = confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Enter)]);
+            actions.extend(confirmation_pass(&ctx, &inv, &mut st, Vec::new()));
+            assert!(matches!(&actions[..], [InvAction::Edit(_)]), "{name}: Enter confirms once");
+            assert!(st.dialog.is_none(), "{name}: the dialog closes");
+            // Escape
+            let ctx = egui::Context::default();
+            st.dialog = Some(dialog());
+            for _ in 0..3 {
+                confirmation_pass(&ctx, &inv, &mut st, Vec::new());
+            }
+            let mut actions = confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Escape)]);
+            actions.extend(confirmation_pass(&ctx, &inv, &mut st, Vec::new()));
+            assert!(actions.is_empty() && st.dialog.is_none(), "{name}: Escape cancels");
+            // a change still pending greys the button out: Enter waits
+            let ctx = egui::Context::default();
+            st.dialog = Some(dialog());
+            st.pending = Some(Uuid::from_u128(1));
+            for _ in 0..3 {
+                confirmation_pass(&ctx, &inv, &mut st, Vec::new());
+            }
+            let mut actions = confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Enter)]);
+            actions.extend(confirmation_pass(&ctx, &inv, &mut st, Vec::new()));
+            assert!(actions.is_empty() && st.dialog.is_some(), "{name}: nothing while pending");
+            st.pending = None;
+        }
     }
 
     /// The give confirmation (#627): the resident by name, the entries with
