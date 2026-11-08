@@ -9304,7 +9304,9 @@ impl App {
             let step_back = self.settings.walk_backwards_without_turning;
             // (Body::update turns a little even without time: held apart)
             if !frozen {
-                self.world.agent.body_turn = self.world.update_bodies(world_now(), dt, at, ml, step_back);
+                self.world.agent.body_turn = self
+                    .world
+                    .update_bodies(world_now(), dt, at, ml, step_back, self.settings.avatar_turn_speed);
             }
             self.trace_own_motion();
             self.update_pointing();
@@ -10455,7 +10457,7 @@ impl App {
             // (a window behind past the driver's budget, or on a card another
             // program keeps busy, pauses its 3D drawing: its 3D targets
             // shrink, texture_budget::Background, busy_pause.rs)
-            rlva_resolution_divisor: if self.drawing_paused() {
+            rlva_resolution_divisor: if self.scene_paused() {
                 PAUSED_RESOLUTION_DIVISOR
             } else {
                 self.world.rlva.resolution_divisor.unwrap_or(1)
@@ -11307,7 +11309,7 @@ impl App {
         // capture is waited for, its pixels are read in the tail below.
         // (nothing of the scene while the 3D drawing is paused behind,
         // texture_budget::Background, busy_pause.rs)
-        let lists = if self.in_world() && !self.drawing_paused() {
+        let lists = if self.in_world() && !self.scene_paused() {
             &self.scene.lists
         } else {
             &self.empty_lists

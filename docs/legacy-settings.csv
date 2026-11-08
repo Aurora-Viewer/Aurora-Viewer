@@ -438,7 +438,7 @@ FSAutoOrderIMTabsAtTop,Boolean,to-add,low,,Add new IM tabs as first in their cha
 FSAutoOrderIMTabsPriorities,String,to-add,low,,Priority for automatic ordering IM tabs. Higher priority means the tab will be inserted before lower priority. Default is Groups[0]=2 Confer
 FSAutoUnmuteAmbient,Boolean,to-add,low,,"If Ambient sounds are muted, unmute on TP. Default (false)"
 FSAutoUnmuteSounds,Boolean,to-add,low,,"If Sound Effects are muted, unmute on TP. Default (false)"
-FSAvatarTurnSpeed,F32,to-add,high,,Modify the speed at which the avatar responds to turning movements. 0-100 percent of max rate. Default is 0.
+FSAvatarTurnSpeed,F32,in-aurora,,avatar_turn_speed,Modify the speed at which the avatar responds to turning movements. 0-100 percent of max rate. Default is 0.
 FSBeamColorFile,String,to-add,low,,Beam file for the shape of your beam
 FSBeamShape,String,to-add,low,,Beam file for the shape of your beam
 FSBeamShapeScale,F32,to-add,low,,How Big You Want to let the beam be
