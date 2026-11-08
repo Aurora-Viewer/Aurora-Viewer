@@ -833,6 +833,8 @@ What comes before the rest (requested by the human).
 
 ## Repository and tooling
 
+- ✅ Make environment-shortcut tests independent of the host keyboard layout ([#2878](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/2878); task `qwertz-shortcut-test`): test sanitized legacy bindings against the active layout's physical key and cover QWERTY, AZERTY, Belgian and QWERTZ mappings. `scripts/check.ps1` passes on the current QWERTZ host.
+
 - ✅ Crash triage references and setup downloads (2026-11-05; task `triage-and-setup-refs`; no issue, no effect on the viewer): the Crash triage workflow adds the `crash-triaged` label to each issue it signs, and only an open issue with that label, whose own triage section ends with the same signature, is a duplicate reference (`Get-TriageSignature`, fixtures in `scripts/test-crash-triage.ps1`; label in `setup-labels.ps1`). The one-line setup reads main's commit once and downloads every file of `scripts/tools` from that commit; a clone still uses its own files.
   - ⬜ After the merge: run `setup-labels.ps1`, then "Run workflow" on the open crash issues already signed, so they get the label and stay references.
 
