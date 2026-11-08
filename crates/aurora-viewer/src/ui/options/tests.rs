@@ -1862,19 +1862,9 @@ fn show_friends_only_switches_from_controls_once_logged_in() {
     }
 }
 
-/// #2136: the System fonts search filters the list, the list grows back when
-/// the search is cleared or the list reopened, and a click in the room a
-/// filtered list left closes it. `screen_h` short enough opens it above its
-/// button.
-fn font_search(screen_h: f32) {
-    let theme = crate::theme::Theme::default();
-    let p = theme.palette();
-    let ctx = egui::Context::default();
-    crate::ui::fonts::apply(&ctx, crate::ui::fonts::INTER);
-    theme.apply(&ctx, 1.0);
-    let names = ["Alpha", "Beta", "Gamma", "Delta"];
-    let mut settings = Settings::default();
-    let mut state = OptionsUi {
+/// Preferences on Appearance, with these system fonts.
+fn font_list_state(names: &[&str]) -> OptionsUi {
+    OptionsUi {
         page: Page::Appearance,
         system_fonts: Some(
             names
@@ -1886,32 +1876,90 @@ fn font_search(screen_h: f32) {
                 .collect(),
         ),
         ..Default::default()
-    };
+    }
+}
+
+/// One frame of the Preferences window, 1600 points wide: the texts drawn
+/// and their places.
+fn draw_preferences(
+    ctx: &egui::Context,
+    frame: &mut u32,
+    screen_h: f32,
+    events: Vec<egui::Event>,
+    state: &mut OptionsUi,
+    settings: &mut Settings,
+) -> Vec<(String, egui::Rect)> {
+    if *frame == 0 {
+        let theme = crate::theme::Theme::default();
+        crate::ui::fonts::apply(ctx, crate::ui::fonts::INTER);
+        theme.apply(ctx, 1.0);
+    }
+    *frame += 1;
+    let p = crate::theme::Theme::default().palette();
     let mut open = true;
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, screen_h))),
+            time: Some(f64::from(*frame) / 60.0),
+            events,
+            focused: true,
+            ..Default::default()
+        },
+        |_| {
+            show(ctx, &p, &Icons::default(), settings, state, &mut open);
+        },
+    );
+    output.textures_delta.clear();
+    output
+        .shapes
+        .iter()
+        .filter_map(|c| match &c.shape {
+            egui::Shape::Text(t) => Some((t.galley.text().to_owned(), t.visual_bounding_rect())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The frames of a click at `at`.
+fn click_frames(at: egui::Pos2) -> Vec<Vec<egui::Event>> {
+    let button = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    vec![
+        vec![egui::Event::PointerMoved(at)],
+        vec![button(true)],
+        vec![button(false)],
+        vec![],
+        vec![],
+    ]
+}
+
+/// A key press, without modifiers.
+fn key_event(key: egui::Key) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    }
+}
+
+/// #2136: the System fonts search filters the list, the list grows back when
+/// the search is cleared or the list reopened, and a click in the room a
+/// filtered list left closes it. `screen_h` short enough opens it above its
+/// button.
+fn font_search(screen_h: f32) {
+    let ctx = egui::Context::default();
+    let names = ["Alpha", "Beta", "Gamma", "Delta"];
+    let mut settings = Settings::default();
+    let mut state = font_list_state(&names);
     let mut frame = 0;
-    let mut draw = |events: Vec<egui::Event>, state: &mut OptionsUi, settings: &mut Settings| -> Vec<(String, egui::Rect)> {
-        frame += 1;
-        let mut output = ctx.run_ui(
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, screen_h))),
-                time: Some(frame as f64 / 60.0),
-                events,
-                focused: true,
-                ..Default::default()
-            },
-            |_| {
-                show(&ctx, &p, &Icons::default(), settings, state, &mut open);
-            },
-        );
-        output.textures_delta.clear();
-        output
-            .shapes
-            .iter()
-            .filter_map(|c| match &c.shape {
-                egui::Shape::Text(t) => Some((t.galley.text().to_owned(), t.visual_bounding_rect())),
-                _ => None,
-            })
-            .collect()
+    let mut draw = |events: Vec<egui::Event>, state: &mut OptionsUi, settings: &mut Settings| {
+        draw_preferences(&ctx, &mut frame, screen_h, events, state, settings)
     };
     let shown = |texts: &[(String, egui::Rect)]| -> Vec<String> {
         names
@@ -1931,28 +1979,8 @@ fn font_search(screen_h: f32) {
     for _ in 0..12 {
         texts = draw(vec![], &mut state, &mut settings);
     }
-    let click = |at: egui::Pos2| {
-        let button = |pressed| egui::Event::PointerButton {
-            pos: at,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
-        };
-        vec![
-            vec![egui::Event::PointerMoved(at)],
-            vec![button(true)],
-            vec![button(false)],
-            vec![],
-            vec![],
-        ]
-    };
-    let key = |key| egui::Event::Key {
-        key,
-        physical_key: None,
-        pressed: true,
-        repeat: false,
-        modifiers: egui::Modifiers::NONE,
-    };
+    let click = click_frames;
+    let key = key_event;
     let erase = || {
         vec![
             vec![key(egui::Key::Backspace)],
@@ -2028,6 +2056,57 @@ fn font_search(screen_h: f32) {
     assert_eq!(shown(&texts), all, "the list reopens on the whole list");
     assert!((height() - whole).abs() < 0.5);
     assert!(state.font_filter.is_empty());
+    // the keys, from the search field: no system font chosen yet, so Down
+    // starts on the first; Up wraps around; Enter picks and closes
+    let path = |name: &str| format!("system:/nonexistent/{name}.ttf");
+    for k in [
+        egui::Key::ArrowDown,
+        egui::Key::ArrowDown,
+        egui::Key::ArrowUp,
+        egui::Key::ArrowUp,
+        egui::Key::Enter,
+    ] {
+        for events in [vec![key(k)], vec![]] {
+            draw(events, &mut state, &mut settings);
+        }
+    }
+    assert_eq!(settings.font, path("Delta"), "Down, Down, Up, Up (wrapped), Enter");
+    assert!(!egui::Popup::is_any_open(&ctx), "Enter closes the list");
+    // reopened on the chosen font: Down goes to the next one, wrapping
+    for events in click(combo) {
+        draw(events, &mut state, &mut settings);
+    }
+    for k in [egui::Key::ArrowDown, egui::Key::Enter] {
+        for events in [vec![key(k)], vec![]] {
+            draw(events, &mut state, &mut settings);
+        }
+    }
+    assert_eq!(settings.font, path("Alpha"), "from Delta, Down wraps to Alpha");
+    // typing selects the first font found
+    for events in click(combo) {
+        draw(events, &mut state, &mut settings);
+    }
+    for events in typed() {
+        draw(events, &mut state, &mut settings);
+    }
+    for events in [vec![key(egui::Key::Enter)], vec![]] {
+        draw(events, &mut state, &mut settings);
+    }
+    assert_eq!(settings.font, path("Beta"), "Enter picks the first font found");
+    assert!(!egui::Popup::is_any_open(&ctx));
+    // nothing found: Enter does nothing, and the field keeps the keyboard
+    for events in click(combo) {
+        draw(events, &mut state, &mut settings);
+    }
+    for events in [vec![egui::Event::Text("zz".into())], vec![], vec![key(egui::Key::Enter)], vec![]] {
+        draw(events, &mut state, &mut settings);
+    }
+    assert_eq!(settings.font, path("Beta"));
+    assert!(egui::Popup::is_any_open(&ctx), "the list stays open");
+    for events in [vec![egui::Event::Text("x".into())], vec![]] {
+        draw(events, &mut state, &mut settings);
+    }
+    assert_eq!(state.font_filter, "zzx", "typing still filters");
 }
 
 #[test]
@@ -2038,4 +2117,67 @@ fn the_system_font_search_filters_and_resets() {
 #[test]
 fn the_system_font_search_resets_above_its_button() {
     font_search(420.0);
+}
+
+/// #2136: the font the keys selected is always on screen: after typing in
+/// a list scrolled down, and on opening on a chosen font far down.
+#[test]
+fn the_selected_system_font_stays_in_view() {
+    let ctx = egui::Context::default();
+    let names: Vec<String> = (0..40).map(|i| format!("Font {i:02}")).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut settings = Settings::default();
+    let mut state = font_list_state(&refs);
+    let mut frame = 0;
+    let mut draw = |events: Vec<egui::Event>, state: &mut OptionsUi, settings: &mut Settings| {
+        draw_preferences(&ctx, &mut frame, 1000.0, events, state, settings)
+    };
+    let mut texts = vec![];
+    for _ in 0..12 {
+        texts = draw(vec![], &mut state, &mut settings);
+    }
+    let none = aurora_i18n::tr!("ui-options-no-system-font");
+    let combo = texts.iter().find(|(t, _)| t == none).expect("the System fonts list").1.center();
+    let drawn = |texts: &[(String, egui::Rect)], name: &str| texts.iter().any(|(t, _)| t == name);
+    for events in click_frames(combo) {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    let row = texts.iter().find(|(t, _)| t == "Font 00").expect("the first row").1.center();
+    for events in [
+        vec![egui::Event::PointerMoved(row)],
+        vec![egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -2000.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+        }],
+    ] {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    // the wheel scrolls smoothly: a second for it to stop
+    for _ in 0..60 {
+        texts = draw(vec![], &mut state, &mut settings);
+    }
+    assert!(!drawn(&texts, "Font 00") && drawn(&texts, "Font 39"), "scrolled to the end");
+    // every font still matches: the selection goes back to the first
+    // the scroll is animated: half a second
+    texts = draw(vec![egui::Event::Text("o".into())], &mut state, &mut settings);
+    for _ in 0..30 {
+        texts = draw(vec![], &mut state, &mut settings);
+    }
+    assert!(drawn(&texts, "Font 00"), "the selected first font found is shown");
+    for events in [vec![key_event(egui::Key::Enter)], vec![]] {
+        draw(events, &mut state, &mut settings);
+    }
+    assert_eq!(settings.font, "system:/nonexistent/Font 00.ttf");
+    // a chosen font far down: the list opens on it
+    settings.font = "system:/nonexistent/Font 35.ttf".into();
+    for events in click_frames(combo) {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    for _ in 0..30 {
+        texts = draw(vec![], &mut state, &mut settings);
+    }
+    assert!(drawn(&texts, "Font 35"), "the list opens on the chosen font");
 }
