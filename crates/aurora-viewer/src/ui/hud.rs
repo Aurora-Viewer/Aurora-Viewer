@@ -314,7 +314,18 @@ fn plate_content(
         appearance: world.contact_sets.appearance(&id).clone(),
         name,
         username,
-        title: o.group_title().filter(|_| world.group_titles.shows(own)),
+        title: if own {
+            if world.groups.active.is_nil() {
+                None
+            } else if !world.groups.active_title.is_empty() {
+                Some(world.groups.active_title.clone())
+            } else {
+                o.group_title()
+            }
+        } else {
+            o.group_title()
+        }
+        .filter(|_| world.group_titles.shows(own)),
         detail,
         role: Role::of(own, blocked, super::colors::is_linden(&legacy), friend),
         presence,
@@ -507,7 +518,18 @@ pub fn draw(
                     lines.push((format!("({})", status.join(", ")), p.muted, 11.0));
                 }
             }
-            if let Some(t) = o.group_title().filter(|_| world.group_titles.shows(o.full_id == world.agent_id)) {
+            let title = if o.full_id == world.agent_id {
+                if world.groups.active.is_nil() {
+                    None
+                } else if !world.groups.active_title.is_empty() {
+                    Some(world.groups.active_title.clone())
+                } else {
+                    o.group_title()
+                }
+            } else {
+                o.group_title()
+            };
+            if let Some(t) = title.filter(|_| world.group_titles.shows(o.full_id == world.agent_id)) {
                 lines.push((t, p.muted, 11.0));
             }
             // LLVOAvatar::idleUpdateNameTagText: the display name, then the

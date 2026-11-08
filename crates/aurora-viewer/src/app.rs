@@ -18735,6 +18735,9 @@ impl ApplicationHandler for App {
                 if matches!(v.as_str(), "add" | "ajout") {
                     self.contacts_ui.pick_new_friend();
                 }
+                if let Ok(filter) = std::env::var("AURORA_DEMO_CONTACTS_FILTER") {
+                    self.contacts_ui.filter_groups(&filter);
+                }
             }
             // AURORA_DEMO_CONV=1: the demo group chat with its participants;
             // =names[:narrow|wide]: conversations and nearby avatars whose

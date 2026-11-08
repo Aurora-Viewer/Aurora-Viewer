@@ -157,7 +157,7 @@ fn none_row(ui: &mut egui::Ui, c: &mut Ctx) {
         context::request(ui.ctx(), CtxAction::ActivateGroup(Uuid::nil()));
     }
     menu::context_menu(&resp, p, |ui| {
-        if menu::item_if(ui, p, "circle-check-filled", aurora_i18n::tr!("common-enable"), !active) {
+        if menu::item_if(ui, p, "circle-check-filled", aurora_i18n::tr!("common-activate"), !active) {
             context::request(ui.ctx(), CtxAction::ActivateGroup(Uuid::nil()));
         }
     });

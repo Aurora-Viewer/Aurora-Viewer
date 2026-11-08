@@ -3081,11 +3081,18 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 }),
             ]
         }
-        aurora_net::NetCommand::ActivateGroup(id) => vec![NetEvent::ActiveGroup {
-            id: *id,
-            name: String::new(),
-            title: String::new(),
-        }],
+        aurora_net::NetCommand::ActivateGroup(id) => {
+            let (name, title) = if *id == DEMO_GROUP1 {
+                ("Aurora Builders".into(), aurora_i18n::tr!("demo-builder").into())
+            } else if *id == DEMO_GROUP2 {
+                ("Aurora Explorers".into(), "Explorer".into())
+            } else if *id == DEMO_GROUP3 {
+                (aurora_i18n::tr!("common-plaza-market").into(), "Merchant".into())
+            } else {
+                (String::new(), String::new())
+            };
+            vec![NetEvent::ActiveGroup { id: *id, name, title }]
+        }
         aurora_net::NetCommand::LeaveGroup(id) => vec![NetEvent::GroupDropped(*id)],
         aurora_net::NetCommand::ChatSession { method, session } => {
             let agents = |ids: &[Uuid]| {

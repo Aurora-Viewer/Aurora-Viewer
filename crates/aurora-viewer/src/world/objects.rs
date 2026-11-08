@@ -392,7 +392,9 @@ impl Object {
             self.te = u.texture_entry;
         }
         self.extra = u.extra;
-        self.name_values = u.name_values;
+        if !u.name_values.is_empty() {
+            self.name_values = u.name_values;
+        }
         self.text = u.text;
         self.text_color = u.text_color;
         if self.set_tex_anim(u.texture_anim, Instant::now()) {
@@ -492,6 +494,20 @@ impl Object {
             }
         }
         None
+    }
+
+    /// Update the avatar's worn group title in its `name_values`
+    /// (e.g. after receiving `NetEvent::ActiveGroup`).
+    pub fn set_group_title(&mut self, title: Option<&str>) {
+        let mut lines: Vec<&str> = self.name_values.lines().filter(|l| !l.starts_with("Title ")).collect();
+        let new_line = title.filter(|t| !t.trim().is_empty()).map(|t| format!("Title STRING RW SV {t}"));
+        if let Some(ref l) = new_line {
+            lines.push(l);
+        }
+        self.name_values = lines.join("\n");
+        if !self.name_values.is_empty() {
+            self.name_values.push('\n');
+        }
     }
 
     /// Local position and rotation drawn at `now`, `motion_time` being the
@@ -1728,6 +1744,25 @@ mod tests {
     }
 
     const SMOOTH_ON: u8 = TextureAnim::ON | TextureAnim::SMOOTH | TextureAnim::LOOP;
+
+    #[test]
+    fn group_title_name_value_update_and_clear() {
+        let mut full = update(1, AVATAR, "");
+        full.name_values = "FirstName STRING RW SV Test\nLastName STRING RW SV Resident\nTitle STRING RW SV Initial".into();
+        let mut avatar = Object::from_update(1, full);
+        assert_eq!(avatar.group_title().as_deref(), Some("Initial"));
+
+        // Update to a new title
+        avatar.set_group_title(Some("New Title"));
+        assert_eq!(avatar.group_title().as_deref(), Some("New Title"));
+
+        // Clear title (none)
+        avatar.set_group_title(None);
+        assert_eq!(avatar.group_title(), None);
+        assert!(avatar.name_values.contains("FirstName STRING RW SV Test"));
+        assert!(avatar.name_values.contains("LastName STRING RW SV Resident"));
+        assert!(!avatar.name_values.contains("Title"));
+    }
 
     #[test]
     fn avatar_contact_plane_survives_absent_blocks_and_accepts_explicit_clears() {

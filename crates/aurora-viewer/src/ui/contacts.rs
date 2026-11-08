@@ -196,6 +196,11 @@ pub struct ContactsUi {
 }
 
 impl ContactsUi {
+    /// Initial group filter text (demo scenarios).
+    pub fn filter_groups(&mut self, text: &str) {
+        self.group_filter = text.to_owned();
+    }
+
     /// "Add..." of the friend list: the resident picker.
     pub fn pick_new_friend(&mut self) {
         self.pick_for = Some(PickFor::Friend);
@@ -1352,6 +1357,10 @@ fn group_list(
                         .iter()
                         .filter(|g| filter.is_empty() || g.name.to_lowercase().contains(filter))
                         .collect();
+                    // "None (no group tag)" on top (LLGroupList::refresh, visible while filtering)
+                    if !groups.is_empty() {
+                        group_row(ui, p, world, st, pics, None, rows_w, actions);
+                    }
                     if groups.is_empty() {
                         ui.label(
                             RichText::new(aurora_i18n::tr!("ui-contacts-looking-for-a-group-to-join-try-search"))
@@ -1367,10 +1376,6 @@ fn group_list(
                             .size(12.0)
                             .color(p.muted),
                         );
-                    }
-                    // "none" on top when not filtering (LLGroupList::refresh)
-                    if filter.is_empty() && !groups.is_empty() {
-                        group_row(ui, p, world, st, pics, None, rows_w, actions);
                     }
                     let pinned = shown.iter().filter(|g| world.groups.favorites.contains(&g.id)).count();
                     for (i, g) in shown.iter().enumerate() {
@@ -1416,16 +1421,38 @@ fn group_row(
         st.wanted_images.insert(i);
     }
     row_icon(ui, p, icon, insignia.and_then(|i| pics.images.get(&i)), "users-group");
-    // active group in bold; hidden from the profile: GroupHiddenInProfile
+    // active group in bold and active pill; hidden from the profile: GroupHiddenInProfile
     let active = world.groups.active == id;
-    let name = g.map(|g| g.name.clone()).unwrap_or_else(|| aurora_i18n::tr!("extra-none").into());
+    let name = g
+        .map(|g| g.name.clone())
+        .unwrap_or_else(|| aurora_i18n::tr!("ui-contacts-none-no-group-tag").into());
     let col = match g {
         Some(g) if g.list_in_profile => p.indigo_light,
         _ => p.ink,
     };
     let pinned = world.groups.favorites.contains(&id);
-    let text_w = width - 30.0 - if pinned { 18.0 } else { 0.0 };
+    let pinned_w = if pinned { 18.0 } else { 0.0 };
+    let active_tag = active.then(|| {
+        let text = aurora_i18n::tr!("people-groups-active-tag");
+        let g = ui.painter().layout_no_wrap(
+            text.to_owned(),
+            egui::FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())),
+            p.teal,
+        );
+        let w = g.size().x + 12.0;
+        (g, w)
+    });
+    let active_w = active_tag.as_ref().map_or(0.0, |(_, w)| *w + 6.0);
+    let text_w = (width - 30.0 - pinned_w - active_w).max(0.0);
     row_text(ui, &name, egui::pos2(icon.right() + 6.0, rect.center().y), text_w, col, active);
+    if let Some((g, tag_w)) = active_tag {
+        let pill_right = rect.right() - pinned_w - 4.0;
+        let pill_rect = egui::Rect::from_min_size(egui::pos2(pill_right - tag_w, rect.center().y - 8.0), Vec2::new(tag_w, 16.0));
+        ui.painter()
+            .rect_filled(pill_rect, ui.visuals().window_corner_radius, p.teal.gamma_multiply(0.18));
+        let text_left = pill_rect.center().x - g.size().x / 2.0;
+        crate::ui::widgets::paint_row_text(ui.painter(), g, text_left, pill_rect.center().y, p.teal);
+    }
     if pinned && let Some(t) = super::icons::global("pinned-filled") {
         let r = egui::Rect::from_center_size(egui::pos2(rect.right() - 10.0, rect.center().y), Vec2::splat(12.0));
         ui.painter().image(
@@ -1438,8 +1465,14 @@ fn group_row(
     if resp.clicked() || resp.secondary_clicked() {
         st.group_sel = Some(id);
     }
-    if resp.double_clicked() && !id.is_nil() {
-        actions.push(ContactsAction::GroupChat(id));
+    if resp.double_clicked() {
+        if id.is_nil() {
+            if world.groups.active != id {
+                actions.push(ContactsAction::Net(NetCommand::ActivateGroup(id)));
+            }
+        } else {
+            actions.push(ContactsAction::GroupChat(id));
+        }
     }
     menu::context_menu(&resp, p, |ui| group_menu(ui, p, world, st, id, actions));
 }
@@ -1451,7 +1484,7 @@ fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Contac
         ui,
         p,
         "circle-check-filled",
-        aurora_i18n::tr!("common-enable"),
+        aurora_i18n::tr!("common-activate"),
         world.groups.active != id,
     ) {
         actions.push(ContactsAction::Net(NetCommand::ActivateGroup(id)));
@@ -1511,7 +1544,7 @@ fn group_buttons(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Con
     if side_button(ui, p, aurora_i18n::tr!("ui-contacts-titles"), "", true) {
         actions.push(ContactsAction::GroupTitles);
     }
-    if side_button(ui, p, aurora_i18n::tr!("common-enable"), "", sel != world.groups.active) {
+    if side_button(ui, p, aurora_i18n::tr!("common-activate"), "", sel != world.groups.active) {
         actions.push(ContactsAction::Net(NetCommand::ActivateGroup(sel)));
     }
     let pinned = world.groups.favorites.contains(&sel);
@@ -2373,5 +2406,11 @@ mod tests {
         st.ask_new_set_for(vec![id(9)]);
         create_set(&mut world, &mut st, "Circle");
         assert!(world.contact_sets.friend_sets(&id(9)).is_empty());
+    }
+
+    #[test]
+    fn none_group_label_and_keys() {
+        assert_eq!(aurora_i18n::tr!("ui-contacts-none-no-group-tag"), "None (no group tag)");
+        assert_eq!(aurora_i18n::tr!("common-activate"), "Activate");
     }
 }

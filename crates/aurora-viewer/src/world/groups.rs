@@ -553,8 +553,14 @@ impl World {
             NetEvent::ActiveGroup { id, name, title } => {
                 log::info!("active group: {}", if id.is_nil() { "none" } else { &name });
                 self.groups.active = id;
-                self.groups.active_title = title;
+                self.groups.active_title = title.clone();
                 self.groups.active_received = true;
+                let active_title = (!id.is_nil() && !title.is_empty()).then_some(title.as_str());
+                if let Some(i) = self.objects.index_of_uuid(&self.agent_id)
+                    && let Some(o) = self.objects.get_mut(i)
+                {
+                    o.set_group_title(active_title);
+                }
             }
             NetEvent::GroupDropped(id) => {
                 self.cancel_saved_im(id);
