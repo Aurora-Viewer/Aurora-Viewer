@@ -502,6 +502,7 @@ mod tests {
     use super::*;
     use crate::pipeline_cache::CachedPipelines;
     use glam::{Mat4, Vec3};
+    use wgpu::util::DeviceExt;
 
     /// The occlusion test of `spheres` (camera at the origin looking down
     /// -Z) against a depth of `w` x `h` whose columns left of `wall` hold a

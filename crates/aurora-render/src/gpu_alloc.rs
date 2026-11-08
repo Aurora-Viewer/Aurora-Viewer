@@ -209,6 +209,17 @@ impl Backoff {
         self.next = Some(now + self.wait);
     }
 
+    /// A try that failed, which lengthens the wait only when it was due:
+    /// the first failure, or a try at or after the scheduled time. A try
+    /// made early (the window resized while waiting) keeps the schedule;
+    /// dragging the window's edge would otherwise put the next try 30 s
+    /// away.
+    pub fn failed_try(&mut self, now: Instant) {
+        if self.ready(now) {
+            self.failed(now);
+        }
+    }
+
     pub fn succeeded(&mut self) {
         *self = Self::default();
     }
@@ -466,6 +477,28 @@ mod tests {
         assert!(b.ready(t0 + Duration::from_secs(30)));
         b.succeeded();
         assert!(b.ready(t0) && !b.waiting());
+    }
+
+    #[test]
+    fn only_a_due_try_lengthens_the_wait() {
+        let t0 = Instant::now();
+        let mut b = Backoff::default();
+        // the first failure starts the wait
+        b.failed_try(t0);
+        assert!(!b.ready(t0 + Duration::from_millis(1999)));
+        assert!(b.ready(t0 + Duration::from_secs(2)));
+        // tries before the 2 s are up (resizes) change nothing
+        for ms in [100, 500, 1500, 1999] {
+            b.failed_try(t0 + Duration::from_millis(ms));
+        }
+        assert!(b.ready(t0 + Duration::from_secs(2)));
+        // the scheduled try at 2 s doubles the wait from then: next at 6 s
+        let t2 = t0 + Duration::from_secs(2);
+        b.failed_try(t2);
+        assert!(!b.ready(t2 + Duration::from_millis(3999)));
+        assert!(b.ready(t2 + Duration::from_secs(4)));
+        b.succeeded();
+        assert!(b.ready(t2) && !b.waiting());
     }
 
     #[test]

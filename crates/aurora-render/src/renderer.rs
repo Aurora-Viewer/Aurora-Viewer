@@ -4974,11 +4974,6 @@ impl Backend {
     fn rebuild_targets(&mut self) {
         let device = self.device.clone();
         let refuse = crate::gpu_alloc::targets_refused();
-        let now = Instant::now();
-        // a resize, a setting or a photo while refused is a try too, but
-        // only the first refusal and the scheduled tries lengthen the wait:
-        // dragging the window's edge would put the next try 30 s away
-        let scheduled = !self.targets_refused || self.targets_backoff.ready(now);
         if self.targets_refused {
             let _ = crate::gpu_alloc::scoped(&device, || self.make_targets_now(refuse, Some((1, 1))));
         }
@@ -4988,9 +4983,9 @@ impl Backend {
                 log::warn!("render targets: out of video memory, the interface alone until they can be made");
             }
             self.targets_refused = true;
-            if scheduled {
-                self.targets_backoff.failed(now);
-            }
+            // a resize, a setting or a photo while refused is a try too,
+            // but only a due one lengthens the wait
+            self.targets_backoff.failed_try(Instant::now());
         } else {
             if self.targets_refused {
                 log::info!("render targets: made again, the world is back");
