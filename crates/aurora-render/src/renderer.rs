@@ -3027,6 +3027,8 @@ impl Backend {
                 },
                 uniform_entry(2, wgpu::ShaderStages::FRAGMENT),
                 float_tex(3),
+                // the scene depth: the sky the sun rays start from
+                tex_entry(4, wgpu::TextureSampleType::Depth),
             ],
         });
         let gbuf_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -4460,6 +4462,7 @@ impl Backend {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(glow_view),
                 },
+                tex(4, &depth_ss),
             ],
         });
         Targets {
@@ -5330,6 +5333,7 @@ impl Backend {
                         binding: 3,
                         resource: wgpu::BindingResource::TextureView(&self.glow.views[1]),
                     },
+                    tex(4, &self.targets.depth_ss),
                 ],
             })
         };
@@ -8497,6 +8501,7 @@ impl Backend {
                         sampler: &self.post_sampler,
                         buffer: &self.post_buffer,
                         glow: &self.glow.views[1],
+                        depth: &self.targets.depth_ss,
                     },
                     f.cutout,
                 );
