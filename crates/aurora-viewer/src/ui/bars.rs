@@ -2494,6 +2494,8 @@ pub struct MicButton<'a> {
     pub output_device: String,
     pub input_devices: &'a [String],
     pub output_devices: &'a [String],
+    /// The device lists are being read again.
+    pub devices_listing: bool,
     /// Output: a device was chosen.
     pub devices_changed: bool,
     /// Output: the panel opens, its lists of devices are to be read again.
@@ -2782,7 +2784,7 @@ fn mic_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, mic: &mut MicButton,
                 hover.on_hover_text(name);
                 ui.add_space(9.0);
                 let width = ui.available_width();
-                let (changed, open) = super::options::device_combo(ui, id, device, list, width);
+                let (changed, open) = super::options::device_combo(ui, id, device, list, width, mic.devices_listing);
                 mic.devices_changed |= changed;
                 *list_open |= open;
             });
