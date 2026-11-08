@@ -391,6 +391,7 @@ pub struct App {
     /// When the GPU device was lost lately (gpu_recovery.rs `loss_step`).
     gpu_losses: std::collections::VecDeque<Instant>,
     egui_ctx: egui::Context,
+    native_viewports: crate::native_viewports::Shared,
     logo: Option<egui::TextureHandle>,
     logo_rx: Option<crossbeam_channel::Receiver<LogoData>>,
     /// The window's icon, kept for a window a GPU recovery opens.
@@ -1419,6 +1420,7 @@ impl App {
         let cache_root = cache.clone();
         let geometry_needs = crate::scene::geometry_need::GeometryNeeds::load(&cache);
         let egui_ctx = egui::Context::default();
+        let native_viewports = crate::native_viewports::Shared::new(&egui_ctx);
         // Restore window state before the theme and fonts: loading egui's
         // memory drops pending font definitions and the transient text scale.
         if std::env::var_os("AURORA_CAPTURE").is_none() || std::env::var_os("AURORA_CAPTURE_LAYOUT").is_some() {
@@ -1487,6 +1489,7 @@ impl App {
             retired_window: None,
             gpu_losses: Default::default(),
             egui_ctx,
+            native_viewports,
             logo: None,
             logo_rx: Some(rx),
             window_icon: None,
@@ -6056,6 +6059,11 @@ impl App {
                     self.settings.window_x = Some(p.x);
                     self.settings.window_y = Some(p.y);
                 }
+                self.settings.window_display = g
+                    .window
+                    .current_monitor()
+                    .as_ref()
+                    .map(crate::window_display::SavedDisplay::from_monitor);
             }
         }
         if self.capture.is_none() {
@@ -6099,7 +6107,7 @@ impl App {
     /// Remember the normal (not maximized / minimized) window size and
     /// position, 300 ms after the last move / resize: while maximizing,
     /// Windows reports the new geometry before the window reads as maximized.
-    fn record_window_geometry(&mut self) {
+    fn record_window_geometry(&mut self, event_loop: &ActiveEventLoop) {
         let Some(t) = self.geom_changed else {
             return;
         };
@@ -6110,7 +6118,7 @@ impl App {
         let Some(g) = &self.gfx else {
             return;
         };
-        if g.window.fullscreen().is_some() || g.window.is_maximized() || g.window.is_minimized().unwrap_or(false) {
+        if g.window.is_maximized() || g.window.is_minimized().unwrap_or(false) || g.window.fullscreen().is_some() {
             return;
         }
         let s = g.window.inner_size();
@@ -6118,12 +6126,40 @@ impl App {
             return;
         }
         let sf = g.window.scale_factor();
-        self.settings.window_width = (s.width as f64 / sf) as u32;
-        self.settings.window_height = (s.height as f64 / sf) as u32;
-        if let Ok(p) = g.window.outer_position() {
-            self.settings.window_x = Some(p.x);
-            self.settings.window_y = Some(p.y);
+        let logical_size = ((s.width as f64 / sf) as u32, (s.height as f64 / sf) as u32);
+        let mut position = g.window.outer_position().ok().map(|position| (position.x, position.y));
+        if self.settings.window_display_recovery
+            && let Some((x, y)) = position
+        {
+            let monitors: Vec<_> = event_loop.available_monitors().collect();
+            let displays: Vec<_> = monitors.iter().map(crate::window_display::Display::from).collect();
+            let reachable = displays
+                .iter()
+                .any(|display| crate::window_display::titlebar_reachable(display, x, y));
+            if !reachable
+                && let Some(target) = event_loop.primary_monitor().and_then(|monitor| {
+                    monitors
+                        .iter()
+                        .position(|candidate| candidate.name() == monitor.name() && candidate.position() == monitor.position())
+                })
+                && let Some(display) = displays.get(target)
+            {
+                let (x, y) = crate::window_display::clamp_to_display(display, x as i64, y as i64, logical_size);
+                g.window.set_outer_position(winit::dpi::PhysicalPosition::new(x, y));
+                position = Some((x, y));
+            }
         }
+        self.settings.window_width = logical_size.0;
+        self.settings.window_height = logical_size.1;
+        if let Some((x, y)) = position {
+            self.settings.window_x = Some(x);
+            self.settings.window_y = Some(y);
+        }
+        self.settings.window_display = g
+            .window
+            .current_monitor()
+            .as_ref()
+            .map(crate::window_display::SavedDisplay::from_monitor);
     }
 
     /// Apply the saved setting after Preferences changes, or after a shortcut.
@@ -10651,6 +10687,16 @@ impl App {
         }
         ui::fonts::preview::release_unused(&self.egui_ctx);
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
+        if let Some(native_limit) = self.native_viewports.max_texture_side() {
+            let shared_limit = crate::native_viewports::shared_texture_limit(raw.max_texture_side, native_limit);
+            if raw.max_texture_side != Some(shared_limit) {
+                log::debug!(
+                    "multi-screen egui texture limit: clamping the shared root Context to {shared_limit} (native painter limit {native_limit})"
+                );
+                gfx.egui_state.set_max_texture_side(shared_limit);
+                raw.max_texture_side = Some(shared_limit);
+            }
+        }
         raw.events.extend(self.alt_text.drain(..).map(egui::Event::Text));
         self.demo_script_input(&mut raw);
         // Synthetic preedit uses the ordinary focused Conversations editor.
@@ -10956,33 +11002,35 @@ impl App {
         let mut library_drop = None;
         let t_pass = Instant::now();
         let mut windows_ms = 0.0;
-        let mut full = ctx.run_ui(raw, |ui| {
-            self.sound_cues.pass_start(ui.ctx());
-            // before any field reads its keys: Ctrl+W is the frontmost window's
-            ui::close_key::begin(ui.ctx());
-            let t = Instant::now();
-            let projector = ui::hud::Projector::for_ui(ui.ctx(), vp, [w as f32, h as f32]);
-            // A discarded pass (`request_discard`) is followed by one that
-            // gets no input events: what the first pass clicked must survive
-            // the second, or a click that changed a row's size is lost.
-            actions.merge(self.draw_ui(ui, &projector, &gfx.renderer));
-            actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
-            if inventory_drop.is_empty() {
-                inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
-                if library_drop.is_none() {
-                    library_drop = self.texture_library_drag_input(ui.ctx(), &mut gfx.renderer);
+        let mut full = crate::native_viewports::with_event_loop(event_loop, || {
+            ctx.run_ui(raw, |ui| {
+                self.sound_cues.pass_start(ui.ctx());
+                // before any field reads its keys: Ctrl+W is the frontmost window's
+                ui::close_key::begin(ui.ctx());
+                let t = Instant::now();
+                let projector = ui::hud::Projector::for_ui(ui.ctx(), vp, [w as f32, h as f32]);
+                // A discarded pass (`request_discard`) is followed by one that
+                // gets no input events: what the first pass clicked must survive
+                // the second, or a click that changed a row's size is lost.
+                actions.merge(self.draw_ui(ui, &projector, &gfx.renderer));
+                actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
+                if inventory_drop.is_empty() {
+                    inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
+                    if library_drop.is_none() {
+                        library_drop = self.texture_library_drag_input(ui.ctx(), &mut gfx.renderer);
+                    }
                 }
-            }
-            if library_drop.is_none() {
-                library_drop = self.no_copy_drop_prompt(ui.ctx());
-            }
-            // after every window: their text fields have been drawn
-            self.text_menu.after(ui.ctx(), &self.palette);
-            // the glass blurs the world: there is none behind the login screen
-            if self.in_world() {
-                ui::menu::glaze(ui.ctx(), &self.palette);
-            }
-            windows_ms += t.elapsed().as_secs_f32() * 1000.0;
+                if library_drop.is_none() {
+                    library_drop = self.no_copy_drop_prompt(ui.ctx());
+                }
+                // after every window: their text fields have been drawn
+                self.text_menu.after(ui.ctx(), &self.palette);
+                // the glass blurs the world: there is none behind the login screen
+                if self.in_world() {
+                    ui::menu::glaze(ui.ctx(), &self.palette);
+                }
+                windows_ms += t.elapsed().as_secs_f32() * 1000.0;
+            })
         });
         // a capture leaves the user's layout as it is (as at exit)
         if self.capture.is_none() {
@@ -11192,6 +11240,8 @@ impl App {
                 self.plate_hover,
             );
         }
+        self.native_viewports.root_textures(&full.textures_delta);
+        full.textures_delta = self.native_viewports.root_texture_deltas(std::mem::take(&mut full.textures_delta));
         gfx.egui_state
             .handle_platform_output_with_event_loop(&gfx.window, event_loop, full.platform_output);
         self.perf.ui_ms = t_ui.elapsed().as_secs_f32() * 1000.0;
@@ -17874,16 +17924,30 @@ impl ApplicationHandler for App {
         let capture = capture || forced.is_some();
         let mut pos = None;
         let mut monitor = event_loop.primary_monitor();
-        // last position, only if it is still on a connected screen
+        // Restore the same screen (including its relative position across DPI
+        // changes), or recover an unreachable window on the primary display.
         if let (Some(x), Some(y), false) = (self.settings.window_x, self.settings.window_y, capture) {
-            let on = event_loop.available_monitors().find(|m| {
-                let (p, s) = (m.position(), m.size());
-                // the title bar (top-left corner area) must be reachable
-                x + 40 >= p.x && x + 40 < p.x + s.width as i32 && y + 10 >= p.y && y + 10 < p.y + s.height as i32
-            });
-            if on.is_some() {
-                pos = Some((x, y));
-                monitor = on;
+            let monitors: Vec<_> = event_loop.available_monitors().collect();
+            let displays: Vec<_> = monitors.iter().map(crate::window_display::Display::from).collect();
+            let primary = event_loop
+                .primary_monitor()
+                .and_then(|primary| {
+                    monitors
+                        .iter()
+                        .position(|candidate| candidate.name() == primary.name() && candidate.position() == primary.position())
+                })
+                .unwrap_or(0);
+            let placement = crate::window_display::startup_placement(
+                self.settings.window_display_recovery,
+                self.settings.window_display.as_ref(),
+                Some((x, y)),
+                (w, h),
+                &displays,
+                primary,
+            );
+            if let Some(placement) = placement {
+                pos = Some((placement.x, placement.y));
+                monitor = monitors.get(placement.monitor_index).cloned();
             }
         }
         // a "normal" size covering the whole screen is a maximized window
@@ -20502,12 +20566,19 @@ impl ApplicationHandler for App {
     /// closed connection and every exit ended in a segmentation fault (before
     /// the browsers' private profiles were cleaned up).
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        self.native_viewports.shutdown();
         #[cfg(windows)]
         crate::slurl_handoff::release();
         self.gfx = None;
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        if self.native_viewports.window_event(id, &event) {
+            if let Some(gfx) = &self.gfx {
+                gfx.window.request_redraw();
+            }
+            return;
+        }
         // the window of a lost device, on screen until its successor has
         // presented: its redraws and sizes are not the new renderer's
         if self.retired_window.as_ref().is_some_and(|w| w.id() == id) && !matches!(event, WindowEvent::CloseRequested) {
@@ -20659,6 +20730,12 @@ impl ApplicationHandler for App {
                 self.sync_minimized_mute();
             }
             WindowEvent::Moved(_) => {
+                ui::menu::window_geometry_changed(&self.egui_ctx);
+                self.geom_changed = Some(Instant::now());
+            }
+            WindowEvent::ScaleFactorChanged { .. } => {
+                // DPI transitions can change both the surface size and saved
+                // physical placement without a distinct user resize.
                 ui::menu::window_geometry_changed(&self.egui_ctx);
                 self.geom_changed = Some(Instant::now());
             }
@@ -21079,7 +21156,7 @@ impl ApplicationHandler for App {
         if self.settings.window_fullscreen != self.fullscreen_applied {
             self.apply_fullscreen_setting();
         }
-        self.record_window_geometry();
+        self.record_window_geometry(event_loop);
         self.attention_window();
         self.external_links();
         if self.gfx.as_ref().is_some_and(|g| !g.shown) {
