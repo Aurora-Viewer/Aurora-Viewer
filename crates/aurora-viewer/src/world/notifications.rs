@@ -1013,18 +1013,24 @@ pub const TEXT_BOX_MAX_BYTES: usize = 250;
 /// Keeps an llTextBox reply as the Legacy Viewer's multi-line editor would
 /// send it (LLToastScriptTextbox::onClickSubmit takes the editor's text):
 /// line ends as `\n`, cut at [`TEXT_BOX_MAX_BYTES`] on a character boundary
-/// (utf8str_truncate). LLTextEditor::cleanStringForPaste turns every `\r`
-/// into `\n`, so a pasted Windows `\r\n` became two lines; here it is one.
+/// (utf8str_truncate). Same as the Legacy Viewer, a pasted Windows `\r\n` is
+/// one line end: its clipboard read removes the CR first
+/// (LLWindowWin32::pasteTextFromClipboard, removeWindowsCR; removeCRLF on
+/// macOS), as egui-winit does, and a lone `\r` becomes `\n`
+/// (LLTextEditor::cleanStringForPaste).
 pub fn clamp_text_box_reply(text: &mut String) {
     if text.contains('\r') {
         *text = text.replace("\r\n", "\n").replace('\r', "\n");
     }
-    if text.len() > TEXT_BOX_MAX_BYTES {
-        let mut end = TEXT_BOX_MAX_BYTES;
-        while !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        text.truncate(end);
+    text.truncate(text.floor_char_boundary(TEXT_BOX_MAX_BYTES));
+}
+
+/// A paste into the llTextBox reply, cleaned like
+/// LLTextEditor::cleanStringForPaste (indra/llui/lltexteditor.cpp): `\r\n`
+/// and `\r` line ends as `\n`, and a tab as four spaces (SPACES_PER_TAB).
+pub fn clean_text_box_paste(text: &mut String) {
+    if text.contains(['\r', '\t']) {
+        *text = text.replace("\r\n", "\n").replace('\r', "\n").replace('\t', "    ");
     }
 }
 
@@ -1232,6 +1238,10 @@ mod tests {
         let cut = clamp(&format!("{}日本", "x".repeat(249)));
         assert_eq!(cut, "x".repeat(249));
         assert_eq!(clamp(&format!("{}é", "x".repeat(248))).len(), 250);
+        // a paste: tabs as four spaces, Windows and old Mac line ends as one `\n`
+        let mut pasted = String::from("Name:\tAda\r\nTitle:\tLady\rEnd");
+        clean_text_box_paste(&mut pasted);
+        assert_eq!(pasted, "Name:    Ada\nTitle:    Lady\nEnd");
 
         let mut n = Notifications::default();
         let id = n.push(

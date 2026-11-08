@@ -786,10 +786,25 @@ fn text_box_field(ui: &mut egui::Ui, id: u64, text: &mut String) -> (egui::Rect,
     let edit_id = egui::Id::unique(("script_text_box", id));
     let style: egui::widget_style::TextEditStyle = ui.widget_style(edit_id, &egui::class::Classes::default());
     let frame = style.atom_layout.frame;
-    let row = ui.fonts_mut(|f| f.row_height(&egui::TextStyle::Body.resolve(ui.style())));
+    // a line as TextEdit lays it out: the font's row plus the theme's spacing
+    let row = ui.fonts_mut(|f| f.row_height(&egui::TextStyle::Body.resolve(ui.style()))) + ui.spacing().extra_text_line_spacing;
     let rows = row * TEXT_BOX_ROWS as f32;
     let size = Vec2::new(ui.available_width(), rows + frame.total_margin().sum().y);
     let (place, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    // a paste reaches the editor cleaned as LLTextEditor::pasteHelper does it,
+    // before egui inserts it, so the cursor lands after the cleaned text
+    let focused = ui.memory(|m| m.has_focus(edit_id));
+    ui.input_mut(|i| {
+        for event in &mut i.events {
+            match event {
+                egui::Event::Paste(pasted) if focused => crate::world::notifications::clean_text_box_paste(pasted),
+                egui::Event::MiddleClickPaste { pos, text } if place.contains(*pos) => {
+                    crate::world::notifications::clean_text_box_paste(text)
+                }
+                _ => {}
+            }
+        }
+    });
     let mut child = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(place)
@@ -1155,6 +1170,9 @@ mod tests {
             ],
         );
         assert_eq!(text, "Line 1\nLine 2");
+        // a paste is cleaned before it is inserted: a tab as four spaces
+        typed(&mut text, vec![egui::Event::Paste("\tTab\r\nEnd".into())]);
+        assert_eq!(text, "Line 1\nLine 2    Tab\nEnd");
     }
 
     /// #2832: the llTextBox toast holds still from one frame to the next:
