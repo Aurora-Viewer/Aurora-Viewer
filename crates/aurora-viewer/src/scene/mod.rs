@@ -32,6 +32,7 @@ pub mod impostors;
 pub mod inspect;
 pub mod jobs;
 pub(crate) mod joint_overrides;
+pub mod legacy_bump;
 pub mod legacy_mat;
 pub mod lights;
 mod list_index;
@@ -64,6 +65,7 @@ pub mod still_check;
 mod sync_check;
 mod sync_plan;
 mod sync_slow;
+mod tree_detail;
 mod world_overlays;
 pub use sync_plan::LodInfo;
 pub mod sync_sets;
@@ -341,6 +343,9 @@ pub struct FaceDraw {
     /// Normal, specular / metallic-roughness and emissive maps (sized like
     /// the base texture).
     pub aux_tex: [Uuid; 3],
+    /// Height asset behind a generated texture-entry normal. Its streaming
+    /// size follows this face even though the generated normal is local.
+    pub bump_height_source: Uuid,
     pub te_alpha: f32,
     pub pbr_alpha: Option<u8>, // 0 opaque, 1 blend, 2 mask
     /// Legacy material alpha mode (`legacy_mat::alpha_mode`).
@@ -655,6 +660,9 @@ fn note_face_usage(usage: &mut Vec<(Uuid, f32, bool)>, f: &FaceDraw, px: f32, in
     usage.push((f.tex_id, px, in_view));
     for t in f.aux_tex.iter().filter(|t| !t.is_nil()) {
         usage.push((*t, px, in_view));
+    }
+    if !f.bump_height_source.is_nil() {
+        usage.push((f.bump_height_source, px, in_view));
     }
 }
 
@@ -1018,6 +1026,8 @@ pub struct Scene {
     last_sync: Option<Instant>,
     frame: u32,
     pub lod_factor: f32,
+    /// RenderTreeLODFactor (`tree_detail.rs`).
+    pub tree_lod_factor: f32,
     pub draw_distance: f32,
     last_origin: Option<(u32, u32)>,
     blend_tmp: Vec<blend_order::BlendEntry>,
@@ -1199,6 +1209,12 @@ pub fn lod_for(radius: f32, distance: f32, lod_factor: f32, fov_y: f32) -> u8 {
     }
 }
 
+/// The detail level of object `o`: a plant's (`plants::plant_lod`), else
+/// a volume's (`lod_for`).
+pub(super) fn object_lod(o: &Object, radius: f32, distance: f32, lod_factor: f32, tree_factor: f32, fov_y: f32) -> u8 {
+    plants::plant_lod(o, distance, tree_factor, lod_factor).unwrap_or_else(|| lod_for(radius, distance, lod_factor, fov_y))
+}
+
 /// Prim material code of light sources (material_codes.h LL_MCODE_LIGHT).
 const LL_MCODE_LIGHT: u8 = 7;
 
@@ -1221,7 +1237,7 @@ fn te_record_base(model: Mat4, f: &TextureFace) -> DrawRecord {
     // specular color, glossiness and environment are its shininess
     // (LLFace: vertex alpha = 0, .25, .5, .75)
     let s = [0.0f32, 0.25, 0.5, 0.75][shiny as usize & 3];
-    if shiny > 0 {
+    if shiny > 0 || matches!(f.bump(), 1..=17) {
         fl |= flags::LEGACY_MAT;
     }
     let sl = s.powf(2.2);
@@ -1583,6 +1599,7 @@ impl Scene {
             last_sync: None,
             frame: 0,
             lod_factor: 2.0,
+            tree_lod_factor: 0.5,
             draw_distance: 96.0,
             last_origin: None,
             blend_tmp: Vec::new(),
@@ -1985,6 +2002,9 @@ impl Scene {
                 JobResult::MeshCache { id, arrival } => self.meshes.on_cache(id, arrival.map(|a| *a)),
                 JobResult::MeshPart { id, arrival } => self.meshes.on_part(id, *arrival, &self.jobs),
                 JobResult::Material { id, material } => self.materials.on_material(id, material),
+                bump @ JobResult::LegacyBump { .. } => {
+                    self.textures.on_legacy_bump_job(bump);
+                }
                 JobResult::Done => {}
                 other => self.textures.on_job(other),
             }
@@ -2384,9 +2404,16 @@ impl Scene {
                     .tree_species
                     .filter(|&s| (s as usize) < aurora_prim::tree::TREE_SPECIES.len())
                     .unwrap_or(0);
+                // (a trunk past the finest four: not drawn, tree_detail.rs)
+                if lod == plants::NOT_DRAWN {
+                    return None;
+                }
                 return Some(GeomKey::Tree { species, lod: lod.min(3) });
             }
             LL_PCODE_LEGACY_GRASS => {
+                if lod == plants::NOT_DRAWN {
+                    return None;
+                }
                 return Some(GeomKey::Grass {
                     id: o.full_id,
                     hash: plants::grass_hash(o),
@@ -2775,7 +2802,7 @@ impl Scene {
         // detail level checks: by events, or the slice of every object
         let events = !sync_sets::slice_mode();
         let dt = self.last_sync.replace(now).map_or(0.0, |last| (now - last).as_secs_f32());
-        let camera_moved = self.sets.lod.advance(view.eye, self.lod_factor, self.fov_y);
+        let camera_moved = self.sets.lod.advance(view.eye, self.lod_factor, self.fov_y, self.tree_lod_factor);
         if events {
             self.note_hud_changes(world);
         }
@@ -3210,7 +3237,7 @@ impl Scene {
         }
         self.anchors.placed(world, idx, m.anchor);
         if let Some((radius, distance)) = m.lod {
-            self.watch_lod(idx, m.anchor.is_some(), radius, distance);
+            self.watch_lod(world, idx, m.anchor.is_some(), radius, distance);
         }
         if m.clear_flags
             && let Some(o) = world.objects.get_mut_untracked(idx)
@@ -3225,11 +3252,15 @@ impl Scene {
     /// turn (sync_sets.rs); the others when the camera has travelled far
     /// enough to change their level (lod_watch.rs). An object whose turn
     /// came before that keeps the wait it has.
-    fn watch_lod(&mut self, idx: usize, anchored: bool, radius: f32, distance: f32) {
+    fn watch_lod(&mut self, world: &World, idx: usize, anchored: bool, radius: f32, distance: f32) {
         if anchored || self.sets.follows_motion(idx) {
             self.sets.lod.forget(idx);
         } else if !(self.sets.only_checked(idx) && self.sets.lod.is_watched(idx)) {
-            let slack = lod_watch::lod_slack(radius, distance, self.lod_factor, self.fov_y);
+            let plant = world
+                .objects
+                .get(idx)
+                .and_then(|o| plants::plant_slack(o, distance, self.tree_lod_factor, self.lod_factor));
+            let slack = plant.unwrap_or_else(|| lod_watch::lod_slack(radius, distance, self.lod_factor, self.fov_y));
             self.sets.lod.watch(idx, slack);
         }
     }
@@ -3440,14 +3471,31 @@ impl Scene {
             &self.mesh_lod_overrides,
             o,
             hud,
-            lod_for(lod_radius, lod_dist, self.lod_factor, self.fov_y),
+            object_lod(o, lod_radius, lod_dist, self.lod_factor, self.tree_lod_factor, self.fov_y),
         );
         // (whatever comes of this sync; what the GPU places leaves below)
-        self.watch_lod(idx, false, lod_radius, lod_dist);
+        self.watch_lod(world, idx, false, lod_radius, lod_dist);
         let Some(o) = world.objects.get(idx) else {
             return;
         };
         let wanted = Self::object_geom_key(o, lod);
+        if lod == plants::NOT_DRAWN {
+            // a plant the trees' detail stops (tree_detail.rs): its drawing
+            // goes, as for a parcel that hides it, but it stays watched so
+            // that a higher factor brings it back
+            if let Some(mut g) = self.gpu.get_mut(idx).map(std::mem::take) {
+                self.release_obj(renderer, idx, &mut g);
+            }
+            self.anchors.forget(idx);
+            self.pick.remove(idx);
+            self.list_index.remove(idx);
+            if let Some(object) = world.objects.get_mut_untracked(idx) {
+                object.render.needs_records = false;
+                object.shape_dirty = false;
+                object.material_dirty = false;
+            }
+            return;
+        }
         let wearer = Self::wearer_avatar(world, idx);
         let owner_avatar = wearer.map(|(_, i)| i);
         let first_person_hidden = Self::attachment_first_person_hidden(world, idx);
@@ -3921,6 +3969,43 @@ impl Scene {
                 base_tex = texture;
                 source = TexSource::Asset;
             }
+            // Texture-entry bump presets fill the normal slot only when no
+            // explicit normal map is present. PBR faces take the earlier
+            // material branch and never reach this Legacy Viewer path.
+            let bump_mode = tf.bump();
+            let mut bump_height_source = Uuid::nil();
+            if legacy_bump::should_apply(
+                bump_mode,
+                mat_id.is_some(),
+                local_normal.is_some_and(|id| !id.is_nil()) || !aux_tex[0].is_nil(),
+            ) {
+                let bump_source = match legacy_bump::bump_source(bump_mode) {
+                    legacy_bump::BumpSource::Brightness | legacy_bump::BumpSource::Darkness => Some(base_tex),
+                    legacy_bump::BumpSource::Standard(id) => Some(id),
+                    legacy_bump::BumpSource::None => None,
+                };
+                if let Some(source_id) = bump_source
+                    && !source_id.is_nil()
+                {
+                    bump_height_source = source_id;
+                    let generated = self.textures.request_legacy_bump(renderer, source_id, bump_mode);
+                    // Hold the height source while its image is decoded and
+                    // while finer resident levels improve its cached normal.
+                    let height_kind = if source_id == base_tex { source.clone() } else { TexSource::Asset };
+                    let _ = self.textures.acquire(renderer, source_id, height_kind);
+                    g.tex_ids.push(source_id);
+                    if let Some(generated) = generated {
+                        g.tex_ids.push(generated);
+                        aux_tex[0] = generated;
+                        rec.tex[1] = self.textures.acquire(renderer, generated, TexSource::Asset);
+                        // A texture-entry bump follows the diffuse mapping,
+                        // even when a material with no normal map supplies a
+                        // separate normal transform.
+                        rec.mat_uv = rec.uv_st;
+                        rec.legacy[0] = rec.params[0];
+                    }
+                }
+            }
             if !base_tex.is_nil() {
                 g.tex_ids.push(base_tex);
             }
@@ -3974,6 +4059,7 @@ impl Scene {
                 base_slot: rec.tex[0],
                 tex_id: base_tex,
                 aux_tex,
+                bump_height_source,
                 te_alpha: if invisible { 0.0 } else { rec.base_color[3] },
                 pbr_alpha,
                 legacy_alpha,
@@ -4280,6 +4366,7 @@ impl Scene {
                     base_slot: slot,
                     tex_id: tex.unwrap_or(Uuid::nil()),
                     aux_tex: [Uuid::nil(); 3],
+                    bump_height_source: Uuid::nil(),
                     te_alpha: if hidden { 0.0 } else { 1.0 },
                     pbr_alpha: None,
                     legacy_alpha: None,
@@ -6536,7 +6623,7 @@ mod tests {
             appearance_version: 1,
             // Our preference must survive a stale simulator appearance.
             hover_height: -0.5,
-            attachments: 0,
+            attachments: Vec::new(),
         }));
         let idx = world.objects.index_of_uuid(&owner).expect("demo avatar");
         let seat_idx = world.objects.parent_of(world.objects.get(idx).expect("avatar")).expect("seat");
@@ -6851,6 +6938,7 @@ mod tests {
             base_slot: 0,
             tex_id: Uuid::nil(),
             aux_tex: [Uuid::nil(); 3],
+            bump_height_source: Uuid::nil(),
             te_alpha: 1.0,
             pbr_alpha: None,
             legacy_alpha: None,
@@ -6863,6 +6951,17 @@ mod tests {
             system: None,
             first_person_hidden: false,
         }
+    }
+
+    #[test]
+    fn generated_bump_height_source_receives_face_texture_usage() {
+        let source = Uuid::from_u128(42);
+        let mut face = test_face(Pass::Opaque, false);
+        face.bump_height_source = source;
+        face.repeats = 2.0;
+        let mut usage = Vec::new();
+        note_face_usage(&mut usage, &face, 256.0, true);
+        assert!(usage.contains(&(source, texture_importance::per_repeats(256.0, 2.0), true)));
     }
 
     #[test]

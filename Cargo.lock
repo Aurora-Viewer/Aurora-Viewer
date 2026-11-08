@@ -752,6 +752,7 @@ dependencies = [
  "resvg",
  "rfd",
  "ron",
+ "roxmltree 0.21.1",
  "serde",
  "serde_json",
  "serde_path_to_error",

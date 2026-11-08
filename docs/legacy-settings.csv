@@ -438,7 +438,7 @@ FSAutoOrderIMTabsAtTop,Boolean,to-add,low,,Add new IM tabs as first in their cha
 FSAutoOrderIMTabsPriorities,String,to-add,low,,Priority for automatic ordering IM tabs. Higher priority means the tab will be inserted before lower priority. Default is Groups[0]=2 Confer
 FSAutoUnmuteAmbient,Boolean,to-add,low,,"If Ambient sounds are muted, unmute on TP. Default (false)"
 FSAutoUnmuteSounds,Boolean,to-add,low,,"If Sound Effects are muted, unmute on TP. Default (false)"
-FSAvatarTurnSpeed,F32,to-add,high,,Modify the speed at which the avatar responds to turning movements. 0-100 percent of max rate. Default is 0.
+FSAvatarTurnSpeed,F32,in-aurora,,avatar_turn_speed,Modify the speed at which the avatar responds to turning movements. 0-100 percent of max rate. Default is 0.
 FSBeamColorFile,String,to-add,low,,Beam file for the shape of your beam
 FSBeamShape,String,to-add,low,,Beam file for the shape of your beam
 FSBeamShapeScale,F32,to-add,low,,How Big You Want to let the beam be
@@ -448,21 +448,21 @@ FSBlockClickSit,Boolean,in-aurora,,block_click_sit,Prevents sitting on left-clic
 FSBrowserHomePage,String,in-aurora,,browser_home_page,Home page for the built in web browser
 FSBubblesHideConsoleAndToasts,Boolean,in-aurora,,chat_bubbles_hide_console,"If enabled, using bubble chat will hide the chat output in the Nearby Chat console and toasts"
 FSBuildPrefs_ActualRoot,Boolean,in-aurora,,build.actual_root,Show the axis on the actual root of a linkset instead of mass center
-FSBuildPrefs_Alpha,F32,to-add,high,new objects' defaults,New object created default alpha
-FSBuildPrefs_Color,Color4,to-add,high,new objects' defaults,New object created default color
+FSBuildPrefs_Alpha,F32,in-aurora,,build.new_prim_transparency,New object created default alpha
+FSBuildPrefs_Color,Color4,in-aurora,,build.new_prim_color,New object created default color
 FSBuildPrefs_EditHandleScaling,F32,in-aurora,,build.gizmo_scale,Factor to scale editing handles.
 FSBuildPrefs_EditTextShadowing,Boolean,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)",Whether the hint-text while building has a drop-shadow.
-FSBuildPrefs_FullBright,Boolean,to-add,high,new objects' defaults,New object created default fullbright
-FSBuildPrefs_Glow,F32,to-add,high,new objects' defaults,New object created default glow
+FSBuildPrefs_FullBright,Boolean,in-aurora,,build.new_prim_fullbright,New object created default fullbright
+FSBuildPrefs_Glow,F32,in-aurora,,build.new_prim_glow,New object created default glow
 FSBuildPrefs_Material,String,in-aurora,,build.new_prim_material,"Default Setting For New Objects to be created, physical flag"
-FSBuildPrefs_Phantom,Boolean,to-add,high,new objects' defaults,New object created default of phantom
-FSBuildPrefs_Physical,Boolean,to-add,high,new objects' defaults,New object created default of physical
+FSBuildPrefs_Phantom,Boolean,in-aurora,,build.new_prim_phantom,New object created default of phantom
+FSBuildPrefs_Physical,Boolean,in-aurora,,build.new_prim_physical,New object created default of physical
 FSBuildPrefs_PivotIsPercent,Boolean,to-add,low,,Consider the Pivot points values as a percentage
 FSBuildPrefs_PivotX,F32,to-add,low,,Pivot point on the X axis
 FSBuildPrefs_PivotY,F32,to-add,low,,Pivot point on the Y axis
 FSBuildPrefs_PivotZ,F32,to-add,low,,Pivot point on the Z axis
-FSBuildPrefs_Shiny,String,to-add,high,new objects' defaults,New object created default shiny
-FSBuildPrefs_Temporary,Boolean,to-add,high,new objects' defaults,New object created default of temporary
+FSBuildPrefs_Shiny,String,in-aurora,,build.new_prim_shiny,New object created default shiny
+FSBuildPrefs_Temporary,Boolean,in-aurora,,build.new_prim_temporary,New object created default of temporary
 FSBuildPrefs_Xsize,F32,in-aurora,,build.new_prim_size,Default Size For New Objects to be created X
 FSBuildPrefs_Ysize,F32,in-aurora,,build.new_prim_size,Default Size For New Objects to be created Y
 FSBuildPrefs_Zsize,F32,in-aurora,,build.new_prim_size,Default Size For New Objects to be created Z
@@ -788,7 +788,7 @@ FSResetCameraOnMovement,Boolean,in-aurora,,camera.reset_on_movement,"If true, th
 FSResetCameraOnTP,Boolean,in-aurora,,camera.reset_on_teleport,If true the camera will be reset to behind the avatar on teleporting
 FSResetSkeletonOnStandUp,Boolean,to-add,low,,Resets own avatar skeleton upon standing up and sends the reset to all surrounding avatars
 FSRestoreOpenIMs,Boolean,in-aurora,,reopen_ims,Restore open IM windows from the previous session on startup.
-FSRevokePerms,U32,to-add,high,,"Revokes objects anim perms on your avatar on: 0) never, 1) on sit, 2) on stand, 3) on sit and stand."
+FSRevokePerms,U32,in-aurora,,revoke_permissions,"Revokes objects anim perms on your avatar on: 0) never, 1) on sit, 2) on stand, 3) on sit and stand."
 FSRowsPerScriptDialog,S32,to-add,low,,The number of rows visible in a script dialog
 FSSaveInventoryScriptsAsMono,Boolean,to-add,low,,Saves scripts edited directly from inventory as Mono instead of LSL
 FSSavedRenderFarClip,F32,not-applicable,,internal state of FSRenderFarClipStepping,Saved draw distance (used in case of logout during progressive draw distance stepping)
@@ -1676,7 +1676,7 @@ RenderAutoMuteSurfaceAreaLimit,F32,in-aurora,,max_attachment_area,"Maximum surfa
 RenderAvatarCloth,Boolean,to-add,low,,Controls if system avatar clothes use wavy cloth
 RenderAvatarComplexityMode,S32,in-aurora,,complexity_mode,"0 - complexity limit applies to everyone, 1 - always show friends, 2 - only show friends"
 RenderAvatarFriendsOnly,Boolean,in-aurora,,"friends_only (per account, not listed in Debug Settings)","When enabled hides all avatars that aren't friends. Does not affect inworld control avatars (animeshes), nor self."
-RenderAvatarLODFactor,F32,to-add,high,,Controls level of detail of avatars (multiplier for current screen area when calculated level of detail)
+RenderAvatarLODFactor,F32,fixed,,"Aurora always draws avatar bodies at full detail (it loads no lower body mesh), the Legacy slider at its top",Controls level of detail of avatars (multiplier for current screen area when calculated level of detail)
 RenderAvatarMaxART,F32,to-add,high,,Render Time Limit in microseconds (0.0 = no limit)
 RenderAvatarMaxComplexity,U32,in-aurora,,max_complexity,"Maximum Avatar Complexity; above this value, the avatar is rendered as a solid color outline (0 to disable this limit)."
 RenderAvatarMaxNonImpostors,U32,in-aurora,,max_avatars,Maximum number of avatars to fully render at one time; over this limit uses impostor rendering (simplified rendering with less frequent upda
@@ -1736,7 +1736,7 @@ RenderExposure,F32,in-aurora,,exposure,Exposure value to send to tonemapper.
 RenderFSAASamples,U32,in-aurora,,antialiasing,"Quality of antialiasing: 0 = Low, 1 = Medium, 2 = High, 3 = Ultra"
 RenderFSAAType,U32,in-aurora,,antialiasing,"Type of Antialiasing to use: 0 = None, 1 = FXAA, 2 = SMAA"
 RenderFarClip,F32,in-aurora,,draw_distance,Distance of far clip plane from camera (meters)
-RenderFlexTimeFactor,F32,to-add,high,,Controls level of detail of flexible objects (multiplier for amount of time spent processing flex objects)
+RenderFlexTimeFactor,F32,fixed,,"Aurora steps every flexible prim at 60 Hz whatever its size on screen, the smoothest the Legacy slider gives",Controls level of detail of flexible objects (multiplier for amount of time spent processing flex objects)
 RenderFogRatio,F32,not-applicable,,marked obsolete or deprecated by the Legacy Viewer,DEPRECATED - Distance from camera where fog reaches maximum density (fraction or multiple of far clip distance)
 RenderGLContextCoreProfile,Boolean,not-applicable,,"OpenGL only, Aurora draws with Vulkan or Metal",Don't use a compatibility profile OpenGL context. Requires restart.
 RenderGLMultiThreadedMedia,Boolean,not-applicable,,"OpenGL only, Aurora draws with Vulkan or Metal","Allow OpenGL to use multiple render contexts for playing media (may reduce frame stutters, doesn't play nice with Intel drivers)"
@@ -1882,7 +1882,7 @@ RenderSpotShadowBias,F32,to-add,low,,Bias value for shadows (prevent shadow acne
 RenderSpotShadowOffset,F32,to-add,low,,Offset value for shadows (prevent shadow acne).
 RenderSunDynamicRange,F32,to-add,low,,Defines what percent brighter the sun is than local point lights (1.0 = 100% brighter. Value should not be less than 0. ).
 RenderTerrainDetail,S32,to-add,high,,"Detail applied to terrain texturing (0 = none, 1 = full)"
-RenderTerrainLODFactor,F32,to-add,high,,Controls level of detail of terrain (multiplier for current screen area when calculated level of detail)
+RenderTerrainLODFactor,F32,fixed,,"Aurora always draws terrain at full resolution (1 m), finer than the Legacy slider at its top",Controls level of detail of terrain (multiplier for current screen area when calculated level of detail)
 RenderTerrainPBRDetail,S32,to-add,high,,"Detail level for PBR terrain. 0 is full detail. Negative values drop rendering features, in accordance with the GLTF specification when poss"
 RenderTerrainPBREnabled,Boolean,fixed,,the Legacy default is built into Aurora: aurora-viewer/src/ui/region/manage.rs:701,Enable PBR Terrain features.
 RenderTerrainPBRNormalsEnabled,Boolean,fixed,,the Legacy default is built into Aurora: aurora-viewer/src/world/terrain.rs:306,EXPERIMENTAL: Change normal gen for PBR Terrain.
@@ -1896,7 +1896,7 @@ RenderTonemapMix,F32,in-aurora,,tonemap_mix,Mix between linear and tonemapped co
 RenderTonemapType,U32,in-aurora,,tonemapper,"What tonemapper to use: 0 = Khronos Neutral, 1 = ACES"
 RenderTrackerBeacon,Boolean,to-add,high,,"Display tracking arrow and beacon to target avatar, teleport destination"
 RenderTransparentWater,Boolean,to-add,low,,Render water as transparent. Setting to false renders water as opaque with a simple texture applied.
-RenderTreeLODFactor,F32,to-add,high,,Controls level of detail of vegetation (multiplier for current screen area when calculated level of detail)
+RenderTreeLODFactor,F32,in-aurora,,tree_lod_factor,Controls level of detail of vegetation (multiplier for current screen area when calculated level of detail)
 RenderUIBuffer,Boolean,not-applicable,,"OpenGL only, Aurora draws with Vulkan or Metal",Cache ui render in a screen aligned buffer.
 RenderUIInSnapshot,Boolean,in-aurora,,snapshot.interface,Display user interface in snapshot
 RenderUnloadedAvatar,Boolean,to-add,high,,Show avatars which haven't finished loading

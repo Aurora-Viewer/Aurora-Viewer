@@ -847,6 +847,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_CROSSHAIR=dot\|cross\|circle\|legacy\|off\|image:<file>` | The mouselook crosshair in that shape for the session (see Details) |
 | `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Manual/automatic avatar grounding and camera toggle |
 | `AURORA_DEMO_TP=1` or `"x,y,z"` or `remote` | Teleport after loading |
+| `AURORA_DEMO_TP_CAM=alt\|alt-off` | The camera on a point before the demo teleport, "Return after a teleport in the region" on or off |
 | `AURORA_TP_SCREEN=legacy` or `alt` | The teleport screen of before 2026-10-17, to compare |
 | `AURORA_DEMO_TP_NO_ARRIVAL=1` | The region never confirms the demo teleport |
 | `AURORA_DEMO_TP_AWAY=1` | Departure out of range of the demo region, then return |
@@ -854,7 +855,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_LINK=<ping ms>[,…]` | Our avatar moved by a stand-in simulator through a simulated link, to compare Aurora's movement with Firestorm's |
 | `AURORA_DEMO_KEY=<arrow>[:pulse]` | Holds an arrow key (or presses and releases it, over and over) |
 | `AURORA_DEMO_SIT=<n>` | Clicks n times on the Sit button |
-| `AURORA_DEMO_SIT_TP=local\|region` | Sits on the nearest prim, then teleports from the seat |
+| `AURORA_DEMO_SIT_TP=local\|region\|ao-local\|ao-region` | Sits on the nearest prim, then teleports from the seat (`ao-*`: with the AO on) |
 | `AURORA_DEMO_MMO="x,y[,flags]"` | Mouse steering and optional world walking with both buttons |
 | `AURORA_DEMO_DOUBLECLICK=walk\|run\|tp[,x,y]` or `menu` | Double click on the ground, its wolf menu entry |
 | `AURORA_DEMO_AVATAR_TRAVEL=<mode>` | Avatar navigation menu, approach, persistent follow and automatic flight |
@@ -1210,6 +1211,16 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_DEMO_TP`**: teleport after the fade of the initial loading
   (frame 240 at the earliest). `1` or `"x,y,z"`: immediate local arrival,
   without a loading screen; `remote` simulates the progress between regions.
+- **`AURORA_DEMO_TP_CAM`** (issue #2828): with `AURORA_DEMO_TP`, the camera
+  is put on a point 8 m ahead just before the teleport, as with Alt and a
+  click. `alt` keeps Preferences › Camera › "Return after a teleport in the
+  region" on, `alt-off` turns it off for that teleport only (never saved).
+  The log gives `camera: teleport arrival (inside the region true, return
+  after teleport …), on the avatar …`. Inside the region, `alt-off` leaves
+  the view where it was (on the avatar `false`) while `alt` brings it back
+  behind the avatar (`true`); with `remote` both come back, like the
+  Legacy Viewer. Capture at frame 400 (`AURORA_DEMO_TP="60,60,30"`) to see
+  it.
 - **`AURORA_TP_SCREEN`**: `legacy` brings back the teleport screen of
   before 2026-10-17 (0.8 s at least after the arrival, then a bar easing at
   2.6 per second up to 98.5 %), `alt` uses it every other teleport, starting
@@ -1319,6 +1330,13 @@ when unfocused") is ignored during a screenshot.
   `demo sit tp: arrived, seated false, parent 0, seat animation false`
   (before the fix: `parent 150, seat animation true`, the avatar drawn
   seated far out of the region).
+  `ao-local` and `ao-region` do the same with the demo's AO turned on at
+  frame 240: the seat plays the stock sit, which the AO overrides and leaves
+  to the simulator, as the Legacy AO does; the teleport unseats us and the
+  simulator drops the stock sit but keeps the AO's animations (#2700). Capture frame 380:
+  seated in the AO's sit; frame 720: standing at the destination. The log
+  ends `AO state None, AO sit cover false` (before the fix: `AO state
+  Some(Sitting), AO sit cover true`, the avatar standing in the AO's sit).
 - **`AURORA_DEMO_MMO="x,y[,1|2|3]"`**: left press on the avatar then right
   button held (steering with the mouse); `1`: right arrow instead (the
   avatar slides right, its yaw unchanged), `2`: double right click
@@ -1523,6 +1541,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_SCULPT_ZERO=1` | Subtype-zero sculpt classification beside torus and sphere controls |
 | `AURORA_DEMO_SCULPT_MISSING=1\|late` | A sculpt whose map is missing: the sphere placeholder, then its torus with `late` |
 | `AURORA_DEMO_TEXTURE_MISSING=1` | Boxes whose texture is missing: the Legacy Viewer's grey, never the rez grid for ever |
+| `AURORA_DEMO_SLIDESHOW=1[,<s>][,net=<ms>][,mbps=<m>][,crowd=<n>][,preload]` | A panel whose texture a script changes every few seconds, its pictures downloaded from a local server |
 | `AURORA_DEMO_BOM_REZZED=1\|pbr` | Ground BOM placeholders, or PBR BOM maps on a ground box and an attachment |
 | `AURORA_DEMO_OBJECT_MENU=<mode>` | Object actions, scene menu customization/notecards, object profile and pathfinding readers |
 
@@ -1706,6 +1725,24 @@ the disk cache and read again, as a retry finding it on the server): the
 torus it describes replaces the sphere. A map still loading draws nothing,
 as in the Legacy Viewer. Capture with `AURORA_FPS_LIMIT=60` around frames
 700 and 1100.
+
+`AURORA_DEMO_SLIDESHOW=1[,<seconds>][,net=<ms>][,mbps=<m>][,side=<px>][,count=<n>][,crowd=<n>][,preload]`
+puts a panel 4 m ahead of the camera at frame 300 and changes its texture
+entry every `seconds` (3) to the next of `count` pictures (6), as a script
+calling llSetTexture makes the simulator send a full update. The pictures
+(`side` px, 1024; each its own hue and its number in white bars) come from
+the local asset server after `net` ms (150), on a link of `mbps` megabits a
+second if given, with no copy in the disk cache. `preload` puts the next
+picture on the panel's back face; `crowd=<n>` adds n boxes beyond it, each
+with its own picture, that compete for the downloads like the textures of a
+busy region. The log tells at each change whether the picture leaving was
+shown (`demo slideshow: picture 2 leaves after 1.5 s, shown: …` or `NEVER
+SHOWN`, with its state). `1,1.5,net=200,mbps=4,crowd=300`: while the crowd
+loads, a picture's download outlasts its turn; before the fix of #2830 every
+picture left with 0 bytes at every turn until the crowd had loaded, the
+panel staying in the rez grid (about 22 s); now each keeps what its download
+brought and shows from its second turn, now and then its third. Capture with
+`AURORA_FPS_LIMIT=60`.
 
 `AURORA_DEMO_TEXTURE_MISSING=1` places two boxes east of the start position
 (x=134, y=133 and 135.5) at frame 300, a white one and a dark, mostly
@@ -4311,6 +4348,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_SHEER=1` | Our avatar wears a sheer knit dress over a red layer drawn after it (#1300) |
 | `AURORA_DEMO_SOFT_MASK=1` | Our avatar wears a skin-tone Mask disc on the groin; soft fringe must stay visible (#1492) |
 | `AURORA_DEMO_BUMP=tall`, `wide` or `sphere` | The normal-mapped test panel stretched 4:1, its normal map denser across or along it; or a low-poly ball with a baked normal map (tangent frame) |
+| `AURORA_DEMO_LEGACY_BUMP=1` or `matrix` | Legacy bump presets and normal-map precedence; `matrix` covers all four Shininess levels |
 | `AURORA_DEMO_MASK_ZERO=1` | The holed test panel with a Mask legacy material whose cutoff is 0: drawn whole |
 | `AURORA_DEMO_MASK_255=<alpha>` | A texture of flat alpha 250-254 on two panels; the one with a Mask of cutoff 255 is hidden; 255: no alpha channel, shown whole (#2276) |
 | `AURORA_DEMO_RIGGED_PROP=1` | A rigged mesh chain rezzed on a cube ahead of the start position, and the same chain worn by our avatar |
@@ -4488,6 +4526,36 @@ both open states and the selection count. Capture at frame 620.
   from the start position: `AURORA_DEMO_CAMERA=close,652,455,30`, capture
   at frame 720; `AURORA_GRAPHICS_PRESET=low` leaves out the self-shadow line
   the sun draws across a low-poly ball.
+- **`AURORA_DEMO_LEGACY_BUMP=1`**: after frame 180, the plaza gets 18 panels
+  ordered by their texture-entry bump code, 0–17, followed by an explicit
+  legacy normal-map control and a PBR normal-map control. Check that 0 stays
+  flat, brightness/darkness and each standard pattern show relief, and the
+  two explicit-normal controls retain their own map. The standard panels use
+  synthetic height patterns under the preset IDs; compare the real preset
+  artwork on a grid, not against these demo patterns. Change Shininess through
+  None/Low/Medium/High on the same test face to ensure the stored shine value
+  and highlights remain independent of the bump preset. The generated maps
+  load with their source textures and improve as finer source levels arrive;
+  revisiting a face should reuse its cached map. Legacy Viewer references:
+  `LLDrawPoolBump::bindBumpMap`, `std_bump.ini`,
+  `LLBumpImageList::generateNormalMapFromAlpha` and `normgenF.glsl`.
+  With `matrix`, all 18 presets appear at None/Low/Medium/High Shininess in
+  four rows, ordered None/Low/Medium/High from the ground up. Both explicit-normal controls carry competing bump 9;
+  they must retain their own maps. Compare fixed camera, lighting, UV repeats,
+  mirrored/planar mapping and material settings against the reference. Synthetic
+  demo artwork validates the pipeline, not the real grid preset artwork.
+  Normals keep a stable streamed slot while finer source data arrives and use
+  the normal texture memory budget, including when minimized or after a GPU
+  recovery. No full-size CPU normal images persist after upload. Regression
+  tests cover BC7-only source pixels, source-refresh epochs, shared identities,
+  normal placeholders, memory reduction and final-user eviction.
+  For captures, start at `AURORA_DEMO_POS=168,118` for the compact wall or
+  `155,112` for the matrix. The wall is east of the plaza exhibits. Panels
+  share a vertical plane so no preset hides another. The two explicit-normal
+  controls sit above the preset rows.
+  For grid diagnosis, `AURORA_DEBUG_LEGACY_BUMP=1` logs standard preset
+  requests, source component counts, generated texture sizes and stable slots
+  by bump code. It does not log asset URLs or locations.
 - **`AURORA_DEMO_RIGGED_PROP=1`**: a five-link chain modelled down the
   back of the default skeleton, bound to the chest, and encoded as an
   upload does it (vertices normalized, the bind shape bringing them back
@@ -4515,7 +4583,10 @@ both open states and the selection count. Capture at frame 620.
   ahead; `far`: the same rows 30 m further and 30 m to the right, 56 to 88 m
   away (within the 96 m draw distance); `dense`: about 580 trees of every
   species, turned and sized at random, and 390 grass tufts over the land
-  ahead (the cost of a forest, with `AURORA_PROFILE=1`). The species
+  ahead (the cost of a forest, with `AURORA_PROFILE=1`). With
+  `AURORA_GRAPHICS_PRESET=potato` (trees' detail 0, as the Legacy Low)
+  neither trees nor grass are drawn; `deluxe` (1) keeps the finest trunks
+  further than `medium` (0.5). The species
   textures are not fetched: stand-ins drawn under their ids (bark on the
   left half, leaves in the top right quarter, grass blades from the bottom
   edge), only with this scenario. Close-ups: `AURORA_DEMO_CAMERA=close,790,185,80`
@@ -7132,7 +7203,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   The report's "Last state" table then shows the new device-lost fields
   (effects on, GPU frame times, session and region seconds,
   `GPU loss: first seen by` = `demo`), and its first table the
-  `Vulkan layers on offer`: read it in the session's
+  `Risk factors` (right under `Crash`), `GPU errors` (`none in the retained
+  session log` in demo), `OS GPU reset records` and `Vulkan layers
+  installed`: read it in the session's
   `public-report.md` under the crash folder of `%LOCALAPPDATA%\Aurora`.
 - **`AURORA_DEMO_GPU_HANG=<frame>`**, with `AURORA_DEMO=1`: a real GPU hang
   at that frame, for testing the recovery on a real driver reset. One

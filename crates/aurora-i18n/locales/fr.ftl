@@ -3701,8 +3701,8 @@ ui-profile-this-user-has-no-picks = L'utilisateur n'a pas de favoris
 ui-profile-this-user-has-no-classified-listings = L'utilisateur n'a pas de petites annonces
 ui-inventory-controls-library = La bibliothèque
 ui-options-camera-the-camera-can-move-beyond-the-draw-distance-below = La caméra peut aller au-delà de la distance d'affichage, sous le sol et plus près des objets
-ui-options-camera-the-camera-returns-behind-your-avatar-on-arrival = La caméra se replace derrière l'avatar à l'arrivée
-ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag = La caméra suit l'avatar avec un léger retard (1 par défaut, 0 = aucun)
+ui-options-camera-after-a-teleport-in-the-region-the-camera-returns = Après une téléportation dans la région, la caméra se replace derrière l'avatar. Désactivé, elle reste où elle est.
+ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag = La caméra suit l'avatar avec un retard : plus la valeur est haute, plus elle bouge doucement et lentement (1 par défaut, 0 = aucun)
 ui-options-camera-the-camera-follows-the-object-it-is-focused-on = La caméra suit l'objet sur lequel elle est fixée quand il bouge
 app-inventory-thumbnail-invalid-capture = La capture est invalide.
 ui-land-dialogs-deeding-this-parcel-requires-the-group-to-permanently-have = La cession de cette parcelle requiert que le groupe dispose en permanence d'un crédit suffisant pour payer les frais d'occupation de terrain.{ $contribution }{ " Le prix d'achat du terrain n'est pas remboursé au propriétaire. Si une parcelle cédée est vendue, son prix de vente est redistribué à part égale entre les membres du groupe.\u000A\u000ACéder ces " }{ $value0 }{ " m² de terrain au groupe '" }{ $group }' ?
@@ -5146,7 +5146,7 @@ ui-bars-back = { "Retour : " }{ $d }
 keybinds-backspace-2 = Retour arrière
 ui-appearance-back-to-worn-items = Retour aux éléments portés
 ui-land-covenant-resell = Revendre :
-ui-options-camera-return-after-teleporting = Revenir après une téléportation
+ui-options-camera-return-after-a-teleport-in-the-region = Revenir après une téléportation dans la région
 ui-appearance-back-to-outfits = Revenir aux tenues
 ui-options-camera-return-when-moving = Revenir en bougeant
 keybinds-return-to-avatar = Revenir à l'avatar
@@ -13403,3 +13403,30 @@ debug-settings-warning-title = Avertissement
 debug-settings-warning-text = L'utilisation de la fenêtre Paramètres de débogage n'est pas prise en charge. Modifier ces paramètres peut fortement dégrader votre expérience et entraîner une perte de données, de fonctionnalités, voire d'accès au service. Ne modifiez aucune valeur sans savoir exactement ce que vous faites.
 debug-settings-warning-ignore = Ne plus afficher cet avertissement
 debug-settings-type-color = Couleur
+
+# Preferences › Graphics: the trees' detail (RenderTreeLODFactor)
+ui-options-trees = Arbres
+ui-options-trees-hint = Détail des arbres Linden à distance (0,5 par défaut). À 0, les arbres et l'herbe ne sont pas affichés.
+
+# Preferences › Build (the Legacy Viewer's Build preferences)
+ui-options-about-build = Ce que devient un prim créé avec l'outil Créer.
+ui-options-build-new-objects = Nouveaux objets
+ui-options-build-new-objects-note = Un prim créé avec l'outil Créer prend ces réglages à son apparition.
+ui-options-build-size-hint = Largeur, profondeur et hauteur en mètres (0,01 à 10)
+ui-options-build-material = Matériau
+ui-options-build-flesh = Chair
+ui-options-build-physical = Physique
+ui-options-build-temporary = Temporaire
+ui-options-build-new-faces = Aspect des nouveaux objets
+
+# Preferences › Controls: FSAvatarTurnSpeed
+ui-options-avatar-turn-speed = Vitesse de rotation des avatars
+ui-options-avatar-turn-speed-help = Rapidité supplémentaire avec laquelle les avatars se tournent vers leur direction en marchant ou debout (0 % par défaut). Uniquement sur cet écran.
+
+# Preferences › Mouse and keyboard: FSRevokePerms
+ui-options-revoke-permissions = Révoquer les permissions du siège
+ui-options-revoke-permissions-help = Quand vous vous asseyez sur un objet qui ne vous appartient pas ou que vous vous en levez, retire à ses scripts ce qui leur avait été permis, comme vous animer.
+ui-options-revoke-never = Jamais
+ui-options-revoke-on-sit = Quand je m'assois
+ui-options-revoke-on-stand = Quand je me lève
+ui-options-revoke-on-sit-and-stand = Quand je m'assois et me lève
