@@ -4857,40 +4857,15 @@ impl App {
             && let Some(d) = shown
             && let Some(target) = crate::interaction::target(&self.world, d.idx, &self.interactions.props)
         {
-            let surface = self.scene.drawn_surface(&self.world, &d);
-            let click_action_sit = self
-                .world
-                .objects
-                .index_of_uuid(&target.clicked_id)
-                .and_then(|i| self.world.objects.get(i))
-                .is_some_and(|o| o.click_action == crate::interaction::code::SIT);
-            let is_hud = self
-                .world
-                .objects
-                .index_of_uuid(&target.clicked_id)
-                .is_some_and(|i| self.world.objects.worn_on_hud(i));
-            let action = self.double_click_action();
-            if crate::autopilot::takes_scripted_object_double_click(
-                double,
-                self.settings.double_click_scripted,
-                action,
-                crate::autopilot::allows_object_double_click(
-                    crate::autopilot::non_zero_global_pick(self.world.main_origin(), d.hit.point),
-                    false,
-                    true,
-                    self.settings.double_click_scripted,
-                    click_action_sit || target.action == crate::interaction::Action::Sit,
-                    !matches!(
-                        target.action,
-                        crate::interaction::Action::Disabled | crate::interaction::Action::Grab
-                    ),
-                    is_hud,
-                    on_avatar,
-                ),
-            ) {
-                self.double_click_ground(d.hit.point);
+            if self.scripted_double_click(double, d.idx, &target, d.hit.point, on_avatar) {
+                // as the ground path below: the press may still become a
+                // both-buttons walk
+                if picked.tag.is_none() {
+                    self.arm_world_mouse_walk();
+                }
                 return;
             }
+            let surface = self.scene.drawn_surface(&self.world, &d);
             if target.action == crate::interaction::Action::Disabled {
                 self.arm_world_mouse_walk();
             }
@@ -4911,37 +4886,10 @@ impl App {
             && (!on_avatar || self.own_attachment(idx))
             && let Some(target) = crate::interaction::target(&self.world, idx, &self.interactions.props)
         {
-            let click_action_sit = self
-                .world
-                .objects
-                .index_of_uuid(&target.clicked_id)
-                .and_then(|i| self.world.objects.get(i))
-                .is_some_and(|o| o.click_action == crate::interaction::code::SIT);
-            let is_hud = self
-                .world
-                .objects
-                .index_of_uuid(&target.clicked_id)
-                .is_some_and(|i| self.world.objects.worn_on_hud(i));
-            let action = self.double_click_action();
-            if crate::autopilot::takes_scripted_object_double_click(
-                double,
-                self.settings.double_click_scripted,
-                action,
-                crate::autopilot::allows_object_double_click(
-                    crate::autopilot::non_zero_global_pick(self.world.main_origin(), point),
-                    false,
-                    true,
-                    self.settings.double_click_scripted,
-                    click_action_sit || target.action == crate::interaction::Action::Sit,
-                    !matches!(
-                        target.action,
-                        crate::interaction::Action::Disabled | crate::interaction::Action::Grab
-                    ),
-                    is_hud,
-                    on_avatar,
-                ),
-            ) {
-                self.double_click_ground(point);
+            if self.scripted_double_click(double, idx, &target, point, on_avatar) {
+                if picked.tag.is_none() {
+                    self.arm_world_mouse_walk();
+                }
                 return;
             }
             if target.action == crate::interaction::Action::Disabled {
@@ -4987,9 +4935,15 @@ impl App {
             build: self.build.open,
             on_avatar,
         }) && let Some(point) = hit
+            && self.ground_double_click_allowed(
+                shown
+                    .map(|d| d.idx)
+                    .or_else(|| ray.and_then(|r| self.scene.left_interaction_at_ray(&self.world, point, r, true))),
+            )
         {
-            // a double click on the ground, or on an object without a click
-            // action (which took the press above): walk_to / teleport_to
+            // a double click on the ground, or on an object without a
+            // one-click target (an object with one took the press above):
+            // walk_to / teleport_to. A refused one is a plain press, below.
             self.double_click_ground(point);
             if picked.tag.is_none() {
                 self.arm_world_mouse_walk();
