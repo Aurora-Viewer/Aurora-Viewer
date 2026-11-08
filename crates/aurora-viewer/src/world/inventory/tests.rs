@@ -787,3 +787,91 @@ fn an_asset_uuid_shows_for_full_permissions_or_a_built_in_texture() {
     );
     assert!(asset_uuid_shown(&inv, asset), "a second item gives full permissions");
 }
+
+#[test]
+fn the_agent_holds_the_owner_mask_of_its_items_and_the_everyone_mask_of_others() {
+    let (agent, library) = (id(9901), id(9902));
+    let item = |owner, group_owned| InvItem {
+        owner,
+        group_owned,
+        owner_mask: FULL,
+        everyone_mask: COPY,
+        ..Default::default()
+    };
+    assert_eq!(agent_mask(&item(agent, false), agent), FULL, "its own item");
+    assert_eq!(agent_mask(&item(library, false), agent), COPY, "a Library item");
+    assert_eq!(agent_mask(&item(agent, true), agent), COPY, "group owned");
+    assert_eq!(agent_mask(&item(Uuid::nil(), false), agent), FULL, "built here, no owner yet");
+    assert_eq!(agent_mask(&item(library, false), Uuid::nil()), FULL, "before the login");
+    let inv = Inventory {
+        owner: agent,
+        ..Default::default()
+    };
+    assert_eq!(held(&inv, &item(agent, false)), FULL);
+    assert_eq!(held(&inv, &item(library, false)), COPY);
+}
+
+#[test]
+fn the_agent_holds_the_everyone_mask_of_contents_in_someone_elses_object() {
+    let (agent, friend) = (id(9921), id(9922));
+    let item = |owner_id, group_owned| aurora_net::build::TaskItem {
+        owner_id,
+        group_owned,
+        owner_mask: FULL,
+        everyone_mask: COPY,
+        ..Default::default()
+    };
+    assert_eq!(task_agent_mask(&item(agent, false), agent), FULL, "its own object's contents");
+    assert_eq!(task_agent_mask(&item(friend, false), agent), COPY, "an object it may only modify");
+    assert_eq!(task_agent_mask(&item(agent, true), agent), COPY, "group owned");
+}
+
+#[test]
+fn a_library_item_shows_its_asset_uuid_by_what_it_allows_everyone() {
+    let (agent, library, asset) = (id(9911), id(9912), id(9913));
+    let mut inv = Inventory {
+        owner: agent,
+        ..Default::default()
+    };
+    let mut lib_item = InvItem {
+        id: id(9914),
+        owner: library,
+        asset_id: asset,
+        owner_mask: FULL,
+        everyone_mask: COPY,
+        ..Default::default()
+    };
+    inv.items.insert(lib_item.id, lib_item.clone());
+    assert!(!asset_uuid_shown(&inv, asset), "full for the Library's account only");
+    lib_item.everyone_mask = FULL;
+    inv.items.insert(lib_item.id, lib_item);
+    assert!(asset_uuid_shown(&inv, asset), "full for everyone");
+}
+
+#[test]
+fn next_owner_rights_need_the_owners_transfer() {
+    let item = |owner_mask: u32, asset_type: i32, inv_type: i32| InvItem {
+        owner_mask,
+        asset_type,
+        inv_type,
+        ..Default::default()
+    };
+    let full = COPY | MODIFY | TRANSFER;
+    assert!(next_owner_editable(&item(full, 6, 6)));
+    assert!(!next_owner_editable(&item(COPY | MODIFY, 6, 6)), "no transfer for the owner");
+    // LLInventoryType::cannotRestrictPermissions
+    assert!(!next_owner_editable(&item(full, 2, 2)), "calling card");
+    assert!(!next_owner_editable(&item(full, 3, 3)), "landmark");
+}
+
+#[test]
+fn a_no_copy_object_is_not_restored_to_its_last_position_in_second_life() {
+    let object = |owner_mask: u32| InvItem {
+        owner_mask,
+        asset_type: 6,
+        ..Default::default()
+    };
+    assert!(restorable(&object(COPY | MODIFY | TRANSFER), false));
+    assert!(!restorable(&object(MODIFY | TRANSFER), false));
+    assert!(restorable(&object(MODIFY | TRANSFER), true), "OpenSim keeps it");
+}

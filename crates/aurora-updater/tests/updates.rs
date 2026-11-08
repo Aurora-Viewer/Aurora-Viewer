@@ -633,3 +633,42 @@ fn the_beta_channel_takes_betas_and_moves_on_to_the_stable_of_the_same_number() 
     // Back on Stable, a beta waits for the next stable instead of a downgrade.
     assert_eq!(check("0.7.7-beta.20261025.1", Channel::Stable, false), None);
 }
+
+#[test]
+fn a_periodic_check_asks_whether_the_list_changed_and_keeps_it_on_not_modified() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("loopback");
+    let base = format!("http://{}", listener.local_addr().expect("address"));
+    let body = serde_json::json!([
+        {"tag_name":"v0.4.0-beta.20261106.1","prerelease":true,"html_url":format!("{base}/beta")},
+        {"tag_name":"v0.3.0","html_url":format!("{base}/release")}
+    ])
+    .to_string();
+    let (seen_tx, seen_rx) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        for answer in 0..3 {
+            let (mut socket, _) = listener.accept().expect("request");
+            let mut request = [0; 4096];
+            let n = socket.read(&mut request).unwrap_or(0);
+            let request = String::from_utf8_lossy(&request[..n]).to_ascii_lowercase();
+            let _ = seen_tx.send(request.contains("if-none-match: \"list-1\""));
+            let reply = if answer == 0 {
+                format!(
+                    "HTTP/1.1 200 OK\r\nETag: \"list-1\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+            } else {
+                "HTTP/1.1 304 Not Modified\r\nETag: \"list-1\"\r\nConnection: close\r\n\r\n".to_owned()
+            };
+            socket.write_all(reply.as_bytes()).expect("response");
+        }
+    });
+    let source = Source::local(&format!("{base}/releases")).expect("feed");
+    let version = |channel| run(source.check("0.2.0", channel)).expect("check").map(|r| r.version);
+    assert_eq!(version(Channel::Stable).as_deref(), Some("0.3.0"));
+    // unchanged: the kept list answers, for either channel
+    assert_eq!(version(Channel::Stable).as_deref(), Some("0.3.0"));
+    assert_eq!(version(Channel::Beta).as_deref(), Some("0.4.0-beta.20261106.1"));
+    server.join().expect("server");
+    let sent: Vec<bool> = seen_rx.try_iter().collect();
+    assert_eq!(sent, [false, true, true]);
+}

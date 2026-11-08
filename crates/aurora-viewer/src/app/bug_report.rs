@@ -28,7 +28,7 @@ impl App {
             Field::new(
                 "bug-vram",
                 "Video memory",
-                gpu.vram_mb.map(|mb| format!("{mb} MiB")).unwrap_or_else(|| "Unavailable".into()),
+                gpu.memory_label(),
                 true,
             ),
             Field::new(
@@ -53,7 +53,7 @@ impl App {
                     s.antialiasing,
                     s.ssao,
                     s.water_reflections,
-                    s.texture_budget(gpu.vram_mb, gpu.integrated),
+                    s.texture_budget(gpu.dedicated_mb, gpu.shared_mb, gpu.integrated),
                     s.max_avatars,
                     s.vsync,
                     if s.fps_cap { frame_limit.as_str() } else { "off" }
@@ -85,7 +85,7 @@ impl App {
                 ("bug-reflections", s.water_reflections.to_string()),
                 (
                     "bug-texture-budget",
-                    format!("{} MiB", s.texture_budget(gpu.vram_mb, gpu.integrated)),
+                    format!("{} MiB", s.texture_budget(gpu.dedicated_mb, gpu.shared_mb, gpu.integrated)),
                 ),
                 ("bug-max-avatars", s.max_avatars.to_string()),
                 ("bug-vsync", s.vsync.to_string()),
@@ -95,13 +95,15 @@ impl App {
             ];
         }
         if matches!(self.screen, Screen::World) {
+            // The report becomes a public issue: where the tester stands and
+            // who they are start unticked, the tester ticks them when they help.
             fields.insert(
                 3,
                 Field::new(
                     "bug-location",
                     "Location",
                     crate::slurl::make(&self.world.region_name(), self.world.agent.position),
-                    true,
+                    false,
                 ),
             );
             if let Some(name) = self.world.social.avatar_names.get(&self.world.agent_id) {

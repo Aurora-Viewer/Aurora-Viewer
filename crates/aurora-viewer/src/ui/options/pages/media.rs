@@ -118,6 +118,8 @@ pub fn page(cx: &mut Cx) {
             use crate::media::pack::PackState;
             let megabytes = |bytes: u64| aurora_i18n::integer((bytes / (1024 * 1024)) as i64);
             // plugins found: their folder; otherwise where Aurora's pack stands
+            // (`retry`: the button that asks for the download, Download or
+            // Retry)
             let (status, download, retry) = if !st.media_plugins.is_empty() {
                 let text = tr!(
                     "status-active-player-s",
@@ -142,25 +144,26 @@ pub fn page(cx: &mut Cx) {
                         None,
                         !matches!(failure, aurora_updater::Failure::Unsupported),
                     ),
-                    PackState::Idle | PackState::Ready => (tr!("media-plugins-missing").to_string(), None, false),
+                    // not downloaded: never asked, or "Not now" on the card
+                    PackState::Idle => (
+                        tr!("media-plugins-not-downloaded", size = crate::ui::web_view::pack_megabytes()).to_string(),
+                        None,
+                        true,
+                    ),
+                    PackState::Ready => (tr!("media-plugins-missing").to_string(), None, false),
                 }
             };
             if let Some(fraction) = download {
                 widgets::progress(ui, &p, "media_pack", fraction, SLIDER_W + 60.0, &status, None);
                 return false;
             }
-            if retry
-                && widgets::action_button(
-                    ui,
-                    &p,
-                    "refresh",
-                    tr!("media-plugins-retry"),
-                    widgets::ActionKind::Flat,
-                    egui::vec2(0.0, 24.0),
-                )
-                .clicked()
-            {
-                st.media_pack_retry = true;
+            let (icon, label) = if matches!(st.media_pack, PackState::Idle) {
+                ("download-filled", tr!("media-plugins-download"))
+            } else {
+                ("refresh", tr!("media-plugins-retry"))
+            };
+            if retry && widgets::action_button(ui, &p, icon, label, widgets::ActionKind::Flat, egui::vec2(0.0, 24.0)).clicked() {
+                st.media_pack_download = true;
             }
             // the path of a folder, of any length: cut to the row (whole on
             // hover)

@@ -98,6 +98,7 @@ pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
             object_id: OBJECT,
             object_name: aurora_i18n::tr!("demo-attention-object-name").into(),
             owner_name: "Nova Exemple".into(),
+            owner_id: Uuid::nil(),
             message: aurora_i18n::tr!("demo-attention-dialog").into(),
             channel: -4242,
             buttons: vec!["OK".into()],

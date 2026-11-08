@@ -246,7 +246,7 @@ fn video_hover_actions_copy_the_original_url_and_use_the_browser_confirmation_pa
     let ctx = Context::default();
     let p = crate::theme::Theme::default().palette();
     let url = "https://youtu.be/jNQXAC9IVRw?t=5";
-    let (target, _) = lp::decide(&lp::Settings::default(), lp::Place::Im, url).expect("a supported video");
+    let (target, _) = lp::decide(&lp::Settings::default(), lp::Place::Im, lp::Sender::Resident, url).expect("a supported video");
     let mut pv = Previews {
         demo_zoom: None,
         ..Default::default()

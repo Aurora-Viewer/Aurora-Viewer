@@ -1128,9 +1128,8 @@ fn outfit_list(
                     let rect = response.header.rect;
                     let left = rect.left() + ui.spacing().indent;
                     if let Some(offset) = widgets::faux_bold_offset(ui) {
-                        let pos = egui::pos2(left, rect.center().y - galley.size().y * 0.5);
-                        let name = outfit_label(ui, &f.info.name, false, font_id, p.ink, galley.size().x);
-                        ui.painter().galley(pos + offset, name, p.ink);
+                        let pos = widgets::row_text_origin(ui.painter(), &galley, left, rect.center().y);
+                        ui.painter().galley(pos + offset, galley.clone(), p.ink);
                     }
                     worn_tag(ui, p, left + galley.size().x, rect.center().y);
                 }
@@ -1454,7 +1453,7 @@ fn add_list(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Appearan
                 && world.inventory.folders.get(&it.parent).is_some_and(|f| !f.library)
         })
         .collect();
-    items.sort_by_key(|it| it.name.to_lowercase());
+    items.sort_by_key(|it| crate::natural_order::key(&it.name));
     for it in items {
         let response = row(ui, p, it, "", st.selected_item == Some(it.id), None);
         row_gap(ui);
@@ -2573,6 +2572,78 @@ mod tests {
         // Headless tests do not submit texture uploads to a renderer.
         output.textures_delta.clear();
         (actions, output.shapes)
+    }
+
+    #[test]
+    fn a_current_outfit_header_faux_bold_uses_the_same_pixel_aligned_origin() {
+        fn collect(shape: &egui::Shape, name: &str, positions: &mut Vec<egui::Pos2>) {
+            match shape {
+                egui::Shape::Text(text) if text.galley.text() == name => positions.push(text.pos),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect(shape, name, positions)),
+                _ => {}
+            }
+        }
+
+        for ppp in [0.75, 0.9, 1.0, 1.25, 1.5, 2.0] {
+            let ctx = egui::Context::default();
+            ctx.set_pixels_per_point(ppp);
+            crate::theme::Theme::default().apply(&ctx, ppp);
+            assert!(!crate::ui::fonts::has_semibold(&ctx), "fresh context uses faux bold at {ppp}");
+            let _icons = icons::Icons::load(&ctx, None);
+            let mut world = wardrobe(0);
+            let current = model::base(&world.inventory).expect("current outfit");
+            let name = "Faux bold alignment outfit";
+            world.inventory.folders.get_mut(&current).expect("outfit").info.name = name.into();
+            world.inventory.generation += 1;
+            let entry = Entry {
+                id: current,
+                depth: 0,
+                group: false,
+                outfits: 0,
+            };
+            let mut st = AppearanceUi::default();
+            let p = crate::theme::Theme::default().palette();
+            let mut expected_offset = 0.0;
+            let mut output = egui::FullOutput::default();
+            for _ in 0..2 {
+                output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(800.0, 500.0))),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        ui.set_width(600.0);
+                        expected_offset = widgets::faux_bold_offset(ui).expect("faux bold").x;
+                        outfit_list(
+                            ui,
+                            &p,
+                            &world,
+                            &mut st,
+                            std::slice::from_ref(&entry),
+                            &[current],
+                            Some(current),
+                            &mut vec![],
+                        );
+                    },
+                );
+                // Headless tests do not submit texture uploads to a renderer.
+                output.textures_delta.clear();
+            }
+            let mut positions = Vec::new();
+            for shape in &output.shapes {
+                collect(&shape.shape, name, &mut positions);
+            }
+            positions.sort_by(|a, b| a.x.total_cmp(&b.x));
+            assert_eq!(positions.len(), 2, "two header text shapes at {ppp}: {positions:?}");
+            assert!(
+                (positions[0].y - positions[1].y).abs() < 0.01,
+                "same baseline at {ppp}: {positions:?}"
+            );
+            assert!(
+                ((positions[1].x - positions[0].x) - expected_offset).abs() < 0.01,
+                "one faux-bold pixel at {ppp}: {positions:?}, offset {expected_offset}"
+            );
+        }
     }
 
     #[test]

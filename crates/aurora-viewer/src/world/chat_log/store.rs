@@ -83,7 +83,26 @@ enum Job {
         to: PathBuf,
         done: Sender<std::io::Result<usize>>,
     },
+    /// One file of an import (`import::merge_file`).
+    Merge {
+        source: PathBuf,
+        target: PathBuf,
+        done: Sender<std::io::Result<u64>>,
+    },
     Sync(Sender<()>),
+}
+
+/// The way in for an import's thread: it waits for each file while the
+/// lines of the conversations take their turn between two files.
+pub struct MergePort(Sender<Job>);
+
+impl MergePort {
+    /// None when the transcript thread is gone.
+    pub fn merge(&self, source: PathBuf, target: PathBuf) -> Option<std::io::Result<u64>> {
+        let (done, rx) = crossbeam_channel::bounded(1);
+        self.0.send(Job::Merge { source, target, done }).ok()?;
+        rx.recv().ok()
+    }
 }
 
 /// The transcript thread and its queue.
@@ -155,6 +174,10 @@ impl Worker {
         rx
     }
 
+    pub fn merge_port(&self) -> MergePort {
+        MergePort(self.jobs.clone())
+    }
+
     pub fn loaded(&self) -> impl Iterator<Item = Loaded> + '_ {
         self.loaded.try_iter()
     }
@@ -219,6 +242,9 @@ fn run(jobs: Receiver<Job>, loaded: Sender<Loaded>) {
             }
             Job::Move { from, to, done } => {
                 let _ = done.send(relocate(&from, &to));
+            }
+            Job::Merge { source, target, done } => {
+                let _ = done.send(super::import::merge_file(&source, &target));
             }
             Job::Sync(done) => {
                 let _ = done.send(());

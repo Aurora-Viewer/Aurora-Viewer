@@ -28,6 +28,9 @@ pub(crate) struct Report {
     #[serde(default)]
     pub target: PathBuf,
     pub backup: Option<PathBuf>,
+    /// The package folders an uninstall deleted.
+    #[serde(default)]
+    pub removed: Vec<PathBuf>,
     pub error: Option<String>,
 }
 
@@ -198,16 +201,7 @@ impl Installer {
         let ctx = ctx.clone();
         let mut manual = self.manual.clone();
         jobs.execute(move || {
-            if let Some(path) = remembered_paths()
-                && let Ok(bytes) = std::fs::read(&path)
-            {
-                manual.extend(
-                    serde_json::from_slice::<Vec<PathBuf>>(&bytes)
-                        .unwrap_or_default()
-                        .into_iter()
-                        .take(64),
-                );
-            }
+            manual.extend(remembered());
             manual = unique_executables(manual);
             *result.lock() = Some(Completed::Scan {
                 installations: scan(&manual),
@@ -313,6 +307,71 @@ fn install_selected(executable: &Path, mut run: impl FnMut(&Path, bool) -> Resul
             ..report
         },
     }
+}
+
+/// One Blender looked at by the removal of Aurora's add-on.
+#[derive(Clone, Debug)]
+pub(crate) struct Removal {
+    pub executable: PathBuf,
+    /// The package folders deleted.
+    pub removed: Vec<PathBuf>,
+    /// The folder of the backups an install made in this Blender's profile,
+    /// left in place: they hold copies of the user's own preferences.
+    pub backups: Option<PathBuf>,
+    pub error: Option<String>,
+}
+
+/// Removes Aurora's add-on from every Blender found (as the scan finds
+/// them, with the ones chosen by hand) whose profile has it. Runs Blender
+/// itself, up to minutes: on a worker or the command line only.
+pub(crate) fn remove_everywhere() -> Vec<Removal> {
+    let installations = scan(&unique_executables(remembered()));
+    remove_from(installations, |executable| bridge(command(executable), Operation::Uninstall))
+}
+
+/// The uninstall of each installation that reports Aurora's package; a
+/// Blender whose probe failed is left alone (nothing says the add-on is
+/// there, and its profile could not be read).
+fn remove_from(installations: Vec<Installation>, mut run: impl FnMut(&Path) -> Result<Report, String>) -> Vec<Removal> {
+    installations
+        .into_iter()
+        .filter(|i| {
+            if let Some(error) = &i.report.error {
+                log::warn!("Aurora's Blender add-on: {} not checked ({error})", i.executable.display());
+                return false;
+            }
+            i.report.plugin_version.is_some() || i.report.enabled
+        })
+        .map(|i| {
+            let backups =
+                Some(i.report.profile.join("aurora-backups")).filter(|dir| !i.report.profile.as_os_str().is_empty() && dir.is_dir());
+            match run(&i.executable) {
+                Ok(report) => Removal {
+                    executable: i.executable,
+                    removed: report.removed,
+                    backups,
+                    error: report.error,
+                },
+                Err(error) => Removal {
+                    executable: i.executable,
+                    removed: Vec::new(),
+                    backups,
+                    error: Some(error),
+                },
+            }
+        })
+        .collect()
+}
+
+/// The executables chosen by hand earlier.
+fn remembered() -> Vec<PathBuf> {
+    remembered_paths()
+        .and_then(|path| std::fs::read(path).ok())
+        .map(|bytes| serde_json::from_slice::<Vec<PathBuf>>(&bytes).unwrap_or_default())
+        .unwrap_or_default()
+        .into_iter()
+        .take(64)
+        .collect()
 }
 
 fn remembered_paths() -> Option<PathBuf> {
@@ -503,16 +562,37 @@ fn command(executable: &Path) -> Command {
     command
 }
 
-fn run_bridge(executable: &Path, install: bool) -> Result<Report, String> {
-    bridge(command(executable), install)
+/// What the bridge script does in the selected Blender's profile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Operation {
+    Probe,
+    Install,
+    /// Disables and deletes Aurora's package (`--uninstall`, Preferences ›
+    /// Remove Aurora from this computer); install's backups stay.
+    Uninstall,
 }
 
-fn bridge(mut command: Command, install: bool) -> Result<Report, String> {
+impl Operation {
+    fn install(install: bool) -> Self {
+        if install { Self::Install } else { Self::Probe }
+    }
+}
+
+fn run_bridge(executable: &Path, install: bool) -> Result<Report, String> {
+    bridge(command(executable), Operation::install(install))
+}
+
+fn bridge(mut command: Command, operation: Operation) -> Result<Report, String> {
+    let install = operation == Operation::Install;
     let temporary = Temporary::new()?;
     let root = &temporary.0;
     std::fs::write(root.join("bridge.py"), BRIDGE).map_err(|e| e.to_string())?;
     let request = Request {
-        operation: if install { "install" } else { "probe" },
+        operation: match operation {
+            Operation::Probe => "probe",
+            Operation::Install => "install",
+            Operation::Uninstall => "uninstall",
+        },
         plugin_version: addon::version(),
         extension_zip: root.join("extension.zip"),
         legacy_zip: root.join("legacy.zip"),
@@ -530,7 +610,7 @@ fn bridge(mut command: Command, install: bool) -> Result<Report, String> {
         .arg(root.join("request.json"))
         .arg(root.join("report.json"));
     let mut child = command.spawn().map_err(|e| e.to_string())?;
-    let deadline = Instant::now() + Duration::from_secs(if install { 180 } else { 45 });
+    let deadline = Instant::now() + Duration::from_secs(if operation == Operation::Probe { 45 } else { 180 });
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,

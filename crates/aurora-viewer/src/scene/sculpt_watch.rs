@@ -3,8 +3,10 @@
 //! texture contents, credentials or service URLs.
 
 use super::textures::TextureStreamer;
-use super::{ObjGpu, Scene};
+use super::{GeomKey, ObjGpu, Scene};
 use crate::world::World;
+use crate::world::inventory::asset_ids::AssetIds;
+use aurora_prim::params::SculptParams;
 use std::collections::{BTreeMap, HashSet};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -52,6 +54,7 @@ impl SculptWatch {
             return;
         }
         self.last_poll = Some(now);
+        let ids = AssetIds::diagnostics(world);
         let avatar = world
             .objects
             .index_of_uuid(&self.target)
@@ -90,16 +93,19 @@ impl SculptWatch {
             let wanted = gpu.get(idx).and_then(|g| g.wanted_geom);
             let wait = gpu.get(idx).and_then(|g| g.sculpt_wait);
             let state = format!(
-                "object={} local={} parent={} class={class} path={:#04x} profile={:#04x} extra_sculpt={:?} volume_sculpt={:?} visual_sculpt={:?} expected={:?} wanted={wanted:?} bound={bound:?} wait={wait:?} cpu_map={cpu_map:?} texture={texture:?}",
+                "object={} local={} parent={} class={class} path={:#04x} profile={:#04x} extra_sculpt={} volume_sculpt={} visual_sculpt={} expected={} wanted={} bound={} wait={:?} cpu_map={cpu_map:?} texture={texture:?}",
                 o.full_id,
                 o.key.local_id,
                 o.parent_id,
                 volume.path.curve_type,
                 volume.profile.curve_type,
-                o.extra.sculpt,
-                o.volume.sculpt,
-                volume.sculpt,
-                Scene::object_geom_key(o, gpu.get(idx).map_or(3, |g| g.lod)),
+                sculpt_text(o.extra.sculpt, &ids),
+                sculpt_text(o.volume.sculpt, &ids),
+                sculpt_text(volume.sculpt, &ids),
+                key_text(Scene::object_geom_key(o, gpu.get(idx).map_or(3, |g| g.lod)), &ids),
+                key_text(wanted, &ids),
+                key_text(bound, &ids),
+                wait.map(|id| ids.id(id)),
             );
             if self.previous.get(&o.full_id) != Some(&state) {
                 log::info!("sculpt watch: {state}");
@@ -110,5 +116,52 @@ impl SculptWatch {
             log::info!("sculpt watch: object={id} no longer attached to the target");
         }
         self.previous = next;
+    }
+}
+
+/// Sculpt parameters as `{:?}` writes them, the map by the asset id rule.
+fn sculpt_text(sculpt: Option<SculptParams>, ids: &AssetIds) -> String {
+    match sculpt {
+        Some(s) => format!(
+            "Some(SculptParams {{ texture: {}, sculpt_type: {} }})",
+            ids.id(s.texture),
+            s.sculpt_type
+        ),
+        None => "None".into(),
+    }
+}
+
+/// A geometry key as `{:?}` writes it, a mesh id by the asset id rule.
+fn key_text(key: Option<GeomKey>, ids: &AssetIds) -> String {
+    match key {
+        Some(GeomKey::Mesh { id, lod }) => format!("Some(Mesh {{ id: {}, lod: {lod} }})", ids.id(id)),
+        key => format!("{key:?}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world::inventory::Inventory;
+
+    #[test]
+    fn the_sculpt_watch_writes_maps_and_meshes_by_the_asset_id_rule() {
+        let map = uuid::Uuid::from_u128(0x91);
+        let hidden = AssetIds::new(&Inventory::default(), [], false);
+        let shown = AssetIds::new(&Inventory::default(), [], true);
+        let sculpt = Some(SculptParams {
+            texture: map,
+            sculpt_type: 5,
+        });
+        assert_eq!(
+            sculpt_text(sculpt, &shown),
+            format!("{sculpt:?}"),
+            "written out, it reads as before"
+        );
+        assert!(!sculpt_text(sculpt, &hidden).contains(&map.to_string()));
+        let mesh = Some(GeomKey::Mesh { id: map, lod: 2 });
+        assert_eq!(key_text(mesh, &shown), format!("{mesh:?}"));
+        assert!(!key_text(mesh, &hidden).contains(&map.to_string()));
+        assert_eq!(key_text(None, &hidden), "None");
     }
 }

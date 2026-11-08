@@ -432,6 +432,9 @@ impl RegionUi {
             ..view
         };
         if let Some(asset) = self.texture.show(ctx, p, world, images) {
+            if let Some(slot) = self.texture.dropped_slot() {
+                self.manage.picking = Some(slot);
+            }
             manage::picked_texture(self, &view, world, asset);
         } else if !self.texture.open {
             if self.texture.cancelled() {

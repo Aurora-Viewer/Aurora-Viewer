@@ -240,7 +240,6 @@ pub(crate) struct WaterGpu {
 
 impl WaterGpu {
     pub fn new(device: &wgpu::Device, size: u32) -> Self {
-        use wgpu::util::DeviceExt;
         let textures = std::array::from_fn(|index| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("water ripple/foam field"),
@@ -277,11 +276,12 @@ impl WaterGpu {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("water effects"),
-            contents: bytemuck::bytes_of(&Uniform::zeroed()),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let uniform = crate::gpu_alloc::buffer_init(
+            device,
+            "water effects",
+            bytemuck::bytes_of(&Uniform::zeroed()),
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
         let events = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("water interaction events"),
             size: (MAX_WATER_EVENTS * std::mem::size_of::<WaterEvent>()) as u64,
@@ -721,7 +721,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {
         });
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: bytes,
+            size: crate::readback::readback_size(bytes),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -761,7 +761,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {
             readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("atlas readback"));
             device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU completion");
             let mapped = readback.get_mapped_range(..).expect("mapped atlas");
-            let samples: &[[f32; 4]] = bytemuck::cast_slice(&mapped);
+            let samples = crate::readback::f32x4s(&mapped);
             assert!(samples.iter().flatten().all(|v| v.is_finite()));
             if enabled && bed == 0.0 && level == 20.0 {
                 let at = |x: f32, y: f32| samples[((y + 16.0) * 8.0) as usize * 256 + ((x + 16.0) * 8.0) as usize];
@@ -840,7 +840,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {
         readback.map_async(wgpu::MapMode::Read, ..24 * 16, |r| r.expect("swell readback"));
         device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU completion");
         let mapped = readback.get_mapped_range(..24 * 16).expect("mapped swell");
-        let samples: &[[f32; 4]] = bytemuck::cast_slice(&mapped);
+        let samples = crate::readback::f32x4s(&mapped);
         for (index, sample) in samples.iter().enumerate() {
             let query = index / 4;
             let quality = (index % 4) as u8;

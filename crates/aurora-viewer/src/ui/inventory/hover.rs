@@ -38,6 +38,10 @@ impl State {
             self.since = None;
             return;
         };
+        if !prefs.show_hover_tooltips {
+            self.since = None;
+            return;
+        }
         if response.ctx.is_being_dragged(response.id) || response.ctx.input(|i| i.pointer.any_down()) {
             self.since = None;
             return;
@@ -224,7 +228,10 @@ mod tests {
         inv.items.get_mut(&item).unwrap().desc = "Photo description".into();
         let picture = inv.items[&item].asset_id;
         let images = HashMap::from([(picture, texture.clone())]);
-        let prefs = InventoryPreferences::default();
+        let prefs = InventoryPreferences {
+            show_hover_tooltips: true,
+            ..Default::default()
+        };
         let p = crate::theme::Theme::default().palette();
         let mut state = State::default();
         let mut wanted = HashSet::new();
@@ -280,6 +287,7 @@ mod tests {
             let item = id(8104);
             inv.items.get_mut(&item).unwrap().desc = "Photo description".into();
             let prefs = InventoryPreferences {
+                show_hover_tooltips: true,
                 thumbnail_tooltips: restricted,
                 ..Default::default()
             };
@@ -297,6 +305,27 @@ mod tests {
     }
 
     #[test]
+    fn inventory_hover_tooltip_is_off_by_default_without_text_or_requests() {
+        let mut frames = Frames::new();
+        let mut inv = super::super::tests::view_inventory(false);
+        let item = id(8104);
+        inv.items.get_mut(&item).unwrap().desc = "Photo description".into();
+        let prefs = InventoryPreferences::default();
+        assert!(!prefs.show_hover_tooltips);
+        let p = crate::theme::Theme::default().palette();
+        let mut state = State::default();
+        let mut wanted = HashSet::new();
+        let texts = frames.hover(egui::pos2(40.0, 20.0), |ui| {
+            let response = ui.add_sized([180.0, 24.0], egui::Label::new("Photo row"));
+            state.record(&response, item, None);
+            state.show(&p, &inv, &prefs, &Default::default(), &mut wanted);
+        });
+        assert!(wanted.is_empty());
+        assert!(!texts.iter().any(|text| text.source == "Photo description"));
+        assert!(state.since.is_none());
+    }
+
+    #[test]
     fn inventory_hover_picture_uses_both_inventory_presentations_without_selecting() {
         for width in [0.0, 440.0, 800.0, 1180.0] {
             let mut frames = Frames::new();
@@ -309,6 +338,7 @@ mod tests {
             };
             let mut prefs = InventoryPreferences {
                 show_details: false,
+                show_hover_tooltips: true,
                 ..Default::default()
             };
             let facts = Facts::default();

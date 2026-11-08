@@ -18,7 +18,7 @@
 //!   between the file's history and the new lines, without those the file
 //!   already has.
 
-use super::chat_log::{Entry, Loaded, format, names};
+use super::chat_log::{Entry, Loaded, format, import, names};
 use super::{ChatKind, ChatLine, MAX_CHAT, Origin, World};
 use aurora_net::{ChatType, HistoryLine};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -328,6 +328,29 @@ impl World {
         for loaded in self.chat_log.take_loaded() {
             self.apply_history(loaded);
         }
+        if let Some(report) = self.chat_log.take_imported() {
+            self.history_imported(&report.changed);
+            self.import_report = Some(report);
+        }
+    }
+
+    /// An import changed these files: a conversation that shows nothing but
+    /// its history reads it again, with what was added. One with lines of
+    /// this session keeps what it shows until it is opened again, or the
+    /// file's end would repeat those lines; so does one still reading its
+    /// history.
+    fn history_imported(&mut self, changed: &std::collections::BTreeSet<String>) {
+        for s in &mut self.social.ims {
+            let imported = s.log.stem().is_some_and(|stem| {
+                let stem = names::clean_file_name(stem.trim());
+                changed.iter().any(|file| import::undated(file) == stem)
+            });
+            if imported && s.log.history == HistoryState::Done && s.lines.iter().all(|l| l.origin == Origin::Log) {
+                s.lines.clear();
+                s.clock.renumbered();
+                s.log.history = HistoryState::NotAsked;
+            }
+        }
     }
 
     /// Our names as a transcript may have them.
@@ -625,6 +648,44 @@ mod tests {
         settle(&mut w);
         let shown: Vec<&str> = w.social.ims[0].lines.iter().map(|l| l.text.as_str()).collect();
         assert_eq!(shown, ["again"]);
+        clean(&w, &root);
+    }
+
+    /// The report of the import under way.
+    fn imported(w: &mut World) -> crate::world::chat_log::import::Report {
+        for _ in 0..500 {
+            if let Some(report) = w.chat_log.take_imported() {
+                return report;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("the import did not end");
+    }
+
+    #[test]
+    fn with_both_saves_off_the_login_import_does_not_run_and_the_window_still_does() {
+        use crate::world::chat_log::import::Account;
+        let root = temp();
+        let from = temp();
+        std::fs::write(from.join("Bob.txt"), "[2026/10/01 12:00]  Jane Doe: hello\n").unwrap();
+        std::fs::write(from.join("chat.txt"), "[2026/10/01 12:00]  Jane Doe: hi\n").unwrap();
+        let mut w = world(&root, Uuid::from_u128(1));
+        w.chat_log.set_legacy_apps(Vec::new());
+        let account = Account {
+            first: "Jane".into(),
+            last: "Doe".into(),
+            grid: "agni".into(),
+        };
+        w.chat_log.cfg.log_im = false;
+        w.chat_log.cfg.log_nearby = false;
+        assert!(!w.chat_log.import_found(account.clone()));
+        w.chat_log.cfg.log_nearby = true;
+        assert!(w.chat_log.import_found(account));
+        imported(&mut w);
+        w.chat_log.cfg.log_nearby = false;
+        assert!(w.chat_log.import(vec![from.clone()]));
+        assert_eq!(imported(&mut w).added, 2);
+        std::fs::remove_dir_all(from).unwrap();
         clean(&w, &root);
     }
 

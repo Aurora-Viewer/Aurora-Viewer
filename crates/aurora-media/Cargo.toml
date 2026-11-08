@@ -10,6 +10,8 @@ description = "Media plugin host for Aurora Viewer: drives SLPlugin media plugin
 [dependencies]
 aurora-llsd = { version = "0.1.0", path = "../aurora-llsd" }
 log = "0.4.34"
+# The same native picker as the viewer, for CEF's blocking pick_file request.
+rfd = "0.17.2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Memory", "Win32_System_Threading", "Win32_Security"] }

@@ -83,7 +83,7 @@ fn asset_choice(ui: &mut egui::Ui, inv: &Inventory, assets: &Assets, kind: i32, 
         && let Some(original) = rules::original(inv, cargo.0)
         && let Some(it) = inv.items.get(&original)
         && it.asset_type == kind
-        && it.owner_mask & (rules::COPY | rules::MODIFY | rules::TRANSFER) == rules::COPY | rules::MODIFY | rules::TRANSFER
+        && rules::held(inv, it) & (rules::COPY | rules::MODIFY | rules::TRANSFER) == rules::COPY | rules::MODIFY | rules::TRANSFER
         && ui.rect_contains_pointer(ui.min_rect())
         && ui.input(|i| i.pointer.any_released())
     {
@@ -140,7 +140,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, manager: &
         let mut open = editor.open;
         let title = aurora_i18n::tr!("gesture-editor-title", name = it.name.as_str());
         let editable = !rules::library(inv, *id);
-        let modifiable = editable && it.owner_mask & rules::MODIFY != 0;
+        let modifiable = editable && rules::held(inv, it) & rules::MODIFY != 0;
         let window_id = format!("gesture_{id}");
         let floater = Floater::new(&window_id, &title, egui::pos2(570.0, 130.0), Vec2::new(400.0, 590.0))
             .cascade(crate::ui::widgets::CascadeGroup::Gesture);
@@ -419,11 +419,13 @@ impl Assets {
             .filter(|it| {
                 matches!(it.asset_type, 1 | 20)
                     && !it.asset_id.is_nil()
-                    && it.owner_mask & (rules::COPY | rules::MODIFY | rules::TRANSFER) == rules::COPY | rules::MODIFY | rules::TRANSFER
+                    && rules::held(inv, it) & (rules::COPY | rules::MODIFY | rules::TRANSFER)
+                        == rules::COPY | rules::MODIFY | rules::TRANSFER
                     && !rules::in_type(inv, it.id, 14)
             })
             .map(|it| (it.asset_type, it.asset_id, it.name.clone()))
             .collect();
-        self.choices.sort_by_cached_key(|(kind, _, name)| (*kind, name.to_lowercase()));
+        self.choices
+            .sort_by_cached_key(|(kind, _, name)| (*kind, crate::natural_order::key(name)));
     }
 }

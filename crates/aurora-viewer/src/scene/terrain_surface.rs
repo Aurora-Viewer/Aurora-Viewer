@@ -226,6 +226,11 @@ impl Scene {
         let mut built = 0;
         for handle in handles {
             let Some(offset) = world.region_offset(handle) else { continue };
+            let edges = world
+                .regions
+                .get(&handle)
+                .is_some_and(|r| !r.dirty_chunks.is_empty() && built <= 6)
+                .then(|| world.terrain_edge_heights(handle));
             let Some(region) = world.regions.get_mut(&handle) else { continue };
             let Some(info) = region.info.clone() else { continue };
             let comp = Composition {
@@ -272,7 +277,8 @@ impl Scene {
             }
             let chunks: Vec<_> = region.dirty_chunks.iter().copied().take(8).collect();
             for index in chunks {
-                let (vertices, frames, indices) = terrain::build_chunk(&region.heightmap, &comp, index);
+                let Some(edges) = edges.as_ref() else { break };
+                let (vertices, frames, indices) = terrain::build_chunk(&region.heightmap, &comp, index, edges);
                 // Terrain reuses the parallel frame bytes without enabling skinning.
                 let Some(alloc) = renderer.upload_skinned_mesh(&vertices, &frames, &indices) else {
                     continue;

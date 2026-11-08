@@ -276,7 +276,7 @@ pub fn system_fonts() -> Vec<SystemFont> {
             out.push(SystemFont { name, path });
         }
     }
-    out.sort_by_key(|f| f.name.to_lowercase());
+    out.sort_by_key(|f| crate::natural_order::key(&f.name));
     out
 }
 
@@ -318,6 +318,67 @@ pub fn apply(ctx: &egui::Context, choice: &str) -> bool {
 const DEFINITIONS_ID: &str = "aurora-font-definitions";
 const SEMIBOLD_ID: &str = "aurora-font-has-semibold";
 const SCALE_ID: &str = "aurora-font-scale";
+const BASELINE_ID: &str = "aurora-font-baseline";
+
+#[derive(Clone, Copy)]
+struct BaselineFace {
+    ascent: f32,
+    descent: f32,
+    scale: f32,
+    offset_factor: f32,
+    offset: f32,
+}
+
+impl BaselineFace {
+    fn of(definitions: &egui::FontDefinitions) -> Option<Self> {
+        let data = definitions.font_data.get(MAIN).or_else(|| {
+            definitions
+                .families
+                .get(&egui::FontFamily::Proportional)?
+                .iter()
+                .find_map(|name| definitions.font_data.get(name))
+        })?;
+        let face = ttf_parser::Face::parse(data.bytes(), data.index).ok()?;
+        let em = f32::from(face.units_per_em());
+        (em > 0.0).then(|| Self {
+            ascent: f32::from(face.ascender()) / em,
+            descent: -f32::from(face.descender()) / em,
+            scale: data.tweak.scale,
+            offset_factor: data.tweak.y_offset_factor,
+            offset: data.tweak.y_offset,
+        })
+    }
+}
+
+pub struct BaselineMetrics {
+    pub advance: f32,
+    /// The optical centering of UI glyphs, removed for baseline-anchored text.
+    pub offset: f32,
+}
+
+/// LLFontGL::getLineHeight (indra/llrender/llfontgl.cpp) rounds ascent and
+/// descent separately, without the font's line gap; LLHUDText subtracts one.
+/// Keep unscaled face metrics at installation, not a font parse every frame.
+pub fn baseline_metrics(ctx: &egui::Context, size: f32) -> BaselineMetrics {
+    use egui::emath::GuiRounding as _;
+    let face = ctx
+        .data(|data| data.get_temp::<Option<BaselineFace>>(egui::Id::unique(BASELINE_ID)))
+        .flatten()
+        .or_else(|| ctx.fonts(|fonts| BaselineFace::of(fonts.definitions())));
+    let scale = scale(ctx);
+    if let Some(face) = face {
+        let em = size * scale * face.scale;
+        BaselineMetrics {
+            advance: ((face.ascent * em).ceil() + (face.descent * em).ceil() - 1.0).max(1.0),
+            offset: (em * face.offset_factor + face.offset * scale).round_ui(),
+        }
+    } else {
+        BaselineMetrics {
+            advance: ctx.fonts_mut(|fonts| fonts.row_height(&egui::FontId::proportional(size))).max(2.0) - 1.0,
+            offset: 0.0,
+        }
+    }
+}
 
 /// Combined skin and preference scale, also used by inline emoji pictures.
 pub fn scale(ctx: &egui::Context) -> f32 {
@@ -368,6 +429,7 @@ fn install(ctx: &egui::Context, definitions: egui::FontDefinitions) {
     ctx.data_mut(|data| {
         data.insert_temp(egui::Id::unique(DEFINITIONS_ID), Arc::new(definitions.clone()));
         data.insert_temp(egui::Id::unique(SEMIBOLD_ID), heavier);
+        data.insert_temp(egui::Id::unique(BASELINE_ID), BaselineFace::of(&definitions));
     });
     let scale = scale(ctx);
     let mut scaled = definitions;

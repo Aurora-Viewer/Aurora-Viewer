@@ -3,6 +3,99 @@ use crate::world::inventory::{FetchState, Folder, Inventory};
 use aurora_net::build::TaskItem;
 use aurora_net::inventory::{InvFolder, InvItem};
 
+#[test]
+fn folder_copies_refresh_permissions_and_refuse_missing_items_and_no_copy_worn_contents() {
+    use crate::build::{BuildTool, task_inventory};
+    use aurora_net::build::perm;
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    let idx = world.objects.index_of_uuid(&crate::demo::action_id(118)).unwrap();
+    let agent = world.agent_id;
+    let object = world.objects.get_mut(idx).unwrap();
+    object.owner_id = agent;
+    let object = object.full_id;
+    let item = TaskItem {
+        item_id: Uuid::from_u128(99001),
+        parent_id: object,
+        owner_id: agent,
+        name: "Outfit".into(),
+        asset_type: 5,
+        inv_type: 18,
+        owner_mask: perm::COPY | perm::TRANSFER,
+        ..Default::default()
+    };
+    let mut build = BuildTool::default();
+    build.on_task_inventory(&world, object, Some(1), vec![item.clone()]);
+    let request = CopyRequest {
+        object,
+        name: "Packed outfit".into(),
+        items: vec![item.clone()],
+        transfer: task_inventory::contents_transfer(&world, object, std::slice::from_ref(&item), true).unwrap(),
+        wear: None,
+    };
+    assert!(refresh_copy(request.clone(), &build, &world).unwrap().transfer.moved.is_empty());
+    let mut current = item;
+    current.owner_mask &= !perm::COPY;
+    let script = TaskItem {
+        item_id: Uuid::from_u128(99002),
+        asset_type: 10,
+        ..current.clone()
+    };
+    build.on_task_inventory(&world, object, Some(2), vec![current.clone(), script]);
+    let updated = refresh_copy(request.clone(), &build, &world).unwrap();
+    assert_eq!(updated.items, [current]);
+    assert_eq!(updated.name, request.name);
+    assert_eq!(updated.transfer.moved, [Uuid::from_u128(99001)]);
+    assert!(updated.transfer.scripted, "an unselected script requires the stronger move warning");
+    assert!(
+        !copy_approval_covers(&request.transfer, &updated.transfer),
+        "a copy cannot turn into an unapproved move"
+    );
+    let object = world.objects.get_mut(idx).unwrap();
+    object.parent_id = 1;
+    object.state = 0x10;
+    assert!(refresh_copy(request.clone(), &build, &world).is_err());
+    world.objects.get_mut(idx).unwrap().parent_id = 0;
+    build.on_task_inventory(&world, request.object, Some(3), Vec::new());
+    assert!(
+        refresh_copy(request, &build, &world).is_err(),
+        "a removed item must never be copied from its stale row"
+    );
+}
+
+#[test]
+fn folder_copy_approval_never_covers_a_new_move_or_a_stronger_script_warning() {
+    use crate::build::task_inventory::ContentsTransfer;
+    let before = ContentsTransfer {
+        moved: vec![Uuid::from_u128(1)],
+        scripted: false,
+    };
+    assert!(copy_approval_covers(&before, &before));
+    assert!(copy_approval_covers(
+        &before,
+        &ContentsTransfer {
+            moved: Vec::new(),
+            scripted: true
+        }
+    ));
+    assert!(!copy_approval_covers(
+        &before,
+        &ContentsTransfer {
+            moved: before.moved.clone(),
+            scripted: true
+        }
+    ));
+    assert!(!copy_approval_covers(
+        &before,
+        &ContentsTransfer {
+            moved: vec![Uuid::from_u128(2)],
+            scripted: false
+        }
+    ));
+}
+
 fn fixture(wear: bool) -> (PendingCopy, Inventory, Instant) {
     let now = Instant::now();
     let folder = Uuid::from_u128(100);

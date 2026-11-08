@@ -81,11 +81,11 @@ fn texture_allowed(world: &World, draft: &Draft, texture: Uuid) -> bool {
     texture == crate::world::inventory::wearable::default_texture(kind)
         || texture.is_nil() && matches!(kind, 1 | 13 | 14 | 16)
         || texture == crate::scene::avatar::IMG_INVISIBLE && kind == 13
-        || world
-            .inventory
-            .items
-            .values()
-            .any(|item| matches!(item.asset_type, 0 | 15) && item.asset_id == texture && item.owner_mask & required == required)
+        || world.inventory.items.values().any(|item| {
+            matches!(item.asset_type, 0 | 15)
+                && item.asset_id == texture
+                && crate::world::inventory::actions::held(&world.inventory, item) & required == required
+        })
 }
 
 /// The texture an inventory entry dragged onto a texture swatch carries: a

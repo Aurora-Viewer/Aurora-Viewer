@@ -125,7 +125,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         .iter()
         .filter(|i| filter.is_empty() || searchable_name(i).to_uppercase().contains(&filter))
         .collect();
-    list.sort_by_key(|i| i.name.to_lowercase());
+    list.sort_by_key(|i| crate::natural_order::key(&i.name));
     tool.ui
         .contents_selection
         .sync(object_id, list.iter().map(|it| it.item_id).collect(), ui.layer_id());
@@ -376,11 +376,9 @@ fn item_row(
             } else {
                 aurora_i18n::tr!("build-ui-contents-copy-to-inventory")
             };
-            let take_tip = aurora_i18n::tr!("build-ui-contents-like-dragging-the-item-to-inventory");
+            let take_tip = aurora_i18n::tr!("contents-copy-selection-tip");
             if menu::item_tip(ui, p, "briefcase-filled", take, can_take, take_tip) {
-                for it in &taken {
-                    tool.copy_item_to_inventory(world, idx, it, uuid::Uuid::nil());
-                }
+                tool.copy_contents_to_inventory(world, idx, &taken);
             }
             if item.asset_type == AT_LSL_TEXT {
                 menu::separator(ui, p);

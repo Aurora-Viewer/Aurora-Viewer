@@ -132,12 +132,12 @@ impl LandmarkList {
         };
         let name_of = |id: &Uuid| inv.folders.get(id).map(|f| f.info.name.clone()).unwrap_or_default();
         let mut folders: Vec<Uuid> = by_folder.keys().copied().collect();
-        folders.sort_by_key(|id| (rank(id), name_of(id).to_lowercase(), *id));
+        folders.sort_by_key(|id| (rank(id), crate::natural_order::key(&name_of(id)), *id));
         self.items.clear();
         self.folders.clear();
         for id in folders {
             let mut list = by_folder.remove(&id).unwrap_or_default();
-            list.sort_by_key(|i| (i.name.to_lowercase(), i.id));
+            list.sort_by_key(|i| (crate::natural_order::key(&i.name), i.id));
             let start = self.items.len();
             self.items.extend(list.into_iter().map(|i| Lm {
                 item: i.id,
@@ -387,7 +387,7 @@ fn build_suggestions(world: &World, list: &LandmarkList, query: &str) -> Vec<Sug
         .map(|f| (f.id, world.social.name_of(&f.id)))
         .filter(|(_, n)| n.to_lowercase().contains(&q))
         .collect();
-    friends.sort_by_key(|f| f.1.to_lowercase());
+    friends.sort_by_key(|f| crate::natural_order::key(&f.1));
     for (id, name) in friends.into_iter().take(SUGGESTIONS) {
         out.push(Suggestion {
             group: Group::Friends,
@@ -1146,7 +1146,7 @@ impl WorldMapUi {
                     .filter(|(_, n, _)| n.to_lowercase().contains(filter))
                     .collect();
                 // those we can find on the map first
-                friends.sort_by_key(|f| (!f.2, f.1.to_lowercase()));
+                friends.sort_by_key(|f| (!f.2, crate::natural_order::key(&f.1)));
                 rows.extend(friends.into_iter().map(|(id, name, mappable)| Row::Friend { id, name, mappable }));
                 if rows.is_empty() {
                     rows.push(Row::Note(

@@ -377,8 +377,9 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     );
     let right = end.items.last().map_or(bounds.right(), |r| r.left()) - PARTS_GAP;
     let count = 4 + usize::from(f.online);
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, RICH_H), Sense::click_and_drag());
+    let (rect, resp) = rows::allocate(ui, f.id, Vec2::new(width, RICH_H));
     if !ui.is_rect_visible(rect) {
+        rows::person_menu(&resp, p, c.world, &st.sel, f.id);
         return;
     }
     if !data.pics.contains_key(&f.id) {

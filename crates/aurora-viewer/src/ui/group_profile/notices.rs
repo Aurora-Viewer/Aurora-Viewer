@@ -59,7 +59,7 @@ pub fn attachable(world: &World, id: Uuid) -> Option<Uuid> {
     if item.asset_type == AT_LINK {
         item = inv.items.get(&item.asset_id)?;
     }
-    let perms = item.owner_mask;
+    let perms = crate::world::inventory::actions::held(inv, item);
     if perms & COPY == 0 || perms & TRANSFER == 0 {
         return None;
     }

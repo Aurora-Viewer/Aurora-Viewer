@@ -263,7 +263,9 @@ impl World {
                             .objects
                             .index_of_uuid(target)
                             .and_then(|i| crate::scene::Scene::object_transform_unshifted(self, i, std::time::Instant::now()))
-                            .is_some_and(|(pos, rot, _)| (pos + rot * *offset).distance(self.agent.position) < limit))
+                            // RlvActions::canSit adds the picked world-axis
+                            // offset directly, including for a rotated child.
+                            .is_some_and(|(pos, _, _)| (pos + *offset).distance(self.agent.position) < limit))
             }
             NetCommand::OneShotControl(flags) => {
                 (flags & control::STAND_UP == 0 || !blocked("unsit"))
@@ -411,7 +413,7 @@ impl World {
                     _ => Some(String::new()),
                 };
                 if let Some(text) = text {
-                    self.rlva.reply(channel, text);
+                    self.rlva.reply(channel, &c.behaviour, text);
                 } else {
                     self.rlva.pending.push((source, c));
                     self.rlva.pending.extend(pending);

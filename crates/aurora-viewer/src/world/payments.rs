@@ -8,17 +8,24 @@
 //!
 //! Only direct payments: an object paid, a sale and a group's money stay in
 //! the money tracker. The card goes into the payer's conversation when one
-//! is open; a friend's payment opens it with "Open a conversation for a
-//! friend's payment" (Preferences › Chat, on by default). The payment is
-//! always written to the payer's transcript, with or without a card, as the
-//! offers' are (LLHandlerUtil::logToIMP2P).
+//! is open. The payment is always written to the payer's transcript, with or
+//! without a card, as the offers' are (LLHandlerUtil::logToIMP2P).
 //!
 //! Our own direct payment to a resident (the Legacy Viewer's PaymentSent,
 //! you_paid_ldollars_gift) is the same the other way: its card in the
-//! payee's conversation when it is open, or always with "Open the
-//! conversation when you pay a resident" (off by default), and its line in
-//! their transcript, so that it is still there when the conversation is
-//! opened again, as a received payment is (#1198).
+//! payee's conversation when it is open, and its line in their transcript,
+//! so that it is still there when the conversation is opened again, as a
+//! received payment is (#1198).
+//!
+//! Whether a payment also opens a closed conversation is Aurora's own: the
+//! Legacy Viewer never opens one for a payment (LLTipHandler only logs it to
+//! a session that exists, LLHandlerUtil::logToIM). Preferences › Chat has one
+//! choice per direction, [`Opens`]: a payment received opens the payer's
+//! conversation for a friend by default, ours opens nothing by default (the
+//! human's choices on #1198). "Never" in both is the Legacy Viewer's
+//! behaviour. One choice per direction, each naming who it applies to,
+//! since #2638: the former "friend's payment" switch only ever applied to
+//! payments received, which read as payments to a friend.
 
 use super::{ChatKind, ChatLine, Origin, World};
 use std::collections::VecDeque;
@@ -47,15 +54,38 @@ pub struct Payment {
     pub message: String,
 }
 
+/// Whose direct payment opens the conversation with them when it is closed,
+/// one choice for the payments received and one for ours (#2638).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum Opens {
+    /// The card shows only in a conversation already open.
+    #[default]
+    Never,
+    /// A friend's conversation opens; anyone else's only shows the card
+    /// when it is open.
+    Friends,
+    Anyone,
+}
+
+impl Opens {
+    pub fn applies(self, friend: bool) -> bool {
+        match self {
+            Opens::Never => false,
+            Opens::Friends => friend,
+            Opens::Anyone => true,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Payments {
     list: VecDeque<Payment>,
     next: u64,
     recent: VecDeque<Uuid>,
-    /// A friend's payment opens their conversation, from the preferences.
-    pub open_for_friends: bool,
-    /// Our own payment opens the payee's conversation, from the preferences.
-    pub open_when_paying: bool,
+    /// Whose payment to us opens their conversation, from the preferences.
+    pub open_received: Opens,
+    /// Whose conversation our own payment opens, from the preferences.
+    pub open_sent: Opens,
 }
 
 impl Payments {
@@ -172,11 +202,12 @@ impl World {
         let note = self.notice_line(text.clone());
         self.transcript_only(other, &note);
         let open = self.social.has_session(&other);
-        let opens = if sent {
-            self.payments.open_when_paying
+        let rule = if sent {
+            self.payments.open_sent
         } else {
-            self.payments.open_for_friends && self.social.is_friend(&other)
+            self.payments.open_received
         };
+        let opens = rule.applies(self.social.is_friend(&other));
         if !open && !(opens && self.rlva_can_start_im(other)) {
             return;
         }
@@ -210,7 +241,7 @@ mod tests {
     fn world() -> World {
         let mut w = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         w.agent_id = AGENT;
-        w.payments.open_for_friends = true;
+        w.payments.open_received = Opens::Friends;
         w
     }
 
@@ -255,15 +286,53 @@ mod tests {
         assert_eq!(w.social.ims[0].unread, 1);
     }
 
-    #[test]
-    fn a_friend_s_payment_opens_the_conversation_when_asked() {
-        for open in [true, false] {
-            let mut w = world();
-            w.payments.open_for_friends = open;
-            w.social.form_friendship(JANE);
-            w.payment(&paid(10, GIFT, JANE, AGENT, 50, "Rent"));
-            assert_eq!(cards(&w, JANE).len(), usize::from(open), "{open}");
+    /// Whether a closed conversation opens, for each choice, from a friend
+    /// and from someone else, the payment received or ours (#2638).
+    fn opened(rule: Opens, sent: bool, friend: bool) -> bool {
+        let mut w = world();
+        if sent {
+            w.payments.open_sent = rule;
+        } else {
+            w.payments.open_received = rule;
         }
+        if friend {
+            w.social.form_friendship(JANE);
+        }
+        let (source, dest) = if sent { (AGENT, JANE) } else { (JANE, AGENT) };
+        w.payment(&paid(10, GIFT, source, dest, 50, "Rent"));
+        let got = cards(&w, JANE).len();
+        assert!(got <= 1);
+        if sent && got == 1 {
+            assert_eq!(w.social.ims[0].unread, 0, "our own doing is not unread");
+        }
+        got == 1
+    }
+
+    #[test]
+    fn each_choice_opens_the_conversations_it_names() {
+        for sent in [false, true] {
+            for friend in [false, true] {
+                assert!(!opened(Opens::Never, sent, friend), "never: {sent} {friend}");
+                assert_eq!(opened(Opens::Friends, sent, friend), friend, "friends: {sent} {friend}");
+                assert!(opened(Opens::Anyone, sent, friend), "anyone: {sent} {friend}");
+            }
+        }
+    }
+
+    #[test]
+    fn one_direction_s_choice_never_opens_for_the_other() {
+        // paying a friend with only "a friend pays you" on: nothing (#2638)
+        let mut w = world();
+        w.social.form_friendship(JANE);
+        w.payment(&paid(40, GIFT, AGENT, JANE, 10, "Payment"));
+        assert!(w.social.ims.is_empty());
+        // and a friend paying us with only "you pay a resident" on
+        let mut w = world();
+        w.payments.open_received = Opens::Never;
+        w.payments.open_sent = Opens::Anyone;
+        w.social.form_friendship(JANE);
+        w.payment(&paid(41, GIFT, JANE, AGENT, 10, "Payment"));
+        assert!(w.social.ims.is_empty());
     }
 
     #[test]
@@ -294,24 +363,6 @@ mod tests {
         assert!(with.contains("75") && with.ends_with("Thanks"), "{with}");
         let ours = sentence("Jane".into(), true, 75, "Thanks");
         assert!(ours != with && ours.contains("Jane") && ours.ends_with("Thanks"), "{ours}");
-    }
-
-    #[test]
-    fn our_payment_opens_the_conversation_when_asked() {
-        for open in [true, false] {
-            let mut w = world();
-            w.payments.open_when_paying = open;
-            w.payment(&paid(30, GIFT, AGENT, JANE, 120, "Payment"));
-            assert_eq!(cards(&w, JANE).len(), usize::from(open), "{open}");
-            if open {
-                assert_eq!(w.social.ims[0].unread, 0, "our own doing is not unread");
-            }
-        }
-        // a received payment from a stranger still opens nothing
-        let mut w = world();
-        w.payments.open_when_paying = true;
-        w.payment(&paid(31, GIFT, JANE, AGENT, 120, "Payment"));
-        assert!(w.social.ims.is_empty());
     }
 
     #[test]

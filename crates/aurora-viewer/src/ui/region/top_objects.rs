@@ -117,12 +117,12 @@ pub(crate) fn sorted(objects: &[TopObject], sort: Option<(Column, bool)>) -> Vec
         rows.sort_by(|a, b| {
             let o = match col {
                 Column::Score => a.score.total_cmp(&b.score),
-                Column::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                Column::Name => crate::natural_order::cmp(&a.name, &b.name),
                 Column::Owner => a.owner.cmp(&b.owner),
                 Column::Location => a.position[0]
                     .total_cmp(&b.position[0])
                     .then(a.position[1].total_cmp(&b.position[1])),
-                Column::Parcel => a.parcel.to_lowercase().cmp(&b.parcel.to_lowercase()),
+                Column::Parcel => crate::natural_order::cmp(&a.parcel, &b.parcel),
                 Column::Time => a.time.cmp(&b.time),
                 Column::Memory => a.memory.total_cmp(&b.memory),
                 Column::Urls => a.urls.cmp(&b.urls),

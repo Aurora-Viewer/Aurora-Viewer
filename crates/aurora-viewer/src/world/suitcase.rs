@@ -66,7 +66,7 @@ pub fn left_behind(inv: &Inventory) -> Vec<LeftBehind> {
             flags: item.flags,
         })
         .collect();
-    items.sort_by_key(|item| item.name.to_lowercase());
+    items.sort_by_key(|item| crate::natural_order::key(&item.name));
     items.dedup();
     items
 }

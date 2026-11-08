@@ -3,22 +3,40 @@
 //! shared after a test even when the viewer was started without a console.
 //! Capability URLs are secrets for the session: their id is masked.
 //!
-//! The lines reach the system as they are logged, and the disk once per
-//! second (`start_flusher`): a PC that freezes and is reset keeps the log up
-//! to the second before. Left to the system, ext4 brought the whole log
-//! back empty after a reset in the first half minute of a session (#1809).
+//! A thread that logs never waits for the disk (#2655): the line goes into
+//! a bounded queue, and the "aurora-log-write" thread writes it to the
+//! files and the console, in the order logged. A disk that stalls holds
+//! that thread alone; when the queue is full, the lines are counted and
+//! dropped, and a "N log lines dropped" line marks the gap once room
+//! returns. A panic and the normal exit wait up to [`DRAIN_WAIT`] for the
+//! queue to reach the files. A native crash (access violation, signal)
+//! does not wait: it may lose the lines still queued, a few microseconds'
+//! worth while the disk keeps up, up to the whole queue while it stalls.
+//!
+//! The writer flushes the files to the disk at most once per second: a PC
+//! that freezes and is reset keeps the log up to the second before. Left to
+//! the system, ext4 brought the whole log back empty after a reset in the
+//! first half minute of a session (#1809).
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
+use std::time::{Duration, Instant};
 
 /// Time between two flushes of the log files to the disk.
 const FLUSH_PERIOD: Duration = Duration::from_secs(1);
 
-/// Records written to the log files, for the flusher to know there is
-/// something to flush.
-static RECORDS: AtomicU64 = AtomicU64::new(0);
+/// Lines the queue holds while the disk lags (a few MiB at most); past
+/// that, they are dropped rather than waited for.
+const QUEUE_LINES: usize = 8192;
+
+/// Bytes the writer gathers into one write when lines arrive in a burst.
+const BATCH_BYTES: usize = 64 * 1024;
+
+/// Longest wait for the queue to reach the files at a panic and at exit.
+pub const DRAIN_WAIT: Duration = Duration::from_millis(500);
 
 pub fn logs_dir() -> PathBuf {
     if let Some(test) = aurora_updater::test_environment() {
@@ -201,10 +219,216 @@ pub fn tool_lines(since: std::time::Duration) -> Vec<(&'static str, Recent)> {
         .unwrap_or_default()
 }
 
-/// Console + file writer.
-struct Tee {
-    file: Option<std::fs::File>,
-    session_file: Option<std::fs::File>,
+/// Where the writer thread puts the lines: a log file or the console.
+trait LogSink: Send {
+    fn put(&mut self, bytes: &[u8]);
+    /// Make what was put survive a reset of the PC.
+    fn sync(&mut self) {}
+}
+
+struct LogFile(std::fs::File);
+
+impl LogSink for LogFile {
+    fn put(&mut self, bytes: &[u8]) {
+        let _ = self.0.write_all(bytes);
+        crate::disk_io::written(crate::disk_io::Origin::Logs, bytes.len());
+    }
+
+    fn sync(&mut self) {
+        let _ = self.0.sync_data();
+    }
+}
+
+/// stderr may block too (a pipe nobody reads): it is the writer's as well.
+struct Console;
+
+impl LogSink for Console {
+    fn put(&mut self, bytes: &[u8]) {
+        let mut stderr = std::io::stderr().lock();
+        let _ = stderr.write_all(bytes);
+        let _ = stderr.flush();
+    }
+}
+
+enum Message {
+    Line(String),
+    /// Lines dropped while the queue was full, before the next one.
+    Dropped(u64),
+}
+
+fn dropped_line(count: u64) -> String {
+    format!("[log] {count} log lines dropped: the disk did not keep up\n")
+}
+
+/// How far the writer has got, for [`Queue::drain`].
+#[derive(Default)]
+struct Progress {
+    written: Mutex<u64>,
+    advanced: Condvar,
+}
+
+/// The bounded queue in front of the writer thread.
+struct Queue {
+    sender: SyncSender<Message>,
+    /// Lines dropped since the last marker.
+    dropped: AtomicU64,
+    /// Messages queued since the start.
+    sent: AtomicU64,
+    progress: Arc<Progress>,
+    writer: std::thread::ThreadId,
+}
+
+impl Queue {
+    /// Start the writer thread with `sinks`. On failure the sinks come back,
+    /// for the caller to write to them itself.
+    fn start(sinks: Vec<Box<dyn LogSink>>, lines: usize) -> Result<Self, Vec<Box<dyn LogSink>>> {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(lines);
+        let progress = Arc::new(Progress::default());
+        // the closure is dropped when the thread cannot start: the sinks
+        // stay reachable from here
+        let slot = Arc::new(Mutex::new(Some(sinks)));
+        let (thread_slot, thread_progress) = (slot.clone(), progress.clone());
+        let spawned = std::thread::Builder::new().name("aurora-log-write".into()).spawn(move || {
+            let sinks = thread_slot
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take()
+                .unwrap_or_default();
+            write_lines(&receiver, sinks, &thread_progress);
+        });
+        match spawned {
+            Ok(handle) => Ok(Self {
+                sender,
+                dropped: AtomicU64::new(0),
+                sent: AtomicU64::new(0),
+                progress,
+                writer: handle.thread().id(),
+            }),
+            Err(e) => {
+                eprintln!("log writer not started, the lines are written as logged: {e}");
+                Err(slot.lock().unwrap_or_else(PoisonError::into_inner).take().unwrap_or_default())
+            }
+        }
+    }
+
+    /// Queue `line` without ever waiting: a full queue drops it.
+    fn push(&self, line: String) {
+        let dropped = self.dropped.swap(0, Ordering::Relaxed);
+        if dropped > 0 {
+            if self.sender.try_send(Message::Dropped(dropped)).is_err() {
+                self.dropped.fetch_add(dropped + 1, Ordering::Relaxed);
+                return;
+            }
+            self.sent.fetch_add(1, Ordering::Release);
+        }
+        match self.sender.try_send(Message::Line(line)) {
+            Ok(()) => {
+                self.sent.fetch_add(1, Ordering::Release);
+            }
+            Err(TrySendError::Full(_)) => {
+                self.dropped.fetch_add(1, Ordering::Relaxed);
+            }
+            // the writer is gone (it panicked): nothing writes any more
+            Err(TrySendError::Disconnected(_)) => {}
+        }
+    }
+
+    /// Wait at most `timeout` for what was queued so far to reach the
+    /// sinks; false when it did not (a stalled disk, or the writer itself).
+    fn drain(&self, timeout: Duration) -> bool {
+        if std::thread::current().id() == self.writer {
+            return false;
+        }
+        let target = self.sent.load(Ordering::Acquire);
+        let deadline = Instant::now() + timeout;
+        let mut written = self.progress.written.lock().unwrap_or_else(PoisonError::into_inner);
+        while *written < target {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return false;
+            }
+            written = self
+                .progress
+                .advanced
+                .wait_timeout(written, left)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+        true
+    }
+}
+
+/// The writer thread: the lines in the order queued, the gathered burst in
+/// one write per sink, and the sinks synced at most once per `FLUSH_PERIOD`
+/// after a write. Logs nothing itself.
+fn write_lines(receiver: &Receiver<Message>, mut sinks: Vec<Box<dyn LogSink>>, progress: &Progress) {
+    let mut written = 0u64;
+    let mut unsynced = false;
+    let mut synced = Instant::now();
+    let mut batch = String::new();
+    loop {
+        let first = if unsynced {
+            match receiver.recv_timeout(FLUSH_PERIOD.saturating_sub(synced.elapsed())) {
+                Ok(message) => Some(message),
+                Err(RecvTimeoutError::Timeout) => None,
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        } else {
+            match receiver.recv() {
+                Ok(message) => Some(message),
+                Err(_) => break,
+            }
+        };
+        if let Some(first) = first {
+            batch.clear();
+            let mut next = Some(first);
+            while let Some(message) = next {
+                match message {
+                    Message::Line(line) => batch.push_str(&line),
+                    Message::Dropped(count) => batch.push_str(&dropped_line(count)),
+                }
+                written += 1;
+                next = if batch.len() < BATCH_BYTES {
+                    receiver.try_recv().ok()
+                } else {
+                    None
+                };
+            }
+            for sink in &mut sinks {
+                sink.put(batch.as_bytes());
+            }
+            *progress.written.lock().unwrap_or_else(PoisonError::into_inner) = written;
+            progress.advanced.notify_all();
+            unsynced = true;
+        }
+        if unsynced && synced.elapsed() >= FLUSH_PERIOD {
+            for sink in &mut sinks {
+                sink.sync();
+            }
+            unsynced = false;
+            synced = Instant::now();
+        }
+    }
+    for sink in &mut sinks {
+        sink.sync();
+    }
+}
+
+/// The queue of the process's log, for [`drain`].
+static QUEUE: OnceLock<Queue> = OnceLock::new();
+
+/// Wait at most `timeout` for the lines logged so far to reach the log
+/// files (at a panic, at exit). False when they did not.
+pub fn drain(timeout: Duration) -> bool {
+    QUEUE.get().is_none_or(|queue| queue.drain(timeout))
+}
+
+/// env_logger's target. env_logger writes each record with one call, in the
+/// thread that logs and under its own lock (so the queue keeps their order).
+enum Tee {
+    Queued(&'static Queue),
+    /// The writer thread could not start: written as logged.
+    Direct(Vec<Box<dyn LogSink>>),
 }
 
 impl Write for Tee {
@@ -217,52 +441,20 @@ impl Write for Tee {
             }
         });
         remember(&text);
-        let _ = std::io::stderr().write_all(text.as_bytes());
-        if let Some(f) = &mut self.file {
-            let _ = f.write_all(text.as_bytes());
-            crate::disk_io::written(crate::disk_io::Origin::Logs, text.len());
-        }
-        if let Some(f) = &mut self.session_file {
-            let _ = f.write_all(text.as_bytes());
-            crate::disk_io::written(crate::disk_io::Origin::Logs, text.len());
-        }
-        RECORDS.fetch_add(1, Ordering::Relaxed);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        if let Some(f) = &mut self.file {
-            let _ = f.flush();
-        }
-        if let Some(f) = &mut self.session_file {
-            let _ = f.flush();
-        }
-        std::io::stderr().flush()
-    }
-}
-
-/// Flush `files` (handles of the log files) to the disk once per
-/// `FLUSH_PERIOD` when lines were logged since the last time, off the
-/// threads that log: a flush waits for the disk.
-fn start_flusher(files: Vec<std::fs::File>) {
-    if files.is_empty() {
-        return;
-    }
-    let spawned = std::thread::Builder::new().name("aurora-log-flush".into()).spawn(move || {
-        let mut flushed = 0;
-        loop {
-            std::thread::sleep(FLUSH_PERIOD);
-            let records = RECORDS.load(Ordering::Relaxed);
-            if records != flushed {
-                flushed = records;
-                for file in &files {
-                    let _ = file.sync_data();
+        match self {
+            Self::Queued(queue) => queue.push(text.into_owned()),
+            Self::Direct(sinks) => {
+                for sink in sinks {
+                    sink.put(text.as_bytes());
                 }
             }
         }
-    });
-    if let Err(e) = spawned {
-        eprintln!("log files not flushed to the disk: {e}");
+        Ok(buf.len())
+    }
+
+    /// Nothing to flush here: the writer thread writes.
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 
@@ -271,15 +463,17 @@ pub fn init() {
     let _ = std::fs::create_dir_all(&dir);
     let path = log_path();
     let _ = std::fs::rename(&path, dir.join(format!("{}.previous.log", log_stem())));
-    let file = std::fs::File::create(&path).ok();
-    let session_file = crate::crash::session_log();
-    start_flusher(
-        [&file, &session_file]
-            .into_iter()
-            .flatten()
-            .filter_map(|f| f.try_clone().ok())
-            .collect(),
-    );
+    let mut sinks: Vec<Box<dyn LogSink>> = vec![Box::new(Console)];
+    for file in [std::fs::File::create(&path).ok(), crate::crash::session_log()]
+        .into_iter()
+        .flatten()
+    {
+        sinks.push(Box::new(LogFile(file)));
+    }
+    let tee = match Queue::start(sinks, QUEUE_LINES) {
+        Ok(queue) => Tee::Queued(QUEUE.get_or_init(|| queue)),
+        Err(sinks) => Tee::Direct(sinks),
+    };
     // `pulseaudio` off: the PulseAudio client logs `ERROR Reactor error:
     // Client disconnected` each time cpal closes a stream (every output or
     // capture device switch). Real stream failures reach aurora-audio through
@@ -289,7 +483,7 @@ pub fn init() {
             .default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn,reqwest=warn,symphonia=warn,pulseaudio=off,zbus=warn"),
     )
     .format_timestamp_millis()
-    .target(env_logger::Target::Pipe(Box::new(Tee { file, session_file })))
+    .target(env_logger::Target::Pipe(Box::new(tee)))
     .init();
     std::panic::set_hook(Box::new(|info| {
         // wgpu's panic for a device lost during a wait, caught by the
@@ -302,6 +496,9 @@ pub fn init() {
         let bt = std::backtrace::Backtrace::force_capture();
         crate::crash::panic(info, &bt);
         log::error!("panic: {info}\n{bt}");
+        // the process may end right after (a panic in main, a critical
+        // thread's death): the lines before it reach the files first
+        drain(DRAIN_WAIT);
     }));
     log::info!(
         "Aurora Viewer {} starting ({} {}, {} allocator), log: {}",
@@ -315,7 +512,163 @@ pub fn init() {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_record, redact, strip_headers};
+    use super::{LogSink, Queue, dropped_line, parse_record, redact, strip_headers};
+    use std::sync::mpsc::{Receiver, Sender, channel};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    /// What the writer put, as text.
+    #[derive(Clone, Default)]
+    struct Recorded(Arc<Mutex<String>>);
+
+    impl Recorded {
+        fn lines(&self) -> Vec<String> {
+            self.0.lock().unwrap().lines().map(str::to_owned).collect()
+        }
+    }
+
+    impl LogSink for Recorded {
+        fn put(&mut self, bytes: &[u8]) {
+            self.0.lock().unwrap().push_str(std::str::from_utf8(bytes).unwrap());
+        }
+    }
+
+    /// A disk that stalls: each write tells it began, then waits for leave.
+    struct Stalled {
+        record: Recorded,
+        began: Sender<()>,
+        leave: Arc<Mutex<Receiver<()>>>,
+    }
+
+    impl LogSink for Stalled {
+        fn put(&mut self, bytes: &[u8]) {
+            let _ = self.began.send(());
+            let _ = self.leave.lock().unwrap().recv();
+            self.record.put(bytes);
+        }
+    }
+
+    fn line(n: usize) -> String {
+        format!("line {n}\n")
+    }
+
+    #[test]
+    fn a_stalled_disk_drops_lines_without_waiting_and_marks_the_gap() {
+        let record = Recorded::default();
+        let (began_tx, began) = channel();
+        let (leave, leave_rx) = channel();
+        let sink = Stalled {
+            record: record.clone(),
+            began: began_tx,
+            leave: Arc::new(Mutex::new(leave_rx)),
+        };
+        let queue = Queue::start(vec![Box::new(sink)], 4).ok().unwrap();
+        queue.push(line(0));
+        // the writer holds line 0 in the stalled write: the queue is empty
+        began.recv_timeout(Duration::from_secs(10)).unwrap();
+        let start = Instant::now();
+        for n in 1..=7 {
+            queue.push(line(n));
+        }
+        // 4 fit, 3 are dropped, and nothing waited for the disk
+        assert!(start.elapsed() < Duration::from_secs(1), "pushes waited {:?}", start.elapsed());
+        assert!(!queue.drain(Duration::from_millis(50)), "drained while the disk stalls");
+        for _ in 0..16 {
+            let _ = leave.send(());
+        }
+        assert!(queue.drain(Duration::from_secs(10)));
+        queue.push(line(8));
+        assert!(queue.drain(Duration::from_secs(10)));
+        let marker = dropped_line(3);
+        assert_eq!(
+            record.lines(),
+            ["line 0", "line 1", "line 2", "line 3", "line 4", marker.trim_end(), "line 8"]
+        );
+    }
+
+    #[test]
+    fn lines_keep_their_order() {
+        let record = Recorded::default();
+        // room for every line: none is dropped
+        let queue = Arc::new(Queue::start(vec![Box::new(record.clone())], 2000).ok().unwrap());
+        let threads: Vec<_> = (0..4)
+            .map(|t| {
+                let queue = queue.clone();
+                std::thread::spawn(move || {
+                    for n in 0..500 {
+                        queue.push(format!("{t} {n}\n"));
+                    }
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        assert!(queue.drain(Duration::from_secs(10)));
+        let lines = record.lines();
+        assert_eq!(lines.len(), 2000);
+        for t in 0..4 {
+            let mine: Vec<usize> = lines
+                .iter()
+                .filter_map(|l| l.split_once(' ').filter(|(who, _)| *who == t.to_string()))
+                .map(|(_, n)| n.parse().unwrap())
+                .collect();
+            assert_eq!(mine, (0..500).collect::<Vec<_>>(), "thread {t}");
+        }
+    }
+
+    #[test]
+    fn drain_waits_for_a_slow_disk() {
+        struct Slow(Recorded);
+        impl LogSink for Slow {
+            fn put(&mut self, bytes: &[u8]) {
+                std::thread::sleep(Duration::from_millis(2));
+                self.0.put(bytes);
+            }
+        }
+        let record = Recorded::default();
+        let queue = Queue::start(vec![Box::new(Slow(record.clone()))], 256).ok().unwrap();
+        for n in 0..100 {
+            queue.push(line(n));
+        }
+        assert!(queue.drain(Duration::from_secs(10)));
+        assert_eq!(record.lines(), (0..100).map(|n| format!("line {n}")).collect::<Vec<_>>());
+    }
+
+    /// The time a thread that logs spends per line, written to two files as
+    /// before (#2655) and queued for the writer as now. Run with
+    /// `cargo test -p aurora-viewer logging::tests::cost_per_line -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "measure"]
+    fn cost_per_line() {
+        use std::io::Write;
+        const LINES: usize = 20_000;
+        let dir = std::env::temp_dir().join(format!("aurora-log-cost-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let text = "[2026-11-06T12:00:00.000Z INFO  aurora_viewer::media] media objects: 12 faces, 3 players, 1 stream\n";
+        let mut files = [0, 1].map(|n| std::fs::File::create(dir.join(format!("direct-{n}.log"))).unwrap());
+        let start = Instant::now();
+        for _ in 0..LINES {
+            for file in &mut files {
+                file.write_all(text.as_bytes()).unwrap();
+            }
+        }
+        let direct = start.elapsed();
+        let sinks: Vec<Box<dyn LogSink>> = (0..2)
+            .map(|n| Box::new(super::LogFile(std::fs::File::create(dir.join(format!("queued-{n}.log"))).unwrap())) as Box<dyn LogSink>)
+            .collect();
+        let queue = Queue::start(sinks, super::QUEUE_LINES).ok().unwrap();
+        let start = Instant::now();
+        for _ in 0..LINES {
+            queue.push(text.to_owned());
+        }
+        let queued = start.elapsed();
+        assert!(queue.drain(Duration::from_secs(30)));
+        drop(queue);
+        let per = |d: Duration| d.as_nanos() / LINES as u128;
+        println!("per line: direct {} ns, queued {} ns", per(direct), per(queued));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn record_headers_give_clock_and_level() {

@@ -201,10 +201,23 @@ pub fn seed_library(world: &mut crate::world::World) {
         library: true,
     });
     let owner = inv.lib_owner;
+    // what a Library item allows everyone is what the agent holds on it
+    let everyone = |item: InvItem| InvItem {
+        everyone_mask: item.owner_mask,
+        ..item
+    };
     inv.add_items(vec![
-        demo_item(LIBRARY[0], root, owner, aurora_i18n::tr!("demo-library-hat"), 6, 6, 2),
-        demo_item(LIBRARY[1], root, owner, aurora_i18n::tr!("demo-library-shirt"), 5, 18, 4),
-        demo_item(LIBRARY[2], root, owner, aurora_i18n::tr!("demo-library-shape"), 13, 18, 0),
+        everyone(demo_item(LIBRARY[0], root, owner, aurora_i18n::tr!("demo-library-hat"), 6, 6, 2)),
+        everyone(demo_item(LIBRARY[1], root, owner, aurora_i18n::tr!("demo-library-shirt"), 5, 18, 4)),
+        everyone(demo_item(
+            LIBRARY[2],
+            root,
+            owner,
+            aurora_i18n::tr!("demo-library-shape"),
+            13,
+            18,
+            0,
+        )),
     ]);
 }
 

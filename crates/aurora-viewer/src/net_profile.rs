@@ -22,6 +22,10 @@ pub struct NetPeriod {
     pub ping_avg_ms: u32,
     pub packets_in: f32,
     pub packets_out: f32,
+    /// Raw received and confirmed-lost counts for this period. Rates above
+    /// must not be mixed with counts when a slow frame extends the period.
+    pub received: u64,
+    pub lost: u64,
     pub kbps_in: f32,
     pub kbps_out: f32,
     /// Reliable packets sent again, and given up on.
@@ -29,8 +33,7 @@ pub struct NetPeriod {
     pub given_up: u64,
     pub duplicates: u64,
     pub unacked: u32,
-    /// Sequence numbers skipped by the simulators, and packets that came
-    /// after a later one: their difference is what was lost for good.
+    /// Provisional sequence holes and those filled before their deadline.
     pub gaps: u64,
     pub late: u64,
     /// Longest time the session loop spent on one wake-up, during which no
@@ -88,18 +91,10 @@ pub struct NetProfile {
     pub totals: NetTotals,
 }
 
-/// The share of the simulators' packets lost over a period (%): the
-/// sequence numbers they skipped less the packets that only came late, out
-/// of all those sent (Firestorm's PACKETS_LOST_PERCENT, the traffic
-/// indicator of its status bar).
+/// Share of confirmed losses over the period (PACKETS_LOST_PERCENT), using
+/// the same counts as the network throttle, independent of frame duration.
 pub fn loss_percent(period: &NetPeriod) -> f32 {
-    let lost = period.gaps.saturating_sub(period.late) as f32;
-    let sent = period.packets_in + lost;
-    if sent <= 0.0 {
-        0.0
-    } else {
-        (lost / sent * 100.0).clamp(0.0, 100.0)
-    }
+    aurora_net::throttle::loss_percent(period.received, period.lost)
 }
 
 impl Default for NetProfile {
@@ -178,6 +173,8 @@ impl NetProfile {
             ping_avg_ms: snap.ping_avg_ms,
             packets_in: rate(snap.packets_in, prev.packets_in),
             packets_out: rate(snap.packets_out, prev.packets_out),
+            received: since(snap.packets_in, prev.packets_in),
+            lost: since(snap.packets_lost, prev.packets_lost),
             kbps_in: kbps(snap.bytes_in, prev.bytes_in),
             kbps_out: kbps(snap.bytes_out, prev.bytes_out),
             resent: since(snap.resent, prev.resent),
@@ -226,7 +223,7 @@ impl NetProfile {
 fn summary(p: &NetPeriod) -> String {
     let input = p.input_delay_ms.map_or_else(|| "-".to_string(), |ms| format!("{ms:.1}"));
     format!(
-        "ping={} avg={} | udp in={:.0} out={:.0} pkt/s {:.0} / {:.0} kb/s | resent={} given_up={} dup={} unacked={} gaps={} late={} \
+        "ping={} avg={} | udp in={:.0} out={:.0} pkt/s {:.0} / {:.0} kb/s | resent={} given_up={} dup={} unacked={} gaps={} late={} lost={} \
          | loop_max={:.2} | events={} left_max={} wait_max={:.2} | agent_updates={} input_delay_max={input} \
          | corrections={} largest={:.2} lead_max={:.2} | http active={} queued={} done={} failed={} retries={} {:.0} kb/s \
          | event_queue idle={} errors={} | objects full={} cache_hit={} cache_miss={}",
@@ -242,6 +239,7 @@ fn summary(p: &NetPeriod) -> String {
         p.unacked,
         p.gaps,
         p.late,
+        p.lost,
         p.loop_busy_ms,
         p.events,
         p.events_left,
@@ -371,22 +369,41 @@ mod tests {
         assert!(p.end_frame_at(&stats, t + PERIOD * 2).is_some());
     }
 
-    /// The packets lost are the sequence numbers skipped less those that
-    /// only came late, out of all the simulators sent; none sent, none lost.
     #[test]
     fn the_losses_count_what_never_came() {
         assert_eq!(loss_percent(&NetPeriod::default()), 0.0);
-        let period = |packets_in: f32, gaps: u64, late: u64| NetPeriod {
-            packets_in,
-            gaps,
-            late,
+        let period = |received: u64, lost: u64| NetPeriod {
+            received,
+            lost,
             ..NetPeriod::default()
         };
-        assert_eq!(loss_percent(&period(99.0, 1, 0)), 1.0);
-        // late packets were not lost
-        assert_eq!(loss_percent(&period(100.0, 3, 3)), 0.0);
-        assert_eq!(loss_percent(&period(97.0, 4, 1)), 3.0);
+        assert_eq!(loss_percent(&period(99, 1)), 1.0);
+        assert_eq!(loss_percent(&period(100, 0)), 0.0);
+        assert_eq!(loss_percent(&period(97, 3)), 3.0);
         // nothing came: all lost
-        assert_eq!(loss_percent(&period(0.0, 5, 0)), 100.0);
+        assert_eq!(loss_percent(&period(0, 5)), 100.0);
+    }
+
+    #[test]
+    fn packet_loss_percent_is_independent_of_a_stalled_frame() {
+        let sample = |seconds| {
+            let stats = NetStats::default();
+            in_session(&stats);
+            let mut profile = NetProfile::new(false);
+            let start = profile.start;
+            profile.end_frame_at(&stats, start + PERIOD);
+            stats.packets_in.store(100, Ordering::Relaxed);
+            stats.packets_lost.store(10, Ordering::Relaxed);
+            // Provisional holes are deliberately unrelated to confirmed loss.
+            stats.seq_gaps.store(50, Ordering::Relaxed);
+            profile.end_frame_at(&stats, start + PERIOD + Duration::from_secs(seconds));
+            profile.last
+        };
+        let normal = sample(1);
+        let stalled = sample(5);
+        assert_eq!(normal.packets_in, 100.0);
+        assert_eq!(stalled.packets_in, 20.0);
+        assert_eq!(loss_percent(&normal), loss_percent(&stalled));
+        assert!((loss_percent(&stalled) - 1000.0 / 110.0).abs() < 0.001);
     }
 }

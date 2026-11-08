@@ -371,7 +371,7 @@ fn share(
                     (Fate::NoCopy, aurora_i18n::tr!("ui-inventory-dialogs-no-copy"), String::new())
                 }
                 Ok(_) => (Fate::Given, "", String::new()),
-                Err(why) if item.is_some_and(|it| it.owner_mask & rules::TRANSFER == 0) => {
+                Err(why) if item.is_some_and(|it| rules::held(inv, it) & rules::TRANSFER == 0) => {
                     (Fate::Excluded, aurora_i18n::tr!("ui-inventory-dialogs-no-transfer"), why)
                 }
                 Err(why) => (Fate::Excluded, aurora_i18n::tr!("ui-inventory-dialogs-left-out"), why),
@@ -870,7 +870,7 @@ fn notecard_description(
         description.original.clone_from(&it.desc);
         description.text.clone_from(&it.desc);
     }
-    let can_edit = rules::mutable(inv, it.id) && it.owner_mask & rules::MODIFY != 0 && st.pending.is_none() && !st.save_pending;
+    let can_edit = rules::mutable(inv, it.id) && rules::held(inv, it) & rules::MODIFY != 0 && st.pending.is_none() && !st.save_pending;
     ui.horizontal(|ui| {
         ui.label(aurora_i18n::tr!("common-description"));
         let response = crate::ui::widgets::restricted_text_field(
@@ -920,7 +920,7 @@ fn animation(
         ui.horizontal(|ui| {
             ui.label(aurora_i18n::tr!("common-description"));
             if let Some((_, description)) = &mut st.animation_description {
-                let can_edit = rules::mutable(inv, it.id) && it.owner_mask & rules::MODIFY != 0 && st.pending.is_none();
+                let can_edit = rules::mutable(inv, it.id) && rules::held(inv, it) & rules::MODIFY != 0 && st.pending.is_none();
                 let response = crate::ui::widgets::restricted_text_field(
                     ui,
                     can_edit,

@@ -1414,7 +1414,7 @@ fn groups_list(
         return;
     }
     let mut groups: Vec<_> = pr.groups.iter().collect();
-    groups.sort_by_key(|g| g.name.to_lowercase());
+    groups.sort_by_key(|g| crate::natural_order::key(&g.name));
     ui.spacing_mut().item_spacing.y = 1.0;
     for g in groups {
         let member = world.groups.is_member(&g.id);

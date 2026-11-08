@@ -28,13 +28,17 @@ impl App {
                     Row {
                         entry: entry.clone(),
                         owner,
+                        asset_shown: false,
                     }
                 })
                 .collect();
         }
-        // Refresh privacy-sensitive names even while the log itself is paused.
+        // Refresh privacy-sensitive names and the asset id rule even while
+        // the log itself is paused.
+        let ids = crate::world::inventory::asset_ids::AssetIds::per_frame(&self.world);
         for row in &mut self.sound_explorer_ui.rows {
             row.owner = sound_owner_name(&self.world, row.entry.owner);
+            row.asset_shown = ids.shown(&row.entry.asset);
         }
         let before = self.settings.audio.explorer;
         let action = self.sound_explorer_ui.show(

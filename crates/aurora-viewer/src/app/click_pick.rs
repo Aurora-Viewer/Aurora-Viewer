@@ -79,6 +79,19 @@ pub(super) enum Held {
     BuildRelease,
     /// A demo script's log line about the click before it.
     Note(DemoNote),
+    /// A world press made while a text field had the keyboard: what follows
+    /// waits until egui's pass `pass` has ended, then the next item, the
+    /// press, runs with this cursor and these modifiers. LLTool::
+    /// handleAnyMouseClick (indra/newview/lltool.cpp) takes the keyboard
+    /// focus before the tool handles the press, so the field commits its
+    /// typed text (onFocusLost) to the selection it was typed for. Here the
+    /// field commits in the next interface pass, and the Face tool, a HUD
+    /// and the Create tool select on the press itself.
+    UiTurn {
+        pass: u64,
+        cursor: (f32, f32),
+        mods: [bool; 3],
+    },
 }
 
 /// Log lines the demo scripts write right after a click, once it is done.
@@ -112,6 +125,11 @@ pub(super) struct Picked {
 }
 
 impl Picked {
+    /// The diagnostic synchronous read has no drawn-face identity.
+    pub(super) fn depth_only(&self) -> bool {
+        pick_mode() == PickMode::Wait
+    }
+
     pub(super) fn visible_point(&self) -> Option<Vec3> {
         match self.drawn.blend.or(self.drawn.opaque) {
             Some(face) => Some(face.point),
@@ -194,8 +212,36 @@ pub(super) struct ClickWait {
     /// The click being run, and its answer when it is run again.
     running: Option<Click>,
     in_hand: Option<Picked>,
+    /// An earlier queued input or resolved pick is being dispatched. Later
+    /// UI turns hold new arrivals, not the input already in progress.
+    replaying_ordered: bool,
     held: VecDeque<Held>,
     demo: DemoClicks,
+}
+
+/// The cursor and the modifiers (Alt, Ctrl, Shift) a held press runs with.
+type Restore = ((f32, f32), [bool; 3]);
+
+impl ClickWait {
+    /// The next held input to run now, with the cursor and modifiers to run
+    /// it with when a `UiTurn` just ended before it. None: the queue is
+    /// empty, or waits for a depth or for the end of egui's pass.
+    fn next_held(&mut self, pass: u64) -> Option<(Held, Option<Restore>)> {
+        let mut restore = None;
+        loop {
+            if self.pending.is_some() {
+                return None;
+            }
+            match self.held.front()? {
+                Held::UiTurn { pass: turn, .. } if pass <= *turn => return None,
+                Held::UiTurn { cursor, mods, .. } => {
+                    restore = Some((*cursor, *mods));
+                    self.held.pop_front();
+                }
+                _ => return self.held.pop_front().map(|input| (input, restore)),
+            }
+        }
+    }
 }
 
 impl ClickWait {
@@ -205,9 +251,18 @@ impl ClickWait {
         self.pending = None;
     }
 
-    /// A click waits for its depth: what comes now goes behind it.
+    /// New input waits for depth or an interface pass. During ordered
+    /// replay only a real depth request may defer the current input again.
     pub(super) fn waiting(&self) -> bool {
-        self.pending.is_some()
+        self.pending.is_some() || (!self.replaying_ordered && self.held.iter().any(|input| matches!(input, Held::UiTurn { .. })))
+    }
+
+    fn begin_replay(&mut self) -> bool {
+        std::mem::replace(&mut self.replaying_ordered, true)
+    }
+
+    fn end_replay(&mut self, previous: bool) {
+        self.replaying_ordered = previous;
     }
 
     /// The click is run again, its depth in hand.
@@ -310,6 +365,7 @@ impl App {
     /// cursor without having it (`click_pick`), it asks for it and returns:
     /// `resolve_clicks` runs it again with the answer.
     fn run_click(&mut self, click: Click) {
+        let started = Instant::now();
         self.clicks.running = Some(click);
         match click {
             Click::Press => {
@@ -325,6 +381,17 @@ impl App {
             Click::Gun { at_cursor } => self.gun_press(at_cursor),
         }
         self.clicks.running = None;
+        // what the click costs the main thread, each time it runs: when it
+        // asks for the depth, then with the answer
+        let ms = started.elapsed().as_secs_f32() * 1000.0;
+        let run = if self.clicks.in_hand.is_some() {
+            "run with the depth"
+        } else if self.clicks.waiting() {
+            "asked for the depth"
+        } else {
+            "run"
+        };
+        self.note_pick(format_args!("{click:?} {run} in {ms:.2} ms"));
     }
 
     /// The cursor ray and the depth under the cursor for the click being
@@ -386,6 +453,7 @@ impl App {
             (depth, t.elapsed())
         });
         let ticket = g.renderer.request_pick(x, y);
+        self.frame_profile.trace_click();
         // LLToolCamera::handleMouseDown: displayed surfaces, including the
         // transparency overlay. Posed geometry avoids an attachment's bind pose.
         // (Alt in mouselook frees the cursor for the grab tool, not the camera.)
@@ -398,6 +466,7 @@ impl App {
             (false, true) => aurora_render::DrawnMode::LeftVisible,
             (false, false) => aurora_render::DrawnMode::Left,
         };
+        self.hover_drawn.cancel(&mut g.renderer);
         let drawn = Some(g.renderer.request_drawn(x, y, mode));
         let tags = self.name_tag_candidates(ray);
         let check = check.map(|(depth, waited)| Check {
@@ -439,7 +508,7 @@ impl App {
                     picked
                         .depth
                         .zip(picked.ray)
-                        .and_then(|(point, ray)| self.scene.interaction_at_ray(&self.world, point, ray, true))
+                        .and_then(|(point, ray)| self.scene.left_interaction_at_ray(&self.world, point, ray, true))
                 } else {
                     None
                 }
@@ -455,6 +524,7 @@ impl App {
     /// then what was held behind it, until one of those waits in turn.
     /// Once a frame, with the renderer in `self.gfx`.
     pub(super) fn resolve_clicks(&mut self) {
+        self.drain_held();
         while let Some(p) = self.clicks.pending.as_mut() {
             let Some(g) = self.gfx.as_mut() else {
                 return;
@@ -508,21 +578,58 @@ impl App {
                     particles: p.particles,
                 });
                 if p.click != Click::Press || !self.camera.mouselook() {
-                    self.run_click(p.click);
+                    self.with_ordered_input(|app| app.run_click(p.click));
                 }
                 self.clicks.in_hand = None;
                 (self.cursor_pos, [self.alt, self.ctrl, self.shift]) = now;
             }
-            while !self.clicks.waiting() {
-                let Some(input) = self.clicks.held.pop_front() else {
-                    break;
-                };
-                self.replay(input);
-            }
+            self.drain_held();
         }
     }
 
+    /// A world press made while a text field had the keyboard: taken from
+    /// the field at once, run once the interface has drawn a pass (the
+    /// field has committed to the selection it was typed for).
+    pub(super) fn press_while_typing(&mut self) {
+        let turn = Held::UiTurn {
+            pass: self.egui_ctx.cumulative_pass_nr(),
+            cursor: self.cursor_pos,
+            mods: [self.alt, self.ctrl, self.shift],
+        };
+        self.clicks.hold(turn);
+    }
+
+    /// Run what is held, in order, until a click waits for its depth again
+    /// or a `UiTurn` waits for the end of the interface's pass.
+    fn drain_held(&mut self) {
+        while let Some((input, restore)) = self.clicks.next_held(self.egui_ctx.cumulative_pass_nr()) {
+            let Some((cursor, mods)) = restore else {
+                self.replay(input);
+                continue;
+            };
+            // the press as it was made; what follows it as it comes
+            let now = (self.cursor_pos, [self.alt, self.ctrl, self.shift]);
+            self.cursor_pos = cursor;
+            [self.alt, self.ctrl, self.shift] = mods;
+            self.replay(input);
+            (self.cursor_pos, [self.alt, self.ctrl, self.shift]) = now;
+        }
+    }
+
+    /// A later UiTurn cannot overtake an input already dequeued or a pick
+    /// whose answer is in hand. Keep actual GPU waits active, including a
+    /// new depth request made by the handler; restore an outer replay scope.
+    fn with_ordered_input(&mut self, run: impl FnOnce(&mut Self)) {
+        let previous = self.clicks.begin_replay();
+        run(self);
+        self.clicks.end_replay(previous);
+    }
+
     fn replay(&mut self, input: Held) {
+        self.with_ordered_input(|app| app.replay_input(input));
+    }
+
+    fn replay_input(&mut self, input: Held) {
         match input {
             Held::Button { button, pressed, over_ui } => {
                 self.with_mouse_mods(|app| app.mouse_button(button, pressed, over_ui));
@@ -532,6 +639,7 @@ impl App {
             Held::LeftRelease => self.on_left_release(),
             Held::BuildRelease => self.build_release(),
             Held::Note(note) => self.demo_note(note),
+            Held::UiTurn { .. } => {}
         }
     }
 
@@ -561,6 +669,19 @@ impl App {
             // aimed at (`rigged`), and the posed bounds of the object
             // designated, which must hold the point read from the GPU
             let local = |idx: usize| self.world.objects.get(idx).map(|o| o.key.local_id);
+            if self.demo {
+                let clicker = self.world.objects.index_of_uuid(&crate::demo::action_id(975));
+                if let (Some(idx), Some(ray), Some(body)) = (clicker, picked.ray, picked.drawn.opaque)
+                    && let Some(surface) = self.scene.left_touch_surface(&self.world, idx, ray)
+                    && let Some(offset) = self.world.objects.get(idx).and_then(|o| self.world.region_offset(o.key.region))
+                {
+                    log::info!(
+                        "demo attachment clearance: body={:?}, gap={:.6}m",
+                        self.scene.record_object(body.record).and_then(|(i, _)| local(i)),
+                        (surface.position + offset - body.point).dot(ray.1)
+                    );
+                }
+            }
             let got = shown.and_then(|d| local(d.idx));
             let raw = |f: Option<aurora_render::DrawnFace>| f.and_then(|f| self.scene.record_object(f.record)).and_then(|(i, _)| local(i));
             let aimed = match self.clicks.demo.expected.take() {
@@ -622,7 +743,7 @@ impl App {
         }
         match note {
             DemoNote::Camera(frame) => log::info!(
-                "demo camera f{frame}: {} (mouse {:?}, agent yaw {:.2}, right orbit={}, menu={}, down={}, cursor held={}, alt free={})",
+                "demo camera f{frame}: {} (mouse {:?}, agent yaw {:.2}, right orbit={}, menu={}, down={}, cursor held={}, alt free={}, typing={})",
                 self.camera.describe(),
                 self.mouse_mode,
                 self.world.agent.yaw,
@@ -630,7 +751,9 @@ impl App {
                 self.context_menu.is_some(),
                 self.input.down,
                 self.cursor_hold.held(),
-                self.alt_cursor.free()
+                self.alt_cursor.free(),
+                // the keys go to a field instead of moving the avatar
+                self.egui_ctx.egui_wants_keyboard_input()
             ),
             DemoNote::Action(mode) => log::info!(
                 "demo action click: {mode}; dialog={}, seated={}, contents={}, parcel_playing={}, parcel_paused={}, selected={:?}, focus={:?}, media_url={}",
@@ -703,7 +826,7 @@ impl App {
                 } else {
                     point
                         .zip(ray)
-                        .and_then(|(p, r)| self.scene.interaction_at_ray(&self.world, p, r, true))
+                        .and_then(|(p, r)| self.scene.left_interaction_at_ray(&self.world, p, r, true))
                 };
                 (point, idx)
             };
@@ -942,12 +1065,243 @@ impl DemoClicks {
 mod tests {
     use super::*;
 
+    fn pending_pick() -> Pending {
+        Pending {
+            ticket: 1,
+            drawn: None,
+            depth_answer: None,
+            drawn_answer: None,
+            click: Click::Press,
+            cursor: (0.0, 0.0),
+            mods: [false; 3],
+            ray: None,
+            particles: None,
+            tags: Vec::new(),
+            asked: Instant::now(),
+            frame: 0,
+            check: None,
+        }
+    }
+
+    fn press() -> Held {
+        Held::Button {
+            button: MouseButton::Left,
+            pressed: true,
+            over_ui: false,
+        }
+    }
+
+    fn ui_turn() -> Held {
+        Held::UiTurn {
+            pass: 7,
+            cursor: (10.0, 20.0),
+            mods: [false, false, true],
+        }
+    }
+
+    /// The release/motion/press consumers check waiting again after an
+    /// input leaves the queue. Exercise that reentry, not just next_held.
+    #[derive(Default)]
+    struct ReplayHarness {
+        clicks: ClickWait,
+        seen: Vec<(Held, Option<Restore>)>,
+        request_depth: bool,
+    }
+
+    impl ReplayHarness {
+        fn drain(&mut self, pass: u64) {
+            while let Some((input, restore)) = self.clicks.next_held(pass) {
+                let previous = self.clicks.begin_replay();
+                // on_left_release / camera_mouse_delta / click: a genuine
+                // depth wait requeues the input; a later UI turn must not.
+                if self.clicks.waiting() {
+                    self.clicks.hold(input);
+                } else {
+                    if self.request_depth && matches!(&input, Held::Button { pressed: true, .. }) {
+                        self.clicks.pending = Some(pending_pick());
+                    }
+                    self.seen.push((input, restore));
+                }
+                self.clicks.end_replay(previous);
+            }
+        }
+
+        fn resolved_press(&mut self) {
+            let previous = self.clicks.begin_replay();
+            // run_click(Press), with no build tool consuming the press.
+            if !self.clicks.waiting() {
+                self.seen.push((Held::Click(Click::Press), None));
+            }
+            self.clicks.end_replay(previous);
+        }
+    }
+
+    #[test]
+    fn an_older_release_finishes_before_a_later_ui_turn() {
+        for pass in [7, 8] {
+            let mut h = ReplayHarness::default();
+            h.clicks.hold(Held::LeftRelease);
+            h.clicks.hold(ui_turn());
+            h.clicks.hold(press());
+            h.drain(pass);
+            assert_eq!(h.seen.first(), Some(&(Held::LeftRelease, None)));
+            if pass == 7 {
+                assert_eq!(h.seen.len(), 1, "only the newer press waits for the UI");
+                assert!(h.clicks.waiting(), "new arrivals still wait behind the turn");
+                h.drain(8);
+            }
+            assert_eq!(
+                h.seen,
+                [(Held::LeftRelease, None), (press(), Some(((10.0, 20.0), [false, false, true])))]
+            );
+            assert!(!h.clicks.waiting());
+        }
+    }
+
+    #[test]
+    fn older_motion_and_release_stay_before_the_new_press() {
+        let mut h = ReplayHarness::default();
+        h.clicks.hold(Held::Motion(5.0, -2.0));
+        h.clicks.hold(Held::LeftRelease);
+        h.clicks.hold(ui_turn());
+        h.clicks.hold(press());
+        h.drain(8);
+        assert_eq!(
+            h.seen,
+            [
+                (Held::Motion(5.0, -2.0), None),
+                (Held::LeftRelease, None),
+                (press(), Some(((10.0, 20.0), [false, false, true])))
+            ]
+        );
+    }
+
+    #[test]
+    fn a_resolved_press_runs_before_a_later_ui_turn() {
+        let mut h = ReplayHarness::default();
+        h.clicks.pending = Some(pending_pick());
+        h.clicks.hold(ui_turn());
+        h.clicks.hold(press());
+        h.clicks.pending.take().expect("the old pick resolved");
+        h.resolved_press();
+        assert_eq!(h.seen, [(Held::Click(Click::Press), None)]);
+        assert!(h.clicks.waiting(), "the newer press still waits for the UI");
+        h.drain(7);
+        assert_eq!(h.seen.len(), 1);
+        h.drain(8);
+        assert_eq!(h.seen.len(), 2);
+        assert_eq!(h.seen[1].0, press());
+    }
+
+    #[test]
+    fn ordered_replay_keeps_real_depth_waits_and_restores_outer_scope() {
+        let mut w = ClickWait::default();
+        w.hold(ui_turn());
+        w.hold(press());
+        let outer = w.begin_replay();
+        assert!(!w.waiting(), "later turns do not block the current input");
+        let inner = w.begin_replay();
+        w.end_replay(inner);
+        assert!(!w.waiting(), "an inner replay keeps the outer scope");
+        w.pending = Some(pending_pick());
+        assert!(w.waiting(), "GPU depth still blocks during replay");
+        assert_eq!(w.next_held(8), None);
+        w.forget_pending();
+        assert!(!w.waiting(), "GPU recovery keeps the current replay scope");
+        w.end_replay(outer);
+        assert!(w.waiting(), "new arrivals are held again outside replay");
+        assert_eq!(w.next_held(7), None);
+    }
+
+    #[test]
+    fn a_replayed_press_can_start_a_depth_wait_without_releasing_later_input() {
+        let mut h = ReplayHarness {
+            request_depth: true,
+            ..Default::default()
+        };
+        h.clicks.hold(press());
+        h.clicks.hold(ui_turn());
+        h.clicks.hold(press());
+        h.drain(7);
+        assert_eq!(h.seen, [(press(), None)]);
+        assert!(h.clicks.pending.is_some());
+        h.drain(8);
+        assert_eq!(h.seen.len(), 1, "the new GPU request keeps later input queued");
+        h.clicks.forget_pending();
+        h.request_depth = false;
+        h.drain(7);
+        assert_eq!(h.seen.len(), 1, "the later UI turn still owns its barrier");
+        h.drain(8);
+        assert_eq!(h.seen.len(), 2);
+        assert!(!h.clicks.waiting());
+    }
+
     #[test]
     fn the_waiting_read_is_only_used_when_asked_for() {
         assert_eq!(pick_mode_of(None), PickMode::Deferred);
         assert_eq!(pick_mode_of(Some("1")), PickMode::Deferred);
         assert_eq!(pick_mode_of(Some(" wait ")), PickMode::Wait);
         assert_eq!(pick_mode_of(Some("check")), PickMode::Check);
+    }
+
+    /// A press made while typing waits behind its `UiTurn` for one whole
+    /// interface pass (the field commits to the old selection in it), also
+    /// behind a click that waits for its depth, and runs with its own
+    /// cursor and modifiers. What was held before the turn runs as it was;
+    /// what follows the press keeps its order.
+    #[test]
+    fn a_press_while_typing_waits_for_one_interface_pass() {
+        let button = |pressed| Held::Button {
+            button: MouseButton::Left,
+            pressed,
+            over_ui: false,
+        };
+        let turn = |pass| Held::UiTurn {
+            pass,
+            cursor: (10.0, 20.0),
+            mods: [false, false, true],
+        };
+        let restore = Some(((10.0, 20.0), [false, false, true]));
+        let mut w = ClickWait::default();
+        // left behind by a GPU recovery (forget_pending keeps `held`)
+        w.hold(Held::LeftRelease);
+        w.hold(turn(7));
+        w.hold(button(true));
+        w.hold(button(false));
+        assert!(w.waiting(), "the press and what follows are held");
+        assert_eq!(w.next_held(7), Some((Held::LeftRelease, None)), "held before the turn: as it was");
+        assert_eq!(w.next_held(7), None, "no pass has ended since the press");
+        assert!(w.waiting());
+        assert_eq!(w.next_held(8), Some((button(true), restore)));
+        assert_eq!(w.next_held(8), Some((button(false), None)));
+        assert_eq!(w.next_held(8), None);
+        assert!(!w.waiting());
+
+        // behind a click that waits for its depth: the depth, then the pass
+        w.pending = Some(Pending {
+            ticket: 1,
+            drawn: None,
+            depth_answer: None,
+            drawn_answer: None,
+            click: Click::Press,
+            cursor: (0.0, 0.0),
+            mods: [false; 3],
+            ray: None,
+            particles: None,
+            tags: Vec::new(),
+            asked: Instant::now(),
+            frame: 0,
+            check: None,
+        });
+        w.hold(turn(3));
+        w.hold(button(true));
+        assert_eq!(w.next_held(9), None, "the depth first");
+        // a GPU recovery forgets the depth, not the turn
+        w.forget_pending();
+        assert!(w.waiting());
+        assert_eq!(w.next_held(3), None, "then the end of the pass");
+        assert_eq!(w.next_held(4), Some((button(true), restore)));
+        assert!(!w.waiting());
     }
 
     #[test]

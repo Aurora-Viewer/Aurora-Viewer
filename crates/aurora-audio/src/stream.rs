@@ -34,10 +34,14 @@ pub enum StreamStatus {
     Error(String),
 }
 
-/// Ring buffer between the decoder thread and the mixer (1.5 s).
-const MUSIC_RING_FRAMES: usize = 72_000;
-/// Jitter buffer before playback starts (400 ms).
-const MUSIC_PREBUFFER_FRAMES: usize = 19_200;
+/// Ring buffer between the decoder thread and the mixer (5 s at 48 kHz).
+const MUSIC_RING_FRAMES: usize = 5 * ENGINE_SAMPLE_RATE as usize;
+/// Jitter buffer before playback starts (1 s).
+const MUSIC_PREBUFFER_FRAMES: usize = ENGINE_SAMPLE_RATE as usize;
+/// Like the Legacy Viewer, resume after a starvation only when the buffer is
+/// mostly full; the shorter initial threshold keeps station changes responsive.
+const MUSIC_REBUFFER_FRAMES: usize = MUSIC_RING_FRAMES * 4 / 5;
+const STARVATION_LOG_INTERVAL: Duration = Duration::from_secs(10);
 const BACKOFF_START: Duration = Duration::from_secs(1);
 const BACKOFF_MAX: Duration = Duration::from_secs(30);
 /// A connection that played this long resets the backoff.
@@ -177,6 +181,45 @@ fn sleep_or_stop(d: Duration, stop: &AtomicBool) -> bool {
     stop.load(Ordering::Relaxed)
 }
 
+struct StarvationMonitor {
+    stop: Arc<AtomicBool>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl StarvationMonitor {
+    fn start(starved: Arc<AtomicBool>) -> Option<Self> {
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = stop.clone();
+        let thread = thread::Builder::new().name("aurora-audio-starvation".into()).spawn(move || {
+            let mut last_log = None;
+            while !sleep_or_stop(Duration::from_millis(100), &thread_stop) {
+                if should_log_starvation(&starved, &mut last_log, Instant::now()) {
+                    log::warn!("music stream: starved, rebuffering");
+                }
+            }
+        });
+        match thread {
+            Ok(thread) => Some(Self {
+                stop,
+                thread: Some(thread),
+            }),
+            Err(error) => {
+                log::warn!("cannot start music starvation monitor: {error}");
+                None
+            }
+        }
+    }
+}
+
+impl Drop for StarvationMonitor {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
 enum EndReason {
     /// Stream ended / stopped normally.
     Ended,
@@ -234,10 +277,20 @@ fn play_once(url: &str, stop: &Arc<AtomicBool>, status: &StatusHandle, cmd_tx: &
     let mut decoder = DecodeStream::open(Box::new(ReadOnlySource::new(reader)), hint).map_err(|e| e.to_string())?;
 
     let (mut prod, cons) = rtrb::RingBuffer::<f32>::new(MUSIC_RING_FRAMES * 2);
-    let source = PcmSource::new(Channel::Music, cons, MUSIC_PREBUFFER_FRAMES, None, Some(stop.clone()));
+    let starved = Arc::new(AtomicBool::new(false));
+    let source = PcmSource::new_with_rebuffer(
+        Channel::Music,
+        cons,
+        MUSIC_PREBUFFER_FRAMES,
+        MUSIC_REBUFFER_FRAMES,
+        None,
+        Some(stop.clone()),
+        Some(starved.clone()),
+    );
     if cmd_tx.send(Command::AddPcm(Box::new(source))).is_err() {
         return Ok(EndReason::Shutdown);
     }
+    let _starvation_monitor = StarvationMonitor::start(starved.clone());
 
     let mut stereo = Vec::new();
     let mut out = Vec::new();
@@ -298,12 +351,43 @@ fn play_once(url: &str, stop: &Arc<AtomicBool>, status: &StatusHandle, cmd_tx: &
     }
 }
 
+fn should_log_starvation(starved: &AtomicBool, last_log: &mut Option<Instant>, now: Instant) -> bool {
+    if !starved.swap(false, Ordering::Relaxed) {
+        return false;
+    }
+    if last_log.is_some_and(|last| now.saturating_duration_since(last) < STARVATION_LOG_INTERVAL) {
+        return false;
+    }
+    *last_log = Some(now);
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::decode::tests::mp3_silence;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+
+    #[test]
+    fn starvation_log_is_rate_limited_and_consumes_each_signal() {
+        let signal = AtomicBool::new(true);
+        let start = Instant::now();
+        let mut last = None;
+        assert!(should_log_starvation(&signal, &mut last, start));
+        assert!(!should_log_starvation(&signal, &mut last, start + Duration::from_secs(1)));
+        signal.store(true, Ordering::Relaxed);
+        assert!(!should_log_starvation(&signal, &mut last, start + Duration::from_secs(5)));
+        signal.store(true, Ordering::Relaxed);
+        assert!(should_log_starvation(&signal, &mut last, start + Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn music_buffer_keeps_two_seconds_of_stall_margin() {
+        assert_eq!(MUSIC_RING_FRAMES, 5 * ENGINE_SAMPLE_RATE as usize);
+        assert_eq!(MUSIC_PREBUFFER_FRAMES, ENGINE_SAMPLE_RATE as usize);
+        assert_eq!(MUSIC_REBUFFER_FRAMES, MUSIC_RING_FRAMES * 4 / 5);
+    }
 
     #[test]
     #[ignore = "contacts the public HTTPS station reported in #1628"]

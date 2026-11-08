@@ -526,9 +526,13 @@ pub(super) fn localize(entries: &mut [Entry], prefs: &Preferences) {
     for entry in entries {
         entry.local = true;
         entry.local_assume_meters = prefs.local_assume_meters;
+        // Some loaders already know source dependencies that are not retained
+        // on decoded image data (notably glTF material map URIs). Keep those
+        // watches when the entry is made local.
+        let mut paths = entry.watch.take().map_or_else(|| vec![entry.path.clone()], |watch| watch.paths);
         if let Some(Source::Mesh(draft)) = &entry.source {
             entry.local_live = prefs.local_mesh_auto_reload;
-            let mut paths = mesh_dependencies(&entry.path, &draft.scene);
+            paths.extend(mesh_dependencies(&entry.path, &draft.scene));
             for lod in &draft.lods {
                 if let Some(path) = &lod.path {
                     paths.extend(
@@ -546,10 +550,12 @@ pub(super) fn localize(entries: &mut [Entry], prefs: &Preferences) {
                         .map_or_else(|| vec![path.clone()], |scene| mesh_dependencies(path, scene)),
                 );
             }
-            paths.sort();
-            paths.dedup();
-            entry.watch = Some(super::local::Watch::new(paths));
+        } else if let Some(Source::Material { images, .. }) = &entry.source {
+            paths.extend(images.iter().flatten().filter_map(|image| image.path.clone()));
         }
+        paths.sort();
+        paths.dedup();
+        entry.watch = Some(super::local::Watch::new(paths));
     }
 }
 
@@ -1124,6 +1130,37 @@ mod tests {
                 .expect("watch")
                 .paths
                 .contains(&files.0.join("mesh.bin").canonicalize().expect("path"))
+        );
+    }
+    #[test]
+    fn local_textures_and_materials_watch_their_source_files() {
+        let files = Files::new();
+        let path = files.0.join("texture-demo.png");
+        let mut entries = load(&path, Choice::Texture, Default::default(), 30, &Preferences::default(), true).expect("local texture");
+        localize(&mut entries, &Preferences::default());
+
+        let entry = &entries[0];
+        assert!(entry.local);
+        assert!(entry.local_live);
+        let watch = entry.watch.as_ref().expect("local texture file watch");
+        assert_eq!(watch.paths.as_slice(), std::slice::from_ref(&path));
+        let before = watch.stamp.clone();
+
+        image::save_buffer(&path, &[180u8; 16 * 16 * 4], 16, 16, image::ColorType::Rgba8).expect("change source image");
+        assert_ne!(before, super::super::local::stamp(&watch.paths));
+
+        let material_path = files.0.join("material-demo.gltf");
+        let mut materials = files.load("material-demo.gltf", Choice::Local);
+        localize(&mut materials, &Preferences::default());
+        let entry = &materials[0];
+        assert!(matches!(entry.source, Some(Source::Material { .. })));
+        let watch = entry.watch.as_ref().expect("local material file watch");
+        assert!(watch.paths.contains(&material_path));
+        let map_path = files.0.join("texture-demo.png").canonicalize().expect("map path");
+        assert!(
+            watch.paths.contains(&map_path),
+            "watched paths: {:?}; expected map: {map_path:?}",
+            watch.paths
         );
     }
     #[test]

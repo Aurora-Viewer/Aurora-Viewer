@@ -244,7 +244,11 @@ impl ExperiencesUi {
                                             .strong()
                                             .color(p.ink),
                                     );
-                                    ui.label(RichText::new(format!("{name} · {}", entry.object_name)).size(11.5).color(p.muted));
+                                    ui.label(
+                                        RichText::new(format!("{name} · {}", crate::world::dialog_names::shown(&entry.object_name)))
+                                            .size(11.5)
+                                            .color(p.muted),
+                                    );
                                 });
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                                     ui.label(RichText::new(format!("{} {}", entry.day, entry.time)).size(11.5).color(p.muted));

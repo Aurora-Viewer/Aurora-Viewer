@@ -495,7 +495,7 @@ mod tests {
             cof_version: 7,
             appearance_version: 1,
             hover_height: 0.03,
-            attachments: 0,
+            attachments: Vec::new(),
         }));
         let idx = world.objects.index_of_uuid(&world.agent_id).expect("our avatar");
         assert_ne!(world.bake_texture(idx, 19), Some(crate::scene::avatar::IMG_INVISIBLE));

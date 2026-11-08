@@ -339,7 +339,7 @@ fn add_folders(inv: &Inventory, parent: Uuid, depth: usize, out: &mut Vec<Folder
         return;
     };
     let mut kids: Vec<_> = f.children.iter().filter_map(|c| inv.folders.get(c)).collect();
-    kids.sort_by_key(|k| k.info.name.to_lowercase());
+    kids.sort_by_key(|k| crate::natural_order::key(&k.info.name));
     for k in kids {
         out.push(FolderRow {
             id: k.info.id,

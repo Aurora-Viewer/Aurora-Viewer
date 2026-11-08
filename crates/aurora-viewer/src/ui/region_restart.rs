@@ -167,7 +167,7 @@ pub fn listed<'a>(landmarks: &'a [Landmark], query: &str) -> Vec<&'a Landmark> {
         v.sort_by(|a, b| b.created.cmp(&a.created).then_with(|| a.name.cmp(&b.name)));
         v.truncate(3);
     } else {
-        v.sort_by_key(|l| (!l.name.to_lowercase().starts_with(&q), l.name.to_lowercase()));
+        v.sort_by_key(|l| (!l.name.to_lowercase().starts_with(&q), crate::natural_order::key(&l.name)));
         v.truncate(8);
     }
     v
@@ -1079,7 +1079,7 @@ pub fn legacy_box(
                 .selected_text(selected)
                 .show_ui(&mut child, |ui| {
                     let mut sorted: Vec<&Landmark> = landmarks.iter().collect();
-                    sorted.sort_by_key(|l| l.name.to_lowercase());
+                    sorted.sort_by_key(|l| crate::natural_order::key(&l.name));
                     for l in sorted {
                         ui.selectable_value(pick, Some(l.asset), &l.name);
                     }

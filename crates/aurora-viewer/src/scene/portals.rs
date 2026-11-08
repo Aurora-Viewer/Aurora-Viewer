@@ -130,10 +130,10 @@ impl super::Scene {
             self.portals.clipping.clear();
             self.portals.planes.clear();
         } else {
+            // A portal the setting hides cuts no body either.
             let portals: Vec<_> = world
                 .portals
-                .entries
-                .iter()
+                .shown(world)
                 .map(|entry| clipping::Aperture {
                     key: clipping::Key(entry.owner, entry.portal.id, entry.portal.region),
                     center: Vec3::from(entry.portal.center),

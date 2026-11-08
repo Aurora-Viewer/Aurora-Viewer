@@ -640,7 +640,7 @@ impl App {
         if editor.saving.is_some() || rules::library(&self.world.inventory, item) {
             return;
         }
-        if it.owner_mask & rules::MODIFY == 0
+        if rules::held(&self.world.inventory, it) & rules::MODIFY == 0
             && (editor.saved.as_ref().is_none_or(|g| g.steps != definition.steps) || it.desc != description)
         {
             editor.message = aurora_i18n::tr!("gesture-modify-denied").into();

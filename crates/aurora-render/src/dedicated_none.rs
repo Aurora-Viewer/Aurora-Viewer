@@ -9,6 +9,6 @@ pub fn bytes() -> u64 {
 }
 
 /// Never made here: the caller falls back to wgpu's allocator.
-pub fn texture(_: &wgpu::Device, _: &wgpu::TextureDescriptor) -> Option<Result<wgpu::Texture, String>> {
+pub fn texture(_: &wgpu::Device, _: &wgpu::TextureDescriptor, _: bool) -> Option<Result<wgpu::Texture, String>> {
     None
 }

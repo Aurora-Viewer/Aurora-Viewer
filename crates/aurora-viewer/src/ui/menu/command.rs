@@ -33,11 +33,6 @@ impl<K: AsRef<str>> Named<'_, K> {
         check_keys(icon: &str, label: &str, checked: bool, enabled: bool, keys: &str);
     }
 
-    pub fn todo(self, icon: &str, label: &str) {
-        let Self { ui, palette, key } = self;
-        identified(ui, key, |ui| super::todo(ui, palette, icon, label));
-    }
-
     pub fn submenu(self, icon: &str, label: &str, enabled: bool, body: impl FnOnce(&mut Ui)) {
         let Self { ui, palette, key } = self;
         identified(ui, key, |ui| super::submenu(ui, palette, icon, label, enabled, body));

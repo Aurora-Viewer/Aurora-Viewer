@@ -1,5 +1,12 @@
 //! UI-owned update state; HTTP, hashing, extraction and helper startup run on
 //! workers. Optional policy follows Firestorm's UpdaterServiceSetting (0/1/3).
+//!
+//! After the check at launch, a running viewer checks again every
+//! `Settings::update_check_interval` (Aurora only: the Legacy Viewer checks
+//! at launch). Such a check is quiet: it never blocks the login, never opens
+//! the update window by itself and says nothing when it fails; a version it
+//! finds becomes a `Notice` (downloaded first in the Automatic mode), shown
+//! once per version and session.
 
 use crate::{
     settings::Settings,
@@ -10,6 +17,7 @@ use aurora_updater::{
     feed::{Channel, Release, Source},
     install::Workspace,
 };
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Mode {
@@ -17,6 +25,42 @@ pub enum Mode {
     #[default]
     Ask,
     Automatic,
+}
+
+/// How often a running viewer checks again (Preferences › Language and
+/// updates). Each check is one request; while the list of releases has not
+/// changed, GitHub answers it in a few bytes (`feed::Source`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Interval {
+    #[default]
+    Minutes10,
+    Minutes30,
+    Hour1,
+    Hours6,
+    /// Only the check at launch.
+    Never,
+}
+
+impl Interval {
+    pub fn duration(self) -> Option<Duration> {
+        let minutes = match self {
+            Interval::Minutes10 => 10,
+            Interval::Minutes30 => 30,
+            Interval::Hour1 => 60,
+            Interval::Hours6 => 6 * 60,
+            Interval::Never => return None,
+        };
+        Some(Duration::from_secs(minutes * 60))
+    }
+}
+
+/// A new version a periodic check found, for the notice in the world (or
+/// the update window on the login screen).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Notice {
+    pub version: String,
+    /// Downloaded already (Automatic mode): the window installs it.
+    pub ready: bool,
 }
 
 pub enum State {
@@ -31,7 +75,12 @@ pub enum State {
     Rollback,
 }
 enum Event {
-    Checked(Result<Option<Release>, Failure>),
+    /// The answer of the check numbered `generation`; one started later
+    /// makes it stale.
+    Checked {
+        result: Result<Option<Release>, Failure>,
+        generation: u64,
+    },
     Progress(Progress),
     Prepared(Result<Workspace, Failure>),
     Handoff(Result<(), Failure>),
@@ -52,6 +101,19 @@ pub struct Updater {
     policy_pending: bool,
     cancel: Cancel,
     prepared: Option<Workspace>,
+    /// The number of the last check started (`Event::Checked`).
+    generation: u64,
+    /// That check is a periodic one, still running.
+    quiet_check: bool,
+    /// The download running or prepared was started by a periodic check:
+    /// its end becomes a notice instead of opening the window.
+    quiet_download: bool,
+    /// When the last check ended (the next periodic one counts from there).
+    last_check: Option<Instant>,
+    /// The version already offered this session (window or notice): a later
+    /// check does not announce it again, "Later" means the next launch.
+    announced: String,
+    notice: Option<Notice>,
 }
 
 pub fn checks_enabled() -> bool {
@@ -87,6 +149,12 @@ impl Updater {
             policy_pending: false,
             cancel: Cancel::default(),
             prepared: None,
+            generation: 0,
+            quiet_check: false,
+            quiet_download: false,
+            last_check: None,
+            announced: String::new(),
+            notice: None,
         };
         // Disabled still checks the minimum supported version, as Firestorm does.
         if enabled {
@@ -121,6 +189,11 @@ impl Updater {
         }
     }
 
+    /// The new version a periodic check found, once.
+    pub fn take_notice(&mut self) -> Option<Notice> {
+        self.notice.take()
+    }
+
     pub fn check(&mut self, runtime: &tokio::runtime::Handle, manual: bool) {
         if !self.enabled || self.busy() {
             return;
@@ -131,8 +204,16 @@ impl Updater {
             self.rollback_notice = false;
         }
         self.prepared.take();
+        self.quiet_download = false;
         self.state = State::Checking;
         self.open = manual;
+        self.quiet_check = false;
+        self.spawn_check(runtime);
+    }
+
+    fn spawn_check(&mut self, runtime: &tokio::runtime::Handle) {
+        self.generation += 1;
+        let generation = self.generation;
         let source = self.source.clone();
         let channel = self.channel;
         let tx = self.tx.clone();
@@ -144,8 +225,24 @@ impl Updater {
                         log::warn!("release check: {e:#}");
                         Failure::Network
                     });
-            let _ = tx.send(Event::Checked(result));
+            let _ = tx.send(Event::Checked { result, generation });
         });
+    }
+
+    /// A periodic check is due: checks enabled, an interval chosen and gone
+    /// by since the last check, and nothing else going on (the window
+    /// closed, no download, nothing prepared to install).
+    fn periodic_due(&self, settings: &Settings, now: Instant) -> bool {
+        let Some(every) = settings.update_check_interval.duration() else {
+            return false;
+        };
+        self.enabled
+            && settings.update_mode != Mode::Disabled
+            && !self.open
+            && !self.quiet_check
+            && !self.rollback_notice
+            && matches!(self.state, State::Idle | State::Current | State::Error(_) | State::Offer)
+            && self.last_check.is_some_and(|at| now.duration_since(at) >= every)
     }
 
     pub fn poll(&mut self, settings: &Settings, info: &mut LoginInfo, runtime: &tokio::runtime::Handle) -> bool {
@@ -163,9 +260,20 @@ impl Updater {
             }
             self.check(runtime, false);
         }
+        if self.periodic_due(settings, Instant::now()) {
+            self.quiet_check = true;
+            self.spawn_check(runtime);
+        }
         while let Ok(event) = self.rx.try_recv() {
             match event {
-                Event::Checked(Ok(release)) => {
+                Event::Checked { generation, .. } if generation != self.generation => {}
+                Event::Checked { result, .. } if self.quiet_check => {
+                    self.quiet_check = false;
+                    self.last_check = Some(Instant::now());
+                    self.quiet_result(result, settings, info, runtime);
+                }
+                Event::Checked { result: Ok(release), .. } => {
+                    self.last_check = Some(Instant::now());
                     self.policy_pending = false;
                     self.release = release;
                     self.state = if self.release.is_some() { State::Offer } else { State::Current };
@@ -175,6 +283,9 @@ impl Updater {
                             url: String::new(),
                         };
                         self.open = should_offer(r.required, self.manual, settings.update_mode, &settings.ignored_update, &r.tag);
+                        if self.open {
+                            self.announced = r.tag.clone();
+                        }
                         if self.open && !self.manual && !self.rollback_notice && !r.required && settings.update_mode == Mode::Automatic {
                             self.download(runtime);
                         }
@@ -189,7 +300,8 @@ impl Updater {
                         self.open = true;
                     }
                 }
-                Event::Checked(Err(error)) => {
+                Event::Checked { result: Err(error), .. } => {
+                    self.last_check = Some(Instant::now());
                     self.policy_pending = false;
                     info.version = VersionState::Failed;
                     self.state = State::Error(error);
@@ -209,11 +321,30 @@ impl Updater {
                         drop(result);
                         self.state = State::Offer;
                     } else {
+                        let quiet = std::mem::take(&mut self.quiet_download) && !self.open;
                         match result {
                             Ok(work) => {
                                 self.prepared = Some(work);
                                 self.state = State::Ready;
-                                self.open = true;
+                                if quiet {
+                                    self.notice = self.release.as_ref().map(|r| Notice {
+                                        version: r.version.clone(),
+                                        ready: true,
+                                    });
+                                } else {
+                                    self.open = true;
+                                }
+                            }
+                            // a quiet download that failed is offered as a
+                            // plain new version: the window says why if it
+                            // fails again
+                            Err(error) if quiet => {
+                                log::warn!("background update download: {error:?}");
+                                self.state = State::Offer;
+                                self.notice = self.release.as_ref().map(|r| Notice {
+                                    version: r.version.clone(),
+                                    ready: false,
+                                });
                             }
                             Err(error) => {
                                 self.state = State::Error(error);
@@ -235,18 +366,80 @@ impl Updater {
         false
     }
 
+    /// The answer of a periodic check: a version not announced yet becomes
+    /// a notice (downloaded first in the Automatic mode); a failure is only
+    /// logged, the next check tries again.
+    fn quiet_result(
+        &mut self,
+        result: Result<Option<Release>, Failure>,
+        settings: &Settings,
+        info: &mut LoginInfo,
+        runtime: &tokio::runtime::Handle,
+    ) {
+        // the user opened the window or started something meanwhile: theirs wins
+        if self.open || !matches!(self.state, State::Idle | State::Current | State::Error(_) | State::Offer) {
+            return;
+        }
+        let release = match result {
+            Ok(release) => release,
+            Err(_) => return,
+        };
+        let Some(r) = release else {
+            self.release = None;
+            self.state = State::Current;
+            info.version = VersionState::UpToDate;
+            return;
+        };
+        info.version = VersionState::Available {
+            version: r.version.clone(),
+            url: String::new(),
+        };
+        let announce = announces(&r, &self.announced, &settings.ignored_update);
+        let (tag, version, required) = (r.tag.clone(), r.version.clone(), r.required);
+        self.release = Some(r);
+        self.state = State::Offer;
+        if !announce {
+            return;
+        }
+        self.announced = tag;
+        if !required && settings.update_mode == Mode::Automatic {
+            self.quiet_download = true;
+            self.start_download(runtime, false);
+        } else {
+            self.notice = Some(Notice { version, ready: false });
+        }
+    }
+
     pub fn download(&mut self, runtime: &tokio::runtime::Handle) {
+        self.quiet_download = false;
+        self.start_download(runtime, true);
+    }
+
+    /// `show`: the window shows the download (else it waits for the end).
+    fn start_download(&mut self, runtime: &tokio::runtime::Handle, show: bool) {
         let Some(release) = self.release.clone() else { return };
         if self.busy() {
             return;
         }
         if !cfg!(windows) || release.archive.is_none() || release.checksum.is_none() {
-            self.state = State::Error(Failure::Unsupported);
-            self.open = true;
+            if show {
+                self.state = State::Error(Failure::Unsupported);
+                self.open = true;
+            } else {
+                // no package to install here (macOS, Linux): the notice
+                // offers the version, the window links its page
+                self.quiet_download = false;
+                self.notice = Some(Notice {
+                    version: release.version.clone(),
+                    ready: false,
+                });
+            }
             return;
         }
         self.state = State::Downloading(Progress::default());
-        self.open = true;
+        if show {
+            self.open = true;
+        }
         self.cancel = Cancel::default();
         let cancel = self.cancel.clone();
         let source = self.source.clone();
@@ -305,6 +498,12 @@ fn should_offer(required: bool, manual: bool, mode: Mode, ignored: &str, tag: &s
     required || manual || (mode != Mode::Disabled && ignored != tag)
 }
 
+/// A periodic check announces a version once per session, unless it was
+/// skipped ("Skip this version"); a required one even then.
+fn announces(release: &Release, announced: &str, ignored: &str) -> bool {
+    release.tag != announced && (release.required || release.tag != ignored)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,6 +529,24 @@ mod tests {
         }
     }
 
+    fn release(tag: &str, required: bool) -> Release {
+        Release {
+            maintenance: Default::default(),
+            tag: tag.into(),
+            version: tag.trim_start_matches('v').into(),
+            notes: String::new(),
+            url: aurora_updater::feed::RELEASE_PAGE.into(),
+            archive: None,
+            checksum: None,
+            required,
+        }
+    }
+
+    fn checked(updater: &Updater, result: Result<Option<Release>, Failure>) {
+        let generation = updater.generation;
+        updater.tx.send(Event::Checked { result, generation }).expect("result");
+    }
+
     #[test]
     fn initial_policy_check_blocks_login_until_a_result_or_network_failure() {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
@@ -337,7 +554,7 @@ mod tests {
         updater.policy_pending = true;
         assert!(updater.blocks_login());
         assert!(updater.login_block_reason().is_some());
-        updater.tx.send(Event::Checked(Err(Failure::Network))).expect("fixture");
+        checked(&updater, Err(Failure::Network));
         updater.poll(&Settings::default(), &mut LoginInfo::preview_release("0.3.0"), rt.handle());
         assert!(!updater.blocks_login());
         assert!(updater.login_block_reason().is_none());
@@ -349,17 +566,7 @@ mod tests {
         let mut updater = Updater::new(rt.handle(), Channel::Stable);
         updater.rollback_notice = true;
         updater.state = State::Rollback;
-        let release = Release {
-            maintenance: Default::default(),
-            tag: "v0.3.0".into(),
-            version: "0.3.0".into(),
-            notes: String::new(),
-            url: aurora_updater::feed::RELEASE_PAGE.into(),
-            archive: None,
-            checksum: None,
-            required: true,
-        };
-        updater.tx.send(Event::Checked(Ok(Some(release)))).expect("result");
+        checked(&updater, Ok(Some(release("v0.3.0", true))));
         let settings = Settings {
             update_mode: Mode::Disabled,
             ignored_update: "v0.3.0".into(),
@@ -369,5 +576,115 @@ mod tests {
         updater.poll(&settings, &mut info, rt.handle());
         assert!(updater.blocks_login());
         assert!(updater.open && matches!(updater.state, State::Rollback));
+    }
+
+    #[test]
+    fn the_check_interval_defaults_to_ten_minutes() {
+        assert_eq!(Settings::default().update_check_interval.duration(), Some(Duration::from_secs(600)));
+        assert_eq!(Interval::Never.duration(), None);
+    }
+
+    #[test]
+    fn a_periodic_check_waits_its_interval_and_a_quiet_moment() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
+        let mut updater = Updater::new(rt.handle(), Channel::Stable);
+        updater.enabled = true;
+        updater.state = State::Current;
+        let settings = Settings::default();
+        let start = Instant::now();
+        // the check at launch has not answered yet
+        assert!(!updater.periodic_due(&settings, start));
+        updater.last_check = Some(start);
+        assert!(!updater.periodic_due(&settings, start + Duration::from_secs(599)));
+        let later = start + Duration::from_secs(600);
+        assert!(updater.periodic_due(&settings, later));
+        // never over the open window, a download or an install waiting
+        updater.open = true;
+        assert!(!updater.periodic_due(&settings, later));
+        updater.open = false;
+        for state in [
+            State::Checking,
+            State::Downloading(Progress::default()),
+            State::Ready,
+            State::Rollback,
+        ] {
+            updater.state = state;
+            assert!(!updater.periodic_due(&settings, later));
+        }
+        updater.state = State::Offer;
+        assert!(updater.periodic_due(&settings, later));
+        // nor when switched off
+        let never = Settings {
+            update_check_interval: Interval::Never,
+            ..Default::default()
+        };
+        let disabled = Settings {
+            update_mode: Mode::Disabled,
+            ..Default::default()
+        };
+        assert!(!updater.periodic_due(&never, later));
+        assert!(!updater.periodic_due(&disabled, later));
+    }
+
+    #[test]
+    fn a_periodic_check_announces_a_new_version_once_without_blocking_or_opening() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
+        let mut updater = Updater::new(rt.handle(), Channel::Stable);
+        updater.enabled = true;
+        updater.state = State::Current;
+        updater.last_check = Some(Instant::now() - Duration::from_secs(3600));
+        let settings = Settings::default();
+        let mut info = LoginInfo::preview_release("0.3.0");
+        // the poll starts the periodic check; its answer comes back
+        updater.poll(&settings, &mut info, rt.handle());
+        assert!(updater.quiet_check && !updater.blocks_login());
+        checked(&updater, Ok(Some(release("v0.4.0", false))));
+        updater.poll(&settings, &mut info, rt.handle());
+        assert!(!updater.open && !updater.blocks_login());
+        assert!(matches!(updater.state, State::Offer));
+        let notice = updater.take_notice().expect("notice");
+        assert_eq!((notice.version.as_str(), notice.ready), ("0.4.0", false));
+        assert!(updater.take_notice().is_none());
+        // the same version, checked again: no second notice
+        assert!(!announces(&release("v0.4.0", false), &updater.announced, ""));
+        // a newer one, a skipped one, a required skipped one
+        assert!(announces(&release("v0.4.1", false), &updater.announced, ""));
+        assert!(!announces(&release("v0.4.1", false), &updater.announced, "v0.4.1"));
+        assert!(announces(&release("v0.4.1", true), &updater.announced, "v0.4.1"));
+    }
+
+    #[test]
+    fn a_failed_periodic_check_stays_silent_and_a_manual_check_wins_over_it() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
+        let mut updater = Updater::new(rt.handle(), Channel::Stable);
+        updater.enabled = true;
+        updater.state = State::Current;
+        updater.last_check = Some(Instant::now() - Duration::from_secs(3600));
+        let settings = Settings::default();
+        let mut info = LoginInfo::preview_release("0.3.0");
+        updater.poll(&settings, &mut info, rt.handle());
+        checked(&updater, Err(Failure::Network));
+        updater.poll(&settings, &mut info, rt.handle());
+        assert!(!updater.open && matches!(updater.state, State::Current));
+        assert!(updater.take_notice().is_none());
+        // a periodic check running, then the user checks: the periodic answer
+        // is stale and the manual one opens the window
+        updater.last_check = Some(Instant::now() - Duration::from_secs(3600));
+        updater.poll(&settings, &mut info, rt.handle());
+        let stale = updater.generation;
+        updater.check(rt.handle(), true);
+        updater
+            .tx
+            .send(Event::Checked {
+                result: Ok(Some(release("v0.4.0", false))),
+                generation: stale,
+            })
+            .expect("stale");
+        updater.poll(&settings, &mut info, rt.handle());
+        assert!(updater.open && matches!(updater.state, State::Checking));
+        checked(&updater, Ok(Some(release("v0.4.0", false))));
+        updater.poll(&settings, &mut info, rt.handle());
+        assert!(updater.open && matches!(updater.state, State::Offer));
+        assert!(updater.take_notice().is_none());
     }
 }

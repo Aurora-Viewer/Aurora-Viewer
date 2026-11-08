@@ -81,7 +81,9 @@ fn standard_texture(id: Uuid) -> bool {
 /// the export back.
 fn item_lets_export(item: &aurora_net::inventory::InvItem, agent: Uuid) -> bool {
     allows_export(item.base_mask, item.everyone_mask)
-        || (item.creator == agent && item.base_mask & perm::EXPORT != 0 && item.owner_mask & perm::EXPORT != 0)
+        || (item.creator == agent
+            && item.base_mask & perm::EXPORT != 0
+            && crate::world::inventory::actions::agent_mask(item, agent) & perm::EXPORT != 0)
 }
 
 /// Whether the agent may tick Export (LLPanelPermissions::refresh, FS:CR):
@@ -379,11 +381,12 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 if r.changed() {
                     tool.ui.edits.insert(field, v.clone());
                 }
-                if r.lost_focus() {
+                let end = super::common::field_end(ui, &r);
+                if end != super::common::FieldEnd::Open {
                     tool.ui.edits.remove(field);
-                    if modify && v != current && (description || !v.trim().is_empty()) {
-                        tool.set_name(world, &v, description);
-                    }
+                }
+                if end == super::common::FieldEnd::Commit && modify && v != current && (description || !v.trim().is_empty()) {
+                    tool.set_name(world, &v, description);
                 }
             });
         }

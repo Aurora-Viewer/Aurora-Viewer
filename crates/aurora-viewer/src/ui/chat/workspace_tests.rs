@@ -299,6 +299,46 @@ fn the_window_does_not_move_from_its_workspace() {
     assert_eq!(last(&texts, "hello from Jane"), before, "the window stayed in place");
 }
 
+/// On macOS Option+Left/Right stay in the composer for word movement;
+/// Option+Up/Down keep cycling as before.
+#[test]
+fn option_left_right_stay_in_the_composer_on_mac() {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let mut h = Harness::new(ChatStyle::Legacy);
+    h.st.conv_focus_request = true;
+    h.st.draft_mut(None).push_str("Aurora Viewer");
+    h.settle();
+    let field = egui::Id::unique(("conv_input", None::<Uuid>));
+    let ctx = h.frames.ctx.clone();
+    let caret = move || {
+        egui::TextEdit::load_state(&ctx, field)
+            .and_then(|state| state.cursor.char_range())
+            .map(|range| (range.secondary.index.0, range.primary.index.0))
+    };
+    assert_eq!(caret(), Some((13, 13)), "the caret starts at the end");
+    h.frame(key(egui::Key::ArrowLeft, egui::Modifiers::ALT));
+    h.settle();
+    assert_eq!(caret(), Some((7, 7)), "Option+Left moves one word back");
+    h.frame(key(egui::Key::ArrowRight, egui::Modifiers::ALT));
+    h.settle();
+    assert_eq!(caret(), Some((13, 13)), "Option+Right moves one word on");
+    assert_eq!(h.st.selected, None, "Option+Left/Right do not cycle");
+    let order = super::super::keys::legacy_order(&h.world, &h.st);
+    let (first, last) = (order[1], order[2]);
+    h.frame(key(egui::Key::ArrowDown, egui::Modifiers::ALT));
+    h.settle();
+    assert_eq!(h.st.selected, first, "Option+Down still cycles");
+    h.frame(key(egui::Key::ArrowUp, egui::Modifiers::ALT));
+    h.settle();
+    assert_eq!(h.st.selected, None, "Option+Up still cycles");
+    h.frame(key(egui::Key::ArrowDown, egui::Modifiers::ALT));
+    h.frame(key(egui::Key::ArrowDown, egui::Modifiers::ALT));
+    h.settle();
+    assert_eq!(h.st.selected, last, "Option+Down still goes round");
+}
+
 /// Narrow, the column is a rail of pictures: no search field, no names.
 #[test]
 fn a_narrow_window_has_a_rail() {
@@ -324,15 +364,16 @@ fn key(key: egui::Key, modifiers: egui::Modifiers) -> Vec<egui::Event> {
         .to_vec()
 }
 
-/// Alt + the arrows go round the conversations with the keyboard in the
-/// window, the field of the one shown taking it; Ctrl+W closes the one
-/// shown and shows the next, then on the nearby chat closes the window
+/// Ctrl+Tab and Ctrl+Shift+Tab go round the conversations with the keyboard
+/// in the window, the field of the one shown taking it; Ctrl+W closes the
+/// one shown and shows the next, then on the nearby chat closes the window
 /// (#651), in both styles of the list.
 #[test]
 fn the_keyboard_goes_round_the_conversations_and_closes_them() {
     for style in [ChatStyle::Legacy, ChatStyle::Aurora] {
         let mut h = Harness::new(style);
         h.st.conv_focus_request = true;
+        h.st.draft_mut(None).push_str("draft");
         h.settle();
         let order = if style.workspace() {
             super::super::sidebar::tab_order(&h.world, &h.st)
@@ -342,23 +383,25 @@ fn the_keyboard_goes_round_the_conversations_and_closes_them() {
         assert_eq!(order.len(), 3, "{style:?}: the nearby chat, Jane and Bob");
         let (first, last) = (order[1], order[2]);
         let field = |tab| egui::Id::unique(("conv_input", tab));
-        h.frame(key(egui::Key::ArrowDown, egui::Modifiers::ALT));
+        let ctrl = egui::Modifiers::CTRL;
+        h.frame(key(egui::Key::Tab, ctrl));
         h.settle();
         assert_eq!(h.st.selected, first, "{style:?}");
+        assert_eq!(h.st.draft_mut(None), "draft", "{style:?}: Ctrl+Tab types no tab");
         assert!(
             h.frames.ctx.memory(|m| m.has_focus(field(first))),
             "{style:?}: its field has the keyboard"
         );
-        h.frame(key(egui::Key::ArrowUp, egui::Modifiers::ALT));
+        h.frame(key(egui::Key::Tab, ctrl | egui::Modifiers::SHIFT));
         h.settle();
         assert_eq!(h.st.selected, None, "{style:?}");
         // round the list
-        h.frame(key(egui::Key::ArrowLeft, egui::Modifiers::ALT));
+        h.frame(key(egui::Key::Tab, ctrl | egui::Modifiers::SHIFT));
         h.settle();
         assert_eq!(h.st.selected, last, "{style:?}");
         // the keyboard elsewhere: the camera's keys
         h.frames.ctx.memory_mut(|m| m.surrender_focus(field(last)));
-        h.frame(key(egui::Key::ArrowRight, egui::Modifiers::ALT));
+        h.frame(key(egui::Key::Tab, ctrl));
         h.settle();
         assert_eq!(h.st.selected, last, "{style:?}");
         // Ctrl+W: the conversation shown, the one above it shown next (it was the last)

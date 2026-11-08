@@ -37,12 +37,7 @@ pub fn chosen() -> Option<&'static Path> {
 /// written (else the default folder is used, like initCache's fallback),
 /// and removes the cache the previous run used when it was elsewhere.
 pub fn init() {
-    let path = crate::settings::Settings::path();
-    let wanted = std::fs::read(&path)
-        .ok()
-        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
-        .and_then(|v| v.get("cache_location").and_then(|c| c.as_str()).map(str::to_owned))
-        .unwrap_or_default();
+    let wanted = crate::settings::Settings::saved_text("cache_location");
     let chosen = root_for(&wanted).filter(|root| match std::fs::create_dir_all(root) {
         Ok(()) => true,
         Err(e) => {

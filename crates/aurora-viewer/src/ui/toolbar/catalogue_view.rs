@@ -142,6 +142,7 @@ pub(super) fn alias(command: &str) -> Option<&'static str> {
         "menu:common-help/bug-title" => "report_bug",
         "menu:common-help/report-abuse-title" => "reporter",
         "menu:common-help/grid_status" => "gridstatus",
+        "menu:common-advanced/debug-settings" => "settings_debug",
         _ => return None,
     })
 }

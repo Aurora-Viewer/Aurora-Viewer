@@ -454,6 +454,7 @@ mod tests {
             object_id: Uuid::from_u128(0x6469_0000 + n),
             object_name: "Dialog object".into(),
             owner_name: "Test Resident".into(),
+            owner_id: Uuid::nil(),
             message: "Choose".into(),
             channel,
             buttons: vec!["Yes".into()],

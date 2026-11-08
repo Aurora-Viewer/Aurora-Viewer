@@ -453,6 +453,18 @@ pub fn seed_received_big(inv: &mut Inventory, agent: Uuid, folders: u128, items:
 }
 
 pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
+    // Clipboard feedback scenarios reuse the same source tree in either layout.
+    let view = view
+        .strip_prefix("aurora-")
+        .filter(|mode| mode.starts_with("clipboard"))
+        .unwrap_or(view);
+    let view = if view.starts_with("clipboard-cut-folder") {
+        "clipboard-cut-folder"
+    } else if view.starts_with("clipboard-cut") {
+        "clipboard-cut"
+    } else {
+        view
+    };
     if let Some(mode) = view.strip_prefix("aurora-menu-") {
         return target(
             match mode {

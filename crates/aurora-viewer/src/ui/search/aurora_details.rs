@@ -184,7 +184,7 @@ fn person(
         // the legacy reply (no AgentProfile capability) has no groups
         if !pr.legacy {
             let mut groups: Vec<&str> = pr.groups.iter().map(|g| g.name.as_str()).collect();
-            groups.sort_by_key(|g| g.to_lowercase());
+            groups.sort_by_key(|g| crate::natural_order::key(g));
             let text = if groups.is_empty() {
                 aurora_i18n::tr!("common-none").to_owned()
             } else {

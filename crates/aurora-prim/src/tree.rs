@@ -336,6 +336,7 @@ pub fn generate_tree(s: &TreeSpecies, lod: usize) -> VolumeMesh {
     VolumeMesh {
         faces: vec![g.out],
         surface_area: 1.0,
+        grid_area: 0.0,
     }
 }
 

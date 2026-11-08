@@ -694,6 +694,9 @@ impl World {
                     (!moved || self.rlva_inventory_move_allowed(*id, body["parent_id"].as_uuid(), actor))
                         && (!renamed || !*folder || !self.rlva_explicit_folder_descendant(&FolderLocks::default(), *id, actor))
                 }
+                // LLInventoryModel::emptyFolderType does not apply RLVa locks.
+                // The Trash dialog still refuses to purge worn items.
+                Operation::Purge(id) if self.inventory.folders.get(id).is_some_and(|folder| folder.info.type_default == 14) => true,
                 Operation::Delete { id, folder: true } | Operation::Purge(id) => self.rlva_inventory_tree_unlocked(*id, actor),
                 Operation::Delete { id, folder: false } => {
                     let target = super::super::inventory::actions::original(&self.inventory, *id).unwrap_or(*id);

@@ -130,7 +130,7 @@ fn remove_on_rez(inv: &Inventory, item: &InvItem, agent: Uuid, on_object: bool) 
 
 /// The avatar an object is, or is worn by: an attachment counts as its
 /// wearer (LLVOAvatar::findAvatarFromAttachment).
-fn wearer(world: &World, idx: usize) -> Option<usize> {
+pub(super) fn wearer(world: &World, idx: usize) -> Option<usize> {
     let mut current = idx;
     for _ in 0..64 {
         let o = world.objects.get(current)?;
@@ -556,6 +556,9 @@ impl App {
             self.build.edit_inventory_rez(&self.world);
         }
         let rez = matches!(drop.command, BuildCmd::RezInventory(_));
+        if rez {
+            self.build.forget_new_defaults();
+        }
         if let BuildCmd::RezInventory(item) = &drop.command {
             self.record_library_use(item.item.id);
         }
@@ -866,6 +869,8 @@ mod tests {
                 opensim: Default::default(),
                 currency_symbol: String::new(),
                 export_supported: false,
+                max_link_children: None,
+                animated_object_max_tris: 0,
             },
         );
         let r = rez(prepare(

@@ -16,6 +16,9 @@ base64 = "0.23.1"
 # local time off Windows (snapshot names, chat log dates, script __DATE__);
 # already built for aurora-llsd, MIT/Apache-2.0.
 chrono = "0.4.45"
+# The Windows event log's XML for the crash report's GPU reset records
+# (crash/os_events.rs); already built for usvg, MIT/Apache-2.0.
+roxmltree = "0.21.1"
 # The bars' clock: the computer's tz database zone (Windows' zones mapped to
 # IANA names; already in the tree through chrono) and its abbreviation now
 # (CET / CEST), from the embedded tz database (about 1.3 MB of the release
@@ -123,7 +126,7 @@ version = "4"
 # Already used by egui-winit (MIT/Apache-2.0); add a file offer alongside
 # the bitmap so Explorer can paste a copied conversation image as a PNG.
 arboard = { version = "3.6.1", default-features = false, features = ["image-data"] }
-windows-sys = { version = "0.61.2", features = ["Win32_UI_Input", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Threading", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_System_SystemInformation", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Globalization", "Win32_Foundation", "Win32_System_Diagnostics_ToolHelp", "Win32_System_ProcessStatus", "Win32_System_WindowsProgramming", "Win32_System_Performance", "Win32_System_Pipes", "Win32_Storage_FileSystem", "Win32_Security", "Win32_System_IO", "Win32_System_RemoteDesktop", "Win32_System_Registry", "Win32_System_Environment", "Win32_NetworkManagement_NetBios", "Win32_System_Memory", "Win32_System_LibraryLoader", "Win32_Devices_DeviceAndDriverInstallation"] }
+windows-sys = { version = "0.61.2", features = ["Win32_UI_Input", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Threading", "Win32_System_DataExchange", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_System_SystemInformation", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Globalization", "Win32_Foundation", "Win32_System_Diagnostics_ToolHelp", "Win32_System_ProcessStatus", "Win32_System_WindowsProgramming", "Win32_System_Performance", "Win32_System_Pipes", "Win32_Storage_FileSystem", "Win32_Security", "Win32_Security_Authorization", "Win32_System_IO", "Win32_System_RemoteDesktop", "Win32_System_Registry", "Win32_System_Console", "Win32_System_Environment", "Win32_NetworkManagement_NetBios", "Win32_System_Memory", "Win32_System_LibraryLoader", "Win32_Devices_DeviceAndDriverInstallation"] }
 # Windows notifications (system_notify.rs): the WinRT toast API, which
 # windows-sys does not cover; already in the tree through wgpu and cpal
 # and the login device ids (machine_id.rs): WMI through COM

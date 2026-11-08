@@ -14,11 +14,13 @@ pub(crate) struct Relay {
     pub session: Uuid,
 }
 impl Relay {
+    /// Commands for the worn relay go on its session's own channel, never a
+    /// fixed one: the session is random and was only told to this viewer.
     pub fn command(&self, command: &str) -> NetCommand {
         NetCommand::ScriptDialogReply {
             sender: None,
             object_id: self.root,
-            channel: super::super::bridge::ik::CONTROL,
+            channel: super::super::bridge::private_channel(self.session),
             index: 0,
             label: format!("auroraIKRelay|{}|{command}", self.session),
         }

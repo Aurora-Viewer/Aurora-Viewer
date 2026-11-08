@@ -482,7 +482,7 @@ pub(super) fn show(
                     .map(|f| (f.id, world.social.name_of(&f.id)))
                     .filter(|(_, n)| n.to_lowercase().contains(&filter))
                     .collect();
-                friends.sort_by_key(|(_, n)| n.to_lowercase());
+                friends.sort_by_key(|(_, n)| crate::natural_order::key(n));
                 if !friends.is_empty() {
                     plain_head(ui, p, aurora_i18n::tr!("ui-chat-section-start-with"));
                     for (id, name) in friends.into_iter().take(8) {

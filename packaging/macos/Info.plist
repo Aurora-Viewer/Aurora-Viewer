@@ -37,7 +37,7 @@
 	<key>GCSupportsGameMode</key>
 	<true/>
 	<key>LSMinimumSystemVersion</key>
-	<string>12.0</string>
+	<string>13.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSPrincipalClass</key>

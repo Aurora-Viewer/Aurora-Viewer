@@ -330,6 +330,8 @@ fn mark_all_read_clears_the_count_and_keeps_what_waits() {
             group: Uuid::from_u128(7),
             tx: Uuid::from_u128(8),
             offline: false,
+            fee: 0,
+            confirming: false,
         },
     );
     update(&list, &mut c, at(0.0), 30.0);
@@ -367,6 +369,7 @@ pub(crate) fn scripted_windows(list: &mut Notifications) -> Vec<u64> {
                 questions: 0x10,
                 region: 1,
                 experience: None,
+                caution: None,
             },
         ),
         list.push(Kind::Url, "Kiosk", "Our shop", Data::Url("https://example.invalid/".into())),

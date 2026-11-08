@@ -98,13 +98,13 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
                 .values()
                 .filter(|item| {
                     item.asset_type == 7
-                        && item.owner_mask & actions::COPY != 0
+                        && actions::held(&world.inventory, item) & actions::COPY != 0
                         && !world.inventory.in_folder_type(item.id, 14)
                         && item.name.to_lowercase().contains(&filter)
                 })
                 .map(|item| (item.id, item.name.clone()))
                 .collect();
-            items.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+            items.sort_by(|a, b| crate::natural_order::cmp(&a.1, &b.1).then(a.0.cmp(&b.0)));
             egui::ScrollArea::vertical()
                 .id_salt("layout-notecard-list")
                 .max_height(260.0)
@@ -132,7 +132,9 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
                 } else {
                     tool.ui.notecards.selected.is_some_and(|id| {
                         world.inventory.items.get(&id).is_some_and(|item| {
-                            item.asset_type == 7 && item.owner_mask & actions::COPY != 0 && !world.inventory.in_folder_type(id, 14)
+                            item.asset_type == 7
+                                && actions::held(&world.inventory, item) & actions::COPY != 0
+                                && !world.inventory.in_folder_type(id, 14)
                         })
                     })
                 };

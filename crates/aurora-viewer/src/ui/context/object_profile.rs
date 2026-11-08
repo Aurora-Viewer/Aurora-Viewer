@@ -65,7 +65,7 @@ impl ObjectProfileUi {
 
     pub(crate) fn on_properties(&mut self, props: &[ObjectProps]) {
         let received = props.iter().filter(|props| Some(props.object_id) == self.object).cloned().collect();
-        self.editor.on_properties(received);
+        self.editor.merge_properties(received);
     }
 
     pub(crate) fn take_output(&mut self) -> (Vec<NetCommand>, Vec<crate::build::ui::Request>, Vec<ObjectProps>) {

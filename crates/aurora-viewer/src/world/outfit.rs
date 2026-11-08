@@ -251,16 +251,44 @@ impl OutfitRestore {
         }
     }
 
+    /// A restore that is already over, as after the login (tests of what
+    /// happens later in the session).
+    #[cfg(test)]
+    pub fn finished() -> Self {
+        OutfitRestore {
+            stage: Stage::Done,
+            ..Default::default()
+        }
+    }
+
     /// A detach was sent for these items: their coming off is wanted.
     pub fn on_detach_requested(&mut self, items: &[Uuid]) {
         self.user_removed.extend(items.iter().copied());
     }
 
-    /// Whether the COF link of `item` stays when it comes off: during the
-    /// login restore an outfit object nobody asked to take off came off
-    /// because the region replaced it, and is worn again.
+    /// Whether the COF link of `item` stays when the region takes it off
+    /// without the viewer asking for it (a detach the viewer sent, for the
+    /// resident or RLVa, always removes it).
+    ///
+    /// Until the login restore has read the Current Outfit folder, no
+    /// unrequested detach removes a link: LLAppearanceMgr::unregisterAttachment
+    /// (indra/newview/llappearancemgr.cpp) leaves the COF alone while
+    /// mAttachmentInvLinkEnabled is false, and only set_flags_and_update_appearance
+    /// (indra/newview/llstartup.cpp) turns it on, after the COF fetch at login.
+    /// A region that clears what it had kept from the last session (a relog
+    /// after a crash) would otherwise unlink those objects for good, and the
+    /// restore would not wear them again. Then, while the restore puts the
+    /// outfit on, an outfit object the region replaced keeps its link and
+    /// is worn again.
     pub fn keeps_cof_link(&self, item: Uuid) -> bool {
-        matches!(self.stage, Stage::Settle | Stage::Attaching { .. }) && self.objects.contains(&item) && !self.user_removed.contains(&item)
+        if self.user_removed.contains(&item) {
+            return false;
+        }
+        match self.stage {
+            Stage::Waiting | Stage::FetchCof { .. } | Stage::FetchItems { .. } => true,
+            Stage::Settle | Stage::Attaching { .. } => self.objects.contains(&item),
+            Stage::Done => false,
+        }
     }
 
     /// A COF change (Replace outfit, Add…) linked objects whose items the
@@ -866,6 +894,48 @@ mod tests {
         assert!(r.is_done(), "203 is not missing: it was taken off on purpose");
         assert!(r.commands.is_empty());
         assert!(!r.keeps_cof_link(Uuid::from_u128(201)), "the restore is over");
+    }
+
+    /// Relog after a crash: the region clears what it kept of the last
+    /// session before the restore has read the COF. No link is removed then
+    /// (mAttachmentInvLinkEnabled), and the object is worn again; once the
+    /// restore is over, an unrequested detach removes the link as usual.
+    #[test]
+    fn no_link_is_removed_before_the_cof_is_read_and_the_object_is_worn_again() {
+        let mut inv = unfetched_cof();
+        let mut r = OutfitRestore::default();
+        let (body, ring, taken_off, unlinked) = (
+            Uuid::from_u128(200),
+            Uuid::from_u128(201),
+            Uuid::from_u128(203),
+            Uuid::from_u128(250),
+        );
+        assert!(r.keeps_cof_link(ring), "waiting for the region");
+        let t0 = Instant::now();
+        r.update(inputs(&mut inv, &[200, 201]), t0);
+        assert!(matches!(r.stage, Stage::FetchCof { .. }));
+        assert!(r.keeps_cof_link(ring), "the COF is not read yet");
+        assert!(r.keeps_cof_link(unlinked), "the COF is not read yet: its links are not known");
+        // a detach asked for (resident, script, RLVa) still removes its link
+        r.on_detach_requested(&[taken_off]);
+        assert!(!r.keeps_cof_link(taken_off));
+        // the ring came off meanwhile; the COF still links it
+        fetch_cof(&mut inv, &[200, 201, 202, 203]);
+        r.update(inputs(&mut inv, &[200]), t0);
+        assert!(matches!(r.stage, Stage::Settle));
+        assert!(r.keeps_cof_link(ring));
+        assert!(!r.keeps_cof_link(unlinked), "not in the outfit");
+        r.commands.clear();
+        r.update(inputs(&mut inv, &[200]), t0 + SETTLE);
+        assert_eq!(
+            requested(&r.commands),
+            vec![201, 202],
+            "the ring is worn again, not what was taken off"
+        );
+        r.update(inputs(&mut inv, &[200, 201, 202]), t0 + SETTLE + RETRY_AFTER);
+        assert!(r.is_done());
+        assert!(!r.keeps_cof_link(body), "after the login, a detach removes the link");
+        assert!(!r.keeps_cof_link(ring));
     }
 
     /// Replace outfit with a cold inventory cache: the new COF links to

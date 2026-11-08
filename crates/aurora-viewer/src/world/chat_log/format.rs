@@ -234,6 +234,14 @@ fn split_stamp(raw: &str) -> (Option<&str>, &str) {
     (Some(inner), rest)
 }
 
+/// TIMESTAMP / TIMESTAMP_AND_SEC (LLLogChat::isTranscriptFileFound): a line
+/// that opens with a timestamp, whatever follows it.
+pub fn starts_with_stamp(line: &str) -> bool {
+    line.strip_prefix('[')
+        .and_then(|rest| rest.split_once(']'))
+        .is_some_and(|(stamp, _)| is_stamp(stamp))
+}
+
 /// "2009/11/20 3:00", "3:00", "3:00:59 PM"...
 fn is_stamp(s: &str) -> bool {
     stamp_fields(s).is_some()

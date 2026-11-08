@@ -1,0 +1,77 @@
+name: PR description
+
+# Checks that a pull request's description follows
+# .github/pull_request_template.md (HUMANS.md "PR description check",
+# AGENTS.md section 9): an incomplete one gets a "## Changes requested"
+# comment and the needs-description label, which go away once it is
+# complete; the daily sweep closes an outside contributor's PR still
+# incomplete 3 days later, never the team's.
+#
+# pull_request_target, so that it runs at once on an outside contributor's
+# PR (their CI waits for a maintainer's approval) with a token that may
+# comment. It runs main's script and never checks out nor runs the PR's
+# code: the script reads the description through the API, and the text
+# never reaches a command line. Pull requests that change the check run its
+# fixture tests (pull_request, read-only).
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+  schedule:
+    - cron: '23 6 * * *'
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number (empty for the sweep)
+        required: false
+        type: string
+  pull_request:
+    paths:
+      - .github/workflows/pr-description.yml
+      - .github/pull_request_template.md
+      - scripts/check-pr-description.ps1
+      - scripts/test-pr-description.ps1
+      - scripts/tools/pr-description.ps1
+
+permissions:
+  contents: read
+
+# one run at a time per pull request: a burst of edits ends on the last body
+concurrency:
+  group: pr-description-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.pr || 'sweep' }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      # main's scripts, not the PR's
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Check
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number || inputs.pr }}
+        run: |
+          if ($env:PR) { ./scripts/check-pr-description.ps1 -Pr $env:PR }
+          else { ./scripts/check-pr-description.ps1 -Sweep }
+
+  test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fixture tests
+        shell: pwsh
+        run: ./scripts/test-pr-description.ps1

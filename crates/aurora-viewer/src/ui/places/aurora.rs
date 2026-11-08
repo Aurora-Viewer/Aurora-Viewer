@@ -275,7 +275,7 @@ pub fn toggle_favorite(inv: &Inventory, place: &Place) -> Option<Mutation> {
             let favorites = system_folder(inv, model::FOLDER_FAVORITES)?;
             let item = place.item?;
             let it = inv.items.get(&item)?;
-            if it.owner_mask & actions::COPY != 0 {
+            if actions::held(inv, it) & actions::COPY != 0 {
                 Some(Mutation {
                     copies: vec![CopyItem {
                         item,
@@ -310,7 +310,7 @@ pub fn move_to_folder(inv: &Inventory, place: &Place, folder: Uuid) -> Option<Mu
     }
     let fav = place.favorite?;
     let it = inv.items.get(&fav)?;
-    if it.owner_mask & actions::COPY != 0 {
+    if actions::held(inv, it) & actions::COPY != 0 {
         Some(Mutation {
             copies: vec![CopyItem {
                 item: fav,

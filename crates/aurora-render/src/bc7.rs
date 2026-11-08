@@ -14,8 +14,10 @@
 //! About 85 % of the textures pass, for 2.9 times less video memory overall
 //! (`cargo run --release -p aurora-render --example bc7_check -- <cache/tex>`).
 //! With alpha, the texels at an end of alpha (0 or 255) are kept exact on
-//! top of that, in every block ([`mend_alpha_ends`]): a mask cutoff at an
-//! end turns the smallest error there into holes.
+//! top of that, in every block, and a block just under opaque stays under
+//! ([`mend_alpha_ends`]): a mask cutoff at an end turns the smallest error
+//! there into holes or specks. Without alpha, every block decodes at alpha
+//! 255 ([`seal_opaque`]) for the same reason.
 
 use intel_tex_2::{RgbaSurface, bc7};
 
@@ -70,6 +72,9 @@ fn try_chain(settings: &bc7::EncodeSettings, mips: &[(u32, u32, Vec<u8>)], alpha
         if alpha && !mend_alpha_ends(rgba, &mut blocks, *w as usize, *h as usize) {
             return None;
         }
+        if !alpha {
+            seal_opaque(&mut blocks);
+        }
         if harmed(rgba, &blocks, *w, *h, alpha) {
             return None;
         }
@@ -78,10 +83,35 @@ fn try_chain(settings: &bc7::EncodeSettings, mips: &[(u32, u32, Vec<u8>)], alpha
     Some(out)
 }
 
+/// Sets the alpha of every mode 6 block to 255. The encoder, told to ignore
+/// alpha, leaves it at 127 on 7 bits and picks the shared low bits (63 and
+/// 64) for the color alone, so that about half the texels of an opaque
+/// texture decode at 254: specks at a mask cutoff of 255, where the Legacy
+/// Viewer, which keeps such a texture without alpha, shows it whole. Raising
+/// those bits moves a color end by 1 of 255 at most. That encoder writes no
+/// other mode with alpha (none in 2,000 chains of a viewer's cache).
+pub fn seal_opaque(blocks: &mut [u8]) {
+    for block in blocks.as_chunks_mut::<16>().0 {
+        if block[0] & 0x7f == 0x40 {
+            // alpha ends: bits 49 to 62, then their low bits, 63 and 64
+            block[6] |= 0xfe;
+            block[7] = 0xff;
+            block[8] |= 1;
+        }
+    }
+}
+
 /// An end of alpha: a texel there must decode to it exactly (see
 /// [`mend_alpha_ends`]).
 fn alpha_end(a: u8) -> bool {
     a == 0 || a == 255
+}
+
+/// A block whose texels all sit just under opaque, from the alpha the
+/// viewer's `classify_alpha` still calls opaque: none may decode at 255
+/// (see [`mend_alpha_ends`]).
+fn under_opaque(src: &[u8; 64]) -> bool {
+    src.as_chunks::<4>().0.iter().all(|t| (250..255).contains(&t[3]))
 }
 
 /// Puts back, block by block, the texels at an end of alpha (0 or 255) that
@@ -89,7 +119,11 @@ fn alpha_end(a: u8) -> bool {
 /// then stays RGBA8). A mask cutoff can sit at either end (255: only the
 /// opaque texels show; 1: all but the transparent ones), where a texel off
 /// by one is a hole or a speck that the tolerance of [`harmed`] lets
-/// through. Mode 6 shares the lowest bit of its endpoints between color and
+/// through. The same goes for a block just under opaque ([`under_opaque`]):
+/// an alpha of 254 decoded at 255 shows at a cutoff of 255, which hides a
+/// face without the cost of colour alpha. Only such a block: one that
+/// mixes 0, 254 and 255 cannot keep all three apart, and asking it to
+/// halves the alpha textures that compress (`bc7_check`). Mode 6 shares the lowest bit of its endpoints between color and
 /// alpha: with that bit at 0, its opaque texels decode at 254 (a third of
 /// the opaque texels of the compressed alpha textures, holes all over a hat
 /// at a cutoff of 255). Its endpoints' bits are set again first (the color
@@ -105,7 +139,7 @@ fn mend_alpha_ends(rgba: &[u8], blocks: &mut [u8], w: usize, h: usize) -> bool {
     for by in 0..h.div_ceil(4) {
         for bx in 0..columns {
             let src = source_block(rgba, w, h, bx, by);
-            if !src.as_chunks::<4>().0.iter().any(|t| alpha_end(t[3])) {
+            if !under_opaque(&src) && !src.as_chunks::<4>().0.iter().any(|t| alpha_end(t[3])) {
                 continue;
             }
             let at = (by * columns + bx) * 16;
@@ -227,11 +261,12 @@ fn source_block(rgba: &[u8], w: usize, h: usize, bx: usize, by: usize) -> [u8; 6
 }
 
 fn ends_kept(src: &[u8; 64], decoded: &[u8; 64]) -> bool {
+    let under = under_opaque(src);
     src.as_chunks::<4>()
         .0
         .iter()
         .zip(decoded.as_chunks::<4>().0)
-        .all(|(s, d)| !alpha_end(s[3]) || d[3] == s[3])
+        .all(|(s, d)| if under { d[3] < 255 } else { !alpha_end(s[3]) || d[3] == s[3] })
 }
 
 /// A mode 6 block (one line, 7-bit endpoints and one shared lowest bit
@@ -374,6 +409,28 @@ mod tests {
     use super::*;
     use crate::build_mips;
 
+    #[test]
+    fn opaque_chains_decode_at_alpha_255_with_their_colors_kept() {
+        let rgba = image(256, 256, |x, y| [x as u8, y as u8, 90, 255]);
+        let chain = encode_chain(&build_mips(256, 256, rgba.clone(), 16), false).expect("kept");
+        for (w, h, blocks) in &chain {
+            let texels = decode_level(blocks, *w, *h).expect("decoded");
+            assert!(texels.as_chunks::<4>().0.iter().all(|t| t[3] == 255), "{w}x{h}");
+        }
+        // what the encoder alone gives, sealed afterwards like an old cache
+        let settings = bc7::EncodeSettings {
+            channels: 3,
+            ..bc7::opaque_ultra_fast_settings()
+        };
+        let blocks = encode_level(&settings, 256, 256, &rgba);
+        let (before, mut sealed) = (decode_level(&blocks, 256, 256).expect("decoded"), blocks.clone());
+        assert!(before.as_chunks::<4>().0.iter().any(|t| t[3] != 255));
+        seal_opaque(&mut sealed);
+        let after = decode_level(&sealed, 256, 256).expect("decoded");
+        let moved = before.iter().zip(&after).step_by(4).map(|(a, b)| a.abs_diff(*b)).max();
+        assert!(moved.is_some_and(|m| m <= 1), "{moved:?}");
+    }
+
     fn image(w: u32, h: u32, texel: impl Fn(u32, u32) -> [u8; 4]) -> Vec<u8> {
         (0..h)
             .flat_map(|y| (0..w).map(move |x| (x, y)))
@@ -460,6 +517,21 @@ mod tests {
                 .zip(decoded.as_chunks::<4>().0)
                 .all(|(s, d)| !alpha_end(s[3]) || s[3] == d[3])
         })
+    }
+
+    #[test]
+    fn alpha_just_under_opaque_never_decodes_as_opaque() {
+        // a mask cutoff of 255 hides these faces: one texel at 255 is a speck
+        for a in 250..255 {
+            let rgba = image(256, 256, |x, y| [x as u8, y as u8, 90, a]);
+            let mips = build_mips(256, 256, rgba, 16);
+            let chain = encode_chain(&mips, true).expect("compressible");
+            for (w, h, blocks) in &chain {
+                let decoded = decode_level(blocks, *w, *h).expect("level");
+                let top = decoded.as_chunks::<4>().0.iter().map(|t| t[3]).max();
+                assert!(top < Some(255), "alpha {a}, level {w} × {h}: {top:?}");
+            }
+        }
     }
 
     #[test]

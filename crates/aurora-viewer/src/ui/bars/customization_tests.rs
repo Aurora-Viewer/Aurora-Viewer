@@ -61,6 +61,8 @@ fn moved_menu_commands_use_their_native_handlers_and_current_enabled_guards() {
     st.hover_tips.enabled = true;
     assert!(matches!(invoke(land_tips, &st), BarAction::HoverTips(_)));
     assert!(matches!(invoke("menu:removed-command", &st), BarAction::None));
+    assert!(matches!(invoke("menu:common-advanced/debug-settings", &st), BarAction::None));
+    assert!(panels.debug_settings, "the new menu command retains its native window handler");
 }
 
 #[test]

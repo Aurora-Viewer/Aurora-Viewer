@@ -55,6 +55,9 @@ pub struct State {
     pub preset: &'static str,
     pub vram_used_mb: Option<u64>,
     pub vram_budget_mb: Option<u64>,
+    /// The tightest headroom of the last minute: budget less usage,
+    /// negative while the viewer was past the budget (vram.rs).
+    pub vram_headroom_min_mb: Option<i64>,
     /// Texture memory pressure step and its maximum.
     pub texture_pressure: (u32, u32),
     pub objects: usize,
@@ -148,6 +151,9 @@ impl State {
         let _ = writeln!(out, "preset={}", self.preset);
         if let (Some(used), Some(budget)) = (self.vram_used_mb, self.vram_budget_mb) {
             let _ = writeln!(out, "vram_mb={used}/{budget}");
+        }
+        if let Some(headroom) = self.vram_headroom_min_mb {
+            let _ = writeln!(out, "vram_headroom_60s_mb={headroom}");
         }
         let _ = writeln!(out, "texture_pressure={}/{}", self.texture_pressure.0, self.texture_pressure.1);
         let _ = writeln!(out, "objects={}", self.objects);

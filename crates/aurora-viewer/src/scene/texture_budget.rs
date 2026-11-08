@@ -150,7 +150,18 @@ pub fn texture_target(setting: u64, pages: u64, video: Option<VideoMemory>) -> u
     // target = max(min(budget - 512, budget * 0.8), MIN_VRAM_BUDGET)
     let process = v.budget.saturating_sub(512 * MB).min(v.budget / 5 * 4).max(768 * MB);
     let others = v.usage.max(v.allocated).saturating_sub(pages);
-    setting.min(process.saturating_sub(others)).max(MIN_TEXTURE_BYTES)
+    let target = setting.min(process.saturating_sub(others)).max(MIN_TEXTURE_BYTES);
+    if v.shared_budget > 0 && v.budget > v.shared_budget {
+        // A separate system heap was added to an integrated GPU's carve-out:
+        // keep texture pages to half of that heap's budget, after room for
+        // the rest of this process, so the system keeps its memory. A
+        // unified heap (Intel, RADV on APUs) is the one the budget always
+        // counted: its target stays as on a discrete card. Never under the
+        // minimum.
+        target.min((v.shared_budget / 2).saturating_sub(others)).max(MIN_TEXTURE_BYTES)
+    } else {
+        target
+    }
 }
 
 /// The target with the card oversubscribed by `over` bytes (gpu_load.rs):
@@ -384,6 +395,7 @@ mod tests {
             budget,
             usage: allocated,
             allocated,
+            shared_budget: 0,
         })
     }
 
@@ -393,6 +405,16 @@ mod tests {
         assert_eq!(texture_target(16 * GB, 4 * GB, video(23 * GB, 5 * GB)), 16 * GB);
         // no figures from the driver: the setting alone
         assert_eq!(texture_target(3 * GB, 9 * GB, None), 3 * GB);
+    }
+
+    #[test]
+    fn an_integrated_gpu_keeps_its_setting_until_the_shared_memory_runs_short() {
+        // a Radeon 610M under RADV: 21,982 MB of budget for 522 MB used
+        // (the system's memory) leaves the 2 GB of auto_texture_budget
+        let setting = 2 * GB;
+        assert_eq!(texture_target(setting, 4 * MB, video(21_982 * MB, 522 * MB)), setting);
+        // the other programs fill the memory: the budget says so
+        assert_eq!(texture_target(setting, GB, video(2 * GB, GB + GB / 2)), GB);
     }
 
     #[test]
@@ -409,6 +431,49 @@ mod tests {
         // under 768 MB for the process nor 256 MB for the textures
         assert_eq!(texture_target(6 * GB, 0, video(2 * GB, 0)), 2 * GB - 512 * MB);
         assert_eq!(texture_target(6 * GB, 100 * MB, video(GB, 900 * MB)), 256 * MB);
+    }
+
+    #[test]
+    fn apu_combines_distinct_heaps_and_caps_texture_pages_to_shared_ram() {
+        let apu = VideoMemory {
+            budget: 8 * GB + 300 * MB,
+            usage: 1800 * MB,
+            allocated: 1800 * MB,
+            shared_budget: 7800 * MB,
+        };
+        assert_eq!(texture_target(12 * GB, GB, Some(apu)), 3124 * MB);
+
+        let discrete = VideoMemory { shared_budget: 0, ..apu };
+        assert_eq!(
+            texture_target(12 * GB, GB, Some(discrete)),
+            (apu.budget / 5 * 4).min(apu.budget.saturating_sub(512 * MB)) - (apu.usage - GB)
+        );
+
+        let tight_shared = VideoMemory {
+            budget: 2 * GB,
+            usage: 0,
+            allocated: 0,
+            shared_budget: 100 * MB,
+        };
+        // never under the minimum, however tight the shared heap
+        assert_eq!(texture_target(2 * GB, 0, Some(tight_shared)), MIN_TEXTURE_BYTES);
+
+        // a unified heap (Intel, RADV on APUs) is all "shared": it is the heap
+        // the budget always counted, so the target stays as on main
+        let unified = VideoMemory {
+            budget: 7800 * MB,
+            usage: 1800 * MB,
+            allocated: 1800 * MB,
+            shared_budget: 7800 * MB,
+        };
+        let as_before = VideoMemory {
+            shared_budget: 0,
+            ..unified
+        };
+        assert_eq!(
+            texture_target(12 * GB, GB, Some(unified)),
+            texture_target(12 * GB, GB, Some(as_before))
+        );
     }
 
     #[test]
@@ -431,6 +496,7 @@ mod tests {
                 budget: 7 * GB + GB / 2,
                 usage,
                 allocated: 4 * GB + GB / 2,
+                shared_budget: 0,
             })
         };
         assert_eq!(texture_target(6 * GB, 3 * GB, v(5 * GB + GB / 2)), 6 * GB - GB / 2 - GB - GB);

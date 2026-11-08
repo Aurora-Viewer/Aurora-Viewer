@@ -85,6 +85,14 @@ impl Graphics {
             &[],
             &(),
         )?;
+        // Only for the log: a runtime that cannot say its name still works.
+        match xr.properties() {
+            Ok(properties) => log::info!("OpenXR runtime loaded: {}", runtime_class(&properties.runtime_name)),
+            Err(e) => {
+                log::info!("OpenXR runtime name unavailable: {e}");
+                log::info!("OpenXR runtime loaded: other OpenXR runtime");
+            }
+        }
         let system = xr.system(xr::FormFactor::HEAD_MOUNTED_DISPLAY)?;
         let requirements = xr.graphics_requirements::<xr::Vulkan>(system)?;
         let api = vk::API_VERSION_1_3;
@@ -190,6 +198,7 @@ impl Graphics {
             )
         }?
         .map_err(vk::Result::from_raw)?;
+        log::info!("OpenXR runtime created Vulkan device");
         // SAFETY: Runtime-created device belongs to the selected adapter and includes HAL features.
         let raw_device = unsafe { ash::Device::load(raw_instance.fp_v1_0(), vk::Device::from_raw(raw as _)) };
         let hd = unsafe {
@@ -206,5 +215,38 @@ impl Graphics {
         };
         let result = unsafe { adapter.create_device_from_hal::<hal::api::Vulkan>(hd, descriptor)? };
         Ok(result)
+    }
+}
+
+fn runtime_class(name: &str) -> &'static str {
+    let name = name.to_ascii_lowercase();
+    if name.contains("steamvr") || name.contains("steam vr") {
+        "SteamVR"
+    } else if name.contains("oculus") || name.contains("meta") {
+        "Meta"
+    } else if name.contains("virtual desktop") || name.contains("vdxr") {
+        "Virtual Desktop"
+    } else if name.contains("monado") {
+        "Monado"
+    } else if name.contains("windows mixed reality") || name.contains("microsoft") {
+        "Windows Mixed Reality"
+    } else {
+        "other OpenXR runtime"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn runtime_names_are_reduced_to_a_closed_public_vocabulary() {
+        for (name, expected) in [
+            ("SteamVR/OpenXR", "SteamVR"),
+            ("Oculus runtime", "Meta"),
+            ("Virtual Desktop VDXR", "Virtual Desktop"),
+            ("Monado", "Monado"),
+            ("Vendor private runtime", "other OpenXR runtime"),
+        ] {
+            assert_eq!(super::runtime_class(name), expected);
+        }
     }
 }

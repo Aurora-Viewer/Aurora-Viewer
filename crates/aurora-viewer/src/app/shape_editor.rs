@@ -76,9 +76,6 @@ impl App {
         self.shape_ui.hints = self.settings.shape_show_hints;
         self.shape_ui.feet = self.settings.shape_height_feet;
         if let Some(command) = self.shape_ui.open_item(&mut self.world, item) {
-            if self.shape_camera.is_none() {
-                self.shape_camera = Some(self.camera.clone());
-            }
             self.focus_shape_category();
             self.panels.appearance = false;
             if self.demo {
@@ -94,6 +91,10 @@ impl App {
     }
 
     pub(super) fn focus_shape_category(&mut self) {
+        self.sync_appearance_camera();
+        if !self.settings.appearance_camera_movement {
+            return;
+        }
         // The initial demo/login pose may not have been evaluated yet. Frame
         // the rendered skeleton once it exists, including its root height.
         if !self.world.avatar_poses.contains_key(&self.world.agent_id) {
@@ -122,10 +123,7 @@ impl App {
 
     pub(super) fn shape_action(&mut self, action: ui::shape::Action) {
         match action {
-            ui::shape::Action::CustomizeAnimation(enabled) => {
-                self.settings.customize_animation = enabled;
-                self.settings.save();
-            }
+            ui::shape::Action::Appearance(action) => self.appearance_editor_action(action),
             ui::shape::Action::Retry => {
                 if let Some(item) = worn_shape(&self.world) {
                     self.open_shape_editor(item);
@@ -140,6 +138,31 @@ impl App {
                     }
                 }
             }
+        }
+    }
+
+    pub(super) fn appearance_editor_action(&mut self, action: ui::shape::AppearanceAction) {
+        match action {
+            ui::shape::AppearanceAction::Camera(enabled) => self.settings.appearance_camera_movement = enabled,
+            ui::shape::AppearanceAction::Pose(enabled) => self.settings.customize_animation = enabled,
+        }
+        self.sync_appearance_camera();
+        self.settings.save();
+    }
+
+    /// Capture the return view only while automatic framing owns the camera.
+    /// Turning it off keeps the displayed view, including when the editor closes.
+    pub(super) fn sync_appearance_camera(&mut self) {
+        if !self.settings.appearance_camera_movement {
+            if self.shape_camera.take().is_some() {
+                self.camera.stop_appearance_view();
+            }
+            self.shape_ui.camera_pending = false;
+            self.wearable_ui.camera_pending = false;
+        } else if (self.shape_ui.open || self.wearable_ui.open) && self.shape_camera.is_none() {
+            self.shape_camera = Some(self.camera.clone());
+            self.shape_ui.camera_pending |= self.shape_ui.open;
+            self.wearable_ui.camera_pending |= self.wearable_ui.open;
         }
     }
 

@@ -337,9 +337,11 @@ fn calculate_normal(edges: vec4<f32>, c: vec3<f32>, l: vec3<f32>, r: vec3<f32>, 
     return normalize(n);
 }
 
-// The octahedral normal of the G-buffer (ssr.wgsl).
+// The octahedral normal of the G-buffer (ssr.wgsl). The prepass adds 2 to x
+// on the faces FSR must not trust (NORMAL_COMPOSITION, common.wgsl): taken
+// off here.
 fn oct_decode(e_in: vec2<f32>) -> vec3<f32> {
-    let e = e_in * 2.0 - vec2<f32>(1.0);
+    let e = vec2<f32>(e_in.x - select(0.0, 2.0, e_in.x > 1.5), e_in.y) * 2.0 - vec2<f32>(1.0);
     var n = vec3<f32>(e, 1.0 - abs(e.x) - abs(e.y));
     if (n.z < 0.0) {
         let s = select(vec2<f32>(-1.0), vec2<f32>(1.0), n.xy >= vec2<f32>(0.0));

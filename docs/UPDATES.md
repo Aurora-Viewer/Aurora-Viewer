@@ -104,8 +104,15 @@ update. The preferences and the skipped tag do not remove this check.
 Changing this policy is a release decision reviewed in a PR; it takes
 effect at the next release.
 
-In **aurora-tools.cmd → Manage releases → Create a release**, the Cache and
-Settings choices come before the confirmation. Keeping the cache and the
+In **aurora-tools.cmd → Manage releases → Create a release**, the Minimum
+version, Cache and Settings choices come before the confirmation. The
+minimum keeps the current one by default (the higher of `update-policy.json`
+and the last stable tag), can require the release's own version (every
+earlier installation must update) or take an earlier X.Y.Z typed by hand,
+never below the current minimum. A pre-release is never offered its own
+number: `0.9.2-beta.1` comes before `0.9.2`, so its users would be refused
+it, and an inherited minimum it does not reach is left out, as in the
+nightly. Keeping the cache and the
 settings is the usual choice; `Settings::sanitized` applies the migrations
 coded in the viewer. Forcing an action records the release version as the
 threshold: every earlier installation will have to apply it. The previous
@@ -160,8 +167,8 @@ up the successful transactions after the helper has finished.
 `cargo test -p aurora-updater`: loopback HTTP server and throwaway packages
 for SemVer, required update, tampered hash, incomplete transfer,
 cancellation, dangerous ZIP, lock, backup and rollback of the package and of
-the data. `scripts/test-update-policy.ps1` checks the release choices, their
-carry-over into an annotated tag and the refusal of an invalid threshold,
+the data. `scripts/test-update-policy.ps1` checks the release choices (minimum
+version included, typed or refused), their carry-over into an annotated tag and the refusal of an invalid threshold,
 without touching the current repository. The visual demo downloads nothing
 (`AURORA_DEMO_UPDATE`). The human test with two real executables is
 described in [TESTING.md](TESTING.md#interface).

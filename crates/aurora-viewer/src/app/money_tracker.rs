@@ -105,15 +105,17 @@ impl App {
         }
     }
 
-    /// AURORA_DEMO_PAYMENT=card|legacy|sent|sent-open|friend|off
+    /// AURORA_DEMO_PAYMENT=card|legacy|sent|sent-open|sent-friend|friend|anyone|off
     /// (docs/TESTING.md): a resident's conversation open on their message,
     /// then their two payments as cards, in the bubbles or the legacy lines;
     /// `sent`: then ours to them (the demo keeps no transcript: what comes
     /// back when the conversation is opened again is a unit test's);
     /// `sent-open`: no conversation open, ours opens it with "Open the
-    /// conversation when you pay a resident" on; `friend`: a friend's payment opens their conversation, a stranger's
-    /// (no conversation) shows nowhere; `off`: the same with the option off,
-    /// no conversation opens.
+    /// conversation when you pay a resident" on Anyone; `sent-friend`: we pay
+    /// a stranger and a friend with it on Friends only, the friend's opens;
+    /// `friend`: a friend's payment to us opens their conversation, a
+    /// stranger's (no conversation) shows nowhere; `anyone`: both open;
+    /// `off`: the same on Never, no conversation opens.
     pub(super) fn demo_payment(&mut self) {
         let Ok(mode) = std::env::var("AURORA_DEMO_PAYMENT") else {
             return;
@@ -136,17 +138,35 @@ impl App {
         self.panels.perf = false;
         self.panels.chat = true;
         ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 300.0), egui::vec2(600.0, 440.0));
+        use crate::world::payments::Opens;
         if mode == "sent-open" {
-            self.settings.payment_sent_opens_conversation = true;
-            self.world.payments.open_when_paying = true;
+            self.settings.payment_sent_opens = Opens::Anyone;
+            self.world.payments.open_sent = Opens::Anyone;
             self.world
                 .payment(&gift(6, agent, DEMO_NOVA, 300, aurora_i18n::tr!("demo-payment-rent")));
             self.chat_ui.open(DEMO_NOVA);
             return;
         }
-        if mode == "friend" || mode == "off" {
-            self.settings.payment_opens_conversation = mode == "friend";
-            self.world.payments.open_for_friends = self.settings.payment_opens_conversation;
+        if mode == "sent-friend" {
+            self.settings.payment_sent_opens = Opens::Friends;
+            self.world.payments.open_sent = Opens::Friends;
+            self.world.payment(&gift(7, agent, DEMO_TESS, 20, "Payment"));
+            self.world
+                .payment(&gift(8, agent, DEMO_FRIEND, 250, aurora_i18n::tr!("demo-payment-boat")));
+            if self.world.social.has_session(&DEMO_FRIEND) {
+                self.chat_ui.open(DEMO_FRIEND);
+            }
+            return;
+        }
+        let received = match mode.as_str() {
+            "friend" => Some(Opens::Friends),
+            "anyone" => Some(Opens::Anyone),
+            "off" => Some(Opens::Never),
+            _ => None,
+        };
+        if let Some(rule) = received {
+            self.settings.payment_received_opens = rule;
+            self.world.payments.open_received = rule;
             self.world.payment(&paid(1, DEMO_TESS, 20, "Payment"));
             self.world
                 .payment(&paid(2, DEMO_FRIEND, 250, aurora_i18n::tr!("demo-payment-boat")));

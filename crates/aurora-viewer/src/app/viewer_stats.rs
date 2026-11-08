@@ -200,12 +200,22 @@ impl App {
                     api: g.backend.clone(),
                     vram_mb: g.vram_mb.map_or(0, |mb| i32::try_from(mb).unwrap_or(i32::MAX)),
                     max_texture_size: i32::try_from(g.max_texture_size).unwrap_or(i32::MAX),
+                    vulkan: g.vulkan.map(|vk| aurora_net::viewer_stats::VulkanLimits {
+                        instance_version: vk.instance_version,
+                        max_samples: vk.max_samples,
+                        texture_units: vk.texture_units,
+                        sample_mask_words: vk.sample_mask_words,
+                        color_samples: vk.color_samples,
+                        depth_samples: vk.depth_samples,
+                        integer_samples: vk.integer_samples,
+                    }),
                 },
             },
             shader_level: shader_level(self.settings.shadows, self.settings.ssao),
             display_names: self.settings.use_display_names,
             show_usernames: self.settings.show_usernames,
             inventory_usable: !inventory.root.is_nil() && inventory.folders.contains_key(&inventory.root),
+            position_snaps: self.world.agent.position_snaps(),
         }
     }
 

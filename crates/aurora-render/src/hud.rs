@@ -8,8 +8,8 @@ pub struct HudView {
     pub width: f32,
     pub height: f32,
     /// Where the HUDs are laid out in it (left, top, right, bottom pixels):
-    /// the room the bars leave, as the Legacy Viewer draws them in its world
-    /// view rectangle (LLViewerWindow::updateWorldViewRect, setup3DViewport,
+    /// the reference world view rectangle (independent of floater movement
+    /// limits; LLViewerWindow::updateWorldViewRect, setup3DViewport,
     /// indra/newview/llviewerwindow.cpp), or the whole window.
     pub area: [f32; 4],
     pub zoom: f32,

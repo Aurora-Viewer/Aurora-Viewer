@@ -24,6 +24,11 @@ pub fn page(cx: &mut Cx) {
             &field!(double_click),
             &choices,
         );
+        cx.toggle(
+            tr!("ui-options-double-click-scripted"),
+            tr!("ui-options-double-click-scripted-help"),
+            &field!(double_click_scripted),
+        );
         // Legacy Viewer › Protection (FSBlockClickSit)
         cx.toggle(
             tr!("ui-options-block-click-sit"),

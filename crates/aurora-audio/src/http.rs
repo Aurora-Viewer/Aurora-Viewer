@@ -300,12 +300,17 @@ fn host_header(url: &Url) -> String {
     }
 }
 
+/// Reads the status line and headers, at most [`MAX_HEADER_BYTES`] in all:
+/// each line read stops at what is left of that budget, so a line that
+/// never ends is refused instead of being kept whole in memory.
 fn read_head<R: BufRead>(r: &mut R) -> Result<Head, HttpError> {
     let mut lines = Vec::new();
     let mut total = 0;
     loop {
         let mut line = Vec::new();
-        let n = r.read_until(b'\n', &mut line)?;
+        // one byte over the budget tells a full budget from a longer line
+        let left = (MAX_HEADER_BYTES - total) as u64 + 1;
+        let n = (&mut *r).take(left).read_until(b'\n', &mut line)?;
         if n == 0 {
             return Err(HttpError::Malformed);
         }
@@ -456,6 +461,58 @@ mod tests {
     #[test]
     fn read_head_from_bytes() {
         let raw = b"HTTP/1.1 200 OK\r\nContent-Type: audio/ogg\r\n\r\nBODY";
+        let mut r = BufReader::new(&raw[..]);
+        let head = read_head(&mut r).unwrap();
+        assert_eq!(head.status, 200);
+        let mut body = String::new();
+        r.read_to_string(&mut body).unwrap();
+        assert_eq!(body, "BODY");
+    }
+
+    /// Endless bytes without a line end, counting what was read.
+    struct Endless {
+        byte: u8,
+        read: usize,
+    }
+
+    impl Read for Endless {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            buf.fill(self.byte);
+            self.read += buf.len();
+            Ok(buf.len())
+        }
+    }
+
+    #[test]
+    fn read_head_stops_a_line_that_never_ends() {
+        let mut r = BufReader::with_capacity(1024, Endless { byte: b'a', read: 0 });
+        assert!(matches!(read_head(&mut r), Err(HttpError::Malformed)));
+        assert!(r.get_ref().read <= MAX_HEADER_BYTES + 1024, "{}", r.get_ref().read);
+
+        // the same once the status line is in
+        let mut raw = b"ICY 200 OK\r\nicy-name: ".to_vec();
+        raw.extend(std::iter::repeat_n(b'x', MAX_HEADER_BYTES));
+        let mut r = BufReader::new(&raw[..]);
+        assert!(matches!(read_head(&mut r), Err(HttpError::Malformed)));
+    }
+
+    #[test]
+    fn read_head_budget_counts_every_line() {
+        let line = format!("x-pad: {}\r\n", "y".repeat(100));
+        let mut raw = b"HTTP/1.1 200 OK\r\n".to_vec();
+        for _ in 0..MAX_HEADER_BYTES / line.len() + 1 {
+            raw.extend(line.as_bytes());
+        }
+        raw.extend(b"\r\n");
+        let mut r = BufReader::new(&raw[..]);
+        assert!(matches!(read_head(&mut r), Err(HttpError::Malformed)));
+
+        // a large head under the budget still reads
+        let mut raw = b"HTTP/1.1 200 OK\r\n".to_vec();
+        for _ in 0..(MAX_HEADER_BYTES - 64) / line.len() {
+            raw.extend(line.as_bytes());
+        }
+        raw.extend(b"\r\nBODY");
         let mut r = BufReader::new(&raw[..]);
         let head = read_head(&mut r).unwrap();
         assert_eq!(head.status, 200);

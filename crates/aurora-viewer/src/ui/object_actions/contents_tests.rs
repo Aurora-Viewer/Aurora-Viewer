@@ -215,6 +215,53 @@ fn open_contents_ctrl_shift_and_right_click_keep_the_batch_in_list_order() {
 }
 
 #[test]
+fn selected_contents_copy_uses_the_open_buttons_name_and_permissions_without_unselected_items() {
+    use crate::build::task_inventory;
+    use aurora_net::build::ObjectProps;
+
+    for worn in [false, true] {
+        let mut w = Window::new();
+        let idx = w.world.objects.index_of_uuid(&w.object).unwrap();
+        if worn {
+            let object = w.world.objects.get_mut(idx).unwrap();
+            object.parent_id = 1;
+            object.state = 0x10;
+        }
+        let props = ObjectProps {
+            name: "Packed outfit".into(),
+            ..Default::default()
+        };
+        let c = w.state.contents.as_mut().unwrap();
+        let listing = c.result.as_mut().unwrap().as_mut().unwrap();
+        listing[0].asset_type = 5;
+        listing[0].inv_type = 18;
+        listing[2].asset_type = 6;
+        listing[2].inv_type = 6;
+        let items = [0, 2]
+            .into_iter()
+            .map(|i| task_inventory::from_inventory(w.object, &listing[i]))
+            .collect::<Vec<_>>();
+        let full = copy_request(c, Some(&props), &w.world).unwrap();
+        let selected = task_copy_request(w.object, items.clone(), Some(&props), &w.world).unwrap();
+        assert_eq!(selected.name, full.name);
+        assert_eq!(selected.object, full.object);
+        assert_eq!(selected.items, items);
+        assert_eq!(selected.items.len(), 2);
+        assert!(selected.wear.is_none());
+        assert_eq!(selected.transfer, full.transfer);
+
+        let mut no_copy = items;
+        no_copy[1].owner_mask &= !perm::COPY;
+        let selected = task_copy_request(w.object, no_copy, Some(&props), &w.world);
+        if worn {
+            assert!(selected.is_err(), "a folder copy cannot remove no-copy items from a worn object");
+        } else {
+            assert_eq!(selected.unwrap().transfer.moved, [w.ids[2]], "one shared move warning");
+        }
+    }
+}
+
+#[test]
 fn open_contents_select_all_delete_is_scoped_and_readonly_and_repeats_are_safe() {
     for editable in [false, true] {
         let mut w = Window::new();

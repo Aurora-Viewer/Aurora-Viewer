@@ -40,7 +40,7 @@ impl MediaManager {
         let _ = self.plugins(f.settings);
         self.on_parcel_messages(world, f.settings);
         self.scan_objects(world, scene, now);
-        self.fetch_media_data(f);
+        self.fetch_media_data(scene, f);
         self.reconcile_prims(world, f);
         self.update_parcel(world, f);
         self.apply_filter(world, f);
@@ -220,26 +220,54 @@ impl MediaManager {
             return;
         }
         // LLVOVolume::processUpdateMessage: fetch when the media version
-        // grew (or never fetched)
+        // grew (or never fetched), once per version: an answer that failed
+        // (the simulator busy past the retries) waits for the next change,
+        // instead of asking again at once and keeping the simulator's rate
+        // limit full for every other screen
         let version = entry::media_version(&o.media_url);
         let need = match (e.fetched_version, version) {
             (None, _) => true,
             (Some(have), Some(v)) => v > have,
             (Some(_), None) => false,
-        };
+        } && e.asked_version.is_none_or(|asked| version.unwrap_or(0) > asked);
         if need
             && !self.client.is_queued(&o.full_id)
             && let Some(cap) = world.regions.get(&o.key.region).and_then(|r| r.caps.get("ObjectMedia"))
         {
-            self.client.request(o.full_id, cap);
+            e.asked_version = Some(version.unwrap_or(0));
+            self.client.request(o.full_id, cap, e.fetched_version.is_some());
         }
     }
 
-    fn fetch_media_data(&mut self, f: &MediaFrame) {
+    fn fetch_media_data(&mut self, scene: &Scene, f: &MediaFrame) {
         let Some((rt, http)) = f.net.as_ref() else {
             return;
         };
-        for got in self.client.update(rt, http) {
+        // LLMediaDataClientObjectImpl::getMediaInterest: the focused object
+        // first, then the pixels on screen (HUDs count as a 512² page), the
+        // nearest first among equals
+        let (objects, focus) = (&self.objects, self.focus);
+        let interest = |id: &Uuid| -> Option<(f32, f32)> {
+            let om = objects.get(id)?;
+            if matches!(focus, Some(MediaKey::Prim { object, .. }) if object == *id) {
+                return Some((f32::MAX, 0.0));
+            }
+            if om.hud {
+                return Some((512.0 * 512.0, 0.0));
+            }
+            Some(match scene.gpu.get(om.idx).filter(|g| g.radius > 0.0) {
+                Some(g) => {
+                    let px = if f.view.sphere_visible(g.center, g.radius) {
+                        f.view.pixel_size(g.center, g.radius)
+                    } else {
+                        0.0
+                    };
+                    (px * px, g.center.distance(f.camera))
+                }
+                None => (0.0, f32::MAX),
+            })
+        };
+        for got in self.client.update(rt, http, Instant::now(), interest) {
             let Some(e) = self.objects.get_mut(&got.object) else {
                 continue;
             };
@@ -258,9 +286,8 @@ impl MediaManager {
                     }
                 }
                 Err(err) => {
+                    // not asked again until the version changes (asked_version)
                     log::info!("media: ObjectMedia for {} failed: {err}", got.object);
-                    // stop asking until the version changes
-                    e.fetched_version = Some(e.fetched_version.unwrap_or(0));
                 }
             }
         }
@@ -353,19 +380,28 @@ impl MediaManager {
 
     /// The media filter (filterMediaUrl), before any plugin or type request
     /// reaches the site: a wanted media whose site has no answer yet waits
-    /// unloaded, a refused one is no longer wanted. Media on our own worn
-    /// items is not asked about (`filter_trust_own_worn`).
+    /// unloaded, a refused one is no longer wanted. Media on items we wear
+    /// and made ourselves is not asked about (`filter_trust_own_worn`). A
+    /// script, a file of this computer or a browser page never loads, with
+    /// the filter off too (`filter::refused_scheme`).
     fn apply_filter(&mut self, world: &mut World, f: &MediaFrame) {
         let objects = &self.objects;
         for m in &mut self.impls {
             m.filter_hold = false;
-            if !f.settings.filter || !m.wanted {
+            if !m.wanted {
                 continue;
             }
             let source = match m.key {
                 MediaKey::Parcel => Source::ParcelMedia,
                 MediaKey::Prim { .. } => Source::PrimMedia,
             };
+            if world.media_filter.refuse_scheme(&m.url, source) {
+                m.wanted = false;
+                continue;
+            }
+            if !f.settings.filter {
+                continue;
+            }
             let verdict = if trusted_by_filter(objects, m.key, f.settings) {
                 world.media_filter.check_trusted(&m.url, source)
             } else {
@@ -878,10 +914,15 @@ fn forget_slot(slot_ids: &mut HashMap<usize, Uuid>, idx: usize, id: &Uuid) {
     }
 }
 
-/// Whether the media filter loads a media without asking: on our own worn
-/// items (attachments and HUDs) when the option is on. Another avatar's
-/// attachments, objects in the world, the parcel media, and an item whose
-/// avatar has not arrived yet are asked about.
+/// Whether the media filter loads a media without asking: on items we wear
+/// (attachments and HUDs), whoever made them, when the option is on.
+/// Another avatar's attachments, objects in the world, the parcel media,
+/// and an item whose avatar has not arrived yet are asked about. The Legacy
+/// Viewer filters only the parcel media and music (filterMediaUrl,
+/// indra/newview/llviewerparcelmedia.cpp), never prim media: asking about
+/// the world's objects is already stricter, and asking about the HUDs one
+/// bought too would question every worn item, with nothing playing until
+/// answered.
 fn trusted_by_filter(objects: &HashMap<Uuid, ObjMedia>, key: MediaKey, settings: &MediaSettings) -> bool {
     settings.filter_trust_own_worn
         && match key {
@@ -1199,6 +1240,33 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_fetch_waits_for_the_next_media_change() {
+        let (mut w, screen) = world();
+        let idx = w.objects.index_of_uuid(&screen).expect("screen");
+        let set_url = |w: &mut World, v: u32| {
+            if let Some(o) = w.objects.get_mut(idx) {
+                o.media_url = format!("x-mv:{v:010}/{}", Uuid::from_u128(7));
+            }
+        };
+        set_url(&mut w, 3);
+        let mut m = MediaManager::default();
+        track(&mut m, &mut w);
+        assert!(m.client.is_queued(&screen));
+        // the simulator stayed busy past the retries: the client gave up
+        m.client.clear();
+        for later in 1..4 {
+            let at = m.last_refresh + Duration::from_millis(600 * later);
+            m.track_objects(&mut w, &|_| false, at);
+            assert!(!m.client.is_queued(&screen), "same version: not asked again");
+        }
+        // the script changes the screen: its new data is asked for
+        set_url(&mut w, 4);
+        track(&mut m, &mut w);
+        assert!(m.client.is_queued(&screen));
+        assert_eq!(m.objects.get(&screen).and_then(|e| e.asked_version), Some(4));
+    }
+
+    #[test]
     fn fetch_waits_for_the_capability_without_a_full_pass() {
         let (mut w, screen) = world();
         let main = w.main_region.expect("demo region");
@@ -1273,9 +1341,39 @@ mod tests {
         // in the world
         track(&mut m, &mut w);
         assert!(!trusted_by_filter(&m.objects, key, &on));
-        // worn by us, as an attachment or a HUD
+        // worn by us, its item not known yet (or a temporary attachment,
+        // worn from no item): trusted
         parent_to(&mut w, own);
+        let item = Uuid::from_u128(0x17e3);
+        if let Some(o) = w.objects.get_mut(idx) {
+            o.name_values = format!("AttachItemID STRING RW SV {item}");
+        }
         track(&mut m, &mut w);
+        assert!(m.objects.get(&screen).is_some_and(|e| e.on_own_avatar));
+        assert!(trusted_by_filter(&m.objects, key, &on), "creator unknown");
+        // whoever made the item: a HUD bought from someone else is trusted
+        // as one we made
+        let made_by = |w: &mut World, creator: Uuid| {
+            w.inventory.add_items(vec![aurora_net::inventory::InvItem {
+                id: item,
+                name: "Screen".into(),
+                creator,
+                owner: w.agent_id,
+                ..Default::default()
+            }]);
+        };
+        // the item arrives later: seen at the next refresh
+        let refresh = |m: &mut MediaManager, w: &mut World| {
+            let later = m.last_refresh + Duration::from_millis(600);
+            m.track_objects(w, &|_| false, later);
+        };
+        made_by(&mut w, Uuid::from_u128(0x5747));
+        refresh(&mut m, &mut w);
+        assert!(trusted_by_filter(&m.objects, key, &on), "made by someone else");
+        assert!(!trusted_by_filter(&m.objects, key, &off), "the option off asks");
+        // made by us, as an attachment or a HUD
+        made_by(&mut w, crate::demo::DEMO_AGENT);
+        refresh(&mut m, &mut w);
         assert!(trusted_by_filter(&m.objects, key, &on));
         assert!(!trusted_by_filter(&m.objects, key, &off), "the option off asks again");
         m.track_objects(&mut w, &|_| true, m.last_refresh);

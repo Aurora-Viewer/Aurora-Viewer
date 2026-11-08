@@ -185,12 +185,12 @@ pub enum BuildCmd {
     },
     SetName {
         handle: RegionHandle,
-        local_id: u32,
+        local_ids: Vec<u32>,
         name: String,
     },
     SetDescription {
         handle: RegionHandle,
-        local_id: u32,
+        local_ids: Vec<u32>,
         description: String,
     },
     /// ObjectFlagUpdate (physical, temporary, phantom).
@@ -621,5 +621,56 @@ mod tests {
         assert_eq!(brush_index(2.0), 0);
         assert_eq!(brush_index(3.0), 1);
         assert_eq!(brush_index(8.0), 2);
+    }
+}
+
+/// LLSelectMgr::sendListToRegions: at most 254 roots in each reliable
+/// ObjectLink, with the same first root repeated in subsequent messages.
+pub fn link_batches<T: Copy>(roots: &[T]) -> Vec<Vec<T>> {
+    let Some(&root) = roots.first() else { return Vec::new() };
+    if roots.len() <= 254 {
+        return vec![roots.to_vec()];
+    }
+    roots[1..]
+        .chunks(253)
+        .map(|children| std::iter::once(root).chain(children.iter().copied()).collect())
+        .collect()
+}
+
+#[cfg(test)]
+mod link_tests {
+    use super::link_batches;
+    use aurora_msg::msgs::{ObjectLink, object_link};
+
+    #[test]
+    fn link_packets_round_trip_every_root_at_protocol_boundaries() {
+        for count in [0, 1, 2, 253, 254, 255, 256, 507, 508, 10001] {
+            let ids: Vec<u32> = (1..=count).collect();
+            let mut received = Vec::new();
+            for (index, batch) in link_batches(&ids).into_iter().enumerate() {
+                assert!(batch.len() <= 254);
+                assert_eq!(batch[0], 1);
+                let message = ObjectLink {
+                    object_data: batch
+                        .into_iter()
+                        .map(|object_local_id| object_link::ObjectData { object_local_id })
+                        .collect(),
+                    ..Default::default()
+                };
+                let mut bytes = Vec::new();
+                aurora_msg::build_packet(&message, index as u32, true, false, &[], &mut bytes);
+                let packet = aurora_msg::parse_packet(&bytes).unwrap();
+                assert!(packet.reliable());
+                let decoded: ObjectLink = packet.decode().unwrap();
+                received.extend(
+                    decoded
+                        .object_data
+                        .into_iter()
+                        .skip(usize::from(index > 0))
+                        .map(|o| o.object_local_id),
+                );
+            }
+            assert_eq!(received, ids, "no dropped or duplicated children for {count} roots");
+        }
     }
 }

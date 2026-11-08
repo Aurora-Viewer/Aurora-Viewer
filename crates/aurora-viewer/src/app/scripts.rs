@@ -67,6 +67,39 @@ fn permissions(mask: u32, library: bool) -> (bool, bool) {
     (copy && (modify || library), copy && modify && !library)
 }
 
+/// What an `#include` may take of an inventory script, from least to most.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum IncludeUse {
+    /// Its source cannot be read (copy and modify, as for opening it).
+    Unreadable,
+    /// Readable, but without transfer and made by someone else: its source
+    /// would end in a script that can be given away.
+    NoTransfer,
+    /// Its source, without its asset id.
+    Source,
+    /// Its source, and its asset id in `__ASSETID__` (full permission).
+    SourceAndAsset,
+}
+
+/// Script includes follow item rights: the source of an included script
+/// needs the rights to read it (`permissions`) and transfer, unless the
+/// agent made it, since it is copied into the saved script; its asset id
+/// only goes into `__ASSETID__` for a full permission script. The Legacy
+/// Viewer includes any script it finds by name and always writes its asset
+/// id (fslslpreproc.cpp, found_include_directive, opened_include_file).
+fn include_use(mask: u32, library: bool, creator: Uuid, agent: Uuid) -> IncludeUse {
+    let full = perm::COPY | perm::MODIFY | perm::TRANSFER;
+    if !permissions(mask, library).0 {
+        IncludeUse::Unreadable
+    } else if mask & full == full {
+        IncludeUse::SourceAndAsset
+    } else if mask & perm::TRANSFER != 0 || !creator.is_nil() && creator == agent {
+        IncludeUse::Source
+    } else {
+        IncludeUse::NoTransfer
+    }
+}
+
 impl App {
     pub(super) fn demo_script_input(&self, raw: &mut egui::RawInput) {
         if !self.demo {
@@ -217,6 +250,8 @@ impl App {
                     it.parent = self.world.inventory.lib_root;
                     it.owner = self.world.inventory.lib_owner;
                     it.owner_mask &= !perm::MODIFY;
+                    // (what the agent holds on a Library item: rules::agent_mask)
+                    it.everyone_mask = it.owner_mask;
                     self.world.inventory.add_items(vec![it]);
                 }
                 self.panels.inventory = true;
@@ -422,7 +457,7 @@ impl App {
             let inv = &self.world.inventory;
             let it = inv.items.get(&target.item).filter(|it| it.asset_type == 10)?;
             let library = !inv.lib_root.is_nil() && crate::world::inventory::actions::under(inv, it.id, inv.lib_root);
-            let (can_read, can_edit) = permissions(it.owner_mask, library);
+            let (can_read, can_edit) = permissions(crate::world::inventory::actions::held(inv, it), library);
             Some(ScriptInfo {
                 name: it.name.clone(),
                 handle: self.world.main_region.unwrap_or_default(),
@@ -448,20 +483,28 @@ impl App {
             } else {
                 it.everyone_mask | if member { it.group_mask } else { 0 }
             };
+            let modify = !task_script_refused(&self.build, &self.world, target.object);
             let (can_read, can_edit) = permissions(mask, false);
             Some(ScriptInfo {
                 name: it.name.clone(),
                 handle: object.key.region,
                 owner: it.owner_id,
                 asset: it.asset_id,
-                can_read,
-                can_edit,
+                can_read: can_read && modify,
+                can_edit: can_edit && modify,
             })
         }
     }
 
     pub(super) fn open_script(&mut self, target: ScriptTarget) {
         if self.world.rlva.has("viewscript") {
+            return;
+        }
+        if task_script_refused(&self.build, &self.world, target.object) {
+            self.world.system_notice(
+                aurora_i18n::tr!("script-object-no-modify"),
+                crate::world::notice_topics::Topic::Items,
+            );
             return;
         }
         let Some(info) = self.script_info(target) else { return };
@@ -518,19 +561,44 @@ impl App {
         match action {
             Action::Debug => self.script_editors.open_debug(),
             Action::Include { request, name } => {
-                let target = self
-                    .world
-                    .inventory
+                // of the scripts of that name, the one the include may use
+                // most (FSLSLPreprocessor::findInventoryByName takes the
+                // first one); read on a user action (a save or a preview)
+                let inv = &self.world.inventory;
+                let found = inv
                     .items
                     .values()
-                    .find(|item| item.asset_type == 10 && item.name == name)
-                    .map(|item| ScriptTarget {
-                        object: Uuid::nil(),
-                        item: item.id,
-                    });
-                let info = target.and_then(|target| self.script_info(target).filter(|info| info.can_read).map(|info| (target, info)));
-                if let Some((target, info)) = info {
-                    self.script_editors.include_asset(request, info.asset);
+                    .filter(|item| item.asset_type == 10 && item.name == name)
+                    .map(|item| {
+                        let library = !inv.lib_root.is_nil() && crate::world::inventory::actions::under(inv, item.id, inv.lib_root);
+                        (
+                            item.id,
+                            include_use(
+                                crate::world::inventory::actions::held(inv, item),
+                                library,
+                                item.creator,
+                                self.world.agent_id,
+                            ),
+                        )
+                    })
+                    .max_by_key(|(_, use_)| *use_);
+                let target = found.filter(|(_, use_)| *use_ >= IncludeUse::Source).map(|(item, use_)| {
+                    let target = ScriptTarget { object: Uuid::nil(), item };
+                    (target, use_)
+                });
+                let info = target.and_then(|(target, use_)| {
+                    self.script_info(target)
+                        .filter(|info| info.can_read)
+                        .map(|info| (target, use_, info))
+                });
+                if let Some((target, use_, info)) = info {
+                    // __ASSETID__: the asset only of a full permission script
+                    let asset = if use_ == IncludeUse::SourceAndAsset {
+                        info.asset
+                    } else {
+                        Uuid::nil()
+                    };
+                    self.script_editors.include_asset(request, asset);
                     self.send(NetCommand::LoadScript {
                         request,
                         target,
@@ -539,13 +607,18 @@ impl App {
                         asset: info.asset,
                     });
                 } else {
+                    let reason = if found.is_some_and(|(_, use_)| use_ == IncludeUse::NoTransfer) {
+                        aurora_i18n::tr!("script-preproc-include-no-transfer", name = name)
+                    } else {
+                        aurora_i18n::tr!("script-preproc-include-missing", name = name)
+                    };
                     self.script_editors.loaded(
                         request,
                         ScriptTarget {
                             object: Uuid::nil(),
                             item: Uuid::nil(),
                         },
-                        Err(aurora_i18n::tr!("script-preproc-include-missing", name = name)),
+                        Err(reason),
                     );
                 }
             }
@@ -729,6 +802,7 @@ impl App {
                 let result = Ok(ScriptSaved {
                     asset,
                     compiled,
+                    checked: true,
                     errors: if compiled {
                         vec![]
                     } else {
@@ -747,6 +821,16 @@ impl App {
     }
 }
 
+/// LLTaskLSLBridge::openItem: a script in an object opens only when the
+/// object may be modified. Checked once per open, on the root's flags.
+fn task_script_refused(build: &crate::build::BuildTool, world: &crate::world::World, object: Uuid) -> bool {
+    !object.is_nil()
+        && world
+            .objects
+            .index_of_uuid(&object)
+            .is_some_and(|idx| !build.can_modify(world, idx))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -758,5 +842,44 @@ mod tests {
         assert_eq!(permissions(perm::MODIFY, false), (false, false));
         assert_eq!(permissions(perm::COPY, true), (true, false));
         assert_eq!(permissions(perm::COPY | perm::MODIFY, true), (true, false));
+    }
+
+    #[test]
+    fn a_task_script_opens_only_in_a_modifiable_object() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for ev in crate::demo::events().into_iter().chain(crate::demo::action_events()) {
+            world.apply(ev);
+        }
+        let object = crate::demo::action_id(970);
+        let idx = world.objects.index_of_uuid(&object).expect("demo action object");
+        world.objects.get_mut(idx).expect("object").parent_id = 0;
+        let build = crate::build::BuildTool::default();
+        world.objects.get_mut(idx).expect("object").update_flags = crate::ui::context::flags::OBJECT_MODIFY;
+        assert!(!task_script_refused(&build, &world, object));
+        world.objects.get_mut(idx).expect("object").update_flags = 0;
+        assert!(task_script_refused(&build, &world, object));
+        // an agent inventory script has no object
+        assert!(!task_script_refused(&build, &world, Uuid::nil()));
+    }
+
+    #[test]
+    fn script_includes_follow_item_rights() {
+        let (me, other) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let full = perm::COPY | perm::MODIFY | perm::TRANSFER;
+        assert_eq!(include_use(full, false, other, me), IncludeUse::SourceAndAsset);
+        // without transfer: refused, unless the agent made it (no asset id)
+        let no_trans = perm::COPY | perm::MODIFY;
+        assert_eq!(include_use(no_trans, false, other, me), IncludeUse::NoTransfer);
+        assert_eq!(include_use(no_trans, false, Uuid::nil(), Uuid::nil()), IncludeUse::NoTransfer);
+        assert_eq!(include_use(no_trans, false, me, me), IncludeUse::Source);
+        // still copy and modify to read it, even for its creator
+        assert_eq!(include_use(perm::COPY | perm::TRANSFER, false, me, me), IncludeUse::Unreadable);
+        assert_eq!(include_use(perm::MODIFY | perm::TRANSFER, false, me, me), IncludeUse::Unreadable);
+        // a library script: readable with copy, its asset id only when full
+        assert_eq!(include_use(perm::COPY | perm::TRANSFER, true, other, me), IncludeUse::Source);
+        assert_eq!(include_use(perm::COPY, true, other, me), IncludeUse::NoTransfer);
+        // the most usable of several scripts of that name wins
+        assert!(IncludeUse::SourceAndAsset > IncludeUse::Source && IncludeUse::Source > IncludeUse::NoTransfer);
+        assert!(IncludeUse::NoTransfer > IncludeUse::Unreadable);
     }
 }
