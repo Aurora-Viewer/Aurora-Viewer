@@ -942,10 +942,26 @@ fn poser_library_saves_bvh_confirms_overwrite_and_correlates_loads_to_the_origin
     }
     assert_eq!(service.entries.len(), 1);
     let path = service.entries[0].path.clone();
-    assert_eq!(service.saved_path.as_ref(), Some(&path));
+    assert_eq!(service.saved_path, None);
     assert_eq!(service.selected, Some(0));
     assert!(service.filter.is_empty());
     assert!(service.message.as_ref().unwrap().contains(path.to_string_lossy().as_ref()));
+
+    // A user can select an existing row while the post-save refresh is pending.
+    service.saved_path = Some(path.clone());
+    service.ready = false;
+    for _ in 0..3 {
+        tick(&mut service);
+    }
+    assert_eq!(service.selected, Some(0));
+    assert_eq!(service.saved_path, None, "a current selection must consume the pending saved path");
+
+    service.selected = None;
+    service.ready = false;
+    for _ in 0..3 {
+        tick(&mut service);
+    }
+    assert_eq!(service.selected, None, "a later library refresh must not reuse the saved path");
     let bvh = std::fs::read(root.join("poses/Portrait.bvh")).unwrap();
     let imported = aurora_assets::import_animation::parse_bvh_pose(&bvh, world.avatar_lib.skeleton.as_ref().unwrap()).unwrap();
     assert!(

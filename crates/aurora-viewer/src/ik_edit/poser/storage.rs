@@ -158,11 +158,12 @@ impl Service {
             self.busy = false;
             match output {
                 Output::Listed(entries) => {
+                    let saved_path = self.saved_path.take();
                     let selected = self
                         .selected
                         .and_then(|i| self.entries.get(i))
                         .map(|e| e.path.clone())
-                        .or_else(|| self.saved_path.clone());
+                        .or(saved_path);
                     self.selected = selected.and_then(|path| entries.iter().position(|e| e.path == path));
                     self.entries = entries;
                     self.ready = true;
