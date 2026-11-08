@@ -8918,8 +8918,8 @@ impl App {
         self.world.inventory_offers.auto_accept_chat = self.settings.auto_accept_inventory_chat;
         self.world.inventory_offers.auto_accept_notify = self.settings.auto_accept_inventory_notify;
         self.world.inventory_offers.show_accepted = self.settings.show_accepted_in_inventory;
-        self.world.payments.open_for_friends = self.settings.payment_opens_conversation;
-        self.world.payments.open_when_paying = self.settings.payment_sent_opens_conversation;
+        self.world.payments.open_received = self.settings.payment_received_opens;
+        self.world.payments.open_sent = self.settings.payment_sent_opens;
         self.world.received_items.enabled_since = self.settings.received_items_since;
         if self.demo
             && self.frame_count == 700
