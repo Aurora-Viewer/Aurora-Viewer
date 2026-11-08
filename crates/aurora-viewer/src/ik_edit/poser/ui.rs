@@ -390,6 +390,11 @@ impl Editor {
                 widgets::action_menu_button(ui, p, "folder-open-filled", aurora_i18n::text("poser-load-menu"), open, 28.0)
             });
             menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                if menu::item(ui, p, "book-filled", aurora_i18n::text("poser-library")) {
+                    self.poser.library_open = true;
+                    self.poser.storage.ready = false;
+                }
+                menu::separator(ui, p);
                 for (mode, key) in [
                     (LoadMode::All, "poser-load-all"),
                     (LoadMode::Rotations, "poser-load-rotations"),

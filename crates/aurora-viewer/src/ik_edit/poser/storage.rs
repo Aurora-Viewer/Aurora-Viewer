@@ -37,7 +37,7 @@ enum Output {
     Listed(Vec<Entry>),
     Loaded(Uuid, Loaded),
     Overwrite(Document, Arc<SubjectPose>, bool, bool),
-    Saved,
+    Saved(PathBuf),
     Prepared(clip::Prepared),
     Failed(String),
     Cancelled,
@@ -53,6 +53,7 @@ pub(super) struct Service {
     pub busy: bool,
     pub message: Option<String>,
     pub selected: Option<usize>,
+    pub saved_path: Option<PathBuf>,
     pub filter: String,
     pub job: Option<Job>,
     pub ready: bool,
@@ -69,6 +70,7 @@ impl Default for Service {
             busy: false,
             message: None,
             selected: None,
+            saved_path: None,
             filter: String::new(),
             job: None,
             ready: false,
@@ -156,7 +158,11 @@ impl Service {
             self.busy = false;
             match output {
                 Output::Listed(entries) => {
-                    let selected = self.selected.and_then(|i| self.entries.get(i)).map(|e| e.path.clone());
+                    let selected = self
+                        .selected
+                        .and_then(|i| self.entries.get(i))
+                        .map(|e| e.path.clone())
+                        .or_else(|| self.saved_path.clone());
                     self.selected = selected.and_then(|path| entries.iter().position(|e| e.path == path));
                     self.entries = entries;
                     self.ready = true;
@@ -164,9 +170,12 @@ impl Service {
                 Output::Loaded(subject, value) => loaded.push((subject, value)),
                 Output::Overwrite(document, pose, bvh, unlock) => self.overwrite = Some((document, pose, bvh, unlock)),
                 Output::Prepared(value) => self.prepared.push(value),
-                Output::Saved => {
+                Output::Saved(path) => {
                     self.ready = false;
-                    self.message = Some(aurora_i18n::tr!("poser-saved").to_string());
+                    self.selected = None;
+                    self.filter.clear();
+                    self.message = Some(aurora_i18n::tr!("poser-saved", path = path.display().to_string()).to_string());
+                    self.saved_path = Some(path);
                 }
                 Output::Failed(message) => {
                     self.message = Some(message);
@@ -195,6 +204,7 @@ impl Service {
                             Some(p) => p,
                             None => {
                                 let Some(p) = rfd::FileDialog::new()
+                                    .set_directory(&root)
                                     .add_filter(aurora_i18n::tr!("poser-file-filter"), &["json", "anim", "bvh"])
                                     .pick_file()
                                 else {
@@ -252,7 +262,7 @@ impl Service {
                         if let Some(bvh) = bvh {
                             std::fs::write(root.join(format!("{name}.bvh")), bvh).map_err(|e| e.to_string())?;
                         }
-                        Output::Saved
+                        Output::Saved(path)
                     }
                     Job::Import(pose, translations, name, priority) => {
                         Output::Prepared(native(&rig, &pose, &translations, name, priority)?)
