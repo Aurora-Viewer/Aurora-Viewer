@@ -701,16 +701,18 @@ pub(super) fn card(
                     });
                 }
                 Data::TextBox { .. } => {
+                    // LLToastScriptTextbox (panel_notify_textbox.xml): a
+                    // multi-line editor three lines tall that scrolls beyond
+                    // them. Enter starts a new line; only the button sends.
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         ui.add_space(indent);
-                        let resp = ui.add(
-                            egui::TextEdit::singleline(&mut n.text)
-                                .hint_text(aurora_i18n::tr!("ui-notifications-reply"))
-                                .desired_width(ui.available_width() - 82.0),
-                        );
-                        let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                        if button(ui, p, aurora_i18n::tr!("common-send"), true).clicked() || enter {
+                        text_box_field(ui, n.id, &mut n.text);
+                    });
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(indent);
+                        if button(ui, p, aurora_i18n::tr!("common-send"), true).clicked() {
                             out = Some(Response::SendText);
                         }
                     });
@@ -762,6 +764,46 @@ pub(super) fn card(
             .show(ui, body);
     }
     out
+}
+
+/// Lines of an llTextBox reply shown before it scrolls: the 50 pixels of the
+/// "message" editor of panel_notify_textbox.xml.
+const TEXT_BOX_ROWS: usize = 3;
+
+/// The reply field of an llTextBox prompt, as wide as the card: as high as
+/// [`TEXT_BOX_ROWS`] lines, then the text scrolls inside the field, its
+/// scroll bar within the frame, like LLTextEditor. The frame is the theme's
+/// own text field face (`theme::FieldSize`, hover and focus included), drawn
+/// around the scroll area so that it never scrolls away with the text. The
+/// text is kept within what the Legacy Viewer's editor accepts
+/// (`clamp_text_box_reply`). Returns the frame's rectangle and the editor.
+fn text_box_field(ui: &mut egui::Ui, id: u64, text: &mut String) -> (egui::Rect, egui::Response) {
+    let edit_id = egui::Id::unique(("script_text_box", id));
+    let style: egui::widget_style::TextEditStyle = ui.widget_style(edit_id, &egui::class::Classes::default());
+    let frame = style.atom_layout.frame;
+    let row = ui.fonts_mut(|f| f.row_height(&egui::TextStyle::Body.resolve(ui.style())));
+    let rows = row * TEXT_BOX_ROWS as f32;
+    let shown = frame.show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        egui::ScrollArea::vertical()
+            .id_salt(edit_id)
+            .min_scrolled_height(rows)
+            .max_height(rows)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                ui.add(
+                    egui::TextEdit::multiline(text)
+                        .id(edit_id)
+                        .frame(egui::Frame::NONE)
+                        .hint_text(aurora_i18n::tr!("ui-notifications-reply"))
+                        .desired_rows(TEXT_BOX_ROWS)
+                        .desired_width(ui.available_width()),
+                )
+            })
+            .inner
+    });
+    crate::world::notifications::clamp_text_box_reply(text);
+    (shown.response.rect, shown.inner)
 }
 
 fn button(ui: &mut egui::Ui, p: &Palette, label: &str, primary: bool) -> egui::Response {
@@ -1045,6 +1087,62 @@ mod tests {
         assert!(on.dnd);
         assert_eq!(crate::world::status::StatusModes { dnd: false, ..on }, away);
         assert_eq!(bell_dnd_toggled(on), away);
+    }
+
+    /// #2832: the llTextBox field holds several lines, shows three, then
+    /// scrolls instead of growing the card; Enter starts a new line.
+    #[test]
+    fn script_text_box_shows_three_lines_then_scrolls() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let height = |text: &str| {
+            let mut text = text.to_owned();
+            let mut h = 0.0;
+            for _ in 0..2 {
+                let mut out = ctx.run_ui(Default::default(), |ui| {
+                    ui.set_width(300.0);
+                    // the frame, which holds still while the text scrolls
+                    h = text_box_field(ui, 7, &mut text).0.height();
+                });
+                out.textures_delta.clear();
+            }
+            h
+        };
+        let empty = height("");
+        let three = height("Line 1\nLine 2\nLine 3");
+        let six = height("1\n2\n3\n4\n5\n6");
+        assert!((empty - three).abs() < 0.5, "three lines fit an empty field: {empty} / {three}");
+        assert!((six - three).abs() < 0.5, "more lines scroll: {six} / {three}");
+
+        let mut text = String::from("Line 1");
+        let typed = |text: &mut String, events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    text_box_field(ui, 7, text).1.request_focus();
+                },
+            );
+            out.textures_delta.clear();
+        };
+        typed(&mut text, Vec::new());
+        typed(&mut text, Vec::new());
+        typed(
+            &mut text,
+            vec![
+                egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::Text("Line 2".into()),
+            ],
+        );
+        assert_eq!(text, "Line 1\nLine 2");
     }
 
     #[test]

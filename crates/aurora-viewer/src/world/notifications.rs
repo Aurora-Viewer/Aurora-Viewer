@@ -947,12 +947,14 @@ impl Notifications {
                 }
             }
             (Data::TextBox { sender, object, channel }, Response::SendText) => {
+                let mut label = n.text.clone();
+                clamp_text_box_reply(&mut label);
                 out.push(NetCommand::ScriptDialogReply {
                     sender: Some(*sender),
                     object_id: *object,
                     channel: *channel,
                     index: 0,
-                    label: n.text.clone(),
+                    label,
                 });
             }
             (
@@ -1000,6 +1002,29 @@ impl Notifications {
         } else {
             NetCommand::DeclineFriendship { transaction: tx }
         }
+    }
+}
+
+/// Longest llTextBox reply, in bytes: the `max_length` of the "message"
+/// editor of panel_notify_textbox.xml (LLTextBase::mMaxTextByteLength, a
+/// UTF-8 byte count), under the 255 bytes of ScriptDialogReply's ButtonLabel.
+pub const TEXT_BOX_MAX_BYTES: usize = 250;
+
+/// Keeps an llTextBox reply as the Legacy Viewer's multi-line editor would
+/// send it (LLToastScriptTextbox::onClickSubmit takes the editor's text):
+/// line ends as `\n`, cut at [`TEXT_BOX_MAX_BYTES`] on a character boundary
+/// (utf8str_truncate). LLTextEditor::cleanStringForPaste turns every `\r`
+/// into `\n`, so a pasted Windows `\r\n` became two lines; here it is one.
+pub fn clamp_text_box_reply(text: &mut String) {
+    if text.contains('\r') {
+        *text = text.replace("\r\n", "\n").replace('\r', "\n");
+    }
+    if text.len() > TEXT_BOX_MAX_BYTES {
+        let mut end = TEXT_BOX_MAX_BYTES;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
     }
 }
 
@@ -1189,6 +1214,43 @@ mod tests {
         assert!(n.list.is_empty());
         assert!(n.take_departures().is_empty());
         assert!(n.outcomes.is_empty());
+    }
+
+    /// #2832: an llTextBox reply keeps its lines, with `\n` line ends, and
+    /// the 250 bytes of the Legacy Viewer's editor, cut on a character.
+    #[test]
+    fn text_box_reply_keeps_lines_within_the_legacy_limit() {
+        let clamp = |s: &str| {
+            let mut s = s.to_owned();
+            clamp_text_box_reply(&mut s);
+            s
+        };
+        assert_eq!(clamp("Lady\nof the\nManor"), "Lady\nof the\nManor");
+        assert_eq!(clamp("a\r\nb\rc"), "a\nb\nc");
+        assert_eq!(clamp(&"x".repeat(300)).len(), TEXT_BOX_MAX_BYTES);
+        // 249 bytes then a three-byte character: it does not fit, nor half of it
+        let cut = clamp(&format!("{}日本", "x".repeat(249)));
+        assert_eq!(cut, "x".repeat(249));
+        assert_eq!(clamp(&format!("{}é", "x".repeat(248))).len(), 250);
+
+        let mut n = Notifications::default();
+        let id = n.push(
+            Kind::Script,
+            "Prompt",
+            "Your title",
+            Data::TextBox {
+                sender: ([127, 0, 0, 1], 13000).into(),
+                object: Uuid::new_v4(),
+                channel: -7,
+            },
+        );
+        n.list.iter_mut().find(|x| x.id == id).expect("text box").text = format!("Line 1\r\nLine 2\n{}", "x".repeat(400));
+        let (cmds, _) = n.respond(id, Response::SendText, |_| Uuid::nil(), Uuid::nil());
+        assert!(
+            matches!(&cmds[..], [NetCommand::ScriptDialogReply { label, index: 0, .. }]
+                if label.starts_with("Line 1\nLine 2\nx") && label.len() == TEXT_BOX_MAX_BYTES),
+            "{cmds:?}"
+        );
     }
 
     #[test]
