@@ -285,6 +285,7 @@ mod tests {
         let mut s = Settings {
             username: "someone".into(),
             remember_username: true,
+            last_login: Some(("synthetic-grid".into(), "someone".into())),
             ..Settings::default()
         };
         s.gifs.giphy_key = "a-service-key".into();
@@ -293,6 +294,7 @@ mod tests {
         for key in [
             "username",
             "remember_username",
+            "last_login",
             "remember_password",
             "mfa_hash",
             "grid",
