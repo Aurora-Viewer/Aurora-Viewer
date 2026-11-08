@@ -647,6 +647,9 @@ impl World {
                     if let Some(s) = self.social.ims.iter_mut().find(|s| s.other == temp_session) {
                         s.other = session;
                     }
+                    // the conversation log's entry (and the poll's memory of the
+                    // open conversation) follows, or the conference is logged twice
+                    self.chat_log.conversations.rekey(temp_session, session);
                 }
                 self.groups.restoring.remove(&session);
                 let info = self.info_mut(session, "");

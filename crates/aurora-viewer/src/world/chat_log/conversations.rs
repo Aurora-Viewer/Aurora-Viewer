@@ -450,6 +450,32 @@ impl Log {
         }
     }
 
+    /// A conference's session id changed (the server's replaces the one we
+    /// made, processSessionInitializedReply): its entry, also one still
+    /// buffered while the file is read, and the open conversations' memory
+    /// follow, merged with an entry of the new id if there is one.
+    pub fn rekey(&mut self, from: Uuid, to: Uuid) {
+        if from == to {
+            return;
+        }
+        if self.known.remove(&from) {
+            self.known.insert(to);
+        }
+        let mut changed = false;
+        for list in [&mut self.list, &mut self.early] {
+            if let Some(i) = list.iter().position(|c| c.session == from) {
+                let mut c = list.remove(i);
+                c.session = to;
+                merge(list, vec![c], true);
+                changed = true;
+            }
+        }
+        if changed {
+            self.dirty = true;
+            self.revision += 1;
+        }
+    }
+
     /// The entry of `session` was read (onIMFloaterShown): no unread
     /// offline mark any more.
     pub fn read(&mut self, session: Uuid) {
@@ -886,5 +912,30 @@ mod tests {
         let mut incoming = theirs();
         log.take_removals().filter(&mut incoming);
         assert_eq!(incoming.len(), 3);
+    }
+
+    #[test]
+    fn a_conference_whose_session_id_changes_keeps_one_entry() {
+        let mut log = logging();
+        let (temp, server) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        log.log(entry(10, Kind::Conference, "Conference", 1));
+        log.known.insert(temp);
+        log.rekey(temp, server);
+        assert_eq!(log.list.len(), 1);
+        assert_eq!(log.list[0].session, server);
+        assert!(log.known.contains(&server) && !log.known.contains(&temp));
+        // the poll logged the new id first: the two entries become one
+        log.log(entry(20, Kind::Conference, "Conference", 3));
+        log.list[1].session = temp;
+        log.rekey(temp, server);
+        assert_eq!(log.list.len(), 1);
+        assert_eq!(log.list[0].time, 20);
+        // an entry buffered while the file is read follows too
+        let (_tx, rx) = crossbeam_channel::bounded(1);
+        let mut log = Log::default();
+        log.start(Some(rx));
+        log.log(entry(10, Kind::Conference, "Conference", 1));
+        log.rekey(temp, server);
+        assert_eq!(log.early[0].session, server);
     }
 }
