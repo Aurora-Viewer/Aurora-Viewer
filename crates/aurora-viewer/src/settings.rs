@@ -1199,8 +1199,10 @@ pub struct Settings {
     /// the default) (app/revoke_on_sit.rs).
     pub revoke_permissions: u8,
     /// What a double click on the ground does (Preferences › Controls, the
-    /// wolf menu › Me): nothing by default, as in Firestorm.
+    /// wolf menu › Me): nothing by default, as in the Legacy Viewer.
     pub double_click: crate::autopilot::DoubleClick,
+    /// Allow the configured double-click action on scripted objects, except Sit (Legacy Viewer default: on).
+    pub double_click_scripted: bool,
     pub follow: crate::autopilot::FollowSettings,
     /// Look-at: what we send of where we look, the crosshairs of where the
     /// avatars look, how our head follows the cursor (Preferences ›
@@ -2083,6 +2085,7 @@ impl Default for Settings {
             block_click_sit: false,
             revoke_permissions: 0,
             double_click: crate::autopilot::DoubleClick::Nothing,
+            double_click_scripted: true,
             follow: Default::default(),
             lookat: Default::default(),
             former_look_at: None,
@@ -3433,6 +3436,18 @@ mod tests {
         .expect("separate switches");
         let apart = apart.sanitized();
         assert_eq!((apart.chat_timestamps_nearby, apart.chat_timestamps_im), (false, true));
+    }
+
+    #[test]
+    fn scripted_object_double_click_defaults_on_and_round_trips() {
+        let missing: Settings = serde_json::from_str("{}").expect("old settings without preference");
+        assert!(missing.double_click_scripted);
+
+        let mut changed = missing;
+        changed.double_click_scripted = false;
+        let saved = serde_json::to_value(&changed).expect("save preference");
+        let loaded: Settings = serde_json::from_value(saved).expect("reload preference");
+        assert!(!loaded.double_click_scripted);
     }
 
     #[test]

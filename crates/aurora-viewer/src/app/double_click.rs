@@ -1,5 +1,5 @@
 //! The double click on the ground (src/autopilot.rs): walk, run or
-//! teleport to the point clicked, as Firestorm's `walk_to` / `teleport_to`
+//! teleport to the point clicked, as the Legacy Viewer's `walk_to` / `teleport_to`
 //! double-click bindings do (LLToolPie::walkToClickedLocation and
 //! teleportToClickedLocation, indra/newview/lltoolpie.cpp, originally LGPL
 //! 2.1), and the walk itself, frame after frame (LLAgent::autoPilot).

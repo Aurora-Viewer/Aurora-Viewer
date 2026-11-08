@@ -122,6 +122,38 @@ pub fn takes_ground_double_click(p: Press) -> bool {
     p.double && !p.alt && !p.ctrl && !p.shift && !p.build && !p.on_avatar
 }
 
+/// Legacy Viewer `teleportToClickedLocation`: permit a picked point on land,
+/// or on an in-world object when the preference permits its click action (and
+/// the picked action is not Sit), or when the object has no effective action.
+pub fn allows_object_double_click(
+    position_non_zero: bool,
+    is_land: bool,
+    is_in_world: bool,
+    allow_scripted: bool,
+    click_action_sit: bool,
+    has_click_action: bool,
+    is_hud: bool,
+    is_own_avatar: bool,
+) -> bool {
+    position_non_zero
+        && !is_hud
+        && !is_own_avatar
+        && (is_land || (is_in_world && ((allow_scripted && !click_action_sit) || !has_click_action)))
+}
+
+/// Legacy Viewer checks the picked global position, not the region-local
+/// point, before starting a double-click action.
+pub fn non_zero_global_pick(origin: Option<(u32, u32)>, point: Vec3) -> bool {
+    let Some((x, y)) = origin else { return false };
+    point.is_finite() && glam::DVec3::new(x as f64 + point.x as f64, y as f64 + point.y as f64, point.z as f64) != glam::DVec3::ZERO
+}
+
+/// Whether a second press in an object-action path should take the configured
+/// double-click action before the object's normal click action.
+pub fn takes_scripted_object_double_click(double: bool, enabled: bool, action: DoubleClick, eligible: bool) -> bool {
+    double && enabled && action != DoubleClick::Nothing && eligible
+}
+
 /// AU_FLAGS_CLIENT_AUTOPILOT of `AgentUpdate` (send_agent_update).
 pub const AU_FLAGS_CLIENT_AUTOPILOT: u8 = 0x02;
 /// AU_FLAGS_HIDETITLE: the simulator hides our group title from everyone
@@ -899,6 +931,29 @@ mod tests {
         assert!(!takes_ground_double_click(Press { shift: true, ..plain }));
         assert!(!takes_ground_double_click(Press { build: true, ..plain }));
         assert!(!takes_ground_double_click(Press { on_avatar: true, ..plain }));
+    }
+
+    #[test]
+    fn scripted_object_double_click_matches_legacy_eligibility() {
+        let allowed =
+            |allow, sit, action, hud, self_avatar| allows_object_double_click(true, false, true, allow, sit, action, hud, self_avatar);
+        assert!(allows_object_double_click(true, true, false, false, false, true, false, false));
+        assert!(allowed(true, false, true, false, false));
+        assert!(!allowed(false, false, true, false, false));
+        assert!(allowed(false, false, false, false, false));
+        assert!(!allowed(true, true, true, false, false));
+        assert!(allowed(false, false, false, false, false)); // disabled click action
+        assert!(!allowed(true, false, true, true, false));
+        assert!(!allowed(true, false, true, false, true));
+        assert!(!allows_object_double_click(false, true, false, true, false, false, false, false));
+        assert!(!non_zero_global_pick(Some((0, 0)), Vec3::ZERO));
+        assert!(non_zero_global_pick(Some((256, 0)), Vec3::ZERO));
+        let eligible = true;
+        assert!(!takes_scripted_object_double_click(false, true, DoubleClick::Teleport, eligible));
+        assert!(!takes_scripted_object_double_click(true, false, DoubleClick::Teleport, eligible));
+        assert!(!takes_scripted_object_double_click(true, true, DoubleClick::Nothing, eligible));
+        assert!(!takes_scripted_object_double_click(true, true, DoubleClick::Teleport, false));
+        assert!(takes_scripted_object_double_click(true, true, DoubleClick::Teleport, eligible));
     }
 
     #[test]

@@ -4858,6 +4858,39 @@ impl App {
             && let Some(target) = crate::interaction::target(&self.world, d.idx, &self.interactions.props)
         {
             let surface = self.scene.drawn_surface(&self.world, &d);
+            let click_action_sit = self
+                .world
+                .objects
+                .index_of_uuid(&target.clicked_id)
+                .and_then(|i| self.world.objects.get(i))
+                .is_some_and(|o| o.click_action == crate::interaction::code::SIT);
+            let is_hud = self
+                .world
+                .objects
+                .index_of_uuid(&target.clicked_id)
+                .is_some_and(|i| self.world.objects.worn_on_hud(i));
+            let action = self.double_click_action();
+            if crate::autopilot::takes_scripted_object_double_click(
+                double,
+                self.settings.double_click_scripted,
+                action,
+                crate::autopilot::allows_object_double_click(
+                    crate::autopilot::non_zero_global_pick(self.world.main_origin(), d.hit.point),
+                    false,
+                    true,
+                    self.settings.double_click_scripted,
+                    click_action_sit || target.action == crate::interaction::Action::Sit,
+                    !matches!(
+                        target.action,
+                        crate::interaction::Action::Disabled | crate::interaction::Action::Grab
+                    ),
+                    is_hud,
+                    on_avatar,
+                ),
+            ) {
+                self.double_click_ground(d.hit.point);
+                return;
+            }
             if target.action == crate::interaction::Action::Disabled {
                 self.arm_world_mouse_walk();
             }
@@ -4878,6 +4911,39 @@ impl App {
             && (!on_avatar || self.own_attachment(idx))
             && let Some(target) = crate::interaction::target(&self.world, idx, &self.interactions.props)
         {
+            let click_action_sit = self
+                .world
+                .objects
+                .index_of_uuid(&target.clicked_id)
+                .and_then(|i| self.world.objects.get(i))
+                .is_some_and(|o| o.click_action == crate::interaction::code::SIT);
+            let is_hud = self
+                .world
+                .objects
+                .index_of_uuid(&target.clicked_id)
+                .is_some_and(|i| self.world.objects.worn_on_hud(i));
+            let action = self.double_click_action();
+            if crate::autopilot::takes_scripted_object_double_click(
+                double,
+                self.settings.double_click_scripted,
+                action,
+                crate::autopilot::allows_object_double_click(
+                    crate::autopilot::non_zero_global_pick(self.world.main_origin(), point),
+                    false,
+                    true,
+                    self.settings.double_click_scripted,
+                    click_action_sit || target.action == crate::interaction::Action::Sit,
+                    !matches!(
+                        target.action,
+                        crate::interaction::Action::Disabled | crate::interaction::Action::Grab
+                    ),
+                    is_hud,
+                    on_avatar,
+                ),
+            ) {
+                self.double_click_ground(point);
+                return;
+            }
             if target.action == crate::interaction::Action::Disabled {
                 self.arm_world_mouse_walk();
             }
