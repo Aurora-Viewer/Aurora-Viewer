@@ -1,6 +1,6 @@
 //! The result tree combines real inventory ancestry with virtual destination paths.
 use super::*;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 pub(super) struct Node {
     pub name: String,
@@ -13,13 +13,8 @@ pub(super) struct Preview {
 }
 
 impl Preview {
-    pub(super) fn ordered_rows(&self, collapsed: &HashSet<Vec<String>>) -> Vec<(Vec<String>, Option<usize>)> {
-        fn append(
-            preview: &Preview,
-            parent: &[String],
-            collapsed: &HashSet<Vec<String>>,
-            rows: &mut Vec<(Vec<String>, Option<usize>)>,
-        ) {
+    pub(super) fn ordered_rows(&self, collapsed: &BTreeSet<Vec<String>>) -> Vec<(Vec<String>, Option<usize>)> {
+        fn append(preview: &Preview, parent: &[String], collapsed: &BTreeSet<Vec<String>>, rows: &mut Vec<(Vec<String>, Option<usize>)>) {
             let mut children: Vec<_> = preview
                 .nodes
                 .keys()
@@ -27,6 +22,7 @@ impl Preview {
                 .collect();
             children.sort_by(|left, right| {
                 crate::imports::folders::explorer_name_cmp(&preview.nodes[*left].name, &preview.nodes[*right].name)
+                    .then_with(|| preview.nodes[*left].name.cmp(&preview.nodes[*right].name))
                     .then_with(|| left.cmp(right))
             });
             for path in children {
@@ -47,14 +43,15 @@ impl Preview {
             }
         }
 
-        let mut rows = self
-            .files
-            .get(&Vec::new())
-            .into_iter()
-            .flatten()
-            .map(|index| (Vec::new(), Some(*index)))
-            .collect();
+        let mut rows = Vec::new();
         append(self, &[], collapsed, &mut rows);
+        rows.extend(
+            self.files
+                .get(&Vec::new())
+                .into_iter()
+                .flatten()
+                .map(|index| (Vec::new(), Some(*index))),
+        );
         rows
     }
 }
@@ -138,14 +135,15 @@ mod tests {
         preview.files.insert(vec!["Set2".into()], vec![2]);
         preview.files.insert(vec!["Set2".into(), "Nested".into()], vec![1]);
 
-        let rows = preview.ordered_rows(&HashSet::new());
+        let rows = preview.ordered_rows(&BTreeSet::new());
         let ordered: Vec<_> = rows
             .iter()
-            .map(|(path, file)| {
-                file.map_or_else(|| path.join("/"), |index| format!("file{index}"))
-            })
+            .map(|(path, file)| file.map_or_else(|| path.join("/"), |index| format!("file{index}")))
             .collect();
-        assert_eq!(ordered, ["file9", "Set2", "Set2/Nested", "file1", "file2", "Set10", "alpha", "Zeta"]);
+        assert_eq!(
+            ordered,
+            ["alpha", "Set2", "Set2/Nested", "file1", "file2", "Set10", "Zeta", "file9"]
+        );
     }
 
     #[test]
