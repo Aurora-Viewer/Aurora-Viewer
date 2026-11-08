@@ -13388,7 +13388,6 @@ picker-pipette-no-material = No copyable material found in your inventory.
 
 local-texture-preview-hint = Local texture — preview from a file on this computer.
 
-<<<<<<< HEAD
 # Conversation log (ui/conversation_log.rs)
 conversation-log-filter = Filter people
 conversation-log-actions = Actions on the selected person or group
@@ -13416,7 +13415,6 @@ ui-options-chat-logs-clear = Clear conversation log…
 ui-options-chat-logs-clear-title = Clear the conversation log?
 ui-options-chat-logs-clear-text = This will delete the logs of previous conversations, and any backups of that file. The transcripts are not touched.
 ui-options-chat-logs-clear-confirm = Clear
-=======
 # Object linking: LLSelectMgr::linkObjects
 build-link-error-title = Unable to link objects
 build-link-downloading = Object information is still downloading. Please wait and try linking again.
@@ -13480,4 +13478,3 @@ ui-options-attached-particles-hint = Draw the particles of what avatars wear: sp
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = Progressive draw distance
 ui-options-draw-distance-stepping-hint = After logging in and after a teleport to another region, the draw distance starts at 32 m and doubles back up to yours, so that what is near loads first.
->>>>>>> upstream/main

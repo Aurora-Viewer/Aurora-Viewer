@@ -13361,7 +13361,6 @@ picker-pipette-no-material = コピー可能なマテリアルがインベント
 
 local-texture-preview-hint = ローカルテクスチャ — このコンピューターのファイルのプレビュー。
 
-<<<<<<< HEAD
 # Conversation log (ui/conversation_log.rs)
 conversation-log-filter = 人物をフィルタ
 conversation-log-actions = 選択した人やグループに対するアクション
@@ -13389,7 +13388,6 @@ ui-options-chat-logs-clear = 会話の記録をクリア…
 ui-options-chat-logs-clear-title = 会話の記録をクリアしますか？
 ui-options-chat-logs-clear-text = これにより、過去の会話のログ、およびそのファイルのすべてのバックアップが削除されます。会話履歴のテキストは削除されません。
 ui-options-chat-logs-clear-confirm = クリア
-=======
 # Object linking: LLSelectMgr::linkObjects
 build-link-error-title = オブジェクトをリンクできません
 build-link-downloading = オブジェクト情報をダウンロード中です。しばらく待ってから再度リンクしてください。
@@ -13453,4 +13451,3 @@ ui-options-attached-particles-hint = アバターが装着しているものの�
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = 描画距離を段階的に広げる
 ui-options-draw-distance-stepping-hint = ログイン後と別のリージョンへのテレポート後、描画距離を32mから始めて設定値まで倍々に広げ、近くのものから読み込みます。
->>>>>>> upstream/main
