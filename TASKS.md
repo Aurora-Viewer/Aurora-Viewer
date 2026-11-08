@@ -841,6 +841,9 @@ What comes before the rest (requested by the human).
 
 ## Repository and tooling
 
+- 🔧 PR description check (human request, 2026-11-08; task `pr-description-check`; no issue, no effect on the viewer): the PR description workflow (`.github/workflows/pr-description.yml`, `pull_request_target`, main's script only, never the PR's code) checks each PR body against `.github/pull_request_template.md`: the issue line, and own text under What it is for, Legacy Viewer origin, What changes and Tests (`###` headings, a longer heading and the bullets the team writes count). Incomplete: one `## Changes requested` comment and the `needs-description` label, removed once the body is edited; the daily sweep closes an outside contributor's PR still incomplete 3 days after the comment, never the team's. Rules in `scripts/tools/pr-description.ps1`, fixtures in `scripts/test-pr-description.ps1` (the template itself must fail, so the two cannot drift); `check-pr-description.ps1 -BodyFile` checks a draft locally. Calibrated on the last 200 PR bodies: 4 flagged, each with a real gap. AGENTS.md sections 9 and 11, HUMANS.md, README Contributing updated.
+  - ⬜ After the merge: run `setup-labels.ps1`; the PRs already open are checked at their next push or edit.
+
 - ✅ Crash triage references and setup downloads (2026-11-05; task `triage-and-setup-refs`; no issue, no effect on the viewer): the Crash triage workflow adds the `crash-triaged` label to each issue it signs, and only an open issue with that label, whose own triage section ends with the same signature, is a duplicate reference (`Get-TriageSignature`, fixtures in `scripts/test-crash-triage.ps1`; label in `setup-labels.ps1`). The one-line setup reads main's commit once and downloads every file of `scripts/tools` from that commit; a clone still uses its own files.
   - ⬜ After the merge: run `setup-labels.ps1`, then "Run workflow" on the open crash issues already signed, so they get the label and stay references.
 
