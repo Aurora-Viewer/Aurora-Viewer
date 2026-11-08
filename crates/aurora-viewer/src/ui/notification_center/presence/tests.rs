@@ -328,6 +328,7 @@ fn frames_with(size: Vec2, classic: bool, at: PresencePosition, center: Center) 
                 &mut wanted,
                 bottom_top,
                 20.0,
+                40,
                 true,
                 !classic,
                 !classic,

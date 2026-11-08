@@ -850,6 +850,8 @@ pub struct Settings {
     /// The same notifications while the window is in front (FSGrowlWhenActive, off).
     pub system_notifications_when_active: bool,
     pub chat_toast_seconds: f32,
+    /// Wrapped text rows above the chat bar (ConsoleMaxLines, 40; 0 hides them).
+    pub chat_console_max_lines: u32,
     /// Toast when a friend comes online or goes offline (ChatOnlineNotification, on).
     pub toast_friends_online: bool,
     /// The same notices as a line of nearby chat (OnlineOfflinetoNearbyChat;
@@ -1989,6 +1991,7 @@ impl Default for Settings {
             system_notifications: false,
             system_notifications_when_active: false,
             chat_toast_seconds: 20.0,
+            chat_console_max_lines: 40,
             toast_friends_online: true,
             friends_online_in_chat: false,
             presence_position: PresencePosition::TopRight,
@@ -2901,6 +2904,7 @@ impl Settings {
             TONEMAP_MIX
         };
         self.chat_toast_seconds = self.chat_toast_seconds.clamp(0.0, 60.0);
+        self.chat_console_max_lines = self.chat_console_max_lines.min(50);
         self.chat_bubble_opacity = if self.chat_bubble_opacity.is_finite() {
             self.chat_bubble_opacity.clamp(0.0, 1.0)
         } else {
@@ -3288,6 +3292,23 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn console_max_lines_defaults_persist_and_sanitize() {
+        let old: super::Settings = serde_json::from_str("{}").expect("old synthetic settings");
+        assert_eq!(old.chat_console_max_lines, 40);
+        for (saved, expected) in [(0, 0), (3, 3), (50, 50), (u32::MAX, 50)] {
+            let settings = super::Settings {
+                chat_console_max_lines: saved,
+                ..Default::default()
+            }
+            .sanitized();
+            assert_eq!(settings.chat_console_max_lines, expected);
+            let json = serde_json::to_string(&settings).expect("synthetic settings JSON");
+            let loaded: super::Settings = serde_json::from_str(&json).expect("saved synthetic settings");
+            assert_eq!(loaded.chat_console_max_lines, expected);
+        }
+    }
+
     #[test]
     fn automatic_texture_budget_uses_shared_heap_only_for_integrated_gpus() {
         use super::auto_texture_budget;
