@@ -1783,8 +1783,10 @@ pub fn stretched_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labe
 }
 
 /// Tabs that always span the row: equal widths while every label fits in
-/// its share, else shares that follow the labels (the narrow tab strip of
-/// `tabs`), so a long label is cut no more than there.
+/// its share; narrower, every label whole and the extra room to the
+/// narrowest tabs first; narrower than the labels, shares that follow them
+/// (the narrow tab strip of `tabs`), so a long label is cut no more than
+/// there.
 pub fn filled_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
     tabs_row(ui, p, selected, labels, TabWidths::Fill, false)
 }
@@ -1812,7 +1814,10 @@ fn tab_widths(text: &[f32], room: f32, gap: f32, mode: TabWidths) -> Vec<f32> {
     let extra = ((room - total) / n).max(0.0);
     let even = ((room - gaps) / n).max(0.0);
     let widest = text.iter().copied().fold(0.0, f32::max);
-    let level = fill_level(text, room - gaps);
+    // only the stretched row between the labels and equal shares needs it
+    let level = matches!(mode, TabWidths::Fill)
+        .then(|| fill_level(text, room - gaps))
+        .unwrap_or(0.0);
     text.iter()
         .map(|&w| match mode {
             TabWidths::Even => even,

@@ -499,8 +499,9 @@ impl PlacesUi {
         // The Legacy Viewer's "Places Tabs" (panel_places.xml) centres tabs
         // sized to their labels; here they are stretched to the window's
         // width by the human's choice (#2641), as Teleport / Map / Profile
-        // share it under the list. Too narrow for equal shares, the labels'
-        // shares are kept, and the long label its ellipsis.
+        // share it under the list. Too narrow for equal shares, every label
+        // stays whole while it can, and the long label keeps its ellipsis at
+        // the minimum width.
         widgets::filled_tabs(
             ui,
             p,
@@ -1403,6 +1404,8 @@ mod tests {
             (Some(min), 1.0, 0),
             (Some(min), 1.5, 0),
             (Some(Vec2::new(700.0, 588.0)), 1.0, 0),
+            // between the labels' width and equal shares
+            (Some(Vec2::new(310.0, 400.0)), 1.0, 0),
             (None, 1.5, 0),
             (None, 1.0, 2),
             (Some(min), 1.0, 2),
