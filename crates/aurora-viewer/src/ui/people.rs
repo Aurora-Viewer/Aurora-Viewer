@@ -829,6 +829,7 @@ fn friends_tab(
 /// (FSCommon::populateGroupCount).
 fn groups_tab(ui: &mut egui::Ui, p: &Palette, world: &World, filter: &str, actions: &mut Vec<PeopleAction>) {
     let groups = world.groups.sorted();
+    let plan = crate::world::groups::plan_group_list(&groups, filter, |g| &g.name);
     let count = super::contacts::group_count_text(groups.len(), super::contacts::group_limit(world));
     // the list over its count: both inside the room the window has, which
     // their own sizes must not push
@@ -845,25 +846,42 @@ fn groups_tab(ui: &mut egui::Ui, p: &Palette, world: &World, filter: &str, actio
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         if groups.is_empty() {
             ui.label(RichText::new(aurora_i18n::tr!("ui-people-no-groups-yet")).size(12.0).color(p.muted));
+        } else if plan.show_none {
+            // "none" on top (LLGroupList::refresh), with the same
+            // differences as Conversations › Contacts › Groups (#2788): it
+            // reads "None (no group tag)" and stays while filtering
+            ui.horizontal(|ui| {
+                ui.set_min_height(22.0);
+                let name = aurora_i18n::tr!("ui-contacts-none-no-group-tag");
+                let r = legacy_group_name(ui, p, world, Uuid::nil(), name, p.ink, ui.available_width());
+                menu::context_menu(&r, p, |ui| {
+                    let active = world.groups.active.is_nil();
+                    if menu::item_if(ui, p, "circle-check-filled", aurora_i18n::tr!("common-activate"), !active) {
+                        context::request(ui.ctx(), context::CtxAction::ActivateGroup(Uuid::nil()));
+                    }
+                });
+                if r.double_clicked() && !world.groups.active.is_nil() {
+                    context::request(ui.ctx(), context::CtxAction::ActivateGroup(Uuid::nil()));
+                }
+            });
         }
-        for g in groups
-            .iter()
-            .filter(|g| filter.is_empty() || g.name.to_lowercase().contains(filter))
-        {
+        if let Some(query) = &plan.no_match {
+            ui.label(
+                RichText::new(aurora_i18n::tr!(
+                    "ui-contacts-no-group-containing-was-found",
+                    value0 = query.clone(),
+                ))
+                .size(12.0)
+                .color(p.muted),
+            );
+        }
+        for g in &plan.items {
             ui.horizontal(|ui| {
                 ui.set_min_height(22.0);
                 let blocked = world.mutes.group_chat_muted(&g.id);
                 let col = if blocked { p.muted } else { p.ink };
                 let name_w = (ui.available_width() - 56.0).max(60.0);
-                let r = ui
-                    .allocate_ui_with_layout(Vec2::new(name_w, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        ui.add(
-                            egui::Label::new(RichText::new(&g.name).size(13.0).color(col))
-                                .truncate()
-                                .sense(egui::Sense::click()),
-                        )
-                    })
-                    .inner;
+                let r = legacy_group_name(ui, p, world, g.id, &g.name, col, name_w);
                 let r = if blocked {
                     r.on_hover_text(aurora_i18n::tr!("ui-people-group-chat-blocked"))
                 } else {
@@ -895,6 +913,38 @@ fn groups_tab(ui: &mut egui::Ui, p: &Palette, world: &World, filter: &str, actio
     let at = egui::pos2(footer.left() + 2.0, footer.bottom() - 8.0);
     let font = egui::FontId::proportional(12.0);
     widgets::paint_elided(ui, &count, at, footer.width() - 4.0, font, p.muted);
+}
+
+/// A group's name in the Legacy look's groups list, `width` wide: the
+/// active group in semi-bold (LLGroupListItem::setBold) with the "active"
+/// tag of People's Aurora look after it; the name is cut before the tag.
+fn legacy_group_name(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    id: Uuid,
+    name: &str,
+    color: egui::Color32,
+    width: f32,
+) -> egui::Response {
+    let active = world.groups.active == id;
+    ui.allocate_ui_with_layout(Vec2::new(width, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        let (ink, fill) = widgets::active_tag_colors(p);
+        let tag = active.then(|| widgets::tag_pill_layout(ui, aurora_i18n::tr!("people-groups-active-tag"), ink));
+        let tag_w = tag.as_ref().map_or(0.0, |(_, w)| w + 6.0);
+        let mut text = RichText::new(name).size(13.0).color(color);
+        if active {
+            text = text.font(egui::FontId::new(13.0, super::fonts::semibold(ui.ctx())));
+        }
+        ui.set_max_width((width - tag_w).max(0.0));
+        let r = ui.add(egui::Label::new(text).truncate().sense(egui::Sense::click()));
+        if let Some((g, w)) = tag {
+            let pill = egui::Rect::from_min_size(egui::pos2(r.rect.right() + 6.0, r.rect.center().y - 8.0), Vec2::new(w, 16.0));
+            widgets::paint_tag_pill(ui, g, pill, ink, fill);
+        }
+        r
+    })
+    .inner
 }
 
 /// Room kept under the list of groups for their count.

@@ -65,34 +65,29 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, _data: &super::RadarData, st: &mut Peopl
     ui.add_space(6.0);
     count_line(ui, c);
     ui.add_space(5.0);
-    let filter = st.filter.trim().to_lowercase();
-    let groups: Vec<GroupMembership> = c
-        .world
-        .groups
-        .sorted()
-        .into_iter()
-        .filter(|g| filter.is_empty() || g.name.to_lowercase().contains(&filter))
-        .collect();
+    let sorted = c.world.groups.sorted();
+    let plan = crate::world::groups::plan_group_list(&sorted, &st.filter, |g| &g.name);
     egui::ScrollArea::vertical()
         .id_salt("people-groups-rows")
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = RICH_GAP;
-            if c.world.groups.groups.is_empty() {
+            if sorted.is_empty() {
                 rows::empty(ui, p, aurora_i18n::tr!("ui-contacts-looking-for-a-group-to-join-try-search"));
                 return;
             }
-            // "none" on top when not filtering (LLGroupList::refresh)
-            if filter.is_empty() {
+            // "None (no group tag)" on top, kept while filtering (#2788)
+            if plan.show_none {
                 none_row(ui, c);
-            } else if groups.is_empty() {
+            }
+            if let Some(query) = &plan.no_match {
                 rows::empty(
                     ui,
                     p,
-                    &aurora_i18n::tr!("ui-contacts-no-group-containing-was-found", value0 = st.filter.trim().to_string()),
+                    &aurora_i18n::tr!("ui-contacts-no-group-containing-was-found", value0 = query.clone()),
                 );
             }
-            for g in &groups {
+            for g in &plan.items {
                 row(ui, c, st, g);
             }
         });
