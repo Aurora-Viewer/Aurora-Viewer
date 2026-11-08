@@ -6391,6 +6391,7 @@ pub fn idle_animation() -> aurora_assets::Animation {
         loop_in: 0.0,
         loop_out: 4.0,
         looping: true,
+        ends_after: None,
         ease_in: 0.3,
         ease_out: 0.3,
         // relaxed, the upload window's default (hands at rest)
@@ -6469,6 +6470,7 @@ pub fn typing_animation() -> aurora_assets::Animation {
         loop_in: 0.0,
         loop_out: 1.0,
         looping: true,
+        ends_after: None,
         ease_in: 0.3,
         ease_out: 0.3,
         hand_pose: 0,

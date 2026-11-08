@@ -9758,7 +9758,7 @@ impl App {
                     self.send(NetCommand::OneShotControl(flags));
                 }
                 self.send(NetCommand::AgentAnimation { anim, start: false });
-                log::debug!("own animation timed stop: {anim}, finish_anim={}", flags != 0);
+                log::info!("own animation timed stop: {anim}, finish_anim={}", flags != 0);
             }
             self.frame_profile.lap(Lap::Poses);
             let mut exceptions = self.settings.render_exceptions_map();
