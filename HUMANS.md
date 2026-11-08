@@ -72,6 +72,19 @@ a review or that left the queue.
     the latest `main`: what lands on `main` is exactly what was tested.
   A PR that only touches documentation or images passes in a minute (no
   build). A red cross = the agent fixes it.
+- **PR description check**: every PR's description must follow the
+  template (`.github/pull_request_template.md`): the issue line, and text
+  under What it is for, Legacy Viewer origin, What changes and Tests. When
+  one is missing, the PR description workflow posts a comment listing what
+  is missing (the PR panel shows `■ CHANGES ASKED`) and adds the
+  `needs-description` label; both go away as soon as the author edits the
+  description. An **outside contributor's** PR still incomplete 3 days
+  later is closed by the workflow's daily sweep (the author can reopen it
+  once it is complete); the team's PRs are never closed. So nobody reads a
+  PR before its author has said what it does and how it was tested.
+- **Outside contributors' CI** waits for a maintainer: on their PR, "Approve
+  and run" (look first that it does not change `.github/`). Review it only
+  once that CI is green and the description is complete.
 - **Labels**: each PR has a **type** (`feature`, `fix`, `performance`,
   `maintenance`, `docs`, and `breaking` if it breaks a compatibility), which
   files it in the release notes, and an **area** (`render`, `avatar`,

@@ -1248,6 +1248,12 @@ its own task in its own git worktree:
 - [docs/IK_EDIT.md](docs/IK_EDIT.md) — frozen-pose skeleton editor, target-prim
   offsets and general bone-contact authoring for LSL
 
+Pull requests follow the [pull request template](.github/pull_request_template.md):
+a check lists what a description is missing, and maintainers review a PR
+once its description and its CI are complete. An outside contributor's PR
+still incomplete 3 days later is closed, and can be reopened once it is
+complete.
+
 Behaviour follows the Legacy Viewer: its sources are expected next to the repository
 (`../phoenix-firestorm`, cloned from
 [FirestormViewer/phoenix-firestorm](https://github.com/FirestormViewer/phoenix-firestorm)).
