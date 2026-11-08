@@ -98,7 +98,13 @@ What each part tells the one who fixes it:
   the driver reset the card; a real hang on an RTX 5070 Ti was declared
   1.1 s after), a fault the driver found in a frame's work (the loss within
   0.1 s of the submission, or after the frame ended), or undecided between
-  the two. Frame numbers and ages only.
+  the two. Frame numbers and ages only. It describes the loss that began
+  the end of the session: the first of the last losses less than five
+  minutes apart, not a recovery's new device lost after it.
+- **GPU work at the later losses**: when the viewer recovered (or tried
+  to) and the card was lost again, each later loss in the same words,
+  numbered (`loss 2: …`). "nothing submitted yet (lost while starting)"
+  there is a recovery whose new device was lost before its first frame.
 - **GPU recoveries**: the graphics card resets the viewer recovered from
   during the session (Preferences › Graphics, on by default), how many, and for the first
   five when in the session, how long the recovery took and whether it came
