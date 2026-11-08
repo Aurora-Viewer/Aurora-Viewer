@@ -777,19 +777,31 @@ const TEXT_BOX_ROWS: usize = 3;
 /// around the scroll area so that it never scrolls away with the text. The
 /// text is kept within what the Legacy Viewer's editor accepts
 /// (`clamp_text_box_reply`). Returns the frame's rectangle and the editor.
+///
+/// The field's place is set first, from the card's width, and the field is
+/// drawn in a child that does not size the card: the scroll area's content
+/// can run a fraction of a point past its width, which grew the card on
+/// some frames, and a toast anchored to the right then shimmered sideways.
 fn text_box_field(ui: &mut egui::Ui, id: u64, text: &mut String) -> (egui::Rect, egui::Response) {
     let edit_id = egui::Id::unique(("script_text_box", id));
     let style: egui::widget_style::TextEditStyle = ui.widget_style(edit_id, &egui::class::Classes::default());
     let frame = style.atom_layout.frame;
     let row = ui.fonts_mut(|f| f.row_height(&egui::TextStyle::Body.resolve(ui.style())));
     let rows = row * TEXT_BOX_ROWS as f32;
-    let shown = frame.show(ui, |ui| {
+    let size = Vec2::new(ui.available_width(), rows + frame.total_margin().sum().y);
+    let (place, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(place)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    let shown = frame.show(&mut child, |ui| {
         ui.set_width(ui.available_width());
         egui::ScrollArea::vertical()
             .id_salt(edit_id)
             .min_scrolled_height(rows)
             .max_height(rows)
-            .auto_shrink([false, true])
+            .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.add(
                     egui::TextEdit::multiline(text)
@@ -803,7 +815,7 @@ fn text_box_field(ui: &mut egui::Ui, id: u64, text: &mut String) -> (egui::Rect,
             .inner
     });
     crate::world::notifications::clamp_text_box_reply(text);
-    (shown.response.rect, shown.inner)
+    (place, shown.inner)
 }
 
 fn button(ui: &mut egui::Ui, p: &Palette, label: &str, primary: bool) -> egui::Response {
@@ -1143,6 +1155,72 @@ mod tests {
             ],
         );
         assert_eq!(text, "Line 1\nLine 2");
+    }
+
+    /// #2832: the llTextBox toast holds still from one frame to the next:
+    /// its field, scrolling past three lines, ran a fraction of a point
+    /// past the card on some frames, and the toast, anchored to the right,
+    /// shimmered sideways. Toasts are the Legacy card (`aurora: false`); the
+    /// Aurora card takes the width of the notification center's list.
+    #[test]
+    fn script_text_box_toast_keeps_its_place() {
+        let aurora = false;
+        for lines in ["a", "1\n2\n3\n4\n5", "1\n2\n3\n4\n5\n6\n7\n8\n9"] {
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let icons = Icons::default();
+            let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            let mut list = Notifications::default();
+            list.push(
+                Kind::Script,
+                "Shop sign",
+                "Write your name for the guest book",
+                Data::TextBox {
+                    sender: ([127, 0, 0, 1], 13000).into(),
+                    object: Uuid::from_u128(3),
+                    channel: -42,
+                },
+            );
+            list.list[0].text = lines.into();
+            let mut rects = Vec::new();
+            for frame in 0..8 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                        time: Some(frame as f64 * 0.016),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let area = egui::Area::new(egui::Id::unique("toast_test"))
+                            .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-10.0, 60.0))
+                            .show(ui.ctx(), |ui| {
+                                card(
+                                    ui,
+                                    &p,
+                                    &icons,
+                                    &world,
+                                    &HashMap::new(),
+                                    &mut HashSet::new(),
+                                    &mut list.list[0],
+                                    true,
+                                    aurora,
+                                );
+                            });
+                        rects.push(area.response.rect);
+                    },
+                );
+                output.textures_delta.clear();
+            }
+            let settled = &rects[3..];
+            assert!(
+                settled
+                    .windows(2)
+                    .all(|w| (w[0].min - w[1].min).length() < 0.01 && (w[0].size() - w[1].size()).length() < 0.01),
+                "{lines:?}: {rects:?}"
+            );
+        }
     }
 
     #[test]
