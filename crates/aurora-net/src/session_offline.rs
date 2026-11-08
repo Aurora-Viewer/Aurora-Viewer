@@ -16,6 +16,7 @@ impl Session<'_> {
     /// Commands of this module; false when `c` is not one of them.
     pub(super) fn on_offline_command(&mut self, c: &NetCommand) -> bool {
         match c {
+            NetCommand::RequestRecentParticipants { request } => self.request_recent_participants(*request),
             NetCommand::RequestOfflineMessages => self.request_offline_messages(),
             NetCommand::RequestOfflineMessagesLegacy => self.request_offline_messages_legacy(),
             NetCommand::AnswerOfflineFriendship {
@@ -29,6 +30,25 @@ impl Session<'_> {
             _ => return false,
         }
         true
+    }
+
+    /// LLChatServiceHistory::requestList: discovery only, without message replay.
+    fn request_recent_participants(&mut self, request: uuid::Uuid) {
+        let Some(url) = self.main_cap(crate::persistent_chat::CAP) else {
+            return;
+        };
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        let agent = self.agent_id();
+        tokio::spawn(async move {
+            match crate::persistent_chat::fetch(&http, &url, agent).await {
+                Ok(people) => {
+                    log::info!("recent participants: {} direct conversations", people.len());
+                    let _ = events.send(NetEvent::RecentParticipants { request, people });
+                }
+                Err(reason) => log::warn!("recent participants unavailable: {reason}"),
+            }
+        });
     }
 
     /// LLIMProcessing::requestOfflineMessages.

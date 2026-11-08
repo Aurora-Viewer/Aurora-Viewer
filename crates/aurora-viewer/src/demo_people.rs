@@ -59,10 +59,20 @@ pub fn mode() -> Option<Mode> {
             "friends" | "amis" | "friends-symbols" => Some(Mode::Friends),
             "groups" | "groupes" => Some(Mode::Groups),
             "sets" | "sets-import" | "cercles" | "visuals" | "visuals-stack" | "visuals-legacy" => Some(Mode::Sets),
-            "recent" | "récent" => Some(Mode::Recent),
+            "recent" | "récent" | "recent-save" | "recent-restore" => Some(Mode::Recent),
             "blocked" | "bloqué" => Some(Mode::Blocked),
             _ => Some(Mode::Rows),
         }
+    })
+}
+
+/// Offline persistence across separate processes, using only the demo account.
+pub fn persistence() -> Option<bool> {
+    static MODE: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| match std::env::var("AURORA_DEMO_PEOPLE").as_deref() {
+        Ok("recent-save") => Some(true),
+        Ok("recent-restore") => Some(false),
+        _ => None,
     })
 }
 
@@ -261,6 +271,12 @@ pub fn seed(world: &mut crate::world::World) {
     world.groups.favorites.insert(super::DEMO_GROUP1);
     // "2 notices" on the first group
     world.group_data.set_read(super::DEMO_GROUP1, super::group::read_but_two());
+    if persistence() == Some(false) {
+        return;
+    }
+    if persistence() == Some(true) {
+        world.social.session_mut(NOVA);
+    }
     let now = std::time::SystemTime::now();
     let here = world.region_name();
     for (who, minutes, region) in [

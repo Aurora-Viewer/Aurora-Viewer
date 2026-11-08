@@ -1,5 +1,16 @@
 # Aurora Viewer architecture
 
+`world/social_history.rs` owns the recent-participant/open-tab snapshot at
+`accounts/<agent>/social/<grid>/social_history.json`. Login fixes its identity;
+one worker loads it and atomically publishes changed snapshots during use,
+with a bounded latest-state mailbox. Recent rows merge by timestamp; existing
+open-tab restoration still applies its preference, group and mute rules.
+Only the main grid imports the former unscoped `open_ims.xml`, leaving it intact.
+`aurora-net::persistent_chat` validates Chat Modernization conversation lists;
+`world/recent.rs` merges named, unblocked direct participants from one optional
+login request, fenced by a request id. It does not fetch message bodies or open
+tabs. Existing local contacts and offline-message delivery remain independent.
+
 `Theme::apply` configures IME composition visuals for all text fields: no
 selection fill, a strong active-segment underline and thinner inactive
 underlines, using the resolved palette. egui retains composition, cursor,
