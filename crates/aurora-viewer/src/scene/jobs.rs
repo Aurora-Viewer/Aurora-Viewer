@@ -160,6 +160,17 @@ pub enum JobResult {
     TextureFailed {
         id: Uuid,
     },
+    /// A derived normal, fully prepared and staged on the worker. Its slot
+    /// stays stable across progressive updates; epoch rejects old source jobs.
+    LegacyBump {
+        id: Uuid,
+        epoch: u32,
+        revision: super::textures::PreviewRevision,
+        discard: u8,
+        size: Option<(u32, u32)>,
+        staged: Option<aurora_render::StagedTexture>,
+        mips: Vec<(u32, u32, Vec<u8>)>,
+    },
     /// The JPEG 2000 data of a texture read from the disk cache (none: not
     /// there).
     TextureCache {

@@ -95,9 +95,10 @@ fn written(value: &Value) -> String {
     }
 }
 
-/// TYPE_COL4: every colour of `colors` is an `Rgba`.
+/// TYPE_COL4: four whole numbers named a colour are an `Rgba` (`colors.*`,
+/// `build.new_prim_color`).
 fn is_color(entry: &Entry) -> bool {
-    entry.kind == (Kind::Vector { len: 4, whole: true }) && entry.key.starts_with("colors.")
+    entry.kind == (Kind::Vector { len: 4, whole: true }) && (entry.key.starts_with("colors.") || entry.key.ends_with("_color"))
 }
 
 fn kind_name(entry: &Entry) -> &'static str {

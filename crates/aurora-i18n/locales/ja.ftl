@@ -3696,7 +3696,7 @@ ui-profile-this-user-has-no-classified-listings = このユーザにはクラシ
 ui-inventory-controls-library = ライブラリ
 ui-options-camera-the-camera-can-move-beyond-the-draw-distance-below = カメラは描画距離より遠く、地面の下、オブジェクトの近くまで移動できます
 ui-options-camera-after-a-teleport-in-the-region-the-camera-returns = リージョン内でテレポートした後、カメラをアバターの後ろに戻します。オフにすると、カメラはその場に留まります。
-ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag = カメラが少し遅れてアバターを追従します（デフォルトは1、0で遅れなし）
+ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag = カメラが遅れてアバターを追従します。値が大きいほど滑らかにゆっくり動きます（デフォルトは1、0で遅れなし）
 ui-options-camera-the-camera-follows-the-object-it-is-focused-on = 焦点を合わせたオブジェクトの移動にカメラが追従する
 app-inventory-thumbnail-invalid-capture = キャプチャが無効です。
 ui-land-dialogs-deeding-this-parcel-requires-the-group-to-permanently-have = この区画をグループに譲渡するには、グループが十分な土地利用クレジットを継続的に保有する必要があります。{ $contribution }{ "購入価格は所有者に返金されません。譲渡した土地を売却すると、売上はグループメンバーに均等に分配されます。\u000A\u000Aこの" }{ $value0 }{ "㎡の土地をグループ「" }{ $group }に譲渡しますか？
@@ -13384,3 +13384,26 @@ debug-settings-type-color = 色
 # Preferences › Graphics: the trees' detail (RenderTreeLODFactor)
 ui-options-trees = 樹木
 ui-options-trees-hint = 遠くにあるリンデンの樹木の詳細度です（デフォルトは0.5）。0にすると樹木と草は表示されません。
+
+# Preferences › Build (the Legacy Viewer's Build preferences)
+ui-options-about-build = 作成ツールで作ったプリムの初期状態です。
+ui-options-build-new-objects = 新しいオブジェクト
+ui-options-build-new-objects-note = 作成ツールで作ったプリムは、表示された時点でこれらの設定を受け取ります。
+ui-options-build-size-hint = 幅、奥行き、高さ（メートル、0.01～10）
+ui-options-build-material = 素材
+ui-options-build-flesh = 肉
+ui-options-build-physical = 物理
+ui-options-build-temporary = 一時的
+ui-options-build-new-faces = 新しいオブジェクトの外観
+
+# Preferences › Controls: FSAvatarTurnSpeed
+ui-options-avatar-turn-speed = アバターの回転速度
+ui-options-avatar-turn-speed-help = 歩いているときや立っているときに、アバターが進む方向へ向き直る速さを上げます（デフォルトは0%）。この画面のみに反映されます。
+
+# Preferences › Mouse and keyboard: FSRevokePerms
+ui-options-revoke-permissions = 座ったオブジェクトの許可を取り消す
+ui-options-revoke-permissions-help = 自分が所有していないオブジェクトに座るとき、または立ち上がるときに、そのスクリプトに与えた許可（アバターのアニメーションなど）を取り消します。
+ui-options-revoke-never = しない
+ui-options-revoke-on-sit = 座ったとき
+ui-options-revoke-on-stand = 立ち上がったとき
+ui-options-revoke-on-sit-and-stand = 座ったときと立ち上がったとき
