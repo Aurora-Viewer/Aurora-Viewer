@@ -4862,6 +4862,14 @@ impl App {
             && let Some(d) = shown
             && let Some(target) = crate::interaction::target(&self.world, d.idx, &self.interactions.props)
         {
+            if self.scripted_double_click(double, d.idx, &target, d.hit.point, on_avatar) {
+                // as the ground path below: the press may still become a
+                // both-buttons walk
+                if picked.tag.is_none() {
+                    self.arm_world_mouse_walk();
+                }
+                return;
+            }
             let surface = self.scene.drawn_surface(&self.world, &d);
             if target.action == crate::interaction::Action::Disabled {
                 self.arm_world_mouse_walk();
@@ -4883,6 +4891,12 @@ impl App {
             && (!on_avatar || self.own_attachment(idx))
             && let Some(target) = crate::interaction::target(&self.world, idx, &self.interactions.props)
         {
+            if self.scripted_double_click(double, idx, &target, point, on_avatar) {
+                if picked.tag.is_none() {
+                    self.arm_world_mouse_walk();
+                }
+                return;
+            }
             if target.action == crate::interaction::Action::Disabled {
                 self.arm_world_mouse_walk();
             }
@@ -4926,9 +4940,15 @@ impl App {
             build: self.build.open,
             on_avatar,
         }) && let Some(point) = hit
+            && self.ground_double_click_allowed(
+                shown
+                    .map(|d| d.idx)
+                    .or_else(|| ray.and_then(|r| self.scene.left_interaction_at_ray(&self.world, point, r, true))),
+            )
         {
-            // a double click on the ground, or on an object without a click
-            // action (which took the press above): walk_to / teleport_to
+            // a double click on the ground, or on an object without a
+            // one-click target (an object with one took the press above):
+            // walk_to / teleport_to. A refused one is a plain press, below.
             self.double_click_ground(point);
             if picked.tag.is_none() {
                 self.arm_world_mouse_walk();
