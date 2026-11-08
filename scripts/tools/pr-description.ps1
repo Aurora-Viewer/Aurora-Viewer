@@ -112,7 +112,7 @@ function Format-PrDescriptionComment([string[]]$Problems, [string]$TemplateUrl, 
     $lines += @($Problems | ForEach-Object { "- $_" })
     $lines += @(
         '',
-        'Edit the description (no new commit needed): this check runs again on its own, and this comment goes away once it is complete. A short sentence is enough when a section does not apply (for example `Legacy Viewer origin: no`).'
+        'Edit the description (no new commit needed): this check runs again on its own, and this comment goes away once it is complete. A short answer under the heading is enough when a section does not apply (for example `No.` under `## Legacy Viewer origin`).'
     )
     if ($Deadline) {
         $lines += @('', "If it is still incomplete on $Deadline, the pull request is closed. You can then reopen it, or open a new one, with the description completed.")
