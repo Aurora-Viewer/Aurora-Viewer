@@ -122,14 +122,19 @@ impl Scene {
         // sync measured it (geometry built after) is measured from what it
         // wants or draws
         self.surface_measured.retain(|i, _| world.objects.get(*i).is_some());
-        let unmeasured: Vec<(usize, Measure)> = self
-            .gpu
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !self.surface_measured.contains_key(i))
-            .filter_map(|(i, g)| Some((i, self.measure_of(g.wanted_geom.or(g.geom)?)?)))
-            .collect();
-        self.surface_measured.extend(unmeasured);
+        // (only when geometry was measured since the last look: meshes,
+        // avatars and plants never are, and are not looked at every frame)
+        if self.grid_area.len() != self.surface_scanned {
+            self.surface_scanned = self.grid_area.len();
+            let unmeasured: Vec<(usize, Measure)> = self
+                .gpu
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !self.surface_measured.contains_key(i))
+                .filter_map(|(i, g)| Some((i, self.measure_of(g.wanted_geom.or(g.geom)?)?)))
+                .collect();
+            self.surface_measured.extend(unmeasured);
+        }
         let now = hidden(&self.surface_measured, self.surface_protection);
         if now == self.surface_hidden {
             return;

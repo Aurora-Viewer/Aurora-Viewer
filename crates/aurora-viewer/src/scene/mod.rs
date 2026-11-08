@@ -980,6 +980,9 @@ pub struct Scene {
     pub surface_protection: surface_area::Protection,
     surface_measured: HashMap<usize, surface_area::Measure>,
     surface_hidden: std::collections::HashSet<usize>,
+    /// How many geometries were measured at the last look for objects not
+    /// measured yet (surface_area.rs).
+    surface_scanned: usize,
     /// LOD triangle counts by prim shape (complexity.rs).
     prim_triangles: std::sync::Mutex<HashMap<u64, [u32; 4]>>,
     /// Attachment surface area of each avatar (m², RenderAutoMuteSurfaceAreaLimit).
@@ -1583,6 +1586,7 @@ impl Scene {
             surface_protection: Default::default(),
             surface_measured: HashMap::new(),
             surface_hidden: Default::default(),
+            surface_scanned: 0,
             prim_triangles: Default::default(),
             avatar_area: HashMap::new(),
             complexity_rules: 0,
@@ -2259,6 +2263,7 @@ impl Scene {
         self.grid_area.clear();
         self.surface_measured.clear();
         self.surface_hidden.clear();
+        self.surface_scanned = 0;
         self.grass.clear();
         self.impostors = Default::default();
         self.far_avatars.clear();
