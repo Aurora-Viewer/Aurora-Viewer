@@ -1194,6 +1194,16 @@ pub struct Settings {
     /// A left click on an object whose click action is Sit does not sit
     /// (FSBlockClickSit, off); the menu's Sit still does.
     pub block_click_sit: bool,
+    /// RenderVolumeSAProtection: prims and sculpts with a very large surface
+    /// stop being drawn past a total each frame (scene/surface_area.rs; off).
+    pub large_surface_protection: bool,
+    /// RenderVolumeSAThreshold (75) and RenderSculptSAThreshold (150): the
+    /// area at unit scale from which a prim or a sculpt counts (Debug
+    /// Settings only, as in the Legacy Viewer).
+    pub large_surface_prim_threshold: f32,
+    pub large_surface_sculpt_threshold: f32,
+    /// RenderVolumeSAFrameMax (5000): the total drawn each frame.
+    pub large_surface_frame_max: f32,
     /// FSRevokePerms: revoke the permissions of an object we do not own
     /// when we sit on it (1), stand up from it (2), both (3) or never (0,
     /// the default) (app/revoke_on_sit.rs).
@@ -2081,6 +2091,10 @@ impl Default for Settings {
             quickjump: false,
             fly_override_warned: false,
             block_click_sit: false,
+            large_surface_protection: false,
+            large_surface_prim_threshold: 75.0,
+            large_surface_sculpt_threshold: 150.0,
+            large_surface_frame_max: 5000.0,
             revoke_permissions: 0,
             double_click: crate::autopilot::DoubleClick::Nothing,
             follow: Default::default(),
@@ -2784,6 +2798,10 @@ impl Settings {
             BLOOM_STRENGTH
         };
         self.lod_factor = self.lod_factor.clamp(0.5, 4.0);
+        let area = |v: f32, default: f32| if v.is_finite() { v.clamp(0.0, 1.0e6) } else { default };
+        self.large_surface_prim_threshold = area(self.large_surface_prim_threshold, 75.0);
+        self.large_surface_sculpt_threshold = area(self.large_surface_sculpt_threshold, 150.0);
+        self.large_surface_frame_max = area(self.large_surface_frame_max, 5000.0);
         self.revoke_permissions = self.revoke_permissions.min(3);
         self.avatar_turn_speed = if self.avatar_turn_speed.is_finite() {
             self.avatar_turn_speed.clamp(0.0, 100.0)
@@ -3004,6 +3022,16 @@ impl Settings {
             2 => (2048, 96.0),
             3 => (2048, 192.0),
             _ => (4096, 256.0),
+        }
+    }
+
+    /// The large surface protection the scene applies.
+    pub fn surface_protection(&self) -> crate::scene::surface_area::Protection {
+        crate::scene::surface_area::Protection {
+            on: self.large_surface_protection,
+            volume_threshold: self.large_surface_prim_threshold,
+            sculpt_threshold: self.large_surface_sculpt_threshold,
+            frame_max: self.large_surface_frame_max,
         }
     }
 

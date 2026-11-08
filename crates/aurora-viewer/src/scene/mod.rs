@@ -62,6 +62,7 @@ pub mod sound_occlusion;
 pub mod sound_reverb;
 pub mod sounds;
 pub mod still_check;
+pub mod surface_area;
 mod sync_check;
 mod sync_plan;
 mod sync_slow;
@@ -973,6 +974,15 @@ pub struct Scene {
     pub attached_lights: bool,
     /// Surface area of the generated sculpts (attachment area limit).
     pub sculpt_area: HashMap<GeomKey, f32>,
+    /// The swept grid's area of generated prims and sculpts, and the large
+    /// surface protection that reads it (surface_area.rs).
+    grid_area: HashMap<GeomKey, f32>,
+    pub surface_protection: surface_area::Protection,
+    surface_measured: HashMap<usize, surface_area::Measure>,
+    surface_hidden: std::collections::HashSet<usize>,
+    /// How many geometries were measured at the last look for objects not
+    /// measured yet (surface_area.rs).
+    surface_scanned: usize,
     /// LOD triangle counts by prim shape (complexity.rs).
     prim_triangles: std::sync::Mutex<HashMap<u64, [u32; 4]>>,
     /// Attachment surface area of each avatar (m², RenderAutoMuteSurfaceAreaLimit).
@@ -1572,6 +1582,11 @@ impl Scene {
             loading_bars: true,
             attached_lights: true,
             sculpt_area: HashMap::new(),
+            grid_area: HashMap::new(),
+            surface_protection: Default::default(),
+            surface_measured: HashMap::new(),
+            surface_hidden: Default::default(),
+            surface_scanned: 0,
             prim_triangles: Default::default(),
             avatar_area: HashMap::new(),
             complexity_rules: 0,
@@ -1757,7 +1772,7 @@ impl Scene {
                 let pool = self.staging.clone();
                 self.jobs.spawn(move || {
                     let mesh = aurora_prim::generate_volume(&params, detail);
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), 1.0, pool.as_deref())
+                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, mesh.grid_area), pool.as_deref())
                 });
             }
             GeomKey::Flexible { lod, .. } => {
@@ -1768,7 +1783,7 @@ impl Scene {
                     let sim = aurora_prim::flexible::Flexible::new(0, 1.0, Vec3::ZERO, Quat::IDENTITY);
                     let mesh =
                         aurora_prim::volume::generate_flexible_volume(&params, detail, &sim.path(Vec3::ZERO, Quat::IDENTITY), Vec3::ONE);
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), 1.0, pool.as_deref())
+                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, 0.0), pool.as_deref())
                 });
             }
             GeomKey::Sculpt { lod, .. } => {
@@ -1783,7 +1798,12 @@ impl Scene {
                 let pool = self.staging.clone();
                 self.jobs.spawn(move || {
                     let mesh = aurora_prim::generate_sculpt(&params, detail, map.width, map.height, map.components, &map.pixels);
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), mesh.surface_area, pool.as_deref())
+                    JobResult::geometry(
+                        key,
+                        jobs::volume_to_faces(&mesh),
+                        (mesh.surface_area, mesh.grid_area),
+                        pool.as_deref(),
+                    )
                 });
             }
             GeomKey::SculptPlaceholder { lod, .. } => {
@@ -1792,7 +1812,12 @@ impl Scene {
                 let pool = self.staging.clone();
                 self.jobs.spawn(move || {
                     let mesh = aurora_prim::sculpt_placeholder(&params, detail);
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), mesh.surface_area, pool.as_deref())
+                    JobResult::geometry(
+                        key,
+                        jobs::volume_to_faces(&mesh),
+                        (mesh.surface_area, mesh.grid_area),
+                        pool.as_deref(),
+                    )
                 });
             }
             GeomKey::Mesh { id, lod } => {
@@ -1804,7 +1829,7 @@ impl Scene {
                 self.jobs.spawn(move || {
                     let s = aurora_prim::tree::tree_species(Some(species));
                     let mesh = aurora_prim::tree::generate_tree(s, plants::tree_lod(lod));
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), 1.0, pool.as_deref())
+                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, 0.0), pool.as_deref())
                 });
             }
             // (built at once by `request_grass`, which needs the ground)
@@ -1829,7 +1854,7 @@ impl Scene {
             self.jobs.spawn(move || match lib.parts.get(part as usize) {
                 Some(p) => {
                     let (face, min, max) = morph::morphed(p, &w);
-                    JobResult::geometry(key, (vec![Some(face)], min, max), 1.0, pool.as_deref())
+                    JobResult::geometry(key, (vec![Some(face)], min, max), (1.0, 0.0), pool.as_deref())
                 }
                 None => JobResult::GeometryFailed { key },
             });
@@ -1988,7 +2013,17 @@ impl Scene {
                 // staged in the pool of a GPU device lost since (`forget_gpu`):
                 // dropped, the next sync asks for it again
                 JobResult::Geometry { geom, .. } if !geom.staged_in(self.staging.as_deref()) => {}
-                JobResult::Geometry { key, geom, area } => self.finish_geometry(renderer, key, geom, area),
+                JobResult::Geometry {
+                    key,
+                    geom,
+                    area,
+                    grid_area,
+                } => {
+                    if grid_area > 0.0 {
+                        self.grid_area.insert(key, grid_area);
+                    }
+                    self.finish_geometry(renderer, key, geom, area)
+                }
                 JobResult::GeometryFailed { key } => {
                     if let GeomKey::Mesh { id, lod } = key {
                         self.meshes.on_geometry_done(&id, lod);
@@ -2045,6 +2080,22 @@ impl Scene {
         for f in g.faces.drain(..) {
             renderer.records.free(f.record);
             self.slot_users.remove(&(f.base_slot, idx as u32));
+        }
+    }
+
+    /// Takes an object's drawing away while it stays in the world (a
+    /// stopped plant, a hidden large surface).
+    fn stop_drawing(&mut self, renderer: &mut Renderer, world: &mut World, idx: usize) {
+        if let Some(mut g) = self.gpu.get_mut(idx).map(std::mem::take) {
+            self.release_obj(renderer, idx, &mut g);
+        }
+        self.anchors.forget(idx);
+        self.pick.remove(idx);
+        self.list_index.remove(idx);
+        if let Some(object) = world.objects.get_mut_untracked(idx) {
+            object.render.needs_records = false;
+            object.shape_dirty = false;
+            object.material_dirty = false;
         }
     }
 
@@ -2209,6 +2260,10 @@ impl Scene {
         self.joint_boxes = Default::default();
         self.skin_binds = Default::default();
         self.sculpt_area.clear();
+        self.grid_area.clear();
+        self.surface_measured.clear();
+        self.surface_hidden.clear();
+        self.surface_scanned = 0;
         self.grass.clear();
         self.impostors = Default::default();
         self.far_avatars.clear();
@@ -2658,6 +2713,7 @@ impl Scene {
     /// the anchors written here (anchors.rs) and is not visited.
     pub fn sync(&mut self, renderer: &mut Renderer, world: &mut World, view: &CullView) {
         self.finish_mesh_lod_resets(world, Instant::now());
+        self.update_surface_protection(world);
         if self.parcel_visibility_version != world.parcel_visibility.version {
             self.parcel_visibility_version = world.parcel_visibility.version;
             for (idx, object) in world.objects.slots.iter_mut().enumerate() {
@@ -3479,21 +3535,12 @@ impl Scene {
             return;
         };
         let wanted = Self::object_geom_key(o, lod);
-        if lod == plants::NOT_DRAWN {
-            // a plant the trees' detail stops (tree_detail.rs): its drawing
-            // goes, as for a parcel that hides it, but it stays watched so
-            // that a higher factor brings it back
-            if let Some(mut g) = self.gpu.get_mut(idx).map(std::mem::take) {
-                self.release_obj(renderer, idx, &mut g);
-            }
-            self.anchors.forget(idx);
-            self.pick.remove(idx);
-            self.list_index.remove(idx);
-            if let Some(object) = world.objects.get_mut_untracked(idx) {
-                object.render.needs_records = false;
-                object.shape_dirty = false;
-                object.material_dirty = false;
-            }
+        // a plant the trees' detail stops (tree_detail.rs), or a large
+        // surface the protection hides (surface_area.rs): its drawing goes,
+        // as for a parcel that hides it, but it stays watched and synced so
+        // that it comes back when that changes
+        if lod == plants::NOT_DRAWN || self.count_surface(idx, wanted) {
+            self.stop_drawing(renderer, world, idx);
             return;
         }
         let wearer = Self::wearer_avatar(world, idx);
