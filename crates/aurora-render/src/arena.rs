@@ -972,7 +972,7 @@ mod tests {
             let sk: Vec<SkinVertex> = (0..vcount)
                 .map(|k| SkinVertex {
                     joints: [i as u8, k as u8, 0, 0],
-                    weights: [255, 0, 0, 0],
+                    weights: [u16::MAX, 0, 0, 0],
                 })
                 .collect();
             let idx: Vec<u16> = (0..icount).map(|k| (k % vcount) as u16).collect();

@@ -1826,7 +1826,7 @@ fn skin_layout() -> wgpu::VertexBufferLayout<'static> {
             shader_location: 3,
         },
         wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Unorm8x4,
+            format: wgpu::VertexFormat::Unorm16x4,
             offset: 4,
             shader_location: 4,
         },
@@ -9744,9 +9744,9 @@ mod tests {
                 let (u, v) = (i as f32 / N as f32, j as f32 / N as f32);
                 let bump = 0.07 * ((u * 9.0).sin() + (v * 7.0).cos());
                 vertices.push(Vertex::new([u - 0.5, v - 0.5, bump], [0.0, 0.0, 1.0], [u, v]));
-                let a = (u * 255.0) as u8;
-                let b = ((1.0 - u) * v * 255.0) as u8;
-                let rest = 255 - a - b;
+                let a = (u * 65535.0) as u16;
+                let b = ((1.0 - u) * v * 65535.0) as u16;
+                let rest = u16::MAX - a - b;
                 skin.push(SkinVertex {
                     joints: [0, 1, 2, 3],
                     weights: [a, b, rest / 2, rest - rest / 2],
