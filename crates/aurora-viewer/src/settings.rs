@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 pub mod area_search;
 pub mod backup;
+pub mod draw_stepping;
 mod hover_height;
 pub mod registry;
 mod saver;
@@ -530,6 +531,16 @@ pub struct Settings {
     pub start_location: String,
     pub start_region: String,
     pub draw_distance: f32,
+    /// FSRenderFarClipStepping: after the login and a teleport to another
+    /// region, the draw distance starts at 32 m and doubles every
+    /// `draw_distance_stepping_interval` seconds (settings/draw_stepping.rs;
+    /// off).
+    pub draw_distance_stepping: bool,
+    /// FSRenderFarClipSteppingInterval: 20 s, 5 to 30 (Debug Settings only).
+    pub draw_distance_stepping_interval: u32,
+    /// The steps under way; the file keeps the user's draw distance.
+    #[serde(skip)]
+    pub draw_stepping: Option<draw_stepping::Stepping>,
     /// The GPU to draw with (Preferences › Graphics; #894): empty for the
     /// automatic choice (discrete first), or the adapter's name; read at
     /// startup (`aurora_render::adapter_choice`), `AURORA_GPU` overrides it.
@@ -1183,7 +1194,8 @@ pub struct Settings {
     /// default.
     pub walk_backwards_without_turning: bool,
     /// FSAvatarTurnSpeed: how much faster avatars turn while walking or
-    /// standing, 0 (the default lag) to 100 % (world/body.rs).
+    /// standing, 0 (the default lag) to 100 % (world/body.rs; Debug Settings
+    /// only).
     pub avatar_turn_speed: f32,
     /// Hold Up to start flying (agent_jump, indra/newview/llviewerinput.cpp).
     /// Aurora splits AutomaticFly into independent takeoff/landing choices;
@@ -1219,7 +1231,7 @@ pub struct Settings {
     pub large_surface_frame_max: f32,
     /// FSRevokePerms: revoke the permissions of an object we do not own
     /// when we sit on it (1), stand up from it (2), both (3) or never (0,
-    /// the default) (app/revoke_on_sit.rs).
+    /// the default) (app/revoke_on_sit.rs; Debug Settings only).
     pub revoke_permissions: u8,
     /// What a double click on the ground does (Preferences › Controls, the
     /// wolf menu › Me): nothing by default, as in the Legacy Viewer.
@@ -1858,6 +1870,9 @@ impl Default for Settings {
             start_location: "last".into(),
             start_region: String::new(),
             draw_distance: 96.0,
+            draw_distance_stepping: false,
+            draw_distance_stepping_interval: 20,
+            draw_stepping: None,
             gpu_adapter: String::new(),
             gpu_driver_dismissed: String::new(),
             allow_overlays: false,
@@ -2810,6 +2825,7 @@ impl Settings {
             self.chat_island_width = 0.0;
         }
         self.draw_distance = self.draw_distance.clamp(32.0, 512.0);
+        self.draw_distance_stepping_interval = self.draw_distance_stepping_interval.clamp(5, 30);
         self.chat_commands.sanitize();
         if let Some(toolbar) = &mut self.toolbar {
             toolbar.sanitize();
@@ -2998,6 +3014,10 @@ impl Settings {
             // a setting changed since the last frame is the user's too
             held.sync(&copy);
             held.restore(&mut copy);
+        }
+        // the draw distance being stepped: the user's
+        if let Some(steps) = copy.draw_stepping.take() {
+            copy.draw_distance = steps.user;
         }
         if !copy.remember_username {
             copy.username.clear();

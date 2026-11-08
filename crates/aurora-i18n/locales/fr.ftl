@@ -13427,17 +13427,7 @@ ui-options-build-physical = Physique
 ui-options-build-temporary = Temporaire
 ui-options-build-new-faces = Aspect des nouveaux objets
 
-# Preferences › Controls: FSAvatarTurnSpeed
-ui-options-avatar-turn-speed = Vitesse de rotation des avatars
-ui-options-avatar-turn-speed-help = Rapidité supplémentaire avec laquelle les avatars se tournent vers leur direction en marchant ou debout (0 % par défaut). Uniquement sur cet écran.
 
-# Preferences › Mouse and keyboard: FSRevokePerms
-ui-options-revoke-permissions = Révoquer les permissions du siège
-ui-options-revoke-permissions-help = Quand vous vous asseyez sur un objet qui ne vous appartient pas ou que vous vous en levez, retire à ses scripts ce qui leur avait été permis, comme vous animer.
-ui-options-revoke-never = Jamais
-ui-options-revoke-on-sit = Quand je m'assois
-ui-options-revoke-on-stand = Quand je me lève
-ui-options-revoke-on-sit-and-stand = Quand je m'assois et me lève
 
 # Preferences › Protections: large surface protection (RenderVolumeSAProtection)
 large-surface-title = Grandes surfaces
@@ -13446,9 +13436,10 @@ large-surface-enable-hint = Protège votre carte graphique des objets conçus po
 large-surface-frame-max = Surface totale affichée
 large-surface-frame-max-hint = La surface des grands objets affichée avant que les plus grands soient masqués (5 000 par défaut).
 
-# Preferences: visibility switches (RenderAttachedParticles, RenderParcelSelection)
+# Preferences › Graphics: RenderAttachedParticles
 ui-options-attached-particles = Particules des objets portés
 ui-options-attached-particles-hint = Affiche les particules de ce que portent les avatars : étincelles, fumée, feu.
-ui-options-build-land = Terrain
-ui-options-parcel-selection-outline = Mettre en évidence les limites de la parcelle sélectionnée
-ui-options-parcel-selection-outline-hint = Murs jaunes autour d'une parcelle sélectionnée avec l'outil terrain ou À propos du terrain.
+
+# Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
+ui-options-draw-distance-stepping = Distance d'affichage progressive
+ui-options-draw-distance-stepping-hint = Après la connexion et après une téléportation vers une autre région, la distance d'affichage part de 32 m et double jusqu'à la vôtre, pour que ce qui est proche se charge d'abord.
