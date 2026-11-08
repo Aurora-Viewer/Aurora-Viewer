@@ -3783,6 +3783,10 @@ the reply comes back with a frame result, one to three frames later (the
 result of a frame the render thread has already finished is taken without
 waiting for the next handoff)
 (`aurora-render/src/pick.rs`, `aurora-viewer/src/app/click_pick.rs`).
+Input replay preserves its position before later `UiTurn` barriers: queued
+events and resolved picks ignore those later barriers while their handlers
+run, but a new GPU depth request still stops the queue. Outside replay,
+new arrivals continue to wait for the interface pass.
 The same click also asks what is drawn under its pixel
 (`Renderer::request_drawn`, `aurora-render/src/drawn_pick.rs`): the frame
 that carries the request redraws the faces of the view through a camera
