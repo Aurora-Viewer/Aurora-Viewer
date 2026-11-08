@@ -32,6 +32,7 @@ pub mod impostors;
 pub mod inspect;
 pub mod jobs;
 pub(crate) mod joint_overrides;
+pub mod legacy_bump;
 pub mod legacy_mat;
 pub mod lights;
 mod list_index;
@@ -61,9 +62,11 @@ pub mod sound_occlusion;
 pub mod sound_reverb;
 pub mod sounds;
 pub mod still_check;
+pub mod surface_area;
 mod sync_check;
 mod sync_plan;
 mod sync_slow;
+mod tree_detail;
 mod world_overlays;
 pub use sync_plan::LodInfo;
 pub mod sync_sets;
@@ -341,6 +344,9 @@ pub struct FaceDraw {
     /// Normal, specular / metallic-roughness and emissive maps (sized like
     /// the base texture).
     pub aux_tex: [Uuid; 3],
+    /// Height asset behind a generated texture-entry normal. Its streaming
+    /// size follows this face even though the generated normal is local.
+    pub bump_height_source: Uuid,
     pub te_alpha: f32,
     pub pbr_alpha: Option<u8>, // 0 opaque, 1 blend, 2 mask
     /// Legacy material alpha mode (`legacy_mat::alpha_mode`).
@@ -656,6 +662,9 @@ fn note_face_usage(usage: &mut Vec<(Uuid, f32, bool)>, f: &FaceDraw, px: f32, in
     for t in f.aux_tex.iter().filter(|t| !t.is_nil()) {
         usage.push((*t, px, in_view));
     }
+    if !f.bump_height_source.is_nil() {
+        usage.push((f.bump_height_source, px, in_view));
+    }
 }
 
 /// GPU face table entry of a face of object `idx`.
@@ -872,6 +881,8 @@ pub struct Scene {
     /// class only the faces using it are classified again.
     slot_users: std::collections::BTreeSet<(u32, u32)>,
     alpha_changes_tmp: Vec<u32>,
+    /// `rebuild_reslotted`'s list, kept for its room.
+    reslotted_tmp: Vec<Uuid>,
     /// Main-thread time a frame gives to the full syncs that can wait
     /// (new objects, geometry bound, faces rebuilt); the others wait in
     /// the backlog (sync_sets.rs). Set by the app from the frame time.
@@ -963,6 +974,15 @@ pub struct Scene {
     pub attached_lights: bool,
     /// Surface area of the generated sculpts (attachment area limit).
     pub sculpt_area: HashMap<GeomKey, f32>,
+    /// The swept grid's area of generated prims and sculpts, and the large
+    /// surface protection that reads it (surface_area.rs).
+    grid_area: HashMap<GeomKey, f32>,
+    pub surface_protection: surface_area::Protection,
+    surface_measured: HashMap<usize, surface_area::Measure>,
+    surface_hidden: std::collections::HashSet<usize>,
+    /// How many geometries were measured at the last look for objects not
+    /// measured yet (surface_area.rs).
+    surface_scanned: usize,
     /// LOD triangle counts by prim shape (complexity.rs).
     prim_triangles: std::sync::Mutex<HashMap<u64, [u32; 4]>>,
     /// Attachment surface area of each avatar (m², RenderAutoMuteSurfaceAreaLimit).
@@ -1016,6 +1036,8 @@ pub struct Scene {
     last_sync: Option<Instant>,
     frame: u32,
     pub lod_factor: f32,
+    /// RenderTreeLODFactor (`tree_detail.rs`).
+    pub tree_lod_factor: f32,
     pub draw_distance: f32,
     last_origin: Option<(u32, u32)>,
     blend_tmp: Vec<blend_order::BlendEntry>,
@@ -1197,6 +1219,12 @@ pub fn lod_for(radius: f32, distance: f32, lod_factor: f32, fov_y: f32) -> u8 {
     }
 }
 
+/// The detail level of object `o`: a plant's (`plants::plant_lod`), else
+/// a volume's (`lod_for`).
+pub(super) fn object_lod(o: &Object, radius: f32, distance: f32, lod_factor: f32, tree_factor: f32, fov_y: f32) -> u8 {
+    plants::plant_lod(o, distance, tree_factor, lod_factor).unwrap_or_else(|| lod_for(radius, distance, lod_factor, fov_y))
+}
+
 /// Prim material code of light sources (material_codes.h LL_MCODE_LIGHT).
 const LL_MCODE_LIGHT: u8 = 7;
 
@@ -1219,7 +1247,7 @@ fn te_record_base(model: Mat4, f: &TextureFace) -> DrawRecord {
     // specular color, glossiness and environment are its shininess
     // (LLFace: vertex alpha = 0, .25, .5, .75)
     let s = [0.0f32, 0.25, 0.5, 0.75][shiny as usize & 3];
-    if shiny > 0 {
+    if shiny > 0 || matches!(f.bump(), 1..=17) {
         fl |= flags::LEGACY_MAT;
     }
     let sl = s.powf(2.2);
@@ -1510,6 +1538,7 @@ impl Scene {
             preview_images: HashMap::new(),
             slot_users: Default::default(),
             alpha_changes_tmp: Vec::new(),
+            reslotted_tmp: Vec::new(),
             sync_budget: std::time::Duration::from_millis(1),
             geom_trash: Default::default(),
             pick: Default::default(),
@@ -1553,6 +1582,11 @@ impl Scene {
             loading_bars: true,
             attached_lights: true,
             sculpt_area: HashMap::new(),
+            grid_area: HashMap::new(),
+            surface_protection: Default::default(),
+            surface_measured: HashMap::new(),
+            surface_hidden: Default::default(),
+            surface_scanned: 0,
             prim_triangles: Default::default(),
             avatar_area: HashMap::new(),
             complexity_rules: 0,
@@ -1580,6 +1614,7 @@ impl Scene {
             last_sync: None,
             frame: 0,
             lod_factor: 2.0,
+            tree_lod_factor: 0.5,
             draw_distance: 96.0,
             last_origin: None,
             blend_tmp: Vec::new(),
@@ -1737,7 +1772,7 @@ impl Scene {
                 let pool = self.staging.clone();
                 self.jobs.spawn(move || {
                     let mesh = aurora_prim::generate_volume(&params, detail);
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), 1.0, pool.as_deref())
+                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, mesh.grid_area), pool.as_deref())
                 });
             }
             GeomKey::Flexible { lod, .. } => {
@@ -1748,7 +1783,7 @@ impl Scene {
                     let sim = aurora_prim::flexible::Flexible::new(0, 1.0, Vec3::ZERO, Quat::IDENTITY);
                     let mesh =
                         aurora_prim::volume::generate_flexible_volume(&params, detail, &sim.path(Vec3::ZERO, Quat::IDENTITY), Vec3::ONE);
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), 1.0, pool.as_deref())
+                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, 0.0), pool.as_deref())
                 });
             }
             GeomKey::Sculpt { lod, .. } => {
@@ -1763,7 +1798,12 @@ impl Scene {
                 let pool = self.staging.clone();
                 self.jobs.spawn(move || {
                     let mesh = aurora_prim::generate_sculpt(&params, detail, map.width, map.height, map.components, &map.pixels);
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), mesh.surface_area, pool.as_deref())
+                    JobResult::geometry(
+                        key,
+                        jobs::volume_to_faces(&mesh),
+                        (mesh.surface_area, mesh.grid_area),
+                        pool.as_deref(),
+                    )
                 });
             }
             GeomKey::SculptPlaceholder { lod, .. } => {
@@ -1772,7 +1812,12 @@ impl Scene {
                 let pool = self.staging.clone();
                 self.jobs.spawn(move || {
                     let mesh = aurora_prim::sculpt_placeholder(&params, detail);
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), mesh.surface_area, pool.as_deref())
+                    JobResult::geometry(
+                        key,
+                        jobs::volume_to_faces(&mesh),
+                        (mesh.surface_area, mesh.grid_area),
+                        pool.as_deref(),
+                    )
                 });
             }
             GeomKey::Mesh { id, lod } => {
@@ -1784,7 +1829,7 @@ impl Scene {
                 self.jobs.spawn(move || {
                     let s = aurora_prim::tree::tree_species(Some(species));
                     let mesh = aurora_prim::tree::generate_tree(s, plants::tree_lod(lod));
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), 1.0, pool.as_deref())
+                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, 0.0), pool.as_deref())
                 });
             }
             // (built at once by `request_grass`, which needs the ground)
@@ -1809,7 +1854,7 @@ impl Scene {
             self.jobs.spawn(move || match lib.parts.get(part as usize) {
                 Some(p) => {
                     let (face, min, max) = morph::morphed(p, &w);
-                    JobResult::geometry(key, (vec![Some(face)], min, max), 1.0, pool.as_deref())
+                    JobResult::geometry(key, (vec![Some(face)], min, max), (1.0, 0.0), pool.as_deref())
                 }
                 None => JobResult::GeometryFailed { key },
             });
@@ -1968,7 +2013,17 @@ impl Scene {
                 // staged in the pool of a GPU device lost since (`forget_gpu`):
                 // dropped, the next sync asks for it again
                 JobResult::Geometry { geom, .. } if !geom.staged_in(self.staging.as_deref()) => {}
-                JobResult::Geometry { key, geom, area } => self.finish_geometry(renderer, key, geom, area),
+                JobResult::Geometry {
+                    key,
+                    geom,
+                    area,
+                    grid_area,
+                } => {
+                    if grid_area > 0.0 {
+                        self.grid_area.insert(key, grid_area);
+                    }
+                    self.finish_geometry(renderer, key, geom, area)
+                }
                 JobResult::GeometryFailed { key } => {
                     if let GeomKey::Mesh { id, lod } = key {
                         self.meshes.on_geometry_done(&id, lod);
@@ -1982,6 +2037,9 @@ impl Scene {
                 JobResult::MeshCache { id, arrival } => self.meshes.on_cache(id, arrival.map(|a| *a)),
                 JobResult::MeshPart { id, arrival } => self.meshes.on_part(id, *arrival, &self.jobs),
                 JobResult::Material { id, material } => self.materials.on_material(id, material),
+                bump @ JobResult::LegacyBump { .. } => {
+                    self.textures.on_legacy_bump_job(bump);
+                }
                 JobResult::Done => {}
                 other => self.textures.on_job(other),
             }
@@ -2022,6 +2080,22 @@ impl Scene {
         for f in g.faces.drain(..) {
             renderer.records.free(f.record);
             self.slot_users.remove(&(f.base_slot, idx as u32));
+        }
+    }
+
+    /// Takes an object's drawing away while it stays in the world (a
+    /// stopped plant, a hidden large surface).
+    fn stop_drawing(&mut self, renderer: &mut Renderer, world: &mut World, idx: usize) {
+        if let Some(mut g) = self.gpu.get_mut(idx).map(std::mem::take) {
+            self.release_obj(renderer, idx, &mut g);
+        }
+        self.anchors.forget(idx);
+        self.pick.remove(idx);
+        self.list_index.remove(idx);
+        if let Some(object) = world.objects.get_mut_untracked(idx) {
+            object.render.needs_records = false;
+            object.shape_dirty = false;
+            object.material_dirty = false;
         }
     }
 
@@ -2186,6 +2260,10 @@ impl Scene {
         self.joint_boxes = Default::default();
         self.skin_binds = Default::default();
         self.sculpt_area.clear();
+        self.grid_area.clear();
+        self.surface_measured.clear();
+        self.surface_hidden.clear();
+        self.surface_scanned = 0;
         self.grass.clear();
         self.impostors = Default::default();
         self.far_avatars.clear();
@@ -2381,9 +2459,16 @@ impl Scene {
                     .tree_species
                     .filter(|&s| (s as usize) < aurora_prim::tree::TREE_SPECIES.len())
                     .unwrap_or(0);
+                // (a trunk past the finest four: not drawn, tree_detail.rs)
+                if lod == plants::NOT_DRAWN {
+                    return None;
+                }
                 return Some(GeomKey::Tree { species, lod: lod.min(3) });
             }
             LL_PCODE_LEGACY_GRASS => {
+                if lod == plants::NOT_DRAWN {
+                    return None;
+                }
                 return Some(GeomKey::Grass {
                     id: o.full_id,
                     hash: plants::grass_hash(o),
@@ -2628,6 +2713,7 @@ impl Scene {
     /// the anchors written here (anchors.rs) and is not visited.
     pub fn sync(&mut self, renderer: &mut Renderer, world: &mut World, view: &CullView) {
         self.finish_mesh_lod_resets(world, Instant::now());
+        self.update_surface_protection(world);
         if self.parcel_visibility_version != world.parcel_visibility.version {
             self.parcel_visibility_version = world.parcel_visibility.version;
             for (idx, object) in world.objects.slots.iter_mut().enumerate() {
@@ -2657,6 +2743,7 @@ impl Scene {
                 }
             }
         }
+        self.rebuild_reslotted(world);
         use crate::frame_profile::Part;
         let t0 = Instant::now();
         let mut slow = self.sync_slow.map(|limit| sync_slow::SlowSync::new(limit, t0));
@@ -2771,7 +2858,7 @@ impl Scene {
         // detail level checks: by events, or the slice of every object
         let events = !sync_sets::slice_mode();
         let dt = self.last_sync.replace(now).map_or(0.0, |last| (now - last).as_secs_f32());
-        let camera_moved = self.sets.lod.advance(view.eye, self.lod_factor, self.fov_y);
+        let camera_moved = self.sets.lod.advance(view.eye, self.lod_factor, self.fov_y, self.tree_lod_factor);
         if events {
             self.note_hud_changes(world);
         }
@@ -3017,6 +3104,45 @@ impl Scene {
         }
     }
 
+    /// Textures that went without a slot (a full texture table) and have one
+    /// now (`TextureStreamer::take_reslotted`): the objects and avatars
+    /// whose faces draw them still hold the white texture, and are built
+    /// again. One pass over the objects, only in a frame that follows such
+    /// a round (a few times a second at most, and only after a full table).
+    fn rebuild_reslotted(&mut self, world: &mut World) {
+        let mut ids = std::mem::take(&mut self.reslotted_tmp);
+        self.textures.take_reslotted(&mut ids);
+        if !ids.is_empty() {
+            let t0 = Instant::now();
+            let wanted: std::collections::HashSet<Uuid> = ids.iter().copied().collect();
+            let mut rebuilt = 0;
+            for (idx, g) in self.gpu.iter_mut().enumerate() {
+                if !g.tex_ids.iter().any(|t| wanted.contains(t)) {
+                    continue;
+                }
+                let Some(o) = world.objects.get_mut_untracked(idx) else {
+                    continue;
+                };
+                o.render.needs_records = true;
+                o.material_dirty = true;
+                if g.is_avatar {
+                    // (the body parts: `needs_full`)
+                    g.tex_generation = u64::MAX;
+                }
+                self.sets.dirty.insert(idx);
+                rebuilt += 1;
+            }
+            log::info!(
+                "texture table: {rebuilt} objects drawing {} textures given a slot again are built again ({} objects looked at in {:.2} ms)",
+                wanted.len(),
+                self.gpu.len(),
+                t0.elapsed().as_secs_f64() * 1000.0
+            );
+            ids.clear();
+        }
+        self.reslotted_tmp = ids;
+    }
+
     /// Classify again the faces whose base texture is in one of `slots`
     /// (found through `slot_users`, not by a pass over every face of the
     /// scene, which ran in most frames while textures arrive); the changed
@@ -3167,7 +3293,7 @@ impl Scene {
         }
         self.anchors.placed(world, idx, m.anchor);
         if let Some((radius, distance)) = m.lod {
-            self.watch_lod(idx, m.anchor.is_some(), radius, distance);
+            self.watch_lod(world, idx, m.anchor.is_some(), radius, distance);
         }
         if m.clear_flags
             && let Some(o) = world.objects.get_mut_untracked(idx)
@@ -3182,11 +3308,15 @@ impl Scene {
     /// turn (sync_sets.rs); the others when the camera has travelled far
     /// enough to change their level (lod_watch.rs). An object whose turn
     /// came before that keeps the wait it has.
-    fn watch_lod(&mut self, idx: usize, anchored: bool, radius: f32, distance: f32) {
+    fn watch_lod(&mut self, world: &World, idx: usize, anchored: bool, radius: f32, distance: f32) {
         if anchored || self.sets.follows_motion(idx) {
             self.sets.lod.forget(idx);
         } else if !(self.sets.only_checked(idx) && self.sets.lod.is_watched(idx)) {
-            let slack = lod_watch::lod_slack(radius, distance, self.lod_factor, self.fov_y);
+            let plant = world
+                .objects
+                .get(idx)
+                .and_then(|o| plants::plant_slack(o, distance, self.tree_lod_factor, self.lod_factor));
+            let slack = plant.unwrap_or_else(|| lod_watch::lod_slack(radius, distance, self.lod_factor, self.fov_y));
             self.sets.lod.watch(idx, slack);
         }
     }
@@ -3397,14 +3527,22 @@ impl Scene {
             &self.mesh_lod_overrides,
             o,
             hud,
-            lod_for(lod_radius, lod_dist, self.lod_factor, self.fov_y),
+            object_lod(o, lod_radius, lod_dist, self.lod_factor, self.tree_lod_factor, self.fov_y),
         );
         // (whatever comes of this sync; what the GPU places leaves below)
-        self.watch_lod(idx, false, lod_radius, lod_dist);
+        self.watch_lod(world, idx, false, lod_radius, lod_dist);
         let Some(o) = world.objects.get(idx) else {
             return;
         };
         let wanted = Self::object_geom_key(o, lod);
+        // a plant the trees' detail stops (tree_detail.rs), or a large
+        // surface the protection hides (surface_area.rs): its drawing goes,
+        // as for a parcel that hides it, but it stays watched and synced so
+        // that it comes back when that changes
+        if lod == plants::NOT_DRAWN || self.count_surface(idx, wanted) {
+            self.stop_drawing(renderer, world, idx);
+            return;
+        }
         let wearer = Self::wearer_avatar(world, idx);
         let owner_avatar = wearer.map(|(_, i)| i);
         let first_person_hidden = Self::attachment_first_person_hidden(world, idx);
@@ -3878,6 +4016,43 @@ impl Scene {
                 base_tex = texture;
                 source = TexSource::Asset;
             }
+            // Texture-entry bump presets fill the normal slot only when no
+            // explicit normal map is present. PBR faces take the earlier
+            // material branch and never reach this Legacy Viewer path.
+            let bump_mode = tf.bump();
+            let mut bump_height_source = Uuid::nil();
+            if legacy_bump::should_apply(
+                bump_mode,
+                mat_id.is_some(),
+                local_normal.is_some_and(|id| !id.is_nil()) || !aux_tex[0].is_nil(),
+            ) {
+                let bump_source = match legacy_bump::bump_source(bump_mode) {
+                    legacy_bump::BumpSource::Brightness | legacy_bump::BumpSource::Darkness => Some(base_tex),
+                    legacy_bump::BumpSource::Standard(id) => Some(id),
+                    legacy_bump::BumpSource::None => None,
+                };
+                if let Some(source_id) = bump_source
+                    && !source_id.is_nil()
+                {
+                    bump_height_source = source_id;
+                    let generated = self.textures.request_legacy_bump(renderer, source_id, bump_mode);
+                    // Hold the height source while its image is decoded and
+                    // while finer resident levels improve its cached normal.
+                    let height_kind = if source_id == base_tex { source.clone() } else { TexSource::Asset };
+                    let _ = self.textures.acquire(renderer, source_id, height_kind);
+                    g.tex_ids.push(source_id);
+                    if let Some(generated) = generated {
+                        g.tex_ids.push(generated);
+                        aux_tex[0] = generated;
+                        rec.tex[1] = self.textures.acquire(renderer, generated, TexSource::Asset);
+                        // A texture-entry bump follows the diffuse mapping,
+                        // even when a material with no normal map supplies a
+                        // separate normal transform.
+                        rec.mat_uv = rec.uv_st;
+                        rec.legacy[0] = rec.params[0];
+                    }
+                }
+            }
             if !base_tex.is_nil() {
                 g.tex_ids.push(base_tex);
             }
@@ -3931,6 +4106,7 @@ impl Scene {
                 base_slot: rec.tex[0],
                 tex_id: base_tex,
                 aux_tex,
+                bump_height_source,
                 te_alpha: if invisible { 0.0 } else { rec.base_color[3] },
                 pbr_alpha,
                 legacy_alpha,
@@ -4237,6 +4413,7 @@ impl Scene {
                     base_slot: slot,
                     tex_id: tex.unwrap_or(Uuid::nil()),
                     aux_tex: [Uuid::nil(); 3],
+                    bump_height_source: Uuid::nil(),
                     te_alpha: if hidden { 0.0 } else { 1.0 },
                     pbr_alpha: None,
                     legacy_alpha: None,
@@ -6493,7 +6670,7 @@ mod tests {
             appearance_version: 1,
             // Our preference must survive a stale simulator appearance.
             hover_height: -0.5,
-            attachments: 0,
+            attachments: Vec::new(),
         }));
         let idx = world.objects.index_of_uuid(&owner).expect("demo avatar");
         let seat_idx = world.objects.parent_of(world.objects.get(idx).expect("avatar")).expect("seat");
@@ -6808,6 +6985,7 @@ mod tests {
             base_slot: 0,
             tex_id: Uuid::nil(),
             aux_tex: [Uuid::nil(); 3],
+            bump_height_source: Uuid::nil(),
             te_alpha: 1.0,
             pbr_alpha: None,
             legacy_alpha: None,
@@ -6820,6 +6998,17 @@ mod tests {
             system: None,
             first_person_hidden: false,
         }
+    }
+
+    #[test]
+    fn generated_bump_height_source_receives_face_texture_usage() {
+        let source = Uuid::from_u128(42);
+        let mut face = test_face(Pass::Opaque, false);
+        face.bump_height_source = source;
+        face.repeats = 2.0;
+        let mut usage = Vec::new();
+        note_face_usage(&mut usage, &face, 256.0, true);
+        assert!(usage.contains(&(source, texture_importance::per_repeats(256.0, 2.0), true)));
     }
 
     #[test]
@@ -7211,6 +7400,7 @@ mod tests {
             0.0,
             [Mat4::IDENTITY; 3],
             [None; aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS],
+            None,
             flags,
         );
         frame.water = [[0.0, 0.0, 0.0, 1.0]; 6];

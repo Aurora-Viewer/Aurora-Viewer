@@ -81,6 +81,7 @@ impl Preset {
             Preset::Potato => Values {
                 draw_distance: 64.0,
                 lod_factor: 1.5,
+                tree_lod_factor: 0.0,
                 max_avatars: 3,
                 max_complexity: 35_000,
                 max_particles: 256,
@@ -109,6 +110,7 @@ impl Preset {
             Preset::Low => Values {
                 draw_distance: 96.0,
                 lod_factor: 2.0,
+                tree_lod_factor: 0.5,
                 max_avatars: 5,
                 max_complexity: 100_000,
                 max_particles: 2048,
@@ -138,6 +140,7 @@ impl Preset {
             Preset::Medium => Values {
                 draw_distance: 128.0,
                 lod_factor: 2.0,
+                tree_lod_factor: 0.5,
                 max_avatars: 7,
                 max_complexity: 200_000,
                 max_particles: 4096,
@@ -169,6 +172,7 @@ impl Preset {
             Preset::High => Values {
                 draw_distance: 128.0,
                 lod_factor: 2.0,
+                tree_lod_factor: 0.5,
                 max_avatars: 11,
                 max_complexity: 300_000,
                 max_particles: 4096,
@@ -206,6 +210,7 @@ impl Preset {
             Preset::Deluxe => Values {
                 draw_distance: 192.0,
                 lod_factor: 3.0,
+                tree_lod_factor: 1.0,
                 max_avatars: 16,
                 max_complexity: 350_000,
                 max_particles: 8192,
@@ -288,6 +293,8 @@ pub(crate) fn deluxe_v20() -> Values {
     Values {
         draw_distance: 256.0,
         gtao_quality: 2,
+        // (files of then hold no tree detail: 0.5, upgrade_tree_detail)
+        tree_lod_factor: 0.5,
         effects: Effects {
             contact_shadows: true,
             ..Effects::OFF
@@ -422,6 +429,7 @@ pub(crate) fn upgrade_physics_detail(s: &mut Settings) {
             avatar_physics_detail: level.avatar_physics_detail,
             hdr_emissive: level.hdr_emissive,
             max_texture_resolution: level.max_texture_resolution,
+            tree_lod_factor: level.tree_lod_factor,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
@@ -442,6 +450,7 @@ pub(crate) fn upgrade_hdr_emissive(s: &mut Settings) {
         let current = Values {
             hdr_emissive: level.hdr_emissive,
             max_texture_resolution: level.max_texture_resolution,
+            tree_lod_factor: level.tree_lod_factor,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
@@ -460,10 +469,29 @@ pub(crate) fn upgrade_max_texture_resolution(s: &mut Settings) {
         let level = preset.values();
         let current = Values {
             max_texture_resolution: level.max_texture_resolution,
+            tree_lod_factor: level.tree_lod_factor,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
             s.max_texture_resolution = level.max_texture_resolution;
+            return;
+        }
+    }
+}
+
+/// Settings files written before the levels set the trees' detail (version
+/// 34), all at 0.5: a profile exactly on Potato or Deluxe apart from it
+/// takes the level's (0 and 1, the Legacy Viewer's Low and Ultra); any
+/// other keeps 0.5.
+pub(crate) fn upgrade_tree_detail(s: &mut Settings) {
+    for preset in [Preset::Potato, Preset::Deluxe] {
+        let level = preset.values();
+        let current = Values {
+            tree_lod_factor: level.tree_lod_factor,
+            ..Values::read(s)
+        };
+        if current.as_shown() == level.as_shown() {
+            s.tree_lod_factor = level.tree_lod_factor;
             return;
         }
     }
@@ -509,6 +537,10 @@ impl Effects {
 pub struct Values {
     pub draw_distance: f32,
     pub lod_factor: f32,
+    /// RenderTreeLODFactor: 0 in Potato, 1 in Deluxe, 0.5 between (a backup
+    /// or a saved preset written before it holds none: 0.5, the default).
+    #[serde(default = "tree_lod_factor")]
+    pub tree_lod_factor: f32,
     pub max_avatars: u32,
     pub max_complexity: u32,
     pub max_particles: u32,
@@ -545,6 +577,10 @@ pub struct Values {
 
 fn default_projector_shadow_limit() -> u8 {
     2
+}
+
+fn tree_lod_factor() -> f32 {
+    0.5
 }
 
 fn hdr_on() -> bool {
@@ -588,6 +624,7 @@ impl Values {
         Values {
             draw_distance: round(self.draw_distance, 1.0),
             lod_factor: round(self.lod_factor, 0.125),
+            tree_lod_factor: round(self.tree_lod_factor, 0.125),
             max_complexity: slider::to_limit(slider::from_limit(self.max_complexity)),
             sharpen: round(self.sharpen, 0.05),
             avatar_physics_detail: round(self.avatar_physics_detail, 0.05),
@@ -607,6 +644,7 @@ impl Values {
         Values {
             draw_distance: s.draw_distance,
             lod_factor: s.lod_factor,
+            tree_lod_factor: s.tree_lod_factor,
             max_avatars: s.max_avatars,
             max_complexity: s.max_complexity,
             max_particles: s.max_particles,
@@ -641,6 +679,7 @@ impl Values {
     pub(crate) fn write(self, s: &mut Settings) {
         s.draw_distance = self.draw_distance;
         s.lod_factor = self.lod_factor;
+        s.tree_lod_factor = self.tree_lod_factor;
         s.max_avatars = self.max_avatars;
         s.max_complexity = self.max_complexity;
         s.max_particles = self.max_particles;
