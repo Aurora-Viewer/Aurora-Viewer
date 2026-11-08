@@ -513,6 +513,13 @@ pub struct Settings {
     pub script_editor: crate::ui::scripts::settings::ScriptSettings,
     pub username: String,
     pub remember_username: bool,
+    /// The saved account of the last login, as (login URI, lowercase user
+    /// name): the login screen selects it first (UserLoginInfo, written by
+    /// FSPanelLogin::onClickConnect and selected by
+    /// FSPanelLogin::addUsersToCombo, indra/newview/fspanellogin.cpp).
+    /// Browsing the cards changes `username`, never this; it is not saved
+    /// when the user name is not remembered.
+    pub last_login: Option<(String, String)>,
     /// Remember the password (its login hash, in the system credential
     /// store; Firestorm "Remember password"). Off by default.
     pub remember_password: bool,
@@ -1833,6 +1840,7 @@ impl Default for Settings {
             script_editor: Default::default(),
             username: String::new(),
             remember_username: true,
+            last_login: None,
             remember_password: false,
             debug_settings_changed_only: false,
             debug_settings_warning_ignored: false,
@@ -2923,6 +2931,7 @@ impl Settings {
         *self = Settings {
             username: old.username,
             remember_username: old.remember_username,
+            last_login: old.last_login,
             grid: old.grid,
             custom_login_uri: old.custom_login_uri,
             grids: old.grids,
@@ -2981,6 +2990,7 @@ impl Settings {
         }
         if !copy.remember_username {
             copy.username.clear();
+            copy.last_login = None;
         }
         copy
     }
@@ -3016,6 +3026,12 @@ impl Settings {
             GridChoice::SecondLifeBeta => aurora_net::login::SL_BETA_GRID.into(),
             GridChoice::Custom => self.custom_login_uri.trim().to_owned(),
         }
+    }
+
+    /// The account the login fields name, as `login_accounts::Account::key`
+    /// writes it: (login URI, lowercase user name).
+    pub fn login_key(&self) -> (String, String) {
+        (self.login_uri(), self.username.trim().to_lowercase())
     }
 
     /// Texture memory budget (MB): the manual value, or in automatic mode a
@@ -3270,6 +3286,27 @@ mod tests {
         // When the system heap cannot be identified, the existing safe
         // integrated default remains in force.
         assert_eq!(auto_texture_budget(Some(512), None, true), 2048);
+    }
+
+    #[test]
+    fn the_last_login_survives_a_restart_only_with_the_user_name() {
+        use super::Settings;
+        let old: Settings = serde_json::from_str("{}").expect("older preferences");
+        assert_eq!(old.last_login, None);
+        for remember in [true, false] {
+            let settings = Settings {
+                username: "synthetic-browsed".into(),
+                remember_username: remember,
+                last_login: Some(("synthetic-grid".into(), "synthetic-last".into())),
+                ..Settings::default()
+            };
+            let bytes = serde_json::to_vec(&settings.to_saved()).expect("save preferences");
+            let restored: Settings = serde_json::from_slice(&bytes).expect("restart");
+            assert_eq!(
+                restored.last_login,
+                remember.then(|| ("synthetic-grid".to_owned(), "synthetic-last".to_owned()))
+            );
+        }
     }
 
     #[test]
