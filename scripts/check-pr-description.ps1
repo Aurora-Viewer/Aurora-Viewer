@@ -101,7 +101,7 @@ function Update-Pr([int]$Number, [bool]$MayClose) {
     $deadline = $asked.AddDays($PrDescriptionGraceDays)
     $deadlineText = $null
     if (-not $team) { $deadlineText = $deadline.ToString('yyyy-MM-dd') }
-    $body = Format-PrDescriptionComment $problems $templateUrl $deadlineText
+    $body = Format-PrDescriptionComment $problems $templateUrl $deadlineText $data.user.login
     if (-not $comment) {
         Send-Body POST "repos/$repo/issues/$Number/comments" $body
     } elseif ($comment.body -ne $body) {
@@ -111,7 +111,7 @@ function Update-Pr([int]$Number, [bool]$MayClose) {
     Write-Host "#${Number} ($($data.user.login), $($data.author_association)): the description misses $($problems.Count) part(s)."
     $problems | ForEach-Object { Write-Host "  - $_" }
     if ($MayClose -and -not $team -and $comment -and [datetime]::UtcNow -gt $deadline) {
-        Send-Body POST "repos/$repo/issues/$Number/comments" (Format-PrDescriptionClose $templateUrl)
+        Send-Body POST "repos/$repo/issues/$Number/comments" (Format-PrDescriptionClose $templateUrl $data.user.login)
         Invoke-Gh api -X PATCH "repos/$repo/pulls/$Number" -f 'state=closed' | Out-Null
         Write-Host "#${Number}: closed, incomplete since $($asked.ToString('yyyy-MM-dd'))."
     }
