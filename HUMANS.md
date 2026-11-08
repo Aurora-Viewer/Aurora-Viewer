@@ -83,13 +83,15 @@ a review or that left the queue.
   once it is complete); the team's PRs are never closed. So nobody reads a
   PR before its author has said what it does and how it was tested.
 - **Review slots**: an outside contributor has at most **10 PRs in review**
-  at a time. The Review slots workflow moves the others to draft, with the
-  `waiting-for-slot` label and a comment explaining why; when one of their
-  PRs in review is merged or closed, the oldest waiting one comes back to
-  review on its own, with a comment. The author can pick which one is
-  reviewed first ("Ready for review" on a waiting PR: their newest other PR
-  in review waits instead). PRs a maintainer has started reviewing, or in
-  the merge queue, keep their slot; the team's PRs never wait. To see the
+  at a time. The Review slots workflow gives the others the
+  `waiting-for-slot` label and a comment explaining why (they stay open as
+  they are; the PR panel hides them, like `on-hold`); when one of their PRs
+  in review is merged or closed, the oldest waiting one comes back to review
+  on its own, with a comment. To have a waiting PR reviewed first (its
+  author may ask in a comment), remove its label by hand: it takes a slot
+  and the author's newest other PR in review waits instead. PRs a
+  maintainer has started reviewing, or in the merge queue, keep their slot;
+  the team's PRs never wait. To see the
   plan without changing anything: Actions › Review slots › Run workflow
   (dry run ticked), or `./scripts/pr-slots.ps1 -Sweep -DryRun`.
 - **Outside contributors' CI** waits for a maintainer: on their PR, "Approve
