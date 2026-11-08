@@ -28,7 +28,9 @@ struct VolParams {
     g: f32,
     // the share of the scene's size drawn (the viewport's)
     res: f32,
-    _pad: f32,
+    // the even part of the scattering, so that beams show from the side
+    // and from behind too, not only toward the sun
+    side: f32,
 };
 @group(3) @binding(0) var<uniform> vol: VolParams;
 
@@ -87,7 +89,7 @@ fn fs_volumetric(in: VolOut) -> @location(0) vec4<f32> {
     // the phase without its 1/4pi: an artistic gain, 1 across the light
     // with no forward scattering
     let g2 = vol.g * vol.g;
-    let phase = (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * vol.g * cos_t, 1e-4), 1.5);
+    let phase = (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * vol.g * cos_t, 1e-4), 1.5) + vol.side;
     let scattered = 1.0 - exp(-len * vol.density);
     return vec4<f32>(frame.sun_color.rgb * (light * lit * phase * scattered), 1.0);
 }

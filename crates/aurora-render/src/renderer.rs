@@ -2625,7 +2625,7 @@ struct VolU {
     density: f32,
     g: f32,
     res: f32,
-    _pad: f32,
+    side: f32,
 }
 
 /// The reduced-resolution pass of the volumetric sun rays (volumetric.wgsl)
@@ -6631,7 +6631,7 @@ impl Backend {
                 density: VOL_DENSITY * f.god_rays_haze.clamp(0.0, 4.0),
                 g: f.god_rays_glow.clamp(0.0, 0.95),
                 res: rays_res,
-                _pad: 0.0,
+                side: f.god_rays_side.clamp(0.0, 4.0),
             };
             self.queue.write_buffer(&self.volumetric.params, 0, bytemuck::bytes_of(&u));
         }

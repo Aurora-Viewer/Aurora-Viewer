@@ -1368,6 +1368,9 @@ pub struct FrameParams {
     /// The resolution the sun rays draw at, a share of the image's size
     /// (0.25 to 1).
     pub god_rays_res: f32,
+    /// How bright the beams are away from the sun, from the side and
+    /// behind (0 only toward the sun).
+    pub god_rays_side: f32,
     pub water_height: f32,
     pub shadows: bool,
     /// Distance covered by the shadow cascades.
