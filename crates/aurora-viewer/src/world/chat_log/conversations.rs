@@ -265,6 +265,10 @@ pub fn now() -> i64 {
 /// A file being read.
 type Reading = crossbeam_channel::Receiver<std::io::Result<Option<Vec<u8>>>>;
 
+/// The answer of a publication: written, or why not. A dropped job (full
+/// queue, thread gone) closes the channel without an answer.
+pub type Published = crossbeam_channel::Receiver<std::io::Result<()>>;
+
 /// The log of the account logged in.
 #[derive(Default)]
 pub struct Log {
@@ -276,8 +280,13 @@ pub struct Log {
     reading: Option<Reading>,
     /// What this session logged while the file was being read.
     early: Vec<Conversation>,
-    /// Changed since the last save.
+    /// Changed since the last save the worker acknowledged.
     dirty: bool,
+    /// Publications the worker has not answered yet.
+    publishing: Vec<Published>,
+    /// Wait before the next try after a failed save (doubles, up to a
+    /// minute); the plain interval otherwise.
+    retry: std::time::Duration,
     /// The file could not be read: it is never written over this session.
     unreadable: bool,
     saved_at: Option<std::time::Instant>,
@@ -292,6 +301,11 @@ pub struct Log {
 
 /// Time between two saves of a changing log.
 const SAVE_EVERY: std::time::Duration = std::time::Duration::from_secs(5);
+/// Longest wait between two tries of a save that keeps failing.
+const RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(60);
+/// How long a logout or exit waits for a file still being read, so that the
+/// session's entries are merged into it and not lost.
+const READ_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
 impl Log {
     /// Start a session's log (enableLogging): `reading` brings the file.
@@ -326,6 +340,21 @@ impl Log {
     pub(super) fn poll_read(&mut self, now: i64) {
         let Some(rx) = &self.reading else { return };
         let Ok(read) = rx.try_recv() else { return };
+        self.apply_read(read, now);
+    }
+
+    /// Before a logout or an exit: wait (briefly) for the file still being
+    /// read and merge the session's entries into it, so that the last save
+    /// does not lose them. Gives up, and says so, when the disk is too slow.
+    pub(super) fn finish_read(&mut self, now: i64) {
+        let Some(rx) = &self.reading else { return };
+        match rx.recv_timeout(READ_WAIT) {
+            Ok(read) => self.apply_read(read, now),
+            Err(_) => log::warn!("conversation log: the file was still being read; this session's entries are not saved"),
+        }
+    }
+
+    fn apply_read(&mut self, read: std::io::Result<Option<Vec<u8>>>, now: i64) {
         self.reading = None;
         let (mut list, purged) = match read {
             Ok(Some(bytes)) => parse_file(&bytes, now),
@@ -344,6 +373,43 @@ impl Log {
         self.list = list;
         self.dirty |= purged || added;
         self.revision += 1;
+    }
+
+    /// Collect the answers of the publications: a failed one leaves the log
+    /// dirty again, to be tried again after a longer wait; a written one
+    /// resets the wait.
+    pub(super) fn poll_saves(&mut self) {
+        let mut failed = false;
+        let mut written = false;
+        self.publishing.retain(|rx| match rx.try_recv() {
+            Ok(Ok(())) => {
+                written = true;
+                false
+            }
+            Ok(Err(_)) | Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                failed = true;
+                false
+            }
+            Err(crossbeam_channel::TryRecvError::Empty) => true,
+        });
+        if failed {
+            self.save_failed();
+        } else if written && self.publishing.is_empty() {
+            self.retry = SAVE_EVERY;
+        }
+    }
+
+    /// A save did not reach the disk: the log stays dirty, the next try waits
+    /// longer.
+    pub(super) fn save_failed(&mut self) {
+        self.dirty = true;
+        self.retry = (self.retry * 2).clamp(SAVE_EVERY, RETRY_MAX);
+        self.saved_at = Some(std::time::Instant::now());
+    }
+
+    /// The publication `take_save` asked for was queued.
+    pub(super) fn saving(&mut self, answer: Published) {
+        self.publishing.push(answer);
     }
 
     fn entries(&mut self) -> &mut Vec<Conversation> {
@@ -428,9 +494,10 @@ impl Log {
         if !self.dirty || self.reading.is_some() || self.unreadable {
             return None;
         }
-        if !now_or_never && self.saved_at.is_some_and(|t| t.elapsed() < SAVE_EVERY) {
+        if !now_or_never && self.saved_at.is_some_and(|t| t.elapsed() < self.retry.max(SAVE_EVERY)) {
             return None;
         }
+        // clean only until the worker answers: a failure sets it again
         self.dirty = false;
         self.saved_at = Some(std::time::Instant::now());
         Some(format_file(&self.list))
@@ -707,5 +774,56 @@ mod tests {
         let b = Uuid::from_u128(0x0F);
         assert_eq!(private_session(a, b), Uuid::from_u128(0xFF));
         assert_eq!(private_session(a, b), private_session(b, a));
+    }
+
+    fn logging() -> Log {
+        Log {
+            logging: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_save_stays_dirty_until_the_worker_acknowledges_it() {
+        let mut log = logging();
+        log.log(entry(10, Kind::Private, "Jane", 1));
+        assert!(log.take_save(true).is_some());
+        // asked and not answered yet: nothing more to write
+        assert!(log.take_save(true).is_none());
+        // the worker could not write it: the next try writes it again
+        let (done, answer) = crossbeam_channel::bounded(1);
+        done.send(Err(std::io::Error::other("disk full"))).unwrap();
+        log.saving(answer);
+        log.poll_saves();
+        assert!(log.take_save(true).is_some());
+        // a job the queue dropped closes its channel: the same
+        let (done, answer) = crossbeam_channel::bounded::<std::io::Result<()>>(1);
+        drop(done);
+        log.saving(answer);
+        log.poll_saves();
+        assert!(log.take_save(true).is_some());
+        // an acknowledged one is done, and a failed save is not retried at once
+        let (done, answer) = crossbeam_channel::bounded(1);
+        done.send(Ok(())).unwrap();
+        log.saving(answer);
+        log.poll_saves();
+        assert!(log.take_save(true).is_none());
+        log.save_failed();
+        assert!(log.take_save(false).is_none(), "backs off");
+        assert!(log.take_save(true).is_some(), "but a logout tries at once");
+    }
+
+    #[test]
+    fn the_entries_logged_during_the_read_are_merged_before_the_last_save() {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        let mut log = Log::default();
+        log.start(Some(rx));
+        log.log(entry(30, Kind::Private, "Session", 2));
+        assert!(log.take_save(true).is_none(), "never over a file not read yet");
+        let file = format_file(&[entry(10, Kind::Private, "Before", 1)]);
+        tx.send(Ok(Some(file.into_bytes()))).unwrap();
+        log.finish_read(40);
+        let text = log.take_save(true).expect("the merged log is written");
+        assert_eq!(parse_file(text.as_bytes(), 40).0.len(), 2);
     }
 }

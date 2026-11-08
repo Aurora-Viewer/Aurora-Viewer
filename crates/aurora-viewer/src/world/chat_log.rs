@@ -183,10 +183,16 @@ impl ChatLog {
         let Some(path) = self.conversations_file() else {
             return;
         };
-        if let Some(text) = self.conversations.take_save(now)
-            && let Some(w) = self.worker()
-        {
-            w.publish(path, text.into_bytes());
+        if now {
+            // the entries logged while the file was being read are merged
+            // before the last save, not lost with the session
+            self.conversations.finish_read(conversations::now());
+        }
+        if let Some(text) = self.conversations.take_save(now) {
+            match self.worker().map(|w| w.publish(path, text.into_bytes())) {
+                Some(answer) => self.conversations.saving(answer),
+                None => self.conversations.save_failed(),
+            }
         }
     }
 
@@ -197,6 +203,7 @@ impl ChatLog {
             return;
         }
         self.conversations.poll_read(conversations::now());
+        self.conversations.poll_saves();
         match (self.cfg.log_conversations, self.conversations.logging) {
             (true, false) => self.start_conversations(),
             (false, true) => {

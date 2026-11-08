@@ -99,6 +99,7 @@ enum Job {
     Publish {
         path: PathBuf,
         bytes: Vec<u8>,
+        done: Sender<std::io::Result<()>>,
     },
     /// The conversation log's backups of a folder removed
     /// (LLConversationLog::deleteBackupLogs).
@@ -198,9 +199,13 @@ impl Worker {
         rx
     }
 
-    /// Replace a whole file (written beside it, then renamed).
-    pub fn publish(&self, path: PathBuf, bytes: Vec<u8>) {
-        self.send(Job::Publish { path, bytes });
+    /// Replace a whole file (written beside it, then renamed), in the order
+    /// of the calls. The answer says whether it is on disk; a job the queue
+    /// refused closes the channel without one.
+    pub fn publish(&self, path: PathBuf, bytes: Vec<u8>) -> Receiver<std::io::Result<()>> {
+        let (done, rx) = crossbeam_channel::bounded(1);
+        self.send(Job::Publish { path, bytes, done });
+        rx
     }
 
     /// Remove the backups of the conversation log of a folder.
@@ -291,14 +296,15 @@ fn run(jobs: Receiver<Job>, loaded: Sender<Loaded>) {
                 };
                 let _ = done.send(read);
             }
-            Job::Publish { path, bytes } => {
+            Job::Publish { path, bytes, done } => {
                 let written = path
                     .parent()
                     .map_or(Ok(()), std::fs::create_dir_all)
                     .and_then(|()| crate::atomic_file::write(&path, &bytes));
-                if let Err(e) = written {
-                    log::warn!("conversation log: not saved ({e})");
+                if let Err(e) = &written {
+                    log::warn!("conversation log: not saved ({e}); it will be tried again");
                 }
+                let _ = done.send(written);
             }
             Job::RemoveBackups { dir } => {
                 for backup in log_backups(&dir) {
