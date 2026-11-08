@@ -282,8 +282,15 @@ fn sky_stars(d: vec3<f32>, background: vec3<f32>, foot: SkyFootprint) -> vec3<f3
 
 // Texel of a heavenly body's texture in direction `dir`, as stored: rgb in the
 // texture's sRGB, not premultiplied, a its alpha (0 outside the quad).
-fn body_disc(dir: vec3<f32>, body: vec3<f32>, half_size: f32, slot: u32) -> vec4<f32> {
+// `radius` is LLHeavenBody's disc radius (SUN_DISK_RADIUS 0.5, the moon 0.9
+// of it). LLVOSky::updateHeavenlyBodyGeometry lays the quad at
+// HEAVENLY_BODY_DIST with half sides HEAVENLY_BODY_DIST x 0.1 x radius x
+// scale, wider and taller towards the horizon: as tangents, 0.1 x radius x
+// scale x (1 + 0.3 (1 - z)) across and (1 + 0.2 (1 - z)) up.
+fn body_disc(dir: vec3<f32>, body: vec3<f32>, radius: f32, scale: f32, slot: u32) -> vec4<f32> {
     let b = normalize(body);
+    let low = 1.0 - b.z;
+    let half_size = vec2<f32>(1.0 + low * 0.3, 1.0 + low * 0.2) * (0.1 * radius * scale);
     let mu = dot(dir, b);
     if (mu < 0.0) {
         return vec4<f32>(0.0);
@@ -367,7 +374,7 @@ fn sky_full_at(dir: vec3<f32>, foot: SkyFootprint) -> vec3<f32> {
     var hidden = 0.0;
     let sd = normalize(frame.sky_sun.xyz);
     if (frame.tex_slots.y != 0u) {
-        let s = body_disc(d, sd, 0.025 * frame.sky_sun.w, frame.tex_slots.y);
+        let s = body_disc(d, sd, 0.5, frame.sky_sun.w, frame.tex_slots.y);
         c = mix(c, s.rgb, s.a);
         // the Legacy Viewer's sun quad writes depth and hides every star
         // behind it, even where it is clear: here only as much as it covers
@@ -375,7 +382,7 @@ fn sky_full_at(dir: vec3<f32>, foot: SkyFootprint) -> vec3<f32> {
     }
     if (frame.tex_slots.z != 0u) {
         let md = normalize(frame.sky_moon.xyz);
-        let m = body_disc(d, md, 0.035 * frame.sky_moon.w, frame.tex_slots.z);
+        let m = body_disc(d, md, 0.45, frame.sky_moon.w, frame.tex_slots.z);
         if (m.a > 2.0 / 255.0) {
             let fade = select(1.0, clamp(md.z * md.z * 4.0, 0.0, 1.0), md.z > 0.0);
             c = mix(c, m.rgb * frame.sky_misc.z, m.a * fade);
