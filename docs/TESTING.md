@@ -4365,8 +4365,9 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
 | `AURORA_DEMO_PROBE_ROOM=<ambiance>[,box]` | A closed room with a lamp at `AURORA_DEMO_POS="100,100"`, and a manual probe of that ambiance: a sphere crossing the floor, or a box filling the room |
 | `AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]` | Geometry load: meshes filling the geometry arena |
-| `AURORA_GPU_OOM=<mb>` | Video memory full: every growth of a GPU buffer or texture page of at least that size fails |
+| `AURORA_GPU_OOM=<mb>[,<seconds>[,<after>]]` | Video memory full: every growth of a GPU buffer or texture page of at least that size fails, for the whole run or that long, from the start or `after` seconds |
 | `AURORA_GPU_OOM_TARGETS=<seconds>` | Video memory full for the render targets, that long after the start |
+| `AURORA_GPU_OOM_FIRST_USE=<seconds>` | Video memory full for the targets made on first use (selection outline, depth of field, photo look, RLVa, TAA history), that long |
 | `AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]` | Fast camera turns, again and again |
 
 ### Details
@@ -4664,9 +4665,31 @@ both open states and the selection count. Capture at frame 620.
   with no usage, which wgpu refuses, and this leaves the same invalid
   textures, so the log holds `Invalid usage flags` lines a real card does
   not.
-- **`AURORA_GPU_OOM=<mb>`** (demo or grid): every allocation of `mb`
-  megabytes or more made through `aurora-render/src/gpu_alloc.rs` fails as
-  if video memory were full (`0`: all of them): the geometry arena, the
+- **`AURORA_GPU_OOM_FIRST_USE=<seconds>`** (demo or grid): for that long
+  after the first one is made, every target made on first use counts as
+  refused by a full video memory. An effect the frame can go without is
+  left out and tried again after 2 s, then twice as long each time up to
+  30 s: the selection outline (`AURORA_DEMO_BUILD`), the depth of field
+  (`AURORA_DEMO_DOF`), a photo look; the log says once `<what>: out of
+  video memory, drawn without it for now`. One the frame cannot go without
+  shows the interface alone, as `AURORA_GPU_OOM_TARGETS` does: RLVa's
+  vision spheres and reduced scene (`AURORA_DEMO_RLVA`), the TAA history
+  after an anti-aliasing change, the rigged blend depth; the log says
+  `<what>: out of video memory, the interface alone until it can be made`,
+  then `render targets: made again` once the time is over. A refused RLVa
+  target never shows the world it hides: the frame that found it fails
+  as a whole. Without the check, the world stayed frozen or black until
+  the window size changed.
+- **`AURORA_GPU_OOM=<mb>[,<seconds>[,<after>]]`** (demo or grid): every
+  allocation of `mb` megabytes or more made through
+  `aurora-render/src/gpu_alloc.rs` fails as if video memory were full
+  (`0`: all of them), for the whole run or, with a duration, that long
+  after the first allocation, as when another program that held the
+  memory closes. With `after`, it starts that many seconds after the first
+  allocation instead, as when another program fills the card while the
+  viewer runs: the reserved textures and the first pages are made, which
+  a small value from the start refuses as well. Allocations covered: the
+  geometry arena, the
   draw records, the culling tables, the joint palettes and skin bindings,
   particle and world-label upload buffers, and the texture pages. The
   interface's blur and glass count as a texture of the window's size and
@@ -4679,6 +4702,17 @@ both open states and the selection count. Capture at frame 620.
   drawing and the log holds no `wgpu error` line. Without the variable, a
   buffer the driver could not make used to be installed anyway, invalid,
   and every write into it was an error, every frame.
+  A texture whose page is refused keeps what it showed (grey while
+  loading), the log says once `textures: video memory full, uploads wait
+  until it can take them`, and it is sent again when the pages are tried
+  again: with `AURORA_GPU_OOM=1,20,3` and `AURORA_DEMO_TEXTURES=3000`,
+  the cubes still loading at 3 s stay grey until the pages are tried
+  again after the 20 s, then fill in, with `textures: video memory took
+  the uploads that waited for it`. Before, they stayed grey for the rest
+  of the session. (The demo's stress textures hold no data to decode
+  again: their texels come again, as a download would bring them. Its
+  own procedural textures, the plaza's, refused while full stay grey: the
+  grid has none.)
   World labels that cannot fit are omitted for that frame; a smaller frame
   resumes from the retained valid buffers. Excess particles wait while the
   portion that fits is uploaded and drawn. Hardware-limit regressions use

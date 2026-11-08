@@ -12401,6 +12401,11 @@ impl App {
                 self.world.objects.len()
             );
         }
+        // AURORA_DEMO_TEXTURES with AURORA_GPU_OOM: the uploads that waited
+        // for video memory get their texels again (`refeed_demo_memory_waits`)
+        if self.demo && self.frame_count.is_multiple_of(30) && crate::demo::texture_stress_count().is_some() {
+            self.scene.textures.refeed_demo_memory_waits();
+        }
         // AURORA_DEMO_TEXTURES_CHURN=1: stress cubes removed at frame 300
         // (textures released, evicted after 2 s), back with new textures at 700
         if self.demo

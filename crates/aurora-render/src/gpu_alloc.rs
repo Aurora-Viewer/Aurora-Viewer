@@ -172,23 +172,54 @@ fn reason(text: &str) -> String {
 /// allocation checked: the memory then comes back, as when another program
 /// that held it closes.
 fn injected_failure(bytes: u64) -> Option<String> {
-    static LIMIT: OnceLock<Option<(u64, Option<Instant>)>> = OnceLock::new();
+    static LIMIT: OnceLock<Option<InjectedOom>> = OnceLock::new();
     let limit = *LIMIT.get_or_init(|| std::env::var("AURORA_GPU_OOM").ok().and_then(|v| parse_oom(&v, Instant::now())));
     limit
-        .filter(|(l, until)| bytes >= *l && until.is_none_or(|t| Instant::now() < t))
+        .filter(|oom| bytes >= oom.bytes && oom.active(Instant::now()))
         .map(|_| "out of video memory (AURORA_GPU_OOM)".to_owned())
 }
 
-/// `<MB>[,<seconds>]` of `AURORA_GPU_OOM`: the size in bytes, and until
-/// when (from `now`) if a duration is given.
-fn parse_oom(value: &str, now: Instant) -> Option<(u64, Option<Instant>)> {
+/// `AURORA_GPU_OOM`, read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct InjectedOom {
+    bytes: u64,
+    /// From when (the viewer's start otherwise).
+    from: Option<Instant>,
+    /// Until when (the whole run otherwise).
+    until: Option<Instant>,
+}
+
+impl InjectedOom {
+    fn active(&self, now: Instant) -> bool {
+        self.from.is_none_or(|t| now >= t) && self.until.is_none_or(|t| now < t)
+    }
+}
+
+/// `<MB>[,<seconds>[,<after seconds>]]` of `AURORA_GPU_OOM`, from `now`
+/// (the first allocation): the size, for how long, and after how long it
+/// starts. A start after the first frames lets the reserved textures and
+/// the first pages be made, as on a card another program fills later.
+fn parse_oom(value: &str, now: Instant) -> Option<InjectedOom> {
     let mut parts = value.split(',').map(str::trim);
     let mb = parts.next()?.parse::<u64>().ok()?;
-    let until = match parts.next() {
-        Some(seconds) => Some(now + Duration::from_secs(seconds.parse().ok()?)),
-        None => None,
+    let seconds = |p: Option<&str>| -> Option<Option<Duration>> {
+        match p {
+            Some(s) => s.parse().ok().map(|s| Some(Duration::from_secs(s))),
+            None => Some(None),
+        }
     };
-    Some((mb << 20, until))
+    let length = seconds(parts.next())?;
+    let after = seconds(parts.next())?;
+    if parts.next().is_some() {
+        return None;
+    }
+    let from = after.map(|d| now + d);
+    let start = from.unwrap_or(now);
+    Some(InjectedOom {
+        bytes: mb << 20,
+        from,
+        until: length.map(|d| start + d),
+    })
 }
 
 /// `AURORA_GPU_OOM_TARGETS=<seconds>`: for that long after the first frame
@@ -693,11 +724,27 @@ mod tests {
     }
 
     #[test]
-    fn the_injected_failure_may_end_after_a_while() {
+    fn the_injected_failure_may_start_late_and_end_after_a_while() {
         let now = Instant::now();
-        assert_eq!(parse_oom("64", now), Some((64 << 20, None)));
-        assert_eq!(parse_oom(" 0 , 30 ", now), Some((0, Some(now + Duration::from_secs(30)))));
+        let s = Duration::from_secs;
+        let oom = |bytes, from, until| Some(InjectedOom { bytes, from, until });
+        assert_eq!(parse_oom("64", now), oom(64 << 20, None, None));
+        assert_eq!(parse_oom(" 0 , 30 ", now), oom(0, None, Some(now + s(30))));
+        // from 60 s, for 20 s
+        let late = parse_oom("1,20,60", now).expect("parsed");
+        assert_eq!(
+            late,
+            InjectedOom {
+                bytes: 1 << 20,
+                from: Some(now + s(60)),
+                until: Some(now + s(80))
+            }
+        );
+        assert!(!late.active(now + s(59)));
+        assert!(late.active(now + s(60)) && late.active(now + s(79)));
+        assert!(!late.active(now + s(80)));
         assert_eq!(parse_oom("64,soon", now), None);
+        assert_eq!(parse_oom("64,1,2,3", now), None);
         assert_eq!(parse_oom("lots", now), None);
     }
 
