@@ -200,6 +200,9 @@ struct PostU {
     god_rays: f32,
     /// The part of the photo the frame draws ([`photo_part`]).
     photo_part: [f32; 4],
+    /// The share of the rays target the sun rays fill ([`Renderer::volumetric_res`]).
+    rays_res: f32,
+    _pad: [f32; 3],
 }
 
 /// Where `PostU::auto_exposure` sits in the post uniforms.
@@ -836,9 +839,10 @@ struct Targets {
     /// Single-sample depth from the prepass.
     depth_ss_tex: wgpu::Texture,
     depth_ss: wgpu::TextureView,
-    /// The volumetric sun rays (volumetric.wgsl), half the scene's size.
-    // shortcut: kept while the rays are off (4 MB at 1080p); make it on
-    // demand if the rays stay.
+    /// The volumetric sun rays (volumetric.wgsl), the scene's size; the
+    /// pass draws only its top-left part at the rays' resolution.
+    // shortcut: full size and kept while the rays are off (16 MB at 1080p);
+    // size it to the setting on demand if memory gets tight.
     vol_rays: wgpu::TextureView,
     /// Nearest water/exclusion surface, ordered by view distance even inside near.
     water_interface: wgpu::TextureView,
@@ -1652,7 +1656,9 @@ pub(crate) struct Backend {
     /// The volumetric sun rays (volumetric.wgsl) and whether this frame
     /// draws them.
     volumetric: Volumetric,
-    volumetric_on: bool,
+    /// The resolution the sun rays draw at this frame, a share of the
+    /// scene's size; `None` while they are off.
+    volumetric_res: Option<f32>,
     /// The automatic exposure of skies that are not classic (exposure.rs).
     exposure: crate::exposure::Exposure,
     /// The photo viewfinder's luminance histogram (histogram.rs).
@@ -2606,11 +2612,6 @@ fn whole_proj(proj: Mat4, photo_tile: Mat4) -> Mat4 {
     }
 }
 
-/// The part of the whole image a frame draws with `photo_tile` (see
-/// [`whole_proj`]), in fractions of it: left, top, width, height (0, 0, 1,
-/// 1 outside a tiled photo). The glow keeps the whole photo's 512 x 512
-/// texels with it: drawn on a tile's own, its halo shrank with the tile and
-/// stopped at its border, a line along every seam.
 /// Format of the volumetric sun rays (scene units, added by the post pass).
 const VOL_RAYS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
@@ -2623,10 +2624,11 @@ const VOL_DENSITY: f32 = 0.008;
 struct VolU {
     density: f32,
     g: f32,
-    _pad: [f32; 2],
+    res: f32,
+    _pad: f32,
 }
 
-/// The half-resolution pass of the volumetric sun rays (volumetric.wgsl)
+/// The reduced-resolution pass of the volumetric sun rays (volumetric.wgsl)
 /// and its settings.
 struct Volumetric {
     pipeline: wgpu::RenderPipeline,
@@ -2637,15 +2639,7 @@ struct Volumetric {
 fn make_volumetric(device: &wgpu::Device, frame_layout: &wgpu::BindGroupLayout) -> Volumetric {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("volumetric rays"),
-        source: wgpu::ShaderSource::Wgsl(
-            format!(
-                "{}
-{}",
-                crate::common_shader_source(),
-                include_str!("shaders/volumetric.wgsl")
-            )
-            .into(),
-        ),
+        source: wgpu::ShaderSource::Wgsl(format!("{}\n{}", crate::common_shader_source(), include_str!("shaders/volumetric.wgsl")).into()),
     });
     let params_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("volumetric rays"),
@@ -2694,6 +2688,11 @@ fn make_volumetric(device: &wgpu::Device, frame_layout: &wgpu::BindGroupLayout) 
     Volumetric { pipeline, params, group }
 }
 
+/// The part of the whole image a frame draws with `photo_tile` (see
+/// [`whole_proj`]), in fractions of it: left, top, width, height (0, 0, 1,
+/// 1 outside a tiled photo). The glow keeps the whole photo's 512 x 512
+/// texels with it: drawn on a tile's own, its halo shrank with the tile and
+/// stopped at its border, a line along every seam.
 fn photo_part(photo_tile: Mat4) -> [f32; 4] {
     let (sx, sy) = (photo_tile.x_axis.x, photo_tile.y_axis.y);
     if photo_tile == Mat4::IDENTITY || sx <= 0.0 || sy <= 0.0 {
@@ -3101,7 +3100,7 @@ impl Backend {
                 },
                 uniform_entry(2, wgpu::ShaderStages::FRAGMENT),
                 float_tex(3),
-                // the volumetric sun rays, half resolution (volumetric.wgsl)
+                // the volumetric sun rays, top-left part (volumetric.wgsl)
                 float_tex(4),
             ],
         });
@@ -3365,7 +3364,7 @@ impl Backend {
             blend_ao_depth: true,
             bloom,
             volumetric,
-            volumetric_on: false,
+            volumetric_res: None,
             exposure,
             histogram,
             glow_drawn: false,
@@ -4522,8 +4521,8 @@ impl Backend {
         let vol_rays = make_view(
             device,
             "volumetric rays",
-            w.div_ceil(2),
-            h.div_ceil(2),
+            w,
+            h,
             VOL_RAYS_FORMAT,
             1,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
@@ -6625,12 +6624,14 @@ impl Backend {
         } else {
             0.0
         };
-        self.volumetric_on = god_rays > 0.0;
-        if self.volumetric_on {
+        let rays_res = f.god_rays_res.clamp(0.25, 1.0);
+        self.volumetric_res = (god_rays > 0.0).then_some(rays_res);
+        if god_rays > 0.0 {
             let u = VolU {
                 density: VOL_DENSITY * f.god_rays_haze.clamp(0.0, 4.0),
                 g: f.god_rays_glow.clamp(0.0, 0.95),
-                _pad: [0.0; 2],
+                res: rays_res,
+                _pad: 0.0,
             };
             self.queue.write_buffer(&self.volumetric.params, 0, bytemuck::bytes_of(&u));
         }
@@ -6692,6 +6693,8 @@ impl Backend {
             },
             god_rays,
             photo_part: photo_part(f.photo_tile),
+            rays_res,
+            _pad: [0.0; 3],
         };
         self.queue.write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(&post));
         if let (true, Some(t)) = (self.contact_now, &self.targets.contact) {
@@ -8504,7 +8507,7 @@ impl Backend {
             self.device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame post") }),
         );
-        if self.volumetric_on {
+        if let Some(res) = self.volumetric_res {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("volumetric rays"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -8521,6 +8524,8 @@ impl Backend {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            let (w, h) = (self.targets.depth_ss_tex.width(), self.targets.depth_ss_tex.height());
+            pass.set_viewport(0.0, 0.0, (w as f32 * res).ceil(), (h as f32 * res).ceil(), 0.0, 1.0);
             pass.set_pipeline(&self.volumetric.pipeline);
             // the frame group with the scene depth and the sun's cascades
             pass.set_bind_group(0, &self.groups.b, &[]);

@@ -1365,6 +1365,9 @@ pub struct FrameParams {
     pub god_rays_haze: f32,
     /// How tightly their glow gathers around the sun (0 to 0.9).
     pub god_rays_glow: f32,
+    /// The resolution the sun rays draw at, a share of the image's size
+    /// (0.25 to 1).
+    pub god_rays_res: f32,
     pub water_height: f32,
     pub shadows: bool,
     /// Distance covered by the shadow cascades.

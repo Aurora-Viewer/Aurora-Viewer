@@ -570,6 +570,9 @@ pub struct Settings {
     /// How tightly their glow gathers around the sun (0 to 0.9, 0.6 by
     /// default).
     pub god_rays_glow: f32,
+    /// The resolution the sun rays draw at, a share of the image's size
+    /// (0.25 to 1, 0.5 by default): higher is sharper and costs more.
+    pub god_rays_resolution: f32,
     /// GPU occlusion culling: objects hidden behind others are not drawn
     /// (Firestorm UseOcclusion, on by default). Renamed from `gpu_occlusion`
     /// (off while it cost more than it saved) so that saved settings take
@@ -1835,6 +1838,7 @@ impl Default for Settings {
             god_rays_strength: 1.0,
             god_rays_haze: 1.0,
             god_rays_glow: 0.6,
+            god_rays_resolution: 0.5,
             occlusion_culling: true,
             lod_factor: 2.0,
             texture_budget_auto: true,
@@ -2777,6 +2781,11 @@ impl Settings {
             self.god_rays_glow.clamp(0.0, 0.9)
         } else {
             0.6
+        };
+        self.god_rays_resolution = if self.god_rays_resolution.is_finite() {
+            self.god_rays_resolution.clamp(0.25, 1.0)
+        } else {
+            0.5
         };
         self.lod_factor = self.lod_factor.clamp(0.5, 4.0);
         self.ui_scale = self.ui_scale.clamp(0.75, 2.0);

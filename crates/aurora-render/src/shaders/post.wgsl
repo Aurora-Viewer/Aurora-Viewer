@@ -35,6 +35,8 @@ struct PostParams {
     // (left, top, width, height; 0, 0, 1, 1 outside a tiled photo): the
     // glow's 512 x 512 texels are the whole photo's, as in one pass
     photo_part: vec4<f32>,
+    // the share of rays_tex the sun rays fill (top left)
+    rays_res: f32,
 };
 @group(0) @binding(2) var<uniform> post: PostParams;
 // Blurred glow (512x512, display space), see glow.wgsl.
@@ -329,7 +331,10 @@ fn fs_post(in: Out) -> @location(0) vec4<f32> {
     }
     if (post.god_rays > 0.0) {
         // screen blend: the beams brighten without clipping
-        let rays = textureSampleLevel(rays_tex, hdr_sampler, in.uv, 0.0).rgb * post.god_rays;
+        // kept half a texel inside the drawn part: past it is black
+        let edge = post.rays_res - 0.5 / vec2<f32>(textureDimensions(rays_tex));
+        let ruv = min(in.uv * post.rays_res, edge);
+        let rays = textureSampleLevel(rays_tex, hdr_sampler, ruv, 0.0).rgb * post.god_rays;
         m += (vec3<f32>(1.0) - min(m, vec3<f32>(1.0))) * tonemap(rays);
     }
     if (post.glow > 0.5) {

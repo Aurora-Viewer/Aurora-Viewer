@@ -715,6 +715,20 @@ fn light(cx: &mut Cx) {
                     .changed()
                 },
             );
+            cx.row(
+                tr!("ui-options-god-rays-resolution"),
+                tr!("ui-options-god-rays-resolution-help"),
+                &field!(god_rays_resolution),
+                |ui, s| {
+                    ui.add(
+                        egui::Slider::new(&mut s.god_rays_resolution, 0.25..=1.0)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .step_by(0.05)
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                },
+            );
         });
     });
 }

@@ -1,7 +1,7 @@
 // Volumetric sun rays: the light the air scatters toward the camera along
 // each view ray, marched through the sun's shadow cascades, so that what
 // casts a shadow on the ground casts a beam in the air, from any angle.
-// Concatenated after common.wgsl; drawn at half resolution, then added by
+// Concatenated after common.wgsl; drawn at a reduced resolution, then added by
 // the post pass (post.wgsl `rays_tex`).
 
 struct VolOut {
@@ -26,7 +26,9 @@ const VOL_STEPS: u32 = 24u;
 struct VolParams {
     density: f32,
     g: f32,
-    _pad: vec2<f32>,
+    // the share of the scene's size drawn (the viewport's)
+    res: f32,
+    _pad: f32,
 };
 @group(3) @binding(0) var<uniform> vol: VolParams;
 
@@ -61,8 +63,8 @@ fn fs_volumetric(in: VolOut) -> @location(0) vec4<f32> {
     if (light <= 0.0 || frame.params.z < 0.5) {
         return vec4<f32>(0.0);
     }
-    // the target is half the image
-    let uv = in.clip.xy * 2.0 * frame.screen.zw;
+    // the viewport covers `res` of the image
+    let uv = in.clip.xy * frame.screen.zw / vol.res;
     let d = scene_depth_at(uv);
     let far = frame.cascade_splits.z;
     let eye = frame.camera_pos.xyz;
