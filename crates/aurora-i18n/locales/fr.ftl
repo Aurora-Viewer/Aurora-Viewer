@@ -1294,6 +1294,7 @@ ui-inventory-properties-creator-unknown-multiple = (inconnu / multiple)
 ui-inventory-properties-creator-unknown-multiple-hint = Le simulateur ne donne pas de créateur pour cet objet : un objet dont les parties ont été créées par plusieurs résidents n’en a pas.
 world-groups-action-denied = Action refusée
 common-enable = Activer
+common-activate = Activer
 ui-options-enable-this-channel = Activer ce canal
 ui-options-perceptual-volume = Curseurs de volume perceptifs
 ui-options-perceptual-volume-hint = Les curseurs de volume suivent l'intensité perçue : un réglage plus fin à bas volume. Les volumes eux-mêmes ne changent pas.
@@ -1653,6 +1654,7 @@ ui-options-no-group-chats = Aucun chat de groupe
 ui-environment-no-local-sky-to-edit = Aucun ciel local à modifier.
 ui-land-media-no-contents = Aucun contenu
 ui-contacts-no-group-containing-was-found = { "Aucun groupe contenant « " }{ $value0 }{ " » n'a été trouvé." }
+ui-contacts-none-no-group-tag = Aucun (sans tag de groupe)
 ui-people-no-groups-yet = Aucun groupe pour l'instant.
 ui-inventory-dialogs-no-editable-links-in-the-loaded-folders = Aucun lien modifiable dans les dossiers chargés.
 ui-texture-picker-no-materials-in-the-loaded-inventory = Aucun matériau dans l'inventaire chargé.
@@ -2374,10 +2376,13 @@ ui-options-compact-im-system-lines = Compacter aussi les lignes système des IM
 ui-options-compact-im-system-lines-hint = Les lignes du viewer dans une conversation (appel commencé ou terminé, réponse automatique envoyée) prennent la même petite ligne, avec leur icône.
 ui-options-show-contacts-tab = Afficher l'onglet Contacts
 ui-options-show-contacts-tab-hint = Affiche Contacts dans la fenêtre Conversations.
-ui-options-payment-opens-conversation = Ouvrir une conversation pour le paiement d'un ami
-ui-options-payment-opens-conversation-hint = Les L$ qu'un résident vous paie s'affichent sous forme de carte dans votre conversation avec lui quand elle est ouverte. Activé, le paiement d'un ami l'ouvre.
+ui-options-payment-opens-conversation = Ouvrir la conversation quand un résident vous paie
+ui-options-payment-opens-conversation-hint = Les L$ qu'un résident vous donne avec Payer, pas un objet payé ni une vente. Le paiement s'affiche sous forme de carte dans votre conversation avec lui quand elle est ouverte ; ce choix dit de qui le paiement l'ouvre quand elle est fermée.
 ui-options-payment-sent-opens-conversation = Ouvrir la conversation quand vous payez un résident
-ui-options-payment-sent-opens-conversation-hint = Votre paiement direct à un résident s'affiche sous forme de carte dans votre conversation avec lui quand elle est ouverte. Activé, il l'ouvre.
+ui-options-payment-sent-opens-conversation-hint = Les L$ que vous donnez à un résident avec Payer, pas un objet payé ni un achat. Votre paiement s'affiche sous forme de carte dans votre conversation avec lui quand elle est ouverte ; ce choix dit quelle conversation il ouvre quand elle est fermée.
+ui-options-payment-opens-never = Jamais
+ui-options-payment-opens-friends = Amis seulement
+ui-options-payment-opens-anyone = Tout le monde
 ui-options-conversations-own-windows = Ouvrir les conversations dans leur propre fenêtre
 ui-options-conversations-own-windows-hint = Une conversation ouverte depuis un nom, une notification ou un appel s'ouvre dans sa propre fenêtre au lieu de la fenêtre Conversations. Le chat local y reste.
 ui-options-send-typing = Signaler quand j'écris
@@ -2726,6 +2731,8 @@ ui-land-dialogs-ban-duration = Durée de l'interdiction
 ui-land-dialogs-ban-duration-2 = Durée de l'interdiction :
 ui-land-environment-day-length-hours = Durée de la journée (heures)
 ui-options-chat-bubble-duration = Durée des bulles
+ui-options-chat-console-max-lines = Nombre maximal de lignes au-dessus du chat
+ui-options-chat-console-max-lines-hint = Compte les lignes de texte, retours à la ligne compris, hors en-têtes des cartes. Conserve les messages entiers les plus récents. 0 masque cet affichage.
 ui-options-chat-bubbles = Chat en bulles au-dessus des avatars
 ui-options-chat-bubbles-hint = Ce que disent les résidents proches s’affiche au-dessus de leur tête, sous leur nom, pendant 24 secondes
 ui-options-chat-bubbles-hide-console = Pas au-dessus de la barre de chat
@@ -3649,6 +3656,8 @@ session-object-actions-inventory-too-large = Inventaire trop volumineux.
 ui-options-invert-vertical-axis = Inverser l'axe vertical
 ui-options-double-click-ground = Double-clic au sol
 ui-options-double-click-ground-help = Ce que fait un double-clic sur le sol ou sur un objet sans action au clic
+ui-options-double-click-scripted = Autoriser le double-clic sur les objets scriptés
+ui-options-double-click-scripted-help = Exécuter l'action configurée sur les objets avec une action au clic ou un script tactile, sauf l'action S'asseoir
 ui-options-double-click-nothing = Aucune action
 ui-options-double-click-walk = Marcher jusqu'ici
 ui-options-double-click-run = Courir jusqu'ici
@@ -3701,8 +3710,8 @@ ui-profile-this-user-has-no-picks = L'utilisateur n'a pas de favoris
 ui-profile-this-user-has-no-classified-listings = L'utilisateur n'a pas de petites annonces
 ui-inventory-controls-library = La bibliothèque
 ui-options-camera-the-camera-can-move-beyond-the-draw-distance-below = La caméra peut aller au-delà de la distance d'affichage, sous le sol et plus près des objets
-ui-options-camera-the-camera-returns-behind-your-avatar-on-arrival = La caméra se replace derrière l'avatar à l'arrivée
-ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag = La caméra suit l'avatar avec un léger retard (1 par défaut, 0 = aucun)
+ui-options-camera-after-a-teleport-in-the-region-the-camera-returns = Après une téléportation dans la région, la caméra se replace derrière l'avatar. Désactivé, elle reste où elle est.
+ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag = La caméra suit l'avatar avec un retard : plus la valeur est haute, plus elle bouge doucement et lentement (1 par défaut, 0 = aucun)
 ui-options-camera-the-camera-follows-the-object-it-is-focused-on = La caméra suit l'objet sur lequel elle est fixée quand il bouge
 app-inventory-thumbnail-invalid-capture = La capture est invalide.
 ui-land-dialogs-deeding-this-parcel-requires-the-group-to-permanently-have = La cession de cette parcelle requiert que le groupe dispose en permanence d'un crédit suffisant pour payer les frais d'occupation de terrain.{ $contribution }{ " Le prix d'achat du terrain n'est pas remboursé au propriétaire. Si une parcelle cédée est vendue, son prix de vente est redistribué à part égale entre les membres du groupe.\u000A\u000ACéder ces " }{ $value0 }{ " m² de terrain au groupe '" }{ $group }' ?
@@ -3995,6 +4004,8 @@ busy-pause-notice = Render en pause : la carte graphique est occupée par un aut
 ui-options-gpu-recovery = Rouvrir après une réinitialisation de la carte graphique
 ui-options-gpu-recovery-tip = Quand le pilote de la carte graphique est réinitialisé (souvent par un autre programme qui occupe la carte), Aurora rouvre sa fenêtre sur la carte et vous restez connecté, au lieu de se fermer. Une deuxième réinitialisation en quelques minutes rouvre avec les graphismes sûrs, une troisième ferme. Désactivé, Aurora se ferme avec « la carte graphique a été perdue ». Activé par défaut
 busy-pause-window-title = { $title } — En pause
+video-memory-full-notice = La mémoire vidéo est pleine et le monde ne peut pas être affiché. Fermez les programmes qui utilisent la carte graphique : il reviendra tout seul.
+video-memory-full-window-title = { $title } — Mémoire vidéo pleine
 busy-pause-forced-notice = Render en pause depuis la Dev Toolbox (R13). Appuyez de nouveau sur R13 pour reprendre.
 ui-land-sound-restrict-voice-chat-to-this-parcel = Limiter le chat vocal à cette parcelle
 ui-land-sound-restrict-gesture-and-object-sounds-to-this-parcel = Limiter les sons des gestes et des objets à cette parcelle
@@ -4503,6 +4514,7 @@ world-appearance-pants = Pantalon
 world-appearance-black-pants = Pantalon noir
 ui-avatar-picker-by-uuid = Par UUID
 ui-options-system-default = Par défaut du système
+ui-options-listing-devices = Recherche des périphériques…
 common-by-name = Par nom
 demo-env-settings = Paramètres
 ui-inventory-view-eep-settings = Paramètres EEP
@@ -5146,7 +5158,7 @@ ui-bars-back = { "Retour : " }{ $d }
 keybinds-backspace-2 = Retour arrière
 ui-appearance-back-to-worn-items = Retour aux éléments portés
 ui-land-covenant-resell = Revendre :
-ui-options-camera-return-after-teleporting = Revenir après une téléportation
+ui-options-camera-return-after-a-teleport-in-the-region = Revenir après une téléportation dans la région
 ui-appearance-back-to-outfits = Revenir aux tenues
 ui-options-camera-return-when-moving = Revenir en bougeant
 keybinds-return-to-avatar = Revenir à l'avatar
@@ -5909,7 +5921,7 @@ ui-options-camera-show-avatar-mouselook = Afficher mon avatar en vue subjective
 ui-options-camera-follow-eyes = Attacher la caméra entre les yeux
 ui-options-camera-follow-eyes-tip = En vue subjective, suit la position animée entre vos yeux. La souris garde le contrôle de la direction du regard. Désactivé par défaut.
 ui-options-camera-show-avatar-mouselook-tip = Affiche votre corps et ses accessoires sous le cou. La tête et les accessoires fixés aux points de la tête restent masqués, comme dans le Legacy Viewer.
-ui-options-camera-show-interface-tip = Les barres restent visibles en vue subjective. Sinon, elles s'effacent et le chat ne revient que pour écrire (Entrée).
+ui-options-camera-show-interface-tip = Les barres et les fenêtres ouvertes restent visibles en vue subjective. Sinon, elles disparaissent et le chat ne revient que pour écrire (Entrée).
 ui-options-crosshair = Réticule
 ui-options-crosshair-show = Afficher le réticule
 ui-options-crosshair-show-tip = Une marque au milieu de l'écran en vue subjective, là où vous visez et cliquez
@@ -13403,3 +13415,35 @@ debug-settings-warning-title = Avertissement
 debug-settings-warning-text = L'utilisation de la fenêtre Paramètres de débogage n'est pas prise en charge. Modifier ces paramètres peut fortement dégrader votre expérience et entraîner une perte de données, de fonctionnalités, voire d'accès au service. Ne modifiez aucune valeur sans savoir exactement ce que vous faites.
 debug-settings-warning-ignore = Ne plus afficher cet avertissement
 debug-settings-type-color = Couleur
+
+# Preferences › Graphics: the trees' detail (RenderTreeLODFactor)
+ui-options-trees = Arbres
+ui-options-trees-hint = Détail des arbres Linden à distance (0,5 par défaut). À 0, les arbres et l'herbe ne sont pas affichés.
+
+# Preferences › Build (the Legacy Viewer's Build preferences)
+ui-options-about-build = Ce que devient un prim créé avec l'outil Créer.
+ui-options-build-new-objects = Nouveaux objets
+ui-options-build-new-objects-note = Un prim créé avec l'outil Créer prend ces réglages à son apparition.
+ui-options-build-size-hint = Largeur, profondeur et hauteur en mètres (0,01 à 10)
+ui-options-build-material = Matériau
+ui-options-build-flesh = Chair
+ui-options-build-physical = Physique
+ui-options-build-temporary = Temporaire
+ui-options-build-new-faces = Aspect des nouveaux objets
+
+
+
+# Preferences › Protections: large surface protection (RenderVolumeSAProtection)
+large-surface-title = Grandes surfaces
+large-surface-enable = Masquer les objets à la surface démesurée
+large-surface-enable-hint = Protège votre carte graphique des objets conçus pour la surcharger : au-delà du total ci-dessous, les prims et sculpties à la plus grande surface ne sont pas affichés. Peut masquer des objets légitimes.
+large-surface-frame-max = Surface totale affichée
+large-surface-frame-max-hint = La surface des grands objets affichée avant que les plus grands soient masqués (5 000 par défaut).
+
+# Preferences › Graphics: RenderAttachedParticles
+ui-options-attached-particles = Particules des objets portés
+ui-options-attached-particles-hint = Affiche les particules de ce que portent les avatars : étincelles, fumée, feu.
+
+# Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
+ui-options-draw-distance-stepping = Distance d'affichage progressive
+ui-options-draw-distance-stepping-hint = Après la connexion et après une téléportation vers une autre région, la distance d'affichage part de 32 m et double jusqu'à la vôtre, pour que ce qui est proche se charge d'abord.

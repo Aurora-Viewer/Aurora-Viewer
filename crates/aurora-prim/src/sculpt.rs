@@ -197,27 +197,6 @@ fn generate_map_vertices(vol: &mut Volume, width: u32, height: u32, components: 
     }
 }
 
-/// `LLVolume::sculptGetSurfaceArea`.
-fn surface_area(vol: &Volume) -> f32 {
-    let size_s = vol.path.points.len();
-    let size_t = vol.profile.points.len();
-    let m = &vol.mesh;
-    let mut area = 0.0f32;
-    for s in 0..size_s.saturating_sub(1) {
-        for t in 0..size_t.saturating_sub(1) {
-            // get four corners of quad
-            let p1 = m[s * size_t + t];
-            let p2 = m[(s + 1) * size_t + t];
-            let p3 = m[s * size_t + t + 1];
-            let p4 = m[(s + 1) * size_t + t + 1];
-            let cross1 = (p1 - p2).cross(p1 - p3);
-            let cross2 = (p4 - p2).cross(p4 - p3);
-            area += (cross1.length() + cross2.length()) / 2.0;
-        }
-    }
-    area
-}
-
 /// Sculpted prim from a decoded sculpt map (RGB or RGBA bytes, row-major
 /// top-to-bottom as returned by Aurora's JPEG2000 decoder, `components`
 /// bytes per pixel). Produces a single face; honors the sculpt
@@ -249,7 +228,7 @@ pub fn generate_sculpt(params: &VolumeParams, detail: f32, width: u32, height: u
 
         // don't test lowest LOD to support legacy content DEV-33670
         if detail > SCULPT_MIN_AREA_DETAIL {
-            let area = surface_area(&vol);
+            let area = vol.grid_area();
             measured = area;
             if !(SCULPT_MIN_AREA..=SCULPT_MAX_AREA).contains(&area) {
                 data_is_empty = true;
@@ -262,6 +241,7 @@ pub fn generate_sculpt(params: &VolumeParams, detail: f32, width: u32, height: u
     }
 
     VolumeMesh {
+        grid_area: vol.grid_area(),
         faces: vol.create_faces(sculpt_type),
         surface_area: measured,
     }
@@ -277,6 +257,7 @@ pub fn sculpt_placeholder(params: &VolumeParams, detail: f32) -> VolumeMesh {
     };
     generate_sphere_placeholder(&mut vol);
     VolumeMesh {
+        grid_area: vol.grid_area(),
         faces: vol.create_faces(sculpt_type),
         surface_area: 1.0,
     }

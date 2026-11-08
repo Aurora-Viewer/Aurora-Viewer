@@ -42,7 +42,7 @@ fn rlva_gpu_spheres_preserve_uniform_images_and_compose_black_masks_without_glow
     );
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("RLVa test readback"),
-        size: 64 * 64 * 4,
+        size: crate::readback::readback_size(64 * 64 * 4),
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });

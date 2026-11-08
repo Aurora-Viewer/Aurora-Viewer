@@ -28,6 +28,7 @@ mod linking;
 pub mod manip;
 mod material_preview;
 pub mod materials;
+mod new_defaults;
 mod object_snap;
 pub mod particle_editor;
 pub mod place;
@@ -174,6 +175,26 @@ pub struct BuildSettings {
     pub new_prim_size: [f32; 3],
     /// New prim material (FSBuildPrefs_Material, LL_MCODE_WOOD).
     pub new_prim_material: u8,
+    /// New prim colour (FSBuildPrefs_Color, white); its alpha is not used,
+    /// the transparency below is (new_defaults.rs).
+    pub new_prim_color: crate::settings::Rgba,
+    /// New prim transparency in percent (FSBuildPrefs_Alpha, 0).
+    pub new_prim_transparency: f32,
+    /// New prim glow (FSBuildPrefs_Glow, 0).
+    pub new_prim_glow: f32,
+    /// New prim full bright (FSBuildPrefs_FullBright, off).
+    pub new_prim_fullbright: bool,
+    /// New prim shininess, 0 none to 3 high (FSBuildPrefs_Shiny, None).
+    pub new_prim_shiny: u8,
+    /// New prim physical (FSBuildPrefs_Physical, off).
+    pub new_prim_physical: bool,
+    /// New prim temporary (FSBuildPrefs_Temporary, off).
+    pub new_prim_temporary: bool,
+    /// New prim phantom (FSBuildPrefs_Phantom, off).
+    pub new_prim_phantom: bool,
+    /// RenderParcelSelection: the selected parcel's yellow walls (on; Debug
+    /// Settings only, to keep Preferences short).
+    pub parcel_selection_outline: bool,
     /// Land tool: 0..5 brush actions (RadioLandBrushAction), 6 select land.
     pub land_action: u8,
     /// LandBrushSize (m).
@@ -607,6 +628,15 @@ impl Default for BuildSettings {
             rez_under_land_group: true,
             new_prim_size: [0.5; 3],
             new_prim_material: 3,
+            new_prim_color: [255; 4],
+            new_prim_transparency: 0.0,
+            new_prim_glow: 0.0,
+            new_prim_fullbright: false,
+            new_prim_shiny: 0,
+            new_prim_physical: false,
+            new_prim_temporary: false,
+            new_prim_phantom: false,
+            parcel_selection_outline: true,
             land_action: 6,
             land_brush_size: 2.0,
             land_brush_force: 1.0,
@@ -805,6 +835,9 @@ pub struct BuildTool {
     /// Objects created / duplicated with FLAGS_CREATE_SELECTED: select them
     /// when they arrive (LLViewerObjectList). (Sent at, objects already flagged.)
     pending_create: Option<(Instant, HashSet<Uuid>)>,
+    /// Prims the Create tool asked for whose new objects' look is still to
+    /// be given (new_defaults.rs).
+    new_defaults_pending: u32,
     /// Selection rectangle being dragged (start, current in pixels, extend).
     pub rect: Option<((f32, f32), (f32, f32), bool)>,
     /// Compact section (Rights, Transform, Features, Materials, Contents, Shape).
@@ -859,6 +892,7 @@ impl Default for BuildTool {
             land: land::LandTool::default(),
             silhouettes: silhouette::Cache::default(),
             pending_create: None,
+            new_defaults_pending: 0,
             rect: None,
             tab: 6,
             status: String::new(),
@@ -1782,7 +1816,7 @@ impl BuildTool {
         self.pending_create = Some((Instant::now(), flagged));
     }
 
-    fn pick_up_created(&mut self, world: &World, s: &BuildSettings) {
+    fn pick_up_created(&mut self, world: &mut World, s: &BuildSettings) {
         let Some((at, known)) = &self.pending_create else {
             return;
         };
@@ -1811,6 +1845,7 @@ impl BuildTool {
         }
         self.selection_linked = s.edit_linked;
         for i in new {
+            self.apply_new_defaults(world, i, s);
             if let Some(unit) = Self::unit_of(world, i, false) {
                 self.add(world, unit);
             }
@@ -2335,10 +2370,12 @@ impl BuildTool {
             state,
         };
         self.deselect_all(world);
+        self.send(BuildCmd::Add(Box::new(p)));
         if !plant {
             self.expect_created(world);
+            // (trees and grass are not created selected: no look of their own)
+            self.expect_new_defaults();
         }
-        self.send(BuildCmd::Add(Box::new(p)));
         // LLToolPlacer::addObject
         world.ui_sounds.push(crate::ui_sound::UiSound::ObjectCreate);
         if !s.keep_tool {
