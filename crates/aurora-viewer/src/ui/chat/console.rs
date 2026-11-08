@@ -582,6 +582,95 @@ mod tests {
         }
     }
 
+    #[test]
+    fn chat_cards_keep_their_positions_when_a_reply_arrives_before_an_older_card_fades() {
+        let base = std::time::UNIX_EPOCH + std::time::Duration::from_secs(10_000);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let line = |from: &str, source: u128, text: &str, time| ChatLine {
+            time,
+            from: from.into(),
+            text: text.into(),
+            kind: ChatKind::Local(ChatType::Normal),
+            source: uuid::Uuid::from_u128(source),
+            origin: crate::world::Origin::Live,
+        };
+        world.chat.extend([
+            line("Nowalski", 1, "Toast question", base - std::time::Duration::from_secs(19)),
+            line("Friend", 2, "Toast reply", base - std::time::Duration::from_secs(10)),
+        ]);
+
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let p = crate::theme::Theme::default().palette();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0));
+        let frame = |world: &World, now, time| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |ui| {
+                    cards(
+                        ui.ctx(),
+                        &p,
+                        world,
+                        &HashMap::new(),
+                        &mut HashSet::new(),
+                        &mut HashSet::new(),
+                        740.0,
+                        20.0,
+                        false,
+                        false,
+                        true,
+                        now,
+                    )
+                },
+            );
+            out.textures_delta.clear();
+            let positions = out
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text().starts_with("Toast ") => {
+                        Some((text.galley.text().to_owned(), text.pos.y))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            (positions, ctx.memory(|memory| memory.area_rect(egui::Id::unique("chat_toasts"))))
+        };
+
+        let _ = frame(&world, base, 0.0);
+        let _ = frame(&world, base, 0.016);
+        world.chat.push_back(line("Nowalski", 1, "Toast follow-up", base));
+        let _ = frame(&world, base, 0.032);
+        let after_reply = frame(&world, base, 0.048);
+        let after_expiry = base + std::time::Duration::from_secs(2);
+        let first_fade_frame = frame(&world, after_expiry, 1.0);
+        let settled_fade_frame = frame(&world, after_expiry, 1.016);
+
+        for surviving in ["Toast reply", "Toast follow-up"] {
+            let y = |positions: &[(String, f32)]| {
+                positions
+                    .iter()
+                    .find(|(text, _)| text.contains(surviving))
+                    .map(|(_, y)| *y)
+                    .expect("the surviving toast remains visible")
+            };
+            let before = y(&after_reply.0);
+            let first = y(&first_fade_frame.0);
+            let settled = y(&settled_fade_frame.0);
+            assert!(
+                (before - first).abs() < 0.5 && (before - settled).abs() < 0.5,
+                "{surviving} moved from y={before} to y={first}, then y={settled} after the older sender's toast faded; areas {:?}, {:?}, {:?}",
+                after_reply.1,
+                first_fade_frame.1,
+                settled_fade_frame.1
+            );
+        }
+    }
+
     /// The human's report of 2026-10-24: above the chat bar, the time of an
     /// object's compact line stood lower than its text (a smaller section
     /// of one job sits on the bottom of the row). The time stands on the
