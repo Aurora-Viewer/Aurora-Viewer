@@ -159,6 +159,8 @@ fn match_row(ui: &mut egui::Ui, p: &Palette, id: &str, kind: &mut MatchType, cas
 impl OmnifilterUi {
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette, engine: &mut Engine, settings: &mut Settings, open: &mut bool) {
         if !*open {
+            // closed while a name was being typed: it is kept
+            self.commit_rename(engine);
             return;
         }
         let before = settings.omnifilter;
@@ -196,9 +198,27 @@ impl OmnifilterUi {
             });
         });
         if settings.omnifilter != before {
+            // another set chosen: the name typed in this one is kept first
+            if settings.omnifilter.rule_set != before.rule_set {
+                self.commit_rename(engine);
+            }
             engine.enabled = settings.omnifilter.enabled;
             engine.select(settings.omnifilter.rule_set);
             settings.save();
+        }
+    }
+
+    /// onNeedleNameChanged for a name typed and not committed yet (the field
+    /// commits when it loses focus, which a click elsewhere in the same
+    /// frame would not report): it goes to the rule it was typed for, before
+    /// the selection or the set moves. A blank or taken name is dropped.
+    fn commit_rename(&mut self, engine: &mut Engine) {
+        let Some((set, index, name)) = self.filled.clone() else {
+            return;
+        };
+        let still_there = set == engine.current() && engine.current_set().rules.get(index).is_some_and(|r| r.name == name);
+        if still_there && self.name != name && engine.rename_rule(index, &self.name) {
+            self.filled = Some((set, index, self.name.clone()));
         }
     }
 
@@ -305,8 +325,15 @@ impl OmnifilterUi {
                 self.prompt = None;
                 return;
             }
-            Prompt::New => engine.add_set(&self.prompt_name),
-            Prompt::Clone => engine.clone_set(&self.prompt_name),
+            Prompt::New | Prompt::Clone => {
+                // a clone carries the name typed, a new set leaves this one
+                self.commit_rename(engine);
+                if prompt == Prompt::New {
+                    engine.add_set(&self.prompt_name)
+                } else {
+                    engine.clone_set(&self.prompt_name)
+                }
+            }
         };
         match added {
             Ok(index) => {
@@ -333,6 +360,7 @@ impl OmnifilterUi {
         let lists = (height - 110.0).max(80.0);
         let list_height = lists * 0.5;
         let mut toggled = None;
+        let mut picked = None;
         egui::ScrollArea::vertical()
             .id_salt("omnifilter_rules")
             .max_height(list_height)
@@ -347,7 +375,7 @@ impl OmnifilterUi {
                         }
                         let selected = self.selected == Some(i);
                         if ui.selectable_label(selected, rule.name.as_str()).clicked() {
-                            self.selected = Some(i);
+                            picked = Some(i);
                         }
                     });
                 }
@@ -355,8 +383,14 @@ impl OmnifilterUi {
         if let Some((i, on)) = toggled {
             engine.rules_mut()[i].enabled = on;
         }
+        if let Some(i) = picked {
+            // the name typed for the rule left is kept, for that rule
+            self.commit_rename(engine);
+            self.selected = Some(i);
+        }
         ui.horizontal(|ui| {
             if widgets::flat_button(ui, p, aurora_i18n::tr!("common-add")).clicked() {
+                self.commit_rename(engine);
                 self.selected = Some(engine.add_rule(aurora_i18n::tr!("omnifilter-new-rule")));
                 self.filled = None;
             }
@@ -376,6 +410,7 @@ impl OmnifilterUi {
                     .clicked()
                     && let Some(i) = chosen
                 {
+                    self.commit_rename(engine);
                     self.selected = Some(engine.move_rule(i, true));
                 }
                 if widgets::flat_button(ui, p, aurora_i18n::tr!("omnifilter-down"))
@@ -383,6 +418,7 @@ impl OmnifilterUi {
                     .clicked()
                     && let Some(i) = chosen
                 {
+                    self.commit_rename(engine);
                     self.selected = Some(engine.move_rule(i, false));
                 }
             });
@@ -574,6 +610,36 @@ impl OmnifilterUi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_name_typed_then_another_rule_picked_goes_to_the_rule_it_was_typed_for() {
+        let mut engine = Engine::with_sets(vec![crate::omnifilter::RuleSet {
+            name: crate::omnifilter::DEFAULT_SET.into(),
+            rules: vec![Rule::new("First"), Rule::new("Second")],
+        }]);
+        let mut ui = OmnifilterUi {
+            filled: Some((0, 0, "First".into())),
+            name: "Renamed".into(),
+            ..Default::default()
+        };
+        ui.commit_rename(&mut engine);
+        assert_eq!(engine.current_set().rules[0].name, "Renamed");
+        assert_eq!(engine.current_set().rules[1].name, "Second");
+        // nothing left to commit the second time
+        ui.commit_rename(&mut engine);
+        assert_eq!(engine.current_set().rules[0].name, "Renamed");
+        // a taken or blank name is dropped, as the field's own commit does
+        ui.name = "Second".into();
+        ui.commit_rename(&mut engine);
+        ui.name = "  ".into();
+        ui.commit_rename(&mut engine);
+        assert_eq!(engine.current_set().rules[0].name, "Renamed");
+        // the rule it was typed for is gone (moved, removed): nothing else is renamed
+        ui.filled = Some((0, 1, "Elsewhere".into()));
+        ui.name = "Other".into();
+        ui.commit_rename(&mut engine);
+        assert_eq!(engine.current_set().rules[1].name, "Second");
+    }
 
     #[test]
     fn the_window_keeps_its_size() {
