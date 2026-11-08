@@ -237,6 +237,21 @@ pub(crate) const INSPECTOR_ID: &str = "build_tools_inspector_c3";
 /// Build shortcuts (menu_viewer.xml): Ctrl+B, Ctrl+1..5, delete, duplicate,
 /// link, edit linked parts, grid, undo...
 pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings) {
+    // egui drops a text field's focus on Escape before this pass starts, so
+    // remember whether one had the keyboard on the previous pass: that
+    // Escape is the field's (LLLineEditor reverts the typed text), not the
+    // build tool's. Taking it here would hide it from the field, which then
+    // commits its text as if focus had moved away.
+    let typing_id = egui::Id::new("build_shortcuts_typing");
+    let typing_before = ctx.data(|d| d.get_temp::<bool>(typing_id)).unwrap_or(false);
+    // Only a text entry: a focused button or list row leaves Escape to the
+    // shortcuts, so Organize mode still closes on the first press.
+    // (read before data_mut: egui's context lock is not reentrant)
+    let typing = ctx.text_edit_focused();
+    ctx.data_mut(|d| d.insert_temp(typing_id, typing));
+    if typing_before && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        return;
+    }
     if tool.ui.link_error.is_some() {
         return;
     }

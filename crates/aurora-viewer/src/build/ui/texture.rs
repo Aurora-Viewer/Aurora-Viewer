@@ -760,6 +760,9 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
         appearance.apply_pbr(&mut mat);
     }
     let face_transforms: Vec<[TextureTransform; 4]> = sel.iter().map(|x| face_pbr_transforms(world, env, x)).collect();
+    // What each face's server override inherits; None while a material is
+    // still loading: the UV fields wait for it rather than guess the pair.
+    let inherited: Option<Vec<[TextureTransform; 4]>> = sel.iter().map(|x| face_server_pbr_transforms(world, env, x)).collect();
     // LLMaterialEditor::canModifyObjectsMaterial; not editable, the maps show no id
     let faces: Vec<(usize, u8)> = sel.iter().map(|x| (x.idx, x.face)).collect();
     let editable = has_all && tool.material_edit_allowed(world, &faces);
@@ -853,21 +856,22 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
         });
         let mut values = shown;
         values[4] = values[4].to_degrees();
-        let write = uv_controls(ui, p, &mut values, mixed, 5, editable, ["U", "V"]);
-        if write.contains(&true) {
+        let write = uv_controls(ui, p, &mut values, mixed, 5, editable && inherited.is_some(), ["U", "V"]);
+        if let Some(inherited) = inherited.as_deref()
+            && write.contains(&true)
+        {
             // LLPanelFace::updateGLTFTextureTransform: the committed
             // component only, on each face's override and each channel.
             // apply_override takes a scale or an offset as a whole pair, so
             // a pair with a committed component starts from what that face
-            // and channel show: the other component keeps its value, the
-            // base material's when the override has none. Better than
-            // LLPanelFace, which starts from the raw override and resets
-            // that component to the identity.
+            // and channel inherit on the server: the other component keeps
+            // its value, the base material's when the override has none.
+            // Better than LLPanelFace, which starts from the raw override
+            // and resets that component to the identity.
             let new = [values[0], values[1], values[2], values[3], values[4].to_radians()];
-            let effective = &face_transforms;
             tool.edit_gltf_faces(world, sel, |k, o| {
                 for channel in channels.clone() {
-                    let shown = effective[k][channel];
+                    let shown = inherited[k][channel];
                     let t = &mut o.transforms[channel];
                     if write[0] || write[1] {
                         t.scale = shown.scale;
@@ -888,6 +892,24 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
             });
         }
     });
+}
+
+/// The texture transforms a face's server override applies over: its
+/// server material's (never a local material's preview, which only this
+/// viewer shows) under that override (LLGLTFMaterial::applyOverride).
+/// None while the material loads; a material that cannot be had renders
+/// as the default one, so the override applies over the identity.
+fn face_server_pbr_transforms(world: &World, env: &mut Env, x: &Sel) -> Option<[TextureTransform; 4]> {
+    let mut mat = aurora_assets::PbrMaterial::default();
+    if let Some(asset) = BuildTool::gltf_asset(world, x.idx, x.face) {
+        match env.scene.materials.resolve(&asset) {
+            crate::scene::meshes::MaterialStatus::Loaded(m) => mat.transforms = m.transforms,
+            crate::scene::meshes::MaterialStatus::Pending => return None,
+            crate::scene::meshes::MaterialStatus::Missing => {}
+        }
+    }
+    mat.apply_override(&BuildTool::gltf_override(world, x.idx, x.face));
+    Some(mat.transforms)
 }
 
 /// The texture transforms a face renders with: its material's under its

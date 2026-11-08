@@ -1011,6 +1011,8 @@ struct Inspector {
     native_pixels_per_point: f32,
     screen: Vec2,
     text_fonts: Vec<(String, f32)>,
+    /// A window drawn before the build tools that takes Escape for itself.
+    escape_taken_first: bool,
 }
 
 impl Inspector {
@@ -1040,6 +1042,7 @@ impl Inspector {
             frame: 0,
             inventory_surface: None,
             numeric_drag: None,
+            escape_taken_first: false,
             native_pixels_per_point: 1.0,
             screen: egui::vec2(1280.0, 900.0),
             text_fonts: Vec::new(),
@@ -1069,6 +1072,9 @@ impl Inspector {
             drag.before(&mut input, self.ctx.pixels_per_point());
         }
         let mut output = self.ctx.run_ui(input, |ui| {
+            if self.escape_taken_first {
+                ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+            }
             super::super::shortcuts(ui.ctx(), &mut self.tool, &mut self.world, &mut self.settings);
             let mut env = Env {
                 images: &Default::default(),
@@ -2128,6 +2134,8 @@ fn material_spinner_drags_commit_all_uv_channels_and_glow_only_on_release() {
             let idx = inspector.world.objects.index_of(&key).unwrap();
             if pbr {
                 inspector.world.objects.get_mut(idx).unwrap().extra.render_materials = vec![(u8::MAX, uuid::Uuid::from_u128(9100))];
+                // the UV fields wait for the material (face_server_pbr_transforms)
+                inspector.scene.materials.insert(uuid::Uuid::from_u128(9100), Default::default());
                 inspector.list_contents(idx);
             }
             inspector.show(vec![]);
@@ -2858,6 +2866,667 @@ fn a_pbr_uv_edit_keeps_the_other_component_inherited_from_the_material() {
                         (Some(sent_pairs.0), Some(sent_pairs.1)),
                         "{case}: sent {json}"
                     );
+                }
+            }
+        }
+    }
+}
+
+/// The value under a row's caption: the first number or "—" to its right,
+/// on the same line.
+fn row_field(texts: &[(String, egui::Rect)], caption: &str) -> Option<(String, egui::Rect)> {
+    let label = texts.iter().find(|(text, _)| text == caption)?.1;
+    texts
+        .iter()
+        .filter(|(text, rect)| {
+            (text == "—" || aurora_i18n::parse_number(text).is_some())
+                && (rect.center().y - label.center().y).abs() < 8.0
+                && rect.left() > label.right()
+        })
+        .min_by(|a, b| a.1.left().total_cmp(&b.1.left()))
+        .cloned()
+}
+
+/// #1956: the other mixed texture spinners take a value typed over "—" too,
+/// even when it equals the first face's hidden value (LLSpinCtrl::
+/// onEditorCommit, then LLPanelFace's per-field commits). Face 1 differs,
+/// the first face's value is typed and Enter pressed: every face takes it.
+/// Both window styles; the Legacy style's mask cutoff needs a loaded
+/// texture with alpha and is checked by hand in the demo.
+#[test]
+fn typed_value_over_the_other_mixed_texture_fields_reaches_every_face() {
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum Field {
+        Glow,
+        RepeatsPerMeter,
+        Glossiness,
+        Environment,
+        MaskCutoff,
+    }
+    use crate::scene::legacy_mat::LegacyMaterial;
+    fn material(inspector: &Inspector, idx: usize, face: u8) -> LegacyMaterial {
+        let object = inspector.world.objects.get(idx).unwrap();
+        let te = object.te.as_ref().unwrap().face(face as usize);
+        match inspector.tool.ui.legacy_pending.get(&(object.full_id, face)) {
+            Some((id, m)) if *id == te.material_id => m.clone().unwrap_or_default(),
+            _ => inspector
+                .scene
+                .legacy_mats
+                .peek(&te.material_id)
+                .map(|m| (*m).clone())
+                .unwrap_or_default(),
+        }
+    }
+    fn value(inspector: &Inspector, field: Field, idx: usize, face: u8) -> f32 {
+        let object = inspector.world.objects.get(idx).unwrap();
+        let te = object.te.as_ref().unwrap().face(face as usize);
+        let m = material(inspector, idx, face);
+        match field {
+            Field::Glow => te.glow,
+            Field::RepeatsPerMeter => {
+                let (sa, ta) = texture::te_st_axes(face);
+                let rpm = (te.scale_s / object.scale[sa].max(0.001)).max(te.scale_t / object.scale[ta].max(0.001));
+                (rpm * 10.0).round() / 10.0
+            }
+            Field::Glossiness => f32::from(m.specular_exp),
+            Field::Environment => f32::from(m.env_intensity),
+            Field::MaskCutoff => f32::from(m.alpha_cutoff),
+        }
+    }
+    let fields = [
+        Field::Glow,
+        Field::RepeatsPerMeter,
+        Field::Glossiness,
+        Field::Environment,
+        Field::MaskCutoff,
+    ];
+    for legacy in [false, true] {
+        for field in fields {
+            if legacy && field == Field::MaskCutoff {
+                continue;
+            }
+            let case = format!("legacy={legacy} {field:?}");
+            let mut inspector = material_inspector();
+            inspector.settings.legacy_window = legacy;
+            inspector.tool.tab = 3;
+            inspector.tool.ui.tex_tab = 0;
+            let idx = inspector.tool.sel_prims(&inspector.world)[0];
+            let n = inspector.tool.num_faces(&inspector.world, idx) as u8;
+            let full_id = inspector.world.objects.get(idx).unwrap().full_id;
+            // a specular map (glossiness, environment) or Mask mode (cutoff)
+            // on every face, face 1 with its own values
+            let first = LegacyMaterial {
+                specular_map: texture::DEFAULT_SPECULAR,
+                specular_exp: 51,
+                env_intensity: 10,
+                diffuse_alpha_mode: crate::scene::legacy_mat::alpha_mode::MASK,
+                alpha_cutoff: 127,
+                ..Default::default()
+            };
+            let odd = LegacyMaterial {
+                specular_exp: 200,
+                env_intensity: 90,
+                alpha_cutoff: 30,
+                ..first.clone()
+            };
+            let object = inspector.world.objects.get_mut(idx).unwrap();
+            let te = Arc::make_mut(object.te.as_mut().unwrap());
+            for face in 0..n {
+                let (id, m) = if face == 1 {
+                    (uuid::Uuid::from_u128(0x1957), odd.clone())
+                } else {
+                    (uuid::Uuid::from_u128(0x1956), first.clone())
+                };
+                te.faces[face as usize].material_id = id;
+                inspector.scene.legacy_mats.insert(id, m.clone());
+                inspector.tool.ui.legacy_pending.insert((full_id, face), (id, Some(m)));
+            }
+            match field {
+                Field::Glow => te.faces[1].glow = 0.5,
+                Field::RepeatsPerMeter => {
+                    te.faces[1].scale_s *= 3.0;
+                    te.faces[1].scale_t *= 3.0;
+                }
+                _ => {}
+            }
+            let typed = value(&inspector, field, idx, 0);
+            assert_ne!(typed, value(&inspector, field, idx, 1), "{case}: face 1 differs");
+            for _ in 0..5 {
+                inspector.show(vec![]);
+            }
+            let (_, texts) = inspector.show(vec![]);
+            let caption = match field {
+                Field::Glow => aurora_i18n::tr!("build-ui-texture-glow"),
+                Field::RepeatsPerMeter => aurora_i18n::tr!("build-ui-texture-repeats-meter"),
+                Field::Glossiness if legacy => aurora_i18n::tr!("build-legacy-glossiness"),
+                Field::Glossiness => aurora_i18n::tr!("build-ui-texture-shininess"),
+                Field::Environment => aurora_i18n::tr!("common-environment"),
+                Field::MaskCutoff => aurora_i18n::tr!("build-ui-texture-mask-cutoff"),
+            };
+            let (shown, rect) = row_field(&texts, caption).unwrap_or_else(|| panic!("{case}: no field beside {caption}"));
+            assert_eq!(shown, "—", "{case}: the field is mixed");
+            press(&mut inspector, rect.center());
+            assert!(
+                inspector.ctx.memory(|m| m.focused()).is_some(),
+                "{case}: the field must take the keyboard"
+            );
+            inspector.show(vec![egui::Event::Text(aurora_i18n::number_text(&typed.to_string()))]);
+            key(&mut inspector, egui::Key::Enter);
+            inspector.show(vec![]);
+            for face in 0..n {
+                let got = value(&inspector, field, idx, face);
+                assert!((got - typed).abs() < 1e-4, "{case}: face {face} has {got}, typed {typed}");
+            }
+        }
+    }
+}
+
+/// #1956: unlike the texture fields, the object's position, size and
+/// rotation still send only a value that differs from the object's
+/// (LLPanelObject::sendPosition, indra/newview/llpanelobject.cpp): typing
+/// the primary object's X (the last selected) over a mixed X sends nothing,
+/// another value moves the selection. Both window styles.
+#[test]
+fn a_typed_position_over_a_mixed_axis_is_sent_only_when_it_changes() {
+    for legacy in [false, true] {
+        // the last object selected is the primary one the fields show
+        for (typed, moves) in [("102", false), ("101", true)] {
+            let case = format!("legacy={legacy} typed={typed}");
+            let mut inspector = Inspector::new();
+            inspector.settings.legacy_window = legacy;
+            let first = inspector.tool.sel_prims(&inspector.world)[0];
+            let second = inspector.world.objects.index_of_uuid(&crate::demo::action_id(119)).unwrap();
+            let base = inspector.world.objects.get(first).unwrap().position;
+            inspector.world.objects.get_mut(first).unwrap().position = glam::Vec3::new(100.0, base.y, base.z);
+            let other = inspector.world.objects.get_mut(second).unwrap();
+            other.position = glam::Vec3::new(102.0, base.y, base.z);
+            other.update_flags |= crate::ui::context::flags::OBJECT_MOVE | crate::ui::context::flags::OBJECT_MODIFY;
+            let id = other.full_id;
+            let owner = inspector.world.agent_id;
+            inspector.tool.props.insert(
+                id,
+                ObjectProps {
+                    object_id: id,
+                    full: true,
+                    owner_id: owner,
+                    creator_id: owner,
+                    owner_mask: perm::COPY | perm::MODIFY | perm::MOVE | perm::TRANSFER,
+                    base_mask: perm::COPY | perm::MODIFY | perm::MOVE | perm::TRANSFER,
+                    ..Default::default()
+                },
+            );
+            inspector
+                .tool
+                .click_select(&mut inspector.world, &inspector.settings, Some(second), true);
+            for _ in 0..5 {
+                inspector.show(vec![]);
+            }
+            let (_, texts) = inspector.show(vec![]);
+            // a mixed axis field: "—" with its axis letter just to its left
+            let mixed: Vec<_> = texts
+                .iter()
+                .filter(|(text, rect)| {
+                    text == "—"
+                        && texts.iter().any(|(letter, l)| {
+                            ["X", "Y", "Z"].contains(&letter.as_str())
+                                && (l.center().y - rect.center().y).abs() < 10.0
+                                && l.right() <= rect.left()
+                                && rect.left() - l.right() < 40.0
+                        })
+                })
+                .collect();
+            // the top row is the position; the demo objects' sizes differ too
+            let top = mixed.iter().map(|(_, r)| r.top()).fold(f32::INFINITY, f32::min);
+            let position: Vec<_> = mixed.iter().filter(|(_, r)| (r.top() - top).abs() < 4.0).collect();
+            assert_eq!(position.len(), 1, "{case}: only the position's X is mixed: {mixed:?}");
+            press(&mut inspector, position[0].1.center());
+            assert!(
+                inspector.ctx.memory(|m| m.focused()).is_some(),
+                "{case}: the field must take the keyboard"
+            );
+            inspector.tool.out.clear();
+            inspector.show(vec![egui::Event::Text(typed.into())]);
+            key(&mut inspector, egui::Key::Enter);
+            inspector.show(vec![]);
+            let sent = inspector.tool.out.iter().any(|command| {
+                matches!(
+                    command,
+                    aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Transform { .. })
+                )
+            });
+            assert_eq!(sent, moves, "{case}: {:?}", inspector.tool.out);
+        }
+    }
+}
+
+/// Escape over a typed mixed transparency, with the selection kept (Escape
+/// only turns "Place on surface" off), also when a window drawn earlier
+/// takes the key. Nothing may change on that frame nor on the frames after.
+#[test]
+fn escape_over_a_typed_mixed_value_changes_nothing_while_the_selection_stays() {
+    for legacy in [false, true] {
+        for (typed, taken) in [("0", false), ("50", false), ("0", true), ("50", true)] {
+            let mut inspector = material_inspector();
+            inspector.settings.legacy_window = legacy;
+            inspector.escape_taken_first = taken;
+            inspector.tool.tab = 3;
+            let idx = inspector.tool.sel_prims(&inspector.world)[0];
+            let n = inspector.tool.num_faces(&inspector.world, idx);
+            let object = inspector.world.objects.get_mut(idx).unwrap();
+            Arc::make_mut(object.te.as_mut().unwrap()).faces[2].color[3] = 0.0;
+            inspector.tool.place.active = true;
+            for _ in 0..5 {
+                inspector.show(vec![]);
+            }
+            let (_, texts) = inspector.show(vec![]);
+            let (shown, field) = row_field(&texts, aurora_i18n::tr!("build-ui-texture-transparency")).expect("transparency field");
+            assert_eq!(shown, "—");
+            press(&mut inspector, field.center());
+            inspector.tool.out.clear();
+            inspector.show(vec![egui::Event::Text(typed.into())]);
+            key(&mut inspector, egui::Key::Escape);
+            for _ in 0..4 {
+                inspector.show(vec![]);
+            }
+            assert!(!inspector.tool.selection.is_empty(), "legacy={legacy}: the selection stays");
+            let te = inspector.world.objects.get(idx).unwrap().te.clone().unwrap();
+            let alphas: Vec<f32> = te.faces[..n].iter().map(|f| f.color[3]).collect();
+            assert_eq!(alphas[2], 0.0, "legacy={legacy} typed={typed} taken={taken}: Escape changed {alphas:?}");
+            assert!(
+                !inspector
+                    .tool
+                    .out
+                    .iter()
+                    .any(|c| matches!(c, aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::SetTextures { .. }))),
+                "legacy={legacy} typed={typed} taken={taken}: {:?}",
+                inspector.tool.out
+            );
+        }
+    }
+}
+
+/// Escape in a build text entry drops what was typed and sends nothing, as
+/// LLLineEditor and LLSpinCtrl::handleKeyHere revert it, and is not also
+/// the build tool's Close. Name and sale price (a spin_i), both window
+/// styles, with Escape seen by the field and with Escape taken first by a
+/// window drawn before the build tools.
+#[test]
+fn escape_reverts_every_build_text_entry_and_keeps_the_tool_open() {
+    use aurora_net::{NetCommand, build::BuildCmd};
+    let select_all = egui::Modifiers {
+        ctrl: true,
+        command: true,
+        ..Default::default()
+    };
+    let type_over = |inspector: &mut Inspector, at: egui::Pos2, text: &str| {
+        press(inspector, at);
+        inspector.show(vec![
+            egui::Event::ModifiersChanged(select_all),
+            egui::Event::Key {
+                key: egui::Key::A,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: select_all,
+            },
+        ]);
+        inspector.show(vec![
+            egui::Event::ModifiersChanged(egui::Modifiers::NONE),
+            egui::Event::Text(text.into()),
+        ]);
+    };
+    for legacy in [false, true] {
+        for taken in [false, true] {
+            let case = format!("legacy={legacy} escape taken first={taken}");
+            let mut inspector = material_inspector();
+            inspector.settings.legacy_window = legacy;
+            inspector.tool.tab = 0;
+            inspector.escape_taken_first = taken;
+            let idx = inspector.tool.sel_prims(&inspector.world)[0];
+            let id = inspector.world.objects.get(idx).unwrap().full_id;
+            {
+                let props = inspector.tool.props.get_mut(&id).unwrap();
+                props.sale_type = 2;
+                props.sale_price = 10;
+            }
+            for _ in 0..5 {
+                inspector.show(vec![]);
+            }
+            let (_, texts) = inspector.show(vec![]);
+            let name = texts.iter().find(|(text, _)| text == "Presentation test").expect("name field").1;
+            inspector.tool.out.clear();
+            type_over(&mut inspector, name.center(), "Changed");
+            key(&mut inspector, egui::Key::Escape);
+            for _ in 0..4 {
+                inspector.show(vec![]);
+            }
+            assert!(inspector.tool.open, "{case}: Escape in Name closed the build tool");
+            assert_eq!(inspector.tool.props[&id].name, "Presentation test", "{case}");
+            assert!(
+                !inspector.tool.out.iter().any(|c| matches!(c, NetCommand::Build(BuildCmd::SetName { .. }))),
+                "{case}: {:?}",
+                inspector.tool.out
+            );
+            let (_, texts) = inspector.show(vec![]);
+            assert!(texts.iter().any(|(text, _)| text == "Presentation test"), "{case}: the name shows again");
+
+            let (shown, price) = row_field(&texts, aurora_i18n::currency()).expect("sale price field");
+            assert_eq!(shown, "10", "{case}");
+            type_over(&mut inspector, price.center(), "99");
+            key(&mut inspector, egui::Key::Escape);
+            for _ in 0..4 {
+                inspector.show(vec![]);
+            }
+            assert!(inspector.tool.open, "{case}: Escape in the price closed the build tool");
+            assert_eq!(inspector.tool.props[&id].sale_price, 10, "{case}");
+            assert!(inspector.tool.ui.sale_draft.is_none(), "{case}: {:?}", inspector.tool.ui.sale_draft);
+            assert!(
+                !inspector.tool.out.iter().any(|c| matches!(c, NetCommand::Build(BuildCmd::SetSaleInfo { .. }))),
+                "{case}: {:?}",
+                inspector.tool.out
+            );
+
+            // The same entries with Enter are sent, once.
+            type_over(&mut inspector, price.center(), "99");
+            key(&mut inspector, egui::Key::Enter);
+            for _ in 0..4 {
+                inspector.show(vec![]);
+            }
+            let sales = inspector
+                .tool
+                .out
+                .iter()
+                .filter(|c| matches!(c, NetCommand::Build(BuildCmd::SetSaleInfo { .. })))
+                .count();
+            assert_eq!(sales, 1, "{case}: {:?}", inspector.tool.out);
+            assert_eq!(inspector.tool.props[&id].sale_price, 99, "{case}");
+        }
+    }
+}
+
+/// A value typed for part A, then a press on part B in the world. As
+/// LLTool::handleAnyMouseClick, the press takes the keyboard first
+/// (app.rs drops egui's focus on the raw press) and waits for one
+/// interface pass (ClickWait::hold_for_ui, app/click_pick.rs) before the
+/// tool selects: the field commits to A in that pass, then B is selected
+/// and keeps its own value. Both styles, whole objects and the Face tool
+/// (which selects on the press itself).
+#[test]
+fn a_value_typed_for_one_selection_lands_on_it_not_on_the_next() {
+    for legacy in [false, true] {
+        for face_mode in [false, true] {
+            let case = format!("legacy={legacy} face mode={face_mode}");
+            let mut inspector = material_inspector();
+            inspector.settings.legacy_window = legacy;
+            inspector.tool.tab = 3;
+            let a = inspector.tool.sel_prims(&inspector.world)[0];
+            let b = inspector.world.objects.index_of_uuid(&crate::demo::action_id(119)).unwrap();
+            for idx in [a, b] {
+                let object = inspector.world.objects.get_mut(idx).unwrap();
+                object.update_flags |= crate::ui::context::flags::OBJECT_MOVE | crate::ui::context::flags::OBJECT_MODIFY;
+                Arc::make_mut(object.te.as_mut().unwrap()).faces[2].color[3] = 0.5;
+            }
+            let id = inspector.world.objects.get(b).unwrap().full_id;
+            let owner = inspector.world.agent_id;
+            inspector.tool.props.insert(
+                id,
+                ObjectProps {
+                    object_id: id,
+                    full: true,
+                    owner_id: owner,
+                    creator_id: owner,
+                    owner_mask: perm::COPY | perm::MODIFY | perm::MOVE | perm::TRANSFER,
+                    base_mask: perm::COPY | perm::MODIFY | perm::MOVE | perm::TRANSFER,
+                    ..Default::default()
+                },
+            );
+            if face_mode {
+                inspector.tool.edit_mode = EditMode::Face;
+                inspector.tool.faces.insert(inspector.tool.selection[0], vec![2]);
+            }
+            for _ in 0..5 {
+                inspector.show(vec![]);
+            }
+            let (_, texts) = inspector.show(vec![]);
+            let (_, field) = row_field(&texts, aurora_i18n::tr!("build-ui-texture-transparency")).expect("transparency field");
+            press(&mut inspector, field.center());
+            inspector.show(vec![egui::Event::Text("0".into())]);
+            // the raw press in the world: the field lets the keyboard go,
+            // the press waits for the next pass
+            inspector.ctx.memory_mut(|m| {
+                if let Some(focused) = m.focused() {
+                    m.surrender_focus(focused);
+                }
+            });
+            inspector.show(vec![]);
+            let a_te = inspector.world.objects.get(a).unwrap().te.clone().unwrap();
+            assert_eq!(a_te.faces[2].color[3], 1.0, "{case}: A takes the value typed for it");
+            // then the held press selects B
+            inspector
+                .tool
+                .click_select(&mut inspector.world, &inspector.settings, Some(b), false);
+            if face_mode {
+                let b_id = inspector.tool.selection[0];
+                inspector.tool.faces.insert(b_id, vec![2]);
+            }
+            inspector.tool.out.clear();
+            for _ in 0..4 {
+                inspector.show(vec![]);
+            }
+            let b_te = inspector.world.objects.get(b).unwrap().te.clone().unwrap();
+            assert_eq!(b_te.faces[2].color[3], 0.5, "{case}: B took the value typed for A");
+            assert!(
+                !inspector
+                    .tool
+                    .out
+                    .iter()
+                    .any(|c| matches!(c, aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::SetTextures { .. }))),
+                "{case}: {:?}",
+                inspector.tool.out
+            );
+        }
+    }
+}
+
+/// The pair a PBR UV edit keeps comes from what the face inherits on the
+/// server. While a face's material still loads the UV fields wait (typing
+/// sends nothing), then the edit keeps that material's V. A face showing a
+/// local material keeps its server material's V, never the preview's,
+/// which only this viewer has. Both window styles.
+#[test]
+fn a_pbr_uv_edit_waits_for_the_materials_and_ignores_a_local_preview() {
+    use aurora_assets::material::TextureTransform;
+    let t = |s: [f32; 2], o: [f32; 2]| TextureTransform {
+        scale: s,
+        offset: o,
+        rotation: 0.0,
+    };
+    let first = uuid::Uuid::from_u128(0x2814);
+    let second = uuid::Uuid::from_u128(0x2815);
+    let local = uuid::Uuid::from_u128(0x2816);
+    let first_transforms = [t([2.0, 3.0], [0.2, 0.3]); 4];
+    let second_transforms = [t([6.0, 7.0], [0.7, 0.8]); 4];
+    let local_transforms = [t([9.0, 11.0], [0.9, 0.1]); 4];
+    let material = |transforms| aurora_assets::PbrMaterial {
+        transforms,
+        ..Default::default()
+    };
+    for legacy in [false, true] {
+        let setup = |with_local: bool| {
+            let mut inspector = material_inspector();
+            inspector.settings.legacy_window = legacy;
+            inspector.tool.tab = 3;
+            inspector.tool.ui.tex_tab = 1;
+            inspector.tool.ui.pbr_channel = 0;
+            let key_ = inspector.tool.selection[0];
+            let idx = inspector.world.objects.index_of(&key_).unwrap();
+            let object = inspector.world.objects.get_mut(idx).unwrap();
+            object.extra.render_materials = vec![(1, second), (u8::MAX, first)];
+            if with_local {
+                object
+                    .render
+                    .local_appearance
+                    .insert(Some(0), crate::world::objects::LocalAppearance::Material(local));
+                inspector.world.local_assets.insert(local, ("local".into(), false));
+                inspector.scene.materials.insert(local, material(local_transforms));
+            }
+            inspector.scene.materials.insert(first, material(first_transforms));
+            inspector.list_contents(idx);
+            inspector.show(vec![]);
+            crate::ui::widgets::size_floater(&inspector.ctx, super::super::INSPECTOR_ID, egui::vec2(390.0, 1500.0));
+            (inspector, idx)
+        };
+        let type_scale_u = |inspector: &mut Inspector| {
+            for _ in 0..5 {
+                inspector.show(vec![]);
+            }
+            let (_, texts) = inspector.show(vec![]);
+            let (_, (_, field)) = uv_field(&texts, 0).expect("scale U field");
+            press(inspector, field.center());
+            inspector.show(vec![egui::Event::Text(aurora_i18n::number_text("4"))]);
+            key(inspector, egui::Key::Enter);
+            inspector.show(vec![]);
+        };
+        let overrides = |inspector: &Inspector, idx: usize| {
+            let n = inspector.tool.num_faces(&inspector.world, idx) as u8;
+            (0..n).map(|face| BuildTool::gltf_override(&inspector.world, idx, face).transforms).collect::<Vec<_>>()
+        };
+
+        // face 1's material is not there yet: nothing is written
+        let (mut inspector, idx) = setup(false);
+        let before = overrides(&inspector, idx);
+        type_scale_u(&mut inspector);
+        assert_eq!(overrides(&inspector, idx), before, "legacy={legacy}: written while a material loads");
+        // it arrives: the edit keeps each face's own V
+        inspector.scene.materials.insert(second, material(second_transforms));
+        type_scale_u(&mut inspector);
+        let n = inspector.tool.num_faces(&inspector.world, idx) as u8;
+        for face in 0..n {
+            let base = if face == 1 { second_transforms } else { first_transforms };
+            let mut rendered = material(base);
+            rendered.apply_override(&BuildTool::gltf_override(&inspector.world, idx, face));
+            for c in 0..4 {
+                assert_eq!(rendered.transforms[c].scale, [4.0, base[c].scale[1]], "legacy={legacy}: face {face} channel {c}");
+            }
+        }
+
+        // a local material on face 0: its server override keeps the server V
+        let (mut inspector, idx) = setup(true);
+        inspector.scene.materials.insert(second, material(second_transforms));
+        type_scale_u(&mut inspector);
+        let mut rendered = material(first_transforms);
+        rendered.apply_override(&BuildTool::gltf_override(&inspector.world, idx, 0));
+        for c in 0..4 {
+            assert_eq!(
+                rendered.transforms[c].scale,
+                [4.0, first_transforms[c].scale[1]],
+                "legacy={legacy}: the local preview's V reached the server, channel {c}"
+            );
+        }
+    }
+}
+
+/// #1956, review of PR #2814: the inherited pair is kept per face and per
+/// channel, never copied from the first face or channel. Face 1 has its own
+/// material, the four channels of each material differ, and face 2 already
+/// overrides its scale and offset. Each U and V field of scale and offset,
+/// typed over "—" on "All", Base color and Emissive: every face and channel
+/// renders what it rendered before with only the typed component changed
+/// (the material after `apply_override`). Both window styles.
+#[test]
+fn a_pbr_uv_edit_keeps_each_faces_and_channels_own_pair() {
+    use aurora_assets::material::{PbrOverride, TextureTransform};
+    let t = |s: [f32; 2], o: [f32; 2]| TextureTransform {
+        scale: s,
+        offset: o,
+        rotation: 0.0,
+    };
+    let first = uuid::Uuid::from_u128(0x2814);
+    let second = uuid::Uuid::from_u128(0x2815);
+    let first_transforms = [
+        t([2.0, 3.0], [0.2, 0.3]),
+        t([1.5, 2.5], [0.1, 0.25]),
+        t([3.0, 0.5], [0.35, 0.05]),
+        t([0.75, 1.25], [0.15, 0.6]),
+    ];
+    let second_transforms = [
+        t([6.0, 7.0], [0.7, 0.8]),
+        t([2.25, 0.25], [0.55, 0.65]),
+        t([1.75, 3.5], [0.45, 0.15]),
+        t([2.75, 0.6], [0.05, 0.95]),
+    ];
+    let own_pairs = [t([5.0, 6.0], [0.5, 0.6]); 4];
+    let typed = [("4", 4.0f32), ("4.5", 4.5), ("0.4", 0.4), ("0.45", 0.45)];
+    for legacy in [false, true] {
+        for channel in [0usize, 1, 4] {
+            for (property, (text, value)) in typed.into_iter().enumerate() {
+                let case = format!("legacy={legacy} channel={channel} field={property}");
+                let mut inspector = material_inspector();
+                inspector.settings.legacy_window = legacy;
+                inspector.tool.tab = 3;
+                inspector.tool.ui.tex_tab = 1;
+                inspector.tool.ui.pbr_channel = channel;
+                let key_ = inspector.tool.selection[0];
+                let idx = inspector.world.objects.index_of(&key_).unwrap();
+                let n = inspector.tool.num_faces(&inspector.world, idx) as u8;
+                inspector.world.objects.get_mut(idx).unwrap().extra.render_materials = vec![(1, second), (u8::MAX, first)];
+                for (asset, transforms) in [(first, first_transforms), (second, second_transforms)] {
+                    inspector.scene.materials.insert(
+                        asset,
+                        aurora_assets::PbrMaterial {
+                            transforms,
+                            ..Default::default()
+                        },
+                    );
+                }
+                inspector.world.gltf_overrides.insert(
+                    key_,
+                    vec![(
+                        2u8,
+                        PbrOverride {
+                            transforms: own_pairs,
+                            ..Default::default()
+                        },
+                    )]
+                    .into(),
+                );
+                let rendered = |inspector: &Inspector, face: u8| {
+                    let mut material = aurora_assets::PbrMaterial {
+                        transforms: if face == 1 { second_transforms } else { first_transforms },
+                        ..Default::default()
+                    };
+                    material.apply_override(&BuildTool::gltf_override(&inspector.world, idx, face));
+                    material.transforms
+                };
+                let before: Vec<[TextureTransform; 4]> = (0..n).map(|face| rendered(&inspector, face)).collect();
+                inspector.list_contents(idx);
+                inspector.show(vec![]);
+                crate::ui::widgets::size_floater(&inspector.ctx, super::super::INSPECTOR_ID, egui::vec2(390.0, 1500.0));
+                for _ in 0..5 {
+                    inspector.show(vec![]);
+                }
+                let (_, texts) = inspector.show(vec![]);
+                let (_, (shown, field)) = uv_field(&texts, property).unwrap_or_else(|| panic!("{case}: missing UV field"));
+                assert_eq!(shown, "—", "{case}: the faces differ");
+                press(&mut inspector, field.center());
+                inspector.show(vec![egui::Event::Text(aurora_i18n::number_text(text))]);
+                key(&mut inspector, egui::Key::Enter);
+                inspector.show(vec![]);
+                let edited: Vec<usize> = if channel == 0 { (0..4).collect() } else { vec![channel - 1] };
+                for face in 0..n {
+                    let after = rendered(&inspector, face);
+                    for c in 0..4 {
+                        let mut want = before[face as usize][c];
+                        if edited.contains(&c) {
+                            match property {
+                                0 => want.scale[0] = value,
+                                1 => want.scale[1] = value,
+                                2 => want.offset[0] = value,
+                                _ => want.offset[1] = value,
+                            }
+                        }
+                        assert_eq!(after[c], want, "{case}: face {face} channel {c}");
+                    }
                 }
             }
         }

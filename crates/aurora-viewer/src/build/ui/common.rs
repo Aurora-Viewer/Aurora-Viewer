@@ -17,6 +17,51 @@ pub(super) fn typography(ui: &mut egui::Ui) {
     crate::ui::widgets::organization_typography(ui);
 }
 
+/// How a build field's keyboard entry stands this pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FieldEnd {
+    /// Still typing, or not being typed in.
+    Open,
+    /// Focus moved away or Enter: send the typed value.
+    Commit,
+    /// Escape: drop the typed text and send nothing, as LLLineEditor and
+    /// LLSpinCtrl::handleKeyHere (indra/llui/llspinctrl.cpp) revert it.
+    Revert,
+    /// The pass after the entry ended: egui reports lost_focus again and
+    /// DragValue parses the abandoned text once more. Nothing to send.
+    Repeat,
+}
+
+/// Escape pressed this pass, read from the raw input: a window drawn before
+/// the build inspector may consume the key, but the field still has to know
+/// that its entry was abandoned rather than committed.
+pub(crate) fn escape_pressed(ui: &egui::Ui) -> bool {
+    ui.input(|i| {
+        i.raw.events.iter().any(|e| {
+            matches!(e, egui::Event::Key { key: egui::Key::Escape, pressed: true, modifiers, .. } if !modifiers.any())
+        })
+    })
+}
+
+/// The shared end rule of every build field that commits typed text on its
+/// own (spinners, name, description, sale price): one decision per entry.
+pub(crate) fn field_end(ui: &egui::Ui, r: &egui::Response) -> FieldEnd {
+    if !r.lost_focus() {
+        return FieldEnd::Open;
+    }
+    let ended_id = r.id.with("build_field_ended");
+    let pass = ui.ctx().cumulative_pass_nr();
+    if ui.data(|d| d.get_temp::<u64>(ended_id)).is_some_and(|ended| ended + 1 == pass) {
+        return FieldEnd::Repeat;
+    }
+    ui.data_mut(|d| d.insert_temp(ended_id, pass));
+    if escape_pressed(ui) {
+        FieldEnd::Revert
+    } else {
+        FieldEnd::Commit
+    }
+}
+
 /// What a value control did this frame: changed (live) and / or must be
 /// sent (typed value, end of a drag).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -203,6 +248,13 @@ fn spinner(
             (r, step)
         })
         .inner;
+    // A spin click or a drag is not a typed entry; otherwise an abandoned
+    // or already ended entry writes nothing, even if DragValue parsed its
+    // text again.
+    if step == 0 && !r.dragged() && !r.drag_stopped() && matches!(field_end(ui, &r), FieldEnd::Revert | FieldEnd::Repeat) {
+        *v = before;
+        return Edit::default();
+    }
     if step != 0 {
         *v = (*v + increment * step as f32).clamp(*range.start(), *range.end());
     }
@@ -256,6 +308,10 @@ pub fn spin_i(ui: &mut egui::Ui, v: &mut i32, range: std::ops::RangeInclusive<i3
             (r, crate::ui::widgets::step_buttons(ui, height))
         })
         .inner;
+    if step == 0 && !r.dragged() && !r.drag_stopped() && matches!(field_end(ui, &r), FieldEnd::Revert | FieldEnd::Repeat) {
+        *v = before;
+        return Edit::default();
+    }
     if step != 0 {
         *v = v.saturating_add(step as i32).clamp(*range.start(), *range.end());
     }
