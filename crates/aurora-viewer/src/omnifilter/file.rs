@@ -5,7 +5,7 @@
 //! - versions 3 and 4: a map of rule sets by name, each
 //!   `{ order, rule_set: { <rule name>: { order, sender_name, … } } }`;
 //! - versions 1 and 2 (before rule sets): the map of rules alone, which
-//!   becomes the Default set.
+//!   becomes the Default set (also when one of its rules is named "Default").
 //!
 //! Without an `order`, the map's order (by name) is kept, as there.
 
@@ -18,9 +18,12 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<RuleSet>, String> {
     let Some(map) = root.as_map() else {
         return Err("not a map of rule sets".into());
     };
-    // importFromLLSD: a "Default" set with an order, or the older format
+    // importFromLLSD: a "Default" set with an order, or the older format.
+    // Stricter than the Legacy Viewer, which looks at the order alone: in a
+    // version 2 file a rule named "Default" has an order too, so the set
+    // must also hold its `rule_set` (a rule never does).
     let current = root.get(super::DEFAULT_SET);
-    if !(current.is_map() && current.has("order")) {
+    if !(current.is_map() && current.has("order") && current.has("rule_set")) {
         return Ok(vec![RuleSet {
             name: super::DEFAULT_SET.to_owned(),
             rules: rules_of(&root),
