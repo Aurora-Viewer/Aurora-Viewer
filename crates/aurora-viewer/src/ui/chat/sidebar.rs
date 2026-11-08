@@ -318,7 +318,7 @@ pub(super) fn show(
         });
         ui.add_space(4.0);
     }
-    let filter = st.side_filter.trim().to_lowercase();
+    let filter = st.side_search().to_lowercase();
     let matches = |name: &str| filter.is_empty() || name.to_lowercase().contains(&filter);
     let voice = voice_panel_wanted(world, st);
     let list_h =
@@ -551,8 +551,8 @@ const FOOT_H: f32 = super::compose::BOX_H + super::compose::UNDER_BOX;
 /// size of its buttons. Lit while the column is what a click asked
 /// (`ColumnChoice::by_hand`), plain while it follows the window, greyed out
 /// in a window too narrow for the column (`workspace::OPEN_FROM`), as a head
-/// tool without its panel's room. Collapsing ends a search
-/// (`workspace::show`).
+/// tool without its panel's room. The rail ignores a search and keeps its
+/// text for the column (`ChatUi::side_search`).
 fn column_toggle(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, actions: &mut Vec<ConvAction>, column: egui::Rect, narrow: bool) {
     let rail = st.column.rail(narrow);
     let fits = st.layout_width.is_some_and(|w| w >= super::workspace::OPEN_FROM);
@@ -697,7 +697,7 @@ fn section_title(ui: &egui::Ui, p: &Palette, title: &str) -> RichText {
 /// them (None: the nearby chat): those the search leaves, the sets shown
 /// apart, the private messages, then the groups and the conferences.
 pub(super) fn tab_order(world: &World, st: &ChatUi) -> Vec<Option<Uuid>> {
-    let filter = st.side_filter.trim().to_lowercase();
+    let filter = st.side_search().to_lowercase();
     let matches = |name: &str| filter.is_empty() || name.to_lowercase().contains(&filter);
     let sessions = st.reorder.sessions(world);
     let mut order: Vec<Option<Uuid>> = Vec::new();

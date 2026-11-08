@@ -167,9 +167,10 @@ pub struct ChatUi {
     /// What the button at the foot of the column asked; `collapsed` is
     /// given every frame by the app, from the settings.
     pub column: workspace::ColumnChoice,
-    /// `AURORA_DEMO_CONV=aurora:collapsed`: the column collapsed without
-    /// changing the preferences, until its button is used.
-    pub demo_column_collapsed: bool,
+    /// Demo mode: the column's state of this session, which stands in for
+    /// the preferences (`AURORA_DEMO_CONV=aurora:collapsed` starts it
+    /// collapsed; the button changes it, never the settings file).
+    pub demo_column: Option<bool>,
     /// The workspace's layout last frame (None before the first): a window
     /// narrow enough for the rail, room for the members' panel. A threshold
     /// crossed back needs a margin past it (`workspace::narrow_now`), so a
@@ -296,17 +297,31 @@ pub(crate) fn line_style(style: crate::settings::ChatStyle, group: Option<bool>)
 
 impl ChatUi {
     /// The column's saved state, given every frame by the app
-    /// (`Settings::chat_column_collapsed`), or the demo's own collapse.
+    /// (`Settings::chat_column_collapsed`), or the demo session's own.
     pub fn follow_column_setting(&mut self, saved: bool) {
-        self.column.collapsed = saved || self.demo_column_collapsed;
+        self.column.collapsed = self.demo_column.unwrap_or(saved);
     }
 
     /// The column's button changed `ColumnChoice::collapsed`
-    /// (`ConvAction::ColumnCollapsed`): the setting keeps it, and the demo's
-    /// own collapse ends with it.
-    pub fn column_collapsed_by_button(&mut self, saved: &mut bool, collapsed: bool) {
-        self.demo_column_collapsed = false;
+    /// (`ConvAction::ColumnCollapsed`): the setting keeps it, or in demo mode
+    /// the session alone. True when the settings are to be saved.
+    pub fn column_collapsed_by_button(&mut self, saved: &mut bool, collapsed: bool, demo: bool) -> bool {
+        if demo {
+            self.demo_column = Some(collapsed);
+            return false;
+        }
         *saved = collapsed;
+        true
+    }
+
+    /// The column's search as the list and Alt+arrows apply it: none on the
+    /// rail, which has no field to show it. The text stays, for the column.
+    pub(super) fn side_search(&self) -> &str {
+        if self.column.rail(self.layout_narrow.unwrap_or(false)) {
+            ""
+        } else {
+            self.side_filter.trim()
+        }
     }
 
     /// Recreate only the account-independent nearby window. IMs, messages,
@@ -564,7 +579,7 @@ impl ChatUi {
     /// several for a conference; a search typed in the column carries over.
     fn start_picker(&mut self, start: Start) {
         self.start = start;
-        let query = self.side_filter.trim().to_owned();
+        let query = self.side_search().to_owned();
         self.picker.open("conversations_start", start == Start::Conference);
         if !query.is_empty() {
             self.picker.set_query(&query);

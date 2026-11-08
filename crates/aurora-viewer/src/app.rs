@@ -16418,9 +16418,13 @@ impl App {
                 for c in conversation_actions {
                     match c {
                         ui::chat::ConvAction::ColumnCollapsed(collapsed) => {
-                            self.chat_ui
-                                .column_collapsed_by_button(&mut self.settings.chat_column_collapsed, collapsed);
-                            self.settings.save();
+                            // (demo mode: this session only, never the file)
+                            if self
+                                .chat_ui
+                                .column_collapsed_by_button(&mut self.settings.chat_column_collapsed, collapsed, self.demo)
+                            {
+                                self.settings.save();
+                            }
                         }
                         ui::chat::ConvAction::Local(out) => a.chat = Some(out),
                         ui::chat::ConvAction::Im { to, text } => a.ims.push((to, text)),
@@ -18815,7 +18819,7 @@ impl ApplicationHandler for App {
                     self.chat_ui.demo_new_menu = scene.new_menu;
                     self.chat_ui.demo_volume_menu = scene.volume_menu;
                     self.chat_ui.demo_channel = scene.channel;
-                    self.chat_ui.demo_column_collapsed = scene.collapsed;
+                    self.chat_ui.demo_column = Some(scene.collapsed);
                     self.chat_ui.column.opened = scene.opened;
                     // the window alone, to compare with the mockups
                     self.panels.people = false;

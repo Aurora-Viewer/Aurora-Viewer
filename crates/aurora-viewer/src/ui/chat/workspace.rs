@@ -164,12 +164,6 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
     let narrow = narrow_now(st.layout_narrow, size.x);
     st.layout_narrow = Some(narrow);
     st.column.opened &= narrow && size.x >= OPEN_FROM;
-    // The rail has no search field to show or clear a search from: a search
-    // ends when the column becomes a rail, whatever made it one (its
-    // button, a narrower window, the end of a column opened by hand).
-    if st.column.rail(narrow) {
-        st.side_filter.clear();
-    }
     let column = ease(
         ui.ctx(),
         ui.scope_id().with("column_width"),
