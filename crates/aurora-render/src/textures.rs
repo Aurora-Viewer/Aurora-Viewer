@@ -2505,7 +2505,7 @@ mod tests {
         let rows: u32 = (0..k.mips).map(|l| k.format.rows(level_dim(k.height, l))).sum();
         let buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: rows as u64 * 256,
+            size: crate::readback::readback_size(rows as u64 * 256),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -3290,7 +3290,7 @@ mod tests {
         let sample_all = |table: &TextureTable| -> Vec<u8> {
             let buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: None,
-                size: SLOTS as u64 * 8,
+                size: crate::readback::readback_size(SLOTS as u64 * 8),
                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             });

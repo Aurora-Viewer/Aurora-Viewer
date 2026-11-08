@@ -36,6 +36,7 @@ the table rows that start with `AURORA_DEMO_<NAME>=1` and shows their second
 column: it must stay short.
 
 Contents: [Automated windows](#automated-test-windows-on-windows) ·
+[Windows SLurl handoff](#windows-slurl-handoff) ·
 [General](#general) · [Screenshots](#screenshots) ·
 [Camera, movement and pointer](#camera-movement-and-pointer) ·
 [Objects and building](#objects-and-building) · [HUDs](#huds) ·
@@ -74,6 +75,45 @@ without taking the focus or intercepting clicks. It disappears when the
 window is minimised, hidden or loses its tag, and the script stops when the
 viewer's process closes. For a test with human intervention, keep the title
 `Test <task>` without the tag.
+
+## Windows SLurl handoff
+
+`cargo test --workspace slurl_handoff::windows` runs native Windows pipe and
+access-check regressions on isolated names. It covers the elevated owner's
+ACL with Administrators disabled in a duplicate client context, actual
+low-integrity refusal, unrelated logons, restricted client rights, long
+Unicode links, aborted connections, buffered links from clients that close before accept, native attribute-access requirements,
+last-focus selection, closing windows, scoped demos and compatibility with
+the old client and server. It does
+not elevate a process, change URL associations or connect to a grid.
+
+For the human check of #2402, start the built viewer with
+`--title "Test slurl-windows-2402"`. From another shell of the same user,
+run the same executable with the same title, followed by
+`--url "secondlife://Test%20Region/128/128/20"`. Both launches must use the
+same demo setting. On a grid, use a real SLurl chosen by the human in place
+of this example. In the world, the existing viewer must show the place
+details and its Teleport button; the sending process must exit without
+opening another window. Before login, the existing login screen must take
+the start location instead.
+
+Repeat with the receiving viewer started as administrator and the sending
+shell running normally under that same user's linked Windows account.
+Also run two receiving viewers. Focus A, then B, then the sending shell:
+only B must receive the next link. Focus A again and repeat: only A receives
+it. Close the last focused receiver and repeat: the remaining one receives
+it. Include a normal receiver and an administrator receiver.
+
+This human runtime check supplements the ACL test. Finally, explicitly
+choose this worktree's executable in Preferences as the user's SLurl
+handler, then check a link opened from the browser. An existing registration
+may still point at the installed release: a browser then starts that older
+client, which may lack the rights needed to reach an elevated viewer. The
+fix leaves valid existing associations under the user's control.
+On Windows a launch with no `--title` selects the last focused online
+receiver, including titled test windows. Explicitly titled senders select
+only receivers with that title; offline demos never receive online links.
+Actual grid login and teleporting are performed by the human.
 
 ## General
 
@@ -7251,7 +7291,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (`600,600,600`) gives one frame to each renderer of the run, the start's
   then each recovery's (a recovery's counts its frames from 0 again): with
   the recovery on (the default), three losses within a minute recover,
-  recover with the safe graphics level, then close.
+  recover with the safe graphics level, then close. The report's
+  `GPU work at the loss` is then the first of the three, and
+  `GPU work at the later losses` the other two (`loss 2: … / loss 3: …`).
   The report's "Last state" table then shows the new device-lost fields
   (effects on, GPU frame times, session and region seconds,
   `GPU loss: first seen by` = `demo`), and its first table the
