@@ -11392,10 +11392,16 @@ the variable.
   after their last resend. `dup`: packets the simulator resent although we
   had them (our acknowledgement was late or lost). `unacked`: reliable
   packets still waiting for their acknowledgement.
-- `gaps`, `late`: sequence numbers the simulators skipped, and packets that
-  arrived after a later one (a resend, or out of order). `gaps` minus `late`
-  over a stretch of the log is what never arrived: a loss on the link, or a
-  receive buffer that overflowed while the loop was busy.
+- `gaps`, `late`, `lost`: provisional sequence holes, those filled before
+  their deadline, and confirmed losses. A hole becomes `lost` only after
+  sixteen smoothed round trips (ping floored at 100 ms), at most 5 s, like
+  the Legacy Viewer; an unanswered ping can extend that grace. A
+  resend or reordered packet arriving within that grace is not a loss.
+  The displayed loss percentage and the simulator bandwidth regulator
+  use `lost`, with received packet counts over the same period, even if a
+  slow frame makes the period longer than a second. Sequence restarts and
+  wraps do not create losses. `gaps - late` may include holes still pending
+  or cleared by a restart; use `lost` to diagnose actual timeouts.
 - `loop_max`: the longest time the session loop spent on one wake-up (a
   packet, a tick, a command). During that time no circuit is read,
   acknowledged or answered: a value of tens of milliseconds is a pause of
