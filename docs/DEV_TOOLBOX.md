@@ -54,6 +54,7 @@ English.
 | Report | Ask the human to | Tools | They paste | Read first |
 |---|---|---|---|---|
 | Something worn renders wrong (see-through, missing, invisible body) | Stand within 3 m of the avatar, or choose My avatar when you wear it (or select the item), press J2 | J2 | The worn items' faces | `left out` reasons, texture-entry alpha, alpha mode and cutoff, `-> Pass` |
+| An avatar stays in its system body (nothing it wears shows, even after a relog) | Stand within 3 m of the avatar, press J2 | J2 | The `worn objects:` line and the `network this session:` line | listed against arrived, the missing ids, blocks not read, packets skipped |
 | An object in the world renders wrong | Select it (right-click › Edit) and press J2; for one face, point at it, then L1 and Copy | J2, L1 | The linkset's faces, or one prim | pass, material state, texture alpha class |
 | Textures stay grey or blurry | Point at a grey face, press L1 and Copy, then J3 | L1, J3, N3 | The face's state, the last warnings | texture state, memory pressure, failed downloads |
 | Stutters or low frame rate | Turn P3 on, reproduce for 30 s, press J5; a screenshot of P1 | P3, J5, P1 | The slow frames and their step | which step peaks (sync, upload, GPU) |
@@ -82,6 +83,17 @@ How to read a copy:
   `-> Blend` on a part meant to be opaque points at the alpha mode or the
   texture's alpha class; a glTF material id on a `403` line is an asset the
   viewer may not fetch.
+- Under each avatar's `attachments of` line, J1 / J2 write `worn objects:`
+  what the simulator lists in its last appearance (the AttachmentBlock of
+  AvatarAppearance) against the worn objects that came, and the object id
+  and attachment point of each listed one that never came. Before the
+  avatars, `network this session:` gives the ObjectUpdate blocks the viewer
+  could not read (their objects never show; the session log warns once per
+  region and size), the packets skipped and those that came late, and the
+  reliable packets given up. Read them together (issue #2747): nothing
+  listed means the simulator itself announces nothing worn; listed but
+  missing, with blocks not read, points at the reader; listed but missing,
+  with neither, points at what the simulator sent.
 - HUD reports also include local position and rotation, reported and visual
   dimensions, geometry bounds, projection and four vertex samples per drawn
   face (up to 64 faces), projected with the actual draw matrix. These values
@@ -111,7 +123,7 @@ text in Send a diagnostic), **live** (a text kept up to date there),
 | ID | Tool | Kind | What it gives |
 |---|---|---|---|
 | J1 | Debug to log | copy | The same text as J2, also written to the session log |
-| J2 | Debug to clipboard | copy | The target's worn items (yours with My avatar, or the selection) face by face; with no avatar within 3 m and nothing selected, the objects within 12 m and the worn items around instead. Copied as soon as the names of the worn items came (3 s) |
+| J2 | Debug to clipboard | copy | The target's worn items (yours with My avatar, or the selection) face by face, and the worn objects the simulator lists that never came; with no avatar within 3 m and nothing selected, the objects within 12 m and the worn items around instead. Copied as soon as the names of the worn items came (3 s) |
 | J3 | Copy the warnings | copy | The last 50 warnings and errors of the session |
 | J4 | Copy the system configuration | copy | Version, commit, OS, CPU, memory, GPU and driver, screen, graphics settings |
 | J5 | Copy a tool's output | copy | What P3, P4, P5, P6, O9 and M1 wrote in the last 60 s |

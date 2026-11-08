@@ -1663,3 +1663,181 @@ fn a_borrowed_row_edits_the_setting_of_its_page() {
     assert!(!s.reduce_motion);
     assert_eq!(s.font_scale, 1.2, "the text size is reset with Appearance");
 }
+
+/// #2136: the System fonts search filters the list, the list grows back when
+/// the search is cleared or the list reopened, and a click in the room a
+/// filtered list left closes it. `screen_h` short enough opens it above its
+/// button.
+fn font_search(screen_h: f32) {
+    let theme = crate::theme::Theme::default();
+    let p = theme.palette();
+    let ctx = egui::Context::default();
+    crate::ui::fonts::apply(&ctx, crate::ui::fonts::INTER);
+    theme.apply(&ctx, 1.0);
+    let names = ["Alpha", "Beta", "Gamma", "Delta"];
+    let mut settings = Settings::default();
+    let mut state = OptionsUi {
+        page: Page::Appearance,
+        system_fonts: Some(
+            names
+                .iter()
+                .map(|n| crate::ui::fonts::SystemFont {
+                    name: (*n).into(),
+                    path: format!("/nonexistent/{n}.ttf").into(),
+                })
+                .collect(),
+        ),
+        ..Default::default()
+    };
+    let mut open = true;
+    let mut frame = 0;
+    let mut draw = |events: Vec<egui::Event>, state: &mut OptionsUi, settings: &mut Settings| -> Vec<(String, egui::Rect)> {
+        frame += 1;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, screen_h))),
+                time: Some(frame as f64 / 60.0),
+                events,
+                focused: true,
+                ..Default::default()
+            },
+            |_| {
+                show(&ctx, &p, &Icons::default(), settings, state, &mut open);
+            },
+        );
+        output.textures_delta.clear();
+        output
+            .shapes
+            .iter()
+            .filter_map(|c| match &c.shape {
+                egui::Shape::Text(t) => Some((t.galley.text().to_owned(), t.visual_bounding_rect())),
+                _ => None,
+            })
+            .collect()
+    };
+    let shown = |texts: &[(String, egui::Rect)]| -> Vec<String> {
+        names
+            .iter()
+            .filter(|n| texts.iter().any(|(t, _)| t == *n))
+            .map(|n| (*n).to_owned())
+            .collect()
+    };
+    // the list's popup, the top area once open
+    let popup = || {
+        ctx.memory(|m| m.areas().top_layer_id(egui::Order::Foreground).and_then(|l| m.area_rect(l.id)))
+            .expect("the list's popup")
+    };
+    let height = || popup().height();
+    let all: Vec<String> = names.iter().map(|n| (*n).to_owned()).collect();
+    let mut texts = vec![];
+    for _ in 0..12 {
+        texts = draw(vec![], &mut state, &mut settings);
+    }
+    let click = |at: egui::Pos2| {
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        vec![
+            vec![egui::Event::PointerMoved(at)],
+            vec![button(true)],
+            vec![button(false)],
+            vec![],
+            vec![],
+        ]
+    };
+    let key = |key| egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let erase = || {
+        vec![
+            vec![key(egui::Key::Backspace)],
+            vec![key(egui::Key::Backspace)],
+            vec![],
+            vec![],
+            vec![],
+        ]
+    };
+    let typed = || vec![vec![egui::Event::Text("Be".into())], vec![], vec![]];
+    let none = aurora_i18n::tr!("ui-options-no-system-font");
+    let button = texts.iter().find(|(t, _)| t == none).expect("the System fonts list").1;
+    let combo = button.center();
+    // every row drawn inside the popup, against its button: below, or
+    // above near the screen's bottom (egui picks the side by the list's size)
+    let in_place = |texts: &[(String, egui::Rect)]| {
+        let rect = popup();
+        let beside = (rect.top() - button.bottom()).max(button.top() - rect.bottom());
+        (0.0..24.0).contains(&beside)
+            && texts
+                .iter()
+                .filter(|(t, _)| names.contains(&t.as_str()))
+                .all(|(_, r)| rect.expand(0.5).contains_rect(*r))
+    };
+    for events in click(combo) {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    assert_eq!(shown(&texts), all, "opened");
+    let whole = height();
+    let above = popup().bottom() <= button.top();
+    assert_eq!(above, screen_h < 500.0, "the list opens on the expected side");
+    assert!(in_place(&texts));
+    for events in typed() {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    assert_eq!(shown(&texts), ["Beta"], "typed in the focused search field");
+    assert!(height() < whole - 1.0, "the list shrinks to its matches");
+    assert!(in_place(&texts));
+    for events in erase() {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    assert_eq!(shown(&texts), all, "a cleared search shows the whole list again");
+    assert!((height() - whole).abs() < 0.5, "and its whole height");
+    assert!(in_place(&texts), "its rows where they can be clicked");
+    for events in typed() {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    // the room the whole list took, which the filtered list left
+    let rect = popup();
+    let room = if rect.bottom() <= button.top() {
+        egui::pos2(rect.left() + 20.0, rect.bottom() - whole + 10.0)
+    } else {
+        egui::pos2(rect.left() + 20.0, (rect.top() + whole - 10.0).min(screen_h - 5.0))
+    };
+    assert!(!rect.contains(room));
+    for events in click(room) {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    assert!(shown(&texts).is_empty(), "a click outside the filtered list closes it");
+    for events in click(combo) {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    for events in typed() {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    for events in [vec![key(egui::Key::Escape)], vec![], vec![]] {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    assert!(shown(&texts).is_empty(), "Escape closes the list");
+    for events in click(combo) {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    assert_eq!(shown(&texts), all, "the list reopens on the whole list");
+    assert!((height() - whole).abs() < 0.5);
+    assert!(state.font_filter.is_empty());
+}
+
+#[test]
+fn the_system_font_search_filters_and_resets() {
+    font_search(1000.0);
+}
+
+#[test]
+fn the_system_font_search_resets_above_its_button() {
+    font_search(420.0);
+}
