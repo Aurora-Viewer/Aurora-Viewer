@@ -536,7 +536,7 @@ pub struct Settings {
     /// `draw_distance_stepping_interval` seconds (settings/draw_stepping.rs;
     /// off).
     pub draw_distance_stepping: bool,
-    /// FSRenderFarClipSteppingInterval: 20 s, 5 to 30.
+    /// FSRenderFarClipSteppingInterval: 20 s, 5 to 30 (Debug Settings only).
     pub draw_distance_stepping_interval: u32,
     /// The steps under way; the file keeps the user's draw distance.
     #[serde(skip)]
@@ -1194,7 +1194,8 @@ pub struct Settings {
     /// default.
     pub walk_backwards_without_turning: bool,
     /// FSAvatarTurnSpeed: how much faster avatars turn while walking or
-    /// standing, 0 (the default lag) to 100 % (world/body.rs).
+    /// standing, 0 (the default lag) to 100 % (world/body.rs; Debug Settings
+    /// only).
     pub avatar_turn_speed: f32,
     /// Hold Up to start flying (agent_jump, indra/newview/llviewerinput.cpp).
     /// Aurora splits AutomaticFly into independent takeoff/landing choices;
@@ -1230,7 +1231,7 @@ pub struct Settings {
     pub large_surface_frame_max: f32,
     /// FSRevokePerms: revoke the permissions of an object we do not own
     /// when we sit on it (1), stand up from it (2), both (3) or never (0,
-    /// the default) (app/revoke_on_sit.rs).
+    /// the default) (app/revoke_on_sit.rs; Debug Settings only).
     pub revoke_permissions: u8,
     /// What a double click on the ground does (Preferences › Controls, the
     /// wolf menu › Me): nothing by default, as in the Legacy Viewer.

@@ -13430,17 +13430,7 @@ ui-options-build-physical = Physical
 ui-options-build-temporary = Temporary
 ui-options-build-new-faces = Look of new objects
 
-# Preferences › Controls: FSAvatarTurnSpeed
-ui-options-avatar-turn-speed = Avatar turn speed
-ui-options-avatar-turn-speed-help = How much faster avatars turn to face where they go while walking or standing (0 % by default). Only on this screen.
 
-# Preferences › Mouse and keyboard: FSRevokePerms
-ui-options-revoke-permissions = Revoke the seat's permissions
-ui-options-revoke-permissions-help = When you sit on or stand up from an object you do not own, take back what its scripts were allowed to do, such as animating you.
-ui-options-revoke-never = Never
-ui-options-revoke-on-sit = When I sit
-ui-options-revoke-on-stand = When I stand up
-ui-options-revoke-on-sit-and-stand = When I sit and stand up
 
 # Preferences › Protections: large surface protection (RenderVolumeSAProtection)
 large-surface-title = Large surfaces
@@ -13449,14 +13439,10 @@ large-surface-enable-hint = Protects your graphics card from objects made to ove
 large-surface-frame-max = Total surface drawn
 large-surface-frame-max-hint = The surface of large objects drawn before the largest are hidden (5,000 by default).
 
-# Preferences: visibility switches (RenderAttachedParticles, RenderParcelSelection)
+# Preferences › Graphics: RenderAttachedParticles
 ui-options-attached-particles = Particles from worn objects
 ui-options-attached-particles-hint = Draw the particles of what avatars wear: sparkles, smoke, fire.
-ui-options-build-land = Land
-ui-options-parcel-selection-outline = Highlight the selected parcel's boundary
-ui-options-parcel-selection-outline-hint = Yellow walls around a parcel selected with the land tool or About Land.
 
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = Progressive draw distance
 ui-options-draw-distance-stepping-hint = After logging in and after a teleport to another region, the draw distance starts at 32 m and doubles back up to yours, so that what is near loads first.
-ui-options-draw-distance-stepping-interval = Time between steps

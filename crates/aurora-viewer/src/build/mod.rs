@@ -192,8 +192,8 @@ pub struct BuildSettings {
     pub new_prim_temporary: bool,
     /// New prim phantom (FSBuildPrefs_Phantom, off).
     pub new_prim_phantom: bool,
-    /// RenderParcelSelection: the selected parcel's yellow walls (on; the
-    /// Legacy Viewer's Build preferences).
+    /// RenderParcelSelection: the selected parcel's yellow walls (on; Debug
+    /// Settings only, to keep Preferences short).
     pub parcel_selection_outline: bool,
     /// Land tool: 0..5 brush actions (RadioLandBrushAction), 6 select land.
     pub land_action: u8,
