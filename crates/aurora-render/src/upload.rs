@@ -752,7 +752,7 @@ mod tests {
         const PER_ROUND: usize = 8;
         let dst = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: (REGION * PER_ROUND) as u64,
+            size: crate::readback::readback_size((REGION * PER_ROUND) as u64),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });

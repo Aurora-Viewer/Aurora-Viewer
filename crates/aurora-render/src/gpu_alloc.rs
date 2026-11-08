@@ -680,7 +680,7 @@ mod tests {
         assert!(per_probe < Duration::from_millis(1), "{per_probe:?}");
         let read = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("read back"),
-            size: 16,
+            size: crate::readback::readback_size(16),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
