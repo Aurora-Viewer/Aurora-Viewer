@@ -474,15 +474,18 @@ fn quick_actions(f: &Friend, poke: Option<&crate::ui::poke::Button>) -> Vec<(&'s
 
 fn hover_actions(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, f: &Friend, slot: Rect, buttons: &[(&str, &str)]) {
     let mut menu_open = false;
+    // the poke greyed out while it cannot go (just poked): its tooltip says why
+    let poke_on = crate::ui::poke::button(ui.ctx(), c.world, &f.id).is_some_and(|b| b.enabled);
+    let enabled = |i: usize| buttons.get(i).is_none_or(|(icon, _)| *icon != crate::ui::poke::ICON || poke_on);
     for ((icon, _), resp) in buttons
         .iter()
-        .zip(rows::actions(ui, c.p, slot, buttons, ("people-friend-act", f.id)))
+        .zip(rows::actions_if(ui, c.p, slot, buttons, ("people-friend-act", f.id), enabled))
     {
         match *icon {
             "user-filled" if resp.clicked() => c.actions.push(super::PeopleAction::Profile(f.id)),
             "message-circle-filled" if resp.clicked() => c.actions.push(super::PeopleAction::OpenIm(f.id)),
-            // refused (just poked, gone offline) it sends nothing
-            crate::ui::poke::ICON if resp.clicked() => context::request(ui.ctx(), CtxAction::Poke(f.id)),
+            // greyed out, its clicks are only caught (not the row's)
+            crate::ui::poke::ICON if resp.clicked() && poke_on => context::request(ui.ctx(), CtxAction::Poke(f.id)),
             "send-filled" if resp.clicked() => c.actions.push(super::PeopleAction::OfferTeleport(f.id)),
             "info-circle-filled" if resp.clicked() => {
                 st.sel = vec![f.id];
