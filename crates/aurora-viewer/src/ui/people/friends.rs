@@ -368,15 +368,19 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     let width = ui.available_width().min(ui.clip_rect().right() - ui.cursor().left()).max(0.0);
     let bounds = Rect::from_min_size(ui.cursor().min, Vec2::new(width, RICH_H));
     let widths = [RECEIVED_W, GRANTED_W];
+    // the room of the hover actions: one more while pokes are on
+    let most = 5 + usize::from(c.world.pokes.enabled);
     let end = rows::end_before(
         bounds,
-        rows::names_left(bounds) + rows::actions_width_for(5, 18.0) + PARTS_GAP,
+        rows::names_left(bounds) + rows::actions_width_for(most, 18.0) + PARTS_GAP,
         &widths,
         PARTS_GAP,
         false,
     );
     let right = end.items.last().map_or(bounds.right(), |r| r.left()) - PARTS_GAP;
-    let count = 4 + usize::from(f.online);
+    // like the teleport offer, only for a friend online
+    let poke = crate::ui::poke::button(ui.ctx(), c.world, &f.id).filter(|_| f.online);
+    let count = 4 + usize::from(f.online) + usize::from(poke.is_some());
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, RICH_H), Sense::click_and_drag());
     if !ui.is_rect_visible(rect) {
         return;
@@ -396,7 +400,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     // Keep the permission cells anchored when hover actions appear, as
     // LLAvatarListItem::showPermissions / updateChildren reserve their slots.
     let slot = rows::actions_slot(rect, left, right, count, rows::BUTTON);
-    let actions = hot.then(|| (quick_actions(f), slot));
+    let actions = hot.then(|| (quick_actions(f, poke.as_ref()), slot));
     rows::picture(ui, p, c.world, identity, data.pics.get(&f.id), f.id, &line.name, false);
     let mut clicked_right = false;
     if let Some(cell) = end.items.first() {
@@ -449,13 +453,17 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     rows::contact_tip(resp, (on_names && (cut || line.full != line.name)).then_some(line.full.as_str()));
 }
 
-/// Profile, IM, a teleport offer to a friend online, the contact
-/// contact sheet, then the whole menu.
-fn quick_actions(f: &Friend) -> Vec<(&'static str, &'static str)> {
+/// Profile, IM, a poke (`ui/poke.rs`, its tooltip saying why when it
+/// cannot go now), a teleport offer to a friend online, the contact sheet,
+/// then the whole menu.
+fn quick_actions(f: &Friend, poke: Option<&crate::ui::poke::Button>) -> Vec<(&'static str, &'static str)> {
     let mut b = vec![
         ("user-filled", aurora_i18n::tr!("common-view-profile")),
         ("message-circle-filled", aurora_i18n::tr!("ui-context-send-im")),
     ];
+    if let Some(poke) = poke {
+        b.push((crate::ui::poke::ICON, poke.tip));
+    }
     if f.online {
         b.push(("send-filled", aurora_i18n::tr!("common-offer-teleport")));
     }
@@ -473,6 +481,8 @@ fn hover_actions(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, f: &Friend, 
         match *icon {
             "user-filled" if resp.clicked() => c.actions.push(super::PeopleAction::Profile(f.id)),
             "message-circle-filled" if resp.clicked() => c.actions.push(super::PeopleAction::OpenIm(f.id)),
+            // refused (just poked, gone offline) it sends nothing
+            crate::ui::poke::ICON if resp.clicked() => context::request(ui.ctx(), CtxAction::Poke(f.id)),
             "send-filled" if resp.clicked() => c.actions.push(super::PeopleAction::OfferTeleport(f.id)),
             "info-circle-filled" if resp.clicked() => {
                 st.sel = vec![f.id];
@@ -669,7 +679,7 @@ mod tests {
                             fixed_name = Some(layout);
                         }
                         if hot {
-                            assert_eq!(quick.len(), 5, "{width}: every quick action remains visible");
+                            assert_eq!(quick.len(), 6, "{width}: every quick action remains visible (Poke included)");
                             if width <= 400.0 {
                                 assert!(
                                     name.pos.x + name.galley.size().x > quick[0].rect.right(),

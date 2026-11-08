@@ -2731,6 +2731,8 @@ impl App {
             {
                 self.world.apply(NetEvent::Balance(balance - price));
             }
+            // a poke to a demo resident is poked back (AURORA_DEMO_POKE)
+            crate::demo::poke::sent(&cmd);
             for mut ev in crate::demo::demo_reply(&cmd) {
                 crate::ao::demo::preserve_custom_motions(&self.world, &cmd, &mut ev);
                 if matches!(cmd, NetCommand::ObjectRelease { .. }) {
@@ -9035,6 +9037,7 @@ impl App {
             self.world.groups.mute_when_notices_off = self.settings.mute_groups_without_notices;
             self.world.groups.report_blocks = self.settings.report_blocks;
             self.world.groups.show_joined_invitations = self.settings.show_joined_group_invitations;
+            self.world.pokes.enabled = self.settings.pokes;
             self.world.group_titles = self.settings.group_titles;
             self.world.portal_sources = self.portal_sources();
             self.world.fly_after_teleport = self.settings.fly_after_teleport && !(self.demo && crate::demo::friend_join_flight_scenario());
@@ -11800,6 +11803,14 @@ impl App {
         if self.demo && crate::demo::im_announce::active() {
             let agent = self.world.agent_id;
             for event in crate::demo::im_announce::events(self.frame_count, agent) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+        }
+        if self.demo && crate::demo::poke::active() {
+            let agent = self.world.agent_id;
+            for event in crate::demo::poke::events(self.frame_count, agent) {
                 if let Some(e) = self.world.apply(event) {
                     self.on_app_event(e);
                 }
@@ -16938,6 +16949,7 @@ impl App {
                     restart,
                     presence_at,
                     classic_bars,
+                    still: self.settings.reduce_motion,
                 };
                 // the cards read the world for their links' names (#898): the
                 // lists leave it while they are drawn, then come back
@@ -16992,6 +17004,16 @@ impl App {
                         continue;
                     }
                     self.update_notice_answer(id, &r);
+                    // a poke card's Poke back: the card stays for the next one
+                    if matches!(r, crate::world::notifications::Response::Poke) {
+                        if let Some(from) = self.world.notifications.list.iter().find_map(|n| match n.data {
+                            crate::world::notifications::Data::Poke { from, .. } if n.id == id => Some(from),
+                            _ => None,
+                        }) {
+                            self.on_ctx_action(ui::context::CtxAction::Poke(from));
+                        }
+                        continue;
+                    }
                     if matches!(r, crate::world::notifications::Response::Open)
                         && let Some(object) = self.world.notifications.list.iter().find_map(|n| match n.data {
                             crate::world::notifications::Data::Delivery { object } if n.id == id => Some(object),

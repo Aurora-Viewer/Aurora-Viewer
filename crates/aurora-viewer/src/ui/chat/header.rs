@@ -87,12 +87,19 @@ pub(super) fn show(
     // buttons at the right: their count fixes the room the names keep
     // (a conversation's own close button among them)
     let snooze = st.selected.filter(|s| super::can_snooze(world, s));
+    // a resident's conversation: Poke (`ui/poke.rs`), greyed out while
+    // they are offline or just poked
+    let poke = st
+        .selected
+        .filter(|_| !group)
+        .and_then(|other| crate::ui::poke::button(ui.ctx(), world, &other));
     let tools = match st.selected {
         None => 1,
         Some(_) if group => 3,
         Some(_) => 4,
     } + 1
-        + usize::from(snooze.is_some());
+        + usize::from(snooze.is_some())
+        + usize::from(poke.is_some());
     egui::Frame::new()
         .fill(p.bar)
         .corner_radius(ui.visuals().window_corner_radius)
@@ -158,6 +165,11 @@ pub(super) fn show(
                         }
                         Some(other) => {
                             call_tool(ui, p, icons, world, st, actions);
+                            if let Some(b) = &poke
+                                && tool(ui, p, icons, crate::ui::poke::ICON, b.tip, b.enabled, false)
+                            {
+                                crate::ui::context::request(ui.ctx(), CtxAction::Poke(other));
+                            }
                             if tool(ui, p, icons, "send-filled", aurora_i18n::tr!("common-offer-teleport"), true, false) {
                                 actions.push(ConvAction::OfferTeleport(other));
                             }

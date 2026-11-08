@@ -72,6 +72,7 @@ fn residents_messages_flash_the_button_except_in_do_not_disturb() {
             kind,
             session,
             new_session: false,
+            poke: false,
         };
         assert!(w.message_flashes_conversations(&m), "{kind:?}");
         w.status.dnd = true;
@@ -95,6 +96,7 @@ fn residents_messages_flash_the_button_except_in_do_not_disturb() {
         kind: ImKind::Private,
         session: BOX,
         new_session: false,
+        poke: false,
     };
     assert!(!w.message_flashes_conversations(&m));
 }

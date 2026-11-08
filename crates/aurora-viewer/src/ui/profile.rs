@@ -1556,6 +1556,13 @@ fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocke
         ) {
             crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::Call(id));
         }
+        // Aurora's poke (`ui/poke.rs`): in this menu, the Legacy Viewer's
+        // button stack keeping its six buttons
+        if let Some(b) = crate::ui::poke::button(ui.ctx(), world, &id)
+            && menu::item_if(ui, p, crate::ui::poke::ICON, aurora_i18n::tr!("ui-poke"), b.enabled)
+        {
+            crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::Poke(id));
+        }
         let block = if blocked {
             aurora_i18n::tr!("common-unblock")
         } else {

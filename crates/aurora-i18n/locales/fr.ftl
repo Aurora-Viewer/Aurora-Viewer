@@ -2378,6 +2378,16 @@ ui-options-payment-opens-conversation = Ouvrir une conversation pour le paiement
 ui-options-payment-opens-conversation-hint = Les L$ qu'un résident vous paie s'affichent sous forme de carte dans votre conversation avec lui quand elle est ouverte. Activé, le paiement d'un ami l'ouvre.
 ui-options-payment-sent-opens-conversation = Ouvrir la conversation quand vous payez un résident
 ui-options-payment-sent-opens-conversation-hint = Votre paiement direct à un résident s'affiche sous forme de carte dans votre conversation avec lui quand elle est ouverte. Activé, il l'ouvre.
+ui-options-pokes = Pokes
+ui-options-pokes-hint = Envoyez et recevez des pokes : un « coucou » en un clic 👉. Un poke reçu s'affiche sur une carte avec Renvoyer un poke. Désactivé, les boutons Poke sont masqués et un poke arrive comme un message ordinaire.
+ui-poke = Envoyer un poke
+ui-poke-back = Renvoyer un poke
+ui-poke-offline = Hors ligne : un poke ne part que vers un résident en ligne.
+ui-poke-cooling = Poke envoyé : patientez un instant.
+notifications-poke-body = { $count ->
+    [1] 👉 vous a envoyé un poke
+   *[other] 👉 vous a envoyé un poke ({ $count } fois)
+    }
 ui-options-conversations-own-windows = Ouvrir les conversations dans leur propre fenêtre
 ui-options-conversations-own-windows-hint = Une conversation ouverte depuis un nom, une notification ou un appel s'ouvre dans sa propre fenêtre au lieu de la fenêtre Conversations. Le chat local y reste.
 ui-options-send-typing = Signaler quand j'écris

@@ -241,6 +241,22 @@ pub(super) fn show(
             if tool(ui, p, slot(), "send-filled", aurora_i18n::tr!("common-offer-teleport"), Tone::Plain).clicked() {
                 actions.push(ConvAction::OfferTeleport(other));
             }
+            // a poke (`ui/poke.rs`), greyed out while they are offline or
+            // just poked
+            if let Some(b) = crate::ui::poke::button(ui.ctx(), world, &other)
+                && tool(
+                    ui,
+                    p,
+                    slot(),
+                    crate::ui::poke::ICON,
+                    b.tip,
+                    if b.enabled { Tone::Plain } else { Tone::Off },
+                )
+                .clicked()
+                && b.enabled
+            {
+                crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::Poke(other));
+            }
         }
     }
     // add people: to a resident's conversation (a new conference, once

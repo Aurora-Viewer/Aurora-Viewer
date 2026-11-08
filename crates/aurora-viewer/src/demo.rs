@@ -20,6 +20,9 @@ pub mod beacons;
 pub mod parcel_visibility;
 #[path = "demo_pointing.rs"]
 pub mod pointing;
+/// A demo friend's pokes, and pokes back to ours (AURORA_DEMO_POKE).
+#[path = "demo_poke.rs"]
+pub mod poke;
 #[path = "demo_poser.rs"]
 pub mod poser;
 
