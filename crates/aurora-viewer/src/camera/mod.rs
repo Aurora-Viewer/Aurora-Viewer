@@ -331,7 +331,6 @@ pub struct Camera {
     time_in_air: f32,
     collide_plane: Vec4,
     sit_camera: Option<SitCamera>,
-    seat_view_fixed: bool,
     follow: follow::Simulation,
     follow_available: bool,
     force_mouselook: bool,
@@ -432,7 +431,6 @@ impl Default for Camera {
             time_in_air: 0.0,
             collide_plane: Vec4::ZERO,
             sit_camera: None,
-            seat_view_fixed: false,
             follow: Default::default(),
             follow_available: false,
             force_mouselook: false,
@@ -1436,9 +1434,6 @@ impl Camera {
     /// mouselook), `clicks` > 0 zooms out. Returns true when the settings
     /// changed: Ctrl / Shift + wheel raise the camera / the focus point.
     pub fn scroll(&mut self, clicks: f32, ctrl: bool, shift: bool, agent: &mut AgentState, s: &mut CameraSettings) -> bool {
-        if self.vehicle_view_locked() {
-            return false;
-        }
         if clicks.is_finite() && clicks != 0.0 && !s.disable_wheel_zoom {
             self.prepare_seated_camera();
         }
@@ -1560,9 +1555,6 @@ impl Camera {
     /// Mouse motion during a camera drag (LLToolCamera::handleHover), in
     /// window pixels (y down). A full window width turns 360°.
     pub fn drag(&mut self, mode: ToolMode, dx: f32, dy: f32, width: f32, agent: &mut AgentState) {
-        if self.vehicle_view_locked() {
-            return;
-        }
         if dx != 0.0 || dy != 0.0 {
             self.prepare_seated_camera();
         }
@@ -1626,9 +1618,6 @@ impl Camera {
     /// Right drag (Aurora): around the avatar without turning it, or around
     /// the alt-camera focus point.
     pub fn orbit_drag(&mut self, dx: f32, dy: f32, sensitivity: f32, agent: &mut AgentState) {
-        if self.vehicle_view_locked() {
-            return;
-        }
         if dx != 0.0 || dy != 0.0 {
             self.prepare_seated_camera();
         }
@@ -1657,9 +1646,6 @@ impl Camera {
     /// Camera keys held this frame (LLAgentCamera::updateCamera); like
     /// camera_spin_around_cw & co they first unlock the view from the avatar.
     pub fn apply_keys(&mut self, keys: CameraKeys, agent: &mut AgentState, s: &CameraSettings, dt: f32) {
-        if self.vehicle_view_locked() {
-            return;
-        }
         if keys.any() {
             self.prepare_seated_camera();
         }
@@ -1709,9 +1695,6 @@ impl Camera {
     /// The joystick's continuous pitch, as LLAgent::pitch updates the
     /// third-person camera; mouselook uses AgentState::pitch instead.
     pub fn joystick_pitch(&mut self, rate: f32, dt: f32) {
-        if self.vehicle_view_locked() {
-            return;
-        }
         if rate != 0.0 {
             self.prepare_seated_camera();
         }
@@ -1741,11 +1724,6 @@ impl Camera {
         }
     }
 
-    /// Creator-provided fixed views remain authoritative only on the desktop.
-    pub fn vehicle_view_locked(&self) -> bool {
-        self.vr_mode.is_none() && self.seat_view_fixed && !self.mouselook() && self.free.is_none() && self.flycam.is_none()
-    }
-
     pub fn seated_manual_view(&self) -> bool {
         self.avatar.seat.is_some() && self.gamepad_follow_avatar && self.focus_object == Some(self.own) && !self.focus_on_avatar
     }
@@ -1759,7 +1737,6 @@ impl Camera {
             || self.mouselook()
             || self.free.is_some()
             || self.flycam.is_some()
-            || self.vehicle_view_locked()
         {
             return;
         }
@@ -1778,9 +1755,6 @@ impl Camera {
     }
 
     pub fn gamepad_zoom(&mut self, rate: f32, dt: f32, agent: &mut AgentState, s: &CameraSettings) {
-        if self.vehicle_view_locked() {
-            return;
-        }
         if rate != 0.0 {
             self.prepare_seated_camera();
         }
@@ -1816,7 +1790,7 @@ impl Camera {
     /// Keep a persistent pan point, using the native object-relative focus on
     /// desktop and translation-only framing in VR.
     pub fn gamepad_pan(&mut self, meters: glam::Vec2, agent: &mut AgentState, s: &CameraSettings) {
-        if self.vehicle_view_locked() || !meters.is_finite() || meters == glam::Vec2::ZERO {
+        if !meters.is_finite() || meters == glam::Vec2::ZERO {
             return;
         }
         self.prepare_seated_camera();
@@ -1858,9 +1832,6 @@ impl Camera {
     /// Turn the third-person view with a gamepad while the avatar is idle.
     /// Once movement starts, the caller routes this input to the avatar instead.
     pub fn joystick_orbit_yaw(&mut self, rate: f32, dt: f32, agent: &mut AgentState) {
-        if self.vehicle_view_locked() {
-            return;
-        }
         if rate != 0.0 {
             self.prepare_seated_camera();
         }
@@ -1944,11 +1915,6 @@ impl Camera {
         self.own = world.agent_id;
         self.avatar = avatar_frame(world, s, f.now);
         self.sync_seat(&mut world.agent, s);
-        self.seat_view_fixed = self.avatar.seat.is_some()
-            && (self
-                .sit_camera
-                .is_some_and(|sit| world.objects.index_of_uuid(&sit.object).is_some())
-                || world.scripted_camera.active().is_some_and(follow::Params::fixed_view));
         if let Some(flycam) = self.flycam {
             self.position = flycam.position;
             self.target = flycam.position + flycam.forward();
@@ -1968,13 +1934,6 @@ impl Camera {
         self.follow_available = self.vr_mode.is_none() && world.scripted_camera.active().is_some();
         if self.vr_mode.is_some() && self.mode == CameraMode::Follow {
             self.change_to_third_person(&mut world.agent, s, false);
-        }
-        if self.vehicle_view_locked() {
-            self.focus_on_avatar = true;
-            self.focus_object = None;
-            self.focus_geom = None;
-            self.gamepad_follow_avatar = false;
-            self.fov_zoom = 0.0;
         }
         if self.third_person() && self.focus_on_avatar && self.follow_available {
             self.change_to_follow(&world.agent, s);
@@ -5666,7 +5625,7 @@ mod tests {
     }
 
     #[test]
-    fn seated_camera_policy_keeps_desktop_fixed_views_and_vr_player_controls() {
+    fn seated_camera_policy_allows_desktop_custom_views_and_vr_player_controls() {
         let settings = CameraSettings {
             smoothing: 0.0,
             ..Default::default()
@@ -5704,8 +5663,6 @@ mod tests {
                         camera.update(&mut world, &settings, &frame(0.016));
                     }
                 }
-                let fixed = !vr && matches!(source, "seat" | "script-position" | "script-focus");
-                assert_eq!(camera.vehicle_view_locked(), fixed, "{source}, vr={vr}");
                 let eye = camera.position;
                 let at = camera.target;
                 camera.joystick_orbit_yaw(1.0, 0.2, &mut world.agent);
@@ -5722,19 +5679,14 @@ mod tests {
                         camera.update(&mut world, &settings, &frame(0.016));
                     }
                 }
-                if fixed {
-                    assert!(camera.position.abs_diff_eq(eye, 1e-4), "{source}");
-                    assert!(camera.target.abs_diff_eq(at, 1e-4), "{source}");
+                assert!(camera.position.distance(eye) > 0.1, "{source}, vr={vr}");
+                if vr {
+                    assert!((camera.vr_pan_offset.z - 0.4).abs() < 1e-4);
+                    assert!(camera.third_person());
+                    assert!(!camera.follow_available);
                 } else {
-                    assert!(camera.position.distance(eye) > 0.1, "{source}, vr={vr}");
-                    if vr {
-                        assert!((camera.vr_pan_offset.z - 0.4).abs() < 1e-4);
-                        assert!(camera.third_person());
-                        assert!(!camera.follow_available);
-                    } else {
-                        assert!(camera.seated_manual_view());
-                        assert!(camera.focus_target.z > at.z + 0.3);
-                    }
+                    assert!(camera.seated_manual_view());
+                    assert!(camera.focus_target.z > at.z + 0.3);
                 }
             }
         }
@@ -5790,7 +5742,7 @@ mod tests {
     }
 
     #[test]
-    fn desktop_fixed_vehicle_camera_blocks_mouse_and_camera_keys() {
+    fn desktop_custom_vehicle_camera_allows_mouse_and_camera_keys() {
         let mut settings = CameraSettings::default();
         let mut world = hover_world(true);
         let mut camera = Camera::default();
@@ -5800,17 +5752,20 @@ mod tests {
         let seat_id = world.objects.get(seat).unwrap().full_id;
         camera.on_sit_response(seat_id, Vec3::new(-4.0, 0.0, 2.0), Vec3::Z, false);
         camera.update(&mut world, &settings, &frame(0.016));
-        assert!(camera.vehicle_view_locked());
-        let zoom = camera.zoom_fraction;
-        let orbit = camera.orbit_yaw;
-        let pitch = camera.pitch;
+        settle(&mut camera, &mut world, &settings);
+        let distance = camera.position.distance(camera.target);
         camera.scroll(2.0, false, false, &mut world.agent, &mut settings);
+        settle(&mut camera, &mut world, &settings);
+        assert!((camera.position.distance(camera.target) - distance).abs() > 0.1);
+
+        let forward = camera.forward();
         camera.orbit_drag(30.0, 20.0, 1.0, &mut world.agent);
-        camera.joystick_pitch(1.0, 0.2);
+        settle(&mut camera, &mut world, &settings);
+        assert!(camera.forward().distance(forward) > 0.01);
+
+        let target = camera.target;
         camera.apply_keys(
             CameraKeys {
-                orbit_left: 1.0,
-                zoom_in: 1.0,
                 pan_up: 1.0,
                 ..Default::default()
             },
@@ -5818,10 +5773,9 @@ mod tests {
             &settings,
             0.2,
         );
-        assert_eq!(camera.zoom_fraction, zoom);
-        assert_eq!(camera.orbit_yaw, orbit);
-        assert_eq!(camera.pitch, pitch);
-        assert!(camera.focus_on_avatar);
+        settle(&mut camera, &mut world, &settings);
+        assert!(camera.target.distance(target) > 0.1);
+        assert!(camera.seated_manual_view());
     }
 
     #[test]
@@ -5850,7 +5804,6 @@ mod tests {
         }
         assert!(camera.position.distance(before) > 0.1);
         assert!(camera.focus_on_avatar);
-        assert!(!camera.vehicle_view_locked());
         assert!((world.agent.yaw - body_yaw).abs() < 1e-4);
     }
 

@@ -516,9 +516,7 @@ impl App {
             }
             return;
         }
-        if self.camera.vehicle_view_locked()
-            || (motion.avatar_zoom == 0.0 && motion.avatar_pan == 0.0 && motion.avatar_pan_side == 0.0 && motion.avatar_cycle == 0)
-        {
+        if motion.avatar_zoom == 0.0 && motion.avatar_pan == 0.0 && motion.avatar_pan_side == 0.0 && motion.avatar_cycle == 0 {
             return;
         }
         let was_mouselook = self.camera.mouselook();

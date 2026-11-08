@@ -27,12 +27,6 @@ pub(crate) struct Params {
     focus_locked: bool,
 }
 
-impl Params {
-    pub fn fixed_view(&self) -> bool {
-        self.position_locked || self.focus_locked
-    }
-}
-
 impl Default for Params {
     fn default() -> Self {
         Self {
