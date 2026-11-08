@@ -15078,6 +15078,7 @@ impl App {
             self.interface.set_hidden(&ctx, false);
         }
         self.busy_pause_notice(&ctx, &p);
+        self.video_memory_notice(&ctx, &p);
         self.media_pack_card(&ctx, &p);
         match self.screen {
             Screen::Login => {

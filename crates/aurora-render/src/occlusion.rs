@@ -9,7 +9,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bytemuck::{Pod, Zeroable};
-use wgpu::util::DeviceExt;
 
 use crate::types::DrawIndexedIndirect;
 
@@ -199,11 +198,12 @@ impl Occlusion {
         let down_pipeline = pipeline(&down_layout, "cs_hiz_down");
         let prepare_pipeline = pipeline(&cull_layout, "cs_prepare");
         let cull_pipeline = pipeline(&cull_layout, "cs_cull");
-        let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("occlusion params"),
-            contents: bytemuck::bytes_of(&CullParams::zeroed()),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let params = crate::gpu_alloc::buffer_init(
+            device,
+            "occlusion params",
+            bytemuck::bytes_of(&CullParams::zeroed()),
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
         let cap = 4096u64;
         let draws = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("occlusion draws"),
@@ -502,6 +502,7 @@ mod tests {
     use super::*;
     use crate::pipeline_cache::CachedPipelines;
     use glam::{Mat4, Vec3};
+    use wgpu::util::DeviceExt;
 
     /// The occlusion test of `spheres` (camera at the origin looking down
     /// -Z) against a depth of `w` x `h` whose columns left of `wall` hold a
