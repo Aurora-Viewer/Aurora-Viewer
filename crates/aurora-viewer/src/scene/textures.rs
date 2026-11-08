@@ -106,6 +106,9 @@ const PAGE_WAITS: usize = 16;
 const HOUSEKEEPING_EVERY: Duration = Duration::from_secs(2);
 /// The memory budget is checked this often (a query to the driver).
 const BUDGET_EVERY: Duration = Duration::from_millis(250);
+/// Textures left without a slot by a full table are given one this often
+/// at most (`TextureStreamer::give_slots`).
+const RESLOT_EVERY: Duration = Duration::from_millis(250);
 /// Textures lowered a second under memory pressure, and per frame at least
 /// and at most: GPU copies of their coarser levels, small (Firestorm scales
 /// down within its 2 to 5 ms of texture work a frame, at least five
@@ -295,6 +298,10 @@ struct Entry {
     fetch_key: u64,
     /// The rank its download was last given (`fetch_priority`).
     sent: f32,
+    /// Its download was cancelled when nothing used it any more: taken out
+    /// of the fetcher's queue if it still waited (an answer says so), or
+    /// left to end if it was sent, its bytes kept (`recompute_wants`).
+    cancelled: bool,
     /// Our own avatar's bake, or an image of the interface: in the
     /// fetcher's urgent lane.
     urgent: bool,
@@ -1014,6 +1021,9 @@ pub struct TextureStreamer {
     max_resolution: u32,
     /// Textures in view still loading, from the last pass.
     pending_in_view: usize,
+    /// Passes of `recompute_wants` so far (a photo waits for one after the
+    /// drawing resumes, `snapshot::PausedWait`).
+    wants_passes: u64,
     /// The last `update` had somewhere to download textures from.
     can_fetch: bool,
     /// Textures the demo draws itself, see [`DemoSource`].
@@ -1046,6 +1056,15 @@ pub struct TextureStreamer {
     /// `report_slotless`).
     slotless: usize,
     slotless_unreported: usize,
+    /// The textures without a slot, given one as soon as the table has
+    /// room (`give_slots`), and those that got theirs since the scene last
+    /// took them (`take_reslotted`): what draws them still holds the white
+    /// texture and is built again. Without it a texture worn or in sight
+    /// stayed white for as long as it was used, until the next login
+    /// (#2822).
+    slotless_ids: Vec<Uuid>,
+    reslotted: Vec<Uuid>,
+    last_reslot: Instant,
     /// Textures that just became unavailable (`is_unavailable`): `upload`
     /// points their slot at the missing grey, so that their faces leave the
     /// rez grid (`textures::MISSING`).
@@ -1317,6 +1336,7 @@ impl TextureStreamer {
             full_resolution: false,
             max_resolution: crate::settings::MAX_TEXTURE_RESOLUTION,
             pending_in_view: 0,
+            wants_passes: 0,
             can_fetch: false,
             demo_source: None,
             ui_wanted: Default::default(),
@@ -1332,6 +1352,9 @@ impl TextureStreamer {
             evicted: Vec::new(),
             slotless: 0,
             slotless_unreported: 0,
+            slotless_ids: Vec::new(),
+            reslotted: Vec::new(),
+            last_reslot: Instant::now(),
             unavailable: Vec::new(),
             trash: Trash::default(),
             cache_writer: None,
@@ -1601,6 +1624,7 @@ impl TextureStreamer {
             unused_since: None,
             fetch_key: 0,
             sent: 0.0,
+            cancelled: false,
             urgent: false,
             dirty_cache: false,
             last_error: None,
@@ -1613,6 +1637,9 @@ impl TextureStreamer {
         });
         e.urgent = own_bake(&self.own_bakes, &e.source);
         Self::settle(&mut self.todo, &mut self.counts, id, e);
+        if slot == NO_SLOT {
+            self.slotless_ids.push(id);
+        }
         slot
     }
 
@@ -1681,11 +1708,24 @@ impl TextureStreamer {
         self.local_slots.clear();
         self.slotless = 0;
         self.slotless_unreported = 0;
+        self.slotless_ids.clear();
+        // (the scene builds everything again on the new renderer)
+        self.reslotted.clear();
         self.staging = None;
         self.generation = self.generation.wrapping_add(1);
         let ids: Vec<Uuid> = self.entries.keys().copied().collect();
         for id in ids {
+            // (a full table evicts unused textures on the way)
+            if !self.entries.contains_key(&id) {
+                continue;
+            }
             let slot = self.new_slot(new);
+            let Some(e) = self.entries.get_mut(&id) else {
+                if slot != NO_SLOT {
+                    new.free(slot);
+                }
+                continue;
+            };
             set_slot_alpha(
                 &mut self.alpha_by_slot,
                 &mut self.generation,
@@ -1693,9 +1733,9 @@ impl TextureStreamer {
                 slot,
                 AlphaKind::Opaque,
             );
-            let Some(e) = self.entries.get_mut(&id) else {
-                continue;
-            };
+            if slot == NO_SLOT {
+                self.slotless_ids.push(id);
+            }
             e.slot = slot;
             e.decoded = None;
             e.gpu_size = (0, 0);
@@ -1717,22 +1757,109 @@ impl TextureStreamer {
     /// release first, instead of after `evict_after`: on arrival in a region
     /// they are those of the region just left, and a texture in use is
     /// never the one that goes without. [`NO_SLOT`], counted for the log,
-    /// when every slot holds a texture in use.
+    /// when every slot holds a texture in use (`give_slots` gives it one
+    /// later).
     fn new_slot(&mut self, table: &mut impl SlotTable) -> u32 {
+        self.free_slot(table).unwrap_or_else(|| {
+            // (drawn white, and nothing decoded for it is sent: `upload`)
+            self.slotless += 1;
+            self.slotless_unreported += 1;
+            NO_SLOT
+        })
+    }
+
+    /// A slot showing the placeholder, after the unused textures gave
+    /// theirs back if the table is full (`new_slot`).
+    fn free_slot(&mut self, table: &mut impl SlotTable) -> Option<u32> {
         if let Some(slot) = table.placeholder() {
-            return slot;
+            return Some(slot);
         }
         let entries = &self.entries;
         let unused = eviction_round(&mut self.unused, Instant::now(), Duration::ZERO, |id, since| {
             evictable(entries, id, since)
         });
         self.evict(table, unused);
-        table.placeholder().unwrap_or_else(|| {
-            // (drawn white, and nothing decoded for it is sent: `upload`)
-            self.slotless += 1;
-            self.slotless_unreported += 1;
-            NO_SLOT
-        })
+        table.placeholder()
+    }
+
+    /// The textures in use that went without a slot get one, as soon as the
+    /// table has room or holds unused textures (a region left, objects
+    /// gone): they are loaded again into it, from what they hold (as after a
+    /// device loss), and listed for the scene (`take_reslotted`). The
+    /// Legacy Viewer has no such table: a texture always has its own GL
+    /// name (LLImageGL::createGLTexture). Unused ones wait: met again, they
+    /// are given one first; else they are evicted. At most every
+    /// [`RESLOT_EVERY`]: each round makes the scene look for their users.
+    fn give_slots(&mut self, table: &mut impl SlotTable, now: Instant) {
+        if self.slotless_ids.is_empty() || now.duration_since(self.last_reslot) < RESLOT_EVERY {
+            return;
+        }
+        self.last_reslot = now;
+        let mut waiting = std::mem::take(&mut self.slotless_ids);
+        let (mut i, mut given) = (0, 0);
+        while i < waiting.len() {
+            let id = waiting[i];
+            match self.entries.get(&id) {
+                // (evicted, or given a slot through a device loss)
+                None => {
+                    waiting.swap_remove(i);
+                    continue;
+                }
+                Some(e) if e.slot != NO_SLOT => {
+                    waiting.swap_remove(i);
+                    continue;
+                }
+                Some(e) if e.refs == 0 => {
+                    i += 1;
+                    continue;
+                }
+                Some(_) => {}
+            }
+            let Some(slot) = self.free_slot(table) else {
+                break;
+            };
+            let Some(e) = self.entries.get_mut(&id) else {
+                table.free(slot);
+                waiting.swap_remove(i);
+                continue;
+            };
+            waiting.swap_remove(i);
+            self.slotless = self.slotless.saturating_sub(1);
+            set_slot_alpha(
+                &mut self.alpha_by_slot,
+                &mut self.generation,
+                &mut self.alpha_changes,
+                slot,
+                AlphaKind::Opaque,
+            );
+            e.slot = slot;
+            e.decoded = None;
+            e.gpu_size = (0, 0);
+            e.alpha = AlphaKind::Opaque;
+            if !e.busy() {
+                // as `gpu_reset_into`: read again, or decoded from memory
+                e.cache_state = if e.cache_state == 3 || e.data.is_empty() { 0 } else { 2 };
+            }
+            if e.unavailable() {
+                self.unavailable.push(id);
+            }
+            Self::settle(&mut self.todo, &mut self.counts, id, e);
+            self.reslotted.push(id);
+            given += 1;
+        }
+        if given > 0 {
+            log::info!(
+                "texture table: {given} textures in use have a slot again, {} still without",
+                waiting.len()
+            );
+        }
+        self.slotless_ids = waiting;
+    }
+
+    /// The textures that got a slot since the last call (`give_slots`):
+    /// the faces drawing them still hold the white texture.
+    pub fn take_reslotted(&mut self, out: &mut Vec<Uuid>) {
+        out.append(&mut self.reslotted);
     }
 
     /// Forget evicted textures: their slots go back to the table, and what
@@ -1784,7 +1911,7 @@ impl TextureStreamer {
         let new = std::mem::take(&mut self.slotless_unreported);
         if new > 0 {
             log::warn!(
-                "texture table full ({capacity} slots, all holding a texture in use): {new} more textures have none, {} in all; they are drawn white until nothing uses them and they are met again",
+                "texture table full ({capacity} slots, all holding a texture in use): {new} more textures have none, {} in all; they are drawn white until a slot is free",
                 self.slotless
             );
         }
@@ -2101,7 +2228,6 @@ impl TextureStreamer {
             ui_wanted,
             todo,
             counts,
-            by_fetch_key,
             moved,
             dropped: dropped_fetches,
             ..
@@ -2177,13 +2303,16 @@ impl TextureStreamer {
             // moves with its size on screen, and goes when nothing uses the
             // texture any more (a region left, an object gone). Firestorm
             // drops every texture request at a teleport
-            // (LLViewerTextureList::updateImages); one already sent ends.
-            if e.fetching && !e.urgent && e.fetch_key != 0 {
+            // (LLViewerTextureList::updateImages); one already sent ends,
+            // and what it brings is kept, as LLViewerFetchedTexture::
+            // updateFetch keeps a request whose priority fell to 0. Its
+            // answer was thrown away: a picture of a scripted slideshow
+            // whose download took longer than its turn on the face was
+            // downloaded again at each turn and never shown (#2830).
+            if e.fetching && !e.urgent && e.fetch_key != 0 && !e.cancelled {
                 if e.refs == 0 {
-                    by_fetch_key.remove(&e.fetch_key);
                     dropped_fetches.push(e.fetch_key);
-                    e.fetch_key = 0;
-                    e.fetching = false;
+                    e.cancelled = true;
                 } else {
                     let (_, now) = Self::rank(e);
                     if fetch_priority::changed(e.sent, now) {
@@ -2223,6 +2352,7 @@ impl TextureStreamer {
         reductions.extend(over_max);
         self.bytes_below = bytes_below;
         self.pending_in_view = pending;
+        self.wants_passes += 1;
         self.passes_at_step = self.passes_at_step.saturating_add(1);
     }
 
@@ -2246,6 +2376,12 @@ impl TextureStreamer {
     /// photo quality waits for them, `app::snapshot`).
     pub fn pending_in_view(&self) -> usize {
         self.pending_in_view
+    }
+
+    /// How many times the wants were computed: `pending_in_view` is from
+    /// the last of them.
+    pub fn wants_passes(&self) -> u64 {
+        self.wants_passes
     }
 
     fn bytes_needed(e: &Entry) -> usize {
@@ -2590,6 +2726,14 @@ impl TextureStreamer {
             return;
         };
         e.fetching = false;
+        e.fetch_key = 0;
+        e.cancelled = false;
+        if r.cancelled {
+            // (never sent: asked again if it is used again, from the bytes
+            // it holds)
+            Self::settle(&mut self.todo, &mut self.counts, id, e);
+            return;
+        }
         if let Ok(bytes) = &r.data {
             self.load.fetched_bytes += bytes.len() as u64;
             self.load.replies += 1;
@@ -2807,18 +2951,33 @@ impl TextureStreamer {
     /// streaming path of grid textures (placeholder, then upgrades).
     pub fn install_demo_stress(&mut self, renderer: &mut Renderer, textures: impl Iterator<Item = u32>) {
         for i in textures {
-            let id = crate::demo::stress_texture(i);
-            let _ = self.acquire(renderer, id, TexSource::Asset);
-            for discard in [2, 0] {
-                self.on_job(texture_result(
-                    id,
-                    discard as u8,
-                    crate::demo::stress_texture_mips(i, discard),
-                    (AlphaKind::Opaque, false),
-                    None,
-                    self.staging.as_deref(),
-                ));
+            let _ = self.acquire(renderer, crate::demo::stress_texture(i), TexSource::Asset);
+            self.feed_demo_stress(i);
+        }
+    }
+
+    /// AURORA_DEMO_TEXTURES with a full table (AURORA_TEXTURE_SLOTS): the
+    /// stress textures given a slot again (`give_slots`) have no data to
+    /// load from; their texels come again, as a download would bring them.
+    pub fn refeed_demo_stress(&mut self, textures: impl Iterator<Item = u32>) {
+        for i in textures {
+            if self.demo_needs_data(&crate::demo::stress_texture(i)) {
+                self.feed_demo_stress(i);
             }
+        }
+    }
+
+    fn feed_demo_stress(&mut self, i: u32) {
+        let id = crate::demo::stress_texture(i);
+        for discard in [2, 0] {
+            self.on_job(texture_result(
+                id,
+                discard as u8,
+                crate::demo::stress_texture_mips(i, discard),
+                (AlphaKind::Opaque, false),
+                None,
+                self.staging.as_deref(),
+            ));
         }
     }
 
@@ -3075,6 +3234,7 @@ impl TextureStreamer {
         };
         let evict = eviction_round(&mut self.unused, now, evict_after, |id, since| evictable(entries, id, since));
         self.evict(renderer, evict);
+        self.give_slots(renderer, now);
         if !self.evicted.is_empty() {
             // the J2C data and sculpt maps go with the entries (those a
             // full table took since the last frame too): freed off this
@@ -3573,6 +3733,17 @@ fn read_job(dir: &std::path::Path, id: Uuid, want: u8, blocks: bool, pool: Optio
     }
 }
 
+/// Whether the BC7 blocks of a decoded texture hold its alpha. Its class
+/// does not say: alpha of 250 to 254 is classed opaque ([`classify_alpha`]),
+/// so a face with no material stays out of the alpha passes, but a Mask
+/// material at a cutoff of 255 must still hide those texels (#2276; the
+/// Legacy Viewer discards `alpha < minimum_alpha`, with `mAlphaMaskCutoff`
+/// = cutoff / 255, llvovolume.cpp). The three-channel encoding stores alpha
+/// as 254 or 255, whatever the source.
+fn bc7_keeps_alpha(alpha: AlphaKind, alpha_channel: bool, rgba: &[u8]) -> bool {
+    alpha != AlphaKind::Opaque || (alpha_channel && rgba.as_chunks::<4>().0.iter().any(|p| p[3] != 255))
+}
+
 fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &DecodeMeter) -> JobResult {
     let DecodeJob {
         id,
@@ -3593,6 +3764,7 @@ fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &D
             };
             let alpha_channel = img.components == 4 || img.components == 2;
             let alpha = if alpha_channel { classify_alpha(&rgba) } else { AlphaKind::Opaque };
+            let keep_alpha = bc7_keeps_alpha(alpha, alpha_channel, &rgba);
             let rgba_done = start.elapsed();
             let sculpt = keep_pixels.then(|| {
                 Arc::new(SculptMap {
@@ -3606,9 +3778,7 @@ fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &D
             let mips = mips_for(img.width, img.height, rgba, 16, alpha);
             let mips_done = start.elapsed();
             let tried = bc7 && pool.is_some();
-            let compressed = tried
-                .then(|| aurora_render::bc7::encode_chain(&mips, alpha != AlphaKind::Opaque))
-                .flatten();
+            let compressed = tried.then(|| aurora_render::bc7::encode_chain(&mips, keep_alpha)).flatten();
             let bc7_done = start.elapsed();
             let cache = cache.as_ref().map(|(path, info, writer)| CacheWrite {
                 path,
@@ -3633,6 +3803,20 @@ fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &D
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn alpha_just_under_opaque_is_kept_though_classed_opaque() {
+        let flat = |a: u8| [90, 120, 200, a].repeat(16 * 16);
+        for a in 250..255 {
+            let rgba = flat(a);
+            assert_eq!(classify_alpha(&rgba), AlphaKind::Opaque, "alpha {a}");
+            assert!(bc7_keeps_alpha(AlphaKind::Opaque, true, &rgba), "alpha {a}");
+        }
+        // really opaque, or an alpha that JPEG 2000 did not carry
+        assert!(!bc7_keeps_alpha(AlphaKind::Opaque, true, &flat(255)));
+        assert!(!bc7_keeps_alpha(AlphaKind::Opaque, false, &flat(250)));
+        assert!(bc7_keeps_alpha(AlphaKind::Mask, true, &flat(255)));
+    }
 
     #[test]
     fn wearable_bakes_use_resident_bc7_pixels_without_jpeg_and_upgrade_progressively() {
@@ -3821,6 +4005,7 @@ mod tests {
             unused_since: None,
             fetch_key: 0,
             sent: 0.0,
+            cancelled: false,
             urgent: false,
             dirty_cache: false,
             last_error: None,
@@ -4352,9 +4537,56 @@ mod tests {
         s.recompute_wants();
         assert_eq!(s.moved, [(11, fetch_priority::texture(300.0, false))]);
         assert_eq!(s.dropped, [12]);
-        assert!(!s.entries[&Uuid::from_u128(2)].fetching);
-        assert!(!s.by_fetch_key.contains_key(&12));
+        // (its answer is still awaited: the queue's, or the reply's)
+        assert!(s.entries[&Uuid::from_u128(2)].fetching);
+        assert!(s.by_fetch_key.contains_key(&12));
         assert!(s.by_fetch_key.contains_key(&13));
+        // cancelled once only
+        s.dropped.clear();
+        s.recompute_wants();
+        assert!(s.dropped.is_empty());
+        // taken out of the queue before it was sent: asked again once used
+        s.on_fetch(FetchResult {
+            key: 12,
+            status: 0,
+            complete: false,
+            offset: 0,
+            data: Err("cancelled before it was sent".to_owned()),
+            cancelled: true,
+        });
+        let e = &s.entries[&Uuid::from_u128(2)];
+        assert!(!e.fetching && !e.cancelled && e.failures == 0 && e.last_error.is_none());
+        assert!(!s.by_fetch_key.contains_key(&12));
+    }
+
+    #[test]
+    fn a_download_already_sent_keeps_its_bytes_when_its_last_user_goes() {
+        // #2830: a slideshow picture whose download outlasts its turn on
+        // the face; its bytes were thrown away and asked for again at each
+        // turn, so it never showed
+        let mut e = entry(None, 300.0);
+        e.refs = 0;
+        e.fetching = true;
+        e.fetch_key = 21;
+        e.sent = fetch_priority::texture(300.0, false);
+        let mut s = pressed(0, vec![(1, e)]);
+        s.by_fetch_key.insert(21, Uuid::from_u128(1));
+        s.recompute_wants();
+        assert_eq!(s.dropped, [21]);
+        let body = vec![7u8; 600];
+        s.on_fetch(FetchResult {
+            key: 21,
+            status: 206,
+            complete: false,
+            offset: 0,
+            data: Ok(body.clone()),
+            cancelled: false,
+        });
+        let e = &s.entries[&Uuid::from_u128(1)];
+        assert_eq!(*e.data, body);
+        assert!(!e.fetching && !e.cancelled && e.failures == 0);
+        // and the next turn of the picture starts from them
+        assert_eq!(next_range(e.data.len(), 2000).start, 599);
     }
 
     #[test]
@@ -4748,6 +4980,7 @@ mod tests {
             complete: false,
             offset: 0,
             data: Err(format!("status {status}")),
+            cancelled: false,
         });
     }
 
@@ -4864,6 +5097,66 @@ mod tests {
         s.evict(&mut table, due);
         assert_eq!(s.slotless, 1);
         assert!(table.freed.is_empty());
+    }
+
+    #[test]
+    fn textures_left_without_a_slot_get_one_once_the_table_has_room() {
+        // every slot holds a texture in use (1) or one of the region just
+        // left (2): a worn texture (7) and one nothing uses now (8) went
+        // without, drawn white, "loaded" as far as the streamer goes
+        let mut s = full_table(&[1], &[]);
+        let mut table = Slots::default();
+        for (n, refs) in [(7, 1), (8, 0)] {
+            let mut e = entry(Some(0), 100.0);
+            (e.slot, e.refs, e.data) = (NO_SLOT, refs, Arc::new(vec![0; 64]));
+            s.entries.insert(id(n), e);
+            s.slotless_ids.push(id(n));
+        }
+        s.slotless = 2;
+        let later = |s: &TextureStreamer| s.last_reslot + RESLOT_EVERY;
+        // the table still full of textures in use: nothing changes
+        let now = later(&s);
+        s.give_slots(&mut table, now);
+        assert_eq!(s.entries[&id(7)].slot, NO_SLOT);
+        assert_eq!((s.slotless_ids.len(), s.slotless), (2, 2));
+        // a slot frees up: not before the next round
+        table.left.push(30);
+        s.give_slots(&mut table, now);
+        assert_eq!(s.entries[&id(7)].slot, NO_SLOT);
+        // the texture in use takes it, loads again from its data, and the
+        // scene hears of it to build its faces again
+        let now = later(&s);
+        s.give_slots(&mut table, now);
+        let e = &s.entries[&id(7)];
+        assert_eq!((e.slot, e.decoded, e.cache_state, e.queued), (30, None, 2, true));
+        let mut out = Vec::new();
+        s.take_reslotted(&mut out);
+        assert_eq!(out, [id(7)]);
+        s.take_reslotted(&mut out);
+        assert_eq!(out.len(), 1);
+        // the unused one waits, and still counts
+        assert_eq!((s.slotless_ids.as_slice(), s.slotless), ([id(8)].as_slice(), 1));
+        assert_eq!(s.entries[&id(8)].slot, NO_SLOT);
+        // used again while the table is full: an unused texture (2) gives
+        // its slot back at once, as to a texture met for the first time
+        let t0 = Instant::now() - Duration::from_secs(5);
+        let mut e = entry(Some(0), 100.0);
+        (e.slot, e.refs, e.unused_since) = (12, 0, Some(t0));
+        s.entries.insert(id(2), e);
+        s.unused.push_back((t0, id(2)));
+        s.entries.get_mut(&id(8)).expect("entry").refs = 1;
+        let now = later(&s);
+        s.give_slots(&mut table, now);
+        assert_eq!(table.freed, [12]);
+        assert!(!s.entries.contains_key(&id(2)));
+        assert_eq!(s.entries[&id(8)].slot, 12);
+        assert!(s.slotless_ids.is_empty());
+        assert_eq!(s.slotless, 0);
+        // one evicted meanwhile simply leaves the list
+        s.slotless_ids.push(id(99));
+        let now = later(&s);
+        s.give_slots(&mut table, now);
+        assert!(s.slotless_ids.is_empty());
     }
 
     #[test]
@@ -5156,6 +5449,7 @@ mod tests {
             complete: true,
             offset: 0,
             data: Ok(vec![4, 5, 6, 7]),
+            cancelled: false,
         });
         b.update();
         let e = &b.s.entries[&id];

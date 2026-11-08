@@ -23,8 +23,9 @@
 // The tests mirror Scene::build_lists (CPU path) and `gpu_cull::face_bins`.
 // The Hi-Z sphere test (hiz_test.wgsl) is prepended to this module.
 
-const BINS: u32 = 30u;
+const BINS: u32 = 31u;
 const BIN_WATER_EXCLUSION: u32 = 29u;
+const BIN_PROBE_SHADOW: u32 = 30u;
 const MAIN_BINS: u32 = 4u;
 const BIN_SHADOW: u32 = 4u;
 const BIN_REFL_WATER: u32 = 7u;
@@ -34,18 +35,18 @@ const BIN_SHADOW_ALPHA: u32 = 10u;
 const BIN_SPOT: u32 = 13u;
 // argument regions after the bins: occlusion phase 1 and phase 2 prepass
 // lists of each main bin (own counts)
-const REGION_PRE1: u32 = 30u;
-const REGION_PRE2: u32 = 34u;
+const REGION_PRE1: u32 = 31u;
+const REGION_PRE2: u32 = 35u;
 
 // counts: bin sizes, then statistics
-const COUNT_VISIBLE: u32 = 30u;
-const COUNT_TRIANGLES: u32 = 31u;
-const COUNT_HIDDEN: u32 = 32u;
-const COUNT_PRE1: u32 = 33u;
-const COUNT_PRE2: u32 = 37u;
+const COUNT_VISIBLE: u32 = 31u;
+const COUNT_TRIANGLES: u32 = 32u;
+const COUNT_HIDDEN: u32 = 33u;
+const COUNT_PRE1: u32 = 34u;
+const COUNT_PRE2: u32 = 38u;
 // profile (F_SHADOW_STATS), per cascade: triangles of its casters, then its
 // rigged casters (avatars and rigged meshes), then their triangles
-const COUNT_SHADOW: u32 = 41u;
+const COUNT_SHADOW: u32 = 42u;
 const SHADOW_STATS: u32 = 9u;
 
 // planes of a cascade's caster volume (CullFrame.shadow_planes)
@@ -96,6 +97,8 @@ const F_OCCLUSION: u32 = 32u;
 const F_SHADOW_STATS: u32 = 64u;
 // every caster drawn with the alpha test (AURORA_SHADOW_LEGACY)
 const F_SHADOW_ALPHA_ALL: u32 = 128u;
+// the shadow map of the probe being captured is drawn this frame
+const F_PROBE_SHADOW: u32 = 256u;
 // projector shadow map k is drawn
 const F_SPOT: u32 = 65536u;
 const F_WATER_AIR: u32 = 1024u;
@@ -158,6 +161,8 @@ struct CullFrame {
     // frustums of the projector shadow maps
     spots: array<vec4<f32>, 96>,
     cascades: array<mat4x4<f32>, 3>,
+    // shadow map of the probe being captured (F_PROBE_SHADOW)
+    probe_shadow: mat4x4<f32>,
     // per cascade, SHADOW_PLANES planes (inside: positive) around what can
     // cast a shadow the main view samples in that cascade
     // (gpu_cull::caster_planes)
@@ -190,7 +195,7 @@ struct OcclParams {
 @group(0) @binding(4) var<storage, read_write> masks: array<u32>;
 // per workgroup and bin: face count, then (after cs_scan) offset
 @group(0) @binding(5) var<storage, read_write> group_data: array<u32>;
-@group(0) @binding(6) var<storage, read_write> counts: array<atomic<u32>, 52>;
+@group(0) @binding(6) var<storage, read_write> counts: array<atomic<u32>, 53>;
 // DrawIndexedIndirect: index_count, instance_count, first_index, base_vertex, first_instance
 @group(0) @binding(7) var<storage, read_write> args: array<u32>;
 @group(0) @binding(8) var<uniform> occl: OcclParams;
@@ -415,6 +420,13 @@ fn face_mask(i: u32) -> u32 {
                 }
             }
         }
+    }
+    // casters of the shadow map of the probe being captured: what the capture
+    // draws, around the probe and not the camera
+    if (reflects && (fl & F_PROBE_SHADOW) != 0u && (o.flags & OBJ_NO_PROBE) == 0u
+        && (fp != PASS_BLEND || (fl & F_BLEND_CASTS) != 0u)
+        && in_cascade(frame.probe_shadow, c, r)) {
+        m |= 1u << BIN_PROBE_SHADOW;
     }
     // casters of the projectors' shadow maps, all drawn with the alpha test
     if (caster) {

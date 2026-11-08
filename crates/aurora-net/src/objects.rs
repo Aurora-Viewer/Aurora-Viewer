@@ -578,9 +578,36 @@ pub fn parse_gltf_override(payload: &[u8]) -> Option<(u32, Vec<(u8, aurora_llsd:
     Some((local_id, sides))
 }
 
+/// The worn objects an AvatarAppearance lists, as
+/// LLVOAvatar::processAvatarAppearance keeps them in mSimAttachments
+/// (indra/newview/llvoavatar.cpp, originally LGPL 2.1): entries with a nil
+/// id ("pending") are left out, and an id listed twice counts once, with
+/// its last point.
+pub fn listed_attachments(blocks: impl IntoIterator<Item = (Uuid, u8)>) -> Vec<(Uuid, u8)> {
+    let mut out: Vec<(Uuid, u8)> = Vec::new();
+    for (id, point) in blocks {
+        if id.is_nil() {
+            continue;
+        }
+        match out.iter_mut().find(|(known, _)| *known == id) {
+            Some(entry) => entry.1 = point,
+            None => out.push((id, point)),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn listed_attachments_skip_pending_entries_and_repeats() {
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let listed = listed_attachments([(a, 2), (Uuid::nil(), 9), (b, 5), (a, 7)]);
+        assert_eq!(listed, vec![(a, 7), (b, 5)]);
+        assert!(listed_attachments([(Uuid::nil(), 1)]).is_empty());
+    }
 
     #[test]
     fn zero_subtype_sculpt_survives_full_and_compressed_updates() {

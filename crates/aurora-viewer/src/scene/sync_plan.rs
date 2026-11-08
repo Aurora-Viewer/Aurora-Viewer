@@ -6,7 +6,7 @@ use super::anchors::{self, AnchorRef};
 use super::meshes::MeshStreamer;
 use super::sync_sets::{PendingGeom, SyncState, Xf, XfCache};
 use super::textures::TextureStreamer;
-use super::{GeomEntry, GeomKey, GeomState, GpuGeom, ObjGpu, Scene, anim, animesh, lod_for};
+use super::{GeomEntry, GeomKey, GeomState, GpuGeom, ObjGpu, Scene, anim, animesh};
 use crate::fast_hash::FastMap;
 use crate::world::World;
 use crate::world::objects::Object;
@@ -245,6 +245,7 @@ pub(super) struct SyncCtx<'a> {
     now: Instant,
     eye: Vec3,
     lod_factor: f32,
+    tree_lod_factor: f32,
     fov_y: f32,
     mesh_lod_overrides: &'a HashMap<crate::world::objects::ObjKey, u8>,
     mesh_lod_resets: &'a HashMap<crate::world::objects::ObjKey, super::mesh_inspection::LodReset>,
@@ -331,7 +332,7 @@ impl SyncCtx<'_> {
                 self.mesh_lod_resets,
                 o,
                 false,
-                lod_for(radius, distance, self.lod_factor, self.fov_y),
+                super::object_lod(o, radius, distance, self.lod_factor, self.tree_lod_factor, self.fov_y),
             ),
             radius,
             distance,
@@ -480,7 +481,7 @@ impl SyncCtx<'_> {
             self.mesh_lod_resets,
             o,
             hud,
-            lod_for(radius, distance, self.lod_factor, self.fov_y),
+            super::object_lod(o, radius, distance, self.lod_factor, self.tree_lod_factor, self.fov_y),
         );
         Some(Scene::object_geom_key(o, lod))
     }
@@ -531,7 +532,7 @@ impl SyncCtx<'_> {
             self.mesh_lod_resets,
             o,
             hud,
-            lod_for(metrics.0, metrics.1, self.lod_factor, self.fov_y),
+            super::object_lod(o, metrics.0, metrics.1, self.lod_factor, self.tree_lod_factor, self.fov_y),
         );
         let Some(key) = Scene::object_geom_key(o, lod) else {
             return full();
@@ -640,6 +641,7 @@ impl Scene {
             now,
             eye,
             lod_factor: self.lod_factor,
+            tree_lod_factor: self.tree_lod_factor,
             fov_y: self.fov_y,
             mesh_lod_overrides: &self.mesh_lod_overrides,
             mesh_lod_resets: &self.mesh_lod_resets,
@@ -662,6 +664,7 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scene::lod_for;
     use aurora_prim::params::{
         LL_PCODE_PATH_CIRCLE, LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF, LL_SCULPT_TYPE_MESH,
         LL_SCULPT_TYPE_SPHERE, SculptParams, VolumeParams,

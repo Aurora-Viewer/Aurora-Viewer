@@ -275,6 +275,17 @@ fn reflection_probe_selection_toggle_controls_rectangles_and_resets_at_startup()
     );
 }
 
+fn receive_link_properties(world: &World, tool: &mut BuildTool) {
+    let mut sim = demo_sim::DemoSim::default();
+    for (handle, local_ids) in tool.group_by_region(world, &tool.roots(world)) {
+        for event in sim.reply(world, &BuildCmd::Select { handle, local_ids }) {
+            if let NetEvent::ObjectProperties(props) = event {
+                tool.on_properties(world, props);
+            }
+        }
+    }
+}
+
 #[test]
 fn confirmed_link_reconciles_selection_colors_and_packet_order() {
     let (mut world, mut tool, settings) = fixture();
@@ -295,6 +306,7 @@ fn confirmed_link_reconciles_selection_colors_and_packet_order() {
         let idx = object(&world, id);
         tool.click_select(&mut world, &settings, Some(idx), extend);
     }
+    receive_link_properties(&world, &mut tool);
     tool.link(&mut world);
     assert_eq!(tool.status, aurora_i18n::tr!("build-link-pending"));
     assert_eq!(tool.highlighted(&world).iter().filter(|(_, root)| *root).count(), 2);
@@ -341,6 +353,7 @@ fn linked_three(world: &mut World, tool: &mut BuildTool, settings: &BuildSetting
         let idx = object(world, *id);
         tool.click_select(world, settings, Some(idx), i > 0);
     }
+    receive_link_properties(world, tool);
     tool.link(world);
     run_sim(world, tool, sim);
     tool.advance_link(world, Instant::now());
@@ -664,14 +677,83 @@ fn new_prim_is_selected_once_without_update_owner_id_and_deleted_without_false_w
         handle,
         objects: vec![update],
     });
-    tool.pick_up_created(&world, &settings);
+    tool.pick_up_created(&mut world, &settings);
     assert_eq!(selected(&tool), [99940]);
     let sends = tool.out.len();
-    tool.pick_up_created(&world, &settings);
+    tool.pick_up_created(&mut world, &settings);
     assert_eq!(tool.out.len(), sends);
     tool.delete(&mut world);
     assert_eq!(tool.status, aurora_i18n::tr!("build-mod-object-s-sent-to-trash", value0 = "1"));
     assert!(tool.selection.is_empty());
+}
+
+/// A prim the Create tool made arriving, ours with `rights`.
+fn arrive_created(world: &mut World, local_id: u32, rights: u32) -> usize {
+    let mut update = crate::demo::action_avatar(false);
+    update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+    update.local_id = local_id;
+    update.full_id = crate::demo::action_id(local_id);
+    update.parent_id = 0;
+    update.update_flags = FLAGS_CREATE_SELECTED | rights;
+    let handle = world.objects.get(object(world, 99610)).unwrap().key.region;
+    world.apply(NetEvent::ObjectUpdates {
+        handle,
+        objects: vec![update],
+    });
+    object(world, local_id)
+}
+
+fn sent_defaults(tool: &BuildTool) -> (usize, usize) {
+    use aurora_net::build::BuildCmd;
+    let count = |f: fn(&BuildCmd) -> bool| tool.out.iter().filter(|c| matches!(c, NetCommand::Build(b) if f(b))).count();
+    (
+        count(|b| matches!(b, BuildCmd::SetTextures { .. })),
+        count(|b| matches!(b, BuildCmd::SetFlags { .. })),
+    )
+}
+
+#[test]
+fn a_created_prim_takes_the_new_objects_look_once_when_ours_with_full_rights() {
+    use crate::ui::context::flags::{OBJECT_COPY, OBJECT_MODIFY, OBJECT_TRANSFER, OBJECT_YOU_OWNER};
+    let full = OBJECT_YOU_OWNER | OBJECT_MODIFY | OBJECT_COPY | OBJECT_TRANSFER;
+    let (mut world, mut tool, mut settings) = fixture();
+    settings.new_prim_color = [255, 0, 0, 255];
+    settings.new_prim_glow = 0.5;
+    settings.new_prim_phantom = true;
+
+    // not asked for by the Create tool (a duplicate, an import): untouched
+    tool.expect_created(&world);
+    arrive_created(&mut world, 99950, full);
+    tool.pick_up_created(&mut world, &settings);
+    assert_eq!(sent_defaults(&tool), (0, 0));
+
+    // asked for, but not ours with every right: untouched, still awaited
+    tool.out.clear();
+    tool.expect_created(&world);
+    tool.expect_new_defaults();
+    arrive_created(&mut world, 99951, OBJECT_YOU_OWNER | OBJECT_MODIFY);
+    tool.pick_up_created(&mut world, &settings);
+    assert_eq!(sent_defaults(&tool), (0, 0));
+
+    // ours with full rights: one look and one flags update, then no more
+    let idx = arrive_created(&mut world, 99952, full);
+    tool.pick_up_created(&mut world, &settings);
+    assert_eq!(sent_defaults(&tool), (1, 1));
+    let face = world.objects.get(idx).unwrap().te.as_deref().unwrap().faces[0];
+    assert_eq!(face.color[..3], [1.0, 0.0, 0.0]);
+    assert_eq!(face.glow, 0.5);
+    arrive_created(&mut world, 99953, full);
+    tool.pick_up_created(&mut world, &settings);
+    assert_eq!(sent_defaults(&tool), (1, 1));
+
+    // an inventory rez clears what the Create tool still awaited
+    tool.out.clear();
+    tool.expect_created(&world);
+    tool.expect_new_defaults();
+    tool.forget_new_defaults();
+    arrive_created(&mut world, 99954, full);
+    tool.pick_up_created(&mut world, &settings);
+    assert_eq!(sent_defaults(&tool), (0, 0));
 }
 
 #[test]
@@ -683,7 +765,7 @@ fn preexisting_create_flags_are_never_selected_after_ownership_arrives() {
     o.update_flags |= FLAGS_CREATE_SELECTED;
     tool.expect_created(&world);
     world.objects.get_mut(idx).unwrap().owner_id = world.agent_id;
-    tool.pick_up_created(&world, &settings);
+    tool.pick_up_created(&mut world, &settings);
     assert!(tool.selection.is_empty());
 }
 
@@ -907,7 +989,7 @@ fn primitive_placement_and_deletion_round_trip_through_the_demo_simulator() {
             }
         }
     }
-    tool.pick_up_created(&world, &settings);
+    tool.pick_up_created(&mut world, &settings);
     assert_eq!(tool.selection.len(), 1);
     let key = tool.selection[0];
     assert!(world.objects.get(world.objects.index_of(&key).unwrap()).unwrap().owner_id.is_nil());
@@ -1354,6 +1436,7 @@ fn duplicate_copies_only_roots_with_copy_and_link_needs_modify() {
     assert!(copyable_object(&world, a) && !copyable_object(&world, b));
     tool.duplicate(&mut world, &settings, Vec3::X, false);
     assert_eq!(duplicates(&tool), [vec![99610]], "the no-copy object stays behind");
+    receive_link_properties(&world, &mut tool);
     // Link and Unlink: one object we may modify
     assert!(!tool.can_link(&world) && !tool.can_unlink(&world));
     tool.out.clear();

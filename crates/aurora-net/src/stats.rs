@@ -69,6 +69,9 @@ pub struct NetStats {
     pub object_cache_misses: AtomicU64,
     /// Objects received in full (ObjectUpdate, ObjectUpdateCompressed).
     pub objects_full: AtomicU64,
+    /// ObjectUpdate blocks not read (an ObjectData size the parser does not
+    /// know): those objects never show (issue #2747).
+    pub objects_unread: AtomicU64,
     /// Sequence numbers skipped by incoming packets, and packets that came
     /// after a later one (a resend, or out of order): the difference is what
     /// is still missing.
@@ -129,6 +132,7 @@ pub struct NetStatsSnapshot {
     pub object_cache_hits: u64,
     pub object_cache_misses: u64,
     pub objects_full: u64,
+    pub objects_unread: u64,
     pub seq_gaps: u64,
     pub seq_late: u64,
     pub agent_updates: u64,
@@ -201,6 +205,7 @@ impl NetStats {
             object_cache_hits: l(&self.object_cache_hits),
             object_cache_misses: l(&self.object_cache_misses),
             objects_full: l(&self.objects_full),
+            objects_unread: l(&self.objects_unread),
             seq_gaps: l(&self.seq_gaps),
             seq_late: l(&self.seq_late),
             agent_updates: l(&self.agent_updates),
