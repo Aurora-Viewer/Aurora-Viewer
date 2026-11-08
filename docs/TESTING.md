@@ -7245,7 +7245,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (`600,600,600`) gives one frame to each renderer of the run, the start's
   then each recovery's (a recovery's counts its frames from 0 again): with
   the recovery on (the default), three losses within a minute recover,
-  recover with the safe graphics level, then close.
+  recover with the safe graphics level, then close. The report's
+  `GPU work at the loss` is then the first of the three, and
+  `GPU work at the later losses` the other two (`loss 2: … / loss 3: …`).
   The report's "Last state" table then shows the new device-lost fields
   (effects on, GPU frame times, session and region seconds,
   `GPU loss: first seen by` = `demo`), and its first table the
