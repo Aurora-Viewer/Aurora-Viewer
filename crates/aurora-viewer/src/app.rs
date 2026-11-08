@@ -4225,6 +4225,7 @@ impl App {
                     }
                 }
                 Step::ToggleMouselook => self.toggle_mouselook(),
+                Step::FocusChat => self.chat_ui.toggle_nearby_chat(&self.egui_ctx, &mut self.panels.chat),
                 Step::GroundSit => {
                     if !self.world.agent.is_sitting() {
                         self.scene.anims.insert(
@@ -15040,6 +15041,16 @@ impl App {
                 &mut self.settings,
                 self.net.runtime(),
             );
+        // mouselook begun or ended: the windows go or come back, and the
+        // fields let the keyboard go (#2897)
+        let mouselook = matches!(self.screen, Screen::World) && self.camera.mouselook();
+        if self
+            .interface
+            .follow_mouselook(&ctx, mouselook, self.settings.camera.show_interface_in_mouselook)
+            .is_some()
+        {
+            self.chat_ui.let_keyboard_go();
+        }
         if !matches!(self.screen, Screen::World) && self.interface.hidden {
             self.interface.set_hidden(&ctx, false);
         }
