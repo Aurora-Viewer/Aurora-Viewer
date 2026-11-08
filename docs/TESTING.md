@@ -4685,12 +4685,12 @@ both open states and the selection count. Capture at frame 620.
   video memory, drawn without it for now`. One the frame cannot go without
   shows the interface alone, as `AURORA_GPU_OOM_TARGETS` does: RLVa's
   vision spheres and reduced scene (`AURORA_DEMO_RLVA`), the TAA history
-  after an anti-aliasing change, the rigged blend depth; the log says
-  `<what>: out of video memory, the interface alone until it can be made`,
-  then `render targets: made again` once the time is over. A refused RLVa
-  target never shows the world it hides: the frame that found it fails
-  as a whole. Without the check, the world stayed frozen or black until
-  the window size changed.
+  remade by an anti-aliasing, shadow, probe or water effects change, the
+  rigged blend depth; the log says `<what>: out of video memory, the
+  interface alone until it can be made`, then `render targets: made again`
+  once the time is over. A refused RLVa target never shows the world it
+  hides: the frame that found it fails as a whole. Without the check, the
+  world stayed frozen or black until the window size changed.
 - **`AURORA_GPU_OOM=<mb>[,<seconds>[,<after>]]`** (demo or grid): every
   allocation of `mb` megabytes or more made through
   `aurora-render/src/gpu_alloc.rs` fails as if video memory were full

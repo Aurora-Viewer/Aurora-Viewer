@@ -4996,6 +4996,15 @@ impl Backend {
         }
     }
 
+    /// `rebuild_bind_groups` outside the render targets' remake, checked: it
+    /// remakes the TAA history, which a full video memory can refuse; then
+    /// the interface alone until the next try makes every target again.
+    fn rebuild_bind_groups_checked(&mut self, what: &str) {
+        let device = self.device.clone();
+        let (_, refused) = crate::gpu_alloc::scoped(&device, || self.rebuild_bind_groups());
+        first_use(&mut self.oom, what, true, refused && !self.lost.get());
+    }
+
     /// The bytes of the live textures and buffers (wgpu's counters).
     fn live_bytes(&self) -> u64 {
         let live = self.device.get_internal_counters().hal;
@@ -5336,7 +5345,7 @@ impl Backend {
         if targets_dirty {
             self.rebuild_targets();
         } else if shadows_dirty || probes_dirty {
-            self.rebuild_bind_groups();
+            self.rebuild_bind_groups_checked("TAA history after a shadow or probe change");
         }
     }
 
@@ -7277,7 +7286,7 @@ impl Backend {
             &lists.water_events,
             &lists.water_contacts,
         ) {
-            self.rebuild_bind_groups();
+            self.rebuild_bind_groups_checked("TAA history after a water effects change");
         }
         stats.particles += self.water_effects.particles;
         prof.mark("lists");
@@ -8958,16 +8967,24 @@ impl Backend {
                     // (no input: the frame is drawn without the look)
                     looks.release();
                 }
+            } else {
+                // waiting: images of another size or format are not drawn
+                // through (no input: the frame goes without the look)
+                looks.release();
             }
         } else if let Some(looks) = &mut self.looks {
             looks.idle();
         }
         let looks = look.and(self.looks.as_ref()).and_then(|looks| Some((looks, looks.input()?)));
         let post_target = looks.map_or(scene_target, |(_, input)| input);
+        // the selection outline is drawn only when its images exist (an
+        // outline refused by a full video memory is not): the frame's last
+        // timestamp goes to whichever pass really ends it
+        let draws_selection = rg.select_faces.1 > 0 && self.selection.is_some();
         // ---- post (tonemap) to the swapchain
         {
             let ts = match (&self.timer, timer_slot) {
-                (Some(t), Some(_)) if !draw_huds && rg.select_faces.1 == 0 => Some(wgpu::RenderPassTimestampWrites {
+                (Some(t), Some(_)) if !draw_huds && !draws_selection => Some(wgpu::RenderPassTimestampWrites {
                     query_set: &t.query_set,
                     beginning_of_pass_write_index: None,
                     end_of_pass_write_index: Some(1),
@@ -9231,6 +9248,7 @@ impl Backend {
             let source = self.ui_blur.as_ref().map_or(surface_tex.texture(), |blur| &blur.source);
             capture = self.encode_capture(&mut encoder, source, false);
         }
+        let draws_hud_selection = hud_select_faces_range.1 > 0 && self.hud_selection.is_some() && self.hud_depth.is_some();
         // HUDs retain their original texture colors and never inherit world
         // depth, fog, shadows, exposure or post effects (render_hud_attachments).
         if draw_huds && let Some((_, _, depth)) = &self.hud_depth {
@@ -9254,7 +9272,7 @@ impl Backend {
                     stencil_ops: None,
                 }),
                 timestamp_writes: match (&self.timer, timer_slot) {
-                    (Some(t), Some(_)) if hud_select_faces_range.1 == 0 => Some(wgpu::RenderPassTimestampWrites {
+                    (Some(t), Some(_)) if !draws_hud_selection => Some(wgpu::RenderPassTimestampWrites {
                         query_set: &t.query_set,
                         beginning_of_pass_write_index: None,
                         end_of_pass_write_index: Some(1),
