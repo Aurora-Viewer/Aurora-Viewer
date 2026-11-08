@@ -178,3 +178,119 @@ fn lines_that_arrive_together_are_drawn_whole_in_their_first_frame() {
         assert_eq!(first, settled, "cards {cards}: the first frame of the burst lost shapes");
     }
 }
+
+/// One frame of the toasts at `ppp` points per pixel: the bounds of what
+/// they painted, and the rect the area keeps for the others to avoid (what
+/// `notification_center::chat_lines` reads for the friends' toasts, later
+/// in the same frame).
+fn bounds(ctx: &egui::Context, world: &World, seconds: f32, cards: bool, frame: u32) -> (Rect, Rect) {
+    let p = crate::theme::Theme::default().palette();
+    let pics = std::collections::HashMap::new();
+    let layer = LayerId::new(egui::Order::Background, egui::Id::unique("chat_toasts"));
+    let mut got = (Rect::NOTHING, Rect::NOTHING);
+    let input = egui::RawInput {
+        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, SCREEN)),
+        time: Some(0.1 * f64::from(frame)),
+        ..Default::default()
+    };
+    let mut out = ctx.run_ui(input, |ui| {
+        let (mut names, mut wanted) = Default::default();
+        super::toasts(
+            ui.ctx(),
+            &p,
+            world,
+            &pics,
+            &mut names,
+            &mut wanted,
+            BAR,
+            seconds,
+            true,
+            false,
+            cards,
+            false,
+            true,
+        );
+        let painted = ui.ctx().graphics(|g| {
+            g.get(layer).map_or(Rect::NOTHING, |l| {
+                l.all_entries()
+                    .map(|s| s.shape.visual_bounding_rect())
+                    .fold(Rect::NOTHING, Rect::union)
+            })
+        });
+        let kept = ui.ctx().memory(|m| m.area_rect(layer.id)).unwrap_or(Rect::NOTHING);
+        got = (painted, kept);
+    });
+    out.textures_delta.clear();
+    got
+}
+
+/// The lines before a change, in the frame of the change, and settled.
+fn around(ppp: f32, cards: bool, change: impl FnOnce(&mut World, &mut f32)) -> [(Rect, Rect); 3] {
+    let ctx = egui::Context::default();
+    ctx.set_pixels_per_point(ppp);
+    let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    say(&mut world, 1, "y'all still alive?", 100);
+    say(&mut world, 2, "nope", 0);
+    say(
+        &mut world,
+        3,
+        "Computer says no, a line long enough to wrap onto a second row of the card",
+        0,
+    );
+    let mut seconds = 200.0;
+    let mut before = (Rect::NOTHING, Rect::NOTHING);
+    for n in 0..4 {
+        before = bounds(&ctx, &world, seconds, cards, n);
+    }
+    change(&mut world, &mut seconds);
+    let during = bounds(&ctx, &world, seconds, cards, 4);
+    let mut after = during;
+    for n in 5..8 {
+        after = bounds(&ctx, &world, seconds, cards, n);
+    }
+    [before, during, after]
+}
+
+#[test]
+fn the_frame_of_a_change_matches_the_settled_frame_to_the_pixel() {
+    for ppp in [1.0, 1.25, 1.5, 1.75, 2.0] {
+        for cards in [true, false] {
+            for leave in [true, false] {
+                let [_, (during, _), (after, _)] = around(ppp, cards, |world, seconds| {
+                    if leave {
+                        *seconds = 60.0;
+                    } else {
+                        say(world, 4, "a new line, from someone else", 0);
+                    }
+                });
+                assert!(
+                    (during.top() - after.top()).abs() < 0.01 && (during.bottom() - after.bottom()).abs() < 0.01,
+                    "ppp {ppp}, cards {cards}, leave {leave}: top and bottom {:.3}, {:.3} in the frame of the change, {:.3}, {:.3} settled",
+                    during.top(),
+                    during.bottom(),
+                    after.top(),
+                    after.bottom()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn the_rect_kept_for_the_friends_toasts_is_where_the_lines_are_drawn() {
+    for cards in [true, false] {
+        for leave in [true, false] {
+            let [_, (_, during), (_, after)] = around(1.0, cards, |world, seconds| {
+                if leave {
+                    *seconds = 60.0;
+                } else {
+                    say(world, 4, "a new line, from someone else", 0);
+                }
+            });
+            assert!(
+                (during.top() - after.top()).abs() < 0.01 && (during.bottom() - after.bottom()).abs() < 0.01,
+                "cards {cards}, leave {leave}: kept {during:?} in the frame of the change, {after:?} settled"
+            );
+        }
+    }
+}
