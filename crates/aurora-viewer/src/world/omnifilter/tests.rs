@@ -216,6 +216,22 @@ fn a_text_box_always_sends_the_rules_reply() {
 }
 
 #[test]
+fn an_automatic_text_box_reply_is_cleaned_and_cut_like_a_typed_one() {
+    // CRs become line feeds, and the cut never splits a character
+    let long = format!("a\r\nb\r{}", "é".repeat(200));
+    let mut w = world(vec![rule(|r| r.textbox_reply = long.clone())]);
+    w.apply(dialog(&["!!llTextBox!!"]));
+    let cmds = sent(&mut w);
+    let [NetCommand::ScriptDialogReply { label, .. }] = &cmds[..] else {
+        panic!("{cmds:?}");
+    };
+    assert!(label.starts_with("a\nb\n"));
+    assert!(!label.contains('\r'));
+    assert!(label.len() <= crate::world::notifications::TEXT_BOX_MAX_BYTES);
+    assert!(label.ends_with('é'), "cut on a character boundary");
+}
+
+#[test]
 fn the_answer_waits_for_the_rules_delay() {
     let mut w = world(vec![rule(|r| {
         r.button_reply = "Yes".into();

@@ -375,6 +375,30 @@ fn an_older_file_without_rule_sets_becomes_the_default_set() {
 }
 
 #[test]
+fn a_version_2_file_with_a_rule_named_default_is_still_the_default_set() {
+    // the rule "Default" has an order like any rule of version 2, but no
+    // rule_set of its own: this is not a version 3 or 4 file
+    let v2 = r#"<llsd><map>
+      <key>Default</key><map><key>order</key><integer>0</integer><key>content</key><string>spam</string><key>enabled</key><boolean>1</boolean></map>
+      <key>Other</key><map><key>order</key><integer>1</integer></map>
+    </map></llsd>"#;
+    let sets = parse(v2.as_bytes()).expect("parsed");
+    assert_eq!(sets.len(), 1);
+    assert_eq!(sets[0].name, DEFAULT_SET);
+    let rules: Vec<_> = sets[0].rules.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(rules, ["Default", "Other"]);
+    assert_eq!(sets[0].rules[0].content, "spam");
+    // a real version 3 or 4 file still reads as sets, also with an empty Default
+    let v4 = r#"<llsd><map>
+      <key>Default</key><map><key>order</key><integer>0</integer><key>rule_set</key><map/></map>
+      <key>Club</key><map><key>order</key><integer>1</integer><key>rule_set</key><map><key>r</key><map/></map></map>
+    </map></llsd>"#;
+    let sets = parse(v4.as_bytes()).expect("parsed");
+    let names: Vec<_> = sets.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, [DEFAULT_SET, "Club"]);
+}
+
+#[test]
 fn a_broken_file_is_an_error_not_a_crash() {
     assert!(parse(b"<llsd><map><key>x</key>").is_err());
     assert!(parse(b"<llsd><array/></llsd>").is_err());
@@ -423,5 +447,90 @@ fn the_file_saves_after_a_pause_and_loads_on_start() {
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(again.has_rule("kept"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn temp_dir(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("aurora-omnifilter-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
+#[test]
+fn saves_land_in_the_order_they_were_asked() {
+    let dir = temp_dir("order");
+    let path = dir.join("omnifilter.xml");
+    let mut e = Engine::default();
+    e.load(path.clone());
+    e.update(Instant::now());
+    // many saves in a row, each with one more rule: the last one stays
+    for n in 0..20 {
+        e.add_rule(&format!("rule {n}"));
+        e.save();
+    }
+    e.save_before_exit();
+    let sets = parse(&std::fs::read(&path).expect("saved")).expect("parsed");
+    assert!(sets[0].rules.iter().any(|r| r.name == "rule 19"), "the newest rules are on disk");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_failed_write_keeps_the_rules_unsaved_and_is_tried_again_later() {
+    let dir = temp_dir("retry");
+    std::fs::create_dir_all(&dir).expect("dir");
+    // the file's folder is a file: the write fails
+    let blocker = dir.join("blocked");
+    std::fs::write(&blocker, b"x").expect("blocker");
+    let path = blocker.join("omnifilter.xml");
+    let mut e = Engine::default();
+    e.load(path.clone());
+    e.update(Instant::now());
+    e.add_rule("kept");
+    e.save();
+    for _ in 0..500 {
+        e.update(Instant::now());
+        if e.in_flight == 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(e.in_flight, 0);
+    assert!(e.dirty_since.is_some(), "not acknowledged: still to save");
+    let retry_at = e.retry_after.expect("a wait before the next try");
+    // the folder is fixed: nothing is written before the wait is over
+    std::fs::remove_file(&blocker).expect("unblock");
+    e.update(retry_at - Duration::from_millis(1) + SAVE_DELAY);
+    assert_eq!(e.in_flight, 0);
+    // after it, the next try writes it
+    let later = retry_at + SAVE_DELAY;
+    e.update(later);
+    for _ in 0..500 {
+        e.update(later);
+        if e.in_flight == 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(e.dirty_since.is_none());
+    let sets = parse(&std::fs::read(&path).expect("saved")).expect("parsed");
+    assert!(sets[0].rules.iter().any(|r| r.name == "kept"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_last_save_before_exit_waits_for_the_writes_under_way() {
+    let dir = temp_dir("exit");
+    let path = dir.join("omnifilter.xml");
+    let mut e = Engine::default();
+    e.load(path.clone());
+    e.update(Instant::now());
+    e.add_rule("late");
+    e.save();
+    e.add_rule("later");
+    // no pause, no update: the exit alone must leave both on disk
+    e.save_before_exit();
+    assert_eq!(e.in_flight, 0);
+    let sets = parse(&std::fs::read(&path).expect("saved")).expect("parsed");
+    assert!(sets[0].rules.iter().any(|r| r.name == "later"));
     let _ = std::fs::remove_dir_all(&dir);
 }
