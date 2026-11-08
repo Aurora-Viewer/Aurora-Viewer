@@ -176,6 +176,23 @@ pub fn targets_refused() -> bool {
     until.is_some_and(|t| Instant::now() < t)
 }
 
+/// `AURORA_GPU_OOM_FIRST_USE=<seconds>`: for that long after the first
+/// target made on first use (the selection outline, the depth of field, a
+/// photo look, RLVa's spheres, the rigged blend depth…), every such target
+/// counts as refused by a full video memory (testing): the target is made,
+/// then let go as a refused one would be, which tests what follows without
+/// filling the card.
+pub fn first_use_refused() -> bool {
+    static UNTIL: OnceLock<Option<Instant>> = OnceLock::new();
+    let until = *UNTIL.get_or_init(|| {
+        std::env::var("AURORA_GPU_OOM_FIRST_USE")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .map(|seconds| Instant::now() + Duration::from_secs(seconds))
+    });
+    until.is_some_and(|t| Instant::now() < t)
+}
+
 /// The interface's blur and glass of a window this size fall under
 /// `AURORA_GPU_OOM`, as a texture of the window's size.
 pub fn ui_targets_refused(size: [u32; 2]) -> bool {
@@ -227,6 +244,95 @@ impl Backoff {
     /// A failure is being waited out.
     pub fn waiting(&self) -> bool {
         self.next.is_some()
+    }
+}
+
+/// What a full video memory refused of the targets a frame draws into,
+/// and when to try again. The render targets (`targets`) are made as a set
+/// at a resize or a setting; others are made on first use, mid-frame:
+///
+/// - **required** ones the frame cannot go without (the rigged blend
+///   depth, RLVa's spheres and reduced scene, the TAA history of a setting
+///   change): refused, the frame shows the interface alone, as for the
+///   render targets. Drawn without RLVa's targets, a frame would show what
+///   RLVa hides. Their own wait (`first_use`) outlives the render targets'
+///   success, which says nothing of them: otherwise every remade set would
+///   start the wait again at 2 s, and the world come and go every 2 s;
+/// - **extras** the frame can go without (the selection outline, the depth
+///   of field, a photo look): refused, the frame is drawn without them
+///   until their wait (`extras`) is over.
+#[derive(Debug, Default)]
+pub struct Refusals {
+    /// The render targets came back invalid (video memory full): frames
+    /// show the interface alone until they can be made
+    /// (`RenderStats::video_memory_full`). Without this, every frame after
+    /// them failed and the window stayed black for the rest of the session.
+    pub targets: bool,
+    /// When to try the render targets again.
+    pub targets_backoff: Backoff,
+    first_use: Backoff,
+    extras: Backoff,
+}
+
+impl Refusals {
+    /// The render targets are refused and due another try.
+    pub fn targets_due(&self, now: Instant) -> bool {
+        self.targets && self.targets_backoff.ready(now)
+    }
+
+    /// The render targets were refused; true the first time (to say so).
+    pub fn targets_failed(&mut self, now: Instant) -> bool {
+        let first = !self.targets;
+        self.targets = true;
+        // a resize, a setting or a photo while refused is a try too, but
+        // only a due one lengthens the wait
+        self.targets_backoff.failed_try(now);
+        first
+    }
+
+    /// The render targets were made; true when they had been refused.
+    pub fn targets_made(&mut self) -> bool {
+        let was = self.targets;
+        self.targets = false;
+        // a required target refused on first use keeps its own wait
+        self.targets_backoff = self.first_use.clone();
+        was
+    }
+
+    /// The outcome of a required target made on first use; true the first
+    /// time it stops the world (to say so).
+    pub fn first_use(&mut self, refused: bool, now: Instant) -> bool {
+        if !refused {
+            self.first_use.succeeded();
+            if !self.targets {
+                // the render targets were made: the wait they inherited
+                // from this one (`targets_made`) goes with it
+                self.targets_backoff.succeeded();
+            }
+            return false;
+        }
+        let first = !self.targets;
+        self.targets = true;
+        self.first_use.failed_try(now);
+        self.targets_backoff = self.first_use.clone();
+        first
+    }
+
+    /// An extra may be made now.
+    pub fn extras_ready(&self, now: Instant) -> bool {
+        self.extras.ready(now)
+    }
+
+    /// The outcome of an extra made on first use; true the first time it
+    /// is refused (to say so).
+    pub fn extra(&mut self, refused: bool, now: Instant) -> bool {
+        if !refused {
+            self.extras.succeeded();
+            return false;
+        }
+        let first = !self.extras.waiting();
+        self.extras.failed_try(now);
+        first
     }
 }
 
@@ -499,6 +605,53 @@ mod tests {
         assert!(b.ready(t2 + Duration::from_secs(4)));
         b.succeeded();
         assert!(b.ready(t2) && !b.waiting());
+    }
+
+    #[test]
+    fn a_required_first_use_refusal_stops_the_world_with_a_wait_of_its_own() {
+        let t0 = Instant::now();
+        let s = Duration::from_secs;
+        let mut r = Refusals::default();
+        assert!(!r.targets_due(t0));
+        // RLVa's spheres refused mid-frame: the world stops, said once
+        assert!(r.first_use(true, t0));
+        assert!(r.targets && !r.targets_due(t0 + Duration::from_millis(1999)));
+        assert!(r.targets_due(t0 + s(2)));
+        // the due try remakes the render targets: the world is back, but
+        // the wait is not reset
+        assert!(r.targets_made());
+        assert!(!r.targets);
+        // the spheres refused again on the next frame: 4 s now, not 2
+        let t2 = t0 + s(2);
+        assert!(r.first_use(true, t2));
+        assert!(!r.targets_due(t2 + Duration::from_millis(3999)));
+        assert!(r.targets_due(t2 + s(4)));
+        // made at last: the next refusal of the render targets starts at 2 s
+        let t6 = t2 + s(4);
+        assert!(r.targets_made());
+        assert!(!r.first_use(false, t6));
+        assert!(r.targets_failed(t6));
+        assert!(r.targets_due(t6 + s(2)));
+        assert!(!r.targets_failed(t6 + s(2)));
+    }
+
+    #[test]
+    fn a_refused_extra_waits_without_stopping_the_world() {
+        let t0 = Instant::now();
+        let mut r = Refusals::default();
+        assert!(r.extras_ready(t0));
+        assert!(r.extra(true, t0));
+        assert!(!r.targets, "the world goes on without the extra");
+        assert!(!r.extras_ready(t0 + Duration::from_secs(1)));
+        // said once while waiting
+        assert!(!r.extra(true, t0 + Duration::from_secs(1)));
+        assert!(r.extras_ready(t0 + Duration::from_secs(2)));
+        assert!(!r.extra(false, t0 + Duration::from_secs(2)));
+        assert!(r.extras_ready(t0 + Duration::from_secs(2)));
+        // the render targets' success does not touch the extras' wait
+        r.extra(true, t0);
+        r.targets_made();
+        assert!(!r.extras_ready(t0 + Duration::from_secs(1)));
     }
 
     #[test]
