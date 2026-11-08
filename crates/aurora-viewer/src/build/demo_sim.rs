@@ -531,10 +531,10 @@ impl DemoSim {
             }
             BuildCmd::SetDescription {
                 handle,
-                local_id,
+                local_ids,
                 description,
             } => {
-                let ids = Self::uuids(world, *handle, &[*local_id]);
+                let ids = Self::uuids(world, *handle, local_ids);
                 for id in &ids {
                     self.props_of(world, *id).description = description.clone();
                 }

@@ -60,8 +60,8 @@ impl World {
                 roots.is_some_and(|roots| self.rlva_can_link(&roots))
             }
             BuildCmd::Transform { handle, updates } => updates.iter().all(|u| local(*handle, u.local_id)),
-            BuildCmd::SetDescription { handle, local_id, .. }
-            | BuildCmd::SetFlags { handle, local_id, .. }
+            BuildCmd::SetDescription { handle, local_ids, .. } => local_ids.iter().all(|id| local(*handle, *id)),
+            BuildCmd::SetFlags { handle, local_id, .. }
             | BuildCmd::SetPhysicsParams { handle, local_id, .. }
             | BuildCmd::SetTextures { handle, local_id, .. }
             | BuildCmd::SetExtraParam { handle, local_id, .. }

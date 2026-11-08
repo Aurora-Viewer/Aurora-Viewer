@@ -125,8 +125,8 @@ fn object_profile_edits_name_and_description_directly_through_native_messages() 
     h.click("Original description");
     h.type_and_commit("Changed description");
     assert!(h.profile.take_output().0.iter().any(
-        |command| matches!(command, NetCommand::Build(BuildCmd::SetDescription { local_id, description, .. })
-        if *local_id == h.key.local_id && description == "Changed description")
+        |command| matches!(command, NetCommand::Build(BuildCmd::SetDescription { local_ids, description, .. })
+        if local_ids == &[h.key.local_id] && description == "Changed description")
     ));
 }
 

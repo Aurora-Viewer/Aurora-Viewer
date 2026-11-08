@@ -190,7 +190,7 @@ pub enum BuildCmd {
     },
     SetDescription {
         handle: RegionHandle,
-        local_id: u32,
+        local_ids: Vec<u32>,
         description: String,
     },
     /// ObjectFlagUpdate (physical, temporary, phantom).

@@ -248,7 +248,7 @@ impl App {
             }));
             self.send(NetCommand::Build(BuildCmd::SetDescription {
                 handle: key.region,
-                local_id: key.local_id,
+                local_ids: vec![key.local_id],
                 description: aurora_i18n::tr!("area-search-demo-description").into(),
             }));
             if n % 2 == 0 {
