@@ -82,6 +82,16 @@ a review or that left the queue.
   later is closed by the workflow's daily sweep (the author can reopen it
   once it is complete); the team's PRs are never closed. So nobody reads a
   PR before its author has said what it does and how it was tested.
+- **Review slots**: an outside contributor has at most **10 PRs in review**
+  at a time. The Review slots workflow moves the others to draft, with the
+  `waiting-for-slot` label and a comment explaining why; when one of their
+  PRs in review is merged or closed, the oldest waiting one comes back to
+  review on its own, with a comment. The author can pick which one is
+  reviewed first ("Ready for review" on a waiting PR: their newest other PR
+  in review waits instead). PRs a maintainer has started reviewing, or in
+  the merge queue, keep their slot; the team's PRs never wait. To see the
+  plan without changing anything: Actions › Review slots › Run workflow
+  (dry run ticked), or `./scripts/pr-slots.ps1 -Sweep -DryRun`.
 - **Outside contributors' CI** waits for a maintainer: on their PR, "Approve
   and run" (look first that it does not change `.github/`). Review it only
   once that CI is green and the description is complete.
