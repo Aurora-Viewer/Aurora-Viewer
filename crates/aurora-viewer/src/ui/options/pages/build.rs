@@ -45,6 +45,15 @@ pub fn page(cx: &mut Cx) {
         cx.toggle(tr!("ui-options-build-temporary"), "", &field!(build.new_prim_temporary));
         cx.toggle(tr!("build-ui-object-phantom"), "", &field!(build.new_prim_phantom));
     });
+    // RenderParcelSelection ("Highlight boundary of currently selected
+    // parcel", the Legacy Build 1 tab)
+    cx.group(tr!("ui-options-build-land"), |cx| {
+        cx.keywords("RenderParcelSelection").toggle(
+            tr!("ui-options-parcel-selection-outline"),
+            tr!("ui-options-parcel-selection-outline-hint"),
+            &field!(build.parcel_selection_outline),
+        );
+    });
     cx.group(tr!("ui-options-build-new-faces"), |cx| {
         cx.color(tr!("common-color"), "", &field!(build.new_prim_color));
         cx.slider_whole(

@@ -13,7 +13,7 @@
 //! again later ([`Backoff`]) or smaller.
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 /// A buffer, or why it could not be made (the device is out of memory, or
@@ -83,6 +83,82 @@ pub fn try_texture(
     }
 }
 
+/// `DeviceExt::create_buffer_init` without its panic: wgpu's helper maps the
+/// new buffer and `expect`s the mapping, so a buffer the full card refused
+/// ended the viewer ("night sky stars" at start with the card full, "water
+/// effects" on a lost device, #1892). Here a refused buffer comes back
+/// invalid and unfilled, like any other object the memory refused, and the
+/// error scopes around it see the failure.
+pub fn buffer_init(device: &wgpu::Device, label: &str, contents: &[u8], usage: wgpu::BufferUsages) -> wgpu::Buffer {
+    let align = wgpu::COPY_BUFFER_ALIGNMENT;
+    let size = (contents.len() as u64).div_ceil(align).max(1) * align;
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: if contents.is_empty() { 0 } else { size },
+        usage,
+        mapped_at_creation: !contents.is_empty(),
+    });
+    if contents.is_empty() {
+        return buffer;
+    }
+    match buffer.get_mapped_range_mut(..) {
+        Ok(mut view) => {
+            view.slice(..contents.len()).copy_from_slice(contents);
+            drop(view);
+            buffer.unmap();
+        }
+        Err(e) => log::warn!("{label}: buffer refused ({})", reason(&e.to_string())),
+    }
+    buffer
+}
+
+/// Runs `make`, which makes GPU objects with no check of their own (a set
+/// of render targets and what binds them), and says whether the memory
+/// refused them. Whatever came back invalid is `make`'s to drop: unlike
+/// [`try_texture`] there is nothing to fall back on but trying again.
+pub fn scoped<T>(device: &wgpu::Device, make: impl FnOnce() -> T) -> (T, bool) {
+    let oom = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+    let invalid = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let made = make();
+    let invalid = pollster::block_on(invalid.pop());
+    let oom = pollster::block_on(oom.pop());
+    let refused = memory_refused(
+        oom.as_ref().map(ToString::to_string).as_deref(),
+        invalid.as_ref().map(ToString::to_string).as_deref(),
+    );
+    // said as outside a scope, refused or not
+    for e in oom.iter().chain(&invalid) {
+        say(e);
+    }
+    (made, refused)
+}
+
+/// An error a scope caught, written as the device's handler writes the
+/// others (main_thread.rs): the crash report's `GPU errors` row reads these
+/// lines, and an out-of-memory names its call there with its sources
+/// (#2482). Throttled the same way: a window dragged while the targets are
+/// refused tries at every step.
+fn say(error: &wgpu::Error) {
+    static THROTTLE: OnceLock<Mutex<LogThrottle>> = OnceLock::new();
+    let message = format!("wgpu error: {}", crate::main_thread::error_text(error));
+    let line = THROTTLE
+        .get_or_init(|| Mutex::new(LogThrottle::new(Duration::from_secs(10))))
+        .lock()
+        .ok()
+        .and_then(|mut t| t.note(&message, Instant::now()));
+    if let Some(line) = line {
+        log::error!("{line}");
+    }
+}
+
+/// Whether a scope's errors mean the memory ran out: wgpu said so, or an
+/// object came back invalid, which is all that shows of a failed allocation
+/// the driver reports as unexpected (see the module). Any other validation
+/// error is a bug of ours and retrying would not cure it.
+fn memory_refused(oom: Option<&str>, invalid: Option<&str>) -> bool {
+    oom.is_some() || invalid.is_some_and(|e| e.contains("is invalid"))
+}
+
 /// The error's reason (wgpu's text spreads over several lines, the last
 /// one says most).
 fn reason(text: &str) -> String {
@@ -103,6 +179,28 @@ fn injected_failure(bytes: u64) -> Option<String> {
     limit
         .filter(|l| bytes >= *l)
         .map(|_| "out of video memory (AURORA_GPU_OOM)".to_owned())
+}
+
+/// `AURORA_GPU_OOM_TARGETS=<seconds>`: for that long after the first frame
+/// target made, the render targets come back invalid as if video memory
+/// were full (testing). They are made with no usage, which wgpu refuses:
+/// the same invalid texture a full card leaves, in a real device, without
+/// filling the card.
+pub fn targets_refused() -> bool {
+    static UNTIL: OnceLock<Option<Instant>> = OnceLock::new();
+    let until = *UNTIL.get_or_init(|| {
+        std::env::var("AURORA_GPU_OOM_TARGETS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .map(|seconds| Instant::now() + Duration::from_secs(seconds))
+    });
+    until.is_some_and(|t| Instant::now() < t)
+}
+
+/// The interface's blur and glass of a window this size fall under
+/// `AURORA_GPU_OOM`, as a texture of the window's size.
+pub fn ui_targets_refused(size: [u32; 2]) -> bool {
+    injected_failure(u64::from(size[0]) * u64::from(size[1]) * 4).is_some()
 }
 
 /// When to try an allocation again after it failed: 2 s, then twice as
@@ -132,8 +230,37 @@ impl Backoff {
         self.next = Some(now + self.wait);
     }
 
+    /// A try that failed, which lengthens the wait only when it was due:
+    /// the first failure, or a try at or after the scheduled time. A try
+    /// made early (the window resized while waiting) keeps the schedule;
+    /// dragging the window's edge would otherwise put the next try 30 s
+    /// away.
+    pub fn failed_try(&mut self, now: Instant) {
+        if self.ready(now) {
+            self.failed(now);
+        }
+    }
+
     pub fn succeeded(&mut self) {
         *self = Self::default();
+    }
+
+    /// A try that worked, when what follows it in the same frame can still
+    /// be refused (the rigged blend depth after the render targets, the
+    /// labels' glass after the glass): the wait is kept, so a refusal right
+    /// after lengthens it instead of starting again at 2 s, which would
+    /// rebuild the whole set every 2 s for good. [`Self::settle`] ends it
+    /// once a frame went through.
+    pub fn made(&mut self) {
+        self.next = None;
+    }
+
+    /// The end of a frame: with no failure waited out, the wait goes back to
+    /// nothing, as after [`Self::succeeded`].
+    pub fn settle(&mut self) {
+        if self.next.is_none() {
+            self.wait = Duration::ZERO;
+        }
     }
 
     /// A failure is being waited out.
@@ -345,6 +472,19 @@ mod tests {
     }
 
     #[test]
+    fn only_a_refused_allocation_counts_as_out_of_memory() {
+        assert!(memory_refused(Some("Out of Memory"), None));
+        assert!(memory_refused(
+            None,
+            Some("In Texture::create_view\n  Texture with 'hdr' label is invalid")
+        ));
+        assert!(memory_refused(Some("Out of Memory"), Some("anything")));
+        assert!(!memory_refused(None, None));
+        // a wrong descriptor is ours: trying again would never end
+        assert!(!memory_refused(None, Some("In Device::create_texture\n  Invalid usage flags")));
+    }
+
+    #[test]
     fn a_repeated_message_is_written_once_then_counted() {
         let t0 = Instant::now();
         let mut log = LogThrottle::new(Duration::from_secs(10));
@@ -376,6 +516,62 @@ mod tests {
         assert!(b.ready(t0 + Duration::from_secs(30)));
         b.succeeded();
         assert!(b.ready(t0) && !b.waiting());
+    }
+
+    #[test]
+    fn only_a_due_try_lengthens_the_wait() {
+        let t0 = Instant::now();
+        let mut b = Backoff::default();
+        // the first failure starts the wait
+        b.failed_try(t0);
+        assert!(!b.ready(t0 + Duration::from_millis(1999)));
+        assert!(b.ready(t0 + Duration::from_secs(2)));
+        // tries before the 2 s are up (resizes) change nothing
+        for ms in [100, 500, 1500, 1999] {
+            b.failed_try(t0 + Duration::from_millis(ms));
+        }
+        assert!(b.ready(t0 + Duration::from_secs(2)));
+        // the scheduled try at 2 s doubles the wait from then: next at 6 s
+        let t2 = t0 + Duration::from_secs(2);
+        b.failed_try(t2);
+        assert!(!b.ready(t2 + Duration::from_millis(3999)));
+        assert!(b.ready(t2 + Duration::from_secs(4)));
+        b.succeeded();
+        assert!(b.ready(t2) && !b.waiting());
+    }
+
+    #[test]
+    fn a_refusal_right_after_a_success_keeps_lengthening_the_wait() {
+        let t0 = Instant::now();
+        let mut b = Backoff::default();
+        b.failed(t0);
+        // the set made at 2 s, the blend depth refused in the same frame
+        let t2 = t0 + Duration::from_secs(2);
+        b.made();
+        assert!(b.ready(t2) && !b.waiting());
+        b.failed(t2);
+        assert!(!b.ready(t2 + Duration::from_millis(3999)));
+        assert!(b.ready(t2 + Duration::from_secs(4)));
+        // the frame ends while waiting: the wait stays
+        b.settle();
+        let t6 = t2 + Duration::from_secs(4);
+        b.made();
+        b.failed(t6);
+        assert!(!b.ready(t6 + Duration::from_millis(7999)));
+        // up to 30 s, never back to 2 s
+        let mut t = t6;
+        for _ in 0..6 {
+            t += Duration::from_secs(30);
+            b.made();
+            b.failed(t);
+        }
+        assert!(!b.ready(t + Duration::from_millis(29_999)));
+        assert!(b.ready(t + Duration::from_secs(30)));
+        // a frame that went through: the next failure starts at 2 s again
+        b.made();
+        b.settle();
+        b.failed(t);
+        assert!(b.ready(t + Duration::from_secs(2)));
     }
 
     #[test]
@@ -484,7 +680,7 @@ mod tests {
         assert!(per_probe < Duration::from_millis(1), "{per_probe:?}");
         let read = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("read back"),
-            size: 16,
+            size: crate::readback::readback_size(16),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });

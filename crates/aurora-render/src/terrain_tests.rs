@@ -305,7 +305,7 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {{
     });
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: 2304,
+        size: crate::readback::readback_size(2304),
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -355,7 +355,7 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {{
     readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("terrain readback"));
     device.poll(wgpu::PollType::wait_indefinitely()).expect("terrain GPU completion");
     let mapped = readback.get_mapped_range(..).expect("terrain samples");
-    let samples: &[[f32; 4]] = bytemuck::cast_slice(&mapped);
+    let samples = crate::readback::f32x4s(&mapped);
     // Independent bilinear samples of IMG_ALPHA_GRAD_2D. A 1D ramp, an
     // inverted row convention or nearest filtering cannot satisfy these.
     for (i, expected) in [
@@ -826,7 +826,7 @@ fn shadow_surface(vi: u32, sample_index: u32) -> TerrainShadowOut {
         let view = target.create_view(&Default::default());
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: 64 * 48 * 4,
+            size: crate::readback::readback_size(64 * 48 * 4),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -874,7 +874,7 @@ fn shadow_surface(vi: u32, sample_index: u32) -> TerrainShadowOut {
         readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("mask readback"));
         device.poll(wgpu::PollType::wait_indefinitely()).expect("mask GPU completion");
         let bytes = readback.get_mapped_range(..).expect("mask depth");
-        depth_maps.push(bytemuck::cast_slice::<u8, f32>(&bytes).to_vec());
+        depth_maps.push(crate::readback::f32s(&bytes));
     }
     assert_eq!(
         &depth_maps[0][..64 * 40],

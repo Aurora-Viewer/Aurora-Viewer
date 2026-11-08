@@ -614,7 +614,7 @@ fn gpu_errors_in(head: &str, tail: &str) -> Option<String> {
 }
 
 /// One wgpu error of the log (`wgpu error: …`, aurora-render
-/// main_thread.rs): its time, its message (the rest of its header line and
+/// main_thread.rs and gpu_alloc.rs): its time, its message (the rest of its header line and
 /// the lines below it, the repeat count taken off) and how many errors it
 /// stands for.
 struct WgpuError<'a> {
@@ -632,7 +632,9 @@ fn wgpu_errors(text: &str) -> Vec<WgpuError<'_>> {
             let Some((record, message)) = line.split_once("] wgpu error: ") else {
                 continue;
             };
-            if !record.ends_with(" ERROR aurora_render::main_thread") {
+            // the device's handler, or an error scope of gpu_alloc.rs (the
+            // render targets refused while video memory is full, #2887)
+            if !record.ends_with(" ERROR aurora_render::main_thread") && !record.ends_with(" ERROR aurora_render::gpu_alloc") {
                 continue;
             }
             let time = record.trim_start_matches('[').split_whitespace().next().unwrap_or("unknown");
@@ -1836,6 +1838,18 @@ mod tests {
         assert_eq!(gpu_errors_in(&log, "").as_deref(), expected);
         // the head and the tail of a short log are the same text
         assert_eq!(gpu_errors_in(&log, &log).as_deref(), expected);
+    }
+
+    #[test]
+    fn a_refusal_caught_by_an_error_scope_counts_like_the_others() {
+        // the render targets refused at login (gpu_alloc.rs's scopes, #2887)
+        let log = "[2026-11-04T10:00:00.000Z ERROR aurora_render::gpu_alloc] wgpu error: Out of Memory\n\nCaused by:\n  In Device::create_texture, label = 'hdr'\n    Not enough memory left.\n\
+             [2026-11-04T10:00:00.000Z WARN  aurora_render::renderer] wgpu error: Out of Memory\n\
+             [2026-11-04T10:00:01.000Z ERROR aurora_render::main_thread] wgpu error: Out of Memory\n\nCaused by:\n  In Device::create_texture, label = 'hdr'\n";
+        assert_eq!(
+            gpu_errors_in(log, "").as_deref(),
+            Some("out-of-memory in Device::create_texture (x2)")
+        );
     }
 
     /// The counts as aurora-render writes them: each error through its

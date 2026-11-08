@@ -513,6 +513,13 @@ pub struct Settings {
     pub script_editor: crate::ui::scripts::settings::ScriptSettings,
     pub username: String,
     pub remember_username: bool,
+    /// The saved account of the last login, as (login URI, lowercase user
+    /// name): the login screen selects it first (UserLoginInfo, written by
+    /// FSPanelLogin::onClickConnect and selected by
+    /// FSPanelLogin::addUsersToCombo, indra/newview/fspanellogin.cpp).
+    /// Browsing the cards changes `username`, never this; it is not saved
+    /// when the user name is not remembered.
+    pub last_login: Option<(String, String)>,
     /// Remember the password (its login hash, in the system credential
     /// store; Firestorm "Remember password"). Off by default.
     pub remember_password: bool,
@@ -665,14 +672,20 @@ pub struct Settings {
     /// The money tracker records the payments even while it is closed
     /// (FSAlwaysTrackPayments, off by default).
     pub always_track_payments: bool,
-    /// Preferences › Chat › Conversations: a friend's direct payment opens
-    /// their conversation on its card (#1198); a payment from anyone else
-    /// shows there only when it is open. On by default.
-    pub payment_opens_conversation: bool,
-    /// Preferences › Chat › Conversations: our own direct payment to a
-    /// resident opens their conversation on its card (#1198); otherwise it
-    /// shows there only when it is open. Off by default.
-    pub payment_sent_opens_conversation: bool,
+    /// Preferences › Chat › Conversations: whose direct payment to us opens
+    /// their conversation on its card (#1198, #2638); otherwise it shows
+    /// there only when it is open. Friends by default.
+    pub payment_received_opens: crate::world::payments::Opens,
+    /// The former switch, read once: on was a friend's payment received.
+    #[serde(rename = "payment_opens_conversation", skip_serializing)]
+    pub(crate) former_payment_opens_conversation: Option<bool>,
+    /// Preferences › Chat › Conversations: whose conversation our own direct
+    /// payment opens on its card (#1198, #2638); otherwise it shows there
+    /// only when it is open. Never by default.
+    pub payment_sent_opens: crate::world::payments::Opens,
+    /// The former switch, read once: on was any resident we paid.
+    #[serde(rename = "payment_sent_opens_conversation", skip_serializing)]
+    pub(crate) former_payment_sent_opens_conversation: Option<bool>,
     /// Mini-map and world map options (Firestorm MiniMap* / Map* settings).
     pub maps: MapSettings,
     /// "Search": last tab, rating boxes and land limits.
@@ -1209,8 +1222,10 @@ pub struct Settings {
     /// the default) (app/revoke_on_sit.rs).
     pub revoke_permissions: u8,
     /// What a double click on the ground does (Preferences › Controls, the
-    /// wolf menu › Me): nothing by default, as in Firestorm.
+    /// wolf menu › Me): nothing by default, as in the Legacy Viewer.
     pub double_click: crate::autopilot::DoubleClick,
+    /// Allow the configured double-click action on scripted objects, except Sit (Legacy Viewer default: on).
+    pub double_click_scripted: bool,
     pub follow: crate::autopilot::FollowSettings,
     /// Look-at: what we send of where we look, the crosshairs of where the
     /// avatars look, how our head follows the cursor (Preferences ›
@@ -1290,6 +1305,12 @@ pub struct Settings {
     pub gpu_recovery: bool,
     /// Maximum live particles (0 = particles off).
     pub max_particles: u32,
+    /// RenderAttachedParticles: the particles of what avatars wear (on;
+    /// Preferences › Graphics, as the Legacy Viewer's).
+    pub attached_particles: bool,
+    /// RenderTrackerBeacon: the beacon and marker of a place or a friend
+    /// tracked from the map (on; Debug Settings only, as there).
+    pub tracker_beacon: bool,
     /// Avatars drawn (the nearest ones).
     pub max_avatars: u32,
     /// Ambient occlusion: 0 off, 1 low, 2 high (the levels of the Legacy
@@ -1827,6 +1848,7 @@ impl Default for Settings {
             script_editor: Default::default(),
             username: String::new(),
             remember_username: true,
+            last_login: None,
             remember_password: false,
             debug_settings_changed_only: false,
             debug_settings_warning_ignored: false,
@@ -1898,8 +1920,10 @@ impl Default for Settings {
             confirm_payments: true,
             payment_confirm_threshold: 200,
             always_track_payments: false,
-            payment_opens_conversation: true,
-            payment_sent_opens_conversation: false,
+            payment_received_opens: crate::world::payments::Opens::Friends,
+            former_payment_opens_conversation: None,
+            payment_sent_opens: crate::world::payments::Opens::Never,
+            former_payment_sent_opens_conversation: None,
             maps: MapSettings::default(),
             search: Default::default(),
             show_people: true,
@@ -2097,6 +2121,7 @@ impl Default for Settings {
             large_surface_frame_max: 5000.0,
             revoke_permissions: 0,
             double_click: crate::autopilot::DoubleClick::Nothing,
+            double_click_scripted: true,
             follow: Default::default(),
             lookat: Default::default(),
             former_look_at: None,
@@ -2123,6 +2148,8 @@ impl Default for Settings {
             background_gpu_pause: true,
             gpu_recovery: true,
             max_particles: 4096,
+            attached_particles: true,
+            tracker_beacon: true,
             max_avatars: 16,
             ssao: 1,
             ao_method: 0,
@@ -2490,6 +2517,17 @@ impl Settings {
         }
         if std::mem::take(&mut self.former_hide_own_group_title) {
             self.group_titles = crate::world::names::GroupTitles::AllExceptMine;
+        }
+        // the payments' two switches became a choice each (#2638), with
+        // what they did: friends' payments received, and ours to anyone
+        {
+            use crate::world::payments::Opens;
+            if let Some(on) = self.former_payment_opens_conversation.take() {
+                self.payment_received_opens = if on { Opens::Friends } else { Opens::Never };
+            }
+            if let Some(on) = self.former_payment_sent_opens_conversation.take() {
+                self.payment_sent_opens = if on { Opens::Anyone } else { Opens::Never };
+            }
         }
         // the shutter's switch of the interface sounds became the photos'
         // own ("Quiet snapshots"): a shutter turned off there stays off
@@ -2904,6 +2942,7 @@ impl Settings {
         *self = Settings {
             username: old.username,
             remember_username: old.remember_username,
+            last_login: old.last_login,
             grid: old.grid,
             custom_login_uri: old.custom_login_uri,
             grids: old.grids,
@@ -2962,6 +3001,7 @@ impl Settings {
         }
         if !copy.remember_username {
             copy.username.clear();
+            copy.last_login = None;
         }
         copy
     }
@@ -2997,6 +3037,12 @@ impl Settings {
             GridChoice::SecondLifeBeta => aurora_net::login::SL_BETA_GRID.into(),
             GridChoice::Custom => self.custom_login_uri.trim().to_owned(),
         }
+    }
+
+    /// The account the login fields name, as `login_accounts::Account::key`
+    /// writes it: (login URI, lowercase user name).
+    pub fn login_key(&self) -> (String, String) {
+        (self.login_uri(), self.username.trim().to_lowercase())
     }
 
     /// Texture memory budget (MB): the manual value, or in automatic mode a
@@ -3254,6 +3300,27 @@ mod tests {
     }
 
     #[test]
+    fn the_last_login_survives_a_restart_only_with_the_user_name() {
+        use super::Settings;
+        let old: Settings = serde_json::from_str("{}").expect("older preferences");
+        assert_eq!(old.last_login, None);
+        for remember in [true, false] {
+            let settings = Settings {
+                username: "synthetic-browsed".into(),
+                remember_username: remember,
+                last_login: Some(("synthetic-grid".into(), "synthetic-last".into())),
+                ..Settings::default()
+            };
+            let bytes = serde_json::to_vec(&settings.to_saved()).expect("save preferences");
+            let restored: Settings = serde_json::from_slice(&bytes).expect("restart");
+            assert_eq!(
+                restored.last_login,
+                remember.then(|| ("synthetic-grid".to_owned(), "synthetic-last".to_owned()))
+            );
+        }
+    }
+
+    #[test]
     fn appearance_camera_and_pose_preferences_default_on_and_persist_independently() {
         use super::Settings;
         let old: Settings = serde_json::from_str("{}").expect("older preferences");
@@ -3437,6 +3504,37 @@ mod tests {
     }
 
     #[test]
+    fn the_former_payment_switches_keep_what_they_did() {
+        use crate::world::payments::Opens;
+
+        let fresh: super::Settings = serde_json::from_str("{}").expect("fresh settings");
+        let fresh = fresh.sanitized();
+        assert_eq!(
+            (fresh.payment_received_opens, fresh.payment_sent_opens),
+            (Opens::Friends, Opens::Never)
+        );
+        for (received, sent) in [(false, false), (true, false), (false, true), (true, true)] {
+            let old: super::Settings = serde_json::from_value(serde_json::json!({
+                "payment_opens_conversation": received,
+                "payment_sent_opens_conversation": sent,
+            }))
+            .expect("former payment switches");
+            let migrated = old.sanitized();
+            let expected = (
+                if received { Opens::Friends } else { Opens::Never },
+                if sent { Opens::Anyone } else { Opens::Never },
+            );
+            assert_eq!((migrated.payment_received_opens, migrated.payment_sent_opens), expected);
+            let saved = serde_json::to_value(&migrated).expect("save payment choices");
+            assert!(saved.get("payment_opens_conversation").is_none(), "only the choices are saved");
+            assert!(saved.get("payment_sent_opens_conversation").is_none(), "only the choices are saved");
+            let reloaded: super::Settings = serde_json::from_value(saved).expect("reload payment choices");
+            let reloaded = reloaded.sanitized();
+            assert_eq!((reloaded.payment_received_opens, reloaded.payment_sent_opens), expected);
+        }
+    }
+
+    #[test]
     fn the_former_show_time_switch_goes_to_both_and_is_not_saved_again() {
         let fresh: super::Settings = serde_json::from_str("{}").expect("fresh settings");
         let fresh = fresh.sanitized();
@@ -3461,6 +3559,18 @@ mod tests {
         .expect("separate switches");
         let apart = apart.sanitized();
         assert_eq!((apart.chat_timestamps_nearby, apart.chat_timestamps_im), (false, true));
+    }
+
+    #[test]
+    fn scripted_object_double_click_defaults_on_and_round_trips() {
+        let missing: Settings = serde_json::from_str("{}").expect("old settings without preference");
+        assert!(missing.double_click_scripted);
+
+        let mut changed = missing;
+        changed.double_click_scripted = false;
+        let saved = serde_json::to_value(&changed).expect("save preference");
+        let loaded: Settings = serde_json::from_value(saved).expect("reload preference");
+        assert!(!loaded.double_click_scripted);
     }
 
     #[test]

@@ -249,6 +249,7 @@ const BEFORE: &[&str] = &[
     "letter_keys_move",
     "walk_backwards_without_turning",
     "double_click",
+    "double_click_scripted",
     "lookat.head_yaw",
     "lookat.head_pitch",
     "crouch_toggle",

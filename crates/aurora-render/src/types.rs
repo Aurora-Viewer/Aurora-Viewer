@@ -1678,6 +1678,9 @@ pub struct RenderStats {
     /// presentation (ms; None when it was not presented). What the GPU
     /// still has to draw after `present` is not in it.
     pub input_ms: Option<f32>,
+    /// The render targets could not be made: video memory is full, the
+    /// frame shows the interface alone, and they are tried again.
+    pub video_memory_full: bool,
     /// Main thread: the sleep the frame pacing asks before the next frame
     /// reads its input (pacing.rs, ms).
     pub pace_ms: f32,
