@@ -92,6 +92,7 @@ mod mac_window_menu;
 mod machine_id;
 mod media;
 mod movement;
+mod native_viewports;
 mod natural_order;
 mod net_adapters;
 mod net_profile;
@@ -135,6 +136,7 @@ mod wearable_editor;
 mod weather;
 #[cfg(any(windows, test))]
 mod wide_chars;
+mod window_display;
 mod window_hold;
 mod window_show;
 mod world;

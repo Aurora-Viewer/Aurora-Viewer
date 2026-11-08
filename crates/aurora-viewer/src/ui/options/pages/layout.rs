@@ -108,6 +108,11 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-snap-windows-help"),
                     &field!(snap_windows),
                 );
+                cx.toggle(
+                    tr!("ui-options-display-recovery"),
+                    tr!("ui-options-display-recovery-help"),
+                    &field!(window_display_recovery),
+                );
                 let p = cx.p;
                 cx.row(
                     tr!("ui-options-windows-stop-at-edges"),

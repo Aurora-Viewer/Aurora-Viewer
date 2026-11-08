@@ -758,6 +758,7 @@ dependencies = [
  "directories",
  "dispatch2",
  "egui",
+ "egui-wgpu",
  "egui-winit",
  "emojis",
  "encoding_rs",
@@ -785,6 +786,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot 0.13.0",
  "png",
+ "pollster 1.0.1",
  "pulldown-cmark",
  "rayon",
  "regex",
@@ -1884,6 +1886,7 @@ dependencies = [
  "ahash",
  "bytemuck",
  "document-features",
+ "egui",
  "epaint",
  "log",
  "profiling",
@@ -1891,6 +1894,7 @@ dependencies = [
  "type-map",
  "web-time",
  "wgpu",
+ "winit",
 ]
 
 [[package]]
