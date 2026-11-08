@@ -563,6 +563,8 @@ pub struct Settings {
     /// Light shafts from the sun through the bright parts of the image
     /// (Aurora's own, the Legacy Viewer has none): off by default.
     pub god_rays: bool,
+    /// How bright the sun rays are (0.1 to 2, 1 by default).
+    pub god_rays_strength: f32,
     /// GPU occlusion culling: objects hidden behind others are not drawn
     /// (Firestorm UseOcclusion, on by default). Renamed from `gpu_occlusion`
     /// (off while it cost more than it saved) so that saved settings take
@@ -1825,6 +1827,7 @@ impl Default for Settings {
             bloom: false,
             bloom_strength: BLOOM_STRENGTH,
             god_rays: false,
+            god_rays_strength: 1.0,
             occlusion_culling: true,
             lod_factor: 2.0,
             texture_budget_auto: true,
@@ -2752,6 +2755,11 @@ impl Settings {
             self.bloom_strength.clamp(0.05, 1.0)
         } else {
             BLOOM_STRENGTH
+        };
+        self.god_rays_strength = if self.god_rays_strength.is_finite() {
+            self.god_rays_strength.clamp(0.1, 2.0)
+        } else {
+            1.0
         };
         self.lod_factor = self.lod_factor.clamp(0.5, 4.0);
         self.ui_scale = self.ui_scale.clamp(0.75, 2.0);

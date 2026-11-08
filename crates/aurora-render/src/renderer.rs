@@ -6587,7 +6587,7 @@ impl Backend {
                 (true, true) => 1.0,
                 (true, false) => 2.0,
             },
-            god_rays: if hdr && !f.cutout { f.god_rays.clamp(0.0, 1.0) } else { 0.0 },
+            god_rays: if hdr && !f.cutout { f.god_rays.clamp(0.0, 2.0) } else { 0.0 },
             photo_part: photo_part(f.photo_tile),
             // the sun disc the sky draws, not the light (the moon at night)
             sun_uv: sun_on_screen(f.proj * f.view, f.sky.sun_dir, f.sun_visible),
