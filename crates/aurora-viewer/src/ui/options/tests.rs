@@ -542,6 +542,18 @@ fn the_sound_page_puts_push_to_talk_back_only() {
 }
 
 #[test]
+fn voice_output_device_has_its_own_sound_preference() {
+    let paths = collected();
+    assert!(paths.contains(&(Page::Sound, "audio.voice_output_device".into())), "{paths:?}");
+    let mut settings = Settings::default();
+    let label = cx::fold(aurora_i18n::tr!("ui-options-voice-output"));
+    assert!(
+        counts(&mut settings, &label).hits(Page::Sound) >= 1,
+        "Voice output row is searchable"
+    );
+}
+
+#[test]
 fn the_moved_settings_reset_with_their_new_page() {
     let mut s = Settings::default();
     s.water_effects.enabled = true;

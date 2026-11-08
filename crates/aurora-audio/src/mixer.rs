@@ -910,7 +910,14 @@ impl Mixer {
     }
 
     /// Renders interleaved stereo frames at [`ENGINE_SAMPLE_RATE`] into `out`.
+    #[cfg(test)]
     pub(crate) fn render(&mut self, out: &mut [f32]) {
+        self.render_split(out, &mut [], false);
+    }
+
+    /// Renders the authoritative mix once, optionally separating the Voice
+    /// bus into `voice_out` while keeping every source on this mix clock.
+    pub(crate) fn render_split(&mut self, out: &mut [f32], voice_out: &mut [f32], separate_voice: bool) {
         for _ in 0..64 {
             match self.cmd_rx.try_recv() {
                 Ok(Command::AddPcm(src)) => self.pcm.push(*src),
@@ -967,6 +974,9 @@ impl Mixer {
         }
 
         let len = out.len() & !1;
+        if separate_voice {
+            assert!(voice_out.len() >= len);
+        }
         for bus in &mut self.buses {
             bus.clear();
             bus.resize(len, 0.0);
@@ -1007,16 +1017,21 @@ impl Mixer {
             for (f, frame) in out[..len].as_chunks_mut::<ENGINE_CHANNELS>().0.iter_mut().enumerate() {
                 let mut l = 0.0f32;
                 let mut r = 0.0f32;
-                for ((smoother, bus), &target) in self.smoothers.iter_mut().zip(&self.buses).zip(&targets) {
+                for (i, ((smoother, bus), &target)) in self.smoothers.iter_mut().zip(&self.buses).zip(&targets).enumerate() {
                     let g = smoother.next(target);
-                    l += bus[2 * f] * g;
-                    r += bus[2 * f + 1] * g;
+                    if separate_voice && Some(i) == Channel::Voice.bus() {
+                        voice_out[2 * f] = (bus[2 * f] * g).clamp(-1.0, 1.0);
+                        voice_out[2 * f + 1] = (bus[2 * f + 1] * g).clamp(-1.0, 1.0);
+                    } else {
+                        l += bus[2 * f] * g;
+                        r += bus[2 * f + 1] * g;
+                    }
                 }
                 frame[0] = l.clamp(-1.0, 1.0);
                 frame[1] = r.clamp(-1.0, 1.0);
             }
         } else {
-            self.mix_with_reverb(&mut out[..len], &targets);
+            self.mix_with_reverb(&mut out[..len], &targets, voice_out, separate_voice);
         }
         for s in &mut out[len..] {
             *s = 0.0;
@@ -1026,7 +1041,7 @@ impl Mixer {
     /// The final mix with the reverb: the buses as without it, the sends
     /// summed at their channels' volumes into the reverb, its output at the
     /// master volume, then the clamp.
-    fn mix_with_reverb(&mut self, out: &mut [f32], targets: &[f32; NUM_BUSES]) {
+    fn mix_with_reverb(&mut self, out: &mut [f32], targets: &[f32; NUM_BUSES], voice_out: &mut [f32], separate_voice: bool) {
         let frames = out.len() / 2;
         let gain = |ch: Channel| self.params.get(ch).effective_gain();
         let reverb_targets = [gain(Channel::Master), gain(REVERB_BUSES[0]), gain(REVERB_BUSES[1])];
@@ -1036,10 +1051,15 @@ impl Mixer {
         for (f, frame) in out.as_chunks_mut::<ENGINE_CHANNELS>().0.iter_mut().enumerate() {
             let mut l = 0.0f32;
             let mut r = 0.0f32;
-            for ((smoother, bus), &target) in self.smoothers.iter_mut().zip(&self.buses).zip(targets) {
+            for (i, ((smoother, bus), &target)) in self.smoothers.iter_mut().zip(&self.buses).zip(targets).enumerate() {
                 let g = smoother.next(target);
-                l += bus[2 * f] * g;
-                r += bus[2 * f + 1] * g;
+                if separate_voice && Some(i) == Channel::Voice.bus() {
+                    voice_out[2 * f] = (bus[2 * f] * g).clamp(-1.0, 1.0);
+                    voice_out[2 * f + 1] = (bus[2 * f + 1] * g).clamp(-1.0, 1.0);
+                } else {
+                    l += bus[2 * f] * g;
+                    r += bus[2 * f + 1] * g;
+                }
             }
             frame[0] = l;
             frame[1] = r;
@@ -1088,6 +1108,32 @@ mod tests {
     fn settle(m: &mut Mixer) {
         let mut buf = vec![0.0; 48_000];
         m.render(&mut buf);
+    }
+
+    #[test]
+    fn split_render_keeps_one_mix_clock_and_routes_the_voice_bus_separately() {
+        let (mut m, _params, tx) = mixer();
+        let (mut producer, consumer) = rtrb::RingBuffer::new(4_096);
+        producer.push_entire_slice(&vec![0.5f32; 4_096]).expect("voice samples");
+        tx.send(Command::AddPcm(Box::new(PcmSource::new(Channel::Voice, consumer, 0, None, None))))
+            .expect("voice source");
+        tx.send(Command::PlayClip(ClipVoice::new(Channel::Sfx, vec![0.25f32; 4_096].into(), 1.0)))
+            .expect("world sound");
+
+        let mut main = vec![0.0; 2_048];
+        let mut voice = vec![0.0; 2_048];
+        m.render_split(&mut main, &mut voice, true);
+        assert!(main[1_000..].iter().all(|sample| (*sample - 0.25).abs() < 0.02));
+        assert!(voice[1_000..].iter().all(|sample| (*sample - 0.5).abs() < 0.02));
+
+        let (mut same, _params, tx) = mixer();
+        let (mut producer, consumer) = rtrb::RingBuffer::new(4_096);
+        producer.push_entire_slice(&vec![0.5f32; 4_096]).expect("voice samples");
+        tx.send(Command::AddPcm(Box::new(PcmSource::new(Channel::Voice, consumer, 0, None, None))))
+            .expect("voice source");
+        let mut combined = vec![0.0; 2_048];
+        same.render(&mut combined);
+        assert!(combined[1_000..].iter().all(|sample| (*sample - 0.5).abs() < 0.02));
     }
 
     #[test]

@@ -1388,6 +1388,7 @@ impl App {
         let mut media = crate::media::MediaManager::default();
         media.set_pack_dir(plugin_pack.dir());
         let out_device = (!settings.audio.output_device.is_empty()).then(|| settings.audio.output_device.clone());
+        let voice_output = aurora_audio::voice_stream_for(&settings.audio.output_device, &settings.audio.voice_output_device);
         let lib = Arc::new(AvatarLibrary::load());
         // the asset cache store: its key first (the credential store, read
         // here rather than by the first streamer thread), then the folders
@@ -1764,6 +1765,10 @@ impl App {
                 Ok(e) => {
                     let o = e.output_info();
                     log::info!("audio: {} ({} Hz, {} canaux)", o.device_name, o.sample_rate, o.channels);
+                    match voice_output {
+                        aurora_audio::VoiceStream::Same => e.set_voice_output_device(None),
+                        aurora_audio::VoiceStream::Separate(name) => e.set_voice_output_device(Some(name)),
+                    }
                     Some(e)
                 }
                 Err(e) => {
@@ -5853,6 +5858,16 @@ impl App {
                 && self.applied_audio.is_some()
             {
                 engine.set_output_device((!a.output_device.is_empty()).then(|| a.output_device.clone()));
+            }
+            if self
+                .applied_audio
+                .as_ref()
+                .is_none_or(|p| p.output_device != a.output_device || p.voice_output_device != a.voice_output_device)
+            {
+                match aurora_audio::voice_stream_for(&a.output_device, &a.voice_output_device) {
+                    aurora_audio::VoiceStream::Same => engine.set_voice_output_device(None),
+                    aurora_audio::VoiceStream::Separate(name) => engine.set_voice_output_device(Some(name)),
+                }
             }
             // same order as AUDIO_CHANNELS
             for (i, ch) in aurora_audio::Channel::ALL.iter().enumerate() {
@@ -15570,6 +15585,7 @@ impl App {
                     ear: self.settings.audio.voice_ear,
                     noise_suppression: self.settings.audio.voice_noise_suppression,
                     output_device: self.settings.audio.output_device.clone(),
+                    voice_output_device: self.settings.audio.voice_output_device.clone(),
                     input_devices: &self.options_ui.input_devices,
                     output_devices: &self.options_ui.output_devices,
                     voice_dot: (!classic_bars).then(|| {
@@ -15823,13 +15839,14 @@ impl App {
                 }
                 self.mic_on = mic.on;
                 self.mic_button_held = mic.held;
-                if mic.mode_changed || mic.devices_changed || mic.processing_changed {
+                if mic.mode_changed || mic.devices_changed || mic.voice_output_changed || mic.processing_changed {
                     // the audio engine and the voice follow the settings
                     self.settings.audio.mic_hold = mic.hold;
                     self.settings.audio.voice_ear = mic.ear;
                     self.settings.audio.voice_noise_suppression = mic.noise_suppression;
                     self.settings.audio.input_device = std::mem::take(&mut mic.input_device);
                     self.settings.audio.output_device = std::mem::take(&mut mic.output_device);
+                    self.settings.audio.voice_output_device = std::mem::take(&mut mic.voice_output_device);
                     self.settings.save();
                 }
                 let (open_prefs, list_devices, open_processing) = (mic.open_prefs, mic.list_devices, mic.open_processing);
