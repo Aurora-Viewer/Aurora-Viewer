@@ -1376,7 +1376,14 @@ mod tests {
             }
         }
         let library = std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load());
-        let world = World::new(library);
+        let mut world = World::new(library);
+        // a long teleport history: the list must give way, not the buttons
+        for i in 0..80 {
+            let global = glam::DVec3::new(256000.0 + f64::from(i), 256000.0, 25.0);
+            world
+                .tp_storage
+                .add(&format!("Parcel {i}, Region"), global, 1.7e9 + f64::from(i), String::new());
+        }
         let images = std::collections::HashMap::new();
         let mut emoji = crate::ui::emoji::Emoji::load();
         let buttons = [
@@ -1390,12 +1397,16 @@ mod tests {
             aurora_i18n::tr!("ui-places-teleport-history"),
         ];
         let min = Vec2::new(260.0, 300.0);
-        for (size, zoom) in [
-            (None, 1.0),
-            (Some(min), 1.0),
-            (Some(min), 1.5),
-            (Some(Vec2::new(700.0, 588.0)), 1.0),
-            (None, 1.5),
+        // the tab shown: 0 Favorites (empty), 2 Teleport history (80 lines)
+        for (size, zoom, tab) in [
+            (None, 1.0, 0),
+            (Some(min), 1.0, 0),
+            (Some(min), 1.5, 0),
+            (Some(Vec2::new(700.0, 588.0)), 1.0, 0),
+            (None, 1.5, 0),
+            (None, 1.0, 2),
+            (Some(min), 1.0, 2),
+            (Some(min), 1.5, 2),
         ] {
             let ctx = egui::Context::default();
             let theme = crate::theme::Theme::default();
@@ -1408,7 +1419,7 @@ mod tests {
             if let Some(size) = size {
                 widgets::size_floater(&ctx, "places", size);
             }
-            let mut places = PlacesUi::default();
+            let mut places = PlacesUi { tab, ..Default::default() };
             let (mut names, mut wanted, mut groups) = (HashSet::new(), HashSet::new(), HashSet::new());
             let mut shapes = Vec::new();
             for _ in 0..4 {
@@ -1444,13 +1455,19 @@ mod tests {
                     // an ellipsised label may keep only its start
                     .find(|(t, ..)| t == label || t.strip_suffix('…').is_some_and(|start| label.starts_with(start)))
                     .map(|(_, rect, clip)| (*rect, *clip))
-                    .unwrap_or_else(|| panic!("« {label} » drawn ({size:?}, zoom {zoom})"))
+                    .unwrap_or_else(|| panic!("« {label} » drawn ({size:?}, zoom {zoom}, tab {tab})"))
             };
+            if tab == 2 {
+                assert!(
+                    drawn.texts.iter().any(|(t, ..)| t.starts_with("Parcel ")),
+                    "the teleport history is listed ({size:?}, zoom {zoom})"
+                );
+            }
             for label in &buttons {
                 let (rect, clip) = find(label);
                 assert!(
                     clip.contains_rect(rect.expand(-0.5)),
-                    "« {label} » cut off ({size:?}, zoom {zoom}): text {rect:?}, clip {clip:?}"
+                    "« {label} » cut off ({size:?}, zoom {zoom}, tab {tab}): text {rect:?}, clip {clip:?}"
                 );
             }
             // each tab: its label and the underline under it, 6 points in
@@ -1462,11 +1479,11 @@ mod tests {
                     .lines
                     .iter()
                     .find(|l| l.top() > text.bottom() && l.top() < text.bottom() + 20.0 && l.x_range().contains(text.center().x))
-                    .unwrap_or_else(|| panic!("underline of « {label} » ({size:?}, zoom {zoom}): {:?}", drawn.lines));
+                    .unwrap_or_else(|| panic!("underline of « {label} » ({size:?}, zoom {zoom}, tab {tab}): {:?}", drawn.lines));
                 let tab = egui::Rect::from_x_y_ranges(line.left() - 6.0..=line.right() + 6.0, text.y_range());
                 assert!(
                     tab.contains_rect(text.expand(-0.5)) && clip.contains_rect(text.expand(-0.5)),
-                    "« {label} » cut off ({size:?}, zoom {zoom}): text {text:?}, tab {tab:?}, clip {clip:?}"
+                    "« {label} » cut off ({size:?}, zoom {zoom}, tab {tab}): text {text:?}, tab {tab:?}, clip {clip:?}"
                 );
                 spans.push((tab, clip));
             }
@@ -1475,7 +1492,7 @@ mod tests {
             let last = spans[2].0;
             assert!(
                 (first.left() - clip.left()).abs() <= 1.5 && (last.right() - clip.right()).abs() <= 1.5,
-                "tabs from {} to {}, content from {} to {} ({size:?}, zoom {zoom})",
+                "tabs from {} to {}, content from {} to {} ({size:?}, zoom {zoom}, tab {tab})",
                 first.left(),
                 last.right(),
                 clip.left(),

@@ -1796,7 +1796,9 @@ enum TabWidths {
     Fit,
     /// Equal shares of the row.
     Even,
-    /// The whole row: equal shares when every label fits, else by label.
+    /// The whole row: equal shares when every label fits. Narrower, the
+    /// room beyond the labels goes to the narrowest tabs first, so the
+    /// widths grow smoothly into the equal shares as the row widens.
     Fill,
 }
 
@@ -1810,14 +1812,36 @@ fn tab_widths(text: &[f32], room: f32, gap: f32, mode: TabWidths) -> Vec<f32> {
     let extra = ((room - total) / n).max(0.0);
     let even = ((room - gaps) / n).max(0.0);
     let widest = text.iter().copied().fold(0.0, f32::max);
+    let level = fill_level(text, room - gaps);
     text.iter()
         .map(|&w| match mode {
             TabWidths::Even => even,
             TabWidths::Fill if even >= widest => even,
-            TabWidths::Fill => w * compact + extra,
+            TabWidths::Fill if room >= total => w.max(level),
+            TabWidths::Fill => w * compact,
             TabWidths::Fit => w * compact + extra.min(40.0),
         })
         .collect()
+}
+
+/// The width the narrow tabs are raised to so that every tab at least its
+/// label's width, the narrow ones at this level, fills `room`: equal to the
+/// narrowest label when `room` is just the labels, to the widest when it
+/// is equal shares. Between the two, no width jumps (#2805: it jumped by
+/// 22 points at the switch to equal shares).
+fn fill_level(text: &[f32], room: f32) -> f32 {
+    let mut sorted = text.to_vec();
+    sorted.sort_by(f32::total_cmp);
+    let mut rest: f32 = sorted.iter().sum();
+    for (k, &w) in sorted.iter().enumerate() {
+        // the k + 1 narrowest raised to the level, the rest at their labels
+        rest -= w;
+        let level = (room - rest) / (k + 1) as f32;
+        if sorted.get(k + 1).is_none_or(|&next| level <= next) {
+            return level;
+        }
+    }
+    0.0
 }
 
 fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)], mode: TabWidths, compact: bool) -> bool {
