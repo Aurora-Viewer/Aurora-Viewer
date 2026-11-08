@@ -112,7 +112,9 @@ impl App {
 
     /// The notice over the paused world.
     pub(super) fn busy_pause_notice(&self, ctx: &egui::Context, p: &crate::theme::Palette) {
-        if !self.busy_pause.paused() {
+        // (video memory full: no world behind to pause, and its own notice
+        // takes the same place; the title still says both)
+        if !self.busy_pause.paused() || self.last_render.video_memory_full {
             return;
         }
         // The paused world, blurred and darkened (the modals' blur, ui_blur.rs:

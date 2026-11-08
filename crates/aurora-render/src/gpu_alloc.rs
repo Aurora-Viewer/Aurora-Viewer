@@ -13,7 +13,7 @@
 //! again later ([`Backoff`]) or smaller.
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 /// A buffer, or why it could not be made (the device is out of memory, or
@@ -120,14 +120,35 @@ pub fn scoped<T>(device: &wgpu::Device, make: impl FnOnce() -> T) -> (T, bool) {
     let oom = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
     let invalid = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let made = make();
-    let invalid = pollster::block_on(invalid.pop()).map(|e| e.to_string());
-    let oom = pollster::block_on(oom.pop()).map(|e| e.to_string());
-    let refused = memory_refused(oom.as_deref(), invalid.as_deref());
-    if let Some(e) = invalid.filter(|_| !refused) {
-        // not the memory: as outside a scope, said and not acted on
-        log::error!("wgpu error: {e}");
+    let invalid = pollster::block_on(invalid.pop());
+    let oom = pollster::block_on(oom.pop());
+    let refused = memory_refused(
+        oom.as_ref().map(ToString::to_string).as_deref(),
+        invalid.as_ref().map(ToString::to_string).as_deref(),
+    );
+    // said as outside a scope, refused or not
+    for e in oom.iter().chain(&invalid) {
+        say(e);
     }
     (made, refused)
+}
+
+/// An error a scope caught, written as the device's handler writes the
+/// others (main_thread.rs): the crash report's `GPU errors` row reads these
+/// lines, and an out-of-memory names its call there with its sources
+/// (#2482). Throttled the same way: a window dragged while the targets are
+/// refused tries at every step.
+fn say(error: &wgpu::Error) {
+    static THROTTLE: OnceLock<Mutex<LogThrottle>> = OnceLock::new();
+    let message = format!("wgpu error: {}", crate::main_thread::error_text(error));
+    let line = THROTTLE
+        .get_or_init(|| Mutex::new(LogThrottle::new(Duration::from_secs(10))))
+        .lock()
+        .ok()
+        .and_then(|mut t| t.note(&message, Instant::now()));
+    if let Some(line) = line {
+        log::error!("{line}");
+    }
 }
 
 /// Whether a scope's errors mean the memory ran out: wgpu said so, or an
@@ -251,6 +272,24 @@ impl Backoff {
         *self = Self::default();
     }
 
+    /// A try that worked, when what follows it in the same frame can still
+    /// be refused (the rigged blend depth after the render targets, the
+    /// labels' glass after the glass): the wait is kept, so a refusal right
+    /// after lengthens it instead of starting again at 2 s, which would
+    /// rebuild the whole set every 2 s for good. [`Self::settle`] ends it
+    /// once a frame went through.
+    pub fn made(&mut self) {
+        self.next = None;
+    }
+
+    /// The end of a frame: with no failure waited out, the wait goes back to
+    /// nothing, as after [`Self::succeeded`].
+    pub fn settle(&mut self) {
+        if self.next.is_none() {
+            self.wait = Duration::ZERO;
+        }
+    }
+
     /// A failure is being waited out.
     pub fn waiting(&self) -> bool {
         self.next.is_some()
@@ -270,9 +309,10 @@ impl Backoff {
 ///   depth, RLVa's spheres and reduced scene, the TAA history of a setting
 ///   change): refused, the frame shows the interface alone, as for the
 ///   render targets. Drawn without RLVa's targets, a frame would show what
-///   RLVa hides. Their own wait (`first_use`) outlives the render targets'
-///   success, which says nothing of them: otherwise every remade set would
-///   start the wait again at 2 s, and the world come and go every 2 s;
+///   RLVa hides. They wait on the render targets' wait, which a remade
+///   set keeps until the frame goes through (`Backoff::made`): otherwise
+///   every remade set would start it again at 2 s, and the world come and
+///   go every 2 s;
 /// - **extras** the frame can go without (the selection outline, the depth
 ///   of field, a photo look): refused, the frame is drawn without them
 ///   until their wait (`extras`) is over.
@@ -285,7 +325,6 @@ pub struct Refusals {
     pub targets: bool,
     /// When to try the render targets again.
     pub targets_backoff: Backoff,
-    first_use: Backoff,
     extras: Backoff,
 }
 
@@ -305,32 +344,32 @@ impl Refusals {
         first
     }
 
-    /// The render targets were made; true when they had been refused.
+    /// The render targets were made; true when they had been refused. The
+    /// wait is kept until the frame ends ([`Self::settle`]): a required
+    /// target refused right after lengthens it (`Backoff::made`).
     pub fn targets_made(&mut self) -> bool {
         let was = self.targets;
         self.targets = false;
-        // a required target refused on first use keeps its own wait
-        self.targets_backoff = self.first_use.clone();
+        self.targets_backoff.made();
         was
     }
 
     /// The outcome of a required target made on first use; true the first
-    /// time it stops the world (to say so).
+    /// time it stops the world (to say so). Refused, it waits on the render
+    /// targets' wait: the next due try makes every target again.
     pub fn first_use(&mut self, refused: bool, now: Instant) -> bool {
         if !refused {
-            self.first_use.succeeded();
-            if !self.targets {
-                // the render targets were made: the wait they inherited
-                // from this one (`targets_made`) goes with it
-                self.targets_backoff.succeeded();
-            }
             return false;
         }
         let first = !self.targets;
         self.targets = true;
-        self.first_use.failed_try(now);
-        self.targets_backoff = self.first_use.clone();
+        self.targets_backoff.failed_try(now);
         first
+    }
+
+    /// The end of a frame (`Backoff::settle`).
+    pub fn settle(&mut self) {
+        self.targets_backoff.settle();
     }
 
     /// An extra may be made now.
@@ -623,31 +662,34 @@ mod tests {
     }
 
     #[test]
-    fn a_required_first_use_refusal_stops_the_world_with_a_wait_of_its_own() {
+    fn a_required_first_use_refusal_stops_the_world_on_the_targets_wait() {
         let t0 = Instant::now();
         let s = Duration::from_secs;
         let mut r = Refusals::default();
         assert!(!r.targets_due(t0));
         // RLVa's spheres refused mid-frame: the world stops, said once
         assert!(r.first_use(true, t0));
+        assert!(!r.first_use(true, t0));
         assert!(r.targets && !r.targets_due(t0 + Duration::from_millis(1999)));
         assert!(r.targets_due(t0 + s(2)));
-        // the due try remakes the render targets: the world is back, but
-        // the wait is not reset
+        // the due try remakes the render targets: the world is back
+        let t2 = t0 + s(2);
         assert!(r.targets_made());
         assert!(!r.targets);
-        // the spheres refused again on the next frame: 4 s now, not 2
-        let t2 = t0 + s(2);
+        // the spheres refused again in the same frame: 4 s now, not 2
         assert!(r.first_use(true, t2));
+        r.settle();
         assert!(!r.targets_due(t2 + Duration::from_millis(3999)));
         assert!(r.targets_due(t2 + s(4)));
-        // made at last: the next refusal of the render targets starts at 2 s
+        // made at last and the frame went through: the next refusal of the
+        // render targets starts at 2 s
         let t6 = t2 + s(4);
         assert!(r.targets_made());
         assert!(!r.first_use(false, t6));
+        r.settle();
         assert!(r.targets_failed(t6));
         assert!(r.targets_due(t6 + s(2)));
-        assert!(!r.targets_failed(t6 + s(2)));
+        assert!(!r.targets_failed(t6 + s(1)));
     }
 
     #[test]
@@ -676,6 +718,40 @@ mod tests {
         r.extra(true, t0);
         r.targets_made();
         assert!(!r.extras_ready(t0 + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn a_refusal_right_after_a_success_keeps_lengthening_the_wait() {
+        let t0 = Instant::now();
+        let mut b = Backoff::default();
+        b.failed(t0);
+        // the set made at 2 s, the blend depth refused in the same frame
+        let t2 = t0 + Duration::from_secs(2);
+        b.made();
+        assert!(b.ready(t2) && !b.waiting());
+        b.failed(t2);
+        assert!(!b.ready(t2 + Duration::from_millis(3999)));
+        assert!(b.ready(t2 + Duration::from_secs(4)));
+        // the frame ends while waiting: the wait stays
+        b.settle();
+        let t6 = t2 + Duration::from_secs(4);
+        b.made();
+        b.failed(t6);
+        assert!(!b.ready(t6 + Duration::from_millis(7999)));
+        // up to 30 s, never back to 2 s
+        let mut t = t6;
+        for _ in 0..6 {
+            t += Duration::from_secs(30);
+            b.made();
+            b.failed(t);
+        }
+        assert!(!b.ready(t + Duration::from_millis(29_999)));
+        assert!(b.ready(t + Duration::from_secs(30)));
+        // a frame that went through: the next failure starts at 2 s again
+        b.made();
+        b.settle();
+        b.failed(t);
+        assert!(b.ready(t + Duration::from_secs(2)));
     }
 
     #[test]

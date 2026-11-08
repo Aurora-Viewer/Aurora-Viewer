@@ -1608,6 +1608,10 @@ pub(crate) struct Backend {
     /// What a full video memory refused of the frame's targets, and when to
     /// try again (gpu_alloc.rs).
     oom: crate::gpu_alloc::Refusals,
+    /// The installed set is the 1x1 one that frees a refused set, made just
+    /// before the next try (`rebuild_targets`): FSR's display-size part is
+    /// made at that size too.
+    targets_shrunk: bool,
     /// When to try the interface's blur and glass again; it goes without
     /// them until then.
     ui_targets_backoff: crate::gpu_alloc::Backoff,
@@ -2260,12 +2264,19 @@ fn first_use(oom: &mut crate::gpu_alloc::Refusals, what: &str, required: bool, r
 
 /// An extra made on first use with `make`, checked: `None` while refused
 /// or waiting.
-fn extra<T>(oom: &mut crate::gpu_alloc::Refusals, device: &wgpu::Device, what: &str, make: impl FnOnce(&wgpu::Device) -> T) -> Option<T> {
+fn extra<T>(
+    oom: &mut crate::gpu_alloc::Refusals,
+    device: &wgpu::Device,
+    lost: bool,
+    what: &str,
+    make: impl FnOnce(&wgpu::Device) -> T,
+) -> Option<T> {
     if !oom.extras_ready(Instant::now()) {
         return None;
     }
     let (made, refused) = crate::gpu_alloc::scoped(device, || make(device));
-    (!first_use(oom, what, false, refused)).then_some(made)
+    // (a lost device's refusals are the device-loss path's, `lost`)
+    (!first_use(oom, what, false, refused && !lost)).then_some(made)
 }
 
 /// The depth of field's targets for `size` are made, checked: false while
@@ -2276,6 +2287,7 @@ fn dof_targets(
     device: &wgpu::Device,
     post: &crate::dof::PostInputs,
     size: (u32, u32),
+    lost: bool,
 ) -> bool {
     let d = dof.get_or_insert_with(|| crate::dof::Dof::new(device, HDR_FORMAT));
     if d.has_targets(size) {
@@ -2285,7 +2297,7 @@ fn dof_targets(
         return false;
     }
     let (_, refused) = crate::gpu_alloc::scoped(device, || d.ensure_targets(device, size, HDR_FORMAT, post));
-    if first_use(oom, "depth of field", false, refused) {
+    if first_use(oom, "depth of field", false, refused && !lost) {
         d.release();
         return false;
     }
@@ -3247,7 +3259,9 @@ impl Backend {
             )
         });
         let mut oom = crate::gpu_alloc::Refusals::default();
-        if refused || refuse {
+        // (a device lost meanwhile ends the start at the next
+        // `lost_at_start`, not as video memory full)
+        if (refused && !lost.get()) || refuse {
             log::warn!("render targets: out of video memory, the interface alone until they can be made");
             oom.targets_failed(Instant::now());
         }
@@ -3324,6 +3338,7 @@ impl Backend {
             egui,
             ui_blur: None,
             oom,
+            targets_shrunk: false,
             ui_targets_backoff: crate::gpu_alloc::Backoff::default(),
             ui_glass: None,
             previews: Default::default(),
@@ -5027,7 +5042,7 @@ impl Backend {
             let _ = crate::gpu_alloc::scoped(&device, || self.make_targets_now(refuse, Some((1, 1))));
         }
         let (_, refused) = crate::gpu_alloc::scoped(&device, || self.make_targets_now(refuse, None));
-        if refused || refuse {
+        if self.memory_refused(refused) || refuse {
             if self.oom.targets_failed(Instant::now()) {
                 log::warn!("render targets: out of video memory, the interface alone until they can be made");
             }
@@ -5050,6 +5065,13 @@ impl Backend {
         if let Some(looks) = &mut self.looks {
             looks.release();
         }
+    }
+
+    /// Whether a scope's refusal is the memory: a lost device leaves every
+    /// object invalid too, but that is the device-loss path's to report,
+    /// never "Video memory full".
+    fn memory_refused(&self, refused: bool) -> bool {
+        refused && !self.lost.get()
     }
 
     /// `size` forces a size: the 1x1 set that frees a refused one.
@@ -5105,6 +5127,7 @@ impl Backend {
         self.exposure
             .bind(&self.device, &self.targets.color, &self.targets.depth_ss, &self.glow.views[1]);
         self.histogram.bind(&self.device, &self.targets.color);
+        self.targets_shrunk = forced;
         self.rebuild_bind_groups();
     }
 
@@ -5303,7 +5326,7 @@ impl Backend {
                 let (_, refused) = crate::gpu_alloc::scoped(&device, || self.remake_taa());
                 // (refused, the next try makes every target again, the TAA
                 // history with them)
-                first_use(&mut self.oom, "TAA history", true, refused);
+                first_use(&mut self.oom, "TAA history", true, refused && !self.lost.get());
             }
         } else {
             self.taa = None;
@@ -5467,7 +5490,9 @@ impl Backend {
         };
         let post_bgs = [post_bg(&history[0]), post_bg(&history[1])];
         let fsr = with_fsr.then(|| {
-            let display = if self.fsr_upscale().is_some() {
+            // (the 1x1 set that frees a refused one shrinks FSR's display
+            // size part too, rebuild_targets)
+            let display = if self.fsr_upscale().is_some() && !self.targets_shrunk {
                 (self.config.width, self.config.height)
             } else {
                 self.scene_size()
@@ -6286,11 +6311,12 @@ impl Backend {
                     let (blur, refused) = crate::gpu_alloc::scoped(&self.device, || {
                         crate::ui_blur::Blur::new(&self.device, format, size, ui.pixels_per_point)
                     });
-                    if refused || crate::gpu_alloc::ui_targets_refused(size) {
+                    if self.memory_refused(refused) || crate::gpu_alloc::ui_targets_refused(size) {
                         log::warn!("interface blur: out of video memory, the windows go without it for now");
                         self.ui_targets_backoff.failed(now);
                     } else {
-                        self.ui_targets_backoff.succeeded();
+                        // (the glass made later in the frame may still be refused)
+                        self.ui_targets_backoff.made();
                         self.ui_blur = Some(blur);
                     }
                 }
@@ -6306,7 +6332,7 @@ impl Backend {
             let size = [post_size.0, post_size.1];
             if self.selection.as_ref().is_none_or(|selection| selection.size != size) {
                 let format = self.config.format;
-                self.selection = extra(&mut self.oom, &self.device, "selection outline", |device| {
+                self.selection = extra(&mut self.oom, &self.device, self.lost.get(), "selection outline", |device| {
                     crate::selection::Overlay::new(device, format, size)
                 });
             }
@@ -6318,7 +6344,7 @@ impl Backend {
             let size = [self.config.width, self.config.height];
             if self.hud_selection.as_ref().is_none_or(|selection| selection.size != size) {
                 let format = self.config.format;
-                self.hud_selection = extra(&mut self.oom, &self.device, "HUD selection outline", |device| {
+                self.hud_selection = extra(&mut self.oom, &self.device, self.lost.get(), "HUD selection outline", |device| {
                     crate::selection::Overlay::new(device, format, size)
                 });
             }
@@ -8379,7 +8405,7 @@ impl Backend {
             self.targets.blend_layers = Some(layers);
             // refused, this frame is lost; the next ones make every target
             // again
-            first_use(&mut self.oom, "rigged blend layers depth", true, refused);
+            first_use(&mut self.oom, "rigged blend layers depth", true, refused && !self.lost.get());
         }
         // ---- scene pass B: SSR, water, blended faces, particles. The
         // blended faces of rigged meshes come first and write depth
@@ -8802,6 +8828,7 @@ impl Backend {
                         glow: &self.glow.views[1],
                     },
                     post_size,
+                    self.lost.get(),
                 ) =>
             {
                 let dof = self.dof.as_mut().expect("made by dof_targets");
@@ -8890,7 +8917,7 @@ impl Backend {
                 // drawn without it, the frame would show the world at a
                 // resolution RLVa does not allow
                 self.rlva_scaled = Some(scaled);
-                first_use(&mut self.oom, "RLVa reduced scene", true, refused);
+                first_use(&mut self.oom, "RLVa reduced scene", true, refused && !self.lost.get());
             }
         } else {
             self.rlva_scaled = None;
@@ -8909,7 +8936,7 @@ impl Backend {
                 let (_, refused) = crate::gpu_alloc::scoped(device, || {
                     spheres.prepare(device, post_size, format);
                 });
-                first_use(&mut self.oom, "RLVa vision spheres", true, refused);
+                first_use(&mut self.oom, "RLVa vision spheres", true, refused && !self.lost.get());
             }
             spheres.prepare(&self.device, post_size, format)
         } else {
@@ -8927,7 +8954,7 @@ impl Backend {
             } else if self.oom.extras_ready(Instant::now()) {
                 let device = &self.device;
                 let (_, refused) = crate::gpu_alloc::scoped(device, || looks.prepare(device, format, post_size));
-                if first_use(&mut self.oom, "photo look", false, refused) {
+                if first_use(&mut self.oom, "photo look", false, refused && !self.lost.get()) {
                     // (no input: the frame is drawn without the look)
                     looks.release();
                 }
@@ -9072,12 +9099,13 @@ impl Backend {
                         let (glass, refused) = crate::gpu_alloc::scoped(&self.device, || {
                             crate::ui_glass::Glass::new(&self.device, egui, format, size, scale)
                         });
-                        if refused || crate::gpu_alloc::ui_targets_refused(size) {
+                        if self.memory_refused(refused) || crate::gpu_alloc::ui_targets_refused(size) {
                             log::warn!("interface glass: out of video memory, the windows go without it for now");
                             glass.free(&mut self.egui);
                             self.ui_targets_backoff.failed(now);
                         } else {
-                            self.ui_targets_backoff.succeeded();
+                            // (the labels' copy below may still be refused)
+                            self.ui_targets_backoff.made();
                             self.ui_glass = Some(glass);
                         }
                     }
@@ -9085,13 +9113,16 @@ impl Backend {
             } else if let Some(old) = self.ui_glass.take() {
                 old.free(&mut self.egui);
             }
-            // the labels' copy, made on its first use
+            // the labels' copy, made on its first use: checked that once,
+            // not on every frame that shows it
             if label_glass.is_some()
-                && let Some(glass) = &mut self.ui_glass
+                && let Some(glass) = self.ui_glass.as_mut().filter(|glass| !glass.has_under())
             {
                 let egui = &mut self.egui;
                 let (_, refused) = crate::gpu_alloc::scoped(&self.device, || glass.make_under(&self.device, egui));
-                if refused && let Some(old) = self.ui_glass.take() {
+                if self.memory_refused(refused)
+                    && let Some(old) = self.ui_glass.take()
+                {
                     log::warn!("interface glass: out of video memory, the labels go without it for now");
                     old.free(&mut self.egui);
                     self.ui_targets_backoff.failed(Instant::now());
@@ -9418,6 +9449,9 @@ impl Backend {
         stats.cpu_encode_ms = encode_ms;
         stats.water_reflection = do_water_refl;
         stats.mirror = mirror.is_some();
+        // a frame that went through: a try made earlier in it is settled
+        self.oom.settle();
+        self.ui_targets_backoff.settle();
         let spent = Spent { writes, lists: draw_lists };
         self.result(index, stats, captured, spent)
     }
