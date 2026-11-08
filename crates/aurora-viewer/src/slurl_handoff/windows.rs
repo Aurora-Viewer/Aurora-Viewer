@@ -155,9 +155,6 @@ fn start_receiver(name: String, tx: crossbeam_channel::Sender<String>, relay: Op
 /// name exists for the viewer's whole life (clients that come while one is
 /// read wait, ERROR_PIPE_BUSY).
 fn serve(name: &str, ready: &crossbeam_channel::Sender<bool>, links: &crossbeam_channel::Sender<String>, relay: Option<&Scope>) {
-    use windows_sys::Win32::Foundation::{ERROR_BROKEN_PIPE, ERROR_NO_DATA, ERROR_PIPE_CONNECTED, GetLastError};
-    use windows_sys::Win32::Storage::FileSystem::ReadFile;
-    use windows_sys::Win32::System::Pipes::{ConnectNamedPipe, DisconnectNamedPipe};
     let security = match security::Attributes::new() {
         Ok(security) => Some(security),
         Err(error) => {
@@ -176,49 +173,54 @@ fn serve(name: &str, ready: &crossbeam_channel::Sender<bool>, links: &crossbeam_
         }
     };
     drop(security);
-    let handle = pipe.as_raw_handle();
     let _ = ready.send(true);
     let mut buf = vec![0u8; 1024];
     loop {
-        // SAFETY: `pipe` is the valid handle created above; no overlapped I/O.
-        if unsafe { ConnectNamedPipe(handle, std::ptr::null_mut()) } == 0 {
-            // SAFETY: read this thread's error immediately after the call.
-            let error = unsafe { GetLastError() };
-            if matches!(error, ERROR_NO_DATA | ERROR_BROKEN_PIPE) {
-                // A probe or aborted launch may close before ConnectNamedPipe
-                // runs. Reset this connection instead of losing the listener.
-                // SAFETY: our live server handle, no outstanding I/O.
-                unsafe { DisconnectNamedPipe(handle) };
-                continue;
-            }
-            if error != ERROR_PIPE_CONNECTED {
-                log::warn!("startup links: pipe stopped (error {error})");
+        let url = match read_request(&pipe, &mut buf) {
+            Ok(url) => url,
+            Err(error) => {
+                log::warn!("startup links: pipe stopped ({error})");
                 break;
             }
-        }
-        let mut url = Vec::new();
-        loop {
-            let mut read = 0u32;
-            // SAFETY: `buf` outlives the call and `read` receives the count.
-            let ok = unsafe { ReadFile(handle, buf.as_mut_ptr(), buf.len() as u32, &mut read, std::ptr::null_mut()) } != 0;
-            if !ok || read == 0 {
-                break;
-            }
-            url.extend_from_slice(&buf[..read as usize]);
-            if url.len() > MAX_URL {
-                url.clear();
-                break;
-            }
-        }
-        // SAFETY: the same valid handle; ends this client's connection.
-        unsafe {
-            DisconnectNamedPipe(handle);
-        }
-        let url = String::from_utf8_lossy(&url).trim().to_owned();
+        };
         if !url.is_empty() && !relay.is_some_and(|scope| route_to(scope, &url)) && links.send(url).is_err() {
             break;
         }
     }
+}
+
+fn read_request(pipe: &OwnedHandle, buf: &mut [u8]) -> io::Result<String> {
+    use windows_sys::Win32::Foundation::{ERROR_BROKEN_PIPE, ERROR_NO_DATA, ERROR_PIPE_CONNECTED, GetLastError};
+    use windows_sys::Win32::Storage::FileSystem::ReadFile;
+    use windows_sys::Win32::System::Pipes::{ConnectNamedPipe, DisconnectNamedPipe};
+    let handle = pipe.as_raw_handle();
+    // SAFETY: the caller retains the live, synchronous server handle.
+    if unsafe { ConnectNamedPipe(handle, std::ptr::null_mut()) } == 0 {
+        // SAFETY: read this thread's error immediately after the call.
+        let error = unsafe { GetLastError() };
+        // A client can write and close before this accept. Its buffered
+        // bytes remain readable: disconnecting now would discard the link.
+        if !matches!(error, ERROR_PIPE_CONNECTED | ERROR_NO_DATA | ERROR_BROKEN_PIPE) {
+            return Err(io::Error::from_raw_os_error(error as i32));
+        }
+    }
+    let mut url = Vec::new();
+    loop {
+        let mut read = 0u32;
+        // SAFETY: buf and the count outlive the synchronous read.
+        let ok = unsafe { ReadFile(handle, buf.as_mut_ptr(), buf.len() as u32, &mut read, std::ptr::null_mut()) } != 0;
+        if !ok || read == 0 {
+            break;
+        }
+        url.extend_from_slice(&buf[..read as usize]);
+        if url.len() > MAX_URL {
+            url.clear();
+            break;
+        }
+    }
+    // SAFETY: the same valid handle; ends this client's connection.
+    unsafe { DisconnectNamedPipe(handle) };
+    Ok(String::from_utf8_lossy(&url).trim().to_owned())
 }
 
 fn create_pipe(name: &str, security: Option<&security::Attributes>) -> io::Result<OwnedHandle> {

@@ -75,6 +75,23 @@ fn aborted_connections_do_not_stop_the_receiver() {
 }
 
 #[test]
+fn a_client_closed_before_accept_still_delivers_its_buffered_link() {
+    let security = security::Attributes::new().unwrap();
+    let mut buf = [0; 1024];
+    for url in [
+        "secondlife://Test/11/128/25".to_owned(),
+        format!("secondlife://{}/22/128/25", "Région".repeat(300)),
+    ] {
+        let name = name();
+        let pipe = create_pipe(&name, Some(&security)).unwrap();
+        assert!(hand_off_to(&name, &url));
+        // A newly created pipe can receive a client before its first accept.
+        // hand_off_to has already closed that client, with data still buffered.
+        assert_eq!(read_request(&pipe, &mut buf).unwrap(), url);
+    }
+}
+
+#[test]
 fn an_oversized_link_is_refused_before_connecting() {
     let listener = Listener::new();
     assert!(!hand_off_to(&listener.name, &"x".repeat(MAX_URL + 1)));

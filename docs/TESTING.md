@@ -82,7 +82,7 @@ viewer's process closes. For a test with human intervention, keep the title
 access-check regressions on isolated names. It covers the elevated owner's
 ACL with Administrators disabled in a duplicate client context, actual
 low-integrity refusal, unrelated logons, restricted client rights, long
-Unicode links, aborted connections, native attribute-access requirements,
+Unicode links, aborted connections, buffered links from clients that close before accept, native attribute-access requirements,
 last-focus selection, closing windows, scoped demos and compatibility with
 the old client and server. It does
 not elevate a process, change URL associations or connect to a grid.
