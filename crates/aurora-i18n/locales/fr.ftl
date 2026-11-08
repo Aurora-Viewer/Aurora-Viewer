@@ -11822,6 +11822,9 @@ poser-finger-col-middle = milieu
 poser-finger-col-tip = bout
 poser-hint-rotation = degrés, repère du parent
 poser-hint-position = mètres, axes de l’avatar · la chaîne suit
+poser-hint-position-only = mètres, axes de l’avatar · cette articulation uniquement
+poser-move-joint-only = Déplacer uniquement cette articulation
+poser-move-joint-only-hint = Déplace cette articulation directement sans plier la chaîne. Le mode miroir déplace aussi l’articulation opposée.
 poser-hint-scale = facteurs · cube central = uniforme
 poser-ball-rotation = Glisser pour tourner · alignée sur la caméra
 poser-ball-position = Déplacez la poignée dans le monde · la chaîne se plie

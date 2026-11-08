@@ -98,6 +98,7 @@ impl Editor {
         if !self.position.is_finite() || self.position.abs().max_element() > 100.0 || !rotation.is_finite() {
             return true;
         }
+        let move_joint_only = self.poser.move_joint_only;
         let Some(session) = self.poser.sessions.get_mut(&self.poser.subject) else {
             return false;
         };
@@ -113,10 +114,19 @@ impl Editor {
             let matrices = rig.world_with(&before.rotations, Vec3::ZERO, &before.positions, &edited.scales);
             let parent_q = rig.parent[bone].map_or(Quat::IDENTITY, |p| matrices[p].to_scale_rotation_translation().1);
             edited.rotations[bone] = (parent_q.inverse() * rotation).normalize();
-        } else if !edited.move_joint(rig, bone, self.position) {
+        } else if !edited.move_joint(rig, bone, self.position, move_joint_only) {
             return true;
         }
         if self.symmetry {
+            if !rotate
+                && move_joint_only
+                && edited.positions[bone] != before.positions[bone]
+                && let Some(other) = self.mirrors.counterpart(bone)
+            {
+                edited.positions[other] = session.base.positions[other]
+                    + crate::ik_edit::rig_controls::reflect(edited.positions[bone] - session.base.positions[bone]);
+                edited.locks.remove(&other);
+            }
             let rotations = edited.rotations.clone();
             for (changed, rotation) in rotations.into_iter().enumerate() {
                 if rotation != before.rotations[changed]

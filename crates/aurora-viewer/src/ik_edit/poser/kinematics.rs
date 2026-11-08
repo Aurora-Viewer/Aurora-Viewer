@@ -2,7 +2,16 @@
 use super::*;
 use crate::scene::ik::LocalPose;
 
-fn solve(rig: &Rig, pose: &mut LocalPose, scales: &[Vec3], bone: usize, position: Vec3, rotation: Option<Quat>) -> bool {
+fn solve(
+    rig: &Rig,
+    pose: &mut LocalPose,
+    scales: &[Vec3],
+    bone: usize,
+    position: Vec3,
+    rotation: Option<Quat>,
+    root: usize,
+    mode: Mode,
+) -> bool {
     ik::apply_goal(
         rig,
         pose,
@@ -12,14 +21,30 @@ fn solve(rig: &Rig, pose: &mut LocalPose, scales: &[Vec3], bone: usize, position
             follow: None,
             weight: 1.0,
             bone,
-            root: ik::default_root(rig, bone),
+            root,
             position,
             contact: Vec3::ZERO,
-            mode: if rig.parent[bone].is_none() { Mode::Direct } else { Mode::Ik },
+            mode,
             pole: None,
             rotation,
         },
     )
+}
+fn spine(name: &str) -> bool {
+    matches!(
+        name,
+        "mPelvis" | "mTorso" | "mChest" | "mSpine1" | "mSpine2" | "mSpine3" | "mSpine4" | "mNeck"
+    )
+}
+/// Stop a poser chain before it can recruit the torso. Runtime IK keeps its
+/// independent `default_root` policy in scene::ik.
+fn poser_root(rig: &Rig, bone: usize) -> usize {
+    let parent = rig.parent[bone].unwrap_or(bone);
+    if spine(&rig.canonical_names[parent]) {
+        return bone;
+    }
+    let root = ik::default_root(rig, bone);
+    if spine(&rig.canonical_names[root]) { parent } else { root }
 }
 impl SubjectPose {
     pub(super) fn resolved(&self, rig: &Rig, model: Mat4) -> LocalPose {
@@ -35,19 +60,57 @@ impl SubjectPose {
                 for &bone in &rig.order {
                     if let Some(target) = self.locks.get(&bone) {
                         let (_, q, p) = (inverse * *target).to_scale_rotation_translation();
-                        solve(rig, &mut pose, &self.scales, bone, p, Some(q));
+                        let root = ik::default_root(rig, bone);
+                        let mode = if rig.parent[bone].is_none() { Mode::Direct } else { Mode::Ik };
+                        solve(rig, &mut pose, &self.scales, bone, p, Some(q), root, mode);
                     }
                 }
             }
         }
         pose
     }
-    pub(super) fn move_joint(&mut self, rig: &Rig, bone: usize, position: Vec3) -> bool {
+    pub(super) fn move_joint(&mut self, rig: &Rig, bone: usize, position: Vec3, only: bool) -> bool {
         let mut pose = LocalPose {
             rotations: self.rotations.clone(),
             positions: self.positions.clone(),
         };
-        if !solve(rig, &mut pose, &self.scales, bone, position, None) {
+        let (root, mode) = if only {
+            // Legacy Viewer FSPoserAnimator::setJointPosition
+            // (indra/newview/fsposeranimator.cpp) uses its NONE style to set
+            // this joint directly, without solving an IK chain.
+            (bone, Mode::Direct)
+        } else {
+            let root = poser_root(rig, bone);
+            let mode = if rig.parent[bone].is_none() || root == bone {
+                Mode::Direct
+            } else {
+                Mode::Ik
+            };
+            (root, mode)
+        };
+        if !solve(rig, &mut pose, &self.scales, bone, position, None, root, mode) {
+            return false;
+        }
+        self.rotations = pose.rotations;
+        self.positions = pose.positions;
+        true
+    }
+    fn move_joint_for_import(&mut self, rig: &Rig, bone: usize, position: Vec3) -> bool {
+        let mut pose = LocalPose {
+            rotations: self.rotations.clone(),
+            positions: self.positions.clone(),
+        };
+        let mode = if rig.parent[bone].is_none() { Mode::Direct } else { Mode::Ik };
+        if !solve(
+            rig,
+            &mut pose,
+            &self.scales,
+            bone,
+            position,
+            None,
+            ik::default_root(rig, bone),
+            mode,
+        ) {
             return false;
         }
         self.rotations = pose.rotations;
@@ -68,7 +131,7 @@ impl SubjectPose {
             self.positions[bone] = reference.positions[bone];
         }
         for bone in translated {
-            self.move_joint(rig, bone, requested[bone].w_axis.truncate());
+            self.move_joint_for_import(rig, bone, requested[bone].w_axis.truncate());
         }
     }
 }

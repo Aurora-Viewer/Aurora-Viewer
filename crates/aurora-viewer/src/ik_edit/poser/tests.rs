@@ -325,6 +325,75 @@ fn poser_moving_wrists_fingers_and_ankles_preserves_the_complete_shaped_hierarch
     editor.commit_manipulation(rig, &frame, false);
     assert_attached(rig, &editor.poser.sessions[&world.agent_id].pose, &base, frame.model);
 }
+
+#[test]
+fn poser_shoulder_chains_stop_before_the_spine_and_joint_only_moves_no_other_joint() {
+    let (world, mut editor) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let base = editor.poser.sessions[&world.agent_id].base.clone();
+    let mut chain_pose = (*base).clone();
+    for name in ["mShoulderLeft", "mShoulderRight"] {
+        let shoulder = rig.names[name];
+        let collar = rig.parent[shoulder].unwrap();
+        let before = chain_pose.clone();
+        let world_pose = chain_pose.matrices(rig, Mat4::IDENTITY);
+        let target = world_pose[shoulder].w_axis.truncate() + Vec3::new(0.05, 0.03, -0.02);
+        assert!(chain_pose.move_joint(rig, shoulder, target, false));
+        for ancestor in ["mChest", "mTorso", "mSpine1", "mSpine2", "mSpine3", "mSpine4"] {
+            if let Some(&bone) = rig.names.get(ancestor) {
+                assert_eq!(chain_pose.rotations[bone], before.rotations[bone], "{ancestor} rotated for {name}");
+            }
+        }
+        assert_ne!(
+            chain_pose.rotations[collar], before.rotations[collar],
+            "the collar should bend for {name}"
+        );
+    }
+
+    let shoulder = rig.names["mShoulderLeft"];
+    let before = (*base).clone();
+    let matrices = before.matrices(rig, Mat4::IDENTITY);
+    let target = matrices[shoulder].w_axis.truncate() + Vec3::new(0.08, -0.04, 0.02);
+    let mut direct = before.clone();
+    assert!(direct.move_joint(rig, shoulder, target, true));
+    assert_eq!(direct.rotations, before.rotations);
+    for bone in 0..rig.len() {
+        if bone != shoulder {
+            assert_eq!(
+                direct.positions[bone], before.positions[bone],
+                "{} position changed",
+                rig.canonical_names[bone]
+            );
+        }
+    }
+    assert_ne!(direct.positions[shoulder], before.positions[shoulder]);
+
+    editor.symmetry = true;
+    editor.poser.move_joint_only = true;
+    let frame = editor.editor_frame(&world).unwrap();
+    editor.select(shoulder, rig, &frame);
+    editor.position = frame.model.inverse().transform_point3(frame.joints[shoulder].w_axis.truncate()) + Vec3::new(0.1, 0.0, 0.0);
+    assert!(editor.commit_poser_manipulation(rig, &frame, false));
+    let pose = &editor.poser.sessions[&world.agent_id].pose;
+    let right = rig.names["mShoulderRight"];
+    assert_ne!(pose.positions[shoulder], base.positions[shoulder]);
+    assert_ne!(pose.positions[right], base.positions[right], "mirror mode moves the opposite joint");
+    assert_eq!(pose.rotations, base.rotations);
+}
+
+#[test]
+fn poser_joint_only_setting_defaults_off_and_persists() {
+    let default = Config::default();
+    assert!(!default.move_joint_only);
+    let mut enabled = default;
+    enabled.move_joint_only = true;
+    let encoded = serde_json::to_vec(&enabled).unwrap();
+    let decoded: Config = serde_json::from_slice(&encoded).unwrap();
+    assert!(decoded.move_joint_only);
+    let old: Config = serde_json::from_str("{}").unwrap();
+    assert!(!old.move_joint_only, "older saved preferences default the new option off");
+}
+
 #[test]
 fn poser_world_pins_and_imported_translations_cannot_detach_children() {
     let (world, editor) = fixture();
@@ -334,7 +403,7 @@ fn poser_world_pins_and_imported_translations_cannot_detach_children() {
     let wrist = rig.names["mWristLeft"];
     let before = pose.matrices(rig, Mat4::IDENTITY);
     let target = before[wrist].w_axis.truncate() + Vec3::new(0.1, -0.15, -0.2);
-    assert!(pose.move_joint(rig, wrist, target));
+    assert!(pose.move_joint(rig, wrist, target, false));
     let pinned = pose.matrices(rig, Mat4::IDENTITY)[wrist];
     pose.locks.insert(wrist, pinned);
     for model in [Mat4::IDENTITY, Mat4::from_translation(Vec3::splat(10.0))] {
