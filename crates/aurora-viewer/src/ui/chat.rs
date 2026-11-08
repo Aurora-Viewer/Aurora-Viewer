@@ -436,6 +436,15 @@ impl ChatUi {
         self.focus_request || (!self.bar_hidden && (self.has_focus || !self.input.trim().is_empty()))
     }
 
+    /// The keyboard taken from every field (mouselook begun or ended,
+    /// gFocusMgr.setKeyboardFocus(NULL)): a request not served yet goes
+    /// too, so the field does not take it back next frame; the draft stays.
+    pub fn let_keyboard_go(&mut self) {
+        self.focus_request = false;
+        self.conv_focus_request = false;
+        self.has_focus = false;
+    }
+
     /// The nearby chat is in its own window (#910): the chat island's
     /// button shows and hides that window.
     pub fn nearby_apart(&self) -> bool {
