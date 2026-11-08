@@ -17,13 +17,23 @@ impl Preview {
         fn append(preview: &Preview, parent: &[String], collapsed: &BTreeSet<Vec<String>>, rows: &mut Vec<(Vec<String>, Option<usize>)>) {
             let mut children: Vec<_> = preview
                 .nodes
-                .keys()
-                .filter(|path| path.len() == parent.len() + 1 && path.starts_with(parent))
+                .range(parent.to_vec()..)
+                .take_while(|(path, _)| path.starts_with(parent))
+                .filter(|(path, _)| path.len() == parent.len() + 1)
+                .map(|(path, _)| path)
                 .collect();
             children.sort_by(|left, right| {
-                crate::imports::folders::explorer_name_cmp(&preview.nodes[*left].name, &preview.nodes[*right].name)
-                    .then_with(|| preview.nodes[*left].name.cmp(&preview.nodes[*right].name))
-                    .then_with(|| left.cmp(right))
+                let left_virtual = left.last().is_some_and(|key| key.starts_with("p:"));
+                let right_virtual = right.last().is_some_and(|key| key.starts_with("p:"));
+                left_virtual.cmp(&right_virtual).then_with(|| {
+                    if left_virtual {
+                        crate::imports::folders::explorer_name_cmp(&preview.nodes[*left].name, &preview.nodes[*right].name)
+                            .then_with(|| preview.nodes[*left].name.cmp(&preview.nodes[*right].name))
+                            .then_with(|| left.cmp(right))
+                    } else {
+                        left.cmp(right)
+                    }
+                })
             });
             for path in children {
                 let path = path.clone();
@@ -113,36 +123,66 @@ mod tests {
     use super::*;
 
     #[test]
-    fn preview_orders_sibling_folders_naturally_before_files() {
+    fn preview_keeps_inventory_sort_and_naturally_sorts_virtual_folders_before_files() {
         let mut preview = Preview::default();
-        for name in ["Set10", "Zeta", "alpha", "Set2"] {
+        let textures = vec!["i:00000000000000000001:textures".into()];
+        let objects = vec!["i:00000000000000000002:objects".into()];
+        let missing = vec!["missing:target".into()];
+        let set10 = [textures.clone(), vec!["p:Set10".into()]].concat();
+        let set2 = [textures.clone(), vec!["p:Set2".into()]].concat();
+        let nested = [set2.clone(), vec!["p:Nested".into()]].concat();
+        for (path, name) in [
+            (textures.clone(), "Textures"),
+            (objects.clone(), "Objects"),
+            (missing.clone(), "Missing"),
+            (set10.clone(), "Set10"),
+            (set2.clone(), "Set2"),
+            (nested.clone(), "Nested"),
+        ] {
             preview.nodes.insert(
-                vec![name.into()],
+                path,
                 Node {
                     name: name.into(),
                     edit: None,
                 },
             );
         }
-        preview.nodes.insert(
-            vec!["Set2".into(), "Nested".into()],
-            Node {
-                name: "Nested".into(),
-                edit: None,
-            },
-        );
-        preview.files.insert(Vec::new(), vec![9]);
-        preview.files.insert(vec!["Set2".into()], vec![2]);
-        preview.files.insert(vec!["Set2".into(), "Nested".into()], vec![1]);
+        preview.files.insert(Vec::new(), vec![99]);
+        preview.files.insert(textures.clone(), vec![3]);
+        preview.files.insert(set10.clone(), vec![10]);
+        preview.files.insert(set2.clone(), vec![2]);
+        preview.files.insert(nested.clone(), vec![1]);
 
         let rows = preview.ordered_rows(&BTreeSet::new());
         let ordered: Vec<_> = rows
             .iter()
-            .map(|(path, file)| file.map_or_else(|| path.join("/"), |index| format!("file{index}")))
+            .map(|(path, file)| {
+                file.map_or_else(
+                    || {
+                        (1..=path.len())
+                            .map(|depth| preview.nodes[&path[..depth]].name.as_str())
+                            .collect::<Vec<_>>()
+                            .join("/")
+                    },
+                    |index| format!("file{index}"),
+                )
+            })
             .collect();
         assert_eq!(
             ordered,
-            ["alpha", "Set2", "Set2/Nested", "file1", "file2", "Set10", "Zeta", "file9"]
+            [
+                "Textures",
+                "Textures/Set2",
+                "Textures/Set2/Nested",
+                "file1",
+                "file2",
+                "Textures/Set10",
+                "file10",
+                "file3",
+                "Objects",
+                "Missing",
+                "file99"
+            ]
         );
     }
 
