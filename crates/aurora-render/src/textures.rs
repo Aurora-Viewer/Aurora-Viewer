@@ -95,9 +95,15 @@ const MAX_PAGES: u32 = 1 << (32 - LAYER_BITS);
 /// the two were one number, at most 16,384, and the table kept that size
 /// once textures went to pages: arriving in a busy region (9,000 textures)
 /// 45 s or less after leaving another, the last 1,500 textures found no
-/// slot and were drawn white for as long as they were used. Four times
-/// that: more than the video memory holds textures for.
-pub const SLOTS: u32 = 1 << 16;
+/// slot and were drawn white for as long as they were used. Then four
+/// times that, 65,536: but a texture holds its slot while any object of a
+/// connected region uses it, in view or not, and the camera moved through
+/// an estate of busy neighbouring regions can keep that many in use
+/// (#2822). Sixteen times: a slot without texels shows the shared
+/// placeholder and costs 4 bytes of the location buffer (1 MB in all),
+/// and the slots are handed out lowest first, so a scene of a few
+/// thousand textures uploads no more of that buffer than before.
+pub const SLOTS: u32 = 1 << 18;
 const MAX_SLOTS: u32 = 1 << 20;
 
 /// Slots of the table: [`SLOTS`], or what AURORA_TEXTURE_SLOTS asks for (to
@@ -608,7 +614,9 @@ impl PageStore {
 
     fn new_with_integrated(capacity: u32, page_capacity: u32, max_layers: u32, max_dim: u32, integrated: bool) -> Self {
         Self {
-            slots: Vec::with_capacity(capacity as usize),
+            // (room for the slots the table held before #2822, as then:
+            // past them it grows, a few times at most)
+            slots: Vec::with_capacity(capacity.min(1 << 16) as usize),
             free_slots: BinaryHeap::new(),
             capacity,
             pages: Vec::new(),
@@ -897,9 +905,15 @@ impl PageStore {
     /// arrive (`replace` / `replace_staged`): nothing is written and no
     /// layer is taken.
     fn create_placeholder(&mut self) -> Option<u32> {
+        self.create_shared(PLACEHOLDER)
+    }
+
+    /// A derived normal loads through a stable slot, sampling the reserved
+    /// flat normal until its first upload. Shared slots allocate no layer.
+    fn create_shared(&mut self, reserved: u32) -> Option<u32> {
         let (key, page, layer) = self
             .slots
-            .get(PLACEHOLDER as usize)
+            .get(reserved as usize)
             .and_then(Option::as_ref)
             .map(|s| (s.key, s.page, s.layer))?;
         let slot = match self.free_slots.pop() {
@@ -1517,6 +1531,11 @@ impl TextureTable {
         self.store.create_placeholder()
     }
 
+    /// A streamed derived normal, flat until ready, without allocating texels.
+    pub fn create_normal_placeholder(&mut self) -> Option<u32> {
+        self.store.create_shared(FLAT_NORMAL)
+    }
+
     /// A texture that will not come: its slot, while it still shows the
     /// loading placeholder, shows the missing grey ([`MISSING`]). Costs no
     /// GPU work. False for a slot with texels of its own.
@@ -1809,11 +1828,13 @@ pub fn alpha_coverage(data: &[u8], cutoff: u8) -> f32 {
 /// averages thin opaque texels with the empty ones around them, so a leaf,
 /// a blade of grass, a hair strand or a fence wire falls under the cutoff a
 /// few levels down and the foliage thins out with the distance. Each level
-/// from 1 on gets its alpha scaled so that the share of texels at or above
-/// the cutoff matches level 0's: the threshold of the level that keeps that
-/// share is found on its alpha histogram, and the level is scaled by
-/// cutoff / threshold. Level 0 and the colour are left as they are; a
-/// level that level 0 leaves fully drawn or fully hidden is not touched.
+/// from 1 on can have its alpha raised to restore level 0's share: find the
+/// threshold on its histogram and scale by cutoff / threshold. A fuller
+/// level stays at the plain average (LLImageBase::generateMip,
+/// indra/llimage/llimage.cpp). Never lower alpha: the same texture may be
+/// used with a higher material cutoff, and dimming even its opaque texels
+/// erased HUD panels (#2163, #2452). Level 0 and colour stay unchanged;
+/// fully drawn or fully hidden textures are not touched.
 pub fn preserve_alpha_coverage(mips: &mut [(u32, u32, Vec<u8>)], cutoff: u8) {
     let cutoff = cutoff.max(1);
     let Some(target) = mips.first().map(|(_, _, d)| alpha_coverage(d, cutoff)) else {
@@ -1837,7 +1858,10 @@ pub fn preserve_alpha_coverage(mips: &mut [(u32, u32, Vec<u8>)], cutoff: u8) {
             kept[t] = kept[t + 1] + hist[t];
         }
         let want = target * n as f32;
-        let threshold = (1..256usize)
+        if kept[usize::from(cutoff)] as f32 >= want {
+            continue;
+        }
+        let threshold = (1..=usize::from(cutoff))
             .min_by(|&a, &b| {
                 let da = (kept[a] as f32 - want).abs();
                 let db = (kept[b] as f32 - want).abs();
@@ -1899,6 +1923,39 @@ mod tests {
         assert!((alpha_coverage(&mips[0].2, MASK_CUTOFF) - 0.25).abs() < 1e-3);
         // two levels down a line is a quarter of a texel: nothing draws
         assert_eq!(alpha_coverage(&mips[2].2, MASK_CUTOFF), 0.0);
+    }
+
+    #[test]
+    fn alpha_coverage_keeps_masked_hud_panels_at_the_creators_cutoff() {
+        // An opaque panel with a one-texel transparent border. Its 8 x 8
+        // mip already covers more than level 0 at the automatic cutoff.
+        // Scaling that coverage down made even its opaque centre 165/255:
+        // a HUD material cut at 200/255 disappeared altogether (#2163).
+        let mut pixels = [20, 40, 80, 255].repeat(64 * 64);
+        for y in 0..64 {
+            for x in 0..64 {
+                if x == 0 || y == 0 || x == 63 || y == 63 {
+                    pixels[(y * 64 + x) * 4 + 3] = 0;
+                }
+            }
+        }
+        let plain = build_mips(64, 64, pixels, 16);
+        assert!(alpha_coverage(&plain[3].2, 200) > 0.5);
+        let mut kept = plain.clone();
+        preserve_alpha_coverage(&mut kept, MASK_CUTOFF);
+        assert!(alpha_coverage(&kept[3].2, 200) > 0.5, "a 200/255 HUD panel must remain visible");
+        for (level, ((_, _, before), (_, _, after))) in plain.iter().zip(&kept).enumerate() {
+            for cutoff in [1, 128, 200, 255] {
+                assert!(
+                    alpha_coverage(after, cutoff) >= alpha_coverage(before, cutoff),
+                    "level {level}, cutoff {cutoff}: coverage preservation must not hide a panel the plain mip draws"
+                );
+            }
+            for (before, after) in before.as_chunks::<4>().0.iter().zip(after.as_chunks::<4>().0) {
+                assert_eq!(after[..3], before[..3]);
+                assert!(after[3] >= before[3], "level {level}: alpha must never decrease");
+            }
+        }
     }
 
     /// 128 × 128 texels, a quarter of them opaque, scattered (splitmix64).
@@ -2125,6 +2182,17 @@ mod tests {
         // the reserved slots are never handed out nor freed
         store.free(WHITE);
         assert_eq!(store.create_placeholder(), None);
+    }
+
+    #[test]
+    fn bump_normal_placeholder_shares_the_flat_normal_without_allocating_texels() {
+        let mut store = bare_store(64, 64);
+        store.slots[FLAT_NORMAL as usize].as_mut().unwrap().layer = 1;
+        let slot = store.create_shared(FLAT_NORMAL).unwrap();
+        assert_eq!(store.loc[slot as usize], pack(0, 1));
+        assert_eq!((store.bytes, store.pages.len(), store.live), (0, 0, 1));
+        store.free(slot);
+        assert_eq!((store.bytes, store.live), (0, 0));
     }
 
     #[test]

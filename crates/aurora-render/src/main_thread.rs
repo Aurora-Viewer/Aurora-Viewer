@@ -558,7 +558,7 @@ impl Renderer {
             let line = throttle
                 .lock()
                 .ok()
-                .and_then(|mut t| t.note(&format!("wgpu error: {e}"), std::time::Instant::now()));
+                .and_then(|mut t| t.note(&format!("wgpu error: {}", error_text(&e)), std::time::Instant::now()));
             if let Some(line) = line {
                 log::error!("{line}");
             }
@@ -996,6 +996,13 @@ impl Renderer {
     /// window's otherwise.
     pub fn frame_size(&self) -> (u32, u32) {
         self.snapshot_request.map_or(self.size, |s| (s.width, s.height))
+    }
+
+    /// The probe slots this device holds of the `slots` asked: the viewer
+    /// places probes in those only, a capture for a slot beyond them would
+    /// overwrite the last one.
+    pub fn fitted_probe_slots(&self, slots: u32) -> u32 {
+        crate::probes::Probes::fitted_slots(&self.device, slots)
     }
 
     /// The largest side a photo can be drawn at in one pass.
@@ -2055,6 +2062,30 @@ fn descriptors_in_all_pools(_adapter: &wgpu::Adapter) -> Option<u32> {
 /// src/vulkan/descriptor.rs). Check it again when wgpu is updated.
 const WGPU_POOL_MIN_SETS: u32 = 64;
 
+/// A wgpu error for the log. `Error::OutOfMemory` prints as "Out of Memory"
+/// alone, and the call that failed is only in its sources: wgpu-core loses
+/// the device on most out-of-memory results (`handle_hal_error`), so this
+/// line is all that says which call ended the session (#2482). The other
+/// errors already carry these lines; this is their layout, which the crash
+/// report reads (aurora-viewer crash/summary.rs).
+fn error_text(error: &wgpu::Error) -> String {
+    use std::fmt::Write as _;
+    let mut text = error.to_string();
+    if matches!(error, wgpu::Error::OutOfMemory { .. }) {
+        let mut source = std::error::Error::source(error);
+        let mut indent = 2;
+        if source.is_some() {
+            text.push_str("\n\nCaused by:");
+        }
+        while let Some(cause) = source {
+            let _ = write!(text, "\n{:indent$}{cause}", "");
+            source = cause.source();
+            indent += 2;
+        }
+    }
+    text
+}
+
 /// Texture pages, the length of the "textures" binding array.
 ///
 /// Binding-array entries have their own limit; they do not consume the
@@ -2080,6 +2111,42 @@ fn texture_page_limit(limits: &wgpu::Limits, descriptors_in_all_pools: Option<u3
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An error and what caused it, as wgpu chains its `ContextError`.
+    #[derive(Debug)]
+    struct Chained(&'static str, Option<Box<Chained>>);
+
+    impl std::fmt::Display for Chained {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.0)
+        }
+    }
+
+    impl std::error::Error for Chained {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            self.1.as_deref().map(|c| c as _)
+        }
+    }
+
+    #[test]
+    fn an_out_of_memory_error_names_the_call_that_failed() {
+        let inner = Chained("Not enough memory left.", None);
+        let source = Chained("In Device::create_bind_group, label = 'textures'", Some(Box::new(inner)));
+        let error = wgpu::Error::OutOfMemory { source: Box::new(source) };
+        assert_eq!(
+            error_text(&error),
+            "Out of Memory\n\nCaused by:\n  In Device::create_bind_group, label = 'textures'\n    Not enough memory left."
+        );
+    }
+
+    #[test]
+    fn a_validation_error_keeps_its_own_text() {
+        let error = wgpu::Error::Validation {
+            source: Box::new(Chained("not repeated", None)),
+            description: "Validation Error\n\nCaused by:\n  In Queue::submit\n".to_owned(),
+        };
+        assert_eq!(error_text(&error), "Validation Error\n\nCaused by:\n  In Queue::submit\n");
+    }
 
     #[test]
     fn memory_summary_reports_distinct_heaps_without_fabricating_a_second_pool() {

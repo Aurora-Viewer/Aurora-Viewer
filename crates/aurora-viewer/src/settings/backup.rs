@@ -50,6 +50,15 @@ const THIS_PC_GIFS: &[&str] = &["giphy_key", "klipy_key", "customer_id"];
 /// The nested sections that hold settings of this PC, and those settings.
 const THIS_PC_NESTED: &[(&str, &[&str])] = &[("audio", THIS_PC_AUDIO), ("gifs", THIS_PC_GIFS)];
 
+/// Whether the path of a setting (`gifs.giphy_key`) names a setting of the
+/// login or of this PC.
+pub(super) fn is_this_pc(key: &str) -> bool {
+    match key.split_once('.') {
+        None => THIS_PC.contains(&key),
+        Some((section, inner)) => THIS_PC_NESTED.iter().any(|(name, keys)| *name == section && keys.contains(&inner)),
+    }
+}
+
 /// An account's files that are preferences. Only these names are read from
 /// a backup: a name in the file is never taken as a path.
 const ACCOUNT_FILES: &[&str] = &[
