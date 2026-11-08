@@ -2069,7 +2069,7 @@ const WGPU_POOL_MIN_SETS: u32 = 64;
 /// line is all that says which call ended the session (#2482). The other
 /// errors already carry these lines; this is their layout, which the crash
 /// report reads (aurora-viewer crash/summary.rs).
-fn error_text(error: &wgpu::Error) -> String {
+pub(crate) fn error_text(error: &wgpu::Error) -> String {
     use std::fmt::Write as _;
     let mut text = error.to_string();
     if matches!(error, wgpu::Error::OutOfMemory { .. }) {

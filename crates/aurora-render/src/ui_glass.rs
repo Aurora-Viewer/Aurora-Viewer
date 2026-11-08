@@ -147,6 +147,11 @@ impl Glass {
         self.blur.matches(size, scale)
     }
 
+    /// The labels' target is made (`make_under`).
+    pub fn has_under(&self) -> bool {
+        self.under.is_some()
+    }
+
     /// The labels' target, made on its first use.
     pub fn make_under(&mut self, device: &wgpu::Device, renderer: &mut egui_wgpu::Renderer) {
         let (format, size) = (self.format, self.size);
