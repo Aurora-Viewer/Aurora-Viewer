@@ -890,7 +890,7 @@ mod tests {
             );
             let pixels = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Layer pixels"),
-                size: u64::from(SIZE * SIZE * 4),
+                size: crate::readback::readback_size(u64::from(SIZE * SIZE * 4)),
                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             });
@@ -1143,7 +1143,7 @@ mod tests {
         let depth = texture(wgpu::TextureFormat::Depth32Float, attachment, SIZE, None).create_view(&Default::default());
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Preview test readback"),
-            size: u64::from(SIZE * SIZE * 4),
+            size: crate::readback::readback_size(u64::from(SIZE * SIZE * 4)),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
