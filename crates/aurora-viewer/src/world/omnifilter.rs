@@ -134,7 +134,11 @@ pub fn dialog_reply(
         })
     };
     if buttons.first().is_some_and(|b| b == TEXTBOX) {
-        return Some(reply(0, m.textbox_reply.clone()));
+        // the answer goes through the same clean-up and cut as one typed
+        // in the prompt (a rule from a file may hold CRs or be too long)
+        let mut text = m.textbox_reply.clone();
+        super::notifications::clamp_text_box_reply(&mut text);
+        return Some(reply(0, text));
     }
     if m.button_reply == MUTE_BUTTON {
         return Some(Reply::Block {
