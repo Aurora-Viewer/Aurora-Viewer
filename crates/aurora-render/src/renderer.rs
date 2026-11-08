@@ -4966,19 +4966,31 @@ impl Backend {
 
     /// The render targets for the current size. Refused, frames show the
     /// interface alone and the targets are tried again later: what is
-    /// installed then is invalid and drawn with by nothing. The old targets
-    /// cannot stay, they have the old size, and making the next try without
-    /// them leaves it more room.
+    /// installed then is invalid and drawn with by nothing. A set is made
+    /// while the one it replaces still lives, so a refused set (most of its
+    /// textures made, one refused) gives way to a 1x1 one before the next
+    /// try: otherwise a card with room for one set but not two would refuse
+    /// every try.
     fn rebuild_targets(&mut self) {
         let device = self.device.clone();
         let refuse = crate::gpu_alloc::targets_refused();
-        let (_, refused) = crate::gpu_alloc::scoped(&device, || self.make_targets_now(refuse));
+        let now = Instant::now();
+        // a resize, a setting or a photo while refused is a try too, but
+        // only the first refusal and the scheduled tries lengthen the wait:
+        // dragging the window's edge would put the next try 30 s away
+        let scheduled = !self.targets_refused || self.targets_backoff.ready(now);
+        if self.targets_refused {
+            let _ = crate::gpu_alloc::scoped(&device, || self.make_targets_now(refuse, Some((1, 1))));
+        }
+        let (_, refused) = crate::gpu_alloc::scoped(&device, || self.make_targets_now(refuse, None));
         if refused || refuse {
             if !self.targets_refused {
                 log::warn!("render targets: out of video memory, the interface alone until they can be made");
             }
             self.targets_refused = true;
-            self.targets_backoff.failed(Instant::now());
+            if scheduled {
+                self.targets_backoff.failed(now);
+            }
         } else {
             if self.targets_refused {
                 log::info!("render targets: made again, the world is back");
@@ -4988,7 +5000,8 @@ impl Backend {
         }
     }
 
-    fn make_targets_now(&mut self, refuse: bool) {
+    /// `size` forces a size: the 1x1 set that frees a refused one.
+    fn make_targets_now(&mut self, refuse: bool, size: Option<(u32, u32)>) {
         self.occlusion.invalidate();
         self.depth_pick.scene_changed();
         let scale = if self.snapshot_window.is_some() {
@@ -4997,18 +5010,21 @@ impl Backend {
             self.settings.render_scale_percent
         };
         let window = (self.config.width, self.config.height);
-        let size = match self.fsr_upscale() {
+        let forced = size.is_some();
+        let size = size.unwrap_or_else(|| match self.fsr_upscale() {
             Some(ratio) => crate::fsr::render_size(window, ratio),
             None => crate::rlva::resolution::render_size(window, self.rlva_resolution_divisor, scale),
-        };
-        log::info!(
-            "world resolution: {}x{} (output {}x{}, scale {}%)",
-            size.0,
-            size.1,
-            self.config.width,
-            self.config.height,
-            scale
-        );
+        });
+        if !forced {
+            log::info!(
+                "world resolution: {}x{} (output {}x{}, scale {}%)",
+                size.0,
+                size.1,
+                self.config.width,
+                self.config.height,
+                scale
+            );
+        }
         // the new targets are made while the old ones live: the counters'
         // growth in between is what this size takes
         let before = self.live_bytes();
@@ -5666,6 +5682,16 @@ impl Backend {
             crate::ui_blur::take_boundary(&mut ui.primitives);
             crate::ui_glass::skip(&mut ui.primitives);
             crate::label_depth::skip(&mut ui.primitives);
+            // the previews draw into targets of their own: they stay, and
+            // egui-wgpu gets meshes, not callbacks it does not know
+            self.previews.render(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                &mut self.egui,
+                &mut ui.primitives,
+                ui.pixels_per_point,
+            );
             let sd = egui_wgpu::ScreenDescriptor {
                 size_in_pixels: [self.config.width, self.config.height],
                 pixels_per_point: ui.pixels_per_point,
@@ -6150,11 +6176,13 @@ impl Backend {
                 _ => None,
             }
         };
+        // (before the skip: a frame without a surface image, as in a resize,
+        // must not take the notice away)
+        stats.video_memory_full = self.targets_refused;
         let Some(surface_tex) = surface_tex else {
             let spent = Spent { writes, lists: draw_lists };
             return self.skip(index, stats, upload_cmds, frame_uploads, spent);
         };
-        stats.video_memory_full = self.targets_refused;
         if self.targets_refused {
             let ui = egui_frame.map(EguiFrame::tessellate);
             let mut cmds = self.interface_alone(surface_tex.texture(), ui);
