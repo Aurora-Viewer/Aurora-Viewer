@@ -3699,7 +3699,7 @@ ui-profile-this-user-has-no-classified-listings = This user has no classified li
 ui-inventory-controls-library = Library
 ui-options-camera-the-camera-can-move-beyond-the-draw-distance-below = The camera can move beyond the draw distance, below ground and closer to objects
 ui-options-camera-after-a-teleport-in-the-region-the-camera-returns = After a teleport within the region, the camera returns behind your avatar. Off, it stays where it is.
-ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag = The camera follows your avatar with a slight lag (1 by default, 0 = none)
+ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag = The camera follows your avatar with a lag: higher values move it more smoothly and slowly (1 by default, 0 = none)
 ui-options-camera-the-camera-follows-the-object-it-is-focused-on = The camera follows the object it is focused on as the object moves
 app-inventory-thumbnail-invalid-capture = Invalid capture.
 ui-land-dialogs-deeding-this-parcel-requires-the-group-to-permanently-have = Deeding this parcel requires the group to permanently have enough land use credit.{ $contribution }{ " The purchase price is not refunded to the owner. If deeded land is sold, the proceeds are split equally among group members.\u000A\u000ADeed these " }{ $value0 }{ " m² of land to group '" }{ $group }'?

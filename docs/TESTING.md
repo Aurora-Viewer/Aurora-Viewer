@@ -1331,9 +1331,9 @@ when unfocused") is ignored during a screenshot.
   (before the fix: `parent 150, seat animation true`, the avatar drawn
   seated far out of the region).
   `ao-local` and `ao-region` do the same with the demo's AO turned on at
-  frame 240: the seat plays the stock sit, which the AO overrides and stops,
-  and the simulator keeps the AO's animations through the teleport and
-  sends no new stock state, as a simulator can (#2700). Capture frame 380:
+  frame 240: the seat plays the stock sit, which the AO overrides and leaves
+  to the simulator, as the Legacy AO does; the teleport unseats us and the
+  simulator drops the stock sit but keeps the AO's animations (#2700). Capture frame 380:
   seated in the AO's sit; frame 720: standing at the destination. The log
   ends `AO state None, AO sit cover false` (before the fix: `AO state
   Some(Sitting), AO sit cover true`, the avatar standing in the AO's sit).

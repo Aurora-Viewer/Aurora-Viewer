@@ -3702,7 +3702,7 @@ ui-profile-this-user-has-no-classified-listings = L'utilisateur n'a pas de petit
 ui-inventory-controls-library = La bibliothèque
 ui-options-camera-the-camera-can-move-beyond-the-draw-distance-below = La caméra peut aller au-delà de la distance d'affichage, sous le sol et plus près des objets
 ui-options-camera-after-a-teleport-in-the-region-the-camera-returns = Après une téléportation dans la région, la caméra se replace derrière l'avatar. Désactivé, elle reste où elle est.
-ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag = La caméra suit l'avatar avec un léger retard (1 par défaut, 0 = aucun)
+ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag = La caméra suit l'avatar avec un retard : plus la valeur est haute, plus elle bouge doucement et lentement (1 par défaut, 0 = aucun)
 ui-options-camera-the-camera-follows-the-object-it-is-focused-on = La caméra suit l'objet sur lequel elle est fixée quand il bouge
 app-inventory-thumbnail-invalid-capture = La capture est invalide.
 ui-land-dialogs-deeding-this-parcel-requires-the-group-to-permanently-have = La cession de cette parcelle requiert que le groupe dispose en permanence d'un crédit suffisant pour payer les frais d'occupation de terrain.{ $contribution }{ " Le prix d'achat du terrain n'est pas remboursé au propriétaire. Si une parcelle cédée est vendue, son prix de vente est redistribué à part égale entre les membres du groupe.\u000A\u000ACéder ces " }{ $value0 }{ " m² de terrain au groupe '" }{ $group }' ?
