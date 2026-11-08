@@ -88,7 +88,7 @@ pub const COMMANDS: &[Command] = commands![
     "webbrowser", "world-filled", "toolbar-command-web-browser", true;
     "defaultchatbar", "message-filled", "toolbar-command-chat-bar", true;
     "areasearch", "zoom-scan-filled", "toolbar-command-area-search", true;
-    "settings_debug", "terminal-2", "toolbar-command-debug-settings", false;
+    "settings_debug", "terminal-2", "toolbar-command-debug-settings", true;
     "statistics", "statistics", "toolbar-command-statistics", true;
     "soundexplorer", "music", "toolbar-command-sound-explorer", true;
     "assetblacklist", "shield-off", "toolbar-command-asset-blacklist", true;
