@@ -415,6 +415,13 @@ impl Refusals {
             self.extras.succeeded();
             return false;
         }
+        // Nothing tried for a whole wait after it was due: no extra was
+        // needed meanwhile, and the memory may have come back and gone
+        // again. Without a success to clear it, a refusal then went
+        // unsaid and waited twice as long as a first one.
+        if self.extras.next.is_some_and(|due| now >= due + self.extras.wait) {
+            self.extras.succeeded();
+        }
         let first = !self.extras.waiting();
         self.extras.failed_try(now);
         first
@@ -765,6 +772,21 @@ mod tests {
         r.extra(true, t0);
         r.targets_made();
         assert!(!r.extras_ready(t0 + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn an_extra_refused_long_after_its_wait_starts_again() {
+        let t0 = Instant::now();
+        let s = Duration::from_secs;
+        let mut r = Refusals::default();
+        assert!(r.extra(true, t0));
+        // retried when due, refused again: still the same episode
+        assert!(!r.extra(true, t0 + s(2)));
+        assert!(!r.extras_ready(t0 + s(5)), "the wait doubled to 4 s");
+        // no extra needed for a minute, then refused: said again, 2 s wait
+        assert!(r.extra(true, t0 + s(66)));
+        assert!(!r.extras_ready(t0 + s(67)));
+        assert!(r.extras_ready(t0 + s(68)));
     }
 
     #[test]
