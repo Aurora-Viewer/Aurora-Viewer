@@ -32,7 +32,7 @@ pub enum TouchLook {
     NormalPointer,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct Preferences {
     /// Native pointer bitmap size in physical pixels.
@@ -124,7 +124,12 @@ impl Cursors {
         *self = Self::with_preferences(palette, &self.preferences);
     }
     pub fn set_preferences(&mut self, palette: &crate::theme::Palette, preferences: &Preferences) {
-        *self = Self::with_preferences(palette, preferences);
+        if self.preferences == *preferences {
+            return;
+        }
+        self.pointer = pointer_image(palette, preferences);
+        self.touch = touch_image(palette, preferences);
+        self.preferences.clone_from(preferences);
     }
     /// The normal arrow used by the platform when no special action cursor applies.
     pub fn pointer(&self) -> Option<egui::CustomCursorImage> {
@@ -539,6 +544,26 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn changing_pointer_preferences_keeps_fixed_action_cursors_cached() {
+        let palette = crate::theme::Theme::default().palette();
+        let mut cursors = Cursors::with_palette(&palette);
+        let pipette = cursors.pipette().unwrap();
+        let preferences = Preferences {
+            size: 48,
+            look: PointerLook::Arrow,
+            ..Preferences::default()
+        };
+
+        cursors.set_preferences(&palette, &preferences);
+
+        assert_eq!(cursors.pointer().unwrap().size, [48, 48]);
+        assert!(std::sync::Arc::ptr_eq(&pipette.rgba, &cursors.pipette().unwrap().rgba));
+        let unchanged = cursors.pointer().unwrap();
+        cursors.set_preferences(&palette, &preferences);
+        assert!(std::sync::Arc::ptr_eq(&unchanged.rgba, &cursors.pointer().unwrap().rgba));
     }
 
     #[test]
