@@ -1174,8 +1174,11 @@ exe before publishing; the local build also writes it to `version.txt`.
   it). Nothing after it is read, so a link from a web page cannot add other
   options. Before login the place is the start location of the next login
   (the saved choice stays); in the world it opens the place's details; a
-  command runs once in the world. When a viewer already runs (same demo
-  mode and `--title`), the link goes to it and the new process stops.
+  command runs once in the world. When a viewer already runs, the link goes
+  to it and the new process stops. On Windows, the last focused matching
+  window receives it: a browser launch without `--title` reaches any online
+  Aurora window, including a titled test window; an explicit `--title` or
+  offline demo stays isolated. Linux matches the demo mode and `--title`.
   Preferences › Language and updates › "Open SLURL and Hypergrid links in
   Aurora" registers all three schemes for the current user (the registry on
   Windows, a desktop entry and `mimeapps.list` on Linux, see
@@ -1247,6 +1250,12 @@ its own task in its own git worktree:
   contact prototype and the creator's LSL script
 - [docs/IK_EDIT.md](docs/IK_EDIT.md) — frozen-pose skeleton editor, target-prim
   offsets and general bone-contact authoring for LSL
+
+Pull requests follow the [pull request template](.github/pull_request_template.md):
+a check lists what a description is missing, and maintainers review a PR
+once its description and its CI are complete. An outside contributor's PR
+still incomplete 3 days later is closed, and can be reopened once it is
+complete.
 
 Behaviour follows the Legacy Viewer: its sources are expected next to the repository
 (`../phoenix-firestorm`, cloned from

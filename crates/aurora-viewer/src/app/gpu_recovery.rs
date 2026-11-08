@@ -34,6 +34,7 @@ impl App {
         crate::window_hold::install(&window);
         // kept with the option off too: turning it on starts from this mode
         crate::system_theme::window_theme(window.theme());
+        crate::slurl_handoff::window_ready(&window);
         Ok(window)
     }
 

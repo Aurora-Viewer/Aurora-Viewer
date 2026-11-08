@@ -517,6 +517,20 @@ in English and must be **readable by a human in two minutes**:
   was tested).
 - **Limits and follow-up**: what is not done, ⬜ lines added to TASKS.md.
 
+**Keep the template's headings** (`## What it is for`, `## Legacy Viewer
+origin`, `## What changes`, `## Screenshots`, `## Tests`, `## Limits and
+follow-up`), the issue line first: the **PR description** workflow reads
+them on every pull request, the team's included. When the issue line is
+missing, or one of `What it is for`, `Legacy Viewer origin`, `What changes`
+and `Tests` is missing or left as the template has it, it posts a comment
+opening with `## Changes requested` and the `needs-description` label; both
+go away once the description is edited. Check your draft before
+`gh pr create`:
+
+```powershell
+./scripts/check-pr-description.ps1 -BodyFile .scratch/pr.md   # lists what it misses, sends nothing
+```
+
 Labels (created by `scripts/setup-labels.ps1`):
 
 - **one type**, for PRs only, which files the PR in the release notes:
@@ -534,6 +548,11 @@ Labels (created by `scripts/setup-labels.ps1`):
   showing it. An agent neither reviews nor merges a PR on hold. When the
   human resumes it, remove the label (`--remove-label on-hold`). Issues use
   the board's `On hold` Status instead (section 15).
+- **`needs-description`**, set and removed by the PR description workflow
+  (above), never by hand. Do not review a PR that carries it: its author
+  completes the description first. An outside contributor's PR that still
+  carries it 3 days after the workflow's comment is closed by the
+  workflow's daily sweep; the team's PRs never are.
 
 ### Link the PR and its issues
 
@@ -612,7 +631,11 @@ explain it to the human and propose 2–3 solutions.
 Then post the review as a comment (`gh pr comment <n> --body-file …`). The
 file given to `--body-file` (like the one of the PR description) is a draft
 in `.scratch/`, never committed: the review lives in the PR comment, not in
-the repository. When you ask the author of someone else's PR for changes,
+the repository. **Someone else's PR** is reviewed only once its description
+is complete (no `needs-description` label) and its PR CI is green: an
+outside contributor's CI waits for a maintainer's "Approve and run", so ask
+your human to approve it, and do not read the code before. When you ask the
+author of someone else's PR for changes,
 open that comment with `## Changes requested`: the PR tracking of
 `aurora-tools.cmd` lists the PR as waiting on its author until a new
 commit of its own (a merge of main does not count). Structure of your review (keep the `## Review` heading and the

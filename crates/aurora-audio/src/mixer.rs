@@ -227,9 +227,14 @@ pub(crate) struct PcmSource {
     bus: usize,
     cons: rtrb::Consumer<f32>,
     playing: bool,
+    started: bool,
     prebuffer: usize,
+    rebuffer: usize,
     max_latency: Option<usize>,
     kill: Option<Arc<AtomicBool>>,
+    starved: Option<Arc<AtomicBool>>,
+    #[cfg(test)]
+    underruns: usize,
     fade: f32,
 }
 
@@ -242,14 +247,33 @@ impl PcmSource {
         max_latency_frames: Option<usize>,
         kill: Option<Arc<AtomicBool>>,
     ) -> Self {
+        Self::new_with_rebuffer(channel, cons, prebuffer_frames, prebuffer_frames, max_latency_frames, kill, None)
+    }
+
+    /// Creates a source with a deeper resume threshold and an optional
+    /// nonblocking starvation signal for its producer thread.
+    pub(crate) fn new_with_rebuffer(
+        channel: Channel,
+        cons: rtrb::Consumer<f32>,
+        prebuffer_frames: usize,
+        rebuffer_frames: usize,
+        max_latency_frames: Option<usize>,
+        kill: Option<Arc<AtomicBool>>,
+        starved: Option<Arc<AtomicBool>>,
+    ) -> Self {
         Self {
             // Master is not a bus; route stray master sources to UI.
             bus: channel.bus().unwrap_or(0),
             cons,
             playing: false,
+            started: false,
             prebuffer: prebuffer_frames * ENGINE_CHANNELS,
+            rebuffer: rebuffer_frames * ENGINE_CHANNELS,
             max_latency: max_latency_frames.map(|f| f * ENGINE_CHANNELS),
             kill,
+            starved,
+            #[cfg(test)]
+            underruns: 0,
             fade: 0.0,
         }
     }
@@ -279,8 +303,10 @@ impl PcmSource {
 
         let mut avail = self.cons.slots() & !1;
         if !self.playing {
-            if avail >= self.prebuffer.max(ENGINE_CHANNELS) || (abandoned && avail > 0) {
+            let threshold = if self.started { self.rebuffer } else { self.prebuffer };
+            if avail >= threshold.max(ENGINE_CHANNELS) || (abandoned && avail > 0) {
                 self.playing = true;
+                self.started = true;
                 self.fade = 0.0;
             } else {
                 return !(abandoned && avail == 0);
@@ -307,7 +333,14 @@ impl PcmSource {
             }
         }
         if n < want {
-            // Underrun: wait for the jitter buffer to refill.
+            // Underruns only signal the producer; logging stays off the audio callback.
+            if let Some(starved) = &self.starved {
+                starved.store(true, Ordering::Relaxed);
+            }
+            #[cfg(test)]
+            {
+                self.underruns += 1;
+            }
             self.playing = false;
         }
         !(abandoned && self.cons.is_empty())
@@ -1324,6 +1357,53 @@ mod tests {
         // Fade-in reaches full level after SOURCE_FADE_FRAMES frames.
         assert!((out[1000] - 0.5).abs() < 1e-3, "{}", out[1000]);
         assert!(out[0] < 0.01);
+    }
+
+    #[test]
+    fn music_resumes_only_after_four_fifths_of_its_ring_refills() {
+        let ring_frames = 5 * ENGINE_SAMPLE_RATE as usize;
+        let (mut prod, cons) = rtrb::RingBuffer::<f32>::new(ring_frames * ENGINE_CHANNELS);
+        let initial = vec![0.1; ring_frames * ENGINE_CHANNELS];
+        prod.push_entire_slice(&initial).unwrap();
+        let starved = Arc::new(AtomicBool::new(false));
+        let mut source = PcmSource::new_with_rebuffer(
+            Channel::Music,
+            cons,
+            ENGINE_SAMPLE_RATE as usize,
+            ring_frames * 4 / 5,
+            None,
+            None,
+            Some(starved.clone()),
+        );
+        let mut bus = vec![0.0; 480 * ENGINE_CHANNELS];
+        let mut tmp = Vec::new();
+
+        // A two-second source pause fits inside the deep ring.
+        for _ in 0..(2 * ENGINE_SAMPLE_RATE as usize / 480) {
+            assert!(source.mix_into(&mut bus, &mut tmp));
+        }
+        assert_eq!(source.underruns, 0);
+
+        // Drain what remains, then confirm the producer must refill to 80%
+        // before this source starts consuming again.
+        for _ in 0..(3 * ENGINE_SAMPLE_RATE as usize / 480) {
+            source.mix_into(&mut bus, &mut tmp);
+        }
+        source.mix_into(&mut bus, &mut tmp);
+        assert_eq!(source.underruns, 1);
+        assert!(starved.load(Ordering::Relaxed));
+        let below_threshold = vec![0.1; ring_frames * 7 / 10 * ENGINE_CHANNELS];
+        prod.push_entire_slice(&below_threshold).unwrap();
+        let queued = source.queued_samples();
+        source.mix_into(&mut bus, &mut tmp);
+        assert!(!source.playing);
+        assert_eq!(source.queued_samples(), queued);
+
+        let to_threshold = vec![0.1; ring_frames / 10 * ENGINE_CHANNELS];
+        prod.push_entire_slice(&to_threshold).unwrap();
+        source.mix_into(&mut bus, &mut tmp);
+        assert!(source.playing);
+        assert_eq!(source.underruns, 1);
     }
 
     #[test]

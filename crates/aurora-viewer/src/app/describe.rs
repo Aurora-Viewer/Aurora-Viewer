@@ -108,6 +108,16 @@ impl App {
             if let Some(me) = me.filter(|_| pending.scope.is_empty()) {
                 self.scene.log_nearby(&self.world, me, 12.0, &ids);
             }
+            // issue #2747: what the network lost or could not read, for a
+            // worn object listed by the simulator that never came
+            let net = self.net.stats.snapshot();
+            log::info!(
+                "network this session: {} ObjectUpdate blocks not read, {} packets skipped ({} came late), {} reliable packets given up",
+                net.objects_unread,
+                net.seq_gaps,
+                net.seq_late,
+                net.dropped_reliable
+            );
             // what the avatars around wear: a missing part shows there
             let names = |id: &Uuid| self.known_object_name(id);
             self.scene.describe_worn(&self.world, renderer, &pending.scope, &names, &ids);
