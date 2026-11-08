@@ -196,9 +196,12 @@ struct PostU {
     auto_exposure: f32,
     /// A cut-out photo (cutout.rs): 1 the snapshot, 2 the live view.
     cutout: f32,
-    _pad: f32,
+    /// Strength of the light shafts from the sun, 0 off.
+    god_rays: f32,
     /// The part of the photo the frame draws ([`photo_part`]).
     photo_part: [f32; 4],
+    /// The sun on screen ([`sun_on_screen`]).
+    sun_uv: [f32; 4],
 }
 
 /// Where `PostU::auto_exposure` sits in the post uniforms.
@@ -2602,6 +2605,21 @@ fn whole_proj(proj: Mat4, photo_tile: Mat4) -> Mat4 {
 /// 1 outside a tiled photo). The glow keeps the whole photo's 512 x 512
 /// texels with it: drawn on a tile's own, its halo shrank with the tile and
 /// stopped at its border, a line along every seam.
+/// Where the sun sits on screen for the light shafts: uv (y down) and a
+/// fade, 1 on screen, down to 0 a screen width past its edge, behind the
+/// camera or below the horizon (`visible`).
+// shortcut: one projection for the whole image; tiled photos and VR eyes
+// place the shafts by it, give each its own if they look off there.
+fn sun_on_screen(view_proj: Mat4, sun_dir: Vec3, visible: f32) -> [f32; 4] {
+    let c = view_proj * sun_dir.normalize_or(Vec3::Z).extend(0.0);
+    if c.w <= 1e-4 || !(visible > 0.0) {
+        return [0.5, 0.5, 0.0, 0.0];
+    }
+    let (x, y) = (c.x / c.w, c.y / c.w);
+    let fade = (2.0 - x.abs().max(y.abs())).clamp(0.0, 1.0) * visible.min(1.0);
+    [x * 0.5 + 0.5, 0.5 - y * 0.5, fade, 0.0]
+}
+
 fn photo_part(photo_tile: Mat4) -> [f32; 4] {
     let (sx, sy) = (photo_tile.x_axis.x, photo_tile.y_axis.y);
     if photo_tile == Mat4::IDENTITY || sx <= 0.0 || sy <= 0.0 {
@@ -6565,8 +6583,9 @@ impl Backend {
                 (true, true) => 1.0,
                 (true, false) => 2.0,
             },
-            _pad: 0.0,
+            god_rays: if hdr && !f.cutout { f.god_rays.clamp(0.0, 1.0) } else { 0.0 },
             photo_part: photo_part(f.photo_tile),
+            sun_uv: sun_on_screen(f.proj * f.view, f.sun_dir, f.sun_visible),
         };
         self.queue.write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(&post));
         if let (true, Some(t)) = (self.contact_now, &self.targets.contact) {
@@ -9170,6 +9189,21 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_sun_lands_on_screen_and_fades_off_it() {
+        // a camera at the origin looking down +X, Z up: clip = (-y, z, 1, x)
+        let proj = Mat4::from_cols(Vec4::W, -Vec4::X, Vec4::Y, Vec4::Z);
+        let view = Mat4::IDENTITY;
+        // dead ahead: the centre, full strength
+        let s = sun_on_screen(proj * view, Vec3::X, 1.0);
+        assert!((s[0] - 0.5).abs() < 1e-5 && (s[1] - 0.5).abs() < 1e-5 && s[2] == 1.0);
+        // a little up: above the centre (uv y down)
+        assert!(sun_on_screen(proj * view, Vec3::new(1.0, 0.0, 0.2), 1.0)[1] < 0.5);
+        // behind the camera or hidden: no rays
+        assert_eq!(sun_on_screen(proj * view, -Vec3::X, 1.0)[2], 0.0);
+        assert_eq!(sun_on_screen(proj * view, Vec3::X, 0.0)[2], 0.0);
+    }
 
     /// The occlusion's table is read by index against the main view's
     /// arguments: a cut-out photo leaves the ground and the water out of both,

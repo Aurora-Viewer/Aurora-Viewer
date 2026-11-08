@@ -560,6 +560,9 @@ pub struct Settings {
     pub bloom: bool,
     /// The share of the light over the threshold it spreads (0.05 to 1).
     pub bloom_strength: f32,
+    /// Light shafts from the sun through the bright parts of the image
+    /// (Aurora's own, the Legacy Viewer has none): off by default.
+    pub god_rays: bool,
     /// GPU occlusion culling: objects hidden behind others are not drawn
     /// (Firestorm UseOcclusion, on by default). Renamed from `gpu_occlusion`
     /// (off while it cost more than it saved) so that saved settings take
@@ -1821,6 +1824,7 @@ impl Default for Settings {
             glow: true,
             bloom: false,
             bloom_strength: BLOOM_STRENGTH,
+            god_rays: false,
             occlusion_culling: true,
             lod_factor: 2.0,
             texture_budget_auto: true,

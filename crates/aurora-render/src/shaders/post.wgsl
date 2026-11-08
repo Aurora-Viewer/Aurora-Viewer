@@ -29,11 +29,14 @@ struct PostParams {
     // shows through each pixel; 1: the photo, straight color and coverage,
     // 2: the live view, over a checkerboard
     cutout: f32,
-    _pad: f32,
+    // light shafts from the sun (god_rays below), 0 off
+    god_rays: f32,
     // the part of the photo this frame draws, in fractions of the photo
     // (left, top, width, height; 0, 0, 1, 1 outside a tiled photo): the
     // glow's 512 x 512 texels are the whole photo's, as in one pass
     photo_part: vec4<f32>,
+    // the sun on screen: uv (xy), its fade (z: hidden, off screen, 0)
+    sun_uv: vec4<f32>,
 };
 @group(0) @binding(2) var<uniform> post: PostParams;
 // Blurred glow (512x512, display space), see glow.wgsl.
@@ -313,6 +316,25 @@ fn fs_bloom_prefilter(in: Out) -> @location(0) vec4<f32> {
     return vec4<f32>(acc.rgb / max(acc.a, 1e-5), 1.0);
 }
 
+// Light shafts (GPU Gems 3, ch. 13): the light over the bloom threshold
+// marched toward the sun on screen, fading each step; a per-pixel offset
+// hides the banding of the steps.
+fn god_rays(uv: vec2<f32>, clip: vec2<f32>) -> vec3<f32> {
+    let n = 48;
+    let dv = (uv - post.sun_uv.xy) * (0.85 / f32(n));
+    let jitter = fract(52.9829189 * fract(dot(clip, vec2<f32>(0.06711056, 0.00583715))));
+    var p = uv - dv * jitter;
+    var decay = 1.0;
+    var acc = vec3<f32>(0.0);
+    for (var i = 0; i < n; i++) {
+        p -= dv;
+        let s = textureSampleLevel(hdr, hdr_sampler, clamp(p, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).rgb;
+        acc += bloom_extract(select(min(s, vec3<f32>(65504.0)), vec3<f32>(0.0), s != s)) * decay;
+        decay *= 0.95;
+    }
+    return acc * (post.god_rays * post.sun_uv.z / f32(n));
+}
+
 @fragment
 fn fs_post(in: Out) -> @location(0) vec4<f32> {
     var m: vec3<f32>;
@@ -323,6 +345,10 @@ fn fs_post(in: Out) -> @location(0) vec4<f32> {
         m = legacy_gamma(srgb_to_linear_post(cas(in.uv)));
     } else {
         m = tap(in.uv);
+    }
+    if (post.god_rays > 0.0 && post.sun_uv.z > 0.0) {
+        // screen blend: the shafts brighten without clipping
+        m += (vec3<f32>(1.0) - min(m, vec3<f32>(1.0))) * tonemap(god_rays(in.uv, in.clip.xy));
     }
     if (post.glow > 0.5) {
         // glowcombineF.glsl: added in display space, then clamped by the 8-bit target

@@ -669,6 +669,8 @@ fn light(cx: &mut Cx) {
                 },
             );
         });
+        cx.experimental()
+            .toggle(tr!("ui-options-god-rays"), tr!("ui-options-god-rays-help"), &field!(god_rays));
     });
 }
 

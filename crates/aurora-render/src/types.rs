@@ -1358,6 +1358,9 @@ pub struct FrameParams {
     /// Aurora's bloom (bloom.rs): the share of the light over the
     /// threshold spread around the bright parts, 0 = off.
     pub bloom: f32,
+    /// Light shafts from the sun through the bright parts of the image
+    /// (0 = off, up to 1).
+    pub god_rays: f32,
     pub water_height: f32,
     pub shadows: bool,
     /// Distance covered by the shadow cascades.
