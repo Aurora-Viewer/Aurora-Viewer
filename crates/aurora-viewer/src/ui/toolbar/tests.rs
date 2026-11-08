@@ -292,6 +292,7 @@ struct Bench {
     settings: ToolbarSettings,
     panels: Panels,
     saves: usize,
+    action: bars::BarAction,
     /// The dock of the islands instead of Firestorm's bar.
     islands: bool,
 }
@@ -309,6 +310,7 @@ impl Default for Bench {
             settings: Default::default(),
             panels: Panels::from_settings(&settings),
             saves: 0,
+            action: bars::BarAction::None,
             islands: false,
         }
     }
@@ -333,7 +335,7 @@ impl Bench {
                 ..Default::default()
             },
             |ui| {
-                bars::bottom_bar(
+                let (_, action, _, _) = bars::bottom_bar(
                     ui,
                     &p,
                     &Icons::default(),
@@ -355,6 +357,7 @@ impl Bench {
                     None,
                     &bars::favorites::View::default(),
                 );
+                self.action = action;
                 let favorites = bars::favorites::View::default();
                 let row = bars::Row {
                     unread: 0,
@@ -877,12 +880,12 @@ fn toolbar_sanitize_keeps_each_command_once_over_the_three_toolbars() {
 fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
     let skin = Layout::default();
     let all = catalogue(&skin);
-    assert_eq!(all.len(), 75);
-    assert_eq!(COMMANDS.len(), 75);
+    assert_eq!(all.len(), 90);
+    assert_eq!(COMMANDS.len(), 90);
     let mut ids: Vec<_> = COMMANDS.iter().map(|c| c.id).collect();
     ids.sort_unstable();
     ids.dedup();
-    assert_eq!(ids.len(), 75, "each command once");
+    assert_eq!(ids.len(), 90, "each command once");
     assert!(ready("texture_library"));
     assert!(ready("movelock") && ready("move_lock") && ready("movement") && ready("water_walk"));
     assert_eq!(catalogue::find("move_lock").map(|c| c.id), Some("movelock"));
@@ -1033,4 +1036,94 @@ fn vr_toolbar_migration_preserves_customization_and_manual_removal() {
     };
     side.migrate_vr_button();
     assert_eq!(side.buttons.expect("custom toolbar").len(), 1);
+}
+
+#[test]
+fn menu_toolbar_edits_recheck_lock_membership_and_preserve_other_pending_edits() {
+    let ctx = egui::Context::default();
+    let layout = layout();
+    let mut state = ToolbarUi::default();
+    let mut settings = ToolbarSettings::default();
+    let queue = |remove| {
+        ctx.data_mut(|d| {
+            d.get_temp_mut_or_default::<Vec<MenuEdit>>(egui::Id::unique("menu_toolbar_edits"))
+                .push(MenuEdit { command: "import", remove })
+        })
+    };
+    queue(false);
+    settings.locked = true;
+    assert!(!state.commit_with_menus(&ctx, &layout, &mut settings));
+    assert!(settings.location("import", &layout).is_none());
+    settings.locked = false;
+    state.pending = Some(Edit::Remove("inventory".into()));
+    queue(false);
+    assert!(state.commit_with_menus(&ctx, &layout, &mut settings));
+    assert!(settings.location("inventory", &layout).is_none());
+    assert_eq!(settings.bar(Bar::Bottom, &layout).last().unwrap().command, "import");
+    queue(false);
+    assert!(
+        !state.commit_with_menus(&ctx, &layout, &mut settings),
+        "stale Add does not move an existing button"
+    );
+    state.pending = Some(Edit::Insert(
+        Bar::Right,
+        settings.bar(Bar::Bottom, &layout).last().unwrap().clone(),
+        0,
+    ));
+    state.commit_with_menus(&ctx, &layout, &mut settings);
+    queue(true);
+    assert!(state.commit_with_menus(&ctx, &layout, &mut settings));
+    assert!(settings.location("import", &layout).is_none(), "menu removal finds side bars too");
+}
+
+#[test]
+fn menu_toolbar_added_import_button_runs_import_in_both_bar_layouts() {
+    for islands in [false, true] {
+        let mut bench = Bench {
+            islands,
+            ..Bench::default()
+        };
+        bench.ctx.data_mut(|d| {
+            d.insert_temp(
+                egui::Id::unique("menu_toolbar_edits"),
+                vec![MenuEdit {
+                    command: "import",
+                    remove: false,
+                }],
+            )
+        });
+        assert!(bench.state.commit_with_menus(&bench.ctx, &layout(), &mut bench.settings));
+        bench.frame(vec![]);
+        let pos = bench.pos("import");
+        bench.pointer(pos, true, false);
+        bench.pointer(pos, false, false);
+        assert!(matches!(bench.action, bars::BarAction::Import));
+    }
+}
+
+#[test]
+fn menu_toolbar_particle_button_follows_selection_availability() {
+    let mut bench = Bench::default();
+    bench.ctx.data_mut(|d| {
+        d.insert_temp(
+            egui::Id::unique("menu_toolbar_edits"),
+            vec![MenuEdit {
+                command: "edit_particles",
+                remove: false,
+            }],
+        )
+    });
+    bench.state.commit_with_menus(&bench.ctx, &layout(), &mut bench.settings);
+    bench.frame(vec![]);
+    let pos = bench.pos("edit_particles");
+    bench.pointer(pos, true, false);
+    bench.pointer(pos, false, false);
+    assert!(matches!(bench.action, bars::BarAction::None));
+    bench
+        .ctx
+        .data_mut(|d| d.insert_temp(egui::Id::unique("toolbar_menu_availability"), (true, false, false)));
+    bench.frame(vec![]);
+    bench.pointer(pos, true, false);
+    bench.pointer(pos, false, false);
+    assert!(matches!(bench.action, bars::BarAction::EditParticles));
 }
