@@ -17051,6 +17051,8 @@ impl App {
                     }
                 }
                 self.world.record_notification_history();
+                // the jabs of the pokes sent, over everything
+                ui::poke::paint_jabs(&ctx, &p, &self.skin.icons, self.settings.reduce_motion);
                 t = self.ui_parts.lap(Part::UiMenus, t);
                 let mut open = self.panels.about_land && self.world.rlva_can_view_parcel();
                 // the mini-map's image of the selection's region, for the header

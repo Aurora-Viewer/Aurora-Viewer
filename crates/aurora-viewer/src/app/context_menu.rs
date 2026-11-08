@@ -591,6 +591,12 @@ impl App {
             CtxAction::Poke(id) => {
                 if let Some(cmd) = self.world.poke(id, Instant::now()) {
                     self.send(cmd);
+                    // the finger jabs from where it was clicked
+                    if !self.settings.reduce_motion
+                        && let Some(at) = self.egui_ctx.pointer_latest_pos()
+                    {
+                        crate::ui::poke::jab(&self.egui_ctx, at);
+                    }
                 }
             }
             CtxAction::Call(id) => {

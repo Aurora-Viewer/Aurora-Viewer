@@ -289,8 +289,6 @@ fn facts(world: &World, id: &Uuid, own: bool, profile: Option<&AvatarProfile>) -
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Act {
     Conversation,
-    /// Aurora's poke (`ui/poke.rs`), after the conversation.
-    Poke,
     Call,
     AddFriend,
     OfferTeleport,
@@ -312,15 +310,6 @@ fn header_acts(own: bool, editing: bool, friend: bool, compact: bool) -> Vec<Act
         _ if compact && !friend => vec![Conversation, AddFriend, OfferTeleport, Pay, Block, More],
         _ => vec![Conversation, Call, OfferTeleport, Pay, Block, More],
     }
-}
-
-/// The header's buttons with Poke after the conversation, while a Poke
-/// button shows for them (`ui::poke::button`).
-fn with_poke(mut acts: Vec<Act>, poke: bool) -> Vec<Act> {
-    if poke && let Some(i) = acts.iter().position(|a| *a == Act::Conversation) {
-        acts.insert(i + 1, Act::Poke);
-    }
-    acts
 }
 
 /// A click on one of the rights we grant: sent at once, or asked first for
@@ -516,8 +505,7 @@ fn header(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, f: &Facts) {
         pos2(full.left() + pad, line.center().y - BUTTON_H / 2.0),
         pos2(full.right() - 14.0, line.center().y + BUTTON_H / 2.0),
     );
-    let poke = !own && crate::ui::poke::button(ui.ctx(), world, &id).is_some();
-    let acts = with_poke(header_acts(own, w.editing, f.friend, false), poke);
+    let acts = header_acts(own, w.editing, f.friend, false);
     let layout = egui::Layout::right_to_left(egui::Align::Center);
     // with their names while who it is keeps room for its badges on a line
     // or two, else the main action alone named (a long language)
@@ -571,8 +559,7 @@ fn header_compact(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, f: &Facts) {
     let status = photo(ui, env, w, photo_rect, 3.0);
     let pad = 82.0;
     let y0 = banner.bottom() + 10.0;
-    let poke = !own && crate::ui::poke::button(ui.ctx(), world, &id).is_some();
-    let acts = with_poke(header_acts(own, w.editing, f.friend, true), poke);
+    let acts = header_acts(own, w.editing, f.friend, true);
     // our own buttons at the right of the name
     let mut acts_w = 0.0;
     if own {
@@ -899,18 +886,6 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
             true,
             None,
         ),
-        // greyed out with the reason while they are offline or just poked
-        Act::Poke => {
-            let b = crate::ui::poke::button(ui.ctx(), env.world, &id);
-            let enabled = b.as_ref().is_some_and(|b| b.enabled);
-            (
-                crate::ui::poke::ICON,
-                aurora_i18n::tr!("ui-poke"),
-                ActionKind::Flat,
-                enabled,
-                b.filter(|b| !b.enabled).map(|b| b.tip),
-            )
-        }
         // LLAvatarActions::startCall, enabled with voice (canCall)
         Act::Call => {
             let voice = env.world.calls.voice_enabled;
@@ -992,7 +967,6 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
     }
     match act {
         Act::Conversation => env.actions.push(ProfileAction::Im(id)),
-        Act::Poke => context::request(ui.ctx(), CtxAction::Poke(id)),
         Act::AddFriend => context::request(ui.ctx(), CtxAction::AddFriend(id)),
         Act::OfferTeleport => env.actions.push(ProfileAction::OfferTeleport(id)),
         // LLAvatarActions::pay
@@ -1021,6 +995,13 @@ fn more_menu(resp: &Response, env: &Env, w: &Window, f: &Facts, compact: bool) {
     menu::dropdown(resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
         let ctx = ui.ctx().clone();
         let act = |a: CtxAction| context::request(&ctx, a);
+        // Aurora's poke (`ui/poke.rs`): in this menu, the header keeping
+        // its buttons; greyed out while they are offline or just poked
+        if let Some(b) = crate::ui::poke::button(&ctx, world, &id)
+            && menu::item_if(ui, p, crate::ui::poke::ICON, aurora_i18n::tr!("ui-poke"), b.enabled)
+        {
+            act(CtxAction::Poke(id));
+        }
         if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-map"), mappable) {
             act(CtxAction::ShowOnMap(id));
         }
