@@ -438,9 +438,43 @@ fn mesh_controls(
                                     edited = true;
                                 }
                             } else {
-                                edited |= ui
-                                    .add_sized(Vec2::new(62.0, 26.0), egui::DragValue::new(&mut lod.triangles).range(0..=triangles))
-                                    .changed();
+                                let response = ui
+                                    .allocate_ui_with_layout(
+                                        Vec2::new(62.0, 26.0),
+                                        egui::Layout::centered_and_justified(ui.layout().main_dir()),
+                                        |ui| {
+                                            let field_id = ui.next_auto_id();
+                                            if ui.memory(|memory| memory.has_focus(field_id)) {
+                                                let (up, down) = ui.input_mut(|input| {
+                                                    (
+                                                        input.count_and_consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
+                                                        input.count_and_consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
+                                                    )
+                                                });
+                                                let steps = up.abs_diff(down);
+                                                if steps > 0 {
+                                                    let change = (triangles / 32).max(1).saturating_mul(steps);
+                                                    lod.triangles = if up > down {
+                                                        lod.triangles.saturating_add(change).min(triangles)
+                                                    } else {
+                                                        lod.triangles.saturating_sub(change)
+                                                    };
+                                                    edited = true;
+                                                }
+                                            }
+                                            let response = ui.add(egui::DragValue::new(&mut lod.triangles).range(0..=triangles));
+                                            #[cfg(test)]
+                                            ui.ctx().data_mut(|data| {
+                                                data.insert_temp(
+                                                    egui::Id::unique(("mesh_lod_triangle_field", id, level)),
+                                                    (response.id, response.rect),
+                                                )
+                                            });
+                                            response
+                                        },
+                                    )
+                                    .inner;
+                                edited |= response.changed();
                             }
                         }
                         if let Some(count) = actual {
@@ -1066,6 +1100,105 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn lod_triangle_arrows_step_by_one_thirty_second_of_mesh_triangles() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let mut draft = crate::imports::tests::mesh_fixture();
+        let model = &mut Arc::make_mut(&mut draft.scene).models[0];
+        model.faces.truncate(1);
+        model.faces[0].indices = vec![0; 9_600];
+        assert_eq!(model.triangles(), 3_200);
+        draft.lods[2].triangles = 0;
+        let id = Uuid::new_v4();
+        let frame = |draft: &mut mesh::Draft, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1200.0, 600.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.set_width(1000.0);
+                    mesh_controls(
+                        ui,
+                        &theme.palette(),
+                        id,
+                        draft,
+                        &mut Preferences::default(),
+                        &mut Vec::new(),
+                        0,
+                        false,
+                        false,
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            output
+        };
+        for _ in 0..3 {
+            frame(&mut draft, vec![]);
+        }
+        let field_id = ctx
+            .data_mut(|data| data.get_temp::<(egui::Id, egui::Rect)>(egui::Id::unique(("mesh_lod_triangle_field", id, 2))))
+            .expect("Medium triangle field");
+        frame(
+            &mut draft,
+            vec![
+                egui::Event::PointerMoved(field_id.1.center()),
+                egui::Event::Key {
+                    key: egui::Key::ArrowUp,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        assert_eq!(draft.lods[2].triangles, 0, "hovering alone does not step the target");
+        for pressed in [true, false] {
+            frame(
+                &mut draft,
+                vec![
+                    egui::Event::PointerMoved(field_id.1.center()),
+                    egui::Event::PointerButton {
+                        pos: field_id.1.center(),
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        assert!(
+            ctx.memory(|memory| memory.has_focus(field_id.0)),
+            "clicking the triangle field focuses it"
+        );
+        frame(
+            &mut draft,
+            vec![egui::Event::Key {
+                key: egui::Key::ArrowUp,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert_eq!(draft.lods[2].triangles, 100);
+        frame(
+            &mut draft,
+            vec![egui::Event::Key {
+                key: egui::Key::ArrowDown,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert_eq!(draft.lods[2].triangles, 0);
     }
 
     #[test]
