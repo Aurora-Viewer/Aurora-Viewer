@@ -3174,14 +3174,15 @@ impl TextureStreamer {
     fn feed_demo_stress(&mut self, i: u32) {
         let id = crate::demo::stress_texture(i);
         for discard in [2, 0] {
-            self.on_job(texture_result(
-                id,
-                discard as u8,
-                crate::demo::stress_texture_mips(i, discard),
-                (AlphaKind::Opaque, false),
-                None,
-                self.staging.as_deref(),
-            ));
+            let mips = crate::demo::stress_texture_mips(i, discard);
+            // staged only with room at once: this runs on the main thread,
+            // which never waits for the pool. While the texture pages are
+            // refused (AURORA_GPU_OOM), the uploads waiting for them hold
+            // the whole pool, and a refeed of the set waited 100 ms per
+            // texture, minutes without a frame.
+            let bytes = StagedTexture::staged_size(TexelFormat::Rgba8, mips.iter().map(|m| (m.0, m.1)));
+            let pool = self.staging.as_deref().filter(|p| p.has_room_now(bytes));
+            self.on_job(texture_result(id, discard as u8, mips, (AlphaKind::Opaque, false), None, pool));
         }
     }
 

@@ -299,6 +299,19 @@ impl StagingPool {
         }
     }
 
+    /// Whether `size` bytes can be staged at once, without the wait of
+    /// [`stage`](Self::stage): for a caller on the main thread, which never
+    /// waits for the pool and writes directly instead. False while a job
+    /// holds the lock.
+    pub fn has_room_now(&self, size: u64) -> bool {
+        let Some(s) = self.try_lock() else {
+            return false;
+        };
+        let returned = !self.returned.0.lock().unwrap_or_else(|e| e.into_inner()).is_empty();
+        let open_left = s.open.as_ref().map(|o| o.chunk.size().saturating_sub(o.offset));
+        room_now(size, self.chunk_bytes, open_left, !s.free.is_empty() || returned)
+    }
+
     /// A region of the open chunk (which has room for it).
     fn bump(s: &mut PoolState, size: u64) -> Option<(Arc<Chunk>, u64)> {
         let o = s.open.as_mut()?;
@@ -513,6 +526,13 @@ impl StagedTexture {
         })
     }
 
+    /// The staging bytes a chain of these sizes takes (rows and levels
+    /// aligned for the copy, so more than the texels):
+    /// [`StagingPool::has_room_now`]'s size for it.
+    pub fn staged_size(format: TexelFormat, sizes: impl Iterator<Item = (u32, u32)>) -> u64 {
+        level_layout(format, sizes).1
+    }
+
     pub fn bytes(&self) -> u64 {
         self.levels.iter().map(|l| self.format.level_bytes(l.width, l.height)).sum()
     }
@@ -706,9 +726,28 @@ impl FrameUploads {
     }
 }
 
+/// [`StagingPool::has_room_now`]: the open chunk has `size` left
+/// (`open_left`), or a whole chunk is free.
+fn room_now(size: u64, chunk_bytes: u64, open_left: Option<u64>, chunk_free: bool) -> bool {
+    size <= chunk_bytes && (open_left.is_some_and(|left| size <= left) || chunk_free)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn room_now_needs_the_open_chunk_or_a_free_one() {
+        // the open chunk has room
+        assert!(room_now(100, 1000, Some(100), false));
+        // it has not, a free chunk has
+        assert!(room_now(101, 1000, Some(100), true));
+        // neither: `stage` would wait
+        assert!(!room_now(101, 1000, Some(100), false));
+        assert!(!room_now(1, 1000, None, false));
+        // larger than a chunk: never staged
+        assert!(!room_now(1001, 1000, None, true));
+    }
 
     /// After a device loss the viewer makes a new pool: what a job staged in
     /// the old one is told apart (GPU test).
