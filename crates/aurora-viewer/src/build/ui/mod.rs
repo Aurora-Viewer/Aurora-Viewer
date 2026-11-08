@@ -242,7 +242,7 @@ pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s
     // Escape is the field's (LLLineEditor reverts the typed text), not the
     // build tool's. Taking it here would hide it from the field, which then
     // commits its text as if focus had moved away.
-    let typing_id = egui::Id::new("build_shortcuts_typing");
+    let typing_id = egui::Id::unique("build_shortcuts_typing");
     let typing_before = ctx.data(|d| d.get_temp::<bool>(typing_id)).unwrap_or(false);
     // Only a text entry: a focused button or list row leaves Escape to the
     // shortcuts, so Organize mode still closes on the first press.

@@ -3131,7 +3131,10 @@ fn escape_over_a_typed_mixed_value_changes_nothing_while_the_selection_stays() {
             assert!(!inspector.tool.selection.is_empty(), "legacy={legacy}: the selection stays");
             let te = inspector.world.objects.get(idx).unwrap().te.clone().unwrap();
             let alphas: Vec<f32> = te.faces[..n].iter().map(|f| f.color[3]).collect();
-            assert_eq!(alphas[2], 0.0, "legacy={legacy} typed={typed} taken={taken}: Escape changed {alphas:?}");
+            assert_eq!(
+                alphas[2], 0.0,
+                "legacy={legacy} typed={typed} taken={taken}: Escape changed {alphas:?}"
+            );
             assert!(
                 !inspector
                     .tool
@@ -3203,12 +3206,19 @@ fn escape_reverts_every_build_text_entry_and_keeps_the_tool_open() {
             assert!(inspector.tool.open, "{case}: Escape in Name closed the build tool");
             assert_eq!(inspector.tool.props[&id].name, "Presentation test", "{case}");
             assert!(
-                !inspector.tool.out.iter().any(|c| matches!(c, NetCommand::Build(BuildCmd::SetName { .. }))),
+                !inspector
+                    .tool
+                    .out
+                    .iter()
+                    .any(|c| matches!(c, NetCommand::Build(BuildCmd::SetName { .. }))),
                 "{case}: {:?}",
                 inspector.tool.out
             );
             let (_, texts) = inspector.show(vec![]);
-            assert!(texts.iter().any(|(text, _)| text == "Presentation test"), "{case}: the name shows again");
+            assert!(
+                texts.iter().any(|(text, _)| text == "Presentation test"),
+                "{case}: the name shows again"
+            );
 
             let (shown, price) = row_field(&texts, aurora_i18n::currency()).expect("sale price field");
             assert_eq!(shown, "10", "{case}");
@@ -3221,7 +3231,11 @@ fn escape_reverts_every_build_text_entry_and_keeps_the_tool_open() {
             assert_eq!(inspector.tool.props[&id].sale_price, 10, "{case}");
             assert!(inspector.tool.ui.sale_draft.is_none(), "{case}: {:?}", inspector.tool.ui.sale_draft);
             assert!(
-                !inspector.tool.out.iter().any(|c| matches!(c, NetCommand::Build(BuildCmd::SetSaleInfo { .. }))),
+                !inspector
+                    .tool
+                    .out
+                    .iter()
+                    .any(|c| matches!(c, NetCommand::Build(BuildCmd::SetSaleInfo { .. }))),
                 "{case}: {:?}",
                 inspector.tool.out
             );
@@ -3389,14 +3403,20 @@ fn a_pbr_uv_edit_waits_for_the_materials_and_ignores_a_local_preview() {
         };
         let overrides = |inspector: &Inspector, idx: usize| {
             let n = inspector.tool.num_faces(&inspector.world, idx) as u8;
-            (0..n).map(|face| BuildTool::gltf_override(&inspector.world, idx, face).transforms).collect::<Vec<_>>()
+            (0..n)
+                .map(|face| BuildTool::gltf_override(&inspector.world, idx, face).transforms)
+                .collect::<Vec<_>>()
         };
 
         // face 1's material is not there yet: nothing is written
         let (mut inspector, idx) = setup(false);
         let before = overrides(&inspector, idx);
         type_scale_u(&mut inspector);
-        assert_eq!(overrides(&inspector, idx), before, "legacy={legacy}: written while a material loads");
+        assert_eq!(
+            overrides(&inspector, idx),
+            before,
+            "legacy={legacy}: written while a material loads"
+        );
         // it arrives: the edit keeps each face's own V
         inspector.scene.materials.insert(second, material(second_transforms));
         type_scale_u(&mut inspector);
@@ -3405,8 +3425,8 @@ fn a_pbr_uv_edit_waits_for_the_materials_and_ignores_a_local_preview() {
             let base = if face == 1 { second_transforms } else { first_transforms };
             let mut rendered = material(base);
             rendered.apply_override(&BuildTool::gltf_override(&inspector.world, idx, face));
-            for c in 0..4 {
-                assert_eq!(rendered.transforms[c].scale, [4.0, base[c].scale[1]], "legacy={legacy}: face {face} channel {c}");
+            for (c, (shown, inherited)) in rendered.transforms.iter().zip(&base).enumerate() {
+                assert_eq!(shown.scale, [4.0, inherited.scale[1]], "legacy={legacy}: face {face} channel {c}");
             }
         }
 
@@ -3416,10 +3436,10 @@ fn a_pbr_uv_edit_waits_for_the_materials_and_ignores_a_local_preview() {
         type_scale_u(&mut inspector);
         let mut rendered = material(first_transforms);
         rendered.apply_override(&BuildTool::gltf_override(&inspector.world, idx, 0));
-        for c in 0..4 {
+        for (c, (shown, inherited)) in rendered.transforms.iter().zip(&first_transforms).enumerate() {
             assert_eq!(
-                rendered.transforms[c].scale,
-                [4.0, first_transforms[c].scale[1]],
+                shown.scale,
+                [4.0, inherited.scale[1]],
                 "legacy={legacy}: the local preview's V reached the server, channel {c}"
             );
         }

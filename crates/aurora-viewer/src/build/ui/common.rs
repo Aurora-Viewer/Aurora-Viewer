@@ -37,9 +37,10 @@ pub(crate) enum FieldEnd {
 /// that its entry was abandoned rather than committed.
 pub(crate) fn escape_pressed(ui: &egui::Ui) -> bool {
     ui.input(|i| {
-        i.raw.events.iter().any(|e| {
-            matches!(e, egui::Event::Key { key: egui::Key::Escape, pressed: true, modifiers, .. } if !modifiers.any())
-        })
+        i.raw
+            .events
+            .iter()
+            .any(|e| matches!(e, egui::Event::Key { key: egui::Key::Escape, pressed: true, modifiers, .. } if !modifiers.any()))
     })
 }
 
@@ -55,11 +56,7 @@ pub(crate) fn field_end(ui: &egui::Ui, r: &egui::Response) -> FieldEnd {
         return FieldEnd::Repeat;
     }
     ui.data_mut(|d| d.insert_temp(ended_id, pass));
-    if escape_pressed(ui) {
-        FieldEnd::Revert
-    } else {
-        FieldEnd::Commit
-    }
+    if escape_pressed(ui) { FieldEnd::Revert } else { FieldEnd::Commit }
 }
 
 /// What a value control did this frame: changed (live) and / or must be

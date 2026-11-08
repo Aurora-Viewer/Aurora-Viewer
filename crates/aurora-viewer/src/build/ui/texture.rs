@@ -867,7 +867,9 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
             // and channel inherit on the server: the other component keeps
             // its value, the base material's when the override has none.
             // Better than LLPanelFace, which starts from the raw override
-            // and resets that component to the identity.
+            // and resets that component to the identity. Like it, a pair
+            // that ends at the identity (scale 1 1, offset 0 0) is "no
+            // override" to applyOverride: the material's own pair shows.
             let new = [values[0], values[1], values[2], values[3], values[4].to_radians()];
             tool.edit_gltf_faces(world, sel, |k, o| {
                 for channel in channels.clone() {

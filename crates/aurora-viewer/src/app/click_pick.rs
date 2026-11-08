@@ -586,8 +586,7 @@ impl App {
     /// field has committed to the selection it was typed for).
     pub(super) fn press_while_typing(&mut self) {
         let mods = [self.alt, self.ctrl, self.shift];
-        self.clicks
-            .hold_for_ui(self.egui_ctx.cumulative_pass_nr(), self.cursor_pos, mods);
+        self.clicks.hold_for_ui(self.egui_ctx.cumulative_pass_nr(), self.cursor_pos, mods);
     }
 
     fn end_ui_turn(&mut self) {
