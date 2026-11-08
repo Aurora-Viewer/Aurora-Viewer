@@ -294,7 +294,7 @@ impl Equirect {
         let row = (width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("equirect readback"),
-            size: u64::from(row) * u64::from(height),
+            size: crate::readback::readback_size(u64::from(row) * u64::from(height)),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
