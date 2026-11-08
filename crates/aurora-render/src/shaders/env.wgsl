@@ -492,7 +492,7 @@ fn vs_terrain_pbr(in: VsIn) -> TerrainPbrOut {
     out.clip = frame.eye_view_proj * ep;
     out.world_pos = ep.xyz + frame.eye.xyz;
     out.normal = vertex_normal(rec, in);
-    let raw = vec4<f32>(terrain_direction(vec4<u32>(round(in.weights * 255.0))), in.normal.w);
+    let raw = vec4<f32>(terrain_tangent(in.weights), in.normal.w);
     out.tangent0 = terrain_transform_tangent(records[rec.tex.x], out.normal, raw);
     out.tangent1 = terrain_transform_tangent(records[rec.tex.y], out.normal, raw);
     out.tangent2 = terrain_transform_tangent(records[rec.tex.z], out.normal, raw);
