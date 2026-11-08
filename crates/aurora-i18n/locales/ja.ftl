@@ -13399,3 +13399,11 @@ ui-options-build-new-faces = 新しいオブジェクトの外観
 # Preferences › Controls: FSAvatarTurnSpeed
 ui-options-avatar-turn-speed = アバターの回転速度
 ui-options-avatar-turn-speed-help = 歩いているときや立っているときに、アバターが進む方向へ向き直る速さを上げます（デフォルトは0%）。この画面のみに反映されます。
+
+# Preferences › Mouse and keyboard: FSRevokePerms
+ui-options-revoke-permissions = 座ったオブジェクトの許可を取り消す
+ui-options-revoke-permissions-help = 自分が所有していないオブジェクトに座るとき、または立ち上がるときに、そのスクリプトに与えた許可（アバターのアニメーションなど）を取り消します。
+ui-options-revoke-never = しない
+ui-options-revoke-on-sit = 座ったとき
+ui-options-revoke-on-stand = 立ち上がったとき
+ui-options-revoke-on-sit-and-stand = 座ったときと立ち上がったとき

@@ -13426,3 +13426,11 @@ ui-options-build-new-faces = Look of new objects
 # Preferences › Controls: FSAvatarTurnSpeed
 ui-options-avatar-turn-speed = Avatar turn speed
 ui-options-avatar-turn-speed-help = How much faster avatars turn to face where they go while walking or standing (0 % by default). Only on this screen.
+
+# Preferences › Mouse and keyboard: FSRevokePerms
+ui-options-revoke-permissions = Revoke the seat's permissions
+ui-options-revoke-permissions-help = When you sit on or stand up from an object you do not own, take back what its scripts were allowed to do, such as animating you.
+ui-options-revoke-never = Never
+ui-options-revoke-on-sit = When I sit
+ui-options-revoke-on-stand = When I stand up
+ui-options-revoke-on-sit-and-stand = When I sit and stand up
