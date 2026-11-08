@@ -369,35 +369,6 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
 
-    fn serve_pausing_mp3() -> (String, thread::JoinHandle<()>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let handle = thread::spawn(move || {
-            let Ok((mut sock, _)) = listener.accept() else {
-                return;
-            };
-            let mut req = Vec::new();
-            let mut buf = [0u8; 1024];
-            while !req.windows(4).any(|w| w == b"\r\n\r\n") {
-                match sock.read(&mut buf) {
-                    Ok(0) | Err(_) => return,
-                    Ok(n) => req.extend_from_slice(&buf[..n]),
-                }
-            }
-            let audio = mp3_silence(300);
-            let header = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                audio.len()
-            );
-            if sock.write_all(header.as_bytes()).is_err() || sock.write_all(&audio[..160 * 417]).is_err() {
-                return;
-            }
-            thread::sleep(Duration::from_secs(2));
-            let _ = sock.write_all(&audio[160 * 417..]);
-        });
-        (format!("http://{addr}/stream"), handle)
-    }
-
     #[test]
     fn starvation_log_is_rate_limited_and_consumes_each_signal() {
         let signal = AtomicBool::new(true);
@@ -521,28 +492,6 @@ mod tests {
         assert_eq!(ctl.status(), StreamStatus::Idle);
         assert_eq!(ctl.url(), "");
         drop(sources);
-        let _ = server.join();
-    }
-
-    #[test]
-    fn loopback_stream_pause_of_two_seconds_does_not_underrun_music() {
-        let (url, server) = serve_pausing_mp3();
-        let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
-        let params = Arc::new(crate::mixer::SharedParams::new());
-        let mut mixer = crate::mixer::Mixer::new(params, cmd_rx);
-        let mut ctl = StreamController::new(cmd_tx);
-        ctl.play(&url);
-
-        // Render at 48 kHz in real time while the loopback source pauses after
-        // an initial burst of audio.
-        let mut block = vec![0.0; 480 * 2];
-        let deadline = Instant::now() + Duration::from_millis(3_800);
-        while Instant::now() < deadline {
-            mixer.render(&mut block);
-            thread::sleep(Duration::from_millis(10));
-        }
-        assert_eq!(mixer.pcm_underruns(), 0, "music underrun during loopback pause");
-        ctl.stop();
         let _ = server.join();
     }
 

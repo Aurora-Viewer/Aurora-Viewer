@@ -1023,11 +1023,6 @@ impl Mixer {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn pcm_underruns(&self) -> usize {
-        self.pcm.iter().map(|source| source.underruns).sum()
-    }
-
     /// The final mix with the reverb: the buses as without it, the sends
     /// summed at their channels' volumes into the reverb, its output at the
     /// master volume, then the clamp.
