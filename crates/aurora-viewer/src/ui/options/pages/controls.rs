@@ -30,6 +30,19 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-block-click-sit-help"),
             &field!(block_click_sit),
         );
+        // Legacy Viewer › Protection (FSRevokePerms)
+        let revoke = [
+            (0u8, tr!("ui-options-revoke-never")),
+            (1, tr!("ui-options-revoke-on-sit")),
+            (2, tr!("ui-options-revoke-on-stand")),
+            (3, tr!("ui-options-revoke-on-sit-and-stand")),
+        ];
+        cx.keywords("FSRevokePerms permissions animation").combo(
+            tr!("ui-options-revoke-permissions"),
+            tr!("ui-options-revoke-permissions-help"),
+            &field!(revoke_permissions),
+            &revoke,
+        );
     });
     cx.group(tr!("ui-options-keyboard"), |cx| {
         cx.toggle(
@@ -52,6 +65,15 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-walk-backwards-without-turning"),
             tr!("ui-options-walk-backwards-without-turning-help"),
             &field!(walk_backwards_without_turning),
+        );
+        // FSAvatarTurnSpeed (panel_preferences_move.xml av_turn_spd: 0 to
+        // 100, steps of 0.5)
+        cx.keywords("FSAvatarTurnSpeed rotation").slider(
+            tr!("ui-options-avatar-turn-speed"),
+            tr!("ui-options-avatar-turn-speed-help"),
+            &field!(avatar_turn_speed),
+            0.0..=100.0,
+            " %",
         );
         // AutomaticFly (agent_jump / LLAgent::propagate), split into two
         // independent choices at the human's request.

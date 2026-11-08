@@ -80,6 +80,7 @@ mod give_demo;
 mod gpu_recovery;
 mod gpu_stall;
 pub(crate) use gpu_stall::withdraw_all as withdraw_gpu_notices;
+mod debug_settings;
 mod graphics_start;
 mod grid_status;
 mod group_titles;
@@ -118,6 +119,7 @@ mod region_window;
 mod relogin;
 mod report_abuse;
 mod reset_skeleton;
+mod revoke_on_sit;
 mod rlva;
 mod safe_graphics;
 mod script_clicks;
@@ -754,9 +756,14 @@ pub struct App {
     /// Inventory generation whose Favorites / Landmarks folders were asked for.
     landmark_folders_checked: u64,
     hover_height_ui: ui::hover_height::HoverHeightUi,
+    /// Debug Settings (Advanced.ShowDebugSettings).
+    debug_settings_ui: ui::debug_settings::DebugSettingsUi,
+    debug_settings_demo_done: bool,
     /// Quick preferences (the toolbar's `quickprefs`).
     quick_prefs_ui: ui::quick_prefs::QuickPrefsUi,
     quick_prefs_demo_done: bool,
+    /// The prim our avatar sat on last frame (app/revoke_on_sit.rs).
+    last_seat: Option<uuid::Uuid>,
     /// Report Abuse (LLFloaterReporter).
     report_abuse: ui::report_abuse::ReportAbuseUi,
     /// The depth of field's focus distance and its transition.
@@ -838,6 +845,7 @@ pub struct App {
     external: external_links::ExternalLinks,
     /// AURORA_DEMO_LINK: a silence of the region to show, or a lost link.
     demo_link_health: Option<link_health::LinkHealthDemo>,
+    demo_legacy_bump: Option<crate::demo::legacy_bump::LegacyBumpDemo>,
     /// AURORA_DEMO_SLURLS: region lookups the demo server answers late.
     demo_lookups: Vec<(Instant, NetCommand)>,
     /// The object of an `objectim` link clicked (LLInspectRemoteObject).
@@ -956,6 +964,8 @@ pub struct App {
     outfit_restore_demo: Option<crate::demo::outfit_restore::OutfitRestoreDemo>,
     /// AURORA_DEMO_TEXREFRESH: "Refresh textures" on a stale cached texture.
     tex_refresh_demo: Option<crate::demo::tex_refresh::TexRefreshDemo>,
+    /// AURORA_DEMO_MASK_255: a Mask of cutoff 255 over an alpha under opaque.
+    mask_255_demo: Option<crate::demo::mask_255::Mask255Demo>,
     texture_res_demo: Option<crate::demo::texture_res::TextureResDemo>,
     /// AURORA_DEMO_AA_SWITCH: the anti-aliasing changes still to come.
     aa_switch_demo: Vec<(u64, u8)>,
@@ -963,6 +973,8 @@ pub struct App {
     sculpt_missing_demo: Option<crate::demo::sculpt::MissingMapDemo>,
     /// AURORA_DEMO_TEXTURE_MISSING: boxes whose texture is missing.
     texture_missing_demo: Option<crate::demo::missing_texture::MissingTextureDemo>,
+    /// AURORA_DEMO_SLIDESHOW: a panel whose texture changes every few seconds.
+    slideshow_demo: Option<crate::demo::slideshow::SlideshowDemo>,
     /// AURORA_DEMO_EXPERIENCE: experiences asking (door, pad, greeter).
     experience_demo: Option<crate::demo::experience::ExperienceDemo>,
     /// AURORA_DEMO_TP_AWAY: the demo region's coarse locations while away.
@@ -1027,6 +1039,9 @@ pub struct App {
     ao_catalog: crate::ao::inventory::Catalog,
     ao_bootstrap: crate::ao::bootstrap::Bootstrap,
     ao_runtime: crate::ao::runtime::Runtime,
+    /// The AO's animation changes held back after a teleport to another
+    /// region, until that region lists our animations (`update_ao`).
+    ao_held_changes: Vec<(uuid::Uuid, bool)>,
     ao_agent: uuid::Uuid,
     ao_missing: HashSet<uuid::Uuid>,
     ao_demo: Option<String>,
@@ -1451,6 +1466,8 @@ impl App {
         });
         scene.draw_distance = settings.draw_distance;
         scene.lod_factor = settings.lod_factor;
+        scene.tree_lod_factor = settings.tree_lod_factor;
+        scene.surface_protection = settings.surface_protection();
         let update_demo = ui::update::UpdateDemo::from_env(&settings);
         Ok(Box::new(App {
             area_search_ui: ui::area_search::AreaSearchUi::from_saved(&settings.area_search),
@@ -1677,8 +1694,11 @@ impl App {
             create_landmark_ui: Default::default(),
             landmark_folders_checked: u64::MAX,
             hover_height_ui: Default::default(),
+            debug_settings_ui: Default::default(),
+            debug_settings_demo_done: false,
             quick_prefs_ui: Default::default(),
             quick_prefs_demo_done: false,
+            last_seat: None,
             follow_ui: Default::default(),
             portal_ui: Default::default(),
             particle_editor: Default::default(),
@@ -1736,6 +1756,7 @@ impl App {
             friends_only_account: uuid::Uuid::nil(),
             external: external_links::ExternalLinks::start(),
             demo_link_health: link_health::LinkHealthDemo::from_env(),
+            demo_legacy_bump: crate::demo::legacy_bump::LegacyBumpDemo::from_env(),
             demo_lookups: Vec::new(),
             remote_object: None,
             app_link_parcels: HashSet::new(),
@@ -1809,6 +1830,7 @@ impl App {
             arrival_demo: None,
             outfit_restore_demo: None,
             tex_refresh_demo: None,
+            mask_255_demo: None,
             texture_res_demo: None,
             aa_switch_demo: if std::env::var_os("AURORA_DEMO").is_some() {
                 crate::demo::aa_switch::from_env()
@@ -1817,6 +1839,7 @@ impl App {
             },
             sculpt_missing_demo: None,
             texture_missing_demo: None,
+            slideshow_demo: None,
             experience_demo: None,
             away_coarse: Vec::new(),
             geometry_demo: None,
@@ -1854,6 +1877,7 @@ impl App {
             ao_catalog: Default::default(),
             ao_bootstrap: Default::default(),
             ao_runtime: Default::default(),
+            ao_held_changes: Vec::new(),
             ao_agent: uuid::Uuid::nil(),
             ao_missing: Default::default(),
             ao_demo: std::env::var("AURORA_DEMO_AO").ok(),
@@ -3592,7 +3616,7 @@ impl App {
                 self.interactions.on_properties(&props);
                 self.object_profile.on_properties(&props);
                 let props = self.area_search_build_properties(props, &area_reads);
-                self.build.on_properties(props);
+                self.build.on_properties(&self.world, props);
             }
             NetEvent::PayPrice { object, default, buttons } => self.interactions.on_prices(object, default, buttons),
             NetEvent::AbuseCategories(list) => self.report_abuse.set_categories(list),
@@ -3891,7 +3915,13 @@ impl App {
                 self.tp_checks = vec![10.0, 3.0];
                 // (a border crossing leaves the camera where it is)
                 if !self.world.arrived_by_crossing {
-                    self.camera.on_teleport_arrival(&self.settings.camera);
+                    let local = self.world.arrived_by_local_teleport;
+                    self.camera.on_teleport_arrival(&self.settings.camera, local);
+                    log::info!(
+                        "camera: teleport arrival (inside the region {local}, return after teleport {}), on the avatar {}",
+                        self.settings.camera.reset_on_teleport,
+                        self.camera.focus_point().is_none()
+                    );
                 }
                 self.scene.textures.mark_arrival();
                 self.loading_stage = aurora_i18n::tr!("app-loading-scene").into();
@@ -4568,6 +4598,9 @@ impl App {
             Action::Search => ui::widgets::toggle_floater(&self.egui_ctx, ui::search::WINDOW, &mut self.panels.search),
             Action::Performance => ui::widgets::toggle_floater(&self.egui_ctx, "perf", &mut self.panels.perf),
             Action::DevToolbox => ui::widgets::toggle_floater(&self.egui_ctx, ui::dev_toolbox::WINDOW, &mut self.panels.dev_toolbox),
+            Action::DebugSettings => {
+                ui::widgets::toggle_floater(&self.egui_ctx, ui::debug_settings::WINDOW, &mut self.panels.debug_settings)
+            }
             Action::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings),
             Action::ToggleInterface => self.toggle_interface(),
             Action::HoverTips => self.toggle_hover_tips(),
@@ -7187,6 +7220,14 @@ impl App {
     /// Preflight before UI/simulation side effects, including offline demos.
     fn request_user_teleport(&mut self, command: NetCommand, dest: String, show_progress: bool) -> bool {
         if self.user_teleport_allowed(&command) {
+            if matches!(command, NetCommand::TeleportHome) {
+                // LLAgent::teleportViaLandmark with no landmark (home):
+                // resetView before the request, so a home inside the region
+                // brings the camera back even with "Return after teleporting"
+                // off
+                self.camera
+                    .reset_view(&mut self.world.agent, &self.settings.camera, true, false, false, false);
+            }
             self.begin_teleport(dest, show_progress);
             self.send(command);
             true
@@ -7256,6 +7297,18 @@ impl App {
         self.tp_dest = Some(dest);
         self.media.on_teleport();
         self.world.begin_teleport(show_progress);
+        // LLAgent::teleportCore runs before the teleport request is sent: the
+        // stops of the seat's animations (LLVOAvatarSelf::stopMotionFromSource)
+        // reach the region we leave first, not one frame after the request.
+        self.send_animation_stops();
+    }
+
+    /// The animation stops the world queued (seat released, blacklisted
+    /// motions, a seat motion the arrival region still plays).
+    fn send_animation_stops(&mut self) {
+        for anim in std::mem::take(&mut self.world.animation_stops) {
+            self.send(NetCommand::AgentAnimation { anim, start: false });
+        }
     }
 
     fn show_teleport_progress(&mut self) {
@@ -8930,9 +8983,7 @@ impl App {
             }
         }
         self.perf.events_ms = t_ev.elapsed().as_secs_f32() * 1000.0;
-        for anim in std::mem::take(&mut self.world.animation_stops) {
-            self.send(NetCommand::AgentAnimation { anim, start: false });
-        }
+        self.send_animation_stops();
         // our script errors said on their channel (#1263), through RLVa's
         // @sendchannel like any other line
         for (channel, message) in std::mem::take(&mut self.world.script_debug.outgoing) {
@@ -9260,8 +9311,11 @@ impl App {
             let step_back = self.settings.walk_backwards_without_turning;
             // (Body::update turns a little even without time: held apart)
             if !frozen {
-                self.world.agent.body_turn = self.world.update_bodies(world_now(), dt, at, ml, step_back);
+                self.world.agent.body_turn = self
+                    .world
+                    .update_bodies(world_now(), dt, at, ml, step_back, self.settings.avatar_turn_speed);
             }
+            self.revoke_on_sit();
             self.trace_own_motion();
             self.update_pointing();
             self.update_look_at(w as f32, h as f32);
@@ -9454,7 +9508,7 @@ impl App {
                         match event {
                             NetEvent::ObjectProperties(props) => {
                                 self.world.ik_targets.on_properties(&props);
-                                self.build.on_properties(props);
+                                self.build.on_properties(&self.world, props);
                             }
                             event => {
                                 self.world.apply(event);
@@ -9550,6 +9604,8 @@ impl App {
                 pixel_angle: lod_height as f32 / self.camera.fov_y.max(1e-3),
             };
             self.scene.lod_factor = self.settings.lod_factor;
+            self.scene.tree_lod_factor = self.settings.tree_lod_factor;
+            self.scene.surface_protection = self.settings.surface_protection();
             self.scene.textures.set_max_resolution(self.settings.max_texture_resolution);
             self.scene.max_avatars = self.settings.max_avatars as usize;
             if self.demo {
@@ -9762,6 +9818,7 @@ impl App {
                 over_ui,
                 mods,
             );
+            self.build.refresh_link_geometry(&self.world, &self.scene);
             let mut selection_wire = self.build.wire_selection(&self.world, &self.settings.build);
             // another avatar's attachment the open menu is about, outlined
             // like a child prim of a selection (it cannot be selected)
@@ -10409,7 +10466,7 @@ impl App {
             // (a window behind past the driver's budget, or on a card another
             // program keeps busy, pauses its 3D drawing: its 3D targets
             // shrink, texture_budget::Background, busy_pause.rs)
-            rlva_resolution_divisor: if self.drawing_paused() {
+            rlva_resolution_divisor: if self.scene_paused() {
                 PAUSED_RESOLUTION_DIVISOR
             } else {
                 self.world.rlva.resolution_divisor.unwrap_or(1)
@@ -11134,7 +11191,6 @@ impl App {
             gfx.renderer.apply_settings(self.settings.render_settings());
             self.panels.time_of_day = self.settings.time_of_day;
             self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));
-            self.net.send(NetCommand::SetDrawDistance(self.settings.draw_distance));
             self.disk_cache.set_limit_mb(self.settings.cache_size_mb);
             self.net.set_bandwidth(bandwidth_kbps(&self.settings));
         }
@@ -11262,7 +11318,7 @@ impl App {
         // capture is waited for, its pixels are read in the tail below.
         // (nothing of the scene while the 3D drawing is paused behind,
         // texture_budget::Background, busy_pause.rs)
-        let lists = if self.in_world() && !self.drawing_paused() {
+        let lists = if self.in_world() && !self.scene_paused() {
             &self.scene.lists
         } else {
             &self.empty_lists
@@ -12250,6 +12306,11 @@ impl App {
         if let Some(demo) = &mut self.turn_demo {
             self.world.agent.yaw += demo.tick(self.frame_count);
         }
+        if self.demo
+            && let Some(demo) = &mut self.demo_legacy_bump
+        {
+            demo.tick(self.frame_count, &mut self.world);
+        }
         if let (Some(demo), Some(g)) = (&mut self.stream_demo, &mut self.gfx) {
             let pending = self.scene.stats.geom_pending;
             demo.tick(
@@ -12274,6 +12335,10 @@ impl App {
         if let (Some(demo), Some(g)) = (&mut self.rez_demo, &mut self.gfx) {
             demo.tick(self.frame_count, &mut self.world, &mut self.scene, &mut g.renderer);
         }
+        // AURORA_DEMO_MASK_255: a Mask of cutoff 255 over an alpha under opaque
+        if let Some(demo) = &mut self.mask_255_demo {
+            demo.tick(self.frame_count, &mut self.world, self.scene.textures.cache_dir());
+        }
         // AURORA_DEMO_TEXREFRESH: a panel with a stale cached texture
         if let Some(demo) = &mut self.tex_refresh_demo
             && let Some(object) = demo.tick(self.frame_count, &mut self.world, self.scene.textures.cache_dir())
@@ -12295,6 +12360,16 @@ impl App {
         }
         if let Some(demo) = &mut self.texture_missing_demo {
             demo.tick(self.frame_count, &mut self.world, &mut self.scene.textures);
+        }
+        // AURORA_DEMO_SLIDESHOW: a scripted slideshow
+        if let Some(demo) = &mut self.slideshow_demo {
+            demo.tick(
+                self.frame_count,
+                &mut self.world,
+                &mut self.scene.textures,
+                self.camera.position,
+                self.camera.forward(),
+            );
         }
         // AURORA_DEMO_EXPERIENCE: the door or the pad, and what asks
         // without a click (walking into the pad, arriving)
@@ -12350,6 +12425,10 @@ impl App {
                     self.world.apply(ev);
                 }
             }
+            // (with a full table: those given a slot once the others left)
+            if self.frame_count > 300 && self.frame_count.is_multiple_of(30) {
+                self.scene.textures.refeed_demo_stress(0..2 * n);
+            }
         }
         // Wait until login's loading fade is over, so the demo exercises a
         // teleport from the visible world even on a very fast machine.
@@ -12368,7 +12447,25 @@ impl App {
                 } else {
                     aurora_i18n::tr!("common-aurora-demo")
                 };
+                // AURORA_DEMO_TP_CAM=alt|alt-off: the camera on a point ahead
+                // before the teleport; `alt-off` with "Return after a
+                // teleport in the region" off for this teleport only (the
+                // local arrival is applied inside the call; never saved)
+                let cam = std::env::var("AURORA_DEMO_TP_CAM").unwrap_or_default();
+                let keep_return = self.settings.camera.reset_on_teleport;
+                if cam.starts_with("alt") {
+                    let ray = (self.camera.position, self.camera.forward());
+                    let point = ray.0 + ray.1 * 8.0;
+                    self.camera
+                        .alt_focus(point, None, ray, &mut self.world.agent, &self.settings.camera);
+                    self.settings.camera.reset_on_teleport = cam != "alt-off";
+                    log::info!(
+                        "demo teleport: camera on {point:.1?}, return after teleport {}",
+                        self.settings.camera.reset_on_teleport
+                    );
+                }
                 self.teleport_to_location(region.into(), Vec3::new(x, y, z));
+                self.settings.camera.reset_on_teleport = keep_return;
                 log::info!(
                     "demo teleport: frame {}, showing progress {}, position {:.1?}",
                     self.frame_count,
@@ -12800,6 +12897,22 @@ impl App {
                     crate::build::demo::Step::CloseEditor => self.build.close(&mut self.world, &mut self.settings.build),
                     crate::build::demo::Step::Select(idx) => {
                         self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
+                        self.flush_build();
+                    }
+                    crate::build::demo::Step::LinkSetup(denied) => {
+                        crate::build::demo::link_setup(&mut self.world, &mut self.build, &self.settings.build, denied);
+                        self.flush_build();
+                    }
+                    crate::build::demo::Step::Link => {
+                        self.build.link(&mut self.world);
+                        self.flush_build();
+                    }
+                    crate::build::demo::Step::SelectMany(indices) => {
+                        self.build.select_many(&mut self.world, &self.settings.build, &indices);
+                        self.flush_build();
+                    }
+                    crate::build::demo::Step::RenameSelection(name) => {
+                        self.build.set_name(&self.world, &name, false);
                         self.flush_build();
                     }
                     crate::build::demo::Step::SharedRights(idx, granted) => {
@@ -13682,9 +13795,7 @@ impl App {
                     return;
                 }
                 // as the camera controls' presets (LLFloaterCamera::switchToPreset)
-                self.settings.camera.apply_preset(preset);
-                self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
-                self.settings.save();
+                self.switch_camera_view(preset);
             }
             BarAction::GraphicsPreferences => {
                 ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
@@ -14706,6 +14817,9 @@ impl App {
                 .collect();
         }
         self.options_ui.rlva_restrictions = self.world.rlva.restrictions();
+        crate::world::rlva::modifiers::hide_texture_ids(&mut self.options_ui.rlva_restrictions, || {
+            crate::world::inventory::asset_ids::AssetIds::per_frame(&self.world)
+        });
         self.options_ui.current_parcel = self.world.current_parcel_entry();
         self.options_ui.selected_parcel = self.world.selected_parcel_entry();
         self.options_ui.rlva_camera_preset_locked = self.world.rlva.camera_preset_locked(uuid::Uuid::nil());
@@ -17414,6 +17528,9 @@ impl App {
                 if rlva_actions.clear_log {
                     self.world.rlva.diagnostics.entries.clear();
                 }
+                for group in rlva_actions.want_groups {
+                    self.world.land.group_name(&group, &self.world.groups.groups);
+                }
                 if let Some(input) = rlva_actions.input {
                     self.world.rlva_configure(self.settings.rlva_enabled);
                     self.world.rlva.preferences.clone_from(&self.settings.rlva);
@@ -17452,6 +17569,7 @@ impl App {
                 // Quick preferences' environment block shares the window's
                 // lists and "Personal lighting"
                 let quick_actions = self.quick_prefs_window(&ctx, &p, &mut lighting);
+                self.debug_settings_window(&ctx, &p);
                 let reset = self.personal_lighting(&ctx, &p, lighting);
                 self.env_actions(env_actions.into_iter().chain(quick_actions).chain(reset));
                 self.draw_env_editor(&ctx, &p);
@@ -19836,9 +19954,11 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
             }
             self.tex_refresh_demo = crate::demo::tex_refresh::TexRefreshDemo::from_env();
+            self.mask_255_demo = crate::demo::mask_255::Mask255Demo::from_env();
             self.texture_res_demo = crate::demo::texture_res::TextureResDemo::from_env();
             self.sculpt_missing_demo = crate::demo::sculpt::MissingMapDemo::from_env();
             self.texture_missing_demo = crate::demo::missing_texture::MissingTextureDemo::from_env();
+            self.slideshow_demo = crate::demo::slideshow::SlideshowDemo::from_env();
             self.experience_demo = crate::demo::experience::ExperienceDemo::from_env();
             self.geometry_demo = crate::demo::geometry::GeometryDemo::from_env();
             self.turn_demo = crate::demo::turn::TurnDemo::from_env();
