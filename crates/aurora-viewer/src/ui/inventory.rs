@@ -517,7 +517,10 @@ pub struct InventoryUi {
     /// Where the plain list was last scrolled, and that place to go back to
     /// once a search is emptied.
     plain_scroll: f32,
-    plain_scroll_restore: Option<f32>,
+    scroll_restore: Option<f32>,
+    scroll_hold: Option<(u64, f32)>,
+    last_list_generation: Option<u64>,
+    last_list_tab: usize,
     roots_seen: HashSet<Uuid>,
     /// Received Items folders already shown once (closed on their arrival).
     received_shown: HashSet<Uuid>,
@@ -921,7 +924,7 @@ impl InventoryUi {
     /// inventory — Received Items included, whose purchases pile up into
     /// thousands of rows.
     fn result_view(&self) -> bool {
-        !self.search.trim().is_empty() || self.filters.active() || self.links_filter.is_some() || self.tab >= RECEIVED_TAB
+        !self.search.trim().is_empty() || self.filters.active() || self.links_filter.is_some() || self.tab != 0
     }
 
     fn select(&mut self, ui: &egui::Ui, id: Uuid, secondary: bool) {
@@ -1534,6 +1537,9 @@ fn search_scroll(
     let navigated = keyboard::navigate(ui, inv, st, true);
     let total = st.result_tree.rows.len();
     let mut scroll = list_scroll(ui, height);
+    if let Some(offset) = st.scroll_restore.take() {
+        scroll = scroll.vertical_scroll_offset(offset);
+    }
     let row_height = rows::row_height(st);
     if navigated && let Some(index) = st.selected.and_then(|id| st.result_tree.order.iter().position(|row| *row == id)) {
         let pitch = row_height + ui.spacing().item_spacing.y;
@@ -1835,6 +1841,8 @@ fn list(
     filtered: bool,
     show_root: bool,
 ) -> egui::scroll_area::ScrollAreaOutput<()> {
+    let user_scrolling = ui.input(|i| i.smooth_scroll_delta != egui::Vec2::ZERO || i.pointer.any_down());
+    remember_list_scroll_on_inventory_change(st, inv.generation, user_scrolling);
     clipboard::list_focus(ui, st, list_h);
     if root.is_nil() {
         return list_scroll(ui, list_h).show(ui, |ui| {
@@ -1865,6 +1873,43 @@ fn list(
         return search_scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h);
     }
     rows::scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h, root, show_root)
+}
+
+/// Inventory updates can change row count and order. Hold the current
+/// viewport through that rebuild; an explicit reveal in either list renderer
+/// takes precedence and scrolls to its selected row.
+fn remember_list_scroll_on_inventory_change(st: &mut InventoryUi, generation: u64, user_scrolling: bool) {
+    if (user_scrolling || st.last_list_tab != st.tab) && st.scroll_hold.take().is_some() {
+        st.scroll_restore = None;
+    }
+    if st.reveal.is_some() {
+        st.scroll_hold = None;
+    }
+    if st
+        .scroll_hold
+        .is_some_and(|(_, held)| st.scroll_restore.is_some_and(|requested| (held - requested).abs() >= 0.5))
+    {
+        st.scroll_hold = None;
+    }
+    let generation_changed = st.last_list_generation.is_some_and(|old| old != generation);
+    if generation_changed && st.last_list_tab == st.tab && !user_scrolling && st.reveal.is_none() {
+        let offset = st
+            .scroll_hold
+            .map(|(_, offset)| offset)
+            .or(st.scroll_restore)
+            .or_else(|| st.list_viewport.map(|(offset, _)| offset));
+        if let Some(offset) = offset {
+            st.scroll_hold = Some((generation, offset));
+            st.scroll_restore = Some(offset);
+        }
+    } else if !generation_changed && let Some((_, offset)) = st.scroll_hold {
+        st.scroll_restore = Some(offset);
+        if st.list_viewport.is_some_and(|(visible, _)| (visible - offset).abs() < 0.5) {
+            st.scroll_hold = None;
+        }
+    }
+    st.last_list_generation = Some(generation);
+    st.last_list_tab = st.tab;
 }
 
 fn inventory_contents(
@@ -2362,6 +2407,140 @@ mod tests {
             set_tab(&mut second, &prefs, 2);
             assert_eq!(&second.filters, prefs.filters_for(2));
         }
+    }
+
+    #[test]
+    fn recent_worn_favorites_and_received_use_the_filtered_result_tree() {
+        let prefs = InventoryPreferences::default();
+        let mut st = InventoryUi::default();
+        assert!(!st.result_view(), "All inventory uses the plain tree");
+        for tab in [2, 3, 4, RECEIVED_TAB] {
+            set_tab(&mut st, &prefs, tab);
+            assert!(st.result_view(), "tab {tab} applies its filtered results");
+        }
+        set_tab(&mut st, &prefs, 0);
+        assert!(!st.result_view());
+    }
+
+    #[test]
+    fn an_inventory_update_restores_the_current_tab_scroll_but_not_a_changed_tab() {
+        let mut st = InventoryUi {
+            tab: 0,
+            last_list_generation: Some(10),
+            last_list_tab: 0,
+            list_viewport: Some((384.0, 240.0)),
+            ..Default::default()
+        };
+        remember_list_scroll_on_inventory_change(&mut st, 11, false);
+        assert_eq!(st.scroll_restore, Some(384.0));
+        assert_eq!(st.last_list_generation, Some(11));
+
+        st.scroll_restore = None; // the scroll renderer consumed the request
+        st.list_viewport = Some((40.0, 240.0)); // transient shrink clamped the area
+        remember_list_scroll_on_inventory_change(&mut st, 12, false);
+        assert_eq!(
+            st.scroll_restore,
+            Some(384.0),
+            "a following inventory update retains the original offset"
+        );
+        assert_eq!(st.scroll_hold, Some((12, 384.0)));
+
+        st.scroll_restore = None;
+        st.list_viewport = Some((384.0, 240.0)); // settled contents can show the old point again
+        remember_list_scroll_on_inventory_change(&mut st, 12, false);
+        assert_eq!(st.scroll_restore, Some(384.0));
+        assert_eq!(st.scroll_hold, None);
+
+        st.scroll_restore = None;
+        st.tab = 2;
+        st.last_list_tab = 0;
+        remember_list_scroll_on_inventory_change(&mut st, 13, false);
+        assert_eq!(st.scroll_restore, None, "a tab switch keeps its own scroll state");
+    }
+
+    #[test]
+    fn inventory_updates_keep_the_scroll_and_an_explicit_reveal_takes_precedence() {
+        let ctx = egui::Context::default();
+        let mut inv = view_inventory(true);
+        let root = inv.root;
+        let mut small = Inventory {
+            root,
+            lib_root: inv.lib_root,
+            generation: inv.generation + 1,
+            ..Default::default()
+        };
+        let mut root_folder = inv.folders.get(&root).expect("inventory root").clone();
+        root_folder.children.clear();
+        root_folder.items.clear();
+        small.folders.insert(root, root_folder);
+        let facts = Facts {
+            agent: Uuid::from_u128(2),
+            ..Default::default()
+        };
+        let mut st = InventoryUi {
+            expand_all: Some(true),
+            ..Default::default()
+        };
+        let mut prefs = InventoryPreferences::default();
+        let palette = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        fn frame(
+            ctx: &egui::Context,
+            palette: &Palette,
+            icons: &Icons,
+            inv: &mut Inventory,
+            st: &mut InventoryUi,
+            prefs: &mut InventoryPreferences,
+            facts: &Facts,
+        ) -> egui::scroll_area::ScrollAreaOutput<()> {
+            let root = inv.root;
+            let mut out = None;
+            headless_output(ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(500.0, 340.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    out = Some(list(
+                        ui,
+                        palette,
+                        icons,
+                        inv,
+                        st,
+                        prefs,
+                        facts,
+                        &mut vec![],
+                        260.0,
+                        root,
+                        false,
+                        true,
+                    ));
+                },
+            ));
+            out.expect("inventory list drawn")
+        }
+
+        let initial = frame(&ctx, &palette, &icons, &mut inv, &mut st, &mut prefs, &facts);
+        assert!(initial.content_size.y > 1_000.0, "large inventory can scroll");
+        crate::ui::widgets::scroll_offset::set(&ctx, initial.id, egui::vec2(0.0, 600.0));
+        let scrolled = frame(&ctx, &palette, &icons, &mut inv, &mut st, &mut prefs, &facts);
+        assert!(scrolled.state.unclamped_offset().y > 500.0);
+
+        std::mem::swap(&mut inv, &mut small); // offer arrives, then is temporarily moved out of the tree
+        frame(&ctx, &palette, &icons, &mut inv, &mut st, &mut prefs, &facts);
+        assert!(st.scroll_hold.is_some(), "keep the old offset while the tree is briefly shorter");
+        std::mem::swap(&mut inv, &mut small); // final inventory contents are visible
+        inv.generation += 2;
+        let restored = frame(&ctx, &palette, &icons, &mut inv, &mut st, &mut prefs, &facts);
+        assert!((restored.state.unclamped_offset().y - 600.0).abs() < 1.0);
+        let settled = frame(&ctx, &palette, &icons, &mut inv, &mut st, &mut prefs, &facts);
+        assert!((settled.state.unclamped_offset().y - 600.0).abs() < 1.0);
+
+        let accepted = Uuid::from_u128(10000);
+        st.show_original(&inv, accepted);
+        frame(&ctx, &palette, &icons, &mut inv, &mut st, &mut prefs, &facts);
+        assert_eq!(st.selected, Some(accepted));
+        assert!(st.visible.contains(&accepted), "the revealed item is selected and drawn");
     }
 
     #[test]

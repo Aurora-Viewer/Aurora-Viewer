@@ -335,7 +335,7 @@ pub fn after_search(inv: &Inventory, st: &mut InventoryUi, searching: bool) {
         // The plain list shares its scroll area with the results: it goes back
         // to its place from before the search, unless a selection it shows is
         // revealed below (that reveal's offset wins).
-        st.plain_scroll_restore = Some(st.plain_scroll);
+        st.scroll_restore = Some(st.plain_scroll);
     }
     if searching
         && st.search.trim().is_empty()

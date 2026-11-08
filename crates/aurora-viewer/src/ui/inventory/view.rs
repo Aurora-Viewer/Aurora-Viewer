@@ -1728,7 +1728,7 @@ mod tests {
 
     #[test]
     fn recent_and_worn_use_real_folders_and_separate_collapse_states() {
-        let (inv, mut facts) = fixture();
+        let (mut inv, mut facts) = fixture();
         let prefs = InventoryPreferences {
             last_logout: 200,
             ..Default::default()
@@ -1741,11 +1741,32 @@ mod tests {
         tree.toggle(id(2), 2);
         tree.prepare(&view, inv.root, 2, true);
         assert_eq!(tree.order, [id(1), id(2)]);
+        inv.generation += 1;
+        view.search(&inv, inv.root, "", &prefs, &Filters::default(), 2, None, &facts, facts.agent, 1000);
+        tree.prepare(&view, inv.root, 2, true);
+        assert_eq!(tree.order, [id(1), id(2)], "a Recent refresh keeps the user's collapse");
         facts.worn.insert(id(10));
         view.search(&inv, inv.root, "", &prefs, &Filters::default(), 3, None, &facts, facts.agent, 1000);
         tree.prepare(&view, inv.root, 3, true);
         assert_eq!(tree.order, [id(1), id(2), id(10)]);
         assert!(!tree.rows.last().unwrap().folder);
+
+        inv.items.get_mut(&id(11)).expect("favorite item").favorite = true;
+        inv.generation += 1;
+        view.search(&inv, inv.root, "", &prefs, &Filters::default(), 4, None, &facts, facts.agent, 1000);
+        tree.prepare(&view, inv.root, 4, true);
+        assert_eq!(
+            tree.order,
+            [id(1), id(2), id(11)],
+            "Favorites shows only the favorite item's ancestors"
+        );
+        tree.toggle(id(2), 4);
+        tree.prepare(&view, inv.root, 4, true);
+        assert_eq!(tree.order, [id(1), id(2)]);
+        inv.generation += 1;
+        view.search(&inv, inv.root, "", &prefs, &Filters::default(), 4, None, &facts, facts.agent, 1000);
+        tree.prepare(&view, inv.root, 4, true);
+        assert_eq!(tree.order, [id(1), id(2)], "a Favorites refresh keeps the user's collapse");
     }
 
     #[test]

@@ -251,7 +251,7 @@ pub(super) fn scroll(
         st.plain.expand(&st.view, inv, root, show_root, prefs.show_library, open);
     }
     // Back from a search: where the list was (a revealed row below wins).
-    let mut offset = st.plain_scroll_restore.take();
+    let mut offset = st.scroll_restore.take();
     // The root opens the first time it is shown, scrolled to the top.
     if show_root && st.roots_seen.insert(root) {
         st.plain.set_open(root, true);
