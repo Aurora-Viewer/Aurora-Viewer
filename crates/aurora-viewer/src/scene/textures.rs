@@ -1832,7 +1832,7 @@ impl TextureStreamer {
                 continue;
             }
             let slot = if self.legacy_bump_entries.contains_key(&id) {
-                new.normal_placeholder().unwrap_or(NO_SLOT)
+                new.normal_placeholder().unwrap_or_else(|| self.note_slotless())
             } else {
                 self.new_slot(new)
             };
@@ -1878,18 +1878,20 @@ impl TextureStreamer {
     /// when every slot holds a texture in use (`give_slots` gives it one
     /// later).
     fn new_slot(&mut self, table: &mut impl SlotTable) -> u32 {
-        self.free_slot(table).unwrap_or_else(|| {
-            // (drawn white, and nothing decoded for it is sent: `upload`)
-            self.slotless += 1;
-            self.slotless_unreported += 1;
-            NO_SLOT
-        })
+        self.free_slot(table, false).unwrap_or_else(|| self.note_slotless())
+    }
+
+    fn note_slotless(&mut self) -> u32 {
+        // The face keeps its fallback and upload waits for a slot.
+        self.slotless += 1;
+        self.slotless_unreported += 1;
+        NO_SLOT
     }
 
     /// A slot showing the placeholder, after the unused textures gave
     /// theirs back if the table is full (`new_slot`).
-    fn free_slot(&mut self, table: &mut impl SlotTable) -> Option<u32> {
-        if let Some(slot) = table.placeholder() {
+    fn free_slot(&mut self, table: &mut impl SlotTable, normal: bool) -> Option<u32> {
+        if let Some(slot) = if normal { table.normal_placeholder() } else { table.placeholder() } {
             return Some(slot);
         }
         let entries = &self.entries;
@@ -1897,7 +1899,7 @@ impl TextureStreamer {
             evictable(entries, id, since)
         });
         self.evict(table, unused);
-        table.placeholder()
+        if normal { table.normal_placeholder() } else { table.placeholder() }
     }
 
     /// The textures in use that went without a slot get one, as soon as the
@@ -1933,7 +1935,8 @@ impl TextureStreamer {
                 }
                 Some(_) => {}
             }
-            let Some(slot) = self.free_slot(table) else {
+            let derived = self.legacy_bump_entries.contains_key(&id);
+            let Some(slot) = self.free_slot(table, derived) else {
                 break;
             };
             let Some(e) = self.entries.get_mut(&id) else {
@@ -1954,7 +1957,10 @@ impl TextureStreamer {
             e.decoded = None;
             e.gpu_size = (0, 0);
             e.alpha = AlphaKind::Opaque;
-            if !e.busy() {
+            if derived {
+                // Local derived identities are never fetched as assets.
+                e.cache_state = 2;
+            } else if !e.busy() {
                 // as `gpu_reset_into`: read again, or decoded from memory
                 e.cache_state = if e.cache_state == 3 || e.data.is_empty() { 0 } else { 2 };
             }

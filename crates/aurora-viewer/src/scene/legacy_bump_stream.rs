@@ -24,14 +24,7 @@ impl TextureStreamer {
         if let Some(id) = self.legacy_bumps.get(&(source, mode)) {
             return Some(*id);
         }
-        let slot = table.normal_placeholder().or_else(|| {
-            let entries = &self.entries;
-            let unused = eviction_round(&mut self.unused, Instant::now(), Duration::ZERO, |id, since| {
-                evictable(entries, id, since)
-            });
-            self.evict(table, unused);
-            table.normal_placeholder()
-        })?;
+        let slot = self.free_slot(table, true)?;
         // A local identity cannot collide with a predictable hash of a grid UUID.
         let mut id = Uuid::new_v4();
         while self.entries.contains_key(&id) || self.local_slots.contains_key(&id) {
@@ -308,10 +301,16 @@ mod tests {
     #[derive(Default)]
     struct Slots {
         free: Vec<u32>,
+        normal_calls: usize,
     }
     impl SlotTable for Slots {
         fn placeholder(&mut self) -> Option<u32> {
             self.free.pop()
+        }
+        fn normal_placeholder(&mut self) -> Option<u32> {
+            let slot = self.free.pop()?;
+            self.normal_calls += 1;
+            Some(slot)
         }
         fn free(&mut self, slot: u32) {
             self.free.push(slot);
@@ -328,7 +327,10 @@ mod tests {
     #[test]
     fn bump_identity_survives_rebuilds_and_unrelated_source_releases() {
         let mut s = streamer();
-        let mut slots = Slots { free: vec![11, 12, 13] };
+        let mut slots = Slots {
+            free: vec![11, 12, 13],
+            ..Default::default()
+        };
         let source = Uuid::new_v4();
         let normal = s.reserve_legacy_bump(&mut slots, source, 1).unwrap();
         s.entries.get_mut(&normal).unwrap().refs = 2;
@@ -349,7 +351,10 @@ mod tests {
     #[test]
     fn bump_residency_uses_the_regular_memory_reduction_and_eviction_rules() {
         let mut s = streamer();
-        let mut slots = Slots { free: vec![11] };
+        let mut slots = Slots {
+            free: vec![11],
+            ..Default::default()
+        };
         let normal = s.reserve_legacy_bump(&mut slots, Uuid::new_v4(), 9).unwrap();
         let e = s.entries.get_mut(&normal).unwrap();
         e.refs = 1;
@@ -379,7 +384,10 @@ mod tests {
     #[test]
     fn bump_old_worker_cannot_cross_source_refresh_or_recreate_evicted_entries() {
         let mut s = streamer();
-        let mut slots = Slots { free: vec![11] };
+        let mut slots = Slots {
+            free: vec![11],
+            ..Default::default()
+        };
         let normal = s.reserve_legacy_bump(&mut slots, Uuid::new_v4(), 9).unwrap();
         let e = s.entries.get_mut(&normal).unwrap();
         e.refs = 1;
@@ -406,16 +414,47 @@ mod tests {
     }
 
     #[test]
+    fn bump_waiting_for_a_slot_recovers_flat_without_fetching_its_local_identity() {
+        let mut s = streamer();
+        let mut slots = Slots {
+            free: vec![11],
+            ..Default::default()
+        };
+        let source = Uuid::new_v4();
+        let normal = s.reserve_legacy_bump(&mut slots, source, 9).unwrap();
+        s.entries.get_mut(&normal).unwrap().refs = 2;
+        let mut replacement = Slots::default();
+        s.gpu_reset_into(&mut replacement);
+        assert_eq!(s.entries[&normal].slot, NO_SLOT);
+        assert_eq!(s.slotless, 1);
+        replacement.free.push(99);
+        s.give_slots(&mut replacement, Instant::now() + RESLOT_EVERY);
+        let e = &s.entries[&normal];
+        assert_eq!((e.slot, e.refs, e.cache_state, e.decoded), (99, 2, 2, None));
+        assert_eq!(replacement.normal_calls, 1);
+        assert!(!e.fetching && e.fetch_key == 0 && e.data.is_empty());
+        assert_eq!(s.slotless, 0);
+        assert_eq!(s.reslotted, vec![normal]);
+        assert_eq!(s.reserve_legacy_bump(&mut replacement, source, 9), Some(normal));
+    }
+
+    #[test]
     fn bump_gpu_reset_retains_identity_and_users_without_reading_a_fake_asset() {
         let mut s = streamer();
-        let mut slots = Slots { free: vec![11] };
+        let mut slots = Slots {
+            free: vec![11],
+            ..Default::default()
+        };
         let source = Uuid::new_v4();
         let normal = s.reserve_legacy_bump(&mut slots, source, 9).unwrap();
         let e = s.entries.get_mut(&normal).unwrap();
         e.refs = 2;
         e.info = Some(bump_info(16, 16));
         e.decoded = Some(0);
-        let mut replacement = Slots { free: vec![99] };
+        let mut replacement = Slots {
+            free: vec![99],
+            ..Default::default()
+        };
         s.gpu_reset_into(&mut replacement);
         let e = &s.entries[&normal];
         assert_eq!((e.slot, e.refs, e.cache_state, e.decoded), (99, 2, 2, None));
@@ -426,7 +465,10 @@ mod tests {
     #[test]
     fn bump_missing_source_does_not_block_photo_quality_and_can_recover() {
         let mut s = streamer();
-        let mut slots = Slots { free: vec![11] };
+        let mut slots = Slots {
+            free: vec![11],
+            ..Default::default()
+        };
         let source = Uuid::new_v4();
         let normal = s.reserve_legacy_bump(&mut slots, source, 9).unwrap();
         let mut height = Entry::new(12, TexSource::Asset, 2048);
