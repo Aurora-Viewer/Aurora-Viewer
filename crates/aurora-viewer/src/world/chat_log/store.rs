@@ -406,8 +406,14 @@ fn relocate(from: &Path, to: &Path) -> std::io::Result<usize> {
     }
     // LLConversationLog::moveLog: the log follows, the one already there
     // kept as a backup
+    // a log that cannot follow fails the whole move: the transcripts go
+    // back, so the log and its transcripts are never split between folders
     if let Err(e) = move_log(&from.join(super::conversations::FILE), &to.join(super::conversations::FILE)) {
-        log::warn!("conversation log: not moved with the transcripts ({e})");
+        log::warn!("conversation log: not moved with the transcripts ({e}); the move is undone");
+        for (source, target) in moved.iter().rev() {
+            let _ = move_file(target, source);
+        }
+        return Err(e);
     }
     let _ = std::fs::remove_dir(from);
     Ok(moved.len())
@@ -428,6 +434,12 @@ fn move_log(from: &Path, to: &Path) -> std::io::Result<()> {
             backup = to.with_file_name(format!("{name}.backup{n}"));
         }
         std::fs::rename(to, &backup)?;
+        if let Err(e) = move_file(from, to) {
+            // the log already there is put back
+            let _ = std::fs::rename(&backup, to);
+            return Err(e);
+        }
+        return Ok(());
     }
     move_file(from, to)
 }
@@ -742,6 +754,26 @@ mod tests {
         assert_eq!(std::fs::read(old.join("Bob.txt")).unwrap(), b"d\n");
         assert!(!new.join("Bob.txt").exists());
         assert_eq!(std::fs::read(new.join("Jane Doe.txt")).unwrap(), b"a\n");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_log_that_cannot_move_undoes_the_move() {
+        let dir = temp();
+        let (old, new) = (dir.join("old"), dir.join("new"));
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("Jane Doe.txt"), b"a
+").unwrap();
+        std::fs::write(old.join(super::super::conversations::FILE), b"log").unwrap();
+        // a folder where the log should land: it cannot be replaced
+        std::fs::create_dir_all(new.join(super::super::conversations::FILE)).unwrap();
+        let w = Worker::start().unwrap();
+        let moved = w.relocate(old.clone(), new.clone()).recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(moved.is_err());
+        assert_eq!(std::fs::read(old.join("Jane Doe.txt")).unwrap(), b"a
+");
+        assert_eq!(std::fs::read(old.join(super::super::conversations::FILE)).unwrap(), b"log");
+        assert!(!new.join("Jane Doe.txt").exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
