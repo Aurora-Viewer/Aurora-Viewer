@@ -1289,6 +1289,37 @@ fn the_buttons_choice_lives_in_the_settings() {
     assert!(!shows_rail(&demo), "the session's state stands in for the settings");
 }
 
+/// A column too short for one entry of the list, the call panel and the
+/// button's row lays out as before the button, without it: the call panel
+/// never covers the list. The button is back with the room.
+#[test]
+fn a_short_column_leaves_the_button_out() {
+    use super::super::sidebar::has_foot;
+    // no call: one entry (44) and the row (54)
+    assert!(has_foot(98.0, 0.0) && !has_foot(97.0, 0.0));
+    // a call on the rail: its panel and gaps (120) too
+    assert!(has_foot(218.0, 120.0) && !has_foot(217.0, 120.0));
+
+    // a call with Jane while Bob's conversation is shown: the call panel
+    // stands in the column
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.world.start_call(JANE);
+    h.settle();
+    h.st.open(BOB);
+    assert!(h.world.calls.active.is_some(), "the call is on");
+    let toggle = super::super::sidebar::control_id("column-toggle");
+    let at = |h: &mut Harness, height: f32| {
+        crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(700.0, height));
+        for _ in 0..30 {
+            h.frame(Vec::new());
+        }
+        h.frames.ctx.read_response(toggle).is_some()
+    };
+    assert!(at(&mut h, 560.0), "room for the button");
+    assert!(!at(&mut h, 130.0), "too short: left out");
+    assert!(at(&mut h, 560.0), "back with the room");
+}
+
 /// All false is the automatic layout; each click departs from it or comes
 /// back to it, whatever the width.
 #[test]

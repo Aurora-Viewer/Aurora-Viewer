@@ -321,8 +321,10 @@ pub(super) fn show(
     let filter = st.side_search().to_lowercase();
     let matches = |name: &str| filter.is_empty() || name.to_lowercase().contains(&filter);
     let voice = voice_panel_wanted(world, st);
-    let list_h =
-        (column.bottom() - ui.cursor().top() - if voice { voice_panel_h(rail) + 2.0 * VOICE_PANEL_GAP } else { 0.0 } - FOOT_H).max(ENTRY_H);
+    let voice_h = if voice { voice_panel_h(rail) + 2.0 * VOICE_PANEL_GAP } else { 0.0 };
+    let room = column.bottom() - ui.cursor().top();
+    let foot = has_foot(room, voice_h);
+    let list_h = (room - voice_h - if foot { FOOT_H } else { BARE_FOOT }).max(ENTRY_H);
     egui::ScrollArea::vertical()
         .id_salt("conversation_column")
         .max_height(list_h)
@@ -530,9 +532,11 @@ pub(super) fn show(
             }
         });
     if voice {
-        voice_panel(ui, p, world, st, actions, rail);
+        voice_panel(ui, p, world, st, actions, rail, foot);
     }
-    column_toggle(ui, p, st, actions, column, narrow);
+    if foot {
+        column_toggle(ui, p, st, actions, column, narrow);
+    }
     contacts_clicked
 }
 
@@ -540,6 +544,16 @@ pub(super) fn show(
 /// conversation's box and the room under it, so that its button stands level
 /// with the box's own buttons (`column_toggle`).
 const FOOT_H: f32 = super::compose::BOX_H + super::compose::UNDER_BOX;
+/// The margin under the list without the button's row, as before it.
+const BARE_FOOT: f32 = 6.0;
+
+/// The column has the button's row when it still holds one entry of the
+/// list above the call panel (`voice_h`, with its gaps, or 0) and the row.
+/// A shorter column lays out as before the button, without it, so that the
+/// call panel never covers the list; the button is back with the room.
+pub(super) fn has_foot(room: f32, voice_h: f32) -> bool {
+    room - voice_h - FOOT_H >= ENTRY_H
+}
 
 /// The button that collapses and expands the column, at the bottom left of
 /// the window (`workspace::ColumnChoice`). An Aurora addition: the Legacy
@@ -1033,12 +1047,12 @@ const VOICE_BUTTON_H: f32 = 28.0;
 /// Room above and below the call panel, between the list and the foot.
 const VOICE_PANEL_GAP: f32 = 6.0;
 
-fn voice_panel(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, actions: &mut Vec<ConvAction>, rail: bool) {
+fn voice_panel(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, actions: &mut Vec<ConvAction>, rail: bool, foot: bool) {
     let Some(call) = world.calls.active.as_ref() else {
         return;
     };
     let conversation = call.conversation();
-    let bottom = ui.max_rect().bottom() - FOOT_H - VOICE_PANEL_GAP;
+    let bottom = ui.max_rect().bottom() - if foot { FOOT_H + VOICE_PANEL_GAP } else { 2.0 * VOICE_PANEL_GAP };
     let rect = egui::Rect::from_min_max(
         egui::pos2(ui.max_rect().left(), bottom - voice_panel_h(rail)),
         egui::pos2(ui.max_rect().right(), bottom),
