@@ -3218,6 +3218,9 @@ impl App {
         }
         if let NetEvent::ScriptTeleportRequest { .. } = ev {
             // llMapDestination asked for the map (BEACON_SHOW_MAP)
+            if !self.panels.world_map {
+                self.worldmap_ui.open_for_script();
+            }
             self.panels.world_map = true;
             return;
         }
