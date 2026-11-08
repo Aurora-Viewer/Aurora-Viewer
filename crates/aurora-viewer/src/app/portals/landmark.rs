@@ -202,13 +202,20 @@ pub(in crate::app) fn preview(ctx: &egui::Context, p: &Palette, point: egui::Pos
         .interactable(false)
         .show(ctx, |ui| {
             ui::widgets::overlay(ui, p, egui::Margin::same(8), |ui| {
-                ui.label(if !ready {
-                    aurora_i18n::tr!("portal-bridge-required")
-                } else if shift {
-                    aurora_i18n::tr!("portal-drop-public")
-                } else {
-                    aurora_i18n::tr!("portal-drop-friends")
-                });
+                // One line that never wraps: the area lays its content out in
+                // the size it kept from the previous frame, so a wrapping label
+                // kept the narrower box of the other Shift text, taller each
+                // toggle and on the next drag (#2636).
+                ui.add(
+                    egui::Label::new(if !ready {
+                        aurora_i18n::tr!("portal-bridge-required")
+                    } else if shift {
+                        aurora_i18n::tr!("portal-drop-public")
+                    } else {
+                        aurora_i18n::tr!("portal-drop-friends")
+                    })
+                    .extend(),
+                );
             });
         });
 }
@@ -265,6 +272,50 @@ mod tests {
         }
         let drag = frame(true, Some(false)).expect("release reaches the world");
         assert!(drag.released && drag.shift);
+    }
+
+    /// #2636: toggling Shift during a held landmark drag keeps the tooltip
+    /// fitted to its current text, and a later drag starts at that size.
+    #[test]
+    fn portal_drag_preview_fits_its_text_across_shift_toggles_and_drags() {
+        let palette = crate::theme::Theme::default().palette();
+        let point = egui::pos2(700.0, 400.0);
+        let frame = |ctx: &egui::Context, shift: Option<bool>| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    if let Some(shift) = shift {
+                        preview(ui.ctx(), &palette, point, shift, true);
+                    }
+                },
+            );
+            output.textures_delta.clear();
+            ctx.memory(|memory| memory.area_rect(egui::Id::unique("portal_landmark_preview")))
+                .map(|rect| rect.size())
+        };
+        let settled = |ctx: &egui::Context, shift: bool| {
+            let mut size = None;
+            for _ in 0..3 {
+                size = frame(ctx, Some(shift));
+            }
+            size.expect("preview shown")
+        };
+        let fresh = |shift: bool| settled(&egui::Context::default(), shift);
+        let (friends, public) = (fresh(false), fresh(true));
+        let ctx = egui::Context::default();
+        for drag in 0..2 {
+            for shift in [false, true, false, true, false, true, false] {
+                let size = settled(&ctx, shift);
+                assert_eq!(size, if shift { public } else { friends }, "drag {drag}, shift {shift}");
+            }
+            // Released: no preview for a few frames, then the next drag.
+            for _ in 0..3 {
+                frame(&ctx, None);
+            }
+        }
     }
 
     #[test]
