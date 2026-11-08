@@ -50,6 +50,70 @@ fn no_viewer_still_starts_with_the_link() {
 }
 
 #[test]
+fn an_endpoint_owned_by_another_pid_does_not_receive_the_link() {
+    let listener = Listener::new();
+    assert!(!send_to(&listener.name, "secondlife://Test/1/2/3", Some(0)));
+    assert!(listener.rx.as_ref().unwrap().try_recv().is_err());
+    assert!(send_to(&listener.name, "secondlife://Test/1/2/3", Some(std::process::id())));
+    assert_eq!(
+        listener.rx.as_ref().unwrap().recv_timeout(Duration::from_secs(2)).unwrap(),
+        "secondlife://Test/1/2/3"
+    );
+}
+
+#[test]
+fn aborted_connections_do_not_stop_the_receiver() {
+    let listener = Listener::new();
+    for _ in 0..32 {
+        assert!(!send_to(&listener.name, "secondlife://Test/1/2/3", Some(0)));
+    }
+    assert!(hand_off_to(&listener.name, "secondlife://Test/1/2/3"));
+    assert_eq!(
+        listener.rx.as_ref().unwrap().recv_timeout(Duration::from_secs(2)).unwrap(),
+        "secondlife://Test/1/2/3"
+    );
+}
+
+#[test]
+fn an_oversized_link_is_refused_before_connecting() {
+    let listener = Listener::new();
+    assert!(!hand_off_to(&listener.name, &"x".repeat(MAX_URL + 1)));
+    assert!(listener.rx.as_ref().unwrap().try_recv().is_err());
+    assert!(hand_off_to(&listener.name, "secondlife://Test/1/2/3"));
+    assert_eq!(
+        listener.rx.as_ref().unwrap().recv_timeout(Duration::from_secs(2)).unwrap(),
+        "secondlife://Test/1/2/3"
+    );
+}
+
+#[test]
+fn native_open_requires_attribute_access_in_addition_to_data_writing() {
+    use windows_sys::Win32::Storage::FileSystem::{FILE_READ_ATTRIBUTES, FILE_WRITE_DATA, SYNCHRONIZE};
+    let logon = security::logon_context().unwrap().0;
+    let descriptor = |rights| {
+        // Suppress the owner's implicit rights so this tests the actual
+        // client ACE even when the server and client are the same process.
+        security::Attributes::from_sddl(&format!("D:P(A;;RC;;;OW)(A;;0x{rights:x};;;{logon})S:(ML;;NW;;;ME)")).unwrap()
+    };
+    let old_rights = FILE_WRITE_DATA | SYNCHRONIZE;
+    let old_security = descriptor(old_rights);
+    let old_name = name();
+    let _old_pipe = create_pipe(&old_name, Some(&old_security)).unwrap();
+    let error = std::fs::OpenOptions::new()
+        .access_mode(old_rights)
+        .open(&old_name)
+        .expect_err("native open needs attribute access");
+    assert_eq!(error.raw_os_error(), Some(5));
+    let fixed_security = descriptor(old_rights | FILE_READ_ATTRIBUTES);
+    let fixed_name = name();
+    let pipe = create_pipe(&fixed_name, Some(&fixed_security)).unwrap();
+    assert!(hand_off_to(&fixed_name, "secondlife://Test/1/2/3"));
+    let mut bytes = vec![0; "secondlife://Test/1/2/3".len()];
+    std::fs::File::from(pipe).read_exact(&mut bytes).unwrap();
+    assert_eq!(bytes, b"secondlife://Test/1/2/3");
+}
+
+#[test]
 fn a_long_unicode_link_keeps_every_byte_across_pipe_reads() {
     let listener = Listener::new();
     let url = format!("secondlife://{}/128/128/20", "Région".repeat(600));

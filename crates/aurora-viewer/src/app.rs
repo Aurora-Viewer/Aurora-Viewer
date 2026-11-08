@@ -20468,6 +20468,8 @@ impl ApplicationHandler for App {
     /// closed connection and every exit ended in a segmentation fault (before
     /// the browsers' private profiles were cleaned up).
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        #[cfg(windows)]
+        crate::slurl_handoff::release();
         self.gfx = None;
     }
 
@@ -20642,6 +20644,7 @@ impl ApplicationHandler for App {
                 self.occluded = *hidden;
             }
             WindowEvent::Focused(true) => {
+                crate::slurl_handoff::focused();
                 self.focused = true;
                 if !self.demo
                     && matches!(self.screen, Screen::Login)

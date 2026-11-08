@@ -4,10 +4,34 @@ use super::{MAX_URL, Receiver};
 use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 
+mod discovery;
 mod security;
+
+use discovery::Scope;
+
+static READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn window_ready(window: &std::sync::Arc<winit::window::Window>) {
+    if READY.load(std::sync::atomic::Ordering::Acquire) {
+        discovery::publish(window);
+    }
+}
+
+pub fn focused() {
+    discovery::focused();
+}
+
+pub fn release() {
+    READY.store(false, std::sync::atomic::Ordering::Release);
+    discovery::release();
+}
 
 /// `\\.\pipe\aurora-viewer-slurl-<session>[-demo][-<title>]`.
 fn pipe_name() -> String {
+    legacy_name(&Scope::current())
+}
+
+fn legacy_name(scope: &Scope) -> String {
     use windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId;
     use windows_sys::Win32::System::Threading::GetCurrentProcessId;
     let mut session = 0u32;
@@ -16,28 +40,46 @@ fn pipe_name() -> String {
         ProcessIdToSessionId(GetCurrentProcessId(), &mut session);
     }
     let mut name = format!(r"\\.\pipe\aurora-viewer-slurl-{session}");
-    if std::env::var_os("AURORA_DEMO").is_some() {
+    if scope.demo {
         name.push_str("-demo");
     }
-    if let Some(slug) = crate::cli::title_slug() {
+    if let Some(slug) = &scope.title {
         name.push('-');
-        name.push_str(&slug);
+        name.push_str(slug);
     }
     name
+}
+
+fn instance_name(pid: u32) -> String {
+    format!("{}-v2-{pid}", legacy_name(&Scope { demo: false, title: None }))
 }
 
 /// Sends the link to the viewer already running; false when there is none
 /// (this process then starts with it).
 pub fn hand_off(url: &str) -> bool {
-    hand_off_to(&pipe_name(), url)
+    route_to(&Scope::current(), url) || hand_off_to(&pipe_name(), url)
+}
+
+fn route_to(scope: &Scope, url: &str) -> bool {
+    discovery::candidates(scope)
+        .into_iter()
+        .any(|candidate| send_to(&instance_name(candidate.pid), url, Some(candidate.pid)))
 }
 
 fn hand_off_to(name: &str, url: &str) -> bool {
+    send_to(name, url, None)
+}
+
+fn send_to(name: &str, url: &str, expected_pid: Option<u32>) -> bool {
     use std::io::Write;
     use std::os::windows::fs::OpenOptionsExt;
     use windows_sys::Win32::Storage::FileSystem::SECURITY_IDENTIFICATION;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{ASFW_ANY, AllowSetForegroundWindow};
+    use windows_sys::Win32::System::Pipes::GetNamedPipeServerProcessId;
+    use windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow;
     const ERROR_PIPE_BUSY: i32 = 231;
+    if url.is_empty() || url.len() > MAX_URL {
+        return false;
+    }
     // the other viewer reads one link at a time: a second click within the
     // same instant waits for its turn
     for _ in 0..20 {
@@ -48,11 +90,20 @@ fn hand_off_to(name: &str, url: &str) -> bool {
             .open(name)
         {
             Ok(mut pipe) => {
+                let mut pid = 0;
+                // SAFETY: a live client pipe and valid output pointer. The
+                // PID must match the discovered HWND, preventing a different
+                // server from taking a reused or pre-created endpoint name.
+                if unsafe { GetNamedPipeServerProcessId(pipe.as_raw_handle(), &mut pid) } == 0
+                    || expected_pid.is_some_and(|expected| expected != pid)
+                {
+                    return false;
+                }
                 // started by the user's click, this process may bring the
                 // other window to the front; it gives that right away
                 // SAFETY: no pointer; a refusal only leaves the window behind.
                 unsafe {
-                    AllowSetForegroundWindow(ASFW_ANY);
+                    AllowSetForegroundWindow(pid);
                 }
                 return pipe.write_all(url.as_bytes()).is_ok();
             }
@@ -65,30 +116,46 @@ fn hand_off_to(name: &str, url: &str) -> bool {
     false
 }
 
-/// Starts receiving the links of later launches, when no other viewer of
-/// this session (same demo mode and title) receives them already.
+/// Every instance owns an endpoint. The old shared name remains a relay for
+/// registered handlers from an older installation, which know no HWND/PID.
 pub fn listen() -> Option<Receiver<String>> {
-    listen_on(pipe_name())
+    let (tx, rx) = crossbeam_channel::unbounded();
+    if !start_receiver(instance_name(std::process::id()), tx.clone(), None) {
+        return None;
+    }
+    let scope = Scope::current();
+    start_receiver(legacy_name(&scope), tx.clone(), Some(scope.clone()));
+    if !scope.demo && scope.title.is_some() {
+        let online = Scope { demo: false, title: None };
+        start_receiver(legacy_name(&online), tx, Some(online));
+    }
+    READY.store(true, std::sync::atomic::Ordering::Release);
+    Some(rx)
 }
 
+#[cfg(test)]
 fn listen_on(name: String) -> Option<Receiver<String>> {
     let (tx, rx) = crossbeam_channel::unbounded();
+    start_receiver(name, tx, None).then_some(rx)
+}
+
+fn start_receiver(name: String, tx: crossbeam_channel::Sender<String>, relay: Option<Scope>) -> bool {
     let (ready_tx, ready_rx) = crossbeam_channel::bounded(1);
     let spawned = std::thread::Builder::new()
         .name("aurora-slurl-pipe".into())
-        .spawn(move || serve(&name, &ready_tx, &tx));
+        .spawn(move || serve(&name, &ready_tx, &tx, relay.as_ref()));
     if let Err(e) = spawned {
         log::warn!("startup links: no pipe thread ({e})");
-        return None;
+        return false;
     }
-    ready_rx.recv().unwrap_or(false).then_some(rx)
+    ready_rx.recv().unwrap_or(false)
 }
 
 /// The pipe's thread: one client at a time on a single instance, so the
 /// name exists for the viewer's whole life (clients that come while one is
 /// read wait, ERROR_PIPE_BUSY).
-fn serve(name: &str, ready: &crossbeam_channel::Sender<bool>, links: &crossbeam_channel::Sender<String>) {
-    use windows_sys::Win32::Foundation::{ERROR_PIPE_CONNECTED, GetLastError};
+fn serve(name: &str, ready: &crossbeam_channel::Sender<bool>, links: &crossbeam_channel::Sender<String>, relay: Option<&Scope>) {
+    use windows_sys::Win32::Foundation::{ERROR_BROKEN_PIPE, ERROR_NO_DATA, ERROR_PIPE_CONNECTED, GetLastError};
     use windows_sys::Win32::Storage::FileSystem::ReadFile;
     use windows_sys::Win32::System::Pipes::{ConnectNamedPipe, DisconnectNamedPipe};
     let security = match security::Attributes::new() {
@@ -114,10 +181,20 @@ fn serve(name: &str, ready: &crossbeam_channel::Sender<bool>, links: &crossbeam_
     let mut buf = vec![0u8; 1024];
     loop {
         // SAFETY: `pipe` is the valid handle created above; no overlapped I/O.
-        let connected = unsafe { ConnectNamedPipe(handle, std::ptr::null_mut()) } != 0 || unsafe { GetLastError() } == ERROR_PIPE_CONNECTED;
-        if !connected {
-            log::warn!("startup links: pipe stopped (error {})", unsafe { GetLastError() });
-            break;
+        if unsafe { ConnectNamedPipe(handle, std::ptr::null_mut()) } == 0 {
+            // SAFETY: read this thread's error immediately after the call.
+            let error = unsafe { GetLastError() };
+            if matches!(error, ERROR_NO_DATA | ERROR_BROKEN_PIPE) {
+                // A probe or aborted launch may close before ConnectNamedPipe
+                // runs. Reset this connection instead of losing the listener.
+                // SAFETY: our live server handle, no outstanding I/O.
+                unsafe { DisconnectNamedPipe(handle) };
+                continue;
+            }
+            if error != ERROR_PIPE_CONNECTED {
+                log::warn!("startup links: pipe stopped (error {error})");
+                break;
+            }
         }
         let mut url = Vec::new();
         loop {
@@ -138,7 +215,7 @@ fn serve(name: &str, ready: &crossbeam_channel::Sender<bool>, links: &crossbeam_
             DisconnectNamedPipe(handle);
         }
         let url = String::from_utf8_lossy(&url).trim().to_owned();
-        if !url.is_empty() && links.send(url).is_err() {
+        if !url.is_empty() && !relay.is_some_and(|scope| route_to(scope, &url)) && links.send(url).is_err() {
             break;
         }
     }

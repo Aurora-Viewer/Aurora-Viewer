@@ -82,7 +82,9 @@ viewer's process closes. For a test with human intervention, keep the title
 access-check regressions on isolated names. It covers the elevated owner's
 ACL with Administrators disabled in a duplicate client context, actual
 low-integrity refusal, unrelated logons, restricted client rights, long
-Unicode links and compatibility with the old client and server. It does
+Unicode links, aborted connections, native attribute-access requirements,
+last-focus selection, closing windows, scoped demos and compatibility with
+the old client and server. It does
 not elevate a process, change URL associations or connect to a grid.
 
 For the human check of #2402, start the built viewer with
@@ -97,9 +99,20 @@ the start location instead.
 
 Repeat with the receiving viewer started as administrator and the sending
 shell running normally under that same user's linked Windows account.
-This human runtime check supplements the ACL test. Finally, with the build
-explicitly chosen in Preferences as the user's SLurl handler, check a link
-opened from the browser. The fix itself does not change that preference.
+Also run two receiving viewers. Focus A, then B, then the sending shell:
+only B must receive the next link. Focus A again and repeat: only A receives
+it. Close the last focused receiver and repeat: the remaining one receives
+it. Include a normal receiver and an administrator receiver.
+
+This human runtime check supplements the ACL test. Finally, explicitly
+choose this worktree's executable in Preferences as the user's SLurl
+handler, then check a link opened from the browser. An existing registration
+may still point at the installed release: a browser then starts that older
+client, which may lack the rights needed to reach an elevated viewer. The
+fix leaves valid existing associations under the user's control.
+On Windows a launch with no `--title` selects the last focused online
+receiver, including titled test windows. Explicitly titled senders select
+only receivers with that title; offline demos never receive online links.
 Actual grid login and teleporting are performed by the human.
 
 ## General

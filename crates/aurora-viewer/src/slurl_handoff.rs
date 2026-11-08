@@ -6,13 +6,16 @@
 //! llappviewerwin32.cpp, llviewerwindow.cpp, originally LGPL 2.1).
 //!
 //! Aurora uses a named pipe of the user's session instead of a window
-//! message (winit owns the window procedure): the first viewer creates it
-//! and a thread reads the links sent to it; a viewer started with a SLURL
-//! writes its link there and stops before opening a window. The pipe's
+//! message (winit owns the window procedure): every viewer creates an
+//! endpoint and publishes it through properties of its main window. Actual
+//! focus events record which receiver was used last. A launch with a link
+//! selects that receiver and stops before opening a window. The pipe's
 //! security permits only the same interactive logon to write requests, at
 //! medium integrity even when the viewer is elevated; remote clients are
-//! refused. Demo mode and `--title` test windows use pipes of their own,
-//! so a test never takes the links meant for the human's viewer.
+//! refused. Offline demos and explicitly titled senders are isolated. An
+//! untitled online launch (the browser's) reaches the last focused online
+//! window even if that receiver has a test title. Shared names remain as
+//! relays for older clients. No registry or per-frame polling is used.
 //!
 //! On Linux the hand-over goes over the session bus, as the Legacy Viewer's
 //! (LLAppViewerLinux::sendURLToOtherInstance and initSLURLHandler, method
@@ -29,7 +32,7 @@ use crossbeam_channel::Receiver;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub use windows::{hand_off, listen};
+pub use windows::{focused, hand_off, listen, release, window_ready};
 
 /// Longest link received (a SLURL is far shorter).
 #[cfg(any(windows, target_os = "linux"))]
@@ -51,11 +54,14 @@ pub use bus::listen;
 #[cfg(target_os = "linux")]
 pub use bus::release;
 
-/// Nothing to give back on the other systems. The Windows pipe still takes
-/// a link while the viewer closes: its thread only finds the receiver gone
-/// after reading it (TASKS.md, "later").
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn release() {}
+
+#[cfg(not(windows))]
+pub fn window_ready(_window: &std::sync::Arc<winit::window::Window>) {}
+
+#[cfg(not(windows))]
+pub fn focused() {}
 
 #[cfg(not(any(windows, target_os = "linux")))]
 pub fn listen() -> Option<Receiver<String>> {

@@ -15,11 +15,13 @@ use windows_sys::Win32::Security::{
     GetTokenInformation, SECURITY_ATTRIBUTES, TOKEN_ELEVATION, TOKEN_GROUPS, TOKEN_QUERY, TokenElevation, TokenLogonSid,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    FILE_CREATE_PIPE_INSTANCE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_WRITE_DATA, SYNCHRONIZE,
+    FILE_CREATE_PIPE_INSTANCE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_READ_ATTRIBUTES, FILE_WRITE_DATA, SYNCHRONIZE,
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
-pub(super) const CLIENT_ACCESS: u32 = FILE_WRITE_DATA | SYNCHRONIZE;
+// The native file-open path and pipe identity query need attribute access
+// too. An AccessCheck on WRITE_DATA alone does not test that Windows path.
+pub(super) const CLIENT_ACCESS: u32 = FILE_WRITE_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE;
 pub(super) fn sddl(logon: &str, elevated: bool) -> String {
     // Older clients requested GENERIC_WRITE. Preserve it only within the
     // same trust level: the logon for a normal viewer, its elevated owner
