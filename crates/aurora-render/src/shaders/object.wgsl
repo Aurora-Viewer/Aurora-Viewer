@@ -140,6 +140,13 @@ fn terrain_direction(bytes: vec4<u32>) -> vec3<f32> {
     return normalize(n);
 }
 
+// The terrain tangent: two snorm16 values in the first two unorm16 weights
+// (types.rs pack_terrain_frame).
+fn terrain_tangent(weights: vec4<f32>) -> vec3<f32> {
+    let w = vec2<u32>(round(weights.xy * 65535.0));
+    return terrain_direction(vec4<u32>(w.x & 0xffu, w.x >> 8u, w.y & 0xffu, w.y >> 8u));
+}
+
 fn vertex_normal(rec: DrawRecord, in: VsIn) -> vec3<f32> {
     if ((rec.flags.x & FLAG_TERRAIN) != 0u) { return terrain_direction(in.joints); }
     return in.normal.xyz + lip_delta(rec, in)[1];

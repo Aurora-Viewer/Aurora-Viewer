@@ -739,74 +739,76 @@ fn friends_tab(
                 continue;
             }
             shown += 1;
-            ui.horizontal(|ui| {
-                ui.set_min_height(22.0);
-                if settings.pictures {
-                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(radar::PICTURE), egui::Sense::hover());
-                    let pic = pics.get(&f.id);
-                    if pic.is_none() && ui.is_rect_visible(rect) {
-                        st.want_pic(f.id, now);
+            ui.push_id(f.id, |ui| {
+                ui.horizontal(|ui| {
+                    ui.set_min_height(22.0);
+                    if settings.pictures {
+                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(radar::PICTURE), egui::Sense::hover());
+                        let pic = pics.get(&f.id);
+                        if pic.is_none() && ui.is_rect_visible(rect) {
+                            st.want_pic(f.id, now);
+                        }
+                        widgets::avatar_picture(ui, p, rect, pic, &name, !f.online);
                     }
-                    widgets::avatar_picture(ui, p, rect, pic, &name, !f.online);
-                }
-                widgets::status_dot(ui, widgets::online_color(p, f.online));
-                let col = if f.online { p.indigo_light } else { p.muted };
-                // complete names can be long: cut before the rights
-                // and buttons (full name on hover)
-                let buttons = if settings.permissions { 140.0 } else { 80.0 };
-                let w = (ui.available_width() - buttons).max(60.0);
-                let r = ui
-                    .allocate_ui_with_layout(egui::vec2(w, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        ui.add(
-                            egui::Label::new(RichText::new(name).size(13.0).color(col))
-                                .truncate()
-                                .sense(egui::Sense::click()),
-                        )
-                    })
-                    .inner;
-                if r.double_clicked() {
-                    actions.push(PeopleAction::OpenIm(f.id));
-                }
-                // menu_fs_contacts_friends.xml
-                menu::context_menu(&r, p, |ui| context::avatar_list_menu(ui, p, world, f.id, AvatarList::Friend));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    // the icons these actions have in the avatar menus
-                    if widgets::icon_button(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport"), f.online) {
-                        actions.push(PeopleAction::OfferTeleport(f.id));
-                    }
-                    if widgets::icon_button(
-                        ui,
-                        p,
-                        "message-circle-filled",
-                        aurora_i18n::tr!("ui-people-instant-message-im"),
-                        true,
-                    ) {
+                    widgets::status_dot(ui, widgets::online_color(p, f.online));
+                    let col = if f.online { p.indigo_light } else { p.muted };
+                    // complete names can be long: cut before the rights
+                    // and buttons (full name on hover)
+                    let buttons = if settings.permissions { 140.0 } else { 80.0 };
+                    let w = (ui.available_width() - buttons).max(60.0);
+                    let r = ui
+                        .allocate_ui_with_layout(egui::vec2(w, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.add(
+                                egui::Label::new(RichText::new(name).size(13.0).color(col))
+                                    .truncate()
+                                    .sense(egui::Sense::click()),
+                            )
+                        })
+                        .inner;
+                    if r.double_clicked() {
                         actions.push(PeopleAction::OpenIm(f.id));
                     }
-                    if widgets::icon_button(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile"), true) {
-                        actions.push(PeopleAction::Profile(f.id));
-                    }
-                    if !settings.permissions {
-                        return;
-                    }
-                    ui.add_space(2.0);
-                    // Rights granted to me: 1 online status, 2 map location, 4 modify
-                    // objects, with the icons of the contacts window
-                    for (bit, icon, tip) in [
-                        (4, "pencil-filled", aurora_i18n::tr!("ui-people-i-can-modify-their-objects")),
-                        (2, "map-pin-filled", aurora_i18n::tr!("extra-i-can-see-them-on-the-map")),
-                        (1, "eye-filled", aurora_i18n::tr!("ui-people-i-can-see-their-online-status")),
-                    ] {
-                        let on = f.rights_has & bit != 0;
-                        let (cell, hover) = ui.allocate_exact_size(Vec2::splat(14.0), egui::Sense::hover());
-                        if let Some(texture) = super::icons::global(icon) {
-                            let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-                            let tint = if on { p.violet_light } else { p.muted_dim.gamma_multiply(0.6) };
-                            ui.painter().image(texture.id(), cell.shrink(0.5), uv, tint);
+                    // menu_fs_contacts_friends.xml
+                    menu::context_menu(&r, p, |ui| context::avatar_list_menu(ui, p, world, f.id, AvatarList::Friend));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        // the icons these actions have in the avatar menus
+                        if widgets::icon_button(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport"), f.online) {
+                            actions.push(PeopleAction::OfferTeleport(f.id));
                         }
-                        hover.on_hover_text(tip);
-                    }
+                        if widgets::icon_button(
+                            ui,
+                            p,
+                            "message-circle-filled",
+                            aurora_i18n::tr!("ui-people-instant-message-im"),
+                            true,
+                        ) {
+                            actions.push(PeopleAction::OpenIm(f.id));
+                        }
+                        if widgets::icon_button(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile"), true) {
+                            actions.push(PeopleAction::Profile(f.id));
+                        }
+                        if !settings.permissions {
+                            return;
+                        }
+                        ui.add_space(2.0);
+                        // Rights granted to me: 1 online status, 2 map location, 4 modify
+                        // objects, with the icons of the contacts window
+                        for (bit, icon, tip) in [
+                            (4, "pencil-filled", aurora_i18n::tr!("ui-people-i-can-modify-their-objects")),
+                            (2, "map-pin-filled", aurora_i18n::tr!("extra-i-can-see-them-on-the-map")),
+                            (1, "eye-filled", aurora_i18n::tr!("ui-people-i-can-see-their-online-status")),
+                        ] {
+                            let on = f.rights_has & bit != 0;
+                            let (cell, hover) = ui.allocate_exact_size(Vec2::splat(14.0), egui::Sense::hover());
+                            if let Some(texture) = super::icons::global(icon) {
+                                let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                                let tint = if on { p.violet_light } else { p.muted_dim.gamma_multiply(0.6) };
+                                ui.painter().image(texture.id(), cell.shrink(0.5), uv, tint);
+                            }
+                            hover.on_hover_text(tip);
+                        }
+                    });
                 });
             });
         }

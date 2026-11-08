@@ -25,8 +25,6 @@ pub struct Frame<'a> {
     pub seat_animations: bool,
     pub underwater: bool,
     pub region: Option<u64>,
-    /// Teleports completed so far (`World::teleport_arrivals`).
-    pub teleports: u64,
 }
 
 #[derive(Default)]
@@ -61,11 +59,6 @@ pub struct Runtime {
     restoring: Option<(State, PlayingAnimation, Instant)>,
     anchor_blend: super::anchor_blend::Blend,
     anchor_signal: Option<PlayingAnimation>,
-    teleports: u64,
-    /// A completed teleport ended our sit: `Some(false)` while we are still
-    /// seated (the simulator unseats us later after a teleport it started),
-    /// `Some(true)` once off any object, until we sit on one again.
-    teleport_unseat: Option<bool>,
 }
 
 impl Default for Runtime {
@@ -92,8 +85,6 @@ impl Default for Runtime {
             restoring: None,
             anchor_blend: Default::default(),
             anchor_signal: None,
-            teleports: 0,
-            teleport_unseat: None,
         }
     }
 }
@@ -398,36 +389,7 @@ impl Runtime {
             self.suppressed.clear();
             self.restoring = None;
         }
-        // LLAgent::teleportCore (indra/newview/llagent.cpp) gets a seated
-        // agent off its seat, and the Legacy AO ends its sit override when
-        // the arrival's animation list no longer has the stock sit
-        // (AOEngine::override(ANIM_AGENT_SIT, false), aoengine.cpp). Ours
-        // stopped that stock sit itself and holds it, and the echo of that
-        // stop looks like the stock sit ending. So once a teleport has taken
-        // us off any seat, possibly after the arrival when the simulator
-        // started the teleport (llTeleportAgent), the sit is no longer held:
-        // the held one ends, and a stock sit an arrival list still carries
-        // plays only while listed. Sitting on an object again lifts this
-        // (issue #2700).
-        if frame.teleports != self.teleports {
-            self.teleports = frame.teleports;
-            self.teleport_unseat = Some(false);
-        }
-        match (self.teleport_unseat, frame.on_object) {
-            (Some(false), false) => self.teleport_unseat = Some(true),
-            (Some(true), true) => self.teleport_unseat = None,
-            _ => {}
-        }
-        let unseated = self.teleport_unseat == Some(true);
-        if unseated {
-            if matches!(self.raw_hold, Some((State::Sitting, _))) {
-                self.raw_hold = None;
-            }
-            self.restoring = self.restoring.filter(|(state, _, _)| *state != State::Sitting);
-        }
-        self.restoring = self
-            .restoring
-            .filter(|(state, _, _)| !frame.on_object || (*state == State::Sitting && !frame.seat_animations));
+        self.restoring = self.restoring.filter(|_| !frame.on_object);
         let mut primary = frame
             .raw
             .iter()
@@ -457,14 +419,14 @@ impl Runtime {
             // that selected the AO. A new stock signal still takes precedence.
             primary = self
                 .raw_hold
-                .filter(|(state, signal)| self.suppressed.contains_key(&signal.id) && (!frame.on_object || *state == State::Sitting))
+                .filter(|(_, signal)| self.suppressed.contains_key(&signal.id) && !frame.on_object)
                 .or_else(|| {
                     self.restoring
                         .filter(|(_, _, sent)| now.saturating_duration_since(*sent) < Duration::from_secs(2))
                         .map(|(state, signal, _)| (state, signal))
                 });
         }
-        self.raw_hold = primary.filter(|(state, _)| !(unseated && *state == State::Sitting));
+        self.raw_hold = primary;
         if let Some(signal) = frame.run_hold {
             primary = Some((State::Running, signal));
         }
@@ -758,12 +720,19 @@ impl Runtime {
         // Suppress replaced standard clips for observers too, rather than
         // depending on upload priorities. Keep jump/landing control motions
         // intact (requestStopMotion finish flags), as in the Legacy AO.
+        // The stock sit stays to the simulator too, as with the Legacy AO:
+        // LLVOAvatar::startMotion (indra/newview/llvoavatar.cpp) only starts
+        // the override (AOEngine::override, aoengine.cpp), and the
+        // simulator's stop of the stock sit, at a stand-up or a teleport,
+        // ends it. Stopped by us, its echo looked like the sit ending, and the
+        // AO had to hold the sit itself, which a teleport left stuck (#2700).
         let steady = |state| {
             !matches!(
                 state,
                 State::Jumping
                     | State::PreJumping
                     | State::Typing
+                    | State::Sitting
                     | State::GroundSit
                     | State::Landing
                     | State::SoftLanding
@@ -792,7 +761,7 @@ impl Runtime {
                 });
                 suppressed.insert(signal.id, old);
                 self.restoring = None;
-            } else if self.suppressed.contains_key(&signal.id) && !(state == State::Sitting && frame.on_object && frame.seat_animations) {
+            } else if self.suppressed.contains_key(&signal.id) {
                 commands.push((signal.id, true));
                 self.restoring = Some((state, signal, now));
             }

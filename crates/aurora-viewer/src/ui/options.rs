@@ -49,6 +49,7 @@ pub enum Page {
     Graphics,
     Camera,
     Avatars,
+    Build,
     Chat,
     Sound,
     Media,
@@ -69,11 +70,12 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 21] = [
+    pub const ALL: [Page; 22] = [
         Page::Aurora,
         Page::Graphics,
         Page::Camera,
         Page::Avatars,
+        Page::Build,
         Page::Chat,
         Page::Sound,
         Page::Media,
@@ -100,6 +102,7 @@ impl Page {
             Page::Graphics => "graphics",
             Page::Camera => "camera",
             Page::Avatars => "avatars",
+            Page::Build => "build",
             Page::Chat => "chat",
             Page::Sound => "sound",
             Page::Media => "media",
@@ -126,6 +129,7 @@ impl Page {
             Page::Graphics => aurora_i18n::tr!("ui-options-graphics"),
             Page::Camera => aurora_i18n::tr!("common-camera"),
             Page::Avatars => aurora_i18n::tr!("ui-options-avatars"),
+            Page::Build => aurora_i18n::tr!("common-build"),
             Page::Chat => aurora_i18n::tr!("common-chat"),
             Page::Sound => aurora_i18n::tr!("ui-options-sound-and-voice"),
             Page::Media => aurora_i18n::tr!("ui-options-page-media"),
@@ -153,6 +157,7 @@ impl Page {
             Page::Graphics => aurora_i18n::tr!("ui-options-about-graphics"),
             Page::Camera => aurora_i18n::tr!("ui-options-about-camera"),
             Page::Avatars => aurora_i18n::tr!("ui-options-about-avatars"),
+            Page::Build => aurora_i18n::tr!("ui-options-about-build"),
             Page::Chat => aurora_i18n::tr!("ui-options-about-chat"),
             Page::Sound => aurora_i18n::tr!("ui-options-about-sound"),
             Page::Media => aurora_i18n::tr!("ui-options-about-media"),
@@ -179,6 +184,8 @@ impl Page {
             Page::Graphics => "device-desktop-filled",
             Page::Camera => "camera-filled",
             Page::Avatars => "user-filled",
+            // the build tools' icon (Command_Build_Icon)
+            Page::Build => "box",
             Page::Chat => "messages-filled",
             Page::Sound => "headset-filled",
             Page::Media => "player-play-filled",
@@ -424,6 +431,8 @@ pub struct OptionsUi {
     /// Audio devices (set by the app) and microphone level (0..1).
     pub output_devices: Vec<String>,
     pub input_devices: Vec<String>,
+    /// The device lists are being read again (set by the app).
+    pub devices_listing: bool,
     pub mic_level: f32,
     /// Media plugins folder found (empty: none) and plugins running.
     pub media_plugins: String,
@@ -927,8 +936,19 @@ fn preset_choice(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
 
 /// Device combo: "" = system default. Returns (a device was chosen, the
 /// list is unfolded).
-pub(super) fn device_combo(ui: &mut egui::Ui, id: &str, value: &mut String, devices: &[String], width: f32) -> (bool, bool) {
-    named_combo(ui, id, value, devices, width, aurora_i18n::tr!("ui-options-system-default"))
+/// `listing`: the devices are being listed again (off the UI thread); the
+/// list shows the last ones and says so, and the current choice is not
+/// called missing meanwhile.
+pub(super) fn device_combo(ui: &mut egui::Ui, id: &str, value: &mut String, devices: &[String], width: f32, listing: bool) -> (bool, bool) {
+    choice_combo(
+        ui,
+        id,
+        value,
+        devices,
+        width,
+        aurora_i18n::tr!("ui-options-system-default"),
+        listing,
+    )
 }
 
 /// `device_combo` whose empty choice reads `default_label`.
@@ -939,6 +959,18 @@ pub(super) fn named_combo(
     devices: &[String],
     width: f32,
     default_label: &str,
+) -> (bool, bool) {
+    choice_combo(ui, id, value, devices, width, default_label, false)
+}
+
+fn choice_combo(
+    ui: &mut egui::Ui,
+    id: &str,
+    value: &mut String,
+    devices: &[String],
+    width: f32,
+    default_label: &str,
+    listing: bool,
 ) -> (bool, bool) {
     let mut changed = false;
     let shown = if value.is_empty() {
@@ -955,7 +987,9 @@ pub(super) fn named_combo(
             for d in devices {
                 changed |= ui.selectable_value(value, d.clone(), d).changed();
             }
-            if !value.is_empty() && !devices.contains(value) {
+            if listing {
+                ui.label(RichText::new(aurora_i18n::tr!("ui-options-listing-devices")).size(12.0).weak());
+            } else if !value.is_empty() && !devices.contains(value) {
                 ui.label(
                     RichText::new(aurora_i18n::tr!("status-value-missing", value = value.to_string()))
                         .size(12.0)

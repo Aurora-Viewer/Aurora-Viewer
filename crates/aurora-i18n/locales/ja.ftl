@@ -2367,10 +2367,13 @@ ui-options-compact-im-system-lines = 会話のシステム行もコンパクト�
 ui-options-compact-im-system-lines-hint = 会話中のビューアーからの行（通話の開始・終了、自動返信の送信など）も、アイコン付きの小さな行で表示します。
 ui-options-show-contacts-tab = コンタクトタブを表示
 ui-options-show-contacts-tab-hint = 会話ウィンドウに「コンタクト」を表示します。
-ui-options-payment-opens-conversation = 友人からの支払い時に会話を開く
-ui-options-payment-opens-conversation-hint = 住人から受け取ったL$は、その人との会話が開いているとカードで表示されます。有効にすると、友人から支払いを受けたとき会話を開きます。
+ui-options-payment-opens-conversation = 住人から支払いを受けたときに会話を開く
+ui-options-payment-opens-conversation-hint = 住人が「支払う」で渡したL$が対象で、支払われたオブジェクトや販売は含みません。支払いはその人との会話が開いているとカードで表示されます。会話が閉じているとき、だれからの支払いで会話を開くかを選びます。
 ui-options-payment-sent-opens-conversation = 住人に支払ったときに会話を開く
-ui-options-payment-sent-opens-conversation-hint = 住人への直接の支払いは、その人との会話が開いているとカードで表示されます。有効にすると、支払ったときに会話を開きます。
+ui-options-payment-sent-opens-conversation-hint = 「支払う」で住人に渡したL$が対象で、オブジェクトへの支払いや購入は含みません。支払いはその人との会話が開いているとカードで表示されます。会話が閉じているとき、だれへの支払いで会話を開くかを選びます。
+ui-options-payment-opens-never = 開かない
+ui-options-payment-opens-friends = 友人のみ
+ui-options-payment-opens-anyone = すべての住人
 ui-options-conversations-own-windows = 会話を個別のウィンドウで開く
 ui-options-conversations-own-windows-hint = 名前、通知、通話から開いた会話を、会話ウィンドウではなく個別のウィンドウに表示します。近くのチャットは会話ウィンドウに残ります。
 ui-options-send-typing = 入力中であることを通知
@@ -2719,6 +2722,8 @@ ui-land-dialogs-ban-duration = アクセス禁止期間
 ui-land-dialogs-ban-duration-2 = アクセス禁止期間：
 ui-land-environment-day-length-hours = １日の長さ（時間）
 ui-options-chat-bubble-duration = フキダシの表示時間
+ui-options-chat-console-max-lines = チャットバーの上に表示する最大行数
+ui-options-chat-console-max-lines-hint = 折り返したテキストの行数を数えます。カードの見出しは含みません。最新のメッセージを途中で切らずに表示します。０にすると表示しません。
 ui-options-chat-bubbles = アバターの上にフキダシチャットを表示
 ui-options-chat-bubbles-hint = 住人の近くの発言を、名前の下に２４秒間表示します。
 ui-options-chat-bubbles-hide-console = チャットバーの上には表示しない
@@ -3643,6 +3648,8 @@ session-object-actions-inventory-too-large = 持ち物が大きすぎます。
 ui-options-invert-vertical-axis = 垂直軸を反転
 ui-options-double-click-ground = 地面をダブルクリック
 ui-options-double-click-ground-help = 地面やクリック操作のないオブジェクトをダブルクリックしたときの動作
+ui-options-double-click-scripted = スクリプト付きオブジェクトのダブルクリックを許可
+ui-options-double-click-scripted-help = Sit以外のクリック操作やタッチスクリプトがあるオブジェクトでも設定した動作を実行します
 ui-options-double-click-nothing = 何もしない
 ui-options-double-click-walk = その場所まで歩く
 ui-options-double-click-run = その場所まで走る
@@ -3696,7 +3703,7 @@ ui-profile-this-user-has-no-classified-listings = このユーザにはクラシ
 ui-inventory-controls-library = ライブラリ
 ui-options-camera-the-camera-can-move-beyond-the-draw-distance-below = カメラは描画距離より遠く、地面の下、オブジェクトの近くまで移動できます
 ui-options-camera-after-a-teleport-in-the-region-the-camera-returns = リージョン内でテレポートした後、カメラをアバターの後ろに戻します。オフにすると、カメラはその場に留まります。
-ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag = カメラが少し遅れてアバターを追従します（デフォルトは1、0で遅れなし）
+ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag = カメラが遅れてアバターを追従します。値が大きいほど滑らかにゆっくり動きます（デフォルトは1、0で遅れなし）
 ui-options-camera-the-camera-follows-the-object-it-is-focused-on = 焦点を合わせたオブジェクトの移動にカメラが追従する
 app-inventory-thumbnail-invalid-capture = キャプチャが無効です。
 ui-land-dialogs-deeding-this-parcel-requires-the-group-to-permanently-have = この区画をグループに譲渡するには、グループが十分な土地利用クレジットを継続的に保有する必要があります。{ $contribution }{ "購入価格は所有者に返金されません。譲渡した土地を売却すると、売上はグループメンバーに均等に分配されます。\u000A\u000Aこの" }{ $value0 }{ "㎡の土地をグループ「" }{ $group }に譲渡しますか？
@@ -3989,6 +3996,8 @@ busy-pause-notice = Renderを一時停止中：グラフィックカードが別
 ui-options-gpu-recovery = グラフィックカードのリセット後に再表示
 ui-options-gpu-recovery-tip = グラフィックカードのドライバーがリセットされたとき（多くはカードを占有する別のプログラムが原因）、Auroraは終了せずにカード上でウィンドウを開き直し、ログインしたままになります。数分以内に2回目のリセットがあると安全なグラフィックで開き直し、3回目で終了します。オフにすると、Auroraは「グラフィックカードが失われました」で終了します。デフォルトで有効
 busy-pause-window-title = { $title } — 一時停止中
+video-memory-full-notice = ビデオメモリが不足しているため、ワールドを描画できません。グラフィックカードを使用しているプログラムを閉じると、自動的に復帰します。
+video-memory-full-window-title = { $title } — ビデオメモリ不足
 busy-pause-forced-notice = Dev Toolbox（R13）からRenderを一時停止中です。もう一度R13を押すと再開します。
 ui-land-sound-restrict-voice-chat-to-this-parcel = ボイスチャットをこの区画に制限
 ui-land-sound-restrict-gesture-and-object-sounds-to-this-parcel = ジェスチャーとオブジェクトのサウンドをこの区画に制限
@@ -4497,6 +4506,7 @@ world-appearance-pants = ズボン
 world-appearance-black-pants = 黒いズボン
 ui-avatar-picker-by-uuid = ＵＵＩＤで
 ui-options-system-default = システムデフォルト
+ui-options-listing-devices = デバイスを確認中…
 common-by-name = 名前で
 demo-env-settings = 設定
 ui-inventory-view-eep-settings = ＥＥＰ設定
@@ -5897,7 +5907,7 @@ ui-options-camera-show-avatar-mouselook = マウスルック中に自分のア�
 ui-options-camera-follow-eyes = カメラを両目の間に固定
 ui-options-camera-follow-eyes-tip = マウスルック中に、アニメーションされた両目の間の位置に追従します。視線の方向はマウスで操作します。デフォルトでオフ。
 ui-options-camera-show-avatar-mouselook-tip = 首から下の体と装着物を表示します。レガシービューアと同様に、頭と頭のポイントの装着物は非表示のままです。
-ui-options-camera-show-interface-tip = マウスルック中もバーを表示します。オフの場合はフェードアウトし、チャットは入力時（Enter）にのみ戻ります。
+ui-options-camera-show-interface-tip = マウスルック中もバーと開いているウィンドウを表示します。オフの場合は非表示になり、チャットは入力時（Enter）にのみ戻ります。
 ui-options-crosshair = 照準
 ui-options-crosshair-show = 照準を表示
 ui-options-crosshair-show-tip = マウスルック中に画面中央に表示される、狙ってクリックする位置の印
@@ -13384,3 +13394,31 @@ debug-settings-type-color = 色
 # Preferences › Graphics: the trees' detail (RenderTreeLODFactor)
 ui-options-trees = 樹木
 ui-options-trees-hint = 遠くにあるリンデンの樹木の詳細度です（デフォルトは0.5）。0にすると樹木と草は表示されません。
+
+# Preferences › Build (the Legacy Viewer's Build preferences)
+ui-options-about-build = 作成ツールで作ったプリムの初期状態です。
+ui-options-build-new-objects = 新しいオブジェクト
+ui-options-build-new-objects-note = 作成ツールで作ったプリムは、表示された時点でこれらの設定を受け取ります。
+ui-options-build-size-hint = 幅、奥行き、高さ（メートル、0.01～10）
+ui-options-build-material = 素材
+ui-options-build-flesh = 肉
+ui-options-build-physical = 物理
+ui-options-build-temporary = 一時的
+ui-options-build-new-faces = 新しいオブジェクトの外観
+
+
+
+# Preferences › Protections: large surface protection (RenderVolumeSAProtection)
+large-surface-title = 大きな表面
+large-surface-enable = 表面積が極端に大きいオブジェクトを隠す
+large-surface-enable-hint = グラフィックカードに過負荷をかけるために作られたオブジェクトから保護します。下の合計を超えると、表面積が最も大きいプリムとスカルプトは描画されません。正当なオブジェクトが隠れることもあります。
+large-surface-frame-max = 描画する表面積の合計
+large-surface-frame-max-hint = 最も大きいものが隠されるまでに描画する、大きなオブジェクトの表面積です（デフォルトは5,000）。
+
+# Preferences › Graphics: RenderAttachedParticles
+ui-options-attached-particles = 装着物のパーティクル
+ui-options-attached-particles-hint = アバターが装着しているもののパーティクル（きらめき、煙、炎など）を描画します。
+
+# Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
+ui-options-draw-distance-stepping = 描画距離を段階的に広げる
+ui-options-draw-distance-stepping-hint = ログイン後と別のリージョンへのテレポート後、描画距離を32mから始めて設定値まで倍々に広げ、近くのものから読み込みます。
