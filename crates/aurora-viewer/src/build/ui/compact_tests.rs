@@ -3342,6 +3342,62 @@ fn a_value_typed_for_one_selection_lands_on_it_not_on_the_next() {
     }
 }
 
+/// A press on the build window outside the typing field takes its focus at
+/// once, as LLButton::handleMouseDown does: the field commits to the face it
+/// was typed for before the release, where the next part / face button, the
+/// edit mode or Edit linked change the selection. Face 2 picked alone, a
+/// transparency typed, a press on the window's own surface (a label), then
+/// the selection moves to face 3 on the release: face 2 takes the value,
+/// face 3 keeps its own. Both styles.
+#[test]
+fn a_press_on_the_build_window_commits_the_field_before_the_release() {
+    for legacy in [false, true] {
+        let mut inspector = material_inspector();
+        inspector.settings.legacy_window = legacy;
+        inspector.tool.tab = 3;
+        inspector.tool.edit_mode = EditMode::Face;
+        let key_ = inspector.tool.selection[0];
+        inspector.tool.faces.insert(key_, vec![2]);
+        let idx = inspector.tool.sel_prims(&inspector.world)[0];
+        for face in [2, 3] {
+            let object = inspector.world.objects.get_mut(idx).unwrap();
+            Arc::make_mut(object.te.as_mut().unwrap()).faces[face].color[3] = 0.5;
+        }
+        for _ in 0..5 {
+            inspector.show(vec![]);
+        }
+        let caption = aurora_i18n::tr!("build-ui-texture-transparency");
+        let (_, texts) = inspector.show(vec![]);
+        let (shown, field) = row_field(&texts, caption).expect("transparency field");
+        assert_eq!(shown, "50", "legacy={legacy}");
+        let label = texts.iter().find(|(text, _)| text == caption).expect("transparency label").1;
+        press(&mut inspector, field.center());
+        inspector.show(vec![egui::Event::Text("0".into())]);
+        inspector.show(vec![egui::Event::PointerMoved(label.center())]);
+        inspector.show(vec![egui::Event::PointerButton {
+            pos: label.center(),
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        }]);
+        let te = inspector.world.objects.get(idx).unwrap().te.clone().unwrap();
+        assert_eq!(te.faces[2].color[3], 1.0, "legacy={legacy}: the press commits to face 2");
+        // the release: a next-face button would select face 3 here
+        inspector.tool.faces.insert(key_, vec![3]);
+        inspector.show(vec![egui::Event::PointerButton {
+            pos: label.center(),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        }]);
+        for _ in 0..3 {
+            inspector.show(vec![]);
+        }
+        let te = inspector.world.objects.get(idx).unwrap().te.clone().unwrap();
+        assert_eq!(te.faces[3].color[3], 0.5, "legacy={legacy}: face 3 took the value typed for face 2");
+    }
+}
+
 /// The pair a PBR UV edit keeps comes from what the face inherits on the
 /// server. While a face's material still loads the UV fields wait (typing
 /// sends nothing), then the edit keeps that material's V. A face showing a

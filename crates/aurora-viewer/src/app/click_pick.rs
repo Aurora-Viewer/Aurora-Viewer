@@ -79,6 +79,19 @@ pub(super) enum Held {
     BuildRelease,
     /// A demo script's log line about the click before it.
     Note(DemoNote),
+    /// A world press made while a text field had the keyboard: what follows
+    /// waits until egui's pass `pass` has ended, then the next item, the
+    /// press, runs with this cursor and these modifiers. LLTool::
+    /// handleAnyMouseClick (indra/newview/lltool.cpp) takes the keyboard
+    /// focus before the tool handles the press, so the field commits its
+    /// typed text (onFocusLost) to the selection it was typed for. Here the
+    /// field commits in the next interface pass, and the Face tool, a HUD
+    /// and the Create tool select on the press itself.
+    UiTurn {
+        pass: u64,
+        cursor: (f32, f32),
+        mods: [bool; 3],
+    },
 }
 
 /// Log lines the demo scripts write right after a click, once it is done.
@@ -200,43 +213,31 @@ pub(super) struct ClickWait {
     running: Option<Click>,
     in_hand: Option<Picked>,
     held: VecDeque<Held>,
-    /// A world press made while a text field had the keyboard, held with
-    /// what follows it until the interface has drawn one pass.
-    ui_turn: Option<UiTurn>,
     demo: DemoClicks,
 }
 
-/// LLTool::handleAnyMouseClick (indra/newview/lltool.cpp) takes the
-/// keyboard focus before the tool handles the press, so the line editor or
-/// spinner commits its typed text (onFocusLost) to the selection it was
-/// typed for; the pick that changes the selection comes after. Here the
-/// field commits in the next interface pass, and the Face tool, a HUD
-/// and the Create tool select on the press itself: the press waits for
-/// that pass, then runs with its cursor and modifiers.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct UiTurn {
-    /// egui's pass count when the press came.
-    pass: u64,
-    cursor: (f32, f32),
-    /// Alt, Ctrl, Shift.
-    mods: [bool; 3],
-}
+/// The cursor and the modifiers (Alt, Ctrl, Shift) a held press runs with.
+type Restore = ((f32, f32), [bool; 3]);
 
 impl ClickWait {
-    /// Hold a world press, and what follows it, until the interface pass
-    /// after `pass` has ended.
-    fn hold_for_ui(&mut self, pass: u64, cursor: (f32, f32), mods: [bool; 3]) {
-        if self.ui_turn.is_none() && self.pending.is_none() {
-            self.ui_turn = Some(UiTurn { pass, cursor, mods });
+    /// The next held input to run now, with the cursor and modifiers to run
+    /// it with when a `UiTurn` just ended before it. None: the queue is
+    /// empty, or waits for a depth or for the end of egui's pass.
+    fn next_held(&mut self, pass: u64) -> Option<(Held, Option<Restore>)> {
+        let mut restore = None;
+        loop {
+            if self.pending.is_some() {
+                return None;
+            }
+            match self.held.front()? {
+                Held::UiTurn { pass: turn, .. } if pass <= *turn => return None,
+                Held::UiTurn { cursor, mods, .. } => {
+                    restore = Some((*cursor, *mods));
+                    self.held.pop_front();
+                }
+                _ => return self.held.pop_front().map(|input| (input, restore)),
+            }
         }
-    }
-
-    /// The held press's cursor and modifiers, once egui's pass count shows
-    /// that a pass has ended since it came.
-    fn ui_turn_over(&mut self, pass: u64) -> Option<((f32, f32), [bool; 3])> {
-        let turn = self.ui_turn.filter(|turn| pass > turn.pass)?;
-        self.ui_turn = None;
-        Some((turn.cursor, turn.mods))
     }
 }
 
@@ -245,13 +246,12 @@ impl ClickWait {
     /// waiting click's picks (gpu_recovery.rs).
     pub(super) fn forget_pending(&mut self) {
         self.pending = None;
-        self.ui_turn = None;
     }
 
     /// A click waits for its depth, or a press for the interface's pass:
     /// what comes now goes behind it.
     pub(super) fn waiting(&self) -> bool {
-        self.pending.is_some() || self.ui_turn.is_some()
+        self.pending.is_some() || self.held.iter().any(|input| matches!(input, Held::UiTurn { .. }))
     }
 
     /// The click is run again, its depth in hand.
@@ -513,7 +513,7 @@ impl App {
     /// then what was held behind it, until one of those waits in turn.
     /// Once a frame, with the renderer in `self.gfx`.
     pub(super) fn resolve_clicks(&mut self) {
-        self.end_ui_turn();
+        self.drain_held();
         while let Some(p) = self.clicks.pending.as_mut() {
             let Some(g) = self.gfx.as_mut() else {
                 return;
@@ -572,12 +572,7 @@ impl App {
                 self.clicks.in_hand = None;
                 (self.cursor_pos, [self.alt, self.ctrl, self.shift]) = now;
             }
-            while !self.clicks.waiting() {
-                let Some(input) = self.clicks.held.pop_front() else {
-                    break;
-                };
-                self.replay(input);
-            }
+            self.drain_held();
         }
     }
 
@@ -585,27 +580,28 @@ impl App {
     /// the field at once, run once the interface has drawn a pass (the
     /// field has committed to the selection it was typed for).
     pub(super) fn press_while_typing(&mut self) {
-        let mods = [self.alt, self.ctrl, self.shift];
-        self.clicks.hold_for_ui(self.egui_ctx.cumulative_pass_nr(), self.cursor_pos, mods);
+        let turn = Held::UiTurn {
+            pass: self.egui_ctx.cumulative_pass_nr(),
+            cursor: self.cursor_pos,
+            mods: [self.alt, self.ctrl, self.shift],
+        };
+        self.clicks.hold(turn);
     }
 
-    fn end_ui_turn(&mut self) {
-        let Some((cursor, mods)) = self.clicks.ui_turn_over(self.egui_ctx.cumulative_pass_nr()) else {
-            return;
-        };
-        // the press as it was made; what follows it as it comes
-        if let Some(press) = self.clicks.held.pop_front() {
+    /// Run what is held, in order, until a click waits for its depth again
+    /// or a `UiTurn` waits for the end of the interface's pass.
+    fn drain_held(&mut self) {
+        while let Some((input, restore)) = self.clicks.next_held(self.egui_ctx.cumulative_pass_nr()) {
+            let Some((cursor, mods)) = restore else {
+                self.replay(input);
+                continue;
+            };
+            // the press as it was made; what follows it as it comes
             let now = (self.cursor_pos, [self.alt, self.ctrl, self.shift]);
             self.cursor_pos = cursor;
             [self.alt, self.ctrl, self.shift] = mods;
-            self.replay(press);
-            (self.cursor_pos, [self.alt, self.ctrl, self.shift]) = now;
-        }
-        while !self.clicks.waiting() {
-            let Some(input) = self.clicks.held.pop_front() else {
-                break;
-            };
             self.replay(input);
+            (self.cursor_pos, [self.alt, self.ctrl, self.shift]) = now;
         }
     }
 
@@ -619,6 +615,7 @@ impl App {
             Held::LeftRelease => self.on_left_release(),
             Held::BuildRelease => self.build_release(),
             Held::Note(note) => self.demo_note(note),
+            Held::UiTurn { .. } => {}
         }
     }
 
@@ -701,7 +698,6 @@ impl App {
             }
         }
         self.clicks.held.clear();
-        self.clicks.ui_turn = None;
     }
 
     /// The build tools' release of a demo script, behind its press.
@@ -1053,35 +1049,63 @@ mod tests {
         assert_eq!(pick_mode_of(Some("check")), PickMode::Check);
     }
 
-    /// A press made while typing waits for one whole interface pass (the
-    /// field commits to the old selection in it), keeps its own cursor and
-    /// modifiers, and holds what follows it in order.
+    /// A press made while typing waits behind its `UiTurn` for one whole
+    /// interface pass (the field commits to the old selection in it), also
+    /// behind a click that waits for its depth, and runs with its own
+    /// cursor and modifiers. What was held before the turn runs as it was;
+    /// what follows the press keeps its order.
     #[test]
     fn a_press_while_typing_waits_for_one_interface_pass() {
+        let button = |pressed| Held::Button {
+            button: MouseButton::Left,
+            pressed,
+            over_ui: false,
+        };
+        let turn = |pass| Held::UiTurn {
+            pass,
+            cursor: (10.0, 20.0),
+            mods: [false, false, true],
+        };
+        let restore = Some(((10.0, 20.0), [false, false, true]));
         let mut w = ClickWait::default();
-        w.hold_for_ui(7, (10.0, 20.0), [false, false, true]);
+        // left behind by a GPU recovery (forget_pending keeps `held`)
+        w.hold(Held::LeftRelease);
+        w.hold(turn(7));
+        w.hold(button(true));
+        w.hold(button(false));
         assert!(w.waiting(), "the press and what follows are held");
-        w.hold(Held::Button {
-            button: MouseButton::Left,
-            pressed: true,
-            over_ui: false,
-        });
-        w.hold(Held::Button {
-            button: MouseButton::Left,
-            pressed: false,
-            over_ui: false,
-        });
-        assert_eq!(w.ui_turn_over(7), None, "no pass has ended since the press");
+        assert_eq!(w.next_held(7), Some((Held::LeftRelease, None)), "held before the turn: as it was");
+        assert_eq!(w.next_held(7), None, "no pass has ended since the press");
         assert!(w.waiting());
-        assert_eq!(w.ui_turn_over(8), Some(((10.0, 20.0), [false, false, true])));
+        assert_eq!(w.next_held(8), Some((button(true), restore)));
+        assert_eq!(w.next_held(8), Some((button(false), None)));
+        assert_eq!(w.next_held(8), None);
         assert!(!w.waiting());
-        assert_eq!(w.held.len(), 2, "press then release, in order");
-        assert!(matches!(w.held[0], Held::Button { pressed: true, .. }));
-        assert_eq!(w.ui_turn_over(9), None, "once");
-        // behind a click that already waits for its depth (answered after a
-        // pass anyway), and after a GPU recovery, nothing more is held
-        w.hold_for_ui(9, (0.0, 0.0), [false; 3]);
+
+        // behind a click that waits for its depth: the depth, then the pass
+        w.pending = Some(Pending {
+            ticket: 1,
+            drawn: None,
+            depth_answer: None,
+            drawn_answer: None,
+            click: Click::Press,
+            cursor: (0.0, 0.0),
+            mods: [false; 3],
+            ray: None,
+            particles: None,
+            tags: Vec::new(),
+            asked: Instant::now(),
+            frame: 0,
+            check: None,
+        });
+        w.hold(turn(3));
+        w.hold(button(true));
+        assert_eq!(w.next_held(9), None, "the depth first");
+        // a GPU recovery forgets the depth, not the turn
         w.forget_pending();
+        assert!(w.waiting());
+        assert_eq!(w.next_held(3), None, "then the end of the pass");
+        assert_eq!(w.next_held(4), Some((button(true), restore)));
         assert!(!w.waiting());
     }
 
