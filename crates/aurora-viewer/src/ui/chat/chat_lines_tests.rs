@@ -124,3 +124,57 @@ fn a_line_that_arrives_does_not_hang_below_the_bar_for_a_frame() {
         assert_held(&format!("cards {cards}, a line arrives"), held);
     }
 }
+
+/// How many shapes one frame of the toasts painted.
+fn painted(ctx: &egui::Context, world: &World, cards: bool, frame: u32) -> usize {
+    let p = crate::theme::Theme::default().palette();
+    let pics = std::collections::HashMap::new();
+    let layer = LayerId::new(egui::Order::Background, egui::Id::unique("chat_toasts"));
+    let mut count = 0;
+    let input = egui::RawInput {
+        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, SCREEN)),
+        time: Some(0.1 * f64::from(frame)),
+        ..Default::default()
+    };
+    let mut out = ctx.run_ui(input, |ui| {
+        let (mut names, mut wanted) = Default::default();
+        super::toasts(
+            ui.ctx(),
+            &p,
+            world,
+            &pics,
+            &mut names,
+            &mut wanted,
+            BAR,
+            200.0,
+            true,
+            false,
+            cards,
+            false,
+            true,
+        );
+        count = ui.ctx().graphics(|g| g.get(layer).map_or(0, |l| l.all_entries().count()));
+    });
+    out.textures_delta.clear();
+    count
+}
+
+#[test]
+fn lines_that_arrive_together_are_drawn_whole_in_their_first_frame() {
+    for cards in [true, false] {
+        let ctx = egui::Context::default();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        say(&mut world, 1, "y'all still alive?", 10);
+        for n in 0..4 {
+            painted(&ctx, &world, cards, n);
+        }
+        // more than the room under the bar: laid out below the screen
+        // before they are moved up onto the bar
+        for who in 2..8 {
+            say(&mut world, who, "a burst of lines from everyone at once", 0);
+        }
+        let first = painted(&ctx, &world, cards, 4);
+        let settled = painted(&ctx, &world, cards, 5);
+        assert_eq!(first, settled, "cards {cards}: the first frame of the burst lost shapes");
+    }
+}

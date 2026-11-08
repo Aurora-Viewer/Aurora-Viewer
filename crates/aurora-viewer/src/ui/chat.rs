@@ -3554,8 +3554,13 @@ struct Held {
 }
 
 impl Held {
-    /// Before the lines, at the start of the area's `ui`.
-    fn new(ui: &egui::Ui) -> Self {
+    /// Before the lines, at the start of the area's `ui`. The clip reaches a
+    /// screen lower: in the frame a line arrives, the lines are laid out
+    /// below the bar before they are moved up, and egui paints nothing of a
+    /// card or a label laid out wholly outside the clip.
+    fn new(ui: &mut egui::Ui) -> Self {
+        let clip = ui.clip_rect();
+        ui.set_clip_rect(clip.with_max_y(clip.bottom() + ui.ctx().content_rect().height()));
         let layer = ui.layer_id();
         Self {
             bottom: ui.max_rect().bottom(),
