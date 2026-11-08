@@ -224,6 +224,10 @@ pub mod sim_version;
 /// A rainbow or a 22° halo in the region's sky (AURORA_DEMO_SKY_OPTICS).
 #[path = "demo_sky.rs"]
 pub mod sky;
+/// A panel whose texture a script changes every few seconds
+/// (AURORA_DEMO_SLIDESHOW).
+#[path = "demo_slideshow.rs"]
+pub mod slideshow;
 /// A resident's "Invite to group", "Add to contact set" and "Block
 /// particles" (AURORA_DEMO_SOCIAL_MENU).
 #[path = "demo_social_menu.rs"]
@@ -6758,7 +6762,7 @@ pub fn classic_events(shapes: &crate::scene::shape::ShapeParams) -> Vec<NetEvent
                 cof_version: 1,
                 appearance_version: 1,
                 hover_height: 0.0,
-                attachments: 0,
+                attachments: Vec::new(),
             })
         })
         .collect()
@@ -6835,7 +6839,7 @@ pub fn cloud_self_events(shapes: &crate::scene::shape::ShapeParams) -> Vec<NetEv
             cof_version: 1,
             appearance_version: 1,
             hover_height: 0.0,
-            attachments: 0,
+            attachments: Vec::new(),
         }),
     ]
 }

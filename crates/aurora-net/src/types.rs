@@ -335,9 +335,11 @@ pub struct AvatarAppearance {
     /// the block.
     pub appearance_version: u8,
     pub hover_height: f32,
-    /// Worn objects the simulator lists (AttachmentBlock entries with an
-    /// id, each once: LLVOAvatar::mSimAttachments).
-    pub attachments: u32,
+    /// Worn objects the simulator lists: object id and attachment point of
+    /// the AttachmentBlock entries with an id, each id once
+    /// (LLVOAvatar::mSimAttachments). The Dev Toolbox's J2 compares them
+    /// with the objects that came (issue #2747).
+    pub attachments: Vec<(Uuid, u8)>,
 }
 
 #[derive(Debug, Clone, Copy)]

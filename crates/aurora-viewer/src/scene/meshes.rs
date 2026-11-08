@@ -1371,6 +1371,7 @@ mod tests {
             complete: true,
             offset: 0,
             data: Err(format!("HTTP {status}")),
+            cancelled: false,
         }
     }
 
@@ -1424,6 +1425,7 @@ mod tests {
             complete: false,
             offset: offset as u64,
             data: Ok(data.to_vec()),
+            cancelled: false,
         }
     }
 
@@ -1801,6 +1803,7 @@ mod tests {
                 complete: true,
                 offset: 0,
                 data: Ok(vec![1, 2, 3]),
+                cancelled: false,
             },
             &jobs,
         );
@@ -1868,6 +1871,7 @@ mod tests {
                 complete: true,
                 offset: 0,
                 data: Ok(asset),
+                cancelled: false,
             },
             &jobs,
         );
