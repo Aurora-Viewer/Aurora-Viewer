@@ -513,6 +513,9 @@ pub struct Request {
     /// change: reading them all at every login would be wasted.
     pub state: PathBuf,
     pub skip_unchanged: bool,
+    /// Take the Legacy Viewer's conversation log too. The import at login
+    /// leaves it when the user keeps no conversation log.
+    pub conversations: bool,
 }
 
 /// What an import did.
@@ -550,6 +553,24 @@ impl Running {
 }
 
 type Signature = (u64, u64);
+
+/// The import state's key of a conversation already brought at login: its
+/// session and last time.
+fn conversation_key(c: &super::conversations::Conversation) -> String {
+    format!("conversation\n{}\n{}", c.session.hyphenated(), c.time)
+}
+
+/// The file stem the transcript of a Legacy conversation log entry has in
+/// Aurora's folder (`target_of` renames the files, so the entry follows).
+fn renamed_history(dir: &Path, history_file: &str, spelled: &Spellings) -> String {
+    if history_file.trim().is_empty() {
+        return history_file.to_owned();
+    }
+    // the name is undated already: kept as it is
+    target_of(dir, Path::new(&format!("{history_file}.{}", names::EXTENSION)), true, spelled)
+        .and_then(|target| target.file_stem().and_then(|s| s.to_str()).map(str::to_owned))
+        .unwrap_or_else(|| history_file.to_owned())
+}
 
 /// Size and modification time.
 fn signature(path: &Path) -> Option<Signature> {
@@ -612,21 +633,32 @@ fn run(port: &store::MergePort, request: Request, done: &AtomicUsize, total: &At
         .filter(|source| request.kinds.take(source))
         .collect();
     let left_out = folders.iter().map(|folder| left_out(folder)).sum();
+    let spelled = spellings(&request.dir, &sources);
+    let mut state = load_state(&request.state);
     // the conversation log goes with the instant messages; it is small and
-    // merged by session, so it is read again at each import
-    let conversations = if request.kinds.im {
+    // merged by session, so it is read again at each import. The import at
+    // login brings each entry once: one the user removed since does not come
+    // back (the window's import brings them all).
+    let mut conversations: Vec<super::conversations::Conversation> = if request.kinds.im && request.conversations {
         folders.iter().flat_map(|folder| legacy_conversations(folder)).collect()
     } else {
         Vec::new()
     };
-    let spelled = spellings(&request.dir, &sources);
+    if request.skip_unchanged {
+        conversations.retain(|c| !state.contains_key(&conversation_key(c)));
+        for c in &conversations {
+            state.insert(conversation_key(c), (0, 0));
+        }
+    }
+    for c in &mut conversations {
+        c.history_file = renamed_history(&request.dir, &c.history_file, &spelled);
+    }
     let plan: Vec<(PathBuf, PathBuf)> = sources
         .into_iter()
         .filter_map(|source| Some((target_of(&request.dir, &source, request.dated, &spelled)?, source)))
         .map(|(target, source)| (source, target))
         .collect();
     total.store(plan.len(), Ordering::Relaxed);
-    let mut state = load_state(&request.state);
     // files a source of this run creates: the others meant for them are due
     let missing: HashSet<PathBuf> = plan.iter().map(|(_, target)| target).filter(|t| !t.is_file()).cloned().collect();
     let mut out = Report {
@@ -853,6 +885,7 @@ mod tests {
             dated,
             state: to.join("state.json"),
             skip_unchanged: true,
+            conversations: true,
         };
         let running = start(worker.merge_port(), request).unwrap();
         running.report.recv().unwrap()
@@ -902,6 +935,49 @@ mod tests {
         // left out with the instant messages
         let kinds = Kinds { im: false, nearby: true };
         assert!(import_kinds_at_login(&from, &to, false, kinds).conversations.is_empty());
+        // brought once: an entry the user removed does not come back at the
+        // next login
+        assert!(import_at_login(&from, &to, false).conversations.is_empty());
+        std::fs::remove_dir_all(from).unwrap();
+        std::fs::remove_dir_all(to).unwrap();
+    }
+
+    #[test]
+    fn the_window_brings_the_conversation_log_again_and_login_waits_for_the_setting() {
+        use super::super::conversations;
+        let (from, to) = (temp(), temp());
+        let entry = conversations::Conversation {
+            time: conversations::now() - 60,
+            kind: conversations::Kind::Private,
+            name: "Jane Doe".into(),
+            history_file: "jane_doe".into(),
+            session: Uuid::new_v4(),
+            participant: Uuid::new_v4(),
+            offline: false,
+        };
+        std::fs::write(from.join(conversations::FILE), conversations::format_file(&[entry])).unwrap();
+        let run = |skip_unchanged, conversations| {
+            let worker = store::Worker::start().unwrap();
+            let request = Request {
+                sources: Sources::Folders(vec![from.clone()]),
+                kinds: Kinds::ALL,
+                dir: to.clone(),
+                dated: false,
+                state: to.join("state.json"),
+                skip_unchanged,
+                conversations,
+            };
+            start(worker.merge_port(), request).unwrap().report.recv().unwrap().conversations
+        };
+        // the user keeps no conversation log: nothing is read, nothing marked
+        assert!(run(true, false).is_empty());
+        let first = run(true, true);
+        assert_eq!(first.len(), 1);
+        // the transcript is renamed on its way in, the entry follows it
+        assert_eq!(first[0].history_file, "Jane Doe");
+        assert!(run(true, true).is_empty());
+        // the window's import brings everything again
+        assert_eq!(run(false, true).len(), 1);
         std::fs::remove_dir_all(from).unwrap();
         std::fs::remove_dir_all(to).unwrap();
     }

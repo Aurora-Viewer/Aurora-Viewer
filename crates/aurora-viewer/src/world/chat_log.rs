@@ -436,8 +436,12 @@ impl ChatLog {
             state: dir.with_extension("legacy-import.json"),
             dated: self.cfg.dated_names,
             skip_unchanged,
+            // the import at login leaves the conversation log alone when
+            // the user keeps none
+            conversations: !skip_unchanged || self.cfg.log_conversations,
             dir,
         };
+        self.conversations.watch_removals();
         self.importing = self.worker().and_then(|w| import::start(w.merge_port(), request));
         self.importing.is_some()
     }
@@ -451,8 +455,16 @@ impl ChatLog {
 
     /// The report of the last import, once.
     pub fn take_imported(&mut self) -> Option<import::Report> {
-        let report = self.importing.as_ref()?.report.try_recv().ok()?;
+        let mut report = self.importing.as_ref()?.report.try_recv().ok()?;
         self.importing = None;
+        // what the user did while the import ran wins: a cleared log gets
+        // nothing back, a removed entry stays removed
+        let removals = self.conversations.take_removals();
+        if report.at_login && !self.cfg.log_conversations {
+            report.conversations.clear();
+        } else {
+            removals.filter(&mut report.conversations);
+        }
         Some(report)
     }
 

@@ -265,6 +265,25 @@ pub fn now() -> i64 {
 /// A file being read.
 type Reading = crossbeam_channel::Receiver<std::io::Result<Option<Vec<u8>>>>;
 
+/// What the user removed from the log while an import was reading: its
+/// entries must not come back with the import's result.
+#[derive(Debug, Default)]
+pub struct Removals {
+    cleared: bool,
+    removed: Vec<(Uuid, i64)>,
+}
+
+impl Removals {
+    /// Drop from an import's entries what was cleared or removed.
+    pub fn filter(&self, incoming: &mut Vec<Conversation>) {
+        if self.cleared {
+            incoming.clear();
+        } else {
+            incoming.retain(|c| !self.removed.contains(&(c.session, c.time)));
+        }
+    }
+}
+
 /// The answer of a publication: written, or why not. A dropped job (full
 /// queue, thread gone) closes the channel without an answer.
 pub type Published = crossbeam_channel::Receiver<std::io::Result<()>>;
@@ -282,6 +301,8 @@ pub struct Log {
     early: Vec<Conversation>,
     /// Changed since the last save the worker acknowledged.
     dirty: bool,
+    /// Removals since an import started (None: no import under way).
+    removals: Option<Removals>,
     /// Publications the worker has not answered yet.
     publishing: Vec<Published>,
     /// Wait before the next try after a failed save (doubles, up to a
@@ -467,11 +488,27 @@ impl Log {
             list.remove(i);
             self.dirty = true;
             self.revision += 1;
+            if let Some(r) = &mut self.removals {
+                r.removed.push((session, time));
+            }
         }
+    }
+
+    /// An import starts reading: note what is removed until its result.
+    pub fn watch_removals(&mut self) {
+        self.removals = Some(Removals::default());
+    }
+
+    /// The import's result is here: what was removed since it started.
+    pub fn take_removals(&mut self) -> Removals {
+        self.removals.take().unwrap_or_default()
     }
 
     /// onClearLogResponse: everything (the file is written empty).
     pub fn clear(&mut self) {
+        if let Some(r) = &mut self.removals {
+            r.cleared = true;
+        }
         self.list.clear();
         self.early.clear();
         self.dirty = true;
@@ -825,5 +862,29 @@ mod tests {
         log.finish_read(40);
         let text = log.take_save(true).expect("the merged log is written");
         assert_eq!(parse_file(text.as_bytes(), 40).0.len(), 2);
+    }
+
+    #[test]
+    fn what_the_user_removes_during_an_import_does_not_come_back_with_it() {
+        let mut log = logging();
+        log.log(entry(10, Kind::Private, "Jane", 1));
+        log.log(entry(20, Kind::Private, "Bob", 2));
+        let theirs = || vec![entry(10, Kind::Private, "Jane", 1), entry(20, Kind::Private, "Bob", 2), entry(30, Kind::Group, "New", 3)];
+        // a removal: only that entry is held back
+        log.watch_removals();
+        log.remove(Uuid::from_u128(1), 10);
+        let mut incoming = theirs();
+        log.take_removals().filter(&mut incoming);
+        assert_eq!(incoming.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["Bob", "New"]);
+        // the log cleared: nothing comes back
+        log.watch_removals();
+        log.clear();
+        let mut incoming = theirs();
+        log.take_removals().filter(&mut incoming);
+        assert!(incoming.is_empty());
+        // no import under way: nothing is held back
+        let mut incoming = theirs();
+        log.take_removals().filter(&mut incoming);
+        assert_eq!(incoming.len(), 3);
     }
 }
