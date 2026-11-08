@@ -2923,9 +2923,10 @@ grid.
   border; the former alpha-coverage adjustment erased the 200 and 255 panels
   at these mip levels. No grid assets are used.
 - `touch`: simulates press, drag and release on the child (frames
-  720–900).
+  720–900), then changes the colour of the HUD.
 - `touch-shift`: repeats the same interaction while Shift is held for the
-  press, then releases Shift; the HUD must still receive the touch.
+  press, then releases Shift; the HUD must still receive the touch and turn
+  green.
 - `zoom`: scales down to 50%; `hidden`: hides the HUDs; `media`: shows the
   local test page on the centre HUD.
 - `scale`: five wheel notches with the HUD key (frame 720), on a

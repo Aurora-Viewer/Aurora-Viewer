@@ -4735,10 +4735,12 @@ impl App {
         {
             self.media.build_mode = self.build.open;
             if !self.alt && !self.ctrl && !self.build.open {
+                // the page gets the held Shift, as on the release and on a
+                // world face (LLToolPie::handleMediaClick passes the mask)
                 let mods = aurora_media::Modifiers {
                     control: false,
                     alt: false,
-                    shift: false,
+                    shift: self.shift,
                     command: false,
                 };
                 let distance = (point - hud_ray.0).dot(hud_ray.1);
