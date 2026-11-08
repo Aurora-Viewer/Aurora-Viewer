@@ -356,6 +356,10 @@ pub struct Refusals {
     pub targets: bool,
     /// When to try the render targets again.
     pub targets_backoff: Backoff,
+    /// A stop of the world was said and its end not yet: the end is said
+    /// once a frame goes through ([`Self::settle`]), not when the render
+    /// targets are remade, since a required target can refuse right after.
+    said: bool,
     extras: Backoff,
 }
 
@@ -367,7 +371,8 @@ impl Refusals {
 
     /// The render targets were refused; true the first time (to say so).
     pub fn targets_failed(&mut self, now: Instant) -> bool {
-        let first = !self.targets;
+        let first = !self.said;
+        self.said = true;
         self.targets = true;
         // a resize, a setting or a photo while refused is a try too, but
         // only a due one lengthens the wait
@@ -375,14 +380,12 @@ impl Refusals {
         first
     }
 
-    /// The render targets were made; true when they had been refused. The
-    /// wait is kept until the frame ends ([`Self::settle`]): a required
-    /// target refused right after lengthens it (`Backoff::made`).
-    pub fn targets_made(&mut self) -> bool {
-        let was = self.targets;
+    /// The render targets were made. The wait is kept until the frame ends
+    /// ([`Self::settle`]): a required target refused right after lengthens
+    /// it (`Backoff::made`).
+    pub fn targets_made(&mut self) {
         self.targets = false;
         self.targets_backoff.made();
-        was
     }
 
     /// The outcome of a required target made on first use; true the first
@@ -392,15 +395,22 @@ impl Refusals {
         if !refused {
             return false;
         }
-        let first = !self.targets;
+        let first = !self.said;
+        self.said = true;
         self.targets = true;
         self.targets_backoff.failed_try(now);
         first
     }
 
-    /// The end of a frame (`Backoff::settle`).
-    pub fn settle(&mut self) {
+    /// The end of a frame that went through (`Backoff::settle`); true the
+    /// first time after a stop of the world (to say it is back).
+    pub fn settle(&mut self) -> bool {
         self.targets_backoff.settle();
+        let back = self.said && !self.targets;
+        if back {
+            self.said = false;
+        }
+        back
     }
 
     /// An extra may be made now.
@@ -710,21 +720,23 @@ mod tests {
         assert!(!r.first_use(true, t0));
         assert!(r.targets && !r.targets_due(t0 + Duration::from_millis(1999)));
         assert!(r.targets_due(t0 + s(2)));
-        // the due try remakes the render targets: the world is back
+        // the due try remakes the render targets
         let t2 = t0 + s(2);
-        assert!(r.targets_made());
+        r.targets_made();
         assert!(!r.targets);
-        // the spheres refused again in the same frame: 4 s now, not 2
-        assert!(r.first_use(true, t2));
-        r.settle();
+        // the spheres refused again in the same frame: 4 s now, not 2, and
+        // neither the world's return nor a second stop is said
+        assert!(!r.first_use(true, t2));
+        assert!(!r.settle());
         assert!(!r.targets_due(t2 + Duration::from_millis(3999)));
         assert!(r.targets_due(t2 + s(4)));
         // made at last and the frame went through: the next refusal of the
         // render targets starts at 2 s
         let t6 = t2 + s(4);
-        assert!(r.targets_made());
+        r.targets_made();
         assert!(!r.first_use(false, t6));
-        r.settle();
+        assert!(r.settle(), "the world's return is said once the frame goes through");
+        assert!(!r.settle());
         assert!(r.targets_failed(t6));
         assert!(r.targets_due(t6 + s(2)));
         assert!(!r.targets_failed(t6 + s(1)));

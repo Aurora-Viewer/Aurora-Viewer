@@ -5052,8 +5052,10 @@ impl Backend {
             if self.oom.targets_failed(Instant::now()) {
                 log::warn!("render targets: out of video memory, the interface alone until they can be made");
             }
-        } else if self.oom.targets_made() {
-            log::info!("render targets: made again, the world is back");
+        } else {
+            // the world's return is said when a frame goes through
+            // (`Refusals::settle`): a required target may refuse first
+            self.oom.targets_made();
         }
     }
 
@@ -9465,7 +9467,9 @@ impl Backend {
         stats.water_reflection = do_water_refl;
         stats.mirror = mirror.is_some();
         // a frame that went through: a try made earlier in it is settled
-        self.oom.settle();
+        if self.oom.settle() {
+            log::info!("render targets: made again, the world is back");
+        }
         self.ui_targets_backoff.settle();
         let spent = Spent { writes, lists: draw_lists };
         self.result(index, stats, captured, spent)
