@@ -2865,6 +2865,13 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `aurora-render/src/vulkan_layers.rs` | Third-party implicit Vulkan layers kept out of the process: those that crash (Overwolf's, in `vkCreateInstance`, #901) always, the other overlays' (OBS Studio's game capture, Steam overlay, RivaTuner, Epic…) unless Preferences › Graphics › Overlays allows them (`Settings::allow_overlays_at_start`, read before any thread); their manifests' disable variables set at the start of `main`; ReShade and the drivers' layers kept; `AURORA_VULKAN_LAYERS=keep` to load them all |
 | `overlay_hooks.rs` | Overlay and capture hooks other programs inject into the running viewer (Discord's `DiscordHook64.dll`, the Steam overlay, RivaTuner, OBS game capture), which the viewer cannot refuse: a background thread lists the process's modules every 10 s and writes one warning per hook that appears, with what to turn off if the image is lost, and notes it for the crash report (`overlay-hooks.txt`) |
 
+`aurora-audio/src/decode.rs` tapers the edges of decoded sound assets over
+about 2.9 ms, at most a quarter of the clip, following
+`LLVorbisDecodeState::finishDecode` (`indra/llaudio/llaudiodecodemgr.cpp`).
+Both stereo channels share the envelope after resampling, so starts, stops
+and loop wraps meet silence without a step (#1653). It runs once on the
+decode worker; raw synthesized PCM, music and voice keep their own envelopes.
+
 `scene/sounds.rs` keeps attached HUD sounds at the audio listener, including
 linked HUD prims, following `LLAudioSourceVO::update`. They share the Sfx
 channel and normal attached-sound lifecycle; HUD coordinates never enter
@@ -3358,7 +3365,9 @@ preferences, and name colours use contact-set UI-name appearance and priority. T
 table keeps its column/name options and optional list pictures/colouring in its own Options
 menu; its search is permanent too. `ui/people/rows.rs` holds what their rows share (faces, names, a right
 end that never covers anything, quick actions, Ctrl / Shift selection and the 0.5-second
-hold that opens contact settings in People and Conversations › Contacts), `world/recent.rs` the
+hold that opens contact settings in People and Conversations › Contacts). Resident row
+interaction IDs include the UUID, so their right-click popups retain their target and
+position across sorting and roster updates, like the More buttons. `world/recent.rs` holds the
 residents met lately (LLRecentPeople), `demo_people.rs` their offline scenario; `ui/people.rs`
 the window, its tabs, and the simple Friends, Groups and Blocked lists of Firestorm's look.
 `ui/widgets/pills.rs` shares the tabs in pills, the filter pills and the search box of the

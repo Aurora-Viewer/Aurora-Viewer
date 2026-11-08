@@ -3071,13 +3071,22 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             if !group::adjust_groups(&mut groups) {
                 return vec![NetEvent::Groups(groups)];
             }
-            vec![
-                NetEvent::Groups(groups),
+            let active_group = if std::env::var("AURORA_DEMO_ACTIVE_GROUP").is_ok_and(|v| v == "none") {
+                NetEvent::ActiveGroup {
+                    id: Uuid::nil(),
+                    name: String::new(),
+                    title: String::new(),
+                }
+            } else {
                 NetEvent::ActiveGroup {
                     id: DEMO_GROUP1,
                     name: "Aurora Builders".into(),
                     title: aurora_i18n::tr!("demo-builder").into(),
-                },
+                }
+            };
+            vec![
+                NetEvent::Groups(groups),
+                active_group,
                 NetEvent::SessionInvite(aurora_net::SessionInvite {
                     session: DEMO_GROUP1,
                     from: DEMO_NOVA,
@@ -3089,11 +3098,24 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 }),
             ]
         }
-        aurora_net::NetCommand::ActivateGroup(id) => vec![NetEvent::ActiveGroup {
-            id: *id,
-            name: String::new(),
-            title: String::new(),
-        }],
+        aurora_net::NetCommand::ActivateGroup(id) => {
+            let (name, title) = if *id == DEMO_GROUP1 {
+                ("Aurora Builders".into(), aurora_i18n::tr!("demo-builder").into())
+            } else if *id == DEMO_GROUP2 {
+                (
+                    aurora_i18n::tr!("demo-northern-wolves").into(),
+                    aurora_i18n::tr!("demo-group-officer").into(),
+                )
+            } else if *id == DEMO_GROUP3 {
+                (
+                    aurora_i18n::tr!("common-plaza-market").into(),
+                    aurora_i18n::tr!("demo-group-member").into(),
+                )
+            } else {
+                (String::new(), String::new())
+            };
+            vec![NetEvent::ActiveGroup { id: *id, name, title }]
+        }
         aurora_net::NetCommand::LeaveGroup(id) => vec![NetEvent::GroupDropped(*id)],
         aurora_net::NetCommand::ChatSession { method, session } => {
             let agents = |ids: &[Uuid]| {
