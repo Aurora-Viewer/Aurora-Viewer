@@ -289,6 +289,29 @@ pub(crate) fn line_style(style: crate::settings::ChatStyle, group: Option<bool>)
 }
 
 impl ChatUi {
+    /// Route text started from the world to the Nearby field that will
+    /// actually receive keyboard focus (LLViewerWindow::handleKey).
+    pub fn start_nearby_with(&mut self, ctx: &egui::Context, main_open: bool, text: &str) {
+        let target = nearby_typing_target(
+            popout::in_sight(ctx, &self.popped).any(|conversation| conversation.is_none()),
+            main_open && !self.contacts && self.selected.is_none() && !crate::ui::widgets::floater_minimized(ctx, "conversations"),
+        );
+        match target {
+            NearbyTypingTarget::Detached => {
+                self.draft_mut(None).push_str(text);
+                self.popped.raise(None, true);
+            }
+            NearbyTypingTarget::Main => {
+                self.draft_mut(None).push_str(text);
+                self.conv_focus_request = true;
+            }
+            NearbyTypingTarget::ChatBar => {
+                self.input.push_str(text);
+                self.focus_request = true;
+            }
+        }
+    }
+
     /// Recreate only the account-independent nearby window. IMs, messages,
     /// drafts and focus never cross sessions. Its stable floater id lets the
     /// existing layout restore position, size and minimized state.
@@ -589,6 +612,23 @@ impl ChatUi {
     /// Stop typing in the nearby chat (after a teleport); true when we were.
     pub fn stop_local_typing(&mut self) -> bool {
         self.local_typing.stop()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NearbyTypingTarget {
+    Detached,
+    Main,
+    ChatBar,
+}
+
+fn nearby_typing_target(detached_visible: bool, main_visible: bool) -> NearbyTypingTarget {
+    if detached_visible {
+        NearbyTypingTarget::Detached
+    } else if main_visible {
+        NearbyTypingTarget::Main
+    } else {
+        NearbyTypingTarget::ChatBar
     }
 }
 
@@ -4077,6 +4117,32 @@ pub(crate) fn bar_input(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn nearby_world_typing_targets_the_field_that_will_be_drawn() {
+        assert_eq!(nearby_typing_target(true, false), NearbyTypingTarget::Detached);
+        assert_eq!(nearby_typing_target(true, true), NearbyTypingTarget::Detached);
+        assert_eq!(nearby_typing_target(false, true), NearbyTypingTarget::Main);
+        assert_eq!(nearby_typing_target(false, false), NearbyTypingTarget::ChatBar);
+    }
+
+    #[test]
+    fn world_typing_focuses_detached_nearby_without_changing_main_im() {
+        let ctx = egui::Context::default();
+        let mut chat = ChatUi::default();
+        let im = uuid::Uuid::from_u128(0x2753);
+        chat.selected = Some(im);
+        chat.draft_mut(Some(im)).push_str("untouched");
+        chat.popped.pop_out(None, false, false, false);
+        chat.start_nearby_with(&ctx, true, "x");
+        assert_eq!(chat.draft_mut(None), "x");
+        assert_eq!(chat.draft_mut(Some(im)), "untouched");
+        assert!(!chat.conv_focus_request, "main IM must not receive focus");
+        assert!(chat.popped.focus_requested(None));
+        chat.start_nearby_with(&ctx, false, "y");
+        assert_eq!(chat.draft_mut(None), "xy", "later frame keeps typing in Nearby");
+        assert_eq!(chat.draft_mut(Some(im)), "untouched");
+    }
+
     use super::*;
 
     fn nearby(apart: bool, shown: bool, minimized: bool, front: bool, focused: bool, tab_visible: bool) -> NearbyChatView {

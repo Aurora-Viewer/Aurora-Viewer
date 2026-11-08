@@ -7590,13 +7590,7 @@ impl App {
     /// character typed in (LLViewerWindow::handleKey; Firestorm's
     /// FSLetterKeysFocusNearbyChatBar, on by default).
     fn start_chat_with(&mut self, text: &str) {
-        if self.panels.chat && ui::chat::local_chat_shown(&self.egui_ctx, &self.chat_ui) {
-            self.chat_ui.draft_mut(None).push_str(text);
-            self.chat_ui.conv_focus_request = true;
-        } else {
-            self.chat_ui.input.push_str(text);
-            self.chat_ui.focus_request = true;
-        }
+        self.chat_ui.start_nearby_with(&self.egui_ctx, self.panels.chat, text);
     }
 
     /// The chat bar has the keyboard and hands its movement keys to the

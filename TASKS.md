@@ -2062,6 +2062,8 @@ The same questions an hour long, **the most rewarding first**. Reading taken by 
 
 ## Interface
 
+- ✅ Route Nearby typing to the visible Nearby composer (#2753; PR #2787): when world typing starts, send the first character and keyboard focus to the same target—visible detached Nearby, visible main Nearby, or the chat bar fallback—so an open IM draft never steals later characters. Follows `LLViewerWindow::handleKey` in the Legacy Viewer. Human core-behavior validation passed in demo on 2026-11-07; further repetition was waived.
+
 - 🟡 Numbers in names sort by value in every list (Discord report, 2026-11-06, task `natural-name-sort`, [PR #2715](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/2715); no issue; unit tests, to check by the QA team): `natural_order.rs` holds the dictionary order the inventory already used (case ignored, runs of digits compared by value: "Pose 2" before "Pose 10", like LLStringUtil::compareDict), and the other lists sort with it instead of plain letter order: the inventory model's folders and items (AO, outfits, gestures and the pickers that keep its order), an object's contents in Build and in the Open window (LLPanelObjectInventory sorts them with compareDict), Places and the map's landmarks, friends, contact sets, group members, roles and titles, radar and nearby lists, About Land and Region / Estate lists, search results, explorers, blocked list, grids and fonts.
   - ⬜ QA: items named "Pose 1" to "Pose 30" in an inventory folder, in an object's contents (Build › Contents, Aurora and Legacy styles, and the Open window), in the AO and as landmarks in Places: listed 1, 2, 3 … 10, 11, not 1, 10, 11 … 2, 20.
   - ⬜ Later: the pathfinding objects and experience lists, sorted in `aurora-net`, keep letter order.
