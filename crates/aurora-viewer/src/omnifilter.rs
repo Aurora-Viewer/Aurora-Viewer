@@ -39,6 +39,13 @@ pub const DEFAULT_SET: &str = "Default";
 /// A save waits this long after the last change (the engine's 5 s timer).
 const SAVE_DELAY: Duration = Duration::from_secs(5);
 
+/// How long the viewer waits, when it closes or logs out, for the writes
+/// still under way.
+const EXIT_WAIT: Duration = Duration::from_secs(5);
+
+/// Longest wait between two tries of a save that keeps failing.
+const RETRY_MAX: Duration = Duration::from_secs(300);
+
 /// Matches kept for the editor's log (the Legacy Viewer keeps them all).
 const LOG_MAX: usize = 1000;
 
@@ -342,6 +349,15 @@ pub struct Engine {
     pub log: VecDeque<(SystemTime, String)>,
     /// Since when changes wait to be saved.
     dirty_since: Option<Instant>,
+    /// The thread that writes, one write at a time and in the order asked,
+    /// so that an older rule set never lands over a newer one.
+    saver: Option<Saver>,
+    /// Writes queued whose answer has not come yet.
+    in_flight: usize,
+    /// Wait before the next try after a failed write (doubles up to
+    /// `RETRY_MAX`), and the time before which none is made.
+    backoff: Duration,
+    retry_after: Option<Instant>,
     /// The file being read at startup.
     loading: Option<parking_lot::Mutex<std::sync::mpsc::Receiver<Vec<RuleSet>>>>,
     /// Where the rules are saved; None (tests, demo): nowhere.
@@ -358,6 +374,10 @@ impl Default for Engine {
             stale: true,
             log: VecDeque::new(),
             dirty_since: None,
+            saver: None,
+            in_flight: 0,
+            backoff: Duration::ZERO,
+            retry_after: None,
             loading: None,
             path: None,
         }
@@ -667,28 +687,79 @@ impl Engine {
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
             }
         }
-        if self.dirty_since.is_some_and(|t| now.duration_since(t) >= SAVE_DELAY) {
+        self.collect_writes(now);
+        if self.dirty_since.is_some_and(|t| now.duration_since(t) >= SAVE_DELAY) && self.retry_after.is_none_or(|t| now >= t) {
             self.save();
         }
     }
 
-    /// Writes the rules now, on a thread (saveNeedles).
+    /// Writes the rules now, on the writer thread (saveNeedles). The change
+    /// counts as saved only once the thread says the file is on disk.
     pub fn save(&mut self) {
-        let Some((path, xml)) = self.pending_save() else { return };
-        let spawned = std::thread::Builder::new()
-            .name("aurora-omnifilter-save".into())
-            .spawn(move || write(&path, &xml));
-        if let Err(e) = spawned {
-            log::warn!("omnifilter: no thread: {e}");
+        if let Some((path, xml)) = self.pending_save() {
+            self.queue(path, xml);
         }
     }
 
-    /// Writes what is left to save before the viewer closes
-    /// (~OmnifilterEngine: a change made just before closing is kept).
+    /// Writes what is left to save before the viewer closes or the account
+    /// logs out (~OmnifilterEngine: a change made just before closing is
+    /// kept), and waits for the writes under way, a few seconds at most.
     pub fn save_before_exit(&mut self) {
-        if let Some((path, xml)) = self.pending_save() {
-            write(&path, &xml);
+        self.save();
+        let deadline = Instant::now() + EXIT_WAIT;
+        while self.in_flight > 0 {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match self.saver.as_ref().map(|s| s.answers.recv_timeout(left)) {
+                Some(Ok(answer)) => self.answered(answer, Instant::now()),
+                _ => break,
+            }
         }
+        // a write that failed, or that was never queued, is tried once more
+        // here, on this thread
+        if let Some((path, xml)) = self.pending_save()
+            && let Err(e) = write(&path, &xml)
+        {
+            log::warn!("omnifilter: {}: {e}", path.display());
+        }
+    }
+
+    fn queue(&mut self, path: std::path::PathBuf, xml: String) {
+        if self.saver.is_none() {
+            self.saver = Saver::start();
+        }
+        match &self.saver {
+            Some(saver) if saver.jobs.send((path, xml)).is_ok() => self.in_flight += 1,
+            _ => self.write_failed(Instant::now()),
+        }
+    }
+
+    /// The answers of the writer thread, once a frame.
+    fn collect_writes(&mut self, now: Instant) {
+        while let Some(answer) = self.saver.as_ref().and_then(|s| s.answers.try_recv().ok()) {
+            self.answered(answer, now);
+        }
+    }
+
+    fn answered(&mut self, answer: std::io::Result<()>, now: Instant) {
+        self.in_flight = self.in_flight.saturating_sub(1);
+        match answer {
+            Ok(()) => {
+                self.backoff = Duration::ZERO;
+                self.retry_after = None;
+            }
+            Err(e) => {
+                log::warn!("omnifilter: not saved ({e}); it will be tried again");
+                self.write_failed(now);
+            }
+        }
+    }
+
+    /// A write did not reach the disk: the rules are unsaved again, the
+    /// next try waits longer.
+    fn write_failed(&mut self, now: Instant) {
+        self.dirty_since.get_or_insert(now);
+        self.backoff = (self.backoff * 2).clamp(SAVE_DELAY, RETRY_MAX);
+        self.retry_after = Some(now + self.backoff);
     }
 
     fn pending_save(&mut self) -> Option<(std::path::PathBuf, String)> {
@@ -698,13 +769,35 @@ impl Engine {
     }
 }
 
-fn write(path: &std::path::Path, xml: &str) {
+/// The writer thread: it takes the files to write in order and answers each
+/// one when it is on disk, or why it is not.
+struct Saver {
+    jobs: crossbeam_channel::Sender<(std::path::PathBuf, String)>,
+    answers: crossbeam_channel::Receiver<std::io::Result<()>>,
+}
+
+impl Saver {
+    fn start() -> Option<Saver> {
+        let (jobs, queue) = crossbeam_channel::unbounded::<(std::path::PathBuf, String)>();
+        let (done, answers) = crossbeam_channel::unbounded();
+        std::thread::Builder::new()
+            .name("aurora-omnifilter-save".into())
+            .spawn(move || {
+                for (path, xml) in queue {
+                    let _ = done.send(write(&path, &xml));
+                }
+            })
+            .map_err(|e| log::warn!("omnifilter: no thread: {e}"))
+            .ok()?;
+        Some(Saver { jobs, answers })
+    }
+}
+
+fn write(path: &std::path::Path, xml: &str) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
+        std::fs::create_dir_all(dir)?;
     }
-    if let Err(e) = crate::atomic_file::write(path, xml.as_bytes()) {
-        log::warn!("omnifilter: {}: {e}", path.display());
-    }
+    crate::atomic_file::write(path, xml.as_bytes())
 }
 
 /// The user's file: `<config>/omnifilter.xml`, the Legacy Viewer's name and

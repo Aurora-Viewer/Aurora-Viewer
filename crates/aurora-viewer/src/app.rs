@@ -6036,6 +6036,8 @@ impl App {
         }
         self.sync_local_picker_bindings();
         self.imports.flush_local_registry();
+        // a rule changed just before closing is kept, as at a logout
+        self.world.omnifilter.save_before_exit();
         self.record_inventory_logout();
         // revertBeaconsState when the editors close with the viewer
         self.env_beacons_release();
