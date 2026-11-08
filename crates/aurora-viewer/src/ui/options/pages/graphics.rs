@@ -357,6 +357,12 @@ fn quality(cx: &mut Cx) {
                 .changed()
             },
         );
+        // RenderAttachedParticles (panel_preferences_graphics1.xml)
+        cx.keywords("RenderAttachedParticles").toggle(
+            tr!("ui-options-attached-particles"),
+            tr!("ui-options-attached-particles-hint"),
+            &field!(attached_particles),
+        );
         cx.toggle(
             tr!("ui-options-occlusion"),
             tr!("ui-options-objects-hidden-behind-others-walls-floors-are-not-drawn"),

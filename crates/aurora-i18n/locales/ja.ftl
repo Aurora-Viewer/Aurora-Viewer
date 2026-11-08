@@ -13421,3 +13421,10 @@ large-surface-enable = 表面積が極端に大きいオブジェクトを隠す
 large-surface-enable-hint = グラフィックカードに過負荷をかけるために作られたオブジェクトから保護します。下の合計を超えると、表面積が最も大きいプリムとスカルプトは描画されません。正当なオブジェクトが隠れることもあります。
 large-surface-frame-max = 描画する表面積の合計
 large-surface-frame-max-hint = 最も大きいものが隠されるまでに描画する、大きなオブジェクトの表面積です（デフォルトは5,000）。
+
+# Preferences: visibility switches (RenderAttachedParticles, RenderParcelSelection)
+ui-options-attached-particles = 装着物のパーティクル
+ui-options-attached-particles-hint = アバターが装着しているもののパーティクル（きらめき、煙、炎など）を描画します。
+ui-options-build-land = 土地
+ui-options-parcel-selection-outline = 選択した区画の境界を強調表示
+ui-options-parcel-selection-outline-hint = 土地ツールや「土地情報」で選択した区画の周りに黄色い壁を表示します。
