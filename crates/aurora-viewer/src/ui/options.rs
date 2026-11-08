@@ -49,6 +49,7 @@ pub enum Page {
     Graphics,
     Camera,
     Avatars,
+    Build,
     Chat,
     Sound,
     Media,
@@ -69,11 +70,12 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 21] = [
+    pub const ALL: [Page; 22] = [
         Page::Aurora,
         Page::Graphics,
         Page::Camera,
         Page::Avatars,
+        Page::Build,
         Page::Chat,
         Page::Sound,
         Page::Media,
@@ -100,6 +102,7 @@ impl Page {
             Page::Graphics => "graphics",
             Page::Camera => "camera",
             Page::Avatars => "avatars",
+            Page::Build => "build",
             Page::Chat => "chat",
             Page::Sound => "sound",
             Page::Media => "media",
@@ -126,6 +129,7 @@ impl Page {
             Page::Graphics => aurora_i18n::tr!("ui-options-graphics"),
             Page::Camera => aurora_i18n::tr!("common-camera"),
             Page::Avatars => aurora_i18n::tr!("ui-options-avatars"),
+            Page::Build => aurora_i18n::tr!("common-build"),
             Page::Chat => aurora_i18n::tr!("common-chat"),
             Page::Sound => aurora_i18n::tr!("ui-options-sound-and-voice"),
             Page::Media => aurora_i18n::tr!("ui-options-page-media"),
@@ -153,6 +157,7 @@ impl Page {
             Page::Graphics => aurora_i18n::tr!("ui-options-about-graphics"),
             Page::Camera => aurora_i18n::tr!("ui-options-about-camera"),
             Page::Avatars => aurora_i18n::tr!("ui-options-about-avatars"),
+            Page::Build => aurora_i18n::tr!("ui-options-about-build"),
             Page::Chat => aurora_i18n::tr!("ui-options-about-chat"),
             Page::Sound => aurora_i18n::tr!("ui-options-about-sound"),
             Page::Media => aurora_i18n::tr!("ui-options-about-media"),
@@ -179,6 +184,8 @@ impl Page {
             Page::Graphics => "device-desktop-filled",
             Page::Camera => "camera-filled",
             Page::Avatars => "user-filled",
+            // the build tools' icon (Command_Build_Icon)
+            Page::Build => "box",
             Page::Chat => "messages-filled",
             Page::Sound => "headset-filled",
             Page::Media => "player-play-filled",
