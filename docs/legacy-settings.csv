@@ -771,8 +771,8 @@ FSRememberUsername,Boolean,in-aurora,,remember_username (kept out of Debug Setti
 FSRemoveFlyHeightLimit,Boolean,to-add,low,,Remove the 4096m high fly limit
 FSRemoveScriptBlockButton,Boolean,to-add,low,,"Removes the ""block"" from script dialogs."
 FSRenderBeaconText,Boolean,to-add,low,,Show beacon text in the viewer window if beacons are enabled
-FSRenderFarClipStepping,Boolean,to-add,high,,Set to TRUE to increase performance via progressive draw distance stepping
-FSRenderFarClipSteppingInterval,U32,to-add,high,,Interval in seconds between each draw distance increment
+FSRenderFarClipStepping,Boolean,in-aurora,,draw_distance_stepping,Set to TRUE to increase performance via progressive draw distance stepping
+FSRenderFarClipSteppingInterval,U32,in-aurora,,draw_distance_stepping_interval,Interval in seconds between each draw distance increment
 FSRenderParcelSelectionToMaxBuildHeight,Boolean,to-add,low,,Shows the parcel boundary up to the maximum build height instead of just 0.66m above ground
 FSRenderVignette,Vector3,to-add,low,,"Amount of vignette to apply (X), power of vignette shading (Y), and multiplier for vignette shading (Z)."
 FSRepeatedEnvTogglesShared,Boolean,check,,named in ui/environment: may be built in,Whether repeated presses of sky preset shortcuts should revert to shared environment
@@ -791,7 +791,7 @@ FSRestoreOpenIMs,Boolean,in-aurora,,reopen_ims,Restore open IM windows from the 
 FSRevokePerms,U32,in-aurora,,revoke_permissions,"Revokes objects anim perms on your avatar on: 0) never, 1) on sit, 2) on stand, 3) on sit and stand."
 FSRowsPerScriptDialog,S32,to-add,low,,The number of rows visible in a script dialog
 FSSaveInventoryScriptsAsMono,Boolean,to-add,low,,Saves scripts edited directly from inventory as Mono instead of LSL
-FSSavedRenderFarClip,F32,not-applicable,,internal state of FSRenderFarClipStepping,Saved draw distance (used in case of logout during progressive draw distance stepping)
+FSSavedRenderFarClip,F32,not-applicable,,Aurora keeps the user's draw distance in the settings file during the steps (Settings::to_saved),Saved draw distance (used in case of logout during progressive draw distance stepping)
 FSScriptDebugWindowClearOnClose,Boolean,to-add,low,,Clear [ALL SCRIPTS] tab of script debug/error window on close.
 FSScriptDialogNoTransparency,Boolean,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)","If true, script dialogs will be shown opaque and ignore the floater opacity settings."
 FSScriptEditorRecompileButton,Boolean,in-aurora,,script_editor.recompile,Enables the save button to recompile scripts when no change in the opened script has occurred. Very useful for preproc scripts that consist 

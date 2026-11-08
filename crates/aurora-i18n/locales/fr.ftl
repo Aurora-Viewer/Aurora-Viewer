@@ -13451,3 +13451,8 @@ ui-options-attached-particles-hint = Affiche les particules de ce que portent le
 ui-options-build-land = Terrain
 ui-options-parcel-selection-outline = Mettre en évidence les limites de la parcelle sélectionnée
 ui-options-parcel-selection-outline-hint = Murs jaunes autour d'une parcelle sélectionnée avec l'outil terrain ou À propos du terrain.
+
+# Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
+ui-options-draw-distance-stepping = Distance d'affichage progressive
+ui-options-draw-distance-stepping-hint = Après la connexion et après une téléportation vers une autre région, la distance d'affichage part de 32 m et double jusqu'à la vôtre, pour que ce qui est proche se charge d'abord.
+ui-options-draw-distance-stepping-interval = Temps entre les paliers

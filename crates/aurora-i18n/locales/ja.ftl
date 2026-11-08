@@ -13428,3 +13428,8 @@ ui-options-attached-particles-hint = アバターが装着しているものの�
 ui-options-build-land = 土地
 ui-options-parcel-selection-outline = 選択した区画の境界を強調表示
 ui-options-parcel-selection-outline-hint = 土地ツールや「土地情報」で選択した区画の周りに黄色い壁を表示します。
+
+# Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
+ui-options-draw-distance-stepping = 描画距離を段階的に広げる
+ui-options-draw-distance-stepping-hint = ログイン後と別のリージョンへのテレポート後、描画距離を32mから始めて設定値まで倍々に広げ、近くのものから読み込みます。
+ui-options-draw-distance-stepping-interval = 段階の間隔

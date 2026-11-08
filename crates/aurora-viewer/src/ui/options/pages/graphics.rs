@@ -311,6 +311,22 @@ fn quality(cx: &mut Cx) {
             32.0..=512.0,
             " m",
         );
+        // FSRenderFarClipStepping and its interval (5 to 30 s), greyed off
+        cx.keywords("FSRenderFarClipStepping progressive").toggle(
+            tr!("ui-options-draw-distance-stepping"),
+            tr!("ui-options-draw-distance-stepping-hint"),
+            &field!(draw_distance_stepping),
+        );
+        let off = !cx.s.draw_distance_stepping;
+        cx.subs(off, |cx| {
+            cx.slider(
+                tr!("ui-options-draw-distance-stepping-interval"),
+                "",
+                &field!(draw_distance_stepping_interval),
+                5..=30,
+                " s",
+            );
+        });
         cx.row(
             tr!("ui-options-level-of-detail-lod"),
             tr!("ui-options-lod-factor-for-sl-objects-and-meshes-2-by"),
