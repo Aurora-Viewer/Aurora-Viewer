@@ -111,36 +111,37 @@ while rethinking the user interface.
   </tr>
 </table>
 
-### New in 0.9.3 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+### New in 0.9.4 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>AMD FSR 3.1</h3>
-      Choose FSR 3.1 under Anti-aliasing: smooth edges at the window's
-      size, or a world drawn smaller and rebuilt sharp, for more frames per
-      second. Animated textures and transparent surfaces stay clean.
+      <h3>Debug settings, like the Legacy Viewer</h3>
+      Every setting by name in one window, from the toolbar or
+      Ctrl+Alt+Shift+S: search the names and descriptions, see the ones you
+      changed, and reset any of them to its default.
     </td>
     <td width="50%" valign="top">
-      <h3>Steadier on every graphics card</h3>
-      After a graphics card reset, Aurora reopens its window and keeps you
-      logged in. Intel 6th to 9th generation integrated GPUs and AMD +
-      NVIDIA laptops start again, and integrated GPUs count their shared
-      memory in the texture budget.
+      <h3>More of the Legacy Viewer's options</h3>
+      Build preferences for new prims, a progressive draw distance, the
+      Trees detail, large surface protection, particles from worn objects,
+      camera smoothing up to 300 and a limit for the chat lines above the
+      chat bar.
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <h3>Updates and your computer</h3>
-      Aurora tells you when a new version is out, while it runs. Remove
-      Aurora from this computer takes away what it registered outside its
-      folders, and the web and media pack downloads only once you agree.
+      <h3>A fuller world</h3>
+      Neighbouring regions appear at your draw distance, objects no longer
+      vanish at some camera angles, and the world comes back by itself
+      after video memory was full at login. Media screens in busy regions
+      load again.
     </td>
     <td valign="top">
-      <h3>Clicks that land</h3>
-      Clicks go through alpha textures and invisible prims like the Legacy
-      Viewer, Shift or Ctrl + right click extends the build selection, and
-      the teleport history survives a crash.
+      <h3>Calls, music and chat</h3>
+      Private calls stay connected across teleports, parcel music no longer
+      cuts out while you cam around, Ctrl+Tab cycles the conversations, and
+      the Japanese IME shows the active conversion segment.
     </td>
   </tr>
 </table>
