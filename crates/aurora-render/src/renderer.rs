@@ -6589,7 +6589,8 @@ impl Backend {
             },
             god_rays: if hdr && !f.cutout { f.god_rays.clamp(0.0, 1.0) } else { 0.0 },
             photo_part: photo_part(f.photo_tile),
-            sun_uv: sun_on_screen(f.proj * f.view, f.sun_dir, f.sun_visible),
+            // the sun disc the sky draws, not the light (the moon at night)
+            sun_uv: sun_on_screen(f.proj * f.view, f.sky.sun_dir, f.sun_visible),
         };
         self.queue.write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(&post));
         if let (true, Some(t)) = (self.contact_now, &self.targets.contact) {
