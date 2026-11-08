@@ -1194,6 +1194,10 @@ pub struct Settings {
     /// A left click on an object whose click action is Sit does not sit
     /// (FSBlockClickSit, off); the menu's Sit still does.
     pub block_click_sit: bool,
+    /// FSRevokePerms: revoke the permissions of an object we do not own
+    /// when we sit on it (1), stand up from it (2), both (3) or never (0,
+    /// the default) (app/revoke_on_sit.rs).
+    pub revoke_permissions: u8,
     /// What a double click on the ground does (Preferences › Controls, the
     /// wolf menu › Me): nothing by default, as in Firestorm.
     pub double_click: crate::autopilot::DoubleClick,
@@ -2077,6 +2081,7 @@ impl Default for Settings {
             quickjump: false,
             fly_override_warned: false,
             block_click_sit: false,
+            revoke_permissions: 0,
             double_click: crate::autopilot::DoubleClick::Nothing,
             follow: Default::default(),
             lookat: Default::default(),
@@ -2779,6 +2784,7 @@ impl Settings {
             BLOOM_STRENGTH
         };
         self.lod_factor = self.lod_factor.clamp(0.5, 4.0);
+        self.revoke_permissions = self.revoke_permissions.min(3);
         self.avatar_turn_speed = if self.avatar_turn_speed.is_finite() {
             self.avatar_turn_speed.clamp(0.0, 100.0)
         } else {
