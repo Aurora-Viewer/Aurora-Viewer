@@ -102,6 +102,9 @@ const EVICT_LOOKS_PER_FRAME: usize = 512;
 /// Uploads set aside in a frame because their texture page is still being
 /// made, before the frame stops looking for one that can go.
 const PAGE_WAITS: usize = 16;
+/// Shortest wait before a texture refused by a full video memory is
+/// decoded and sent again (the renderer's own page wait is 2 s to 30 s).
+const MEMORY_RETRY_MIN: Duration = Duration::from_secs(1);
 /// Downloaded data is written to the disk cache this often.
 const HOUSEKEEPING_EVERY: Duration = Duration::from_secs(2);
 /// The memory budget is checked this often (a query to the driver).
@@ -1102,6 +1105,9 @@ pub struct TextureStreamer {
     pub demo_source: Option<DemoSource>,
     /// Textures also wanted as egui images (profile pictures...): small CPU copies.
     ui_wanted: std::collections::HashSet<Uuid>,
+    /// Textures whose upload a full video memory refused, waiting to be
+    /// sent again (one warning while any wait, one line when all went).
+    memory_waits: std::collections::HashSet<Uuid>,
     /// Session-long UI users, independent from the bounded hover cache.
     ui_permanent: std::collections::HashSet<Uuid>,
     ui_ready: HashMap<Uuid, (u32, u32, Vec<u8>)>,
@@ -1497,6 +1503,7 @@ impl TextureStreamer {
             can_fetch: false,
             demo_source: None,
             ui_wanted: Default::default(),
+            memory_waits: Default::default(),
             ui_permanent: Default::default(),
             ui_ready: HashMap::new(),
             ui_previews: Default::default(),
@@ -3268,6 +3275,27 @@ impl TextureStreamer {
                 }
             };
             done += usize::from(placed);
+            if !accepted
+                && placed
+                && let Some(at) = renderer.textures.retry_after_refusal()
+            {
+                // video memory full (another program took it, or the
+                // scene outgrew it): the slot keeps its texels and the
+                // level is decoded and sent again once the renderer tries
+                // its pages again, instead of being settled as loaded,
+                // which left the texture blurred or grey after the memory
+                // came back. Not a failure: it would end as unavailable.
+                if !self.memory_waits.contains(&u.id) {
+                    if self.memory_waits.is_empty() {
+                        log::warn!("textures: video memory full, uploads wait until it can take them");
+                    }
+                    self.memory_waits.insert(u.id);
+                }
+                e.retry_at = Some(at.max(Instant::now() + MEMORY_RETRY_MIN));
+                Self::settle(&mut self.todo, &mut self.counts, u.id, e);
+                u.retire(&mut self.trash);
+                continue;
+            }
             if !accepted {
                 // keep the current texels, and do not decode it again in a loop
                 if placed {
@@ -3286,6 +3314,9 @@ impl TextureStreamer {
                 Self::settle(&mut self.todo, &mut self.counts, u.id, e);
                 u.retire(&mut self.trash);
                 continue;
+            }
+            if self.memory_waits.remove(&u.id) && self.memory_waits.is_empty() {
+                log::info!("textures: video memory took the uploads that waited for it");
             }
             spent += match &u.staged {
                 Some(staged) => {
@@ -3387,6 +3418,11 @@ impl TextureStreamer {
         }
         self.last_maintenance = now;
         self.report_slotless(renderer.textures.capacity());
+        // (a texture refused by a full video memory that is no longer
+        // wanted at that level, or gone, waits no more)
+        let entries = &self.entries;
+        self.memory_waits
+            .retain(|id| entries.get(id).is_some_and(|e| e.refs > 0 && e.needs_decode(e.want)));
         // downloaded data to persist: shared, not copied, and queued in one go
         let mut writes = Vec::new();
         let mut later = Vec::new();

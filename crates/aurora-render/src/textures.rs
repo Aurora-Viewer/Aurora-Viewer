@@ -581,6 +581,9 @@ struct PageStore {
     warned_full: bool,
     /// A page could not be made (video memory full): when to try again.
     page_backoff: crate::gpu_alloc::Backoff,
+    /// The last `replace` / `replace_staged` was refused for want of a page
+    /// video memory could not hold (not for its size or format).
+    refused_for_memory: bool,
     /// Pages created so far, by whom and in how long (AURORA_PROFILE).
     made: PagesMade,
     /// Pages the page thread made, waiting for the first texture of their
@@ -637,6 +640,7 @@ impl PageStore {
             eager: false,
             warned_full: false,
             page_backoff: Default::default(),
+            refused_for_memory: false,
             made: PagesMade::default(),
             spares: Vec::new(),
             retired: Vec::new(),
@@ -762,6 +766,7 @@ impl PageStore {
                 // texture waits, and the page is asked again a little later
                 let now = Instant::now();
                 if !self.page_backoff.ready(now) {
+                    self.refused_for_memory = true;
                     return None;
                 }
                 let layers = self.next_page_layers(key);
@@ -785,6 +790,7 @@ impl PageStore {
                             );
                         }
                         self.page_backoff.failed(now);
+                        self.refused_for_memory = true;
                         return None;
                     }
                 }
@@ -969,6 +975,7 @@ impl PageStore {
     }
 
     fn replace(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, slot: u32, mips: &[MipLevel]) -> bool {
+        self.refused_for_memory = false;
         let Some(key) = page_key(mips, self.max_dim) else {
             return false;
         };
@@ -982,6 +989,7 @@ impl PageStore {
     /// Like `replace`, from a mip chain staged by a background job: the
     /// copies are recorded in the frame's upload encoder.
     fn replace_staged(&mut self, device: &wgpu::Device, uploads: &mut UploadQueue, slot: u32, staged: &StagedTexture) -> bool {
+        self.refused_for_memory = false;
         if staged.format == TexelFormat::Bc7 && !self.bc7 {
             return false;
         }
@@ -1552,6 +1560,16 @@ impl TextureTable {
     /// must be ready); the copies go to the frame's upload encoder.
     pub fn replace_staged(&mut self, device: &wgpu::Device, uploads: &mut UploadQueue, slot: u32, staged: &StagedTexture) -> bool {
         self.store.replace_staged(device, uploads, slot, staged)
+    }
+
+    /// After a refused `replace` / `replace_staged`: when to upload it
+    /// again if video memory was full (its page could not be made), `None`
+    /// if it was refused for good (size, format, table full).
+    pub fn retry_after_refusal(&self) -> Option<Instant> {
+        if !self.store.refused_for_memory {
+            return None;
+        }
+        Some(self.store.page_backoff.next_try().unwrap_or_else(Instant::now))
     }
 
     /// Size of the texture in a slot (level 0).

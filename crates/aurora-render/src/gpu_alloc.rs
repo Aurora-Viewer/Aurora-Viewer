@@ -145,19 +145,29 @@ fn reason(text: &str) -> String {
     lines.last().map_or_else(|| text.trim().to_owned(), |l| (*l).to_owned())
 }
 
-/// `AURORA_GPU_OOM=<MB>`: every allocation of at least that size fails as
-/// if video memory were full (testing; 0 fails them all).
+/// `AURORA_GPU_OOM=<MB>[,<seconds>]`: every allocation of at least that
+/// size fails as if video memory were full (testing; 0 fails them all),
+/// for the whole run or, with a duration, that long after the first
+/// allocation checked: the memory then comes back, as when another program
+/// that held it closes.
 fn injected_failure(bytes: u64) -> Option<String> {
-    static LIMIT: OnceLock<Option<u64>> = OnceLock::new();
-    let limit = *LIMIT.get_or_init(|| {
-        std::env::var("AURORA_GPU_OOM")
-            .ok()
-            .and_then(|v| v.trim().parse::<u64>().ok())
-            .map(|mb| mb << 20)
-    });
+    static LIMIT: OnceLock<Option<(u64, Option<Instant>)>> = OnceLock::new();
+    let limit = *LIMIT.get_or_init(|| std::env::var("AURORA_GPU_OOM").ok().and_then(|v| parse_oom(&v, Instant::now())));
     limit
-        .filter(|l| bytes >= *l)
+        .filter(|(l, until)| bytes >= *l && until.is_none_or(|t| Instant::now() < t))
         .map(|_| "out of video memory (AURORA_GPU_OOM)".to_owned())
+}
+
+/// `<MB>[,<seconds>]` of `AURORA_GPU_OOM`: the size in bytes, and until
+/// when (from `now`) if a duration is given.
+fn parse_oom(value: &str, now: Instant) -> Option<(u64, Option<Instant>)> {
+    let mut parts = value.split(',').map(str::trim);
+    let mb = parts.next()?.parse::<u64>().ok()?;
+    let until = match parts.next() {
+        Some(seconds) => Some(now + Duration::from_secs(seconds.parse().ok()?)),
+        None => None,
+    };
+    Some((mb << 20, until))
 }
 
 /// `AURORA_GPU_OOM_TARGETS=<seconds>`: for that long after the first frame
@@ -244,6 +254,11 @@ impl Backoff {
     /// A failure is being waited out.
     pub fn waiting(&self) -> bool {
         self.next.is_some()
+    }
+
+    /// When the next try is due, while a failure is being waited out.
+    pub fn next_try(&self) -> Option<Instant> {
+        self.next
     }
 }
 
@@ -633,6 +648,15 @@ mod tests {
         assert!(r.targets_failed(t6));
         assert!(r.targets_due(t6 + s(2)));
         assert!(!r.targets_failed(t6 + s(2)));
+    }
+
+    #[test]
+    fn the_injected_failure_may_end_after_a_while() {
+        let now = Instant::now();
+        assert_eq!(parse_oom("64", now), Some((64 << 20, None)));
+        assert_eq!(parse_oom(" 0 , 30 ", now), Some((0, Some(now + Duration::from_secs(30)))));
+        assert_eq!(parse_oom("64,soon", now), None);
+        assert_eq!(parse_oom("lots", now), None);
     }
 
     #[test]
