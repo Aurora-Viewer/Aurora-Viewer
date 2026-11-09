@@ -6940,6 +6940,12 @@ pub fn stress_texture(i: u32) -> Uuid {
     Uuid::from_u128(0xDE40_7E57_0000_0000_0000_0000_0000_0000 | i as u128)
 }
 
+/// The stress cube index of a texture of `stress_texture`, if it is one.
+pub fn stress_index(id: &Uuid) -> Option<u32> {
+    let v = id.as_u128();
+    (v >> 32 == 0xDE40_7E57_0000_0000_0000_0000).then_some(v as u32)
+}
+
 /// Level-0 sizes of the stress textures, cycled: the common square and
 /// oblong powers of two, plus one size that is not a power of two.
 const STRESS_SIZES: [(u32, u32); 8] = [(64, 64), (32, 32), (128, 64), (64, 128), (128, 128), (16, 16), (48, 48), (64, 32)];

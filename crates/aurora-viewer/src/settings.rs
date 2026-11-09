@@ -432,6 +432,10 @@ pub struct Settings {
     /// a notice. Aurora only: the Legacy Viewer checks at launch.
     pub update_check_interval: crate::updater::Interval,
     pub ignored_update: String,
+    /// When this installation first saw the minimum supported version that
+    /// is above it: its grace period to sign in counts from there (#3014).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update_grace: Option<crate::updater::GraceStart>,
     pub area_search: area_search::AreaSearch,
     pub crash_reports: CrashReports,
     /// Firestorm Language: default follows the OS.
@@ -1827,6 +1831,7 @@ impl Default for Settings {
             update_check_interval: crate::updater::Interval::default(),
             update_channel: aurora_updater::feed::Channel::Stable,
             ignored_update: String::new(),
+            update_grace: None,
             area_search: Default::default(),
             crash_reports: CrashReports::Ask,
             language: "default".into(),
