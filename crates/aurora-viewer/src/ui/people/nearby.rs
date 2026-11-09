@@ -403,14 +403,10 @@ fn list_part(
                 if action.sheet {
                     open_sheet(st, row.id);
                 }
-                // double click: the camera goes to the avatar and follows it, when it is
-                // drawn (LLAvatarActions::zoomIn, FSPanelRadar)
+                // double click: the camera goes to the avatar and follows it
+                // (LLAvatarActions::zoomIn, FSPanelRadar)
                 if action.activate {
-                    if row.loaded {
-                        context::request(ui.ctx(), CtxAction::ZoomAvatar(row.id));
-                    } else {
-                        actions.push(PeopleAction::TooFarToZoom);
-                    }
+                    radar::zoom_from_list(ui, st, row, data.draw_distance, actions);
                 }
                 // menu_fs_radar.xml, menu_fs_radar_multiselect.xml for several
                 super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);

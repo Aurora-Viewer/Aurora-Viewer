@@ -1135,3 +1135,27 @@ fn poser_a_saved_change_applies_on_the_destinations_own_pose_and_older_files_sti
     let older: document::Joint = serde_json::from_slice(older).unwrap();
     assert_eq!(older.name, "mElbowLeft");
 }
+#[test]
+fn poser_title_eye_hides_and_shows_the_markers_and_gizmos() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (world, mut editor) = selected_fixture();
+    let frame = editor.editor_frame(&world).unwrap();
+    let mut frames = Frames::new();
+    let p = crate::theme::Theme::default().palette();
+    crate::ui::widgets::place_floater(&frames.ctx, "poser", egui::pos2(30.0, 30.0), egui::vec2(880.0, 760.0));
+    assert!(editor.poser.markers);
+    // the eye shows what is on screen: open, then struck through once hidden
+    for (icon, after) in [("eye-filled", false), ("eye-off", true)] {
+        for _ in 0..3 {
+            frames.run(Vec::new(), |ui: &mut egui::Ui| editor.poser_ui(ui.ctx(), &p, &world, &frame));
+        }
+        let eye = frames
+            .ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("floater_action", "poser", icon))))
+            .unwrap_or_else(|| panic!("the title shows {icon}"))
+            .center();
+        frames.run(click(eye), |ui: &mut egui::Ui| editor.poser_ui(ui.ctx(), &p, &world, &frame));
+        assert_eq!(editor.poser.markers, after, "{icon} toggles the settings' switch");
+        assert!(!editor.poser.settings_open, "no detour through the settings");
+    }
+}

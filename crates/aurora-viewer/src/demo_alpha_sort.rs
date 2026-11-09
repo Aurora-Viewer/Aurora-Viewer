@@ -1,4 +1,4 @@
-//! AURORA_DEMO_ALPHA_SORT=front|back: the same unrigged DAE and PNGs supplied
+//! AURORA_DEMO_ALPHA_SORT=front|back|hud|hud-back|hud-zoom: the same unrigged DAE and PNGs supplied
 //! for the human's grid comparison (#2575), passed through the normal loader.
 
 use super::*;
@@ -21,6 +21,10 @@ pub fn enabled() -> bool {
     std::env::var_os("AURORA_DEMO_ALPHA_SORT").is_some()
 }
 
+fn is_hud() -> bool {
+    std::env::var("AURORA_DEMO_ALPHA_SORT").is_ok_and(|v| v.starts_with("hud"))
+}
+
 fn model() -> Result<Model, aurora_assets::AssetError> {
     import_mesh::collada::parse(MODEL, &aurora_assets::Skeleton::default())?
         .models
@@ -34,7 +38,7 @@ pub fn point() -> Vec3 {
 }
 
 pub fn view(frame: u64) -> Option<(Vec3, Vec3)> {
-    if !enabled() || frame != 300 {
+    if !enabled() || is_hud() || frame != 300 {
         return None;
     }
     let y = if std::env::var("AURORA_DEMO_ALPHA_SORT").as_deref() == Ok("back") {
@@ -84,11 +88,21 @@ pub fn tick(world: &mut crate::world::World, scene: &mut crate::scene::Scene, fr
     for (face, texture) in entry.faces.iter_mut().zip(TEX) {
         face.texture = texture;
     }
-    let object = prim(
+    let hud = is_hud();
+    let back = std::env::var("AURORA_DEMO_ALPHA_SORT").as_deref() == Ok("hud-back");
+    let mut object = prim(
         25750,
-        point(),
-        Quat::IDENTITY,
-        size,
+        if hud { Vec3::new(0.0, 0.35, 0.03) } else { point() },
+        if hud {
+            Quat::from_rotation_z(if back {
+                std::f32::consts::FRAC_PI_2
+            } else {
+                -std::f32::consts::FRAC_PI_2
+            })
+        } else {
+            Quat::IDENTITY
+        },
+        if hud { size * 0.25 } else { size },
         aurora_prim::VolumeParams {
             sculpt: Some(sculpt),
             ..Default::default()
@@ -100,12 +114,29 @@ pub fn tick(world: &mut crate::world::World, scene: &mut crate::scene::Scene, fr
         },
         "",
     );
+    let id = object.full_id;
+    if hud {
+        object.parent_id = 9000;
+        object.state = 31u8.rotate_left(4);
+        object.owner_id = DEMO_AGENT;
+        object.name_values = format!("AttachItemID STRING RW SV {id}");
+    }
     world.apply(NetEvent::ObjectUpdates {
         handle: HANDLE,
         objects: vec![object],
     });
+    if hud {
+        // A prior demo run may have saved this synthetic attachment's zoom.
+        world.hud_zoom = 1.0;
+        let zoom = if std::env::var("AURORA_DEMO_ALPHA_SORT").as_deref() == Ok("hud-zoom") {
+            0.5
+        } else {
+            1.0
+        };
+        world.hud_scales.set(id, zoom);
+    }
     log::info!(
-        "demo alpha sort: three nonrigged faces, size={size:?}, face_sort={}",
+        "demo alpha sort: three nonrigged faces, hud={hud}, size={size:?}, face_sort={}",
         crate::scene::blend_order::face_sort_enabled()
     );
 }

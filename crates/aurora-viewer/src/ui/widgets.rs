@@ -189,11 +189,41 @@ pub(crate) fn faux_bold_offset(ui: &egui::Ui) -> Option<Vec2> {
     Some(Vec2::new(ppp.round().max(1.0) / ppp, 0.0))
 }
 
+/// A floater's inner margin around its body (neither `flush_body` nor
+/// `framed_header`, not minimized), and the width of its outline.
+const FLOATER_MARGIN: egui::Margin = egui::Margin {
+    left: 10,
+    right: 10,
+    top: 5,
+    bottom: 10,
+};
+const FLOATER_STROKE: f32 = 1.0;
+/// The title row's least height, its title's size, and the room left
+/// between the divider under it and the body.
+const TITLE_ROW_MIN: f32 = 28.0;
+const TITLE_SIZE: f32 = 14.0;
+const UNDER_DIVIDER: f32 = 5.0;
 /// What a floater has above and below its body besides its title: the
 /// margins of its frame and its outline.
-const BODY_CHROME: f32 = 17.0;
+const BODY_CHROME: f32 = FLOATER_MARGIN.top as f32 + FLOATER_MARGIN.bottom as f32 + 2.0 * FLOATER_STROKE;
 /// The least height the scrolled body of a floater keeps.
 const MIN_SCROLLED_BODY: f32 = 80.0;
+
+/// What a floater of the usual layout (title row and divider, no status
+/// row, neither `flush_body` nor `framed_header`) adds around its body:
+/// its margins and outline across; down, those with the title row and the
+/// divider under it. A window whose minimum follows its body adds this.
+pub fn floater_chrome(ctx: &egui::Context) -> Vec2 {
+    let gap = ctx.global_style().spacing.item_spacing.y;
+    let title = ctx
+        .fonts_mut(|f| f.row_height(&egui::FontId::proportional(TITLE_SIZE)))
+        .max(TITLE_ROW_MIN);
+    let m = FLOATER_MARGIN;
+    Vec2::new(
+        m.leftf() + m.rightf() + 2.0 * FLOATER_STROKE,
+        BODY_CHROME + title + gap + DIVIDER_ROOM + gap + UNDER_DIVIDER,
+    )
+}
 
 /// `pos` moved so that a window of `size` placed there stands inside `area`
 /// (its top left corner first, when it is larger).
@@ -280,6 +310,7 @@ pub struct Floater<'a> {
     /// A short muted text right after the title (a count of what the
     /// window holds).
     pub title_note: Option<String>,
+    pub title_note_tooltip: Option<String>,
     /// A state at the right end of the title bar, before its buttons: a
     /// dot of its colour and its text in muted.
     pub title_state: Option<(Color32, String)>,
@@ -338,6 +369,7 @@ impl<'a> Floater<'a> {
             header_status: Vec::new(),
             header_status_action: None,
             title_note: None,
+            title_note_tooltip: None,
             title_state: None,
             default_pos: pos,
             default_size: size,
@@ -389,6 +421,12 @@ impl<'a> Floater<'a> {
     /// A muted text after the title (see `title_note`).
     pub fn title_note(mut self, note: impl Into<String>) -> Self {
         self.title_note = Some(note.into());
+        self
+    }
+
+    /// Details shown when hovering the muted text after the title.
+    pub fn title_note_tooltip(mut self, tooltip: impl Into<String>) -> Self {
+        self.title_note_tooltip = Some(tooltip.into());
         self
     }
 
@@ -515,7 +553,7 @@ impl<'a> Floater<'a> {
                 p.panel.b(),
                 p.panel_alpha,
             ))
-            .stroke(border_stroke(p, Stroke::new(1.0, p.muted_dim.gamma_multiply(0.6))))
+            .stroke(border_stroke(p, Stroke::new(FLOATER_STROKE, p.muted_dim.gamma_multiply(0.6))))
             .corner_radius(ctx.global_style().visuals.window_corner_radius)
             .shadow(ctx.global_style().visuals.window_shadow)
             .inner_margin(if self.framed_header.is_some() {
@@ -527,13 +565,14 @@ impl<'a> Floater<'a> {
                     top: if minimized && !compact { 4 } else { 5 },
                     bottom: if minimized && !compact { 4 } else { 0 },
                 }
-            } else {
+            } else if minimized && !compact {
                 egui::Margin {
-                    left: 10,
-                    right: 10,
-                    top: if minimized && !compact { 4 } else { 5 },
-                    bottom: if minimized && !compact { 4 } else { 10 },
+                    top: 4,
+                    bottom: 4,
+                    ..FLOATER_MARGIN
                 }
+            } else {
+                FLOATER_MARGIN
             });
         // Ctrl+W closes it as its cross does, when it is the frontmost.
         // Ctrl+Shift+W closes every window.
@@ -696,6 +735,7 @@ impl<'a> Floater<'a> {
             }
             // title bar
             let mut buttons_left = f32::INFINITY;
+            let mut note_rect = None;
             let framed_header = self.framed_header;
             if framed_header.is_some() {
                 ui.spacing_mut().item_spacing.y = 0.0;
@@ -705,8 +745,8 @@ impl<'a> Floater<'a> {
                     ui.spacing_mut().interact_size.y = 20.0;
                 }
                 let title_row = ui.horizontal(|ui| {
-                    ui.set_min_height(if framed_header.is_some() { 20.0 } else { 28.0 });
-                    let title = RichText::new(&self.title).size(14.0).strong().color(p.ink);
+                    ui.set_min_height(if framed_header.is_some() { 20.0 } else { TITLE_ROW_MIN });
+                    let title = RichText::new(&self.title).size(TITLE_SIZE).strong().color(p.ink);
                     // a fixed floater is as wide as its title; a resizable one
                     // cuts a long title short before the buttons (LLFloater
                     // titles end with an ellipsis)
@@ -768,7 +808,8 @@ impl<'a> Floater<'a> {
                                 }
                                 ui.add(egui::Label::new(title).truncate());
                                 if let Some(note) = &self.title_note {
-                                    ui.add(egui::Label::new(RichText::new(note).size(12.0).color(p.muted)).truncate());
+                                    let response = ui.add(egui::Label::new(RichText::new(note).size(12.0).color(p.muted)).truncate());
+                                    note_rect = Some(response.rect);
                                 }
                             });
                         }
@@ -836,15 +877,21 @@ impl<'a> Floater<'a> {
             title_rect.max.x = buttons_left;
             // Keep the title buttons outside the double-click target; Window
             // still owns dragging the bar, including when it is minimized.
-            if ui
-                .interact(title_rect, window_id.with("title_double_click"), Sense::click())
-                .double_clicked()
-            {
+            let title_response = ui.interact(title_rect, window_id.with("title_double_click"), Sense::click());
+            if title_response.double_clicked() {
                 toggle_min = true;
+            }
+            // The double-click target owns title-bar hover. Keep its interaction
+            // and restrict the note's tooltip to the note's own rectangle.
+            if let Some(rect) = note_rect
+                && let Some(tooltip) = &self.title_note_tooltip
+                && ui.input(|input| input.pointer.hover_pos().is_some_and(|pos| rect.contains(pos)))
+            {
+                title_response.with_new_rect(rect).on_hover_text(tooltip);
             }
             if compact {
                 divider(ui, p);
-                ui.add_space(5.0);
+                ui.add_space(UNDER_DIVIDER);
                 out = Some(body(ui));
             } else if !minimized {
                 if flush {
@@ -855,7 +902,7 @@ impl<'a> Floater<'a> {
                             .hline(header.rect.x_range(), header.rect.bottom() + 2.0, divider_stroke(p));
                     } else {
                         divider(ui, p);
-                        ui.add_space(5.0);
+                        ui.add_space(UNDER_DIVIDER);
                     }
                 }
                 if scrolls {
@@ -1516,12 +1563,14 @@ pub fn border_stroke(p: &Palette, usual: Stroke) -> Stroke {
     }
 }
 
+/// The room a `divider` takes across its line.
+const DIVIDER_ROOM: f32 = 6.0;
+
 /// Thin line between two zones of a window, across the layout (horizontal in
 /// a column, vertical in a row), in the room of egui's separator: a window
 /// keeps its layout. Not for buttons or toolbar items: their spacing and the
 /// pill of the hovered one tell them apart. A menu uses `menu::separator`.
 pub fn divider(ui: &mut egui::Ui, p: &Palette) -> egui::Response {
-    const ROOM: f32 = 6.0;
     let across = !ui.layout().main_dir().is_horizontal();
     let available = if ui.is_sizing_pass() {
         Vec2::ZERO
@@ -1529,9 +1578,9 @@ pub fn divider(ui: &mut egui::Ui, p: &Palette) -> egui::Response {
         ui.available_size_before_wrap()
     };
     let size = if across {
-        Vec2::new(available.x, ROOM)
+        Vec2::new(available.x, DIVIDER_ROOM)
     } else {
-        Vec2::new(ROOM, available.y)
+        Vec2::new(DIVIDER_ROOM, available.y)
     };
     let (rect, resp) = ui.allocate_at_least(size, Sense::hover());
     if ui.is_rect_visible(rect) {

@@ -184,6 +184,8 @@ pub struct State {
     pub alpha_previous: HashMap<u32, Uuid>,
     local_textures: HashSet<Uuid>,
     pub preview: preview::Preview,
+    /// Import of an appearance XML into the draft.
+    pub xml: crate::shape_editor::xml_import::Import,
 }
 
 struct TextureSnapshot {
