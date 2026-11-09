@@ -7575,6 +7575,7 @@ app-item = アイテム
 world-inventory-demo-demo-item-for-inventory-filters = インベントリのフィルタ用デモアイテム
 common-item-not-found = アイテムが見つかりません。
 world-inventory-demo-item = { "アイテム" }{ $n }
+world-inventory-demo-folder = { "フォルダー" }{ $n }
 ui-appearance-attached-items = 装着中のアイテム
 ui-appearance-temporary-items = 一時的な装着物（{ $count }個）
 ui-appearance-items-to-wear = 着用するアイテム

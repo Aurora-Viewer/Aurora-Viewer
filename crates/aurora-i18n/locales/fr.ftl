@@ -7587,6 +7587,7 @@ app-item = Élément
 world-inventory-demo-demo-item-for-inventory-filters = Élément de démonstration pour les filtres d'inventaire
 common-item-not-found = Élément introuvable.
 world-inventory-demo-item = { "Élément " }{ $n }
+world-inventory-demo-folder = { "Dossier " }{ $n }
 ui-appearance-attached-items = Éléments attachés
 ui-appearance-temporary-items = Éléments temporaires ({ $count })
 ui-appearance-items-to-wear = Éléments à porter

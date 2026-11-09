@@ -19661,6 +19661,8 @@ impl ApplicationHandler for App {
                         | "worn"
                         | "filtered"
                         | "large"
+                        | "many-folders"
+                        | "aurora-many-folders"
                         | "search-selection"
                         | "search-selection-keyboard"
                         | "long"
@@ -19864,6 +19866,9 @@ impl ApplicationHandler for App {
                     }
                     if view == "large" {
                         self.inventory_ui.search = aurora_i18n::tr!("app-item").into();
+                    }
+                    if matches!(view.as_str(), "many-folders" | "aurora-many-folders") {
+                        crate::world::inventory::demo::seed_many_folders(&mut self.world.inventory, 300);
                     }
                     if matches!(view.as_str(), "smart" | "aurora-smart" | "aurora-smart-wide") {
                         // advanced search: objects or scripts (an Any

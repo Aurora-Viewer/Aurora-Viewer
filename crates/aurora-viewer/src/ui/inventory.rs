@@ -2762,27 +2762,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut inv = view_inventory(true);
         let root = inv.root;
-        // Hundreds of top folders: still a long list once all are collapsed.
-        for n in 0..300u128 {
-            let id = Uuid::from_u128(0x00c0_11a9_5e00_0000 + n);
-            inv.folders.insert(
-                id,
-                crate::world::inventory::Folder {
-                    info: aurora_net::inventory::InvFolder {
-                        id,
-                        parent: root,
-                        name: format!("Folder {n:03}"),
-                        type_default: -1,
-                        ..Default::default()
-                    },
-                    children: vec![],
-                    items: vec![],
-                    state: FetchState::Fetched,
-                    library: false,
-                },
-            );
-            inv.folders.get_mut(&root).expect("inventory root").children.push(id);
-        }
+        crate::world::inventory::demo::seed_many_folders(&mut inv, 300);
         let facts = Facts {
             agent: Uuid::from_u128(2),
             ..Default::default()
