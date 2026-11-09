@@ -1198,15 +1198,13 @@ pub(super) fn execute(
             for id in ids {
                 super::context::open(inv, id, st, actions);
             }
-            // LLInventoryAction::doToSelected hosts bulk previews together.
-            // Keep non-resource actions on their existing editor/open path.
+            // LLInventoryAction::doToSelected hosts compatible bulk previews
+            // together. Keep non-preview actions on their existing path.
             let mut previews = Vec::new();
             let other: Vec<_> = actions
                 .drain(start..)
                 .filter_map(|action| {
-                    if let InvAction::Preview(id) = &action
-                        && crate::ui::texture_library::catalogue::resource(inv, *id).is_some()
-                    {
+                    if let InvAction::Preview(id) = &action {
                         previews.push(*id);
                         None
                     } else {
@@ -1328,6 +1326,43 @@ mod tests {
             actions
                 .iter()
                 .any(|action| matches!(action, InvAction::PreviewMany(items) if items == &ids[..2]))
+        );
+    }
+
+    #[test]
+    fn bulk_open_groups_document_and_script_previews() {
+        let mut inv = inventory();
+        let ids = [9301, 9302, 9303, 9304].map(Uuid::from_u128);
+        inv.add_items(
+            ids.into_iter()
+                .zip([1, 7, 10, 20])
+                .map(|(id, kind)| aurora_net::inventory::InvItem {
+                    id,
+                    asset_type: kind,
+                    asset_id: Uuid::from_u128(9400 + kind as u128),
+                    ..Default::default()
+                })
+                .collect(),
+        );
+        let ctx = egui::Context::default();
+        let mut st = InventoryUi::default();
+        let mut prefs = InventoryPreferences::default();
+        let mut actions = Vec::new();
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            execute(
+                Command::OpenMany(ids.to_vec()),
+                ui,
+                &inv,
+                &mut st,
+                &mut prefs,
+                &facts(),
+                &mut actions,
+            );
+        });
+        assert!(
+            actions
+                .iter()
+                .any(|action| matches!(action, InvAction::PreviewMany(items) if items == &ids))
         );
     }
 
