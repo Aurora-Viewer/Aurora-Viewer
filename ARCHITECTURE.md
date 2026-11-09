@@ -1,5 +1,12 @@
 # Aurora Viewer architecture
 
+`ui/inventory/clipboard.rs` owns the cut feedback shared by the two inventory
+layouts and folder windows. It caches the cut roots and checks only visible
+rows' ancestors, following `LLFolderViewItem::isFadeItem`. Native clipboard
+output, the Windows change counter, focus return and Escape invalidate the
+cut; a successful move consumes it, while a refused move retains it. Faded
+rows keep their normal interactions.
+
 `Theme::apply` configures IME composition visuals for all text fields: no
 selection fill, a strong active-segment underline and thinner inactive
 underlines, using the resolved palette. egui retains composition, cursor,

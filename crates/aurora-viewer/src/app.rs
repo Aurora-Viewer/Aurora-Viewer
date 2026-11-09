@@ -10946,6 +10946,13 @@ impl App {
             .prepare_scale_input(&raw, ctx.pixels_per_point(), self.numeric_drag.active());
         self.numeric_drag.before(&mut raw, ctx.pixels_per_point());
         let egui_state = &mut gfx.egui_state;
+        self.inventory_ui.clipboard_input(&raw.events);
+        if self.inventory_ui.cut
+            && (self.inventory_ui.native_clipboard_changed()
+                || raw.events.iter().any(|event| matches!(event, egui::Event::WindowFocused(true))))
+        {
+            self.inventory_ui.clipboard_changed(egui_state.clipboard_text().as_deref());
+        }
         self.text_menu.before(
             &ctx,
             &mut raw,
@@ -10993,6 +11000,7 @@ impl App {
             self.ik_editor.paste_binding(&self.world, &text);
         }
         ui::chat::previews::clipboard_update(&ctx, &mut full.platform_output);
+        self.inventory_ui.clipboard_output(&full.platform_output.commands);
         // interface sounds of the widgets; the sounds are SL assets, loaded
         // once logged in
         let in_world_view = matches!(self.screen, Screen::World);
@@ -12464,6 +12472,11 @@ impl App {
                 self.frame_count,
                 self.world.objects.len()
             );
+        }
+        // AURORA_DEMO_TEXTURES with AURORA_GPU_OOM: the uploads that waited
+        // for video memory get their texels again (`refeed_demo_memory_waits`)
+        if self.demo && self.frame_count.is_multiple_of(30) && crate::demo::texture_stress_count().is_some() {
+            self.scene.textures.refeed_demo_memory_waits();
         }
         // AURORA_DEMO_TEXTURES_CHURN=1: stress cubes removed at frame 300
         // (textures released, evicted after 2 s), back with new textures at 700
@@ -19854,7 +19867,7 @@ impl ApplicationHandler for App {
                         self.inventory_ui
                             .configure_menu_demo(&self.world.inventory, &mut self.settings.inventory, id, &view);
                     }
-                    if view.starts_with("clipboard") {
+                    if view.starts_with("clipboard") || view.starts_with("aurora-clipboard") {
                         if view == "clipboard-window" {
                             self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8000));
                             self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8001));

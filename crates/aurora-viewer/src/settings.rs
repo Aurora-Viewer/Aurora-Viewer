@@ -1297,7 +1297,7 @@ pub struct Settings {
     /// mapping nor sharpening, no emissive on opaque PBR faces and 8-bit
     /// reflection probes (`RenderSettings::hdr`).
     pub hdr_emissive: bool,
-    /// Optional frame rate cap (on by default at 120 images per second).
+    /// Optional frame rate cap (on by default at 60 images per second).
     pub fps_cap: bool,
     pub fps_limit: u32,
     /// Named graphics quality snapshots (#1218), independent of frame pacing.
@@ -2158,7 +2158,7 @@ impl Default for Settings {
             tonemap_mix: TONEMAP_MIX,
             hdr_emissive: true,
             fps_cap: true,
-            fps_limit: 120,
+            fps_limit: 60,
             graphics_saved: Default::default(),
             graphics_saved_active: None,
             background_fps_cap: true,
@@ -4142,13 +4142,13 @@ mod tests {
     fn fps_defaults_and_saved_preferences() {
         let defaults = Settings::default().sanitized();
         assert!(defaults.fps_cap);
-        assert_eq!(defaults.fps_limit, 120);
+        assert_eq!(defaults.fps_limit, 60);
         let missing: Settings = serde_json::from_str("{}").expect("synthetic settings without FPS preferences");
         let missing = missing.sanitized();
         assert!(missing.fps_cap);
-        assert_eq!(missing.fps_limit, 120);
+        assert_eq!(missing.fps_limit, 60);
         for enabled in [false, true] {
-            for limit in [30, 60, 144, 500] {
+            for limit in [30, 60, 120, 144, 500] {
                 let original = Settings {
                     fps_cap: enabled,
                     fps_limit: limit,
