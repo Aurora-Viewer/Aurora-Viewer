@@ -148,11 +148,23 @@ impl PayUi {
         });
     }
 
-    /// Close a resident/group payment when RLVa's live restrictions change.
+    /// Close a resident/group payment not sent yet when RLVa's live
+    /// restrictions forbid paying. A payment already sent (Sending, Sent,
+    /// Failed) stays: its L$ went or the server answered, and closing it
+    /// with the "restricted" notice would say the opposite. The Legacy
+    /// Viewer only refuses to open LLFloaterPay and leaves an open one
+    /// alone; closing an unsent one is stricter, never looser.
     pub fn close_resident(&mut self) -> bool {
-        let was_open = self.payee.take().is_some();
+        if !self
+            .payee
+            .as_ref()
+            .is_some_and(|p| matches!(p.stage, Stage::Edit | Stage::Confirm(_)))
+        {
+            return false;
+        }
+        self.payee = None;
         self.raise = false;
-        was_open
+        true
     }
 
     /// LLFloaterPay::give, or the Buy L$ window when the balance is short
@@ -1268,6 +1280,37 @@ mod tests {
     }
 
     #[test]
+    fn rlva_pay_closes_an_unsent_payment_and_leaves_a_sent_one() {
+        let recipient = Uuid::from_u128(3);
+        for (stage, closes) in [
+            (Stage::Edit, true),
+            (Stage::Confirm(25), true),
+            (
+                Stage::Sending {
+                    amount: 25,
+                    since: Instant::now(),
+                },
+                false,
+            ),
+            (
+                Stage::Sent {
+                    amount: 25,
+                    balance: Some(75),
+                },
+                false,
+            ),
+            (Stage::Failed("refused".into()), false),
+        ] {
+            let mut pay = PayUi::default();
+            pay.open(recipient, false);
+            pay.payee.as_mut().unwrap().stage = stage.clone();
+            assert_eq!(pay.close_resident(), closes, "{stage:?}");
+            assert_eq!(pay.payee.is_none(), closes, "{stage:?}");
+        }
+        assert!(!PayUi::default().close_resident(), "nothing open, no notice");
+    }
+
+    #[test]
     fn rlva_pay_restriction_refuses_residents_and_groups_without_a_sent_state() {
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         world.rlva_configure(true);
@@ -1282,6 +1325,9 @@ mod tests {
         };
         assert!(world.rlva.receive(&restriction));
         assert!(!world.rlva_can_pay());
+        // enough L$: without the check the payment would go out (and not
+        // open Buy L$ instead)
+        world.balance = Some(100);
         for group in [false, true] {
             let mut pay = PayUi::default();
             let recipient = Uuid::from_u128(if group { 4 } else { 3 });
