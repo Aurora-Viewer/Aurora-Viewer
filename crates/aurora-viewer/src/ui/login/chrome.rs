@@ -35,7 +35,7 @@ fn version(ui: &mut egui::Ui, p: &Palette) {
 pub fn footer(ctx: &Context, p: &Palette, icons: &Icons, info: &LoginInfo, sidebar_visible: bool, form: &mut LoginForm) -> LoginAction {
     let mut action = LoginAction::None;
     let screen = ctx.content_rect();
-    if form.safe_graphics.is_some() || form.photo_quality_off || form.driver_notice.is_some() {
+    if form.safe_graphics.is_some() || form.photo_quality_off || form.camera_limits_restored || form.driver_notice.is_some() {
         super::driver_notice::column(ctx, |ui, width| {
             if let Some(state) = form.safe_graphics
                 && let Some(choice) = super::safe_graphics_notice::card(ui, p, icons, state, width)
@@ -46,6 +46,11 @@ pub fn footer(ctx: &Context, p: &Palette, icons: &Icons, info: &LoginInfo, sideb
                 && let Some(back_on) = super::photo_quality_notice::card(ui, p, icons, width)
             {
                 action = LoginAction::PhotoQualityOff(back_on);
+            }
+            if form.camera_limits_restored
+                && let Some(open) = super::camera_limits_notice::card(ui, p, icons, width)
+            {
+                action = LoginAction::CameraLimits(open);
             }
             if let Some(notice) = &form.driver_notice
                 && super::driver_notice::card(ui, p, icons, notice, width)

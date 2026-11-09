@@ -368,6 +368,9 @@ pub struct MediaSettings {
     pub filter_explained: bool,
     /// Folder with SLPlugin and llplugin\ (empty: automatic).
     pub plugin_dir: String,
+    /// Aurora's own: the answer to the download of the media plugins pack
+    /// (`pack.rs`); asked once, the first time it is needed.
+    pub pack_consent: pack::Consent,
 }
 
 impl Default for MediaSettings {
@@ -384,6 +387,7 @@ impl Default for MediaSettings {
             filter_trust_own_worn: true,
             filter_explained: false,
             plugin_dir: String::new(),
+            pack_consent: pack::Consent::Unasked,
         }
     }
 }
@@ -393,6 +397,10 @@ impl Default for MediaSettings {
 struct ObjMedia {
     idx: usize,
     fetched_version: Option<u32>,
+    /// Object media version of the last GET asked (0 without one): asked
+    /// once per version, like LLVOVolume::processUpdateMessage asks once per
+    /// media change, so a failed GET is not asked again until the next one.
+    asked_version: Option<u32>,
     data: Option<ObjectMediaData>,
     hud: bool,
     on_other_avatar: bool,

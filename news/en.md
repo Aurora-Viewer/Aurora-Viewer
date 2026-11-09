@@ -26,6 +26,26 @@ An empty line starts a new paragraph.
 
 # Aurora Viewer news
 
+## 2026-11-08 — Aurora 0.9.4: Debug settings, and more of the Legacy Viewer's options
+The toolbar's Debug settings button, or Ctrl+Alt+Shift+S, opens the Debug settings window: every setting by name, with a search, a star on the ones you changed and Reset to default. Preferences › Build sets what a new prim starts as: colour, transparency, glow, fullbright, physical, temporary or phantom. Preferences › Graphics gets a progressive draw distance (off by default), the Trees detail and Particles from worn objects, and Preferences › Protections can hide objects with a huge surface. Your cache and settings are kept.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.4)
+
+## 2026-11-08 — Neighbouring regions, objects that stay in view, calls that hold
+Aurora now asks the region for your own draw distance, so the neighbouring regions appear at 256 m and beyond, as in the Legacy Viewer. Objects in plain view no longer vanish at some camera angles, and the world comes back by itself when the video memory was full at login. Media screens in busy regions load and follow their remotes, and textures left white come back without a relog. Private calls stay connected across teleports, and parcel music no longer cuts out while you cam around.
+
+## 2026-11-08 — Chat, camera, avatars and fixes
+Camera smoothing goes up to 300 without jumps, and Preferences › Chat sets how many lines show above the chat bar. Ctrl+Tab cycles through the conversations, the Japanese IME shows the active conversion segment, and script text boxes take several lines. About Land edits stick, the AO no longer leaves a sit playing after a teleport, and the RLVa tools get an Exceptions tab. Thanks to AiAiCaptainn, anne-skydancer, circuskid, ClifHofmann, emmelinedevere, Gaalrauch, iGao, KanikaBreed, Marakiinfinity, MilkIsPrettyGood, Nowalski, Odessa-Draekavik and RheaMercury.
+
+## 2026-11-06 — Aurora 0.9.3: AMD FSR 3.1, and steadier on every graphics card
+Choose FSR 3.1 under Anti-aliasing in Preferences › Graphics: smooth edges at the window's size, or a world drawn smaller and rebuilt sharp, for more frames per second. After a graphics card reset Aurora reopens its window and keeps you logged in (a switch in Preferences turns it off). Intel 6th to 9th generation integrated GPUs start again, and so do AMD + NVIDIA laptops; integrated GPUs count their shared memory in the texture budget. The cache is cleared once at the first start of 0.9.3; your settings are kept.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.3)
+
+## 2026-11-06 — Updates, your computer, and clicks that land
+Aurora now tells you when a new version is out, while it runs. Preferences › Language and updates › Remove Aurora from this computer takes away what Aurora registered outside its own folders, then lists the folders left. The web and media pack downloads only once you agree. Clicks go through alpha textures and invisible prims like the Legacy Viewer, and Shift or Ctrl + right click extends the build selection.
+
+## 2026-11-06 — Camera, inventory and fixes
+The camera limits are back on by default, like the Legacy Viewer: a card at login says where to turn them off. The teleport history survives a crash, and neither writing the log nor turning voice off can freeze the viewer. Terrain edges meet the next region, profile pictures stay sharp, Favorites lists starred items and the hover popups of the inventory have a switch. Thanks to ClifHofmann, chrzang, circuskid, emmelinedevere, Gaalrauch, iGao, KanikaBreed, Marakiinfinity, Odessa-Draekavik and xWynt3r.
+
 ## 2026-11-05 — Aurora 0.9.2: your chat history comes along, and a fullscreen mode
 Preferences › Chat › History imports your conversations from the Legacy Viewer and the other approved viewers that write the same files. The messages join your Aurora history in time order, each login adds only what is new, and the other viewer's files are only read. Preferences › Graphics gets a borderless fullscreen mode, and Alt+Enter turns it on or off at once, without a restart: a clean frame for videos, and the window comes back exactly as it was.
 [Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.2)
