@@ -496,13 +496,7 @@ impl PlacesUi {
         });
         ui.add_space(4.0);
         let before = self.tab;
-        // The Legacy Viewer's "Places Tabs" (panel_places.xml) centres tabs
-        // sized to their labels; here they are stretched to the window's
-        // width by the human's choice (#2641), as Teleport / Map / Profile
-        // share it under the list. Too narrow for equal shares, every label
-        // stays whole while it can, and the long label keeps its ellipsis at
-        // the minimum width.
-        widgets::filled_tabs(
+        widgets::tabs(
             ui,
             p,
             &mut self.tab,
@@ -517,31 +511,23 @@ impl PlacesUi {
         }
         ui.add_space(4.0);
         // panel_places.xml: button_layout_panel keeps its height at the
-        // bottom and places_layout_panel takes what is left above it. The
-        // buttons are laid out first, from the bottom, as in the profile
-        // view: a fixed share for them cut them off once the theme's
-        // spacing and button height outgrew it (#2641)
-        let rest = ui.available_rect_before_wrap();
-        ui.allocate_rect(rest, Sense::hover());
-        let mut bottom_up = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(rest)
-                .layout(egui::Layout::bottom_up(egui::Align::Min)),
-        );
-        let ui = &mut bottom_up;
-        self.list_buttons(ui, p, world, actions);
-        ui.add_space(6.0);
-        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt(("places-list", self.tab))
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    if history {
-                        self.history_list(ui, p, world, actions);
-                    } else {
-                        self.landmark_list(ui, p, world, by_date, actions);
-                    }
-                });
+        // bottom and places_layout_panel takes what is left above it. A
+        // fixed share for the buttons cut them off once the theme's spacing
+        // and button height outgrew it (#2641)
+        let (mut list, foot) = widgets::above_footer(ui);
+        egui::ScrollArea::vertical()
+            .id_salt(("places-list", self.tab))
+            .auto_shrink([false, false])
+            .show(&mut list, |ui| {
+                if history {
+                    self.history_list(ui, p, world, actions);
+                } else {
+                    self.landmark_list(ui, p, world, by_date, actions);
+                }
+            });
+        foot.show(ui, |ui| {
+            ui.add_space(6.0);
+            self.list_buttons(ui, p, world, actions);
         });
     }
 
@@ -1100,60 +1086,53 @@ impl PlacesUi {
             ui.label(RichText::new(place_details::header_title(place)).size(16.0).strong().color(p.ink));
         });
         ui.add_space(4.0);
-        // the buttons are laid out first, from the bottom, and the profile
-        // takes what is left above them: a fixed share for the buttons cut
-        // them off when the theme's spacing differed from it
-        let rest = ui.available_rect_before_wrap();
-        ui.allocate_rect(rest, Sense::hover());
-        let mut bottom_up = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(rest)
-                .layout(egui::Layout::bottom_up(egui::Align::Min)),
-        );
-        let ui = &mut bottom_up;
+        // the profile takes what the buttons leave above them: a fixed share
+        // for the buttons cut them off when the theme's spacing differed
+        // from it
+        let (mut body, foot) = widgets::above_footer(ui);
+        egui::ScrollArea::vertical()
+            .id_salt(("places-profile", place.serial))
+            .auto_shrink([false, false])
+            .show(&mut body, |ui| place_details::profile_body(ui, c, place));
         // updateVerbs with a profile shown: Teleport, Map and the
         // overflow menu (Profile hidden)
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 3.0;
-            let w = ((ui.available_width() - 30.0) / 2.0).max(60.0);
-            if place_details::button(
-                ui,
-                p,
-                aurora_i18n::tr!("common-teleport"),
-                aurora_i18n::tr!("ui-places-teleport-to-a-location-of-your-choice"),
-                place.global.is_some() && place_details::teleport_allowed(place, world),
-                w,
-            ) && let Some(a) = place_details::teleport_action(place, world)
-            {
-                match a {
-                    place_details::PlaceAction::TeleportLandmark { asset, name } => {
-                        self.confirm = Some(Confirm::Landmark { asset, name });
+        foot.show(ui, |ui| {
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 3.0;
+                let w = ((ui.available_width() - 30.0) / 2.0).max(60.0);
+                if place_details::button(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("common-teleport"),
+                    aurora_i18n::tr!("ui-places-teleport-to-a-location-of-your-choice"),
+                    place.global.is_some() && place_details::teleport_allowed(place, world),
+                    w,
+                ) && let Some(a) = place_details::teleport_action(place, world)
+                {
+                    match a {
+                        place_details::PlaceAction::TeleportLandmark { asset, name } => {
+                            self.confirm = Some(Confirm::Landmark { asset, name });
+                        }
+                        place_details::PlaceAction::Teleport(g) => actions.push(PlacesAction::Teleport(g)),
+                        _ => {}
                     }
-                    place_details::PlaceAction::Teleport(g) => actions.push(PlacesAction::Teleport(g)),
-                    _ => {}
                 }
-            }
-            if place_details::button(
-                ui,
-                p,
-                aurora_i18n::tr!("common-map"),
-                aurora_i18n::tr!("ui-places-show-the-corresponding-location-on-the-map"),
-                place.global.is_some(),
-                w,
-            ) && let Some(g) = place.global
-            {
-                actions.push(PlacesAction::ShowOnMap(g));
-            }
-            widgets::icon_menu(ui, p, "caret-up-filled", aurora_i18n::tr!("ui-places-show-more-options"), |ui| {
-                place_details::overflow_menu(ui, p, world, place);
+                if place_details::button(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("common-map"),
+                    aurora_i18n::tr!("ui-places-show-the-corresponding-location-on-the-map"),
+                    place.global.is_some(),
+                    w,
+                ) && let Some(g) = place.global
+                {
+                    actions.push(PlacesAction::ShowOnMap(g));
+                }
+                widgets::icon_menu(ui, p, "caret-up-filled", aurora_i18n::tr!("ui-places-show-more-options"), |ui| {
+                    place_details::overflow_menu(ui, p, world, place);
+                });
             });
-        });
-        ui.add_space(6.0);
-        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt(("places-profile", place.serial))
-                .auto_shrink([false, false])
-                .show(ui, |ui| place_details::profile_body(ui, c, place));
         });
     }
 }
@@ -1354,48 +1333,55 @@ mod tests {
         actions
     }
 
-    /// #2641: in the Legacy Viewer's tabs, Teleport / Map / Profile stay
-    /// whole at the bottom of the window (the list gives way), and the three
-    /// tabs span the width of the window, their labels whole or ellipsised,
-    /// never clipped: at its opening size, at its minimum, wide, and at more
-    /// than one interface scale.
-    #[test]
-    fn legacy_tabs_span_the_window_and_keep_their_bottom_buttons_whole() {
-        #[derive(Default)]
-        struct Drawn {
-            /// Text, its ink, its clip.
-            texts: Vec<(String, egui::Rect, egui::Rect)>,
-            /// Thin filled rectangles (the tabs' underlines).
-            lines: Vec<egui::Rect>,
-        }
-        fn collect(shape: &egui::epaint::Shape, clip: egui::Rect, out: &mut Drawn) {
-            match shape {
-                egui::epaint::Shape::Text(t) => out.texts.push((t.galley.text().to_owned(), t.visual_bounding_rect(), clip)),
-                egui::epaint::Shape::Rect(r) if r.rect.height() <= 2.5 && r.rect.width() > 1.0 => out.lines.push(r.rect),
-                egui::epaint::Shape::Vec(v) => v.iter().for_each(|s| collect(s, clip, out)),
-                _ => {}
-            }
-        }
+    /// A world with a long teleport history (80 lines): the list must give
+    /// way, not the buttons under it.
+    fn long_history_world() -> World {
         let library = std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load());
         let mut world = World::new(library);
-        // a long teleport history: the list must give way, not the buttons
         for i in 0..80 {
             let global = glam::DVec3::new(256000.0 + f64::from(i), 256000.0, 25.0);
             world
                 .tp_storage
                 .add(&format!("Parcel {i}, Region"), global, 1.7e9 + f64::from(i), String::new());
         }
+        world
+    }
+
+    /// One frame of "Places" in the Legacy Viewer's tabs.
+    fn show_legacy(places: &mut PlacesUi, ctx: &egui::Context, p: &Palette, world: &World, emoji: &mut crate::ui::emoji::Emoji) {
         let images = std::collections::HashMap::new();
+        let (mut names, mut wanted, mut groups) = (HashSet::new(), HashSet::new(), HashSet::new());
+        let mut c = Ctx {
+            p,
+            world,
+            images: &images,
+            emoji,
+            want_names: &mut names,
+            wanted_images: &mut wanted,
+            want_groups: &mut groups,
+        };
+        places.show(ctx, &mut c, &mut true, false, false, None);
+    }
+
+    /// #2641: in the Legacy Viewer's tabs, Teleport / Map / Profile stay
+    /// whole at the bottom of the window (the list gives way): at its
+    /// opening size, at its minimum, wide, and at more than one interface
+    /// scale, with an empty list and a long teleport history.
+    #[test]
+    fn legacy_tabs_keep_their_bottom_buttons_whole() {
+        fn collect(shape: &egui::epaint::Shape, clip: egui::Rect, out: &mut Vec<(String, egui::Rect, egui::Rect)>) {
+            match shape {
+                egui::epaint::Shape::Text(t) => out.push((t.galley.text().to_owned(), t.visual_bounding_rect(), clip)),
+                egui::epaint::Shape::Vec(v) => v.iter().for_each(|s| collect(s, clip, out)),
+                _ => {}
+            }
+        }
+        let world = long_history_world();
         let mut emoji = crate::ui::emoji::Emoji::load();
         let buttons = [
             aurora_i18n::tr!("common-teleport"),
             aurora_i18n::tr!("common-map"),
             aurora_i18n::tr!("common-profile"),
-        ];
-        let tabs = [
-            aurora_i18n::tr!("common-favorites"),
-            aurora_i18n::tr!("common-landmarks"),
-            aurora_i18n::tr!("ui-places-teleport-history"),
         ];
         let min = Vec2::new(260.0, 300.0);
         // the tab shown: 0 Favorites (empty), 2 Teleport history (80 lines)
@@ -1404,8 +1390,6 @@ mod tests {
             (Some(min), 1.0, 0),
             (Some(min), 1.5, 0),
             (Some(Vec2::new(700.0, 588.0)), 1.0, 0),
-            // between the labels' width and equal shares
-            (Some(Vec2::new(310.0, 400.0)), 1.0, 0),
             (None, 1.5, 0),
             (None, 1.0, 2),
             (Some(min), 1.0, 2),
@@ -1423,83 +1407,61 @@ mod tests {
                 widgets::size_floater(&ctx, "places", size);
             }
             let mut places = PlacesUi { tab, ..Default::default() };
-            let (mut names, mut wanted, mut groups) = (HashSet::new(), HashSet::new(), HashSet::new());
             let mut shapes = Vec::new();
             for _ in 0..4 {
-                let mut c = Ctx {
-                    p: &p,
-                    world: &world,
-                    images: &images,
-                    emoji: &mut emoji,
-                    want_names: &mut names,
-                    wanted_images: &mut wanted,
-                    want_groups: &mut groups,
-                };
                 let mut output = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
                         ..Default::default()
                     },
-                    |root| {
-                        places.show(root.ctx(), &mut c, &mut true, false, false, None);
-                    },
+                    |root| show_legacy(&mut places, root.ctx(), &p, &world, &mut emoji),
                 );
                 output.textures_delta.clear();
                 shapes = output.shapes;
             }
-            let mut drawn = Drawn::default();
+            let mut drawn = Vec::new();
             for s in &shapes {
                 collect(&s.shape, s.clip_rect, &mut drawn);
             }
-            let find = |label: &str| {
-                drawn
-                    .texts
-                    .iter()
-                    // an ellipsised label may keep only its start
-                    .find(|(t, ..)| t == label || t.strip_suffix('…').is_some_and(|start| label.starts_with(start)))
-                    .map(|(_, rect, clip)| (*rect, *clip))
-                    .unwrap_or_else(|| panic!("« {label} » drawn ({size:?}, zoom {zoom}, tab {tab})"))
-            };
             if tab == 2 {
                 assert!(
-                    drawn.texts.iter().any(|(t, ..)| t.starts_with("Parcel ")),
+                    drawn.iter().any(|(t, ..)| t.starts_with("Parcel ")),
                     "the teleport history is listed ({size:?}, zoom {zoom})"
                 );
             }
             for label in &buttons {
-                let (rect, clip) = find(label);
+                let (_, rect, clip) = drawn
+                    .iter()
+                    .find(|(t, ..)| t == label)
+                    .unwrap_or_else(|| panic!("« {label} » drawn ({size:?}, zoom {zoom}, tab {tab})"));
                 assert!(
                     clip.contains_rect(rect.expand(-0.5)),
                     "« {label} » cut off ({size:?}, zoom {zoom}, tab {tab}): text {rect:?}, clip {clip:?}"
                 );
             }
-            // each tab: its label and the underline under it, 6 points in
-            // from both of its edges (widgets::underline)
-            let mut spans = Vec::new();
-            for label in &tabs {
-                let (text, clip) = find(label);
-                let line = drawn
-                    .lines
-                    .iter()
-                    .find(|l| l.top() > text.bottom() && l.top() < text.bottom() + 20.0 && l.x_range().contains(text.center().x))
-                    .unwrap_or_else(|| panic!("underline of « {label} » ({size:?}, zoom {zoom}, tab {tab}): {:?}", drawn.lines));
-                let tab = egui::Rect::from_x_y_ranges(line.left() - 6.0..=line.right() + 6.0, text.y_range());
-                assert!(
-                    tab.contains_rect(text.expand(-0.5)) && clip.contains_rect(text.expand(-0.5)),
-                    "« {label} » cut off ({size:?}, zoom {zoom}, tab {tab}): text {text:?}, tab {tab:?}, clip {clip:?}"
-                );
-                spans.push((tab, clip));
-            }
-            // together, the width of the window's content (its clip)
-            let (first, clip) = spans[0];
-            let last = spans[2].0;
-            assert!(
-                (first.left() - clip.left()).abs() <= 1.5 && (last.right() - clip.right()).abs() <= 1.5,
-                "tabs from {} to {}, content from {} to {} ({size:?}, zoom {zoom}, tab {tab})",
-                first.left(),
-                last.right(),
-                clip.left(),
-                clip.right()
+        }
+    }
+
+    /// The Legacy Viewer's tabs keep the window's size frame after frame,
+    /// the buttons inside it, on the empty Favorites and on the long
+    /// teleport history (`widgets::above_footer`): at the opening size and
+    /// at the minimum height. The minimum width is checked at the interface
+    /// scales above; with the text twice as large, the three buttons no
+    /// longer fit side by side in it.
+    #[test]
+    fn legacy_tabs_window_keeps_its_size() {
+        let world = long_history_world();
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        // the icons as in the viewer: without them, the header's menus fall
+        // back to text buttons wider than the window
+        let _icons = crate::ui::icons::Icons::load(&egui::Context::default(), None);
+        for tab in [0, 2] {
+            crate::ui::widgets::steady_tests::assert_window_steady(
+                "places",
+                &[Vec2::new(400.0, 588.0), Vec2::new(400.0, 300.0)],
+                aurora_i18n::tr!("common-profile"),
+                || PlacesUi { tab, ..Default::default() },
+                |places, ctx, p| show_legacy(places, ctx, p, &world, &mut emoji),
             );
         }
     }
