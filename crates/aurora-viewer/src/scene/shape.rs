@@ -244,10 +244,7 @@ impl ShapeParams {
     /// LLWearable::createVisualParams clones the avatar's parameters whose
     /// wearable type matches (indra/llappearance/llwearable.cpp).
     pub fn wearable_range(&self, id: i32, kind: u8) -> Option<(f32, f32)> {
-        self.params
-            .get(&id)
-            .filter(|p| p.wearable == Some(kind))
-            .map(|p| (p.min, p.max))
+        self.params.get(&id).filter(|p| p.wearable == Some(kind)).map(|p| (p.min, p.max))
     }
 
     /// Range and default weight of a parameter.
