@@ -30,6 +30,7 @@ pub mod objcache;
 pub mod objects;
 pub mod offline_im;
 pub mod outfits;
+mod packet_loss;
 pub mod pathfinding;
 pub mod postcard;
 pub mod probe;

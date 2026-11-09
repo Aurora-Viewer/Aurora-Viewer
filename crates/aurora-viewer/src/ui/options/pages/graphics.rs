@@ -311,6 +311,12 @@ fn quality(cx: &mut Cx) {
             32.0..=512.0,
             " m",
         );
+        // FSRenderFarClipStepping; its interval in Debug Settings (clean menus)
+        cx.keywords("FSRenderFarClipStepping progressive").toggle(
+            tr!("ui-options-draw-distance-stepping"),
+            tr!("ui-options-draw-distance-stepping-hint"),
+            &field!(draw_distance_stepping),
+        );
         cx.row(
             tr!("ui-options-level-of-detail-lod"),
             tr!("ui-options-lod-factor-for-sl-objects-and-meshes-2-by"),
@@ -356,6 +362,12 @@ fn quality(cx: &mut Cx) {
                 )
                 .changed()
             },
+        );
+        // RenderAttachedParticles (panel_preferences_graphics1.xml)
+        cx.keywords("RenderAttachedParticles").toggle(
+            tr!("ui-options-attached-particles"),
+            tr!("ui-options-attached-particles-hint"),
+            &field!(attached_particles),
         );
         cx.toggle(
             tr!("ui-options-occlusion"),
@@ -539,6 +551,13 @@ fn quality(cx: &mut Cx) {
 
 fn light(cx: &mut Cx) {
     use aurora_i18n::tr;
+    cx.group(tr!("ui-options-local-lights"), |cx| {
+        cx.toggle(
+            tr!("ui-options-others-attached-lights"),
+            tr!("ui-options-others-attached-lights-help"),
+            &field!(others_attached_lights),
+        );
+    });
     cx.group(tr!("ui-options-shadows"), |cx| {
         let p = cx.p;
         let levels = [
