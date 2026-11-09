@@ -73,21 +73,31 @@ fn gltf_cycles_missing_accessor_data_and_singular_transform_are_rejected() {
     assert!(gltf::attribute::<3>(&document, 0).is_err());
 }
 
-pub(super) fn collada_objects(visual: &str, rigged: bool) -> String {
+pub(super) fn collada_objects(visual: &str, rigged: bool, identical_controllers: bool, change_b_controller: bool) -> String {
     let mut geometries = String::new();
     let mut controllers = String::new();
+
     for id in ["a", "b"] {
         geometries.push_str(&format!(r##"<geometry id="{id}" name="{id}"><mesh>
 <source id="{id}-pos"><float_array count="9">0 0 0 1 0 0 0 1 0</float_array><technique_common><accessor count="3" stride="3"/></technique_common></source>
 <vertices id="{id}-verts"><input semantic="POSITION" source="#{id}-pos"/></vertices>
 <triangles count="1"><input semantic="VERTEX" source="#{id}-verts"/><p>0 1 2</p></triangles></mesh></geometry>"##));
         if rigged {
-            controllers.push_str(&format!(r##"<controller id="{id}-skin"><skin source="#{id}">
-<source id="{id}-joints"><Name_array count="1">mPelvis</Name_array></source>
-<source id="{id}-bind"><float_array count="16">1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1</float_array><technique_common><accessor count="1" stride="16"/></technique_common></source>
-<source id="{id}-weights"><float_array count="1">1</float_array><technique_common><accessor count="1" stride="1"/></technique_common></source>
-<joints><input semantic="JOINT" source="#{id}-joints"/><input semantic="INV_BIND_MATRIX" source="#{id}-bind"/></joints>
-<vertex_weights count="3"><input semantic="JOINT" source="#{id}-joints" offset="0"/><input semantic="WEIGHT" source="#{id}-weights" offset="1"/><vcount>1 1 1</vcount><v>0 0 0 0 0 0</v></vertex_weights>
+            let mut skin_id = id;
+            if identical_controllers {
+                skin_id = "a";
+            }
+
+            let mut weight = 1.0;
+            if change_b_controller && id == "b" {
+                weight = 0.5;
+            }
+            controllers.push_str(&format!(r##"<controller id="{skin_id}-skin"><skin source="#{skin_id}">
+<source id="{skin_id}-joints"><Name_array count="1">mPelvis</Name_array></source>
+<source id="{skin_id}-bind"><float_array count="16">1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1</float_array><technique_common><accessor count="1" stride="16"/></technique_common></source>
+<source id="{skin_id}-weights"><float_array count="1">{weight}</float_array><technique_common><accessor count="1" stride="1"/></technique_common></source>
+<joints><input semantic="JOINT" source="#{skin_id}-joints"/><input semantic="INV_BIND_MATRIX" source="#{skin_id}-bind"/></joints>
+<vertex_weights count="3"><input semantic="JOINT" source="#{skin_id}-joints" offset="0"/><input semantic="WEIGHT" source="#{skin_id}-weights" offset="1"/><vcount>1 1 1</vcount><v>0 0 0 0 0 0</v></vertex_weights>
 </skin></controller>"##));
         }
     }
@@ -105,6 +115,8 @@ fn collada_multiple_objects_keep_geometry_instances_and_nested_transforms() {
 <node name="first"><instance_geometry url="#a"/></node>
 <node name="second"><translate>5 0 0</translate><instance_geometry url="#b"/></node>
 <node name="repeated"><translate>0 6 0</translate><instance_geometry url="#a"/></node></node>"##,
+        false,
+        false,
         false,
     );
     let scene = collada::parse(document.as_bytes(), &crate::Skeleton::default()).expect("multi-object scene");
@@ -127,7 +139,7 @@ fn collada_skin_libraries_load_without_scene_instances_and_do_not_duplicate_expl
         "<node id=\"mPelvis\" type=\"JOINT\"/>",
         r##"<node id="mPelvis" type="JOINT"/><node><translate>2 3 4</translate><instance_controller url="#a-skin"/></node>"##,
     ] {
-        let document = collada_objects(visual, true);
+        let document = collada_objects(visual, true, false, false);
         let scene = collada::parse(document.as_bytes(), &skeleton).expect("library-only skin controllers");
         assert_eq!(scene.models.len(), 2);
         assert_eq!(scene.instances.len(), 2);
@@ -156,6 +168,39 @@ fn collada_skin_libraries_load_without_scene_instances_and_do_not_duplicate_expl
                 < 0.00001
         );
     }
+}
+
+#[test]
+fn collada_duplicate_controller_ids_require_equivalent_definitions() {
+    let skeleton = crate::Skeleton::parse(include_bytes!("../../../aurora-viewer/assets/character/avatar_skeleton.xml")).expect("skeleton");
+    let document_identical_controller = collada_objects(
+        r##"<node id="mPelvis" type="JOINT"/>
+        <node name="first"><instance_controller url="#a-skin"/></node>
+        <node name="second"><instance_controller url="#a-skin"/></node>"##,
+        true,
+        true,
+        false,
+    );
+
+    assert!(collada::parse(document_identical_controller.as_bytes(), &skeleton).is_ok());
+
+    let document_different_controller = collada_objects(
+        r##"<node id="mPelvis" type="JOINT"/>
+        <node name="first"><instance_controller url="#a-skin"/></node>
+        <node name="second"><instance_controller url="#a-skin"/></node>"##,
+        true,
+        true,
+        true,
+    );
+
+    let error = collada::parse(document_different_controller.as_bytes(), &skeleton)
+        .expect_err("conflicting duplicate controller definitions must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("duplicate Collada ID for non-equivalent elements: a-skin"),
+        "unexpected error: {error}"
+    );
 }
 
 fn cube() -> Model {

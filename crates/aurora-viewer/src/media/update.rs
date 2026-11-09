@@ -40,7 +40,7 @@ impl MediaManager {
         let _ = self.plugins(f.settings);
         self.on_parcel_messages(world, f.settings);
         self.scan_objects(world, scene, now);
-        self.fetch_media_data(f);
+        self.fetch_media_data(scene, f);
         self.reconcile_prims(world, f);
         self.update_parcel(world, f);
         self.apply_filter(world, f);
@@ -220,26 +220,54 @@ impl MediaManager {
             return;
         }
         // LLVOVolume::processUpdateMessage: fetch when the media version
-        // grew (or never fetched)
+        // grew (or never fetched), once per version: an answer that failed
+        // (the simulator busy past the retries) waits for the next change,
+        // instead of asking again at once and keeping the simulator's rate
+        // limit full for every other screen
         let version = entry::media_version(&o.media_url);
         let need = match (e.fetched_version, version) {
             (None, _) => true,
             (Some(have), Some(v)) => v > have,
             (Some(_), None) => false,
-        };
+        } && e.asked_version.is_none_or(|asked| version.unwrap_or(0) > asked);
         if need
             && !self.client.is_queued(&o.full_id)
             && let Some(cap) = world.regions.get(&o.key.region).and_then(|r| r.caps.get("ObjectMedia"))
         {
-            self.client.request(o.full_id, cap);
+            e.asked_version = Some(version.unwrap_or(0));
+            self.client.request(o.full_id, cap, e.fetched_version.is_some());
         }
     }
 
-    fn fetch_media_data(&mut self, f: &MediaFrame) {
+    fn fetch_media_data(&mut self, scene: &Scene, f: &MediaFrame) {
         let Some((rt, http)) = f.net.as_ref() else {
             return;
         };
-        for got in self.client.update(rt, http) {
+        // LLMediaDataClientObjectImpl::getMediaInterest: the focused object
+        // first, then the pixels on screen (HUDs count as a 512² page), the
+        // nearest first among equals
+        let (objects, focus) = (&self.objects, self.focus);
+        let interest = |id: &Uuid| -> Option<(f32, f32)> {
+            let om = objects.get(id)?;
+            if matches!(focus, Some(MediaKey::Prim { object, .. }) if object == *id) {
+                return Some((f32::MAX, 0.0));
+            }
+            if om.hud {
+                return Some((512.0 * 512.0, 0.0));
+            }
+            Some(match scene.gpu.get(om.idx).filter(|g| g.radius > 0.0) {
+                Some(g) => {
+                    let px = if f.view.sphere_visible(g.center, g.radius) {
+                        f.view.pixel_size(g.center, g.radius)
+                    } else {
+                        0.0
+                    };
+                    (px * px, g.center.distance(f.camera))
+                }
+                None => (0.0, f32::MAX),
+            })
+        };
+        for got in self.client.update(rt, http, Instant::now(), interest) {
             let Some(e) = self.objects.get_mut(&got.object) else {
                 continue;
             };
@@ -258,9 +286,8 @@ impl MediaManager {
                     }
                 }
                 Err(err) => {
+                    // not asked again until the version changes (asked_version)
                     log::info!("media: ObjectMedia for {} failed: {err}", got.object);
-                    // stop asking until the version changes
-                    e.fetched_version = Some(e.fetched_version.unwrap_or(0));
                 }
             }
         }
@@ -1210,6 +1237,33 @@ mod tests {
         set_url(&mut w, 6);
         track(&mut m, &mut w);
         assert!(m.client.is_queued(&screen), "newer version: fetched");
+    }
+
+    #[test]
+    fn a_failed_fetch_waits_for_the_next_media_change() {
+        let (mut w, screen) = world();
+        let idx = w.objects.index_of_uuid(&screen).expect("screen");
+        let set_url = |w: &mut World, v: u32| {
+            if let Some(o) = w.objects.get_mut(idx) {
+                o.media_url = format!("x-mv:{v:010}/{}", Uuid::from_u128(7));
+            }
+        };
+        set_url(&mut w, 3);
+        let mut m = MediaManager::default();
+        track(&mut m, &mut w);
+        assert!(m.client.is_queued(&screen));
+        // the simulator stayed busy past the retries: the client gave up
+        m.client.clear();
+        for later in 1..4 {
+            let at = m.last_refresh + Duration::from_millis(600 * later);
+            m.track_objects(&mut w, &|_| false, at);
+            assert!(!m.client.is_queued(&screen), "same version: not asked again");
+        }
+        // the script changes the screen: its new data is asked for
+        set_url(&mut w, 4);
+        track(&mut m, &mut w);
+        assert!(m.client.is_queued(&screen));
+        assert_eq!(m.objects.get(&screen).and_then(|e| e.asked_version), Some(4));
     }
 
     #[test]

@@ -2533,7 +2533,9 @@ mod tests {
         assert!((new_pos - new_rot * Vec3::Z * (new_scale.z * 0.5)).abs_diff_eq(anchor, 1e-5));
 
         // Disabling flexibility restores the ordinary centered edit pivot.
-        world.objects.get_mut(idx).unwrap().extra.flexible = None;
+        let object = world.objects.get_mut(idx).unwrap();
+        object.extra.flexible = None;
+        object.volume.path.curve_type = aurora_prim::params::LL_PCODE_PATH_LINE;
         assert!(
             frame(&world, &settings, &[key], true, now, None)
                 .unwrap()

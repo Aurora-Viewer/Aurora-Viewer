@@ -667,3 +667,30 @@ fn flexible_sweep_keeps_face_order_topology_uvs_and_nonuniform_scale() {
         }
     }
 }
+
+#[test]
+fn every_prim_and_sculpt_measures_its_grid_and_a_folded_sculpt_measures_more() {
+    // ordinary prims at unit scale: a few square metres (the Legacy
+    // thresholds, 75 and 150, are for lag bombs, not for these)
+    for p in [box_params(), cylinder_params(), sphere_params(), torus_params()] {
+        let area = generate_volume(&p, DETAIL_SCALES[3]).grid_area;
+        assert!((1.0..20.0).contains(&area), "{area}");
+    }
+    let mut sculpt = sphere_params();
+    sculpt.sculpt = Some(SculptParams {
+        texture: uuid::Uuid::nil(),
+        sculpt_type: LL_SCULPT_TYPE_PLANE,
+    });
+    let (w, h) = (64u32, 64u32);
+    // a flat plane, then the same plane folded every pixel
+    let flat: Vec<u8> = (0..w * h).flat_map(|i| [((i % w) * 4) as u8, ((i / w) * 4) as u8, 128]).collect();
+    let folded: Vec<u8> = (0..w * h)
+        .flat_map(|i| [((i % w) * 4) as u8, ((i / w) * 4) as u8, if (i + i / w) % 2 == 0 { 0 } else { 255 }])
+        .collect();
+    let flat_area = generate_sculpt(&sculpt, DETAIL_SCALES[3], w, h, 3, &flat).grid_area;
+    let folded_area = generate_sculpt(&sculpt, DETAIL_SCALES[3], w, h, 3, &folded).grid_area;
+    assert!(flat_area > 0.5 && flat_area < 2.0, "{flat_area}");
+    assert!(folded_area > 2.0 * flat_area, "{folded_area} against {flat_area}");
+    // a mesh-less placeholder still measures its sphere
+    assert!(sculpt_placeholder(&sculpt, DETAIL_SCALES[3]).grid_area > 0.0);
+}

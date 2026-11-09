@@ -330,3 +330,35 @@ fn a_clicked_tile_is_sent_and_the_picker_keeps_its_size() {
     assert!(out.send.is_none(), "the star does not send");
     assert!(picker.settings.is_favorite(Provider::Giphy, &id) && picker.changed);
 }
+
+#[test]
+fn the_recent_tab_asks_the_gifs_sent_in_the_order_sent() {
+    let mut picker = demo_picker();
+    picker.recent = true;
+    let request = picker.wanted(0.0).expect("the recent GIFs");
+    assert_eq!(request.query, Query::Favorites(Vec::new()));
+    picker.begin(request);
+    assert!(!picker.loading, "nothing sent, nothing to ask");
+    let gif = |id: &str| page(Provider::Giphy, &[id], None).expect("a page").gifs.remove(0);
+    picker.sent(&gif("a"));
+    picker.sent(&gif("b"));
+    assert!(picker.changed, "the app saves them");
+    let request = picker.wanted(0.0).expect("the list changed");
+    assert_eq!(request.query, Query::Favorites(vec!["b".into(), "a".into()]));
+    picker.begin(request);
+    let generation = picker.generation;
+    // the service answers in its own order
+    picker.receive(
+        None,
+        Answer::Page {
+            generation,
+            page: gs::first_page(Provider::Giphy),
+            result: page(Provider::Giphy, &["a", "b"], None),
+        },
+    );
+    assert_eq!(ids(&picker), ["b", "a"]);
+    // closing leaves the tab
+    picker.active = true;
+    picker.close();
+    assert!(!picker.recent);
+}

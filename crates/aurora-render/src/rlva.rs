@@ -124,6 +124,11 @@ impl Spheres {
         }
     }
 
+    /// Whether `prepare` would make new targets.
+    pub fn needs_targets(&self, size: (u32, u32)) -> bool {
+        self.targets.as_ref().is_none_or(|t| t.size != size)
+    }
+
     pub fn prepare(&mut self, device: &wgpu::Device, size: (u32, u32), format: wgpu::TextureFormat) -> &wgpu::TextureView {
         if self.targets.as_ref().is_none_or(|t| t.size != size) {
             let views = std::array::from_fn(|_| {

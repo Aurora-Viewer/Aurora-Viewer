@@ -129,6 +129,8 @@ pub struct GifPicker {
     /// The tab shown (None: the settings' last one, on opening).
     tab: Option<Provider>,
     favorites: bool,
+    /// The GIFs sent last, in place of the favourites or the results.
+    recent: bool,
     pub query: String,
     typed_at: Option<f64>,
     /// What the shown results answer.
@@ -173,6 +175,7 @@ impl Default for GifPicker {
             demo: false,
             tab: None,
             favorites: false,
+            recent: false,
             query: String::new(),
             typed_at: None,
             asked: None,
@@ -210,6 +213,7 @@ impl GifPicker {
                 self.query = "dance".into();
             }
             crate::demo::Gifs::Sent => self.demo_send = true,
+            crate::demo::Gifs::Recent => self.recent = true,
             crate::demo::Gifs::Menu => self.demo_menu = true,
             _ => {}
         }
@@ -255,6 +259,8 @@ impl GifPicker {
         let key = self.key(provider)?;
         let query = if self.favorites {
             Query::Favorites(self.settings.favorite_ids(provider))
+        } else if self.recent {
+            Query::Favorites(self.settings.recent_ids(provider))
         } else {
             let text = self.query.trim();
             if text.is_empty() {
@@ -306,7 +312,10 @@ impl GifPicker {
                 self.loading = false;
                 self.loading_more = false;
                 match result {
-                    Ok(answer) => {
+                    Ok(mut answer) => {
+                        if let Some(Query::Favorites(ids)) = self.asked.as_ref().map(|r| &r.query) {
+                            gs::in_order_of(&mut answer.gifs, ids);
+                        }
                         if first {
                             self.gifs = answer.gifs;
                         } else {
@@ -360,6 +369,7 @@ impl GifPicker {
         self.query.clear();
         self.typed_at = None;
         self.favorites = false;
+        self.recent = false;
         self.tab = None;
         self.seen.clear();
         self.shown_pass = None;
@@ -553,6 +563,8 @@ impl GifPicker {
 
     /// A GIF was sent: its service counts it.
     pub(super) fn sent(&mut self, gif: &Gif) {
+        self.settings.note_sent(gif.provider, &gif.id);
+        self.changed = true;
         if self.demo {
             return;
         }
@@ -593,9 +605,10 @@ impl GifPicker {
             ui.spacing_mut().item_spacing.x = 2.0;
             // a tab for each service with a key
             for provider in self.providers() {
-                if tab_button(ui, p, provider.name(), tab == provider && !self.favorites).clicked() {
+                if tab_button(ui, p, provider.name(), tab == provider && !self.favorites && !self.recent).clicked() {
                     self.tab = Some(provider);
                     self.favorites = false;
+                    self.recent = false;
                     if self.settings.provider != provider {
                         self.settings.provider = provider;
                         self.changed = true;
@@ -607,6 +620,12 @@ impl GifPicker {
                 let resp = icon_tab(ui, p, icons, icon, self.favorites).on_hover_text(aurora_i18n::tr!("ui-chat-gif-favorites"));
                 if resp.clicked() {
                     self.favorites = !self.favorites;
+                    self.recent = false;
+                }
+                let resp = icon_tab(ui, p, icons, "history", self.recent).on_hover_text(aurora_i18n::tr!("ui-chat-gif-recent"));
+                if resp.clicked() {
+                    self.recent = !self.recent;
+                    self.favorites = false;
                 }
             });
         });
@@ -621,6 +640,7 @@ impl GifPicker {
         if search.changed() {
             self.typed_at = Some(now);
             self.favorites = false;
+            self.recent = false;
         }
         if opened || ctx.memory(|m| m.focused().is_none()) {
             search.request_focus();
@@ -641,11 +661,12 @@ impl GifPicker {
                         ui.add_space(22.0);
                     }
                     for c in &chips {
-                        let on = !self.favorites && self.query.trim().eq_ignore_ascii_case(c.query.trim());
+                        let on = !self.favorites && !self.recent && self.query.trim().eq_ignore_ascii_case(c.query.trim());
                         if chip(ui, p, &c.label, on).clicked() {
                             self.query = c.query.clone();
                             self.typed_at = None;
                             self.favorites = false;
+                            self.recent = false;
                         }
                     }
                 });
@@ -721,6 +742,8 @@ impl GifPicker {
                 aurora_i18n::tr!("ui-chat-gif-loading").to_owned()
             } else if self.favorites {
                 aurora_i18n::tr!("ui-chat-gif-no-favorites").to_owned()
+            } else if self.recent {
+                aurora_i18n::tr!("ui-chat-gif-no-recent").to_owned()
             } else {
                 aurora_i18n::tr!("ui-chat-gif-none").to_owned()
             };
@@ -737,7 +760,7 @@ impl GifPicker {
         let mut next_frame: Option<Duration> = None;
         ui.spacing_mut().item_spacing = egui::vec2(GAP, GAP);
         egui::ScrollArea::vertical()
-            .id_salt(("gif_picker_grid", tab, self.favorites))
+            .id_salt(("gif_picker_grid", tab, self.favorites, self.recent))
             .max_height(GRID_H)
             .min_scrolled_height(GRID_H)
             .auto_shrink([false, false])

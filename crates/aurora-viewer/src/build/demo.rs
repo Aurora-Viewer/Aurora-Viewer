@@ -27,6 +27,7 @@
 //!   place: `place,object:<id>,<target id>[,click][,rotate:<side>]` turns
 //!   "Place on surface" on and holds the cursor over the target's top
 //!   (`click` clicks there; `rotate:back` chooses Auto rotate and that side).
+//!   multi-rename: select multiple roots and apply the same name to all of them.
 //! - x, y: click (physical pixels) at frame 220: selects the object there,
 //!   creates a prim, or presses the land brush (held until the capture)
 //! - part: handle grabbed at frame 250 (move: x y z xy yz xz; rotate: rx ry
@@ -62,6 +63,8 @@ pub enum Step {
     Select(usize),
     LinkSetup(bool),
     Link,
+    SelectMany(Vec<usize>),
+    RenameSelection(String),
     SharedRights(usize, bool),
     Face(usize, u8, bool),
     /// Target channel, Local tab.
@@ -368,6 +371,28 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
     let Some(frame) = (frame + 215).checked_sub(base) else {
         return Vec::new();
     };
+    if parts[0] == "multi-rename" {
+        let objects: Vec<usize> = parts
+            .iter()
+            .skip(1)
+            .filter_map(|part| part.parse::<u32>().ok())
+            .filter_map(|local_id| {
+                world
+                    .objects
+                    .iter()
+                    .find_map(|(idx, object)| (object.key.local_id == local_id).then_some(idx))
+            })
+            .collect();
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
+            220 if objects.len() >= 2 => vec![Step::SelectMany(objects)],
+            227 => vec![Step::Focus(false)],
+            240 => vec![Step::RenameSelection("Shared edit".into())],
+            260 if !objects.is_empty() => vec![Step::SelectMany(vec![objects[0]])],
+            270 if objects.len() >= 2 => vec![Step::SelectMany(vec![objects[1]])],
+            _ => Vec::new(),
+        };
+    }
     if matches!(parts[0], "link" | "link-ready" | "link-denied") {
         return match frame {
             215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],

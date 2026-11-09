@@ -556,6 +556,9 @@ impl App {
             self.build.edit_inventory_rez(&self.world);
         }
         let rez = matches!(drop.command, BuildCmd::RezInventory(_));
+        if rez {
+            self.build.forget_new_defaults();
+        }
         if let BuildCmd::RezInventory(item) = &drop.command {
             self.record_library_use(item.item.id);
         }

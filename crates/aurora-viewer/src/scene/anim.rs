@@ -1171,6 +1171,22 @@ impl Controller {
                     }
                 }
             }
+            // A "loop" whose raw loop points run past its duration plays
+            // once: LLKeyframeMotion::onUpdate returns false, and
+            // updateMotionsByType stops it and requests the simulator stop
+            // (#2869, scripted clothing jiggling forever).
+            if m.stop.is_none()
+                && m.anim.anim.looping
+                && let Some(after) = m.anim.anim.ends_after
+            {
+                let end = m.continuous_activation + Duration::from_secs_f64(f64::from(after));
+                if now > end {
+                    m.stop_at(end);
+                    if !m.internal && !preview.is_some_and(|(target, _)| target.is_none_or(|id| id == m.id)) {
+                        completed.push(m.id);
+                    }
+                }
+            }
             match m.stop {
                 Some(stop) if now >= stop => {
                     let a = &m.anim.anim;
@@ -2184,6 +2200,7 @@ mod tests {
             loop_in: 0.0,
             loop_out: 1.0,
             looping: true,
+            ends_after: None,
             ease_in: ease,
             ease_out: ease,
             hand_pose: 0,
@@ -2422,6 +2439,7 @@ mod tests {
             loop_in: 0.0,
             loop_out: 2.0,
             looping: true,
+            ends_after: None,
             ease_in: 0.0,
             ease_out: 0.0,
             hand_pose: 0,
@@ -2608,6 +2626,7 @@ mod tests {
                 loop_in: 0.0,
                 loop_out: 1.0,
                 looping: true,
+                ends_after: None,
                 ease_in: 0.0,
                 ease_out: 0.0,
                 hand_pose: 0,
@@ -2958,6 +2977,48 @@ mod tests {
         assert_eq!(c.motions[0].activation, at(3.1));
         assert_eq!(c.motions[1].stop, Some(at(3.1)));
         assert_eq!(c.sync(&[c.signals[&id]], at(4.0), |_| Some(anim.clone())), vec![id]);
+    }
+
+    /// A loop whose raw loop-out runs past its duration plays once, then
+    /// stops and asks the simulator to stop it, once (#2869).
+    #[test]
+    fn a_loop_that_ends_itself_stops_once_and_notifies_the_simulator() {
+        let rig = rig();
+        let id = Uuid::from_u128(21);
+        let mut bound = BoundAnim::bind(bend(&rig, 0.7, 0.2).anim.clone(), &rig);
+        // the reported asset's 1.56 s: its f32 end rounds past loop-out
+        bound.anim.duration = 1.56;
+        bound.anim.loop_out = 1.56;
+        bound.anim.ends_after = Some(1.56);
+        let end = Duration::from_secs_f64(f64::from(1.56f32));
+        let anim = Arc::new(bound);
+        for synchronized in [false, true] {
+            let t0 = Instant::now();
+            let at = |s| t0 + Duration::from_secs_f64(s);
+            let mut c = if synchronized {
+                synchronized_controller()
+            } else {
+                Controller::default()
+            };
+            let playing = [signal(id, 1, t0)];
+            assert!(c.sync(&playing, t0, |_| Some(anim.clone())).is_empty());
+            assert!(c.sync(&playing, at(1.5), |_| Some(anim.clone())).is_empty(), "not before the end");
+            // a new sequence of the still-playing loop does not restart it
+            let resent = [PlayingAnimation {
+                sequence: 2,
+                sequence_start: at(0.5),
+                ..playing[0]
+            }];
+            assert_eq!(c.sync(&resent, at(1.6), |_| Some(anim.clone())), vec![id]);
+            assert_eq!(c.motions[0].stop, Some(t0 + end));
+            // the ease-out holds the last frame instead of wrapping to the start
+            for s in [1.6, 1.7, 1.75] {
+                assert!((c.motions[0].local_time(at(s)) - 1.56).abs() < 1e-6, "frame at {s} s");
+            }
+            assert!(c.sync(&resent, at(1.7), |_| Some(anim.clone())).is_empty());
+            assert!(c.sync(&resent, at(3.0), |_| Some(anim.clone())).is_empty());
+            assert!(c.motions.is_empty(), "eased out, not replayed (synchronized {synchronized})");
+        }
     }
 
     #[test]
@@ -3343,6 +3404,7 @@ mod tests {
             loop_in: 0.0,
             loop_out: 1.0,
             looping: true,
+            ends_after: None,
             ease_in: 0.0,
             ease_out: 0.0,
             hand_pose,
@@ -3497,6 +3559,7 @@ mod tests {
             loop_in: 0.0,
             loop_out: 1.0,
             looping: true,
+            ends_after: None,
             ease_in: 0.0,
             ease_out: 0.0,
             hand_pose: 1,

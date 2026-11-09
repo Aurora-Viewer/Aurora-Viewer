@@ -220,7 +220,7 @@ impl DrawnPick {
             .map(|_| Slot {
                 buffer: device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("drawn pick readback"),
-                    size: TARGET_BYTES * 2,
+                    size: crate::readback::readback_size(TARGET_BYTES * 2),
                     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                     mapped_at_creation: false,
                 }),

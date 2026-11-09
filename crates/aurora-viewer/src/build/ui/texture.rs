@@ -15,7 +15,7 @@ mod paste_tests;
 #[path = "texture_drop.rs"]
 pub(super) mod texture_drop;
 
-use super::common::{Edit, check, combo, row, same, small, spin, swatch};
+use super::common::{check, combo, row, same, small, spin, swatch};
 use super::{Confirm, Env, FaceClip, PickTarget};
 use crate::build::materials::{GltfUpdate, MF_HAS_MEDIA};
 use crate::build::{BuildSettings, BuildTool, Tool, texture_copy};
@@ -298,12 +298,18 @@ impl BuildTool {
     /// Change the GLTF override of the selected faces with a material
     /// (FSRenderMaterialOverrideFunctor): only the faces with a base material.
     fn edit_gltf(&mut self, world: &mut World, sel: &[Sel], f: impl Fn(&mut PbrOverride)) {
+        self.edit_gltf_faces(world, sel, |_, o| f(o));
+    }
+
+    /// `edit_gltf` with the index of each face in `sel`.
+    fn edit_gltf_faces(&mut self, world: &mut World, sel: &[Sel], f: impl Fn(usize, &mut PbrOverride)) {
         let updates: Vec<GltfUpdate> = sel
             .iter()
-            .filter(|s| BuildTool::gltf_asset(world, s.idx, s.face).is_some())
-            .map(|s| {
+            .enumerate()
+            .filter(|(_, s)| BuildTool::gltf_asset(world, s.idx, s.face).is_some())
+            .map(|(k, s)| {
                 let mut o = BuildTool::gltf_override(world, s.idx, s.face);
-                f(&mut o);
+                f(k, &mut o);
                 GltfUpdate {
                     object: s.idx,
                     face: s.face,
@@ -651,6 +657,13 @@ fn material_map(
 }
 
 /// Two UV rows, with scale/flip, offset and rotation visible together.
+///
+/// Returns the components to write to every selected face: one committed
+/// with a new value, or typed over a mixed ("—") field even when it equals
+/// the first face's hidden value. LLPanelFace sends each spinner's commit on
+/// its own (onCommitTextureScaleX / onCommitGLTFTextureScaleU…,
+/// indra/newview/llpanelface.cpp): only that component reaches the faces and
+/// the other, possibly mixed, components keep each face's value.
 fn uv_controls(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -659,8 +672,8 @@ fn uv_controls(
     decimals: usize,
     enabled: bool,
     axes: [&str; 2],
-) -> Edit {
-    let mut edit = Edit::default();
+) -> [bool; 5] {
+    let mut write = [false; 5];
     ui.add_enabled_ui(enabled, |ui| {
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
@@ -684,7 +697,8 @@ fn uv_controls(
                                 1 => (0.01, -1.0..=1.0, decimals),
                                 _ => (1.0, -360.0..=360.0, decimals.min(2)),
                             };
-                            edit = edit.or(super::common::spin_with_min_decimals(
+                            let before = values[index];
+                            let edit = super::common::spin_with_min_decimals(
                                 ui,
                                 &mut values[index],
                                 increment,
@@ -693,13 +707,20 @@ fn uv_controls(
                                 if column == 2 { 71.0 } else { 65.0 },
                                 mixed[index],
                                 d.min(3),
-                            ));
+                            );
+                            // A release that moved nothing sends nothing; a
+                            // number typed over "—" is sent as it is.
+                            if edit.typed_over_mixed || (edit.commit && (values[index] - before).abs() > 1e-6) {
+                                write[index] = true;
+                            }
+                            // FSPanelFace::onCommitFlip negates the shown value
+                            // and forces the spinner's commit.
                             if column == 0
                                 && super::compact::icon_button(ui, p, "arrows-exchange", aurora_i18n::tr!("common-rotate"), enabled)
                                     .clicked()
                             {
                                 values[index] = -values[index];
-                                edit.commit = true;
+                                write[index] = true;
                             }
                         });
                     }
@@ -707,7 +728,7 @@ fn uv_controls(
             }
         });
     });
-    edit
+    write
 }
 
 // ---------------------------------------------------------------- PBR
@@ -738,6 +759,10 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
     {
         appearance.apply_pbr(&mut mat);
     }
+    let face_transforms: Vec<[TextureTransform; 4]> = sel.iter().map(|x| face_pbr_transforms(world, env, x)).collect();
+    // What each face's server override inherits; None while a material is
+    // still loading: the UV fields wait for it rather than guess the pair.
+    let inherited: Option<Vec<[TextureTransform; 4]>> = sel.iter().map(|x| face_server_pbr_transforms(world, env, x)).collect();
     // LLMaterialEditor::canModifyObjectsMaterial; not editable, the maps show no id
     let faces: Vec<(usize, u8)> = sel.iter().map(|x| (x.idx, x.face)).collect();
     let editable = has_all && tool.material_edit_allowed(world, &faces);
@@ -815,34 +840,99 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
             tabs(ui, p, &mut ch, &labels);
         }
         tool.ui.pbr_channel = ch;
-        // "All" shows the base color's, mixed when the channels differ;
-        // the others in the panel's order: base, normal, ORM, emissive
-        let (t, mixed) = if ch == 0 {
-            (mat.transforms[0], mat.transforms.iter().any(|x| *x != mat.transforms[0]))
-        } else {
-            (mat.transforms[ch - 1], false)
-        };
-        let mut nt = t;
-        let mut rot = nt.rotation.to_degrees();
-        let mut e = Edit::default();
-
-        let mut values = [nt.scale[0], nt.scale[1], nt.offset[0], nt.offset[1], rot];
-        e = e.or(uv_controls(ui, p, &mut values, [mixed; 5], 5, editable, ["U", "V"]));
-        nt.scale = [values[0], values[1]];
-        nt.offset = [values[2], values[3]];
-        rot = values[4];
-
-        nt.rotation = rot.to_radians();
-        if e.commit && nt != t {
-            tool.edit_gltf(world, sel, |o| {
-                if ch == 0 {
-                    o.transforms = [nt; 4];
-                } else {
-                    o.transforms[ch - 1] = nt;
+        // "All" covers the four channels and shows the base color's; the
+        // others in the panel's order: base, normal, ORM, emissive. A
+        // component is mixed when it differs between the selected faces or,
+        // under "All", between the channels
+        // (LLPanelFace::setMaterialOverridesFromSelection).
+        let channels = if ch == 0 { 0..4 } else { ch - 1..ch };
+        let components = |t: &TextureTransform| [t.scale[0], t.scale[1], t.offset[0], t.offset[1], t.rotation];
+        let shown = components(&mat.transforms[channels.start]);
+        let mixed: [bool; 5] = std::array::from_fn(|i| {
+            face_transforms
+                .iter()
+                .flat_map(|transforms| &transforms[channels.clone()])
+                .any(|t| (components(t)[i] - shown[i]).abs() > 1e-5)
+        });
+        let mut values = shown;
+        values[4] = values[4].to_degrees();
+        let write = uv_controls(ui, p, &mut values, mixed, 5, editable && inherited.is_some(), ["U", "V"]);
+        if let Some(inherited) = inherited.as_deref()
+            && write.contains(&true)
+        {
+            // LLPanelFace::updateGLTFTextureTransform: the committed
+            // component only, on each face's override and each channel.
+            // apply_override takes a scale or an offset as a whole pair, so
+            // a pair with a committed component starts from what that face
+            // and channel inherit on the server: the other component keeps
+            // its value, the base material's when the override has none.
+            // Better than LLPanelFace, which starts from the raw override
+            // and resets that component to the identity. Like it, a pair
+            // that ends at the identity (scale 1 1, offset 0 0) is "no
+            // override" to applyOverride: the material's own pair shows.
+            let new = [values[0], values[1], values[2], values[3], values[4].to_radians()];
+            tool.edit_gltf_faces(world, sel, |k, o| {
+                for channel in channels.clone() {
+                    let shown = inherited[k][channel];
+                    let t = &mut o.transforms[channel];
+                    if write[0] || write[1] {
+                        t.scale = shown.scale;
+                    }
+                    if write[2] || write[3] {
+                        t.offset = shown.offset;
+                    }
+                    let mut a = components(t);
+                    for i in (0..5).filter(|&i| write[i]) {
+                        a[i] = new[i];
+                    }
+                    *t = TextureTransform {
+                        scale: [a[0], a[1]],
+                        offset: [a[2], a[3]],
+                        rotation: a[4],
+                    };
                 }
             });
         }
     });
+}
+
+/// The texture transforms a face's server override applies over: its
+/// server material's (never a local material's preview, which only this
+/// viewer shows) under that override (LLGLTFMaterial::applyOverride).
+/// None while the material loads; a material that cannot be had renders
+/// as the default one, so the override applies over the identity.
+fn face_server_pbr_transforms(world: &World, env: &mut Env, x: &Sel) -> Option<[TextureTransform; 4]> {
+    let mut mat = aurora_assets::PbrMaterial::default();
+    if let Some(asset) = BuildTool::gltf_asset(world, x.idx, x.face) {
+        match env.scene.materials.resolve(&asset) {
+            crate::scene::meshes::MaterialStatus::Loaded(m) => mat.transforms = m.transforms,
+            crate::scene::meshes::MaterialStatus::Pending => return None,
+            crate::scene::meshes::MaterialStatus::Missing => {}
+        }
+    }
+    mat.apply_override(&BuildTool::gltf_override(world, x.idx, x.face));
+    Some(mat.transforms)
+}
+
+/// The texture transforms a face renders with: its material's under its
+/// override (LLGLTFMaterial::applyOverride), as `pbr` builds the first face's.
+fn face_pbr_transforms(world: &World, env: &mut Env, x: &Sel) -> [TextureTransform; 4] {
+    let asset = world
+        .objects
+        .get(x.idx)
+        .and_then(|object| object.local_texture(x.face as usize, crate::world::objects::LocalTextureSlot::Material))
+        .or_else(|| BuildTool::gltf_asset(world, x.idx, x.face));
+    let mut mat = aurora_assets::PbrMaterial {
+        transforms: asset
+            .and_then(|asset| env.scene.materials.get(&asset))
+            .map(|m| m.transforms)
+            .unwrap_or_default(),
+        ..Default::default()
+    };
+    if !asset.is_some_and(|asset| world.local_assets.contains_key(&asset)) {
+        mat.apply_override(&BuildTool::gltf_override(world, x.idx, x.face));
+    }
+    mat.transforms
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1226,16 +1316,14 @@ fn bp_transforms(
         v[0] *= k;
         v[1] *= k;
         v[4] = v[4].to_degrees();
-        let before = v;
         let decimals = s.decimal_precision.min(7) as usize;
-        let mut e = Edit::default();
 
         let axes = if super::legacy::active(ui) { ["U", "V"] } else { ["H", "V"] };
-        e = e.or(uv_controls(ui, p, &mut v, std::array::from_fn(mixed), decimals, editable, axes));
+        let write = uv_controls(ui, p, &mut v, std::array::from_fn(mixed), decimals, editable, axes);
 
-        if e.commit && v != before {
-            // only the values that moved are written (non-tentative spinners)
-            let changed: Vec<usize> = (0..5).filter(|&i| (v[i] - before[i]).abs() > 1e-6).collect();
+        if write.contains(&true) {
+            // only the committed components; the others keep each face's value
+            let changed: Vec<usize> = (0..5).filter(|&i| write[i]).collect();
             let new = [v[0] / k, v[1] / k, v[2], v[3], v[4].to_radians()];
             let set = |a: &mut [f32; 5]| {
                 for &i in &changed {

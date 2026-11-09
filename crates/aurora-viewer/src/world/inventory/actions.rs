@@ -628,6 +628,7 @@ pub fn demo_mutate(inv: &mut Inventory, agent: Uuid, change: Mutation) -> Result
                     }
                     if body.has("thumbnail") {
                         f.info.thumbnail = body["thumbnail"]["asset_id"].as_uuid();
+                        f.info.thumbnail_known = true;
                     }
                 } else {
                     let it = inv.items.get_mut(&id).ok_or(aurora_i18n::tr!("common-item-not-found"))?;

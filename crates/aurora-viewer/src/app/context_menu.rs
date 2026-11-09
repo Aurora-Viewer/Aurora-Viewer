@@ -9,6 +9,9 @@ use uuid::Uuid;
 impl App {
     /// Right click on the world: the menu of what is under the cursor.
     pub(super) fn open_context_menu(&mut self) {
+        if self.photo_full_frame() {
+            return;
+        }
         self.click(click_pick::Click::Menu);
     }
 
@@ -823,7 +826,9 @@ impl App {
                 let Some(region) = self.grid_region(&region) else {
                     return;
                 };
-                self.world.map.track_region(&region, pos);
+                // LLWorldMapHandler::handle: trackURL, then the map opens
+                // centred on the place ("center")
+                self.world.map.show_region(&region, pos);
                 ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
             }
             CtxAction::TeleportToPlace(region, pos) if self.settings.confirm_teleports => self.place_confirm = Some((region, pos, false)),

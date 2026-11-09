@@ -431,7 +431,7 @@ mod tests {
         let read = |buffer: &wgpu::Buffer| -> Vec<u8> {
             let out = device.create_buffer(&wgpu::BufferDescriptor {
                 label: None,
-                size: 1024,
+                size: crate::readback::readback_size(1024),
                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             });

@@ -173,7 +173,7 @@ fn vertex(i:u32,inst:u32)->VsOut {{
                 });
                 let readback = device.create_buffer(&wgpu::BufferDescriptor {
                     label: None,
-                    size: u64::from(height) * 256 * 2,
+                    size: crate::readback::readback_size(u64::from(height) * 256 * 2),
                     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                     mapped_at_creation: false,
                 });

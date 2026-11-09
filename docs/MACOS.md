@@ -85,6 +85,10 @@ Command (⌘), then Option (⌥) and Shift (⇧).
 Text fields accept both keys for copy, paste, undo and the rest.
 Select All is Command+A (or Control+A). Command+Shift+A still opens People,
 as in the Legacy Viewer, even while a field is focused.
+In the Conversations window, **Control+Tab** and **Control+Shift+Tab** go to
+the next and previous conversation. Option+Left/Right moves by word in its
+field, while Option+Up/Down still cycles conversations and Command+Left/Right
+stays the start or end of the line.
 **Command+Q** asks before quitting, like the close button of the window.
 macOS takes Command+Q and Command+H before the viewer sees them. The Quit
 item is answered here; Command+H stays Hide.

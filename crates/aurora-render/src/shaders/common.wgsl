@@ -149,6 +149,10 @@ const FLAG_PORTAL_CLIP: u32 = 16384u;
 const FLAG_PORTAL_EFFECT: u32 = 32768u;
 const FLAG_WORLD_BLEND_PICK: u32 = 2147483648u; // flags.w, above texture animation
 const FLAG_OBJECT_MASK_PICK: u32 = 1073741824u; // flags.w, world/worn objects only
+// flags.w bits 24..26: layer rank of a rigged face (types.rs flags, object.wgsl eye_clip)
+const LAYER_RANK_SHIFT: u32 = 24u;
+const LAYER_RANK_MAX: u32 = 7u;
+const LAYER_DEPTH_STEP: f32 = 9.5367431640625e-7; // 2^-20
 const PORTAL_HALF_WIDTH: f32 = 1.0;
 const PORTAL_HALF_HEIGHT: f32 = 1.5;
 const PORTAL_SURFACE_SCALE: f32 = 1.16;
@@ -388,15 +392,38 @@ fn in_reflection_pass() -> bool {
     return frame.misc.w > 0.5;
 }
 
-/// Planar reflection passes (water, mirror): a view mirrored by a plane.
+/// Reflection passes with a mirrored view: planar ones (water, mirror) and
+/// the faces of a probe (probes::face_view).
 fn mirrored_pass() -> bool {
     return frame.misc.w > 1.5;
 }
 
-// Probes are sampled in the main view only (captures see the sky instead,
-// a single bounce).
+// frame.light_mode.z, the capture of a probe that lights its surfaces with
+// the probes as LLReflectionMapManager::updateUniforms does: the radiance
+// capture with both, the irradiance capture (PROBE_CAPTURE_AMBIANCE too)
+// with no irradiance and half the radiance. A closed room then sees its own
+// dark surroundings in its captures, not the sky. probes::CaptureLighting.
+const PROBE_CAPTURE_LIT: u32 = 0x20000u;
+const PROBE_CAPTURE_AMBIANCE: u32 = 0x40000u;
+// frame.light_mode.z, any capture of a probe: the sea instead of the sky under
+// the rim of the Legacy Viewer's dome (sky_pixel in env.wgsl).
+// probes::capture_lighting::DOME.
+const PROBE_CAPTURE_DOME: u32 = 0x80000u;
+
+// Probes are sampled in the main view and in the captures of the probes
+// themselves (planar reflections and the sky-only default probe see the sky).
 fn probes_on() -> bool {
-    return probe_set.enabled != 0u && !in_reflection_pass();
+    return probe_set.enabled != 0u && (!in_reflection_pass() || (frame.light_mode.z & PROBE_CAPTURE_LIT) != 0u);
+}
+
+// What the pass multiplies the probes' irradiance by (refParams.x).
+fn probe_pass_ambiance() -> f32 {
+    return select(1.0, 0.0, (frame.light_mode.z & PROBE_CAPTURE_AMBIANCE) != 0u);
+}
+
+// What the pass multiplies the probes' radiance by (refParams.y).
+fn probe_pass_radiance() -> f32 {
+    return select(1.0, 0.5, (frame.light_mode.z & PROBE_CAPTURE_AMBIANCE) != 0u);
 }
 
 fn probe_max_lod() -> f32 {
@@ -1683,10 +1710,10 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
         // occlusion only), in one walk of the probes
         let s = sample_probes_pair(world_pos, frag, ProbeLookup(n, 0.0, true), ProbeLookup(r, roughness * probe_max_lod(), false), !legacy, true, hemi);
         if (s.a.w > 0.0) {
-            amb = s.a.rgb;
+            amb = s.a.rgb * probe_pass_ambiance();
         }
         if (s.b.w > 0.0) {
-            env = s.b.rgb;
+            env = s.b.rgb * probe_pass_radiance();
             occl = spec_ao;
         }
     }

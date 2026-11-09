@@ -22,7 +22,7 @@ impl Rlva {
             .map(|(channel, _)| channel)
             .collect();
         for channel in channels {
-            self.reply(channel, format!("/{text}"));
+            self.reply(channel, "notify", format!("/{text}"));
         }
     }
 

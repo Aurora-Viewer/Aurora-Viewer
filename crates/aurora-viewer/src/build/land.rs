@@ -402,8 +402,10 @@ impl LandTool {
                 }
             }
         }
-        // land selection: yellow walls around it (renderRect / renderHighlightSegments)
-        let rect = self.dragging.or(self.selection);
+        // land selection: yellow walls around it (renderRect / renderHighlightSegments);
+        // a selected parcel only with RenderParcelSelection
+        // (LLViewerParcelMgr::render), the rectangle being dragged always
+        let rect = self.dragging.or(self.selection.filter(|_| s.parcel_selection_outline));
         if let Some((a, b)) = rect {
             let (lo, hi) = (a.min(b), a.max(b));
             let yellow = rgba(1.0, 1.0, 0.0, 1.0);

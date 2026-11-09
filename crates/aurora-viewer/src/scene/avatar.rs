@@ -184,7 +184,7 @@ fn llm_skin(m: &LlmMesh, list: &[u8], fixed_joint: Option<u8>) -> Vec<SkinVertex
             if let Some(j) = fixed_joint {
                 return SkinVertex {
                     joints: [j, 0, 0, 0],
-                    weights: [255, 0, 0, 0],
+                    weights: [u16::MAX, 0, 0, 0],
                 };
             }
             let w = m.weights.get(i).copied().unwrap_or(0.0).max(0.0);
@@ -195,7 +195,12 @@ fn llm_skin(m: &LlmMesh, list: &[u8], fixed_joint: Option<u8>) -> Vec<SkinVertex
             let j1 = list.get((idx + 1).min(last)).copied().unwrap_or(j0);
             SkinVertex {
                 joints: [j0, j1, 0, 0],
-                weights: [((1.0 - frac) * 255.0).round() as u8, (frac * 255.0).round() as u8, 0, 0],
+                weights: [
+                    aurora_render::pack_skin_weight(1.0 - frac),
+                    aurora_render::pack_skin_weight(frac),
+                    0,
+                    0,
+                ],
             }
         })
         .collect()

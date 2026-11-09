@@ -212,6 +212,7 @@ fn authored_native_animation_opens_the_normal_inspector_without_starting_or_char
         loop_in: 0.0,
         loop_out: 1.0,
         looping: true,
+        ends_after: None,
         ease_in: 0.2,
         ease_out: 0.3,
         hand_pose: 0,

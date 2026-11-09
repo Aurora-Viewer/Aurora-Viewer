@@ -182,7 +182,15 @@ impl Dof {
         self.targets = None;
     }
 
-    fn ensure_targets(&mut self, device: &wgpu::Device, size: (u32, u32), hdr: wgpu::TextureFormat, post: &PostInputs) {
+    /// Whether the targets for `size` are made (`ensure_targets` would
+    /// make nothing).
+    pub(crate) fn has_targets(&self, size: (u32, u32)) -> bool {
+        self.targets.as_ref().is_some_and(|t| t.size == size)
+    }
+
+    /// The targets for `size`, made if needed (the renderer makes them
+    /// first, checked: renderer.rs `first_use`).
+    pub(crate) fn ensure_targets(&mut self, device: &wgpu::Device, size: (u32, u32), hdr: wgpu::TextureFormat, post: &PostInputs) {
         if self.targets.as_ref().is_none_or(|t| t.size != size) {
             let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
             let view = |label: &str, w: u32, h: u32, f: wgpu::TextureFormat| crate::renderer::make_view(device, label, w, h, f, 1, usage).1;

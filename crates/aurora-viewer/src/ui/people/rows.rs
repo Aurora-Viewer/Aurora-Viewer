@@ -29,6 +29,16 @@ pub(super) const TOOLBAR_H: f32 = 30.0;
 /// The side of a contact set's symbol after a name (`SetMark::Icon`).
 const SET_ICON: f32 = 12.0;
 
+/// A resident owns the row's interactions and popup, even when sorting or
+/// incoming names move it. Positional auto ids can transfer an open menu to
+/// the next resident. LLListContextMenu::show retains UUIDs too
+/// (indra/newview/lllistcontextmenu.cpp).
+pub(super) fn allocate(ui: &mut egui::Ui, id: Uuid, size: Vec2) -> (Rect, egui::Response) {
+    let (_, rect) = ui.allocate_space(size);
+    let response = ui.interact(rect, ui.scope_id().with(("people-person-row", id)), Sense::click_and_drag());
+    (rect, response)
+}
+
 /// The name a row shows: the display name as the name preferences make it
 /// (a contact set nickname included), as Near you's rows do.
 pub(super) fn display_name(world: &World, id: &Uuid) -> String {
@@ -229,14 +239,10 @@ pub(super) fn person_names(
         _ => {}
     }
     if let Some((text, ink, fill)) = tag.filter(|_| !cut) {
-        let g = ui
-            .painter()
-            .layout_no_wrap(text.to_owned(), FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())), ink);
-        let r = Rect::from_min_size(Pos2::new(x, y - 8.0), Vec2::new(g.size().x + 12.0, 16.0));
+        let (g, w) = crate::ui::widgets::tag_pill_layout(ui, text, ink);
+        let r = Rect::from_min_size(Pos2::new(x, y - 8.0), Vec2::new(w, 16.0));
         if r.right() <= right {
-            ui.painter().rect_filled(r, ui.visuals().window_corner_radius, fill);
-            let left = r.center().x - g.size().x / 2.0;
-            crate::ui::widgets::paint_row_text(ui.painter(), g, left, r.center().y, ink);
+            crate::ui::widgets::paint_tag_pill(ui, g, r, ink, fill);
         }
     }
     cut
@@ -476,12 +482,18 @@ pub(super) fn contact_tip(resp: egui::Response, detail: Option<&str>) {
 /// row is part of a selection of several (menu_fs_radar_multiselect.xml),
 /// else the resident's own.
 pub(super) fn person_menu(resp: &egui::Response, p: &Palette, world: &World, sel: &[Uuid], id: Uuid) {
-    let several = sel.len() > 1 && sel.contains(&id);
     let kind = if world.social.is_friend(&id) {
         AvatarList::Friend
     } else {
         AvatarList::Nearby
     };
+    list_menu(resp, p, world, sel, id, kind);
+}
+
+/// Also called for clipped rows: an open popup stays at its original click
+/// while its resident moves out of the visible part of the list.
+pub(super) fn list_menu(resp: &egui::Response, p: &Palette, world: &World, sel: &[Uuid], id: Uuid, kind: AvatarList) {
+    let several = sel.len() > 1 && sel.contains(&id);
     menu::context_menu(resp, p, |ui| {
         if several {
             context::avatars_menu(ui, p, world, sel);
@@ -510,6 +522,142 @@ pub(super) fn empty(ui: &mut egui::Ui, p: &Palette, text: &str) {
 mod tests {
     use super::*;
 
+    struct MenuHarness {
+        frames: crate::ui::widgets::elide_tests::Frames,
+        world: World,
+        rects: std::collections::HashMap<Uuid, Rect>,
+        popups: std::collections::HashMap<Uuid, egui::Id>,
+        texts: Vec<crate::ui::widgets::elide_tests::Text>,
+    }
+
+    impl MenuHarness {
+        fn new() -> Self {
+            let frames = crate::ui::widgets::elide_tests::Frames::new();
+            crate::theme::Theme::default().apply(&frames.ctx, 1.0);
+            frames.ctx.all_styles_mut(|s| s.animation_time = 0.0);
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            world.agent_id = Uuid::from_u128(99);
+            for n in 1..=3 {
+                let id = Uuid::from_u128(n);
+                world.social.names.insert(id, format!("Resident {n}"));
+                world.calls.voice_peers.insert(id);
+            }
+            world.calls.set_volume(Uuid::from_u128(1), 0.2);
+            Self {
+                frames,
+                world,
+                rects: Default::default(),
+                popups: Default::default(),
+                texts: Vec::new(),
+            }
+        }
+
+        fn frame(&mut self, order: &[Uuid], events: Vec<egui::Event>) {
+            let p = crate::theme::Theme::default().palette();
+            self.rects.clear();
+            self.popups.clear();
+            self.texts = self.frames.run(events, |ui| {
+                // Only the first row is visible; sorting may move the menu's
+                // owner outside the clip without removing them from the list.
+                ui.set_clip_rect(Rect::from_min_size(ui.cursor().min, Vec2::new(600.0, RICH_H)));
+                for &id in order {
+                    let (rect, resp) = allocate(ui, id, Vec2::new(300.0, RICH_H));
+                    self.rects.insert(id, rect);
+                    self.popups.insert(id, egui::Popup::default_response_id(&resp));
+                    person_menu(&resp, &p, &self.world, &[], id);
+                }
+            });
+        }
+
+        fn click(&mut self, order: &[Uuid], at: Pos2, button: egui::PointerButton) {
+            for pressed in [true, false] {
+                self.frame(
+                    order,
+                    vec![
+                        egui::Event::PointerMoved(at),
+                        egui::Event::PointerButton {
+                            pos: at,
+                            button,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+        }
+
+        fn open_first(&mut self, order: &[Uuid]) -> egui::Id {
+            for _ in 0..3 {
+                self.frame(order, Vec::new());
+            }
+            let at = self.rects[&order[0]].center();
+            self.click(order, at, egui::PointerButton::Secondary);
+            for _ in 0..3 {
+                self.frame(order, Vec::new());
+            }
+            let popup = self.popups[&order[0]];
+            assert!(egui::Popup::is_id_open(&self.frames.ctx, popup));
+            popup
+        }
+
+        fn text_rect(&self, text: &str) -> Rect {
+            self.texts.iter().find(|t| t.source == text).expect("menu text is visible").rect
+        }
+    }
+
+    #[test]
+    fn resident_context_menu_keeps_its_target_when_the_list_changes() {
+        let [a, b, c] = [1, 2, 3].map(Uuid::from_u128);
+        for order in [vec![b, a], vec![c, a, b], vec![a]] {
+            let mut h = MenuHarness::new();
+            let popup = h.open_first(&[a, b]);
+            let profile = h.text_rect(aurora_i18n::tr!("common-view-profile"));
+            for _ in 0..3 {
+                h.frame(&order, Vec::new());
+            }
+            assert_eq!(h.popups[&a], popup, "the popup belongs to the resident, not the row position");
+            assert!(egui::Popup::is_id_open(&h.frames.ctx, popup));
+            assert_eq!(
+                h.text_rect(aurora_i18n::tr!("common-view-profile")),
+                profile,
+                "the menu stays at the right-click position"
+            );
+            let percent = h.text_rect("40 %");
+            h.click(
+                &order,
+                egui::pos2(profile.left() + 12.0, percent.center().y),
+                egui::PointerButton::Primary,
+            );
+            let requests = context::take_requests(&h.frames.ctx);
+            assert!(!requests.is_empty(), "the slider sent a volume change");
+            assert!(
+                requests
+                    .iter()
+                    .all(|r| matches!(r, context::CtxAction::SetVoiceVolume(id, _) if *id == a)),
+                "{requests:?}"
+            );
+            assert!(egui::Popup::is_id_open(&h.frames.ctx, popup));
+            h.click(&order, profile.center(), egui::PointerButton::Primary);
+            assert!(matches!(&context::take_requests(&h.frames.ctx)[..], [context::CtxAction::Profile(id)] if *id == a));
+        }
+    }
+
+    #[test]
+    fn resident_context_menu_does_not_transfer_to_a_replacement_row() {
+        let [a, b] = [1, 2].map(Uuid::from_u128);
+        let mut h = MenuHarness::new();
+        h.open_first(&[a, b]);
+        for _ in 0..3 {
+            h.frame(&[b], Vec::new());
+        }
+        assert!(h.texts.iter().all(|t| t.source != aurora_i18n::tr!("common-view-profile")));
+        assert!(context::take_requests(&h.frames.ctx).is_empty());
+        h.open_first(&[b]);
+        let profile = h.text_rect(aurora_i18n::tr!("common-view-profile"));
+        h.click(&[b], profile.center(), egui::PointerButton::Primary);
+        assert!(matches!(&context::take_requests(&h.frames.ctx)[..], [context::CtxAction::Profile(id)] if *id == b));
+    }
+
     struct PressHarness {
         frames: crate::ui::widgets::elide_tests::Frames,
         sel: Vec<Uuid>,
@@ -527,7 +675,7 @@ mod tests {
             self.frames.run(events, |ui| {
                 ui.input_mut(|i| i.modifiers = self.modifiers);
                 for id in order {
-                    let (rect, resp) = ui.allocate_exact_size(Vec2::new(300.0, RICH_H), Sense::click_and_drag());
+                    let (rect, resp) = allocate(ui, id, Vec2::new(300.0, RICH_H));
                     self.rects.push(rect);
                     let child = Rect::from_min_max(Pos2::new(rect.right() - 30.0, rect.top()), rect.max);
                     ui.interact(child, resp.id.with("quick-action"), Sense::click());

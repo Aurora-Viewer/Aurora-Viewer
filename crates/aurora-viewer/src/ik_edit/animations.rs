@@ -256,6 +256,7 @@ impl Stack {
                 loop_in: 0.0,
                 loop_out: 2.0,
                 looping: true,
+                ends_after: None,
                 ease_in: 0.0,
                 ease_out: 0.0,
                 hand_pose: 0,

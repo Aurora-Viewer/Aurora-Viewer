@@ -228,8 +228,9 @@ fn second_line(c: &Ctx, id: &Uuid) -> String {
 fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleUi, set: &str, id: Uuid, name: &str, order: &[Uuid]) {
     let p = c.p;
     let world = c.world;
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), RICH_H), Sense::click_and_drag());
+    let (rect, resp) = rows::allocate(ui, id, Vec2::new(ui.available_width(), RICH_H));
     if !ui.is_rect_visible(rect) {
+        rows::person_menu(&resp, p, world, &st.sel, id);
         return;
     }
     if !data.pics.contains_key(&id) {

@@ -51,9 +51,68 @@
 
 use std::cmp::Ordering;
 
+use glam::{Mat3, Mat4, Vec3};
+
 use aurora_render::{DrawCmd, RiggedBlendDepth};
 
 use crate::world::World;
+
+/// Local face bounds, computed on the geometry worker alongside the pick copy.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FaceBounds {
+    pub center: Vec3,
+    pub half: Vec3,
+}
+
+impl FaceBounds {
+    pub fn of(positions: &[[f32; 3]]) -> Self {
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+        for p in positions.iter().copied().map(Vec3::from_array).filter(|p| p.is_finite()) {
+            min = min.min(p);
+            max = max.max(p);
+        }
+        if min.is_finite() && max.is_finite() {
+            Self {
+                center: (min + max) * 0.5,
+                half: (max - min) * 0.5,
+            }
+        } else {
+            Self::default()
+        }
+    }
+}
+
+/// LLDrawable::updateDistance (indra/newview/lldrawable.cpp): projected face
+/// centre, biased toward the front of its world AABB by a quarter of its size.
+/// Factor the placement once per object; each face then needs two dot products.
+pub struct FaceDepth {
+    axis: Vec3,
+    front: Vec3,
+    offset: f32,
+}
+
+impl FaceDepth {
+    pub fn new(model: Mat4, eye: Vec3, forward: Vec3) -> Self {
+        let linear = Mat3::from_mat4(model);
+        let absolute = Mat3::from_cols(linear.x_axis.abs(), linear.y_axis.abs(), linear.z_axis.abs());
+        Self {
+            axis: linear.transpose() * forward,
+            front: absolute.transpose() * (forward * forward) * 0.5,
+            offset: (model.w_axis.truncate() - eye).dot(forward),
+        }
+    }
+
+    pub fn of(&self, bounds: FaceBounds) -> f32 {
+        self.offset + bounds.center.dot(self.axis) - bounds.half.dot(self.front)
+    }
+}
+
+/// Keep the previous object-centre ordering for a controlled A/B launch.
+pub fn face_sort_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("AURORA_ALPHA_FACE_SORT").as_deref() != Ok("0"))
+}
 
 /// Where the blended faces of a rigged mesh come among those of its
 /// skeleton, as the Legacy Viewer draws them (see the module).
@@ -121,8 +180,9 @@ fn rig_cmp(a: Option<RigOrder>, b: Option<RigOrder>) -> Ordering {
 /// One blended face of the frame.
 #[derive(Clone, Copy, Debug)]
 pub struct BlendEntry {
-    /// Distance from the eye to the centre of its object, or of its
-    /// skeleton for a rigged mesh (`rig`).
+    /// Nonrigged: projected face depth, with the Legacy bounds bias. Rigged:
+    /// distance to its skeleton, retaining attachment order. The comparison
+    /// switch keeps object-centre distances for all nonrigged entries.
     pub distance: f32,
     pub cmd: DrawCmd,
     /// The face has glow (drawn into the glow right after it).
@@ -131,8 +191,8 @@ pub struct BlendEntry {
     pub double_sided: bool,
     /// The face belongs to a rigged mesh.
     pub rigged: bool,
-    /// Its object (index in the scene's slab), whose faces share one
-    /// distance and are drawn in their own order.
+    /// Its object (index in the scene's slab), used to break equal-depth
+    /// ties and retain a rigged object's face order.
     pub object: u32,
     /// Its face (texture entry) in the object.
     pub face: u8,
@@ -215,7 +275,7 @@ fn depth_mode_in(mode: Mode, old_now: bool) -> RiggedBlendDepth {
 /// start, are drawn writing depth: the rigged faces, skeleton by skeleton
 /// back to front, each in its `RigOrder`, then the others back to front
 /// (all of them back to front, none apart, when `rigged_apart` is false).
-/// The faces of one object keep their own order, by face then first index;
+/// Rigged faces of one object keep their own order, by face then first index;
 /// objects at the same distance keep one order from frame to frame (by
 /// object): the lists are gathered in parallel, in no fixed order, and an
 /// unstable tie would flicker.
@@ -334,6 +394,76 @@ pub fn water_sides(center_z: f32, radius: f32, plane: Option<f32>) -> (bool, boo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nonrigged_faces_reverse_order_when_seen_from_the_other_side() {
+        let bounds: Vec<_> = [0.0, 0.3, 0.6]
+            .into_iter()
+            .map(|y| FaceBounds {
+                center: Vec3::new(0.0, y, 0.0),
+                half: Vec3::new(1.0, 0.0, 1.0),
+            })
+            .collect();
+        for (eye, forward, expected) in [
+            (Vec3::new(0.0, -3.0, 0.0), Vec3::Y, vec![2, 1, 0]),
+            (Vec3::new(0.0, 3.0, 0.0), Vec3::NEG_Y, vec![0, 1, 2]),
+        ] {
+            let depth = FaceDepth::new(Mat4::IDENTITY, eye, forward);
+            let mut entries: Vec<_> = bounds
+                .iter()
+                .enumerate()
+                .map(|(i, &b)| BlendEntry {
+                    distance: depth.of(b),
+                    object: 1,
+                    face: i as u8,
+                    ..entry(i as u32, 3.0, false)
+                })
+                .collect();
+            sort(&mut entries, true);
+            assert_eq!(records(&entries), expected);
+        }
+    }
+
+    #[test]
+    fn face_depth_matches_legacy_world_bounds_after_rotation_scale_and_anchor() {
+        let local = FaceBounds::of(&[[-0.3, -0.5, -1.0], [0.7, 0.2, 0.9]]);
+        let model = Mat4::from_rotation_z(0.7)
+            * Mat4::from_scale_rotation_translation(
+                Vec3::new(-2.0, 0.3, 1.5),
+                glam::Quat::from_rotation_x(0.4),
+                Vec3::new(4.0, -3.0, 2.0),
+            );
+        let eye = Vec3::new(1.0, -7.0, 5.0);
+        let forward = Vec3::new(0.3, 1.0, -0.2).normalize();
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+        for x in [-1.0, 1.0] {
+            for y in [-1.0, 1.0] {
+                for z in [-1.0, 1.0] {
+                    let p = model.transform_point3(local.center + local.half * Vec3::new(x, y, z));
+                    min = min.min(p);
+                    max = max.max(p);
+                }
+            }
+        }
+        let legacy = ((min + max) * 0.5 - eye - (max - min) * 0.25 * forward).dot(forward);
+        assert!((FaceDepth::new(model, eye, forward).of(local) - legacy).abs() < 1e-5);
+    }
+
+    #[test]
+    fn alpha_sort_uses_view_depth_instead_of_radial_distance() {
+        let depth = FaceDepth::new(Mat4::IDENTITY, Vec3::ZERO, Vec3::Y);
+        let side = FaceBounds {
+            center: Vec3::new(10.0, 2.0, 0.0),
+            half: Vec3::ZERO,
+        };
+        let back = FaceBounds {
+            center: Vec3::new(0.0, 3.0, 0.0),
+            half: Vec3::ZERO,
+        };
+        assert!(side.center.length() > back.center.length());
+        assert!(depth.of(side) < depth.of(back));
+    }
 
     fn entry(record: u32, distance: f32, rigged: bool) -> BlendEntry {
         BlendEntry {

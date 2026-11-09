@@ -26,6 +26,16 @@ An empty line starts a new paragraph.
 
 # Aurora Viewer news
 
+## 2026-11-08 — Aurora 0.9.4: Debug settings, and more of the Legacy Viewer's options
+The toolbar's Debug settings button, or Ctrl+Alt+Shift+S, opens the Debug settings window: every setting by name, with a search, a star on the ones you changed and Reset to default. Preferences › Build sets what a new prim starts as: colour, transparency, glow, fullbright, physical, temporary or phantom. Preferences › Graphics gets a progressive draw distance (off by default), the Trees detail and Particles from worn objects, and Preferences › Protections can hide objects with a huge surface. Your cache and settings are kept.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.4)
+
+## 2026-11-08 — Neighbouring regions, objects that stay in view, calls that hold
+Aurora now asks the region for your own draw distance, so the neighbouring regions appear at 256 m and beyond, as in the Legacy Viewer. Objects in plain view no longer vanish at some camera angles, and the world comes back by itself when the video memory was full at login. Media screens in busy regions load and follow their remotes, and textures left white come back without a relog. Private calls stay connected across teleports, and parcel music no longer cuts out while you cam around.
+
+## 2026-11-08 — Chat, camera, avatars and fixes
+Camera smoothing goes up to 300 without jumps, and Preferences › Chat sets how many lines show above the chat bar. Ctrl+Tab cycles through the conversations, the Japanese IME shows the active conversion segment, and script text boxes take several lines. About Land edits stick, the AO no longer leaves a sit playing after a teleport, and the RLVa tools get an Exceptions tab. Thanks to AiAiCaptainn, anne-skydancer, circuskid, ClifHofmann, emmelinedevere, Gaalrauch, iGao, KanikaBreed, Marakiinfinity, MilkIsPrettyGood, Nowalski, Odessa-Draekavik and RheaMercury.
+
 ## 2026-11-06 — Aurora 0.9.3: AMD FSR 3.1, and steadier on every graphics card
 Choose FSR 3.1 under Anti-aliasing in Preferences › Graphics: smooth edges at the window's size, or a world drawn smaller and rebuilt sharp, for more frames per second. After a graphics card reset Aurora reopens its window and keeps you logged in (a switch in Preferences turns it off). Intel 6th to 9th generation integrated GPUs start again, and so do AMD + NVIDIA laptops; integrated GPUs count their shared memory in the texture budget. The cache is cleared once at the first start of 0.9.3; your settings are kept.
 [Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.3)

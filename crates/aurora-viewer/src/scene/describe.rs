@@ -342,6 +342,11 @@ impl Scene {
             world.avatar_shape_dz.get(&avatar).copied().unwrap_or(0.0) + world.appearance_hover(&avatar),
             world.visual_params(&avatar).map(|v| v.len()).unwrap_or(0)
         );
+        // issue #2747: an avatar in its system body, as if nothing it wears
+        // came; the list tells which of the simulator's never arrived
+        if let Some(worn) = world.worn_vs_listed(aidx) {
+            log::info!("  {}", worn.line());
+        }
         for (te, name, _) in avatar::BAKES {
             if let Some(t) = world.bake_texture(aidx, te) {
                 // our own bakes are ours; those of the others follow the rule

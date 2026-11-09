@@ -388,7 +388,7 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
             ),
             (
                 "card-request-teleport",
-                "map-pin-filled",
+                "car-filled",
                 aurora_i18n::tr!("inventory-card-request-teleport"),
                 crate::ui::context::CtxAction::RequestTeleport(who),
                 single && facts.online.contains(&who),

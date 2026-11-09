@@ -1806,8 +1806,9 @@ impl WorldMapUi {
         }
         Self::friend_altitude_hint(ui, p, world);
         ui.add_space(8.0);
-        let (mut go, mut copy, mut info, mut show, mut clear) = (false, false, false, false, false);
-        ui.horizontal(|ui| {
+        let (mut go, mut copy, mut info, mut show, mut clear, mut track_region) = (false, false, false, false, false, false);
+        // wraps: Track region makes the row wider than a narrow card
+        ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             let h = Vec2::new(0.0, BUTTON_H);
             let icon_only = Vec2::new(30.0, BUTTON_H);
@@ -1845,6 +1846,16 @@ impl WorldMapUi {
             show = widgets::action_button_if(ui, p, "focus-centered", "", ActionKind::Flat, icon_only, track.is_some())
                 .on_hover_text(aurora_i18n::tr!("ui-worldmap-show-selection"))
                 .clicked();
+            track_region = widgets::action_button_if(
+                ui,
+                p,
+                "location-filled",
+                aurora_i18n::tr!("region-tracker-track-region"),
+                ActionKind::Flat,
+                h,
+                region.is_some() && !world.rlva.has("showloc"),
+            )
+            .clicked();
             clear = widgets::action_button(ui, p, "backspace-filled", "", ActionKind::Flat, icon_only)
                 .on_hover_text(format!(
                     "{}\n{}",
@@ -1855,6 +1866,13 @@ impl WorldMapUi {
         });
         let ctx = ui.ctx().clone();
         let rect = self.ov.close(panel);
+
+        if track_region
+            && !world.rlva.has("showloc")
+            && let Some((_, sim)) = &region
+        {
+            actions.push(WorldMapAction::TrackRegion(sim.name.clone()));
+        }
 
         if let Some((x, y, z, moved)) = edited {
             // another spot: no landmark nor friend any more; a height only:
@@ -2032,6 +2050,7 @@ mod tests {
             favorite: false,
             favorite_known: false,
             thumbnail: Uuid::nil(),
+            thumbnail_known: false,
         }
     }
 

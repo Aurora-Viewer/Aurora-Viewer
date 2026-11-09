@@ -147,21 +147,7 @@ impl App {
 
     /// Whether `idx` is a prim worn by our avatar (or a child of one).
     pub(super) fn own_attachment(&self, idx: usize) -> bool {
-        let mut current = idx;
-        for _ in 0..64 {
-            let Some(o) = self.world.objects.get(current) else {
-                return false;
-            };
-            let Some(parent) = self.world.objects.parent_of(o) else {
-                return false;
-            };
-            match self.world.objects.get(parent) {
-                Some(p) if p.is_avatar() => return p.full_id == self.world.agent_id,
-                Some(_) => current = parent,
-                None => return false,
-            }
-        }
-        false
+        crate::interaction::own_attachment(&self.world, idx)
     }
 }
 

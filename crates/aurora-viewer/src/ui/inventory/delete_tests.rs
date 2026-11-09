@@ -304,3 +304,13 @@ fn measure() {
         );
     }
 }
+
+#[test]
+fn the_backspace_key_deletes_on_a_mac_only() {
+    use super::delete::deletes;
+    assert!(deletes(egui::Key::Delete, false));
+    assert!(deletes(egui::Key::Delete, true));
+    assert!(!deletes(egui::Key::Backspace, false));
+    assert!(deletes(egui::Key::Backspace, true), "the Mac key labelled Delete");
+    assert!(!deletes(egui::Key::A, true));
+}

@@ -4,12 +4,12 @@
 use super::{Action, AppearanceUi, model};
 use crate::{
     theme::Palette,
-    ui::{menu, texture_picker::TexturePicker, widgets},
+    ui::{menu, widgets},
     world::{World, inventory::Inventory, names::AvatarNames},
 };
 use aurora_net::outfits::categories::Update;
 use egui::RichText;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 #[derive(Default)]
@@ -17,8 +17,6 @@ pub(super) struct State {
     rename: Option<(Uuid, String)>,
     focus: bool,
     confirm: Option<(Uuid, bool)>,
-    picker: TexturePicker,
-    image_for: Option<Uuid>,
     copy: Option<OutfitCopy>,
 }
 
@@ -242,14 +240,19 @@ pub(super) fn context_menu(
             return;
         }
         menu::separator(ui, p);
+        // LLOutfitContextMenu's Outfit.Thumbnail
         if menu::item_if(ui, p, "photo-filled", aurora_i18n::tr!("common-image-2"), rules.folder) {
-            st.gallery.picker.open_with_defaults(
-                aurora_i18n::tr!("ui-appearance-gallery-outfit-picture"),
-                folder.info.thumbnail,
-                None,
-                true,
-            );
-            st.gallery.image_for = Some(id);
+            actions.push(Action::OutfitImage(id));
+        }
+        // the quick way to know an outfit again: no window, no preview (#2716)
+        if menu::item_if(
+            ui,
+            p,
+            "camera-filled",
+            aurora_i18n::tr!("ui-inventory-thumbnail-take-snapshot"),
+            rules.folder,
+        ) {
+            actions.push(Action::OutfitSnapshot(id));
         }
         if menu::item_if(
             ui,
@@ -389,14 +392,7 @@ pub(super) fn context_menu(
     });
 }
 
-pub(super) fn dialogs(
-    ctx: &egui::Context,
-    p: &Palette,
-    world: &mut World,
-    st: &mut AppearanceUi,
-    images: &HashMap<Uuid, egui::TextureHandle>,
-    actions: &mut Vec<Action>,
-) {
+pub(super) fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut AppearanceUi, actions: &mut Vec<Action>) {
     if let Some((id, mut name)) = st.gallery.rename.clone() {
         let mut close = false;
         let response = crate::ui::widgets::Modal::new(egui::Id::unique("outfit_rename")).show(ctx, |ui| {
@@ -491,15 +487,6 @@ pub(super) fn dialogs(
             st.gallery.confirm = None;
         }
     }
-    if let Some(image) = st.gallery.picker.show_live(ctx, p, world, images)
-        && let Some(id) = st.gallery.image_for
-    {
-        actions.push(Action::Category(id, Update::Thumbnail(image)));
-    }
-    if !st.gallery.picker.open {
-        st.gallery.image_for = None;
-    }
-    st.wanted_images.extend(st.gallery.picker.wanted_images.drain());
 }
 
 #[cfg(test)]
@@ -540,7 +527,7 @@ mod tests {
                     st,
                     &mut open,
                     41_748,
-                    &HashMap::new(),
+                    &std::collections::HashMap::new(),
                 );
             },
         );

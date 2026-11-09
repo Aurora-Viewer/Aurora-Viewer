@@ -25,10 +25,15 @@ fn pbr_terrain_samples_all_layers_maps_and_triplanar_normals_on_gpu() {
     // binding-array path is covered by scene_shader_is_valid; sampling is unchanged.
     let terrain_vertex = env[..env.find("fn vs_terrain(").unwrap()].rfind("@vertex").unwrap();
     let tangent = &env[env.find("fn terrain_transform_tangent(").unwrap()..terrain_vertex];
-    let functions = format!("{}\n{tangent}\n{}", wgsl_function(object, "terrain_direction"), &env[start..end])
-        .replace("tex_pages[loc >> 16u]", "tex_pages")
-        .replace("tex_pages[ramp_loc >> 16u]", "alpha_ramp")
-        .replace("let ramp_loc = tex_loc[6u];", "let ramp_loc = 0u;");
+    let functions = format!(
+        "{}\n{}\n{tangent}\n{}",
+        wgsl_function(object, "terrain_direction"),
+        wgsl_function(object, "terrain_tangent"),
+        &env[start..end]
+    )
+    .replace("tex_pages[loc >> 16u]", "tex_pages")
+    .replace("tex_pages[ramp_loc >> 16u]", "alpha_ramp")
+    .replace("let ramp_loc = tex_loc[6u];", "let ramp_loc = 0u;");
     let source = format!(
         r#"
 {}
@@ -88,7 +93,7 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {{
     }}
     if (id.x >= 15u && id.x < 23u) {{
         let parent = records[input.record];
-        let raw = vec4<f32>(terrain_direction(vec4<u32>(round(parent.anim_xf * 255.0))), 1.0);
+        let raw = vec4<f32>(terrain_tangent(parent.anim_xf), 1.0);
         input.tangent0 = terrain_transform_tangent(records[parent.tex.x], input.normal, raw);
     }}
     let material = terrain_material(input, vec3<f32>(0.01, 0.0, 0.0), vec3<f32>(0.0, 0.01, 0.0), vec2<f32>(0.0), vec2<f32>(0.0), false, lin_clamp);
@@ -153,7 +158,7 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {{
         records.push(DrawRecord {
             tex: [20 + i; 4],
             anim: frame.joints.map(u32::from),
-            anim_xf: frame.weights.map(|b| f32::from(b) / 255.0),
+            anim_xf: frame.weights.map(|w| f32::from(w) / 65535.0),
             ..Default::default()
         });
     }
@@ -300,7 +305,7 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {{
     });
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: 2304,
+        size: crate::readback::readback_size(2304),
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -350,7 +355,7 @@ fn probe(@builtin(global_invocation_id) id: vec3<u32>) {{
     readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("terrain readback"));
     device.poll(wgpu::PollType::wait_indefinitely()).expect("terrain GPU completion");
     let mapped = readback.get_mapped_range(..).expect("terrain samples");
-    let samples: &[[f32; 4]] = bytemuck::cast_slice(&mapped);
+    let samples = crate::readback::f32x4s(&mapped);
     // Independent bilinear samples of IMG_ALPHA_GRAD_2D. A 1D ramp, an
     // inverted row convention or nearest filtering cannot satisfy these.
     for (i, expected) in [
@@ -821,7 +826,7 @@ fn shadow_surface(vi: u32, sample_index: u32) -> TerrainShadowOut {
         let view = target.create_view(&Default::default());
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: 64 * 48 * 4,
+            size: crate::readback::readback_size(64 * 48 * 4),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -869,7 +874,7 @@ fn shadow_surface(vi: u32, sample_index: u32) -> TerrainShadowOut {
         readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("mask readback"));
         device.poll(wgpu::PollType::wait_indefinitely()).expect("mask GPU completion");
         let bytes = readback.get_mapped_range(..).expect("mask depth");
-        depth_maps.push(bytemuck::cast_slice::<u8, f32>(&bytes).to_vec());
+        depth_maps.push(crate::readback::f32s(&bytes));
     }
     assert_eq!(
         &depth_maps[0][..64 * 40],

@@ -22,6 +22,9 @@ const TOOL: f32 = 30.0;
 /// conversation's bubble with a plus, apart from the friendship offer's
 /// `user-plus`.
 pub(super) const ADD_PEOPLE_ICON: &str = "message-circle-plus";
+/// Requesting a teleport, wherever it is offered: a car comes to fetch you,
+/// apart from the paper plane of the offer beside it.
+pub(super) const REQUEST_TELEPORT_ICON: &str = "car-filled";
 
 /// What the head says of the conversation shown.
 struct Identity {
@@ -225,8 +228,8 @@ pub(super) fn show(
                 st.members_open = !st.members_open;
             }
         }
-        // a resident: their profile, and a teleport offer to join us (the
-        // teleport button of FSFloaterIM's toolbar)
+        // a resident: their profile, and a teleport offered or requested (one
+        // menu button in FSFloaterIM's toolbar, two buttons here)
         (Some(other), _) => {
             if tool(ui, p, slot(), "user-filled", aurora_i18n::tr!("common-profile"), Tone::Plain).clicked() {
                 actions.push(ConvAction::Profile(other));
@@ -240,6 +243,30 @@ pub(super) fn show(
             }
             if tool(ui, p, slot(), "send-filled", aurora_i18n::tr!("common-offer-teleport"), Tone::Plain).clicked() {
                 actions.push(ConvAction::OfferTeleport(other));
+            }
+            // the other direction, greyed for an offline friend as
+            // FSFloaterIM::changed greys teleport_btn; a head too narrow
+            // for it leaves it to the row of the "…" menu
+            let friend = world.social.is_friend(&other);
+            let slots = 7 + usize::from(!friend) + usize::from(can_add_people(world, &other));
+            if request_fits(width, slots) {
+                let request = if world.social.can_request_teleport(&other) {
+                    Tone::Plain
+                } else {
+                    Tone::Off
+                };
+                if tool(
+                    ui,
+                    p,
+                    slot(),
+                    REQUEST_TELEPORT_ICON,
+                    aurora_i18n::tr!("common-request-teleport"),
+                    request,
+                )
+                .clicked()
+                {
+                    crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::RequestTeleport(other));
+                }
             }
         }
     }
@@ -332,6 +359,12 @@ pub(super) fn show(
     } else if cut {
         r.on_hover_text(&who.title);
     }
+}
+
+/// Whether a head of `width` keeps its picture clear of `slots` buttons, the
+/// request's among them.
+pub(super) fn request_fits(width: f32, slots: usize) -> bool {
+    8.0 + slots as f32 * (TOOL + 2.0) + 12.0 + PIC <= width
 }
 
 /// People can be added to a conversation with a resident or a

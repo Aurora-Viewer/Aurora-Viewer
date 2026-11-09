@@ -129,13 +129,11 @@ pub struct Throttle {
     counted: Counted,
 }
 
-/// Packets of all the circuits since the start: received, sequence numbers
-/// skipped, and packets that came after a later one (what filled a gap).
+/// Packets of all circuits since the start: received and confirmed lost.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Counted {
     pub received: u64,
-    pub gaps: u64,
-    pub late: u64,
+    pub lost: u64,
 }
 
 impl Throttle {
@@ -206,8 +204,7 @@ impl Throttle {
             return None;
         }
         let before = std::mem::replace(&mut self.counted, counted);
-        let gaps = counted.gaps.saturating_sub(before.gaps);
-        let missing = gaps.saturating_sub(counted.late.saturating_sub(before.late));
+        let missing = counted.lost.saturating_sub(before.lost);
         let lost = loss_percent(counted.received.saturating_sub(before.received), missing);
         self.update(now, lost).then_some(lost)
     }
@@ -316,19 +313,51 @@ mod tests {
     #[test]
     fn the_share_lost_is_that_of_the_packets_since_the_last_update() {
         let t0 = Instant::now();
-        let counted = |received, gaps, late| Counted { received, gaps, late };
-        let mut t = Throttle::new(1000.0, t0).counting_from(counted(5000, 40, 10));
+        let counted = |received, lost| Counted { received, lost };
+        let mut t = Throttle::new(1000.0, t0).counting_from(counted(5000, 30));
         // too soon: nothing is counted
-        assert_eq!(t.update_from(t0 + Duration::from_secs(1), counted(5100, 90, 10)), None);
-        // 950 more received, 60 gaps of which 10 were filled late: 5 %
-        let lost = t.update_from(t0 + UPDATE_EVERY, counted(5950, 100, 20));
+        assert_eq!(t.update_from(t0 + Duration::from_secs(1), counted(5100, 80)), None);
+        // 950 more received and 50 confirmed losses: 5 %.
+        let lost = t.update_from(t0 + UPDATE_EVERY, counted(5950, 80));
         assert!(lost.is_some_and(|l| (l - 5.0).abs() < 0.01), "{lost:?}");
         assert!((t.asked() - 1400.0).abs() < 0.01);
         // nothing lost since: back up
-        let lost = t.update_from(t0 + UPDATE_EVERY * 2, counted(9000, 100, 20));
+        let lost = t.update_from(t0 + UPDATE_EVERY * 2, counted(9000, 80));
         assert_eq!(lost, Some(0.0));
         // at the top again: nothing to send
-        assert_eq!(t.update_from(t0 + UPDATE_EVERY * 3, counted(9900, 100, 20)), None);
+        assert_eq!(t.update_from(t0 + UPDATE_EVERY * 3, counted(9900, 80)), None);
+    }
+
+    #[test]
+    fn packet_loss_reordered_across_throttle_windows_does_not_lower_bandwidth() {
+        use crate::packet_loss::PacketLoss;
+
+        let start = Instant::now();
+        let at = |ms| start + Duration::from_millis(ms);
+        let rtt = Duration::from_millis(325);
+        let mut packets = PacketLoss::default();
+        let mut throttle = Throttle::new(1000.0, start);
+        packets.receive(1, false, start);
+        // A burst just before the five-second throttle sample. All ten
+        // missing packets arrive just after it, still within the grace.
+        packets.receive(12, false, at(4900));
+        let lost = packets.expire(at(5000), rtt);
+        throttle.update_from(at(5000), Counted { received: 2, lost });
+        assert_eq!(throttle.asked(), 1500.0);
+        for seq in 2..12 {
+            packets.receive(seq, true, at(5100));
+        }
+        let lost = lost + packets.expire(at(10000), rtt);
+        throttle.update_from(at(10000), Counted { received: 12, lost });
+        assert_eq!(throttle.asked(), 1500.0);
+        // Real losses still lower the throttle once their grace expires.
+        packets.receive(23, false, at(10100));
+        let lost = lost + packets.expire(at(20000), rtt);
+        let changed = throttle.update_from(at(20000), Counted { received: 13, lost });
+        assert!(changed.is_some_and(|percent| percent > TIGHTEN_LOSS));
+        assert!((throttle.asked() - 1400.0).abs() < 0.01);
+        throttle.update_from(at(25000), Counted { received: 113, lost });
+        assert!((throttle.asked() - 1500.0).abs() < 0.01);
     }
 
     #[test]
