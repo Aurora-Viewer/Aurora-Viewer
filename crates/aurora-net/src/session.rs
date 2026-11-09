@@ -7325,7 +7325,11 @@ mod interest_list_tests {
     #[tokio::test]
     async fn queued_modes_fold_into_the_last() {
         let (tx, rx) = mpsc::unbounded_channel();
-        for mode in [InterestListMode::Capture360, InterestListMode::Default, InterestListMode::Capture360] {
+        for mode in [
+            InterestListMode::Capture360,
+            InterestListMode::Default,
+            InterestListMode::Capture360,
+        ] {
             tx.send(("u".into(), mode)).expect("queue");
         }
         drop(tx);
