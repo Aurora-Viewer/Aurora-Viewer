@@ -17,6 +17,7 @@ use crate::ui::capture_360::{Action, Capture360Ui, View};
 use aurora_net::{InterestListMode, NetCommand};
 use aurora_render::{CAPTURE_CAMERAS, EquirectJob, Renderer, SnapshotSpec};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 
 /// Frames a face may wait for its answer before the capture is given up
@@ -42,11 +43,74 @@ enum Stage {
     Projecting { started: Instant, faces_ms: u128 },
 }
 
+/// What a capture was started with: the settings and the camera of that
+/// instant, so that the window's controls and the camera's motion during
+/// the capture change nothing of it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Plan {
+    quality: Quality,
+    face_size: u32,
+    hide_avatars: bool,
+    /// Degrees, for the XMP block.
+    heading: u32,
+    /// The eye of all six faces.
+    eye: glam::Vec3,
+}
+
+impl Plan {
+    fn new(quality: Quality, hide_avatars: bool, forward: glam::Vec3, eye: glam::Vec3) -> Self {
+        Plan {
+            quality,
+            face_size: quality.face_size(),
+            hide_avatars,
+            heading: rules::heading_degrees(forward),
+            eye,
+        }
+    }
+}
+
+/// Renderer replies owed to captures given up: the renderer answers a
+/// request once, whoever still waits for it, and the answer of a capture
+/// that is gone must not reach the next capture or an ordinary photo.
+#[derive(Debug, Default, PartialEq)]
+struct Stale(u32);
+
+impl Stale {
+    /// A request is given up; `in_flight` when the render thread has it.
+    fn abandon(&mut self, in_flight: bool) {
+        if in_flight {
+            self.0 += 1;
+        }
+    }
+
+    /// A projection is given up: the render thread owes an answer only when
+    /// the answer has not arrived and the request was no longer waiting to be
+    /// taken (`withdrawn`).
+    fn abandon_projecting(&mut self, arrived: bool, withdrawn: bool) {
+        self.abandon(!arrived && !withdrawn);
+    }
+
+    /// An answer arrived: true when it belongs to a capture given up (and
+    /// is to be thrown away).
+    fn swallow(&mut self, arrived: bool) -> bool {
+        if arrived && self.0 > 0 {
+            self.0 -= 1;
+            return true;
+        }
+        false
+    }
+
+    fn pending(&self) -> bool {
+        self.0 > 0
+    }
+}
+
 /// The last panorama made.
 pub(super) struct Panorama {
     width: u32,
     height: u32,
-    rgba: Vec<u8>,
+    /// Shared with the worker that makes the preview and with the saves.
+    rgba: Arc<Vec<u8>>,
     /// What the XMP block says of it.
     heading: u32,
     quality: Quality,
@@ -75,10 +139,12 @@ pub(super) struct Capture360 {
     face_view: bool,
     /// The face drawn this frame (its side), for the photo frame.
     face_frame: Option<u32>,
-    /// The side of the faces of the capture in progress.
-    face_size: u32,
-    /// The heading of the camera when the capture started.
-    heading: u32,
+    /// What the capture in progress (or the last) was started with.
+    plan: Option<Plan>,
+    /// Panorama answers still owed to captures given up.
+    stale_equirect: Stale,
+    /// The preview of the last panorama, reduced on a worker.
+    preview_work: Option<crossbeam_channel::Receiver<(u32, u32, Vec<u8>)>>,
     image: Option<Panorama>,
     preview: Option<egui::TextureHandle>,
     saving: Option<crossbeam_channel::Receiver<Result<PathBuf, String>>>,
@@ -123,7 +189,7 @@ impl App {
         self.capture_360_demo();
         self.capture_360.face_frame = None;
         if std::mem::take(&mut self.capture_360.face_view) {
-            self.camera.fixed_view = None;
+            self.camera.release_fixed_view();
             renderer.cut_motion_history();
         }
         let open = self.panels.capture_360 && self.in_world();
@@ -142,11 +208,18 @@ impl App {
                 // onOpen: a first capture at the chosen quality
                 self.capture_360.wanted = true;
             } else {
-                self.capture_360_abandon("the window closed");
+                self.capture_360_abandon(renderer, "the window closed");
             }
         }
         self.capture_360_take_answers(renderer);
-        if self.capture_360.wanted && self.capture_360.stage.is_none() && open && !self.photo_busy() {
+        // (a photo's preview or part still on its way would be taken for a
+        // face, and a panorama owed to a capture given up for this one's)
+        if self.capture_360.wanted
+            && self.capture_360.stage.is_none()
+            && open
+            && !self.photo_work_pending(renderer)
+            && !self.capture_360.stale_equirect.pending()
+        {
             self.capture_360.wanted = false;
             self.capture_360_start();
         }
@@ -158,10 +231,10 @@ impl App {
     /// avatars hidden when asked, the heading recorded, six faces to draw.
     fn capture_360_start(&mut self) {
         let settings = self.settings.snapshot.capture_360;
-        let face_size = settings.quality.face_size();
+        let plan = Plan::new(settings.quality, settings.hide_avatars, self.camera.forward(), self.camera.position);
+        let face_size = plan.face_size;
         self.world.photo_isolation.set_hide_avatars(settings.hide_avatars);
-        self.capture_360.face_size = face_size;
-        self.capture_360.heading = rules::heading_degrees(self.camera.forward());
+        self.capture_360.plan = Some(plan);
         self.capture_360.message = None;
         self.capture_360.stage = Some(Stage::Faces {
             faces: Default::default(),
@@ -172,7 +245,7 @@ impl App {
         });
         log::info!(
             "360 capture: heading {}°, faces of {face_size} px, avatars {}",
-            self.capture_360.heading,
+            plan.heading,
             if settings.hide_avatars { "hidden" } else { "drawn" }
         );
     }
@@ -185,16 +258,23 @@ impl App {
             Some(Stage::Faces { next, asked, waited, .. }) => (*next, *asked, *waited),
             _ => return,
         };
+        let Some(plan) = self.capture_360.plan else {
+            return;
+        };
         if asked {
             if renderer.failed() || renderer.device_lost() {
-                self.capture_360_fail("the frame of a face was not drawn");
+                self.capture_360_fail(renderer, "the frame of a face was not drawn");
                 return;
             }
             if waited >= FACE_WAIT {
-                renderer.drop_snapshot();
-                self.capture_360_fail("a face waited too long for the render thread");
+                self.capture_360_fail(renderer, "a face waited too long for the render thread");
                 return;
             }
+        } else if next == 0 && !self.photo_world_frozen() {
+            // the freeze takes hold at the start of the next frame: the
+            // first face waits for it, so that the six faces share one
+            // instant (the clock, the animations, the avatars hidden)
+            return;
         }
         if let Some(Stage::Faces { asked, waited, .. }) = &mut self.capture_360.stage {
             if *asked {
@@ -203,10 +283,12 @@ impl App {
             *asked = true;
         }
         let face = CAPTURE_CAMERAS[next];
-        let size = self.capture_360.face_size;
-        // the capture camera: the eye where it is, the view along the face,
-        // 90° high and wide (LLViewerCamera::setView(F_PI_BY_TWO), setAspect(1))
+        let size = plan.face_size;
+        // the capture camera: the eye where the capture started, the view
+        // along the face, 90° high and wide
+        // (LLViewerCamera::setView(F_PI_BY_TWO), setAspect(1))
         self.camera.fixed_view = Some(FixedView {
+            eye: plan.eye,
             forward: face.forward,
             up: face.up,
             fov_y: std::f32::consts::FRAC_PI_2,
@@ -235,13 +317,15 @@ impl App {
         let Some(answer) = renderer.snapshot.take() else {
             return;
         };
-        let size = self.capture_360.face_size;
+        let Some(size) = self.capture_360.plan.map(|p| p.face_size) else {
+            return;
+        };
         let Some((_, _, pixels)) = answer.filter(|(w, h, _)| (*w, *h) == (size, size)) else {
-            self.capture_360_fail("a face was not drawn");
+            self.capture_360_fail(renderer, "a face was not drawn");
             return;
         };
         if renderer.device_lost() {
-            self.capture_360_fail("the GPU was lost while a face was drawn");
+            self.capture_360_fail(renderer, "the GPU was lost while a face was drawn");
             return;
         }
         let Some(Stage::Faces {
@@ -290,22 +374,33 @@ impl App {
 
     /// The panorama the renderer made, if it came back.
     fn capture_360_take_answers(&mut self, renderer: &mut Renderer) {
+        // the answer of a capture given up goes nowhere
+        if self.capture_360.stale_equirect.pending() {
+            let arrived = renderer.equirect.is_some();
+            if self.capture_360.stale_equirect.swallow(arrived) {
+                renderer.equirect = None;
+            }
+            if renderer.failed() || renderer.device_lost() {
+                self.capture_360.stale_equirect = Stale::default();
+            }
+            return;
+        }
         let (started, faces_ms) = match &self.capture_360.stage {
             Some(Stage::Projecting { started, faces_ms }) => (*started, *faces_ms),
             _ => return,
         };
         if renderer.failed() || renderer.device_lost() {
-            self.capture_360_fail("the panorama was not made");
+            self.capture_360_fail(renderer, "the panorama was not made");
             return;
         }
         let Some(answer) = renderer.equirect.take() else {
             if started.elapsed().as_secs() > 60 {
-                self.capture_360_fail("the panorama waited too long");
+                self.capture_360_fail(renderer, "the panorama waited too long");
             }
             return;
         };
         let Some((width, height, rgba)) = answer else {
-            self.capture_360_fail("the panorama could not be made");
+            self.capture_360_fail(renderer, "the panorama could not be made");
             return;
         };
         log::info!(
@@ -313,7 +408,9 @@ impl App {
             started.elapsed().as_millis()
         );
         self.capture_360.stage = None;
-        let settings = self.settings.snapshot.capture_360;
+        let Some(plan) = self.capture_360.plan else {
+            return;
+        };
         let region_name = self.world.region_name();
         let region_url = if region_name.is_empty() {
             "https://secondlife.com".to_owned()
@@ -321,20 +418,25 @@ impl App {
             crate::slurl::make(&region_name, self.world.agent.position)
         };
         // the preview at half the panorama's width: the window never shows
-        // more, and the texture stays modest
-        let (pw, ph, preview) = crate::snapshot::save::downscale(width, height, &rgba, width / 2);
-        let image = egui::ColorImage::from_rgba_unmultiplied([pw as usize, ph as usize], &preview);
-        self.capture_360.preview = Some(
-            self.egui_ctx
-                .load_texture("capture_360_preview", image, egui::TextureOptions::LINEAR),
-        );
+        // more, and the texture stays modest; reduced on a worker, the
+        // frame does not wait for 8 megapixels
+        let rgba = Arc::new(rgba);
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        let source = rgba.clone();
+        let spawned = std::thread::Builder::new().name("aurora-360-preview".into()).spawn(move || {
+            let _ = tx.send(crate::snapshot::save::downscale(width, height, &source, width / 2));
+        });
+        match spawned {
+            Ok(_) => self.capture_360.preview_work = Some(rx),
+            Err(e) => log::warn!("360 capture: cannot start the preview thread: {e}"),
+        }
         self.capture_360.image = Some(Panorama {
             width,
             height,
             rgba,
-            heading: self.capture_360.heading,
-            quality: settings.quality,
-            face_size: self.capture_360.face_size,
+            heading: plan.heading,
+            quality: plan.quality,
+            face_size: plan.face_size,
             taken: crate::snapshot::local_time(),
             region_name,
             region_url,
@@ -351,19 +453,36 @@ impl App {
     }
 
     /// The capture given up: what it changed put back.
-    fn capture_360_abandon(&mut self, why: &str) {
-        if self.capture_360.stage.take().is_some() {
-            log::info!("360 capture: given up, {why}");
+    fn capture_360_abandon(&mut self, renderer: &mut Renderer, why: &str) {
+        match self.capture_360.stage.take() {
+            Some(Stage::Faces { asked, .. }) => {
+                log::info!("360 capture: given up, {why}");
+                if asked {
+                    // the face asked is drawn for nobody: its answer is
+                    // swallowed, and one that already came is thrown away
+                    renderer.drop_snapshot();
+                    renderer.snapshot = None;
+                }
+            }
+            Some(Stage::Projecting { .. }) => {
+                log::info!("360 capture: given up, {why}");
+                // not yet taken by the render thread: simply withdrawn
+                // (an answer already there is thrown away, and owes nothing)
+                let arrived = renderer.equirect.take().is_some();
+                let withdrawn = renderer.equirect_request.take().is_some();
+                self.capture_360.stale_equirect.abandon_projecting(arrived, withdrawn);
+            }
+            None => {}
         }
-        self.camera.fixed_view = None;
+        self.camera.release_fixed_view();
         self.capture_360.face_view = false;
         self.capture_360.wanted = false;
         self.world.photo_isolation.set_hide_avatars(false);
     }
 
-    fn capture_360_fail(&mut self, why: &str) {
+    fn capture_360_fail(&mut self, renderer: &mut Renderer, why: &str) {
         log::warn!("360 capture: {why}");
-        self.capture_360_abandon(why);
+        self.capture_360_abandon(renderer, why);
         self.capture_360.message = Some((aurora_i18n::tr!("capture-360-failed").to_owned(), true));
     }
 
@@ -421,6 +540,16 @@ impl App {
 
     /// The save dialog's choice and the save's end.
     fn capture_360_poll_workers(&mut self) {
+        if let Some(rx) = &self.capture_360.preview_work
+            && let Ok((pw, ph, preview)) = rx.try_recv()
+        {
+            self.capture_360.preview_work = None;
+            let image = egui::ColorImage::from_rgba_unmultiplied([pw as usize, ph as usize], &preview);
+            self.capture_360.preview = Some(
+                self.egui_ctx
+                    .load_texture("capture_360_preview", image, egui::TextureOptions::LINEAR),
+            );
+        }
         if let Some(rx) = &self.capture_360.dialog
             && let Ok(choice) = rx.try_recv()
         {
@@ -583,5 +712,48 @@ mod tests {
         assert_eq!(d.quality, None);
         assert!(!d.hide);
         assert!(parse_demo("").is_none());
+    }
+
+    /// The plan keeps the quality, the eye and the heading of the start.
+    #[test]
+    fn the_plan_is_the_start_of_the_capture() {
+        let eye = glam::Vec3::new(10.0, 20.0, 30.0);
+        let plan = Plan::new(Quality::High, true, glam::Vec3::Y, eye);
+        assert_eq!(plan.quality, Quality::High);
+        assert_eq!(plan.face_size, Quality::High.face_size());
+        assert_eq!(plan.eye, eye);
+        assert!(plan.hide_avatars);
+        let other = Plan::new(Quality::Preview, false, glam::Vec3::Y, eye);
+        assert_ne!(plan.face_size, other.face_size);
+    }
+
+    /// The answers owed to captures given up are thrown away, in order,
+    /// and only they.
+    #[test]
+    fn a_given_up_answer_never_reaches_the_next_capture() {
+        let mut stale = Stale::default();
+        assert!(!stale.swallow(true), "nothing owed: the answer is the capture's");
+        stale.abandon(false);
+        assert!(!stale.pending(), "a request the render thread never took is owed nothing");
+        stale.abandon(true);
+        assert!(stale.pending());
+        assert!(!stale.swallow(false), "no answer yet");
+        assert!(stale.swallow(true), "the first answer is the given up one's");
+        assert!(!stale.pending());
+        assert!(!stale.swallow(true), "the next is the new capture's");
+    }
+
+    /// Given up while projecting: an answer that already arrived is thrown
+    /// away and owes nothing, or the next capture would swallow its own.
+    #[test]
+    fn abandoning_a_projection_owes_nothing_for_an_answer_that_arrived() {
+        let mut stale = Stale::default();
+        stale.abandon_projecting(true, false);
+        assert!(!stale.pending(), "the answer is here: nothing is owed");
+        stale.abandon_projecting(false, true);
+        assert!(!stale.pending(), "the request was withdrawn before the render thread took it");
+        stale.abandon_projecting(false, false);
+        assert!(stale.pending(), "the render thread has the request: its answer is owed");
+        assert!(!Stale::default().swallow(true), "the next capture keeps its own answer");
     }
 }

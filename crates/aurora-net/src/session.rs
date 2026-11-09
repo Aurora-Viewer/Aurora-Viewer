@@ -170,6 +170,10 @@ struct Sim {
     /// The interest list mode this region was last told
     /// (LLViewerRegion::mInterestListMode): the same one is not posted again.
     interest_list: InterestListMode,
+    /// The queue of this region's InterestList posts: one task sends them
+    /// in order, so a slow `360` can never land after the `default` that
+    /// followed it.
+    interest_tx: Option<mpsc::UnboundedSender<(String, InterestListMode)>>,
 }
 
 impl Sim {
@@ -202,6 +206,7 @@ impl Sim {
             link_up: false,
             caps_asked_at: None,
             interest_list: InterestListMode::Default,
+            interest_tx: None,
         }
     }
 }
@@ -3478,14 +3483,22 @@ impl Session<'_> {
         }
         sim.interest_list = mode;
         let handle = sim.handle;
-        let body = caps::interest_list_body(mode);
         let http = self.sh.caps_http.clone();
-        tokio::spawn(async move {
-            match caps::post_llsd(&http, &url, &body).await {
-                Ok(_) => log::info!("InterestList mode {} posted to region {handle}", mode.as_str()),
-                Err(e) => log::warn!("InterestList mode {} not posted to region {handle}: {e}", mode.as_str()),
-            }
+        let tx = sim.interest_tx.get_or_insert_with(|| {
+            let (tx, rx) = mpsc::unbounded_channel();
+            tokio::spawn(interest_list_worker(rx, move |url, mode| {
+                let http = http.clone();
+                async move {
+                    let body = caps::interest_list_body(mode);
+                    match caps::post_llsd(&http, &url, &body).await {
+                        Ok(_) => log::info!("InterestList mode {} posted to region {handle}", mode.as_str()),
+                        Err(e) => log::warn!("InterestList mode {} not posted to region {handle}: {e}", mode.as_str()),
+                    }
+                }
+            }));
+            tx
         });
+        let _ = tx.send((url, mode));
     }
 
     /// The capability of the agent's region (cloned for a request task).
@@ -5591,6 +5604,23 @@ fn coarse_position(x: u8, y: u8, z: u8, size: (u32, u32)) -> Vec3 {
     )
 }
 
+/// One region's InterestList posts, in the order asked and one at a time
+/// (the Legacy Viewer's posts are independent coroutines; a slow reply
+/// must not reorder the modes here). Modes queued while one is being
+/// posted are folded into the last, which is the one the region must end on.
+async fn interest_list_worker<F, Fut>(mut rx: mpsc::UnboundedReceiver<(String, InterestListMode)>, post: F)
+where
+    F: Fn(String, InterestListMode) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    while let Some(mut latest) = rx.recv().await {
+        while let Ok(next) = rx.try_recv() {
+            latest = next;
+        }
+        post(latest.0, latest.1).await;
+    }
+}
+
 #[cfg(test)]
 mod coarse_tests {
     use super::*;
@@ -7260,5 +7290,52 @@ mod script_dialog_tests {
             assert_eq!(parts.join(" "), words);
             assert!(main.try_recv_from(&mut large).is_err(), "three parts only");
         }
+    }
+}
+
+#[cfg(test)]
+mod interest_list_tests {
+    use super::*;
+
+    /// A slow `360` post finishes before the `default` asked after it is
+    /// sent, and the region ends on the latest mode.
+    #[tokio::test]
+    async fn interest_list_posts_are_ordered_and_end_on_the_latest() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let seen = log.clone();
+        let worker = tokio::spawn(interest_list_worker(rx, move |_url, mode| {
+            let seen = seen.clone();
+            async move {
+                if mode == InterestListMode::Capture360 {
+                    tokio::time::sleep(Duration::from_millis(60)).await;
+                }
+                seen.lock().push(mode);
+            }
+        }));
+        tx.send(("u".into(), InterestListMode::Capture360)).expect("queue");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        tx.send(("u".into(), InterestListMode::Default)).expect("queue");
+        drop(tx);
+        worker.await.expect("worker");
+        assert_eq!(*log.lock(), vec![InterestListMode::Capture360, InterestListMode::Default]);
+    }
+
+    /// Modes queued behind a post in flight fold into the last one.
+    #[tokio::test]
+    async fn queued_modes_fold_into_the_last() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        for mode in [InterestListMode::Capture360, InterestListMode::Default, InterestListMode::Capture360] {
+            tx.send(("u".into(), mode)).expect("queue");
+        }
+        drop(tx);
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let seen = log.clone();
+        interest_list_worker(rx, move |_url, mode| {
+            let seen = seen.clone();
+            async move { seen.lock().push(mode) }
+        })
+        .await;
+        assert_eq!(*log.lock(), vec![InterestListMode::Capture360]);
     }
 }

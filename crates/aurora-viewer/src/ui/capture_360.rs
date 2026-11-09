@@ -84,19 +84,22 @@ impl Capture360Ui {
                 .color(p.ink),
         );
         ui.add_space(2.0);
-        ui.indent("capture_360_quality", |ui| {
-            for q in Quality::ALL {
-                let resp = widgets::radio_value(ui, p, &mut settings.quality, q, aurora_i18n::text(q.label_key()))
-                    .on_hover_text(aurora_i18n::text(q.tip_key()));
-                if resp.changed() {
-                    actions.push(Action::Changed);
+        // (the settings of a capture in progress are the ones it started with)
+        ui.add_enabled_ui(!view.busy, |ui| {
+            ui.indent("capture_360_quality", |ui| {
+                for q in Quality::ALL {
+                    let resp = widgets::radio_value(ui, p, &mut settings.quality, q, aurora_i18n::text(q.label_key()))
+                        .on_hover_text(aurora_i18n::text(q.tip_key()));
+                    if resp.changed() {
+                        actions.push(Action::Changed);
+                    }
                 }
+            });
+            ui.add_space(6.0);
+            if widgets::checkbox(ui, p, &mut settings.hide_avatars, aurora_i18n::tr!("capture-360-hide-avatars")).changed() {
+                actions.push(Action::Changed);
             }
         });
-        ui.add_space(6.0);
-        if widgets::checkbox(ui, p, &mut settings.hide_avatars, aurora_i18n::tr!("capture-360-hide-avatars")).changed() {
-            actions.push(Action::Changed);
-        }
         ui.add_space(12.0);
         ui.add_enabled_ui(!view.busy, |ui| {
             if widgets::primary_button_sized(ui, p, aurora_i18n::tr!("capture-360-create"), Vec2::new(PANEL_W, BUTTON_H)).clicked() {

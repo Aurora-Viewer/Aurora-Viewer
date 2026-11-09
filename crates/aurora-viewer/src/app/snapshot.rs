@@ -1081,6 +1081,12 @@ impl App {
 
     /// Start a photo of the destination's size.
     pub(super) fn photo_job(&mut self, purpose: Purpose, renderer: &Renderer) {
+        // a 360° capture owns the renderer's snapshot slot and the frozen
+        // world until its panorama is made: a photo would be taken for a face
+        if self.capture_360.capturing() {
+            log::info!("photo: not started, a 360° capture is under way");
+            return;
+        }
         let window = renderer.size();
         let full = self.photo_size(window);
         let s = &self.settings.snapshot;
@@ -1294,6 +1300,13 @@ impl App {
     pub(super) fn photo_busy(&self) -> bool {
         let s = &self.snapshots;
         s.saving.is_some() || s.upload.is_some() || s.detail_wait.is_some() || s.job.as_ref().is_some_and(|j| j.purpose != Purpose::Preview)
+    }
+
+    /// Any photo work that still owns the renderer's snapshot slot: a
+    /// part or a preview drawn or awaited, a request out, an answer not yet
+    /// taken (a 360° capture waits for all of it).
+    pub(super) fn photo_work_pending(&self, renderer: &Renderer) -> bool {
+        self.photo_busy() || self.snapshots.job.is_some() || renderer.snapshot_request.is_some() || renderer.snapshot.is_some()
     }
 
     /// Upload prices: the account's benefits (texture_upload_cost, by area
@@ -1717,7 +1730,7 @@ impl App {
             s.camera_moved = None;
             s.preview_wanted = true;
         }
-        if s.preview_wanted && s.job.is_none() && in_world {
+        if s.preview_wanted && s.job.is_none() && in_world && !self.capture_360.capturing() {
             s.preview_wanted = false;
             s.preview_for = Some(key);
             self.photo_job(Purpose::Preview, renderer);
