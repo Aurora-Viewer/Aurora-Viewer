@@ -562,18 +562,43 @@ fn conversation_key(c: &super::conversations::Conversation) -> String {
     format!("conversation\n{}\n{}", c.session.hyphenated(), c.time)
 }
 
+/// `mark_brought_in_background`, waited for (the tests).
+#[cfg(test)]
+pub fn mark_brought(state: &Path, entries: &[super::conversations::Conversation]) {
+    if entries.is_empty() {
+        return;
+    }
+    write_brought(state, entries.iter().map(conversation_key).collect());
+}
+
 /// The import at login brings each conversation entry once: the keys of
 /// `entries` are written to the state only now, by the side that took the
 /// entries in (or knowingly dropped them: removed by the user, the log
 /// cleared). An import whose entries were not taken because the log was
 /// switched off leaves them to come at the next login.
-pub fn mark_brought(state: &Path, entries: &[super::conversations::Conversation]) {
+/// The state file is written on a short-lived thread, not on the frame.
+pub fn mark_brought_in_background(state: &Path, entries: &[super::conversations::Conversation]) {
     if entries.is_empty() {
         return;
     }
+    let (state, keys) = (state.to_owned(), entries.iter().map(conversation_key).collect());
+    if let Err(e) = std::thread::Builder::new()
+        .name("import-state".into())
+        .spawn(move || write_brought(&state, keys))
+    {
+        log::warn!("conversation transcripts: the import's state is not saved ({e})");
+    }
+}
+
+/// The state file is read and written whole: one writer at a time, the
+/// import's own pass included.
+static STATE_WRITER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn write_brought(state: &Path, keys: Vec<String>) {
+    let _one = STATE_WRITER.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut known = load_state(state);
-    for c in entries {
-        known.insert(conversation_key(c), (0, 0));
+    for key in keys {
+        known.insert(key, (0, 0));
     }
     save_state(state, &known);
 }
@@ -652,6 +677,7 @@ fn run(port: &store::MergePort, request: Request, done: &AtomicUsize, total: &At
         .collect();
     let left_out = folders.iter().map(|folder| left_out(folder)).sum();
     let spelled = spellings(&request.dir, &sources);
+    let _one = STATE_WRITER.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut state = load_state(&request.state);
     // the conversation log goes with the instant messages; it is small and
     // merged by session, so it is read again at each import. The import at

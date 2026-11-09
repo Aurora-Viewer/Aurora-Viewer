@@ -469,7 +469,7 @@ impl ChatLog {
         } else {
             if report.at_login {
                 // taken in, or removed by the user on purpose: not brought again
-                import::mark_brought(&report.state, &report.conversations);
+                import::mark_brought_in_background(&report.state, &report.conversations);
             }
             removals.filter(&mut report.conversations);
         }

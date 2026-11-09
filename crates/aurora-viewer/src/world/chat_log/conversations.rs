@@ -360,7 +360,12 @@ impl Log {
     /// is not written over.
     pub(super) fn poll_read(&mut self, now: i64) {
         let Some(rx) = &self.reading else { return };
-        let Ok(read) = rx.try_recv() else { return };
+        let read = match rx.try_recv() {
+            Ok(read) => read,
+            Err(crossbeam_channel::TryRecvError::Empty) => return,
+            // the job was dropped without an answer: as an unreadable file
+            Err(crossbeam_channel::TryRecvError::Disconnected) => Err(std::io::Error::other("the read job ended without an answer")),
+        };
         self.apply_read(read, now);
     }
 
@@ -916,6 +921,19 @@ mod tests {
         log.finish_read(40);
         let text = log.take_save(true).expect("the merged log is written");
         assert_eq!(parse_file(text.as_bytes(), 40).0.len(), 2);
+    }
+
+    #[test]
+    fn a_dropped_read_job_ends_the_wait_and_keeps_the_session_entries() {
+        let (tx, rx) = crossbeam_channel::bounded::<std::io::Result<Option<Vec<u8>>>>(1);
+        let mut log = Log::default();
+        log.start(Some(rx));
+        log.log(entry(30, Kind::Private, "Session", 2));
+        drop(tx);
+        log.poll_read(40);
+        assert!(!log.is_reading());
+        assert_eq!(log.list.len(), 1);
+        assert!(log.take_save(true).is_none(), "never over a file that could not be read");
     }
 
     #[test]
