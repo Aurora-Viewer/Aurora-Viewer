@@ -1,5 +1,6 @@
 # Aurora Viewer — task tracking
 
+- 🔧 Large Teleport History no longer paints every row each frame ([#2955](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/2955); task `tp-history-fps-2955`, 2026-11-09): off-screen history rows skip text layout, menus and snapshots (classic list_row and Aurora Places cards).
 - 🟡 The media filter's question no longer blocks flying (Discord report relayed by the human, 2026-11-09: a pilot crossing regions got a dialog at each one; task `media-question-card`; no issue): the question is a banner under the top bar (under the media controls when they show) instead of a dialog. It takes neither the keyboard nor the mouse and covers no window; nothing loads until it is answered, a region left behind takes its question away, the whole address shows on hover of the domain, and its ✕ ("Not now") denies this time, as Escape did. A deliberate difference from the Legacy Viewer's MediaAlert dialogs (`ui/media_filter.rs`).
   - ⬜ QA on the grid: with the media filter on and an empty list, fly a vehicle across several regions with parcel music: the banner shows at each new site, flying and the camera keep responding, and the next region's question replaces the previous one; Allow with "Always for <domain>" stops the questions for that site.
 

@@ -891,6 +891,10 @@ impl PlacesUi {
                     self.selected == Some(Sel::History(i)),
                     true,
                 );
+                // off-screen rows keep their slot but skip menus (#2955)
+                if !ui.is_rect_visible(r.response.rect) {
+                    continue;
+                }
                 drag::source(&r.response, || drag::PlaceDrag {
                     target: drag::Target::History(it.global),
                     favorite: None,
@@ -1183,6 +1187,14 @@ fn list_row(
         Sense::click()
     };
     let (rect, response) = ui.allocate_exact_size(Vec2::new(w, 20.0), sense);
+    // large Teleport History (#2955): skip paint and text layout off screen
+    if !ui.is_rect_visible(rect) {
+        return RowResponse {
+            response,
+            toggle: false,
+            info: false,
+        };
+    }
     let painter = ui.painter();
     if selected {
         painter.rect_filled(rect, ui.visuals().window_corner_radius, p.violet.gamma_multiply(0.28));
