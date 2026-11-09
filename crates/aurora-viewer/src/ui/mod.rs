@@ -29,6 +29,7 @@ pub mod click_away_focus;
 pub mod close_key;
 pub mod color_picker;
 pub mod colors;
+pub mod contact_markers;
 pub mod contacts;
 pub mod context;
 pub mod controls;

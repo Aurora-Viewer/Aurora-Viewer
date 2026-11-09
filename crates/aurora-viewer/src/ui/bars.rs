@@ -78,6 +78,7 @@ pub enum BarAction {
     ToggleChatBar,
     /// Show Friends Only switched (RFO, FSRenderFriendsOnly).
     ToggleFriendsOnly,
+    ToggleNameTags,
     ToggleMoveLock,
     /// Me › Quickjump (Self.toggleIgnorePreJump, FSIgnoreFinishAnimation).
     ToggleQuickjump,
@@ -260,6 +261,7 @@ pub struct StatusInfo<'a> {
     pub quickjump: bool,
     /// Show Friends Only is on (World › Show Friends only).
     pub friends_only: bool,
+    pub show_name_tags: bool,
     /// The fly override is on (Me › Fly override).
     pub fly_override: bool,
     /// Photos are taken without the shutter sound nor the snapshot
@@ -1212,6 +1214,16 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             true,
         ) {
             *action = BarAction::ToggleFriendsOnly;
+        }
+        if menu::check(
+            ui,
+            p,
+            "label-off",
+            aurora_i18n::tr!("ui-bars-immersive-hide-tags"),
+            !st.show_name_tags,
+            true,
+        ) {
+            *action = BarAction::ToggleNameTags;
         }
         menu::separator(ui, p);
         // Firestorm's View › Camera Controls and Movement Controls
@@ -2204,6 +2216,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "defaultchatbar" => return BarAction::ToggleChatBar,
         // TogglePerAccountControl FSRenderFriendsOnly
         "RFO" => return BarAction::ToggleFriendsOnly,
+        "name_tags" => return BarAction::ToggleNameTags,
         "preferences" => toggle("options", &mut panels.settings),
         // Firestorm's Move and View buttons open the controls
         "move" => {
@@ -3008,6 +3021,8 @@ pub(crate) fn toolbar_row(
             toolbar.photo_roll_active
         } else if b.command == "defaultchatbar" {
             toolbar.chat_bar_active
+        } else if b.command == "name_tags" {
+            !toolbar.show_name_tags
         } else if b.command == "RFO" {
             toolbar.friends_only_active
         } else if b.command == "vr_view" {
@@ -3033,6 +3048,13 @@ pub(crate) fn toolbar_row(
                 value0 = super::toolbar::label(b).to_string(),
                 unread = format!("{}", row.unread)
             )
+        } else if b.command == "name_tags" {
+            if active {
+                aurora_i18n::tr!("toolbar-use-name-tag-preferences")
+            } else {
+                aurora_i18n::tr!("ui-bars-immersive-hide-tags")
+            }
+            .to_owned()
         } else if !super::toolbar::ready(&b.command) {
             format!("{}\n{}", super::toolbar::label(b), menu::not_yet())
         } else if !usable {
@@ -3054,7 +3076,7 @@ pub(crate) fn toolbar_row(
             p,
             icons,
             &b.command,
-            &b.icon,
+            if b.command == "name_tags" && active { "label-off" } else { &b.icon },
             super::toolbar::label(b),
             &tip,
             active,
@@ -3803,6 +3825,9 @@ mod tests {
         assert!(!panels.web_browser);
         assert!(super::super::toolbar::ready("RFO"));
         assert!(matches!(run_command(&ctx, "RFO", &mut panels), BarAction::ToggleFriendsOnly));
+        // World › Hide name tags' button
+        assert!(super::super::toolbar::ready("name_tags"));
+        assert!(matches!(run_command(&ctx, "name_tags", &mut panels), BarAction::ToggleNameTags));
     }
 
     #[test]

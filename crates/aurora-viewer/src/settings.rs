@@ -12,6 +12,16 @@ pub mod registry;
 mod saver;
 pub mod stream_list;
 
+/// Where a contact-set marker stands on an avatar (`ui/contact_markers.rs`).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum MarkerAnchor {
+    /// Above the name plate, or the head without one.
+    #[default]
+    AboveName,
+    /// On the avatar's chest.
+    Body,
+}
+
 /// How the Conversations window looks (Preferences › Aurora): Aurora's
 /// workspace (the default: a column of conversations, messages grouped by
 /// author with their picture, `ui/chat/aurora.rs`), its compact variant (one
@@ -1015,6 +1025,9 @@ pub struct Settings {
     pub show_other_name_tags: bool,
     /// LLVOAvatar::idleUpdateNameTag: fade after a continuous visible interval.
     pub temporary_name_tags: bool,
+    /// The contact sets' markers in the world (each set says where it wants one).
+    pub contact_markers: bool,
+    pub contact_marker_anchor: MarkerAnchor,
     pub name_tag_show_seconds: f32,
     /// Avatar name tags drawn as before the name plates (`ui::nameplate`):
     /// lines of text on a flat tag, in the tag colors of the preferences.
@@ -1070,6 +1083,8 @@ pub struct Settings {
     /// Firestorm's ConfirmHideUI ("Confirm before hiding UI"): with
     /// Firestorm's bars, hiding the interface asks first.
     pub confirm_hide_interface: bool,
+    /// Normal-mode visibility, applied before the individual avatar tag preferences.
+    pub show_name_tags: bool,
     /// The avatars' name tags in immersive mode (#859): off by default, its
     /// button beside the one that leaves it.
     pub immersive_name_tags: bool,
@@ -1184,6 +1199,9 @@ pub struct Settings {
     /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
     /// legacy lines).
     pub chat_style: ChatStyle,
+    /// The column of the conversations' workspace stays a rail at any
+    /// window width (its button; off, the column follows the window).
+    pub chat_column_collapsed: bool,
     /// Pictures and videos under the links of the Conversations window
     /// (Preferences › Chat; `link_preview.rs`).
     pub link_previews: crate::link_preview::Settings,
@@ -2110,6 +2128,8 @@ impl Default for Settings {
             show_friend_name_tags: true,
             show_other_name_tags: true,
             temporary_name_tags: false,
+            contact_markers: true,
+            contact_marker_anchor: MarkerAnchor::AboveName,
             name_tag_show_seconds: 10.0,
             classic_name_tags: false,
             classic_profiles: false,
@@ -2123,6 +2143,7 @@ impl Default for Settings {
             favorites_row_folded: false,
             system_island: SystemIsland::default(),
             confirm_hide_interface: true,
+            show_name_tags: true,
             immersive_name_tags: false,
             immersive_huds: true,
             show_net_stats: false,
@@ -2167,6 +2188,7 @@ impl Default for Settings {
             plate_shift_click: PlateClick::Nothing,
             plate_ctrl_click: PlateClick::Nothing,
             chat_style: ChatStyle::Aurora,
+            chat_column_collapsed: false,
             link_previews: Default::default(),
             gifs: Default::default(),
             notifications_style: NotificationsStyle::Aurora,

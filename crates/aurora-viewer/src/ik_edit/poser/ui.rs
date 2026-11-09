@@ -34,6 +34,7 @@ impl Editor {
         self.mirrors.initialize(rig);
         self.follow_selected_side(rig);
         let (mut library, mut settings, mut undo, mut redo) = (false, false, false, false);
+        let mut markers = false;
         self.poser.edited_total = self
             .poser
             .sessions
@@ -47,8 +48,18 @@ impl Editor {
         if self.over_viewfinder {
             floater.order = egui::Order::Foreground;
         }
+        // The settings' "Show joint markers and gizmos" switch, one click
+        // away while posing, as the Legacy Viewer's toggleVisualManipulators
+        // button (FSFloaterPoser::onToggleVisualManipulators,
+        // indra/newview/fsfloaterposer.cpp); the eye says what is on screen.
+        let (markers_icon, markers_tip) = if self.poser.markers {
+            ("eye-filled", aurora_i18n::text("poser-markers-hide"))
+        } else {
+            ("eye-off", aurora_i18n::text("poser-markers"))
+        };
         floater.actions = vec![
             ("settings-filled", aurora_i18n::text("poser-settings"), &mut settings),
+            (markers_icon, markers_tip, &mut markers),
             ("arrow-forward-up", aurora_i18n::text("poser-redo"), &mut redo),
             ("arrow-back-up", aurora_i18n::text("poser-undo"), &mut undo),
             ("book-filled", aurora_i18n::text("poser-library"), &mut library),
@@ -83,6 +94,9 @@ impl Editor {
         }
         if settings {
             self.poser.settings_open = !self.poser.settings_open;
+        }
+        if markers {
+            self.poser.markers = !self.poser.markers;
         }
         if let Some(history) = self.history_key(ctx) {
             undo |= history == EditHistory::Undo;
