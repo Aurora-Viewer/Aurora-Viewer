@@ -308,6 +308,10 @@ pub struct HoverTips {
     /// human's choice (2026-10-21); the Legacy Viewer's is on.
     pub enabled: bool,
     pub form: HoverTipForm,
+    /// Avatar tips even with `enabled` off, objects and land then showing
+    /// none (#2475; the Legacy Viewer has no such switch, its avatar tips
+    /// follow ShowHoverTips alone). Off, so nothing changes for anyone.
+    pub avatars: bool,
     /// ShowAllObjectHoverTip: every object, not only those that can be
     /// touched, paid, bought or have media (off, as in the Legacy Viewer).
     pub all_objects: bool,
@@ -330,6 +334,7 @@ impl Default for HoverTips {
         HoverTips {
             enabled: false,
             form: HoverTipForm::Card,
+            avatars: false,
             all_objects: false,
             land: false,
             group_titles: true,
@@ -432,6 +437,10 @@ pub struct Settings {
     /// a notice. Aurora only: the Legacy Viewer checks at launch.
     pub update_check_interval: crate::updater::Interval,
     pub ignored_update: String,
+    /// When this installation first saw the minimum supported version that
+    /// is above it: its grace period to sign in counts from there (#3014).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update_grace: Option<crate::updater::GraceStart>,
     pub area_search: area_search::AreaSearch,
     pub crash_reports: CrashReports,
     /// Firestorm Language: default follows the OS.
@@ -497,6 +506,9 @@ pub struct Settings {
     /// Show Friends Only and keeping it after a teleport, for each account
     /// (FSRenderFriendsOnly, FSRenderFriendsOnlyPersistsTP: per-account settings).
     pub friends_only: std::collections::HashMap<uuid::Uuid, crate::world::friends_only::Preferences>,
+    /// Accounts whose radio was explicitly switched on. Only the intent is
+    /// remembered across logins (#2514), never a parcel or manual stream URL.
+    pub parcel_music_accounts: std::collections::HashSet<uuid::Uuid>,
     /// Photo window (Firestorm's snapshot floater settings).
     pub snapshot: crate::snapshot::Settings,
     /// Depth of field (Preferences › Graphics).
@@ -746,6 +758,12 @@ pub struct Settings {
     /// off by default; Preferences > Chat). "/n" before the text works
     /// without it.
     pub show_chat_channel: bool,
+    /// The emojis used last as a row under the chat fields (Preferences >
+    /// Chat, on; it takes no room before a first emoji is sent).
+    pub show_recent_emojis: bool,
+    /// The same row with the Legacy chat style: off, as the Legacy Viewer's
+    /// row starts closed behind its arrow (the human's choice, 2026-11-09).
+    pub show_recent_emojis_legacy: bool,
     /// Our own objects' script errors in the nearby chat, with a red
     /// warning sign, instead of opening the Script debug window, which
     /// still keeps them (ShowScriptErrorsLocation 0; on, the human's choice
@@ -1256,6 +1274,8 @@ pub struct Settings {
     /// Projectors cast shadows within the configured budget
     /// (Legacy Viewer RenderShadowDetail 2, "Sun/Moon + Projectors").
     pub projector_shadows: bool,
+    /// Include lights worn by other residents (Preferences › Graphics).
+    pub others_attached_lights: bool,
     /// Maximum simultaneous projector shadows, independent of local-light count.
     pub projector_shadow_limit: u8,
     /// Screen-space contact shadows of the sun or the moon, beyond the
@@ -1517,7 +1537,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 34;
+const SETTINGS_VERSION: u32 = 35;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1827,6 +1847,7 @@ impl Default for Settings {
             update_check_interval: crate::updater::Interval::default(),
             update_channel: aurora_updater::feed::Channel::Stable,
             ignored_update: String::new(),
+            update_grace: None,
             area_search: Default::default(),
             crash_reports: CrashReports::Ask,
             language: "default".into(),
@@ -1953,6 +1974,7 @@ impl Default for Settings {
             bridge: Default::default(),
             movements: Default::default(),
             friends_only: Default::default(),
+            parcel_music_accounts: Default::default(),
             snapshot: Default::default(),
             dof: Default::default(),
             loading_backdrop: true,
@@ -1971,6 +1993,8 @@ impl Default for Settings {
             chat_timestamps_im: true,
             former_chat_timestamps: None,
             show_chat_channel: false,
+            show_recent_emojis: true,
+            show_recent_emojis_legacy: false,
             script_errors_in_chat: true,
             script_errors_to_channel: false,
             script_errors_channel: 1,
@@ -2146,6 +2170,7 @@ impl Default for Settings {
             former_look_at_range: None,
             shadow_quality: 3,
             projector_shadows: true,
+            others_attached_lights: true,
             projector_shadow_limit: 2,
             contact_shadows: false,
             antialiasing: 6,
@@ -2779,6 +2804,13 @@ impl Settings {
             // Low and Ultra), any other keeps 0.5
             crate::graphics_presets::upgrade_tree_detail(&mut self);
         }
+        if self.settings_version < 35 {
+            // pictures on hover used to show only inside the text tooltips
+            // (#3008): an earlier file keeps what it really showed, so the
+            // pictures stay on only where the tooltips were on too
+            let inventory = &mut self.inventory;
+            inventory.thumbnail_tooltips &= inventory.show_hover_tooltips;
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -3313,6 +3345,17 @@ impl WaterEffectsSettings {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn avatar_only_hover_tips_are_off_by_default_and_for_older_preferences() {
+        use super::HoverTips;
+        assert!(!HoverTips::default().avatars);
+        assert!(!HoverTips::default().enabled);
+        let old: HoverTips = serde_json::from_str(r#"{"enabled":true,"all_objects":false}"#).expect("older hover preferences");
+        assert!(!old.avatars);
+        assert!(old.enabled);
+        assert!(!old.all_objects);
+    }
+
+    #[test]
     fn console_max_lines_defaults_persist_and_sanitize() {
         let old: super::Settings = serde_json::from_str("{}").expect("old synthetic settings");
         assert_eq!(old.chat_console_max_lines, 40);
@@ -3843,6 +3886,22 @@ mod tests {
     }
 
     #[test]
+    fn recent_emojis_are_shown_by_default_and_survive_reload() {
+        assert!(Settings::default().show_recent_emojis);
+        assert!(!Settings::default().show_recent_emojis_legacy, "off with the Legacy chat style");
+        let old: Settings = serde_json::from_str("{}").expect("synthetic old settings");
+        assert!(old.show_recent_emojis);
+        assert!(!old.show_recent_emojis_legacy);
+        let original = Settings {
+            show_recent_emojis: false,
+            ..Settings::default()
+        };
+        let saved = serde_json::to_vec(&original).expect("serialize synthetic preference");
+        let loaded: Settings = serde_json::from_slice(&saved).expect("reload synthetic preference");
+        assert!(!loaded.sanitized().show_recent_emojis);
+    }
+
+    #[test]
     fn chat_channel_selector_is_hidden_by_default_and_survives_reload() {
         assert!(!Settings::default().show_chat_channel);
         let old: Settings = serde_json::from_str("{}").expect("synthetic old settings");
@@ -4044,6 +4103,32 @@ mod tests {
             ..Settings::default()
         };
         assert!(chosen.sanitized().show_perf);
+    }
+
+    /// Pictures on hover used to show only inside the text tooltips (#3008).
+    #[test]
+    fn inventory_hover_pictures_keep_what_earlier_files_showed() {
+        let fresh = Settings::default().sanitized().inventory;
+        assert!(!fresh.show_hover_tooltips && !fresh.thumbnail_tooltips, "both off by default");
+        // (tooltips, pictures) in an earlier file → pictures afterwards: the
+        // pictures only showed inside the tooltips
+        for (tips, pictures, kept) in [(false, true, false), (true, true, true), (true, false, false)] {
+            let mut old = Settings {
+                settings_version: 34,
+                ..Settings::default()
+            };
+            old.inventory.show_hover_tooltips = tips;
+            old.inventory.thumbnail_tooltips = pictures;
+            let migrated = old.sanitized();
+            assert_eq!(migrated.inventory.show_hover_tooltips, tips);
+            assert_eq!(migrated.inventory.thumbnail_tooltips, kept, "tips {tips}, pictures {pictures}");
+        }
+        // a later choice of pictures alone stays
+        let mut chosen = Settings::default();
+        chosen.inventory.thumbnail_tooltips = true;
+        let chosen = chosen.sanitized();
+        assert!(chosen.inventory.thumbnail_tooltips);
+        assert!(chosen.sanitized().inventory.thumbnail_tooltips, "migrated only once");
     }
 
     /// The head turns toward the cursor's side by default; earlier files all

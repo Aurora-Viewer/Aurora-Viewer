@@ -1437,7 +1437,7 @@ fn contacts_navigation_details_button_opens_sheet() {
                             .collect()
                     });
                     buttons.sort_by(|a, b| a.top().total_cmp(&b.top()).then(a.left().total_cmp(&b.left())));
-                    assert_eq!(buttons.len(), if online { 5 } else { 4 }, "all quick actions remain visible");
+                    assert_eq!(buttons.len(), if online { 6 } else { 4 }, "all quick actions remain visible");
                     assert_eq!(row.rect.height(), 42.0, "contact rows keep their height at every window width");
                     assert!(buttons.iter().all(|button| button.center().y == row.rect.center().y));
                     let details = buttons[buttons.len() - 2].center();
