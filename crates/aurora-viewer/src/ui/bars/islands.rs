@@ -1044,13 +1044,7 @@ fn tip_body(
         *action = BarAction::NetworkGraph;
     }
 
-    let music = if !media.music_available {
-        aurora_i18n::tr!("ui-bars-tip-music-none")
-    } else if media.music_playing {
-        aurora_i18n::tr!("ui-bars-tip-music-playing")
-    } else {
-        aurora_i18n::tr!("ui-bars-tip-music-stopped")
-    };
+    let music = media.music_status.text();
     let (rect, _) = ui.allocate_exact_size(Vec2::new(w, TIP_ROW), Sense::hover());
     paint_tip_row(
         ui,
@@ -1059,7 +1053,7 @@ fn tip_body(
         rect,
         "radio",
         aurora_i18n::tr!("ui-bars-tip-music"),
-        music,
+        &music,
         p.muted,
         11.5,
     );

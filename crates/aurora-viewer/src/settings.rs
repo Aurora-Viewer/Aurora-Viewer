@@ -501,6 +501,9 @@ pub struct Settings {
     /// Show Friends Only and keeping it after a teleport, for each account
     /// (FSRenderFriendsOnly, FSRenderFriendsOnlyPersistsTP: per-account settings).
     pub friends_only: std::collections::HashMap<uuid::Uuid, crate::world::friends_only::Preferences>,
+    /// Accounts whose radio was explicitly switched on. Only the intent is
+    /// remembered across logins (#2514), never a parcel or manual stream URL.
+    pub parcel_music_accounts: std::collections::HashSet<uuid::Uuid>,
     /// Photo window (Firestorm's snapshot floater settings).
     pub snapshot: crate::snapshot::Settings,
     /// Depth of field (Preferences › Graphics).
@@ -1960,6 +1963,7 @@ impl Default for Settings {
             bridge: Default::default(),
             movements: Default::default(),
             friends_only: Default::default(),
+            parcel_music_accounts: Default::default(),
             snapshot: Default::default(),
             dof: Default::default(),
             loading_backdrop: true,
