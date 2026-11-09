@@ -540,6 +540,9 @@ pub struct InventoryUi {
     visible: Vec<Uuid>,
     pub clipboard: Vec<Uuid>,
     pub cut: bool,
+    cut_rows: clipboard::CutRows,
+    #[cfg(windows)]
+    clipboard_sequence: Option<u32>,
     pub consume_clipboard: bool,
     pub pending_refresh: Vec<Uuid>,
     pub created_selection: Option<Uuid>,
@@ -1105,6 +1108,8 @@ fn item_row(
     };
     st.visible.push(*id);
     ui.horizontal(|ui| {
+        let opacity = ui.opacity();
+        ui.multiply_opacity(clipboard::opacity(inv, st, *id));
         ui.spacing_mut().item_spacing.x = 4.0;
         resolved_item_type_icon(ui, icons, inv, it, p);
         if rename_row(ui, p, inv, *id, st, actions) {
@@ -1134,6 +1139,7 @@ fn item_row(
                 super::widgets::inventory_item_label_tagged(ui, label, st.selection.contains(id), egui::Sense::click_and_drag(), name, tag)
             })
             .inner;
+        ui.set_opacity(opacity);
         item_response(ui, p, inv, it, r, permissions, st, prefs, facts, actions);
     });
 }
@@ -1198,6 +1204,8 @@ fn folder_row(
     let name = folder_name(inv, id);
     let fetch_state = folder.state;
     ui.horizontal(|ui| {
+        let opacity = ui.opacity();
+        ui.multiply_opacity(clipboard::opacity(inv, state, id));
         ui.spacing_mut().item_spacing.x = 4.0;
         let resp = tree::caret(ui, p, *open);
         clipboard::demo_caret(&resp, state, id);
@@ -1228,6 +1236,7 @@ fn folder_row(
             (p, text, super::widgets::reserve_row_tag(ui, &mut job, text, p), false)
         });
         let r = super::widgets::inventory_item_label_tagged(ui, job, state.selection.contains(&id), sense, None, tag);
+        ui.set_opacity(opacity);
         if folder_response(ui, p, inv, id, r, Some(resp.rect), open, state, prefs, facts, actions).double_clicked() {
             *open = !*open;
         }
@@ -2070,6 +2079,7 @@ pub fn show(
     classic: bool,
 ) -> Vec<InvAction> {
     let mut actions = Vec::new();
+    clipboard::prepare(st);
     st.focus_search = *open && (st.focus_search || !st.was_open);
     // What is worn, the attachment points and the names are read for the
     // windows and dialogs that show them, not every frame while closed.
@@ -2251,6 +2261,7 @@ pub fn show(
         }
         w.state.clipboard.clone_from(&st.clipboard);
         w.state.cut = st.cut;
+        clipboard::prepare(&mut w.state);
         w.state.pending = st.pending;
         w.state.progress.clone_from(&st.progress);
         w.state.copy_jobs.clone_from(&st.copy_jobs);
