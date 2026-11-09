@@ -34,6 +34,10 @@ pub(super) struct ImageJobs {
     pub auto_capture_pending: bool,
     /// An outfit's picture waiting for the photo pass, or drawn by it.
     pub photo: Option<(Uuid, bool)>,
+    /// The request of the gallery's Take snapshot under way (#2716), drawn,
+    /// encoded or sent: a job of its own, that no image editor shows, so
+    /// one the user has open on another item is left as it is.
+    outfit: Option<Uuid>,
 }
 impl Default for ImageJobs {
     fn default() -> Self {
@@ -48,6 +52,7 @@ impl Default for ImageJobs {
             capturing: None,
             auto_capture_pending: false,
             photo: None,
+            outfit: None,
         }
     }
 }
@@ -205,17 +210,21 @@ impl App {
     }
     /// The gallery's Take snapshot (#2716): the scene, square, saved as the
     /// outfit's picture at once; the image editor's own steps, with no
-    /// window (`ThumbnailUi::quick`).
+    /// window. Appearance says why one is refused or fails.
     pub(super) fn outfit_snapshot(&mut self, outfit: Uuid) {
-        let request = Uuid::new_v4();
-        if self.inventory_ui.thumbnail.start_quick(outfit, request) {
-            self.inventory_images.requests.insert(request, outfit);
-            self.inventory_images.photo = Some((request, false));
+        if self.inventory_images.outfit.is_some() {
+            self.appearance_ui.message = aurora_i18n::tr!("app-inventory-thumbnail-a-snapshot-is-already-in-progress").into();
+            return;
         }
+        let request = Uuid::new_v4();
+        self.appearance_ui.message.clear();
+        self.inventory_images.outfit = Some(request);
+        self.inventory_images.requests.insert(request, outfit);
+        self.inventory_images.photo = Some((request, false));
     }
 
     /// Every frame: the outfit's picture starts once no photo is being
-    /// drawn; a job that ended without its pixels says so in the editor.
+    /// drawn; a job that ended without its pixels says so.
     pub(super) fn poll_outfit_photo(&mut self, renderer: &aurora_render::Renderer) {
         let Some((request, started)) = self.inventory_images.photo else {
             return;
@@ -243,20 +252,22 @@ impl App {
     }
     pub(super) fn finish_inventory_image(&mut self, request: Uuid, error: Option<String>) {
         self.inventory_images.requests.remove(&request);
+        if self.inventory_images.outfit == Some(request) {
+            // the gallery's snapshot has no window: Appearance says why
+            self.inventory_images.outfit = None;
+            if let Some(error) = error {
+                self.appearance_ui.message = error;
+            }
+            return;
+        }
         if let Some(st) = panel(&mut self.inventory_ui, request) {
             st.pending = None;
-            if error.is_some() {
-                st.finish_quick(false);
-            }
             st.error = error.unwrap_or_default();
         }
     }
     pub(super) fn finish_inventory_image_upload(&mut self, request: Uuid, error: Option<String>) {
         if let Some(st) = panel(&mut self.inventory_ui, request) {
             st.saved = error.is_none();
-            if error.is_none() {
-                st.finish_quick(true);
-            }
         }
         self.inventory_ui
             .finish_thumbnail_upload(request, error.as_deref(), std::time::Instant::now());
@@ -288,7 +299,8 @@ impl App {
             let Some(item) = self.inventory_images.requests.get(&reply.request).copied() else {
                 continue;
             };
-            if panel(&mut self.inventory_ui, reply.request).is_none_or(|st| st.item != Some(item)) {
+            let outfit = self.inventory_images.outfit == Some(reply.request);
+            if !outfit && panel(&mut self.inventory_ui, reply.request).is_none_or(|st| st.item != Some(item)) {
                 self.finish_inventory_image(reply.request, None);
                 continue;
             }
@@ -301,25 +313,24 @@ impl App {
                     }
                     self.finish_inventory_image(reply.request, None);
                 }
+                // the gallery's snapshot is saved at once, with no preview
+                Ok(Some(Prepared::Photo(pixels))) if outfit => {
+                    self.inventory_images.requests.remove(&reply.request);
+                    let request = Uuid::new_v4();
+                    self.inventory_images.outfit = Some(request);
+                    self.inventory_image_action(request, item, ImageInput::Pixels(Arc::new(pixels)));
+                }
                 Ok(Some(Prepared::Photo(pixels))) => {
                     let texture = self.egui_ctx.load_texture(
                         format!("inventory_snapshot_{}", reply.request),
                         egui::ColorImage::from_rgba_unmultiplied([256, 256], &pixels),
                         egui::TextureOptions::LINEAR,
                     );
-                    let mut quick = None;
                     if let Some(st) = panel(&mut self.inventory_ui, reply.request) {
                         st.photo = Some(texture);
-                        let pixels = Arc::new(pixels);
-                        st.pixels = Some(pixels.clone());
-                        quick = st.item.filter(|_| st.quick).map(|item| (item, pixels));
+                        st.pixels = Some(Arc::new(pixels));
                     }
                     self.finish_inventory_image(reply.request, None);
-                    if let Some((item, pixels)) = quick {
-                        let request = Uuid::new_v4();
-                        self.inventory_ui.thumbnail.pending = Some(request);
-                        self.inventory_image_action(request, item, ImageInput::Pixels(pixels));
-                    }
                 }
                 Ok(Some(prepared)) => {
                     if self.inventory_ui.pending.is_some() {

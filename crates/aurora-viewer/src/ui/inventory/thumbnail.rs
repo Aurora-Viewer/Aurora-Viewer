@@ -26,8 +26,6 @@ pub struct ThumbnailUi {
     pub photo: Option<egui::TextureHandle>,
     pub pixels: Option<Arc<Vec<u8>>>,
     pub picker_open: bool,
-    /// A snapshot that saves itself: no window unless something goes wrong.
-    pub quick: bool,
     selected: Option<Uuid>,
     filter: String,
     uuid_text: String,
@@ -41,27 +39,6 @@ impl ThumbnailUi {
                 item: Some(item),
                 ..Default::default()
             };
-        }
-    }
-    /// Start a snapshot of `item` that saves itself, with `request`. Refused
-    /// while another one runs.
-    pub(crate) fn start_quick(&mut self, item: Uuid, request: Uuid) -> bool {
-        if self.pending.is_some() {
-            return false;
-        }
-        self.open(item);
-        self.quick = true;
-        self.pending = Some(request);
-        self.error.clear();
-        true
-    }
-    /// The quick snapshot's upload ended: done, or the window shows why not.
-    pub(crate) fn finish_quick(&mut self, saved: bool) {
-        if self.quick {
-            self.quick = false;
-            if saved {
-                self.item = None;
-            }
         }
     }
     fn request(&mut self, item: Uuid, input: Input, actions: &mut Vec<InvAction>) {
@@ -99,11 +76,7 @@ impl ThumbnailUi {
         };
         if !world.inventory.items.contains_key(&item) && !world.inventory.folders.contains_key(&item) {
             self.item = None;
-            self.quick = false;
             self.choices.clear();
-            return;
-        }
-        if self.quick {
             return;
         }
         let asset = image(&world.inventory, item);
@@ -715,27 +688,5 @@ mod tests {
             if t.galley.text() == aurora_i18n::tr!("ui-inventory-thumbnail-edit-object-picture"))));
         assert!(!output.shapes.iter().any(|s| matches!(&s.shape, egui::epaint::Shape::Text(t)
             if t.galley.text() == aurora_i18n::tr!("ui-inventory-thumbnail-object-picture"))));
-    }
-
-    #[test]
-    fn a_quick_snapshot_opens_nothing_and_closes_when_saved() {
-        let (item, other) = (Uuid::from_u128(1), Uuid::from_u128(2));
-        let mut st = ThumbnailUi::default();
-        assert!(st.start_quick(item, Uuid::from_u128(10)));
-        assert_eq!((st.item, st.quick), (Some(item), true));
-        assert!(!st.start_quick(other, Uuid::from_u128(11)), "one at a time");
-        assert_eq!(st.item, Some(item));
-        st.pending = None;
-        st.finish_quick(true);
-        assert_eq!((st.item, st.quick), (None, false));
-        // refused: the window stays open on its error
-        assert!(st.start_quick(item, Uuid::from_u128(12)));
-        st.pending = None;
-        st.error = "refused".into();
-        st.finish_quick(false);
-        assert_eq!((st.item, st.quick), (Some(item), false));
-        // and a later end does not close a window opened since
-        st.finish_quick(true);
-        assert_eq!(st.item, Some(item));
     }
 }
