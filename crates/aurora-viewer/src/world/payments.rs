@@ -538,8 +538,40 @@ mod tests {
         w.notifications.listed().map(|n| n.body.clone()).collect()
     }
 
-    fn from_jane(text: &str) -> String {
-        format!("secondlife:///app/agent/{JANE}/completename{text}")
+    // The expected lines go through the catalogue: tests run in the
+    // machine's language (English on CI, French or Japanese elsewhere).
+
+    fn jane() -> String {
+        format!("secondlife:///app/agent/{JANE}/completename")
+    }
+
+    /// "Jane paid you L$5"
+    fn paid_you(name: String, amount: i32) -> String {
+        aurora_i18n::tr!("world-payments-paid-you", name = name, amount = amount_label(amount))
+    }
+
+    /// "Jane paid you L$75: Thanks!"
+    fn paid_you_saying(name: String, amount: i32, message: &str) -> String {
+        aurora_i18n::tr!(
+            "world-payments-paid-you-message",
+            name = name,
+            amount = amount_label(amount),
+            message = message.to_owned()
+        )
+    }
+
+    /// "Jane paid you L$100 for Steel helmet"
+    fn paid_you_for(amount: i32, reason: String) -> String {
+        aurora_i18n::tr!(
+            "world-payments-paid-you-reason",
+            name = jane(),
+            amount = amount_label(amount),
+            reason = reason
+        )
+    }
+
+    fn for_item(item: &str) -> String {
+        aurora_i18n::tr!("world-payments-for-item", item = item.to_owned())
     }
 
     #[test]
@@ -553,9 +585,9 @@ mod tests {
         assert_eq!(
             notices(&w),
             [
-                from_jane(" paid you L$100 for Steel helmet"),
-                from_jane(" paid you L$25 for Tip jar"),
-                from_jane(" paid you L$5"),
+                paid_you_for(100, for_item("Steel helmet")),
+                paid_you_for(25, for_item("Tip jar")),
+                paid_you(jane(), 5),
             ]
         );
     }
@@ -569,9 +601,9 @@ mod tests {
         assert_eq!(
             notices(&w),
             [
-                from_jane(" paid you L$10 for a parcel of land"),
-                from_jane(" paid you L$11 for a land access pass"),
-                from_jane(" paid you L$12 for deeding land"),
+                paid_you_for(10, aurora_i18n::tr!("world-payments-for-land").into()),
+                paid_you_for(11, aurora_i18n::tr!("world-payments-for-land-pass").into()),
+                paid_you_for(12, aurora_i18n::tr!("world-payments-for-land-deed").into()),
             ]
         );
     }
@@ -581,7 +613,7 @@ mod tests {
         let mut w = noticing();
         w.payment(&received(60, GIFT, JANE, 75, "Thanks!"));
         w.payment(&received(61, GIFT, JANE, 20, "Payment"));
-        assert_eq!(notices(&w), [from_jane(" paid you L$75: Thanks!"), from_jane(" paid you L$20")]);
+        assert_eq!(notices(&w), [paid_you_saying(jane(), 75, "Thanks!"), paid_you(jane(), 20)]);
         assert!(w.social.ims.is_empty());
         // the conversation is open: its card says it
         w.social.session_mut(JANE);
@@ -601,7 +633,7 @@ mod tests {
         w.payment(&ev);
         assert_eq!(
             notices(&w),
-            [format!("secondlife:///app/group/{GROUP}/about paid you L$40: Dividend")]
+            [paid_you_saying(format!("secondlife:///app/group/{GROUP}/about"), 40, "Dividend")]
         );
     }
 
@@ -650,7 +682,7 @@ mod tests {
         w.block(JANE, "Jane Doe", crate::world::mutes::MuteType::Agent).expect("blocked");
         w.payment(&received(90, trans::OBJECT_SALE, JANE, 100, "Spam for you"));
         w.payment(&received(91, GIFT, JANE, 20, "Hello again"));
-        assert_eq!(notices(&w), [from_jane(" paid you L$100"), from_jane(" paid you L$20")]);
+        assert_eq!(notices(&w), [paid_you(jane(), 100), paid_you(jane(), 20)]);
     }
 
     #[test]
@@ -660,7 +692,7 @@ mod tests {
         w.rlva_console_input("@recvim=n");
         w.payment(&received(95, GIFT, JANE, 20, "A way around it"));
         w.payment(&received(96, trans::OBJECT_SALE, JANE, 100, "Hat"));
-        assert_eq!(notices(&w), [from_jane(" paid you L$20"), from_jane(" paid you L$100")]);
+        assert_eq!(notices(&w), [paid_you(jane(), 20), paid_you(jane(), 100)]);
     }
 
     #[test]
@@ -675,7 +707,7 @@ mod tests {
             "{}",
             got[0]
         );
-        assert!(got[1].ends_with("for Box second line"), "{}", got[1]);
+        assert_eq!(got[1], paid_you_for(2, for_item("Box second line")));
     }
 
     #[test]
@@ -684,7 +716,7 @@ mod tests {
         w.payments.notify_direct = true;
         w.social.names.insert(JANE, "Jane Doe".into());
         w.payment(&received(130, GIFT, JANE, 100, "Payment"));
-        assert_eq!(notices(&w), [from_jane(" paid you L$100")]);
+        assert_eq!(notices(&w), [paid_you(jane(), 100)]);
         w.payment(&received(131, trans::OBJECT_SALE, JANE, 50, "Hat"));
         w.payment(&received(132, trans::PAY_OBJECT, JANE, 50, "Tip jar"));
         w.payment(&received(133, trans::LAND_SALE, JANE, 50, ""));
