@@ -109,13 +109,16 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
     }
     // Without the watcher's word, the last sign of life stands for the end.
     let tick = number("tick");
-    let end = stopped.or(tick);
+    // An `alive.txt` emptied by a system that stopped at once still has its
+    // date: without it, a Windows restart would never be told (#3056).
+    let seen = tick.or_else(|| super::watchdog::alive_written(dir));
+    let end = stopped.or(seen);
     if let Some(duration) = end.and_then(|end| end.checked_sub(record.started_unix)) {
         let approximate = if stopped.is_none() { " (last sign of life)" } else { "" };
         rows.push(("Session duration", format!("{duration} s{approximate}")));
     }
     if stopped.is_none() {
-        rows.push(("End of session", unseen_end(tick, boot_unix).to_owned()));
+        rows.push(("End of session", unseen_end(seen, boot_unix).to_owned()));
     }
     // `freeze.txt` is the watchdog's word that the window was frozen at the
     // end; it answers for 5 s more than its last `responsive`, itself up to
@@ -153,9 +156,13 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
     if device_lost_in(&tail) {
         rows.push(("GPU device lost", "yes (driver reset or GPU removed)".into()));
         // the work the GPU had in hand: a hang or a fault (aurora-render
-        // device_lost.rs), rebuilt from the renderer's own newest line
-        if let Some(work) = gpu_work_in(&tail) {
-            rows.push(("GPU work at the loss", work));
+        // device_lost.rs), rebuilt from the renderer's own lines: the loss
+        // that began the end of the session, then the recoveries' losses
+        if let Some((first, later)) = gpu_work_in(&tail) {
+            rows.push(("GPU work at the loss", first));
+            if let Some(later) = later {
+                rows.push(("GPU work at the later losses", later));
+            }
         }
     }
     let has_gpu_trouble = dir.join("gpu-lost.txt").exists()
@@ -524,6 +531,7 @@ const STATE_ROWS: &[(&str, &str)] = &[
     ("preset", "Graphics preset"),
     ("ram_mb", "Memory (MB)"),
     ("vram_mb", "Video memory used / budget (MB)"),
+    ("vram_headroom_60s_mb", "Video memory headroom, tightest in 60 s (MB)"),
     ("texture_pressure", "Texture memory pressure"),
     ("objects", "Objects"),
     ("avatars", "Avatars"),
@@ -613,7 +621,7 @@ fn gpu_errors_in(head: &str, tail: &str) -> Option<String> {
 }
 
 /// One wgpu error of the log (`wgpu error: …`, aurora-render
-/// main_thread.rs): its time, its message (the rest of its header line and
+/// main_thread.rs and gpu_alloc.rs): its time, its message (the rest of its header line and
 /// the lines below it, the repeat count taken off) and how many errors it
 /// stands for.
 struct WgpuError<'a> {
@@ -631,7 +639,9 @@ fn wgpu_errors(text: &str) -> Vec<WgpuError<'_>> {
             let Some((record, message)) = line.split_once("] wgpu error: ") else {
                 continue;
             };
-            if !record.ends_with(" ERROR aurora_render::main_thread") {
+            // the device's handler, or an error scope of gpu_alloc.rs (the
+            // render targets refused while video memory is full, #2887)
+            if !record.ends_with(" ERROR aurora_render::main_thread") && !record.ends_with(" ERROR aurora_render::gpu_alloc") {
                 continue;
             }
             let time = record.trim_start_matches('[').split_whitespace().next().unwrap_or("unknown");
@@ -805,9 +815,9 @@ fn gpu_operation(text: &str) -> Option<&str> {
     .then_some(operation)
 }
 
-/// A state value as the watchdog writes it: a number, numbers joined by
-/// `/` or `x`, a list of the effect words, or one of the fixed names;
-/// anything else is not published.
+/// A state value as the watchdog writes it: a number (a `-` before it for
+/// a headroom gone negative), numbers joined by `/` or `x`, a list of the
+/// effect words, or one of the fixed names; anything else is not published.
 pub(crate) fn state_value(value: &str) -> Option<String> {
     use super::watchdog::{EFFECT_WORDS, WINDOW_STATES};
     let names = [
@@ -827,7 +837,10 @@ pub(crate) fn state_value(value: &str) -> Option<String> {
     let screens = ["login", "loading", "world", "potato", "low", "medium", "high", "deluxe", "custom"];
     // the passes of `GpuElement::key`
     let passes = ["shadows_depth", "effects", "terrain_sky", "objects", "water", "transparent", "post"];
-    let numeric = |v: &str| !v.is_empty() && v.len() <= 12 && v.bytes().all(|b| b.is_ascii_digit() || b == b'.');
+    let numeric = |v: &str| {
+        let digits = v.strip_prefix('-').unwrap_or(v);
+        !digits.is_empty() && v.len() <= 12 && digits.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+    };
     let effect = |token: &str| {
         let word = token.trim_end_matches(|c: char| c.is_ascii_digit());
         EFFECT_WORDS.contains(&word) && token.len() <= 24
@@ -1113,19 +1126,62 @@ fn device_lost_in(tail: &str) -> bool {
     tail.lines().any(|line| line.contains("] GPU device lost ("))
 }
 
-/// The "GPU work at the loss" row: the newest line the device-lost
-/// callback logged (`[… ERROR aurora_render::main_thread] GPU work at the
-/// loss: …`; the last one when a recovered session was lost again),
+/// Losses this close to the next one belong to the same end of the
+/// session: the recovery counts them together over the same span
+/// (`LOSS_SPAN`, app/gpu_recovery.rs).
+const LOSS_CHAIN_S: i64 = 5 * 60;
+/// Later losses published at most (the recovery closes at the third).
+const MAX_LATER_LOSSES: usize = 4;
+
+/// The "GPU work at the loss" row and the "GPU work at the later losses"
+/// one, from the lines the device-lost callback logged
+/// (`[… ERROR aurora_render::main_thread] GPU work at the loss: …`),
 /// rebuilt by [`gpu_work_row`]. A line of any other module or level is
 /// left out: a name logged elsewhere could carry the marker.
-fn gpu_work_in(tail: &str) -> Option<String> {
-    tail.lines().rev().find_map(|line| {
-        let (head, text) = line.split_once("] GPU work at the loss: ")?;
-        if !head.ends_with(" ERROR aurora_render::main_thread") {
-            return None;
+///
+/// The first row is the loss that began the end of the session: the
+/// oldest of the last losses less than [`LOSS_CHAIN_S`] apart. Each
+/// recovery makes a new device, whose own line follows; the newest line
+/// alone described the last of them, often a recovery's device lost before
+/// its first frame ("nothing submitted yet"), and hid the loss that
+/// mattered (RX 9070 XT reports of 0.9.3, #2238). A line without a
+/// readable time stays with the line after it.
+fn gpu_work_in(tail: &str) -> Option<(String, Option<String>)> {
+    let lines: Vec<(Option<i64>, String)> = tail
+        .lines()
+        .filter_map(|line| {
+            let (head, text) = line.split_once("] GPU work at the loss: ")?;
+            if !head.ends_with(" ERROR aurora_render::main_thread") {
+                return None;
+            }
+            let at = head
+                .strip_prefix('[')
+                .and_then(|head| head.split_whitespace().next())
+                .and_then(|stamp| chrono::DateTime::parse_from_rfc3339(stamp).ok())
+                .map(|at| at.timestamp());
+            Some((at, gpu_work_row(text)?))
+        })
+        .collect();
+    let mut start = lines.len().checked_sub(1)?;
+    while start > 0 {
+        let apart = match (lines[start - 1].0, lines[start].0) {
+            (Some(before), Some(after)) => after - before,
+            _ => 0,
+        };
+        if apart > LOSS_CHAIN_S {
+            break;
         }
-        gpu_work_row(text)
-    })
+        start -= 1;
+    }
+    let chain = &lines[start..];
+    let later: Vec<String> = chain
+        .iter()
+        .enumerate()
+        .skip(1)
+        .take(MAX_LATER_LOSSES)
+        .map(|(i, (_, row))| format!("loss {}: {row}", i + 1))
+        .collect();
+    Some((chain[0].1.clone(), (!later.is_empty()).then(|| later.join(" / "))))
 }
 
 /// The row rebuilt from the line's frame numbers, ages (`d.ddd`) and one
@@ -1373,10 +1429,10 @@ mod tests {
     /// The row comes from the renderer's own line only, rebuilt from its
     /// numbers and fixed words: a name logged by another module that
     /// carries the marker publishes nothing, a line that does not parse
-    /// whole neither; of a session recovered then lost again, the last
-    /// loss's line is the row.
+    /// whole neither; of a session recovered then lost again, the first
+    /// loss's line is the row and the later one follows it.
     #[test]
-    fn the_gpu_work_row_is_rebuilt_from_the_renderer_s_newest_line() {
+    fn the_gpu_work_row_is_rebuilt_from_the_renderer_s_own_lines() {
         const HANG: &str = "last submission frame 601, 1.101 s before, not finished, frame 599 finished 1.103 s before, a hang (the driver reset the card while that frame ran)";
         const FAULT: &str = "last submission frame 12, 0.008 s before, not finished, frame 11 finished 0.009 s before, a fault in the work of that frame (not a hang)";
         let own = |text: &str| format!("[t ERROR aurora_render::main_thread] GPU work at the loss: {text}\n");
@@ -1390,15 +1446,16 @@ mod tests {
             None
         );
         // the renderer's line, rebuilt as it is
+        let alone = |log: &str| gpu_work_in(log).map(|(first, later)| (first, later.is_none()));
         let expected_hang = format!("{HANG}; noticed after about 1 s (detection latency; actual hang duration unknown)");
-        assert_eq!(gpu_work_in(&own(HANG)).as_deref(), Some(expected_hang.as_str()));
-        assert_eq!(gpu_work_in(&own(FAULT)).as_deref(), Some(FAULT));
+        assert_eq!(alone(&own(HANG)), Some((expected_hang.clone(), true)));
+        assert_eq!(alone(&own(FAULT)), Some((FAULT.to_owned(), true)));
         let no_completion = "last submission frame 0, 3.000 s before, not finished, none finished yet, a hang (the driver reset the card while that frame ran)";
         let expected_no_completion = format!("{no_completion}; noticed after about 1 s (detection latency; actual hang duration unknown)");
-        assert_eq!(gpu_work_in(&own(no_completion)).as_deref(), Some(expected_no_completion.as_str()));
+        assert_eq!(alone(&own(no_completion)), Some((expected_no_completion, true)));
         assert_eq!(
-            gpu_work_in(&own("nothing submitted yet (lost while starting)")).as_deref(),
-            Some("nothing submitted yet (lost while starting)")
+            alone(&own("nothing submitted yet (lost while starting)")),
+            Some(("nothing submitted yet (lost while starting)".to_owned(), true))
         );
         // anything else in the line: nothing published
         for bad in [
@@ -1410,9 +1467,43 @@ mod tests {
         ] {
             assert_eq!(gpu_work_in(&own(bad)), None, "{bad}");
         }
-        // a recovered loss, then the fatal one: the last line
+        // a recovered loss, then the fatal one: the first, then the later
         let twice = format!("{}{}", own(FAULT), own(HANG));
-        assert_eq!(gpu_work_in(&twice).as_deref(), Some(expected_hang.as_str()));
+        assert_eq!(
+            gpu_work_in(&twice),
+            Some((FAULT.to_owned(), Some(format!("loss 2: {expected_hang}"))))
+        );
+    }
+
+    /// The RX 9070 XT reports of 0.9.3 (#2238): a hang, then each
+    /// recovery's new device lost before its first frame. The row is the
+    /// hang; the recoveries' losses follow it. A loss more than five minutes
+    /// before the next one (recovered then, long ago) is not part of the end.
+    #[test]
+    fn the_gpu_work_row_is_the_loss_that_began_the_end_not_the_recovery_s() {
+        const HANG: &str = "last submission frame 34120, 1.204 s before, not finished, frame 34119 finished 1.211 s before, a hang (the driver reset the card while that frame ran)";
+        const FAULT: &str = "last submission frame 12, 0.008 s before, not finished, frame 11 finished 0.009 s before, a fault in the work of that frame (not a hang)";
+        const NONE: &str = "nothing submitted yet (lost while starting)";
+        let at = |stamp: &str, text: &str| format!("[{stamp} ERROR aurora_render::main_thread] GPU work at the loss: {text}\n");
+        let noted = "; noticed after about 1 s (detection latency; actual hang duration unknown)";
+        let log = format!(
+            "{}[2026-11-08T08:21:30.100Z WARN  aurora_render::renderer] GPU device lost\n{}{}",
+            at("2026-11-08T07:40:00.000Z", FAULT),
+            at("2026-11-08T08:21:31.000Z", HANG),
+            at("2026-11-08T08:21:49.500Z", NONE),
+        );
+        assert_eq!(gpu_work_in(&log), Some((format!("{HANG}{noted}"), Some(format!("loss 2: {NONE}")))));
+        // recovered once, lost again, the safe level's device lost at start
+        let three = format!(
+            "{}{}{}",
+            at("2026-11-08T12:00:00.000Z", HANG),
+            at("2026-11-08T12:00:07.000Z", FAULT),
+            at("2026-11-08T12:00:13.000Z", NONE),
+        );
+        assert_eq!(
+            gpu_work_in(&three),
+            Some((format!("{HANG}{noted}"), Some(format!("loss 2: {FAULT} / loss 3: {NONE}"))))
+        );
     }
 
     #[test]
@@ -1601,7 +1692,7 @@ mod tests {
         std::fs::write(dir.join("vulkan-layers.txt"), "VK_LAYER_OBS_HOOK,VK_LAYER_NV_optimus\n").unwrap();
         std::fs::write(
             dir.join("alive.txt"),
-            "tick=1098\nresponsive=1075\nram_mb=5120\nscreen=world\nfps=0.4\nwindow=1920x1080\npreset=high\nvram_mb=5800/6000\ntexture_pressure=7/7\nobjects=4200\nswapchain_10s=37\nregion_name=Private Place\neffects=shadows3,contact-shadows,ao-gtao2,aa-smaa,scale100,draw192\nwindow_state=background\ngpu_ms=12.5\ngpu_peak_ms=2400.0\ngpu_peak_pass=effects\nuploads=12/34.5\nsession_s=45\nregion_s=20\nloading=12/3/40\ngpu_peak_ao_contact=20.5/2100.0\nlayers=VK_LAYER_OLD_NOTE\nloss_reason=unknown\nloss_cause=device-lost\nloss_seen_by=callback\nstall_ms=2300\nother_viewers=2/1\ncard_used_mb=6100\ncard_others_mb=3200\nlayers_note=/home/someone\n",
+            "tick=1098\nresponsive=1075\nram_mb=5120\nscreen=world\nfps=0.4\nwindow=1920x1080\npreset=high\nvram_mb=5800/6000\nvram_headroom_60s_mb=-512\ntexture_pressure=7/7\nobjects=4200\nswapchain_10s=37\nregion_name=Private Place\neffects=shadows3,contact-shadows,ao-gtao2,aa-smaa,scale100,draw192\nwindow_state=background\ngpu_ms=12.5\ngpu_peak_ms=2400.0\ngpu_peak_pass=effects\nuploads=12/34.5\nsession_s=45\nregion_s=20\nloading=12/3/40\ngpu_peak_ao_contact=20.5/2100.0\nlayers=VK_LAYER_OLD_NOTE\nloss_reason=unknown\nloss_cause=device-lost\nloss_seen_by=callback\nstall_ms=2300\nother_viewers=2/1\ncard_used_mb=6100\ncard_others_mb=3200\nlayers_note=/home/someone\n",
         )
         .unwrap();
         let summary = build_at(&record, &dir, Some(10));
@@ -1615,6 +1706,7 @@ mod tests {
             "### Stack\n\n```text\n00 ntdll+0x9d0e4\n01 aurora_viewer+0x5000\n```",
             "### Stack (aurora-render thread)\n\n```text\n00 nvoglv64+0x9abc\n01 aurora_viewer+0x7000\n```",
             "| Video memory used / budget (MB) | 5800/6000 |",
+            "| Video memory headroom, tightest in 60 s (MB) | -512 |",
             "| Texture memory pressure | 7/7 |",
             "| Window size | 1920x1080 |",
             "| Screen | world |",
@@ -1657,6 +1749,38 @@ mod tests {
         assert!(body.contains("| Window | answering until the end |"), "{body}");
         // Windows started long after: nothing says it went down with it.
         let body = build_at(&record, &dir, Some(90_000)).body;
+        assert!(
+            body.contains("| End of session | not seen: the viewer and its watcher stopped together"),
+            "{body}"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_sign_of_life_emptied_by_a_stopped_system_still_dates_the_end() {
+        let (dir, record) = session();
+        // What a power cut leaves of a file renamed without a flush.
+        let alive = dir.join("alive.txt");
+        std::fs::write(&alive, [0u8; 300]).unwrap();
+        let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1500);
+        std::fs::File::options()
+            .append(true)
+            .open(&alive)
+            .unwrap()
+            .set_modified(at)
+            .unwrap();
+        let body = build_at(&record, &dir, Some(1600)).body;
+        assert!(body.contains("| Session duration | 500 s (last sign of life) |"), "{body}");
+        assert!(
+            body.contains("| End of session | not seen: Windows started again right after"),
+            "{body}"
+        );
+        // The content is lost: nothing to say about the window.
+        assert!(!body.contains("| Window |"), "{body}");
+        // A session that ended before its first sign of life stays unknown.
+        std::fs::remove_file(&alive).unwrap();
+        let body = build_at(&record, &dir, Some(1600)).body;
+        assert!(!body.contains("Session duration"), "{body}");
         assert!(
             body.contains("| End of session | not seen: the viewer and its watcher stopped together"),
             "{body}"
@@ -1831,6 +1955,18 @@ mod tests {
         assert_eq!(gpu_errors_in(&log, "").as_deref(), expected);
         // the head and the tail of a short log are the same text
         assert_eq!(gpu_errors_in(&log, &log).as_deref(), expected);
+    }
+
+    #[test]
+    fn a_refusal_caught_by_an_error_scope_counts_like_the_others() {
+        // the render targets refused at login (gpu_alloc.rs's scopes, #2887)
+        let log = "[2026-11-04T10:00:00.000Z ERROR aurora_render::gpu_alloc] wgpu error: Out of Memory\n\nCaused by:\n  In Device::create_texture, label = 'hdr'\n    Not enough memory left.\n\
+             [2026-11-04T10:00:00.000Z WARN  aurora_render::renderer] wgpu error: Out of Memory\n\
+             [2026-11-04T10:00:01.000Z ERROR aurora_render::main_thread] wgpu error: Out of Memory\n\nCaused by:\n  In Device::create_texture, label = 'hdr'\n";
+        assert_eq!(
+            gpu_errors_in(log, "").as_deref(),
+            Some("out-of-memory in Device::create_texture (x2)")
+        );
     }
 
     /// The counts as aurora-render writes them: each error through its

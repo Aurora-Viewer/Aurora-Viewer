@@ -32,6 +32,10 @@
 //! - `head-follow|pelvis-follow|hand-follow`: animate the named body part and
 //!   enable that third-person camera joint.
 //! - `wheel`: 3 wheel clicks out at 600, 12 in at 650 (into mouselook)
+//! - `wheel-chat`: the Conversations window opened at 560, its field taking
+//!   the keyboard, 12 wheel clicks in at 650 (into mouselook: the window
+//!   goes and the field lets the keyboard go, #2897), out at 700 (the
+//!   window back, the keyboard still free)
 //! - `ml-zoom`: into mouselook at 600, right button held at 640 (no zoom
 //!   yet: the normal angle stays until the wheel sets one), 3 wheel clicks in at
 //!   650, released at 680 (the normal angle), held again at 720 (the
@@ -76,6 +80,9 @@ pub enum Step {
     /// Enable toggle crouch and hold / release its Down input.
     Crouch(bool),
     ToggleMouselook,
+    /// Communicate › Nearby Chat: the Conversations window, its field
+    /// taking the keyboard.
+    FocusChat,
     GroundSit,
     /// Wheel clicks, SL sign (positive zooms out).
     Wheel(f32),
@@ -352,6 +359,13 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
             610 | 630 | 660 => out.push(Step::Log),
             _ => {}
         },
+        "wheel-chat" => match frame {
+            560 => out.push(Step::FocusChat),
+            600 | 662 | 712 => out.push(Step::Log),
+            650 => out.extend([Step::Wheel(-12.0), Step::Log]),
+            700 => out.extend([Step::ToggleMouselook, Step::Log]),
+            _ => {}
+        },
         mode @ ("sit"
         | "scripted-sit"
         | "sit-ml"
@@ -545,6 +559,14 @@ mod tests {
         assert_eq!(steps("ml-alt", 650), vec![alt(false)]);
         assert_eq!(steps("ml-alt", 660), vec![Step::Drag(8.0, 0.0)]);
         assert!(steps("ml-alt", 700).contains(&Step::ToggleMouselook));
+    }
+
+    #[test]
+    fn wheel_chat_scenario_types_then_wheels_into_mouselook() {
+        assert_eq!(steps("wheel-chat", 560), vec![Step::FocusChat]);
+        assert!(steps("wheel-chat", 650).contains(&Step::Wheel(-12.0)));
+        assert!(steps("wheel-chat", 700).contains(&Step::ToggleMouselook));
+        assert!(steps("wheel-chat", 800).is_empty());
     }
 
     #[test]

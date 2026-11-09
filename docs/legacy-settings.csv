@@ -196,7 +196,7 @@ ConnectionPort,U32,unreviewed,,,Custom connection port number
 ConnectionPortEnabled,Boolean,unreviewed,,,Use the custom connection port?
 ConsoleBackgroundOpacity,F32,unreviewed,,,"Opacity of chat console (0.0 = completely transparent, 1.0 = completely opaque)"
 ConsoleBufferSize,S32,unreviewed,,,Size of chat console transcript (lines of chat)
-ConsoleMaxLines,S32,unreviewed,,,Max number of lines of chat text visible in console.
+ConsoleMaxLines,S32,in-aurora,,field `chat_console_max_lines`; wrapped text rows in both console styles; 40 by default; 0..50,Max number of lines of chat text visible in console.
 ContactsTornOff,Boolean,unreviewed,,field `torn_off`,Show contacts window separately from Communicate window.
 ConversationSortOrder,U32,unreviewed,,,Specifies sort key for conversations
 CookiesEnabled,Boolean,unreviewed,,,Accept cookies from Web sites?
@@ -395,7 +395,7 @@ FMODProfilerEnable,Boolean,unreviewed,,,Enable profiler tool if using FMOD Studi
 FMODResampleMethod,U32,unreviewed,,,"Sets the method used for internal resampler 0(Linear), 1(Cubic), 2(Spline) for FMOD Studio"
 FSAdvancedTooltips,Boolean,check,,hover_tips.form may cover it,Show extended information in hovertips about objects (classic Phoenix style)
 FSAdvancedWorldmapRegionInfo,Boolean,to-add,low,,Shows additional region infos on the world map (agent count and maturity level)
-FSAllowDoubleClickOnScriptedObjects,Boolean,to-add,low,,"If enabled, allows double-click movement action (walk/teleport) to scripted objects"
+FSAllowDoubleClickOnScriptedObjects,Boolean,in-aurora,,double_click_scripted,"If enabled, allows double-click movement action (walk/teleport) to scripted objects"
 FSAllowEEPWaterDerender,Boolean,to-add,low,,Allow EEP assets to disable water rendering to increase FPS
 FSAlwaysFly,Boolean,in-aurora,,"a session toggle (fly override), not saved, as in the Legacy Viewer","Fly Override, for no-fly zones. Must be activated each time."
 FSAlwaysShowInboxButton,Boolean,to-add,low,,"If enabled, the Received Items folder aka Inbox is always shown at the bottom of the inventory, even if it is shown as folder in the invento"
@@ -438,7 +438,7 @@ FSAutoOrderIMTabsAtTop,Boolean,to-add,low,,Add new IM tabs as first in their cha
 FSAutoOrderIMTabsPriorities,String,to-add,low,,Priority for automatic ordering IM tabs. Higher priority means the tab will be inserted before lower priority. Default is Groups[0]=2 Confer
 FSAutoUnmuteAmbient,Boolean,to-add,low,,"If Ambient sounds are muted, unmute on TP. Default (false)"
 FSAutoUnmuteSounds,Boolean,to-add,low,,"If Sound Effects are muted, unmute on TP. Default (false)"
-FSAvatarTurnSpeed,F32,to-add,high,,Modify the speed at which the avatar responds to turning movements. 0-100 percent of max rate. Default is 0.
+FSAvatarTurnSpeed,F32,in-aurora,,avatar_turn_speed,Modify the speed at which the avatar responds to turning movements. 0-100 percent of max rate. Default is 0.
 FSBeamColorFile,String,to-add,low,,Beam file for the shape of your beam
 FSBeamShape,String,to-add,low,,Beam file for the shape of your beam
 FSBeamShapeScale,F32,to-add,low,,How Big You Want to let the beam be
@@ -448,21 +448,21 @@ FSBlockClickSit,Boolean,in-aurora,,block_click_sit,Prevents sitting on left-clic
 FSBrowserHomePage,String,in-aurora,,browser_home_page,Home page for the built in web browser
 FSBubblesHideConsoleAndToasts,Boolean,in-aurora,,chat_bubbles_hide_console,"If enabled, using bubble chat will hide the chat output in the Nearby Chat console and toasts"
 FSBuildPrefs_ActualRoot,Boolean,in-aurora,,build.actual_root,Show the axis on the actual root of a linkset instead of mass center
-FSBuildPrefs_Alpha,F32,to-add,high,new objects' defaults,New object created default alpha
-FSBuildPrefs_Color,Color4,to-add,high,new objects' defaults,New object created default color
+FSBuildPrefs_Alpha,F32,in-aurora,,build.new_prim_transparency,New object created default alpha
+FSBuildPrefs_Color,Color4,in-aurora,,build.new_prim_color,New object created default color
 FSBuildPrefs_EditHandleScaling,F32,in-aurora,,build.gizmo_scale,Factor to scale editing handles.
 FSBuildPrefs_EditTextShadowing,Boolean,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)",Whether the hint-text while building has a drop-shadow.
-FSBuildPrefs_FullBright,Boolean,to-add,high,new objects' defaults,New object created default fullbright
-FSBuildPrefs_Glow,F32,to-add,high,new objects' defaults,New object created default glow
+FSBuildPrefs_FullBright,Boolean,in-aurora,,build.new_prim_fullbright,New object created default fullbright
+FSBuildPrefs_Glow,F32,in-aurora,,build.new_prim_glow,New object created default glow
 FSBuildPrefs_Material,String,in-aurora,,build.new_prim_material,"Default Setting For New Objects to be created, physical flag"
-FSBuildPrefs_Phantom,Boolean,to-add,high,new objects' defaults,New object created default of phantom
-FSBuildPrefs_Physical,Boolean,to-add,high,new objects' defaults,New object created default of physical
+FSBuildPrefs_Phantom,Boolean,in-aurora,,build.new_prim_phantom,New object created default of phantom
+FSBuildPrefs_Physical,Boolean,in-aurora,,build.new_prim_physical,New object created default of physical
 FSBuildPrefs_PivotIsPercent,Boolean,to-add,low,,Consider the Pivot points values as a percentage
 FSBuildPrefs_PivotX,F32,to-add,low,,Pivot point on the X axis
 FSBuildPrefs_PivotY,F32,to-add,low,,Pivot point on the Y axis
 FSBuildPrefs_PivotZ,F32,to-add,low,,Pivot point on the Z axis
-FSBuildPrefs_Shiny,String,to-add,high,new objects' defaults,New object created default shiny
-FSBuildPrefs_Temporary,Boolean,to-add,high,new objects' defaults,New object created default of temporary
+FSBuildPrefs_Shiny,String,in-aurora,,build.new_prim_shiny,New object created default shiny
+FSBuildPrefs_Temporary,Boolean,in-aurora,,build.new_prim_temporary,New object created default of temporary
 FSBuildPrefs_Xsize,F32,in-aurora,,build.new_prim_size,Default Size For New Objects to be created X
 FSBuildPrefs_Ysize,F32,in-aurora,,build.new_prim_size,Default Size For New Objects to be created Y
 FSBuildPrefs_Zsize,F32,in-aurora,,build.new_prim_size,Default Size For New Objects to be created Z
@@ -771,8 +771,8 @@ FSRememberUsername,Boolean,in-aurora,,remember_username (kept out of Debug Setti
 FSRemoveFlyHeightLimit,Boolean,to-add,low,,Remove the 4096m high fly limit
 FSRemoveScriptBlockButton,Boolean,to-add,low,,"Removes the ""block"" from script dialogs."
 FSRenderBeaconText,Boolean,to-add,low,,Show beacon text in the viewer window if beacons are enabled
-FSRenderFarClipStepping,Boolean,to-add,high,,Set to TRUE to increase performance via progressive draw distance stepping
-FSRenderFarClipSteppingInterval,U32,to-add,high,,Interval in seconds between each draw distance increment
+FSRenderFarClipStepping,Boolean,in-aurora,,draw_distance_stepping,Set to TRUE to increase performance via progressive draw distance stepping
+FSRenderFarClipSteppingInterval,U32,in-aurora,,draw_distance_stepping_interval,Interval in seconds between each draw distance increment
 FSRenderParcelSelectionToMaxBuildHeight,Boolean,to-add,low,,Shows the parcel boundary up to the maximum build height instead of just 0.66m above ground
 FSRenderVignette,Vector3,to-add,low,,"Amount of vignette to apply (X), power of vignette shading (Y), and multiplier for vignette shading (Z)."
 FSRepeatedEnvTogglesShared,Boolean,check,,named in ui/environment: may be built in,Whether repeated presses of sky preset shortcuts should revert to shared environment
@@ -788,10 +788,10 @@ FSResetCameraOnMovement,Boolean,in-aurora,,camera.reset_on_movement,"If true, th
 FSResetCameraOnTP,Boolean,in-aurora,,camera.reset_on_teleport,If true the camera will be reset to behind the avatar on teleporting
 FSResetSkeletonOnStandUp,Boolean,to-add,low,,Resets own avatar skeleton upon standing up and sends the reset to all surrounding avatars
 FSRestoreOpenIMs,Boolean,in-aurora,,reopen_ims,Restore open IM windows from the previous session on startup.
-FSRevokePerms,U32,to-add,high,,"Revokes objects anim perms on your avatar on: 0) never, 1) on sit, 2) on stand, 3) on sit and stand."
+FSRevokePerms,U32,in-aurora,,revoke_permissions,"Revokes objects anim perms on your avatar on: 0) never, 1) on sit, 2) on stand, 3) on sit and stand."
 FSRowsPerScriptDialog,S32,to-add,low,,The number of rows visible in a script dialog
 FSSaveInventoryScriptsAsMono,Boolean,to-add,low,,Saves scripts edited directly from inventory as Mono instead of LSL
-FSSavedRenderFarClip,F32,not-applicable,,internal state of FSRenderFarClipStepping,Saved draw distance (used in case of logout during progressive draw distance stepping)
+FSSavedRenderFarClip,F32,not-applicable,,Aurora keeps the user's draw distance in the settings file during the steps (Settings::to_saved),Saved draw distance (used in case of logout during progressive draw distance stepping)
 FSScriptDebugWindowClearOnClose,Boolean,to-add,low,,Clear [ALL SCRIPTS] tab of script debug/error window on close.
 FSScriptDialogNoTransparency,Boolean,not-applicable,,"a look of the Legacy interface (opacity, spacing, cursors); Aurora's interface has its own design (docs/BRANDING.md)","If true, script dialogs will be shown opaque and ignore the floater opacity settings."
 FSScriptEditorRecompileButton,Boolean,in-aurora,,script_editor.recompile,Enables the save button to recompile scripts when no change in the opened script has occurred. Very useful for preproc scripts that consist 
@@ -1666,8 +1666,8 @@ RenderAnisotropic,Boolean,not-applicable,,marked obsolete or deprecated by the L
 RenderAnisotropicLevel,U32,in-aurora,,anisotropy,"Anisotropic filtering strength(0(Disable), 2x, 4x, 8x, 16x"
 RenderAppleUseMultGL,Boolean,not-applicable,,"OpenGL only, Aurora draws with Vulkan or Metal",Whether we want to use multi-threaded OpenGL on Apple hardware (requires restart of SL).
 RenderAttachedLights,Boolean,fixed,,the Legacy default is built into Aurora: aurora-viewer/src/snapshot/light.rs:8,Render lighted prims that are attached to avatars
-RenderAttachedParticles,Boolean,to-add,high,,Render particle systems that are attached to avatars
-RenderAutoHideSurfaceAreaLimit,F32,to-add,high,,Maximum surface area of a set of proximal objects inworld before automatically hiding geometry to prevent system overload.
+RenderAttachedParticles,Boolean,in-aurora,,attached_particles,Render particle systems that are attached to avatars
+RenderAutoHideSurfaceAreaLimit,F32,not-applicable,,its default (10 million) never hides anything and the Legacy Viewer shows no control for it; the large surface protection covers the need,Maximum surface area of a set of proximal objects inworld before automatically hiding geometry to prevent system overload.
 RenderAutoMaskAlphaDeferred,Boolean,to-add,low,,Use alpha masks where appropriate in the Advanced Lighting Model
 RenderAutoMaskAlphaNonDeferred,Boolean,not-applicable,,marked obsolete or deprecated by the Legacy Viewer,Use alpha masks where appropriate when not using the Advanced Lighting Model
 RenderAutoMuteLogging,Boolean,not-applicable,,read nowhere in the Legacy sources,Show extra information in viewer logs about avatar rendering costs
@@ -1677,7 +1677,7 @@ RenderAvatarCloth,Boolean,to-add,low,,Controls if system avatar clothes use wavy
 RenderAvatarComplexityMode,S32,in-aurora,,complexity_mode,"0 - complexity limit applies to everyone, 1 - always show friends, 2 - only show friends"
 RenderAvatarFriendsOnly,Boolean,in-aurora,,"friends_only (per account, not listed in Debug Settings)","When enabled hides all avatars that aren't friends. Does not affect inworld control avatars (animeshes), nor self."
 RenderAvatarLODFactor,F32,fixed,,"Aurora always draws avatar bodies at full detail (it loads no lower body mesh), the Legacy slider at its top",Controls level of detail of avatars (multiplier for current screen area when calculated level of detail)
-RenderAvatarMaxART,F32,to-add,high,,Render Time Limit in microseconds (0.0 = no limit)
+RenderAvatarMaxART,F32,to-add,low,"needs a render time measured per avatar, which Aurora's renderer does not take; the complexity limit covers most of the need (a renderer task of its own)",Render Time Limit in microseconds (0.0 = no limit)
 RenderAvatarMaxComplexity,U32,in-aurora,,max_complexity,"Maximum Avatar Complexity; above this value, the avatar is rendered as a solid color outline (0 to disable this limit)."
 RenderAvatarMaxNonImpostors,U32,in-aurora,,max_avatars,Maximum number of avatars to fully render at one time; over this limit uses impostor rendering (simplified rendering with less frequent upda
 RenderAvatarMaxVisible,S32,not-applicable,,marked obsolete or deprecated by the Legacy Viewer,OBSOLETE and UNUSED. See RenderAvatarMaxNonImpostors
@@ -1764,7 +1764,7 @@ RenderHDRSkySunlightScale,F32,fixed,,the Legacy default is built into Aurora: au
 RenderHUDInSnapshot,Boolean,in-aurora,,snapshot.huds,Display HUD attachments in snapshot
 RenderHUDObjectsWarning,U32,to-add,low,,Viewer will warn user about HUD containing to many objects if objects count is above this value
 RenderHUDOversizedTexturesWarning,U32,to-add,low,,How many textures with size 1024 * 1024 or bigger HUD can contain before notifying user
-RenderHUDParticles,Boolean,to-add,high,,Display particle systems in HUD attachments (experimental)
+RenderHUDParticles,Boolean,fixed,,"HUD particles are not drawn, the Legacy default (its ""on"" is experimental)",Display particle systems in HUD attachments (experimental)
 RenderHUDTexturesMemoryWarning,U32,to-add,low,,Viewer will warn user about HUD textures using memory above this value (in bytes)
 RenderHUDTexturesWarning,U32,to-add,low,,Viewer will warn user about HUD containing to many textures if texture count is above this value
 RenderHeroProbeConservativeUpdateMultiplier,S32,to-add,high,,"How many probe updates to wait until it's time to update faces that are not directly facing the camera. Acts as a multiplier. E.g., frames t"
@@ -1806,7 +1806,7 @@ RenderNormalMapScale,F32,to-add,low,,Scaler applied to height map when generatin
 RenderNsightDebugSupport,Boolean,not-applicable,,"OpenGL only, Aurora draws with Vulkan or Metal",Disable features which prevent nVidia nSight from being usable with SL. Requires restart.
 RenderObjectBump,Boolean,not-applicable,,marked obsolete or deprecated by the Legacy Viewer,DEPRECATED (only TRUE supported) Show bumpmapping on primitives
 RenderOcclusionTimeout,U32,not-applicable,,"OpenGL only, Aurora draws with Vulkan or Metal",Maximum number of frames to wait on an occlusion query before forcibly reading it back
-RenderParcelSelection,Boolean,to-add,high,,Display selected parcel outline
+RenderParcelSelection,Boolean,in-aurora,,build.parcel_selection_outline,Display selected parcel outline
 RenderPerformanceTest,Boolean,to-add,low,,Disable rendering of everything but in-world content for performance testing
 RenderPreferStreamDraw,Boolean,not-applicable,,read nowhere in the Legacy sources,Use GL_STREAM_DRAW in place of GL_DYNAMIC_DRAW
 RenderQualityPerformance,U32,not-applicable,,"hardware class detection, replaced by Aurora's own graphics level",Which graphics settings you've chosen. Don't use this setting to change quality directly from debug settings.
@@ -1839,7 +1839,7 @@ RenderScreenSpaceReflectionGlossySamples,S32,to-add,low,,Maximum number of sampl
 RenderScreenSpaceReflectionIterations,S32,to-add,low,,Number of times the ray march algorithm runs to find a potential hit.
 RenderScreenSpaceReflectionRayStep,F32,to-add,low,,How big the step is between each run.
 RenderScreenSpaceReflections,Boolean,in-aurora,,ssr,Renders screen space reflections to better account for dynamic objects with reflection probes.
-RenderSculptSAThreshold,F32,to-add,high,,The surface area at which sculpts begin to be considered for being made invisible.
+RenderSculptSAThreshold,F32,in-aurora,,large_surface_sculpt_threshold,The surface area at which sculpts begin to be considered for being made invisible.
 RenderShaderCacheEnabled,Boolean,not-applicable,,"OpenGL only, Aurora draws with Vulkan or Metal",Enable binary shader cache
 RenderShaderCacheVersion,String,not-applicable,,"OpenGL only, Aurora draws with Vulkan or Metal",Current version hash for shader cache
 RenderShaderLODThreshold,F32,not-applicable,,read nowhere in the Legacy sources,Fraction of draw distance defining the switch to a different shader LOD
@@ -1894,12 +1894,12 @@ RenderTerrainScale,F32,to-add,high,,Terrain detail texture scale (meters)
 RenderTextureVRAMDivisor,U32,not-applicable,,"OpenGL only, Aurora draws with Vulkan or Metal",Divisor for maximum amount of VRAM the viewer will use for textures. 1 = all the VRAM. Used in conjunction with RenderMaxVRAMBudget.
 RenderTonemapMix,F32,in-aurora,,tonemap_mix,Mix between linear and tonemapped colors (0.0(Linear) - 1.0(Tonemapped)
 RenderTonemapType,U32,in-aurora,,tonemapper,"What tonemapper to use: 0 = Khronos Neutral, 1 = ACES"
-RenderTrackerBeacon,Boolean,to-add,high,,"Display tracking arrow and beacon to target avatar, teleport destination"
+RenderTrackerBeacon,Boolean,in-aurora,,tracker_beacon,"Display tracking arrow and beacon to target avatar, teleport destination"
 RenderTransparentWater,Boolean,to-add,low,,Render water as transparent. Setting to false renders water as opaque with a simple texture applied.
 RenderTreeLODFactor,F32,in-aurora,,tree_lod_factor,Controls level of detail of vegetation (multiplier for current screen area when calculated level of detail)
 RenderUIBuffer,Boolean,not-applicable,,"OpenGL only, Aurora draws with Vulkan or Metal",Cache ui render in a screen aligned buffer.
 RenderUIInSnapshot,Boolean,in-aurora,,snapshot.interface,Display user interface in snapshot
-RenderUnloadedAvatar,Boolean,to-add,high,,Show avatars which haven't finished loading
+RenderUnloadedAvatar,Boolean,in-aurora,,"loading_avatars (1: drawn as they load, with a progress bar)",Show avatars which haven't finished loading
 RenderUseAdvancedAtmospherics,Boolean,not-applicable,,read nowhere in the Legacy sources,Use fancy precomputed atmospherics and stuff.
 RenderUseExposureSkySettings,Boolean,fixed,,the Legacy default is built into Aurora: aurora-render/src/exposure.rs:43,Use exposure sky settings instead of deriving from HDR scale.
 RenderUseFarClip,Boolean,to-add,low,,"If false, frustum culling will ignore far clip plane."
@@ -1910,9 +1910,9 @@ RenderVBOEnable,Boolean,not-applicable,,"OpenGL only, Aurora draws with Vulkan o
 RenderVBOMappingDisable,Boolean,not-applicable,,read nowhere in the Legacy sources,Disable VBO glMapBufferARB
 RenderVSyncEnable,Boolean,in-aurora,,vsync,Update frames between display scans (FALSE = Update frames as fast as possible).
 RenderVolumeLODFactor,F32,in-aurora,,lod_factor,Influences the distance at which the viewer will display a lower detail model. Higher values = more lag. IMPORTANT: Please disregard advice 
-RenderVolumeSAFrameMax,F32,to-add,high,,The limit(per frame) at which the sum of all volumes above the surface area threshold that causes all further sculpts/volumes above the thre
-RenderVolumeSAProtection,Boolean,to-add,high,,Enables automatic derendering of prims with high surface area (can protect against some video card crashers)
-RenderVolumeSAThreshold,F32,to-add,high,,The surface area at which volumes begin to be considered for being made invisible.
+RenderVolumeSAFrameMax,F32,in-aurora,,large_surface_frame_max,The limit(per frame) at which the sum of all volumes above the surface area threshold that causes all further sculpts/volumes above the thre
+RenderVolumeSAProtection,Boolean,in-aurora,,large_surface_protection,Enables automatic derendering of prims with high surface area (can protect against some video card crashers)
+RenderVolumeSAThreshold,F32,in-aurora,,large_surface_prim_threshold,The surface area at which volumes begin to be considered for being made invisible.
 RenderWater,Boolean,fixed,,the Legacy default is built into Aurora: aurora-viewer/src/ui/monitor/model.rs:121,Display water
 RenderWaterMaterials,S32,not-applicable,,read nowhere in the Legacy sources,Water planar reflections include materials rendering.
 RenderWaterMipNormal,Boolean,not-applicable,,"OpenGL only, Aurora draws with Vulkan or Metal",Use mip maps for water normal map.
