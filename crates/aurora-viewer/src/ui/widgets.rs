@@ -478,6 +478,61 @@ impl<'a> Floater<'a> {
 
     /// Show the floater; `open` is cleared by the close button.
     pub fn show<R>(mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
+        let window_id = egui::Id::unique(self.id);
+        let viewport_id = crate::native_viewports::floater_viewport_id(self.id);
+        let native_key = window_id.with("native_viewport");
+        let restore_key = window_id.with("native_restore_area");
+        let detached = ctx.data(|data| data.get_temp::<bool>(native_key)).unwrap_or(false);
+        if detached && ctx.viewport_id() != viewport_id {
+            if !*open {
+                ctx.data_mut(|data| data.remove_temp::<bool>(native_key));
+                restore_floater_area(ctx, window_id, self.order, restore_key);
+                return None;
+            }
+            let area = egui::AreaState::load(ctx, window_id).unwrap_or_default();
+            let root_origin = ctx.input(|input| input.viewport().inner_rect.map_or(egui::Pos2::ZERO, |rect| rect.min));
+            let outer_position = root_origin + area.left_top_pos().to_vec2();
+            let size = area.size.unwrap_or(self.default_size);
+            let builder = egui::ViewportBuilder::default()
+                .with_title(self.title.clone())
+                .with_position(outer_position)
+                .with_inner_size(size)
+                .with_min_inner_size(self.min_size)
+                .with_decorations(false)
+                .with_resizable(self.resizable);
+            let mut body = Some(body);
+            let mut result = None;
+            let order = self.order;
+            let mut floater = Some(self);
+            ctx.show_viewport_immediate(viewport_id, builder, |_, class| {
+                if class == egui::ViewportClass::EmbeddedWindow {
+                    return;
+                }
+                if ctx.input(|input| input.viewport().close_requested()) {
+                    *open = false;
+                    ctx.data_mut(|data| data.remove_temp::<bool>(native_key));
+                    restore_floater_area(ctx, window_id, order, restore_key);
+                    return;
+                }
+                if ctx
+                    .data_mut(|data| data.remove_temp::<bool>(window_id.with("native_start_drag")))
+                    .unwrap_or(false)
+                {
+                    ctx.send_viewport_cmd_to(viewport_id, egui::ViewportCommand::StartDrag);
+                }
+                let viewport_rect = ctx.input(|input| input.viewport_rect());
+                set_floater_area(ctx, window_id, order, egui::Pos2::ZERO, viewport_rect.size());
+                if let (Some(floater), Some(body)) = (floater.take(), body.take()) {
+                    result = floater.show(ctx, p, open, body);
+                }
+            });
+            return result;
+        }
+        let native_child = detached && ctx.viewport_id() == viewport_id;
+        if native_child {
+            let viewport_rect = ctx.input(|input| input.viewport_rect());
+            set_floater_area(ctx, window_id, self.order, egui::Pos2::ZERO, viewport_rect.size());
+        }
         super::layout::set_partial_outside(ctx, egui::Id::unique(self.id), self.partial_outside);
         if window_hidden(ctx, egui::Id::unique(self.id), *open, self.chat) {
             // its toolbar button still closes it with the interface hidden,
@@ -543,7 +598,6 @@ impl<'a> Floater<'a> {
         let expand_asked = ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(self.id).with(EXPAND)));
         let mut toggle_min = minimized && expand_asked.unwrap_or(false);
         let mut out = None;
-        let window_id = egui::Id::unique(self.id);
         let expanded_id = window_id.with("expanded_size");
         let restore_id = window_id.with("restore_size");
         let expanded = ctx.data_mut(|d| d.get_persisted::<Vec2>(expanded_id)).unwrap_or(self.default_size);
@@ -551,13 +605,25 @@ impl<'a> Floater<'a> {
         let resizable = self.resizable && !minimized;
         // The windows live between the bars (`layout::work_area`): none
         // opens larger than that room, nor outside it.
-        let work = super::layout::work_area(ctx);
+        let work = if native_child {
+            ctx.input(|input| input.viewport_rect())
+        } else {
+            super::layout::work_area(ctx)
+        };
         self.min_size = self.min_size.min(work.size());
-        self.default_size = self.default_size.min(work.size());
-        self.default_pos = fit_in(work, self.default_pos, self.default_size);
-        let opening = self
-            .cascade
-            .and_then(|group| cascade::prepare(ctx, window_id, group, egui::Rect::from_min_size(self.default_pos, expanded), work));
+        if native_child {
+            self.default_pos = egui::Pos2::ZERO;
+            self.default_size = work.size();
+        } else {
+            self.default_size = self.default_size.min(work.size());
+            self.default_pos = fit_in(work, self.default_pos, self.default_size);
+        }
+        let opening = (!native_child)
+            .then(|| {
+                self.cascade
+                    .and_then(|group| cascade::prepare(ctx, window_id, group, egui::Rect::from_min_size(self.default_pos, expanded), work))
+            })
+            .flatten();
         // A window as tall as its content (fixed, or of automatic height)
         // whose content is taller than the room scrolls it, from the frame
         // after the one that showed it too tall, and for as long as it is.
@@ -565,7 +631,9 @@ impl<'a> Floater<'a> {
         let scroll_id = window_id.with("body_scrolls");
         let scrolls = content_sized && ctx.data(|d| d.get_temp::<bool>(scroll_id)).unwrap_or(false);
         let mut still_too_tall = false;
-        let resize_drag = resizable.then(|| resize::Drag::prepare(ctx, window_id, self.min_size)).flatten();
+        let resize_drag = (!native_child)
+            .then(|| resizable.then(|| resize::Drag::prepare(ctx, window_id, self.min_size)).flatten())
+            .flatten();
         // A resizable window left larger than the room (the viewer window
         // was made smaller) is brought down to it, as Firestorm's floaters
         // are (LLFloaterView::adjustToFitScreen).
@@ -618,19 +686,23 @@ impl<'a> Floater<'a> {
         }
         // the viewer window changed size: the floater follows its edges;
         // a placement asked this frame and a resize in progress come after
-        let slot = super::layout::slot(ctx, window_id);
-        if opening.is_some() {
+        let mut slot = (!native_child).then(|| super::layout::slot(ctx, window_id));
+        if !native_child && opening.is_some() {
             super::layout::reanchor(ctx, window_id);
         }
-        let mut asked = opening.as_ref().map(|o| o.pos).or(slot.pos);
+        let mut asked = if native_child {
+            Some(egui::Pos2::ZERO)
+        } else {
+            opening.as_ref().map(|o| o.pos).or_else(|| slot.as_ref().and_then(|slot| slot.pos))
+        };
         // A window moves anywhere in the room the bars leave it
         // (`layout::move_area`: the whole screen with the islands, between
         // the Legacy Viewer's bars otherwise), past the edges the user lets
         // it cross, its title bar within reach (`layout::reach`); a window
         // dragged with its group has the group's limits.
-        let room = super::layout::move_area(ctx);
+        let room = if native_child { work } else { super::layout::move_area(ctx) };
         // the edge dragged snaps to the other windows and to the work area
-        let resized = resize_drag.map(|drag| {
+        let resized = (!native_child).then_some(resize_drag).flatten().map(|drag| {
             let rect = on_pixels(
                 ctx,
                 super::layout::resizing(ctx, p, window_id, drag.rect(), drag.edges(), drag.minimum()),
@@ -651,10 +723,16 @@ impl<'a> Floater<'a> {
         // quick drag of the left or top edge pushed the whole window back
         // by what that size exceeded, its opposite edge moving for a frame
         // (the human's report of 2026-10-16).
-        w = if resized.is_some() {
+        w = if native_child {
+            w.fixed_size(work.size()).constrain(false)
+        } else if resized.is_some() {
             w.constrain(false)
         } else {
-            w.constrain_to(slot.limits.unwrap_or_else(|| super::layout::reach(room, size, edges)))
+            w.constrain_to(
+                slot.as_ref()
+                    .and_then(|slot| slot.limits)
+                    .unwrap_or_else(|| super::layout::reach(room, size, edges)),
+            )
         };
         if let Some(pos) = ctx.data_mut(|d| d.remove_temp::<egui::Pos2>(window_id.with(PLACE_POS))) {
             asked = Some(pos);
@@ -669,7 +747,7 @@ impl<'a> Floater<'a> {
         // Whatever places the window, its title bar stays in reach: egui
         // lets a window larger than its limits slide out of them by what it
         // has in excess, title first.
-        if let Some(pos) = title_in_reach(ctx, window_id, room, asked, resized.map(|r| r.size())) {
+        if !native_child && let Some(pos) = title_in_reach(ctx, window_id, room, asked, resized.map(|r| r.size())) {
             w = w.current_pos(pos);
         }
         // `steady_size`: once shown, the body in the window's exact rect
@@ -731,6 +809,14 @@ impl<'a> Floater<'a> {
                         };
                         if title_button(ui, p, icon).on_hover_text(tip).clicked() {
                             toggle_min = true;
+                        }
+                        if native_child
+                            && title_button(ui, p, "picture-in-picture")
+                                .on_hover_text(aurora_i18n::tr!("floater-reattach"))
+                                .clicked()
+                        {
+                            ui.ctx().data_mut(|data| data.remove_temp::<bool>(native_key));
+                            restore_floater_area(ui.ctx(), window_id, self.order, restore_key);
                         }
                         for (icon, tip, clicked) in &mut self.actions {
                             let response = title_button(ui, p, icon).on_hover_text(*tip);
@@ -842,6 +928,12 @@ impl<'a> Floater<'a> {
             {
                 toggle_min = true;
             }
+            if native_child {
+                let drag = ui.interact(title_rect, window_id.with("native_title_drag"), Sense::drag());
+                if drag.drag_started() {
+                    ui.ctx().send_viewport_cmd_to(viewport_id, egui::ViewportCommand::StartDrag);
+                }
+            }
             if compact {
                 divider(ui, p);
                 ui.add_space(5.0);
@@ -874,6 +966,15 @@ impl<'a> Floater<'a> {
         });
         if let Some(response) = response {
             window_click_tolerance(&response.response);
+            if !native_child
+                && ctx.dragged_id() == Some(window_id.with("move"))
+                && ctx.input(|input| input.pointer.interact_pos().is_some_and(|pos| !input.viewport_rect().contains(pos)))
+                && let Some(area) = egui::AreaState::load(ctx, window_id)
+            {
+                ctx.data_mut(|data| data.insert_temp(restore_key, area));
+                ctx.data_mut(|data| data.insert_temp(native_key, true));
+                ctx.data_mut(|data| data.insert_temp(window_id.with("native_start_drag"), true));
+            }
             if content_sized {
                 let too_tall = if scrolls {
                     still_too_tall
@@ -882,7 +983,9 @@ impl<'a> Floater<'a> {
                 };
                 ctx.data_mut(|d| d.insert_temp(scroll_id, too_tall));
             }
-            slot.shown(ctx, response.response.rect, minimized);
+            if let Some(slot) = slot.take() {
+                slot.shown(ctx, response.response.rect, minimized);
+            }
             if self.cascade.is_some() {
                 cascade::shown(ctx, window_id, response.response.rect, minimized);
             }
@@ -939,6 +1042,19 @@ impl<'a> Floater<'a> {
             }
         }
         out
+    }
+}
+
+fn set_floater_area(ctx: &egui::Context, id: egui::Id, order: egui::Order, pos: egui::Pos2, size: Vec2) {
+    let mut state = egui::AreaState::load(ctx, id).unwrap_or_default();
+    state.set_left_top_pos(pos);
+    state.size = Some(size);
+    ctx.memory_mut(|memory| memory.areas_mut().set_state(egui::LayerId::new(order, id), state));
+}
+
+fn restore_floater_area(ctx: &egui::Context, id: egui::Id, order: egui::Order, key: egui::Id) {
+    if let Some(state) = ctx.data_mut(|data| data.remove_temp::<egui::AreaState>(key)) {
+        ctx.memory_mut(|memory| memory.areas_mut().set_state(egui::LayerId::new(order, id), state));
     }
 }
 

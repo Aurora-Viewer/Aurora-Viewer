@@ -39,6 +39,7 @@ const THIS_PC: &[&str] = &[
     "window_height",
     "window_x",
     "window_y",
+    "window_display",
     "window_maximized",
     "cache_location",
     "chat_log_location",
@@ -285,6 +286,7 @@ impl Settings {
         self.window_height = current.window_height;
         self.window_x = current.window_x;
         self.window_y = current.window_y;
+        self.window_display = current.window_display.clone();
         self.window_maximized = current.window_maximized;
         self.cache_location = current.cache_location.clone();
         self.chat_log_location = current.chat_log_location.clone();

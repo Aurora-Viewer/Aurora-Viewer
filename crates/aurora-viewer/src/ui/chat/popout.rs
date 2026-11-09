@@ -1234,6 +1234,30 @@ mod tests {
     }
 
     #[test]
+    fn each_conversation_window_has_a_stable_native_viewport_identity() {
+        let conversations = [id(1), id(2), None];
+        let mut popped = Popped::default();
+        for conversation in conversations {
+            popped.pop_out(conversation, false, false, false);
+        }
+
+        let viewport_ids: Vec<_> = popped
+            .windows
+            .iter()
+            .map(|window| crate::native_viewports::floater_viewport_id(&window.floater))
+            .collect();
+
+        assert_eq!(viewport_ids.len(), conversations.len());
+        for (index, conversation) in conversations.iter().enumerate() {
+            assert_eq!(
+                viewport_ids[index],
+                crate::native_viewports::floater_viewport_id(&floater_id(*conversation))
+            );
+            assert!(viewport_ids[index + 1..].iter().all(|other| other != &viewport_ids[index]));
+        }
+    }
+
+    #[test]
     fn a_window_docks_back_or_closes_with_its_conversation() {
         let mut popped = Popped::default();
         popped.pop_out(id(1), false, false, false);

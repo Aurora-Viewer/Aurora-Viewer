@@ -724,6 +724,10 @@ pub struct Settings {
     pub window_x: Option<i32>,
     pub window_y: Option<i32>,
     pub window_maximized: bool,
+    /// Last display used for restoring native window placement.
+    pub window_display: Option<crate::window_display::SavedDisplay>,
+    /// Recover unreachable window geometry when connected displays change.
+    pub window_display_recovery: bool,
     /// Start in a borderless window covering the current monitor.
     pub window_fullscreen: bool,
     /// Legacy single-account authorization, read once for migration only.
@@ -1967,6 +1971,8 @@ impl Default for Settings {
             window_x: None,
             window_y: None,
             window_maximized: false,
+            window_display: None,
+            window_display_recovery: true,
             window_fullscreen: false,
             mfa_hash: String::new(),
             font: crate::ui::fonts::DEFAULT.into(),
@@ -2978,6 +2984,8 @@ impl Settings {
             window_x: old.window_x,
             window_y: old.window_y,
             window_maximized: old.window_maximized,
+            window_display: old.window_display,
+            window_display_recovery: old.window_display_recovery,
             window_fullscreen: old.window_fullscreen,
             // a newer build's own values are not this build's to reset
             newer_file: old.newer_file,
