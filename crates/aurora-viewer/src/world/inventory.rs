@@ -163,6 +163,12 @@ impl Inventory {
                     f.favorite = existing.info.favorite;
                     f.favorite_known = existing.info.favorite_known;
                 }
+                // Neither can a skeleton, a legacy listing or a UDP update
+                // say the thumbnail is gone: they do not carry it (#2716).
+                if !f.thumbnail_known && f.thumbnail.is_nil() {
+                    f.thumbnail = existing.info.thumbnail;
+                    f.thumbnail_known = existing.info.thumbnail_known;
+                }
                 // A parent listing can carry older/unknown child versions.
                 // Keep the version of the contents already confirmed locally.
                 let version = existing.info.version;
@@ -215,6 +221,11 @@ impl Inventory {
         for id in ids {
             self.sort_children(id);
         }
+    }
+
+    /// Folder requests wait for the cache file to be read.
+    pub fn requests_held(&self) -> bool {
+        self.held.is_some()
     }
 
     /// Queue a folder fetch if not fetched yet.
@@ -1226,5 +1237,41 @@ mod tests {
         assert!(read_cache(&path).is_none());
         std::fs::remove_file(&path).expect("synthetic cache cleanup");
         assert!(read_cache_in_background(path).recv().expect("one answer").is_none());
+    }
+
+    fn outfit(id: u128, thumbnail: u128, known: bool) -> InvFolder {
+        InvFolder {
+            id: Uuid::from_u128(id),
+            parent: Uuid::from_u128(48),
+            name: "Outfit".into(),
+            type_default: 47,
+            version: 3,
+            thumbnail: Uuid::from_u128(thumbnail),
+            thumbnail_known: known,
+            ..Default::default()
+        }
+    }
+
+    /// A legacy listing of My Outfits, as saving or renaming an outfit reads
+    /// it, says nothing of thumbnails: its children keep theirs (#2716).
+    #[test]
+    fn a_record_without_a_thumbnail_keeps_the_one_known() {
+        let mut inv = Inventory::default();
+        inv.add_folders(vec![outfit(1, 9, true)], false);
+        let picture = Uuid::from_u128(9);
+        inv.add_folders(vec![outfit(1, 0, false)], false);
+        assert_eq!(inv.folders[&Uuid::from_u128(1)].info.thumbnail, picture);
+        // and a new one replaces it, known or not
+        inv.add_folders(vec![outfit(1, 8, false)], false);
+        assert_eq!(inv.folders[&Uuid::from_u128(1)].info.thumbnail, Uuid::from_u128(8));
+    }
+
+    /// A complete AIS record, or the removal of the picture, does clear it.
+    #[test]
+    fn a_complete_record_without_a_thumbnail_clears_it() {
+        let mut inv = Inventory::default();
+        inv.add_folders(vec![outfit(1, 9, true)], false);
+        inv.add_folders(vec![outfit(1, 0, true)], false);
+        assert!(inv.folders[&Uuid::from_u128(1)].info.thumbnail.is_nil());
     }
 }

@@ -1451,12 +1451,31 @@ fn beacon_marker(clip: glam::Vec4, inner: Rect, proj: &super::hud::Projector) ->
             return Some((at, true, Vec2::ZERO));
         }
     }
-    // Camera-space x keeps its sign behind the camera too: the arrow
-    // indicates which way to turn. Straight behind defaults to the bottom.
+    let dir = edge_direction(clip, proj);
+    Some((edge_point(inner.center(), inner, dir), false, dir))
+}
+
+/// On the screen, the way toward a clip-space point, from the screen centre.
+/// Camera-space x keeps its sign behind the camera too: the arrow indicates
+/// which way to turn. Straight behind defaults to the bottom.
+pub(super) fn edge_direction(clip: glam::Vec4, proj: &super::hud::Projector) -> Vec2 {
     let v = vec2(clip.x * proj.width, -clip.y * proj.height);
-    let dir = if v.length_sq() > 1e-8 { v.normalized() } else { vec2(0.0, 1.0) };
-    let t = (inner.width() * 0.5 / dir.x.abs().max(1e-4)).min(inner.height() * 0.5 / dir.y.abs().max(1e-4));
-    Some((inner.center() + dir * t, false, dir))
+    if v.length_sq() > 1e-8 { v.normalized() } else { vec2(0.0, 1.0) }
+}
+
+/// Where the ray from `from` along `dir` leaves `inner`. `inner` need not
+/// be centred on `from`: the bars keep more of one side than of the other.
+pub(super) fn edge_point(from: Pos2, inner: Rect, dir: Vec2) -> Pos2 {
+    let from = from.clamp(inner.min, inner.max);
+    let reach = |d: f32, low: f32, high: f32, at: f32| {
+        if d > 0.0 {
+            (high - at) / d.max(1e-4)
+        } else {
+            (at - low) / (-d).max(1e-4)
+        }
+    };
+    let t = reach(dir.x, inner.left(), inner.right(), from.x).min(reach(dir.y, inner.top(), inner.bottom(), from.y));
+    from + dir * t
 }
 
 #[cfg(test)]
@@ -1513,6 +1532,23 @@ mod beacon_tests {
         assert!(!visible && at == inner.center_bottom());
         let (at, visible, _) = beacon_marker(Vec4::W, inner, &p).expect("visible marker");
         assert!(visible && at == inner.center());
+    }
+
+    #[test]
+    fn the_edge_point_leaves_a_rectangle_off_centre_along_its_ray() {
+        // a screen centred on 800,450 with bars taking more from the bottom
+        let inner = Rect::from_min_max(pos2(40.0, 60.0), pos2(1560.0, 700.0));
+        let from = pos2(800.0, 450.0);
+        assert_eq!(edge_point(from, inner, vec2(1.0, 0.0)), pos2(1560.0, 450.0));
+        assert_eq!(edge_point(from, inner, vec2(-1.0, 0.0)), pos2(40.0, 450.0));
+        assert_eq!(edge_point(from, inner, vec2(0.0, 1.0)), pos2(800.0, 700.0));
+        assert_eq!(edge_point(from, inner, vec2(0.0, -1.0)), pos2(800.0, 60.0));
+        let dir = vec2(1.0, 1.0).normalized();
+        let at = edge_point(from, inner, dir);
+        assert!((at.y - 700.0).abs() < 0.01 && (at.x - 1050.0).abs() < 0.01);
+        // the ray from the screen centre stays that ray
+        let on_ray = (at - from).normalized();
+        assert!((on_ray - dir).length() < 1e-4);
     }
 
     #[test]
