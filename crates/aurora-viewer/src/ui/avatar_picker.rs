@@ -30,6 +30,8 @@ pub struct AvatarPicker {
     query: String,
     uuid_text: String,
     selected: Vec<Uuid>,
+    /// Row Shift selects from (LLScrollListCtrl::mLastSelected).
+    anchor: Option<Uuid>,
 }
 
 impl AvatarPicker {
@@ -38,6 +40,7 @@ impl AvatarPicker {
         self.id = id.to_owned();
         self.multiple = multiple;
         self.selected.clear();
+        self.anchor = None;
     }
 
     /// Start on the search by name with `query` typed (a search begun
@@ -78,6 +81,7 @@ impl AvatarPicker {
             );
             if before != self.tab {
                 self.selected.clear();
+                self.anchor = None;
             }
             ui.add_space(6.0);
             let rows: Vec<(Uuid, String, String)> = match self.tab {
@@ -127,6 +131,7 @@ impl AvatarPicker {
                             {
                                 world.land.search_avatars(&self.query);
                                 self.selected.clear();
+                                self.anchor = None;
                             }
                         });
                     });
@@ -149,9 +154,10 @@ impl AvatarPicker {
                 }
             };
             ui.add_space(4.0);
-            // Ctrl+A: every visible row, as LLScrollListCtrl with multiple selection
+            // Ctrl+A / Shift+click: LLScrollListCtrl multi-select
             if self.multiple && !rows.is_empty() && ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::A)) {
                 self.selected = rows.iter().map(|(id, ..)| *id).collect();
+                self.anchor = rows.last().map(|(id, ..)| *id);
             }
             // fixed like the window: the available height of a window
             // sized from its content is the whole screen
@@ -204,14 +210,15 @@ impl AvatarPicker {
                             let at = crate::ui::widgets::row_text_origin(ui.painter(), &g, rect.left() + 6.0, rect.center().y);
                             ui.painter().galley(at, g, p.ink);
                             if r.clicked() {
-                                let add = ui.input(|i| i.modifiers.ctrl || i.modifiers.command) && self.multiple;
-                                if !add {
-                                    self.selected.clear();
-                                }
-                                if sel && add {
-                                    self.selected.retain(|x| x != id);
+                                let mods = ui.input(|i| i.modifiers);
+                                if self.multiple {
+                                    let order: Vec<Uuid> = rows.iter().map(|(row, ..)| *row).collect();
+                                    // Ctrl+click toggle, Shift+click range (no Contacts
+                                    // MAX_SELECT cap — Share can pick a whole crowd)
+                                    click_select(&mut self.selected, &mut self.anchor, &order, *id, mods);
                                 } else {
-                                    self.selected.push(*id);
+                                    self.selected = vec![*id];
+                                    self.anchor = Some(*id);
                                 }
                             }
                             if r.double_clicked() {
@@ -236,5 +243,60 @@ impl AvatarPicker {
             self.open = false;
         }
         chosen
+    }
+}
+
+/// Multi-select like LLScrollListCtrl / Contacts, without the friend-action
+/// row cap: Ctrl toggles, Shift fills from the anchor, plain click alone.
+fn click_select(sel: &mut Vec<Uuid>, anchor: &mut Option<Uuid>, order: &[Uuid], id: Uuid, mods: egui::Modifiers) {
+    if mods.command {
+        if let Some(i) = sel.iter().position(|s| *s == id) {
+            sel.remove(i);
+        } else {
+            sel.push(id);
+        }
+        *anchor = Some(id);
+    } else if mods.shift
+        && let Some(a) = anchor.and_then(|a| order.iter().position(|x| *x == a))
+        && let Some(b) = order.iter().position(|x| *x == id)
+    {
+        let (lo, hi) = (a.min(b), a.max(b));
+        *sel = order[lo..=hi].to_vec();
+    } else {
+        *sel = vec![id];
+        *anchor = Some(id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shift_click_selects_the_range_between_anchor_and_row() {
+        let order: Vec<Uuid> = (1..=5).map(Uuid::from_u128).collect();
+        let mut sel = Vec::new();
+        let mut anchor = None;
+        let plain = egui::Modifiers::default();
+        let mut shift = egui::Modifiers::default();
+        shift.shift = true;
+        click_select(&mut sel, &mut anchor, &order, order[1], plain);
+        assert_eq!(sel, vec![order[1]]);
+        assert_eq!(anchor, Some(order[1]));
+        click_select(&mut sel, &mut anchor, &order, order[4], shift);
+        assert_eq!(sel, order[1..=4].to_vec());
+        click_select(&mut sel, &mut anchor, &order, order[0], shift);
+        assert_eq!(sel, order[0..=1].to_vec());
+    }
+
+    #[test]
+    fn shift_range_is_not_capped_at_twenty() {
+        let order: Vec<Uuid> = (1..=40).map(Uuid::from_u128).collect();
+        let mut sel = Vec::new();
+        let mut anchor = Some(order[0]);
+        let mut shift = egui::Modifiers::default();
+        shift.shift = true;
+        click_select(&mut sel, &mut anchor, &order, order[39], shift);
+        assert_eq!(sel.len(), 40);
     }
 }
