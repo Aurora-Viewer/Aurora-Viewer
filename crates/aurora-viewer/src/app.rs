@@ -12998,6 +12998,7 @@ impl App {
                             }
                         }
                         self.build.ui.tex_tab = usize::from(channel.is_some());
+                        self.build.keep_texture_tab();
                         self.build.tab = 3;
                         self.build.ui.picker.open_with_defaults(
                             aurora_i18n::tr!("build-ui-texture-choose-texture"),
@@ -13022,6 +13023,7 @@ impl App {
                             );
                             self.build.ui.pick_target = Some(crate::build::ui::PickTarget::PbrMaterial);
                             self.build.ui.tex_tab = 1;
+                            self.build.keep_texture_tab();
                         } else {
                             self.build.ui.picker.open_with_defaults(
                                 aurora_i18n::tr!("build-ui-texture-choose-texture"),

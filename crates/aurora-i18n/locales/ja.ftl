@@ -13497,6 +13497,9 @@ ui-options-build-flesh = 肉
 ui-options-build-physical = 物理
 ui-options-build-temporary = 一時的
 ui-options-build-new-faces = 新しいオブジェクトの外観
+ui-options-build-editing = 編集
+ui-options-build-auto-material-tab = 選択に合ったマテリアルタブを開く
+ui-options-build-auto-material-tab-hint = オブジェクトを選択すると、いずれかの面にPBRマテリアルが表示されていればPBRタブ、そうでなければBlinn-Phongタブが開きます。オフにすると、最後に選んだタブのままになります。
 
 
 

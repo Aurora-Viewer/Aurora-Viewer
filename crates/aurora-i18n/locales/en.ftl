@@ -13530,6 +13530,9 @@ ui-options-build-flesh = Flesh
 ui-options-build-physical = Physical
 ui-options-build-temporary = Temporary
 ui-options-build-new-faces = Look of new objects
+ui-options-build-editing = Editing
+ui-options-build-auto-material-tab = Open the material tab that fits the selection
+ui-options-build-auto-material-tab-hint = Selecting an object opens the PBR tab when one of its faces shows a PBR material, Blinn-Phong otherwise. Off: the last tab chosen stays.
 
 
 
