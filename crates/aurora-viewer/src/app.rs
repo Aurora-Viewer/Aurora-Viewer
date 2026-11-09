@@ -14,7 +14,7 @@ use crate::world::World;
 use crate::world::env::Environment;
 use aurora_net::{LoginRequest, NetClient, NetCommand, NetEvent, StartLocation, control};
 use aurora_render::{DrawLists, EguiHandOver, FrameParams, RenderStats, Renderer};
-use glam::{Vec3, Vec4};
+use glam::{Mat4, Vec3, Vec4};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -9053,6 +9053,9 @@ impl App {
         }
         self.net_profile.corrections(corrections);
         self.net_profile.lead(self.world.agent.prediction.take_lead_max());
+        if self.demo {
+            crate::demo::terrain_crossing_step(&mut self.world, self.frame_count);
+        }
         // a border crossing changed what positions are relative to: the
         // camera moves with the agent, in the same frame
         let shift = self.world.take_origin_shift();
@@ -10206,7 +10209,10 @@ impl App {
                 .update(&mut gfx.renderer, &self.world, &mut self.scene.meshes, &physics);
             self.scene.physics_shapes.append(&mut self.scene.lists);
             let huds_shown = self.huds_shown();
-            self.scene.build_huds(&self.world, [hud_size.width, hud_size.height], huds_shown);
+            self.scene
+                .build_huds(&self.world, [hud_size.width, hud_size.height], huds_shown, |id| {
+                    gfx.renderer.records.get(id).map(|r| Mat4::from_cols_array_2d(&r.model))
+                });
             self.frame_profile.lap(Lap::Lists);
             if self.demo && std::env::var_os("AURORA_DEMO_ANIMESH").is_some() && self.frame_count.is_multiple_of(120) {
                 self.scene.log_demo_animesh(&self.world);
@@ -11415,6 +11421,7 @@ impl App {
         self.update_maps();
         self.poll_key_to_name();
 
+        self.poll_outfit_photo(&gfx.renderer);
         if let Some(request) = self.inventory_images.capture.take() {
             if self.scene_capture_pending
                 || self.inventory_images.capturing.is_some()
@@ -12128,6 +12135,19 @@ impl App {
         self.resolve_clicks();
         self.demo_action_steps();
         self.demo_click_steps();
+        // AURORA_DEMO_MAP=…,switch: the map's layout flips at frame 700 with
+        // the map open, as Preferences › Aurora › World map does (#2669)
+        if self.demo
+            && self.frame_count == 700
+            && std::env::var("AURORA_DEMO_MAP").is_ok_and(|s| s.split(',').any(|w| w.trim() == "switch"))
+        {
+            use crate::settings::WorldMapStyle;
+            let now = self.worldmap_ui.demo_style.unwrap_or(self.settings.world_map_style);
+            self.worldmap_ui.demo_style = Some(match now {
+                WorldMapStyle::Aurora => WorldMapStyle::Legacy,
+                WorldMapStyle::Legacy => WorldMapStyle::Aurora,
+            });
+        }
         if self.demo && self.frame_count == 700 && std::env::var("AURORA_DEMO_MAP").as_deref() == Ok("beacon-click") {
             if let Some(hit) = &self.beacon_hit {
                 let at = hit.rect.center() * self.egui_ctx.pixels_per_point();
@@ -16331,6 +16351,8 @@ impl App {
                 } else {
                     self.settings.show_recent_emojis
                 };
+                self.chat_ui.recent_emojis.favorites_enabled = self.settings.favorite_emojis;
+                self.chat_ui.recent_emojis.above = self.settings.chat_style != crate::settings::ChatStyle::Legacy;
                 self.chat_ui.send_typing = self.settings.send_typing_state;
                 self.chat_ui.typing_chevron = self.settings.typing_chevron;
                 self.chat_ui.flash_unread = self.settings.flash_unread_conversations;
@@ -17461,7 +17483,10 @@ impl App {
                     poser: self.ik_editor.open && self.ik_editor.posing(),
                     report_abuse: self.report_abuse.open,
                     marketplace_listings: self.listings_ui.open,
-                    teleport_history: self.panels.places && self.places_ui.history_shown(self.settings.classic_places),
+                    teleport_history: self.panels.places
+                        && self
+                            .places_ui
+                            .history_shown(self.settings.classic_places || self.places_ui.demo_classic),
                 };
                 self.toolbar_ui.chat_bar_active = self.chat_ui.bar_shown();
                 self.toolbar_ui.friends_only_active = self.world.friends_only();
@@ -17513,7 +17538,8 @@ impl App {
                     }
                 }
                 // place profiles: standalone windows and "Places"
-                let favorites_order = if self.panels.places && !self.settings.classic_places {
+                let classic_places = self.settings.classic_places || self.places_ui.demo_classic;
+                let favorites_order = if self.panels.places && !classic_places {
                     self.world.favorites.list(&self.world.inventory).to_vec()
                 } else {
                     Vec::new()
@@ -17530,7 +17556,7 @@ impl App {
                 let window_acts = self.place_ui.show(&ctx, &mut c);
                 let mut open = self.panels.places;
                 // Aurora's look orders the favourites as the bar does
-                let places_env = (!self.settings.classic_places).then(|| ui::places::aurora::Env {
+                let places_env = (!classic_places).then(|| ui::places::aurora::Env {
                     sort: self.settings.places_sort,
                     favorites: &favorites_order,
                 });
@@ -18684,7 +18710,8 @@ impl ApplicationHandler for App {
             }
             // AURORA_DEMO_PLACES=favorites|landmarks|history: "Places" on a tab
             // (after the tab, ":wide": Aurora's window widened to its rail and
-            // preview; ":open": its first place selected; both: ":wide,open")
+            // preview; ":open": its first place selected; both: ":wide,open";
+            // ":classic": the Legacy Viewer's tabs for this run, not saved)
             let demo_places = std::env::var("AURORA_DEMO_PLACES").unwrap_or_default();
             let (demo_tab, demo_how) = demo_places.split_once(':').unwrap_or((demo_places.as_str(), ""));
             if let Some(tab) = ui::places::tab_from_name(demo_tab) {
@@ -18695,6 +18722,7 @@ impl ApplicationHandler for App {
                     ui::widgets::size_floater(&self.egui_ctx, "places", egui::vec2(1040.0, 640.0));
                 }
                 self.places_ui.aurora.demo_open = demo_how.split(',').any(|w| w == "open");
+                self.places_ui.demo_classic = demo_how.split(',').any(|w| w == "classic");
             }
             // AURORA_DEMO_MARKETPLACE=<page>: World › SL Marketplace on that
             // page, open at start
