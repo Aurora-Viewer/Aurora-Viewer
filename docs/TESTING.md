@@ -4392,8 +4392,8 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_IMPOSTOR_FLIP=<seconds>` | The avatar limit alternates between its setting and one every `seconds` |
 | `AURORA_DEMO_OVERDRAW=<n>` | Overdraw test: n rows of opaque walls |
 | `AURORA_DEMO_ALPHA_MASK_AB=<shape>:<layers>:<mode>[:touch]` | Static layered alpha faces for the offline Mask/Blend A/B (#1696) |
-| `AURORA_DEMO_ALPHA_SORT=front\|back` | Original unrigged three-face DAE and PNG fixture, fixed front/back camera (#2575) |
-| `AURORA_ALPHA_FACE_SORT=0\|1` | Nonrigged alpha face-depth sorting, on by default; 0 retains object-centre sorting for A/B |
+| `AURORA_DEMO_ALPHA_SORT=<mode>` | Original three-face DAE/PNG fixture in the world or worn as a HUD |
+| `AURORA_ALPHA_FACE_SORT=0\|1` | World/HUD nonrigged alpha face-depth sorting, on by default; 0 retains object-centre sorting for A/B |
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
 | `AURORA_DEMO_REZ_EFFECT=1\|loop\|styles\|cold` | The rez effect: objects and an avatar appearing, dressing and leaving in front of the camera; `styles`: its three looks side by side; `cold`: a cold arrival with slow textures |
 | `AURORA_REZ_EFFECT=0\|1` | The rez effect off or on, whatever the setting (Preferences › Aurora) |
@@ -4441,6 +4441,13 @@ both open states and the selection count. Capture at frame 620.
   This tests ordering between nonrigged faces, not intersections inside one face
   or the separate rigged attachment order. The switch also restores the former
   radial ordering of portal and ban-line sort points for a consistent A/B.
+  Modes `hud`, `hud-back` and `hud-zoom` wear the same mesh at the centre HUD
+  point: red is nearest in `hud`, blue in `hud-back`; `hud-zoom` uses the red
+  side at 50% local size. The HUD uses its own +X depth, independent of the
+  world camera. With sorting off, its three faces share one object key and
+  blue incorrectly covers red in `hud`. Compare sorting off/on, SMAA/MSAA 4x,
+  reversed orientation and local zoom; ordinary HUD opacity, masks, clicks,
+  viewport zoom and visibility must stay unchanged. No grid assets are read.
 
 - **`AURORA_DEMO_ALPHA_MASK_AB=planes|cross|spheres:<layers>:mask|blend[:touch]`**:
   adds 1 to 512 static layered prims with a procedural alpha texture; `none`
@@ -5291,7 +5298,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Dev build with a synthetic version for this test |
 | `AURORA_DEMO_BUG_REPORT=<mode>` | Public bug report with demo data, nothing sent (no effect while the form is disabled) |
 | `AURORA_DEMO_REPORT_ABUSE=<mode>` | Report Abuse window, its checks and its sending, nothing sent |
-| `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `show-on-map`, `show-link`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, Show on map, coordinate entry and clickable 3D beacon |
+| `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `switch`, `show-on-map`, `show-link`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, layout switched with the map open, Show on map, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_PARCEL_NAME=<text>` | Any parcel name in the place island (odd names, line breaks) |
 | `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Legacy bars, place island, favourites, menus, balance, clock, hidden interface, immersive mode, chat autohide; `profiles` / `fpspresets`: saved graphics fixtures / FPS hover card |
@@ -5334,7 +5341,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GLYPHS=1\|2\|rtl\|rtl2` | Names, titles and chat in extended characters (system fonts); `rtl`, `rtl2`: right-to-left text |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
-| `AURORA_DEMO_RECENT_EMOJIS=1\|<emojis>` | Recent emojis under the chat fields: a full row, or the emojis given |
+| `AURORA_DEMO_RECENT_EMOJIS=1\|<emojis>` | Recent emojis over the chat fields (under them with the Legacy chat style): a full row, or the emojis given |
 | `AURORA_DEMO_FAVORITE_EMOJIS=<emojis>` | Favourite emojis: first in that row, the picker opening on their tab |
 | `AURORA_DEMO_CHAT_INPUT=1\|long\|ime` | Paragraph drafts or Japanese IME composition in chat inputs |
 | `AURORA_DEMO_SPELLING=1\|menu\|replace` | Misspelled words underlined in the chat bar and Conversations; their suggestions; auto-replace while typing |
@@ -5385,7 +5392,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_SOCIAL_MENU=<step>` | A resident's "Invite to group", "Add to contact set", "Block particles" and calling card |
 | `AURORA_DEMO_LAND_MODERATION=menu\|none\|freeze\|eject\|eject-ban` | "Freeze" and "Eject" of a resident on our land |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
-| `AURORA_DEMO_PLACES=<tab>[:wide,open]` | "Places" on a tab, widened, its first place selected |
+| `AURORA_DEMO_PLACES=<tab>[:wide,open,classic]` | "Places" on a tab, widened, its first place selected, or in the Legacy Viewer's tabs |
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
 | `AURORA_DEMO_PLACE_WINDOW=1` | Place profiles in separate windows |
 | `AURORA_DEMO_TP_CONFIRM=<origin>` | Teleport confirmation on screen |
@@ -7162,8 +7169,8 @@ failure. Grid validation and any paid upload are performed by the human.
   Unset, the row takes no room until a first emoji is sent. Preferences ›
   Chat › Show recent emojis turns it off. The Legacy bars
   (`AURORA_DEMO_BARS=legacy`) have no emojis in their field, so no row.
-- **`AURORA_DEMO_FAVORITE_EMOJIS=<emojis>`**: the favourites, for the run:
-  first in the row with a small star, and the emoji picker opening on their
+- **`AURORA_DEMO_FAVORITE_EMOJIS=<emojis>`**: the favourites, turned on for
+  the run whatever Preferences › Chat › Favorite emojis says: first in the row with a small star, and the emoji picker opening on their
   tab (with `AURORA_DEMO_BARS=emoji`). The right-click menu of an emoji in
   the row or the picker adds or removes one. Nothing is saved.
 - **`AURORA_DEMO_EMOJI_CODES=<text>`**: the Conversations window open, its
@@ -7718,6 +7725,13 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   value with Enter or
   by leaving the field: a destination appears without teleporting. Remove
   it: the coordinates return to our position and can be edited again.
+  `switch` flips the layout at frame 700 with the map open, as
+  Preferences › Aurora › World map does (with `legacy`: from the side panel
+  to the full-frame map). What to see (#2669): the window keeps its size and
+  stays resizable by its edges; capture frames 650, 760 and 1300. With
+  `AURORA_UI_FONT=OpenDyslexic AURORA_TEXT_SIZE=1.3` the side column's rows
+  measure wider than the column, which made the window grow to the screen's
+  width.
 - **`AURORA_DEMO_APPLINKS=1|<command>`**: Tess Touch's conversation and the
   chat console show one `secondlife:///app/...` link of each command: a
   group (its name), a link written with its own text, the "About Land"
@@ -8530,7 +8544,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `unknown`: a region for which nobody answers (error after 10 s);
   `landmark`: the profile of a landmark; `history`: that of an entry of the
   teleport history.
-- **`AURORA_DEMO_PLACES=favorites|landmarks|history[:wide,open]`**: the Favorites
+- **`AURORA_DEMO_PLACES=favorites|landmarks|history[:wide,open,classic]`**: the Favorites
   and Landmarks folders of the demo (with a subfolder) and a teleport
   history over several months. In Aurora's look (Preferences › Aurora ›
   Places), `:wide` opens the window at 1040 × 640 (the rail of sources and
@@ -8538,6 +8552,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   narrow row opens in place); `:wide,open` does both. The demo's favourite
   of the lagoon is a copy of its landmark (same asset): one place with a
   lit star.
+  `:classic` shows the Legacy Viewer's three tabs for the run, whatever
+  Preferences › Aurora › Places says (not saved): the Teleport / Map /
+  Profile bar stays whole at the bottom, down to the window's minimum size
+  and at any interface scale (#2641).
 - **`AURORA_DEMO_LANDMARK=create|favorite|landmark`**: once the avatar
   stands on its parcel, `create` opens World › Landmark this place: the
   landmark is created at once, named after the parcel; OK renames it,
