@@ -313,6 +313,8 @@ fn day(keys: &[(f32, Llsd)], water_frame: Llsd) -> Llsd {
     frames.insert("water".into(), water_frame);
     llsd_map! {
         "type" => "daycycle",
+        // as a viewer saves them (LLSettingsBase::saveValuesToLLSD)
+        "flags" => 0,
         "frames" => Llsd::Map(frames),
         "tracks" => Llsd::Array(vec![
             Llsd::Array(vec![llsd_map! {"key_keyframe" => 0.0, "key_name" => "water"}]),

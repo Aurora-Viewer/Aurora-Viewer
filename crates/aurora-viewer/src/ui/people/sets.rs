@@ -82,9 +82,9 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
     members.retain(|id| super::matches_name(world, id, &name_of(id), &filter));
     // FSPanelContactSets::updateAvatarListSorting
     if world.contact_sets.sorts_by_online(&set) {
-        members.sort_by_cached_key(|id| (!online(id), name_of(id).to_lowercase()));
+        members.sort_by_cached_key(|id| (!online(id), crate::natural_order::key(&name_of(id))));
     } else {
-        members.sort_by_cached_key(|id| name_of(id).to_lowercase());
+        members.sort_by_cached_key(|id| crate::natural_order::key(&name_of(id)));
     }
     st.sel.retain(|id| members.contains(id));
     let area = egui::ScrollArea::vertical()
@@ -228,8 +228,9 @@ fn second_line(c: &Ctx, id: &Uuid) -> String {
 fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleUi, set: &str, id: Uuid, name: &str, order: &[Uuid]) {
     let p = c.p;
     let world = c.world;
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), RICH_H), Sense::click_and_drag());
+    let (rect, resp) = rows::allocate(ui, id, Vec2::new(ui.available_width(), RICH_H));
     if !ui.is_rect_visible(rect) {
+        rows::person_menu(&resp, p, world, &st.sel, id);
         return;
     }
     if !data.pics.contains_key(&id) {

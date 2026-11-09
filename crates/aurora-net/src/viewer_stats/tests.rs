@@ -33,12 +33,23 @@ fn viewer() -> ViewerSide {
                 api: "Vulkan".into(),
                 vram_mb: 24_564,
                 max_texture_size: 16_384,
+                vulkan: Some(VulkanLimits {
+                    // 1.4.309
+                    instance_version: (1 << 22) | (4 << 12) | 309,
+                    max_samples: 8,
+                    texture_units: 1_048_576,
+                    sample_mask_words: 1,
+                    color_samples: 8,
+                    depth_samples: 8,
+                    integer_samples: 8,
+                }),
             },
         },
         shader_level: 5,
         display_names: true,
         show_usernames: false,
         inventory_usable: true,
+        position_snaps: 1.5,
     }
 }
 
@@ -110,8 +121,6 @@ fn the_report_has_every_field_of_the_legacy_viewer_with_its_type() {
         ("system.gl.max_color_texture_samples", "int"),
         ("system.gl.max_depth_texture_samples", "int"),
         ("system.gl.max_integer_samples", "int"),
-        ("system.gl.max_vertex_range", "int"),
-        ("system.gl.max_index_range", "int"),
         ("system.gl.max_texture_size", "int"),
         ("system.gl.is_ati", "bool"),
         ("system.gl.is_nvidia", "bool"),
@@ -159,7 +168,22 @@ fn the_report_has_every_field_of_the_legacy_viewer_with_its_type() {
         assert_eq!(kind(value), expected, "{path}");
     }
     if cfg!(windows) {
-        assert_eq!(kind(at(&report, "stats.misc.VulkanMaxApiVersion")), "string");
+        assert_eq!(at(&report, "stats.misc.VulkanMaxApiVersion").as_str(), "1.4.309.0");
+        assert_eq!(at(&report, "stats.misc.string_1").as_str(), "Vulkan driver is detected");
+    }
+    // the Vulkan counterparts of the OpenGL limits; none for these two
+    assert_eq!(at(&report, "system.gl.max_samples").as_i32(), 8);
+    assert_eq!(at(&report, "system.gl.num_texture_image_units").as_i32(), 1_048_576);
+    assert_eq!(kind(at(&report, "system.gl.max_vertex_range")), "undef");
+    assert_eq!(kind(at(&report, "system.gl.max_index_range")), "undef");
+    assert_eq!(report["AgentPositionSnaps"].as_f64(), 1.5);
+    // without Vulkan the limits are left out, the probe says so
+    let mut metal = viewer();
+    metal.system.gpu.vulkan = None;
+    let other = body(&metal, &NetCounters::default(), 61.5, 1_800_000_000, 2);
+    assert_eq!(kind(at(&other, "system.gl.max_samples")), "undef");
+    if cfg!(windows) {
+        assert_eq!(at(&other, "stats.misc.VulkanMaxApiVersion").as_str(), "0.0");
     }
     // the session id is added by the caller, after any logging
     assert_eq!(kind(&report["session_id"]), "undef");
@@ -289,17 +313,18 @@ fn the_vendor_short_name_comes_from_the_pci_id() {
 }
 
 #[test]
-fn dropped_packets_are_the_gaps_no_late_packet_filled() {
+fn dropped_packets_are_confirmed_losses_not_provisional_gaps() {
     let stats = NetStats::default();
     stats.seq_gaps.store(10, Ordering::Relaxed);
     stats.seq_late.store(7, Ordering::Relaxed);
+    stats.packets_lost.store(2, Ordering::Relaxed);
     stats.ping_avg_ms.store(120, Ordering::Relaxed);
     let n = NetCounters::read(&stats);
-    assert_eq!(n.dropped, 3);
+    assert_eq!(n.dropped, 2);
     assert_eq!(n.ping_ms, 120.0);
-    // a late packet counted before its gap never wraps the counter
+    // Recoveries from another period do not undo already confirmed losses.
     stats.seq_late.store(12, Ordering::Relaxed);
-    assert_eq!(NetCounters::read(&stats).dropped, 0);
+    assert_eq!(NetCounters::read(&stats).dropped, 2);
 }
 
 #[tokio::test]
