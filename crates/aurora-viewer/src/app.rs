@@ -750,6 +750,10 @@ pub struct App {
     /// Avatars around us, swept once a second on `radar_clock`.
     radar: crate::world::radar::Radar,
     radar_clock: Instant,
+    /// A zoom on a resident not drawn yet: the camera looks at its radar
+    /// position (the point) and follows the resident once drawn, unless the
+    /// camera was moved away meanwhile.
+    zoom_awaited: Option<(uuid::Uuid, glam::Vec3)>,
     contacts_ui: ui::contacts::ContactsUi,
     /// Mini-map and world map state, map server tiles.
     minimap_ui: ui::minimap::MiniMap,
@@ -1694,6 +1698,7 @@ impl App {
             contacts_people_ui: Default::default(),
             radar: Default::default(),
             radar_clock: Instant::now(),
+            zoom_awaited: None,
             contacts_ui: Default::default(),
             minimap_ui: Default::default(),
             display_name_ui: Default::default(),
@@ -4319,6 +4324,17 @@ impl App {
                     match nearest {
                         Some(id) => self.on_ctx_action(ui::context::CtxAction::ZoomAvatar(id)),
                         None => log::warn!("demo camera: no standing resident to zoom on"),
+                    }
+                }
+                Step::ZoomUnloadedResident => match crate::demo::people::drawn_late() {
+                    Some((id, _)) => self.on_ctx_action(ui::context::CtxAction::ZoomAvatar(id)),
+                    None => log::warn!("demo camera: zoom-unloaded needs AURORA_DEMO_PEOPLE=rows"),
+                },
+                Step::DrawUnloadedResident => {
+                    for ev in crate::demo::people::drawn_late().map(|(_, events)| events).unwrap_or_default() {
+                        if let Some(e) = self.world.apply(ev) {
+                            self.on_app_event(e);
+                        }
                     }
                 }
                 Step::MoveResident(x, y) => {
@@ -9388,6 +9404,7 @@ impl App {
             if !self.camera.mouselook() && self.camera.mouselook_zoom_held() {
                 self.end_mouselook_zoom();
             }
+            self.follow_awaited_zoom();
             let frame = crate::camera::FrameInput {
                 dt,
                 aspect: self.camera_aspect(),
@@ -16767,8 +16784,18 @@ impl App {
                         }
                         ui::people::PeopleAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::people::PeopleAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
-                        ui::people::PeopleAction::TooFarToZoom => {
-                            self.world.system_message(aurora_i18n::tr!("radar-too-far-to-zoom"));
+                        ui::people::PeopleAction::ZoomRefused { name, why } => {
+                            let meters = |d: f32| aurora_i18n::number(f64::from(d), 0);
+                            let text = match why {
+                                ui::people::ZoomRefusal::BeyondDrawDistance { range, draw_distance } => aurora_i18n::tr!(
+                                    "radar-zoom-beyond-draw-distance",
+                                    name = name,
+                                    distance = meters(range),
+                                    draw = meters(draw_distance)
+                                ),
+                                ui::people::ZoomRefusal::Unplaced => aurora_i18n::tr!("radar-zoom-unplaced", name = name),
+                            };
+                            self.world.system_message(text);
                         }
                         ui::people::PeopleAction::GroupChat(id) => {
                             self.world.ui_sounds.push(UiSound::StartIm);
