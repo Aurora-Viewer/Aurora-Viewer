@@ -43,14 +43,14 @@ impl Draft {
             .inventory
             .items
             .get(&self.item.id)
-            .is_some_and(|i| i.owner == world.agent_id && i.owner_mask & 0x4000 != 0)
+            .is_some_and(|i| crate::world::inventory::actions::agent_mask(i, world.agent_id) & 0x4000 != 0)
     }
     pub fn can_copy(&self, world: &World) -> bool {
         world
             .inventory
             .items
             .get(&self.item.id)
-            .is_some_and(|i| i.owner == world.agent_id && i.owner_mask & 0x8000 != 0)
+            .is_some_and(|i| crate::world::inventory::actions::agent_mask(i, world.agent_id) & 0x8000 != 0)
     }
     pub fn value(&self, param: &catalog::Param) -> f32 {
         self.edited

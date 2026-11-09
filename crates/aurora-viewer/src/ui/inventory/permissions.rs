@@ -88,7 +88,7 @@ impl Permissions {
         Some(
             actions::original(inv, id)
                 .and_then(|id| inv.items.get(&id))
-                .map_or_else(Self::default, |item| Self::new(item.owner_mask, item.next_owner_mask)),
+                .map_or_else(Self::default, |item| Self::new(actions::held(inv, item), item.next_owner_mask)),
         )
     }
 

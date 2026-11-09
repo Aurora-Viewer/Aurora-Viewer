@@ -26,6 +26,26 @@ Une ligne vide commence un nouveau paragraphe.
 
 # Actualités d'Aurora Viewer
 
+## 2026-11-08 — Aurora 0.9.4 : les Paramètres de débogage, et plus d'options du Legacy Viewer
+Le bouton Paramètres de débogage, ou Ctrl+Alt+Maj+S, ouvre une fenêtre avec chaque réglage par son nom : une recherche, une étoile sur ceux que vous avez changés et Rétablir la valeur par défaut. Préférences › Construire règle ce que devient une nouvelle prim : couleur, transparence, lueur, lumineux, physique, temporaire ou fantôme. Préférences › Graphismes gagne une distance d'affichage progressive (désactivée par défaut), le détail des Arbres et les Particules des objets portés, et Préférences › Protections peut masquer les objets à la surface démesurée. Cache et réglages sont gardés.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.4)
+
+## 2026-11-08 — Les régions voisines, des objets qui restent visibles, des appels qui tiennent
+Aurora demande désormais à la région votre propre distance d'affichage : les régions voisines apparaissent à 256 m et au-delà, comme dans le Legacy Viewer. Les objets bien en vue ne disparaissent plus sous certains angles de caméra, et le monde revient de lui-même quand la mémoire vidéo était pleine à la connexion. Les écrans média des régions chargées se remplissent et suivent leurs télécommandes, et les textures restées blanches reviennent sans vous reconnecter. Les appels privés tiennent pendant les téléportations, et la musique de la parcelle ne coupe plus quand vous bougez la caméra.
+
+## 2026-11-08 — Chat, caméra, avatars et correctifs
+Le lissage de caméra va jusqu'à 300 sans à-coups, et Préférences › Chat règle le nombre de lignes au-dessus du chat. Ctrl+Tab change de conversation, l'IME japonais montre le segment en conversion, et les zones de texte des scripts prennent plusieurs lignes. Les changements d'À propos du terrain tiennent, l'AO ne laisse plus de pose assise après une téléportation, et les outils RLVa ont un onglet Exceptions. Merci à AiAiCaptainn, anne-skydancer, circuskid, ClifHofmann, emmelinedevere, Gaalrauch, iGao, KanikaBreed, Marakiinfinity, MilkIsPrettyGood, Nowalski, Odessa-Draekavik et RheaMercury.
+
+## 2026-11-06 — Aurora 0.9.3 : AMD FSR 3.1, et plus stable sur toutes les cartes graphiques
+Choisissez FSR 3.1 sous Anticrénelage dans Préférences › Graphismes : des bords lissés à la taille de la fenêtre, ou un monde dessiné plus petit puis reconstruit net, pour plus d'images par seconde. Après une réinitialisation de la carte graphique, Aurora rouvre sa fenêtre sans vous déconnecter (désactivable dans les Préférences). Les GPU intégrés Intel de 6e à 9e génération démarrent de nouveau, comme les portables AMD + NVIDIA ; les GPU intégrés comptent leur mémoire partagée dans le budget des textures. Le cache est vidé une fois au premier lancement de la 0.9.3 ; vos réglages sont gardés.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.3)
+
+## 2026-11-06 — Mises à jour, votre ordinateur, et des clics qui tombent juste
+Aurora vous prévient désormais qu'une nouvelle version est sortie, pendant qu'il tourne. Préférences › Langue et mises à jour › Retirer Aurora de cet ordinateur enlève ce qu'Aurora a inscrit hors de ses propres dossiers, puis liste les dossiers restants. Le pack web et médias ne se télécharge qu'après votre accord. Les clics traversent les textures alpha et les prims invisibles comme dans le Legacy Viewer, et Maj ou Ctrl + clic droit étend la sélection de construction.
+
+## 2026-11-06 — Caméra, inventaire et correctifs
+Les limites de la caméra sont de nouveau actives par défaut, comme dans le Legacy Viewer : une carte à la connexion indique où les désactiver. L'historique des téléportations survit à un plantage, et ni l'écriture du journal ni la coupure de la voix ne peuvent figer le viewer. Les bords du terrain rejoignent la région voisine, les photos de profil restent nettes, les Favoris listent les éléments étoilés et le survol de l'inventaire a un interrupteur. Merci à ClifHofmann, chrzang, circuskid, emmelinedevere, Gaalrauch, iGao, KanikaBreed, Marakiinfinity, Odessa-Draekavik et xWynt3r.
+
 ## 2026-11-05 — Aurora 0.9.2 : votre historique de chat vous suit, et un mode plein écran
 Préférences › Chat › Historique importe vos conversations du Legacy Viewer et des autres viewers approuvés qui écrivent les mêmes fichiers. Les messages rejoignent votre historique Aurora dans l'ordre, chaque connexion n'ajoute que les nouveaux, et les fichiers de l'autre viewer sont seulement lus. Préférences › Graphismes gagne un plein écran sans bordure, et Alt+Entrée l'active ou le coupe aussitôt, sans redémarrer : une image nette pour les vidéos, et la fenêtre revient telle qu'elle était.
 [En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.2)

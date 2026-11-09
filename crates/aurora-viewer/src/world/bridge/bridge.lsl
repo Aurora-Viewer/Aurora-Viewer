@@ -1,10 +1,10 @@
-// Aurora LSL Bridge v1.40. Movelock physics follow the Legacy Viewer's movelockMe
+// Aurora LSL Bridge v1.41. Movelock physics follow the Legacy Viewer's movelockMe
 // (EBEDD1D2-A320-43f5-88CF-DD47BBCA5DFB.lsltxt, originally LGPL 2.1).
 // Mono's 64 KB holds this compiled controller too, with little to spare: the
 // read-only queries run in query.lsl, so a busy region cannot halt Movelock
 // with a Stack-Heap Collision. Keep new services out of this script.
 string FOLDER = "__FOLDER__";
-string VERSION = "1.40";
+string VERSION = "1.41";
 string gURL;
 key gToken;
 key gURLRequest;
@@ -17,7 +17,9 @@ integer gLocked;
 integer gRetryURL;
 float gRetryAt;
 float gNextHello;
-integer DISCOVERY_CHANNEL = -184735219;
+// Derived from this root's key at each rez, as the viewer does
+// (world/bridge.rs private_channel): no fixed channel to listen to.
+integer DISCOVERY_CHANNEL;
 integer gDiscoveryListener;
 integer gHelloPending;
 integer CONTROLS;
@@ -657,6 +659,7 @@ initialize() {
     CONTROLS =CONTROL_FWD | CONTROL_BACK | CONTROL_LEFT | CONTROL_RIGHT | CONTROL_UP | CONTROL_DOWN;
     gOwner = llGetOwner();
     llListenRemove(gDiscoveryListener);
+    DISCOVERY_CHANNEL = -0x10000000 - (integer)("0x" + llGetSubString((string)llGetKey(), 0, 6));
     gDiscoveryListener = llListen(DISCOVERY_CHANNEL, "", gOwner, "auroraHello|" + (string)llGetKey());
     gEnabled = FALSE;
     gMoving = FALSE;

@@ -6,6 +6,7 @@
 
 use super::smart::{Field as SmartField, Matcher, Subject};
 use super::{Facts, Inventory, folder_name, rules};
+use crate::natural_order::cmp_folded;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -253,7 +254,7 @@ pub fn picker_order(ctx: &egui::Context, inv: &Inventory) -> std::sync::Arc<Pick
 }
 
 pub fn picker_name_cmp(a: &str, b: &str) -> Ordering {
-    natural_cmp(&a.to_lowercase(), &b.to_lowercase())
+    cmp_folded(&a.to_lowercase(), &b.to_lowercase())
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -352,11 +353,15 @@ pub struct InventoryPreferences {
     pub show_recent: bool,
     pub show_worn: bool,
     pub show_favorites: bool,
+    pub show_hover_tooltips: bool,
     pub thumbnail_tooltips: bool,
     pub separate_searches: bool,
     pub double_click_add_objects: bool,
     pub double_click_add_clothes: bool,
     pub filter_defaults: Filters,
+    /// Received, Recent, Worn and Favorites keep their own finder defaults.
+    /// The existing filter_defaults setting remains the main inventory's.
+    pub tab_filter_defaults: [Filters; 4],
     pub last_logout: i64,
     /// How far back the Recent tab goes, in hours; 0: since the last logout.
     /// The Recent Items panel's own filter keeps its "Since Logoff" or its
@@ -399,11 +404,16 @@ impl Default for InventoryPreferences {
             show_recent: true,
             show_worn: true,
             show_favorites: true,
-            thumbnail_tooltips: true,
+            // off until a better hover card replaces it
+            show_hover_tooltips: false,
+            // its own switch since #3008, off like the tooltips it used to
+            // live in, so nobody gets pictures they never asked for
+            thumbnail_tooltips: false,
             separate_searches: false,
             double_click_add_objects: false,
             double_click_add_clothes: false,
             filter_defaults: Filters::default(),
+            tab_filter_defaults: Default::default(),
             last_logout: 0,
             recent_hours: 0,
             warn_task_move: true,
@@ -445,6 +455,22 @@ impl Default for ExplorerPreferences {
 }
 
 impl InventoryPreferences {
+    pub(super) fn filters_for(&self, tab: usize) -> &Filters {
+        if tab == 0 {
+            &self.filter_defaults
+        } else {
+            &self.tab_filter_defaults[tab.min(4) - 1]
+        }
+    }
+
+    pub(super) fn filters_for_mut(&mut self, tab: usize) -> &mut Filters {
+        if tab == 0 {
+            &mut self.filter_defaults
+        } else {
+            &mut self.tab_filter_defaults[tab.min(4) - 1]
+        }
+    }
+
     // LLPanelMainInventory::setSortBy saves the active panel's order
     // (indra/newview/llpanelmaininventory.cpp). Recent and Received each
     // keep their own order; other tabs share the main-inventory preference.
@@ -535,6 +561,9 @@ pub struct ViewCache {
     built: u64,
     query: Option<Query>,
     pub results: Vec<Uuid>,
+    /// With Always show folders, the folders that hold a matching item: the
+    /// others it lists start closed (`TreeState::prepare`).
+    holding: Option<IdSet>,
 }
 
 impl ViewCache {
@@ -760,6 +789,9 @@ impl ViewCache {
         // A favorite folder shows its whole content, favorite or not
         // (LLInventoryFavoritesItemsPanel::findAndInitRootContent builds the
         // full tree under each favorite folder, llinventorypanel.cpp).
+        // Outside those folders, membership uses the record's own flag.
+        // Link stars/actions follow the original; Favorites must not also
+        // collect every outfit link to that original (#2289).
         let favorites: Vec<Uuid> = if tab == 4 {
             inv.folders.values().filter(|f| f.info.favorite).map(|f| f.info.id).collect()
         } else {
@@ -846,7 +878,7 @@ impl ViewCache {
                     if tab == 3 && (!query.worn.contains(&original_id) || e.outfit) {
                         return false;
                     }
-                    if tab == 4 && !favored.contains(&e.parent) && !rules::is_favorite(inv, e.id) {
+                    if tab == 4 && !favored.contains(&e.parent) && !it.favorite {
                         return false;
                     }
                     return matcher.matches(&Subject {
@@ -857,7 +889,7 @@ impl ViewCache {
                         parent_name: folder_names.get(&e.parent).copied().unwrap_or(""),
                         creator: original.creator,
                         kind: if original.inv_type == 17 { 6 } else { original.inv_type },
-                        owner_mask: original.owner_mask,
+                        owner_mask: rules::held(inv, original),
                         worn: query.worn.contains(&original_id),
                         linked,
                         coalesced: original.asset_type == 6 && original.flags & super::OBJECT_HAS_MULTIPLE_ITEMS != 0,
@@ -879,7 +911,7 @@ impl ViewCache {
                 if filters.types != u32::MAX && filters.types & (1_u32 << kind) == 0 {
                     return false;
                 }
-                if original.owner_mask & filters.permissions != filters.permissions {
+                if rules::held(inv, original) & filters.permissions != filters.permissions {
                     return false;
                 }
                 if filters.coalesced && (original.asset_type != 6 || original.flags & super::OBJECT_HAS_MULTIPLE_ITEMS == 0) {
@@ -896,7 +928,7 @@ impl ViewCache {
                 if tab == 3 && (!query.worn.contains(&original_id) || e.outfit) {
                     return false;
                 }
-                if tab == 4 && !favored.contains(&e.parent) && !rules::is_favorite(inv, e.id) {
+                if tab == 4 && !favored.contains(&e.parent) && !it.favorite {
                     return false;
                 }
                 let creator = || query.names.get(&original.creator).map(|s| s.to_lowercase()).unwrap_or_default();
@@ -930,6 +962,22 @@ impl ViewCache {
                 parent = next;
             }
         }
+        // Always show folders lists every folder: like LLOpenFilteredFolders
+        // (indra/newview/llinventoryfunctions.cpp), a folder with no matching
+        // item below it is shown closed, the folders of the matches open.
+        // Advanced search keeps its own folder rules.
+        self.holding = (filters.always_folders && smart.is_none()).then(|| {
+            let mut holding = IdSet::default();
+            for id in self.results.iter().filter(|id| !self.folders.contains(*id)) {
+                let mut parent = rules::parent(inv, *id);
+                while let Some(folder) = parent
+                    && holding.insert(folder)
+                {
+                    parent = rules::parent(inv, folder);
+                }
+            }
+            holding
+        });
         self.result_children.clear();
         for (parent, children) in &self.children {
             let children: Vec<_> = children.iter().filter(|id| included.contains(id)).copied().collect();
@@ -984,6 +1032,10 @@ pub struct TreeRow {
 pub struct TreeState {
     key: Option<(u64, Uuid, usize, bool)>,
     closed: [HashSet<Uuid>; 5],
+    /// The folders listed so far with Always show folders, and those of them
+    /// closed because no matching item was below them.
+    seen: [HashSet<Uuid>; 5],
+    hollow_closed: [HashSet<Uuid>; 5],
     pub rows: Vec<TreeRow>,
     pub order: Vec<Uuid>,
 }
@@ -1014,6 +1066,21 @@ impl TreeState {
                 continue;
             }
             let folder = view.folders.contains(&id);
+            // A folder with no matching item starts closed when first listed;
+            // closed that way, it opens once a match lands in it.
+            if folder
+                && id != root
+                && let Some(holding) = &view.holding
+            {
+                let hollow = !holding.contains(&id);
+                if self.seen[tab].insert(id) {
+                    if hollow && self.closed[tab].insert(id) {
+                        self.hollow_closed[tab].insert(id);
+                    }
+                } else if !hollow && self.hollow_closed[tab].remove(&id) {
+                    self.closed[tab].remove(&id);
+                }
+            }
             let open = folder && !self.closed[tab].contains(&id);
             if id != root || show_root {
                 self.rows.push(TreeRow { id, depth, folder, open });
@@ -1070,6 +1137,8 @@ impl TreeState {
     }
 
     pub fn set_all(&mut self, view: &ViewCache, root: Uuid, tab: usize, open: bool) {
+        // Expand all or Collapse all is the user's choice for every folder.
+        self.hollow_closed[tab.min(4)].clear();
         let closed = &mut self.closed[tab.min(4)];
         closed.clear();
         if !open {
@@ -1167,47 +1236,12 @@ fn compare(a: &Entry, b: &Entry, sort: Sort) -> Ordering {
     groups
         .then_with(|| {
             if by_name {
-                natural_cmp(&a.name, &b.name).then_with(|| b.date.cmp(&a.date))
+                cmp_folded(&a.name, &b.name).then_with(|| b.date.cmp(&a.date))
             } else {
-                b.date.cmp(&a.date).then_with(|| natural_cmp(&a.name, &b.name))
+                b.date.cmp(&a.date).then_with(|| cmp_folded(&a.name, &b.name))
             }
         })
         .then_with(|| a.id.cmp(&b.id))
-}
-
-/// Dictionary order: numeric runs compare numerically ("2" before "10").
-fn natural_cmp(a: &str, b: &str) -> Ordering {
-    let (mut a, mut b) = (a.as_bytes(), b.as_bytes());
-    while let (Some(&x), Some(&y)) = (a.first(), b.first()) {
-        if x.is_ascii_digit() && y.is_ascii_digit() {
-            let (an, bn) = (
-                a.iter().take_while(|c| c.is_ascii_digit()).count(),
-                b.iter().take_while(|c| c.is_ascii_digit()).count(),
-            );
-            let (av, bv) = (&a[..an], &b[..bn]);
-            let (az, bz) = (
-                av.iter().take_while(|c| **c == b'0').count(),
-                bv.iter().take_while(|c| **c == b'0').count(),
-            );
-            let order = (an - az)
-                .cmp(&(bn - bz))
-                .then_with(|| av[az..].cmp(&bv[bz..]))
-                .then_with(|| an.cmp(&bn));
-            if order != Ordering::Equal {
-                return order;
-            }
-            a = &a[an..];
-            b = &b[bn..];
-        } else {
-            let order = x.cmp(&y);
-            if order != Ordering::Equal {
-                return order;
-            }
-            a = &a[1..];
-            b = &b[1..];
-        }
-    }
-    a.len().cmp(&b.len())
 }
 
 fn matches_text(value: &str, query: &str) -> bool {
@@ -1377,25 +1411,57 @@ mod tests {
     }
 
     #[test]
-    fn inventory_favorites_filter_links_by_the_original_state() {
-        let (mut inv, facts) = fixture();
-        inv.items.get_mut(&id(10)).expect("original").favorite = true;
-        let mut link = item(13, id(2), "Link", 100);
-        link.asset_type = 24;
-        link.asset_id = id(10);
-        inv.add_items(vec![link]);
-        let prefs = InventoryPreferences::default();
-        let filters = Filters::default();
-        let results = search(&inv, &facts, &prefs, &filters, 4);
-        assert!(results.contains(&id(10)));
-        assert!(results.contains(&id(13)));
-        assert!(!results.contains(&id(11)));
-        inv.items.get_mut(&id(10)).expect("original").favorite = false;
-        inv.items.get_mut(&id(13)).expect("link").favorite = true;
-        inv.generation += 1;
-        let results = search(&inv, &facts, &prefs, &filters, 4);
-        assert!(!results.contains(&id(10)));
-        assert!(!results.contains(&id(13)), "ignore a stale favorite on the link itself");
+    fn inventory_favorites_do_not_collect_links_to_favorite_originals() {
+        for filters in [Filters::default(), smart(Vec::new(), false)] {
+            let (mut inv, facts) = fixture();
+            let root = inv.root;
+            folder(&mut inv, 20, root, -1, "Favorite folder");
+            folder(&mut inv, 21, root, 48, "My Outfits");
+            folder(&mut inv, 22, id(21), -1, "Outfit");
+            inv.folders.get_mut(&id(20)).expect("favorite folder").info.favorite = true;
+            inv.items.get_mut(&id(10)).expect("original").favorite = true;
+            let mut link = item(13, id(2), "Link", 100);
+            link.asset_type = 24;
+            link.asset_id = id(10);
+            let mut folder_link = item(14, id(2), "Folder link", 100);
+            folder_link.asset_type = 25;
+            folder_link.asset_id = id(20);
+            inv.add_items(vec![link.clone(), folder_link]);
+            // Several outfits can refer to one favorite; none is another
+            // favorite root merely because its target has a star.
+            inv.add_items(
+                (100..200)
+                    .map(|n| {
+                        let mut alias = link.clone();
+                        alias.id = id(n);
+                        alias.parent = id(22);
+                        alias
+                    })
+                    .collect(),
+            );
+            let prefs = InventoryPreferences {
+                search_outfits: true,
+                ..Default::default()
+            };
+            let results = search(&inv, &facts, &prefs, &filters, 4);
+            assert!(results.contains(&id(10)) && results.contains(&id(20)));
+            assert!(results.iter().all(|i| !matches!(i.as_u128(), 13 | 14 | 100..=199)));
+            assert!(!results.contains(&id(11)));
+            assert!(rules::is_favorite(&inv, id(13)), "the link still shows its original's star");
+            assert!(rules::is_favorite(&inv, id(14)), "folder-link actions still address the original");
+
+            // Do not simply hide all links: the Legacy Favorites panel reads
+            // an explicitly stored flag, even on a link with a stale target.
+            inv.items.get_mut(&id(10)).expect("original").favorite = false;
+            inv.items.get_mut(&id(13)).expect("link").favorite = true;
+            inv.generation += 1;
+            let results = search(&inv, &facts, &prefs, &filters, 4);
+            assert!(!results.contains(&id(10)));
+            assert!(results.contains(&id(13)), "retain an entry's own favorite flag");
+            inv.items.get_mut(&id(13)).expect("link").asset_id = id(9999);
+            inv.generation += 1;
+            assert!(search(&inv, &facts, &prefs, &filters, 4).contains(&id(13)));
+        }
     }
 
     #[test]
@@ -1404,11 +1470,15 @@ mod tests {
         folder(&mut inv, 20, id(2), -1, "Sub");
         folder(&mut inv, 21, id(20), -1, "Empty");
         inv.add_items(vec![item(22, id(20), "Deep", 100)]);
+        let mut link = item(23, id(20), "Link inside favorite folder", 100);
+        link.asset_type = 24;
+        link.asset_id = id(10);
+        inv.add_items(vec![link]);
         inv.folders.get_mut(&id(2)).expect("folder").info.favorite = true;
         let prefs = InventoryPreferences::default();
         let filters = Filters::default();
         let results = search(&inv, &facts, &prefs, &filters, 4);
-        for n in [2, 10, 11, 12, 20, 21, 22] {
+        for n in [2, 10, 11, 12, 20, 21, 22, 23] {
             assert!(results.contains(&id(n)), "{n} sits in a favorite folder");
         }
         assert!(!results.contains(&id(4)), "a folder outside stays hidden");
@@ -1417,7 +1487,14 @@ mod tests {
         inv.generation += 1;
         let results = search(&inv, &facts, &prefs, &filters, 4);
         assert!(results.contains(&id(22)) && results.contains(&id(21)));
+        assert!(
+            results.contains(&id(23)),
+            "links inside a favorite folder remain part of its content"
+        );
         assert!(!results.contains(&id(10)), "the parent of a favorite folder shows only its path");
+        let advanced = search(&inv, &facts, &prefs, &smart(Vec::new(), false), 4);
+        assert!(advanced.contains(&id(23)), "advanced Favorites search retains folder content too");
+        assert!(!advanced.contains(&id(10)));
     }
 
     #[test]
@@ -1545,7 +1622,7 @@ mod tests {
         cache.prepare(&inv, prefs.sort);
         let root = cache.children(inv.root, &prefs, inv.lib_root);
         assert!(root.iter().position(|n| *n == id(6)) < root.iter().position(|n| *n == id(2)));
-        assert!(natural_cmp("folder 2", "folder 10").is_lt());
+        assert!(cmp_folded("folder 2", "folder 10").is_lt());
     }
 
     #[test]
@@ -1693,7 +1770,7 @@ mod tests {
 
     #[test]
     fn recent_and_worn_use_real_folders_and_separate_collapse_states() {
-        let (inv, mut facts) = fixture();
+        let (mut inv, mut facts) = fixture();
         let prefs = InventoryPreferences {
             last_logout: 200,
             ..Default::default()
@@ -1706,11 +1783,84 @@ mod tests {
         tree.toggle(id(2), 2);
         tree.prepare(&view, inv.root, 2, true);
         assert_eq!(tree.order, [id(1), id(2)]);
+        inv.generation += 1;
+        view.search(&inv, inv.root, "", &prefs, &Filters::default(), 2, None, &facts, facts.agent, 1000);
+        tree.prepare(&view, inv.root, 2, true);
+        assert_eq!(tree.order, [id(1), id(2)], "a Recent refresh keeps the user's collapse");
         facts.worn.insert(id(10));
         view.search(&inv, inv.root, "", &prefs, &Filters::default(), 3, None, &facts, facts.agent, 1000);
         tree.prepare(&view, inv.root, 3, true);
         assert_eq!(tree.order, [id(1), id(2), id(10)]);
         assert!(!tree.rows.last().unwrap().folder);
+
+        inv.items.get_mut(&id(11)).expect("favorite item").favorite = true;
+        inv.generation += 1;
+        view.search(&inv, inv.root, "", &prefs, &Filters::default(), 4, None, &facts, facts.agent, 1000);
+        tree.prepare(&view, inv.root, 4, true);
+        assert_eq!(
+            tree.order,
+            [id(1), id(2), id(11)],
+            "Favorites shows only the favorite item's ancestors"
+        );
+        tree.toggle(id(2), 4);
+        tree.prepare(&view, inv.root, 4, true);
+        assert_eq!(tree.order, [id(1), id(2)]);
+        inv.generation += 1;
+        view.search(&inv, inv.root, "", &prefs, &Filters::default(), 4, None, &facts, facts.agent, 1000);
+        tree.prepare(&view, inv.root, 4, true);
+        assert_eq!(tree.order, [id(1), id(2)], "a Favorites refresh keeps the user's collapse");
+    }
+
+    /// Recent with Always show folders (#2853): every folder is listed, only
+    /// those holding a recent item open, as LLOpenFilteredFolders leaves them.
+    #[test]
+    fn always_show_folders_opens_only_the_folders_of_the_matches() {
+        let (mut inv, facts) = fixture();
+        folder(&mut inv, 7, id(4), -1, "Inner");
+        let prefs = InventoryPreferences {
+            last_logout: 200,
+            ..Default::default()
+        };
+        let filters = Filters {
+            always_folders: true,
+            ..Default::default()
+        };
+        let mut view = ViewCache::default();
+        let mut tree = TreeState::default();
+        let open = |tree: &TreeState, n: u128| tree.rows.iter().find(|row| row.id == id(n)).map(|row| row.open);
+        view.search(&inv, inv.root, "", &prefs, &filters, 2, None, &facts, facts.agent, 1000);
+        tree.prepare(&view, inv.root, 2, true);
+        assert_eq!(open(&tree, 2), Some(true), "the folder of the recent item");
+        assert!(tree.order.contains(&id(11)));
+        assert_eq!(open(&tree, 4), Some(false), "a folder without recent items is listed closed");
+        assert_eq!(open(&tree, 7), None, "its folders wait for it to open");
+
+        // a recent item lands in it: it opens; its own empty folder stays closed
+        inv.add_items(vec![item(13, id(4), "New gift", 900)]);
+        view.search(&inv, inv.root, "", &prefs, &filters, 2, None, &facts, facts.agent, 1000);
+        tree.prepare(&view, inv.root, 2, true);
+        assert_eq!(open(&tree, 4), Some(true));
+        assert!(tree.order.contains(&id(13)));
+        assert_eq!(open(&tree, 7), Some(false));
+
+        // what the user closes stays closed through a refresh
+        tree.toggle(id(2), 2);
+        inv.generation += 1;
+        view.search(&inv, inv.root, "", &prefs, &filters, 2, None, &facts, facts.agent, 1000);
+        tree.prepare(&view, inv.root, 2, true);
+        assert_eq!(open(&tree, 2), Some(false));
+        // Expand all opens everything, Inner included
+        tree.set_all(&view, inv.root, 2, true);
+        tree.prepare(&view, inv.root, 2, true);
+        assert_eq!((open(&tree, 2), open(&tree, 7)), (Some(true), Some(true)));
+
+        // without the option, nothing changes: only the folders of the matches
+        let mut view = ViewCache::default();
+        let mut tree = TreeState::default();
+        view.search(&inv, inv.root, "", &prefs, &Filters::default(), 2, None, &facts, facts.agent, 1000);
+        tree.prepare(&view, inv.root, 2, true);
+        assert!(tree.rows.iter().all(|row| !row.folder || row.open));
+        assert_eq!(open(&tree, 7), None);
     }
 
     #[test]
@@ -1920,6 +2070,32 @@ mod tests {
                 system_first: true
             }
         );
+    }
+
+    #[test]
+    fn inventory_tab_filter_defaults_migrate_and_survive_reload() {
+        let mut prefs: InventoryPreferences =
+            serde_json::from_str(r#"{"filter_defaults":{"links":"Exclude","hours":48}}"#).expect("existing preferences");
+        assert_eq!(prefs.filter_defaults.links, Links::Exclude);
+        for tab in 1..5 {
+            assert_eq!(
+                prefs.filters_for(tab),
+                &Filters::default(),
+                "old shared defaults stay in the main tab"
+            );
+            let filters = prefs.filters_for_mut(tab);
+            filters.types = 1 << tab;
+            filters.hours = tab as u32 * 24;
+            filters.age = Age::Newer;
+        }
+        let restored: InventoryPreferences = serde_json::from_str(&serde_json::to_string(&prefs).expect("save")).expect("reload");
+        assert_eq!(restored, prefs);
+        assert_eq!(restored.filter_defaults.links, Links::Exclude);
+        assert_eq!(restored.filter_defaults.hours, 48);
+        for tab in 1..5 {
+            assert_eq!(restored.filters_for(tab).types, 1 << tab);
+            assert_eq!(restored.filters_for(tab).hours, tab as u32 * 24);
+        }
     }
 
     #[test]

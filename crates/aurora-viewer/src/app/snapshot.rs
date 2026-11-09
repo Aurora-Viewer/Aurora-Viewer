@@ -12,7 +12,7 @@ use super::App;
 use crate::snapshot::looks::{self, Placement, Resolved};
 use crate::snapshot::luts::{Imported, LutLibrary};
 use crate::snapshot::reel::Place;
-use crate::snapshot::{self, ContextPass, TilePass, gallery, inventory, profile, save};
+use crate::snapshot::{self, ContextPass, PausedPart, TilePass, gallery, inventory, profile, save};
 use crate::ui::snapshot::{Action, Destination, EmailView, InventoryView, ProfileView};
 use crate::ui_sound::UiSound;
 use aurora_net::NetCommand;
@@ -117,6 +117,8 @@ struct Job {
     hold: Option<snapshot::Hold>,
     /// The whole photo drawn small before its tiles, for their occlusion.
     context: ContextPass,
+    /// Its parts wait while the 3D drawing is paused behind.
+    paused: snapshot::PausedWait,
 }
 
 /// A held photo (freeze frame) and what shows it.
@@ -502,6 +504,18 @@ impl App {
         self.snapshots.world_freeze
     }
 
+    /// Whether this frame's 3D drawing is paused behind
+    /// (texture_budget::Background::paused, busy_pause.rs): not for a frame
+    /// that carries a part of a photo. No part is asked while the drawing is
+    /// paused for memory (`snapshot::PausedWait`), but the pause can begin
+    /// after the part of the frame was asked, or while one asked is still on
+    /// its way; the busy card's pause only ends after the frame of a photo's
+    /// first part. Drawn paused, it was only sky (the empty lists, at a
+    /// sixteenth of its size).
+    pub(super) fn scene_paused(&self) -> bool {
+        self.drawing_paused() && self.snapshots.capturing.is_none()
+    }
+
     /// Whether the photo mode holds the world still.
     pub(super) fn photo_world_frozen(&self) -> bool {
         self.snapshots.world_freeze.is_some()
@@ -509,9 +523,36 @@ impl App {
 
     /// Before a frame is laid out: the photo frame it carries, if any.
     pub(super) fn photo_frame(&mut self, renderer: &mut Renderer) -> Option<PhotoFrame> {
+        let textures = &self.scene.textures;
+        let (paused, pending, passes) = (textures.drawing_paused(), textures.pending_in_view(), textures.wants_passes());
+        let occlusion = self.settings.ssao > 0;
         let s = &mut self.snapshots;
         s.capturing = None;
         let job = s.job.as_mut()?;
+        // (a part already asked is drawn all the same: the frame that
+        // carries it draws the scene, `App::scene_paused`)
+        if !job.asked {
+            let waited = job.paused.waiting();
+            match job.paused.next(Instant::now(), paused, pending, passes) {
+                PausedPart::Draw if waited => {
+                    log::info!("photo: the 3D drawing resumed, drawn from its first part ({pending} textures in view left)");
+                }
+                PausedPart::Draw => {}
+                PausedPart::Wait => return None,
+                PausedPart::StartOver => {
+                    log::info!(
+                        "photo: the 3D drawing is paused behind, the photo waits for it ({} of {} part(s) drawn, drawn again)",
+                        job.next,
+                        job.tiles.len()
+                    );
+                    job.next = 0;
+                    job.pixels = Vec::new();
+                    job.hold = None;
+                    job.context = ContextPass::plan(job.size, job.tiles.len(), occlusion);
+                    return None;
+                }
+            }
+        }
         if job.asked {
             if renderer.failed() || renderer.device_lost() {
                 // the frame asked never came back (the render thread is gone)
@@ -841,7 +882,7 @@ impl App {
             self.snapshots.message = Some((aurora_i18n::tr!("photo-profile-not-ready").to_owned(), true));
             return;
         };
-        self.snapshots.reel.start(size, Some(&rgba), cutout);
+        self.snapshots.reel.start(size, &rgba, cutout, &self.world.agent_id);
         let caption: String = self.snapshots.ui.caption.chars().take(profile::MAX_CAPTION).collect();
         let add_location = self.settings.snapshot.profile_location;
         let auth = self.snapshots.web_auth.clone();
@@ -957,7 +998,7 @@ impl App {
             self.snapshots.message = Some((aurora_i18n::tr!("photo-email-unavailable").to_owned(), true));
             return;
         }
-        self.snapshots.reel.start(size, Some(&rgba), cutout);
+        self.snapshots.reel.start(size, &rgba, cutout, &self.world.agent_id);
         let postcard = self.photo_postcard_fields();
         let quality = self.settings.snapshot.jpeg_quality;
         let demo_fail = self.demo && std::env::var("AURORA_DEMO_SNAPSHOT").is_ok_and(|m| m == "postcard-fail");
@@ -1094,6 +1135,7 @@ impl App {
             photo: full,
             hold: None,
             context,
+            paused: Default::default(),
         });
         let stack = self.settings.snapshot.looks.clone();
         let settings = self.settings.snapshot.look_settings.clone();
@@ -1224,7 +1266,7 @@ impl App {
         };
         self.snapshots.message_item = None;
         self.snapshots.message_profile = false;
-        self.snapshots.reel.start(size, None, cutout);
+        self.snapshots.reel.start(size, &rgba, cutout, &self.world.agent_id);
         self.snapshots.saving = Some(save::Saving::start(save::Job {
             width: size.0,
             height: size.1,
@@ -1261,8 +1303,8 @@ impl App {
 
     /// What the window shows of a photo for the inventory.
     pub(super) fn photo_inventory_view(&self, window: (u32, u32)) -> InventoryView {
-        // a photo of the reel sent again goes at its own size (fitted to the
-        // inventory's when it was read back): its price follows
+        // a photo of the reel sent again goes at its own size (never above
+        // the largest texture when it was read back): its price follows
         let capture = match &self.snapshots.reel.pending {
             Some((_, (w, h, _))) => (*w, *h),
             None => self.photo_size(window),
@@ -1311,7 +1353,7 @@ impl App {
     /// Scale and encode the texture on a worker; the shutter sounds as the
     /// upload starts, like saveTexture's playSnapshotAnimAndSound.
     pub(super) fn photo_encode(&mut self, size: (u32, u32), rgba: Vec<u8>, cost: i32, cutout: bool) {
-        self.snapshots.reel.start(size, Some(&rgba), cutout);
+        self.snapshots.reel.start(size, &rgba, cutout, &self.world.agent_id);
         let texture = inventory::texture_size(size);
         let (tx, rx) = crossbeam_channel::bounded(1);
         std::thread::spawn(move || {
@@ -2305,6 +2347,9 @@ LUT_3D_SIZE {n}
                 v.isolate = false;
                 v.presets = false;
                 v.light = false;
+            } else if !self.build.selection.is_empty() {
+                self.build.deselect_all(&self.world);
+                self.flush_build();
             } else if self.camera.free().is_some() {
                 self.snapshots.ui.free.on = false;
                 self.photo_free_camera();
@@ -2316,6 +2361,11 @@ LUT_3D_SIZE {n}
             return true;
         }
         if self.photo_full_frame() {
+            if !self.build.selection.is_empty() {
+                self.build.deselect_all(&self.world);
+                self.flush_build();
+                return true;
+            }
             self.snapshots.ui.full_frame = false;
             return true;
         }

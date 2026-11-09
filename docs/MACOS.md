@@ -9,7 +9,10 @@ nothing else to install. macOS support is new: tell us what does not work
 
 - A Mac with Apple Silicon (M1, M2, M3, M4 or later). Intel Macs are not
   supported.
-- macOS 12 Monterey or later.
+- macOS 13 Ventura or later. The renderer draws every texture through
+  Metal 3, which Apple ships from macOS 13 on: on macOS 12 Monterey the
+  viewer cannot start, even on Apple Silicon. Every Apple Silicon Mac can
+  be updated to a newer macOS, free of charge.
 
 ## 1. Download and install
 
@@ -82,6 +85,10 @@ Command (⌘), then Option (⌥) and Shift (⇧).
 Text fields accept both keys for copy, paste, undo and the rest.
 Select All is Command+A (or Control+A). Command+Shift+A still opens People,
 as in the Legacy Viewer, even while a field is focused.
+In the Conversations window, **Control+Tab** and **Control+Shift+Tab** go to
+the next and previous conversation. Option+Left/Right moves by word in its
+field, while Option+Up/Down still cycles conversations and Command+Left/Right
+stays the start or end of the line.
 **Command+Q** asks before quitting, like the close button of the window.
 macOS takes Command+Q and Command+H before the viewer sees them. The Quit
 item is answered here; Command+H stays Hide.
@@ -89,9 +96,11 @@ item is answered here; Command+H stays Hide.
 ## Web pages and video
 
 Web pages and video in the world need the media plugins, which are not part
-of the application: the first time they are needed, the viewer downloads
-Aurora's media plugins pack (about 335 MB) into the `media-plugins` folder of
-its settings (table below), once. A Legacy Viewer installed on the Mac can
+of the application: the first time they are needed, the viewer asks before
+it downloads Aurora's media plugins pack (about 335 MB) into the
+`media-plugins` folder of its settings (table below), once. "Not now" leaves
+a Download button in Preferences › Sound and voice › Media and where the page
+would show. A Legacy Viewer installed on the Mac can
 lend its plugins instead: in **Preferences › Media**, type the path of its
 application (its `.app` in `/Applications`) as the plugins folder.
 
