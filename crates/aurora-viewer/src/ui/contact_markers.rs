@@ -288,12 +288,7 @@ fn place(
             Some(tag) => (on_screen.y - tag.rect.top() + PLATE_GAP + full).max(rest),
             None => rest,
         };
-        // no slide up from the head on the frame it appears
-        if entry.presence == 0.0 {
-            entry.lift = lift;
-        }
-        entry.ease_lift(lift, dt);
-        let at = on_screen - vec2(0.0, entry.lift);
+        let at = on_screen - vec2(0.0, entry.ease_lift(lift, dt));
         let way = (at - center).normalized();
         if inner.contains(at) {
             entry.direction = Some(glam::Vec2::new(way.x, way.y));

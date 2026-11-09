@@ -104,8 +104,9 @@ pub struct Entry {
     pub marker: Marker,
     /// 0..1, appearing or going.
     pub presence: f32,
-    /// Points above the avatar, set by the painter.
-    pub lift: f32,
+    /// Points above the avatar, set by the painter (`ease_lift`); None until
+    /// it first stands on the screen.
+    lift: Option<f32>,
     /// From the screen centre, set by the painter.
     pub direction: Option<Vec2>,
     /// 0 above the plate, 1 landed on it, linear.
@@ -148,9 +149,13 @@ impl Entry {
         self.badge = None;
     }
 
-    /// `lift` eased toward `target` over `dt` seconds.
-    pub fn ease_lift(&mut self, target: f32, dt: f32) {
-        self.lift += (target - self.lift) * ease(dt, SCREEN_EASE);
+    /// The lift eased toward `target` over `dt` seconds, and returned. A
+    /// marker's first lift is `target` itself: it does not slide up from the
+    /// avatar's root on the frame it appears.
+    pub fn ease_lift(&mut self, target: f32, dt: f32) -> f32 {
+        let lift = self.lift.map_or(target, |lift| lift + (target - lift) * ease(dt, SCREEN_EASE));
+        self.lift = Some(lift);
+        lift
     }
 }
 
@@ -186,7 +191,7 @@ impl Tracker {
                     position: s.position,
                     marker: s.marker,
                     presence: 0.0,
-                    lift: 0.0,
+                    lift: None,
                     direction: None,
                     merge: 0.0,
                     badge: None,
@@ -421,6 +426,16 @@ mod tests {
         assert_eq!(settle(true, MERGE_DISTANCE + MERGE_MARGIN + 1.0), 0.0);
         assert_eq!(settle(true, 5.0), 1.0);
         assert_eq!(settle(false, 5.0), 0.0, "the plate is gone");
+    }
+
+    #[test]
+    fn a_new_marker_starts_at_its_lift_then_eases() {
+        let mut t = Tracker::default();
+        run(&mut t, 0.0, 0.1, &[seen(Vec3::new(10.0, 10.0, 20.0), true, Some(true))]);
+        let (_, entry) = t.iter_mut().next().expect("a marker");
+        assert_eq!(entry.ease_lift(30.0, 1.0 / 60.0), 30.0, "no slide up from the root");
+        let eased = entry.ease_lift(50.0, 1.0 / 60.0);
+        assert!(eased > 30.0 && eased < 50.0, "eases afterwards: {eased}");
     }
 
     #[test]
