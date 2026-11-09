@@ -260,7 +260,7 @@ struct TextureLocations {
 fn texture_page_index(loc: u32) -> u32 {
     let page = loc >> 16u;
     let last_bound_page = max(tex_loc.page_count, 1u) - 1u;
-    return select(min(page, last_bound_page), 0u, page > last_bound_page);
+    return select(page, 0u, page > last_bound_page);
 }
 
 // Local lights of a fragment (light_tiles.rs). In the main view, the lights

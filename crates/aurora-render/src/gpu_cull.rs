@@ -131,6 +131,17 @@ pub fn bound_index_range(first_index: u32, index_count: u32, index_limit: u32) -
     (safe_first, if valid { index_count } else { 0 }, !valid)
 }
 
+/// The same bound for a CPU-built indirect draw (`Backend::render_view`'s
+/// lists, drawn with `draw_indexed_indirect` without wgpu's indirect
+/// validation): an out-of-range draw becomes a zero-count draw. True when
+/// it was clamped.
+pub(crate) fn bound_cpu_draw(d: &mut crate::types::DrawIndexedIndirect, index_limit: u32) -> bool {
+    let (first, count, clamped) = bound_index_range(d.first_index, d.index_count, index_limit);
+    d.first_index = first;
+    d.index_count = count;
+    clamped
+}
+
 /// `CullFrame::sizes.w`.
 pub mod frame_flags {
     pub const SHADOWS: u32 = 1;
@@ -1396,6 +1407,26 @@ impl GpuCull {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cpu_built_draws_are_bounded_like_the_gpu_ones() {
+        let mut ok = crate::types::DrawIndexedIndirect {
+            index_count: 6,
+            instance_count: 1,
+            first_index: 4,
+            base_vertex: 0,
+            first_instance: 7,
+        };
+        assert!(!bound_cpu_draw(&mut ok, 10));
+        assert_eq!((ok.first_index, ok.index_count, ok.first_instance), (4, 6, 7));
+        let mut bad = crate::types::DrawIndexedIndirect {
+            index_count: 2,
+            first_index: 9,
+            ..ok
+        };
+        assert!(bound_cpu_draw(&mut bad, 10));
+        assert_eq!((bad.first_index, bad.index_count, bad.first_instance), (9, 0, 7));
+    }
 
     #[test]
     fn indirect_index_ranges_are_safe_or_zeroed() {

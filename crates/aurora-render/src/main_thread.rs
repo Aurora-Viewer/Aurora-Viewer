@@ -2109,9 +2109,10 @@ fn gpu_instance_flags(validation: bool) -> wgpu::InstanceFlags {
     if validation {
         wgpu::InstanceFlags::debugging()
     } else {
-        // Keep wgpu's release default. Without this flag, draw_indexed_indirect
-        // does not validate the argument range against the bound index buffer.
-        wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL
+        // No VALIDATION_INDIRECT_CALL: wgpu does not apply it to the GPU-culled
+        // scene's multi_draw_indexed_indirect_count (cull.wgsl clamps those
+        // ranges), and the CPU-built lists are range-checked when pushed.
+        wgpu::InstanceFlags::empty()
     }
 }
 
@@ -2156,10 +2157,10 @@ mod tests {
     }
 
     #[test]
-    fn indirect_call_validation_stays_enabled_without_debugging() {
-        assert!(gpu_instance_flags(false).contains(wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL));
-        assert!(gpu_instance_flags(true).contains(wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL));
+    fn indirect_call_validation_is_left_to_debugging() {
+        assert!(!gpu_instance_flags(false).contains(wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL));
         assert!(!gpu_instance_flags(false).contains(wgpu::InstanceFlags::DEBUG));
+        assert!(gpu_instance_flags(true).contains(wgpu::InstanceFlags::DEBUG));
     }
 
     #[test]
