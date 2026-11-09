@@ -121,11 +121,12 @@ In **aurora-tools.cmd → Manage releases → Create a release**, the Minimum
 version, Cache and Settings choices come before the confirmation. The
 minimum keeps the current one by default (the higher of `update-policy.json`
 and the last stable tag), can require the release's own version (every
-earlier installation must update, after its 12 h grace period), require it
-**at once** (`grace_hours: 0`, for a release that cannot wait) or take an
-earlier X.Y.Z typed by hand, never below the current minimum. A release, or
-a beta, that keeps the minimum keeps its grace period; a new minimum starts
-again from 12 h. A pre-release is never offered its own
+earlier installation must update) or take an earlier X.Y.Z typed by hand,
+never below the current minimum. A new minimum then asks for its **grace
+period**: 12 hours (the usual choice, written as no `grace_hours`), 24, 72
+or 6 hours, or none (`grace_hours: 0`, login blocked at once, for a release
+that cannot wait). A release, or a beta, that keeps the minimum keeps its
+grace period without asking. A pre-release is never offered its own
 number: `0.9.2-beta.1` comes before `0.9.2`, so its users would be refused
 it, and an inherited minimum it does not reach is left out, as in the
 nightly. Keeping the cache and the

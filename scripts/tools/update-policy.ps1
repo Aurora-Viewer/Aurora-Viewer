@@ -69,6 +69,13 @@ function Get-ReleaseFloorError([string]$Value, [string]$Floor, [string]$Version)
     $null
 }
 
+# How long a version below the minimum may still log in, in words:
+# absent is the viewer's default (12 h, aurora-updater feed.rs).
+function Get-GraceText($Hours) {
+    if ($null -eq $Hours) { $Hours = 12 }
+    if ([int]$Hours -eq 0) { 'login blocked at once' } else { "they can still log in for $Hours h, then login is blocked" }
+}
+
 function Read-ReleaseMaintenance($Policy) {
     $core = ($Policy.version -split '-')[0]
     $pre = $Policy.version -ne $core
@@ -79,8 +86,7 @@ function Read-ReleaseMaintenance($Policy) {
     $floorText = if ($floor) { "updates required below $floor" } else { 'every update optional' }
     $items = @(@{ Key = '1'; Label = 'Keep the current minimum'; Hint = "usual choice: $floorText"; Minimum = $floor })
     if (-not $pre -and (-not $floor -or [version]$floor -lt [version]$core)) {
-        $items += @{ Key = '2'; Label = "Require v$core"; Hint = 'every earlier version must update: they can still log in for 12 h, then login is blocked'; Minimum = $core }
-        $items += @{ Key = '3'; Label = "Require v$core at once"; Hint = 'urgent: login blocked right away, no 12 h grace period'; Minimum = $core; Grace = 0 }
+        $items += @{ Key = '2'; Label = "Require v$core"; Hint = 'every earlier version must update (grace period chosen next)'; Minimum = $core }
     }
     $items += @{ Key = [string]($items.Count + 1); Label = 'Other minimum…'; Hint = 'an earlier X.Y.Z version'; Minimum = $null; Other = $true }
     $step = Show-Menu 'Step 2/4 · Minimum version' $items {
@@ -97,8 +103,25 @@ function Read-ReleaseMaintenance($Policy) {
         $refused = Get-ReleaseFloorError $minimum $floor $Policy.version
         if ($refused) { Write-Color "  $refused" danger; Wait-Back; return }
     }
-    $grace = $step.Grace
-    $minimumText = if ($minimum) { "required below $minimum$(if ($null -ne $grace) { ', at once' } else { ' after 12 h' })" } else { 'every update optional' }
+    # a new minimum gets its grace period (#3014); a kept one keeps its own
+    $newMinimum = $minimum -and $minimum -ne $Policy.minimum_supported_version
+    $grace = $Policy.grace_hours
+    if ($newMinimum) {
+        $graceStep = Show-Menu 'Step 2/4 · Grace period' @(
+            @{ Key = '1'; Label = '12 hours'; Hint = 'usual choice: a show or a set under way ends before the update is needed'; Hours = $null }
+            @{ Key = '2'; Label = '24 hours'; Hint = 'a whole day of events'; Hours = 24 }
+            @{ Key = '3'; Label = '72 hours'; Hint = 'the longest: a weekend'; Hours = 72 }
+            @{ Key = '4'; Label = '6 hours'; Hint = 'a short evening'; Hours = 6 }
+            @{ Key = '5'; Label = 'None: block at once'; Hint = 'urgent: login blocked right away below the minimum'; Hours = 0 }
+        ) {
+            Show-Logo 'New release'
+            Write-Color "  Chosen version: v$($Policy.version)" teal
+            Write-Color "  Minimum: $minimum. A version below it may still log in for this time, counted from the first time it sees this minimum." muted
+        }
+        if (-not $graceStep) { return }
+        $grace = $graceStep.Hours
+    }
+    $minimumText = if ($minimum) { "required below $minimum ($(Get-GraceText $grace))" } else { 'every update optional' }
     $cache = Show-Menu 'Step 3/4 · User cache' @(
         @{ Key = '1'; Label = 'Keep the cache'; Hint = 'usual choice, no data to download again'; Clear = $false }
         @{ Key = '2'; Label = "Force cache invalidation"; Hint = 'cache cleared at the first start of this version'; Clear = $true }
@@ -120,9 +143,9 @@ function Read-ReleaseMaintenance($Policy) {
     }
     if (-not $settings) { return }
     # a new minimum does not keep the grace of the previous one
-    if ($minimum -ne $Policy.minimum_supported_version -and $Policy.Contains('grace_hours')) { $Policy.Remove('grace_hours') }
+    if ($Policy.Contains('grace_hours')) { $Policy.Remove('grace_hours') }
+    if ($minimum -and $null -ne $grace) { $Policy.grace_hours = $grace }
     $Policy.minimum_supported_version = $minimum
-    if ($null -ne $grace) { $Policy.grace_hours = $grace }
     if ($cache.Clear) { $Policy.cache_invalidation_before = $core }
     if ($settings.Reset) { $Policy.settings_reset_before = $core }
     Assert-UpdatePolicy $Policy $Policy.version
