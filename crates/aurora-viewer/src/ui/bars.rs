@@ -3756,6 +3756,9 @@ mod tests {
         assert!(!panels.web_browser);
         assert!(super::super::toolbar::ready("RFO"));
         assert!(matches!(run_command(&ctx, "RFO", &mut panels), BarAction::ToggleFriendsOnly));
+        // World › Hide name tags' button
+        assert!(super::super::toolbar::ready("name_tags"));
+        assert!(matches!(run_command(&ctx, "name_tags", &mut panels), BarAction::ToggleNameTags));
     }
 
     #[test]

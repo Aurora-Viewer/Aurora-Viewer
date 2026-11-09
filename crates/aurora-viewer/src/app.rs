@@ -15365,11 +15365,11 @@ impl App {
                         projector,
                         self.camera.position,
                         !self.camera.mouselook(),
-                        if self.interface.immersive {
-                            self.settings.immersive_name_tags
-                        } else {
-                            self.settings.show_name_tags
-                        },
+                        ui::hud::avatar_tags(
+                            self.interface.immersive,
+                            self.settings.immersive_name_tags,
+                            self.settings.show_name_tags,
+                        ),
                         &self.settings,
                         &mut self.name_tag_visibility,
                         &voice_levels,
