@@ -6486,7 +6486,7 @@ failure. Grid validation and any paid upload are performed by the human.
     "Ombres", not "Nombre"); a shortcut is found by its keys (`Ctrl+M`), a
     command by its name (`gtp`). `zzzz` shows the empty result.
   - `modified`: the settings that differ from their defaults, all pages
-    together, with "Reset them all" (and its Undo).
+    together, with "Reset them all…" (its confirmation, then its Undo).
   - `cogs`: every cog open (the rows behind the cog of a row: the twelve
     effects of Aurora's water, the eight of the depth of field…), for
     captures; each opened block has its own darker face.
@@ -6499,6 +6499,9 @@ failure. Grid validation and any paid upload are performed by the human.
     every frame short.
   - `reset`: the page reset at once, with its Undo at the bottom; the chat
     says it was reset once the Undo is gone (8 s) or the window closed.
+    The button itself asks first: `reset-ask` opens its "Reset …?"
+    dialog, `reset-all-ask` the one of "Reset everything…", and
+    `modified-ask` the one of "Reset them all…".
   - `restore` (with `system`): the confirmation of a settings restore, for
     a backup of the demo's own profile (preferences, windows' layout, skin,
     accounts' files when they exist); "Restore" puts them back as a real
