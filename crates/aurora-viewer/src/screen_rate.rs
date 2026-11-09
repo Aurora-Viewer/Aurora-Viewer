@@ -8,6 +8,13 @@
 //! on Windows `MonitorFromWindow` and `EnumDisplaySettingsExW` for the
 //! current mode, a few microseconds.
 //!
+//! Not while the window is minimized: it is on no screen and draws nothing
+//! to pace, and `EnumDisplaySettingsExW` asks the display driver, which can
+//! hold it as long as the GPU holds a present (a freeze report, #3064: the
+//! main thread waited there 10 s while the render thread sat in the
+//! driver's present, minimized, after hours with a VR runtime on the card).
+//! The rate of the last screen is kept and looked at again on restore.
+//!
 //! Firestorm reads the rate once, of the primary display, when its window is
 //! created (`LLWindowWin32`, indra/llwindow/llwindowwin32.cpp: `mRefreshRate`
 //! from `EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS)`) and only bounds
@@ -34,9 +41,10 @@ pub fn rate_hz(millihertz: Option<u32>) -> f32 {
     }
 }
 
-/// The screen is looked at again once `PERIOD` has passed since `checked`.
-fn due(checked: Option<Instant>, now: Instant) -> bool {
-    checked.is_none_or(|t| now.saturating_duration_since(t) >= PERIOD)
+/// The screen is looked at again once `PERIOD` has passed since `checked`,
+/// never while the window is minimized (`None`: the system does not say).
+fn due(checked: Option<Instant>, now: Instant, minimized: Option<bool>) -> bool {
+    minimized != Some(true) && checked.is_none_or(|t| now.saturating_duration_since(t) >= PERIOD)
 }
 
 pub struct ScreenRate {
@@ -62,9 +70,10 @@ impl ScreenRate {
     }
 
     /// Follow the window: at most once per `PERIOD`, the screen it is on and
-    /// the rate of that screen's current mode. Changes go to the log.
+    /// the rate of that screen's current mode, not while it is minimized.
+    /// Changes go to the log.
     pub fn poll(&mut self, window: &Window, now: Instant) {
-        if !due(self.checked, now) {
+        if !due(self.checked, now, window.is_minimized()) {
             return;
         }
         self.checked = Some(now);
@@ -98,11 +107,24 @@ mod tests {
     #[test]
     fn screen_is_looked_at_once_per_period() {
         let t0 = Instant::now();
-        assert!(due(None, t0));
-        assert!(!due(Some(t0), t0));
-        assert!(!due(Some(t0), t0 + Duration::from_millis(999)));
-        assert!(due(Some(t0), t0 + PERIOD));
+        assert!(due(None, t0, Some(false)));
+        assert!(!due(Some(t0), t0, Some(false)));
+        assert!(!due(Some(t0), t0 + Duration::from_millis(999), Some(false)));
+        assert!(due(Some(t0), t0 + PERIOD, Some(false)));
         // a clock read before the last check never panics nor triggers
-        assert!(!due(Some(t0 + PERIOD), t0));
+        assert!(!due(Some(t0 + PERIOD), t0, Some(false)));
+    }
+
+    #[test]
+    fn a_minimized_window_asks_the_screen_nothing() {
+        let t0 = Instant::now();
+        let later = t0 + PERIOD * 60;
+        assert!(!due(None, t0, Some(true)));
+        assert!(!due(Some(t0), later, Some(true)));
+        // restored: asked at once, the period long past
+        assert!(due(Some(t0), later, Some(false)));
+        // systems that cannot tell (Wayland): as before
+        assert!(due(Some(t0), later, None));
+        assert!(!due(Some(t0), t0, None));
     }
 }
