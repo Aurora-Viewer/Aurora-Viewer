@@ -3301,6 +3301,7 @@ ui-options-quickjump = Jump and land without the animation delay
 ui-options-quickjump-help = The avatar leaves the ground and moves on after landing at once, without waiting for the pre-jump and landing animations. Also in Me › Quickjump.
 ui-options-fly-after-teleport = Fly after a teleport
 ui-options-fly-after-teleport-help = The avatar always flies when a teleport arrives, except in a region that blocks flying
+ui-options-friends-only-show-help = Only you and your friends are shown: the other avatars disappear, and come back at once when it is switched off. The same switch as the toolbar button and the World menu. A teleport switches it off unless the next row keeps it. Kept for each account.
 ui-options-friends-only-keep = Keep "Show friends only" after a teleport
 ui-options-friends-only-keep-help = "Show friends only" stays on when a teleport arrives. Off, the teleport switches it off. Switched off, the other avatars come back at once. Kept for each account.
 ui-options-friends-only-keep-login = Kept for each account: log in to change it.

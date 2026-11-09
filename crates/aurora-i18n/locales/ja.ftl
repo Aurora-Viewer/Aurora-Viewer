@@ -3298,6 +3298,7 @@ ui-options-quickjump = アニメーションを待たずにジャンプして着
 ui-options-quickjump-help = ジャンプと着地のアニメーションを待たず、すぐに地面を離れて着地後に動きます。「自分」›「クイックジャンプ」からも設定できます。
 ui-options-fly-after-teleport = テレポート後に飛行
 ui-options-fly-after-teleport-help = 飛行禁止のリージョンを除き、テレポート完了後は常に飛行します。
+ui-options-friends-only-show-help = 自分とフレンドだけが表示されます。他のアバターは消え、オフにするとすぐに表示されます。ツールバーのボタンや「ワールド」メニューと同じ設定です。次の項目で維持しない限り、テレポートでオフになります。アカウントごとに保存されます。
 ui-options-friends-only-keep = テレポート後も「フレンドのみ表示」を維持
 ui-options-friends-only-keep-help = テレポートが完了しても「フレンドのみ表示」はオンのままです。オフの場合、テレポートでオフになります。オフにすると、他のアバターはすぐに表示されます。アカウントごとに保存されます。
 ui-options-friends-only-keep-login = アカウントごとに保存されます。変更するにはログインしてください。

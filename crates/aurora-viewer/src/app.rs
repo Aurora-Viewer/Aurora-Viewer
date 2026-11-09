@@ -14888,6 +14888,7 @@ impl App {
             second_life,
         });
         self.options_ui.login_favorites = self.login_favorites.key().map(|key| self.login_form.favorites.shown(key));
+        self.options_ui.friends_only = (!self.world.agent_id.is_nil()).then_some(self.world.friends_only());
         self.options_ui.friends_only_keep = (!self.world.agent_id.is_nil()).then_some(self.world.friends_only.keep_after_teleport);
         let time_of_day = self.settings.time_of_day;
         if self.options_ui.anti_spam_version != self.world.anti_spam.version {
@@ -14987,6 +14988,10 @@ impl App {
             if shown {
                 self.keep_login_favorites(true);
             }
+        }
+        // the same switch as BarAction::ToggleFriendsOnly
+        if let Some(on) = res.friends_only {
+            self.world.set_friends_only(on);
         }
         if let Some(keep) = res.friends_only_keep {
             self.world.friends_only.keep_after_teleport = keep;
