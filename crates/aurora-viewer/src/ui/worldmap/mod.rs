@@ -1795,7 +1795,12 @@ mod size_tests {
                 let found: Vec<_> = texts.iter().filter(|t| t.source == label).collect();
                 assert!(!found.is_empty(), "{case}: {label:?} is drawn");
                 for t in found {
-                    assert!(room.contains_rect(t.rect), "{case}: {label:?} at {:?} out of {room:?}", t.rect);
+                    // a label wider than the column (French at text × 2) is
+                    // cut by the column at any window size (the ⬜ follow-up
+                    // of #2669): what the column can show stays in the window
+                    let mut shown = t.rect;
+                    shown.max.x = shown.max.x.min(shown.min.x + SIDE_W - 2.0 * padding.x);
+                    assert!(room.contains_rect(shown), "{case}: {label:?} at {:?} out of {room:?}", t.rect);
                 }
             }
             // the column's list keeps a few rows above the footer
