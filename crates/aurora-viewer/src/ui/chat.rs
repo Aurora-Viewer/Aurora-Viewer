@@ -161,6 +161,8 @@ pub struct ChatUi {
     /// `AURORA_DEMO_CONV=aurora:local:volume`: open the menu of the nearby
     /// chat's volume once it is drawn.
     pub demo_volume_menu: bool,
+    /// The emojis used last, the row under the fields.
+    pub recent_emojis: super::emoji::recent::Recent,
     /// `AURORA_DEMO_CONV=aurora:local:channel`: the channel selector shown
     /// without changing the preferences.
     pub demo_channel: bool,
@@ -3279,7 +3281,7 @@ fn classic_pane(
             });
         ui.add_space(4.0);
     }
-    let input_h = input::height(ui.ctx(), egui::Id::unique(("conv_input", st.selected)), INPUT_H);
+    let input_h = input::height(ui.ctx(), egui::Id::unique(("conv_input", st.selected)), INPUT_H) + st.recent_emojis.height();
     // Ctrl+F opens the find field of the conversation shown (in
     // the head's row), when the keyboard is in this window, or
     // nowhere with the pointer over it
@@ -3378,6 +3380,17 @@ fn classic_pane(
                 .on_hover_text(aurora_i18n::tr!("ui-chat-compose-shortcuts"))
         })
         .inner;
+    // the recent emojis, under the field
+    if st.recent_emojis.shown() {
+        let w = ui.available_width();
+        let (row, _) = ui.allocate_exact_size(
+            egui::vec2(w, super::emoji::recent::HEIGHT - ui.spacing().item_spacing.y),
+            egui::Sense::hover(),
+        );
+        if let Some(c) = st.recent_emojis.row(ui, p, emoji, row, conv_input) {
+            super::emoji::recent::insert(ui.ctx(), conv_input, &mut draft, c);
+        }
+    }
     // the strip between the lines and the field: egui reaches
     // both from it (interact_radius), it keeps the normal cursor
     // unless a drag goes through it
@@ -3401,7 +3414,10 @@ fn classic_pane(
             .show(ui.ctx(), |ui| {
                 super::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
                     ui.set_width(300.0);
-                    let picked = emoji.picker(ui, p, icons);
+                    let picked = emoji.picker(ui, p, icons, st.recent_emojis.favorites());
+                    if let Some(c) = picked.favorite {
+                        st.recent_emojis.toggle_favorite(c);
+                    }
                     if let Some(c) = picked.chosen {
                         draft.push(c);
                         close = !ui.input(|i| i.modifiers.shift);
