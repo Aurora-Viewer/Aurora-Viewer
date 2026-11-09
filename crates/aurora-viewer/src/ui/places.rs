@@ -21,7 +21,7 @@ pub mod aurora;
 pub(crate) mod drag;
 pub mod model;
 
-use super::place_details::{self, Ctx};
+use super::place_details::{self, ButtonLook, Ctx};
 use super::widgets::{self, Floater};
 use crate::theme::Palette;
 use crate::world::World;
@@ -312,6 +312,16 @@ impl PlacesUi {
         self.raise = true;
     }
 
+    /// A place profile opened from outside the lists (a notecard's landmark,
+    /// the inventory, the map): the window comes to the front and Aurora's
+    /// shows that profile (LLFloaterSidePanelContainer::showPanel "places",
+    /// indra/newview/fsfloaterplacedetails.cpp). The Legacy tabs show any
+    /// open profile on their own and clear the flag.
+    pub fn show_profile(&mut self) {
+        self.raise();
+        self.aurora.opened = true;
+    }
+
     /// TeleportFromLandmark from elsewhere (a standalone landmark window).
     pub fn confirm_landmark(&mut self, asset: Uuid, name: String) {
         self.confirm = Some(Confirm::Landmark { asset, name });
@@ -363,6 +373,9 @@ impl PlacesUi {
             return actions;
         }
         self.aurora.pending_click = None;
+        // a profile shown here is the Legacy tabs' own: Aurora's must not
+        // take it over after a switch of look
+        self.aurora.opened = false;
         floater.show(ctx, c.p, open, |ui| {
             let body = egui::Rect::from_min_max(ui.cursor().min, ui.max_rect().max);
             ui.allocate_rect(body, Sense::hover());
@@ -374,7 +387,7 @@ impl PlacesUi {
             child.set_clip_rect(body.intersect(ui.clip_rect()));
             let ui = &mut child;
             match c.world.place_details.panel.clone() {
-                Some(place) => self.profile_view(ui, c, &place, &mut actions),
+                Some(place) => self.profile_view(ui, c, &place, false, &mut actions),
                 None => self.list_view(ui, c, by_date, &mut actions),
             }
         });
@@ -1069,11 +1082,14 @@ impl PlacesUi {
 
     // -------------------------------------------------------------- profile
 
+    /// `aurora`: drawn in Aurora's look (a profile opened from outside its
+    /// lists), which gives the bottom bar Aurora's buttons.
     fn profile_view(
         &mut self,
         ui: &mut egui::Ui,
         c: &mut Ctx,
         place: &crate::world::place_details::Place,
+        aurora: bool,
         actions: &mut Vec<PlacesAction>,
     ) {
         let p = c.p;
@@ -1099,15 +1115,16 @@ impl PlacesUi {
         foot.show(ui, |ui| {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 3.0;
-                let w = ((ui.available_width() - 30.0) / 2.0).max(60.0);
-                if place_details::button(
+                ui.spacing_mut().item_spacing.x = ButtonLook::gap(aurora);
+                // the Legacy style's two halves, beside the menu button
+                let look = ButtonLook::of(aurora, ((ui.available_width() - 30.0) / 2.0).max(60.0));
+                if place_details::teleport_button(
                     ui,
                     p,
+                    look,
                     aurora_i18n::tr!("common-teleport"),
                     aurora_i18n::tr!("ui-places-teleport-to-a-location-of-your-choice"),
                     place.global.is_some() && place_details::teleport_allowed(place, world),
-                    w,
                 ) && let Some(a) = place_details::teleport_action(place, world)
                 {
                     match a {
@@ -1118,13 +1135,13 @@ impl PlacesUi {
                         _ => {}
                     }
                 }
-                if place_details::button(
+                if place_details::map_button(
                     ui,
                     p,
+                    look,
                     aurora_i18n::tr!("common-map"),
                     aurora_i18n::tr!("ui-places-show-the-corresponding-location-on-the-map"),
                     place.global.is_some(),
-                    w,
                 ) && let Some(g) = place.global
                 {
                     actions.push(PlacesAction::ShowOnMap(g));
@@ -1331,6 +1348,36 @@ mod tests {
             }
         }
         actions
+    }
+
+    /// A profile opened from outside while the Legacy tabs are shown is
+    /// theirs: switching to Aurora's look later does not open on it.
+    #[test]
+    fn the_legacy_tabs_clear_an_opened_profile() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let images = std::collections::HashMap::new();
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let (mut names, mut wanted_images, mut groups) = (HashSet::new(), HashSet::new(), HashSet::new());
+        let mut places = PlacesUi::default();
+        places.show_profile();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let mut c = Ctx {
+                p: &p,
+                world: &world,
+                images: &images,
+                emoji: &mut emoji,
+                want_names: &mut names,
+                wanted_images: &mut wanted_images,
+                want_groups: &mut groups,
+            };
+            places.show(ui.ctx(), &mut c, &mut true, false, false, None);
+        });
+        output.textures_delta.clear();
+        assert!(!places.aurora.opened);
     }
 
     /// A world with a long teleport history (80 lines): the list must give
