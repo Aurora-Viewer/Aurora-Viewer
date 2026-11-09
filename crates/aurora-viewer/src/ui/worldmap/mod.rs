@@ -231,20 +231,18 @@ impl WorldMapUi {
             .steady_size()
             .show(ctx, p, open, |ui| {
                 let avail = ui.available_size();
-                let side = SIDE_W;
                 let gap = ui.spacing().item_spacing.x;
                 ui.horizontal_top(|ui| {
                     let map_size = vec2(
-                        (avail.x - side - gap).max(SIDE_MAP_MIN.0).floor(),
+                        (avail.x - SIDE_W - gap).max(SIDE_MAP_MIN.0).floor(),
                         avail.y.max(SIDE_MAP_MIN.1).floor(),
                     );
                     self.map(ui, p, world, tiles, cam, opts, map_size, None);
                     ui.vertical(|ui| {
-                        ui.set_width(side);
-                        ui.set_max_width(side);
+                        ui.set_width(SIDE_W);
+                        ui.set_max_width(SIDE_W);
                         ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
-                        let footer_id = side_footer_id();
-                        let footer_height = ui.ctx().data(|d| d.get_temp::<f32>(footer_id)).unwrap_or(180.0);
+                        let footer_height = side_footer_height(ui.ctx());
                         let scroll_height = (avail.y - footer_height - ui.spacing().item_spacing.y).max(0.0);
                         egui::ScrollArea::vertical()
                             .id_salt("worldmap-side")
@@ -254,7 +252,8 @@ impl WorldMapUi {
                                 self.side_panel(ui, p, world, cam, opts, &mut actions);
                             });
                         let footer = ui.vertical(|ui| self.position_panel(ui, p, world, cam, &mut actions));
-                        ui.ctx().data_mut(|d| d.insert_temp(footer_id, footer.response.rect.height()));
+                        ui.ctx()
+                            .data_mut(|d| d.insert_temp(side_footer_id(), footer.response.rect.height()));
                     });
                 });
             });
@@ -1582,6 +1581,14 @@ fn side_footer_id() -> egui::Id {
     egui::Id::unique("worldmap-position-height")
 }
 
+/// The position footer's height until it has been measured once.
+const SIDE_FOOTER_GUESS: f32 = 180.0;
+
+/// The position footer's height as last measured.
+fn side_footer_height(ctx: &egui::Context) -> f32 {
+    ctx.data(|d| d.get_temp::<f32>(side_footer_id())).unwrap_or(SIDE_FOOTER_GUESS)
+}
+
 /// The side panel layout's smallest window: the map's floor beside the
 /// whole column, and the position footer whole under the title, at the
 /// interface's text size. Before `steady_size` (#2669), egui's frame
@@ -1592,20 +1599,15 @@ fn side_footer_id() -> egui::Id {
 fn side_panel_min_size(ctx: &egui::Context) -> Vec2 {
     let style = ctx.global_style();
     let spacing = &style.spacing;
-    let footer = ctx.data(|d| d.get_temp::<f32>(side_footer_id())).unwrap_or(180.0);
-    // Floater's chrome (widgets.rs): 10 points of inner margin and a 1-point
-    // stroke on each side; above the body 1 + 5, the title row (at least 28,
-    // its 14-point title), 6 + divider 6 + 6 and 5; below it 10 + 1
-    let across = 2.0 * (10.0 + 1.0);
-    let title = ctx.fonts_mut(|f| f.row_height(&egui::FontId::proportional(14.0))).max(28.0);
-    let down = 40.0 + title;
+    let footer = side_footer_height(ctx);
+    let chrome = widgets::floater_chrome(ctx);
     // a few rows of the column's scrolled list (search, landmarks, layers)
     // stay reachable above the footer
     let list = 3.0 * (spacing.interact_size.y + spacing.item_spacing.y);
     vec2(
-        SIDE_MAP_MIN.0 + spacing.item_spacing.x + SIDE_W + across,
-        (list + spacing.item_spacing.y + footer + down)
-            .max(SIDE_MAP_MIN.1 + down)
+        SIDE_MAP_MIN.0 + spacing.item_spacing.x + SIDE_W + chrome.x,
+        (list + spacing.item_spacing.y + footer + chrome.y)
+            .max(SIDE_MAP_MIN.1 + chrome.y)
             .max(386.0),
     )
 }
@@ -1614,6 +1616,7 @@ fn side_panel_min_size(ctx: &egui::Context) -> Vec2 {
 mod size_tests {
     use super::*;
     use crate::scene::avatar::AvatarLibrary;
+    use crate::ui::widgets::elide_tests::{Frames, Text};
     use std::sync::Arc;
 
     struct Map {
@@ -1690,6 +1693,74 @@ mod size_tests {
         assert_steady(WorldMapStyle::Aurora, aurora_i18n::tr!("common-copy-slurl"));
     }
 
+    /// The side panel layout in a window placed at (40, 40) with `size`,
+    /// the interface at `zoom` and `text` size, shown frame after frame.
+    struct SidePanel {
+        frames: Frames,
+        map: Map,
+        p: Palette,
+    }
+
+    impl SidePanel {
+        fn new(library: &Arc<AvatarLibrary>, zoom: f32, text: f32, size: Vec2) -> Self {
+            let frames = Frames::new();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&frames.ctx, text);
+            crate::ui::fonts::apply(&frames.ctx, crate::ui::fonts::DEFAULT);
+            frames.ctx.set_zoom_factor(zoom);
+            crate::ui::widgets::place_floater(&frames.ctx, "worldmap", pos2(40.0, 40.0), size);
+            SidePanel {
+                frames,
+                map: Map::new(library),
+                p: theme.palette(),
+            }
+        }
+
+        /// One frame with `events`: the window's rect and the texts drawn.
+        fn frame(&mut self, events: Vec<egui::Event>) -> (Rect, Vec<Text>) {
+            let (map, p) = (&mut self.map, &self.p);
+            let texts = self.frames.run(events, |ui| map.show(ui.ctx(), p, WorldMapStyle::Legacy));
+            let rect = self
+                .frames
+                .ctx
+                .memory(|m| m.area_rect(egui::Id::unique("worldmap")))
+                .expect("the window is shown");
+            (rect, texts)
+        }
+
+        /// Ten frames without input: the window's settled rect.
+        fn settle(&mut self) -> Rect {
+            (0..10).map(|_| self.frame(vec![]).0).last().expect("ten frames")
+        }
+
+        /// `grip` dragged to `target` in ten steps and let go, as a user
+        /// resizing the window by an edge or a corner, then 30 frames
+        /// without input: the window's rect at each, the texts of the last.
+        fn drag(&mut self, grip: Pos2, target: Pos2) -> (Vec<Rect>, Vec<Text>) {
+            let button = |pos, pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            self.frame(vec![egui::Event::PointerMoved(grip)]);
+            self.frame(vec![button(grip, true)]);
+            for i in 1..=10 {
+                self.frame(vec![egui::Event::PointerMoved(grip.lerp(target, i as f32 / 10.0))]);
+            }
+            self.frame(vec![button(target, false)]);
+            let mut texts = Vec::new();
+            let rects = (0..30)
+                .map(|_| {
+                    let (rect, shown) = self.frame(vec![]);
+                    texts = shown;
+                    rect
+                })
+                .collect();
+            (rects, texts)
+        }
+    }
+
     /// The side panel layout made as small as it goes: the position footer's
     /// buttons stay whole inside the window, across and down, at every
     /// interface scale and text size. Without a minimum, `steady_size` let
@@ -1697,61 +1768,29 @@ mod size_tests {
     #[test]
     fn the_side_panel_layout_at_its_smallest_keeps_its_buttons_whole() {
         let library = Arc::new(AvatarLibrary::load());
-        let p = crate::theme::Theme::default().palette();
         let labels = [
             aurora_i18n::tr!("common-copy-slurl"),
             aurora_i18n::tr!("common-teleport-3"),
             aurora_i18n::tr!("ui-worldmap-show-selection"),
         ];
         for (zoom, text) in [(1.0f32, 1.0f32), (1.25, 1.0), (1.5, 1.0), (1.0, 1.4), (1.0, 2.0)] {
-            let mut frames = crate::ui::widgets::elide_tests::Frames::new();
-            crate::theme::Theme::default().apply(&frames.ctx, text);
-            crate::ui::fonts::apply(&frames.ctx, crate::ui::fonts::DEFAULT);
-            frames.ctx.set_zoom_factor(zoom);
-            crate::ui::widgets::place_floater(&frames.ctx, "worldmap", pos2(40.0, 40.0), vec2(700.0, 600.0));
-            let mut map = Map::new(&library);
-            let mut texts = Vec::new();
-            let mut step = |frames: &mut crate::ui::widgets::elide_tests::Frames, events: Vec<egui::Event>| {
-                texts = frames.run(events, |ui| map.show(ui.ctx(), &p, WorldMapStyle::Legacy));
-                frames
-                    .ctx
-                    .memory(|m| m.area_rect(egui::Id::unique("worldmap")))
-                    .expect("the window is shown")
-            };
-            let mut rect = Rect::NOTHING;
-            for _ in 0..10 {
-                rect = step(&mut frames, vec![]);
-            }
+            let mut side = SidePanel::new(&library, zoom, text, vec2(700.0, 600.0));
+            let rect = side.settle();
             // the bottom-right corner dragged far up and to the left, as a
             // user shrinking the window as far as it goes
-            let grip = rect.right_bottom() - vec2(1.0, 1.0);
-            let target = rect.left_top() + vec2(20.0, 20.0);
-            let button = |pos, pressed| egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: Default::default(),
-            };
-            step(&mut frames, vec![egui::Event::PointerMoved(grip)]);
-            step(&mut frames, vec![button(grip, true)]);
-            for i in 1..=10 {
-                step(&mut frames, vec![egui::Event::PointerMoved(grip.lerp(target, i as f32 / 10.0))]);
-            }
-            step(&mut frames, vec![button(target, false)]);
-            let mut window = rect;
-            for _ in 0..30 {
-                window = step(&mut frames, vec![]);
-            }
+            let (rects, texts) = side.drag(rect.right_bottom() - vec2(1.0, 1.0), rect.left_top() + vec2(20.0, 20.0));
+            let window = rects[rects.len() - 1];
             assert!(
                 window.width() < rect.width() - 100.0,
                 "the drag made the window smaller: {rect:?} then {window:?}"
             );
-            let texts = std::mem::take(&mut texts);
             let case = format!("zoom {zoom}, text {text}, window {window:?}");
-            // inside the body (the frame's 10-point margin and 1-point
-            // stroke), with room for the button's own padding around its text
-            let padding = frames.ctx.global_style().spacing.button_padding;
-            let room = window.shrink(11.0).shrink2(padding).expand(0.5);
+            // inside the body (the frame's margin and outline), with room for
+            // the button's own padding around its text
+            let ctx = &side.frames.ctx;
+            let across = crate::ui::widgets::floater_chrome(ctx).x / 2.0;
+            let padding = ctx.global_style().spacing.button_padding;
+            let room = window.shrink(across).shrink2(padding).expand(0.5);
             for label in labels {
                 let found: Vec<_> = texts.iter().filter(|t| t.source == label).collect();
                 assert!(!found.is_empty(), "{case}: {label:?} is drawn");
@@ -1773,38 +1812,10 @@ mod size_tests {
     #[test]
     fn the_side_panel_layout_narrows_by_its_edge() {
         let library = Arc::new(AvatarLibrary::load());
-        let p = crate::theme::Theme::default().palette();
-        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
-        crate::theme::Theme::default().apply(&frames.ctx, 2.0);
-        crate::ui::fonts::apply(&frames.ctx, crate::ui::fonts::DEFAULT);
-        crate::ui::widgets::place_floater(&frames.ctx, "worldmap", pos2(40.0, 40.0), vec2(1040.0, 640.0));
-        let mut map = Map::new(&library);
-        let mut step = |frames: &mut crate::ui::widgets::elide_tests::Frames, events: Vec<egui::Event>| {
-            frames.run(events, |ui| map.show(ui.ctx(), &p, WorldMapStyle::Legacy));
-            frames
-                .ctx
-                .memory(|m| m.area_rect(egui::Id::unique("worldmap")))
-                .expect("the window is shown")
-        };
-        let mut rect = Rect::NOTHING;
-        for _ in 0..10 {
-            rect = step(&mut frames, vec![]);
-        }
+        let mut side = SidePanel::new(&library, 1.0, 2.0, vec2(1040.0, 640.0));
+        let rect = side.settle();
         let grip = pos2(rect.right() - 1.0, rect.center().y);
-        let target = grip - vec2(400.0, 0.0);
-        step(&mut frames, vec![egui::Event::PointerMoved(grip)]);
-        let button = |pos, pressed| egui::Event::PointerButton {
-            pos,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: Default::default(),
-        };
-        step(&mut frames, vec![button(grip, true)]);
-        for i in 1..=10 {
-            step(&mut frames, vec![egui::Event::PointerMoved(grip.lerp(target, i as f32 / 10.0))]);
-        }
-        step(&mut frames, vec![button(target, false)]);
-        let rects: Vec<Rect> = (0..30).map(|_| step(&mut frames, vec![])).collect();
+        let (rects, _) = side.drag(grip, grip - vec2(400.0, 0.0));
         let last = rects[rects.len() - 1];
         assert!(
             rects.iter().all(|r| *r == last),
