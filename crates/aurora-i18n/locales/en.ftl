@@ -3844,6 +3844,7 @@ ui-bars-immersive = Immersive mode
 ui-bars-immersive-leave = Leave immersive mode
 ui-bars-immersive-show-tags = Show name tags
 ui-bars-immersive-hide-tags = Hide name tags
+toolbar-use-name-tag-preferences = Use name tag preferences
 ui-bars-immersive-show-huds = Show HUDs
 ui-bars-immersive-hide-huds = Hide HUDs
 ui-bars-customize-bars = Customize the bars…

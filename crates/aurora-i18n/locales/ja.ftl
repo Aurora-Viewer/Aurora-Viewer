@@ -3841,6 +3841,7 @@ ui-bars-immersive = 没入モード
 ui-bars-immersive-leave = 没入モードを終了
 ui-bars-immersive-show-tags = 名前タグを表示
 ui-bars-immersive-hide-tags = 名前タグを隠す
+toolbar-use-name-tag-preferences = 名前タグの設定を使用
 ui-bars-immersive-show-huds = ＨＵＤを表示
 ui-bars-immersive-hide-huds = ＨＵＤを隠す
 ui-bars-customize-bars = バーをカスタマイズ…

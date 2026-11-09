@@ -3847,6 +3847,7 @@ ui-bars-immersive = Mode immersif
 ui-bars-immersive-leave = Quitter le mode immersif
 ui-bars-immersive-show-tags = Afficher les étiquettes des avatars
 ui-bars-immersive-hide-tags = Masquer les étiquettes des avatars
+toolbar-use-name-tag-preferences = Utiliser les préférences des étiquettes des avatars
 ui-bars-immersive-show-huds = Afficher les HUDs
 ui-bars-immersive-hide-huds = Masquer les HUDs
 ui-bars-customize-bars = Personnaliser les barres…
