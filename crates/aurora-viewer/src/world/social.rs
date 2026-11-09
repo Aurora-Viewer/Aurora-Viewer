@@ -109,7 +109,6 @@ impl Social {
         self.avatar_names.want(&id);
     }
 
-    /// Complete name ("Jane Doe (janedoe)"), else the legacy name.
     /// A teleport can be requested from anyone but a friend known to be
     /// offline (LLAvatarActions::canRequestTeleport,
     /// indra/newview/llavataractions.cpp).
@@ -117,6 +116,7 @@ impl Social {
         self.friends.iter().find(|f| f.id == *id).is_none_or(|f| f.online)
     }
 
+    /// Complete name ("Jane Doe (janedoe)"), else the legacy name.
     pub fn name_of(&self, id: &Uuid) -> String {
         self.avatar_names
             .complete(id)
