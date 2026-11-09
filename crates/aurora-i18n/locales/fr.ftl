@@ -5436,6 +5436,21 @@ outfit-json-empty = Cette sauvegarde ne contient aucun élément de tenue. L'imp
 outfit-json-missing-changed = Certains éléments de la tenue sont indisponibles. Relancez l'importation pour les examiner et choisir une importation partielle.
 outfit-json-create-wear = Créer et porter
 outfit-json-import-partial = Importer la tenue partielle
+appearance-xml-import-button = Importer XML
+appearance-xml-import-hint = Règle les curseurs depuis un fichier XML d’apparence, par exemple créé par un site de silhouettes ou exporté par un autre viewer. Seuls les réglages de cet élément sont lus ; enregistrez pour les garder.
+appearance-xml-import = Importer un XML d’apparence
+appearance-xml-file-type = XML d’apparence (*.xml)
+appearance-xml-not-avatar = Ce fichier n’est pas un fichier d’apparence d’avatar.
+appearance-xml-failed = Impossible d’importer le fichier d’apparence.
+appearance-xml-none = Ce fichier ne contient aucun réglage pour cet élément.
+appearance-xml-imported = { $count ->
+    [one] 1 réglage importé. Enregistrez pour le garder.
+   *[other] { $count } réglages importés. Enregistrez pour les garder.
+    }
+appearance-xml-partial = { $count ->
+    [one] 1 réglage importé, { $errors } illisible(s). Enregistrez pour le garder.
+   *[other] { $count } réglages importés, { $errors } illisible(s). Enregistrez pour les garder.
+    }
 common-unmute = Rétablir le son
 ui-options-restore-default-shortcuts = Rétablir les raccourcis par défaut
 ui-options-restore-the-local-environment-selected-sky-water-and-day = Rétablit l'environnement local (ciel, eau, cycle du jour choisis) à la prochaine connexion
