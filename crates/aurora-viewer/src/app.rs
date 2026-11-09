@@ -10946,6 +10946,13 @@ impl App {
             .prepare_scale_input(&raw, ctx.pixels_per_point(), self.numeric_drag.active());
         self.numeric_drag.before(&mut raw, ctx.pixels_per_point());
         let egui_state = &mut gfx.egui_state;
+        self.inventory_ui.clipboard_input(&raw.events);
+        if self.inventory_ui.cut
+            && (self.inventory_ui.native_clipboard_changed()
+                || raw.events.iter().any(|event| matches!(event, egui::Event::WindowFocused(true))))
+        {
+            self.inventory_ui.clipboard_changed(egui_state.clipboard_text().as_deref());
+        }
         self.text_menu.before(
             &ctx,
             &mut raw,
@@ -10993,6 +11000,7 @@ impl App {
             self.ik_editor.paste_binding(&self.world, &text);
         }
         ui::chat::previews::clipboard_update(&ctx, &mut full.platform_output);
+        self.inventory_ui.clipboard_output(&full.platform_output.commands);
         // interface sounds of the widgets; the sounds are SL assets, loaded
         // once logged in
         let in_world_view = matches!(self.screen, Screen::World);
@@ -19854,7 +19862,7 @@ impl ApplicationHandler for App {
                         self.inventory_ui
                             .configure_menu_demo(&self.world.inventory, &mut self.settings.inventory, id, &view);
                     }
-                    if view.starts_with("clipboard") {
+                    if view.starts_with("clipboard") || view.starts_with("aurora-clipboard") {
                         if view == "clipboard-window" {
                             self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8000));
                             self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8001));
@@ -21002,11 +21010,16 @@ impl ApplicationHandler for App {
                 // when it turns into a drag (LLTool::handleAnyMouseClick:
                 // setKeyboardFocus(NULL)); egui lets it go on a click only
                 if pressed && !over_ui && self.in_world() {
+                    let typing = self.egui_ctx.text_edit_focused();
                     self.egui_ctx.memory_mut(|m| {
                         if let Some(id) = m.focused() {
                             m.surrender_focus(id);
                         }
                     });
+                    // the field commits first, to what it was typed for
+                    if typing {
+                        self.press_while_typing();
+                    }
                 }
                 // (in its turn behind a click that waits for its depth)
                 self.mouse_input(*button, pressed, over_ui);

@@ -112,10 +112,11 @@ impl App {
             // worn object listed by the simulator that never came
             let net = self.net.stats.snapshot();
             log::info!(
-                "network this session: {} ObjectUpdate blocks not read, {} packets skipped ({} came late), {} reliable packets given up",
+                "network this session: {} ObjectUpdate blocks not read, {} packets skipped ({} recovered before timeout), {} confirmed lost, {} reliable packets given up",
                 net.objects_unread,
                 net.seq_gaps,
                 net.seq_late,
+                net.packets_lost,
                 net.dropped_reliable
             );
             // what the avatars around wear: a missing part shows there
