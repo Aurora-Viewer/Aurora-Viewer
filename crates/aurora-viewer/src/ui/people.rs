@@ -33,6 +33,7 @@ mod recent;
 mod rows;
 mod sets;
 mod sheet;
+pub(crate) mod type_ahead;
 pub use radar::{RadarData, RadarSettings, age_days, radar_name};
 
 /// The tabs (`Panels::people_tab`), in Aurora's order: Near you, Friends,
