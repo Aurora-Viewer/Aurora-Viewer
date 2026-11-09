@@ -95,9 +95,15 @@ const MAX_PAGES: u32 = 1 << (32 - LAYER_BITS);
 /// the two were one number, at most 16,384, and the table kept that size
 /// once textures went to pages: arriving in a busy region (9,000 textures)
 /// 45 s or less after leaving another, the last 1,500 textures found no
-/// slot and were drawn white for as long as they were used. Four times
-/// that: more than the video memory holds textures for.
-pub const SLOTS: u32 = 1 << 16;
+/// slot and were drawn white for as long as they were used. Then four
+/// times that, 65,536: but a texture holds its slot while any object of a
+/// connected region uses it, in view or not, and the camera moved through
+/// an estate of busy neighbouring regions can keep that many in use
+/// (#2822). Sixteen times: a slot without texels shows the shared
+/// placeholder and costs 4 bytes of the location buffer (1 MB in all),
+/// and the slots are handed out lowest first, so a scene of a few
+/// thousand textures uploads no more of that buffer than before.
+pub const SLOTS: u32 = 1 << 18;
 const MAX_SLOTS: u32 = 1 << 20;
 
 /// Slots of the table: [`SLOTS`], or what AURORA_TEXTURE_SLOTS asks for (to
@@ -608,7 +614,9 @@ impl PageStore {
 
     fn new_with_integrated(capacity: u32, page_capacity: u32, max_layers: u32, max_dim: u32, integrated: bool) -> Self {
         Self {
-            slots: Vec::with_capacity(capacity as usize),
+            // (room for the slots the table held before #2822, as then:
+            // past them it grows, a few times at most)
+            slots: Vec::with_capacity(capacity.min(1 << 16) as usize),
             free_slots: BinaryHeap::new(),
             capacity,
             pages: Vec::new(),
@@ -897,9 +905,15 @@ impl PageStore {
     /// arrive (`replace` / `replace_staged`): nothing is written and no
     /// layer is taken.
     fn create_placeholder(&mut self) -> Option<u32> {
+        self.create_shared(PLACEHOLDER)
+    }
+
+    /// A derived normal loads through a stable slot, sampling the reserved
+    /// flat normal until its first upload. Shared slots allocate no layer.
+    fn create_shared(&mut self, reserved: u32) -> Option<u32> {
         let (key, page, layer) = self
             .slots
-            .get(PLACEHOLDER as usize)
+            .get(reserved as usize)
             .and_then(Option::as_ref)
             .map(|s| (s.key, s.page, s.layer))?;
         let slot = match self.free_slots.pop() {
@@ -1515,6 +1529,11 @@ impl TextureTable {
     /// gives it texels. Costs no GPU work.
     pub fn create_placeholder(&mut self) -> Option<u32> {
         self.store.create_placeholder()
+    }
+
+    /// A streamed derived normal, flat until ready, without allocating texels.
+    pub fn create_normal_placeholder(&mut self) -> Option<u32> {
+        self.store.create_shared(FLAT_NORMAL)
     }
 
     /// A texture that will not come: its slot, while it still shows the
@@ -2166,6 +2185,17 @@ mod tests {
     }
 
     #[test]
+    fn bump_normal_placeholder_shares_the_flat_normal_without_allocating_texels() {
+        let mut store = bare_store(64, 64);
+        store.slots[FLAT_NORMAL as usize].as_mut().unwrap().layer = 1;
+        let slot = store.create_shared(FLAT_NORMAL).unwrap();
+        assert_eq!(store.loc[slot as usize], pack(0, 1));
+        assert_eq!((store.bytes, store.pages.len(), store.live), (0, 0, 1));
+        store.free(slot);
+        assert_eq!((store.bytes, store.live), (0, 0));
+    }
+
+    #[test]
     fn a_texture_that_will_not_come_leaves_the_loading_grey() {
         let mut store = bare_store(64, page_capacity(64, true));
         for (slot, layer) in [(PLACEHOLDER, 4), (MISSING, 5)] {
@@ -2475,7 +2505,7 @@ mod tests {
         let rows: u32 = (0..k.mips).map(|l| k.format.rows(level_dim(k.height, l))).sum();
         let buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: rows as u64 * 256,
+            size: crate::readback::readback_size(rows as u64 * 256),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -3260,7 +3290,7 @@ mod tests {
         let sample_all = |table: &TextureTable| -> Vec<u8> {
             let buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: None,
-                size: SLOTS as u64 * 8,
+                size: crate::readback::readback_size(SLOTS as u64 * 8),
                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             });
