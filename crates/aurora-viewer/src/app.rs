@@ -15633,6 +15633,8 @@ impl App {
                     );
                     a.bar = bar;
                     a.audio = Some(audio_action);
+                } else {
+                    ui::bars::islands::set_favorites_row_bottom(&ctx, None);
                 }
                 // AURORA_DEMO_BARS: the mockup's voice (connected; talking
                 // with `voice`) and chat island width, for this run only and
@@ -15808,7 +15810,7 @@ impl App {
                 // snapped this frame (above the dock with the islands)
                 let mut area = ui::layout::bars_room(ui.available_rect_before_wrap(), bottom_top, classic_bars);
                 // the favourites' row under the islands keeps the windows under it
-                if !classic_bars && let Some(row) = ui::bars::islands::favorites_row_bottom(ui.ctx()) {
+                if let Some(row) = ui::bars::islands::favorites_row_bottom(ui.ctx()) {
                     area.min.y = area.min.y.max(row + ui::bars::islands::MARGIN);
                 }
                 // the left and right toolbars, and the windows beside them
