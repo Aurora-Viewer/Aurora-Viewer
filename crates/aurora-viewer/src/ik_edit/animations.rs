@@ -256,6 +256,7 @@ impl Stack {
                 loop_in: 0.0,
                 loop_out: 2.0,
                 looping: true,
+                ends_after: None,
                 ease_in: 0.0,
                 ease_out: 0.0,
                 hand_pose: 0,
@@ -402,7 +403,7 @@ impl Stack {
                             })
                             .collect();
                         self.candidates
-                            .sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()).then(a.0.cmp(&b.0)));
+                            .sort_by(|a, b| crate::natural_order::cmp(&a.1, &b.1).then(a.0.cmp(&b.0)));
                         self.cache = Some((inv.generation, self.filter.clone()));
                     }
                     let mut chosen = None;

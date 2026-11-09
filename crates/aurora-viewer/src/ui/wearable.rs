@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 pub enum Action {
     Save(Option<String>),
+    Appearance(super::shape::AppearanceAction),
 }
 
 fn group_label(group: &str) -> &'static str {
@@ -90,6 +91,7 @@ pub fn show(
     world: &mut World,
     st: &mut State,
     images: &HashMap<Uuid, egui::TextureHandle>,
+    controls: super::shape::AppearanceControls,
 ) -> Vec<Action> {
     if !st.open {
         return Vec::new();
@@ -124,6 +126,11 @@ pub fn show(
         let local = editor::has_local_textures(world, draft);
         let copy = draft.can_copy(world) && (modify || !draft.dirty()) && !picking;
         ui.label(RichText::new(&draft.item.name).strong().size(16.0));
+        actions.extend(
+            super::shape::appearance_controls(ui, p, controls)
+                .into_iter()
+                .map(Action::Appearance),
+        );
         if !modify {
             ui.label(RichText::new(aurora_i18n::tr!("wearable-readonly")).color(p.warn));
         }
@@ -427,7 +434,14 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                actions = show(ui.ctx(), &crate::theme::Theme::default().palette(), world, state, &HashMap::new());
+                actions = show(
+                    ui.ctx(),
+                    &crate::theme::Theme::default().palette(),
+                    world,
+                    state,
+                    &HashMap::new(),
+                    crate::ui::shape::AppearanceControls { camera: true, pose: true },
+                );
             },
         );
         output.textures_delta.clear();

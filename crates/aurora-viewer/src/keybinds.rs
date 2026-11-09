@@ -440,6 +440,8 @@ pub enum Action {
     DevToolbox,
     /// Advanced › Request Admin Status (menu_viewer.xml, control|alt|G).
     RequestAdminStatus,
+    /// Advanced.ShowDebugSettings.
+    DebugSettings,
     /// "Force appearance update (rebake)" (Firestorm Ctrl+Alt+R).
     Rebake,
     /// Avatar health's "Stop avatar animations", the scripts keeping their
@@ -635,6 +637,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                 vec![
                     (Action::DevToolbox, aurora_i18n::tr!("dev-toolbox-title")),
                     (Action::RequestAdminStatus, aurora_i18n::tr!("god-mode-request")),
+                    (Action::DebugSettings, aurora_i18n::tr!("toolbar-command-debug-settings")),
                     (Action::ShowTransparency, aurora_i18n::tr!("common-show-transparency")),
                     (Action::SelectionOutlines, aurora_i18n::tr!("keybinds-selection-outlines")),
                     (Action::Beacons, aurora_i18n::tr!("beacons-title")),
@@ -931,6 +934,7 @@ impl KeyBindings {
             (Action::DevToolbox, [kalt(K::KeyD, true, false), None]),
             // menu_viewer.xml: Request Admin Status
             (Action::RequestAdminStatus, [kalt(K::KeyG, true, false), None]),
+            (Action::DebugSettings, [kalt(K::KeyS, true, true), None]),
             // menu_viewer.xml: Avatar Health
             (Action::StopAnimations, [kalt(K::KeyA, false, true), None]),
             (Action::ResyncAnimations, [kmod(K::KeyS, true, false), None]),
@@ -2274,6 +2278,7 @@ mod tests {
             ),
             (Action::DevToolbox, (true, false, true), [K::KeyD; 4]),
             (Action::RequestAdminStatus, (true, false, true), [K::KeyG; 4]),
+            (Action::DebugSettings, (true, true, true), [K::KeyS; 4]),
             (Action::Rebake, (true, false, true), [K::KeyR; 4]),
             (Action::StopAnimations, (false, true, true), [K::KeyA, K::KeyQ, K::KeyQ, K::KeyA]),
             (Action::ResyncAnimations, (true, false, false), [K::KeyS; 4]),

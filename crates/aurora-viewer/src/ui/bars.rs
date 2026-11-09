@@ -993,13 +993,13 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             super::stream_title::WINDOW,
             &mut panels.stream_title,
         );
-        if menu::item(ui, p, "map-pin-filled", aurora_i18n::tr!("landmark-create-here")) {
+        if menu::item(ui, p, "bookmark-filled", aurora_i18n::tr!("landmark-create-here")) {
             *action = BarAction::CreateLandmark;
         }
         if menu::item(ui, p, "map", aurora_i18n::tr!("owned-land-title")) {
             *action = BarAction::OwnedLand;
         }
-        menu::submenu(ui, p, "eye-filled", aurora_i18n::tr!("world-show-more"), true, |ui| {
+        menu::submenu(ui, p, "dots-filled", aurora_i18n::tr!("world-show-more"), true, |ui| {
             flip_window(
                 ui,
                 p,
@@ -1176,7 +1176,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         flip_window(
             ui,
             p,
-            "eye-filled",
+            "adjustments-horizontal-filled",
             aurora_i18n::tr!("avatar-render-title"),
             super::avatar_render_settings::WINDOW,
             &mut panels.avatar_render_settings,
@@ -1239,6 +1239,16 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 toolbox,
                 crate::ui::dev_toolbox::WINDOW,
                 &mut panels.dev_toolbox,
+            );
+            // Advanced.ShowDebugSettings
+            let debug_settings = aurora_i18n::tr!("toolbar-command-debug-settings");
+            flip_window(
+                ui,
+                p,
+                "terminal-2",
+                debug_settings,
+                crate::ui::debug_settings::WINDOW,
+                &mut panels.debug_settings,
             );
             // Develop › Consoles › Region Debug Console, for those the
             // region gives the console to
@@ -1327,10 +1337,6 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             *action = BarAction::ServerReleaseNotes;
         }
         menu::separator(ui, p);
-        // Enable Sysinfo Button (SysinfoButtonInIM), then About, whose
-        // window carries the system information
-        menu::todo(ui, p, "device-desktop-filled", aurora_i18n::tr!("ui-bars-sysinfo-button"));
-        menu::separator(ui, p);
         let about = aurora_i18n::tr!("ui-bars-about");
         flip_window(ui, p, "info-circle-filled", about, super::about::WINDOW, &mut panels.about);
         let version = aurora_i18n::tr!("common-aurora-viewer", value0 = aurora_version::version().to_string());
@@ -1404,7 +1410,7 @@ fn health_menu(ui: &mut egui::Ui, p: &Palette, h: &HealthMenu) {
         if menu::item_keys(
             ui,
             p,
-            "refresh",
+            "paperclip",
             aurora_i18n::tr!("avatar-health-refresh-attachments"),
             &h.refresh_keys,
         ) {
@@ -2163,6 +2169,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "beacons" => toggle(super::beacons::WINDOW, &mut panels.beacons),
         // Floater.Toggle quickprefs
         "quickprefs" => toggle(super::quick_prefs::WINDOW, &mut panels.quick_prefs),
+        // Floater.ToggleOrBringToFront settings_debug
+        "settings_debug" => toggle(super::debug_settings::WINDOW, &mut panels.debug_settings),
         // Avatar.TogglePicks: our profile on its Picks tab
         "picks" => return BarAction::MyPicks,
         // MainChatbarVisible: the nearby chat bar shown or put away
@@ -2254,6 +2262,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "snapshot" => panels.snapshot,
         "beacons" => panels.beacons,
         "quickprefs" => panels.quick_prefs,
+        "settings_debug" => panels.debug_settings,
         "preferences" => panels.settings,
         "move" => panels.movement_controls,
         "view" => panels.camera_controls,
@@ -2526,6 +2535,8 @@ pub struct MicButton<'a> {
     pub output_device: String,
     pub input_devices: &'a [String],
     pub output_devices: &'a [String],
+    /// The device lists are being read again.
+    pub devices_listing: bool,
     /// Output: a device was chosen.
     pub devices_changed: bool,
     /// Output: the panel opens, its lists of devices are to be read again.
@@ -2814,7 +2825,7 @@ fn mic_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, mic: &mut MicButton,
                 hover.on_hover_text(name);
                 ui.add_space(9.0);
                 let width = ui.available_width();
-                let (changed, open) = super::options::device_combo(ui, id, device, list, width);
+                let (changed, open) = super::options::device_combo(ui, id, device, list, width, mic.devices_listing);
                 mic.devices_changed |= changed;
                 *list_open |= open;
             });
@@ -3761,6 +3772,7 @@ mod tests {
             ("webbrowser", super::super::web_browser::WINDOW, |p| p.web_browser),
             ("beacons", super::super::beacons::WINDOW, |p| p.beacons),
             ("quickprefs", super::super::quick_prefs::WINDOW, |p| p.quick_prefs),
+            ("settings_debug", super::super::debug_settings::WINDOW, |p| p.debug_settings),
             ("statistics", "perf", |p| p.perf),
             ("voice", super::super::voice_controls::WINDOW, |p| p.voice_controls),
         ] {

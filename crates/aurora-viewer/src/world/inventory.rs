@@ -196,14 +196,14 @@ impl Inventory {
         kids.sort_by_cached_key(|id| {
             let f = self.folders.get(id);
             let sys = f.is_some_and(|f| f.info.type_default >= 0 && f.info.type_default != 8);
-            (!sys, f.map(|f| f.info.name.to_lowercase()).unwrap_or_default())
+            (!sys, f.map(|f| crate::natural_order::key(&f.info.name)).unwrap_or_default())
         });
         let mut items = f.items.clone();
         seen.clear();
         // FetchInventoryDescendents2 may include linked originals from other
         // folders. LLInventoryModel::updateItem indexes each by its parent.
         items.retain(|item| self.items.get(item).is_some_and(|it| it.parent == id) && seen.insert(*item));
-        items.sort_by_cached_key(|i| self.items.get(i).map(|it| it.name.to_lowercase()).unwrap_or_default());
+        items.sort_by_cached_key(|i| self.items.get(i).map(|it| crate::natural_order::key(&it.name)).unwrap_or_default());
         if let Some(f) = self.folders.get_mut(&id) {
             f.children = kids;
             f.items = items;
@@ -772,7 +772,7 @@ pub fn read_cache(path: &std::path::Path) -> Option<CachedInventory> {
         .map(|f| {
             let id = f["id"].as_uuid();
             let mut items = by_parent.remove(&id).unwrap_or_default();
-            items.sort_by_cached_key(|it| it.name.to_lowercase());
+            items.sort_by_cached_key(|it| crate::natural_order::key(&it.name));
             CachedFolder {
                 id,
                 version: f["version"].as_i32(),
