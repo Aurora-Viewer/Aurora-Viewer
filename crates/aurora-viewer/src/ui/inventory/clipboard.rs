@@ -1734,4 +1734,50 @@ mod tests {
         h.ctx.memory_mut(|m| m.request_focus(egui::Id::unique("unrelated_widget")));
         assert!(h.paste().is_empty());
     }
+
+    /// #2764 follow-up: a confirmed deletion selects the row below in every
+    /// layout, so that the next Delete goes on down the list
+    /// (LLFolderView::getNextUnselectedItem; the end of the list and deleted
+    /// folders are in `delete_tests`).
+    #[test]
+    fn a_confirmed_deletion_selects_the_next_row_in_every_layout() {
+        for (classic, width) in [(true, 680.0), (false, 440.0), (false, 800.0), (false, 1180.0)] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            h.add_trash();
+            super::super::super::widgets::place_floater(&h.ctx, "inventory", egui::pos2(10.0, 40.0), egui::vec2(width, 950.0));
+            h.st.show_original(&h.world.inventory, id(8100));
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            let order = if !classic && width >= 800.0 {
+                &h.st.flat.order
+            } else {
+                &h.st.plain.order
+            };
+            let index = order
+                .iter()
+                .position(|row| h.world.inventory.items.contains_key(row))
+                .expect("an item row");
+            let (target, expected) = (order[index], order[index + 1]);
+            h.select(target, false);
+            assert!(h.frame(vec![delete_key(Default::default())]).is_empty());
+            h.frame(Vec::new());
+            let actions = h.click(h.text(aurora_i18n::tr!("common-delete")).center(), Default::default());
+            let [InvAction::Edit(change)] = &actions[..] else {
+                panic!("confirmed deletion must submit one mutation ({classic}, {width})")
+            };
+            assert_eq!(h.st.selection, HashSet::from([expected]), "({classic}, {width})");
+            assert_eq!(h.st.selected, Some(expected));
+            rules::demo_mutate(&mut h.world.inventory, h.world.agent_id, change.clone()).expect("delete");
+            for _ in 0..3 {
+                h.frame(Vec::new());
+            }
+            assert_eq!(
+                h.st.selection,
+                HashSet::from([expected]),
+                "kept once the move lands ({classic}, {width})"
+            );
+        }
+    }
 }

@@ -537,6 +537,8 @@ pub struct InventoryUi {
     /// Last actual scroll offset and viewport height of this window's list.
     list_viewport: Option<(f32, f32)>,
     list_focus_frame: Option<u64>,
+    /// Which row order the list drew last, for the work done outside it.
+    shown_order: keyboard::ShownOrder,
     visible: Vec<Uuid>,
     pub clipboard: Vec<Uuid>,
     pub cut: bool,

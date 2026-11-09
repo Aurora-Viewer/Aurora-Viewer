@@ -244,6 +244,7 @@ pub(super) fn show(
                     };
                     match plan {
                         Ok(change) => {
+                            super::delete::select_next(inv, st, ids);
                             actions.push(InvAction::Edit(change));
                             done = true;
                         }

@@ -119,3 +119,36 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &InventoryUi) -> Vec<egu
         ]
     })
 }
+
+/// LLFolderView::removeSelectedItems and getNextUnselectedItem
+/// (indra/llui/llfolderview.cpp, originally LGPL 2.1): a confirmed deletion
+/// selects the row below the last one removed, or above it at the end of the
+/// list, so that the next Delete goes on down the list.
+pub(super) fn select_next(inv: &Inventory, st: &mut InventoryUi, ids: &[Uuid]) {
+    let gone: std::collections::HashSet<Uuid> = ids.iter().copied().collect();
+    let order = super::keyboard::shown_order(st);
+    let last = st
+        .selected
+        .filter(|id| gone.contains(id))
+        .or_else(|| order.iter().rev().find(|row| gone.contains(row)).copied());
+    let next = last.and_then(|last| next_row(inv, order, &gone, last));
+    st.selection.clear();
+    st.selection.extend(next);
+    st.anchor = next;
+    st.selected = next;
+    st.keyboard_selection = true;
+}
+
+/// The first displayed row after `last` that does not go with the deletion,
+/// else the nearest one before it. Unlike getNextOpenNode, which skips only
+/// the selected rows going down, a row inside any deleted folder is skipped
+/// both ways: it leaves with its folder.
+pub(super) fn next_row(inv: &Inventory, order: &[Uuid], gone: &std::collections::HashSet<Uuid>, last: Uuid) -> Option<Uuid> {
+    let index = order.iter().position(|row| *row == last)?;
+    let stays = |row: &&Uuid| !rules::ancestors(inv, **row).any(|id| gone.contains(&id));
+    order[index + 1..]
+        .iter()
+        .find(stays)
+        .or_else(|| order[..index].iter().rev().find(stays))
+        .copied()
+}

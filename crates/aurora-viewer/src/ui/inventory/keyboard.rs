@@ -9,12 +9,19 @@ use super::*;
 /// Run after rebuilding the displayed order and before laying out its viewport,
 /// including while Aurora's explorer has swapped its flat tree into `plain`.
 pub(super) fn navigate(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, filtered: bool) -> bool {
-    if !clipboard::list_has_focus(ui, st) || st.rename.is_some() {
-        return false;
-    }
     // The explorer lists one folder flat (the Legacy Viewer's single folder
     // mode): its folders never open in place, so Left and Right stay unused.
     let explorer = st.aurora.is_some_and(|frame| frame.explorer);
+    st.shown_order = if filtered {
+        ShownOrder::Results
+    } else if explorer {
+        ShownOrder::Flat
+    } else {
+        ShownOrder::Plain
+    };
+    if !clipboard::list_has_focus(ui, st) || st.rename.is_some() {
+        return false;
+    }
     let mut keys = Vec::new();
     ui.input_mut(|input| {
         input.events.retain(|event| {
@@ -50,6 +57,26 @@ pub(super) fn navigate(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, fil
         }
     }
     navigated
+}
+
+/// The rows the list drew last: the plain tree, Aurora's explorer folder or
+/// the result tree of a search, a filter or another tab.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) enum ShownOrder {
+    #[default]
+    Plain,
+    Flat,
+    Results,
+}
+
+/// The rows the list drew last, in their displayed order. Outside the list
+/// only: while the explorer draws, its rows are swapped into `plain`.
+pub(super) fn shown_order(st: &InventoryUi) -> &[Uuid] {
+    match st.shown_order {
+        ShownOrder::Plain => &st.plain.order,
+        ShownOrder::Flat => &st.flat.order,
+        ShownOrder::Results => &st.result_tree.order,
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
