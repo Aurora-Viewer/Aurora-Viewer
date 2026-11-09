@@ -1600,11 +1600,21 @@ pub(crate) struct Backend {
     target_bytes: Option<(u64, u64)>,
     taa_bytes: u64,
     surface_srgb: bool,
-    egui: egui_wgpu::Renderer,
+    egui: EguiSlot,
     ui_blur: Option<crate::ui_blur::Blur>,
     /// What a full video memory refused of the frame's targets, and when to
     /// try again (gpu_alloc.rs).
     oom: crate::gpu_alloc::Refusals,
+    /// What the renderer was made from, kept until its start is over: made,
+    /// then the user's settings applied by a frame, with nothing refused.
+    seed: Option<Box<BackendInit>>,
+    /// Video memory refused part of what the start makes outside the render
+    /// targets (the placeholders, probes, shadow atlases, culling and
+    /// particle buffers…, or the atlases the settings make again): the
+    /// frame's bind groups hold it, so no try of the targets could bring the
+    /// world back. The whole renderer is made again from `seed`, on the same
+    /// device and window, at the targets' next try (`remake_refused`).
+    remake: bool,
     /// The installed set is the 1x1 one that frees a refused set, made just
     /// before the next try (`rebuild_targets`): FSR's display-size part is
     /// made at that size too.
@@ -1778,6 +1788,27 @@ impl Drop for Backend {
         // SAFETY: dropped once, here, and never used again: the backend is
         // being dropped.
         unsafe { std::mem::ManuallyDrop::drop(&mut self.surface) };
+    }
+}
+
+/// egui's renderer, made once and moved from one backend to the next by
+/// `Backend::remake_refused`: egui-wgpu makes its buffers with
+/// `create_buffer_init`, which panics on a buffer a full video memory
+/// refused, and its textures (the fonts) are only sent once. Empty only
+/// inside `remake_refused`.
+struct EguiSlot(Option<egui_wgpu::Renderer>);
+
+impl std::ops::Deref for EguiSlot {
+    type Target = egui_wgpu::Renderer;
+
+    fn deref(&self) -> &egui_wgpu::Renderer {
+        self.0.as_ref().expect("egui renderer: only taken inside remake_refused")
+    }
+}
+
+impl std::ops::DerefMut for EguiSlot {
+    fn deref_mut(&mut self) -> &mut egui_wgpu::Renderer {
+        self.0.as_mut().expect("egui renderer: only taken inside remake_refused")
     }
 }
 
@@ -2803,7 +2834,59 @@ struct Ranges {
 
 impl Backend {
     /// Surface configuration, pipelines, targets and per-frame buffers.
+    ///
+    /// Made in one error scope: a full video memory that refuses any of it
+    /// outside the render targets (those have their own scope and retry)
+    /// leaves the renderer showing the interface alone, with the "Video
+    /// memory full" notice, until `remake_refused` can make it whole.
     pub fn new(init: BackendInit) -> Result<Backend, RenderError> {
+        Self::new_with(init, false)
+    }
+
+    /// `egui_later`: made without egui's renderer, which the backend this
+    /// one replaces hands over once it has come through whole.
+    fn new_with(init: BackendInit, egui_later: bool) -> Result<Backend, RenderError> {
+        let seed = Box::new(init.clone());
+        let device = init.device.clone();
+        let lost = init.lost.clone();
+        let (made, oom, invalid) = crate::gpu_alloc::scoped_apart(&device, || Self::make(init, egui_later));
+        let mut backend = made?;
+        // (AURORA_GPU_OOM_START's own refusal is a usage error, which the
+        // scope does not read as memory)
+        let oom = oom || crate::gpu_alloc::start_refused();
+        backend.seed = Some(seed);
+        if crate::gpu_alloc::start_remade(oom, invalid, backend.oom.targets, lost.get()) {
+            backend.refused_at_start();
+        }
+        Ok(backend)
+    }
+
+    /// The interface alone, with the notice, until `remake_refused` makes
+    /// the renderer whole.
+    fn refused_at_start(&mut self) {
+        log::warn!("renderer: out of video memory while it was made, made again once memory is freed");
+        if !self.oom.targets {
+            self.oom.targets_failed(Instant::now());
+        }
+        self.remake = true;
+    }
+
+    /// The settings a frame asks for. Until the start is over, applied in
+    /// an error scope: the shadow atlas and the probes they make again
+    /// belong to the start, and a refused one is remade with the rest.
+    fn apply_frame_settings(&mut self, settings: RenderSettings) {
+        if self.seed.is_none() {
+            self.apply_settings(settings);
+            return;
+        }
+        let device = self.device.clone();
+        let ((), oom, invalid) = crate::gpu_alloc::scoped_apart(&device, || self.apply_settings(settings));
+        if !self.remake && crate::gpu_alloc::start_remade(oom, invalid, self.oom.targets, self.lost.get()) {
+            self.refused_at_start();
+        }
+    }
+
+    fn make(init: BackendInit, egui_later: bool) -> Result<Backend, RenderError> {
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         let xr_seed = init.xr.as_ref().map(|_| Box::new(init.clone()));
         let BackendInit {
@@ -3169,7 +3252,9 @@ impl Backend {
         });
 
         let dummies = {
-            let usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
+            // AURORA_GPU_OOM_START: refused as by a full card (no usage)
+            let refuse = crate::gpu_alloc::start_refused();
+            let usage = crate::gpu_alloc::start_usage(wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST, refuse);
             let (wt, white) = make_view(&device, "dummy white", 1, 1, wgpu::TextureFormat::Rgba8Unorm, 1, usage);
             let (_, black) = make_view(&device, "dummy black", 1, 1, HDR_FORMAT, 1, usage);
             let (_, depth) = make_view(
@@ -3179,7 +3264,10 @@ impl Backend {
                 1,
                 DEPTH_FORMAT,
                 1,
-                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                crate::gpu_alloc::start_usage(
+                    wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    refuse,
+                ),
             );
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
@@ -3309,7 +3397,7 @@ impl Backend {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let egui = egui_wgpu::Renderer::new(&device, format, egui_wgpu::RendererOptions::default());
+        let egui = EguiSlot((!egui_later).then(|| egui_wgpu::Renderer::new(&device, format, egui_wgpu::RendererOptions::default())));
         let timer = timestamps.then(|| GpuTimer::new(&device, &queue));
 
         let mut r = Backend {
@@ -3335,6 +3423,8 @@ impl Backend {
             egui,
             ui_blur: None,
             oom,
+            seed: None,
+            remake: false,
             targets_shrunk: false,
             ui_targets_backoff: crate::gpu_alloc::Backoff::default(),
             ui_glass: None,
@@ -5039,6 +5129,12 @@ impl Backend {
     /// try: otherwise a card with room for one set but not two would refuse
     /// every try.
     fn rebuild_targets(&mut self) {
+        // (a renderer waiting for its remake draws no world: its targets
+        // stay small and the notice stays, whatever asks for them)
+        if self.remake {
+            self.shed_world();
+            return;
+        }
         let device = self.device.clone();
         let refuse = crate::gpu_alloc::targets_refused();
         if self.oom.targets {
@@ -6077,7 +6173,80 @@ impl Backend {
         self.render_view(packet)
     }
 
+    /// The renderer made again, whole, from what it was first made from:
+    /// once video memory lets all of it through, it takes this one's place
+    /// (egui's renderer moved over), the world comes back with no relog,
+    /// and the old one's memory is freed. Not a GPU loss: same device, same
+    /// window, nothing counted for the crash report, and it works with GPU
+    /// recovery turned off. Refused again, it is dropped and tried later on
+    /// the targets' backoff.
+    fn remake_refused(&mut self, scene: &SceneGpu, settings: RenderSettings) {
+        let Some(seed) = self.seed.as_ref() else {
+            return;
+        };
+        let mut init = (**seed).clone();
+        init.width = self.config.width;
+        init.height = self.config.height;
+        init.output_format = Some(self.config.format);
+        init.vsync = self.vsync;
+        init.scene = scene.clone();
+        // what this one holds for a world it no longer draws is let go
+        // first: a card with room for one renderer but not two would
+        // otherwise refuse every try
+        self.shed_world();
+        // (how long a try holds the frame: the render thread makes the
+        // whole renderer, its pipelines included)
+        let started = Instant::now();
+        let made = Backend::new_with(init, true).map(|mut fresh| {
+            // the settings the frame asks for, as part of the remake: the
+            // atlases they make again could still be refused
+            if !fresh.remake {
+                fresh.apply_frame_settings(settings);
+            }
+            fresh
+        });
+        let took = started.elapsed().as_millis();
+        match made {
+            Ok(mut fresh) if !fresh.remake => {
+                log::info!("renderer: made again, whole ({took} ms)");
+                fresh.egui.0 = self.egui.0.take();
+                *self = fresh;
+            }
+            Ok(_) => {
+                log::info!("renderer: try refused ({took} ms)");
+                self.oom.targets_failed(Instant::now());
+            }
+            // (a lost device, which ends the viewer: egui's renderer stays
+            // here, nothing is made on the lost device)
+            Err(e) => {
+                log::warn!("renderer: could not be made again: {e}");
+                self.oom.targets_failed(Instant::now());
+            }
+        }
+    }
+
+    /// Lets go of the largest of what a renderer waiting for its remake
+    /// holds for the world it no longer draws: the render targets, down to
+    /// 1x1, and the shadow atlas, down to its smallest. In a scope: what
+    /// binds the start's refused resources fails again, and is dropped with
+    /// this renderer.
+    fn shed_world(&mut self) {
+        let device = self.device.clone();
+        let _ = crate::gpu_alloc::scoped(&device, || {
+            // (the size the settings ask for stays recorded: no frame's
+            // settings make the full atlas again before the remake)
+            self.shadow_view = Self::make_shadow_atlas(&device, 512, 0);
+            self.shadow_merge.atlas_changed(&device, &self.shadow_view, 512, SHADOW_FORMAT);
+            self.make_targets_now(false, Some((1, 1)));
+        });
+    }
+
     fn render_view(&mut self, packet: FramePacket) -> FrameResult {
+        // (here, not in `render`: the eyes' backends of VR are made, and
+        // can be refused, like the window's)
+        if self.remake && self.oom.targets_due(Instant::now()) {
+            self.remake_refused(&packet.scene, packet.settings);
+        }
         let FramePacket {
             output,
             index,
@@ -6135,7 +6304,12 @@ impl Backend {
         }
         stats.present_mode = Some(self.config.present_mode);
         if settings != self.settings {
-            self.apply_settings(settings);
+            self.apply_frame_settings(settings);
+        }
+        // the start is over: made, and its settings applied, with nothing
+        // refused
+        if !self.remake {
+            self.seed = None;
         }
         stats.settings = Some(self.settings);
         // the tiled photo is done: its context goes with the targets that
