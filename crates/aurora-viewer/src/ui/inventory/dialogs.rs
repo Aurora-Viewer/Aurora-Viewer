@@ -203,6 +203,18 @@ pub(super) fn show(
                 } else {
                     aurora_i18n::tr!("ui-inventory-dialogs-items-will-be-moved-to-trash")
                 });
+                // DeleteItems ignore box; PurgeSelectedItems has none (#2344).
+                if !*purge {
+                    ui.add_space(8.0);
+                    super::super::widgets::checkbox(
+                        ui,
+                        p,
+                        &mut st.delete_dont_ask,
+                        RichText::new(aurora_i18n::tr!("ui-context-do-not-show-again"))
+                            .size(12.5)
+                            .color(p.muted),
+                    );
+                }
                 if confirmation_buttons(
                     ui,
                     p,
@@ -214,41 +226,20 @@ pub(super) fn show(
                     },
                     &mut done,
                 ) {
-                    let plan = if *purge {
-                        let ids = rules::roots(inv, ids);
-                        let refresh = ids.iter().filter_map(|id| rules::parent(inv, *id)).collect();
-                        let operations = ids
-                            .iter()
-                            .map(|id| Operation::Delete {
-                                id: *id,
-                                folder: inv.folders.contains_key(id),
-                            })
-                            .collect();
-                        let holds_worn = rules::worn_ancestors(inv, &facts.worn);
-                        if ids.iter().all(|id| {
-                            rules::removable(inv, *id, &prefs.protected) && rules::in_type(inv, *id, 14) && !holds_worn.contains(id)
-                        }) {
-                            Ok(Mutation {
-                                operations,
-                                refresh,
-                                removed: ids,
-                                ..Default::default()
-                            })
-                        } else {
-                            Err(aurora_i18n::tr!("ui-inventory-dialogs-the-selection-can-no-longer-be-purged").into())
-                        }
-                    } else {
-                        rules::system(inv, 14)
-                            .ok_or_else(|| aurora_i18n::tr!("common-trash-folder-not-found").to_owned())
-                            .and_then(|to| rules::move_selection(inv, ids, to, &prefs.protected, &facts.worn))
-                    };
-                    match plan {
+                    let silence = !*purge && st.delete_dont_ask;
+                    match super::delete::plan(inv, ids, *purge, prefs, facts) {
                         Ok(change) => {
+                            if silence {
+                                actions.push(InvAction::StopConfirmingDelete);
+                            }
                             actions.push(InvAction::Edit(change));
                             done = true;
                         }
                         Err(reason) => st.message = reason,
                     }
+                }
+                if done {
+                    st.delete_dont_ask = false;
                 }
             }
             EditDialog::Empty(id) => {

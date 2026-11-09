@@ -184,6 +184,7 @@ const BEFORE: &[&str] = &[
     "inventory.double_click_add_clothes",
     "inventory.warn_task_move",
     "inventory.warn_scripted_task_move",
+    "inventory.confirm_delete",
     // Fonts
     "font",
     "font_scale",

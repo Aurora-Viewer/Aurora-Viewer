@@ -293,6 +293,7 @@ impl App {
                 }
             }
             InvAction::TakeTask(request) => self.take_task_inventory(*request),
+            InvAction::StopConfirmingDelete => self.settings.inventory.confirm_delete = false,
             InvAction::Edit(change) => self.edit_inventory(change, false),
             InvAction::Drop(change) => self.edit_inventory(change, true),
             InvAction::Create { parent, kind, name } => {

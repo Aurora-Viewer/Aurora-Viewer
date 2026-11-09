@@ -369,6 +369,10 @@ pub struct InventoryPreferences {
     pub recent_hours: u32,
     pub warn_task_move: bool,
     pub warn_scripted_task_move: bool,
+    /// Ask before moving inventory to the Trash (DeleteItems; its "Do not
+    /// show again" box turns this off). Purge from Trash always asks.
+    /// On by default (#2344).
+    pub confirm_delete: bool,
     /// The rights Aurora's rows show (its "CMT" menu).
     pub rights: super::permissions::Rights,
     /// Aurora's window shows the selection's details: the card at the
@@ -418,6 +422,7 @@ impl Default for InventoryPreferences {
             recent_hours: 0,
             warn_task_move: true,
             warn_scripted_task_move: true,
+            confirm_delete: true,
             rights: Default::default(),
             show_details: true,
             folder_colors_enabled: true,
