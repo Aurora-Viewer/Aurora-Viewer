@@ -559,6 +559,9 @@ pub struct ViewCache {
     built: u64,
     query: Option<Query>,
     pub results: Vec<Uuid>,
+    /// With Always show folders, the folders that hold a matching item: the
+    /// others it lists start closed (`TreeState::prepare`).
+    holding: Option<IdSet>,
 }
 
 impl ViewCache {
@@ -957,6 +960,22 @@ impl ViewCache {
                 parent = next;
             }
         }
+        // Always show folders lists every folder: like LLOpenFilteredFolders
+        // (indra/newview/llinventoryfunctions.cpp), a folder with no matching
+        // item below it is shown closed, the folders of the matches open.
+        // Advanced search keeps its own folder rules.
+        self.holding = (filters.always_folders && smart.is_none()).then(|| {
+            let mut holding = IdSet::default();
+            for id in self.results.iter().filter(|id| !self.folders.contains(*id)) {
+                let mut parent = rules::parent(inv, *id);
+                while let Some(folder) = parent
+                    && holding.insert(folder)
+                {
+                    parent = rules::parent(inv, folder);
+                }
+            }
+            holding
+        });
         self.result_children.clear();
         for (parent, children) in &self.children {
             let children: Vec<_> = children.iter().filter(|id| included.contains(id)).copied().collect();
@@ -1011,6 +1030,10 @@ pub struct TreeRow {
 pub struct TreeState {
     key: Option<(u64, Uuid, usize, bool)>,
     closed: [HashSet<Uuid>; 5],
+    /// The folders listed so far with Always show folders, and those of them
+    /// closed because no matching item was below them.
+    seen: [HashSet<Uuid>; 5],
+    hollow_closed: [HashSet<Uuid>; 5],
     pub rows: Vec<TreeRow>,
     pub order: Vec<Uuid>,
 }
@@ -1041,6 +1064,21 @@ impl TreeState {
                 continue;
             }
             let folder = view.folders.contains(&id);
+            // A folder with no matching item starts closed when first listed;
+            // closed that way, it opens once a match lands in it.
+            if folder
+                && id != root
+                && let Some(holding) = &view.holding
+            {
+                let hollow = !holding.contains(&id);
+                if self.seen[tab].insert(id) {
+                    if hollow && self.closed[tab].insert(id) {
+                        self.hollow_closed[tab].insert(id);
+                    }
+                } else if !hollow && self.hollow_closed[tab].remove(&id) {
+                    self.closed[tab].remove(&id);
+                }
+            }
             let open = folder && !self.closed[tab].contains(&id);
             if id != root || show_root {
                 self.rows.push(TreeRow { id, depth, folder, open });
@@ -1097,6 +1135,8 @@ impl TreeState {
     }
 
     pub fn set_all(&mut self, view: &ViewCache, root: Uuid, tab: usize, open: bool) {
+        // Expand all or Collapse all is the user's choice for every folder.
+        self.hollow_closed[tab.min(4)].clear();
         let closed = &mut self.closed[tab.min(4)];
         closed.clear();
         if !open {
@@ -1728,7 +1768,7 @@ mod tests {
 
     #[test]
     fn recent_and_worn_use_real_folders_and_separate_collapse_states() {
-        let (inv, mut facts) = fixture();
+        let (mut inv, mut facts) = fixture();
         let prefs = InventoryPreferences {
             last_logout: 200,
             ..Default::default()
@@ -1741,11 +1781,84 @@ mod tests {
         tree.toggle(id(2), 2);
         tree.prepare(&view, inv.root, 2, true);
         assert_eq!(tree.order, [id(1), id(2)]);
+        inv.generation += 1;
+        view.search(&inv, inv.root, "", &prefs, &Filters::default(), 2, None, &facts, facts.agent, 1000);
+        tree.prepare(&view, inv.root, 2, true);
+        assert_eq!(tree.order, [id(1), id(2)], "a Recent refresh keeps the user's collapse");
         facts.worn.insert(id(10));
         view.search(&inv, inv.root, "", &prefs, &Filters::default(), 3, None, &facts, facts.agent, 1000);
         tree.prepare(&view, inv.root, 3, true);
         assert_eq!(tree.order, [id(1), id(2), id(10)]);
         assert!(!tree.rows.last().unwrap().folder);
+
+        inv.items.get_mut(&id(11)).expect("favorite item").favorite = true;
+        inv.generation += 1;
+        view.search(&inv, inv.root, "", &prefs, &Filters::default(), 4, None, &facts, facts.agent, 1000);
+        tree.prepare(&view, inv.root, 4, true);
+        assert_eq!(
+            tree.order,
+            [id(1), id(2), id(11)],
+            "Favorites shows only the favorite item's ancestors"
+        );
+        tree.toggle(id(2), 4);
+        tree.prepare(&view, inv.root, 4, true);
+        assert_eq!(tree.order, [id(1), id(2)]);
+        inv.generation += 1;
+        view.search(&inv, inv.root, "", &prefs, &Filters::default(), 4, None, &facts, facts.agent, 1000);
+        tree.prepare(&view, inv.root, 4, true);
+        assert_eq!(tree.order, [id(1), id(2)], "a Favorites refresh keeps the user's collapse");
+    }
+
+    /// Recent with Always show folders (#2853): every folder is listed, only
+    /// those holding a recent item open, as LLOpenFilteredFolders leaves them.
+    #[test]
+    fn always_show_folders_opens_only_the_folders_of_the_matches() {
+        let (mut inv, facts) = fixture();
+        folder(&mut inv, 7, id(4), -1, "Inner");
+        let prefs = InventoryPreferences {
+            last_logout: 200,
+            ..Default::default()
+        };
+        let filters = Filters {
+            always_folders: true,
+            ..Default::default()
+        };
+        let mut view = ViewCache::default();
+        let mut tree = TreeState::default();
+        let open = |tree: &TreeState, n: u128| tree.rows.iter().find(|row| row.id == id(n)).map(|row| row.open);
+        view.search(&inv, inv.root, "", &prefs, &filters, 2, None, &facts, facts.agent, 1000);
+        tree.prepare(&view, inv.root, 2, true);
+        assert_eq!(open(&tree, 2), Some(true), "the folder of the recent item");
+        assert!(tree.order.contains(&id(11)));
+        assert_eq!(open(&tree, 4), Some(false), "a folder without recent items is listed closed");
+        assert_eq!(open(&tree, 7), None, "its folders wait for it to open");
+
+        // a recent item lands in it: it opens; its own empty folder stays closed
+        inv.add_items(vec![item(13, id(4), "New gift", 900)]);
+        view.search(&inv, inv.root, "", &prefs, &filters, 2, None, &facts, facts.agent, 1000);
+        tree.prepare(&view, inv.root, 2, true);
+        assert_eq!(open(&tree, 4), Some(true));
+        assert!(tree.order.contains(&id(13)));
+        assert_eq!(open(&tree, 7), Some(false));
+
+        // what the user closes stays closed through a refresh
+        tree.toggle(id(2), 2);
+        inv.generation += 1;
+        view.search(&inv, inv.root, "", &prefs, &filters, 2, None, &facts, facts.agent, 1000);
+        tree.prepare(&view, inv.root, 2, true);
+        assert_eq!(open(&tree, 2), Some(false));
+        // Expand all opens everything, Inner included
+        tree.set_all(&view, inv.root, 2, true);
+        tree.prepare(&view, inv.root, 2, true);
+        assert_eq!((open(&tree, 2), open(&tree, 7)), (Some(true), Some(true)));
+
+        // without the option, nothing changes: only the folders of the matches
+        let mut view = ViewCache::default();
+        let mut tree = TreeState::default();
+        view.search(&inv, inv.root, "", &prefs, &Filters::default(), 2, None, &facts, facts.agent, 1000);
+        tree.prepare(&view, inv.root, 2, true);
+        assert!(tree.rows.iter().all(|row| !row.folder || row.open));
+        assert_eq!(open(&tree, 7), None);
     }
 
     #[test]

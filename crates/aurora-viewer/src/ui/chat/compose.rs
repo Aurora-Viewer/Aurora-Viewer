@@ -8,7 +8,7 @@
 //! Each conversation keeps its draft, and its field takes the keyboard as
 //! in the other styles (#422, #425).
 
-use super::{ChatUi, ConvAction, OutgoingChat, parse_channel, sidebar, suggest, typing};
+use super::{ChatUi, ConvAction, OutgoingChat, SendKey, ooc, parse_channel, send_enter, sidebar, suggest, typing};
 use crate::theme::Palette;
 use crate::ui::menu;
 use crate::world::World;
@@ -227,10 +227,18 @@ pub(super) fn show(
                 super::cursor_to_end(ui.ctx(), conv_input, &draft);
             }
             let mut sent = false;
-            if send_clicked
-                || ((resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt))
-            {
-                let text = st.suggest.expand(st.selected, draft.trim());
+            let send = if send_clicked {
+                Some(SendKey::Normal)
+            } else if resp.has_focus() || resp.lost_focus() {
+                ui.input(send_enter)
+            } else {
+                None
+            };
+            if let Some(send) = send {
+                let mut text = st.suggest.expand(st.selected, draft.trim());
+                if send == SendKey::Ooc {
+                    text = ooc(&text);
+                }
                 if !text.is_empty() {
                     sent = true;
                     st.input_history.entry(st.selected).or_default().record(conv_input, &draft);
@@ -241,15 +249,7 @@ pub(super) fn show(
                             actions.push(ConvAction::Local(OutgoingChat {
                                 message,
                                 channel,
-                                chat_type: ui.input(|i| {
-                                    if i.modifiers.ctrl {
-                                        ChatType::Shout
-                                    } else if i.modifiers.shift {
-                                        ChatType::Whisper
-                                    } else {
-                                        volume
-                                    }
-                                }),
+                                chat_type: send.chat_type(volume),
                             }));
                         }
                         Some(to) => actions.push(ConvAction::Im { to, text }),
