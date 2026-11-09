@@ -658,8 +658,13 @@ impl App {
                 if let Some(id) = self.inventory_ui.created_selection.and_then(|id| reply.created.get(&id))
                     && !self.inventory_ui.select_created_listing(&self.world.inventory, *id)
                 {
+                    self.inventory_ui.apply_delete_selection(false);
                     self.inventory_ui.show_original(&self.world.inventory, *id);
                     self.inventory_ui.begin_rename(&self.world.inventory, *id);
+                } else {
+                    // After a Delete, select the next remaining row so another
+                    // Delete removes the next item down the list (#3094).
+                    self.inventory_ui.apply_delete_selection(true);
                 }
                 if self.inventory_ui.consume_clipboard {
                     self.inventory_ui.cancel_cut();
@@ -667,6 +672,7 @@ impl App {
                 self.inventory_ui.message.clear();
             }
             Err(reason) => {
+                self.inventory_ui.apply_delete_selection(false);
                 if !thumbnail_upload {
                     self.inventory_ui.message = reason;
                 }

@@ -4,6 +4,22 @@
 
 use super::*;
 
+/// LLFolderView::getNextUnselectedItem (indra/llui/llfolderview.cpp): the next
+/// open row after the focused selected one, skipping other selected rows, or
+/// the previous row when nothing follows — so a second Delete keeps removing
+/// down the list (#3094).
+pub(super) fn next_unselected(order: &[Uuid], selection: &HashSet<Uuid>, focus: Option<Uuid>) -> Option<Uuid> {
+    let last = focus
+        .filter(|id| selection.contains(id))
+        .or_else(|| order.iter().rev().copied().find(|id| selection.contains(id)))?;
+    let index = order.iter().position(|id| *id == last)?;
+    order[index + 1..]
+        .iter()
+        .copied()
+        .find(|id| !selection.contains(id))
+        .or_else(|| order[..index].iter().rev().copied().find(|id| !selection.contains(id)))
+}
+
 pub(super) fn allowed(inv: &Inventory, ids: &[Uuid], prefs: &InventoryPreferences, facts: &Facts) -> bool {
     if ids.is_empty() {
         return false;
@@ -118,4 +134,27 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &InventoryUi) -> Vec<egu
             },
         ]
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn id(n: u128) -> Uuid {
+        Uuid::from_u128(n)
+    }
+
+    #[test]
+    fn next_unselected_picks_the_row_below_then_the_row_above_at_the_end() {
+        let order = [id(1), id(2), id(3), id(4)];
+        let one = HashSet::from([id(2)]);
+        assert_eq!(next_unselected(&order, &one, Some(id(2))), Some(id(3)));
+        let last = HashSet::from([id(4)]);
+        assert_eq!(next_unselected(&order, &last, Some(id(4))), Some(id(3)));
+        let multi = HashSet::from([id(2), id(3)]);
+        assert_eq!(next_unselected(&order, &multi, Some(id(3))), Some(id(4)));
+        let all = HashSet::from([id(1), id(2), id(3), id(4)]);
+        assert_eq!(next_unselected(&order, &all, Some(id(2))), None);
+        assert_eq!(next_unselected(&order, &HashSet::new(), Some(id(2))), None);
+    }
 }

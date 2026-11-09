@@ -244,6 +244,10 @@ pub(super) fn show(
                     };
                     match plan {
                         Ok(change) => {
+                            // LLFolderView::removeSelectedItems: pick the next
+                            // unselected row before the move, then select it
+                            // once the mutation succeeds (#3094).
+                            st.remember_delete_selection();
                             actions.push(InvAction::Edit(change));
                             done = true;
                         }

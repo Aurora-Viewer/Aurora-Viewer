@@ -534,6 +534,10 @@ pub struct InventoryUi {
     pub selection: HashSet<Uuid>,
     anchor: Option<Uuid>,
     keyboard_selection: bool,
+    /// After a confirmed Delete: pending next row to select once the mutation
+    /// succeeds (`LLFolderView::getNextUnselectedItem`). Outer `None` means
+    /// idle; `Some(None)` clears the selection; `Some(Some(id))` selects `id`.
+    post_delete_select: Option<Option<Uuid>>,
     /// Last actual scroll offset and viewport height of this window's list.
     list_viewport: Option<(f32, f32)>,
     list_focus_frame: Option<u64>,
@@ -729,6 +733,34 @@ impl InventoryUi {
     pub fn close_additional_window(&mut self) {
         for w in self.windows.iter_mut().filter(|w| w.additional) {
             w.open = false;
+        }
+    }
+
+    /// Remember which row to select after a confirmed Delete succeeds (#3094).
+    pub(super) fn remember_delete_selection(&mut self) {
+        let order = if self.result_view() {
+            &self.result_tree.order
+        } else {
+            &self.plain.order
+        };
+        self.post_delete_select = Some(delete::next_unselected(order, &self.selection, self.selected));
+    }
+
+    /// Apply or drop the pending post-delete selection once the mutation ends.
+    pub fn apply_delete_selection(&mut self, success: bool) {
+        let Some(next) = self.post_delete_select.take() else {
+            return;
+        };
+        if !success {
+            return;
+        }
+        self.selection.clear();
+        self.selected = next;
+        self.anchor = next;
+        if let Some(id) = next {
+            self.selection.insert(id);
+            self.reveal = Some(id);
+            self.keyboard_selection = true;
         }
     }
 
