@@ -280,6 +280,7 @@ pub struct Floater<'a> {
     /// A short muted text right after the title (a count of what the
     /// window holds).
     pub title_note: Option<String>,
+    pub title_note_tooltip: Option<String>,
     /// A state at the right end of the title bar, before its buttons: a
     /// dot of its colour and its text in muted.
     pub title_state: Option<(Color32, String)>,
@@ -338,6 +339,7 @@ impl<'a> Floater<'a> {
             header_status: Vec::new(),
             header_status_action: None,
             title_note: None,
+            title_note_tooltip: None,
             title_state: None,
             default_pos: pos,
             default_size: size,
@@ -389,6 +391,12 @@ impl<'a> Floater<'a> {
     /// A muted text after the title (see `title_note`).
     pub fn title_note(mut self, note: impl Into<String>) -> Self {
         self.title_note = Some(note.into());
+        self
+    }
+
+    /// Details shown when hovering the muted text after the title.
+    pub fn title_note_tooltip(mut self, tooltip: impl Into<String>) -> Self {
+        self.title_note_tooltip = Some(tooltip.into());
         self
     }
 
@@ -696,6 +704,7 @@ impl<'a> Floater<'a> {
             }
             // title bar
             let mut buttons_left = f32::INFINITY;
+            let mut note_rect = None;
             let framed_header = self.framed_header;
             if framed_header.is_some() {
                 ui.spacing_mut().item_spacing.y = 0.0;
@@ -768,7 +777,8 @@ impl<'a> Floater<'a> {
                                 }
                                 ui.add(egui::Label::new(title).truncate());
                                 if let Some(note) = &self.title_note {
-                                    ui.add(egui::Label::new(RichText::new(note).size(12.0).color(p.muted)).truncate());
+                                    let response = ui.add(egui::Label::new(RichText::new(note).size(12.0).color(p.muted)).truncate());
+                                    note_rect = Some(response.rect);
                                 }
                             });
                         }
@@ -836,11 +846,17 @@ impl<'a> Floater<'a> {
             title_rect.max.x = buttons_left;
             // Keep the title buttons outside the double-click target; Window
             // still owns dragging the bar, including when it is minimized.
-            if ui
-                .interact(title_rect, window_id.with("title_double_click"), Sense::click())
-                .double_clicked()
-            {
+            let title_response = ui.interact(title_rect, window_id.with("title_double_click"), Sense::click());
+            if title_response.double_clicked() {
                 toggle_min = true;
+            }
+            // The double-click target owns title-bar hover. Keep its interaction
+            // and restrict the note's tooltip to the note's own rectangle.
+            if let Some(rect) = note_rect
+                && let Some(tooltip) = &self.title_note_tooltip
+                && ui.input(|input| input.pointer.hover_pos().is_some_and(|pos| rect.contains(pos)))
+            {
+                title_response.with_new_rect(rect).on_hover_text(tooltip);
             }
             if compact {
                 divider(ui, p);

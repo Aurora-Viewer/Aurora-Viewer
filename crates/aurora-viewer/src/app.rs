@@ -14,7 +14,7 @@ use crate::world::World;
 use crate::world::env::Environment;
 use aurora_net::{LoginRequest, NetClient, NetCommand, NetEvent, StartLocation, control};
 use aurora_render::{DrawLists, EguiHandOver, FrameParams, RenderStats, Renderer};
-use glam::{Vec3, Vec4};
+use glam::{Mat4, Vec3, Vec4};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -9065,6 +9065,8 @@ impl App {
             if let Some((eye, at)) = crate::demo::alpha_sort::view(self.frame_count) {
                 self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
             }
+            let view = (self.camera.position, self.camera.forward());
+            crate::demo::coplanar_decal::tick(&mut self.world, &mut self.scene, self.frame_count, view);
             if let Some(e) = crate::demo::conference::tick().and_then(|ev| self.world.apply(ev)) {
                 self.on_app_event(e);
             }
@@ -10187,7 +10189,10 @@ impl App {
                 .update(&mut gfx.renderer, &self.world, &mut self.scene.meshes, &physics);
             self.scene.physics_shapes.append(&mut self.scene.lists);
             let huds_shown = self.huds_shown();
-            self.scene.build_huds(&self.world, [hud_size.width, hud_size.height], huds_shown);
+            self.scene
+                .build_huds(&self.world, [hud_size.width, hud_size.height], huds_shown, |id| {
+                    gfx.renderer.records.get(id).map(|r| Mat4::from_cols_array_2d(&r.model))
+                });
             self.frame_profile.lap(Lap::Lists);
             if self.demo && std::env::var_os("AURORA_DEMO_ANIMESH").is_some() && self.frame_count.is_multiple_of(120) {
                 self.scene.log_demo_animesh(&self.world);

@@ -4392,8 +4392,8 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_IMPOSTOR_FLIP=<seconds>` | The avatar limit alternates between its setting and one every `seconds` |
 | `AURORA_DEMO_OVERDRAW=<n>` | Overdraw test: n rows of opaque walls |
 | `AURORA_DEMO_ALPHA_MASK_AB=<shape>:<layers>:<mode>[:touch]` | Static layered alpha faces for the offline Mask/Blend A/B (#1696) |
-| `AURORA_DEMO_ALPHA_SORT=front\|back` | Original unrigged three-face DAE and PNG fixture, fixed front/back camera (#2575) |
-| `AURORA_ALPHA_FACE_SORT=0\|1` | Nonrigged alpha face-depth sorting, on by default; 0 retains object-centre sorting for A/B |
+| `AURORA_DEMO_ALPHA_SORT=<mode>` | Original three-face DAE/PNG fixture in the world or worn as a HUD |
+| `AURORA_ALPHA_FACE_SORT=0\|1` | World/HUD nonrigged alpha face-depth sorting, on by default; 0 retains object-centre sorting for A/B |
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
 | `AURORA_DEMO_REZ_EFFECT=1\|loop\|styles\|cold` | The rez effect: objects and an avatar appearing, dressing and leaving in front of the camera; `styles`: its three looks side by side; `cold`: a cold arrival with slow textures |
 | `AURORA_REZ_EFFECT=0\|1` | The rez effect off or on, whatever the setting (Preferences › Aurora) |
@@ -4412,6 +4412,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_MASK_255=<alpha>` | A texture of flat alpha 250-254 on two panels; the one with a Mask of cutoff 255 is hidden; 255: no alpha channel, shown whole (#2276) |
 | `AURORA_DEMO_RIGGED_PROP=1` | A rigged mesh chain rezzed on a cube ahead of the start position, and the same chain worn by our avatar |
 | `AURORA_DEMO_COPLANAR_LAYERS=1` | A worn dark layer lying exactly on a worn skin, in eight strips beside our avatar |
+| `AURORA_DEMO_COPLANAR_DECAL=1`, `mask` or `blend` | Two dirt strips blended over a grass face of the same static mesh, 9 m along the start view (#3059) |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
 | `AURORA_DEMO_PLANTS=1`, `far` or `dense` | Linden trees and grass: every species near or far along the start view, or a forest |
 | `AURORA_DEMO_BLEND_SHADOWS=1` or `dense` | Alpha-blended panels in the sun (greenhouse pane, face and texture alpha), or 400 greenhouse panes |
@@ -4440,6 +4441,13 @@ both open states and the selection count. Capture at frame 620.
   This tests ordering between nonrigged faces, not intersections inside one face
   or the separate rigged attachment order. The switch also restores the former
   radial ordering of portal and ban-line sort points for a consistent A/B.
+  Modes `hud`, `hud-back` and `hud-zoom` wear the same mesh at the centre HUD
+  point: red is nearest in `hud`, blue in `hud-back`; `hud-zoom` uses the red
+  side at 50% local size. The HUD uses its own +X depth, independent of the
+  world camera. With sorting off, its three faces share one object key and
+  blue incorrectly covers red in `hud`. Compare sorting off/on, SMAA/MSAA 4x,
+  reversed orientation and local zoom; ordinary HUD opacity, masks, clicks,
+  viewport zoom and visibility must stay unchanged. No grid assets are read.
 
 - **`AURORA_DEMO_ALPHA_MASK_AB=planes|cross|spheres:<layers>:mask|blend[:touch]`**:
   adds 1 to 512 static layered prims with a procedural alpha texture; `none`
@@ -4652,6 +4660,17 @@ both open states and the selection count. Capture at frame 620.
   (`DrawRecord::set_layer_rank`) puts a worn layer over the skin it lies
   on. Skin-coloured bands, one strip in two, mean the winner follows the
   order of the draw records again. Capture with `AURORA_AA=6` and `3`.
+- **`AURORA_DEMO_COPLANAR_DECAL=1`**: one static mesh, a 3 x 2.4 m panel
+  9 m along the start view (`demo_coplanar_decal.rs`), made of two faces
+  with the very same triangles, as a road section is a grass base with a
+  dirt track over it: face 0 opaque grass, face 1 two dirt strips on a
+  transparent background. The strips arrive hard-edged (drawn as a mask);
+  at frame 360 a full update gives face 1 a soft-edged texture (drawn
+  blended), as a season script changing the texture does. `mask` and
+  `blend` keep one version. The strips must stay on the panel after the
+  change: the blended pass of static faces passes equal depths, as the
+  Legacy Viewer's alpha pass (GL_LEQUAL). Grass alone after frame 360
+  means the blended face loses the depth test again.
 - **`AURORA_BLEND_SHADOWS=0`**: alpha-blended faces cast sun and projector
   shadows only when rigged, as before. By default every blended face casts,
   as in LLPipeline::renderShadow (renderAlphaObjects): glass whose texture
@@ -9817,6 +9836,16 @@ What the inventory must show with these scenarios:
   Windows/macOS use the system's certificate verifier, which can complete
   missing intermediate chains. Linux uses the system CA bundle and still
   needs the intermediates from the server or its trust store.
+  AzuraCast public player URLs also resolve their exported PLS playlist before
+  decoding. Use `https://login-na2.lightmanstreams.com/public/auto_dj_44` and
+  compare its direct `/listen/auto_dj_44/live` stream: both should play without
+  editing the parcel URL. The explicit network probe is
+  `cargo test --workspace --locked lightman_live_probe -- --ignored --nocapture`.
+  Local `playlist::tests` cover player JSON, PLS/M3U, relative redirects,
+  actual MP3 decoding, cancellation, loops and document limits. Discovered
+  links and their redirects must stay on the same HTTP(S) origin; HLS is
+  unsupported. No JavaScript is executed and normal media-filter consent
+  still precedes the first request.
 - **`AURORA_DEMO_MEDIA_FILTER`**: turns the media filter on for the run.
   `ask` (or `1`) starts a parcel media on `media.example.com`, which the
   filter asks about (the question is up from the first frames; nothing

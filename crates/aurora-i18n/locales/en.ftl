@@ -623,6 +623,8 @@ inventory-items-count = { $count ->
     [one] { $number } item
    *[other] { $number } items
 }
+inventory-count-tooltip = Items: { $items }
+    Folders: { $folders }
 inventory-syncing = Synchronizing…
 inventory-synced = Synchronized
 inventory-tab-all = All
@@ -7408,10 +7410,10 @@ ui-perf-active-queued = { $value0 }{ " active · " }{ $value1 }{ " queued" }
 ui-environment-skies-waters-day-cycles = { $value0 }{ " skies · " }{ $value1 }{ " waters · " }{ $value2 }{ " day cycles" }
 ui-land-access-entries-imported = { $value0 }{ " entries imported." }
 build-mod-object-s-sent-to-trash = { $value0 }{ " object(s) sent to Trash" }
-ui-inventory-objects-loaded = { $value0 }{ " objects loaded" }
+ui-inventory-objects-loaded = { $value0 }{ " items loaded" }
 inventory-delete-shortcut = Delete selection (Delete)
 build-mod-objects-linked = { $value0 }{ " objects linked" }
-ui-inventory-results-objects-loaded = { $value0 }{ " results · " }{ $value1 }{ " objects loaded" }
+ui-inventory-results-objects-loaded = { $value0 }{ " results · " }{ $value1 }{ " items loaded" }
 ui-options-jane-jane-doe-instead-of-jane-jane-doe = “Jane (Jane Doe)” instead of “Jane (jane.doe)”
 ui-login-up-to-date = Up to date
 ui-options-commands-at-altitude = At altitude
