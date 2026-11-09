@@ -620,6 +620,8 @@ inventory-items-count = { $count ->
     [one] { $number }個のアイテム
    *[other] { $number }個のアイテム
 }
+inventory-count-tooltip = アイテム：{ $items }
+    フォルダ：{ $folders }
 inventory-syncing = 同期しています…
 inventory-synced = 同期済み
 inventory-tab-all = すべて
@@ -7398,10 +7400,10 @@ ui-perf-active-queued = { $value0 }{ "件処理中・" }{ $value1 }{ "件待機�
 ui-environment-skies-waters-day-cycles = { "空" }{ $value0 }{ "・水面" }{ $value1 }{ "・デイサイクル" }{ $value2 }
 ui-land-access-entries-imported = { $value0 }{ "件のエントリをインポートしました。" }
 build-mod-object-s-sent-to-trash = { $value0 }{ "個のオブジェクトをゴミ箱に送りました" }
-ui-inventory-objects-loaded = { $value0 }{ "個のオブジェクトを読み込みました" }
+ui-inventory-objects-loaded = { $value0 }{ "個のアイテムを読み込みました" }
 inventory-delete-shortcut = 選択したものを削除（Delete）
 build-mod-objects-linked = { $value0 }{ "個のオブジェクトをリンクしました" }
-ui-inventory-results-objects-loaded = { $value0 }{ "件の結果・" }{ $value1 }{ "個のオブジェクトを読み込みました" }
+ui-inventory-results-objects-loaded = { $value0 }{ "件の結果・" }{ $value1 }{ "個のアイテムを読み込みました" }
 ui-options-jane-jane-doe-instead-of-jane-jane-doe = 「Jane (jane.doe)」の代わりに「Jane (Jane Doe)」
 ui-login-up-to-date = 最新です
 ui-options-commands-at-altitude = 高度で

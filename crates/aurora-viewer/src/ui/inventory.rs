@@ -1403,6 +1403,16 @@ fn scroll_to_row(ui: &egui::Ui, row: &egui::Response, align: egui::Align) {
     ui.scroll_to_rect(rect, Some(align));
 }
 
+/// Breakdown of LLPanelMainInventory::updateItemcountText's tooltip
+/// (indra/newview/llpanelmaininventory.cpp), shared by both layouts.
+fn count_tooltip(inv: &Inventory) -> String {
+    aurora_i18n::tr!(
+        "inventory-count-tooltip",
+        items = aurora_i18n::integer(inv.item_count() as i64),
+        folders = aurora_i18n::integer(inv.folders.len() as i64)
+    )
+}
+
 fn status(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -1420,10 +1430,13 @@ fn status(
         aurora_i18n::tr!(
             "ui-inventory-results-objects-loaded",
             value0 = format!("{}", st.view.results.len()),
-            value1 = format!("{}", inv.item_count())
+            value1 = aurora_i18n::integer(inv.total_count() as i64)
         )
     } else {
-        aurora_i18n::tr!("ui-inventory-objects-loaded", value0 = format!("{}", inv.item_count()))
+        aurora_i18n::tr!(
+            "ui-inventory-objects-loaded",
+            value0 = aurora_i18n::integer(inv.total_count() as i64)
+        )
     };
     ui.horizontal(|ui| {
         let to = st
@@ -1447,7 +1460,11 @@ fn status(
             }
             let label = if message.is_empty() { &count } else { &message };
             ui.add(egui::Label::new(RichText::new(label).size(11.0).color(color)).truncate())
-                .on_hover_text(if message.is_empty() { count } else { format!("{message}\n{count}") });
+                .on_hover_text(if message.is_empty() {
+                    format!("{count}\n{}", count_tooltip(inv))
+                } else {
+                    format!("{message}\n{count}\n{}", count_tooltip(inv))
+                });
         });
     });
 }
@@ -2203,7 +2220,9 @@ pub fn show(
     } else {
         // The title bar follows the width the window had last frame.
         let layout = aurora::Layout::of_window(ctx, "inventory");
-        floater = floater.title_note(aurora::item_count(inv, layout));
+        floater = floater
+            .title_note(aurora::item_count(inv, layout))
+            .title_note_tooltip(count_tooltip(inv));
         if layout != aurora::Layout::Compact {
             let (dot, text) = aurora::sync_state(p, inv, st);
             floater = floater.title_state(dot, text);
@@ -2317,7 +2336,9 @@ pub fn show(
             let layout = aurora::Layout::of_window(ctx, &window_id);
             let mut floater = floater;
             if w.additional {
-                floater = floater.title_note(aurora::item_count(&world.inventory, layout));
+                floater = floater
+                    .title_note(aurora::item_count(&world.inventory, layout))
+                    .title_note_tooltip(count_tooltip(&world.inventory));
                 if layout != aurora::Layout::Compact {
                     let (dot, text) = aurora::sync_state(p, &world.inventory, &w.state);
                     floater = floater.title_state(dot, text);
