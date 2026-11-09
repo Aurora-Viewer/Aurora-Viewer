@@ -62,6 +62,36 @@ impl ScriptControls {
     pub fn any(&self) -> bool {
         self.taken.iter().chain(self.passed_on.iter()).any(|&n| n > 0)
     }
+
+    /// Whether a script holds a specific control bit (isControlGrabbed).
+    pub fn is_grabbed(&self, flag: u32) -> bool {
+        self.held(flag)
+    }
+
+    /// Whether a script holds the forward control (forwardGrabbed).
+    pub fn forward_grabbed(&self) -> bool {
+        self.is_grabbed(control::AT_POS)
+    }
+
+    /// Whether a script holds the backward control (backwardGrabbed).
+    pub fn backward_grabbed(&self) -> bool {
+        self.is_grabbed(control::AT_NEG)
+    }
+
+    /// Whether a script holds yaw left or right (rotateGrabbed).
+    pub fn rotate_grabbed(&self) -> bool {
+        self.is_grabbed(control::YAW_POS) || self.is_grabbed(control::YAW_NEG)
+    }
+
+    /// Whether a script holds the up/jump control (upGrabbed).
+    pub fn up_grabbed(&self) -> bool {
+        self.is_grabbed(control::UP_POS)
+    }
+
+    /// Whether a script holds the down/crouch control (downGrabbed).
+    pub fn down_grabbed(&self) -> bool {
+        self.is_grabbed(control::UP_NEG)
+    }
 }
 
 /// The left-button bits as `send_agent_update` sends them: while Alt or
@@ -127,5 +157,33 @@ mod tests {
             mask_left_button(control::AT_POS, true),
             control::AT_POS | control::LBUTTON_UP | control::ML_LBUTTON_UP
         );
+    }
+
+    #[test]
+    fn movement_controls_grabbed_detection() {
+        let mut c = ScriptControls::default();
+        assert!(!c.forward_grabbed());
+        assert!(!c.backward_grabbed());
+        assert!(!c.rotate_grabbed());
+        assert!(!c.up_grabbed());
+        assert!(!c.down_grabbed());
+
+        // Vehicle script takes forward and yaw controls
+        c.apply(true, control::AT_POS | control::YAW_POS, false);
+        assert!(c.forward_grabbed());
+        assert!(c.rotate_grabbed());
+        assert!(!c.backward_grabbed());
+        assert!(!c.up_grabbed());
+        assert!(!c.down_grabbed());
+
+        // Script takes up and down controls passed on
+        c.apply(true, control::UP_POS | control::UP_NEG, true);
+        assert!(c.up_grabbed());
+        assert!(c.down_grabbed());
+
+        // Release forward
+        c.apply(false, control::AT_POS, false);
+        assert!(!c.forward_grabbed());
+        assert!(c.rotate_grabbed());
     }
 }

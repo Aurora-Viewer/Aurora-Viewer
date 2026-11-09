@@ -8387,6 +8387,44 @@ impl App {
         if self.world.rlva.has("jump") && !self.world.agent.flying {
             i.up = false;
         }
+        // While seated in third person without script-grabbed controls or
+        // sit camera, movement keys zoom and orbit the camera instead of
+        // moving or resetting the view (camera_move_forward_sitting & co in
+        // indra/newview/llviewerinput.cpp, originally LGPL 2.1).
+        let sitting_cam = self.world.agent.is_sitting() && !self.camera.mouselook() && self.in_world();
+        let sit_zoom_in = sitting_cam
+            && i.forward
+            && !self.world.script_controls.forward_grabbed()
+            && !self.camera.sit_camera_active()
+            && self.temp_run.is_none();
+        let sit_zoom_out = sitting_cam
+            && i.back
+            && !self.world.script_controls.backward_grabbed()
+            && !self.camera.sit_camera_active()
+            && self.temp_run.is_none();
+        let sit_orbit_cw = sitting_cam && i.turn_left && !self.world.script_controls.rotate_grabbed() && !self.camera.sit_camera_active();
+        let sit_orbit_ccw = sitting_cam && i.turn_right && !self.world.script_controls.rotate_grabbed() && !self.camera.sit_camera_active();
+        let sit_orbit_up = sitting_cam && i.up && !self.world.script_controls.up_grabbed() && !self.camera.sit_camera_active();
+        let sit_orbit_down = sitting_cam && i.down && !self.world.script_controls.down_grabbed() && !self.camera.sit_camera_active();
+
+        if sit_zoom_in {
+            i.forward = false;
+        }
+        if sit_zoom_out {
+            i.back = false;
+        }
+        if sit_orbit_cw {
+            i.turn_left = false;
+        }
+        if sit_orbit_ccw {
+            i.turn_right = false;
+        }
+        if sit_orbit_up {
+            i.up = false;
+        }
+        if sit_orbit_down {
+            i.down = false;
+        }
         // nudge phase: the first 0.25 s of a press makes small steps
         let since = |s: &mut Option<Instant>, held: bool| -> bool {
             if !held {
@@ -8477,9 +8515,23 @@ impl App {
             A::CamPanDown,
         ];
         let mut rate = [0.0f32; 10];
+        let mut unlock = false;
         for (n, a) in CAMERA_KEYS.into_iter().enumerate() {
             let key = self.vr_camera.is_none() && !typing && self.settings.keybinds.held(a, &self.down, m);
-            if self.in_world() && (key || self.controls_held.contains(&a)) {
+            let explicit = key || self.controls_held.contains(&a);
+            let sitting_active = match n {
+                0 => sit_orbit_cw,
+                1 => sit_orbit_ccw,
+                2 => sit_orbit_up,
+                3 => sit_orbit_down,
+                4 => sit_zoom_in,
+                5 => sit_zoom_out,
+                _ => false,
+            };
+            if self.in_world() && (explicit || sitting_active) {
+                if explicit {
+                    unlock = true;
+                }
                 let held = self.cam_key_since[n].get_or_insert(now).elapsed().as_secs_f32();
                 rate[n] = if held < NUDGE_TIME { 0.05 + held * 0.95 / NUDGE_TIME } else { 1.0 };
             } else {
@@ -8489,6 +8541,9 @@ impl App {
         // the photo viewfinder's camera pad, held like the keys
         if let Some(pad) = self.viewfinder_pad(dt) {
             for (r, p) in rate.iter_mut().zip(pad) {
+                if p > 0.0 {
+                    unlock = true;
+                }
                 *r = r.max(p);
             }
         }
@@ -8504,7 +8559,8 @@ impl App {
             pan_up: rate[8],
             pan_down: rate[9],
         };
-        self.camera.apply_keys(keys, &mut self.world.agent, &self.settings.camera, dt);
+        self.camera
+            .apply_keys(keys, unlock, &mut self.world.agent, &self.settings.camera, dt);
         self.camera.joystick_pitch(i.joystick_pitch, dt, gamepad);
         if gamepad
             && (!moving || self.world.agent.is_sitting() || self.camera.gamepad_pan_follows_player())
