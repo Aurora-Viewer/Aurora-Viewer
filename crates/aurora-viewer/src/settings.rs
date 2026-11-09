@@ -1517,7 +1517,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 34;
+const SETTINGS_VERSION: u32 = 35;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -2778,6 +2778,13 @@ impl Settings {
             // on Potato or Deluxe takes theirs (0 and 1, the Legacy Viewer's
             // Low and Ultra), any other keeps 0.5
             crate::graphics_presets::upgrade_tree_detail(&mut self);
+        }
+        if self.settings_version < 35 {
+            // pictures on hover used to show only inside the text tooltips
+            // (#3008): an earlier file keeps what it really showed, so the
+            // pictures stay on only where the tooltips were on too
+            let inventory = &mut self.inventory;
+            inventory.thumbnail_tooltips &= inventory.show_hover_tooltips;
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -4044,6 +4051,32 @@ mod tests {
             ..Settings::default()
         };
         assert!(chosen.sanitized().show_perf);
+    }
+
+    /// Pictures on hover used to show only inside the text tooltips (#3008).
+    #[test]
+    fn inventory_hover_pictures_keep_what_earlier_files_showed() {
+        let fresh = Settings::default().sanitized().inventory;
+        assert!(!fresh.show_hover_tooltips && !fresh.thumbnail_tooltips, "both off by default");
+        // (tooltips, pictures) in an earlier file → pictures afterwards: the
+        // pictures only showed inside the tooltips
+        for (tips, pictures, kept) in [(false, true, false), (true, true, true), (true, false, false)] {
+            let mut old = Settings {
+                settings_version: 34,
+                ..Settings::default()
+            };
+            old.inventory.show_hover_tooltips = tips;
+            old.inventory.thumbnail_tooltips = pictures;
+            let migrated = old.sanitized();
+            assert_eq!(migrated.inventory.show_hover_tooltips, tips);
+            assert_eq!(migrated.inventory.thumbnail_tooltips, kept, "tips {tips}, pictures {pictures}");
+        }
+        // a later choice of pictures alone stays
+        let mut chosen = Settings::default();
+        chosen.inventory.thumbnail_tooltips = true;
+        let chosen = chosen.sanitized();
+        assert!(chosen.inventory.thumbnail_tooltips);
+        assert!(chosen.sanitized().inventory.thumbnail_tooltips, "migrated only once");
     }
 
     /// The head turns toward the cursor's side by default; earlier files all

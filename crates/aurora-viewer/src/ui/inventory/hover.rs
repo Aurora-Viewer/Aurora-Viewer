@@ -235,6 +235,7 @@ mod tests {
         let images = HashMap::from([(picture, texture.clone())]);
         let prefs = InventoryPreferences {
             show_hover_tooltips: true,
+            thumbnail_tooltips: true,
             ..Default::default()
         };
         let p = crate::theme::Theme::default().palette();
@@ -373,10 +374,7 @@ mod tests {
             state.show(&p, &inv, &prefs, &images, &mut wanted);
         });
         assert_eq!(wanted, HashSet::from([picture]));
-        assert!(
-            !texts.iter().any(|text| text.source == "Photo description"),
-            "text tip stays off"
-        );
+        assert!(!texts.iter().any(|text| text.source == "Photo description"), "text tip stays off");
         let shapes = frames.shapes(vec![], |ui| {
             let response = ui.add_sized([180.0, 24.0], egui::Label::new("Photo row"));
             state.record(&response, item, None);
@@ -405,6 +403,7 @@ mod tests {
             let mut prefs = InventoryPreferences {
                 show_details: false,
                 show_hover_tooltips: true,
+                thumbnail_tooltips: true,
                 ..Default::default()
             };
             let facts = Facts::default();
