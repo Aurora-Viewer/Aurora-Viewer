@@ -45,7 +45,7 @@ impl Column {
     ];
 
     /// Bit of FSRadarColumnConfig.
-    const fn bit(self) -> u32 {
+    pub(super) const fn bit(self) -> u32 {
         match self {
             Column::Name => 1,
             Column::Voice => 2,
@@ -214,7 +214,7 @@ impl Default for RadarSettings {
 }
 
 impl RadarSettings {
-    fn shows(&self, column: Column) -> bool {
+    pub(super) fn shows(&self, column: Column) -> bool {
         !column.optional() || self.columns & column.bit() != 0
     }
 
