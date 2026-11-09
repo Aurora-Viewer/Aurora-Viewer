@@ -25,7 +25,7 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 
 </div>
 
-**High framerates and low frame time, ultra fast teleports/loading, thanks to modern technologies like Vulkan/Rust.**  
+**Multi-threaded from the ground up: parallel loading, ultra fast teleports, built for today's hardware with Vulkan and Rust.**  
 <img width="1920" height="1032" alt="Aurora Viewer in a Japanese garden, with the People, Controls, Places, Inventory, Performance and Conversations windows open" src="docs/screenshots/world.webp" />  
 
 
@@ -93,8 +93,8 @@ while rethinking the user interface.
 <table>
   <tr>
     <td width="25%" align="center" valign="top">
-      <h3>≈ 5×</h3>
-      the frame rate of a classic viewer in a busy store
+      <h3>Multi-core</h3>
+      the work shared across your processor while the graphics card draws
     </td>
     <td width="25%" align="center" valign="top">
       <h3>≈ ½</h3>
@@ -151,10 +151,10 @@ are planned or in progress: they are not in the viewer yet.
 
 ### Fast, and smooth
 
-- **Hundreds of frames per second in crowded places.** In a busy store of
-  about 16,000 objects, Aurora ran at around 340 fps where a classic viewer
-  gave 68, on the same PC and at the same spot
-  ([how it was measured](#performance)).
+- **Built for every core.** The work is shared across your processor: while
+  the render thread draws one frame, the main thread prepares the next, and
+  the big loops of a frame are split between helper threads
+  ([who does what](#performance)).
 - **The picture keeps moving when you arrive.** Textures and meshes are
   decoded on background threads and written straight into GPU memory, so
   landing in a busy region doesn't freeze the view.
@@ -166,8 +166,7 @@ are planned or in progress: they are not in the viewer yet.
 - **Instant teleports within a region.** The other teleports show your last
   view, blurred, with real step-by-step progress.
 - **A graphics card that finally does the work.** It decides by itself what
-  is visible and draws thousands of objects in a handful of calls, while a
-  dedicated render thread keeps the frames coming.
+  is visible and draws thousands of objects in a handful of calls.
 - **Faster arrivals**: what you are looking at downloads first, and after a
   teleport the region shows about a second sooner. Downloads keep pace with
   your connection, so avatars come out of the cloud about three times
@@ -623,28 +622,26 @@ are planned or in progress: they are not in the viewer yet.
 
 ## Performance
 
-<table>
-  <tr>
-    <td width="50%" align="center" valign="top">
-      <img src="docs/screenshots/compare-firestorm.png" alt="Legacy Viewer statistics window in a busy store: 68 fps"><br>
-      <b>Legacy Viewer</b> · 68 fps
-    </td>
-    <td width="50%" align="center" valign="top">
-      <img src="docs/screenshots/compare-aurora.png" alt="Aurora Viewer performance window in the same store: 386 fps"><br>
-      <b>Aurora Viewer</b> · 386 fps
-    </td>
-  </tr>
-</table>
+Aurora shares the work across your processor and hands the heavy lifting to
+your graphics card. A frame costs the longer of the main and render threads,
+not their sum: while one frame is drawn, the next is already being prepared.
 
-Measured on 10 October 2026 with the frame cap off, on one PC (RTX 4090), in
-one busy store of about 16,000 objects. This is an informal test, not a
-benchmark:
+| Who | Does what, side by side |
+|---|---|
+| Main thread | The world and the interface: prepares the next frame |
+| Render thread | Draws the current frame, with two helpers that finish the GPU commands in parallel |
+| Frame helpers | Share the big loops of a frame: object placement, draw lists, poses, flexible prims |
+| Background tasks | Decode textures and build meshes at low priority, written straight into GPU memory |
+| Network | Downloads on its own runtime, from 24 up to 192 at once while your connection keeps up, what you look at first |
+| Graphics card | Decides what is visible and draws thousands of objects in a handful of calls (bindless textures, multi-draw-indirect, compute culling) |
 
-- 138 fps where the Legacy Viewer gave 68 fps at the same spot;
-- about 343 fps at that spot (median) once the render thread landed, 386 fps
-  in the capture above.
+Built for today's hardware: Vulkan on Windows and Linux, Metal on macOS
+(Apple Silicon), the dedicated graphics card picked on a laptop, AMD FSR 3.1
+on every brand of card, and a texture memory budget set automatically from
+the video memory your driver grants.
 
-The texture memory budget is set automatically from the detected VRAM.
+The resource monitor (Performance window) shows the time of each step of the
+frame on your own PC.
 
 ## What works today
 
