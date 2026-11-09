@@ -187,9 +187,14 @@ fn rebase_pose(pose: &mut Pose, old: &SkeletonBase, new: &SkeletonBase) {
         let sign = pose.scales[bone].signum() * old.scale[bone].signum() * new.scale[bone].signum();
         let rebased = sign * raw.abs().clamp(Vec3::splat(1e-5), Vec3::splat(100.0));
         // A shape slider can flatten a rest axis to zero (#1249): the ratio
-        // is then meaningless, so that axis takes the new rest scale.
+        // is then meaningless, so that axis takes the new rest scale, held
+        // in the same bounds. A rest still flat after a later shape change
+        // would otherwise give the pose a zero axis, which `scale_valid`
+        // refuses: the whole pose, and every undo step rebased with it,
+        // would be dropped.
+        let fallback = new.scale[bone].signum() * new.scale[bone].abs().clamp(Vec3::splat(1e-5), Vec3::splat(100.0));
         let usable = old.scale[bone].abs().cmpge(Vec3::splat(1e-5));
-        pose.scales[bone] = Vec3::select(usable, rebased, new.scale[bone]);
+        pose.scales[bone] = Vec3::select(usable, rebased, fallback);
     }
 }
 /// A joint's rotation mirrored on its counterpart, in that joint's own rest

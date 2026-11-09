@@ -350,6 +350,31 @@ fn poser_rebase_from_a_flat_rest_axis_takes_the_new_rest_scale() {
     assert!(session.pose.scales[chest].is_finite());
     assert!((session.pose.scales[chest] - rig.scale[chest]).length() < 1e-5);
 }
+
+#[test]
+fn poser_a_rest_axis_still_flat_after_another_shape_change_keeps_the_pose_valid() {
+    // Pose, a slider flattens the chest's X (#1249), then another slider
+    // changes the rest while that axis stays flat: the pose and its undo
+    // steps must stay usable, not be dropped for a zero scale.
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let chest = rig.names["CHEST"];
+    let neck = rig.names["NECK"];
+    let rest = crate::scene::anim::SkeletonBase {
+        local_pos: rig.local_pos.clone(),
+        scale: rig.scale.clone(),
+    };
+    let mut flat = rest.clone();
+    flat.scale[chest].x = 0.0;
+    let mut flat_taller = flat.clone();
+    flat_taller.scale[neck] *= 1.2;
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    session.rebase(Arc::new(flat));
+    session.rebase(Arc::new(flat_taller));
+    let scale = session.pose.scales[chest];
+    assert!(super::data::scale_valid(scale), "chest scale {scale} is out of the poser's bounds");
+    assert!(session.pose.scales.iter().all(|s| super::data::scale_valid(*s)));
+}
 fn assert_attached(rig: &Rig, pose: &SubjectPose, reference: &SubjectPose, model: Mat4) {
     let matrices = pose.matrices(rig, model);
     for (bone, parent) in rig.parent.iter().enumerate() {
