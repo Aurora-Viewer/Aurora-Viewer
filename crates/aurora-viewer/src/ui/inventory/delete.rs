@@ -16,13 +16,7 @@ pub(super) fn allowed(inv: &Inventory, ids: &[Uuid], prefs: &InventoryPreference
 
 /// Build the mutation for a confirmed Delete: Trash move, or permanent purge
 /// when every selected entry is already in the Trash.
-pub(super) fn plan(
-    inv: &Inventory,
-    ids: &[Uuid],
-    purge: bool,
-    prefs: &InventoryPreferences,
-    facts: &Facts,
-) -> Result<Mutation, String> {
+pub(super) fn plan(inv: &Inventory, ids: &[Uuid], purge: bool, prefs: &InventoryPreferences, facts: &Facts) -> Result<Mutation, String> {
     if purge {
         let ids = rules::roots(inv, ids);
         let refresh = ids.iter().filter_map(|id| rules::parent(inv, *id)).collect();
@@ -34,9 +28,10 @@ pub(super) fn plan(
             })
             .collect();
         let holds_worn = rules::worn_ancestors(inv, &facts.worn);
-        if ids.iter().all(|id| {
-            rules::removable(inv, *id, &prefs.protected) && rules::in_type(inv, *id, 14) && !holds_worn.contains(id)
-        }) {
+        if ids
+            .iter()
+            .all(|id| rules::removable(inv, *id, &prefs.protected) && rules::in_type(inv, *id, 14) && !holds_worn.contains(id))
+        {
             Ok(Mutation {
                 operations,
                 refresh,

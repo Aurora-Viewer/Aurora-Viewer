@@ -2080,12 +2080,15 @@ mod tests {
         };
         let cancel = text(aurora_i18n::tr!("common-cancel"));
         let delete = text(aurora_i18n::tr!("common-delete"));
+        let message = text(aurora_i18n::tr!("ui-inventory-dialogs-items-will-be-moved-to-trash"));
+        let dont_ask = text(aurora_i18n::tr!("ui-context-do-not-show-again"));
         assert!((cancel.y - delete.y).abs() < 1.0);
         assert!(cancel.x < delete.x);
-        assert!(delete.y > text(aurora_i18n::tr!("ui-inventory-dialogs-items-will-be-moved-to-trash")).y);
+        assert!(dont_ask.y > message.y);
+        assert!(delete.y > dont_ask.y);
         assert!(
-            delete.y - text(aurora_i18n::tr!("ui-inventory-dialogs-items-will-be-moved-to-trash")).y < 65.0,
-            "footer must stay close to the message"
+            delete.y - message.y < 100.0,
+            "footer must stay close to the message (with the do-not-ask row between)"
         );
         assert!(
             !output
