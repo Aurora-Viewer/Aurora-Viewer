@@ -9029,6 +9029,7 @@ impl App {
         if self.demo {
             crate::demo::tangents::tick(&mut self.world, &mut self.scene, self.frame_count);
             crate::demo::rigged_prop::tick(&mut self.world, &mut self.scene, self.frame_count);
+            crate::demo::coplanar_layers::tick(&mut self.world, &mut self.scene, self.frame_count);
             if let Some(e) = crate::demo::conference::tick().and_then(|ev| self.world.apply(ev)) {
                 self.on_app_event(e);
             }

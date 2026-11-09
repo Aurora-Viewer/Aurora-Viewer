@@ -77,6 +77,10 @@ pub mod conference;
 /// The Conversations button flashing (AURORA_DEMO_CONV_BUTTON).
 #[path = "demo_conv_button.rs"]
 pub mod conv_button;
+/// A worn layer lying exactly on the skin, in strips
+/// (AURORA_DEMO_COPLANAR_LAYERS).
+#[path = "demo_coplanar_layers.rs"]
+pub mod coplanar_layers;
 /// A deformed avatar to reset (AURORA_DEMO_DEFORM).
 #[path = "demo_deform.rs"]
 pub mod deform;
