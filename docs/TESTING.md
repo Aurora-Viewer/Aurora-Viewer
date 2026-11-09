@@ -5382,7 +5382,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_LINE_MENU=1` | Open a visible message's context menu in Aurora or Compact (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_CONTENTS_DROP=world\|panel[:ctrl][:drop]` | A selection of four inventory entries carried over an object or onto its Contents tab, with or without Ctrl |
-| `AURORA_DEMO_GIVE=profile\|avatar[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
+| `AURORA_DEMO_GIVE=profile\|avatar\|texture[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
@@ -6820,7 +6820,7 @@ failure. Grid validation and any paid upload are performed by the human.
   onto an object you own with and without Ctrl, onto someone else's (a
   no-transfer item refuses the whole drop), and onto the Contents tab.
 
-- **`AURORA_DEMO_GIVE=profile|avatar[:over|:drop]`**: with `AURORA_DEMO_INVENTORY=1`, seven of
+- **`AURORA_DEMO_GIVE=profile|avatar|texture[:over|:drop]`**: with `AURORA_DEMO_INVENTORY=1`, seven of
   its entries are carried from frame 700, without a press. `profile`, with
   `AURORA_DEMO_PROFILE=wolf` (or any other resident), leaves the pointer
   beside the profile window: the whole window fades behind the gift and
@@ -6834,6 +6834,10 @@ failure. Grid validation and any paid upload are performed by the human.
   a readable avatar capture use `AURORA_DEMO_CROWD=12`,
   `AURORA_DEMO_POS=129,134` and `AURORA_DEMO_CAMERA=close,1110,420,20`;
   capture at frame 715 (`over`) or 760 (`drop`) with `AURORA_FPS_LIMIT=60`.
+  `texture` does the same as `avatar` with the demo texture alone, the
+  cargo of a texture row: the copy cursor and the outline, never the
+  texture library's refusal, and `texture:drop` opens the confirmation for
+  that one texture.
   The demo crowd is drawn as a grid: compare with a capture without the
   variable to see the outline. Manually: drag an item, a folder or a
   selection onto another resident's profile (any tab, both styles), onto
