@@ -563,6 +563,16 @@ pub const ROW_HEIGHT: f32 = 34.0;
 const PILL_H: f32 = 26.0;
 const PILL_THUMB: f32 = 16.0;
 
+/// Placement shared by the glass-island and Classic top bars.
+pub fn row_bounds(under: Rect, folded: bool) -> Rect {
+    let top = under.bottom() + super::islands::MARGIN;
+    if folded {
+        Rect::from_min_size(Pos2::new(under.left(), top), Vec2::new(PAD * 2.0 + SLOT + 14.0, ROW_HEIGHT))
+    } else {
+        Rect::from_min_max(Pos2::new(under.left() - 1.0, top), Pos2::new(under.right() + 1.0, top + ROW_HEIGHT))
+    }
+}
+
 fn pill_width(ui: &egui::Ui, fav: &Favorite) -> f32 {
     let w = ui
         .painter()
@@ -578,10 +588,9 @@ fn pill_width(ui: &egui::Ui, fav: &Favorite) -> f32 {
 /// rectangle.
 pub fn row(ctx: &egui::Context, p: &Palette, icons: &Icons, view: &View, under: Rect) -> (Rect, Option<BarAction>) {
     let mut out = None;
-    let top = under.bottom() + super::islands::MARGIN;
     if view.folded {
         // a tab under the place island's left end
-        let rect = Rect::from_min_size(Pos2::new(under.left(), top), Vec2::new(PAD * 2.0 + SLOT + 14.0, ROW_HEIGHT));
+        let rect = row_bounds(under, true);
         area(ctx, p, "favorites_tab", rect, |ui| {
             let slot = rect.shrink2(Vec2::new(PAD, (ROW_HEIGHT - PILL_H) / 2.0));
             let resp = ui.interact(slot, Id::unique("bars_favorites_unfold"), Sense::click());
@@ -598,7 +607,7 @@ pub fn row(ctx: &egui::Context, p: &Palette, icons: &Icons, view: &View, under: 
         });
         return (rect, out.map(BarAction::from));
     }
-    let rect = Rect::from_min_max(Pos2::new(under.left() - 1.0, top), Pos2::new(under.right() + 1.0, top + ROW_HEIGHT));
+    let rect = row_bounds(under, false);
     area(ctx, p, "favorites_row", rect, |ui| {
         mark_shown(ui.ctx());
         let back = ui.interact(rect, Id::unique("bars_favorites_row_back"), Sense::click());
@@ -916,6 +925,18 @@ pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn row_bounds_follow_the_top_bar_and_fold_to_a_tab() {
+        let under = Rect::from_min_max(Pos2::new(10.0, 8.0), Pos2::new(990.0, 46.0));
+        let row = row_bounds(under, false);
+        assert_eq!(row.min, Pos2::new(9.0, 54.0));
+        assert_eq!(row.max, Pos2::new(991.0, 88.0));
+        let folded = row_bounds(under, true);
+        assert_eq!(folded.min, Pos2::new(10.0, 54.0));
+        assert_eq!(folded.height(), ROW_HEIGHT);
+        assert!(folded.width() < row.width());
+    }
 
     #[test]
     fn a_drop_lands_before_the_first_item_past_the_pointer() {

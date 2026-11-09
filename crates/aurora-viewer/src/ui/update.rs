@@ -29,6 +29,8 @@ pub struct UpdateDemo {
     maintenance: aurora_updater::Maintenance,
     /// The installed and offered versions the cards show.
     versions: (&'static str, &'static str),
+    /// `grace`: the offer below a new minimum, still in its grace period.
+    grace_hours: Option<u64>,
 }
 
 impl UpdateDemo {
@@ -59,6 +61,7 @@ impl UpdateDemo {
             open: mode != "ignored",
             maintenance: demo_maintenance(),
             versions,
+            grace_hours: (mode == "grace").then_some(12),
         })
     }
 
@@ -107,6 +110,7 @@ impl UpdateDemo {
                     ui.vertical(|ui| {
                         ui.label(RichText::new(aurora_i18n::tr!("update-demo-badge")).size(10.0).color(p.amber));
                         let title = match self.phase {
+                            Phase::Available if self.grace_hours.is_some() => aurora_i18n::tr!("update-required-title"),
                             Phase::Available => aurora_i18n::tr!("update-title"),
                             Phase::Downloading(_) => aurora_i18n::tr!("update-downloading-title"),
                             Phase::Ready => aurora_i18n::tr!("update-ready-title"),
@@ -114,7 +118,11 @@ impl UpdateDemo {
                         ui.label(RichText::new(title).size(23.0).strong().color(p.ink));
                     });
                 });
-                ui.label(RichText::new(aurora_i18n::tr!("update-intro")).size(13.0).color(p.muted));
+                let intro = match self.grace_hours {
+                    Some(hours) => aurora_i18n::tr!("update-grace", hours = hours),
+                    None => aurora_i18n::tr!("update-intro").to_owned(),
+                };
+                ui.label(RichText::new(intro).size(13.0).color(p.muted));
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     let card_width = (width - 44.0) / 2.0;
@@ -172,6 +180,20 @@ impl UpdateDemo {
                 match self.phase {
                     Phase::Available => {
                         ui.horizontal(|ui| {
+                            if let Some(hours) = self.grace_hours {
+                                let size = Vec2::new((width - 20.0) / 2.0, 34.0);
+                                if flat_button_sized(ui, p, &aurora_i18n::tr!("update-grace-later", hours = hours), size)
+                                    .on_hover_text(aurora_i18n::tr!("update-grace-later-hint"))
+                                    .clicked()
+                                {
+                                    self.open = false;
+                                }
+                                if primary_button_sized(ui, p, aurora_i18n::tr!("update-install"), size).clicked() {
+                                    self.phase = Phase::Downloading(0.0);
+                                    self.started = Some(Instant::now());
+                                }
+                                return;
+                            }
                             let size = Vec2::new((width - 20.0) / 3.0, 34.0);
                             let skip = flat_button_sized(ui, p, aurora_i18n::tr!("update-skip"), size)
                                 .on_hover_text(aurora_i18n::tr!("update-skip-hint"))
@@ -269,6 +291,9 @@ pub fn show_real(
     let mut quit = false;
     let width = (ctx.content_rect().width() - 64.0).clamp(280.0, 620.0);
     let required = updater.required();
+    // below the minimum, still in its grace period: signing in stays
+    // possible, in whole hours rounded up (#3014)
+    let grace_hours = updater.grace_left().map(|left| left.as_secs().div_ceil(3600).max(1));
     aurora_render::blurred_backdrop(ctx, egui::Modal::default_area(egui::Id::unique("viewer_update")).layer());
     let response = super::widgets::Modal::new(egui::Id::unique("viewer_update"))
         .transparent_backdrop()
@@ -285,17 +310,19 @@ pub fn show_real(
                     State::Ready => aurora_i18n::tr!("update-ready-title"),
                     State::Error(_) | State::Rollback => aurora_i18n::tr!("update-error-title"),
                     State::Current => aurora_i18n::tr!("ui-login-up-to-date"),
-                    _ if required => aurora_i18n::tr!("update-required-title"),
+                    _ if required || grace_hours.is_some() => aurora_i18n::tr!("update-required-title"),
                     _ => aurora_i18n::tr!("update-title"),
                 };
                 ui.label(RichText::new(title).size(23.0).strong().color(p.ink));
             });
             if let Some(r) = &updater.release {
                 ui.label(
-                    RichText::new(if required {
-                        aurora_i18n::tr!("update-required")
+                    RichText::new(if let Some(hours) = grace_hours {
+                        aurora_i18n::tr!("update-grace", hours = hours)
+                    } else if required {
+                        aurora_i18n::tr!("update-required").to_owned()
                     } else {
-                        aurora_i18n::tr!("update-intro")
+                        aurora_i18n::tr!("update-intro").to_owned()
                     })
                     .size(13.0)
                     .color(p.muted),
@@ -375,10 +402,18 @@ pub fn show_real(
             match updater.state {
                 State::Offer => {
                     ui.horizontal(|ui| {
-                        let size = Vec2::new((width - 20.0) / if required { 2.0 } else { 3.0 }, 34.0);
+                        let size = Vec2::new((width - 20.0) / if required || grace_hours.is_some() { 2.0 } else { 3.0 }, 34.0);
                         if required {
                             if flat_button_sized(ui, p, aurora_i18n::tr!("common-quit"), size).clicked() {
                                 quit = true;
+                            }
+                        } else if let Some(hours) = grace_hours {
+                            // no "Skip this version": it is offered again at each launch
+                            if flat_button_sized(ui, p, &aurora_i18n::tr!("update-grace-later", hours = hours), size)
+                                .on_hover_text(aurora_i18n::tr!("update-grace-later-hint"))
+                                .clicked()
+                            {
+                                updater.open = false;
                             }
                         } else {
                             if flat_button_sized(ui, p, aurora_i18n::tr!("update-skip"), size)
@@ -593,6 +628,8 @@ mod tests {
             archive: None,
             checksum: None,
             required: true,
+            minimum: Some("0.3.0".into()),
+            grace: std::time::Duration::ZERO,
             maintenance: Default::default(),
         });
         updater.state = crate::updater::State::Offer;
@@ -648,6 +685,60 @@ mod tests {
     }
 
     #[test]
+    fn a_required_offer_in_its_grace_period_lets_the_user_sign_in() {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
+        let mut updater = crate::updater::Updater::new(runtime.handle(), aurora_updater::feed::Channel::Stable);
+        updater.release = Some(aurora_updater::feed::Release {
+            tag: "v0.3.0".into(),
+            version: "0.3.0".into(),
+            notes: "Synthetic notes".into(),
+            url: aurora_updater::feed::RELEASE_PAGE.into(),
+            archive: None,
+            checksum: None,
+            required: true,
+            minimum: Some("0.3.0".into()),
+            grace: std::time::Duration::from_secs(12 * 3600),
+            maintenance: Default::default(),
+        });
+        updater.start_grace_for_test(std::time::Duration::from_secs(11 * 3600 + 60));
+        updater.state = crate::updater::State::Offer;
+        updater.open = true;
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let mut settings = Settings::default();
+        let mut warmup = ctx.run_ui(egui::RawInput::default(), |ui| {
+            show_real(ui.ctx(), &p, &icons, &mut updater, &mut settings, runtime.handle());
+        });
+        warmup.textures_delta.clear();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                ..Default::default()
+            },
+            |ui| {
+                show_real(ui.ctx(), &p, &icons, &mut updater, &mut settings, runtime.handle());
+            },
+        );
+        output.textures_delta.clear();
+        // 11 h 01 left shows as 12 h: the hours are rounded up
+        let later = aurora_i18n::tr!("update-grace-later", hours = 12);
+        for label in [aurora_i18n::tr!("update-skip"), aurora_i18n::tr!("common-quit")] {
+            assert!(
+                !output.shapes.iter().any(|s| label_position(&s.shape, label).is_some()),
+                "forbidden choice: {label}"
+            );
+        }
+        for label in [later.as_str(), aurora_i18n::tr!("update-install")] {
+            assert!(
+                output.shapes.iter().any(|s| label_position(&s.shape, label).is_some()),
+                "expected choice: {label}"
+            );
+        }
+        assert!(!updater.blocks_login());
+    }
+
+    #[test]
     fn manual_check_reopens_skipped_release_on_wide_and_narrow_login() {
         for width in [1600.0, 860.0] {
             let ctx = egui::Context::default();
@@ -660,6 +751,7 @@ mod tests {
                 started: None,
                 open: true,
                 maintenance: Default::default(),
+                grace_hours: None,
             };
             draw(&ctx, &mut demo, width, vec![]);
             click(&ctx, &mut demo, width, aurora_i18n::tr!("update-skip"));
