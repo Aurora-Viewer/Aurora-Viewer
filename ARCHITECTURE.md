@@ -2490,6 +2490,10 @@ so asynchronous saves and wrapped errors never enlarge the floater. `app/shape_e
 opens it from Appearance, the self-avatar/attachment menu or the worn shape's
 inventory menu, restores the camera
 on closing and provides `AURORA_DEMO_SHAPE`.
+`shape_editor/xml_import.rs` reads an appearance XML (`linden_genepool` 1.0) on
+a worker after its native dialog and sets the weights the edited wearable carries
+(`ShapeParams::wearable_range`) in the shape, physics or layer draft; the three
+editors share its Import button through `ui/shape.rs::name_row`.
 `shape_editor/camera.rs` frames the posed skeleton by category (whole body,
 head, torso or legs), using the existing camera transition.
 

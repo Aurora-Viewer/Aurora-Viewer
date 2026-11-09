@@ -5442,6 +5442,21 @@ outfit-json-empty = This backup contains no outfit items. Import is unavailable.
 outfit-json-missing-changed = Some outfit items are unavailable. Import again to review the missing items and choose whether to import a partial outfit.
 outfit-json-create-wear = Create and wear
 outfit-json-import-partial = Import partial outfit
+appearance-xml-import-button = Import XML
+appearance-xml-import-hint = Set the sliders from an appearance XML file, such as one made by a shape website or exported by another viewer. Only this item's settings are read; save to keep them.
+appearance-xml-import = Import an appearance XML
+appearance-xml-file-type = Appearance XML (*.xml)
+appearance-xml-not-avatar = This file is not an avatar appearance file.
+appearance-xml-failed = The appearance file could not be imported.
+appearance-xml-none = This file has no setting for this item.
+appearance-xml-imported = { $count ->
+    [one] 1 setting imported. Save to keep it.
+   *[other] { $count } settings imported. Save to keep them.
+    }
+appearance-xml-partial = { $count ->
+    [one] 1 setting imported, { $errors } could not be read. Save to keep it.
+   *[other] { $count } settings imported, { $errors } could not be read. Save to keep them.
+    }
 common-unmute = Unmute
 ui-options-restore-default-shortcuts = Restore default shortcuts
 ui-options-restore-the-local-environment-selected-sky-water-and-day = Restore the local environment (selected sky, water and day cycle) at the next login
