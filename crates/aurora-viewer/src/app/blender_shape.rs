@@ -26,7 +26,7 @@ impl App {
                     cof_version: 1,
                     appearance_version: 1,
                     hover_height: 0.0,
-                    attachments: 0,
+                    attachments: Vec::new(),
                 }));
             }
             if let Some(item) = self.world.inventory.items.get_mut(&id) {

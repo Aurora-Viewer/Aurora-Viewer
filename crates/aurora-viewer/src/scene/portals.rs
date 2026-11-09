@@ -26,7 +26,7 @@ pub struct Portals {
     clipping: clipping::Clipping,
     quad: Option<MeshAlloc>,
     records: Vec<u32>,
-    pub cmds: Vec<(f32, DrawCmd)>,
+    pub cmds: Vec<(Vec3, DrawCmd)>,
 }
 
 impl Portals {
@@ -43,7 +43,7 @@ impl Portals {
         self.cmds.clear();
     }
 
-    pub fn update(&mut self, renderer: &mut Renderer, world: &World, eye: Vec3, palette: &Palette, _time: f32, animate: bool) {
+    pub fn update(&mut self, renderer: &mut Renderer, world: &World, _eye: Vec3, palette: &Palette, _time: f32, animate: bool) {
         self.cmds.clear();
         if world.portals.visible(world).next().is_some() && self.quad.is_none() {
             let vertices = [
@@ -102,7 +102,7 @@ impl Portals {
             };
             used += 1;
             self.cmds.push((
-                eye.distance(center),
+                center,
                 DrawCmd {
                     index_count: quad.index_count,
                     first_index: quad.index_offset,
@@ -130,10 +130,10 @@ impl super::Scene {
             self.portals.clipping.clear();
             self.portals.planes.clear();
         } else {
+            // A portal the setting hides cuts no body either.
             let portals: Vec<_> = world
                 .portals
-                .entries
-                .iter()
+                .shown(world)
                 .map(|entry| clipping::Aperture {
                     key: clipping::Key(entry.owner, entry.portal.id, entry.portal.region),
                     center: Vec3::from(entry.portal.center),

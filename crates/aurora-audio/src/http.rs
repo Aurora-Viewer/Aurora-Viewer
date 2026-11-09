@@ -41,12 +41,15 @@ pub(crate) enum HttpError {
     Status(u16),
     #[error("too many redirects")]
     Redirects,
+    #[error("radio playlist links must stay on the same HTTP(S) origin")]
+    PlaylistOrigin,
     #[error("stopped")]
     Stopped,
 }
 
 /// Body + interesting headers of a successful response.
 pub(crate) struct HttpResponse {
+    pub url: Url,
     pub content_type: Option<String>,
     pub metaint: Option<usize>,
     pub body: Box<dyn Read + Send + Sync>,
@@ -300,12 +303,17 @@ fn host_header(url: &Url) -> String {
     }
 }
 
+/// Reads the status line and headers, at most [`MAX_HEADER_BYTES`] in all:
+/// each line read stops at what is left of that budget, so a line that
+/// never ends is refused instead of being kept whole in memory.
 fn read_head<R: BufRead>(r: &mut R) -> Result<Head, HttpError> {
     let mut lines = Vec::new();
     let mut total = 0;
     loop {
         let mut line = Vec::new();
-        let n = r.read_until(b'\n', &mut line)?;
+        // one byte over the budget tells a full budget from a longer line
+        let left = (MAX_HEADER_BYTES - total) as u64 + 1;
+        let n = (&mut *r).take(left).read_until(b'\n', &mut line)?;
         if n == 0 {
             return Err(HttpError::Malformed);
         }
@@ -327,10 +335,24 @@ fn read_head<R: BufRead>(r: &mut R) -> Result<Head, HttpError> {
 
 /// Opens `url` for streaming, following redirects. Sends `Icy-MetaData: 1`.
 pub(crate) fn open(url: &str, stop: &Arc<AtomicBool>) -> Result<HttpResponse, HttpError> {
+    open_with_origin(url, stop, None)
+}
+
+/// Discovered playlist links cannot acquire access to another site, including
+/// through a redirect. Ordinary stream redirects retain their existing policy.
+pub(crate) fn open_with_origin(url: &str, stop: &Arc<AtomicBool>, origin: Option<&Url>) -> Result<HttpResponse, HttpError> {
     let mut url = Url::parse(url.trim()).map_err(|e| HttpError::Url(e.to_string()))?;
     for _ in 0..=MAX_REDIRECTS {
         if stop.load(Ordering::Relaxed) {
             return Err(HttpError::Stopped);
+        }
+        if origin.is_some_and(|base| {
+            !matches!(url.scheme(), "http" | "https")
+                || url.origin() != base.origin()
+                || !url.username().is_empty()
+                || url.password().is_some()
+        }) {
+            return Err(HttpError::PlaylistOrigin);
         }
         let mut conn = connect(&url)?;
         let req = format!(
@@ -365,6 +387,7 @@ pub(crate) fn open(url: &str, stop: &Arc<AtomicBool>) -> Result<HttpResponse, Ht
                     Box::new(reader)
                 };
                 return Ok(HttpResponse {
+                    url,
                     content_type,
                     metaint,
                     body,
@@ -456,6 +479,58 @@ mod tests {
     #[test]
     fn read_head_from_bytes() {
         let raw = b"HTTP/1.1 200 OK\r\nContent-Type: audio/ogg\r\n\r\nBODY";
+        let mut r = BufReader::new(&raw[..]);
+        let head = read_head(&mut r).unwrap();
+        assert_eq!(head.status, 200);
+        let mut body = String::new();
+        r.read_to_string(&mut body).unwrap();
+        assert_eq!(body, "BODY");
+    }
+
+    /// Endless bytes without a line end, counting what was read.
+    struct Endless {
+        byte: u8,
+        read: usize,
+    }
+
+    impl Read for Endless {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            buf.fill(self.byte);
+            self.read += buf.len();
+            Ok(buf.len())
+        }
+    }
+
+    #[test]
+    fn read_head_stops_a_line_that_never_ends() {
+        let mut r = BufReader::with_capacity(1024, Endless { byte: b'a', read: 0 });
+        assert!(matches!(read_head(&mut r), Err(HttpError::Malformed)));
+        assert!(r.get_ref().read <= MAX_HEADER_BYTES + 1024, "{}", r.get_ref().read);
+
+        // the same once the status line is in
+        let mut raw = b"ICY 200 OK\r\nicy-name: ".to_vec();
+        raw.extend(std::iter::repeat_n(b'x', MAX_HEADER_BYTES));
+        let mut r = BufReader::new(&raw[..]);
+        assert!(matches!(read_head(&mut r), Err(HttpError::Malformed)));
+    }
+
+    #[test]
+    fn read_head_budget_counts_every_line() {
+        let line = format!("x-pad: {}\r\n", "y".repeat(100));
+        let mut raw = b"HTTP/1.1 200 OK\r\n".to_vec();
+        for _ in 0..MAX_HEADER_BYTES / line.len() + 1 {
+            raw.extend(line.as_bytes());
+        }
+        raw.extend(b"\r\n");
+        let mut r = BufReader::new(&raw[..]);
+        assert!(matches!(read_head(&mut r), Err(HttpError::Malformed)));
+
+        // a large head under the budget still reads
+        let mut raw = b"HTTP/1.1 200 OK\r\n".to_vec();
+        for _ in 0..(MAX_HEADER_BYTES - 64) / line.len() {
+            raw.extend(line.as_bytes());
+        }
+        raw.extend(b"\r\nBODY");
         let mut r = BufReader::new(&raw[..]);
         let head = read_head(&mut r).unwrap();
         assert_eq!(head.status, 200);

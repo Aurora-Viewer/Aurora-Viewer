@@ -7,6 +7,8 @@ use super::super::cx::{Cx, field};
 
 pub fn page(cx: &mut Cx) {
     use aurora_i18n::tr;
+    cx.track(&field!(inventory.filter_defaults));
+    cx.track(&field!(inventory.tab_filter_defaults));
     cx.group(tr!("ui-options-sorting"), |cx| {
         cx.choice(
             tr!("ui-inventory-controls-display-order"),
@@ -33,6 +35,12 @@ pub fn page(cx: &mut Cx) {
     });
     cx.group(tr!("common-display"), |cx| {
         cx.toggle(tr!("ui-inventory-controls-show-library"), "", &field!(inventory.show_library));
+        cx.toggle(
+            tr!("inventory-hover-tooltips"),
+            tr!("inventory-hover-tooltips-help"),
+            &field!(inventory.show_hover_tooltips),
+        );
+        // pictures on hover work with the text tooltips off (#3008)
         cx.toggle(
             tr!("inventory-hover-pictures"),
             tr!("inventory-hover-pictures-help"),
