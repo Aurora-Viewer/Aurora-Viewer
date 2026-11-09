@@ -471,7 +471,7 @@ fn vs_terrain(in: VsIn) -> TerrainOut {
     let model = eye_model(rec, in);
     let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: TerrainOut;
-    out.clip = frame.eye_view_proj * ep;
+    out.clip = eye_clip(rec, ep);
     // (lighting, shadows and fog keep region coordinates)
     out.world_pos = ep.xyz + frame.eye.xyz;
     out.normal = vertex_normal(rec, in);
@@ -489,7 +489,7 @@ fn vs_terrain_pbr(in: VsIn) -> TerrainPbrOut {
     let model = eye_model(rec, in);
     let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: TerrainPbrOut;
-    out.clip = frame.eye_view_proj * ep;
+    out.clip = eye_clip(rec, ep);
     out.world_pos = ep.xyz + frame.eye.xyz;
     out.normal = vertex_normal(rec, in);
     let raw = vec4<f32>(terrain_tangent(in.weights), in.normal.w);

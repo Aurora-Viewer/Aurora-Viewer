@@ -4408,6 +4408,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_MASK_ZERO=1` | The holed test panel with a Mask legacy material whose cutoff is 0: drawn whole |
 | `AURORA_DEMO_MASK_255=<alpha>` | A texture of flat alpha 250-254 on two panels; the one with a Mask of cutoff 255 is hidden; 255: no alpha channel, shown whole (#2276) |
 | `AURORA_DEMO_RIGGED_PROP=1` | A rigged mesh chain rezzed on a cube ahead of the start position, and the same chain worn by our avatar |
+| `AURORA_DEMO_COPLANAR_LAYERS=1` | A worn dark layer lying exactly on a worn skin, in eight strips beside our avatar |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
 | `AURORA_DEMO_PLANTS=1`, `far` or `dense` | Linden trees and grass: every species near or far along the start view, or a forest |
 | `AURORA_DEMO_BLEND_SHADOWS=1` or `dense` | Alpha-blended panels in the sun (greenhouse pane, face and texture alpha), or 400 greenhouse panes |
@@ -4625,6 +4626,16 @@ both open states and the selection count. Capture at frame 620.
   neither worn nor a playing animated object; a chain much smaller,
   floating above the cube, is its bind shape applied without a skeleton.
   The same mesh worn by our avatar hangs down its back.
+- **`AURORA_DEMO_COPLANAR_LAYERS=1`**: one rigged mesh, a 0.5 x 0.8 m
+  plate of eight horizontal strips beside our avatar, worn sixteen times at
+  frame 120 (`demo_coplanar_layers.rs`): for each strip a skin copy (the
+  upper-body bake) and a dark layer copy showing that strip alone, the
+  other faces at texture-entry alpha 0. Both copies of a strip have the
+  same triangles, so the same depths, and the pairs arrive in alternating
+  order. The plate must be dark from top to bottom: the layer rank
+  (`DrawRecord::set_layer_rank`) puts a worn layer over the skin it lies
+  on. Skin-coloured bands, one strip in two, mean the winner follows the
+  order of the draw records again. Capture with `AURORA_AA=6` and `3`.
 - **`AURORA_BLEND_SHADOWS=0`**: alpha-blended faces cast sun and projector
   shadows only when rigged, as before. By default every blended face casts,
   as in LLPipeline::renderShadow (renderAlphaObjects): glass whose texture
