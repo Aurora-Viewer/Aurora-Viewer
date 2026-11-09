@@ -1061,7 +1061,7 @@ fn friend_menu(
     if menu::item_if(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport"), online) {
         actions.push(ContactsAction::OfferTeleport(id));
     }
-    if menu::item(ui, p, "plane-arrival-filled", aurora_i18n::tr!("common-request-teleport")) {
+    if menu::item_if(ui, p, "car-filled", aurora_i18n::tr!("common-request-teleport"), online) {
         st.ask_teleport_request(id, world.status.cfg.reject_teleports);
     }
     if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
@@ -1770,6 +1770,15 @@ fn sets_tab(
                                 }
                                 if menu::item_if(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport"), *on) {
                                     actions.push(ContactsAction::OfferTeleport(*id));
+                                }
+                                if menu::item_if(
+                                    ui,
+                                    p,
+                                    "car-filled",
+                                    aurora_i18n::tr!("common-request-teleport"),
+                                    world.social.can_request_teleport(id),
+                                ) {
+                                    context::request(ui.ctx(), CtxAction::RequestTeleport(*id));
                                 }
                             });
                         }
