@@ -223,12 +223,12 @@ impl Inventory {
         }
     }
 
-    /// Queue a folder fetch if not fetched yet.
     /// Folder requests wait for the cache file to be read.
     pub fn requests_held(&self) -> bool {
         self.held.is_some()
     }
 
+    /// Queue a folder fetch if not fetched yet.
     pub fn request(&mut self, id: Uuid) {
         if let Some(held) = &mut self.held {
             if !held.contains(&id) {
