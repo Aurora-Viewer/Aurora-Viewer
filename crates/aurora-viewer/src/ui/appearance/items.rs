@@ -217,6 +217,20 @@ pub(super) fn context_menu(
                 actions.extend(ids.into_iter().map(Action::Favorite));
             }
         }
+        // gestures are activated, not worn (the inventory's Activate /
+        // Deactivate entry)
+        let gestures: Vec<Uuid> = items.iter().filter(|it| it.asset_type == 21).map(|it| it.id).collect();
+        if matches!(list, List::Favorites(_)) && !gestures.is_empty() {
+            let active = gestures.iter().all(|id| world.active_gestures.contains(id));
+            let label = if active {
+                aurora_i18n::tr!("gesture-deactivate")
+            } else {
+                aurora_i18n::tr!("gesture-activate")
+            };
+            if menu::item(ui, p, "player-play-filled", label) {
+                actions.push(Action::Gesture(gestures, !active));
+            }
+        }
         if let List::Favorites(folders) = list {
             assign_menu(ui, p, world, folders, &items, actions);
         }

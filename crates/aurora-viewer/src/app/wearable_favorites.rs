@@ -15,8 +15,19 @@ impl App {
         }
         let mut open = self.panels.wearable_favorites;
         let mut sort = self.settings.wearable_favorites_sort;
-        let actions = ui::appearance::wearable_favorites::show(ctx, p, &self.world, &mut self.appearance_ui, &mut open, &mut sort);
+        let writable = (self.demo || self.world.inventory_writable()) && self.inventory_ui.pending.is_none();
+        let actions =
+            ui::appearance::wearable_favorites::show(ctx, p, &self.world, &mut self.appearance_ui, &mut open, &mut sort, writable);
         self.panels.wearable_favorites = open;
+        // the import is marked sent only once the inventory took it: a change
+        // already pending discards it, and the button must stay
+        self.appearance_ui.wearable_favorites.import_settled(self.inventory_ui.pending.is_some());
+        if let Some(change) = ui::appearance::wearable_favorites::take_import(&mut self.appearance_ui) {
+            self.apply_inventory_action(ui::inventory::InvAction::Edit(change));
+            if self.inventory_ui.pending.is_some() {
+                self.appearance_ui.wearable_favorites.import_accepted();
+            }
+        }
         if sort != self.settings.wearable_favorites_sort {
             self.settings.wearable_favorites_sort = sort;
             self.settings.save();

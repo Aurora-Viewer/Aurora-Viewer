@@ -319,3 +319,151 @@ fn the_import_skips_library_items_and_waits_for_a_complete_tree() {
     inv.folders.get_mut(&legacy).expect("legacy").state = FetchState::Fetching;
     assert!(import_plan(&inv, root).is_none());
 }
+
+/// An original (not a link) put by hand into `parent`.
+fn put_original(inv: &mut Inventory, parent: Uuid, n: u128) {
+    inv.items.insert(
+        id(n),
+        InvItem {
+            id: id(n),
+            parent,
+            name: "Hand-made".into(),
+            asset_type: 5,
+            owner: AGENT,
+            creator: AGENT,
+            base_mask: 0x7fffffff,
+            owner_mask: 0x7fffffff,
+            ..Default::default()
+        },
+    );
+    inv.folders.get_mut(&parent).expect("folder").items.push(id(n));
+}
+
+#[test]
+fn remove_never_deletes_an_original_put_in_the_folder() {
+    let mut inv = seeded();
+    let root = folder(&inv).expect("favorites");
+    put_original(&mut inv, root, 9001);
+    let rows = entries(&inv, root, root);
+    let original = rows.iter().find(|e| e.target == id(9001)).copied().expect("listed");
+    assert_eq!(original.link, original.target, "an original stands for itself");
+    assert!(!is_link(&inv, original.link));
+    assert!(remove(&inv, &[original.link]).is_none(), "refused");
+    // mixed with a link: only the link goes
+    let link_row = rows.iter().find(|e| e.target == id(720)).copied().expect("boots");
+    let change = remove(&inv, &[original.link, link_row.link]).expect("the link");
+    assert_eq!(change.removed, [link_row.link]);
+    assert!(
+        change
+            .operations
+            .iter()
+            .all(|op| matches!(op, Operation::Delete { id, .. } if *id == link_row.link))
+    );
+}
+
+#[test]
+fn deleting_a_folder_is_refused_while_its_tree_holds_an_original() {
+    let mut inv = seeded();
+    let root = folder(&inv).expect("favorites");
+    let (evening, _) = subfolders(&inv, root)[0].clone();
+    assert!(!holds_originals(&inv, evening));
+    // an original in a subfolder of the subfolder
+    let (change, deep) = create_folder(evening, "Deep");
+    demo_mutate(&mut inv, AGENT, change).expect("created");
+    let deep = inv.folders[&evening]
+        .children
+        .iter()
+        .copied()
+        .find(|c| inv.folders[c].info.name == "Deep")
+        .unwrap_or(deep);
+    put_original(&mut inv, deep, 9002);
+    assert!(holds_originals(&inv, evening));
+    assert!(delete_folder(&inv, evening).is_none());
+    assert!(delete_folder(&inv, deep).is_none());
+    assert!(inv.items.contains_key(&id(9002)));
+    // once it is moved out, the folder can go
+    inv.folders.get_mut(&deep).expect("deep").items.clear();
+    assert!(delete_folder(&inv, evening).is_some());
+}
+
+#[test]
+fn the_import_plan_is_linear_on_a_deep_chain_of_missing_folders() {
+    let (mut inv, root) = with_legacy();
+    let legacy = legacy_folder(&inv).expect("legacy");
+    let mut parent = legacy;
+    let depth = 40;
+    for n in 0..depth {
+        let fid = id(50_000 + n);
+        inv.folders.insert(
+            fid,
+            crate::world::inventory::Folder {
+                info: InvFolder {
+                    id: fid,
+                    parent,
+                    name: format!("d{n}"),
+                    type_default: -1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        inv.folders.get_mut(&parent).expect("parent").children.push(fid);
+        parent = fid;
+    }
+    let link = id(60_000);
+    inv.items.insert(
+        link,
+        InvItem {
+            id: link,
+            parent,
+            name: "Deep link".into(),
+            asset_type: 24,
+            asset_id: id(719),
+            owner: AGENT,
+            ..Default::default()
+        },
+    );
+    inv.folders.get_mut(&parent).expect("bottom").items.push(link);
+    let started = std::time::Instant::now();
+    let plan = import_plan(&inv, root).expect("something to import");
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    // the earlier four links and one folder (Party), plus the whole chain
+    assert_eq!(plan.folders, 1 + depth as usize);
+    assert_eq!(plan.links, 5);
+    let folder_ops = plan
+        .change
+        .operations
+        .iter()
+        .filter(|op| matches!(op, Operation::Folder { .. }))
+        .count();
+    assert_eq!(folder_ops, plan.folders);
+    // an empty chain creates nothing
+    inv.folders.get_mut(&parent).expect("bottom").items.clear();
+    let plan = import_plan(&inv, root).expect("the rest");
+    assert_eq!(plan.folders, 1);
+}
+
+#[test]
+fn deleting_a_folder_is_refused_while_a_subfolder_is_not_fetched() {
+    let mut inv = seeded();
+    let root = folder(&inv).expect("favorites");
+    let (evening, _) = subfolders(&inv, root)[0].clone();
+    assert!(delete_folder(&inv, evening).is_some());
+    // a subfolder still being fetched: an original may be in it, unknown yet
+    let (change, _) = create_folder(evening, "Later");
+    demo_mutate(&mut inv, AGENT, change).expect("created");
+    let later = inv.folders[&evening]
+        .children
+        .iter()
+        .copied()
+        .find(|c| inv.folders[c].info.name == "Later")
+        .expect("later");
+    inv.folders.get_mut(&later).expect("later").state = FetchState::Fetching;
+    assert!(!holds_originals(&inv, evening));
+    assert!(delete_folder(&inv, evening).is_none());
+    inv.folders.get_mut(&later).expect("later").state = FetchState::Fetched;
+    assert!(delete_folder(&inv, evening).is_some());
+}

@@ -13406,6 +13406,10 @@ wearable-favorites-delete-confirm =
     Supprimer le dossier des vêtements préférés « { $name } » ?
 
     Seuls le dossier et ses liens sont supprimés. Les éléments d’origine de l’inventaire ne sont pas supprimés.
+wearable-favorites-delete-refused =
+    Le dossier « { $name } » contient des éléments d’origine de l’inventaire, pas seulement des liens : il n’est pas supprimé. Déplacez d’abord les éléments d’origine hors du dossier.
+wearable-favorites-delete-unloaded =
+    Le dossier « { $name } » n’a pas fini de se charger : il n’est pas supprimé. Attendez que son contenu soit chargé, puis réessayez.
 wearable-favorites-invalid-name =
     Impossible de créer le dossier des vêtements préférés « { $name } ».
     Les noms de dossier ne peuvent pas contenir / ou \.

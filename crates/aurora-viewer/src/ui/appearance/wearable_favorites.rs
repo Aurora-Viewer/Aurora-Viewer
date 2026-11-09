@@ -37,9 +37,40 @@ pub(crate) struct State {
     /// A folder asked for, with the subfolders there before it: picked
     /// when it appears (onNewFolderCallback).
     select_new: Option<(String, HashSet<Uuid>)>,
-    /// The import was sent and the inventory has not answered yet: the
-    /// button stays hidden, so that a second click cannot link twice.
+    /// The import was accepted for sending and the inventory has not
+    /// answered yet: the button stays hidden, so that a second click cannot
+    /// link twice. Set by `import_accepted` only.
     import_sent: bool,
+    /// The import clicked, for the app to submit (`take_import`).
+    import_request: Option<Mutation>,
+    /// The import plan with the inventory generation and favorites folder it
+    /// was built for: rebuilt only when the inventory changes.
+    plan: Option<(u64, Option<Uuid>, Option<model::Import>)>,
+}
+
+impl State {
+    /// The app submitted the import and the inventory accepted it.
+    pub(crate) fn import_accepted(&mut self) {
+        self.import_sent = true;
+    }
+
+    /// The accepted change is over (done or failed): while the plan still
+    /// exists the button comes back, so a failed import can be retried.
+    pub(crate) fn import_settled(&mut self, change_pending: bool) {
+        if !change_pending {
+            self.import_sent = false;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn import_hidden(&self) -> bool {
+        self.import_sent
+    }
+}
+
+/// The import the window asked for since the last call, if any.
+pub fn take_import(st: &mut AppearanceUi) -> Option<Mutation> {
+    st.wearable_favorites.import_request.take()
 }
 
 enum Dialog {
@@ -49,6 +80,10 @@ enum Dialog {
         name: String,
     },
     Delete(Uuid),
+    /// A folder holding an original is not deleted (the name shown).
+    DeleteRefused(String),
+    /// A folder whose subtree is not fully fetched is not deleted (the name shown).
+    DeleteUnloaded(String),
     /// FSWearableFavoritesFolderInvalidName.
     Invalid(String),
 }
@@ -82,7 +117,15 @@ pub fn prepare(inv: &mut Inventory, st: &mut AppearanceUi, writable: bool) -> Op
 }
 
 /// Draw the window while `open`; `sort` is FSWearableFavoritesSortOrder.
-pub fn show(ctx: &egui::Context, p: &Palette, world: &World, st: &mut AppearanceUi, open: &mut bool, sort: &mut SortOrder) -> Vec<Action> {
+pub fn show(
+    ctx: &egui::Context,
+    p: &Palette,
+    world: &World,
+    st: &mut AppearanceUi,
+    open: &mut bool,
+    sort: &mut SortOrder,
+    writable: bool,
+) -> Vec<Action> {
     let mut actions = Vec::new();
     if !*open {
         return actions;
@@ -114,7 +157,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &World, st: &mut Appearance
         let shown = root.map(|root| st.wearable_favorites.shown.unwrap_or(root));
         folder_bar(ui, p, inv, st, root, &folders);
         ui.add_space(4.0);
-        import_bar(ui, p, inv, st, root, &mut actions);
+        import_bar(ui, p, inv, st, root, writable);
         let labels = items::worn_labels(world);
         let mut rows = match (root, shown) {
             (Some(root), Some(shown)) => model::entries(inv, root, shown),
@@ -149,7 +192,14 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &World, st: &mut Appearance
                                 .selection
                                 .click(e.link, &order, modifiers, response.secondary_clicked());
                         }
-                        items::double_click(&response, world, it, worn.is_some(), &mut actions);
+                        if it.asset_type == 21 {
+                            // a gesture is activated or deactivated (the inventory's double click)
+                            if items::double_clicked(&response) {
+                                actions.push(Action::Gesture(vec![it.id], !world.active_gestures.contains(&it.id)));
+                            }
+                        } else {
+                            items::double_click(&response, world, it, worn.is_some(), &mut actions);
+                        }
                         // the menu acts on the originals of the rows picked
                         let picked: Vec<Uuid> = if st.wearable_favorites.selection.contains(e.link) {
                             rows.iter()
@@ -242,43 +292,61 @@ fn folder_bar(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut Appearan
             sub.is_some(),
         ) && let Some(id) = sub
         {
-            fav.dialog = Some(Dialog::Delete(id));
+            let name = || folders.iter().find(|(f, _)| *f == id).map(|(_, n)| n.clone()).unwrap_or_default();
+            fav.dialog = Some(if !model::loaded(inv, id) {
+                Dialog::DeleteUnloaded(name())
+            } else if model::holds_originals(inv, id) {
+                Dialog::DeleteRefused(name())
+            } else {
+                Dialog::Delete(id)
+            });
         }
     });
 }
 
 /// The offer to import the Legacy Viewer's favorites: shown only while the
 /// Legacy folder holds favorites ours does not link yet. It links them, and
-/// copies or moves nothing.
-fn import_bar(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut AppearanceUi, root: Option<Uuid>, actions: &mut Vec<Action>) {
+/// copies or moves nothing. Disabled while an inventory change is on its way
+/// (it would be refused); the button hides once the change is accepted.
+fn import_bar(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut AppearanceUi, root: Option<Uuid>, writable: bool) {
     let fav = &mut st.wearable_favorites;
-    let plan = root.and_then(|root| model::import_plan(inv, root));
-    let Some(plan) = plan else {
+    if fav
+        .plan
+        .as_ref()
+        .is_none_or(|(generation, folder, _)| *generation != inv.generation || *folder != root)
+    {
+        fav.plan = Some((inv.generation, root, root.and_then(|root| model::import_plan(inv, root))));
+    }
+    let Some(plan) = fav.plan.as_ref().and_then(|(_, _, plan)| plan.as_ref()) else {
         fav.import_sent = false;
         return;
     };
     if fav.import_sent {
         return;
     }
-    let clicked = widgets::action_button(
-        ui,
-        p,
-        "download",
-        aurora_i18n::tr!("wearable-favorites-import"),
-        widgets::ActionKind::Flat,
-        Vec2::new(0.0, 26.0),
-    )
-    .on_hover_text(aurora_i18n::tr!("wearable-favorites-import-tip"))
-    .clicked();
+    let (links, folders) = (plan.links, plan.folders);
+    let clicked = ui
+        .add_enabled_ui(writable, |ui| {
+            widgets::action_button(
+                ui,
+                p,
+                "download",
+                aurora_i18n::tr!("wearable-favorites-import"),
+                widgets::ActionKind::Flat,
+                Vec2::new(0.0, 26.0),
+            )
+            .on_hover_text(aurora_i18n::tr!("wearable-favorites-import-tip"))
+            .clicked()
+        })
+        .inner;
     ui.add_space(4.0);
-    if clicked {
-        log::info!(
-            "wearable favorites: importing the Legacy Viewer's favorites ({} links, {} new folders)",
-            plan.links,
-            plan.folders
-        );
-        fav.import_sent = true;
-        actions.push(Action::Folders(plan.change));
+    if clicked && fav.import_request.is_none() {
+        log::info!("wearable favorites: importing the Legacy Viewer's favorites ({links} links, {folders} new folders)");
+        fav.import_request = fav
+            .plan
+            .as_ref()
+            .and_then(|(_, _, plan)| plan.as_ref())
+            .map(|plan| plan.change.clone());
     }
 }
 
@@ -336,7 +404,7 @@ fn filter_bar(
             p,
             "circle-minus",
             aurora_i18n::tr!("wearable-favorites-remove-tip"),
-            !picked.is_empty(),
+            picked.iter().any(|id| model::is_link(inv, *id)),
         ) && let Some(change) = model::remove(inv, &picked)
         {
             actions.push(Action::Folders(change));
@@ -398,6 +466,8 @@ fn dialogs(
             Dialog::New(_) => aurora_i18n::tr!("wearable-favorites-new-folder-prompt").to_string(),
             Dialog::Rename { id, .. } => aurora_i18n::tr!("wearable-favorites-rename-prompt", name = folder_name(id)),
             Dialog::Delete(id) => aurora_i18n::tr!("wearable-favorites-delete-confirm", name = folder_name(id)),
+            Dialog::DeleteRefused(name) => aurora_i18n::tr!("wearable-favorites-delete-refused", name = name.as_str()),
+            Dialog::DeleteUnloaded(name) => aurora_i18n::tr!("wearable-favorites-delete-unloaded", name = name.as_str()),
             Dialog::Invalid(name) => aurora_i18n::tr!("wearable-favorites-invalid-name", name = name.as_str()),
         };
         ui.add(egui::Label::new(RichText::new(text).color(p.ink)).wrap());
@@ -452,10 +522,10 @@ fn dialogs(
                             actions.push(Action::Folders(change));
                         }
                     }
-                    Dialog::Invalid(_) => {}
+                    Dialog::Invalid(_) | Dialog::DeleteRefused(_) | Dialog::DeleteUnloaded(_) => {}
                 }
             }
-            if !matches!(dialog, Dialog::Invalid(_))
+            if !matches!(dialog, Dialog::Invalid(_) | Dialog::DeleteRefused(_) | Dialog::DeleteUnloaded(_))
                 && action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked()
             {
                 done = true;
@@ -474,5 +544,23 @@ pub fn demo_pick(inv: &Inventory, st: &mut AppearanceUi, name: &str) {
             .into_iter()
             .find(|(_, n)| n.eq_ignore_ascii_case(name))
             .map(|(id, _)| id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_import_button_returns_once_the_accepted_change_is_over() {
+        let mut st = State::default();
+        st.import_accepted();
+        assert!(st.import_hidden());
+        // still on its way: stays hidden, a second click cannot link twice
+        st.import_settled(true);
+        assert!(st.import_hidden());
+        // done or failed: the plan decides whether the button shows again
+        st.import_settled(false);
+        assert!(!st.import_hidden());
     }
 }

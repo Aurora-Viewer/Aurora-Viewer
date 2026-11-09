@@ -13410,6 +13410,10 @@ wearable-favorites-delete-confirm =
     Delete Favorite Wearables folder "{ $name }"?
 
     This removes the folder and its favorite links only. Original inventory items are not deleted.
+wearable-favorites-delete-refused =
+    The folder "{ $name }" holds original inventory items, not only links, so it is not deleted. Move the originals out of it first.
+wearable-favorites-delete-unloaded =
+    The folder "{ $name }" has not finished loading, so it is not deleted. Wait for its contents to load, then try again.
 wearable-favorites-invalid-name =
     Could not create Favorite Wearables folder "{ $name }".
     Folder names cannot contain / or \.

@@ -350,29 +350,50 @@ fn import_folder(inv: &Inventory, from: Uuid, to: Uuid, existing: bool, plan: &m
         let (dest, existing) = match existing.then(|| child(inv, to, &name)).flatten() {
             Some(dest) => (dest, true),
             None => {
-                // only worth creating when something will be linked in it
-                let mut probe = Import {
+                // Built once into its own plan, appended only when something
+                // is linked in it (a probe plus a second pass would double
+                // the work at every level of a deep chain).
+                let dest = Uuid::new_v4();
+                let mut sub = Import {
                     change: Mutation::default(),
                     links: 0,
                     folders: 0,
                 };
-                import_folder(inv, id, Uuid::nil(), false, &mut probe, &mut seen.clone());
-                if probe.links == 0 {
-                    continue;
+                import_folder(inv, id, dest, false, &mut sub, seen);
+                if sub.links > 0 {
+                    plan.folders += 1 + sub.folders;
+                    plan.links += sub.links;
+                    plan.change.operations.push(Operation::Folder {
+                        id: dest,
+                        parent: to,
+                        name: name.clone(),
+                        type_default: -1,
+                    });
+                    plan.change.refresh.extend([to, dest]);
+                    plan.change.operations.append(&mut sub.change.operations);
+                    plan.change.refresh.append(&mut sub.change.refresh);
                 }
-                plan.folders += 1;
-                (new_folder(&mut plan.change, to, &name), false)
+                continue;
             }
         };
         import_folder(inv, id, dest, existing, plan, seen);
     }
 }
 
-/// handleRemove: remove_inventory_item of each selected row.
+/// Whether `id` is a link (an item put in the folder by hand is not).
+pub fn is_link(inv: &Inventory, id: Uuid) -> bool {
+    inv.items.get(&id).is_some_and(|it| it.asset_type == 24)
+}
+
+/// handleRemove: remove_inventory_item of each selected row. Stricter than
+/// the Legacy Viewer, which would also delete an original dropped in the
+/// folder by hand: only links are removed, an original is never deleted.
 pub fn remove(inv: &Inventory, rows: &[Uuid]) -> Option<Mutation> {
     let mut change = Mutation::default();
     for id in rows {
-        let Some(it) = inv.items.get(id) else { continue };
+        let Some(it) = inv.items.get(id).filter(|_| is_link(inv, *id)) else {
+            continue;
+        };
         change.operations.push(Operation::Delete { id: *id, folder: false });
         change.removed.push(*id);
         change.refresh.push(it.parent);
@@ -426,12 +447,37 @@ pub fn rename_folder(inv: &Inventory, id: Uuid, name: &str) -> Option<Mutation> 
     })
 }
 
-/// remove_inventory_category: the folder and its links, never the originals.
+/// Whether the folder or a subfolder holds an item that is not a link (an
+/// original put there by hand or moved in): deleting the folder would delete
+/// it too.
+pub fn holds_originals(inv: &Inventory, id: Uuid) -> bool {
+    let mut todo = vec![id];
+    let mut seen = HashSet::new();
+    while let Some(f) = todo.pop() {
+        if !seen.insert(f) {
+            continue;
+        }
+        let Some(f) = inv.folders.get(&f) else { continue };
+        if f.items.iter().any(|item| inv.items.contains_key(item) && !is_link(inv, *item)) {
+            return true;
+        }
+        todo.extend(f.children.iter().copied());
+    }
+    false
+}
+
+/// remove_inventory_category: the folder and its links. Stricter than the
+/// Legacy Viewer: `None` while the folder holds an original anywhere in its
+/// subtree (`holds_originals`), so that no original is ever deleted.
 pub fn delete_folder(inv: &Inventory, id: Uuid) -> Option<Mutation> {
+    if holds_originals(inv, id) {
+        return None;
+    }
     let parent = inv.folders.get(&id)?.info.parent;
     let mut removed = vec![id];
     let mut todo = vec![id];
-    while let Some(f) = todo.pop().and_then(|f| inv.folders.get(&f)) {
+    let mut seen = HashSet::new();
+    while let Some(f) = todo.pop().filter(|f| seen.insert(*f)).and_then(|f| inv.folders.get(&f)) {
         removed.extend(f.items.iter().copied());
         removed.extend(f.children.iter().copied());
         todo.extend(f.children.iter().copied());
