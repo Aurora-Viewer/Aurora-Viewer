@@ -328,6 +328,28 @@ enum Fate {
     Excluded,
 }
 
+/// How many names fit as a comma list before switching to "+ N people".
+const RESIDENTS_LISTED: usize = 2;
+
+/// Label for the give confirmation's recipients, and an optional hover with
+/// every name (when the label only keeps the first ones).
+fn residents_label(names: &[&str]) -> (String, Option<String>) {
+    if names.is_empty() {
+        return (String::new(), None);
+    }
+    if names.len() <= RESIDENTS_LISTED {
+        return (names.join(", "), None);
+    }
+    let more = names.len() - 1;
+    let label = aurora_i18n::tr!(
+        "ui-inventory-dialogs-give-to-many",
+        name = names[0].to_string(),
+        count = more as i64,
+        number = aurora_i18n::integer(more as i64)
+    );
+    (label, Some(names.join(", ")))
+}
+
 /// The confirmation of a give, from an inventory window or a drop on a
 /// conversation (ShareItemsConfirmation, LLToolDragAndDrop's
 /// show_object_sharing_confirmation and LLAvatarActions::shareWithAvatars,
@@ -355,9 +377,10 @@ fn share(
     if residents.is_empty() {
         return true;
     }
-    // LLAvatarActions::buildResidentsString: names joined for the confirmation
+    // LLAvatarActions::buildResidentsString joins every name; a long multi-
+    // select overflows the modal, so we keep one or two names then "+ N people"
     let names: Vec<&str> = residents.iter().map(|id| facts.names.get(id).map_or("…", String::as_str)).collect();
-    let name = names.join(", ");
+    let (name, name_tip) = residents_label(&names);
     let first = residents[0];
     // ((icon, tint), name, fate, tag, why)
     let rows: Vec<((&str, egui::Color32), String, Fate, &str, String)> = ids
@@ -408,7 +431,10 @@ fn share(
                         .size(12.0)
                         .color(p.muted),
                 );
-                ui.add(egui::Label::new(RichText::new(&name).size(15.0).strong().color(p.ink)).truncate());
+                let label = ui.add(egui::Label::new(RichText::new(&name).size(15.0).strong().color(p.ink)).truncate());
+                if let Some(tip) = &name_tip {
+                    label.on_hover_text(tip);
+                }
             });
         });
         ui.add_space(10.0);
@@ -2193,6 +2219,24 @@ mod tests {
         for id in &ids {
             assert!(shown(&rules::name(&inv, *id)), "each entry listed");
         }
+        // many recipients: first name + count, not a truncated comma list
+        let crowd_names: Vec<&str> = (1..=5).map(|_| "Orion Example").collect();
+        let (many, tip) = residents_label(&crowd_names);
+        assert_eq!(
+            many,
+            aurora_i18n::tr!(
+                "ui-inventory-dialogs-give-to-many",
+                name = "Orion Example".to_string(),
+                count = 4i64,
+                number = aurora_i18n::integer(4)
+            )
+        );
+        assert_eq!(
+            tip.as_deref(),
+            Some("Orion Example, Orion Example, Orion Example, Orion Example, Orion Example")
+        );
+        assert_eq!(residents_label(&["A", "B"]).0, "A, B");
+        assert!(residents_label(&["A", "B"]).1.is_none());
         assert!(shown(aurora_i18n::tr!("ui-inventory-dialogs-no-copy")), "the no-copy entry marked");
         assert!(shown(&aurora_i18n::tr!(
             "ui-inventory-dialogs-no-copy-will-leave",
@@ -2225,6 +2269,34 @@ mod tests {
             matches!(&actions[..], [InvAction::Share { items, resident: to }] if *items == ids && *to == resident),
             "Give gives all but the entry left out"
         );
+        assert!(st.dialog.is_none());
+        // several residents at once (LLAvatarActions::shareWithAvatars, #3074)
+        let crowd: Vec<Uuid> = (1..=5)
+            .map(|n| Uuid::from_u128(0xA0E0_5A4E_0000_0000_0000_0000_0000_0000 | n))
+            .collect();
+        st.dialog = Some(EditDialog::Share(ids.clone(), crowd.clone()));
+        for _ in 0..4 {
+            frame(&mut st, Vec::new());
+        }
+        let give_many = ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("inventory_share_give", st.ui_id))))
+            .expect("give button")
+            .center();
+        let press = |pressed, pos| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        frame(&mut st, vec![egui::Event::PointerMoved(give_many), press(true, give_many)]);
+        let (_, actions) = frame(&mut st, vec![press(false, give_many)]);
+        assert_eq!(actions.len(), crowd.len(), "one Share action per resident");
+        for (action, who) in actions.iter().zip(&crowd) {
+            assert!(
+                matches!(action, InvAction::Share { items, resident: to } if *items == ids && to == who),
+                "Give to {who}"
+            );
+        }
         assert!(st.dialog.is_none());
         // nothing that can be given: Enter gives nothing
         let enter = egui::Event::Key {

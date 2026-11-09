@@ -824,21 +824,27 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
                 .map(|id| (*id, aurora_i18n::tr!("demo-land-demo-group").to_owned()))
                 .collect(),
         ))],
-        LandCommand::AvatarSearch { query } => vec![ev(LandEvent::AvatarSearch {
-            query: query.clone(),
-            results: Some(vec![
-                FoundAvatar {
-                    id: DEMO_NOVA,
-                    display_name: "Nova ♪".into(),
-                    username: "nova.exemple".into(),
-                },
-                FoundAvatar {
-                    id: DEMO_TESS,
-                    display_name: "Tess ✨".into(),
-                    username: "tesstouch".into(),
-                },
-            ]),
-        })],
+        LandCommand::AvatarSearch { query } => {
+            // AURORA_DEMO_SHARE=multi: dozens of Orion-like hits for multi-select
+            let results = crate::demo::share::avatar_search(query).unwrap_or_else(|| {
+                vec![
+                    FoundAvatar {
+                        id: DEMO_NOVA,
+                        display_name: "Nova ♪".into(),
+                        username: "nova.exemple".into(),
+                    },
+                    FoundAvatar {
+                        id: DEMO_TESS,
+                        display_name: "Tess ✨".into(),
+                        username: "tesstouch".into(),
+                    },
+                ]
+            });
+            vec![ev(LandEvent::AvatarSearch {
+                query: query.clone(),
+                results: Some(results),
+            })]
+        }
         LandCommand::MediaType { url } => vec![ev(LandEvent::MediaType {
             url: url.clone(),
             mime: "text/html".into(),

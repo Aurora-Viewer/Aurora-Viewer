@@ -3170,6 +3170,9 @@ ui-context-send-im = ＩＭを送信
 ui-contacts-send-im = ＩＭを送信…
 ui-inventory-dialogs-give-to = 渡す相手
 ui-inventory-dialogs-give = 渡す
+ui-inventory-dialogs-give-to-many = { $name } + { $count ->
+    *[other] { $number }人
+}
 ui-inventory-dialogs-and-more = { $count ->
     [one] ほか{ $number }件
    *[other] ほか{ $number }件

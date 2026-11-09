@@ -3177,6 +3177,10 @@ ui-context-send-im = Envoyer un IM
 ui-contacts-send-im = Envoyer un IM...
 ui-inventory-dialogs-give-to = Donner à
 ui-inventory-dialogs-give = Donner
+ui-inventory-dialogs-give-to-many = { $name } + { $count ->
+    [one] { $number } personne
+   *[other] { $number } personnes
+}
 ui-inventory-dialogs-and-more = { $count ->
     [one] et { $number } autre
    *[other] et { $number } autres
