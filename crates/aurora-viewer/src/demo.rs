@@ -144,6 +144,10 @@ pub mod keywords;
 /// About Land answers (AURORA_DEMO_LAND).
 #[path = "demo_land.rs"]
 pub mod land;
+/// Legacy texture-entry bump presets and normal-map precedence
+/// (AURORA_DEMO_LEGACY_BUMP).
+#[path = "demo_legacy_bump.rs"]
+pub mod legacy_bump;
 #[path = "demo_link.rs"]
 pub mod link;
 /// A Mask of cutoff 255 over an alpha just under opaque (AURORA_DEMO_MASK_255).
@@ -224,6 +228,10 @@ pub mod sim_version;
 /// A rainbow or a 22° halo in the region's sky (AURORA_DEMO_SKY_OPTICS).
 #[path = "demo_sky.rs"]
 pub mod sky;
+/// A panel whose texture a script changes every few seconds
+/// (AURORA_DEMO_SLIDESHOW).
+#[path = "demo_slideshow.rs"]
+pub mod slideshow;
 /// A resident's "Invite to group", "Add to contact set" and "Block
 /// particles" (AURORA_DEMO_SOCIAL_MENU).
 #[path = "demo_social_menu.rs"]
@@ -483,6 +491,8 @@ pub fn build_rez(p: &aurora_net::build::NewPrim) -> ObjectUpdate {
         | crate::ui::context::flags::OBJECT_MODIFY
         | crate::ui::context::flags::OBJECT_COPY
         | crate::ui::context::flags::OBJECT_MOVE
+        // a prim we create is ours with every right, transfer included
+        | crate::ui::context::flags::OBJECT_TRANSFER
         | p.add_flags;
     object
 }
@@ -1211,20 +1221,28 @@ pub fn bubbles_events() -> Vec<NetEvent> {
 /// see the lines above the chat bar (`ui/chat/console.rs`): two lines of
 /// one resident, an emote, an object's line, a long line with a link, a
 /// shout. `legacy` shows them as the Legacy Viewer's lines for the session
-/// (nothing is saved). Some(true) for `legacy`.
+/// (nothing is saved). An optional `:0` through `:50` overrides the maximum
+/// wrapped text lines for this demo. Some(true) for `legacy`.
 pub fn chat_lines_scenario() -> Option<bool> {
-    match std::env::var("AURORA_DEMO_CHAT_LINES").ok()?.as_str() {
+    let mode = std::env::var("AURORA_DEMO_CHAT_LINES").ok()?;
+    match mode.split(':').next()? {
         "legacy" => Some(true),
         "" | "0" => None,
         _ => Some(false),
     }
 }
 
+pub fn chat_lines_limit() -> Option<u32> {
+    let mode = std::env::var("AURORA_DEMO_CHAT_LINES").ok()?;
+    mode.split_once(':')?.1.parse::<u32>().ok().map(|lines| lines.min(50))
+}
+
 /// Show the same six messages in Conversations and above the bar (#1323).
 pub fn chat_volume_comparison() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| {
-        std::env::var_os("AURORA_DEMO").is_some() && std::env::var("AURORA_DEMO_CHAT_LINES").is_ok_and(|mode| mode == "volumes")
+        std::env::var_os("AURORA_DEMO").is_some()
+            && std::env::var("AURORA_DEMO_CHAT_LINES").is_ok_and(|mode| mode.split(':').next() == Some("volumes"))
     })
 }
 
@@ -3053,13 +3071,22 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             if !group::adjust_groups(&mut groups) {
                 return vec![NetEvent::Groups(groups)];
             }
-            vec![
-                NetEvent::Groups(groups),
+            let active_group = if std::env::var("AURORA_DEMO_ACTIVE_GROUP").is_ok_and(|v| v == "none") {
+                NetEvent::ActiveGroup {
+                    id: Uuid::nil(),
+                    name: String::new(),
+                    title: String::new(),
+                }
+            } else {
                 NetEvent::ActiveGroup {
                     id: DEMO_GROUP1,
                     name: "Aurora Builders".into(),
                     title: aurora_i18n::tr!("demo-builder").into(),
-                },
+                }
+            };
+            vec![
+                NetEvent::Groups(groups),
+                active_group,
                 NetEvent::SessionInvite(aurora_net::SessionInvite {
                     session: DEMO_GROUP1,
                     from: DEMO_NOVA,
@@ -3071,11 +3098,24 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 }),
             ]
         }
-        aurora_net::NetCommand::ActivateGroup(id) => vec![NetEvent::ActiveGroup {
-            id: *id,
-            name: String::new(),
-            title: String::new(),
-        }],
+        aurora_net::NetCommand::ActivateGroup(id) => {
+            let (name, title) = if *id == DEMO_GROUP1 {
+                ("Aurora Builders".into(), aurora_i18n::tr!("demo-builder").into())
+            } else if *id == DEMO_GROUP2 {
+                (
+                    aurora_i18n::tr!("demo-northern-wolves").into(),
+                    aurora_i18n::tr!("demo-group-officer").into(),
+                )
+            } else if *id == DEMO_GROUP3 {
+                (
+                    aurora_i18n::tr!("common-plaza-market").into(),
+                    aurora_i18n::tr!("demo-group-member").into(),
+                )
+            } else {
+                (String::new(), String::new())
+            };
+            vec![NetEvent::ActiveGroup { id: *id, name, title }]
+        }
         aurora_net::NetCommand::LeaveGroup(id) => vec![NetEvent::GroupDropped(*id)],
         aurora_net::NetCommand::ChatSession { method, session } => {
             let agents = |ids: &[Uuid]| {
@@ -4679,10 +4719,66 @@ pub fn events() -> Vec<NetEvent> {
             id += 1;
         }
     }
+    // AURORA_DEMO_OCCLUSION=edge: occlusion at the right and bottom edges of
+    // the screen (#2459). A tall wall just ahead covers the left half of the
+    // start view, and cubes stand in the open right half, behind the wall's
+    // depth: every cube is in plain view and none may be culled. From
+    // AURORA_DEMO_POS="x,y" (default an open place, 80,100) along the start
+    // view, or `edge,<x>,<y>,<heading in degrees>` for another camera.
+    let occlusion_mode = std::env::var("AURORA_DEMO_OCCLUSION").ok();
+    let edge = occlusion_mode.as_deref().and_then(|m| {
+        let mut parts = m.split(',');
+        (parts.next()? == "edge").then(|| parts.filter_map(|s| s.trim().parse::<f32>().ok()).collect::<Vec<_>>())
+    });
+    if let Some(at) = &edge {
+        let (eye, look) = if let [x, y, heading] = at[..] {
+            let h = heading.to_radians();
+            (Vec3::new(x, y, 0.0), Vec3::new(h.cos(), h.sin(), 0.0))
+        } else {
+            let eye = std::env::var("AURORA_DEMO_POS")
+                .ok()
+                .map(|v| v.split(',').filter_map(|s| s.trim().parse::<f32>().ok()).collect::<Vec<_>>())
+                .filter(|p| p.len() >= 2)
+                .map_or(Vec3::new(80.0, 100.0, 0.0), |p| Vec3::new(p[0], p[1], 0.0));
+            (eye, Vec3::new(0.8, 0.4, 0.0).normalize())
+        };
+        let left = Vec3::new(-look.y, look.x, 0.0);
+        let yaw = look.y.atan2(look.x);
+        // its right edge 0.3 m right of the view's axis
+        let wall = eye + look * 1.5 + left * 5.7;
+        add(prim(
+            id,
+            Vec3::new(wall.x, wall.y, g(wall.x, wall.y) + 5.0),
+            Quat::from_rotation_z(yaw),
+            Vec3::new(0.2, 12.0, 10.0),
+            boxp,
+            te(navy, 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        ));
+        id += 1;
+        for (k, ahead) in [4.0f32, 7.0, 11.0].into_iter().enumerate() {
+            for (j, right) in [1.2f32, 2.6, 4.2].into_iter().enumerate() {
+                let p = eye + look * ahead - left * (right + ahead * 0.15);
+                let c = [0.3 + 0.3 * k as f32, 0.85 - 0.25 * j as f32, 0.4, 1.0];
+                add(prim(
+                    id,
+                    Vec3::new(p.x, p.y, g(p.x, p.y) + 0.75 + 0.6 * j as f32),
+                    Quat::from_rotation_z(yaw),
+                    Vec3::splat(1.5),
+                    boxp,
+                    te(c, 0, false, 0.0),
+                    ExtraParams::default(),
+                    "",
+                ));
+                id += 1;
+            }
+        }
+    }
     // AURORA_DEMO_OCCLUSION=1: occlusion test, a long wall in front of the
     // start position with 360 detailed objects behind it (a few towers rise
     // above it, so some must stay visible)
-    if std::env::var_os("AURORA_DEMO_OCCLUSION").is_some() {
+    if occlusion_mode.is_some() && edge.is_none() {
         let wx = 158.0;
         for k in 0..4 {
             let y = 100.0 + k as f32 * 20.0;
@@ -5170,7 +5266,12 @@ pub fn events() -> Vec<NetEvent> {
             (true, 126.0, aurora_i18n::tr!("common-wind")),
             (false, 130.0, aurora_i18n::tr!("demo-smoke")),
         ] {
-            if (mode == "wind" && !wind) || (mode == "smoke" && wind) || (mode == "legacy" && !wind) || mode == "leash" {
+            if (mode == "wind" && !wind)
+                || (mode == "smoke" && wind)
+                || (mode == "legacy" && !wind)
+                || mode == "leash"
+                || (mode == "worn" && wind)
+            {
                 continue;
             }
             let mut o = prim(
@@ -5190,6 +5291,13 @@ pub fn events() -> Vec<NetEvent> {
             };
             if let Some(particles) = particles {
                 o.particles = particles;
+            }
+            // `worn`: the smoke worn on our avatar's chest instead, for
+            // RenderAttachedParticles (Preferences › Graphics)
+            if mode == "worn" {
+                o.parent_id = action_avatar(false).local_id;
+                o.state = 0x10; // chest
+                o.position = Vec3::new(0.0, 0.0, 0.3);
             }
             add(o);
             id += 1;
@@ -5552,6 +5660,10 @@ pub fn events() -> Vec<NetEvent> {
                 "",
             );
             if spec == "rigid" {
+                o.volume.path.curve_type = aurora_prim::params::LL_PCODE_PATH_LINE;
+                o.extra.flexible = None;
+            }
+            if spec == "missing-params" {
                 o.extra.flexible = None;
             }
             if k % 6 == 5 {
@@ -6309,6 +6421,7 @@ pub fn idle_animation() -> aurora_assets::Animation {
         loop_in: 0.0,
         loop_out: 4.0,
         looping: true,
+        ends_after: None,
         ease_in: 0.3,
         ease_out: 0.3,
         // relaxed, the upload window's default (hands at rest)
@@ -6387,6 +6500,7 @@ pub fn typing_animation() -> aurora_assets::Animation {
         loop_in: 0.0,
         loop_out: 1.0,
         looping: true,
+        ends_after: None,
         ease_in: 0.3,
         ease_out: 0.3,
         hand_pose: 0,
@@ -6702,7 +6816,7 @@ pub fn classic_events(shapes: &crate::scene::shape::ShapeParams) -> Vec<NetEvent
                 cof_version: 1,
                 appearance_version: 1,
                 hover_height: 0.0,
-                attachments: 0,
+                attachments: Vec::new(),
             })
         })
         .collect()
@@ -6779,7 +6893,7 @@ pub fn cloud_self_events(shapes: &crate::scene::shape::ShapeParams) -> Vec<NetEv
             cof_version: 1,
             appearance_version: 1,
             hover_height: 0.0,
-            attachments: 0,
+            attachments: Vec::new(),
         }),
     ]
 }
@@ -8523,6 +8637,9 @@ fn alpha_panels() -> [(Uuid, Option<Uuid>, &'static str); 6] {
 
 /// Pixels and dimensions of a procedural demo texture (RGBA8).
 pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
+    if let Some(texture) = legacy_bump::texture(id) {
+        return Some(texture);
+    }
     if *id == hud::TEX_MASK_PANEL {
         return Some(hud::mask_cutoff_texture());
     }
@@ -8731,6 +8848,9 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
             ..Default::default()
         },
     )];
+    if legacy_bump::enabled() {
+        list.push((legacy_bump::PBR_MATERIAL, legacy_bump::pbr_material()));
+    }
     for (mat, double_sided) in MAT_PBR_SIDED.into_iter().zip([false, true]) {
         list.push((
             mat,
@@ -8825,7 +8945,7 @@ pub fn legacy_materials() -> Vec<(Uuid, crate::scene::legacy_mat::LegacyMaterial
         diffuse_alpha_mode: alpha_mode::BLEND,
         alpha_cutoff: 0,
     };
-    vec![
+    let mut list = vec![
         (tangents::MAT, tangents::material()),
         (MAT_BLEND, base.clone()),
         (
@@ -8888,7 +9008,11 @@ pub fn legacy_materials() -> Vec<(Uuid, crate::scene::legacy_mat::LegacyMaterial
                 ..base
             },
         ),
-    ]
+    ];
+    if legacy_bump::enabled() {
+        list.push((legacy_bump::LEGACY_MATERIAL, legacy_bump::legacy_material()));
+    }
+    list
 }
 
 /// AURORA_DEMO_CAMERA="sit": a seat with a sit camera (llSetCameraEyeOffset
