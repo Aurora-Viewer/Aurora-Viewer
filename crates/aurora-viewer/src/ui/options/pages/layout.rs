@@ -127,7 +127,9 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 tr!("ui-options-hover-tips-show-help"),
                 &field!(hover_tips.enabled),
             );
-            // the one exception to the main switch (#2475), never greyed
+            // the one exception to the main switch (#2475): it only acts
+            // while world tooltips are off, so it is greyed while they are on
+            cx.greyed(cx.s.hover_tips.enabled);
             cx.toggle(
                 tr!("ui-options-hover-tips-avatars"),
                 tr!("ui-options-hover-tips-avatars-help"),
