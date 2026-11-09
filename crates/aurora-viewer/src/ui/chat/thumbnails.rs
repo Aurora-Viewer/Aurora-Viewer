@@ -199,8 +199,7 @@ fn toggle(ctx: &egui::Context, world: &mut World, st: &mut ChatUi, panels: &mut 
             st.popped.raise(Some(id), true);
         }
         (false, false) => {
-            world.social.focus_im = Some(id);
-            st.conv_focus_request = true;
+            world.focus_conversation(id, true);
             crate::ui::notifications::open_conversations(ctx, &mut panels.chat);
         }
     }

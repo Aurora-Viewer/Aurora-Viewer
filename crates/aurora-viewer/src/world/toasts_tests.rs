@@ -342,6 +342,7 @@ fn clicking_a_message_card_reads_its_conversation_and_focuses_its_tab() {
         // acknowledged: gone from the bell, the conversation read, its tab asked
         assert!(!w.notifications.list.iter().any(|n| n.id == id));
         assert_eq!(w.social.ims.iter().find(|s| s.other == session).unwrap().unread, 0);
+        assert!(w.social.focus_im_to_type, "the click leaves it ready to type in");
         assert_eq!(w.social.focus_im.take(), Some(session));
     }
     assert_eq!(w.notifications.unread(), 0);
@@ -354,6 +355,7 @@ fn clicking_a_friend_online_starts_an_im_and_offline_opens_nothing() {
     let off = w.notifications.push_presence(TOM, "Tom Smith is offline.", false);
     assert_eq!(w.open_from_notification(on), Some(JANE));
     assert!(w.social.has_session(&JANE));
+    assert!(w.social.focus_im_to_type);
     assert_eq!(w.social.focus_im.take(), Some(JANE));
     assert_eq!(w.open_from_notification(off), None);
     assert!(w.social.focus_im.is_none());

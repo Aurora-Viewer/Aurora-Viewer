@@ -1328,13 +1328,24 @@ fn apply_test_overrides(settings: &mut Settings) {
 fn show_conversation_to_type(
     ctx: &egui::Context,
     world: &mut crate::world::World,
-    chat: &mut ui::chat::ChatUi,
     conversations_open: &mut bool,
     conversation: uuid::Uuid,
 ) {
-    world.social.focus_im = Some(conversation);
-    chat.conv_focus_request = true;
+    world.focus_conversation(conversation, true);
     ui::notifications::open_conversations(ctx, conversations_open);
+}
+
+/// A conversation the user asked for (`World::focus_conversation(.., true)`)
+/// opens its window, even when it was closed or minimized: a notification
+/// card's "Reply by text", for one, is outside the Conversations window. A
+/// conversation in a window of its own is raised by the chat UI instead.
+fn open_conversations_for_focus(ctx: &egui::Context, world: &crate::world::World, chat: &ui::chat::ChatUi, conversations_open: &mut bool) {
+    if world.social.focus_im_to_type
+        && let Some(conversation) = world.social.focus_im
+        && !chat.in_own_window(conversation)
+    {
+        ui::notifications::open_conversations(ctx, conversations_open);
+    }
 }
 
 /// A conversation's toast or card clicked: acknowledges the notification and
@@ -1344,12 +1355,11 @@ fn show_conversation_to_type(
 fn open_notification_to_type(
     ctx: &egui::Context,
     world: &mut crate::world::World,
-    chat: &mut ui::chat::ChatUi,
     conversations_open: &mut bool,
     id: u64,
 ) -> Option<uuid::Uuid> {
     let conversation = world.open_from_notification(id)?;
-    show_conversation_to_type(ctx, world, chat, conversations_open, conversation);
+    show_conversation_to_type(ctx, world, conversations_open, conversation);
     Some(conversation)
 }
 
@@ -5414,8 +5424,7 @@ impl App {
                     if !self.world.social.ims.iter().any(|s| s.other == session) {
                         self.world.social.session_mut(session);
                     }
-                    self.world.social.focus_im = Some(session);
-                    self.chat_ui.conv_focus_request = true;
+                    self.world.focus_conversation(session, true);
                     self.notif_ui.open = false;
                     ui::notifications::open_conversations(ctx, &mut self.panels.chat);
                 }
@@ -7559,7 +7568,7 @@ impl App {
     /// Shows a conversation the user asked for with its field ready to type
     /// in (a notification's toast or card, `show_conversation_to_type`).
     fn show_conversation_to_type(&mut self, id: uuid::Uuid) {
-        show_conversation_to_type(&self.egui_ctx, &mut self.world, &mut self.chat_ui, &mut self.panels.chat, id);
+        show_conversation_to_type(&self.egui_ctx, &mut self.world, &mut self.panels.chat, id);
     }
 
     /// The Conversations window for a conversation the user asked for (Send
@@ -8029,7 +8038,7 @@ impl App {
             }
             ContactsAction::GroupChat(id) => {
                 self.world.ui_sounds.push(UiSound::StartIm);
-                self.world.start_group_chat(id);
+                self.world.start_group_chat(id, true);
                 self.open_conversation_to_type(id);
             }
             ContactsAction::Net(cmd) => {
@@ -11945,7 +11954,7 @@ impl App {
                     _ => None,
                 });
                 if let Some(id) = nova {
-                    open_notification_to_type(&self.egui_ctx, &mut self.world, &mut self.chat_ui, &mut self.panels.chat, id);
+                    open_notification_to_type(&self.egui_ctx, &mut self.world, &mut self.panels.chat, id);
                 }
             }
         }
@@ -16211,6 +16220,7 @@ impl App {
                     }
                 };
                 let mut mini = Vec::new();
+                open_conversations_for_focus(&ctx, &self.world, &self.chat_ui, &mut self.panels.chat);
                 let mut open = self.panels.chat;
                 let mut contact_actions = Vec::new();
                 self.chat_ui.set_style(self.settings.chat_style);
@@ -16469,7 +16479,7 @@ impl App {
                         ui::chat::ConvAction::Contacts(c) => contact_actions.push(c),
                         ui::chat::ConvAction::People(pa) => contacts_people.push(pa),
                         ui::chat::ConvAction::OpenIm(id) => self.world.start_text_conference(vec![id]),
-                        ui::chat::ConvAction::StartGroupChat(group) => self.world.start_group_chat(group),
+                        ui::chat::ConvAction::StartGroupChat(group) => self.world.start_group_chat(group, true),
                         // LLIMModel::sendTypingState: to the resident, in
                         // the session of the two of us (agent XOR other)
                         ui::chat::ConvAction::Typing { to, typing } => a.typing.push(NetCommand::SendImDialog {
@@ -16632,7 +16642,7 @@ impl App {
                         }
                         ui::people::PeopleAction::GroupChat(id) => {
                             self.world.ui_sounds.push(UiSound::StartIm);
-                            self.world.start_group_chat(id);
+                            self.world.start_group_chat(id, true);
                             self.show_conversations();
                         }
                         ui::people::PeopleAction::GroupNotices(id, on) => self.world.groups.set_accept_notices(id, on),
@@ -17095,9 +17105,7 @@ impl App {
                             .list
                             .iter()
                             .any(|n| n.id == id && matches!(n.data, crate::world::notifications::Data::Presence { .. }));
-                        if open_notification_to_type(&ctx, &mut self.world, &mut self.chat_ui, &mut self.panels.chat, id).is_some()
-                            && presence
-                        {
+                        if open_notification_to_type(&ctx, &mut self.world, &mut self.panels.chat, id).is_some() && presence {
                             self.world.ui_sounds.push(UiSound::StartIm);
                         }
                         continue;
@@ -17365,7 +17373,7 @@ impl App {
                             self.contacts_ui.ask_modify_rights(friend, rights, grant)
                         }
                         ui::profile::ProfileAction::GroupChat(id) => {
-                            self.world.start_group_chat(id);
+                            self.world.start_group_chat(id, true);
                             self.show_conversations();
                         }
                         // the conversations' give confirmation (#991)
@@ -21564,24 +21572,43 @@ mod tests {
         use super::open_notification_to_type;
         let ctx = egui::Context::default();
         let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
-        let mut chat = crate::ui::chat::ChatUi::default();
         let mut open = false;
         let jane = uuid::Uuid::from_u128(0x2285);
         let id = world.notifications.push_message(jane, jane, "Jane Doe", "hello", true);
-        assert_eq!(open_notification_to_type(&ctx, &mut world, &mut chat, &mut open, id), Some(jane));
+        assert_eq!(open_notification_to_type(&ctx, &mut world, &mut open, id), Some(jane));
         assert!(open, "the Conversations window opens");
-        assert!(chat.conv_focus_request, "the conversation's field takes the keyboard");
+        assert!(world.social.focus_im_to_type, "the conversation's field takes the keyboard");
         assert_eq!(world.social.focus_im, Some(jane), "the Conversations window shows that tab");
         assert!(
             !world.notifications.list.iter().any(|n| n.id == id),
             "the click acknowledges the card"
         );
         // an offline friend is a toast that opens nothing and takes no keyboard
-        chat.conv_focus_request = false;
+        world.social.focus_im_to_type = false;
         open = false;
         let off = world.notifications.push_presence(jane, "Jane Doe is offline.", false);
-        assert_eq!(open_notification_to_type(&ctx, &mut world, &mut chat, &mut open, off), None);
-        assert!(!open && !chat.conv_focus_request);
+        assert_eq!(open_notification_to_type(&ctx, &mut world, &mut open, off), None);
+        assert!(!open && !world.social.focus_im_to_type);
+    }
+
+    /// A conversation the user asked for opens the Conversations window even
+    /// when it was closed (Reply by text comes from a notification card);
+    /// a call's show-only request does not open it by itself.
+    #[test]
+    fn a_user_requested_conversation_opens_its_window_a_call_does_not() {
+        use super::open_conversations_for_focus;
+        let ctx = egui::Context::default();
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let chat = crate::ui::chat::ChatUi::default();
+        let jane = uuid::Uuid::from_u128(0x2285);
+        let mut open = false;
+        world.focus_conversation(jane, true);
+        open_conversations_for_focus(&ctx, &world, &chat, &mut open);
+        assert!(open, "the conversation the user asked for opens its window");
+        open = false;
+        world.focus_conversation(jane, false);
+        open_conversations_for_focus(&ctx, &world, &chat, &mut open);
+        assert!(!open, "a call does not open the window by itself");
     }
 
     #[test]
