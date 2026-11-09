@@ -1632,6 +1632,9 @@ pub struct AuroraScene {
     pub away: bool,
     /// `new`: the menu of the column's "new conversation" button open.
     pub new_menu: bool,
+    /// The column collapsed at any width, or opened in a narrow window.
+    pub collapsed: bool,
+    pub opened: bool,
     /// `volume`: the menu of the nearby chat's volume open.
     pub volume_menu: bool,
     /// `channel`: the nearby chat's channel selector shown.
@@ -1677,6 +1680,8 @@ fn parse_aurora_scene(v: &str) -> Option<AuroraScene> {
         call: None,
         away: false,
         new_menu: false,
+        collapsed: false,
+        opened: false,
         volume_menu: false,
         channel: false,
         friend: None,
@@ -1700,6 +1705,8 @@ fn parse_aurora_scene(v: &str) -> Option<AuroraScene> {
             "call-p2p" => scene.call = Some(AuroraCall::P2p),
             "conference" => scene.call = Some(AuroraCall::Conference),
             "new" => scene.new_menu = true,
+            "collapsed" => scene.collapsed = true,
+            "opened" => scene.opened = true,
             "volume" => scene.volume_menu = true,
             "channel" => scene.channel = true,
             "friend-away" => scene.friend = Some(crate::ui::presence::Status::Away),

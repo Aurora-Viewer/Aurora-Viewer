@@ -16389,6 +16389,7 @@ impl App {
                 self.chat_ui.send_typing = self.settings.send_typing_state;
                 self.chat_ui.typing_chevron = self.settings.typing_chevron;
                 self.chat_ui.flash_unread = self.settings.flash_unread_conversations;
+                self.chat_ui.follow_column_setting(self.settings.chat_column_collapsed);
                 self.chat_ui.own_windows = self.settings.conversations_own_windows
                     || (self.demo && crate::demo::popout_scenario() == Some(crate::demo::Popout::Option));
                 // AURORA_DEMO_CONV_POPOUT: at frame 640, the friend's IM and
@@ -16581,6 +16582,15 @@ impl App {
                 }
                 for c in conversation_actions {
                     match c {
+                        ui::chat::ConvAction::ColumnCollapsed(collapsed) => {
+                            // (demo mode: this session only, never the file)
+                            if self
+                                .chat_ui
+                                .column_collapsed_by_button(&mut self.settings.chat_column_collapsed, collapsed, self.demo)
+                            {
+                                self.settings.save();
+                            }
+                        }
                         ui::chat::ConvAction::Local(out) => a.chat = Some(out),
                         ui::chat::ConvAction::Im { to, text } => a.ims.push((to, text)),
                         ui::chat::ConvAction::OfferTeleport(id) => a.offer_tp.push(id),
@@ -19005,6 +19015,8 @@ impl ApplicationHandler for App {
                     self.chat_ui.demo_new_menu = scene.new_menu;
                     self.chat_ui.demo_volume_menu = scene.volume_menu;
                     self.chat_ui.demo_channel = scene.channel;
+                    self.chat_ui.demo_column = Some(scene.collapsed);
+                    self.chat_ui.column.opened = scene.opened;
                     // the window alone, to compare with the mockups
                     self.panels.people = false;
                     self.panels.inventory = false;
