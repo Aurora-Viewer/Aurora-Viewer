@@ -13,19 +13,23 @@
 //! Deliberate differences, each for the resident:
 //! * media on a prim is filtered too (the Legacy Viewer filters the parcel
 //!   media and music only), and the check comes before anything reaches the
-//!   site, the request that discovers the media type included; media on our
-//!   own worn items (attachments, HUDs) is not asked about by default (the
-//!   list's refusals still apply), closer to the Legacy Viewer, which asks
-//!   about no prim media at all;
+//!   site, the request that discovers the media type included; media on
+//!   worn items (attachments, HUDs) we made ourselves is not asked about by
+//!   default (the list's refusals still apply), closer to the Legacy Viewer,
+//!   which asks about no prim media at all;
 //! * a domain rule matches that domain and its subdomains at a dot
 //!   (`example.com` no longer matches `badexample.com`), and the most
 //!   precise rule wins (the URL, then the longest domain) instead of the
 //!   first one added;
 //! * "only this time" holds for that URL until logout, instead of until
 //!   another URL is asked about;
-//! * a URL without a host (`data:`, `about:`) is not asked about: by
-//!   itself it contacts no site (what a page loads afterwards is never
-//!   filtered, there as here);
+//! * a `data:` URL is asked about under the domain "data", as the Legacy
+//!   Viewer's extractDomain reads it (a page it holds can load any site,
+//!   and what a page loads afterwards is never filtered, there as here);
+//!   `about:blank` loads without a question;
+//! * a URL that runs a script or reads this computer (`javascript:`,
+//!   `file:`, `blob:`, the browser's own pages...) never loads from the
+//!   world, whatever the list says and with the filter off too;
 //! * one question that offers to remember the answer, instead of two in a
 //!   row, with the first use's explanation in it (FirstMediaFilter) instead
 //!   of a dialog before it.
@@ -129,19 +133,97 @@ pub struct MediaFilter {
     /// Lines for the local chat (FSCommon::report_to_nearby_chat), drained
     /// by the app.
     pub messages: Vec<String>,
+    /// Radio intent survives refusals. Suppress the same refusal on successive
+    /// frames, as LLViewerParcelMedia::filterAudioUrl does with mAudioLastURL.
+    denied_music: Option<String>,
 }
 
-/// Schemes whose URLs name no site.
-const HOSTLESS: [&str; 5] = ["data", "about", "javascript", "blob", "mailto"];
+/// Schemes whose URLs name no site: asked about under the scheme's name,
+/// as extractDomain makes `data:text/html,...` the domain "data".
+const HOSTLESS: [&str; 3] = ["data", "about", "mailto"];
+
+/// Schemes media from the world never loads: a script, a file of this
+/// computer, a page's own memory, the embedded browser's own pages.
+const REFUSED: [&str; 10] = [
+    "javascript",
+    "vbscript",
+    "file",
+    "blob",
+    "filesystem",
+    "view-source",
+    "chrome",
+    "chrome-extension",
+    "chrome-devtools",
+    "devtools",
+];
 
 fn is_scheme(s: &str) -> bool {
     s.starts_with(|c: char| c.is_ascii_alphabetic()) && s.chars().all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c))
 }
 
+/// The scheme of a URL, lower case, when it has one (`host:port` has none).
+fn scheme_of(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once(':')?;
+    let port = !rest.starts_with("//")
+        && rest
+            .split(['/', '?', '#'])
+            .next()
+            .is_some_and(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
+    (is_scheme(scheme) && !port).then(|| scheme.to_ascii_lowercase())
+}
+
+/// The scheme of a media URL that never loads from the world (`REFUSED`,
+/// or an `about:` page other than `about:blank`), for the chat line and
+/// the log; `None` for any other URL. Read as the browser will: spaces and
+/// control characters around it and tabs or line breaks in it do not
+/// count, nor does the case.
+pub fn refused_scheme(url: &str) -> Option<String> {
+    let url = url.trim_matches(|c: char| c <= ' ');
+    let (scheme, rest) = url.split_once(':')?;
+    let scheme: String = scheme
+        .chars()
+        .filter(|c| !matches!(c, '\t' | '\n' | '\r'))
+        .collect::<String>()
+        .to_ascii_lowercase();
+    let blank = || {
+        let page = rest.split(['?', '#']).next().unwrap_or("");
+        page.eq_ignore_ascii_case("blank")
+    };
+    (REFUSED.contains(&scheme.as_str()) || (scheme == "about" && !blank())).then_some(scheme)
+}
+
+/// What a URL leads to, before any rule.
+#[derive(Debug, PartialEq, Eq)]
+enum Target {
+    /// A site, by its domain (a pseudo-domain for `data:`).
+    Site(String),
+    /// `about:blank`: an empty page.
+    Blank,
+    /// A scheme `refused_scheme` names.
+    Refused(String),
+}
+
+fn target(url: &str) -> Target {
+    let url = url.trim();
+    if let Some(scheme) = refused_scheme(url) {
+        return Target::Refused(scheme);
+    }
+    match domain(url) {
+        Some(host) => Target::Site(host),
+        // extractDomain keeps what comes before the first ":" of a URL
+        // without "//" ("data"); `about:blank` is all that is left of
+        // `about:`, and an empty URL loads nothing
+        None => match scheme_of(url) {
+            Some(scheme) if scheme != "about" => Target::Site(scheme),
+            _ => Target::Blank,
+        },
+    }
+}
+
 /// LLViewerParcelMedia::extractDomain: the host of a URL, lower case,
 /// without the scheme, the user, the port nor the path; a URL without a
 /// scheme starts with its host. `None` for a URL without a host (`data:`,
-/// `about:`, `file:///`).
+/// `about:`, `file:///`): `target` names those.
 pub fn domain(url: &str) -> Option<String> {
     let url = url.trim();
     let rest = match url.find("://") {
@@ -268,25 +350,57 @@ impl MediaFilter {
     /// to load: the list, then this session's answers, else the question.
     /// A refusal is told in the local chat.
     pub fn check(&mut self, url: &str, source: Source) -> Verdict {
-        self.decide(url, source, true)
+        let url = url.trim();
+        let notify = source != Source::Music || self.denied_music.as_deref() != Some(url);
+        let verdict = self.decide(url, source, true, notify);
+        if source == Source::Music {
+            match verdict {
+                Verdict::Deny if notify => self.denied_music = Some(url.to_owned()),
+                Verdict::Deny => {}
+                _ => self.denied_music = None,
+            }
+        }
+        verdict
     }
 
     /// The same for a media the resident trusts without being asked (on
-    /// their own worn items): a site the list or this session refused stays
+    /// worn items they made): a site the list or this session refused stays
     /// refused, any other loads, and no question is queued.
     pub fn check_trusted(&mut self, url: &str, source: Source) -> Verdict {
-        self.decide(url, source, false)
+        self.decide(url, source, false, true)
     }
 
-    fn decide(&mut self, url: &str, source: Source, ask: bool) -> Verdict {
+    /// A URL whose scheme never loads (`REFUSED`): told in the local chat,
+    /// whether the filter is on or not. True when refused.
+    pub fn refuse_scheme(&mut self, url: &str, source: Source) -> bool {
+        let Some(scheme) = refused_scheme(url) else {
+            return false;
+        };
+        log::info!("media filter: a {scheme}: URL blocked");
+        let what = format!("{scheme}:");
+        self.messages.push(match source {
+            Source::Music => aurora_i18n::tr!("media-filter-music-blocked", domain = what),
+            _ => aurora_i18n::tr!("media-filter-media-blocked", domain = what),
+        });
+        true
+    }
+
+    fn decide(&mut self, url: &str, source: Source, ask: bool, notify: bool) -> Verdict {
         let url = url.trim();
-        let Some(host) = domain(url) else {
-            return Verdict::Allow;
+        let host = match target(url) {
+            Target::Site(host) => host,
+            Target::Blank => return Verdict::Allow,
+            Target::Refused(_) => {
+                if notify {
+                    self.refuse_scheme(url, source);
+                }
+                return Verdict::Deny;
+            }
         };
         match rule_for(&self.rules, url, &host).or_else(|| self.session.get(url).copied()) {
             Some(Action::Allow) => Verdict::Allow,
             Some(Action::Deny) => {
-                if !self.just_denied.remove(url) {
+                if !self.just_denied.remove(url) && notify {
                     log::info!("media filter: {host} blocked");
                     self.messages.push(match source {
                         Source::Music => aurora_i18n::tr!("media-filter-music-blocked", domain = host),
@@ -398,6 +512,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn parcel_music_refusals_are_quiet_but_rule_changes_and_consent_are_rechecked() {
+        let mut filter = MediaFilter::default();
+        let station = "https://radio.example/live";
+        assert_eq!(filter.check(station, Source::Music), Verdict::Ask);
+        assert_eq!(filter.questions.len(), 1);
+        filter.answer(station, false, Remember::Once);
+        let messages = filter.messages.len();
+        for _ in 0..8 {
+            assert_eq!(filter.check(station, Source::Music), Verdict::Deny);
+        }
+        assert_eq!(filter.messages.len(), messages);
+        filter.apply(Edit::Set("radio.example".into(), Action::Allow));
+        assert_eq!(filter.check(station, Source::Music), Verdict::Allow);
+        filter.apply(Edit::Set("radio.example".into(), Action::Deny));
+        for _ in 0..8 {
+            assert_eq!(filter.check(station, Source::Music), Verdict::Deny);
+        }
+        assert_eq!(filter.messages.len(), messages + 1, "a newly blocked station is still reported");
+        filter.apply(Edit::Remove("radio.example".into()));
+        assert_eq!(filter.check("https://new.example/live", Source::Music), Verdict::Ask);
+        assert_eq!(filter.questions.len(), 1);
+        filter.answer("https://new.example/live", true, Remember::Once);
+        assert_eq!(filter.check("https://new.example/live", Source::Music), Verdict::Allow);
+    }
+
+    #[test]
     fn domain_is_the_host_alone() {
         assert_eq!(domain("http://Example.COM/video.mp4").as_deref(), Some("example.com"));
         assert_eq!(
@@ -440,12 +580,88 @@ mod tests {
     #[test]
     fn an_unknown_site_is_asked_about_once() {
         let mut f = MediaFilter::default();
-        assert_eq!(f.check("data:text/html,x", Source::PrimMedia), Verdict::Allow);
         assert_eq!(f.check("http://a.example/1", Source::PrimMedia), Verdict::Ask);
         assert_eq!(f.check("http://a.example/1", Source::PrimMedia), Verdict::Ask);
         assert_eq!(f.check("http://b.example/", Source::Music), Verdict::Ask);
         assert_eq!(f.question().map(|q| q.domain.as_str()), Some("a.example"));
         assert_eq!(f.questions.len(), 2);
+    }
+
+    #[test]
+    fn a_data_page_is_asked_about_as_the_domain_data() {
+        let mut f = MediaFilter::default();
+        let page = "data:text/html,<script>location='http://a.example/'</script>";
+        assert_eq!(f.check(page, Source::PrimMedia), Verdict::Ask);
+        assert_eq!(f.question().map(|q| q.domain.as_str()), Some("data"));
+        // a worn item does not ask, but a refusal of "data" holds
+        assert_eq!(f.check_trusted("DATA:text/plain,x", Source::PrimMedia), Verdict::Allow);
+        f.answer(page, false, Remember::Domain);
+        assert_eq!(
+            f.rules,
+            vec![Rule {
+                pattern: "data".into(),
+                action: Action::Deny
+            }]
+        );
+        assert_eq!(f.check("data:text/html,other", Source::ParcelMedia), Verdict::Deny);
+        assert_eq!(f.check_trusted("data:text/html,other", Source::PrimMedia), Verdict::Deny);
+        // remembered as allowed, as in the Legacy Viewer's list
+        f.apply(Edit::Set("data".into(), Action::Allow));
+        assert_eq!(f.check(page, Source::PrimMedia), Verdict::Allow);
+        // an empty page needs no question
+        let mut f = MediaFilter::default();
+        for url in ["about:blank", "About:Blank", "about:blank#top", ""] {
+            assert_eq!(f.check(url, Source::PrimMedia), Verdict::Allow, "{url:?}");
+        }
+        assert!(f.question().is_none());
+    }
+
+    #[test]
+    fn scripts_files_and_browser_pages_never_load() {
+        for url in [
+            "javascript:alert(1)",
+            "javascript:1",
+            " JavaScript:void(0)",
+            "java\tscript:alert(1)",
+            "\u{1}javascript:alert(1)",
+            "vbscript:msgbox(1)",
+            "file:///C:/Users/x/secret.txt",
+            "FILE://server/share/page.html",
+            "file:page.html",
+            "blob:https://a.example/0e346d8b-4433-4d66-a6b0-fd37083abc4c",
+            "filesystem:https://a.example/temporary/x",
+            "view-source:file:///C:/x",
+            "chrome://settings",
+            "devtools://devtools/bundled/inspector.html",
+            "about:version",
+            "about:srcdoc",
+        ] {
+            assert!(refused_scheme(url).is_some(), "{url:?}");
+            let mut f = MediaFilter::default();
+            // whatever the list says, trusted or not
+            f.apply(Edit::Set("javascript".into(), Action::Allow));
+            f.apply(Edit::Set("file".into(), Action::Allow));
+            assert_eq!(f.check(url, Source::PrimMedia), Verdict::Deny, "{url:?}");
+            assert_eq!(f.check_trusted(url, Source::PrimMedia), Verdict::Deny, "{url:?}");
+            assert_eq!(f.check(url, Source::Music), Verdict::Deny, "{url:?}");
+            assert!(f.question().is_none(), "{url:?}");
+            assert_eq!(f.messages.len(), 3, "told each time: {url:?}");
+        }
+        // only the scheme is named, never the rest of the URL
+        let mut f = MediaFilter::default();
+        f.check("file:///C:/Users/x/secret.txt", Source::ParcelMedia);
+        assert!(f.messages[0].contains("file:") && !f.messages[0].contains("secret"));
+        for url in [
+            "http://a.example/file:x",
+            "https://a.example/?u=javascript:1",
+            "radio.example.org:8000/live",
+            "localhost:8000",
+            "about:blank",
+            "rtsp://stream.example.net:554",
+            "data:text/html,x",
+        ] {
+            assert_eq!(refused_scheme(url), None, "{url:?}");
+        }
     }
 
     #[test]

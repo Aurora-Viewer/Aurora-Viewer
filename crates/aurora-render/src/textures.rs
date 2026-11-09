@@ -95,9 +95,15 @@ const MAX_PAGES: u32 = 1 << (32 - LAYER_BITS);
 /// the two were one number, at most 16,384, and the table kept that size
 /// once textures went to pages: arriving in a busy region (9,000 textures)
 /// 45 s or less after leaving another, the last 1,500 textures found no
-/// slot and were drawn white for as long as they were used. Four times
-/// that: more than the video memory holds textures for.
-pub const SLOTS: u32 = 1 << 16;
+/// slot and were drawn white for as long as they were used. Then four
+/// times that, 65,536: but a texture holds its slot while any object of a
+/// connected region uses it, in view or not, and the camera moved through
+/// an estate of busy neighbouring regions can keep that many in use
+/// (#2822). Sixteen times: a slot without texels shows the shared
+/// placeholder and costs 4 bytes of the location buffer (1 MB in all),
+/// and the slots are handed out lowest first, so a scene of a few
+/// thousand textures uploads no more of that buffer than before.
+pub const SLOTS: u32 = 1 << 18;
 const MAX_SLOTS: u32 = 1 << 20;
 
 /// Slots of the table: [`SLOTS`], or what AURORA_TEXTURE_SLOTS asks for (to
@@ -204,7 +210,7 @@ struct PageWorker {
 }
 
 impl PageWorker {
-    fn new(device: &wgpu::Device) -> Self {
+    fn new(device: &wgpu::Device, integrated: bool) -> Self {
         let (tx, rx) = std::sync::mpsc::channel::<PageJob>();
         let (made_tx, made) = std::sync::mpsc::channel::<MadePage>();
         let device = device.clone();
@@ -215,7 +221,7 @@ impl PageWorker {
                 match job {
                     PageJob::Make { key, layers } => {
                         let t0 = Instant::now();
-                        let (texture, view) = match make_page(&device, key, layers) {
+                        let (texture, view) = match make_page(&device, key, layers, integrated) {
                             Ok(page) => page,
                             Err(e) => {
                                 // (nothing comes back: once the request times
@@ -315,7 +321,7 @@ fn log_slow_page(key: PageKey, layers: u32, ms: f32, by: &str) {
 }
 
 /// A page, or why video memory could not hold it.
-fn make_page(device: &wgpu::Device, key: PageKey, layers: u32) -> Result<DeadPage, String> {
+fn make_page(device: &wgpu::Device, key: PageKey, layers: u32, integrated: bool) -> Result<DeadPage, String> {
     let desc = wgpu::TextureDescriptor {
         label: Some("texture page"),
         size: wgpu::Extent3d {
@@ -336,7 +342,7 @@ fn make_page(device: &wgpu::Device, key: PageKey, layers: u32) -> Result<DeadPag
         dimension: Some(wgpu::TextureViewDimension::D2Array),
         ..Default::default()
     };
-    crate::gpu_alloc::try_texture(device, &desc, &view, layers as u64 * key.layer_bytes())
+    crate::gpu_alloc::try_texture(device, &desc, &view, layers as u64 * key.layer_bytes(), integrated)
 }
 
 const NO_SLOT: u32 = u32::MAX;
@@ -575,6 +581,9 @@ struct PageStore {
     warned_full: bool,
     /// A page could not be made (video memory full): when to try again.
     page_backoff: crate::gpu_alloc::Backoff,
+    /// The last `replace` / `replace_staged` was refused for want of a page
+    /// video memory could not hold (not for its size or format).
+    refused_for_memory: bool,
     /// Pages created so far, by whom and in how long (AURORA_PROFILE).
     made: PagesMade,
     /// Pages the page thread made, waiting for the first texture of their
@@ -583,6 +592,7 @@ struct PageStore {
     /// Emptied pages the current bind group may still hold: taken by
     /// `TextureTable::maintain` once it is rebuilt.
     retired: Vec<DeadPage>,
+    integrated: bool,
 }
 
 /// Pages created since the start: by the caller (the main thread) and by
@@ -600,9 +610,16 @@ pub struct PagesMade {
 }
 
 impl PageStore {
+    #[cfg(test)]
     fn new(capacity: u32, page_capacity: u32, max_layers: u32, max_dim: u32) -> Self {
+        Self::new_with_integrated(capacity, page_capacity, max_layers, max_dim, false)
+    }
+
+    fn new_with_integrated(capacity: u32, page_capacity: u32, max_layers: u32, max_dim: u32, integrated: bool) -> Self {
         Self {
-            slots: Vec::with_capacity(capacity as usize),
+            // (room for the slots the table held before #2822, as then:
+            // past them it grows, a few times at most)
+            slots: Vec::with_capacity(capacity.min(1 << 16) as usize),
             free_slots: BinaryHeap::new(),
             capacity,
             pages: Vec::new(),
@@ -623,9 +640,11 @@ impl PageStore {
             eager: false,
             warned_full: false,
             page_backoff: Default::default(),
+            refused_for_memory: false,
             made: PagesMade::default(),
             spares: Vec::new(),
             retired: Vec::new(),
+            integrated,
         }
     }
 
@@ -747,11 +766,12 @@ impl PageStore {
                 // texture waits, and the page is asked again a little later
                 let now = Instant::now();
                 if !self.page_backoff.ready(now) {
+                    self.refused_for_memory = true;
                     return None;
                 }
                 let layers = self.next_page_layers(key);
                 let t0 = Instant::now();
-                match make_page(device, key, layers) {
+                match make_page(device, key, layers, self.integrated) {
                     Ok((texture, view)) => {
                         self.page_backoff.succeeded();
                         let ms = t0.elapsed().as_secs_f32() * 1000.0;
@@ -770,6 +790,7 @@ impl PageStore {
                             );
                         }
                         self.page_backoff.failed(now);
+                        self.refused_for_memory = true;
                         return None;
                     }
                 }
@@ -890,9 +911,15 @@ impl PageStore {
     /// arrive (`replace` / `replace_staged`): nothing is written and no
     /// layer is taken.
     fn create_placeholder(&mut self) -> Option<u32> {
+        self.create_shared(PLACEHOLDER)
+    }
+
+    /// A derived normal loads through a stable slot, sampling the reserved
+    /// flat normal until its first upload. Shared slots allocate no layer.
+    fn create_shared(&mut self, reserved: u32) -> Option<u32> {
         let (key, page, layer) = self
             .slots
-            .get(PLACEHOLDER as usize)
+            .get(reserved as usize)
             .and_then(Option::as_ref)
             .map(|s| (s.key, s.page, s.layer))?;
         let slot = match self.free_slots.pop() {
@@ -948,6 +975,7 @@ impl PageStore {
     }
 
     fn replace(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, slot: u32, mips: &[MipLevel]) -> bool {
+        self.refused_for_memory = false;
         let Some(key) = page_key(mips, self.max_dim) else {
             return false;
         };
@@ -961,6 +989,7 @@ impl PageStore {
     /// Like `replace`, from a mip chain staged by a background job: the
     /// copies are recorded in the frame's upload encoder.
     fn replace_staged(&mut self, device: &wgpu::Device, uploads: &mut UploadQueue, slot: u32, staged: &StagedTexture) -> bool {
+        self.refused_for_memory = false;
         if staged.format == TexelFormat::Bc7 && !self.bc7 {
             return false;
         }
@@ -1216,6 +1245,18 @@ impl TextureTable {
     /// `capacity`: slots (textures) of the table; `bindable`: elements the
     /// device lets a shader bind in one array, which bounds the pages.
     pub fn new(device: &wgpu::Device, writes: &mut GpuWrites, capacity: u32, bindable: u32, anisotropy: u16) -> Self {
+        Self::new_with_integrated(device, writes, capacity, bindable, anisotropy, false)
+    }
+
+    /// As [`Self::new`], with the selected adapter class for page allocation.
+    pub fn new_with_integrated(
+        device: &wgpu::Device,
+        writes: &mut GpuWrites,
+        capacity: u32,
+        bindable: u32,
+        anisotropy: u16,
+        integrated: bool,
+    ) -> Self {
         let partial = device.features().contains(wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY);
         let limits = device.limits();
         let capacity = capacity.max(RESERVED + 1);
@@ -1259,7 +1300,7 @@ impl TextureTable {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let mut store = PageStore::new(capacity, page_capacity, max_layers, limits.max_texture_dimension_2d);
+        let mut store = PageStore::new_with_integrated(capacity, page_capacity, max_layers, limits.max_texture_dimension_2d, integrated);
         store.bc7 = device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
         for (slot, rgba) in [
             (WHITE, [255u8, 255, 255, 255]),
@@ -1315,7 +1356,7 @@ impl TextureTable {
             last_rebuild: Instant::now(),
             last_compact: Instant::now(),
             doomed: Default::default(),
-            worker: PageWorker::new(device),
+            worker: PageWorker::new(device, integrated),
             requests: PageRequests::default(),
             last_destroy: Instant::now(),
             shrinks: Vec::new(),
@@ -1498,6 +1539,11 @@ impl TextureTable {
         self.store.create_placeholder()
     }
 
+    /// A streamed derived normal, flat until ready, without allocating texels.
+    pub fn create_normal_placeholder(&mut self) -> Option<u32> {
+        self.store.create_shared(FLAT_NORMAL)
+    }
+
     /// A texture that will not come: its slot, while it still shows the
     /// loading placeholder, shows the missing grey ([`MISSING`]). Costs no
     /// GPU work. False for a slot with texels of its own.
@@ -1514,6 +1560,13 @@ impl TextureTable {
     /// must be ready); the copies go to the frame's upload encoder.
     pub fn replace_staged(&mut self, device: &wgpu::Device, uploads: &mut UploadQueue, slot: u32, staged: &StagedTexture) -> bool {
         self.store.replace_staged(device, uploads, slot, staged)
+    }
+
+    /// After a refused `replace` / `replace_staged`: when to upload it
+    /// again if video memory was full (its page could not be made), `None`
+    /// if it was refused for good (size, format, table full).
+    pub fn retry_after_refusal(&self) -> Option<Instant> {
+        retry_after(self.store.refused_for_memory, self.store.page_backoff.next_try(), Instant::now())
     }
 
     /// Size of the texture in a slot (level 0).
@@ -1790,11 +1843,13 @@ pub fn alpha_coverage(data: &[u8], cutoff: u8) -> f32 {
 /// averages thin opaque texels with the empty ones around them, so a leaf,
 /// a blade of grass, a hair strand or a fence wire falls under the cutoff a
 /// few levels down and the foliage thins out with the distance. Each level
-/// from 1 on gets its alpha scaled so that the share of texels at or above
-/// the cutoff matches level 0's: the threshold of the level that keeps that
-/// share is found on its alpha histogram, and the level is scaled by
-/// cutoff / threshold. Level 0 and the colour are left as they are; a
-/// level that level 0 leaves fully drawn or fully hidden is not touched.
+/// from 1 on can have its alpha raised to restore level 0's share: find the
+/// threshold on its histogram and scale by cutoff / threshold. A fuller
+/// level stays at the plain average (LLImageBase::generateMip,
+/// indra/llimage/llimage.cpp). Never lower alpha: the same texture may be
+/// used with a higher material cutoff, and dimming even its opaque texels
+/// erased HUD panels (#2163, #2452). Level 0 and colour stay unchanged;
+/// fully drawn or fully hidden textures are not touched.
 pub fn preserve_alpha_coverage(mips: &mut [(u32, u32, Vec<u8>)], cutoff: u8) {
     let cutoff = cutoff.max(1);
     let Some(target) = mips.first().map(|(_, _, d)| alpha_coverage(d, cutoff)) else {
@@ -1818,7 +1873,10 @@ pub fn preserve_alpha_coverage(mips: &mut [(u32, u32, Vec<u8>)], cutoff: u8) {
             kept[t] = kept[t + 1] + hist[t];
         }
         let want = target * n as f32;
-        let threshold = (1..256usize)
+        if kept[usize::from(cutoff)] as f32 >= want {
+            continue;
+        }
+        let threshold = (1..=usize::from(cutoff))
             .min_by(|&a, &b| {
                 let da = (kept[a] as f32 - want).abs();
                 let db = (kept[b] as f32 - want).abs();
@@ -1837,6 +1895,13 @@ pub fn preserve_alpha_coverage(mips: &mut [(u32, u32, Vec<u8>)], cutoff: u8) {
             p[3] = (p[3] as u32 * cut / threshold).min(255) as u8;
         }
     }
+}
+
+/// When a texture refused by `replace` is uploaded again: at the pages'
+/// next try if video memory refused its page, `now` when no try is waiting
+/// any more; `None` when it was refused for good (size, format, table).
+fn retry_after(refused_for_memory: bool, next_try: Option<Instant>, now: Instant) -> Option<Instant> {
+    refused_for_memory.then(|| next_try.unwrap_or(now))
 }
 
 #[cfg(test)]
@@ -1863,6 +1928,18 @@ mod tests {
     /// average takes both, as the Legacy Viewer's mips; the weighted one
     /// keeps the blade's.
     #[test]
+    fn only_a_texture_refused_for_memory_is_uploaded_again() {
+        let now = Instant::now();
+        let later = now + std::time::Duration::from_secs(4);
+        // refused for its size or format, or the table full: for good
+        assert_eq!(retry_after(false, Some(later), now), None);
+        assert_eq!(retry_after(false, None, now), None);
+        // its page refused: at the pages' next try, or now if none waits
+        assert_eq!(retry_after(true, Some(later), now), Some(later));
+        assert_eq!(retry_after(true, None, now), Some(now));
+    }
+
+    #[test]
     fn empty_texels_colour_blends_into_the_mips() {
         let mut px = vec![0u8; 2 * 2 * 4];
         for (i, p) in px.chunks_mut(4).enumerate() {
@@ -1880,6 +1957,39 @@ mod tests {
         assert!((alpha_coverage(&mips[0].2, MASK_CUTOFF) - 0.25).abs() < 1e-3);
         // two levels down a line is a quarter of a texel: nothing draws
         assert_eq!(alpha_coverage(&mips[2].2, MASK_CUTOFF), 0.0);
+    }
+
+    #[test]
+    fn alpha_coverage_keeps_masked_hud_panels_at_the_creators_cutoff() {
+        // An opaque panel with a one-texel transparent border. Its 8 x 8
+        // mip already covers more than level 0 at the automatic cutoff.
+        // Scaling that coverage down made even its opaque centre 165/255:
+        // a HUD material cut at 200/255 disappeared altogether (#2163).
+        let mut pixels = [20, 40, 80, 255].repeat(64 * 64);
+        for y in 0..64 {
+            for x in 0..64 {
+                if x == 0 || y == 0 || x == 63 || y == 63 {
+                    pixels[(y * 64 + x) * 4 + 3] = 0;
+                }
+            }
+        }
+        let plain = build_mips(64, 64, pixels, 16);
+        assert!(alpha_coverage(&plain[3].2, 200) > 0.5);
+        let mut kept = plain.clone();
+        preserve_alpha_coverage(&mut kept, MASK_CUTOFF);
+        assert!(alpha_coverage(&kept[3].2, 200) > 0.5, "a 200/255 HUD panel must remain visible");
+        for (level, ((_, _, before), (_, _, after))) in plain.iter().zip(&kept).enumerate() {
+            for cutoff in [1, 128, 200, 255] {
+                assert!(
+                    alpha_coverage(after, cutoff) >= alpha_coverage(before, cutoff),
+                    "level {level}, cutoff {cutoff}: coverage preservation must not hide a panel the plain mip draws"
+                );
+            }
+            for (before, after) in before.as_chunks::<4>().0.iter().zip(after.as_chunks::<4>().0) {
+                assert_eq!(after[..3], before[..3]);
+                assert!(after[3] >= before[3], "level {level}: alpha must never decrease");
+            }
+        }
     }
 
     /// 128 × 128 texels, a quarter of them opaque, scattered (splitmix64).
@@ -2106,6 +2216,17 @@ mod tests {
         // the reserved slots are never handed out nor freed
         store.free(WHITE);
         assert_eq!(store.create_placeholder(), None);
+    }
+
+    #[test]
+    fn bump_normal_placeholder_shares_the_flat_normal_without_allocating_texels() {
+        let mut store = bare_store(64, 64);
+        store.slots[FLAT_NORMAL as usize].as_mut().unwrap().layer = 1;
+        let slot = store.create_shared(FLAT_NORMAL).unwrap();
+        assert_eq!(store.loc[slot as usize], pack(0, 1));
+        assert_eq!((store.bytes, store.pages.len(), store.live), (0, 0, 1));
+        store.free(slot);
+        assert_eq!((store.bytes, store.live), (0, 0));
     }
 
     #[test]
@@ -2418,7 +2539,7 @@ mod tests {
         let rows: u32 = (0..k.mips).map(|l| k.format.rows(level_dim(k.height, l))).sum();
         let buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: rows as u64 * 256,
+            size: crate::readback::readback_size(rows as u64 * 256),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -3203,7 +3324,7 @@ mod tests {
         let sample_all = |table: &TextureTable| -> Vec<u8> {
             let buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: None,
-                size: SLOTS as u64 * 8,
+                size: crate::readback::readback_size(SLOTS as u64 * 8),
                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             });

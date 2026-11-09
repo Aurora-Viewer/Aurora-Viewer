@@ -24,6 +24,10 @@ pub const NO_ROTATE_ANIMS: [Uuid; 3] = [
 const PELVIS_LAG_FLYING: f32 = 0.22;
 const PELVIS_LAG_WALKING: f32 = 0.4;
 const PELVIS_LAG_MOUSELOOK: f32 = 0.15;
+/// FSAvatarTurnSpeed: what each percent takes off the walking lag (s), and
+/// the shortest lag (F_ALMOST_ZERO).
+const TURN_RATE_DELTA: f32 = 0.0019;
+const SHORTEST_LAG: f32 = 0.0001;
 const MOUSELOOK_PELVIS_FOLLOW_FACTOR: f32 = 0.5;
 /// AvatarRotateThresholdSlow / Fast (degrees).
 const ROTATE_THRESHOLD_SLOW: f32 = 60.0;
@@ -51,6 +55,20 @@ pub struct Input {
     /// backward without turning around", only while the walk animation is
     /// signalled, as `FSDisableTurningAroundWhenWalkingBackwards`).
     pub step_back: bool,
+    /// How much faster the body turns while walking or standing, 0 to 100 %
+    /// (FSAvatarTurnSpeed, in Debug Settings); every avatar drawn.
+    pub turn_speed: f32,
+}
+
+/// The walking and standing lag of the turn (s): PELVIS_LAG_WALKING,
+/// shortened by FSAvatarTurnSpeed (LLVOAvatar::updateOrientation, FIRE-29581).
+fn walking_lag(turn_speed: f32) -> f32 {
+    let speed = if turn_speed.is_finite() {
+        turn_speed.clamp(0.0, 100.0)
+    } else {
+        0.0
+    };
+    (PELVIS_LAG_WALKING - speed * TURN_RATE_DELTA).max(SHORTEST_LAG)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -144,7 +162,7 @@ impl Body {
         } else if i.in_air {
             PELVIS_LAG_FLYING * clamp_rescale(self.speed_accum, 0.0, 15.0, 3.0, 1.0)
         } else {
-            PELVIS_LAG_WALKING
+            walking_lag(i.turn_speed)
         };
         let u = (dt / lag).clamp(0.0, 1.0);
         self.rotation = self.rotation.slerp(target, u).normalize();
@@ -170,6 +188,7 @@ mod tests {
             mouselook_at: None,
             flying: false,
             step_back: false,
+            turn_speed: 0.0,
         };
         let mut b = Body::new(Vec3::X);
         // standing: a 30° camera turn does not move the body
@@ -195,6 +214,7 @@ mod tests {
             mouselook_at: None,
             flying: false,
             step_back: false,
+            turn_speed: 0.0,
         };
         for _ in 0..240 {
             b.update(&back, 1.0 / 60.0);
@@ -227,5 +247,32 @@ mod tests {
             b.update(&side, 1.0 / 60.0);
         }
         assert!((yaw(b.rotation) - 90.0).abs() < 3.0, "{}", yaw(b.rotation));
+    }
+
+    #[test]
+    fn turn_speed_shortens_the_walking_lag_like_the_legacy_viewer() {
+        assert_eq!(walking_lag(0.0), PELVIS_LAG_WALKING);
+        assert!((walking_lag(100.0) - 0.21).abs() < 1e-6);
+        assert!((walking_lag(50.0) - 0.305).abs() < 1e-6);
+        // out of range and broken values: the Legacy clamp, the default lag
+        assert_eq!(walking_lag(250.0), walking_lag(100.0));
+        assert_eq!(walking_lag(-5.0), PELVIS_LAG_WALKING);
+        assert_eq!(walking_lag(f32::NAN), PELVIS_LAG_WALKING);
+        // a standing avatar asked to face 90° away gets there sooner
+        let turned = |speed: f32| {
+            let mut b = Body::new(Vec3::X);
+            let face = Input {
+                prim_dir: Vec3::Y,
+                velocity: Vec3::ZERO,
+                in_air: false,
+                mouselook_at: None,
+                flying: false,
+                step_back: false,
+                turn_speed: speed,
+            };
+            b.update(&face, 0.05);
+            yaw(b.rotation)
+        };
+        assert!(turned(100.0) > turned(0.0) + 1.0, "{} vs {}", turned(100.0), turned(0.0));
     }
 }

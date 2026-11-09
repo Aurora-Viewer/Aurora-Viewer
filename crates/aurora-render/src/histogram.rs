@@ -104,7 +104,7 @@ impl Histogram {
         });
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("histogram read back"),
-            size: BYTES,
+            size: crate::readback::readback_size(BYTES),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
