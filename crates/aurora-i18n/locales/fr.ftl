@@ -3550,7 +3550,6 @@ world-tphistory-6-days-ago-or-earlier = Il y a 6 jours et plus
 world-tphistory-6-months-ago-or-earlier = Il y a 6 mois et plus
 common-image = Image
 app-inventory-thumbnail-demo-image-unavailable = Image de démonstration indisponible.
-ui-appearance-gallery-outfit-picture = Image de la tenue
 app-inventory-thumbnail-invalid-or-oversized-image = Image invalide ou trop volumineuse.
 app-inventory-thumbnail-images = Images
 ui-bars-frames-per-second-click-for-performance-details = Images par seconde : cliquez pour les performances

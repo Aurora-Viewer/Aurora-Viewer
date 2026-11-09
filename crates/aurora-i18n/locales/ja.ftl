@@ -3544,7 +3544,6 @@ world-tphistory-6-days-ago-or-earlier = ６日前以前
 world-tphistory-6-months-ago-or-earlier = ６か月前以前
 common-image = 画像
 app-inventory-thumbnail-demo-image-unavailable = デモ画像を利用できません。
-ui-appearance-gallery-outfit-picture = アウトフィットの画像
 app-inventory-thumbnail-invalid-or-oversized-image = 画像が無効、または大きすぎます。
 app-inventory-thumbnail-images = 画像
 ui-bars-frames-per-second-click-for-performance-details = フレームレート：クリックしてパフォーマンスの詳細を表示
