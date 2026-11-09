@@ -4,15 +4,8 @@
 //! the conversation with the other resident (`world/payments.rs`).
 
 use super::*;
+use aurora_net::trans::{GIFT, GROUP_JOIN, OBJECT_SALE, PAY_OBJECT, UPLOAD_CHARGE};
 use ui::money_tracker::{Party, TrackerAction};
-
-/// TRANS_PAY_OBJECT, TRANS_GIFT, TRANS_OBJECT_SALE, TRANS_GROUP_JOIN and
-/// TRANS_UPLOAD_CHARGE (lltransactiontypes.h), for the demo's session.
-const PAY_OBJECT: i32 = 5008;
-const GIFT: i32 = 5001;
-const OBJECT_SALE: i32 = 5000;
-const GROUP_JOIN: i32 = 1004;
-const UPLOAD_CHARGE: i32 = 1101;
 
 /// `AURORA_DEMO_PAYMENT=earning`: a payment this often.
 const EARNING_EVERY: std::time::Duration = std::time::Duration::from_secs(10);
@@ -122,6 +115,7 @@ impl App {
             let random = uuid::Uuid::new_v4();
             let number = random.as_u128();
             let amount = earning_amount(number >> 8);
+            // the grid could send any balance: none of this overflows
             let balance = self.world.balance.unwrap_or(0);
             let (kind, item) = match number % 5 {
                 0 => (OBJECT_SALE, "Steel helmet"),
@@ -129,11 +123,11 @@ impl App {
                 2 => (GIFT, "Payment"),
                 // a purchase, and L$ bought: only the balance moves
                 3 => {
-                    self.world.apply(NetEvent::Balance(balance - amount));
+                    self.world.apply(NetEvent::Balance(balance.saturating_sub(amount)));
                     return;
                 }
                 _ => {
-                    self.world.apply(NetEvent::Balance(balance + amount * 10));
+                    self.world.apply(NetEvent::Balance(balance.saturating_add(amount * 10)));
                     return;
                 }
             };
@@ -158,7 +152,7 @@ impl App {
             };
             if let NetEvent::MoneyTransaction { amount, .. } = ev {
                 self.world.payment(&ev);
-                let balance = self.world.balance.unwrap_or(0) + amount;
+                let balance = self.world.balance.unwrap_or(0).saturating_add(amount);
                 self.world.apply(NetEvent::Balance(balance));
             } else {
                 self.world.apply(ev);
@@ -187,10 +181,10 @@ impl App {
         };
         use crate::demo::{DEMO_FRIEND, DEMO_NOVA, DEMO_TESS};
         let agent = self.world.agent_id;
-        let gift = |n: u128, source, dest, amount, item: &str| NetEvent::MoneyTransaction {
+        let event = |n: u128, kind, source, dest, amount, item: &str| NetEvent::MoneyTransaction {
             id: uuid::Uuid::from_u128(0x9A1D_0000 + n),
             success: true,
-            kind: GIFT,
+            kind,
             source,
             source_group: false,
             dest,
@@ -199,40 +193,14 @@ impl App {
             item: item.into(),
             description: "Transaction".into(),
         };
+        let gift = |n, source, dest, amount, item: &str| event(n, GIFT, source, dest, amount, item);
         let paid = |n, source, amount, item: &str| gift(n, source, agent, amount, item);
         if mode == "sale" {
-            self.demo_money_notices = Some((true, true, true));
+            self.demo_money_notices = Some((true, true));
             // this frame's payments, before the next frame reads it
             self.world.payments.notify_direct = true;
             self.world.payments.notify_received = true;
-        }
-        if mode == "sale" {
-            let earned = |n: u128, kind, amount, item: &str| match paid(n, DEMO_NOVA, amount, item) {
-                NetEvent::MoneyTransaction {
-                    id,
-                    success,
-                    source,
-                    source_group,
-                    dest,
-                    dest_group,
-                    amount,
-                    item,
-                    description,
-                    ..
-                } => NetEvent::MoneyTransaction {
-                    id,
-                    success,
-                    kind,
-                    source,
-                    source_group,
-                    dest,
-                    dest_group,
-                    amount,
-                    item,
-                    description,
-                },
-                other => other,
-            };
+            let earned = |n, kind, amount, item: &str| event(n, kind, DEMO_NOVA, agent, amount, item);
             self.world.payment(&earned(7, OBJECT_SALE, 100, "Steel helmet"));
             self.world.payment(&earned(8, PAY_OBJECT, 25, "Tip jar"));
             self.world.payment(&earned(9, PAY_OBJECT, 5, ""));
@@ -240,7 +208,7 @@ impl App {
             return;
         }
         if mode == "balance" {
-            self.demo_money_notices = Some((false, false, true));
+            self.demo_money_notices = Some((false, false));
             self.world.apply(NetEvent::Balance(12480));
             self.balance_gains.resync();
             let start = Instant::now() + std::time::Duration::from_secs(6);

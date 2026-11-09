@@ -136,8 +136,8 @@ pub enum BarAction {
     BuyCurrency,
     /// The balance shown or hidden (its right click, the account island's).
     ShowBalance(bool),
-    /// "Highlight L$ changes as they happen", from the balance's menu.
-    BalanceHighlight(bool),
+    /// "L$ received" and "L$ spent" under the balance, from its menu.
+    BalanceRows(super::balance_gains::Shown),
     /// Me › Double-click on the ground (Firestorm's "DoubleClick Teleport"
     /// of its movement menu, Advanced.SetDoubleClickAction).
     SetDoubleClick(crate::autopilot::DoubleClick),
@@ -237,8 +237,8 @@ pub struct StatusInfo<'a> {
     pub balance_gains: Vec<super::balance_gains::GainRow>,
     /// The balance's colour this frame: it flashes when a row lands.
     pub balance_ink: Color32,
-    /// The switch of those rows, for the balance's menu.
-    pub balance_highlight: bool,
+    /// The switches of those rows, for the balance's menu.
+    pub balance_rows: super::balance_gains::Shown,
     /// Voice connection light and its explanation.
     pub voice: (crate::voice::VoiceLight, String),
     /// SLURL of the current position (shown when the location is edited).
@@ -448,17 +448,34 @@ pub(super) fn balance_menu(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, acti
     if menu::check(ui, p, "coin-filled", aurora_i18n::tr!("ui-bars-show-balance"), shown, true) {
         *action = BarAction::ShowBalance(!shown);
     }
-    // the L$ gained and spent: nowhere to show them while it is hidden
-    let highlight = st.balance_highlight;
+    // the L$ received and spent under it, each on its own: nowhere to show
+    // them while it is hidden
+    let rows = st.balance_rows;
     if menu::check(
         ui,
         p,
-        "sparkles-filled",
-        aurora_i18n::tr!("ui-options-balance-gain-animation"),
-        highlight,
+        "square-rounded-plus-filled",
+        aurora_i18n::tr!("ui-bars-balance-received"),
+        rows.received,
         shown,
     ) {
-        *action = BarAction::BalanceHighlight(!highlight);
+        *action = BarAction::BalanceRows(super::balance_gains::Shown {
+            received: !rows.received,
+            ..rows
+        });
+    }
+    if menu::check(
+        ui,
+        p,
+        "square-rounded-minus-filled",
+        aurora_i18n::tr!("ui-bars-balance-spent"),
+        rows.spent,
+        shown,
+    ) {
+        *action = BarAction::BalanceRows(super::balance_gains::Shown {
+            spent: !rows.spent,
+            ..rows
+        });
     }
     if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("currency-menu")) {
         *action = BarAction::BuyCurrency;

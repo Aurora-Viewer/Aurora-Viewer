@@ -633,15 +633,16 @@ pub struct App {
     demo_look_at_targets: bool,
     /// The L$ gained and spent, under the balance.
     balance_gains: ui::balance_gains::BalanceGains,
-    highlight_balance: bool,
+    /// Which of them show: the settings', or the demo's.
+    balance_rows: ui::balance_gains::Shown,
     /// `AURORA_DEMO_PAYMENT=balance`: the payments still to come.
     demo_gains: std::collections::VecDeque<(Instant, NetEvent)>,
     /// `AURORA_DEMO_PAYMENT=earning`: when the next payment comes.
     demo_earning: Option<Instant>,
-    /// `AURORA_DEMO_PAYMENT`: the toasts (direct, others) and the highlight
-    /// for this run, whatever is saved (the demo's settings are saved like
-    /// the user's).
-    demo_money_notices: Option<(bool, bool, bool)>,
+    /// `AURORA_DEMO_PAYMENT`: the toasts (direct, others) for this run,
+    /// with both rows under the balance, whatever is saved (the demo's
+    /// settings are saved like the user's).
+    demo_money_notices: Option<(bool, bool)>,
     look_focus: Option<Vec3>,
     look_cursor: (f32, f32),
     look_root_at: Vec3,
@@ -1631,7 +1632,7 @@ impl App {
             demo_look_ahead: false,
             demo_look_at_targets: false,
             balance_gains: Default::default(),
-            highlight_balance: true,
+            balance_rows: ui::balance_gains::Shown::BOTH,
             demo_gains: Default::default(),
             demo_earning: None,
             demo_money_notices: None,
@@ -9029,14 +9030,19 @@ impl App {
         self.world.inventory_offers.show_accepted = self.settings.show_accepted_in_inventory;
         self.world.payments.open_received = self.settings.payment_received_opens;
         self.world.payments.open_sent = self.settings.payment_sent_opens;
-        let (direct, toast, highlight) = self.demo_money_notices.unwrap_or((
-            self.settings.notify_direct_payment,
-            self.settings.notify_money_received,
-            self.settings.balance_gain_animation,
-        ));
+        let ((direct, toast), rows) = match self.demo_money_notices {
+            Some(toasts) => (toasts, ui::balance_gains::Shown::BOTH),
+            None => (
+                (self.settings.notify_direct_payment, self.settings.notify_money_received),
+                ui::balance_gains::Shown {
+                    received: self.settings.balance_shows_received,
+                    spent: self.settings.balance_shows_spent,
+                },
+            ),
+        };
         self.world.payments.notify_direct = direct;
         self.world.payments.notify_received = toast;
-        self.highlight_balance = highlight;
+        self.balance_rows = rows;
         self.world.payments.direct_above = self.settings.notify_direct_above.then_some(self.settings.notify_direct_threshold);
         self.world.payments.received_above = self.settings.notify_money_above.then_some(self.settings.notify_money_threshold);
         self.world.received_items.enabled_since = self.settings.received_items_since;
@@ -13913,8 +13919,9 @@ impl App {
                 self.settings.place_bar_rights_text = rights_text;
                 self.settings.save();
             }
-            BarAction::BalanceHighlight(on) => {
-                self.settings.balance_gain_animation = on;
+            BarAction::BalanceRows(rows) => {
+                self.settings.balance_shows_received = rows.received;
+                self.settings.balance_shows_spent = rows.spent;
                 self.settings.save();
             }
             BarAction::ShowBugButton(shown) => {
@@ -15584,12 +15591,12 @@ impl App {
                     self.settings.show_balance
                 };
                 let now = Instant::now();
-                let shown = show_balance && self.highlight_balance;
-                let balance = self
-                    .balance_gains
-                    .update(self.world.balance, shown, self.settings.reduce_motion, now);
-                if self.balance_gains.animating() {
-                    self.egui_ctx.request_repaint();
+                let rows = if show_balance { self.balance_rows } else { Default::default() };
+                let still = self.settings.reduce_motion;
+                let balance = self.balance_gains.update(self.world.balance, rows, still, now);
+                // full rate only while a row or the number moves
+                if let Some(after) = self.balance_gains.repaint_after(still, now) {
+                    self.egui_ctx.request_repaint_after(after);
                 }
                 let status = ui::bars::StatusInfo {
                     location_hidden: self.world.rlva.has("showloc"),
@@ -15624,7 +15631,11 @@ impl App {
                     balance: balance.balance,
                     show_balance,
                     balance_gains: balance.rows,
-                    balance_highlight: self.settings.balance_gain_animation,
+                    // the saved switches, which the menu turns
+                    balance_rows: ui::balance_gains::Shown {
+                        received: self.settings.balance_shows_received,
+                        spent: self.settings.balance_shows_spent,
+                    },
                     voice: (self.voice.light, self.voice.status.clone()),
                     slurl: if self.world.rlva.has("showloc") {
                         String::new()

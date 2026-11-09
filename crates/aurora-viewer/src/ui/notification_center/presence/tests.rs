@@ -151,7 +151,7 @@ fn status(classic: bool) -> StatusInfo<'static> {
         show_balance: true,
         balance_gains: Vec::new(),
         balance_ink: crate::theme::Theme::default().palette().ink,
-        balance_highlight: true,
+        balance_rows: crate::ui::balance_gains::Shown::BOTH,
         voice: (crate::voice::VoiceLight::Off, String::new()),
         slurl: String::new(),
         status: Default::default(),

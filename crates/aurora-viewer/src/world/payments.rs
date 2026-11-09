@@ -43,7 +43,7 @@
 
 use super::notifications::{Data, Kind};
 use super::{ChatKind, ChatLine, Origin, World};
-use crate::ui::money_tracker::trans::{self, GIFT};
+use aurora_net::trans::{self, GIFT};
 use std::collections::VecDeque;
 use std::time::SystemTime;
 use uuid::Uuid;
@@ -745,7 +745,7 @@ mod tests {
         let settings = crate::settings::Settings::default();
         assert!(settings.notify_direct_payment);
         assert!(!settings.notify_money_received);
-        assert!(settings.balance_gain_animation);
+        assert!(settings.balance_shows_received && settings.balance_shows_spent);
         assert!(!settings.notify_direct_above && !settings.notify_money_above);
     }
 }
