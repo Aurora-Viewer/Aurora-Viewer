@@ -751,6 +751,7 @@ mod tests {
                 started: None,
                 open: true,
                 maintenance: Default::default(),
+                grace_hours: None,
             };
             draw(&ctx, &mut demo, width, vec![]);
             click(&ctx, &mut demo, width, aurora_i18n::tr!("update-skip"));
