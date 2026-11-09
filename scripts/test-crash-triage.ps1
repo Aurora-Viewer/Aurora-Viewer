@@ -141,6 +141,26 @@ try {
     Assert-Triage ((@($bareSig.Frames)[0]) -eq "unsymbolized $id" -and $bareSig.Id -ne $sig.Id) 'Without symbols the signature must name the build.'
     Assert-Triage ($null -eq (Get-TriageTitle $r $bareSig)) 'Without symbols the title stays as the viewer wrote it.'
 
+    # A thread of another program's DLL, with no frame of the viewer (#3006,
+    # #2361): signed by that module's offsets and its own debug id, whatever
+    # the viewer's build.
+    $hookStack = @('00 osmimhk64+0x40835', '01 osmimhk64+0x3eed3', '02 osmimhk64+0x77c42', '03 osmimhk64+0x71d1c', '04 kernel32+0x2dda7', '05 ntdll+0x7ee4c')
+    $hookId = '55CE45CBC86A47389529E1ABEDFC1BE61'
+    $hookReport = (New-Report 'Native exception 0xC0000005' $hookStack) -replace '(kernelbase id=\S+ code=\S+)', "`$1`nosmimhk64 id=$hookId code=69A5F5AA11d000"
+    $hook = Read-CrashReport $hookReport
+    $hookSig = Get-CrashSignature $hook (Get-SymbolizedFrames $hook $symFile)
+    Assert-Triage ((@($hookSig.Frames) -join '|') -eq 'osmimhk64+0x40835|osmimhk64+0x3eed3|osmimhk64+0x77c42') "Unexpected foreign module signature frames: $(@($hookSig.Frames) -join '|')"
+    Assert-Triage ((Get-TriageTitle $hook $hookSig) -eq 'Crash: native exception 0xC0000005 in osmimhk64+0x40835') 'A foreign module crash is titled by its place.'
+    $otherBuild = Read-CrashReport ($hookReport -replace $id, '00112233445566778899AABBCCDDEEFF1')
+    Assert-Triage ((Get-CrashSignature $otherBuild (Get-SymbolizedFrames $otherBuild $null)).Id -eq $hookSig.Id) 'The same DLL crash under another viewer build must be the same crash.'
+    $otherDll = Read-CrashReport ($hookReport -replace $hookId, '11111111111111111111111111111111A')
+    Assert-Triage ((Get-CrashSignature $otherDll (Get-SymbolizedFrames $otherDll $null)).Id -ne $hookSig.Id) 'Another version of the DLL is another crash.'
+    $otherPlace = Read-CrashReport ($hookReport -replace '0x40835', '0x41000')
+    Assert-Triage ((Get-CrashSignature $otherPlace (Get-SymbolizedFrames $otherPlace $null)).Id -ne $hookSig.Id) 'Another place in the DLL is another crash, even on the same build.'
+    # Only system frames: still the viewer build's signature, as before.
+    $systemOnly = Read-CrashReport (New-Report 'Native exception 0xC0000005' @('00 kernelbase+0x1234', '01 ntdll+0x7ee4c'))
+    Assert-Triage ((@((Get-CrashSignature $systemOnly (Get-SymbolizedFrames $systemOnly $null)).Frames)[0]) -eq "unsymbolized $id") 'A stack of system frames alone keeps the build signature.'
+
     # The section: added once, replaced on a new run, the report kept.
     $section = Format-TriageSection $frames 'Aurora-Viewer-v0.8.0-windows-x64-symbols.zip' $sig
     $body = Merge-TriageSection $native $section
