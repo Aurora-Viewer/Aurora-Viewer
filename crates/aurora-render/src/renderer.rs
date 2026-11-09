@@ -6194,6 +6194,9 @@ impl Backend {
         // first: a card with room for one renderer but not two would
         // otherwise refuse every try
         self.shed_world();
+        // (how long a try holds the frame: the render thread makes the
+        // whole renderer, its pipelines included)
+        let started = Instant::now();
         let made = Backend::new_with(init, true).map(|mut fresh| {
             // the settings the frame asks for, as part of the remake: the
             // atlases they make again could still be refused
@@ -6202,13 +6205,17 @@ impl Backend {
             }
             fresh
         });
+        let took = started.elapsed().as_millis();
         match made {
             Ok(mut fresh) if !fresh.remake => {
-                log::info!("renderer: made again, whole");
+                log::info!("renderer: made again, whole ({took} ms)");
                 fresh.egui.0 = self.egui.0.take();
                 *self = fresh;
             }
-            Ok(_) => self.oom.targets_failed(Instant::now()),
+            Ok(_) => {
+                log::info!("renderer: try refused ({took} ms)");
+                self.oom.targets_failed(Instant::now());
+            }
             // (a lost device, which ends the viewer: egui's renderer stays
             // here, nothing is made on the lost device)
             Err(e) => {

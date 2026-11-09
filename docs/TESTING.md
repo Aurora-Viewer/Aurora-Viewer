@@ -4726,8 +4726,9 @@ both open states and the selection count. Capture at frame 620.
   black with the `Video memory full` notice. The whole renderer is made
   again on the same device and window, with the frame's settings (2 s,
   then twice as long each time up to 30 s), each refused try repeating
-  that line; once the time is over the log says `renderer: made again,
-  whole` and the world comes back. A build without the remake stays black
+  that line and `renderer: try refused (<ms> ms)`, the time the try held
+  the frame; once the time is over the log says `renderer: made again,
+  whole (<ms> ms)` and the world comes back. A build without the remake stays black
   for good: every later try of the render targets fails on the `frame
   mask` bind group. Made with no usage, as for `AURORA_GPU_OOM_TARGETS`,
   so the log holds `Invalid usage flags` lines a real card does not.
