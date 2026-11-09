@@ -158,8 +158,9 @@ pub fn draw(
         marked(world, id).is_some()
     });
     let screen = ctx.content_rect();
-    let room = super::layout::work_area(ctx).intersect(screen).shrink(EDGE_MARGIN);
-    let inner = if room.is_positive() { room } else { screen.shrink(EDGE_MARGIN) };
+    let Some(inner) = room(super::layout::work_area(ctx), screen) else {
+        return;
+    };
     let mut markers: Vec<_> = tracker
         .iter_mut()
         .filter_map(|(id, entry)| {
@@ -195,6 +196,16 @@ pub fn draw(
     for (i, (_, placed, marker, alpha)) in markers.into_iter().enumerate() {
         paint(&painter, p, &placed, &marker, alpha, i >= plain);
     }
+}
+
+/// Where markers may stand: the room the bars leave, else the whole screen,
+/// `EDGE_MARGIN` inside. None on a window too small for one (`edge_point`
+/// needs a rectangle that is not inverted).
+fn room(work: Rect, screen: Rect) -> Option<Rect> {
+    [work.intersect(screen), screen]
+        .into_iter()
+        .map(|rect| rect.shrink(EDGE_MARGIN))
+        .find(|rect| rect.is_positive())
 }
 
 fn full_radius(shape: MarkerShape) -> f32 {
@@ -460,6 +471,19 @@ pub fn preview(ui: &mut egui::Ui, p: &Palette, marker: &Marker) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_room_falls_back_to_the_screen_then_to_none_on_a_tiny_window() {
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0));
+        let work = Rect::from_min_max(pos2(0.0, 40.0), pos2(800.0, 560.0));
+        assert_eq!(room(work, screen), Some(work.shrink(EDGE_MARGIN)));
+        // bars that leave no room: the whole screen
+        let squeezed = Rect::from_min_max(pos2(0.0, 290.0), pos2(800.0, 310.0));
+        assert_eq!(room(squeezed, screen), Some(screen.shrink(EDGE_MARGIN)));
+        // smaller than two margins: nowhere, rather than an inverted rectangle
+        let tiny = Rect::from_min_size(Pos2::ZERO, vec2(40.0, 40.0));
+        assert_eq!(room(tiny, tiny), None);
+    }
 
     #[test]
     fn a_diamond_stands_on_its_corners_and_rounds_into_a_circle() {
