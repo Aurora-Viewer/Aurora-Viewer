@@ -1314,6 +1314,28 @@ fn tex_anim_record(
     record_anim(&params, clock.ms(o.tex_anim_clock.start), o.tex_anim_clock.phase, &te)
 }
 
+/// Layer rank of a rigged face (`DrawRecord::set_layer_rank`).
+///
+/// Worn layers are often made from the body's own mesh, so their faces lie
+/// exactly on the body's. Equal depths are then won by the draw record drawn
+/// first (cull.wgsl keeps the record order), and records are recycled from a
+/// free list whenever an object is rebuilt: the winner changed face by face,
+/// showing bands of the body through a layer, bands that moved with every
+/// rebuild (the transparency overlay's Ctrl+Alt+T rebuilds them all).
+///
+/// The Legacy Viewer draws a layer whole and in a lasting order, sorted by
+/// skin, material and texture (CompareBatchBreakerRigged,
+/// indra/newview/llvovolume.cpp). Here the skin (a face showing a bake)
+/// stays at rank 0 and every other face of an object takes one rank of 1 to
+/// `LAYER_RANK_MAX`, chosen from its id: a layer covers the skin it lies on,
+/// and two layers that lie on each other keep the same winner everywhere.
+fn rigged_layer_rank(skin_face: bool, object: &Uuid) -> u32 {
+    if skin_face {
+        return 0;
+    }
+    1 + (object.as_u128() % u128::from(flags::LAYER_RANK_MAX)) as u32
+}
+
 /// Whether a texture animation set on `anim_face` (-1 = ALL_SIDES) moves
 /// face `fi`: see [`tex_anim_record`].
 fn tex_anim_targets(anim_face: i8, fi: usize) -> bool {
@@ -4002,6 +4024,7 @@ impl Scene {
             }
             // texture (with bake-on-mesh redirection); without a bake wearer
             // the placeholder stays, an ordinary texture asset
+            let skin_face = avatar::bake_slot_for(&base_tex).is_some();
             let (texture, mut source) = self.face_texture(renderer, world, base_tex, bake_wearer);
             base_tex = texture;
             // media replaces the diffuse texture (LLViewerMediaTexture::switchTexture)
@@ -4057,6 +4080,7 @@ impl Scene {
                 g.tex_ids.push(base_tex);
             }
             rec.tex[0] = self.textures.acquire(renderer, base_tex, source);
+            let rigged = rigged_owner.is_some();
             if let Some((owner, _, binds)) = rigged_owner {
                 rec.flags[0] |= flags::SKINNED;
                 rec.flags[1] = self.palette_base(owner);
@@ -4091,6 +4115,9 @@ impl Scene {
                     && matches!(pbr_alpha, None | Some(1))
                     && matches!(legacy_alpha, None | Some(legacy_mat::alpha_mode::BLEND)),
             );
+            if rigged {
+                rec.set_layer_rank(rigged_layer_rank(skin_face, &o.full_id));
+            }
             rec.set_anchor(anchor.map(|a| a.matrix));
             let record = renderer.records.alloc(rec);
             g.faces.push(FaceDraw {
@@ -6096,6 +6123,23 @@ fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
             }
         }
         AlphaKind::Blend => Pass::Blend,
+    }
+}
+
+#[cfg(test)]
+mod layer_rank_tests {
+    use super::*;
+
+    #[test]
+    fn the_skin_stays_under_every_worn_layer() {
+        let ids = [Uuid::nil(), Uuid::from_u128(1), Uuid::from_u128(6), Uuid::from_u128(7), Uuid::max()];
+        for id in ids {
+            assert_eq!(rigged_layer_rank(true, &id), 0);
+            let rank = rigged_layer_rank(false, &id);
+            assert!((1..=flags::LAYER_RANK_MAX).contains(&rank), "{id}: {rank}");
+            // the same object keeps its rank on every rebuild
+            assert_eq!(rigged_layer_rank(false, &id), rank);
+        }
     }
 }
 

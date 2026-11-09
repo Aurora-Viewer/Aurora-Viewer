@@ -540,6 +540,13 @@ fn the_head_acts() {
             has(&h.take(), |a| matches!(a, ConvAction::OfferTeleport(id) if *id == BOB)),
             "{style:?}: teleport"
         );
+        h.press(control_id(&format!("head-{}", super::head::REQUEST_TELEPORT_ICON)));
+        assert!(
+            crate::ui::context::take_requests(&h.frames.ctx)
+                .iter()
+                .any(|a| matches!(a, crate::ui::context::CtxAction::RequestTeleport(id) if *id == BOB)),
+            "{style:?}: request a teleport"
+        );
         h.press(control_id("head-x"));
         assert!(
             has(&h.take(), |a| matches!(a, ConvAction::Close(id) if *id == BOB)),
@@ -570,6 +577,14 @@ fn the_head_acts() {
             assert!(ok, "{style:?}: … › {row}");
         }
         h.press(control_id("head-dots-filled"));
+        h.press_text(aurora_i18n::tr!("common-request-teleport"));
+        assert!(
+            crate::ui::context::take_requests(&h.frames.ctx)
+                .iter()
+                .any(|a| matches!(a, crate::ui::context::CtxAction::RequestTeleport(id) if *id == BOB)),
+            "{style:?}: … › request a teleport"
+        );
+        h.press(control_id("head-dots-filled"));
         h.press_text(aurora_i18n::tr!("common-become-friends"));
         assert!(
             crate::ui::context::take_requests(&h.frames.ctx)
@@ -596,6 +611,22 @@ fn the_head_acts() {
             h.shown(control_id("head-user-plus")).is_none(),
             "{style:?}: a friend is not offered friendship"
         );
+        // LLAvatarActions::canRequestTeleport: not from a friend known to be
+        // offline, greyed where the offer stays
+        h.world.social.friends[0].online = false;
+        h.settle();
+        h.press(control_id(&format!("head-{}", super::head::REQUEST_TELEPORT_ICON)));
+        assert!(
+            crate::ui::context::take_requests(&h.frames.ctx).is_empty(),
+            "{style:?}: no request to an offline friend"
+        );
+        h.press(control_id("head-dots-filled"));
+        h.press_text(aurora_i18n::tr!("common-request-teleport"));
+        assert!(
+            crate::ui::context::take_requests(&h.frames.ctx).is_empty(),
+            "{style:?}: … › no request to an offline friend"
+        );
+        h.press(control_id("head-dots-filled"));
         h.world.social.friends.clear();
         // a role group: members, no adding (like Firestorm)
         h.open(Some(GROUP));
@@ -1995,6 +2026,27 @@ fn the_window_of_tabs_still_acts() {
             has(&h.take(), |a| matches!(a, ConvAction::OfferTeleport(id) if *id == BOB)),
             "{style:?}: teleport"
         );
+        h.press(classic_id(super::head::REQUEST_TELEPORT_ICON));
+        assert!(
+            crate::ui::context::take_requests(&h.frames.ctx)
+                .iter()
+                .any(|a| matches!(a, crate::ui::context::CtxAction::RequestTeleport(id) if *id == BOB)),
+            "{style:?}: request a teleport"
+        );
+        h.world.social.friends.push(crate::world::social::Friend {
+            id: BOB,
+            online: false,
+            rights_given: 1,
+            rights_has: 1,
+        });
+        h.settle();
+        h.press(classic_id(super::head::REQUEST_TELEPORT_ICON));
+        assert!(
+            crate::ui::context::take_requests(&h.frames.ctx).is_empty(),
+            "{style:?}: no request to an offline friend"
+        );
+        h.world.social.friends.clear();
+        h.settle();
         h.press(classic_id("x"));
         assert!(
             has(&h.take(), |a| matches!(a, ConvAction::Close(id) if *id == BOB)),
@@ -2056,6 +2108,37 @@ fn find_opens_in_every_style() {
         h.settle();
         assert!(h.st.searches.get(&Some(JANE)).is_some_and(|s| s.find.is_some()), "{style:?}");
     }
+}
+
+/// The picture keeps clear of a stranger's nine buttons at 340 points, of a
+/// friend's eight at 308.
+#[test]
+fn the_request_button_needs_room_beside_the_picture() {
+    assert!(super::head::request_fits(340.0, 9));
+    assert!(!super::head::request_fits(339.0, 9));
+    assert!(super::head::request_fits(308.0, 8));
+    assert!(!super::head::request_fits(307.0, 8));
+}
+
+/// A narrow workspace drops the head's button, and its "…" row still asks.
+#[test]
+fn a_narrow_head_leaves_the_request_to_its_menu() {
+    let mut h = H::new(ChatStyle::Aurora);
+    h.open(Some(BOB));
+    let button = control_id(&format!("head-{}", super::head::REQUEST_TELEPORT_ICON));
+    assert!(h.shown(button).is_some(), "the button in a wide window");
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(10.0, 10.0), egui::vec2(460.0, 400.0));
+    h.settle();
+    assert!(h.shown(button).is_none(), "no button in a narrow window");
+    assert!(h.shown(control_id("head-send-filled")).is_some(), "the offer stays");
+    h.press(control_id("head-dots-filled"));
+    h.press_text(aurora_i18n::tr!("common-request-teleport"));
+    assert!(
+        crate::ui::context::take_requests(&h.frames.ctx)
+            .iter()
+            .any(|a| matches!(a, crate::ui::context::CtxAction::RequestTeleport(id) if *id == BOB)),
+        "… › request a teleport"
+    );
 }
 
 /// The OOC shortcut uses the same send path in local chat, IMs, groups,

@@ -77,6 +77,10 @@ pub mod conference;
 /// The Conversations button flashing (AURORA_DEMO_CONV_BUTTON).
 #[path = "demo_conv_button.rs"]
 pub mod conv_button;
+/// A worn layer lying exactly on the skin, in strips
+/// (AURORA_DEMO_COPLANAR_LAYERS).
+#[path = "demo_coplanar_layers.rs"]
+pub mod coplanar_layers;
 /// A deformed avatar to reset (AURORA_DEMO_DEFORM).
 #[path = "demo_deform.rs"]
 pub mod deform;
@@ -6938,6 +6942,12 @@ pub fn texture_stress_count() -> Option<u32> {
 /// Texture of stress cube `i`.
 pub fn stress_texture(i: u32) -> Uuid {
     Uuid::from_u128(0xDE40_7E57_0000_0000_0000_0000_0000_0000 | i as u128)
+}
+
+/// The stress cube index of a texture of `stress_texture`, if it is one.
+pub fn stress_index(id: &Uuid) -> Option<u32> {
+    let v = id.as_u128();
+    (v >> 32 == 0xDE40_7E57_0000_0000_0000_0000).then_some(v as u32)
 }
 
 /// Level-0 sizes of the stress textures, cycled: the common square and

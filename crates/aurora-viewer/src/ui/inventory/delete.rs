@@ -27,13 +27,21 @@ pub(super) fn request(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPr
     }
 }
 
+/// LLInventoryPanel::handleKeyHere: on a Mac the key labelled Delete sends
+/// Backspace, so both delete there (`#if LL_DARWIN`); elsewhere Backspace does
+/// nothing in the list.
+pub(super) fn deletes(key: egui::Key, mac: bool) -> bool {
+    key == egui::Key::Delete || (mac && key == egui::Key::Backspace)
+}
+
 pub(super) fn shortcut(ui: &mut egui::Ui, inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, facts: &Facts) {
     // Called only by the focused list's shortcut dispatcher. Text editors,
     // popups and other inventory windows retain their own Delete handling.
     let pressed = ui.input_mut(|input| {
         let mut pressed = false;
         input.events.retain(|event| {
-            if matches!(event, egui::Event::Key { key: egui::Key::Delete, pressed: true, repeat: false, modifiers, .. } if modifiers.is_none()) {
+            if matches!(event, egui::Event::Key { key, pressed: true, repeat: false, modifiers, .. } if modifiers.is_none() && deletes(*key, cfg!(target_os = "macos")))
+            {
                 pressed = true;
                 false
             } else {

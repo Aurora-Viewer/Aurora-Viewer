@@ -3936,6 +3936,12 @@ impl App {
                 // the simulator we land in plays none of our animations yet
                 self.static_eyes.on_arrival();
                 self.tp_checks = vec![10.0, 3.0];
+                // New region must learn walk/run again (LLAgent::sendWalkRun
+                // after RegionHandshake, llviewermessage.cpp). Without this
+                // Always run stays lit in Controls while the sim walks (#3041).
+                self.send(NetCommand::SetAlwaysRun(
+                    self.always_run || self.temp_run.is_some() || self.joystick.running,
+                ));
                 // (a border crossing leaves the camera where it is)
                 if !self.world.arrived_by_crossing {
                     let local = self.world.arrived_by_local_teleport;
@@ -7143,8 +7149,15 @@ impl App {
             self.check_temp_run();
         }
         if !pressed && was_drag && self.right_gesture.opens_menu() && self.mouse_mode == MouseMode::None {
-            // a click (no drag): context menu
-            self.open_context_menu();
+            if self.photo_full_frame() {
+                if !self.build.selection.is_empty() {
+                    self.build.deselect_all(&self.world);
+                    self.flush_build();
+                }
+            } else {
+                // a click (no drag): context menu
+                self.open_context_menu();
+            }
         }
     }
 
@@ -8850,7 +8863,7 @@ impl App {
                 _ => {}
             }
         }
-        if self.updater.poll(&self.settings, &mut self.login_info, self.net.runtime()) {
+        if self.updater.poll(&mut self.settings, &mut self.login_info, self.net.runtime()) {
             self.shutdown(event_loop);
             return;
         }
@@ -9022,6 +9035,7 @@ impl App {
         if self.demo {
             crate::demo::tangents::tick(&mut self.world, &mut self.scene, self.frame_count);
             crate::demo::rigged_prop::tick(&mut self.world, &mut self.scene, self.frame_count);
+            crate::demo::coplanar_layers::tick(&mut self.world, &mut self.scene, self.frame_count);
             if let Some(e) = crate::demo::conference::tick().and_then(|ev| self.world.apply(ev)) {
                 self.on_app_event(e);
             }
@@ -9872,17 +9886,27 @@ impl App {
                 mods,
             );
             self.build.refresh_link_geometry(&self.world, &self.scene);
-            let mut selection_wire = self.build.wire_selection(&self.world, &self.settings.build);
-            // another avatar's attachment the open menu is about, outlined
-            // like a child prim of a selection (it cannot be selected)
-            for idx in self.menu_outline() {
-                selection_wire.entry(idx).or_insert(false);
-            }
-            for (idx, current) in self.inspect_outline() {
-                selection_wire.entry(idx).or_insert(current);
+            let mut selection_wire = if self.photo_full_frame() {
+                Default::default()
+            } else {
+                self.build.wire_selection(&self.world, &self.settings.build)
+            };
+            if !self.photo_full_frame() {
+                // another avatar's attachment the open menu is about, outlined
+                // like a child prim of a selection (it cannot be selected)
+                for idx in self.menu_outline() {
+                    selection_wire.entry(idx).or_insert(false);
+                }
+                for (idx, current) in self.inspect_outline() {
+                    selection_wire.entry(idx).or_insert(current);
+                }
             }
             self.scene.set_wire_selection(&mut self.world, selection_wire);
-            self.scene.selection_silhouettes = self.build.silhouette_selection(&self.world, &self.settings.build);
+            self.scene.selection_silhouettes = if self.photo_full_frame() {
+                Default::default()
+            } else {
+                self.build.silhouette_selection(&self.world, &self.settings.build)
+            };
             // Use face coverage while highlighting local appearances. Actual
             // build selection, wire outlines and edits stay untouched; its
             // ordinary face overlay returns when the mode is switched off.
@@ -10493,6 +10517,7 @@ impl App {
                     self.settings.projector_shadow_limit,
                     gfx.renderer.max_texture_dimension(),
                 ),
+                others_attached_lights: self.settings.others_attached_lights,
             };
             self.scene.local_lights(&self.world, &mut gfx.renderer, &view)
         } else {
@@ -12472,6 +12497,11 @@ impl App {
                 self.frame_count,
                 self.world.objects.len()
             );
+        }
+        // AURORA_DEMO_TEXTURES with AURORA_GPU_OOM: the uploads that waited
+        // for video memory get their texels again (`refeed_demo_memory_waits`)
+        if self.demo && self.frame_count.is_multiple_of(30) && crate::demo::texture_stress_count().is_some() {
+            self.scene.textures.refeed_demo_memory_waits();
         }
         // AURORA_DEMO_TEXTURES_CHURN=1: stress cubes removed at frame 300
         // (textures released, evicted after 2 s), back with new textures at 700
@@ -14864,6 +14894,7 @@ impl App {
             second_life,
         });
         self.options_ui.login_favorites = self.login_favorites.key().map(|key| self.login_form.favorites.shown(key));
+        self.options_ui.friends_only = (!self.world.agent_id.is_nil()).then_some(self.world.friends_only());
         self.options_ui.friends_only_keep = (!self.world.agent_id.is_nil()).then_some(self.world.friends_only.keep_after_teleport);
         let time_of_day = self.settings.time_of_day;
         if self.options_ui.anti_spam_version != self.world.anti_spam.version {
@@ -14963,6 +14994,10 @@ impl App {
             if shown {
                 self.keep_login_favorites(true);
             }
+        }
+        // the same switch as BarAction::ToggleFriendsOnly
+        if let Some(on) = res.friends_only {
+            self.world.set_friends_only(on);
         }
         if let Some(keep) = res.friends_only_keep {
             self.world.friends_only.keep_after_teleport = keep;
@@ -15268,6 +15303,10 @@ impl App {
             Screen::World => {
                 // the full-frame photo view: the world and its own strip only
                 if self.photo_full_frame() {
+                    if self.context_menu.take().is_some() || self.build.menu_selection {
+                        self.build.release_menu_selection(&self.world);
+                        self.flush_build();
+                    }
                     self.photo_ui(&ctx, &p, projector, renderer);
                     // the poser stays over it (#1389): pose, then shoot
                     if self.ik_editor.open && self.ik_editor.posing() {
@@ -15628,6 +15667,8 @@ impl App {
                     );
                     a.bar = bar;
                     a.audio = Some(audio_action);
+                } else {
+                    ui::bars::islands::set_favorites_row_bottom(&ctx, None);
                 }
                 // AURORA_DEMO_BARS: the mockup's voice (connected; talking
                 // with `voice`) and chat island width, for this run only and
@@ -15803,7 +15844,7 @@ impl App {
                 // snapped this frame (above the dock with the islands)
                 let mut area = ui::layout::bars_room(ui.available_rect_before_wrap(), bottom_top, classic_bars);
                 // the favourites' row under the islands keeps the windows under it
-                if !classic_bars && let Some(row) = ui::bars::islands::favorites_row_bottom(ui.ctx()) {
+                if let Some(row) = ui::bars::islands::favorites_row_bottom(ui.ctx()) {
                     area.min.y = area.min.y.max(row + ui::bars::islands::MARGIN);
                 }
                 // the left and right toolbars, and the windows beside them
