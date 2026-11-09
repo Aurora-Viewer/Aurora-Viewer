@@ -5323,6 +5323,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
 | `AURORA_DEMO_RECENT_EMOJIS=1\|<emojis>` | Recent emojis under the chat fields: a full row, or the emojis given |
+| `AURORA_DEMO_FAVORITE_EMOJIS=<emojis>` | Favourite emojis: first in that row, the picker opening on their tab |
 | `AURORA_DEMO_CHAT_INPUT=1\|long\|ime` | Paragraph drafts or Japanese IME composition in chat inputs |
 | `AURORA_DEMO_SPELLING=1\|menu\|replace` | Misspelled words underlined in the chat bar and Conversations; their suggestions; auto-replace while typing |
 | `AURORA_DEMO_CONV_EMOJI=1` | Messages of emoji alone in the friend's conversation, drawn large (with `AURORA_DEMO_CONV`) |
@@ -7149,6 +7150,10 @@ failure. Grid validation and any paid upload are performed by the human.
   Unset, the row takes no room until a first emoji is sent. Preferences ›
   Chat › Show recent emojis turns it off. The Legacy bars
   (`AURORA_DEMO_BARS=legacy`) have no emojis in their field, so no row.
+- **`AURORA_DEMO_FAVORITE_EMOJIS=<emojis>`**: the favourites, for the run:
+  first in the row with a small star, and the emoji picker opening on their
+  tab (with `AURORA_DEMO_BARS=emoji`). The right-click menu of an emoji in
+  the row or the picker adds or removes one. Nothing is saved.
 - **`AURORA_DEMO_EMOJI_CODES=<text>`**: the Conversations window open, its
   input holding `<text>` with the keyboard and the caret at the end
   (`ui/emoji/codes.rs`). With `hi :hea`, the list of suggestions opens

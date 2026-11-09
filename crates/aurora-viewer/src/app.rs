@@ -3792,9 +3792,14 @@ impl App {
                 };
                 self.load_region_titles(l.agent_id);
                 self.chat_ui.recent_emojis = if self.demo {
-                    ui::emoji::recent::Recent::demo(&crate::demo::recent_emojis())
+                    let mut recent = ui::emoji::recent::Recent::demo(&crate::demo::recent_emojis());
+                    if let Ok(favorites) = std::env::var("AURORA_DEMO_FAVORITE_EMOJIS") {
+                        recent.demo_favorites(&favorites);
+                        self.emoji.tab = ui::emoji::FAVORITES_TAB;
+                    }
+                    recent
                 } else {
-                    ui::emoji::recent::Recent::load(crate::settings::account_dir(&l.agent_id).join(ui::emoji::recent::FILE))
+                    ui::emoji::recent::Recent::load(crate::settings::account_dir(&l.agent_id))
                 };
                 self.world.favorites = if self.demo {
                     Default::default()
