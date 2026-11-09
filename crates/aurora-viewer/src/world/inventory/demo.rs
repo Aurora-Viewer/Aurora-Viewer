@@ -760,7 +760,7 @@ pub fn seed_many_folders(inv: &mut Inventory, count: u128) {
                 info: InvFolder {
                     id,
                     parent: root,
-                    name: aurora_i18n::tr!("world-inventory-demo-folder", n = format!("{n:03}")).into(),
+                    name: aurora_i18n::tr!("world-inventory-demo-folder", n = format!("{n:03}")),
                     type_default: -1,
                     version: 1,
                     ..Default::default()
