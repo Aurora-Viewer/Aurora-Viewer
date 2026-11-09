@@ -2271,14 +2271,23 @@ impl Scene {
             self.textures.release(&id);
         }
         self.clear(old);
-        // every GpuGeom holds allocations of the lost device's arena
-        self.geoms.clear();
+        // every GpuGeom holds allocations of the lost device's arena. The
+        // tables go to the trash thread whole (`Jobs::discard`), as the
+        // geometries collected each frame do: freeing them touches every
+        // geometry's picking faces and joint bounds, and after a driver
+        // reset Windows has often paged the viewer's memory out, so each
+        // free read it back from the disk first. Two freeze reports
+        // (#2997, #2998) stopped there, in `forget_gpu`, with the window
+        // not answering for 10 s.
+        self.jobs.discard((
+            std::mem::take(&mut self.geoms),
+            std::mem::take(&mut self.geom_waiting),
+            std::mem::take(&mut self.geom_delayed),
+        ));
+        self.geom_trash.empty(&self.jobs);
         self.geom_zero.clear();
         self.geom_pending = 0;
-        self.geom_waiting.clear();
         self.geom_waiting_spare.clear();
-        self.geom_delayed.clear();
-        self.geom_trash = Default::default();
         self.joint_boxes = Default::default();
         self.skin_binds = Default::default();
         self.sculpt_area.clear();
