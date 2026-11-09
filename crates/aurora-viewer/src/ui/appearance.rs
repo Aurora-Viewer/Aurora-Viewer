@@ -26,6 +26,9 @@ pub use clipboard::{PasteTo, Request as ClipboardRequest};
 pub struct AppearanceUi {
     /// The account whose outfit pictures were read this session.
     pictures_read: Option<Uuid>,
+    /// The pictures found inside the outfits that have no thumbnail
+    /// (`outfit_picture`), and the inventory generation they were found at.
+    fallback_pictures: (u64, HashMap<Uuid, Uuid>),
     pub(crate) json: json::State,
     pub tab: usize,
     pub fill_previews: bool,
@@ -506,25 +509,50 @@ impl AppearanceUi {
     }
 
     /// A cached folder is current while its version is: a picture set from
-    /// another viewer can leave it without one. My Outfits is read again
-    /// once per session, one AIS read that gives all its outfits' pictures
-    /// (#2716). A read under way will do, and one held for the cache would
-    /// find the folder restored: wait for it.
+    /// another viewer can leave it without one. My Outfits and its groups
+    /// are read again once per session, one AIS read each that gives the
+    /// pictures of the outfits it holds (#2716). A read under way will do,
+    /// and one held for the cache would find the folder restored: wait for it.
     fn read_pictures(&mut self, world: &mut World) {
         use crate::world::inventory::FetchState;
         if self.pictures_read == Some(world.agent_id) || world.inventory.requests_held() {
             return;
         }
-        let Some(id) = model::system_folder(&world.inventory, model::FT_MY_OUTFITS) else {
+        let Some(my) = model::system_folder(&world.inventory, model::FT_MY_OUTFITS) else {
             return;
         };
         self.pictures_read = Some(world.agent_id);
-        if let Some(folder) = world.inventory.folders.get_mut(&id)
-            && folder.state == FetchState::Fetched
-        {
-            folder.state = FetchState::Unknown;
-            world.inventory.request(id);
+        let inv = &mut world.inventory;
+        let groups: Vec<Uuid> = crate::world::outfit_folders::folders(inv)
+            .into_iter()
+            .filter(|id| inv.folders.get(id).is_some_and(|f| f.info.type_default != model::FT_OUTFIT))
+            .collect();
+        for id in std::iter::once(my).chain(groups) {
+            if let Some(folder) = inv.folders.get_mut(&id)
+                && folder.state == FetchState::Fetched
+            {
+                folder.state = FetchState::Unknown;
+                inv.request(id);
+            }
         }
+    }
+
+    /// The picture of an outfit in the gallery: its thumbnail, else the one
+    /// `outfit_image` finds inside, which walks the outfit's folders: kept
+    /// until the inventory changes, so that a frame only looks it up.
+    fn outfit_picture(&mut self, inv: &crate::world::inventory::Inventory, outfit: Uuid) -> Uuid {
+        let Some(folder) = inv.folders.get(&outfit) else {
+            return Uuid::nil();
+        };
+        if !folder.info.thumbnail.is_nil() {
+            return folder.info.thumbnail;
+        }
+        let (generation, found) = &mut self.fallback_pictures;
+        if *generation != inv.generation {
+            *generation = inv.generation;
+            found.clear();
+        }
+        *found.entry(outfit).or_insert_with(|| model::outfit_image(inv, outfit))
     }
 
     pub fn refresh(&mut self, inv: &mut crate::world::inventory::Inventory) {
@@ -851,7 +879,7 @@ fn gallery(
                             egui::Stroke::new(1.0, if selected { p.violet } else { p.raised }),
                             egui::StrokeKind::Inside,
                         );
-                        let image = crate::world::appearance::outfit_image(&world.inventory, *id);
+                        let image = st.outfit_picture(&world.inventory, *id);
                         if !image.is_nil() {
                             st.wanted_images.insert(image);
                         }
@@ -3911,31 +3939,81 @@ mod tests {
         use crate::world::inventory::FetchState;
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         world.agent_id = Uuid::from_u128(1);
-        let outfits = Uuid::from_u128(48);
+        let (outfits, group, outfit) = (Uuid::from_u128(48), Uuid::from_u128(49), Uuid::from_u128(50));
+        let folder = |id, parent, type_default| aurora_net::inventory::InvFolder {
+            id,
+            parent,
+            type_default,
+            ..Default::default()
+        };
         world.inventory.add_folders(
-            vec![aurora_net::inventory::InvFolder {
-                id: outfits,
-                type_default: model::FT_MY_OUTFITS,
-                ..Default::default()
-            }],
+            vec![
+                folder(outfits, Uuid::nil(), model::FT_MY_OUTFITS),
+                folder(group, outfits, -1),
+                folder(outfit, group, model::FT_OUTFIT),
+            ],
             false,
         );
-        let state = |world: &World| world.inventory.folders[&outfits].state;
-        world.inventory.folders.get_mut(&outfits).expect("folder").state = FetchState::Fetched;
+        let state = |world: &World, id| world.inventory.folders[&id].state;
+        let fetched = |world: &mut World| {
+            for id in [outfits, group, outfit] {
+                world.inventory.folders.get_mut(&id).expect("folder").state = FetchState::Fetched;
+            }
+        };
+        fetched(&mut world);
         let mut st = AppearanceUi::default();
         // the cache being read would restore the folder: not yet
         world.inventory.hold_requests();
         st.read_pictures(&mut world);
-        assert_eq!(state(&world), FetchState::Fetched);
+        assert_eq!(state(&world, outfits), FetchState::Fetched);
         world.inventory.release_requests();
         st.read_pictures(&mut world);
-        assert_eq!(state(&world), FetchState::Fetching, "asked once");
-        world.inventory.folders.get_mut(&outfits).expect("folder").state = FetchState::Fetched;
+        assert_eq!(state(&world, outfits), FetchState::Fetching, "asked once");
+        // a group's outfits have their pictures in the group's listing
+        assert_eq!(state(&world, group), FetchState::Fetching);
+        assert_eq!(state(&world, outfit), FetchState::Fetched, "an outfit is not listed again");
+        fetched(&mut world);
         st.read_pictures(&mut world);
-        assert_eq!(state(&world), FetchState::Fetched, "not twice");
+        assert_eq!(state(&world, outfits), FetchState::Fetched, "not twice");
         // another account in the same run
         world.agent_id = Uuid::from_u128(2);
         st.read_pictures(&mut world);
-        assert_eq!(state(&world), FetchState::Fetching);
+        assert_eq!(state(&world, outfits), FetchState::Fetching);
+    }
+
+    /// The picture found inside an outfit is looked for again only once
+    /// the inventory changed: the gallery draws it at every frame.
+    #[test]
+    fn an_outfit_s_fallback_picture_is_kept_until_the_inventory_changes() {
+        let id = Uuid::from_u128;
+        let mut inv = crate::world::inventory::Inventory::default();
+        inv.add_folders(
+            vec![aurora_net::inventory::InvFolder {
+                id: id(1),
+                type_default: model::FT_OUTFIT,
+                ..Default::default()
+            }],
+            false,
+        );
+        let texture = |n, asset| InvItem {
+            id: id(n),
+            parent: id(1),
+            asset_type: 0,
+            asset_id: id(asset),
+            ..Default::default()
+        };
+        inv.items.insert(id(10), texture(10, 500));
+        inv.folders.get_mut(&id(1)).expect("outfit").items.push(id(10));
+        let mut st = AppearanceUi::default();
+        assert_eq!(st.outfit_picture(&inv, id(1)), id(500));
+        // the same inventory generation: what was found
+        inv.items.insert(id(10), texture(10, 501));
+        assert_eq!(st.outfit_picture(&inv, id(1)), id(500));
+        inv.generation += 1;
+        assert_eq!(st.outfit_picture(&inv, id(1)), id(501));
+        // a thumbnail comes first, with no walk
+        inv.folders.get_mut(&id(1)).expect("outfit").info.thumbnail = id(502);
+        assert_eq!(st.outfit_picture(&inv, id(1)), id(502));
+        assert!(st.outfit_picture(&inv, id(99)).is_nil(), "unknown outfit");
     }
 }
