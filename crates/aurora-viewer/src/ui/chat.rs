@@ -3335,6 +3335,13 @@ fn classic_pane(
     let mut emoji_btn = None;
     let mut send_clicked = false;
     let mut draft = std::mem::take(st.draft_mut(st.selected));
+    // the recent emojis, over the field (under it with the Legacy chat style)
+    let over = if st.recent_emojis.above {
+        let w = ui.available_width();
+        st.recent_emojis.strip(ui, p, emoji, w, conv_input, &mut draft)
+    } else {
+        None
+    };
     let resp = ui
         .horizontal(|ui| {
             // the edges of the lines above, half the theme's spacing between
@@ -3380,23 +3387,18 @@ fn classic_pane(
                 .on_hover_text(aurora_i18n::tr!("ui-chat-compose-shortcuts"))
         })
         .inner;
-    // the recent emojis, under the field
-    if st.recent_emojis.shown() {
+    if !st.recent_emojis.above {
         let w = ui.available_width();
-        let (row, _) = ui.allocate_exact_size(
-            egui::vec2(w, super::emoji::recent::HEIGHT - ui.spacing().item_spacing.y),
-            egui::Sense::hover(),
-        );
-        if let Some(c) = st.recent_emojis.row(ui, p, emoji, row, conv_input) {
-            super::emoji::recent::insert(ui.ctx(), conv_input, &mut draft, c);
-        }
+        st.recent_emojis.strip(ui, p, emoji, w, conv_input, &mut draft);
     }
+    // the row over the field is not part of the strip
+    let field_top = over.map_or(resp.rect.top(), |row| row.top());
     // the strip between the lines and the field: egui reaches
     // both from it (interact_radius), it keeps the normal cursor
     // unless a drag goes through it
     if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
         && pos.y > strip_top
-        && pos.y < resp.rect.top()
+        && pos.y < field_top
         && ui.min_rect().x_range().contains(pos.x)
         && !ui.input(|i| i.pointer.any_down())
     {

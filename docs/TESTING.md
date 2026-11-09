@@ -4392,8 +4392,8 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_IMPOSTOR_FLIP=<seconds>` | The avatar limit alternates between its setting and one every `seconds` |
 | `AURORA_DEMO_OVERDRAW=<n>` | Overdraw test: n rows of opaque walls |
 | `AURORA_DEMO_ALPHA_MASK_AB=<shape>:<layers>:<mode>[:touch]` | Static layered alpha faces for the offline Mask/Blend A/B (#1696) |
-| `AURORA_DEMO_ALPHA_SORT=front\|back` | Original unrigged three-face DAE and PNG fixture, fixed front/back camera (#2575) |
-| `AURORA_ALPHA_FACE_SORT=0\|1` | Nonrigged alpha face-depth sorting, on by default; 0 retains object-centre sorting for A/B |
+| `AURORA_DEMO_ALPHA_SORT=<mode>` | Original three-face DAE/PNG fixture in the world or worn as a HUD |
+| `AURORA_ALPHA_FACE_SORT=0\|1` | World/HUD nonrigged alpha face-depth sorting, on by default; 0 retains object-centre sorting for A/B |
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
 | `AURORA_DEMO_REZ_EFFECT=1\|loop\|styles\|cold` | The rez effect: objects and an avatar appearing, dressing and leaving in front of the camera; `styles`: its three looks side by side; `cold`: a cold arrival with slow textures |
 | `AURORA_REZ_EFFECT=0\|1` | The rez effect off or on, whatever the setting (Preferences › Aurora) |
@@ -4441,6 +4441,13 @@ both open states and the selection count. Capture at frame 620.
   This tests ordering between nonrigged faces, not intersections inside one face
   or the separate rigged attachment order. The switch also restores the former
   radial ordering of portal and ban-line sort points for a consistent A/B.
+  Modes `hud`, `hud-back` and `hud-zoom` wear the same mesh at the centre HUD
+  point: red is nearest in `hud`, blue in `hud-back`; `hud-zoom` uses the red
+  side at 50% local size. The HUD uses its own +X depth, independent of the
+  world camera. With sorting off, its three faces share one object key and
+  blue incorrectly covers red in `hud`. Compare sorting off/on, SMAA/MSAA 4x,
+  reversed orientation and local zoom; ordinary HUD opacity, masks, clicks,
+  viewport zoom and visibility must stay unchanged. No grid assets are read.
 
 - **`AURORA_DEMO_ALPHA_MASK_AB=planes|cross|spheres:<layers>:mask|blend[:touch]`**:
   adds 1 to 512 static layered prims with a procedural alpha texture; `none`
@@ -5334,7 +5341,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GLYPHS=1\|2\|rtl\|rtl2` | Names, titles and chat in extended characters (system fonts); `rtl`, `rtl2`: right-to-left text |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
-| `AURORA_DEMO_RECENT_EMOJIS=1\|<emojis>` | Recent emojis under the chat fields: a full row, or the emojis given |
+| `AURORA_DEMO_RECENT_EMOJIS=1\|<emojis>` | Recent emojis over the chat fields (under them with the Legacy chat style): a full row, or the emojis given |
 | `AURORA_DEMO_FAVORITE_EMOJIS=<emojis>` | Favourite emojis: first in that row, the picker opening on their tab |
 | `AURORA_DEMO_CHAT_INPUT=1\|long\|ime` | Paragraph drafts or Japanese IME composition in chat inputs |
 | `AURORA_DEMO_SPELLING=1\|menu\|replace` | Misspelled words underlined in the chat bar and Conversations; their suggestions; auto-replace while typing |
@@ -7176,8 +7183,8 @@ failure. Grid validation and any paid upload are performed by the human.
   Unset, the row takes no room until a first emoji is sent. Preferences ›
   Chat › Show recent emojis turns it off. The Legacy bars
   (`AURORA_DEMO_BARS=legacy`) have no emojis in their field, so no row.
-- **`AURORA_DEMO_FAVORITE_EMOJIS=<emojis>`**: the favourites, for the run:
-  first in the row with a small star, and the emoji picker opening on their
+- **`AURORA_DEMO_FAVORITE_EMOJIS=<emojis>`**: the favourites, turned on for
+  the run whatever Preferences › Chat › Favorite emojis says: first in the row with a small star, and the emoji picker opening on their
   tab (with `AURORA_DEMO_BARS=emoji`). The right-click menu of an emoji in
   the row or the picker adds or removes one. Nothing is saved.
 - **`AURORA_DEMO_EMOJI_CODES=<text>`**: the Conversations window open, its

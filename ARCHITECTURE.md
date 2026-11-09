@@ -6,11 +6,18 @@ rather than one radial object distance. `scene/picking.rs::PickFace` caches
 each face's local bounds on the geometry worker. `scene/blend_order.rs::FaceDepth`
 factors the current GPU record placement and its animated anchor once per visible
 object, leaving two dot products per face in the parallel list build. Rigged and
-HUD ordering remain separate; glow and the under-water list follow the same face
+HUD passes remain separate; glow and the under-water list follow the same face
 order. Portal and ban-line sort points use the same view-depth metric.
-`AURORA_ALPHA_FACE_SORT=0` retains the former ordering for controlled comparisons.
+`scene/hud.rs::build_huds` reuses `FaceDepth` with the HUD camera's +X axis,
+reading the actual record model once per nonrigged blended object through a
+read-only model callback. It keeps opaque/masked faces and hit testing apart;
+object/face/index ties stay deterministic. Missing geometry/model data and rigged
+HUDs retain the object-centre fallback.
+`AURORA_ALPHA_FACE_SORT=0` retains the former world and HUD ordering for controlled
+comparisons.
 `demo_alpha_sort.rs` loads the original three-face unrigged DAE and PNGs in
-`crates/aurora-viewer/assets/demo/alpha-sort/`, also supplied for grid testing.
+`crates/aurora-viewer/assets/demo/alpha-sort/`, also supplied for grid testing. Its
+`hud`, `hud-back` and `hud-zoom` modes exercise the same layered mesh in screen space.
 
 `ui/inventory/clipboard.rs` owns the cut feedback shared by the two inventory
 layouts and folder windows. It caches the cut roots and checks only visible
@@ -2133,6 +2140,12 @@ than once per 200 ms per avatar; decoding and vertex work stay on the job
 pool. Departed/unposed avatars, disabled placement and scene cleanup retire
 their caches. Animesh is excluded. Remote measurements never change hover
 settings and do not depend on our account's automatic-height capability.
+The last accepted sole height is retained per avatar for pose placement while
+a changed outfit settles or its replacement measurement is pending or fails.
+This rendering reference is separate from the current calibration: automatic
+hover changes still require a successful result for the current signature,
+and stale jobs cannot replace either reference. Disabling calibration clears
+the retained reference; it cannot be reused by another avatar.
 With automatic height disabled, calibration
 updates only the cached sole reference; it never previews or commits hover
 height. Toggling automatic height preserves that reference while foot
@@ -2775,7 +2788,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `ui/options/pages/aurora.rs` | Preferences › Aurora: what Aurora does differently from the Legacy Viewer, each redrawn element with its way back to the Legacy look (windows, the world and the interface, gaze, movement, animation timing); `set_all` sets every look at once (and Aurora's water); the entry of the sidebar carries the aurora gradient |
 | `ui/bidi.rs` | Right-to-left text (Arabic, Hebrew) in reading order on top of egui, which lays rows out from left to right: the Unicode Bidirectional Algorithm (`unicode-bidi`) on the rows of a text, each right-to-left word given to egui as its own section (its shaper reverses and joins it). `layout` returns a `Visual`: the galley and the box of each character of the original text (`range_rects`, `cursor_rect`, `cursor_at`) for links and selection. Texts without right-to-left characters are laid out as they are |
 | `ui/fonts.rs`, `ui/fonts/fallback.rs`, `ui/fonts/preview.rs` | Interface fonts: main font, embedded (Inter by default, Noto Sans, Roboto, OpenDyslexic, each with its semi-bold or bold face) or chosen, those of egui, then system text fallback fonts before egui's icon font for characters the main faces do not have (display names, titles, chat: Georgian, CJK, Arabic, mathematical letters…). `fallback.rs`: list per script, first installed font that draws the probe character, files memory-mapped and checked on the `aurora-fonts` thread, alignment of their baseline with the main font; installed on the next frame if the search was not finished. `AURORA_FONT_FALLBACK=0` removes them. `preview.rs`: the system font list's visible rows (and a margin), each name drawn in its own face into a picture by a thread of its own, uploaded as it is ready and dropped once the list closes; the faces never enter egui |
-| `ui/emoji.rs`, `ui/emoji/codes.rs`, `ui/emoji/recent.rs` | Colour emoji: the built-in font's pictures, the text fields that draw them, and the picker (its search takes the keyboard, Escape is its own). `recent.rs`: the emojis of the messages sent and the favourites, kept for the account, and their row under the chat fields. `codes.rs`: the `:code:` shortcodes of the chat fields, converted when the closing `:` is typed, a list of suggestions from `:` and two letters (arrows, Tab / Enter, Escape), and the same rules for what is sent (not inside a word, a time or a link). |
+| `ui/emoji.rs`, `ui/emoji/codes.rs`, `ui/emoji/recent.rs` | Colour emoji: the built-in font's pictures, the text fields that draw them, and the picker (its search takes the keyboard, Escape is its own). `recent.rs`: the emojis of the messages sent and the favourites, kept for the account, and their row over the chat fields (under them with the Legacy chat style). `codes.rs`: the `:code:` shortcodes of the chat fields, converted when the closing `:` is typed, a list of suggestions from `:` and two letters (arrows, Tab / Enter, Escape), and the same rules for what is sent (not inside a word, a time or a link). |
 | `ui/exit.rs` | Translated exit modal: quit, log out to the login screen, cancel; background blurred on the GPU and interactions blocked; non-blocking wait for the end of the session, with Firestorm's six-second fallback timeout |
 | `updater.rs`, `ui/update.rs`, `app/update_notice.rs` | Asynchronous controller and update window: notes, progress, restart and errors; manual check in Help / login, ignored tag, Ask / Automatic / Required only choice and Stable / Beta channel (a change checks again). A running viewer checks again every `update_check_interval` (10 min by default): a quiet check that never blocks the login nor opens the window, whose new version becomes a notice once per session (`app/update_notice.rs`: a card of the notifications in the world, the window on the login screen), downloaded first in the Automatic mode. Isolated synthetic demo through `AURORA_DEMO_UPDATE`, the notice through `AURORA_DEMO_UPDATE_NOTICE`. |
 | `ui/news.rs`, `ui/news/markdown.rs`, `links.rs` | News of the login screen: Markdown files `news/<language>.md` of the repository, one per interface language (fallback to the base language, then English). At startup, the last download kept in the cache (`news-<language>.json`) or, failing that, the files compiled into the viewer; then the file from `main`, downloaded in the background (bounded size, 20 news items, texts cut, `https://` links only), replaces them. Reloaded when the interface language changes; a failure leaves the panel as it is. No download in demo nor in the test installation of updates; `AURORA_NEWS_URL` reads a local server or another branch, without cache. `markdown.rs`: tolerant reading of the format (`## date — title`, text, link), HTML comments ignored |
