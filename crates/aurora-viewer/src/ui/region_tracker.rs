@@ -66,11 +66,12 @@ impl RegionTrackerUi {
                 status: status(&world.map, &r.name, own),
             })
             .collect();
-        if let Some(sel) = &self.selected
-            && !self.rows.iter().any(|r| &r.name == sel)
-        {
-            self.selected = None;
-        }
+        // the name as the list keeps it: "ahern" added again selects the
+        // tracked "Ahern"
+        self.selected = self
+            .selected
+            .take()
+            .and_then(|sel| self.rows.iter().find(|r| r.name.eq_ignore_ascii_case(&sel)).map(|r| r.name.clone()));
         self.refreshed = Some(Instant::now());
     }
 
@@ -165,13 +166,13 @@ impl RegionTrackerUi {
                     );
                 }
             });
-            let height = (ui.available_height() - 40.0).max(60.0);
+            // the list takes the room the buttons leave, measured, not guessed
+            let (mut rows_ui, footer) = widgets::above_footer(ui);
             let mut open_region = None;
             let out = egui::ScrollArea::vertical()
                 .id_salt("region_tracker_rows")
-                .max_height(height)
                 .auto_shrink([false, false])
-                .show(ui, |ui| {
+                .show(&mut rows_ui, |ui| {
                     for row in &self.rows {
                         let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::click());
                         let selected = self.selected.as_deref() == Some(row.name.as_str());
@@ -220,19 +221,21 @@ impl RegionTrackerUi {
                         ui.label(RichText::new(aurora_i18n::tr!("common-none")).color(p.muted));
                     }
                 });
-            widgets::remember_scroll_bar(ui, list, &out);
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(self.selected.is_some(), egui::Button::new(aurora_i18n::tr!("common-remove")))
-                    .clicked()
-                    && let Some(name) = self.selected.take()
-                {
-                    world.remove_tracked_region(&name);
-                    changed = true;
-                }
-                if ui.button(aurora_i18n::tr!("common-world-map")).clicked() {
-                    open_region = Some(self.selected.clone().unwrap_or_default());
-                }
+            widgets::remember_scroll_bar(&rows_ui, list, &out);
+            footer.show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(self.selected.is_some(), egui::Button::new(aurora_i18n::tr!("common-remove")))
+                        .clicked()
+                        && let Some(name) = self.selected.take()
+                    {
+                        world.remove_tracked_region(&name);
+                        changed = true;
+                    }
+                    if ui.button(aurora_i18n::tr!("common-world-map")).clicked() {
+                        open_region = Some(self.selected.clone().unwrap_or_default());
+                    }
+                });
             });
             if let Some(name) = open_region {
                 Self::open_map(world, Some(name.as_str()).filter(|n| !n.is_empty()), map_open);
@@ -241,5 +244,48 @@ impl RegionTrackerUi {
         if changed {
             self.rebuild(world);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn world() -> World {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for i in 0..30 {
+            world.region_tracker.add(&format!("Region {i}"), &format!("Label {i}"));
+        }
+        world
+    }
+
+    /// The list takes the room the buttons leave: the window keeps its size
+    /// at every interface scale and text size, its buttons in view.
+    #[test]
+    fn the_window_keeps_its_size() {
+        let mut world = world();
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            WINDOW,
+            &[Vec2::new(620.0, 420.0), Vec2::new(420.0, 260.0)],
+            aurora_i18n::tr!("common-world-map"),
+            RegionTrackerUi::default,
+            |ui, ctx, p| ui.show(ctx, p, &mut world, &mut true, &mut false),
+        );
+    }
+
+    /// A region added again under another case keeps the list's spelling
+    /// and stays selected.
+    #[test]
+    fn a_region_added_again_in_another_case_stays_selected() {
+        let mut world = world();
+        let mut ui = RegionTrackerUi {
+            selected: Some("region 3".to_owned()),
+            ..Default::default()
+        };
+        ui.rebuild(&mut world);
+        assert_eq!(ui.selected.as_deref(), Some("Region 3"));
+        ui.selected = Some("Nowhere".to_owned());
+        ui.rebuild(&mut world);
+        assert_eq!(ui.selected, None, "a region no longer tracked is unselected");
     }
 }

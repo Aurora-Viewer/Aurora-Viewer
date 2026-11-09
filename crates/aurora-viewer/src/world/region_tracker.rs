@@ -1,7 +1,9 @@
 //! Per-account list of regions to watch (ALFloaterRegionTracker,
 //! indra/newview/alfloaterregiontracker.cpp): `tracked_regions.json` in the
-//! account's folder, `{name: {label}}` as the Legacy Viewer keeps it, and
-//! the state of each region read from the world map.
+//! account's folder, the Legacy Viewer's `{name: {label}}` map written as
+//! JSON (it writes LLSD notation under the same name, so the two files are
+//! not interchangeable), and the state of each region read from the world
+//! map.
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
