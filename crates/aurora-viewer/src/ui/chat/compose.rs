@@ -121,6 +121,10 @@ pub(super) fn show(
             let mut send_clicked = false;
             let local = st.selected.is_none();
             let roomy = width > 520.0;
+            // ---- the recent emojis, over the box
+            if st.recent_emojis.above {
+                st.recent_emojis.strip(ui, p, emoji, width - 28.0, conv_input, &mut draft);
+            }
             let field = egui::Frame::new()
                 .fill(p.raised)
                 .corner_radius(ui.visuals().window_corner_radius)
@@ -194,15 +198,9 @@ pub(super) fn show(
                     .inner
                 });
             let resp = field.inner;
-            // ---- the recent emojis, under the box
-            if st.recent_emojis.shown() {
-                let (row, _) = ui.allocate_exact_size(
-                    egui::vec2(width - 28.0, crate::ui::emoji::recent::HEIGHT - ui.spacing().item_spacing.y),
-                    egui::Sense::hover(),
-                );
-                if let Some(c) = st.recent_emojis.row(ui, p, emoji, row, conv_input) {
-                    crate::ui::emoji::recent::insert(ui.ctx(), conv_input, &mut draft, c);
-                }
+            // ---- or under it, with the Legacy chat style
+            if !st.recent_emojis.above {
+                st.recent_emojis.strip(ui, p, emoji, width - 28.0, conv_input, &mut draft);
             }
             if st.emoji_open && super::popout::claim_picker(ui.ctx()) {
                 let anchor = emoji_btn.unwrap_or(resp.rect).left_top();

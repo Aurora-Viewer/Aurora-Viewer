@@ -16317,6 +16317,8 @@ impl App {
                 } else {
                     self.settings.show_recent_emojis
                 };
+                self.chat_ui.recent_emojis.favorites_enabled = self.settings.favorite_emojis;
+                self.chat_ui.recent_emojis.above = self.settings.chat_style != crate::settings::ChatStyle::Legacy;
                 self.chat_ui.send_typing = self.settings.send_typing_state;
                 self.chat_ui.typing_chevron = self.settings.typing_chevron;
                 self.chat_ui.flash_unread = self.settings.flash_unread_conversations;
