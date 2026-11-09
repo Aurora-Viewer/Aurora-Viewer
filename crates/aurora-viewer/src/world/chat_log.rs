@@ -206,7 +206,9 @@ impl ChatLog {
         self.conversations.poll_saves();
         match (self.cfg.log_conversations, self.conversations.logging) {
             (true, false) => self.start_conversations(),
-            (false, true) => {
+            // (a file still being read is waited for on the next frames, not
+            // on this one: the last save merges the session's entries into it)
+            (false, true) if !self.conversations.is_reading() => {
                 self.save_conversations(true);
                 self.conversations.stop();
             }
@@ -461,8 +463,14 @@ impl ChatLog {
         // nothing back, a removed entry stays removed
         let removals = self.conversations.take_removals();
         if report.at_login && !self.cfg.log_conversations {
+            // the log was switched off meanwhile: nothing taken in, nothing
+            // marked brought
             report.conversations.clear();
         } else {
+            if report.at_login {
+                // taken in, or removed by the user on purpose: not brought again
+                import::mark_brought(&report.state, &report.conversations);
+            }
             removals.filter(&mut report.conversations);
         }
         Some(report)

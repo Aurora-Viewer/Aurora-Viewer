@@ -1286,4 +1286,45 @@ mod tests {
         assert_eq!(w.social.ims.len(), 1);
         clean(&w, &root);
     }
+
+    #[test]
+    fn the_conversation_log_hides_a_private_name_under_shownames_only() {
+        use aurora_net::{ChatMessage, ChatSourceType, ChatType};
+        let root = temp();
+        let me = Uuid::from_u128(0x5E1F);
+        let jane = Uuid::from_u128(0x1A4E);
+        let group = Uuid::from_u128(0x6A00);
+        let mut w = world(&root, me);
+        let entry = |kind, participant, name: &str| Conversation {
+            time: 100,
+            kind,
+            name: name.into(),
+            history_file: name.into(),
+            session: Uuid::from_u128(77),
+            participant,
+            offline: false,
+        };
+        let private = entry(Kind::Private, jane, "Jane Doe");
+        let own = entry(Kind::Private, me, "Me Resident");
+        let chat = entry(Kind::Group, group, "Some Group");
+        // RLVa off: the real names
+        assert_eq!(w.conversation_display_name(&private), "Jane Doe");
+        w.rlva.configure(true);
+        let restrict = ChatMessage {
+            from_name: "RLVa test object".to_owned(),
+            source_id: Uuid::from_u128(1),
+            owner_id: Uuid::from_u128(2),
+            source_type: ChatSourceType::Object,
+            chat_type: ChatType::OwnerSay,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n".to_owned(),
+        };
+        assert!(w.rlva.receive(&restrict));
+        let hidden = w.conversation_display_name(&private);
+        assert_ne!(hidden, "Jane Doe", "a private conversation is anonymous");
+        assert!(!hidden.is_empty());
+        assert_eq!(w.conversation_display_name(&chat), "Some Group");
+        assert_eq!(w.conversation_display_name(&own), "Me Resident");
+        clean(&w, &root);
+    }
 }

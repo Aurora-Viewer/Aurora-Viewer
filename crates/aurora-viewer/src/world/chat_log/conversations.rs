@@ -364,6 +364,11 @@ impl Log {
         self.apply_read(read, now);
     }
 
+    /// The file is still being read.
+    pub(super) fn is_reading(&self) -> bool {
+        self.reading.is_some()
+    }
+
     /// Before a logout or an exit: wait (briefly) for the file still being
     /// read and merge the session's entries into it, so that the last save
     /// does not lose them. Gives up, and says so, when the disk is too slow.
@@ -535,6 +540,10 @@ impl Log {
         if let Some(r) = &mut self.removals {
             r.cleared = true;
         }
+        // a file still being read holds what is cleared: its answer is
+        // dropped (the receiver goes, the worker's send finds nobody), and
+        // the empty log is written over it
+        self.reading = None;
         self.list.clear();
         self.early.clear();
         self.dirty = true;
@@ -962,5 +971,26 @@ mod tests {
         log.log(entry(10, Kind::Conference, "Conference", 1));
         log.rekey(temp, server);
         assert_eq!(log.early[0].session, server);
+    }
+
+    #[test]
+    fn clearing_while_the_file_is_still_being_read_drops_the_old_list() {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        let mut log = Log::default();
+        log.start(Some(rx));
+        log.log(entry(100, Kind::Private, "Session", 1));
+        log.clear();
+        assert!(!log.is_reading(), "the read is no longer waited for");
+        // the worker answers anyway, with the old file
+        let old = format_file(&[entry(50, Kind::Private, "Old", 2)]);
+        let _ = tx.send(Ok(Some(old.into_bytes())));
+        log.poll_read(1_000);
+        assert!(log.list.is_empty(), "the old list does not come back");
+        // the empty log goes to the disk at once, over the old file
+        let saved = log.take_save(true).expect("written");
+        assert_eq!(parse_file(saved.as_bytes(), 1_000).0.len(), 0);
+        // what is logged afterwards is kept
+        log.log(entry(200, Kind::Private, "New", 3));
+        assert_eq!(log.list.len(), 1);
     }
 }

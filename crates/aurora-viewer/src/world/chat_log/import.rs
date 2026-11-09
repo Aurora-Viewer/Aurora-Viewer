@@ -534,6 +534,8 @@ pub struct Report {
     /// The entries of the Legacy Viewer's conversation logs
     /// (`conversation.log` of the folders read), with the instant messages.
     pub conversations: Vec<super::conversations::Conversation>,
+    /// The import state file, for `mark_brought`.
+    pub state: PathBuf,
 }
 
 /// An import under way.
@@ -558,6 +560,22 @@ type Signature = (u64, u64);
 /// session and last time.
 fn conversation_key(c: &super::conversations::Conversation) -> String {
     format!("conversation\n{}\n{}", c.session.hyphenated(), c.time)
+}
+
+/// The import at login brings each conversation entry once: the keys of
+/// `entries` are written to the state only now, by the side that took the
+/// entries in (or knowingly dropped them: removed by the user, the log
+/// cleared). An import whose entries were not taken because the log was
+/// switched off leaves them to come at the next login.
+pub fn mark_brought(state: &Path, entries: &[super::conversations::Conversation]) {
+    if entries.is_empty() {
+        return;
+    }
+    let mut known = load_state(state);
+    for c in entries {
+        known.insert(conversation_key(c), (0, 0));
+    }
+    save_state(state, &known);
 }
 
 /// The file stem the transcript of a Legacy conversation log entry has in
@@ -645,10 +663,8 @@ fn run(port: &store::MergePort, request: Request, done: &AtomicUsize, total: &At
         Vec::new()
     };
     if request.skip_unchanged {
+        // (marked brought later, by `mark_brought`, once taken in)
         conversations.retain(|c| !state.contains_key(&conversation_key(c)));
-        for c in &conversations {
-            state.insert(conversation_key(c), (0, 0));
-        }
     }
     for c in &mut conversations {
         c.history_file = renamed_history(&request.dir, &c.history_file, &spelled);
@@ -665,6 +681,7 @@ fn run(port: &store::MergePort, request: Request, done: &AtomicUsize, total: &At
         left_out,
         conversations,
         at_login: request.skip_unchanged,
+        state: request.state.clone(),
         ..Report::default()
     };
     let mut first_error = None;
@@ -935,8 +952,13 @@ mod tests {
         // left out with the instant messages
         let kinds = Kinds { im: false, nearby: true };
         assert!(import_kinds_at_login(&from, &to, false, kinds).conversations.is_empty());
+        // not brought until the side that takes them in says so: an import
+        // whose entries were dropped (the log switched off) brings them again
+        let second = import_at_login(&from, &to, false);
+        assert_eq!(second.conversations.len(), 1);
         // brought once: an entry the user removed does not come back at the
         // next login
+        mark_brought(&second.state, &second.conversations);
         assert!(import_at_login(&from, &to, false).conversations.is_empty());
         std::fs::remove_dir_all(from).unwrap();
         std::fs::remove_dir_all(to).unwrap();
@@ -967,7 +989,12 @@ mod tests {
                 skip_unchanged,
                 conversations,
             };
-            start(worker.merge_port(), request).unwrap().report.recv().unwrap().conversations
+            let report = start(worker.merge_port(), request).unwrap().report.recv().unwrap();
+            // (what the side taking the entries in does at login)
+            if skip_unchanged {
+                mark_brought(&report.state, &report.conversations);
+            }
+            report.conversations
         };
         // the user keeps no conversation log: nothing is read, nothing marked
         assert!(run(true, false).is_empty());
