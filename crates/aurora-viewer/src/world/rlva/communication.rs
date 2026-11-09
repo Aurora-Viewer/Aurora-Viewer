@@ -370,7 +370,7 @@ mod tests {
         });
         restrict(&mut world, "@startim=n");
         world.start_text_conference(vec![PERSON]);
-        world.start_group_chat(group);
+        world.start_group_chat(group, false);
         world.start_call(PERSON);
         assert!(world.social.ims.is_empty() && world.groups.sessions.is_empty() && world.groups.out.is_empty());
         assert!(world.calls.active.is_none());
@@ -391,7 +391,7 @@ mod tests {
         assert!(world.rlva_can_start_im(PERSON), "a real open session overrides startimto too");
         world.start_text_conference(vec![PERSON, other]);
         assert_eq!(world.calls.conferences.len(), 1);
-        world.start_group_chat(group);
+        world.start_group_chat(group, false);
         restrict(&mut world, &format!("@startim:{group}=y,startimto:{group}=n"));
         world.groups.out.clear();
         world.start_call(group);
