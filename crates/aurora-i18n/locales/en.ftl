@@ -12015,6 +12015,7 @@ poser-search = Find a bone…
 poser-position = Local position (metres)
 poser-rotation = Local rotation (degrees)
 poser-markers = Show joint markers and gizmos
+poser-markers-hide = Hide joint markers and gizmos
 poser-stop-on-close = Stop posing when closed
 poser-confirm-close = Confirm before closing loses the pose
 poser-close-title = Close the poser?

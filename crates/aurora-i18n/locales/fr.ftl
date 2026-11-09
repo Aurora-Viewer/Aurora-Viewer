@@ -12011,6 +12011,7 @@ poser-search = Rechercher un os…
 poser-position = Position locale (mètres)
 poser-rotation = Rotation locale (degrés)
 poser-markers = Afficher les repères et les gizmos
+poser-markers-hide = Masquer les repères et les gizmos
 poser-stop-on-close = Arrêter la pose à la fermeture
 poser-confirm-close = Confirmer quand la fermeture perd la pose
 poser-close-title = Fermer le poseur ?

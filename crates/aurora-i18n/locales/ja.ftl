@@ -11993,6 +11993,7 @@ poser-search = ボーンを検索…
 poser-position = ローカルの位置（ｍ）
 poser-rotation = ローカルの回転角（度）
 poser-markers = ジョイントのマーカーとギズモを表示
+poser-markers-hide = ジョイントのマーカーとギズモを隠す
 poser-stop-on-close = 閉じたときにポーズを停止する
 poser-confirm-close = 閉じようとしてポーズが失われる前に確認
 poser-close-title = ポーザーを閉じますか？
