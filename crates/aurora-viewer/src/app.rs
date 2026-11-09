@@ -6092,6 +6092,8 @@ impl App {
         self.settings.save();
         // the last lines of the conversations reach their files
         self.world.chat_log.flush(Duration::from_secs(2));
+        // the recent emojis of a message sent just before
+        self.chat_ui.recent_emojis.finish(Duration::from_secs(1));
         // and the settings theirs (written by the save thread), before a
         // restarted viewer reads them
         Settings::wait_saved(Duration::from_secs(5));
@@ -16291,7 +16293,12 @@ impl App {
                 self.chat_ui.compact_im_notices =
                     self.settings.compact_im_system_lines || (self.demo && crate::demo::object_chat::scene().is_some_and(|s| s.im_lines));
                 self.chat_ui.show_channel = self.settings.show_chat_channel || self.chat_ui.demo_channel;
-                self.chat_ui.recent_emojis.enabled = self.settings.show_recent_emojis;
+                // the Legacy chat style keeps its own switch, off
+                self.chat_ui.recent_emojis.enabled = if self.settings.chat_style == crate::settings::ChatStyle::Legacy {
+                    self.settings.show_recent_emojis_legacy
+                } else {
+                    self.settings.show_recent_emojis
+                };
                 self.chat_ui.send_typing = self.settings.send_typing_state;
                 self.chat_ui.typing_chevron = self.settings.typing_chevron;
                 self.chat_ui.flash_unread = self.settings.flash_unread_conversations;
