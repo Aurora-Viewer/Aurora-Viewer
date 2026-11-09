@@ -50,7 +50,8 @@ pub fn tab_from_name(name: &str) -> Option<usize> {
     match name.trim().to_lowercase().as_str() {
         "favorites" | "favoris" | "0" => Some(TAB_FAVORITES),
         "landmarks" | "reperes" | "repères" | "1" => Some(TAB_LANDMARKS),
-        "history" | "historique" | "2" => Some(TAB_HISTORY),
+        // history-big: same tab, a large demo history (#2955)
+        "history" | "historique" | "history-big" | "2" => Some(TAB_HISTORY),
         _ => None,
     }
 }

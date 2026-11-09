@@ -3840,8 +3840,13 @@ impl App {
                 }
                 self.login_favorites.session_started(&self.settings, self.demo);
                 // the demo's teleport history: several days, never saved
+                // (history-big / n=…: thousands of rows for Places FPS, #2955)
                 if self.demo {
-                    self.world.tp_storage = crate::world::tphistory::HistoryStorage::in_memory(crate::demo::place::history());
+                    let items = crate::demo::place::history();
+                    if crate::demo::place::history_stress_count().is_some() {
+                        log::info!("demo teleport history: {} entries (FPS stress)", items.len());
+                    }
+                    self.world.tp_storage = crate::world::tphistory::HistoryStorage::in_memory(items);
                     // earlier places in the session, for the arrows' list
                     if crate::ui::bars::demo::get().open == Some(crate::ui::bars::demo::Open::TpList) {
                         self.world.tp_history = crate::world::tphistory::TeleportHistory::seeded(crate::demo::place::session());

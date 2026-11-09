@@ -5392,7 +5392,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_SOCIAL_MENU=<step>` | A resident's "Invite to group", "Add to contact set", "Block particles" and calling card |
 | `AURORA_DEMO_LAND_MODERATION=menu\|none\|freeze\|eject\|eject-ban` | "Freeze" and "Eject" of a resident on our land |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
-| `AURORA_DEMO_PLACES=<tab>[:wide,open]` | "Places" on a tab, widened, its first place selected |
+| `AURORA_DEMO_PLACES=<tab>[:wide,open]` or `history-big` / `history:n=<count>` | "Places" on a tab; `history-big` seeds thousands of TP history rows (#2955) |
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
 | `AURORA_DEMO_PLACE_WINDOW=1` | Place profiles in separate windows |
 | `AURORA_DEMO_TP_CONFIRM=<origin>` | Teleport confirmation on screen |
@@ -8544,7 +8544,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   folders, the list, the preview) and `:open` selects its first place (a
   narrow row opens in place); `:wide,open` does both. The demo's favourite
   of the lagoon is a copy of its landmark (same asset): one place with a
-  lit star.
+  lit star. `history-big` (or `history:big` / `history:n=5000`) seeds thousands
+  of history rows (most older than a month) so Places › History FPS (#2955)
+  can be checked on a fast machine; open History and scroll with the FPS
+  meter (`AURORA_PROFILE=1`).
 - **`AURORA_DEMO_LANDMARK=create|favorite|landmark`**: once the avatar
   stands on its parcel, `create` opens World › Landmark this place: the
   landmark is created at once, named after the parcel; OK renames it,
