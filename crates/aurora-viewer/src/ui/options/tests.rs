@@ -1717,14 +1717,16 @@ fn a_borrowed_row_edits_the_setting_of_its_page() {
 
 #[test]
 fn show_friends_only_switches_from_controls_once_logged_in() {
-    // the rows of the search "friends only" on Controls: the shapes painted
+    // the rows of a search for the row's own label on Controls, in the
+    // interface's language (the tests may run in French): the shapes painted
     fn frame(frames: &mut Frames, st: &mut OptionsUi, r: &mut OptionsResult, events: Vec<egui::Event>) -> Vec<egui::Shape> {
         let p = crate::theme::Theme::default().palette();
         let (mut s, d) = (Settings::default(), Settings::default());
+        let query = aurora_i18n::tr!("toolbar-command-friends-only");
         frames.shapes(events, |ui| {
             ui.set_width(700.0);
             ui.spacing_mut().item_spacing.y = 0.0;
-            let mut cx = Cx::new(ui, p, &mut s, &d, st, r, Mode::Search, "friends only");
+            let mut cx = Cx::new(ui, p, &mut s, &d, st, r, Mode::Search, query);
             run_page(&mut cx, Page::Controls, Some(0));
         })
     }
