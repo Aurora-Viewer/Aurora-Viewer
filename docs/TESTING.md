@@ -4416,8 +4416,9 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
 | `AURORA_DEMO_PROBE_ROOM=<ambiance>[,box]` | A closed room with a lamp at `AURORA_DEMO_POS="100,100"`, and a manual probe of that ambiance: a sphere crossing the floor, or a box filling the room |
 | `AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]` | Geometry load: meshes filling the geometry arena |
-| `AURORA_GPU_OOM=<mb>` | Video memory full: every growth of a GPU buffer or texture page of at least that size fails |
+| `AURORA_GPU_OOM=<mb>[,<seconds>[,<after>]]` | Video memory full: every growth of a GPU buffer or texture page of at least that size fails, for the whole run or that long, from the start or `after` seconds |
 | `AURORA_GPU_OOM_TARGETS=<seconds>` | Video memory full for the render targets, that long after the start |
+| `AURORA_GPU_OOM_FIRST_USE=<seconds>` | Video memory full for the targets made on first use (selection outline, depth of field, photo look, RLVa, TAA history), that long |
 | `AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]` | Fast camera turns, again and again |
 
 ### Details
@@ -4715,9 +4716,31 @@ both open states and the selection count. Capture at frame 620.
   with no usage, which wgpu refuses, and this leaves the same invalid
   textures, so the log holds `Invalid usage flags` lines a real card does
   not.
-- **`AURORA_GPU_OOM=<mb>`** (demo or grid): every allocation of `mb`
-  megabytes or more made through `aurora-render/src/gpu_alloc.rs` fails as
-  if video memory were full (`0`: all of them): the geometry arena, the
+- **`AURORA_GPU_OOM_FIRST_USE=<seconds>`** (demo or grid): for that long
+  after the first one is made, every target made on first use counts as
+  refused by a full video memory. An effect the frame can go without is
+  left out and tried again after 2 s, then twice as long each time up to
+  30 s: the selection outline (`AURORA_DEMO_BUILD`), the depth of field
+  (`AURORA_DEMO_DOF`), a photo look; the log says once `<what>: out of
+  video memory, drawn without it for now`. One the frame cannot go without
+  shows the interface alone, as `AURORA_GPU_OOM_TARGETS` does: RLVa's
+  vision spheres and reduced scene (`AURORA_DEMO_RLVA`), the TAA history
+  remade by an anti-aliasing, shadow, probe or water effects change, the
+  rigged blend depth; the log says `<what>: out of video memory, the
+  interface alone until it can be made`, then `render targets: made again`
+  once the time is over. A refused RLVa target never shows the world it
+  hides: the frame that found it fails as a whole. Without the check, the
+  world stayed frozen or black until the window size changed.
+- **`AURORA_GPU_OOM=<mb>[,<seconds>[,<after>]]`** (demo or grid): every
+  allocation of `mb` megabytes or more made through
+  `aurora-render/src/gpu_alloc.rs` fails as if video memory were full
+  (`0`: all of them), for the whole run or, with a duration, that long
+  after the first allocation, as when another program that held the
+  memory closes. With `after`, it starts that many seconds after the first
+  allocation instead, as when another program fills the card while the
+  viewer runs: the reserved textures and the first pages are made, which
+  a small value from the start refuses as well. Allocations covered: the
+  geometry arena, the
   draw records, the culling tables, the joint palettes and skin bindings,
   particle and world-label upload buffers, and the texture pages. The
   interface's blur and glass count as a texture of the window's size and
@@ -4730,6 +4753,17 @@ both open states and the selection count. Capture at frame 620.
   drawing and the log holds no `wgpu error` line. Without the variable, a
   buffer the driver could not make used to be installed anyway, invalid,
   and every write into it was an error, every frame.
+  A texture whose page is refused keeps what it showed (grey while
+  loading), the log says once `textures: video memory full, uploads wait
+  until it can take them`, and it is sent again when the pages are tried
+  again: with `AURORA_GPU_OOM=1,20,3` and `AURORA_DEMO_TEXTURES=3000`,
+  the cubes still loading at 3 s stay grey until the pages are tried
+  again after the 20 s, then fill in, with `textures: video memory took
+  the uploads that waited for it`. Before, they stayed grey for the rest
+  of the session. (The demo's stress textures hold no data to decode
+  again: their texels come again, as a download would bring them. Its
+  own procedural textures, the plaza's, refused while full stay grey: the
+  grid has none.)
   World labels that cannot fit are omitted for that frame; a smaller frame
   resumes from the retained valid buffers. Excess particles wait while the
   portion that fits is uploaded and drawn. Hardware-limit regressions use
@@ -6486,7 +6520,7 @@ failure. Grid validation and any paid upload are performed by the human.
     "Ombres", not "Nombre"); a shortcut is found by its keys (`Ctrl+M`), a
     command by its name (`gtp`). `zzzz` shows the empty result.
   - `modified`: the settings that differ from their defaults, all pages
-    together, with "Reset them all" (and its Undo).
+    together, with "Reset them all…" (its confirmation, then its Undo).
   - `cogs`: every cog open (the rows behind the cog of a row: the twelve
     effects of Aurora's water, the eight of the depth of field…), for
     captures; each opened block has its own darker face.
@@ -6499,6 +6533,9 @@ failure. Grid validation and any paid upload are performed by the human.
     every frame short.
   - `reset`: the page reset at once, with its Undo at the bottom; the chat
     says it was reset once the Undo is gone (8 s) or the window closed.
+    The button itself asks first: `reset-ask` opens its "Reset …?"
+    dialog, `reset-all-ask` the one of "Reset everything…", and
+    `modified-ask` the one of "Reset them all…".
   - `restore` (with `system`): the confirmation of a settings restore, for
     a backup of the demo's own profile (preferences, windows' layout, skin,
     accounts' files when they exist); "Restore" puts them back as a real
@@ -7218,10 +7255,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the files built into the viewer. The demo and the update test
   installation never download the news, even with this
   variable.
-- **`AURORA_DEMO_UPDATE=1|progress|ready|ignored|beta`**, with `AURORA_DEMO=1`: offer
+- **`AURORA_DEMO_UPDATE=1|progress|ready|ignored|beta|grace`**, with `AURORA_DEMO=1`: offer
   of a synthetic version, download at 42% or download finished; `beta`
   offers a nightly beta (`0.7.7-beta.20261025.1`), as a viewer on the Beta
-  channel sees it.
+  channel sees it; `grace` is the offer below a new minimum version during
+  its grace period (12 h left): "Sign in anyway" and "Update", no "Skip".
   "Update" animates a simulated progress; "Cancel" goes back to the
   offer. No download and no file replacement. Login
   is inert and the login preferences stay intact.
