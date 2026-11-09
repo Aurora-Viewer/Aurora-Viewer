@@ -5685,8 +5685,11 @@ impl App {
         let Some(q) = self.world.media_filter.question() else {
             return;
         };
-        let area = ui::layout::work_area(ctx);
-        let Some(answer) = ui::media_filter::prompt(ctx, p, area, q, first_use, &mut self.media_filter_prompt) else {
+        // under the top bar or the islands, and under the media controls
+        // when they show (drawn just before)
+        let screen_top = ctx.content_rect().top();
+        let top = ui::media::controls_rect(ctx).map_or(ui::layout::work_area(ctx).top(), |r| r.bottom()) - screen_top;
+        let Some(answer) = ui::media_filter::prompt(ctx, p, top, q, first_use, &mut self.media_filter_prompt) else {
             return;
         };
         let url = q.url.clone();
@@ -16982,7 +16985,6 @@ impl App {
                         ctx.open_url(egui::OpenUrl::new_tab(url));
                     }
                 }
-                self.media_filter_question(&ctx, &p);
                 ui::media::show(
                     &ctx,
                     &p,
@@ -16992,6 +16994,7 @@ impl App {
                     // under the top bar or the islands
                     ui::layout::work_area(&ctx).top() - ctx.content_rect().top(),
                 );
+                self.media_filter_question(&ctx, &p);
                 if let Some(c) = self.media_cursor {
                     ctx.set_cursor_icon(c);
                 }
