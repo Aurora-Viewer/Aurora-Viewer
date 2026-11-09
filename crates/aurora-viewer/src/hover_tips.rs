@@ -535,20 +535,37 @@ pub struct Sources<'a> {
     pub agent: Vec3,
 }
 
-/// The tip of `subject`, or None when it shows none (an object that is not
-/// interactive without "on all objects", land without "on land", a parcel
-/// not known yet).
+/// The tip of `subject`, or None when it shows none (a subject its
+/// switches leave out, an object that is not interactive without "on all
+/// objects", a parcel not known yet).
 pub fn build(world: &mut World, subject: Subject, s: &Sources, settings: &HoverTips) -> Option<Tip> {
+    if !subject_enabled(subject, settings) {
+        return None;
+    }
     match subject {
         Subject::Object { idx, root, root_id } => object_tip(world, idx, root, root_id, s, settings),
         Subject::Avatar { idx, id } => Some(avatar_tip(world, idx, id, s, settings)),
         Subject::Land { handle, local, origin } => {
-            if !settings.land {
-                return None;
-            }
             let parcel = s.parcels.at(handle, local, origin)?.clone();
             Some(land_tip(world, &parcel, s.point))
         }
+    }
+}
+
+/// Some tip can show: the main switch (ShowHoverTips), or avatars alone.
+pub fn any_enabled(settings: &HoverTips) -> bool {
+    settings.enabled || settings.avatars
+}
+
+/// Whether the switches let this kind of subject have a tip: avatars with
+/// the main switch or "Avatars even when off", objects and land with the
+/// main switch only (land with "on land" too). "On all objects" is the
+/// object builder's.
+pub fn subject_enabled(subject: Subject, settings: &HoverTips) -> bool {
+    match subject {
+        Subject::Avatar { .. } => any_enabled(settings),
+        Subject::Object { .. } => settings.enabled,
+        Subject::Land { .. } => settings.enabled && settings.land,
     }
 }
 
