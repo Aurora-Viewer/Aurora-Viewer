@@ -9812,6 +9812,16 @@ What the inventory must show with these scenarios:
   Windows/macOS use the system's certificate verifier, which can complete
   missing intermediate chains. Linux uses the system CA bundle and still
   needs the intermediates from the server or its trust store.
+  AzuraCast public player URLs also resolve their exported PLS playlist before
+  decoding. Use `https://login-na2.lightmanstreams.com/public/auto_dj_44` and
+  compare its direct `/listen/auto_dj_44/live` stream: both should play without
+  editing the parcel URL. The explicit network probe is
+  `cargo test --workspace --locked lightman_live_probe -- --ignored --nocapture`.
+  Local `playlist::tests` cover player JSON, PLS/M3U, relative redirects,
+  actual MP3 decoding, cancellation, loops and document limits. Discovered
+  links and their redirects must stay on the same HTTP(S) origin; HLS is
+  unsupported. No JavaScript is executed and normal media-filter consent
+  still precedes the first request.
 - **`AURORA_DEMO_MEDIA_FILTER`**: turns the media filter on for the run.
   `ask` (or `1`) starts a parcel media on `media.example.com`, which the
   filter asks about (the question is up from the first frames; nothing
