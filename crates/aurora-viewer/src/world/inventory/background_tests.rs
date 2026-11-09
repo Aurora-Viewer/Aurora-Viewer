@@ -1,5 +1,5 @@
 use super::*;
-use aurora_net::inventory::{FolderContents, InvFolder};
+use aurora_net::inventory::{FolderContents, InvFolder, InvItem};
 
 const AGENT: Uuid = Uuid::from_u128(2);
 
@@ -70,12 +70,14 @@ struct Read {
     depth: i32,
 }
 
-/// An AIS server over `tree` that returns at most `cap` levels and fails
-/// the reads `fails` picks, like a 403 for a reply that would be too big.
+/// An AIS server over `tree` that returns at most `cap` levels, gives every
+/// folder `items` items, and fails the reads `failure` picks with that kind
+/// (a 403 for a reply that would be too big, a 503 for a throttled read).
 struct Server<'a> {
     tree: &'a [(u128, u128, i32)],
     cap: i32,
-    fails: &'a dyn Fn(&Read) -> bool,
+    items: usize,
+    failure: &'a dyn Fn(&Read) -> Option<FetchFailure>,
 }
 
 impl Server<'_> {
@@ -92,7 +94,16 @@ impl Server<'_> {
             owner_id: AGENT,
             version: 1,
             folders: children,
-            items: Vec::new(),
+            items: (0..self.items)
+                .map(|n| InvItem {
+                    id: id(1_000_000_000 + folder.as_u128() * 1_000 + n as u128),
+                    parent: folder,
+                    name: format!("Item {n}"),
+                    asset_type: 6,
+                    inv_type: 6,
+                    ..Default::default()
+                })
+                .collect(),
         });
         if depth > 0 {
             for child in next {
@@ -101,9 +112,14 @@ impl Server<'_> {
         }
     }
 
-    fn answer(&self, read: &Read) -> Option<Vec<FolderContents>> {
-        if (self.fails)(read) {
-            return None;
+    fn answer(&self, read: &Read) -> Result<Vec<FolderContents>, FetchError> {
+        if let Some(kind) = (self.failure)(read) {
+            let status = match kind {
+                FetchFailure::TooBig => 403,
+                FetchFailure::Transient => 503,
+                FetchFailure::Fatal => 500,
+            };
+            return Err(FetchError::new(kind, Some(status)));
         }
         let mut out = Vec::new();
         if read.children.is_empty() {
@@ -113,7 +129,7 @@ impl Server<'_> {
                 self.subtree(*child, (read.depth - 1).min(self.cap), &mut out);
             }
         }
-        Some(out)
+        Ok(out)
     }
 }
 
@@ -122,16 +138,22 @@ fn run(inv: &mut Inventory, server: &Server) -> Vec<Read> {
     run_with(BackgroundFetch::default(), inv, server)
 }
 
-fn run_with(mut fetch: BackgroundFetch, inv: &mut Inventory, server: &Server) -> Vec<Read> {
+fn run_with(fetch: BackgroundFetch, inv: &mut Inventory, server: &Server) -> Vec<Read> {
+    run_keeping_fetch(fetch, inv, server).0
+}
+
+fn run_keeping_fetch(mut fetch: BackgroundFetch, inv: &mut Inventory, server: &Server) -> (Vec<Read>, BackgroundFetch) {
     fetch.start(inv);
     let mut reads = Vec::new();
+    let mut now = Instant::now();
     for _ in 0..1000 {
-        let commands = fetch.pump(inv, AGENT);
+        now += std::time::Duration::from_secs(60);
+        let commands = fetch.pump_at(inv, AGENT, now);
         let max = if fetch.legacy[0] { LEGACY_IN_FLIGHT } else { MAX_IN_FLIGHT };
         // the end-of-frame legacy batches may each add one read
         assert!(fetch.in_flight.len() <= max + 2, "the pool bounds the reads in flight");
         if commands.is_empty() && fetch.is_idle() {
-            return reads;
+            return (reads, fetch);
         }
         for command in commands {
             if let NetCommand::FetchInventoryOrphans { request } = command {
@@ -153,10 +175,11 @@ fn run_with(mut fetch: BackgroundFetch, inv: &mut Inventory, server: &Server) ->
             assert_eq!(library, inv.folders[&parent].library);
             assert!(children.iter().all(|c| inv.folders[c].library == library), "one tree per read");
             let read = Read { parent, children, depth };
-            if let Some(contents) = server.answer(&read) {
-                inv.apply(contents);
-            }
-            fetch.on_reply(inv, request);
+            let (stale, outcome) = match server.answer(&read) {
+                Ok(contents) => (inv.apply(contents), Ok(())),
+                Err(error) => (Vec::new(), Err(error)),
+            };
+            fetch.on_reply_at(inv, request, &stale, outcome, now);
             reads.push(read);
         }
     }
@@ -196,7 +219,8 @@ fn whole_inventory_loads_in_a_few_batched_recursive_reads() {
         &Server {
             tree: &tree,
             cap: MAX_FOLDER_DEPTH,
-            fails: &|_| false,
+            items: 0,
+            failure: &|_| None,
         },
     );
     assert!(unfetched(&inv).is_empty());
@@ -219,6 +243,29 @@ fn whole_inventory_loads_in_a_few_batched_recursive_reads() {
 }
 
 #[test]
+fn a_stale_folder_reply_is_refetched_instead_of_left_unloaded() {
+    let tree = [(10, 1, -1)];
+    let mut inv = skeleton(&tree);
+    let target = inv.folders.get_mut(&id(10)).expect("folder");
+    target.state = FetchState::Fetched;
+    target.info.version = 5;
+    // A delayed snapshot older than the contents already confirmed locally.
+    inv.apply(vec![FolderContents {
+        folder_id: id(10),
+        owner_id: AGENT,
+        version: 4,
+        folders: Vec::new(),
+        items: Vec::new(),
+    }]);
+    assert_eq!(
+        inv.folders[&id(10)].state,
+        FetchState::Fetching,
+        "a stale snapshot asks for the folder again"
+    );
+    assert_eq!(inv.queue, [(id(10), false)], "the refetch is queued");
+}
+
+#[test]
 fn marketplace_listings_are_left_to_their_window() {
     let tree = [(10, 1, -1), (11, 1, MARKETPLACE_LISTINGS), (12, 11, -1)];
     let mut inv = skeleton(&tree);
@@ -227,7 +274,8 @@ fn marketplace_listings_are_left_to_their_window() {
         &Server {
             tree: &tree,
             cap: MAX_FOLDER_DEPTH,
-            fails: &|_| false,
+            items: 0,
+            failure: &|_| None,
         },
     );
     assert_eq!(unfetched(&inv), [id(11), id(12)]);
@@ -243,7 +291,8 @@ fn what_the_depth_limit_leaves_is_fetched_by_the_verify_walk() {
         &Server {
             tree: &tree,
             cap: 2,
-            fails: &|_| false,
+            items: 0,
+            failure: &|_| None,
         },
     );
     assert!(unfetched(&inv).is_empty());
@@ -261,13 +310,16 @@ fn reads_too_big_fall_back_to_the_folder_then_its_folders() {
     // folder 10 is too big to read with its subtree, its folders are not
     let tree = [(10, 1, -1), (11, 1, -1), (20, 10, -1), (21, 10, -1), (30, 20, -1)];
     let mut inv = skeleton(&tree);
-    let big = |r: &Read| r.depth > 0 && (r.parent == id(10) && r.children.is_empty() || r.children.contains(&id(10)));
+    let big = |r: &Read| {
+        (r.depth > 0 && (r.parent == id(10) && r.children.is_empty() || r.children.contains(&id(10)))).then_some(FetchFailure::TooBig)
+    };
     let reads = run(
         &mut inv,
         &Server {
             tree: &tree,
             cap: MAX_FOLDER_DEPTH,
-            fails: &big,
+            items: 0,
+            failure: &big,
         },
     );
     assert!(unfetched(&inv).is_empty());
@@ -293,7 +345,8 @@ fn a_folder_the_user_opened_is_not_read_twice() {
     let server = Server {
         tree: &tree,
         cap: 0,
-        fails: &|_| false,
+        items: 0,
+        failure: &|_| None,
     };
     let mut fetch = BackgroundFetch::default();
     fetch.start(&inv);
@@ -314,8 +367,11 @@ fn a_folder_the_user_opened_is_not_read_twice() {
             {
                 batches.push(children.clone());
                 let read = Read { parent, children, depth };
-                inv.apply(server.answer(&read).unwrap_or_default());
-                fetch.on_reply(inv, request);
+                let (stale, outcome) = match server.answer(&read) {
+                    Ok(contents) => (inv.apply(contents), Ok(())),
+                    Err(error) => (Vec::new(), Err(error)),
+                };
+                fetch.on_reply_at(inv, request, &stale, outcome, Instant::now());
             }
         }
         batches
@@ -329,15 +385,14 @@ fn a_folder_the_user_opened_is_not_read_twice() {
     let batches = answer(&mut inv, &mut fetch, commands);
     assert!(batches.contains(&vec![id(10)]), "{batches:?}");
     // its listing arrives: the walk goes on below it
-    inv.apply(
-        server
-            .answer(&Read {
-                parent: id(11),
-                children: Vec::new(),
-                depth: 0,
-            })
-            .unwrap_or_default(),
-    );
+    let read = Read {
+        parent: id(11),
+        children: Vec::new(),
+        depth: 0,
+    };
+    if let Ok(contents) = server.answer(&read) {
+        inv.apply(contents);
+    }
     for _ in 0..10 {
         let commands = fetch.pump(&mut inv, AGENT);
         answer(&mut inv, &mut fetch, commands);
@@ -354,7 +409,8 @@ fn a_root_already_read_at_login_still_loads_by_batches() {
     let server = Server {
         tree: &tree,
         cap: MAX_FOLDER_DEPTH,
-        fails: &|_| false,
+        items: 0,
+        failure: &|_| None,
     };
     inv.apply(
         server
@@ -378,7 +434,8 @@ fn legacy_server(tree: &[(u128, u128, i32)]) -> Server<'_> {
     Server {
         tree,
         cap: 0,
-        fails: &|_| false,
+        items: 0,
+        failure: &|_| None,
     }
 }
 
@@ -408,20 +465,21 @@ fn without_ais_a_failed_batch_is_read_folder_by_folder() {
     // folder 11 makes every read holding it fail: the others still load
     let tree = [(10, 1, -1), (11, 1, -1), (12, 1, -1), (20, 10, -1), (21, 11, -1)];
     let mut inv = skeleton(&tree);
-    let fails = |r: &Read| r.parent == id(11) || r.children.contains(&id(11));
+    let fails = |r: &Read| (r.parent == id(11) || r.children.contains(&id(11))).then_some(FetchFailure::TooBig);
     let reads = run_with(
         legacy_fetch(),
         &mut inv,
         &Server {
             tree: &tree,
             cap: 0,
-            fails: &fails,
+            items: 0,
+            failure: &fails,
         },
     );
     // 21 is unknown to the viewer until 11 is read
     assert_eq!(unfetched(&inv), [id(11)]);
     assert_eq!(
-        reads.iter().filter(|r| fails(r)).count(),
+        reads.iter().filter(|r| fails(r).is_some()).count(),
         2,
         "the batch, then 11 alone, then no loop"
     );
@@ -447,7 +505,8 @@ fn without_ais_only_for_the_library_the_inventory_keeps_its_recursive_reads() {
         &Server {
             tree: &tree,
             cap: MAX_FOLDER_DEPTH,
-            fails: &|_| false,
+            items: 0,
+            failure: &|_| None,
         },
     );
     assert!(unfetched(&inv).is_empty());
@@ -457,4 +516,54 @@ fn without_ais_only_for_the_library_the_inventory_keeps_its_recursive_reads() {
         reads.iter().any(|r| !inv.folders[&r.parent].library && r.depth == MAX_FOLDER_DEPTH),
         "inventory still through AIS"
     );
+}
+
+#[test]
+fn a_large_inventory_recovers_from_a_transient_failed_read() {
+    let tree: Vec<(u128, u128, i32)> = (0..400).map(|n| (1000 + n, 1, -1)).collect();
+    let mut inv = skeleton(&tree);
+    let attempts = std::sync::atomic::AtomicU32::new(0);
+    let failure = |r: &Read| {
+        let batch = r.depth > 0 && !r.children.is_empty();
+        (batch && attempts.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 2).then_some(FetchFailure::Transient)
+    };
+    let reads = run(
+        &mut inv,
+        &Server {
+            tree: &tree,
+            cap: MAX_FOLDER_DEPTH,
+            items: 100,
+            failure: &failure,
+        },
+    );
+    assert!(unfetched(&inv).is_empty(), "{:?}", unfetched(&inv));
+    assert_eq!(inv.item_count(), (tree.len() + 2) * 100, "every folder's items survived");
+    let batches = reads.iter().filter(|r| r.parent == id(1) && !r.children.is_empty()).count();
+    assert!(batches >= 3, "the failed batch is asked again, then the rest: {batches}");
+}
+
+#[test]
+fn a_folder_too_big_even_at_depth_zero_is_reported_and_its_subfolders_still_load() {
+    let tree = [(10, 1, -1), (11, 1, -1), (12, 11, -1), (13, 11, -1)];
+    let mut inv = skeleton(&tree);
+    let too_big =
+        |r: &Read| (r.children.contains(&id(11)) || (r.parent == id(11) && r.children.is_empty())).then_some(FetchFailure::TooBig);
+    let (_reads, mut fetch) = run_keeping_fetch(
+        BackgroundFetch::default(),
+        &mut inv,
+        &Server {
+            tree: &tree,
+            cap: MAX_FOLDER_DEPTH,
+            items: 10,
+            failure: &too_big,
+        },
+    );
+    assert!(inv.too_big.contains(&id(11)), "the over-limit folder is recorded");
+    assert_eq!(inv.folders[&id(11)].state, FetchState::Failed);
+    assert!(inv.folders[&id(11)].items.is_empty(), "its direct items cannot be read");
+    assert_eq!(inv.folders[&id(10)].state, FetchState::Fetched, "the rest of the inventory loads");
+    assert_eq!(inv.folders[&id(12)].state, FetchState::Fetched, "its subfolders still load");
+    assert_eq!(inv.folders[&id(13)].state, FetchState::Fetched);
+    assert_eq!(fetch.take_too_big().0, [id(11)], "the alert names the folder once");
+    assert!(fetch.take_too_big().0.is_empty());
 }
