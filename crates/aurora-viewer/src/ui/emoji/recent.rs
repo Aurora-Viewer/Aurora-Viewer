@@ -126,6 +126,8 @@ pub struct Recent {
     /// The writes leave the frame, with the file each goes to; none in the
     /// demo.
     writer: Option<Sender<(&'static str, Vec<char>)>>,
+    /// The writing thread, waited for when the viewer ends (`finish`).
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Recent {
@@ -143,20 +145,41 @@ impl Recent {
                 }
             }
         });
-        if let Err(error) = spawned {
-            log::warn!("Recent emojis are not saved: {error}");
-            return Recent {
-                list,
-                favorites,
-                ..Recent::default()
-            };
-        }
+        let thread = match spawned {
+            Ok(thread) => thread,
+            Err(error) => {
+                log::warn!("Recent emojis are not saved: {error}");
+                return Recent {
+                    list,
+                    favorites,
+                    ..Recent::default()
+                };
+            }
+        };
         Recent {
             list,
             favorites,
             writer: Some(writer),
+            thread: Some(thread),
             ..Recent::default()
         }
+    }
+
+    /// Before the viewer ends: the last list asked for reaches its file,
+    /// `timeout` at most (an emoji sent just before quitting is kept).
+    pub fn finish(&mut self, timeout: std::time::Duration) {
+        // the thread ends once the writes already sent are done
+        self.writer = None;
+        let Some(thread) = self.thread.take() else { return };
+        let start = std::time::Instant::now();
+        while !thread.is_finished() {
+            if start.elapsed() >= timeout {
+                log::warn!("recent emojis: the last save was not written within {timeout:?}");
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let _ = thread.join();
     }
 
     /// `AURORA_DEMO_RECENT_EMOJIS`: `text`'s emojis, for the run.
@@ -357,6 +380,21 @@ mod tests {
         assert_eq!(read(&path, MAX), ['😂', '👍']);
         let _ = std::fs::remove_dir_all(&folder);
         assert!(read(&path, MAX).is_empty());
+    }
+
+    /// An emoji sent and a favourite kept just before quitting are in their
+    /// files once `finish` returns, written by the thread.
+    #[test]
+    fn the_last_list_is_written_before_the_viewer_ends() {
+        let folder = std::env::temp_dir().join(format!("aurora-recent-emojis-finish-{}", std::process::id()));
+        let path = folder.join(FILE);
+        let mut recent = Recent::load(folder.clone());
+        recent.note("bye 👋");
+        recent.toggle_favorite('⭐');
+        recent.finish(std::time::Duration::from_secs(5));
+        assert_eq!(read(&path, MAX), ['👋']);
+        assert_eq!(read(&folder.join(FAVORITES_FILE), MAX_FAVORITES), ['⭐']);
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[test]

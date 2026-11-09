@@ -140,6 +140,8 @@ pub enum JobResult {
         geom: PreparedGeom,
         /// LLVolume::getSurfaceArea (sculpts; 1 otherwise).
         area: f32,
+        /// The swept grid's area of prims and sculpts (surface_area.rs).
+        grid_area: f32,
     },
     GeometryFailed {
         key: GeomKey,
@@ -159,6 +161,17 @@ pub enum JobResult {
     },
     TextureFailed {
         id: Uuid,
+    },
+    /// A derived normal, fully prepared and staged on the worker. Its slot
+    /// stays stable across progressive updates; epoch rejects old source jobs.
+    LegacyBump {
+        id: Uuid,
+        epoch: u32,
+        revision: super::textures::PreviewRevision,
+        discard: u8,
+        size: Option<(u32, u32)>,
+        staged: Option<aurora_render::StagedTexture>,
+        mips: Vec<(u32, u32, Vec<u8>)>,
     },
     /// The JPEG 2000 data of a texture read from the disk cache (none: not
     /// there).
@@ -236,12 +249,18 @@ fn below_normal_priority() {
 
 impl JobResult {
     /// A geometry built by a job, prepared for the GPU on the job's thread.
-    pub fn geometry(key: GeomKey, (faces, min, max): (Vec<FaceData>, Vec3, Vec3), area: f32, pool: Option<&StagingPool>) -> Self {
+    pub fn geometry(
+        key: GeomKey,
+        (faces, min, max): (Vec<FaceData>, Vec3, Vec3),
+        (area, grid_area): (f32, f32),
+        pool: Option<&StagingPool>,
+    ) -> Self {
         let pick = !matches!(key, GeomKey::AvatarPart(_) | GeomKey::AvatarMorph { .. });
         JobResult::Geometry {
             key,
             geom: PreparedGeom::new(faces, min, max, pick, pool),
             area,
+            grid_area,
         }
     }
 }
@@ -596,7 +615,7 @@ pub fn mesh_to_faces(
                                 // LLSkinningUtil::getPerVertexSkinMatrix:
                                 // clamp in the mesh's palette before remapping.
                                 sv.joints[k] = map[(j[k] as usize).min(map.len() - 1)];
-                                sv.weights[k] = (w[k].clamp(0.0, 1.0) * 255.0).round() as u8;
+                                sv.weights[k] = aurora_render::pack_skin_weight(w[k]);
                             }
                             sv
                         })
@@ -643,7 +662,7 @@ mod tests {
             [9, 9, 9, 3],
             "invalid indices clamp to the last mesh joint before mapping"
         );
-        assert_eq!(vertices[1].weights, [128, 64, 64, 0]);
+        assert_eq!(vertices[1].weights, [32768, 16384, 16384, 0]);
         assert_eq!(vertices[2].joints, [9, 7, 3, 9]);
         let (faces, _, _) = mesh_to_faces(&[face], None, Some(&[]));
         assert!(faces[0].as_ref().unwrap().skin.is_none(), "an empty palette cannot skin vertices");

@@ -36,6 +36,10 @@ const ARC_ANIM_TEX_COST: f32 = 4.0;
 const ARC_ALPHA_COST: f32 = 4.0;
 const ARC_TEXTURE_COST: f32 = 16.0;
 
+fn flexible_cost_multiplier(has_flexible_path: bool) -> f32 {
+    if has_flexible_path { ARC_FLEXI_MULT } else { 1.0 }
+}
+
 /// RenderAvatarMaxComplexity slider (LLAvatarComplexityControls): positions
 /// 1..=100 map exponentially onto 20 000..350 000, 101 is "no limit" (0).
 pub mod slider {
@@ -243,9 +247,7 @@ impl Scene {
         if weighted_mesh {
             shame *= ARC_WEIGHTED_MESH;
         }
-        if o.extra.flexible.is_some() {
-            shame *= ARC_FLEXI_MULT;
-        }
+        shame *= flexible_cost_multiplier(o.has_flexible_path());
         if let Some(d) = self.particles.source_data(&o.full_id) {
             let n = (d.burst_part_count as f32 * (d.part.max_age / d.burst_rate.max(1e-3)).ceil()).min(ARC_PARTICLE_MAX);
             let size = (d.part.start_scale.x.max(d.part.end_scale.x) + d.part.start_scale.y.max(d.part.end_scale.y)) / 2.0;
@@ -482,6 +484,12 @@ mod tests {
         assert!((t - (16_384.0 - 384.0) / 16.0).abs() < 0.5, "{t}");
         // a missing lower LOD falls back on the next higher one
         assert!((radius_weighted_tris([0, 0, 0, 16_384], 1.0) - t).abs() < 0.5);
+    }
+
+    #[test]
+    fn flexible_path_complexity_multiplier_matches_legacy_cost() {
+        assert_eq!(flexible_cost_multiplier(true), 5.0);
+        assert_eq!(flexible_cost_multiplier(false), 1.0);
     }
 
     #[test]
