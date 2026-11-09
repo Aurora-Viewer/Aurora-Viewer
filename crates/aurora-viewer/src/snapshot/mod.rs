@@ -757,6 +757,66 @@ impl Hold {
     }
 }
 
+/// A photo while the window's 3D drawing is paused behind (the viewer past
+/// the driver's video memory budget, texture_budget::Background::paused):
+/// nothing of the scene would be drawn, at a sixteenth of the photo's size,
+/// with every texture at its last level. No part is asked while it lasts;
+/// once the window is in front, the photo is drawn again from its first
+/// part when the textures in view have loaded again (or after
+/// `quality::DETAIL_WAIT`, as the photo quality waits). From the first part,
+/// not where it stopped: its parts show the instant of the first
+/// (`Hold`), which would hold the world and the network's events for as
+/// long as the window stays behind.
+#[derive(Debug, Default)]
+pub struct PausedWait {
+    /// The photo waits for the drawing.
+    waiting: bool,
+    /// The drawing came back then, and the textures' wants had been
+    /// computed this many times (their count in view before is stale).
+    resumed: Option<(std::time::Instant, u64)>,
+}
+
+/// What a photo's next part does this frame (`PausedWait::next`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PausedPart {
+    /// Asked, as usual.
+    Draw,
+    /// Not asked.
+    Wait,
+    /// Not asked, and the photo starts over from its first part.
+    StartOver,
+}
+
+impl PausedWait {
+    /// The photo waits for the drawing (or, once back, for the textures).
+    pub fn waiting(&self) -> bool {
+        self.waiting
+    }
+
+    /// A frame where the photo would ask its next part: `paused`, the 3D
+    /// drawing now; `pending`, the textures in view still loading, from
+    /// the `passes`-th computation of their wants.
+    pub fn next(&mut self, now: std::time::Instant, paused: bool, pending: usize, passes: u64) -> PausedPart {
+        if paused {
+            self.resumed = None;
+            return if std::mem::replace(&mut self.waiting, true) {
+                PausedPart::Wait
+            } else {
+                PausedPart::StartOver
+            };
+        }
+        if !self.waiting {
+            return PausedPart::Draw;
+        }
+        let (since, before) = *self.resumed.get_or_insert((now, passes));
+        if (passes > before && pending == 0) || now.duration_since(since) >= quality::DETAIL_WAIT {
+            *self = Self::default();
+            return PausedPart::Draw;
+        }
+        PausedPart::Wait
+    }
+}
+
 /// A tiled photo's frame of the whole photo at a fraction of its size,
 /// drawn before its tiles: GTAO keeps its depth, which the tiles' samples
 /// past their border read (`aurora_render::PhotoContext`).
