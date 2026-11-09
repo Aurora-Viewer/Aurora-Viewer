@@ -250,11 +250,14 @@ impl Glass {
 
 fn diamond_mesh(rect: egui::Rect, texture: egui::TextureId, screen: egui::Vec2, color: egui::Color32) -> egui::Mesh {
     let mut mesh = egui::Mesh::with_texture(texture);
+    // `colored_vertex` asserts an untextured mesh: the glass samples the
+    // backdrop texture, so the vertices carry their screen UVs directly.
     for pos in [rect.center_top(), rect.right_center(), rect.center_bottom(), rect.left_center()] {
-        mesh.colored_vertex(pos, color);
-        if let Some(vertex) = mesh.vertices.last_mut() {
-            vertex.uv = egui::pos2(pos.x / screen.x, pos.y / screen.y);
-        }
+        mesh.vertices.push(egui::epaint::Vertex {
+            pos,
+            uv: egui::pos2(pos.x / screen.x, pos.y / screen.y),
+            color,
+        });
     }
     mesh.add_triangle(0, 1, 2);
     mesh.add_triangle(0, 2, 3);
