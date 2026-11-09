@@ -10023,7 +10023,7 @@ impl App {
                     let depth = point.map(|p| (p - ray.0).dot(ray.1));
                     let (ray, depth, hud) = self
                         .scene
-                        .hud_pick(&self.world, self.cursor_pos, false)
+                        .hud_click_pick(&self.world, self.cursor_pos)
                         .map_or((ray, depth, false), |(_, p, r)| (r, Some((p - r.0).dot(r.1)), true));
                     if let Some(c) = self.media.on_hover(&self.world, &self.scene, ray, depth, mods, hud) {
                         self.media_cursor = Some(match c.as_str() {
@@ -21055,7 +21055,7 @@ impl ApplicationHandler for App {
                     Some(ray) => {
                         let (ray, depth, hud) = self
                             .scene
-                            .hud_pick(&self.world, self.cursor_pos, false)
+                            .hud_click_pick(&self.world, self.cursor_pos)
                             .map_or((ray, None, false), |(_, p, r)| (r, Some((p - r.0).dot(r.1)), true));
                         self.media.on_scroll(&self.world, &self.scene, ray, depth, steps, mods, hud)
                     }

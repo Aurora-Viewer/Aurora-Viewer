@@ -459,12 +459,13 @@ mod tests {
             );
             let g = &mut scene.gpu[idx];
             g.hud = true;
+            g.lod = 3;
             g.owner_avatar = Some(own);
             g.center = o.position;
             g.radius = 1.0;
         }
         Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].color[3] = 0.0;
-        scene.index_objects();
+        crate::scene::picking::tests::index_test_objects(&mut scene);
         scene.build_huds(&world, [1280, 720], true);
         let cursor = (640.0, 360.0);
         let press = |media: &mut MediaManager, world: &World, scene: &Scene| {

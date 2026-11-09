@@ -190,8 +190,7 @@ impl MediaManager {
                 self.client.cancel(&id);
             }
         }
-        self.recently_shown
-            .retain(|_, at| now.saturating_duration_since(*at) < RECENTLY_SHOWN);
+        self.expire_visibility(now);
         for &idx in &changes {
             self.visit(world, idx, hud, now);
         }
@@ -206,6 +205,11 @@ impl MediaManager {
                 self.local_entries.len()
             );
         }
+    }
+
+    fn expire_visibility(&mut self, now: Instant) {
+        self.recently_shown
+            .retain(|_, at| now.saturating_duration_since(*at) < RECENTLY_SHOWN);
     }
 
     /// One slot of the store: what it held is forgotten if the object is
@@ -1410,9 +1414,10 @@ mod tests {
         assert_eq!(m.client.queued_priority(&screen), Some(entry::SHOWN));
         m.impls[0].interest = 0.0;
 
-        // Visiting after the 60-second window removes the stale shown boost
-        // from the existing request, even though its version was already asked.
+        // A new scan expires history once, then visiting demotes the existing
+        // request even though its version was already asked.
         let expired = shown_at + RECENTLY_SHOWN + Duration::from_millis(1);
+        m.expire_visibility(expired);
         m.visit(&w, idx, &|_| false, expired);
         assert_eq!(m.client.queued_priority(&screen), Some(entry::WORLD));
 
