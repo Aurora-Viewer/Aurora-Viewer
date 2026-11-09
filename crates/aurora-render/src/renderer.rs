@@ -2784,16 +2784,16 @@ impl Backend {
     /// leaves the renderer showing the interface alone, with the "Video
     /// memory full" notice, until `remake_refused` can make it whole.
     pub fn new(init: BackendInit) -> Result<Backend, RenderError> {
-        Self::new_with(init, None)
+        Self::new_with(init, false)
     }
 
-    /// `egui`: the renderer of the backend this one replaces, or none to
-    /// make one.
-    fn new_with(init: BackendInit, egui: Option<egui_wgpu::Renderer>) -> Result<Backend, RenderError> {
+    /// `egui_later`: made without egui's renderer, which the backend this
+    /// one replaces hands over once it has come through whole.
+    fn new_with(init: BackendInit, egui_later: bool) -> Result<Backend, RenderError> {
         let seed = Box::new(init.clone());
         let device = init.device.clone();
         let lost = init.lost.clone();
-        let (made, oom, invalid) = crate::gpu_alloc::scoped_apart(&device, || Self::make(init, egui));
+        let (made, oom, invalid) = crate::gpu_alloc::scoped_apart(&device, || Self::make(init, egui_later));
         let mut backend = made?;
         // (AURORA_GPU_OOM_START's own refusal is a usage error, which the
         // scope does not read as memory)
@@ -2831,7 +2831,7 @@ impl Backend {
         }
     }
 
-    fn make(init: BackendInit, egui: Option<egui_wgpu::Renderer>) -> Result<Backend, RenderError> {
+    fn make(init: BackendInit, egui_later: bool) -> Result<Backend, RenderError> {
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         let xr_seed = init.xr.as_ref().map(|_| Box::new(init.clone()));
         let BackendInit {
@@ -3343,9 +3343,7 @@ impl Backend {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let egui = EguiSlot(Some(egui.unwrap_or_else(|| {
-            egui_wgpu::Renderer::new(&device, format, egui_wgpu::RendererOptions::default())
-        })));
+        let egui = EguiSlot((!egui_later).then(|| egui_wgpu::Renderer::new(&device, format, egui_wgpu::RendererOptions::default())));
         let timer = timestamps.then(|| GpuTimer::new(&device, &queue));
 
         let mut r = Backend {
@@ -5069,6 +5067,12 @@ impl Backend {
     /// try: otherwise a card with room for one set but not two would refuse
     /// every try.
     fn rebuild_targets(&mut self) {
+        // (a renderer waiting for its remake draws no world: its targets
+        // stay small and the notice stays, whatever asks for them)
+        if self.remake {
+            self.shed_world();
+            return;
+        }
         let device = self.device.clone();
         let refuse = crate::gpu_alloc::targets_refused();
         if self.targets_refused {
@@ -6080,9 +6084,6 @@ impl Backend {
         if !self.vr.wanted() && self.xr_world.is_none() {
             self.xr_retry = (0, None);
         }
-        if self.remake && self.targets_backoff.ready(Instant::now()) {
-            self.remake_refused(&packet.scene, packet.settings);
-        }
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         let packet = if self.xr_seed.is_some() && (self.vr.wanted() || self.xr_world.is_some()) {
             match self.render_xr(packet) {
@@ -6110,8 +6111,13 @@ impl Backend {
         init.width = self.config.width;
         init.height = self.config.height;
         init.output_format = Some(self.config.format);
+        init.vsync = self.vsync;
         init.scene = scene.clone();
-        let made = Backend::new_with(init, self.egui.0.take()).map(|mut fresh| {
+        // what this one holds for a world it no longer draws is let go
+        // first: a card with room for one renderer but not two would
+        // otherwise refuse every try
+        self.shed_world();
+        let made = Backend::new_with(init, true).map(|mut fresh| {
             // the settings the frame asks for, as part of the remake: the
             // atlases they make again could still be refused
             if !fresh.remake {
@@ -6120,29 +6126,43 @@ impl Backend {
             fresh
         });
         match made {
-            Ok(fresh) if !fresh.remake => {
+            Ok(mut fresh) if !fresh.remake => {
                 log::info!("renderer: made again, whole");
+                fresh.egui.0 = self.egui.0.take();
                 *self = fresh;
             }
-            Ok(mut fresh) => {
-                self.egui.0 = fresh.egui.0.take();
-                self.targets_backoff.failed(Instant::now());
-            }
-            // (a lost device, which ends the viewer: egui's textures went
-            // with the failed make, a new renderer draws what comes next)
+            Ok(_) => self.targets_backoff.failed(Instant::now()),
+            // (a lost device, which ends the viewer: egui's renderer stays
+            // here, nothing is made on the lost device)
             Err(e) => {
                 log::warn!("renderer: could not be made again: {e}");
-                self.egui.0 = Some(egui_wgpu::Renderer::new(
-                    &self.device,
-                    self.config.format,
-                    egui_wgpu::RendererOptions::default(),
-                ));
                 self.targets_backoff.failed(Instant::now());
             }
         }
     }
 
+    /// Lets go of the largest of what a renderer waiting for its remake
+    /// holds for the world it no longer draws: the render targets, down to
+    /// 1x1, and the shadow atlas, down to its smallest. In a scope: what
+    /// binds the start's refused resources fails again, and is dropped with
+    /// this renderer.
+    fn shed_world(&mut self) {
+        let device = self.device.clone();
+        let _ = crate::gpu_alloc::scoped(&device, || {
+            // (the size the settings ask for stays recorded: no frame's
+            // settings make the full atlas again before the remake)
+            self.shadow_view = Self::make_shadow_atlas(&device, 512, 0);
+            self.shadow_merge.atlas_changed(&device, &self.shadow_view, 512, SHADOW_FORMAT);
+            self.make_targets_now(false, Some((1, 1)));
+        });
+    }
+
     fn render_view(&mut self, packet: FramePacket) -> FrameResult {
+        // (here, not in `render`: the eyes' backends of VR are made, and
+        // can be refused, like the window's)
+        if self.remake && self.targets_backoff.ready(Instant::now()) {
+            self.remake_refused(&packet.scene, packet.settings);
+        }
         let FramePacket {
             output,
             index,
