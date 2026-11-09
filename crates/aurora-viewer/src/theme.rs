@@ -220,6 +220,13 @@ impl Theme {
         v.popup_shadow = v.window_shadow;
         v.selection.bg_fill = p.violet;
         v.selection.stroke = Stroke::new(1.0, p.on_accent);
+        // LLLineEditor::draw (indra/llui/lllineeditor.cpp) and
+        // LLTextEditor::drawPreeditMarker (indra/llui/lltexteditor.cpp)
+        // underline the composition and distinguish its active segment.
+        // egui's Windows default instead selects the whole preedit (#2608).
+        v.ime_composition.legacy_visuals = false;
+        v.ime_composition.active_underline_stroke = Stroke::new(2.0, p.ink);
+        v.ime_composition.inactive_underline_stroke = Stroke::new(1.0, p.muted);
 
         let w = &mut v.widgets;
         w.noninteractive.bg_fill = panel;
@@ -336,6 +343,166 @@ impl egui::theme::StyleProvider<egui::widget_style::TextEditStyle> for FieldSize
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::{
+        Event, ImeEvent, Shape,
+        text::{CCursor, CCursorRange},
+    };
+
+    fn ime_frame(
+        ctx: &egui::Context,
+        text: &mut String,
+        events: Vec<Event>,
+        multiline: bool,
+    ) -> (egui::text_edit::TextEditOutput, egui::FullOutput) {
+        let mut field = None;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 400.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                let edit = if multiline {
+                    egui::TextEdit::multiline(&mut *text)
+                } else {
+                    egui::TextEdit::singleline(&mut *text)
+                };
+                field = Some(edit.id(egui::Id::unique("ime-field")).desired_width(100.0).show(ui));
+            },
+        );
+        output.textures_delta.clear();
+        (field.expect("field shown"), output)
+    }
+
+    fn underlines(output: &egui::FullOutput, stroke: Stroke) -> Vec<[egui::Pos2; 2]> {
+        fn collect(shape: &Shape, stroke: Stroke, lines: &mut Vec<[egui::Pos2; 2]>) {
+            match shape {
+                Shape::LineSegment { points, stroke: painted } if *painted == stroke && points[0].y == points[1].y => lines.push(*points),
+                Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, stroke, lines)),
+                _ => {}
+            }
+        }
+        let mut lines = Vec::new();
+        for clipped in &output.shapes {
+            collect(&clipped.shape, stroke, &mut lines);
+        }
+        lines
+    }
+
+    fn has_selection(field: &egui::text_edit::TextEditOutput, color: Color32) -> bool {
+        field.galley.rows.iter().any(|row| {
+            row.visuals
+                .mesh
+                .vertices
+                .iter()
+                .any(|v| v.color == color && v.uv == egui::epaint::WHITE_UV)
+        })
+    }
+
+    /// Exercise TextEdit's painted output, not just the theme flag: the active
+    /// Japanese segment moves, while preedit never receives selection quads.
+    #[test]
+    fn ime_composition_underlines_the_active_segment_without_a_selection_background() {
+        let light = Theme {
+            ink: "#151515".into(),
+            muted: "#555555".into(),
+            field: "#FAFAFA".into(),
+            ..Theme::default()
+        };
+        for theme in [Theme::default(), light] {
+            for multiline in [false, true] {
+                let ctx = egui::Context::default();
+                theme.apply(&ctx, 1.0);
+                let visuals = ctx.global_style().visuals.clone();
+                let mut text = String::new();
+                let (field, _) = ime_frame(&ctx, &mut text, vec![], multiline);
+                ctx.memory_mut(|m| m.request_focus(field.response.id));
+                let preedit = "かなを変換して文章を入力します";
+                let event = |range| {
+                    Event::Ime(ImeEvent::Preedit {
+                        text: preedit.into(),
+                        active_range_chars: Some(range),
+                    })
+                };
+                ctx.all_styles_mut(|s| s.visuals.ime_composition.legacy_visuals = true);
+                let (old, _) = ime_frame(&ctx, &mut text, vec![event(0..2)], multiline);
+                assert!(
+                    has_selection(&old, visuals.selection.bg_fill),
+                    "the previous rendering reproduces #2608"
+                );
+                theme.apply(&ctx, 1.0);
+                let (field, output) = ime_frame(&ctx, &mut text, vec![event(0..2)], multiline);
+                assert_eq!(text, preedit);
+                assert!(!has_selection(&field, visuals.selection.bg_fill));
+                let first = underlines(&output, visuals.ime_composition.active_underline_stroke);
+                assert_eq!(first.len(), 1);
+                assert!(!underlines(&output, visuals.ime_composition.inactive_underline_stroke).is_empty());
+                let (field, output) = ime_frame(&ctx, &mut text, vec![event(3..5)], multiline);
+                assert!(!has_selection(&field, visuals.selection.bg_fill));
+                let next = underlines(&output, visuals.ime_composition.active_underline_stroke);
+                assert_eq!(next.len(), 1);
+                assert!(next[0][0].x > first[0][0].x, "the active segment must move with the IME range");
+                if multiline {
+                    assert!(field.galley.rows.len() > 1, "exercise wrapped composition");
+                }
+                theme.apply(&ctx, 1.0);
+                let (_, output) = ime_frame(&ctx, &mut text, vec![Event::Ime(ImeEvent::Commit("漢字を変換".into()))], multiline);
+                assert_eq!(text, "漢字を変換");
+                assert!(underlines(&output, visuals.ime_composition.active_underline_stroke).is_empty());
+                assert!(underlines(&output, visuals.ime_composition.inactive_underline_stroke).is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn ime_composition_keeps_insertion_cancellation_and_ordinary_selection() {
+        for multiline in [false, true] {
+            let ctx = egui::Context::default();
+            Theme::default().apply(&ctx, 1.0);
+            let visuals = ctx.global_style().visuals.clone();
+            let mut text = "before after".to_owned();
+            let (mut field, _) = ime_frame(&ctx, &mut text, vec![], multiline);
+            field.state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(7))));
+            field.state.store(&ctx, field.response.id);
+            ctx.memory_mut(|m| m.request_focus(field.response.id));
+            // No active range (some IMEs), then a caret inside Korean preedit.
+            for range in [None, Some(1..1)] {
+                let (field, output) = ime_frame(
+                    &ctx,
+                    &mut text,
+                    vec![Event::Ime(ImeEvent::Preedit {
+                        text: "한글".into(),
+                        active_range_chars: range,
+                    })],
+                    multiline,
+                );
+                assert_eq!(text, "before 한글after");
+                assert!(!has_selection(&field, visuals.selection.bg_fill));
+                assert!(!underlines(&output, visuals.ime_composition.inactive_underline_stroke).is_empty());
+            }
+            ime_frame(
+                &ctx,
+                &mut text,
+                vec![Event::Ime(ImeEvent::Preedit {
+                    text: String::new(),
+                    active_range_chars: None,
+                })],
+                multiline,
+            );
+            assert_eq!(text, "before after", "cancellation removes only provisional text");
+            let (mut field, _) = ime_frame(&ctx, &mut text, vec![], multiline);
+            field
+                .state
+                .cursor
+                .set_char_range(Some(CCursorRange::two(CCursor::new(0), CCursor::new(6))));
+            field.state.store(&ctx, field.response.id);
+            let (field, _) = ime_frame(&ctx, &mut text, vec![], multiline);
+            assert!(
+                has_selection(&field, visuals.selection.bg_fill),
+                "ordinary selection must still have its accent background"
+            );
+        }
+    }
 
     /// "Reduce animations" ends egui's transitions at once, and gives
     /// them back their duration when it is turned off, a skin reload in

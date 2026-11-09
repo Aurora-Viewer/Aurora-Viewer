@@ -62,6 +62,7 @@ pub mod sound_occlusion;
 pub mod sound_reverb;
 pub mod sounds;
 pub mod still_check;
+pub mod surface_area;
 mod sync_check;
 mod sync_plan;
 mod sync_slow;
@@ -973,6 +974,15 @@ pub struct Scene {
     pub attached_lights: bool,
     /// Surface area of the generated sculpts (attachment area limit).
     pub sculpt_area: HashMap<GeomKey, f32>,
+    /// The swept grid's area of generated prims and sculpts, and the large
+    /// surface protection that reads it (surface_area.rs).
+    grid_area: HashMap<GeomKey, f32>,
+    pub surface_protection: surface_area::Protection,
+    surface_measured: HashMap<usize, surface_area::Measure>,
+    surface_hidden: std::collections::HashSet<usize>,
+    /// How many geometries were measured at the last look for objects not
+    /// measured yet (surface_area.rs).
+    surface_scanned: usize,
     /// LOD triangle counts by prim shape (complexity.rs).
     prim_triangles: std::sync::Mutex<HashMap<u64, [u32; 4]>>,
     /// Attachment surface area of each avatar (m², RenderAutoMuteSurfaceAreaLimit).
@@ -1304,6 +1314,28 @@ fn tex_anim_record(
     record_anim(&params, clock.ms(o.tex_anim_clock.start), o.tex_anim_clock.phase, &te)
 }
 
+/// Layer rank of a rigged face (`DrawRecord::set_layer_rank`).
+///
+/// Worn layers are often made from the body's own mesh, so their faces lie
+/// exactly on the body's. Equal depths are then won by the draw record drawn
+/// first (cull.wgsl keeps the record order), and records are recycled from a
+/// free list whenever an object is rebuilt: the winner changed face by face,
+/// showing bands of the body through a layer, bands that moved with every
+/// rebuild (the transparency overlay's Ctrl+Alt+T rebuilds them all).
+///
+/// The Legacy Viewer draws a layer whole and in a lasting order, sorted by
+/// skin, material and texture (CompareBatchBreakerRigged,
+/// indra/newview/llvovolume.cpp). Here the skin (a face showing a bake)
+/// stays at rank 0 and every other face of an object takes one rank of 1 to
+/// `LAYER_RANK_MAX`, chosen from its id: a layer covers the skin it lies on,
+/// and two layers that lie on each other keep the same winner everywhere.
+fn rigged_layer_rank(skin_face: bool, object: &Uuid) -> u32 {
+    if skin_face {
+        return 0;
+    }
+    1 + (object.as_u128() % u128::from(flags::LAYER_RANK_MAX)) as u32
+}
+
 /// Whether a texture animation set on `anim_face` (-1 = ALL_SIDES) moves
 /// face `fi`: see [`tex_anim_record`].
 fn tex_anim_targets(anim_face: i8, fi: usize) -> bool {
@@ -1572,6 +1604,11 @@ impl Scene {
             loading_bars: true,
             attached_lights: true,
             sculpt_area: HashMap::new(),
+            grid_area: HashMap::new(),
+            surface_protection: Default::default(),
+            surface_measured: HashMap::new(),
+            surface_hidden: Default::default(),
+            surface_scanned: 0,
             prim_triangles: Default::default(),
             avatar_area: HashMap::new(),
             complexity_rules: 0,
@@ -1757,7 +1794,7 @@ impl Scene {
                 let pool = self.staging.clone();
                 self.jobs.spawn(move || {
                     let mesh = aurora_prim::generate_volume(&params, detail);
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), 1.0, pool.as_deref())
+                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, mesh.grid_area), pool.as_deref())
                 });
             }
             GeomKey::Flexible { lod, .. } => {
@@ -1768,7 +1805,7 @@ impl Scene {
                     let sim = aurora_prim::flexible::Flexible::new(0, 1.0, Vec3::ZERO, Quat::IDENTITY);
                     let mesh =
                         aurora_prim::volume::generate_flexible_volume(&params, detail, &sim.path(Vec3::ZERO, Quat::IDENTITY), Vec3::ONE);
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), 1.0, pool.as_deref())
+                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, 0.0), pool.as_deref())
                 });
             }
             GeomKey::Sculpt { lod, .. } => {
@@ -1783,7 +1820,12 @@ impl Scene {
                 let pool = self.staging.clone();
                 self.jobs.spawn(move || {
                     let mesh = aurora_prim::generate_sculpt(&params, detail, map.width, map.height, map.components, &map.pixels);
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), mesh.surface_area, pool.as_deref())
+                    JobResult::geometry(
+                        key,
+                        jobs::volume_to_faces(&mesh),
+                        (mesh.surface_area, mesh.grid_area),
+                        pool.as_deref(),
+                    )
                 });
             }
             GeomKey::SculptPlaceholder { lod, .. } => {
@@ -1792,7 +1834,12 @@ impl Scene {
                 let pool = self.staging.clone();
                 self.jobs.spawn(move || {
                     let mesh = aurora_prim::sculpt_placeholder(&params, detail);
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), mesh.surface_area, pool.as_deref())
+                    JobResult::geometry(
+                        key,
+                        jobs::volume_to_faces(&mesh),
+                        (mesh.surface_area, mesh.grid_area),
+                        pool.as_deref(),
+                    )
                 });
             }
             GeomKey::Mesh { id, lod } => {
@@ -1804,7 +1851,7 @@ impl Scene {
                 self.jobs.spawn(move || {
                     let s = aurora_prim::tree::tree_species(Some(species));
                     let mesh = aurora_prim::tree::generate_tree(s, plants::tree_lod(lod));
-                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), 1.0, pool.as_deref())
+                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), (1.0, 0.0), pool.as_deref())
                 });
             }
             // (built at once by `request_grass`, which needs the ground)
@@ -1829,7 +1876,7 @@ impl Scene {
             self.jobs.spawn(move || match lib.parts.get(part as usize) {
                 Some(p) => {
                     let (face, min, max) = morph::morphed(p, &w);
-                    JobResult::geometry(key, (vec![Some(face)], min, max), 1.0, pool.as_deref())
+                    JobResult::geometry(key, (vec![Some(face)], min, max), (1.0, 0.0), pool.as_deref())
                 }
                 None => JobResult::GeometryFailed { key },
             });
@@ -1988,7 +2035,17 @@ impl Scene {
                 // staged in the pool of a GPU device lost since (`forget_gpu`):
                 // dropped, the next sync asks for it again
                 JobResult::Geometry { geom, .. } if !geom.staged_in(self.staging.as_deref()) => {}
-                JobResult::Geometry { key, geom, area } => self.finish_geometry(renderer, key, geom, area),
+                JobResult::Geometry {
+                    key,
+                    geom,
+                    area,
+                    grid_area,
+                } => {
+                    if grid_area > 0.0 {
+                        self.grid_area.insert(key, grid_area);
+                    }
+                    self.finish_geometry(renderer, key, geom, area)
+                }
                 JobResult::GeometryFailed { key } => {
                     if let GeomKey::Mesh { id, lod } = key {
                         self.meshes.on_geometry_done(&id, lod);
@@ -2045,6 +2102,22 @@ impl Scene {
         for f in g.faces.drain(..) {
             renderer.records.free(f.record);
             self.slot_users.remove(&(f.base_slot, idx as u32));
+        }
+    }
+
+    /// Takes an object's drawing away while it stays in the world (a
+    /// stopped plant, a hidden large surface).
+    fn stop_drawing(&mut self, renderer: &mut Renderer, world: &mut World, idx: usize) {
+        if let Some(mut g) = self.gpu.get_mut(idx).map(std::mem::take) {
+            self.release_obj(renderer, idx, &mut g);
+        }
+        self.anchors.forget(idx);
+        self.pick.remove(idx);
+        self.list_index.remove(idx);
+        if let Some(object) = world.objects.get_mut_untracked(idx) {
+            object.render.needs_records = false;
+            object.shape_dirty = false;
+            object.material_dirty = false;
         }
     }
 
@@ -2209,6 +2282,10 @@ impl Scene {
         self.joint_boxes = Default::default();
         self.skin_binds = Default::default();
         self.sculpt_area.clear();
+        self.grid_area.clear();
+        self.surface_measured.clear();
+        self.surface_hidden.clear();
+        self.surface_scanned = 0;
         self.grass.clear();
         self.impostors = Default::default();
         self.far_avatars.clear();
@@ -2658,6 +2735,7 @@ impl Scene {
     /// the anchors written here (anchors.rs) and is not visited.
     pub fn sync(&mut self, renderer: &mut Renderer, world: &mut World, view: &CullView) {
         self.finish_mesh_lod_resets(world, Instant::now());
+        self.update_surface_protection(world);
         if self.parcel_visibility_version != world.parcel_visibility.version {
             self.parcel_visibility_version = world.parcel_visibility.version;
             for (idx, object) in world.objects.slots.iter_mut().enumerate() {
@@ -3479,21 +3557,12 @@ impl Scene {
             return;
         };
         let wanted = Self::object_geom_key(o, lod);
-        if lod == plants::NOT_DRAWN {
-            // a plant the trees' detail stops (tree_detail.rs): its drawing
-            // goes, as for a parcel that hides it, but it stays watched so
-            // that a higher factor brings it back
-            if let Some(mut g) = self.gpu.get_mut(idx).map(std::mem::take) {
-                self.release_obj(renderer, idx, &mut g);
-            }
-            self.anchors.forget(idx);
-            self.pick.remove(idx);
-            self.list_index.remove(idx);
-            if let Some(object) = world.objects.get_mut_untracked(idx) {
-                object.render.needs_records = false;
-                object.shape_dirty = false;
-                object.material_dirty = false;
-            }
+        // a plant the trees' detail stops (tree_detail.rs), or a large
+        // surface the protection hides (surface_area.rs): its drawing goes,
+        // as for a parcel that hides it, but it stays watched and synced so
+        // that it comes back when that changes
+        if lod == plants::NOT_DRAWN || self.count_surface(idx, wanted) {
+            self.stop_drawing(renderer, world, idx);
             return;
         }
         let wearer = Self::wearer_avatar(world, idx);
@@ -3955,6 +4024,7 @@ impl Scene {
             }
             // texture (with bake-on-mesh redirection); without a bake wearer
             // the placeholder stays, an ordinary texture asset
+            let skin_face = avatar::bake_slot_for(&base_tex).is_some();
             let (texture, mut source) = self.face_texture(renderer, world, base_tex, bake_wearer);
             base_tex = texture;
             // media replaces the diffuse texture (LLViewerMediaTexture::switchTexture)
@@ -4010,6 +4080,7 @@ impl Scene {
                 g.tex_ids.push(base_tex);
             }
             rec.tex[0] = self.textures.acquire(renderer, base_tex, source);
+            let rigged = rigged_owner.is_some();
             if let Some((owner, _, binds)) = rigged_owner {
                 rec.flags[0] |= flags::SKINNED;
                 rec.flags[1] = self.palette_base(owner);
@@ -4044,6 +4115,9 @@ impl Scene {
                     && matches!(pbr_alpha, None | Some(1))
                     && matches!(legacy_alpha, None | Some(legacy_mat::alpha_mode::BLEND)),
             );
+            if rigged {
+                rec.set_layer_rank(rigged_layer_rank(skin_face, &o.full_id));
+            }
             rec.set_anchor(anchor.map(|a| a.matrix));
             let record = renderer.records.alloc(rec);
             g.faces.push(FaceDraw {
@@ -4709,6 +4783,13 @@ impl Scene {
         // the water's plane while the camera is above it: the blended
         // faces under it are drawn before the water (blend_order::water_sides)
         let under_water_plane = self.water.height.filter(|h| view.eye.z >= *h);
+        let face_sort = blend_order::face_sort_enabled();
+        // Tests and secondary cameras may not supply the texture-importance
+        // direction. The near plane faces into the same view frustum.
+        let alpha_forward = view
+            .forward
+            .try_normalize()
+            .unwrap_or_else(|| view.planes[4].truncate().normalize_or_zero());
         struct Local {
             water_exclusion: Vec<DrawCmd>,
             opaque: Vec<DrawCmd>,
@@ -4845,6 +4926,22 @@ impl Scene {
             let rig = g.rig_order.filter(|_| g.rigged);
             let blend_center = rig.and_then(|r| self.gpu.get(r.skeleton as usize)).map_or(g.center, |s| s.center);
             let blend_d = (blend_center - view.eye).length();
+            // Rigged meshes retain their attachment order. For ordinary faces,
+            // use the exact placement written to the GPU, including this frame's
+            // moving/worn anchor, without visiting the world's parent chain.
+            let face_depth = (face_sort && in_view && !g.rigged && !g.is_avatar && g.faces.iter().any(|f| f.pass == Pass::Blend))
+                .then(|| {
+                    let record = renderer.records.get(g.faces.first()?.record)?;
+                    let mut model = Mat4::from_cols_array_2d(&record.model);
+                    if let Some(anchor) = record.anchor() {
+                        model = Mat4::from_cols_array_2d(self.palettes.get(anchor as usize)?) * model;
+                    }
+                    let GeomState::Ready(geom) = &self.geoms.get(&g.geom?)?.state else {
+                        return None;
+                    };
+                    Some((blend_order::FaceDepth::new(model, view.eye, alpha_forward), geom))
+                })
+                .flatten();
             for f in &g.faces {
                 // object sphere for the GPU occlusion test
                 let in_view = in_view && !(own_first_person == Some(true) && (g.first_person_hidden || f.first_person_hidden));
@@ -4942,7 +5039,16 @@ impl Scene {
                 match pass {
                     Pass::Blend => {
                         let entry = blend_order::BlendEntry {
-                            distance: blend_d,
+                            distance: if face_sort && !g.rigged {
+                                face_depth
+                                    .as_ref()
+                                    .and_then(|(depth, geom)| {
+                                        geom.pick_faces.get(f.te_index as usize)?.as_ref().map(|face| depth.of(face.bounds))
+                                    })
+                                    .unwrap_or_else(|| (g.center - view.eye).dot(alpha_forward))
+                            } else {
+                                blend_d
+                            },
                             cmd,
                             glow: f.glow,
                             double_sided: f.two_sided,
@@ -5010,8 +5116,12 @@ impl Scene {
             ]
             .into_iter()
             .flat_map(|(cmds, glow, double_sided)| {
-                cmds.iter().map(move |(d, c)| blend_order::BlendEntry {
-                    distance: *d,
+                cmds.iter().map(move |(point, c)| blend_order::BlendEntry {
+                    distance: if face_sort {
+                        (*point - view.eye).dot(alpha_forward)
+                    } else {
+                        view.eye.distance(*point)
+                    },
                     cmd: *c,
                     glow,
                     double_sided,
@@ -6049,6 +6159,23 @@ fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
             }
         }
         AlphaKind::Blend => Pass::Blend,
+    }
+}
+
+#[cfg(test)]
+mod layer_rank_tests {
+    use super::*;
+
+    #[test]
+    fn the_skin_stays_under_every_worn_layer() {
+        let ids = [Uuid::nil(), Uuid::from_u128(1), Uuid::from_u128(6), Uuid::from_u128(7), Uuid::max()];
+        for id in ids {
+            assert_eq!(rigged_layer_rank(true, &id), 0);
+            let rank = rigged_layer_rank(false, &id);
+            assert!((1..=flags::LAYER_RANK_MAX).contains(&rank), "{id}: {rank}");
+            // the same object keeps its rank on every rebuild
+            assert_eq!(rigged_layer_rank(false, &id), rank);
+        }
     }
 }
 
