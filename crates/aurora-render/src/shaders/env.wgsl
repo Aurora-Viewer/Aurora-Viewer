@@ -383,6 +383,21 @@ fn sky_pixel(in: SkyOut) -> vec4<f32> {
     // from the camera, not region positions minus the camera: those rounded
     // differently each frame and the sky shook as it moved (#1059)
     let dir = sky_ray(in.ndc);
+    // Under the rim of the dome a probe's capture has no sky: LLVOWLSky::calcPhi
+    // ends the dome at pi/8 from its apex, and LLDrawPoolWLSky::renderDome
+    // lowers it by the dome offset (about 5.4 degrees under the horizon by
+    // default). The Legacy Viewer's captures draw the water there; Aurora's have
+    // no water pass, so this stands in for the open sea around the terrain: the
+    // sky in the mirror, by a Fresnel term. Haze here lit the sides of everything
+    // outdoors; black left a band the Legacy Viewer does not have.
+    if ((frame.light_mode.z & PROBE_CAPTURE_DOME) != 0u) {
+        let rim_up = 0.92387953 - frame.sky_misc.x;
+        let d = normalize(dir);
+        if (d.z < rim_up / sqrt(0.14644661 + rim_up * rim_up)) {
+            let fresnel = 0.02 + 0.98 * pow(1.0 - min(abs(d.z), 1.0), 5.0);
+            return vec4<f32>(sky_color(vec3<f32>(d.x, d.y, abs(d.z))) * fresnel, 1.0);
+        }
+    }
     var col = sky_full_at(dir, sky_footprint(in.ndc, dir));
     if (camera_underwater()) {
         let wf = water_fog_view(dir * 512.0, frame.water_normal.w);
@@ -456,7 +471,7 @@ fn vs_terrain(in: VsIn) -> TerrainOut {
     let model = eye_model(rec, in);
     let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: TerrainOut;
-    out.clip = frame.eye_view_proj * ep;
+    out.clip = eye_clip(rec, ep);
     // (lighting, shadows and fog keep region coordinates)
     out.world_pos = ep.xyz + frame.eye.xyz;
     out.normal = vertex_normal(rec, in);
@@ -474,10 +489,10 @@ fn vs_terrain_pbr(in: VsIn) -> TerrainPbrOut {
     let model = eye_model(rec, in);
     let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: TerrainPbrOut;
-    out.clip = frame.eye_view_proj * ep;
+    out.clip = eye_clip(rec, ep);
     out.world_pos = ep.xyz + frame.eye.xyz;
     out.normal = vertex_normal(rec, in);
-    let raw = vec4<f32>(terrain_direction(vec4<u32>(round(in.weights * 255.0))), in.normal.w);
+    let raw = vec4<f32>(terrain_tangent(in.weights), in.normal.w);
     out.tangent0 = terrain_transform_tangent(records[rec.tex.x], out.normal, raw);
     out.tangent1 = terrain_transform_tangent(records[rec.tex.y], out.normal, raw);
     out.tangent2 = terrain_transform_tangent(records[rec.tex.z], out.normal, raw);
