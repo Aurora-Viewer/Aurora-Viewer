@@ -8914,7 +8914,8 @@ radar-age-alert = { $days ->
     [one] a déclenché l'alerte d'âge. Âge : { $days } jour
    *[other] a déclenché l'alerte d'âge. Âge : { $days } jours
     }
-radar-too-far-to-zoom = Cet avatar est trop loin pour que la caméra aille jusqu'à lui.
+radar-zoom-beyond-draw-distance = { $name } est à { $distance } m, au-delà de votre distance d'affichage ({ $draw } m).
+radar-zoom-unplaced = { $name } n'est pas encore chargé et sa hauteur est inconnue : la caméra ne sait pas où regarder.
 people-view-sort-options = Options d'affichage et de tri
 people-filter-by-name = Filtrer par nom…
 people-edit-contact-hold = Maintenez le clic gauche pour modifier les paramètres du contact.

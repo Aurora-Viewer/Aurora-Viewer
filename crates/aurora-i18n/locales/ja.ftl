@@ -8908,7 +8908,8 @@ radar-age-alert = { $days ->
     [one] が年齢警告の条件に該当しました。年齢：{ $days }日
    *[other] が年齢警告の条件に該当しました。年齢：{ $days }日
     }
-radar-too-far-to-zoom = このアバターは遠すぎて、カメラが届きません。
+radar-zoom-beyond-draw-distance = { $name }さんは{ $distance }ｍ先にいて、描画距離（{ $draw }ｍ）の外です。
+radar-zoom-unplaced = { $name }さんはまだ読み込まれておらず、高さも不明なため、カメラの向け先がわかりません。
 people-view-sort-options = 表示／並べ替えのオプション
 people-filter-by-name = 名前で絞り込む…
 people-edit-contact-hold = マウスの左ボタンを長押しするとコンタクトの設定を編集します。

@@ -8921,7 +8921,8 @@ radar-age-alert = { $days ->
     [one] triggered the age alert. Age: { $days } day
    *[other] triggered the age alert. Age: { $days } days
     }
-radar-too-far-to-zoom = This avatar is too far for the camera to reach it.
+radar-zoom-beyond-draw-distance = { $name } is { $distance } m away, beyond your draw distance ({ $draw } m).
+radar-zoom-unplaced = { $name } is not loaded yet and their height is unknown: the camera does not know where to look.
 people-view-sort-options = View/sort options
 people-filter-by-name = Filter by name…
 people-edit-contact-hold = Hold the left mouse button to edit contact settings.
