@@ -1071,6 +1071,8 @@ pub enum Gifs {
     Klipy,
     /// `sent`: the first GIF sent, its preview under the message.
     Sent,
+    /// `recent`: open on the Recent tab, five GIFs sent before.
+    Recent,
     /// `menu`: the GIF button's right-click menu open.
     Menu,
     /// `nokey`: the real settings, no key: no button.
@@ -1093,6 +1095,7 @@ pub fn gifs_scenario() -> Option<Gifs> {
         "1" | "open" => Some(Gifs::Open),
         "klipy" => Some(Gifs::Klipy),
         "sent" => Some(Gifs::Sent),
+        "recent" => Some(Gifs::Recent),
         "menu" => Some(Gifs::Menu),
         "nokey" => Some(Gifs::NoKey),
         "net" => Some(Gifs::Net),
@@ -1101,6 +1104,16 @@ pub fn gifs_scenario() -> Option<Gifs> {
             None
         }
     })
+}
+
+/// AURORA_DEMO_RECENT_EMOJIS=1|<emojis>: the row under the chat fields, the
+/// given emojis or a full row; unset, it starts empty as a new account's.
+pub fn recent_emojis() -> String {
+    match std::env::var("AURORA_DEMO_RECENT_EMOJIS") {
+        Ok(v) if v.trim() == "1" => "🌟🐱🍕🎶🌈☕🤔😎🥳😍👏😢🙏🎉😅🔥👍❤😭😂".to_owned(),
+        Ok(v) => v,
+        Err(_) => String::new(),
+    }
 }
 
 /// AURORA_DEMO_CONV=bubbles[:busy|:group|:local|:legacy]: the
