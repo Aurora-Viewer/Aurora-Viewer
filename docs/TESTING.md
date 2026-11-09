@@ -1557,7 +1557,7 @@ when unfocused") is ignored during a screenshot.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_ACTIONS=<mode>` | Cursors, object clicks, buying and paying |
-| `AURORA_DEMO_HOVER_TIPS=<form>[:all][:noland]` | World tooltips over objects, avatars and land |
+| `AURORA_DEMO_HOVER_TIPS=<form>[:all][:noland][:avatars]` | World tooltips over objects, avatars and land (`avatars`: avatars alone) |
 | `AURORA_DEMO_WORLD_CLICKS=<mode>` | Camera transparency, name-plate clicks, scripted attachments and the left button's script clicks |
 | `AURORA_DEMO_DIALOG=<mode>` | llDialog menu, every scripted object's window |
 | `AURORA_DEMO_BUILD="<script>"` | Script of the build tools |
@@ -2288,10 +2288,11 @@ errors of owned objects also appear there, after filtering of the bridge and
 of blocked objects. The window allows seeing all the objects or a single one
 and clearing the displayed messages.
 
-**`AURORA_DEMO_HOVER_TIPS=bubble|card|readout|legacy[:all][:noland]`** — the
+**`AURORA_DEMO_HOVER_TIPS=bubble|card|readout|legacy[:all][:noland][:avatars]`** — the
 world tooltips on for the session in that form (the Legacy Viewer's text
 with `legacy`), the saved settings untouched; on land unless `noland`, on
-every object with `all`. The simulator answers the parcel under the pointer
+every object with `all`; with `avatars`, the main switch off and "On avatars
+even when off" on: avatars only, nothing over objects or land. The simulator answers the parcel under the pointer
 (the plaza, the 128 m square in the middle, or the garden for sale around
 it) and the objects' properties. Rest the cursor with `AURORA_DEMO_HOVER="x,y"`
 and add `AURORA_DEMO_ACTIONS=1` for cubes that can be bought, paid and

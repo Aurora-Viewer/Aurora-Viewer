@@ -163,6 +163,7 @@ const BEFORE: &[&str] = &[
     "tag_complexity_own",
     "hover_tips.enabled",
     "hover_tips.form",
+    "hover_tips.avatars",
     "hover_tips.all_objects",
     "hover_tips.land",
     "hover_tips.group_titles",
