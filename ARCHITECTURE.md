@@ -121,8 +121,9 @@ The views of a capture are mirrored (`probes::face_view`), so captures count
 as mirrored passes (`misc.w` 2).
 
 `shaders/cull.wgsl::write_args` validates indexed-indirect ranges against the
-bound u16 index buffer and zeros invalid draws; a readback counter reports
-skipped draws. CPU-built indirect lists get the same bound when they are pushed
+bound u16 index buffer and zeros invalid draws; `cs_classify` counts each
+such face once per frame (left out of the triangle statistics), and the log
+names a new maximum only. CPU-built indirect lists get the same bound when they are pushed
 (`gpu_cull::bound_cpu_draw`); wgpu's `VALIDATION_INDIRECT_CALL` stays off (it
 does not cover the GPU-culled `multi_draw_indexed_indirect_count`). The scene
 texture table stores its bound page count in the header of the existing storage

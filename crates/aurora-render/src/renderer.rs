@@ -6997,11 +6997,6 @@ impl Backend {
             }
         };
         let main_count = cpu.len();
-        if cpu_clamped.get() > 0 {
-            static ONCE: std::sync::Once = std::sync::Once::new();
-            let n = cpu_clamped.get();
-            ONCE.call_once(|| log::warn!("indirect draws: {n} CPU-built draws had an index range past the index buffer and were skipped"));
-        }
         // GPU draw lists this frame (gpu_cull.rs)
         let gpu = lists.gpu.filter(|_| self.gpu_cull);
         // GPU occlusion of the main draws (AURORA_NO_OCCLUSION turns it off)
@@ -7071,9 +7066,9 @@ impl Backend {
                 frame.water_air = crate::gpu_cull::view_planes(air_vp).map(|p| p.to_array());
                 frame.dist[1] = frame.dist[1].max(g.draw_distance.min(200.0));
             }
-            let index_count = (scene.indices.size() / 2).min(u64::from(u32::MAX)) as u32;
+            // the same limit as the CPU-built lists' bound (`push`)
             self.cull
-                .prepare(&self.device, &self.queue, scene.face_count, scene.object_count, index_count, frame);
+                .prepare(&self.device, &self.queue, scene.face_count, scene.object_count, index_limit, frame);
         }
         let cpu = &mut self.indirect_cpu;
         let hud_opaque_range = push(cpu, &lists.hud_opaque);
@@ -7143,6 +7138,13 @@ impl Backend {
         }
         for (range, list) in rg.spot_terrain.iter_mut().zip(&spot_terrain_lists) {
             *range = push(cpu, list);
+        }
+        // after every CPU-built list: main view, HUD, debug, selection,
+        // preview, shadows and probes
+        if cpu_clamped.get() > 0 {
+            static ONCE: std::sync::Once = std::sync::Once::new();
+            let n = cpu_clamped.get();
+            ONCE.call_once(|| log::warn!("indirect draws: {n} CPU-built draws had an index range past the index buffer and were skipped"));
         }
         let needed = (self.indirect_cpu.len() * std::mem::size_of::<DrawIndexedIndirect>()) as u64;
         if needed > self.indirect.size() {

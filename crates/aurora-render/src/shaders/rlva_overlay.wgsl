@@ -13,7 +13,7 @@ struct TextureLocations {
 fn page_of(loc: u32) -> u32 {
     let page = loc >> 16u;
     let last_bound_page = max(locations.page_count, 1u) - 1u;
-    return select(min(page, last_bound_page), 0u, page > last_bound_page);
+    return select(page, 0u, page > last_bound_page);
 }
 struct Vertex {
     @builtin(position) position: vec4<f32>,

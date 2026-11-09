@@ -338,6 +338,14 @@ var<workgroup> wg_bins: array<atomic<u32>, BINS>;
 var<workgroup> wg_stats: array<atomic<u32>, 2>;
 var<workgroup> wg_shadow: array<atomic<u32>, SHADOW_STATS>;
 
+// The face's index range fits in the index buffer (frame.groups.z). A face
+// past it is drawn with no index (write_args), counted once per frame in
+// COUNT_CLAMPED (cs_classify) and left out of the triangle statistics.
+fn index_range_fits(f: CullFace) -> bool {
+    let index_limit = frame.groups.z;
+    return f.first_index <= index_limit && f.index_count <= index_limit - f.first_index;
+}
+
 // Bins of face `i` this frame (0: not drawn anywhere).
 fn face_mask(i: u32) -> u32 {
     let f = faces[i];
@@ -400,6 +408,7 @@ fn face_mask(i: u32) -> u32 {
         return select(0u, 1u << BIN_WATER_EXCLUSION, allowed);
     }
     var m = 0u;
+    let tris = select(0u, f.index_count / 3u, index_range_fits(f));
     // LLPipeline::renderShadow: blended faces cast too, rigged or not
     // (renderAlphaObjects), with fs_shadow's alpha rules
     let rigged = (o.flags & (OBJ_RIGGED | OBJ_AVATAR)) != 0u;
@@ -413,10 +422,10 @@ fn face_mask(i: u32) -> u32 {
             if (in_cascade(frame.cascades[k], c, r) && casts_into(k, c, r) && !(depth_only && merged_from_finer(k, c, r))) {
                 m |= 1u << (bin + k);
                 if ((fl & F_SHADOW_STATS) != 0u) {
-                    atomicAdd(&wg_shadow[k], f.index_count / 3u);
+                    atomicAdd(&wg_shadow[k], tris);
                     if (rigged) {
                         atomicAdd(&wg_shadow[3u + k], 1u);
-                        atomicAdd(&wg_shadow[6u + k], f.index_count / 3u);
+                        atomicAdd(&wg_shadow[6u + k], tris);
                     }
                 }
             }
@@ -452,7 +461,7 @@ fn face_mask(i: u32) -> u32 {
     }
     if (in_view && solid) {
         m |= 1u << (fp - PASS_OPAQUE);
-        atomicAdd(&wg_stats[1], f.index_count / 3u);
+        atomicAdd(&wg_stats[1], tris);
     }
     return m;
 }
@@ -478,6 +487,9 @@ fn cs_classify(
     if (i < frame.sizes.x) {
         m = face_mask(i);
         masks[i] = m;
+        if (m != 0u && !index_range_fits(faces[i])) {
+            atomicAdd(&counts[COUNT_CLAMPED], 1u);
+        }
     }
     for (var b = 0u; b < BINS; b++) {
         if (((m >> b) & 1u) != 0u) {
@@ -560,11 +572,9 @@ fn write_args(slot: u32, f: CullFace, rec: u32, instances: u32) {
     let a = slot * 5u;
     var first_index = f.first_index;
     var index_count = f.index_count;
-    let index_limit = frame.groups.z;
-    if (first_index > index_limit || index_count > index_limit - min(first_index, index_limit)) {
-        first_index = min(first_index, index_limit);
+    if (!index_range_fits(f)) {
+        first_index = min(first_index, frame.groups.z);
         index_count = 0u;
-        atomicAdd(&counts[COUNT_CLAMPED], 1u);
     }
     args[a] = index_count;
     args[a + 1u] = instances;

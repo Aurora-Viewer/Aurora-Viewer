@@ -131,6 +131,17 @@ pub fn bound_index_range(first_index: u32, index_count: u32, index_limit: u32) -
     (safe_first, if valid { index_count } else { 0 }, !valid)
 }
 
+/// True when `count` clamped faces is more than any count logged before
+/// (then remembered): a bad face that goes in and out of view logs once,
+/// not at every readback that sees it again.
+fn new_clamped_max(logged: &mut u32, count: u32) -> bool {
+    if count <= *logged {
+        return false;
+    }
+    *logged = count;
+    true
+}
+
 /// The same bound for a CPU-built indirect draw (`Backend::render_view`'s
 /// lists, drawn with `draw_indexed_indirect` without wgpu's indirect
 /// validation): an out-of-range draw becomes a zero-count draw. True when
@@ -845,8 +856,9 @@ pub struct CullCounts {
     pub triangles: u32,
     /// Main-bin draws hidden by the occlusion.
     pub hidden: u32,
-    /// Indirect draws whose index range was rejected and zeroed.
-    pub clamped_draws: u32,
+    /// Faces drawn this frame whose index range was past the index buffer
+    /// (drawn with no index, each counted once).
+    pub clamped_faces: u32,
     /// With `frame_flags::SHADOW_STATS`, per cascade: triangles of its
     /// casters, its rigged casters (avatars and rigged meshes) and their
     /// triangles.
@@ -958,6 +970,8 @@ pub struct GpuCull {
     copied: std::cell::Cell<Option<usize>>,
     /// Last counts read back.
     pub last: CullCounts,
+    /// Largest clamped-face count logged this session (`new_clamped_max`).
+    clamped_logged: u32,
     max_groups: u32,
     /// World sphere of each object this frame (`cs_spheres`), and the
     /// objects it has room for.
@@ -1095,6 +1109,7 @@ impl GpuCull {
             readback: Vec::new(),
             copied: std::cell::Cell::new(None),
             last: CullCounts::default(),
+            clamped_logged: 0,
             max_groups: device.limits().max_compute_workgroups_per_dimension,
             spheres: Self::make_storage(device, "cull spheres", 4096 * 16),
             sphere_cap: 4096,
@@ -1360,15 +1375,15 @@ impl GpuCull {
                     c.visible_objects = n[COUNT_VISIBLE];
                     c.triangles = n[COUNT_TRIANGLES];
                     c.hidden = n[COUNT_HIDDEN];
-                    c.clamped_draws = n[COUNT_CLAMPED];
+                    c.clamped_faces = n[COUNT_CLAMPED];
                     let stat = |i: usize| std::array::from_fn(|k| n[COUNT_SHADOW + i * 3 + k]);
                     c.shadow_triangles = stat(0);
                     c.shadow_rigged = stat(1);
                     c.shadow_rigged_triangles = stat(2);
-                    if c.clamped_draws > 0 && self.last.clamped_draws == 0 {
+                    if new_clamped_max(&mut self.clamped_logged, c.clamped_faces) {
                         log::warn!(
-                            "GPU culling: {} indirect draws had out-of-range indices and were skipped",
-                            c.clamped_draws
+                            "GPU culling: {} faces had an index range past the index buffer and were skipped (most this session)",
+                            c.clamped_faces
                         );
                     }
                     self.last = c;
@@ -1407,6 +1422,17 @@ impl GpuCull {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_face_going_in_and_out_of_view_logs_once() {
+        let mut logged = 0;
+        let seen: Vec<bool> = [0, 1, 0, 1, 0, 1, 2, 1, 2, 0]
+            .iter()
+            .map(|&n| new_clamped_max(&mut logged, n))
+            .collect();
+        assert_eq!(seen, [false, true, false, false, false, false, true, false, false, false]);
+        assert_eq!(logged, 2);
+    }
 
     #[test]
     fn cpu_built_draws_are_bounded_like_the_gpu_ones() {
@@ -2444,15 +2470,18 @@ mod tests {
         let args = crate::readback::u32s(&args[..size as usize]);
         let counts = counts_read.get_mapped_range(..).expect("counts mapped");
         let counts = crate::readback::u32s(&counts[..COUNTS * 4]);
+        // a face past the index buffer is counted once and its triangles left out
+        let fits = |i: usize| !bound_index_range(faces[i].first_index, faces[i].index_count, 200_000).2;
         let mut expect: Vec<Vec<u32>> = vec![Vec::new(); BINS];
-        let (mut visible, mut tris) = (0, 0);
+        let (mut visible, mut tris, mut clamped_faces) = (0, 0, 0);
         for i in 0..n_faces {
             let (m, v) = face_bins(&f, &faces, &objects, &spheres, i);
             visible += v as u32;
+            clamped_faces += (m != 0 && !fits(i)) as u32;
             for (b, e) in expect.iter_mut().enumerate() {
                 if (m >> b) & 1 != 0 {
                     e.push(i as u32);
-                    if b < MAIN_BINS {
+                    if b < MAIN_BINS && fits(i) {
                         tris += faces[i].index_count / 3;
                     }
                 }
@@ -2480,7 +2509,13 @@ mod tests {
             let casters = || expect[BIN_SHADOW + k].iter().chain(&expect[BIN_SHADOW_ALPHA + k]);
             let rigged =
                 |rec: &&u32| objects[faces[**rec as usize].object as usize].flags & (object_flags::RIGGED | object_flags::AVATAR) != 0;
-            let tris = |rec: &u32| faces[*rec as usize].index_count / 3;
+            let tris = |rec: &u32| {
+                if fits(*rec as usize) {
+                    faces[*rec as usize].index_count / 3
+                } else {
+                    0
+                }
+            };
             assert_eq!(counts[COUNT_SHADOW + k], casters().map(tris).sum::<u32>(), "cascade {k} triangles");
             assert_eq!(
                 counts[COUNT_SHADOW + 3 + k],
@@ -2491,28 +2526,8 @@ mod tests {
         }
         assert_eq!(counts[COUNT_VISIBLE], visible);
         assert_eq!(counts[COUNT_TRIANGLES], tris);
-        let invalid_draws = expect
-            .iter()
-            .enumerate()
-            .map(|(bin, draws)| {
-                let in_bin = draws
-                    .iter()
-                    .filter(|&&rec| bound_index_range(faces[rec as usize].first_index, faces[rec as usize].index_count, 200_000).2)
-                    .count();
-                in_bin
-                    + if bin < MAIN_BINS {
-                        draws
-                            .iter()
-                            .filter(|&&rec| was[rec as usize] != 0)
-                            .filter(|&&rec| bound_index_range(faces[rec as usize].first_index, faces[rec as usize].index_count, 200_000).2)
-                            .count()
-                    } else {
-                        0
-                    }
-            })
-            .sum::<usize>();
-        assert!(invalid_draws > 0, "the invalid face should be visible and emitted at least once");
-        assert_eq!(counts[COUNT_CLAMPED] as usize, invalid_draws);
+        assert!(clamped_faces > 0, "the invalid face should be drawn somewhere");
+        assert_eq!(counts[COUNT_CLAMPED], clamped_faces, "each clamped face counted once");
         let cap = cull.cap() as usize;
         for (b, e) in expect.iter().enumerate() {
             assert_eq!(counts[b] as usize, e.len(), "bin {b} size");

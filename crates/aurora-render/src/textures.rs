@@ -2457,6 +2457,27 @@ mod tests {
         assert_eq!(loc_buffer_offset(7), 32);
     }
 
+    /// `texture_page_index` as common.wgsl defines it.
+    fn page_helper() -> &'static str {
+        let common = include_str!("shaders/common.wgsl");
+        let start = common.find("fn texture_page_index(").expect("page helper in common.wgsl");
+        let end = start + common[start..].find("\n}\n").expect("end of the page helper") + 2;
+        &common[start..end]
+    }
+
+    #[test]
+    fn the_overlay_page_lookup_is_the_scene_helper() {
+        // rlva_overlay.wgsl has its own bindings: the same body, on its buffer
+        let overlay = include_str!("shaders/rlva_overlay.wgsl");
+        let expected = page_helper()
+            .replace("fn texture_page_index(", "fn page_of(")
+            .replace("tex_loc.", "locations.");
+        assert!(
+            overlay.contains(&expected),
+            "rlva_overlay.wgsl's page_of differs from common.wgsl's texture_page_index"
+        );
+    }
+
     #[test]
     fn every_scene_page_lookup_uses_the_bound_page_helper() {
         let common = include_str!("shaders/common.wgsl");
@@ -3298,25 +3319,23 @@ mod tests {
         let mut uploads = UploadQueue::new(&device, true);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
+            // common.wgsl's own page helper, not a copy of it
             source: wgpu::ShaderSource::Wgsl(
-                "enable wgpu_binding_array;
+                format!(
+                    "enable wgpu_binding_array;
                 @group(0) @binding(0) var tex_pages: binding_array<texture_2d_array<f32>>;
                 @group(0) @binding(1) var tex_sampler: sampler;
-                struct TextureLocations {
+                struct TextureLocations {{
                     page_count: u32,
                     values: array<u32>,
-                }
+                }}
                 @group(0) @binding(2) var<storage, read> tex_loc: TextureLocations;
-                fn texture_page_index(loc: u32) -> u32 {
-                    let page = loc >> 16u;
-                    let last_bound_page = max(tex_loc.page_count, 1u) - 1u;
-                    return select(min(page, last_bound_page), 0u, page > last_bound_page);
-                }
-                @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+                {helper}
+                @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {{
                     let p = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
                     return vec4<f32>(p * 2.0 - 1.0, 0.0, 1.0);
-                }
-                @fragment fn fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
+                }}
+                @fragment fn fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {{
                     // row 0: level 0, row 1: the last level (first texel of each)
                     let loc = tex_loc.values[u32(p.x)];
                     let levels = textureNumLevels(tex_pages[texture_page_index(loc)]);
@@ -3324,7 +3343,9 @@ mod tests {
                     let dims = textureDimensions(tex_pages[texture_page_index(loc)], level);
                     let uv = vec2<f32>(0.5) / vec2<f32>(dims);
                     return textureSampleLevel(tex_pages[texture_page_index(loc)], tex_sampler, uv, loc & 0xffffu, f32(level));
-                }"
+                }}",
+                    helper = page_helper()
+                )
                 .into(),
             ),
         });
