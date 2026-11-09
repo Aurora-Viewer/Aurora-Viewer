@@ -51,6 +51,10 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &World, shown: &mut Option<
                 ui.label(RichText::new(aurora_i18n::tr!("status-unknown")).size(12.0).color(p.ink));
                 return;
             }
+            if let Some(anonymous) = hidden_owner(world, &o) {
+                ui.label(RichText::new(anonymous).size(12.0).color(p.ink));
+                return;
+            }
             let name = if o.group_owned {
                 super::chat::app_link_group_name(world, o.owner)
             } else {
@@ -124,4 +128,14 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &World, shown: &mut Option<
     if !open || close {
         *shown = None;
     }
+}
+
+/// The owner's name in its place under RLVa `@shownames`: a resident owner
+/// is shown anonymous, with no profile link (the Legacy Viewer's objectim
+/// link carries `rlv_shownames` and LLInspectRemoteObject shows
+/// `rlvanonym`). A group owner stays named, as there. Stricter than the
+/// Legacy Viewer, which hides only an owner who is nearby.
+pub(crate) fn hidden_owner(world: &World, o: &crate::slapp::RemoteObject) -> Option<String> {
+    (!o.owner.is_nil() && !o.group_owned && !world.rlva_can_name(o.owner))
+        .then(|| crate::world::rlva::privacy::anonymous(o.owner).display_name.clone())
 }

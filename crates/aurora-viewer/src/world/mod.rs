@@ -1924,6 +1924,16 @@ impl World {
         origin + clipped
     }
 
+    /// The object of a chat line, for its name's inspector
+    /// (`AppLink::ObjectIm`): kept while a retained line names it.
+    fn remember_chat_object(&mut self, object: crate::slapp::RemoteObject) {
+        if self.chat_objects.len() >= MAX_CHAT && !self.chat_objects.contains_key(&object.id) {
+            let retained: HashSet<_> = self.chat.iter().map(|line| line.source).collect();
+            self.chat_objects.retain(|id, _| retained.contains(id));
+        }
+        self.chat_objects.insert(object.id, object);
+    }
+
     fn push_chat(&mut self, line: ChatLine) {
         if self.alerts(line.kind) {
             self.chat_badge += 1;
@@ -4391,10 +4401,6 @@ impl World {
         // LLViewerChat::getObjectImSLURL uses the message's owner and
         // position, even when the speaking object is not in the scene.
         if matches!(kind, ChatKind::Object(_)) && !c.source_id.is_nil() {
-            if self.chat_objects.len() >= MAX_CHAT && !self.chat_objects.contains_key(&c.source_id) {
-                let retained: HashSet<_> = self.chat.iter().map(|line| line.source).collect();
-                self.chat_objects.retain(|id, _| retained.contains(id));
-            }
             let region = self
                 .objects
                 .index_of_uuid(&c.source_id)
@@ -4413,16 +4419,13 @@ impl World {
                     )
                 })
                 .unwrap_or_default();
-            self.chat_objects.insert(
-                c.source_id,
-                crate::slapp::RemoteObject {
-                    id: c.source_id,
-                    name: from.clone(),
-                    owner: c.owner_id,
-                    group_owned: false,
-                    slurl,
-                },
-            );
+            self.remember_chat_object(crate::slapp::RemoteObject {
+                id: c.source_id,
+                name: from.clone(),
+                owner: c.owner_id,
+                group_owned: false,
+                slurl,
+            });
         }
         self.push_chat(ChatLine {
             time: SystemTime::now(),
@@ -4539,6 +4542,34 @@ impl World {
         } else {
             im.from_name
         };
+        // IM_FROM_TASK (LLIMProcessing::processNewMessage): the line belongs
+        // to the object, the IM's session id; the sender is its owner (a
+        // group with from_group) and the binary bucket its location. With
+        // the owner's id, the name's Inspect showed no object and its Block
+        // muted the owner, hiding all their chat and objects. An older
+        // region gives no session id: no object to link then.
+        let source = if im.dialog == 19 { im.session_id } else { im.from_agent_id };
+        if im.dialog == 19 && !im.session_id.is_nil() {
+            let slurl = object_im_filter::origin(&im.binary_bucket)
+                .map(|o| match o.pos {
+                    Some(p) => format!(
+                        "{}/{:.0}/{:.0}/{:.0}",
+                        crate::slurl::encode(&o.region),
+                        p.x.round(),
+                        p.y.round(),
+                        p.z.round()
+                    ),
+                    None => crate::slurl::encode(&o.region),
+                })
+                .unwrap_or_default();
+            self.remember_chat_object(crate::slapp::RemoteObject {
+                id: im.session_id,
+                name: from.clone(),
+                owner: im.from_agent_id,
+                group_owned: im.from_group,
+                slurl,
+            });
+        }
         // an object's message kept while we were offline (IM_FROM_TASK)
         let text = if im.offline && im.dialog == 19 {
             saved_prefix(im.timestamp) + &im.message
@@ -4571,7 +4602,7 @@ impl World {
             from,
             text,
             kind,
-            source: im.from_agent_id,
+            source,
             origin: Origin::Live,
         });
     }

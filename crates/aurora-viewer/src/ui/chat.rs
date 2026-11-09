@@ -5841,7 +5841,8 @@ mod tests {
         let expected = world.chat_objects.get(&id).unwrap().clone();
         assert_eq!(expected.owner, owner);
         assert!(expected.slurl.ends_with("/32/64/128"));
-        // Changing the scene or agent position cannot erase a message's origin.
+        // The object's latest origin stays known when it leaves the scene
+        // or the agent moves (one per object, not per line).
         world.agent.position = glam::Vec3::ZERO;
         let icons = crate::ui::icons::Icons::default();
         let pics = HashMap::new();
