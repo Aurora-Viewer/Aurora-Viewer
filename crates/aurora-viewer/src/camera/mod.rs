@@ -64,6 +64,24 @@ const HEAD_BUFFER_SIZE: f32 = 0.3;
 const LAND_MIN_ZOOM: f32 = 0.15;
 const AVATAR_MIN_ZOOM: f32 = 0.5;
 const OBJECT_MIN_ZOOM: f32 = 0.02;
+
+/// Where the free camera's distance `d` sits between `min` and `max`, 0 to
+/// 1 on a log scale. Deliberate difference: LLAgentCamera::getCameraZoomFraction
+/// is linear, and over 0.02–496 m a slider pixel then jumps metres (#1870).
+fn free_zoom_fraction(d: f32, min: f32, max: f32) -> f32 {
+    if !(min > 0.0 && max > min) {
+        return 0.0;
+    }
+    ((d.max(min) / min).ln() / (max / min).ln()).clamp(0.0, 1.0)
+}
+
+/// The distance at `t` (0 to 1) of `free_zoom_fraction`'s scale.
+fn free_zoom_distance(t: f32, min: f32, max: f32) -> f32 {
+    if !(min > 0.0 && max > min) {
+        return min.max(max);
+    }
+    min * (max / min).powf(t.clamp(0.0, 1.0))
+}
 const GROUND_TO_AIR_CAMERA_TRANSITION_TIME: f32 = 0.5;
 const GROUND_TO_AIR_CAMERA_TRANSITION_START_TIME: f32 = 0.5;
 const SMOOTHING_HALF_LIFE: f32 = 0.02;
@@ -1202,14 +1220,15 @@ impl Camera {
     }
 
     /// LLAgentCamera::getCameraZoomFraction: 0 zoomed all the way out, 1
-    /// all the way in (the build floater's Focus slider).
+    /// all the way in (the build floater's Focus slider, the Controls
+    /// window's zoom).
     pub fn zoom_fraction(&self) -> f32 {
         let rescale = |v: f32, a: f32, b: f32| ((v - a) / (b - a)).clamp(0.0, 1.0);
         if self.focus_on_avatar && self.third_person() {
             return 1.0 - rescale(self.zoom_fraction, MIN_ZOOM_FRACTION, MAX_ZOOM_FRACTION);
         }
         let (min, max) = self.zoom_limits();
-        1.0 - rescale(self.focus_offset_target.length(), min, max)
+        1.0 - free_zoom_fraction(self.focus_offset_target.length(), min, max)
     }
 
     /// LLAgentCamera::setCameraZoomFraction.
@@ -1220,7 +1239,7 @@ impl Camera {
         } else {
             let (min, max) = self.zoom_limits();
             let unit = self.focus_offset_target.normalize_or(Vec3::X);
-            self.focus_offset_target = unit * (max + (min - max) * f);
+            self.focus_offset_target = unit * free_zoom_distance(1.0 - f, min, max);
         }
     }
 
@@ -2162,6 +2181,23 @@ pub fn pick_focus_object(world: &World, idx: usize, now: Instant) -> Option<(Uui
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn free_zoom_slider_is_logarithmic_and_round_trips() {
+        let (min, max) = (OBJECT_MIN_ZOOM, MAX_CAMERA_DISTANCE_FROM_OBJECT);
+        assert_eq!(free_zoom_distance(0.0, min, max), min);
+        assert!((free_zoom_distance(1.0, min, max) - max).abs() < 1e-2);
+        // a hundredth of the slider near the avatar moves centimetres, not
+        // the ~5 m of a linear scale (#1870)
+        assert!(free_zoom_distance(0.31, min, max) - free_zoom_distance(0.30, min, max) < 0.1);
+        for d in [0.05, 1.0, 10.0, 100.0, 400.0] {
+            let back = free_zoom_distance(free_zoom_fraction(d, min, max), min, max);
+            assert!((back - d).abs() / d < 1e-3, "{d} came back as {back}");
+        }
+        assert_eq!(free_zoom_fraction(0.0, min, max), 0.0);
+        assert_eq!(free_zoom_fraction(1e6, min, max), 1.0);
+        assert_eq!(free_zoom_fraction(5.0, 1.0, 1.0), 0.0);
+    }
 
     #[test]
     fn a_photo_frames_exactly_the_clear_part_of_the_window() {
