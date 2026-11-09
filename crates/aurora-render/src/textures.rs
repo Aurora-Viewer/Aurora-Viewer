@@ -2462,7 +2462,7 @@ mod tests {
         let common = include_str!("shaders/common.wgsl");
         assert_eq!(common.matches("fn texture_page_index(").count(), 1);
         assert!(common.contains("let last_bound_page = max(tex_loc.page_count, 1u) - 1u;"));
-        assert!(common.contains("return select(min(page, last_bound_page), 0u, page > last_bound_page);"));
+        assert!(common.contains("return select(page, 0u, page > last_bound_page);"));
         let shader_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/shaders");
         for entry in std::fs::read_dir(shader_dir).expect("shader source directory") {
             let path = entry.expect("shader directory entry").path();
