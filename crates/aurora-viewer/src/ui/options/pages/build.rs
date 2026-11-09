@@ -11,7 +11,7 @@ pub fn page(cx: &mut Cx) {
     cx.group(tr!("ui-options-build-new-objects"), |cx| {
         cx.note(tr!("ui-options-build-new-objects-note"));
         // FSBuildPrefs_X/Y/Zsize: 0.01 to 10 m, as the Legacy spinners
-        cx.row(
+        cx.keywords("FSBuildPrefs_Xsize FSBuildPrefs_Ysize FSBuildPrefs_Zsize").row(
             tr!("common-size"),
             tr!("ui-options-build-size-hint"),
             &field!(build.new_prim_size),
@@ -40,28 +40,36 @@ pub fn page(cx: &mut Cx) {
             (5, tr!("build-ui-features-plastic")),
             (6, tr!("build-ui-features-rubber")),
         ];
-        cx.combo(tr!("ui-options-build-material"), "", &field!(build.new_prim_material), &materials);
-        cx.toggle(tr!("ui-options-build-physical"), "", &field!(build.new_prim_physical));
-        cx.toggle(tr!("ui-options-build-temporary"), "", &field!(build.new_prim_temporary));
-        cx.toggle(tr!("build-ui-object-phantom"), "", &field!(build.new_prim_phantom));
+        cx.keywords("FSBuildPrefs_Material")
+            .combo(tr!("ui-options-build-material"), "", &field!(build.new_prim_material), &materials);
+        cx.keywords("FSBuildPrefs_Physical")
+            .toggle(tr!("ui-options-build-physical"), "", &field!(build.new_prim_physical));
+        cx.keywords("FSBuildPrefs_Temporary")
+            .toggle(tr!("ui-options-build-temporary"), "", &field!(build.new_prim_temporary));
+        cx.keywords("FSBuildPrefs_Phantom")
+            .toggle(tr!("build-ui-object-phantom"), "", &field!(build.new_prim_phantom));
     });
     cx.group(tr!("ui-options-build-new-faces"), |cx| {
-        cx.color(tr!("common-color"), "", &field!(build.new_prim_color));
-        cx.slider_whole(
+        cx.keywords("FSBuildPrefs_Color")
+            .color(tr!("common-color"), "", &field!(build.new_prim_color));
+        cx.keywords("FSBuildPrefs_Alpha").slider_whole(
             tr!("build-ui-texture-transparency"),
             "",
             &field!(build.new_prim_transparency),
             0.0..=100.0,
             " %",
         );
-        cx.slider(tr!("build-ui-texture-glow"), "", &field!(build.new_prim_glow), 0.0..=1.0, "");
-        cx.toggle(tr!("build-ui-texture-fullbright"), "", &field!(build.new_prim_fullbright));
+        cx.keywords("FSBuildPrefs_Glow")
+            .slider(tr!("build-ui-texture-glow"), "", &field!(build.new_prim_glow), 0.0..=1.0, "");
+        cx.keywords("FSBuildPrefs_FullBright")
+            .toggle(tr!("build-ui-texture-fullbright"), "", &field!(build.new_prim_fullbright));
         let shines = [
             (0u8, tr!("common-none-2")),
             (1, tr!("build-ui-texture-low")),
             (2, tr!("common-medium")),
             (3, tr!("build-ui-texture-high")),
         ];
-        cx.combo(tr!("build-ui-texture-shininess"), "", &field!(build.new_prim_shiny), &shines);
+        cx.keywords("FSBuildPrefs_Shiny")
+            .combo(tr!("build-ui-texture-shininess"), "", &field!(build.new_prim_shiny), &shines);
     });
 }

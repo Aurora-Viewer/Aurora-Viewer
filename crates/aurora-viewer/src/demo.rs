@@ -1221,20 +1221,28 @@ pub fn bubbles_events() -> Vec<NetEvent> {
 /// see the lines above the chat bar (`ui/chat/console.rs`): two lines of
 /// one resident, an emote, an object's line, a long line with a link, a
 /// shout. `legacy` shows them as the Legacy Viewer's lines for the session
-/// (nothing is saved). Some(true) for `legacy`.
+/// (nothing is saved). An optional `:0` through `:50` overrides the maximum
+/// wrapped text lines for this demo. Some(true) for `legacy`.
 pub fn chat_lines_scenario() -> Option<bool> {
-    match std::env::var("AURORA_DEMO_CHAT_LINES").ok()?.as_str() {
+    let mode = std::env::var("AURORA_DEMO_CHAT_LINES").ok()?;
+    match mode.split(':').next()? {
         "legacy" => Some(true),
         "" | "0" => None,
         _ => Some(false),
     }
 }
 
+pub fn chat_lines_limit() -> Option<u32> {
+    let mode = std::env::var("AURORA_DEMO_CHAT_LINES").ok()?;
+    mode.split_once(':')?.1.parse::<u32>().ok().map(|lines| lines.min(50))
+}
+
 /// Show the same six messages in Conversations and above the bar (#1323).
 pub fn chat_volume_comparison() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| {
-        std::env::var_os("AURORA_DEMO").is_some() && std::env::var("AURORA_DEMO_CHAT_LINES").is_ok_and(|mode| mode == "volumes")
+        std::env::var_os("AURORA_DEMO").is_some()
+            && std::env::var("AURORA_DEMO_CHAT_LINES").is_ok_and(|mode| mode.split(':').next() == Some("volumes"))
     })
 }
 
@@ -3063,13 +3071,22 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             if !group::adjust_groups(&mut groups) {
                 return vec![NetEvent::Groups(groups)];
             }
-            vec![
-                NetEvent::Groups(groups),
+            let active_group = if std::env::var("AURORA_DEMO_ACTIVE_GROUP").is_ok_and(|v| v == "none") {
+                NetEvent::ActiveGroup {
+                    id: Uuid::nil(),
+                    name: String::new(),
+                    title: String::new(),
+                }
+            } else {
                 NetEvent::ActiveGroup {
                     id: DEMO_GROUP1,
                     name: "Aurora Builders".into(),
                     title: aurora_i18n::tr!("demo-builder").into(),
-                },
+                }
+            };
+            vec![
+                NetEvent::Groups(groups),
+                active_group,
                 NetEvent::SessionInvite(aurora_net::SessionInvite {
                     session: DEMO_GROUP1,
                     from: DEMO_NOVA,
@@ -3081,11 +3098,24 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 }),
             ]
         }
-        aurora_net::NetCommand::ActivateGroup(id) => vec![NetEvent::ActiveGroup {
-            id: *id,
-            name: String::new(),
-            title: String::new(),
-        }],
+        aurora_net::NetCommand::ActivateGroup(id) => {
+            let (name, title) = if *id == DEMO_GROUP1 {
+                ("Aurora Builders".into(), aurora_i18n::tr!("demo-builder").into())
+            } else if *id == DEMO_GROUP2 {
+                (
+                    aurora_i18n::tr!("demo-northern-wolves").into(),
+                    aurora_i18n::tr!("demo-group-officer").into(),
+                )
+            } else if *id == DEMO_GROUP3 {
+                (
+                    aurora_i18n::tr!("common-plaza-market").into(),
+                    aurora_i18n::tr!("demo-group-member").into(),
+                )
+            } else {
+                (String::new(), String::new())
+            };
+            vec![NetEvent::ActiveGroup { id: *id, name, title }]
+        }
         aurora_net::NetCommand::LeaveGroup(id) => vec![NetEvent::GroupDropped(*id)],
         aurora_net::NetCommand::ChatSession { method, session } => {
             let agents = |ids: &[Uuid]| {
@@ -5236,7 +5266,12 @@ pub fn events() -> Vec<NetEvent> {
             (true, 126.0, aurora_i18n::tr!("common-wind")),
             (false, 130.0, aurora_i18n::tr!("demo-smoke")),
         ] {
-            if (mode == "wind" && !wind) || (mode == "smoke" && wind) || (mode == "legacy" && !wind) || mode == "leash" {
+            if (mode == "wind" && !wind)
+                || (mode == "smoke" && wind)
+                || (mode == "legacy" && !wind)
+                || mode == "leash"
+                || (mode == "worn" && wind)
+            {
                 continue;
             }
             let mut o = prim(
@@ -5256,6 +5291,13 @@ pub fn events() -> Vec<NetEvent> {
             };
             if let Some(particles) = particles {
                 o.particles = particles;
+            }
+            // `worn`: the smoke worn on our avatar's chest instead, for
+            // RenderAttachedParticles (Preferences › Graphics)
+            if mode == "worn" {
+                o.parent_id = action_avatar(false).local_id;
+                o.state = 0x10; // chest
+                o.position = Vec3::new(0.0, 0.0, 0.3);
             }
             add(o);
             id += 1;
@@ -6379,6 +6421,7 @@ pub fn idle_animation() -> aurora_assets::Animation {
         loop_in: 0.0,
         loop_out: 4.0,
         looping: true,
+        ends_after: None,
         ease_in: 0.3,
         ease_out: 0.3,
         // relaxed, the upload window's default (hands at rest)
@@ -6457,6 +6500,7 @@ pub fn typing_animation() -> aurora_assets::Animation {
         loop_in: 0.0,
         loop_out: 1.0,
         looping: true,
+        ends_after: None,
         ease_in: 0.3,
         ease_out: 0.3,
         hand_pose: 0,
