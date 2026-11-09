@@ -9222,6 +9222,11 @@ separate searches enabled and disabled; that preference controls only the text.
   Each switch independently hides/shows only the suffix after the arrow;
   current rights and the detailed hover remain available. Check filtered,
   folder and unknown-link rows, horizontal scrolling and item selection.
+- `delete-confirm`: as `delete-button`, then the confirmation's Delete
+  button at frame 740. Capture 720 (the confirmation), then 780: the dialog
+  is closed and the row below the deleted folder is selected. The log gives
+  `demo inventory delete-confirm:` with the dialog state and the selected
+  row at both frames.
 - `delete-key`, `delete-button`: select a folder containing three
   levels and their items, then open the confirmation with the Delete key or
   the trash button of the window footer. Capture 660 (selection and trash to

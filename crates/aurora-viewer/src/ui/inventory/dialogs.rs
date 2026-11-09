@@ -251,6 +251,13 @@ pub(super) fn show(
                         Err(reason) => st.message = reason,
                     }
                 }
+                // `delete-confirm` demo: the confirm button closes the row of
+                // buttons on the right (120 × 28, `confirmation_buttons`)
+                if super::delete::demo_enabled() {
+                    let row = ui.min_rect();
+                    let confirm = egui::pos2(row.right() - 60.0, row.bottom() - 14.0);
+                    ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_delete_confirm", st.ui_id)), confirm));
+                }
             }
             EditDialog::Empty(id) => {
                 ui.label(aurora_i18n::tr!(

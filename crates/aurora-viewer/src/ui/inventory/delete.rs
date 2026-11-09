@@ -102,18 +102,29 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &InventoryUi) -> Vec<egu
         650 | 651 => {
             ctx.data(|data| data.get_temp::<egui::Pos2>(egui::Id::unique(("clipboard_demo_row", st.ui_id, Uuid::from_u128(8001)))))
         }
-        680 | 681 if mode == "delete-button" => ctx
+        680 | 681 if matches!(mode, "delete-button" | "delete-confirm") => ctx
             .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("inventory_delete_button", st.ui_id))))
             .map(|rect| rect.center()),
+        // `delete-confirm`: the trash button at 680, then the confirmation's Delete button
+        740 | 741 if mode == "delete-confirm" => {
+            ctx.data(|data| data.get_temp::<egui::Pos2>(egui::Id::unique(("inventory_delete_confirm", st.ui_id))))
+        }
         _ => None,
     };
+    if mode == "delete-confirm" && matches!(frame, 720 | 780) {
+        log::info!(
+            "demo inventory delete-confirm: frame={frame}, dialog_open={}, selected={:?}",
+            st.dialog.is_some(),
+            st.selected.map(|id| id.as_u128())
+        );
+    }
     pos.map_or_else(Vec::new, |pos| {
         vec![
             egui::Event::PointerMoved(pos),
             egui::Event::PointerButton {
                 pos,
                 button: egui::PointerButton::Primary,
-                pressed: matches!(frame, 650 | 680),
+                pressed: matches!(frame, 650 | 680 | 740),
                 modifiers: Default::default(),
             },
         ]
