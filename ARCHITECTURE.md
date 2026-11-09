@@ -2133,6 +2133,12 @@ than once per 200 ms per avatar; decoding and vertex work stay on the job
 pool. Departed/unposed avatars, disabled placement and scene cleanup retire
 their caches. Animesh is excluded. Remote measurements never change hover
 settings and do not depend on our account's automatic-height capability.
+The last accepted sole height is retained per avatar for pose placement while
+a changed outfit settles or its replacement measurement is pending or fails.
+This rendering reference is separate from the current calibration: automatic
+hover changes still require a successful result for the current signature,
+and stale jobs cannot replace either reference. Disabling calibration clears
+the retained reference; it cannot be reused by another avatar.
 With automatic height disabled, calibration
 updates only the cached sole reference; it never previews or commits hover
 height. Toggling automatic height preserves that reference while foot
