@@ -166,7 +166,7 @@ pub struct ChatUi {
     /// `AURORA_DEMO_CONV=aurora:local:channel`: the channel selector shown
     /// without changing the preferences.
     pub demo_channel: bool,
-    /// What the button at the foot of the column asked; `collapsed` is
+    /// What the button in the column's head asked; `collapsed` is
     /// given every frame by the app, from the settings.
     pub column: workspace::ColumnChoice,
     /// Demo mode: the column's state of this session, which stands in for
@@ -179,9 +179,12 @@ pub struct ChatUi {
     /// window resized around one does not flip at every point.
     layout_narrow: Option<bool>,
     layout_members_room: Option<bool>,
-    /// How much taller the column needs to be to keep two whole entries
-    /// above a call's panel (negative: to spare), measured with the fonts of
-    /// last frame (`sidebar::show`); the window's least height follows it.
+    /// During a call, how much taller the column needs to be to keep two
+    /// whole entries above the call's panel (negative: to spare), as last
+    /// frame laid them out (`sidebar::show`); the window's least height
+    /// follows it. None without a call, and taken by each frame that reads
+    /// it: a column not drawn since (another style, a closed window) leaves
+    /// none behind.
     column_short: Option<f32>,
     /// The workspace's width last frame, and whether this frame's change of
     /// it comes from a drag of the window's edge: the layout then follows
@@ -3013,17 +3016,18 @@ pub fn show(
     // workspace's rail, head, 60 points of messages and field; the Legacy
     // style's tabs and field): smaller, it grew back to its content during
     // a resize and the messages, laid out for the smaller size first,
-    // hopped for a frame. The workspace's column also keeps two whole
-    // entries above a call's panel, call or not (`ChatUi::column_short`).
+    // hopped for a frame. During a call the workspace's column also keeps
+    // two whole entries above the call's panel (`ChatUi::column_short`).
     let mut least = egui::vec2(if style.workspace() { 300.0 } else { 0.0 }, 240.0);
     // the column grows 1:1 with the window: its shortfall is how much the
-    // least height must be above the window's own
-    if let (true, Some(short), Some(now)) = (
-        style.workspace(),
-        st.column_short,
-        ctx.memory(|m| m.area_rect(egui::Id::unique("conversations"))),
-    ) {
-        least.y = least.y.max(now.height() + short);
+    // least height must be above the window's own (the window's rect read
+    // only then: nothing more per frame without a call)
+    let short = st.column_short.take().filter(|_| style.workspace() && world.calls.active.is_some());
+    if let Some(column) = short.and_then(|short| {
+        ctx.memory(|m| m.area_rect(egui::Id::unique("conversations")))
+            .map(|now| now.height() + short)
+    }) {
+        least.y = least.y.max(column);
     }
     floater.min_size = floater.min_size.max(least);
     let image_bounds = floater.show(ctx, p, open, |ui| {

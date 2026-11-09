@@ -308,55 +308,44 @@ pub(super) fn show(
     let ui = &mut child;
     ui.spacing_mut().item_spacing.y = 2.0;
     ui.add_space(8.0);
-    if !rail {
-        let row = egui::vec2(ui.available_width(), SEARCH_H);
+    let row = egui::vec2(ui.available_width(), SEARCH_H);
+    if rail {
+        // the rail's head: its button alone, over the pictures
+        let (row, _) = ui.allocate_exact_size(row, egui::Sense::hover());
+        column_toggle(
+            ui,
+            p,
+            st,
+            actions,
+            egui::Rect::from_center_size(row.center(), egui::Vec2::splat(SEARCH_H)),
+            narrow,
+        );
+    } else {
         ui.allocate_ui_with_layout(row, egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
+            let (button, _) = ui.allocate_exact_size(egui::Vec2::splat(SEARCH_H), egui::Sense::hover());
+            column_toggle(ui, p, st, actions, button, narrow);
             let width = (ui.available_width() - SEARCH_H - 4.0).max(40.0);
             search_box(ui, p, &mut st.side_filter, width);
             new_conversation(ui, p, world, st, actions);
         });
-        ui.add_space(4.0);
     }
+    ui.add_space(4.0);
     let filter = st.side_search().to_lowercase();
     let matches = |name: &str| filter.is_empty() || name.to_lowercase().contains(&filter);
     let voice = voice_panel_wanted(world, st);
-    let voice_h = if voice { voice_panel_h(rail) + 2.0 * VOICE_PANEL_GAP } else { 0.0 };
     let room = column.bottom() - ui.cursor().top();
-    // the list's top to the bottom of its second entry, headings and
-    // spacing included, as last frame laid it out (`TwoEntries`); before
-    // that, two entries and their spacing
-    let two = ui
-        .data(|d| d.get_temp::<TwoEntries>(two_entries_id()))
-        .and_then(TwoEntries::height)
-        .unwrap_or_else(|| {
-            let gap = crate::ui::widgets::two_lines_gap(ui, &egui::FontId::proportional(13.0), &egui::FontId::proportional(11.0), LINE_GAP);
-            2.0 * (ENTRY_H + gap - LINE_GAP) + ui.spacing().item_spacing.y
-        });
-    let foot = has_foot(room, voice_h, two);
-    // what the window's least height keeps: those two above a call's panel,
-    // whether a call is on or not (`ui/chat.rs`)
-    st.column_short = Some(two + voice_panel_h(rail) + 2.0 * VOICE_PANEL_GAP + BARE_FOOT - room);
-    let list_h = (room - voice_h - if foot { FOOT_H } else { BARE_FOOT }).max(ENTRY_H);
+    let list_h = (room - if voice { voice_panel_h(rail) + VOICE_PANEL_GAP } else { 0.0 } - LIST_FOOT).max(ENTRY_H);
+    // the list's top to the bottom of its second entry, as this frame lays
+    // it out (headings and spacing included); the scroll offset moves both
+    let mut two = TwoEntries::default();
     egui::ScrollArea::vertical()
         .id_salt("conversation_column")
         .max_height(list_h)
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
-            let top = ui.cursor().top();
-            let layer = ui.layer_id();
-            ui.data_mut(|d| {
-                d.insert_temp(
-                    two_entries_id(),
-                    TwoEntries {
-                        layer,
-                        top,
-                        drawn: 0,
-                        bottom: top,
-                    },
-                )
-            });
+            two.top = ui.cursor().top();
             // Contacts and the nearby chat, pinned
             if show_contacts_tab && docked && matches(aurora_i18n::tr!("common-contacts")) {
                 let e = Entry {
@@ -379,7 +368,9 @@ pub(super) fn show(
                     flash: 0.0,
                     popped: false,
                 };
-                if entry(ui, p, &e, rail, entry_id(Pinned::Contacts)).resp.clicked() {
+                let picked = entry(ui, p, &e, rail, entry_id(Pinned::Contacts));
+                two.note(picked.resp.rect);
+                if picked.resp.clicked() {
                     contacts_clicked = true;
                     st.contacts = true;
                     st.show_profile = false;
@@ -403,6 +394,7 @@ pub(super) fn show(
                     popped: false,
                 };
                 let picked = entry(ui, p, &e, rail, entry_id(Pinned::Local));
+                two.note(picked.resp.rect);
                 super::conv_menu::demo_mark(ui.ctx(), world, st, None, picked.resp.rect);
                 super::conv_menu::attach(&picked.resp, p, world, actions, None);
                 st.reorder.local_row(&picked.resp);
@@ -480,6 +472,7 @@ pub(super) fn show(
                     };
                     st.reorder.space_before(ui, id);
                     let picked = entry(ui, p, &e, rail, entry_id(Pinned::Conversation(id)));
+                    two.note(picked.resp.rect);
                     if reveal == Some(id) {
                         picked.resp.scroll_to_me(None);
                         st.reveal = None;
@@ -532,7 +525,9 @@ pub(super) fn show(
                             flash: 0.0,
                             popped: false,
                         };
-                        if entry(ui, p, &e, rail, egui::Id::unique(("conversation_start", id))).resp.clicked() {
+                        let picked = entry(ui, p, &e, rail, egui::Id::unique(("conversation_start", id)));
+                        two.note(picked.resp.rect);
+                        if picked.resp.clicked() {
                             st.side_filter.clear();
                             actions.push(ConvAction::OpenIm(id));
                         }
@@ -552,71 +547,78 @@ pub(super) fn show(
                     flash: 0.0,
                     popped: false,
                 };
-                if entry(ui, p, &e, rail, egui::Id::unique("conversation_find")).resp.clicked() {
+                let picked = entry(ui, p, &e, rail, egui::Id::unique("conversation_find"));
+                two.note(picked.resp.rect);
+                if picked.resp.clicked() {
                     st.start_picker(super::Start::Im);
                 }
             }
         });
     if voice {
-        voice_panel(ui, p, world, st, actions, rail, foot);
+        voice_panel(ui, p, world, st, actions, rail);
     }
-    if foot {
-        column_toggle(ui, p, st, actions, column, narrow);
-    }
+    // while a call is on, the window's least height keeps two whole entries
+    // above its panel, shown or not (the call's own conversation hides it),
+    // so that the window does not jump with the conversation picked; without
+    // a call it keeps its own (`ui/chat.rs`)
+    st.column_short = world.calls.active.is_some().then(|| {
+        let two = two.height().unwrap_or_else(|| {
+            // fewer than two entries: two of them and their spacing
+            let gap = crate::ui::widgets::two_lines_gap(ui, &egui::FontId::proportional(13.0), &egui::FontId::proportional(11.0), LINE_GAP);
+            2.0 * (ENTRY_H + gap - LINE_GAP) + ui.spacing().item_spacing.y
+        });
+        least_column_short(room, two, voice_panel_h(rail))
+    });
     contacts_clicked
 }
 
-/// The foot of the column, under its list or call panel: the height of the
-/// conversation's box and the room under it, so that its button stands level
-/// with the box's own buttons (`column_toggle`).
-const FOOT_H: f32 = super::compose::BOX_H + super::compose::UNDER_BOX;
-/// The margin under the list without the button's row, as before it.
-const BARE_FOOT: f32 = 6.0;
+/// The margin under the list, above the window's bottom or the call panel.
+const LIST_FOOT: f32 = 6.0;
 
-/// Where the list's second entry ends below its top, measured while `entry`
-/// lays the entries out (the scroll offset moves both alike).
-/// Only the list's layer counts, not a dragged entry's ghost.
-#[derive(Clone, Copy, Debug)]
+/// How much taller the column must be for its list to hold two whole
+/// entries (`two`, as laid out) above a call's panel (`panel`, without its
+/// gap): negative, to spare. The list's height is `room` less the panel,
+/// its gap and the margin under the list, as `show` lays it out.
+pub(super) fn least_column_short(room: f32, two: f32, panel: f32) -> f32 {
+    two + panel + VOICE_PANEL_GAP + LIST_FOOT - room
+}
+
+/// Where the list's second entry ends below its top, noted as `show` lays
+/// the entries out: a counter on the stack, nothing kept between frames.
+#[derive(Clone, Copy, Debug, Default)]
 struct TwoEntries {
-    layer: egui::LayerId,
     top: f32,
     drawn: u32,
     bottom: f32,
 }
 
 impl TwoEntries {
+    fn note(&mut self, rect: egui::Rect) {
+        if self.drawn < 2 {
+            self.drawn += 1;
+            self.bottom = rect.bottom();
+        }
+    }
+
     fn height(self) -> Option<f32> {
         (self.drawn >= 2).then_some(self.bottom - self.top)
     }
 }
 
-fn two_entries_id() -> egui::Id {
-    egui::Id::unique("conversation_column_two_entries")
-}
-
-/// The column has the button's row when it still holds two whole entries of
-/// the list (`two`, as laid out) above the call panel (`voice_h`, with its
-/// gaps, or 0) and the row. A shorter column (a short window during a
-/// call) lays out as before the button, without it, and its two entries
-/// stay whole; the button is back with the room. The window's least height
-/// keeps those two entries (`ChatUi::column_short`).
-pub(super) fn has_foot(room: f32, voice_h: f32, two: f32) -> bool {
-    room - voice_h - FOOT_H >= two
-}
-
-/// The button that collapses and expands the column, at the bottom left of
-/// the window (`workspace::ColumnChoice`). An Aurora addition: the Legacy
-/// Viewer's window has tabs and no such list. The nearest is the unregistered
+/// The button that collapses and expands the column, in its head: first in
+/// the row of the search field and the "new conversation" button, alone at
+/// the top of the rail, so the list loses no height
+/// (`workspace::ColumnChoice`). An Aurora addition: the Legacy Viewer's
+/// window has tabs and no such list. The nearest is the unregistered
 /// LLFloaterIMContainer (indra/newview/llfloaterimcontainer.cpp):
 /// onExpandCollapseButtonClicked, ConversationsListPaneCollapsed.
-/// Over the rail's pictures in both layouts, it does not move from under
-/// the pointer that used it, level with a one-line conversation box and the
-/// size of its buttons. Lit while the column is what a click asked
+/// At the left of both heads, it stays under the pointer that used it. It
+/// looks like the "new conversation" button beside it: lit, as that one
+/// while its menu is open, while the column is what a click asked
 /// (`ColumnChoice::by_hand`), plain while it follows the window, greyed out
-/// in a window too narrow for the column (`workspace::OPEN_FROM`), as a head
-/// tool without its panel's room. The rail ignores a search and keeps its
-/// text for the column (`ChatUi::side_search`).
-fn column_toggle(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, actions: &mut Vec<ConvAction>, column: egui::Rect, narrow: bool) {
+/// in a window too narrow for the column (`workspace::OPEN_FROM`). The rail
+/// ignores a search and keeps its text for the column (`ChatUi::side_search`).
+fn column_toggle(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, actions: &mut Vec<ConvAction>, rect: egui::Rect, narrow: bool) {
     let rail = st.column.rail(narrow);
     let fits = st.layout_width.is_some_and(|w| w >= super::workspace::OPEN_FROM);
     let off = rail && !fits;
@@ -627,34 +629,24 @@ fn column_toggle(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, actions: &mut 
     } else {
         ("layout-sidebar-left-collapse-filled", aurora_i18n::tr!("ui-chat-column-collapse"))
     };
-    let center = egui::pos2(
-        column.left() + RAIL / 2.0,
-        column.bottom() - super::compose::UNDER_BOX - super::compose::BOX_H / 2.0,
-    );
-    let rect = egui::Rect::from_center_size(center, egui::Vec2::splat(super::compose::BUTTON));
     let sense = if off { egui::Sense::hover() } else { egui::Sense::click() };
     let resp = ui.interact(rect, control_id("column-toggle"), sense);
-    let hovered = resp.hovered() && !off;
-    let lit = st.column.by_hand() && !off;
-    let face = match (lit, hovered) {
-        // the conversation's box beside it, not the accent: this is a
-        // state, the accent marks the conversation shown
-        (true, false) => Some(p.raised),
-        (true, true) => Some(p.raised.gamma_multiply(1.3)),
-        (false, true) => Some(p.raised.gamma_multiply(0.7)),
-        (false, false) => None,
-    };
-    if let Some(face) = face {
-        ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, face);
-    }
+    let lit = !off && (resp.hovered() || st.column.by_hand());
+    ui.painter().rect_filled(
+        rect,
+        ui.visuals().widgets.inactive.corner_radius,
+        if lit { p.raised } else { p.field },
+    );
     super::thread::paint_icon(
         ui.painter(),
         icon,
-        egui::Rect::from_center_size(center, egui::Vec2::splat(18.0)),
-        match (lit, hovered) {
-            _ if off => p.muted_dim.gamma_multiply(0.6),
-            (true, _) | (false, true) => p.ink,
-            (false, false) => p.muted,
+        egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(15.0)),
+        if off {
+            p.muted_dim
+        } else if lit {
+            p.ink
+        } else {
+            p.muted
         },
     );
     if resp.on_hover_text(tip).clicked() {
@@ -882,16 +874,6 @@ fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) ->
     let width = ui.available_width();
     let gap = crate::ui::widgets::two_lines_gap(ui, &egui::FontId::proportional(13.0), &egui::FontId::proportional(11.0), LINE_GAP);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, ENTRY_H + gap - LINE_GAP), egui::Sense::hover());
-    let layer = ui.layer_id();
-    ui.data_mut(|d| {
-        if let Some(mut two) = d.get_temp::<TwoEntries>(two_entries_id()).filter(|two| two.layer == layer) {
-            two.drawn += 1;
-            if two.drawn == 2 {
-                two.bottom = rect.bottom();
-            }
-            d.insert_temp(two_entries_id(), two);
-        }
-    });
     // a conversation's entry drags, to its place or out of the window; the
     // nearby chat's, pinned, out of the window (#910)
     let sense = if e.close.is_some() || id == entry_id(Pinned::Local) {
@@ -1103,15 +1085,15 @@ fn voice_panel_h(rail: bool) -> f32 {
 /// The call panel's buttons (the mockup's `.vpanel .rb`).
 const VOICE_BUTTON_H: f32 = 28.0;
 
-/// Room above and below the call panel, between the list and the foot.
-const VOICE_PANEL_GAP: f32 = 6.0;
+/// Room under the call panel, the same as under the conversation's field.
+const VOICE_PANEL_GAP: f32 = 12.0;
 
-fn voice_panel(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, actions: &mut Vec<ConvAction>, rail: bool, foot: bool) {
+fn voice_panel(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, actions: &mut Vec<ConvAction>, rail: bool) {
     let Some(call) = world.calls.active.as_ref() else {
         return;
     };
     let conversation = call.conversation();
-    let bottom = ui.max_rect().bottom() - if foot { FOOT_H + VOICE_PANEL_GAP } else { 2.0 * VOICE_PANEL_GAP };
+    let bottom = ui.max_rect().bottom() - VOICE_PANEL_GAP;
     let rect = egui::Rect::from_min_max(
         egui::pos2(ui.max_rect().left(), bottom - voice_panel_h(rail)),
         egui::pos2(ui.max_rect().right(), bottom),

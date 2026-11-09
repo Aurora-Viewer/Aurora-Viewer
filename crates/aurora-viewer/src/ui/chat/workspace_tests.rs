@@ -1377,35 +1377,69 @@ fn the_least_window_shows_two_entries_above_the_call() {
     }
 }
 
-/// A column too short for two whole entries of the list, the call panel and
-/// the button's row lays out as before the button, without it. The button
-/// is back with the room.
+/// The window's least height. Without a call it is what it was before the
+/// button; during one it keeps two whole entries above the call's panel,
+/// whether the panel shows or not (the call's own conversation hides it),
+/// and it comes back down when the call ends. The column's button is in the
+/// head at every height.
 #[test]
-fn a_short_column_leaves_the_button_out() {
-    use super::super::sidebar::has_foot;
-    // no call: two entries (here 100 as laid out) and the row (54)
-    assert!(has_foot(154.0, 0.0, 100.0) && !has_foot(153.0, 0.0, 100.0));
-    // a call on the rail: its panel and gaps (120) too
-    assert!(has_foot(274.0, 120.0, 100.0) && !has_foot(273.0, 120.0, 100.0));
+fn the_least_height_grows_only_during_a_call() {
+    use super::super::sidebar::least_column_short;
+    // two entries of 100 and a call panel of 80, with its gap (12) and the
+    // margin under the list (6): a 198 column fits them exactly
+    assert_eq!(least_column_short(198.0, 100.0, 80.0), 0.0);
+    assert_eq!(least_column_short(150.0, 100.0, 80.0), 48.0);
+    assert_eq!(least_column_short(250.0, 100.0, 80.0), -52.0);
 
-    // a call with Jane while Bob's conversation is shown: the call panel
-    // stands in the column
+    let mut h = Harness::new(ChatStyle::Aurora);
+    let toggle = super::super::sidebar::control_id("column-toggle");
+    // asked smaller than the least: the floater keeps its least size
+    let least = |h: &mut Harness| {
+        crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(700.0, 120.0));
+        for _ in 0..30 {
+            h.frame(Vec::new());
+        }
+        assert!(h.frames.ctx.read_response(toggle).is_some(), "the button stays in the head");
+        h.frames
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::unique("conversations")))
+            .expect("the window was drawn")
+            .height()
+    };
+    let without = least(&mut h);
+    assert!(without <= 240.5, "no call: the least height of before, {without}");
+    assert!(h.st.column_short.is_none(), "no call: the column asks nothing");
+
+    h.world.start_call(JANE);
+    h.settle();
+    h.st.open(BOB);
+    let during = least(&mut h);
+    assert!(during > without, "a call: two entries above its panel, {without} → {during}");
+    // the call's own conversation: no panel, the same least height
+    h.st.open(JANE);
+    assert!(
+        (least(&mut h) - during).abs() <= 0.5,
+        "the window does not jump with the conversation"
+    );
+
+    h.world.end_call();
+    assert!((least(&mut h) - without).abs() <= 0.5, "the call ended: back to before");
+}
+
+/// The column's least height is taken by the window each frame: once the
+/// column is no longer drawn (the Legacy style here), nothing it measured
+/// keeps the window tall.
+#[test]
+fn a_column_not_drawn_leaves_no_least_height() {
     let mut h = Harness::new(ChatStyle::Aurora);
     h.world.start_call(JANE);
     h.settle();
     h.st.open(BOB);
-    assert!(h.world.calls.active.is_some(), "the call is on");
-    let toggle = super::super::sidebar::control_id("column-toggle");
-    let at = |h: &mut Harness, height: f32| {
-        crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(700.0, height));
-        for _ in 0..30 {
-            h.frame(Vec::new());
-        }
-        h.frames.ctx.read_response(toggle).is_some()
-    };
-    assert!(at(&mut h, 560.0), "room for the button");
-    assert!(!at(&mut h, 130.0), "too short: left out");
-    assert!(at(&mut h, 560.0), "back with the room");
+    resize(&mut h, 700.0);
+    assert!(h.st.column_short.is_some(), "measured during the call");
+    h.st.style = ChatStyle::Legacy;
+    h.settle();
+    assert!(h.st.column_short.is_none(), "taken, and not measured again");
 }
 
 /// All false is the automatic layout; each click departs from it or comes
@@ -1532,21 +1566,65 @@ fn the_button_is_greyed_out_when_the_column_does_not_fit() {
     assert!(!h.st.column.collapsed && !shows_rail(&h));
 }
 
-/// The column's button stands level with the conversation's box, at the
-/// height of its buttons, in the column and in the rail.
+/// The column's button sits in the column's head: first in the row of the
+/// search field and the "new conversation" button, their height, and alone
+/// at the top of the rail, above the entries. Each one stands under the
+/// other's centre, so the pointer that clicked stays on it.
 #[test]
-fn the_column_button_is_level_with_the_box() {
+fn the_column_button_sits_in_the_head() {
+    use super::super::sidebar::control_id;
     let mut h = Harness::new(ChatStyle::Aurora);
     resize(&mut h, 700.0);
-    for what in ["the column", "the rail"] {
-        let button = h.rect(super::super::sidebar::control_id("column-toggle"));
-        let field = h.rect(egui::Id::unique(("conv_input", None::<Uuid>)));
-        assert!(
-            (button.center().y - field.center().y).abs() <= 1.0,
-            "{what}: {button:?} and {field:?}"
-        );
-        assert_eq!(button.height(), super::super::compose::BUTTON);
-        toggle_column(&mut h);
+    let button = h.rect(control_id("column-toggle"));
+    let search = h.rect(super::super::sidebar::search_id());
+    let new = h.rect(control_id("new-conversation"));
+    assert!(
+        button.right() < search.left() && search.right() < new.left(),
+        "{button:?} {search:?} {new:?}"
+    );
+    assert_eq!(button.size(), new.size(), "the head's buttons alike");
+    assert!((button.center().y - new.center().y).abs() <= 0.5);
+    assert!(button.bottom() < h.rect(entry_id(Pinned::Local)).top(), "above the list");
+
+    toggle_column(&mut h);
+    assert!(shows_rail(&h));
+    let rail_button = h.rect(control_id("column-toggle"));
+    let first = h.rect(entry_id(Pinned::Local));
+    assert_eq!(rail_button.size(), button.size());
+    assert!((rail_button.top() - button.top()).abs() <= 0.5, "the same row");
+    assert!(rail_button.bottom() < first.top(), "above the rail's pictures");
+    assert!(
+        rail_button.contains(button.center()) && button.contains(rail_button.center()),
+        "under the pointer both ways: {button:?} {rail_button:?}"
+    );
+}
+
+/// The button takes nothing from the list's foot: the call panel stands
+/// where it stood before the button, its gap above the window's bottom.
+#[test]
+fn the_call_panel_keeps_its_place() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.world.start_call(JANE);
+    h.settle();
+    h.st.open(BOB);
+    // the microphone's button, as the app gives it (its three buttons fill
+    // the panel's foot, stacked in the rail)
+    h.st.mic = Some(true);
+    for collapse in [false, true] {
+        if collapse {
+            toggle_column(&mut h);
+        } else {
+            resize(&mut h, 700.0);
+        }
+        let window = h
+            .frames
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::unique("conversations")))
+            .expect("the window was drawn");
+        let hang_up = h.rect(super::super::sidebar::control_id("panel-hang-up"));
+        // the panel's 8 points of padding under its buttons, its 12 of gap
+        let gap = window.bottom() - hang_up.bottom();
+        assert!((gap - 20.0).abs() <= 1.0, "collapsed={collapse}: {gap} under the panel's buttons");
     }
 }
 

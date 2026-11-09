@@ -18,15 +18,13 @@ use egui::RichText;
 /// The line of who is typing, and the least height of the box.
 const TYPING_H: f32 = 18.0;
 pub(super) const BOX_H: f32 = 42.0;
-pub(super) const BUTTON: f32 = 28.0;
-/// Room under the box, at the bottom of the window.
-pub(super) const UNDER_BOX: f32 = 12.0;
+const BUTTON: f32 = 28.0;
 
 /// What the field takes under the messages: typing line, box, the recent
 /// emojis and margin.
 pub(super) fn height(ctx: &egui::Context, conversation: Option<uuid::Uuid>, recent: f32) -> f32 {
     let field = egui::Id::unique(("conv_input", conversation));
-    TYPING_H + BOX_H.max(super::input::height(ctx, field, BUTTON) + 8.0) + recent + UNDER_BOX
+    TYPING_H + BOX_H.max(super::input::height(ctx, field, BUTTON) + 8.0) + recent + 12.0
 }
 
 /// The volume of what we say in the nearby chat.

@@ -67,7 +67,7 @@ fn ease(ctx: &egui::Context, id: egui::Id, target: f32, instant: bool) -> f32 {
     value
 }
 
-/// What the button at the foot of the column (`sidebar::column_toggle`)
+/// What the button in the column's head (`sidebar::column_toggle`)
 /// asked. There is no mode to choose: all false is the automatic layout,
 /// and each field departs from it for as long as it means something.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
