@@ -9,6 +9,9 @@ use uuid::Uuid;
 impl App {
     /// Right click on the world: the menu of what is under the cursor.
     pub(super) fn open_context_menu(&mut self) {
+        if self.photo_full_frame() {
+            return;
+        }
         self.click(click_pick::Click::Menu);
     }
 
@@ -71,7 +74,6 @@ impl App {
         if self.gfx.is_none() {
             return;
         }
-        let now = Instant::now();
         let Some((picked, point)) = self.menu_pick() else {
             return;
         };
@@ -114,9 +116,9 @@ impl App {
                         attachment: Some(full_id),
                     },
                     None => {
-                        let offset = Scene::object_transform(&self.world, idx, now, 0)
-                            .map(|(pos, rot, _)| rot.inverse() * (point - pos))
-                            .unwrap_or(Vec3::ZERO);
+                        let ray = self.object_menu.ray;
+                        let offset =
+                            super::object_actions::object_sit_offset(&self.world, &self.camera, idx, point, ray).unwrap_or(Vec3::ZERO);
                         // selected and outlined while the menu is open
                         // (LLToolSelect::handleObjectSelection, temp_select)
                         self.build.select_for_menu_with(&mut self.world, &self.settings.build, idx, extend);
@@ -369,7 +371,7 @@ impl App {
         let (commands, requests, properties) = self.object_profile.take_output();
         if !commands.is_empty() {
             self.interactions.on_properties(&properties);
-            self.build.on_properties(properties);
+            self.build.on_properties(&self.world, properties);
         }
         for command in commands {
             self.send(command);
@@ -824,7 +826,9 @@ impl App {
                 let Some(region) = self.grid_region(&region) else {
                     return;
                 };
-                self.world.map.track_region(&region, pos);
+                // LLWorldMapHandler::handle: trackURL, then the map opens
+                // centred on the place ("center")
+                self.world.map.show_region(&region, pos);
                 ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
             }
             CtxAction::TeleportToPlace(region, pos) if self.settings.confirm_teleports => self.place_confirm = Some((region, pos, false)),
