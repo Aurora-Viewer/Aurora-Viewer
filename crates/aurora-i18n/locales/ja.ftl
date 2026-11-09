@@ -3990,6 +3990,7 @@ media-filter-remember-domain = { $domain }を常に許可／ブロック
 media-filter-remember-url = このアドレスを常に許可／ブロック
 media-filter-allow = 許可
 media-filter-deny = 拒否
+media-filter-not-now = 今はしない：ログアウトするまでこのメディアは止まったままです
 media-filter-turn-off = メディアをフィルターしない
 world-inventory-demo-link-to-object = オブジェクトへのリンク
 ui-inventory-controls-links-only = リンクのみ

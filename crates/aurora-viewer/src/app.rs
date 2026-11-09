@@ -5685,7 +5685,8 @@ impl App {
         let Some(q) = self.world.media_filter.question() else {
             return;
         };
-        let Some(answer) = ui::media_filter::prompt(ctx, p, q, first_use, &mut self.media_filter_prompt) else {
+        let area = ui::layout::work_area(ctx);
+        let Some(answer) = ui::media_filter::prompt(ctx, p, area, q, first_use, &mut self.media_filter_prompt) else {
             return;
         };
         let url = q.url.clone();

@@ -3996,6 +3996,7 @@ media-filter-remember-domain = Toujours pour { $domain }
 media-filter-remember-url = Toujours pour cette adresse exacte
 media-filter-allow = Autoriser
 media-filter-deny = Refuser
+media-filter-not-now = Pas maintenant : ce média reste coupé jusqu'à la déconnexion
 media-filter-turn-off = Ne pas filtrer les médias
 world-inventory-demo-link-to-object = Lien vers l’objet
 ui-inventory-controls-links-only = Liens uniquement
