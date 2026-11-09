@@ -12115,6 +12115,19 @@ impl App {
         self.resolve_clicks();
         self.demo_action_steps();
         self.demo_click_steps();
+        // AURORA_DEMO_MAP=…,switch: the map's layout flips at frame 700 with
+        // the map open, as Preferences › Aurora › World map does (#2669)
+        if self.demo
+            && self.frame_count == 700
+            && std::env::var("AURORA_DEMO_MAP").is_ok_and(|s| s.split(',').any(|w| w.trim() == "switch"))
+        {
+            use crate::settings::WorldMapStyle;
+            let now = self.worldmap_ui.demo_style.unwrap_or(self.settings.world_map_style);
+            self.worldmap_ui.demo_style = Some(match now {
+                WorldMapStyle::Aurora => WorldMapStyle::Legacy,
+                WorldMapStyle::Legacy => WorldMapStyle::Aurora,
+            });
+        }
         if self.demo && self.frame_count == 700 && std::env::var("AURORA_DEMO_MAP").as_deref() == Ok("beacon-click") {
             if let Some(hit) = &self.beacon_hit {
                 let at = hit.rect.center() * self.egui_ctx.pixels_per_point();
