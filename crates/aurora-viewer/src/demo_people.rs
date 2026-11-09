@@ -216,6 +216,8 @@ pub fn seed(world: &mut crate::world::World) {
                 minimap: true,
                 icon: Some(0),
                 size: PlateSize::Reduced,
+                marker: crate::world::contact_sets::MarkerScope::Region,
+                marker_fade: Some(10),
                 ..Default::default()
             },
         );

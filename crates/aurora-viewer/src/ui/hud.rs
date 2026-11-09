@@ -108,6 +108,8 @@ pub struct NameTag {
     /// rather than a sphere centred on its avatar's current position.
     pub at: Vec3,
     pub normal: Vec3,
+    /// Where the resident's contact-set marker lands on the plate.
+    pub marker_slot: Option<egui::Rect>,
 }
 
 impl NameTag {
@@ -117,6 +119,7 @@ impl NameTag {
             rect,
             at,
             normal: proj.view_proj.row(3).truncate().normalize_or_zero(),
+            marker_slot: None,
         }
     }
 
@@ -730,14 +733,17 @@ pub fn draw(
         } else {
             plate_tags.iter().map(|t| (t.id, t.fade)).collect()
         };
-        plates.paint(&painter, p, icons, &plate_tags, now_s, |id, rect, at| {
+        plates.paint(&painter, p, icons, &plate_tags, now_s, |id, rect, at, marker_slot| {
             // right after its plate, before the nearer ones
             if let Some(b) = plate_bubbles.get(&id) {
                 let top = Pos2::new(rect.center().x, rect.bottom() + super::chat_bubbles::GAP);
                 let fade = fades.get(&id).copied().unwrap_or(1.0);
                 super::chat_bubbles::paint(&painter, p, b, top, fade, opacity, true, now_s);
             }
-            name_tags.push(NameTag::new(id, rect, at, proj))
+            name_tags.push(NameTag {
+                marker_slot,
+                ..NameTag::new(id, rect, at, proj)
+            })
         });
     }
     // what else is painted for the world (the tracking beacon) stands nowhere
