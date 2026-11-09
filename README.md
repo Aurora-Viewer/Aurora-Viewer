@@ -111,36 +111,37 @@ while rethinking the user interface.
   </tr>
 </table>
 
-### New in 0.9.3 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+### New in 0.9.4 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>AMD FSR 3.1</h3>
-      Choose FSR 3.1 under Anti-aliasing: smooth edges at the window's
-      size, or a world drawn smaller and rebuilt sharp, for more frames per
-      second. Animated textures and transparent surfaces stay clean.
+      <h3>Debug settings, like the Legacy Viewer</h3>
+      Every setting by name in one window, from the toolbar or
+      Ctrl+Alt+Shift+S: search the names and descriptions, see the ones you
+      changed, and reset any of them to its default.
     </td>
     <td width="50%" valign="top">
-      <h3>Steadier on every graphics card</h3>
-      After a graphics card reset, Aurora reopens its window and keeps you
-      logged in. Intel 6th to 9th generation integrated GPUs and AMD +
-      NVIDIA laptops start again, and integrated GPUs count their shared
-      memory in the texture budget.
+      <h3>More of the Legacy Viewer's options</h3>
+      Build preferences for new prims, a progressive draw distance, the
+      Trees detail, large surface protection, particles from worn objects,
+      camera smoothing up to 300 and a limit for the chat lines above the
+      chat bar.
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <h3>Updates and your computer</h3>
-      Aurora tells you when a new version is out, while it runs. Remove
-      Aurora from this computer takes away what it registered outside its
-      folders, and the web and media pack downloads only once you agree.
+      <h3>A fuller world</h3>
+      Neighbouring regions appear at your draw distance, objects no longer
+      vanish at some camera angles, and the world comes back by itself
+      after video memory was full at login. Media screens in busy regions
+      load again.
     </td>
     <td valign="top">
-      <h3>Clicks that land</h3>
-      Clicks go through alpha textures and invisible prims like the Legacy
-      Viewer, Shift or Ctrl + right click extends the build selection, and
-      the teleport history survives a crash.
+      <h3>Calls, music and chat</h3>
+      Private calls stay connected across teleports, parcel music no longer
+      cuts out while you cam around, Ctrl+Tab cycles the conversations, and
+      the Japanese IME shows the active conversion segment.
     </td>
   </tr>
 </table>
@@ -805,7 +806,7 @@ setting is on by default, like the Legacy Viewer. The translations are in
 
 ### Frame limiter
 
-The frame limiter is enabled at **120 fps by default** and can be disabled
+The frame limiter is enabled at **60 fps by default** and can be disabled
 or adjusted in Preferences › Graphics › Smoothness. Saved preferences are
 preserved.
 
@@ -1174,8 +1175,11 @@ exe before publishing; the local build also writes it to `version.txt`.
   it). Nothing after it is read, so a link from a web page cannot add other
   options. Before login the place is the start location of the next login
   (the saved choice stays); in the world it opens the place's details; a
-  command runs once in the world. When a viewer already runs (same demo
-  mode and `--title`), the link goes to it and the new process stops.
+  command runs once in the world. When a viewer already runs, the link goes
+  to it and the new process stops. On Windows, the last focused matching
+  window receives it: a browser launch without `--title` reaches any online
+  Aurora window, including a titled test window; an explicit `--title` or
+  offline demo stays isolated. Linux matches the demo mode and `--title`.
   Preferences › Language and updates › "Open SLURL and Hypergrid links in
   Aurora" registers all three schemes for the current user (the registry on
   Windows, a desktop entry and `mimeapps.list` on Linux, see
@@ -1247,6 +1251,14 @@ its own task in its own git worktree:
   contact prototype and the creator's LSL script
 - [docs/IK_EDIT.md](docs/IK_EDIT.md) — frozen-pose skeleton editor, target-prim
   offsets and general bone-contact authoring for LSL
+
+Pull requests follow the [pull request template](.github/pull_request_template.md):
+a check lists what a description is missing, and maintainers review a PR
+once its description and its CI are complete. An outside contributor's PR
+still incomplete 3 days later is closed, and can be reopened once it is
+complete. Each outside contributor has up to 10 pull requests in review at
+a time; the others wait in a queue and come back to review on their own,
+oldest first.
 
 Behaviour follows the Legacy Viewer: its sources are expected next to the repository
 (`../phoenix-firestorm`, cloned from
