@@ -677,14 +677,83 @@ fn new_prim_is_selected_once_without_update_owner_id_and_deleted_without_false_w
         handle,
         objects: vec![update],
     });
-    tool.pick_up_created(&world, &settings);
+    tool.pick_up_created(&mut world, &settings);
     assert_eq!(selected(&tool), [99940]);
     let sends = tool.out.len();
-    tool.pick_up_created(&world, &settings);
+    tool.pick_up_created(&mut world, &settings);
     assert_eq!(tool.out.len(), sends);
     tool.delete(&mut world);
     assert_eq!(tool.status, aurora_i18n::tr!("build-mod-object-s-sent-to-trash", value0 = "1"));
     assert!(tool.selection.is_empty());
+}
+
+/// A prim the Create tool made arriving, ours with `rights`.
+fn arrive_created(world: &mut World, local_id: u32, rights: u32) -> usize {
+    let mut update = crate::demo::action_avatar(false);
+    update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+    update.local_id = local_id;
+    update.full_id = crate::demo::action_id(local_id);
+    update.parent_id = 0;
+    update.update_flags = FLAGS_CREATE_SELECTED | rights;
+    let handle = world.objects.get(object(world, 99610)).unwrap().key.region;
+    world.apply(NetEvent::ObjectUpdates {
+        handle,
+        objects: vec![update],
+    });
+    object(world, local_id)
+}
+
+fn sent_defaults(tool: &BuildTool) -> (usize, usize) {
+    use aurora_net::build::BuildCmd;
+    let count = |f: fn(&BuildCmd) -> bool| tool.out.iter().filter(|c| matches!(c, NetCommand::Build(b) if f(b))).count();
+    (
+        count(|b| matches!(b, BuildCmd::SetTextures { .. })),
+        count(|b| matches!(b, BuildCmd::SetFlags { .. })),
+    )
+}
+
+#[test]
+fn a_created_prim_takes_the_new_objects_look_once_when_ours_with_full_rights() {
+    use crate::ui::context::flags::{OBJECT_COPY, OBJECT_MODIFY, OBJECT_TRANSFER, OBJECT_YOU_OWNER};
+    let full = OBJECT_YOU_OWNER | OBJECT_MODIFY | OBJECT_COPY | OBJECT_TRANSFER;
+    let (mut world, mut tool, mut settings) = fixture();
+    settings.new_prim_color = [255, 0, 0, 255];
+    settings.new_prim_glow = 0.5;
+    settings.new_prim_phantom = true;
+
+    // not asked for by the Create tool (a duplicate, an import): untouched
+    tool.expect_created(&world);
+    arrive_created(&mut world, 99950, full);
+    tool.pick_up_created(&mut world, &settings);
+    assert_eq!(sent_defaults(&tool), (0, 0));
+
+    // asked for, but not ours with every right: untouched, still awaited
+    tool.out.clear();
+    tool.expect_created(&world);
+    tool.expect_new_defaults();
+    arrive_created(&mut world, 99951, OBJECT_YOU_OWNER | OBJECT_MODIFY);
+    tool.pick_up_created(&mut world, &settings);
+    assert_eq!(sent_defaults(&tool), (0, 0));
+
+    // ours with full rights: one look and one flags update, then no more
+    let idx = arrive_created(&mut world, 99952, full);
+    tool.pick_up_created(&mut world, &settings);
+    assert_eq!(sent_defaults(&tool), (1, 1));
+    let face = world.objects.get(idx).unwrap().te.as_deref().unwrap().faces[0];
+    assert_eq!(face.color[..3], [1.0, 0.0, 0.0]);
+    assert_eq!(face.glow, 0.5);
+    arrive_created(&mut world, 99953, full);
+    tool.pick_up_created(&mut world, &settings);
+    assert_eq!(sent_defaults(&tool), (1, 1));
+
+    // an inventory rez clears what the Create tool still awaited
+    tool.out.clear();
+    tool.expect_created(&world);
+    tool.expect_new_defaults();
+    tool.forget_new_defaults();
+    arrive_created(&mut world, 99954, full);
+    tool.pick_up_created(&mut world, &settings);
+    assert_eq!(sent_defaults(&tool), (0, 0));
 }
 
 #[test]
@@ -696,7 +765,7 @@ fn preexisting_create_flags_are_never_selected_after_ownership_arrives() {
     o.update_flags |= FLAGS_CREATE_SELECTED;
     tool.expect_created(&world);
     world.objects.get_mut(idx).unwrap().owner_id = world.agent_id;
-    tool.pick_up_created(&world, &settings);
+    tool.pick_up_created(&mut world, &settings);
     assert!(tool.selection.is_empty());
 }
 
@@ -920,7 +989,7 @@ fn primitive_placement_and_deletion_round_trip_through_the_demo_simulator() {
             }
         }
     }
-    tool.pick_up_created(&world, &settings);
+    tool.pick_up_created(&mut world, &settings);
     assert_eq!(tool.selection.len(), 1);
     let key = tool.selection[0];
     assert!(world.objects.get(world.objects.index_of(&key).unwrap()).unwrap().owner_id.is_nil());
@@ -1440,4 +1509,76 @@ fn right_click_outside_build_selects_one_object_at_a_time() {
     assert!(tool.select_for_menu_with(&mut world, &settings, b, true));
     assert_eq!(selected(&tool), [99612]);
     assert_eq!(tool.menu_roots(&world, b), [b]);
+}
+
+/// #1956, LLSelectMgr::selectionSetAlphaOnly over LLSelectNode::isTESelected
+/// (indra/newview/llselectmgr.cpp): a linked part selected whole under Edit
+/// linked parts edits all its faces, even after one of them was edited alone
+/// in face mode; a picked face edits that face only.
+#[test]
+fn face_edits_cover_a_whole_linked_part_or_only_the_picked_face() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let root = object(&world, 99610);
+    let child = object(&world, 99611);
+    world.objects.get_mut(root).unwrap().update_flags |= crate::ui::context::flags::OBJECT_MODIFY;
+    let n = tool.num_faces(&world, child);
+    let alphas = |world: &World| -> Vec<f32> {
+        let te = world.objects.get(child).unwrap().te.clone().unwrap();
+        te.faces[..n].iter().map(|f| f.color[3]).collect()
+    };
+    let before = alphas(&world);
+    tool.set_edit_mode(&mut world, &mut settings, EditMode::Face);
+    tool.face_click(&mut world, Some(child), Some(2), false);
+    assert_eq!(tool.sel_te(&world), [(child, 2)]);
+    tool.edit_faces(&mut world, |f, _, _| f.color[3] = 0.0);
+    let mut expected = before.clone();
+    expected[2] = 0.0;
+    assert_eq!(alphas(&world), expected);
+
+    tool.set_edit_mode(&mut world, &mut settings, EditMode::Move);
+    settings.edit_linked = true;
+    tool.click_select(&mut world, &settings, Some(child), false);
+    assert_eq!(tool.sel_faces(&world, child), (0..n as u8).collect::<Vec<_>>());
+    tool.out.clear();
+    tool.edit_faces(&mut world, |f, _, _| f.color[3] = 1.0);
+    assert!(alphas(&world).iter().all(|a| *a == 1.0));
+    assert!(matches!(
+        &tool.out[..],
+        [NetCommand::Build(BuildCmd::SetTextures { local_id: 99611, .. })]
+    ));
+}
+
+/// The hollow face of a hollow sphere is its own texture entry: LLProfile::
+/// generate (indra/llmath/llvolume.cpp) adds the outer face, the hole, then
+/// the two degenerate profile edges of the open half circle, so the inner
+/// face is TE 1 of 4. Picking it edits it alone; the whole prim edits all.
+#[test]
+fn face_edits_on_a_hollow_sphere_keep_the_inner_face_separate() {
+    use aurora_prim::params::{LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF};
+    let (mut world, mut tool, mut settings) = fixture();
+    let idx = object(&world, 99612);
+    let o = world.objects.get_mut(idx).unwrap();
+    o.update_flags |= crate::ui::context::flags::OBJECT_MODIFY;
+    o.volume.profile.curve_type = LL_PCODE_PROFILE_CIRCLE_HALF;
+    o.volume.profile.hollow = 0.5;
+    o.volume.path.curve_type = LL_PCODE_PATH_CIRCLE;
+    let n = tool.num_faces(&world, idx);
+    assert_eq!(n, 4);
+    let colors = |world: &World| -> Vec<[f32; 4]> {
+        let te = world.objects.get(idx).unwrap().te.clone().unwrap();
+        te.faces[..n].iter().map(|f| f.color).collect()
+    };
+    let mut expected = colors(&world);
+    tool.set_edit_mode(&mut world, &mut settings, EditMode::Face);
+    tool.face_click(&mut world, Some(idx), Some(1), false);
+    tool.edit_faces(&mut world, |f, _, _| f.color = [1.0, 0.0, 0.0, 0.0]);
+    expected[1] = [1.0, 0.0, 0.0, 0.0];
+    assert_eq!(colors(&world), expected);
+
+    tool.set_edit_mode(&mut world, &mut settings, EditMode::Move);
+    settings.edit_linked = true;
+    tool.click_select(&mut world, &settings, Some(idx), false);
+    assert_eq!(tool.sel_te(&world), (0..n as u8).map(|f| (idx, f)).collect::<Vec<_>>());
+    tool.edit_faces(&mut world, |f, _, _| f.color = [0.0, 0.0, 1.0, 0.5]);
+    assert_eq!(colors(&world), vec![[0.0, 0.0, 1.0, 0.5]; n]);
 }

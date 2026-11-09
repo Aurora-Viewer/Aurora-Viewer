@@ -1,7 +1,8 @@
 ﻿<#
 .SYNOPSIS
     Creates (or updates) the labels on GitHub: types, for PRs only, areas,
-    for PRs and issues, on-hold, for PRs only, and crash-triaged, set on
+    for PRs and issues, on-hold, needs-description and waiting-for-slot
+    (set by their workflows), for PRs only, and crash-triaged, set on
     issues by the Crash triage workflow. The nature of an issue is its issue type (Bug,
     Feature, Task, Epic; AGENTS.md section 15). Keeps the other labels and
     their history. A
@@ -45,6 +46,12 @@ $labels = @(
     @{ Name = 'tooling'; Was = 'outillage'; Color = '6F7BA0'; Desc = 'GitHub repository, CI, scripts and development environment' },
     # state of a PR (AGENTS.md section 9): hidden from the Aurora Tools PR panel
     @{ Name = 'on-hold'; Color = '94A3B8'; Desc = 'PR paused by a maintainer: not reviewed nor merged until the label is removed' },
+    # PR whose description misses parts of the template (PR description
+    # workflow, scripts/check-pr-description.ps1, which creates it if missing)
+    # outside contributor's PR waiting for a review slot (Review slots workflow,
+    # scripts/pr-slots.ps1, which creates it if missing)
+    @{ Name = 'waiting-for-slot'; Color = '94A3B8'; Desc = 'Outside contributor over 10 PRs in review: draft until a review slot frees up' },
+    @{ Name = 'needs-description'; Color = '94A3B8'; Desc = 'PR description incomplete: not reviewed until it follows the template' },
     # crash report signed by the Crash triage workflow (docs/BUG_REPORTING.md)
     @{ Name = 'crash-triaged'; Color = '94A3B8'; Desc = 'Crash report signed by the Crash triage workflow (set by the workflow)' }
 )
