@@ -607,12 +607,52 @@ pub fn sends_local_line(channel: i32, message: &str) -> bool {
     channel != 0 || !message.is_empty()
 }
 
-/// Enter that may send: plain, Ctrl (shout), Shift (whisper) or Alt alone
-/// (OOC). Ctrl+Alt is AltGr on Windows and stays unclaimed, like any other
-/// Alt chord: FSNearbyChatControl / FSFloaterIM::handleKeyHere (indra/newview)
-/// test `mask == MASK_ALT`.
-fn send_enter(i: &egui::InputState) -> bool {
-    i.key_pressed(egui::Key::Enter) && (!i.modifiers.alt || ooc_key(&i.modifiers))
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SendKey {
+    Normal,
+    Shout,
+    Whisper,
+    Ooc,
+}
+
+impl SendKey {
+    /// OOC always uses normal volume, independently of the nearby volume
+    /// selector (FSNearbyChat::sendChat, indra/newview/fsnearbychathub.cpp).
+    fn chat_type(self, selected: ChatType) -> ChatType {
+        match self {
+            Self::Normal => selected,
+            Self::Shout => ChatType::Shout,
+            Self::Whisper => ChatType::Whisper,
+            Self::Ooc => ChatType::Normal,
+        }
+    }
+}
+
+/// Classify the Enter event once: releasing a modifier later in the same
+/// frame must change neither permission to send, OOC wrapping nor volume.
+/// FSNearbyChatControl / FSFloaterIM::handleKeyHere (indra/newview) read
+/// the event's mask; Alt alone is OOC, other Alt chords stay unclaimed.
+fn send_enter(i: &egui::InputState) -> Option<SendKey> {
+    i.events.iter().find_map(|event| {
+        let egui::Event::Key {
+            key: egui::Key::Enter,
+            pressed: true,
+            modifiers,
+            ..
+        } = event
+        else {
+            return None;
+        };
+        if modifiers.alt {
+            ooc_key(modifiers).then_some(SendKey::Ooc)
+        } else if modifiers.ctrl {
+            Some(SendKey::Shout)
+        } else if modifiers.shift {
+            Some(SendKey::Whisper)
+        } else {
+            Some(SendKey::Normal)
+        }
+    })
 }
 
 /// Alt+Enter alone sends ((OOC)) chat (FSUseAltOOC, on by default).
@@ -3382,10 +3422,16 @@ fn classic_pane(
         cursor_to_end(ui.ctx(), conv_input, &draft);
     }
     let mut sent = false;
-    if send_clicked || ((resp.has_focus() || resp.lost_focus()) && ui.input(send_enter)) {
+    let send = if send_clicked {
+        Some(SendKey::Normal)
+    } else if resp.has_focus() || resp.lost_focus() {
+        ui.input(send_enter)
+    } else {
+        None
+    };
+    if let Some(send) = send {
         let mut text = st.suggest.expand(st.selected, draft.trim());
-        // Alt+Enter, not the send button, marks the line OOC (in IMs too)
-        if ui.input(|i| i.key_pressed(egui::Key::Enter) && ooc_key(&i.modifiers)) {
+        if send == SendKey::Ooc {
             text = ooc(&text);
         }
         if !text.is_empty() {
@@ -3397,16 +3443,7 @@ fn classic_pane(
                     actions.push(ConvAction::Local(OutgoingChat {
                         message,
                         channel,
-                        // Ctrl+Enter shouts, Shift+Enter whispers (like the chat bar)
-                        chat_type: ui.input(|i| {
-                            if i.modifiers.ctrl {
-                                ChatType::Shout
-                            } else if i.modifiers.shift {
-                                ChatType::Whisper
-                            } else {
-                                ChatType::Normal
-                            }
-                        }),
+                        chat_type: send.chat_type(ChatType::Normal),
                     }));
                 }
                 Some(to) => actions.push(ConvAction::Im { to, text }),
@@ -4079,31 +4116,31 @@ pub(crate) fn bar_input(
     }
     st.has_focus = resp.has_focus();
     // The editor leaves ordinary Enter to this send path.
-    let enter = !focusing && (resp.has_focus() || resp.lost_focus()) && ui.input(send_enter);
+    let send = if !focusing && (resp.has_focus() || resp.lost_focus()) {
+        ui.input(send_enter)
+    } else {
+        None
+    };
+    let enter = send.is_some();
     // Enter, even on an empty bar, ends the typing (sendChat → stopTyping)
     let said = typing::says_aloud(&st.input, st.type_during_emote, st.colon_emote);
     st.local_field(&resp, said, enter);
     if enter {
         resp.surrender_focus();
     }
-    if enter && !st.input.trim().is_empty() {
+    if let Some(send) = send
+        && !st.input.trim().is_empty()
+    {
         st.input_history.entry(None).or_default().record(bar_input_id(), &st.input);
-        let (shout, whisper, is_ooc) = ui.input(|i| (i.modifiers.ctrl, i.modifiers.shift, ooc_key(&i.modifiers)));
         let mut text = st.suggest.expand(None, st.input.trim());
-        if is_ooc {
+        if send == SendKey::Ooc {
             text = ooc(&text);
         }
         let (channel, message) = parse_channel(&text);
         out = Some(OutgoingChat {
             message,
             channel,
-            chat_type: if shout {
-                ChatType::Shout
-            } else if whisper {
-                ChatType::Whisper
-            } else {
-                ChatType::Normal
-            },
+            chat_type: send.chat_type(ChatType::Normal),
         });
         st.input.clear();
         if st.keep_focus {
