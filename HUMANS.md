@@ -72,6 +72,31 @@ a review or that left the queue.
     the latest `main`: what lands on `main` is exactly what was tested.
   A PR that only touches documentation or images passes in a minute (no
   build). A red cross = the agent fixes it.
+- **PR description check**: every PR's description must follow the
+  template (`.github/pull_request_template.md`): the issue line, and text
+  under What it is for, Legacy Viewer origin, What changes and Tests. When
+  one is missing, the PR description workflow posts a comment listing what
+  is missing (the PR panel shows `■ CHANGES ASKED`) and adds the
+  `needs-description` label; both go away as soon as the author edits the
+  description. An **outside contributor's** PR still incomplete 3 days
+  later is closed by the workflow's daily sweep (the author can reopen it
+  once it is complete); the team's PRs are never closed. So nobody reads a
+  PR before its author has said what it does and how it was tested.
+- **Review slots**: an outside contributor has at most **10 PRs in review**
+  at a time. The Review slots workflow gives the others the
+  `waiting-for-slot` label and a comment explaining why (they stay open as
+  they are; the PR panel hides them, like `on-hold`); when one of their PRs
+  in review is merged or closed, the oldest waiting one comes back to review
+  on its own, with a comment. To have a waiting PR reviewed first (its
+  author may ask in a comment), remove its label by hand: it takes a slot
+  and the author's newest other PR in review waits instead. PRs a
+  maintainer has started reviewing, or in the merge queue, keep their slot;
+  the team's PRs never wait. To see the
+  plan without changing anything: Actions › Review slots › Run workflow
+  (dry run ticked), or `./scripts/pr-slots.ps1 -Sweep -DryRun`.
+- **Outside contributors' CI** waits for a maintainer: on their PR, "Approve
+  and run" (look first that it does not change `.github/`). Review it only
+  once that CI is green and the description is complete.
 - **Labels**: each PR has a **type** (`feature`, `fix`, `performance`,
   `maintenance`, `docs`, and `breaking` if it breaks a compatibility), which
   files it in the release notes, and an **area** (`render`, `avatar`,
@@ -262,8 +287,12 @@ even from a prompt with delayed expansion.
 The active choice carries a **›** mark on a violet background; the text
 cursor stays hidden while navigating. Long lists scroll with the selection
 and the menus adapt when the console is resized. Creating a release splits
-the number, the cache and the settings into three screens, with the chosen
-version and a summary before confirmation.
+the number, the minimum version, the cache and the settings into four
+screens, with the chosen version and a summary before confirmation. The
+minimum version makes the update required for the versions below it: they
+can still log in for a grace period, then not before updating. A new
+minimum asks for that period: 12 hours usually, 24, 72 or 6 hours, or none
+for a release that cannot wait.
 
 When it opens, the tool checks the environment: tools, repository behind
 GitHub, outdated Legacy Viewer sources, Rust not up to date, font, GitHub

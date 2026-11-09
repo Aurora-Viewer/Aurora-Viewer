@@ -25,6 +25,7 @@ pub mod demo;
 pub(crate) mod elide_tests;
 pub(crate) mod hero;
 pub(crate) mod keycap;
+pub(crate) mod local_texture;
 mod modal_keys;
 pub(crate) mod pills;
 mod resize;
@@ -279,6 +280,7 @@ pub struct Floater<'a> {
     /// A short muted text right after the title (a count of what the
     /// window holds).
     pub title_note: Option<String>,
+    pub title_note_tooltip: Option<String>,
     /// A state at the right end of the title bar, before its buttons: a
     /// dot of its colour and its text in muted.
     pub title_state: Option<(Color32, String)>,
@@ -337,6 +339,7 @@ impl<'a> Floater<'a> {
             header_status: Vec::new(),
             header_status_action: None,
             title_note: None,
+            title_note_tooltip: None,
             title_state: None,
             default_pos: pos,
             default_size: size,
@@ -388,6 +391,12 @@ impl<'a> Floater<'a> {
     /// A muted text after the title (see `title_note`).
     pub fn title_note(mut self, note: impl Into<String>) -> Self {
         self.title_note = Some(note.into());
+        self
+    }
+
+    /// Details shown when hovering the muted text after the title.
+    pub fn title_note_tooltip(mut self, tooltip: impl Into<String>) -> Self {
+        self.title_note_tooltip = Some(tooltip.into());
         self
     }
 
@@ -695,6 +704,7 @@ impl<'a> Floater<'a> {
             }
             // title bar
             let mut buttons_left = f32::INFINITY;
+            let mut note_rect = None;
             let framed_header = self.framed_header;
             if framed_header.is_some() {
                 ui.spacing_mut().item_spacing.y = 0.0;
@@ -767,7 +777,8 @@ impl<'a> Floater<'a> {
                                 }
                                 ui.add(egui::Label::new(title).truncate());
                                 if let Some(note) = &self.title_note {
-                                    ui.add(egui::Label::new(RichText::new(note).size(12.0).color(p.muted)).truncate());
+                                    let response = ui.add(egui::Label::new(RichText::new(note).size(12.0).color(p.muted)).truncate());
+                                    note_rect = Some(response.rect);
                                 }
                             });
                         }
@@ -835,11 +846,17 @@ impl<'a> Floater<'a> {
             title_rect.max.x = buttons_left;
             // Keep the title buttons outside the double-click target; Window
             // still owns dragging the bar, including when it is minimized.
-            if ui
-                .interact(title_rect, window_id.with("title_double_click"), Sense::click())
-                .double_clicked()
-            {
+            let title_response = ui.interact(title_rect, window_id.with("title_double_click"), Sense::click());
+            if title_response.double_clicked() {
                 toggle_min = true;
+            }
+            // The double-click target owns title-bar hover. Keep its interaction
+            // and restrict the note's tooltip to the note's own rectangle.
+            if let Some(rect) = note_rect
+                && let Some(tooltip) = &self.title_note_tooltip
+                && ui.input(|input| input.pointer.hover_pos().is_some_and(|pos| rect.contains(pos)))
+            {
+                title_response.with_new_rect(rect).on_hover_text(tooltip);
             }
             if compact {
                 divider(ui, p);
@@ -2961,6 +2978,27 @@ pub fn row_tag_ink(p: &Palette, active: bool) -> Color32 {
     if active { p.teal } else { p.muted }
 }
 
+/// Colors `(ink, fill)` for the active group tag pill.
+pub fn active_tag_colors(p: &Palette) -> (Color32, Color32) {
+    (p.teal, p.teal.gamma_multiply(0.14))
+}
+
+/// Measures a small row tag pill (such as "active" next to a group). Returns `(galley, total_width)`.
+pub fn tag_pill_layout(ui: &egui::Ui, text: &str, ink: Color32) -> (std::sync::Arc<egui::Galley>, f32) {
+    let g = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), egui::FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())), ink);
+    let w = g.size().x + 12.0;
+    (g, w)
+}
+
+/// Paints a small row tag pill (such as "active" next to a group) into `rect`.
+pub fn paint_tag_pill(ui: &egui::Ui, g: std::sync::Arc<egui::Galley>, rect: egui::Rect, ink: Color32, fill: Color32) {
+    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
+    let left = rect.center().x - g.size().x / 2.0;
+    paint_row_text(ui.painter(), g, left, rect.center().y, ink);
+}
+
 /// A small tag after an item's name, the same in every list: teal when
 /// `active` (worn, an active gesture), neutral for a plain fact (a link).
 /// Returns its width.
@@ -3030,6 +3068,9 @@ pub fn picture(
         egui::Stroke::new(1.0, p.raised),
         egui::StrokeKind::Inside,
     );
+    if let Some(texture) = tex {
+        local_texture::image(ui, p, rect, texture.id());
+    }
     resp
 }
 

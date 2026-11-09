@@ -566,14 +566,7 @@ impl Imports {
             (object, target.entry, target.model, target.use_scale).hash(&mut hash);
         }
         for ((object, face), appearance) in &self.local_appearance_targets {
-            (
-                object,
-                face,
-                appearance.entry(),
-                matches!(appearance, crate::world::objects::LocalAppearance::Material(_)),
-                self.persistence.appearance_expirations[&(*object, *face)],
-            )
-                .hash(&mut hash);
+            (object, face, appearance, self.persistence.appearance_expirations[&(*object, *face)]).hash(&mut hash);
         }
         let observed = hash.finish();
         if !force && self.persistence.observed == Some(observed) {
@@ -609,7 +602,14 @@ impl Imports {
         );
         for profile in self.persistence.registry.profiles.values_mut() {
             profile.meshes.retain(|(_, target)| ids.contains(&target.entry));
-            profile.appearances.retain(|(_, _, appearance)| ids.contains(&appearance.entry()));
+            profile.appearances.retain_mut(|(_, _, appearance)| {
+                if let Some(remaining) = appearance.retain(|id| ids.contains(&id)) {
+                    *appearance = remaining;
+                    true
+                } else {
+                    false
+                }
+            });
             profile.expire_appearances(now);
         }
         if let Ok(bytes) = serde_json::to_vec(&self.persistence.registry)
