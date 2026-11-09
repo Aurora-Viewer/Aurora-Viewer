@@ -6,11 +6,18 @@ rather than one radial object distance. `scene/picking.rs::PickFace` caches
 each face's local bounds on the geometry worker. `scene/blend_order.rs::FaceDepth`
 factors the current GPU record placement and its animated anchor once per visible
 object, leaving two dot products per face in the parallel list build. Rigged and
-HUD ordering remain separate; glow and the under-water list follow the same face
+HUD passes remain separate; glow and the under-water list follow the same face
 order. Portal and ban-line sort points use the same view-depth metric.
-`AURORA_ALPHA_FACE_SORT=0` retains the former ordering for controlled comparisons.
+`scene/hud.rs::build_huds` reuses `FaceDepth` with the HUD camera's +X axis,
+reading the actual record model once per nonrigged blended object through a
+read-only model callback. It keeps opaque/masked faces and hit testing apart;
+object/face/index ties stay deterministic. Missing geometry/model data and rigged
+HUDs retain the object-centre fallback.
+`AURORA_ALPHA_FACE_SORT=0` retains the former world and HUD ordering for controlled
+comparisons.
 `demo_alpha_sort.rs` loads the original three-face unrigged DAE and PNGs in
-`crates/aurora-viewer/assets/demo/alpha-sort/`, also supplied for grid testing.
+`crates/aurora-viewer/assets/demo/alpha-sort/`, also supplied for grid testing. Its
+`hud`, `hud-back` and `hud-zoom` modes exercise the same layered mesh in screen space.
 
 `ui/inventory/clipboard.rs` owns the cut feedback shared by the two inventory
 layouts and folder windows. It caches the cut roots and checks only visible
