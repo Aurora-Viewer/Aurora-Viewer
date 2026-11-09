@@ -200,7 +200,7 @@ fn demo_hair_cards(head: Vec3, joint: usize, n: u32, layered: bool, outer_first:
                     if let Some(s) = &mut face.skin {
                         s.push(aurora_render::SkinVertex {
                             joints: [joint as u8, 0, 0, 0],
-                            weights: [255, 0, 0, 0],
+                            weights: [u16::MAX, 0, 0, 0],
                         });
                     }
                 }
@@ -333,7 +333,7 @@ impl super::Scene {
                             if let Some(s) = &mut face.skin {
                                 s.push(SkinVertex {
                                     joints: [j as u8, 0, 0, 0],
-                                    weights: [255, 0, 0, 0],
+                                    weights: [u16::MAX, 0, 0, 0],
                                 });
                             }
                         }
@@ -388,7 +388,7 @@ impl super::Scene {
                     if let Some(s) = &mut face.skin {
                         s.push(SkinVertex {
                             joints: [j as u8, 0, 0, 0],
-                            weights: [255, 0, 0, 0],
+                            weights: [u16::MAX, 0, 0, 0],
                         });
                     }
                 }
@@ -409,7 +409,7 @@ impl super::Scene {
                     skin: Some(vec![
                         SkinVertex {
                             joints: [j as u8, 0, 0, 0],
-                            weights: [255, 0, 0, 0],
+                            weights: [u16::MAX, 0, 0, 0],
                         };
                         (SIDE + 1) * (SIDE + 1)
                     ]),
@@ -491,7 +491,7 @@ impl super::Scene {
                     if let Some(s) = &mut face.skin {
                         s.push(SkinVertex {
                             joints: [j as u8, 0, 0, 0],
-                            weights: [255, 0, 0, 0],
+                            weights: [u16::MAX, 0, 0, 0],
                         });
                     }
                 }
@@ -624,7 +624,7 @@ impl super::Scene {
                 let skin = vec![
                     SkinVertex {
                         joints: [j as u8, 0, 0, 0],
-                        weights: [255, 0, 0, 0],
+                        weights: [u16::MAX, 0, 0, 0],
                     };
                     vertices.len()
                 ];
@@ -699,7 +699,7 @@ impl super::Scene {
             face.skin = Some(vec![
                 SkinVertex {
                     joints: [0, 0, 0, 0],
-                    weights: [255, 0, 0, 0],
+                    weights: [u16::MAX, 0, 0, 0],
                 };
                 face.vertices.len()
             ]);
@@ -756,7 +756,7 @@ impl super::Scene {
                 v.pos = p.to_array();
                 skin.push(SkinVertex {
                     joints: [joint, 0, 0, 0],
-                    weights: [255, 0, 0, 0],
+                    weights: [u16::MAX, 0, 0, 0],
                 });
             }
             face.skin = Some(skin);
