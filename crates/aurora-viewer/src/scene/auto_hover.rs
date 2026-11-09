@@ -595,7 +595,7 @@ fn mesh_min(faces: &[MeshFace], skin: Option<&SkinInfo>, rigid: Option<Mat4>, ri
             let mut vertex = SkinVertex::default();
             for k in 0..4 {
                 vertex.joints[k] = (face.joints[i][k] as usize).min(skin.joint_names.len() - 1) as u8;
-                vertex.weights[k] = (face.weights[i][k].clamp(0.0, 1.0) * 255.0).round() as u8;
+                vertex.weights[k] = aurora_render::pack_skin_weight(face.weights[i][k]);
             }
             if let Some(point) = skinned_point(
                 skin.bind_shape.transform_point3(Vec3::from_array(*position)),
@@ -773,7 +773,7 @@ mod tests {
     fn tiny_weights_rounded_to_zero_do_not_select_low_vertices() {
         let lib = library();
         let mut geometry = face();
-        geometry.weights[1] = [0.0001, 0.9999, 0.0, 0.0];
+        geometry.weights[1] = [0.000001, 0.999999, 0.0, 0.0];
         let matrices = vec![Mat4::IDENTITY; lib.rig.len()];
         assert!((mesh_min(&[geometry], Some(&skin()), None, &lib.rig, &matrices).unwrap() + 0.3).abs() < 1e-5);
     }
@@ -782,11 +782,11 @@ mod tests {
     fn selected_vertices_blend_every_joint_and_normalize_packed_weights() {
         let vertex = SkinVertex {
             joints: [0, 1, 0, 0],
-            weights: [64, 191, 0, 0],
+            weights: [16384, 49151, 0, 0],
         };
         let matrices = [Mat4::from_translation(-Vec3::Z), Mat4::from_translation(Vec3::Z)];
         let point = skinned_point(Vec3::ZERO, &vertex, &matrices, &[true, false]).unwrap();
-        assert!((point.z - 127.0 / 255.0).abs() < 1e-6);
+        assert!((point.z - 32767.0 / 65535.0).abs() < 1e-6);
         assert_eq!(skinned_point(Vec3::ZERO, &vertex, &matrices, &[false, false]), None);
         assert_eq!(skinned_point(Vec3::ZERO, &SkinVertex::default(), &matrices, &[true, true]), None);
     }
