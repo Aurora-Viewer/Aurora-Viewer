@@ -427,6 +427,7 @@ impl App {
                 self.on_ctx_action(CtxAction::Edit(id));
                 self.build.tab = 3;
                 self.build.ui.tex_tab = 1;
+                self.build.keep_texture_tab();
             }
             CtxAction::TakeOffClothing(kind) => {
                 let items = crate::world::appearance::worn_clothing(&self.world.inventory)

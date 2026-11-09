@@ -13506,6 +13506,9 @@ ui-options-build-flesh = Chair
 ui-options-build-physical = Physique
 ui-options-build-temporary = Temporaire
 ui-options-build-new-faces = Aspect des nouveaux objets
+ui-options-build-editing = Modification
+ui-options-build-auto-material-tab = Ouvrir l’onglet matériau adapté à la sélection
+ui-options-build-auto-material-tab-hint = Sélectionner un objet ouvre l’onglet PBR si l’une de ses faces affiche un matériau PBR, sinon Blinn-Phong. Désactivé : le dernier onglet choisi reste.
 
 
 

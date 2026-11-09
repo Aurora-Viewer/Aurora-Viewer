@@ -1747,7 +1747,10 @@ and tiled PBR texture with its UV/tint override in PBR; the other slab retains
 its PBR rendering. In the native viewer, click BP, PBR and
 Media repeatedly, select another object/linked part/face, then leave Materials
 or close/fold the editor. Each object must retain its last mode after
-deselection, independently of the next object. Use
+deselection, independently of the next object. A new selection opens on
+PBR when one of its faces shows a PBR material and on BP when none does
+(#1945; off in Preferences › Build › Editing); the scenario's own tab is
+kept for its first selection. Use
 `AURORA_DEMO_BUILD=material-deselect,object:151` for an automatic native capture
 after closing/deselection: BP must remain plain and PBR must remain tiled.
 Reselect an object and choose PBR to restore its material, including every
