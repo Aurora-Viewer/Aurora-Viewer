@@ -374,27 +374,17 @@ impl MediaDataClient {
         out
     }
 
-    /// Recompute a pending request's priority in either direction.
+    /// Recompute a pending request's priority in either direction. The queue
+    /// reads the latest value from this map when it selects a request.
     pub fn prioritize(&mut self, object: &Uuid, priority: u8) {
         if let Some((_, current)) = self.queued.get_mut(object) {
             *current = priority;
         }
-        for p in self
-            .sorted
-            .iter_mut()
-            .chain(&mut self.round_robin)
-            .chain(self.retrying.iter_mut().map(|(_, p)| p))
-            .filter(|p| p.object == *object)
-        {
-            p.priority = priority;
-        }
     }
 
-    /// Cancel a removed object's queued or in-flight request.
+    /// Cancel a removed object's queued or in-flight request. Its queue entry
+    /// is discarded on the next scan; a late answer fails the generation check.
     pub fn cancel(&mut self, object: &Uuid) {
-        self.sorted.retain(|p| p.object != *object);
-        self.round_robin.retain(|p| p.object != *object);
-        self.retrying.retain(|(_, p)| p.object != *object);
         self.queued.remove(object);
     }
 
@@ -438,17 +428,18 @@ impl MediaDataClient {
         // objects gone since they were queued (Request::isDead)
         let queued = &mut self.queued;
         let mut alive = |p: &mut Pending| {
-            let keep = interest(&p.object).is_some();
-            if !keep {
-                if queued.get(&p.object).is_some_and(|(generation, _)| *generation == p.generation) {
-                    queued.remove(&p.object);
-                }
-            } else if let Some((generation, priority)) = queued.get(&p.object).copied()
-                && generation == p.generation
-            {
-                p.priority = priority;
+            let Some((generation, priority)) = queued.get(&p.object).copied() else {
+                return false;
+            };
+            if generation != p.generation {
+                return false;
             }
-            keep
+            if interest(&p.object).is_none() {
+                queued.remove(&p.object);
+                return false;
+            }
+            p.priority = priority;
+            true
         };
         self.sorted.retain_mut(&mut alive);
         self.round_robin.retain_mut(&mut alive);
@@ -665,6 +656,21 @@ mod tests {
         c.request(id(1), "cap", false, HUD);
         assert!(c.answer(old, Ok(ObjectMediaData::default()), Instant::now()).is_none());
         assert_eq!(c.queued.get(&id(1)).map(|(_, p)| *p), Some(HUD));
+    }
+
+    #[test]
+    fn large_backlog_uses_latest_priority_and_skips_cancelled_entries() {
+        let mut c = MediaDataClient::default();
+        for n in 1..=5_000 {
+            c.request(id(n), "cap", false, WORLD);
+        }
+        // An ordinary object with no request must not disturb the backlog.
+        c.cancel(&id(6_000));
+        c.prioritize(&id(5_000), HUD);
+        c.cancel(&id(5_000));
+        c.request(id(5_001), "cap", false, HUD);
+        assert_eq!(c.next_due_object(Instant::now(), |_| Some((0.0, 1.0))), Some(id(5_001)));
+        assert!(!c.is_queued(&id(5_000)));
     }
 
     #[test]

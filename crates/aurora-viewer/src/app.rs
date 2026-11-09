@@ -4754,7 +4754,7 @@ impl App {
             return;
         }
         let (x, y) = self.cursor_pos;
-        if let Some((idx, point, hud_ray)) = self.scene.hud_pick(&self.world, (x, y), false)
+        if let Some((idx, point, hud_ray)) = self.scene.hud_click_pick(&self.world, (x, y))
             && !(self.alt && self.world.hud_move_locked(idx))
         {
             self.media.build_mode = self.build.open;

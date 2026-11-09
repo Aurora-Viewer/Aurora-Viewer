@@ -36,6 +36,41 @@ fn request_priority(e: &ObjMedia, shown: bool) -> u8 {
     }
 }
 
+/// The running plugin receives changed media parameters without being
+/// recreated or navigating away from its current page.
+trait MediaConfigTarget {
+    fn size(&mut self, width: i32, height: i32);
+    fn auto_scale(&mut self, enabled: bool);
+    fn looping(&mut self, enabled: bool);
+}
+
+impl MediaConfigTarget for MediaPlugin {
+    fn size(&mut self, width: i32, height: i32) {
+        self.set_size(width, height);
+    }
+
+    fn auto_scale(&mut self, enabled: bool) {
+        self.set_auto_scale(enabled);
+    }
+
+    fn looping(&mut self, enabled: bool) {
+        self.set_loop(enabled);
+    }
+}
+
+fn apply_entry_to_plugin(plugin: &mut impl MediaConfigTarget, old: (i32, i32, bool, bool), entry: &MediaEntry) {
+    let size = (entry.width_pixels as i32, entry.height_pixels as i32);
+    if (old.0, old.1) != size {
+        plugin.size(size.0, size.1);
+    }
+    if old.2 != entry.auto_scale {
+        plugin.auto_scale(entry.auto_scale);
+    }
+    if old.3 != entry.auto_loop {
+        plugin.looping(entry.auto_loop);
+    }
+}
+
 impl MediaManager {
     /// Update running plugins immediately, including while the native window
     /// is minimized and media frames may no longer be drawn.
@@ -155,6 +190,8 @@ impl MediaManager {
                 self.client.cancel(&id);
             }
         }
+        self.recently_shown
+            .retain(|_, at| now.saturating_duration_since(*at) < RECENTLY_SHOWN);
         for &idx in &changes {
             self.visit(world, idx, hud, now);
         }
@@ -250,8 +287,6 @@ impl MediaManager {
         if showing {
             self.recently_shown.insert(o.full_id, now);
         }
-        self.recently_shown
-            .retain(|_, at| now.saturating_duration_since(*at) < RECENTLY_SHOWN);
         let shown = showing || self.recently_shown.contains_key(&o.full_id);
         let avatar = attachment_avatar(world, idx);
         let on_other_avatar = avatar.is_some_and(|a| a != world.agent_id);
@@ -396,9 +431,13 @@ impl MediaManager {
                     m.may_navigate = may_navigate;
                     if m.entry.as_ref() != Some(entry) {
                         let old_url = m.entry.as_ref().map(|e| e.url().to_string()).unwrap_or_default();
+                        let (width, height) = (entry.width_pixels as i32, entry.height_pixels as i32);
+                        if let Some(plugin) = m.plugin.as_mut() {
+                            apply_entry_to_plugin(plugin, (m.width, m.height, m.auto_scale, m.looping), entry);
+                        }
                         m.entry = Some(entry.clone());
-                        m.width = entry.width_pixels as i32;
-                        m.height = entry.height_pixels as i32;
+                        m.width = width;
+                        m.height = height;
                         m.auto_scale = entry.auto_scale;
                         m.looping = entry.auto_loop;
                         // someone else navigated: follow (not our own change)
@@ -1057,6 +1096,49 @@ impl MediaImpl {
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn running_media_receives_changed_dimensions_scale_and_loop() {
+        #[derive(Default)]
+        struct Effective {
+            size: (i32, i32),
+            scale: bool,
+            looping: bool,
+            calls: usize,
+        }
+        impl MediaConfigTarget for Effective {
+            fn size(&mut self, width: i32, height: i32) {
+                self.size = (width, height);
+                self.calls += 1;
+            }
+            fn auto_scale(&mut self, enabled: bool) {
+                self.scale = enabled;
+                self.calls += 1;
+            }
+            fn looping(&mut self, enabled: bool) {
+                self.looping = enabled;
+                self.calls += 1;
+            }
+        }
+        let mut running = Effective {
+            size: (640, 360),
+            ..Default::default()
+        };
+        let changed = MediaEntry {
+            width_pixels: 1024,
+            height_pixels: 512,
+            auto_scale: true,
+            auto_loop: true,
+            ..Default::default()
+        };
+        apply_entry_to_plugin(&mut running, (640, 360, false, false), &changed);
+        assert_eq!(
+            (running.size, running.scale, running.looping, running.calls),
+            ((1024, 512), true, true, 3)
+        );
+        apply_entry_to_plugin(&mut running, (1024, 512, true, true), &changed);
+        assert_eq!(running.calls, 3, "an unchanged entry must not reconfigure the plugin");
+    }
 
     #[test]
     fn minimized_mute_restores_media_source_volume_and_rolloff() {

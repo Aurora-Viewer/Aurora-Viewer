@@ -413,6 +413,90 @@ mod tests {
     use super::*;
 
     #[test]
+    fn hud_press_reaches_media_behind_a_plain_invisible_panel() {
+        let (mut world, mut scene, front, back) = crate::scene::picking::tests::scene_with_two_objects();
+        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let parent = world.objects.get(own).unwrap().key.local_id;
+        let mut media = MediaManager::default();
+        for (idx, x) in [(front, 3.0), (back, 7.0)] {
+            let o = world.objects.get_mut(idx).unwrap();
+            o.parent_id = parent;
+            o.state = 31u8.rotate_left(4);
+            o.position = Vec3::new(x, 0.0, 0.0);
+            o.click_action = crate::interaction::code::NONE;
+            o.update_flags = 0;
+            let id = o.full_id;
+            let cache_key = o.visual_volume().cache_key() ^ (3u64 << 60);
+            let key = MediaKey::Prim { object: id, face: 0 };
+            media.objects.insert(
+                id,
+                ObjMedia {
+                    idx,
+                    data: Some(ObjectMediaData {
+                        faces: vec![Some(MediaEntry {
+                            current_url: "https://example.invalid/media".into(),
+                            ..Default::default()
+                        })],
+                        ..Default::default()
+                    }),
+                    hud: true,
+                    ..Default::default()
+                },
+            );
+            media
+                .impls
+                .push(MediaImpl::new(key, "https://example.invalid/media".into(), "text/html".into()));
+            media.pick_cache.insert(
+                id,
+                (
+                    cache_key,
+                    Arc::new(vec![Some(CpuFace {
+                        positions: vec![[-0.5, -0.5, -0.5], [-0.5, 0.5, -0.5], [-0.5, 0.5, 0.5], [-0.5, -0.5, 0.5]],
+                        uvs: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                        indices: vec![0, 2, 1, 0, 3, 2],
+                    })]),
+                ),
+            );
+            let g = &mut scene.gpu[idx];
+            g.hud = true;
+            g.owner_avatar = Some(own);
+            g.center = o.position;
+            g.radius = 1.0;
+        }
+        Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].color[3] = 0.0;
+        scene.index_objects();
+        scene.build_huds(&world, [1280, 720], true);
+        let cursor = (640.0, 360.0);
+        let press = |media: &mut MediaManager, world: &World, scene: &Scene| {
+            let (idx, point, ray) = scene.hud_click_pick(world, cursor).unwrap();
+            let distance = (point - ray.0).dot(ray.1);
+            assert!(media.on_click(
+                world,
+                scene,
+                ray,
+                Some(distance),
+                &MediaSettings::default(),
+                Modifiers::default(),
+                true,
+                Some(idx),
+            ));
+            idx
+        };
+        assert_eq!(press(&mut media, &world, &scene), back);
+        assert_eq!(
+            media.focus,
+            Some(MediaKey::Prim {
+                object: world.objects.get(back).unwrap().full_id,
+                face: 0
+            })
+        );
+
+        // A touch script makes the transparent front face a deliberate clicker.
+        world.objects.get_mut(front).unwrap().update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        assert_eq!(press(&mut media, &world, &scene), front);
+    }
+
+    #[test]
     fn a_media_face_at_alpha_zero_lets_the_click_through_unless_its_prim_is_touchable() {
         let library = Arc::new(crate::scene::avatar::AvatarLibrary::load());
         let mut world = World::new(library.clone());

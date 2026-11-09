@@ -67,6 +67,9 @@ pub(super) enum FacePick {
     Geometry,
     Inventory,
     HudMove,
+    /// HUD press: transparent scripted clickers win, plain alpha-zero
+    /// panels let a visible button behind them take the click.
+    HudClick,
     /// Left button: only world Blend faces test exact texels at the legacy alpha threshold.
     Left,
     LeftBlend,
@@ -899,7 +902,9 @@ impl Scene {
             if only_hidden && !hidden && !Self::face_undrawn(g, face) {
                 return None;
             }
-            if !include_hidden && super::plants::plant_face(o).is_none() && hidden && !(g.hud && mode == FacePick::Surface) {
+            let hud_clicker = g.hud && mode == FacePick::HudClick && crate::interaction::special_hover_cursor(o);
+            if !include_hidden && super::plants::plant_face(o).is_none() && hidden && !(g.hud && mode == FacePick::Surface) && !hud_clicker
+            {
                 return None;
             }
             let f = f.as_ref()?;
@@ -946,7 +951,7 @@ impl Scene {
                     // every alpha mode, including Mask cutouts. Hover follows
                     // the same target; quick movement keeps texture holes.
                     // Right-click selection already includes hidden surfaces.
-                    if g.hud && mode == FacePick::Surface {
+                    if g.hud && matches!(mode, FacePick::Surface | FacePick::HudClick) {
                         return Some(hit);
                     }
                     let draw = geom
@@ -955,7 +960,7 @@ impl Scene {
                         .and_then(Option::as_ref)
                         .and_then(|a| g.faces.iter().find(|f| f.cmd.first_index == a.index_offset))?;
                     if g.hud && (draw.pass == Pass::Hidden || draw.te_alpha < 0.004) {
-                        return (mode == FacePick::Surface).then_some(hit);
+                        return matches!(mode, FacePick::Surface | FacePick::HudClick).then_some(hit);
                     }
                     let ignore_alpha = draw.pbr_alpha == Some(0)
                         || matches!(
