@@ -2057,3 +2057,156 @@ fn find_opens_in_every_style() {
         assert!(h.st.searches.get(&Some(JANE)).is_some_and(|s| s.find.is_some()), "{style:?}");
     }
 }
+
+/// The OOC shortcut uses the same send path in local chat, IMs, groups,
+/// conferences and detached panes. Other Alt chords leave the draft alone.
+#[test]
+fn ooc_shortcut_sends_in_every_conversation_style() {
+    for style in ALL {
+        for conversation in [None, Some(JANE), Some(GROUP), Some(MEETING)] {
+            for detached in [false, true] {
+                let mut h = H::new(style);
+                h.open(conversation);
+                if detached {
+                    h.st.pop_out(conversation);
+                    h.st.conv_focus_request = true;
+                    h.settle();
+                }
+                h.history_key(egui::Key::Enter, egui::Modifiers::ALT);
+                assert!(
+                    !h.take().iter().any(|a| matches!(a, ConvAction::Local(_) | ConvAction::Im { .. })),
+                    "empty OOC"
+                );
+                h.type_text("brb");
+                for extra in [egui::Modifiers::CTRL, egui::Modifiers::SHIFT, egui::Modifiers::MAC_CMD] {
+                    h.history_key(egui::Key::Enter, egui::Modifiers::ALT | extra);
+                    assert!(!h.take().iter().any(|a| matches!(a, ConvAction::Local(_) | ConvAction::Im { .. })));
+                    assert_eq!(h.st.draft_mut(conversation), "brb");
+                }
+                h.history_key(egui::Key::Enter, egui::Modifiers::ALT);
+                assert!(
+                    h.take().iter().any(|a| match a {
+                        ConvAction::Local(out) => {
+                            out.message == "(( brb ))" && out.channel == 0 && out.chat_type == aurora_net::ChatType::Normal
+                        }
+                        ConvAction::Im { to, text } => Some(*to) == conversation && text == "(( brb ))",
+                        _ => false,
+                    }),
+                    "{style:?}, {conversation:?}, detached={detached}"
+                );
+            }
+        }
+    }
+}
+
+/// OOC overrides a selected whisper/shout for this send only. The user's
+/// selected volume still applies to the following ordinary message.
+#[test]
+fn ooc_shortcut_always_uses_normal_volume() {
+    for style in ALL {
+        for volume in [Volume::Whisper, Volume::Say, Volume::Shout] {
+            for detached in [false, true] {
+                let mut h = H::new(style);
+                h.open(None);
+                if detached {
+                    h.st.pop_out(None);
+                    h.st.conv_focus_request = true;
+                    h.settle();
+                }
+                h.st.volume = volume;
+                h.type_text("brb");
+                h.history_key(egui::Key::Enter, egui::Modifiers::ALT);
+                assert!(
+                    h.take().iter().any(|a| matches!(a, ConvAction::Local(out)
+                        if out.message == "(( brb ))" && out.chat_type == aurora_net::ChatType::Normal)),
+                    "{style:?}, {volume:?}, detached={detached}: normal OOC"
+                );
+                assert_eq!(h.st.volume, volume);
+                h.type_text("ordinary");
+                h.history_key(egui::Key::Enter, egui::Modifiers::NONE);
+                let expected = match (style.workspace(), volume) {
+                    (true, Volume::Whisper) => aurora_net::ChatType::Whisper,
+                    (true, Volume::Shout) => aurora_net::ChatType::Shout,
+                    _ => aurora_net::ChatType::Normal,
+                };
+                assert!(h.take().iter().any(|a| matches!(a, ConvAction::Local(out)
+                    if out.message == "ordinary" && out.chat_type == expected)));
+            }
+        }
+    }
+}
+
+/// Events are queued until a frame is drawn: a later modifier release or
+/// press must not turn a refused chord into a send or change its formatting.
+#[test]
+fn ooc_shortcut_uses_the_enter_events_modifiers() {
+    use egui::Modifiers as M;
+    let cases = [
+        (M::ALT, M::NONE, Some("(( brb ))")),
+        (M::NONE, M::ALT, Some("brb")),
+        (M::CTRL | M::ALT, M::ALT, None),
+        (M::CTRL | M::ALT, M::CTRL, None),
+        (M::SHIFT | M::ALT, M::ALT, None),
+    ];
+    for style in ALL {
+        for conversation in [None, Some(JANE), Some(GROUP), Some(MEETING)] {
+            for (pressed, after, expected) in cases {
+                let mut h = H::new(style);
+                h.open(conversation);
+                h.type_text("brb");
+                let mut events = history_events(egui::Key::Enter, pressed);
+                events.push(egui::Event::ModifiersChanged(after));
+                h.frame(events);
+                let sent = h.take().into_iter().find_map(|a| match a {
+                    ConvAction::Local(out) => {
+                        assert_eq!(out.chat_type, aurora_net::ChatType::Normal);
+                        Some(out.message)
+                    }
+                    ConvAction::Im { text, .. } => Some(text),
+                    _ => None,
+                });
+                assert_eq!(sent.as_deref(), expected, "{style:?}, {conversation:?}, {pressed:?} -> {after:?}");
+                if expected.is_none() {
+                    assert_eq!(h.st.draft_mut(conversation), "brb");
+                }
+            }
+        }
+    }
+}
+
+/// The bar/island shares event classification with conversations. Wrapping
+/// comes before channel parsing, and Ctrl/Shift retain their event's volume.
+#[test]
+fn ooc_shortcut_keeps_bar_channel_focus_and_event_volume() {
+    use aurora_net::ChatType as C;
+    use egui::Modifiers as M;
+    let cases = [
+        (M::ALT, M::NONE, Some((0, "(( /5 brb ))", C::Normal))),
+        (M::CTRL | M::ALT, M::ALT, None),
+        (M::SHIFT | M::ALT, M::ALT, None),
+        (M::CTRL, M::NONE, Some((5, "brb", C::Shout))),
+        (M::SHIFT, M::NONE, Some((5, "brb", C::Whisper))),
+    ];
+    for (pressed, after, expected) in cases {
+        let mut h = H::new(ChatStyle::Aurora);
+        h.st.keep_focus = true;
+        h.st.focus_request = true;
+        h.bar_frame(Vec::new());
+        h.bar_frame(Vec::new());
+        h.bar_frame(vec![egui::Event::Text("/5 brb".into())]);
+        let mut events = history_events(egui::Key::Enter, pressed);
+        events.push(egui::Event::ModifiersChanged(after));
+        let sent = h.bar_frame(events);
+        assert_eq!(
+            sent.as_ref().map(|out| (out.channel, out.message.as_str(), out.chat_type)),
+            expected
+        );
+        h.bar_frame(Vec::new());
+        assert!(h.frames.ctx.memory(|m| m.has_focus(super::bar_input_id())));
+        if expected.is_none() {
+            assert_eq!(h.st.input, "/5 brb");
+        } else {
+            assert!(h.st.input.is_empty());
+        }
+    }
+}
