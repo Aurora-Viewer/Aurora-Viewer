@@ -378,6 +378,7 @@ impl LandUi {
                 &AgentRights {
                     id: world.agent_id,
                     groups: &world.groups.groups,
+                    god: world.god_level > 0,
                 },
                 crate::world::land::powers::LAND_CHANGE_IDENTITY,
             )
