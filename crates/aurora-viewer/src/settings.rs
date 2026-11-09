@@ -764,6 +764,10 @@ pub struct Settings {
     /// The same row with the Legacy chat style: off, as the Legacy Viewer's
     /// row starts closed behind its arrow (the human's choice, 2026-11-09).
     pub show_recent_emojis_legacy: bool,
+    /// Favourite emojis, kept by a right-click on an emoji: first in the
+    /// recent row and a star tab in the picker. Off (the human's choice,
+    /// 2026-11-09; an Aurora addition); Preferences > Chat.
+    pub favorite_emojis: bool,
     /// Our own objects' script errors in the nearby chat, with a red
     /// warning sign, instead of opening the Script debug window, which
     /// still keeps them (ShowScriptErrorsLocation 0; on, the human's choice
@@ -1995,6 +1999,7 @@ impl Default for Settings {
             show_chat_channel: false,
             show_recent_emojis: true,
             show_recent_emojis_legacy: false,
+            favorite_emojis: false,
             script_errors_in_chat: true,
             script_errors_to_channel: false,
             script_errors_channel: 1,
@@ -3892,6 +3897,8 @@ mod tests {
         let old: Settings = serde_json::from_str("{}").expect("synthetic old settings");
         assert!(old.show_recent_emojis);
         assert!(!old.show_recent_emojis_legacy);
+        assert!(!Settings::default().favorite_emojis, "favourites off by default");
+        assert!(!old.favorite_emojis);
         let original = Settings {
             show_recent_emojis: false,
             ..Settings::default()
