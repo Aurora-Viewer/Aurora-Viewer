@@ -7592,6 +7592,7 @@ app-item = Item
 world-inventory-demo-demo-item-for-inventory-filters = Demo item for inventory filters
 common-item-not-found = Item not found.
 world-inventory-demo-item = { "Item " }{ $n }
+world-inventory-demo-folder = { "Folder " }{ $n }
 ui-appearance-attached-items = Attached items
 ui-appearance-temporary-items = Temporary attachments ({ $count })
 ui-appearance-items-to-wear = Items to wear

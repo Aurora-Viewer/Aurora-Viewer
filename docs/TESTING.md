@@ -9500,6 +9500,9 @@ separate searches enabled and disabled; that preference controls only the text.
 - `sort`, `filters`, `preferences`, `recent`, `worn`, `filtered`, `large`:
   system / date sort, filters, preferences, Recent / Worn tree,
   filter excluding objects or search of 1,500 items.
+- `many-folders`, `aurora-many-folders`: 300 more top folders, in the
+  Legacy and Aurora styles; scroll to the end, press Collapse: the list
+  goes back to its top.
 - `long`, `long-filtered`: long names and horizontal scrolling in
   the full or filtered tree.
 - `resize-left`, `resize-right`: with a screenshot, drag the corresponding
