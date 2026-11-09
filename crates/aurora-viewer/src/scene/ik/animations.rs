@@ -87,6 +87,7 @@ mod tests {
                     duration: 2.0,
                     emote_name: String::new(),
                     looping: true,
+                    ends_after: None,
                     loop_in: 0.0,
                     loop_out: 2.0,
                     ease_in: 1.0,

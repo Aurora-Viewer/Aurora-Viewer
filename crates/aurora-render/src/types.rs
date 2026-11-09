@@ -366,6 +366,16 @@ impl DrawRecord {
         self.flags[3] = (self.flags[3] & !flags::WORLD_BLEND_PICK) | if enabled { flags::WORLD_BLEND_PICK } else { 0 };
     }
 
+    /// Layer rank (0..=`flags::LAYER_RANK_MAX`) of a face that may lie
+    /// exactly on another one, such as a worn layer made from the body's own
+    /// mesh: the vertex shaders pull a higher rank toward the camera by a few
+    /// depth steps (`layer_clip`), so the same layer wins on every face and
+    /// after every rebuild, whatever the order of the draw records.
+    pub fn set_layer_rank(&mut self, rank: u32) {
+        let mask = flags::LAYER_RANK_MAX << flags::LAYER_RANK_SHIFT;
+        self.flags[3] = (self.flags[3] & !mask) | ((rank.min(flags::LAYER_RANK_MAX)) << flags::LAYER_RANK_SHIFT);
+    }
+
     /// Upper 16 bits of flags.x: visual HUD zoom in units of 1/4096.
     /// Zero means 1. The shader removes it from planar texture generation,
     /// before materials and animations, without enlarging every GPU record.
@@ -1685,6 +1695,9 @@ pub struct RenderStats {
     /// presentation (ms; None when it was not presented). What the GPU
     /// still has to draw after `present` is not in it.
     pub input_ms: Option<f32>,
+    /// The render targets could not be made: video memory is full, the
+    /// frame shows the interface alone, and they are tried again.
+    pub video_memory_full: bool,
     /// Main thread: the sleep the frame pacing asks before the next frame
     /// reads its input (pacing.rs, ms).
     pub pace_ms: f32,
