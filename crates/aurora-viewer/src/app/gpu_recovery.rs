@@ -209,7 +209,13 @@ impl App {
         };
         let maximized = old.window.is_maximized();
         let Gfx { mut renderer, window, .. } = old;
+        let released = Instant::now();
         self.forget_gpu_scene(&mut renderer);
+        // (#2997: a scene paged out to the disk once took over 10 s here)
+        log::info!(
+            "GPU recovery: the scene let go of the lost device in {} ms",
+            released.elapsed().as_millis()
+        );
         // the lost renderer first: its surface is made from this window's
         // handles (Renderer::new's contract)
         drop(renderer);
