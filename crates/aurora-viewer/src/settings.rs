@@ -12,11 +12,6 @@ pub mod registry;
 mod saver;
 pub mod stream_list;
 
-/// How the Conversations window looks (Preferences › Aurora): Aurora's
-/// workspace (the default: a column of conversations, messages grouped by
-/// author with their picture, `ui/chat/aurora.rs`), its compact variant (one
-/// row per message, no pictures), a messenger's bubbles (`ui/chat/bubbles.rs`)
-/// or the lines of Firestorm's conversations (the legacy style).
 /// Where a contact-set marker stands on an avatar (`ui/contact_markers.rs`).
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum MarkerAnchor {
@@ -27,6 +22,11 @@ pub enum MarkerAnchor {
     Body,
 }
 
+/// How the Conversations window looks (Preferences › Aurora): Aurora's
+/// workspace (the default: a column of conversations, messages grouped by
+/// author with their picture, `ui/chat/aurora.rs`), its compact variant (one
+/// row per message, no pictures), a messenger's bubbles (`ui/chat/bubbles.rs`)
+/// or the lines of Firestorm's conversations (the legacy style).
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ChatStyle {
     #[default]
