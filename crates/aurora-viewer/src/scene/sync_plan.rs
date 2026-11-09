@@ -249,6 +249,7 @@ pub(super) struct SyncCtx<'a> {
     fov_y: f32,
     mesh_lod_overrides: &'a HashMap<crate::world::objects::ObjKey, u8>,
     mesh_lod_resets: &'a HashMap<crate::world::objects::ObjKey, super::mesh_inspection::LodReset>,
+    surface_hidden: &'a std::collections::HashSet<usize>,
     mat_gen: u64,
     mat_changes: &'a super::mat_changes::MatChanges,
 }
@@ -519,7 +520,7 @@ impl SyncCtx<'_> {
             xf: Some(xf),
             interim: self.interim_move(idx, o, g, xf),
         };
-        if o.shape_dirty || o.material_dirty {
+        if o.shape_dirty || o.material_dirty || self.surface_hidden.contains(&idx) {
             return full();
         }
         if g.sculpt_wait.is_some() || self.mat_changes.stale(&g.material_ids, g.mat_generation, self.mat_gen) {
@@ -645,6 +646,7 @@ impl Scene {
             fov_y: self.fov_y,
             mesh_lod_overrides: &self.mesh_lod_overrides,
             mesh_lod_resets: &self.mesh_lod_resets,
+            surface_hidden: &self.surface_hidden,
             mat_gen: self.materials.generation,
             mat_changes: &self.mat_changes,
         }

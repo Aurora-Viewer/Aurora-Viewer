@@ -392,7 +392,12 @@ impl Object {
             self.te = u.texture_entry;
         }
         self.extra = u.extra;
-        self.name_values = u.name_values;
+        // Follow LLViewerObject::processUpdateMessage:
+        // if (nv_size > 0) setNameValueList(...) (indra/newview/llviewerobject.cpp).
+        // Empty NameValues in an update do not clear existing NameValues.
+        if !u.name_values.is_empty() {
+            self.name_values = u.name_values;
+        }
         self.text = u.text;
         self.text_color = u.text_color;
         if self.set_tex_anim(u.texture_anim, Instant::now()) {
@@ -492,6 +497,20 @@ impl Object {
             }
         }
         None
+    }
+
+    /// Update the avatar's worn group title in its `name_values`
+    /// (e.g. after receiving `NetEvent::ActiveGroup`).
+    pub fn set_group_title(&mut self, title: Option<&str>) {
+        let mut lines: Vec<&str> = self.name_values.lines().filter(|l| !l.starts_with("Title ")).collect();
+        let new_line = title.filter(|t| !t.trim().is_empty()).map(|t| format!("Title STRING RW SV {t}"));
+        if let Some(ref l) = new_line {
+            lines.push(l);
+        }
+        self.name_values = lines.join("\n");
+        if !self.name_values.is_empty() {
+            self.name_values.push('\n');
+        }
     }
 
     /// Local position and rotation drawn at `now`, `motion_time` being the
@@ -1693,7 +1712,7 @@ impl ObjectStore {
 
     /// A prim of a linkset worn on a HUD point (31–38). The simulator only
     /// sends the HUDs of our own avatar.
-    fn worn_on_hud(&self, mut idx: usize) -> bool {
+    pub fn worn_on_hud(&self, mut idx: usize) -> bool {
         for _ in 0..16 {
             let Some(o) = self.get(idx) else {
                 return false;
@@ -1728,6 +1747,40 @@ mod tests {
     }
 
     const SMOOTH_ON: u8 = TextureAnim::ON | TextureAnim::SMOOTH | TextureAnim::LOOP;
+
+    #[test]
+    fn full_update_with_empty_name_values_keeps_previous() {
+        let mut full = update(1, AVATAR, "");
+        full.name_values = "FirstName STRING RW SV Test\nTitle STRING RW SV Initial".into();
+        let mut avatar = Object::from_update(1, full);
+        assert_eq!(avatar.group_title().as_deref(), Some("Initial"));
+
+        // Follow LLViewerObject::processUpdateMessage: an update with empty name_values preserves existing values.
+        let mut update_empty_nv = update(1, AVATAR, "");
+        update_empty_nv.name_values.clear();
+        avatar.apply_full(update_empty_nv);
+        assert_eq!(avatar.group_title().as_deref(), Some("Initial"));
+        assert!(avatar.name_values.contains("FirstName STRING RW SV Test"));
+    }
+
+    #[test]
+    fn group_title_name_value_update_and_clear() {
+        let mut full = update(1, AVATAR, "");
+        full.name_values = "FirstName STRING RW SV Test\nLastName STRING RW SV Resident\nTitle STRING RW SV Initial".into();
+        let mut avatar = Object::from_update(1, full);
+        assert_eq!(avatar.group_title().as_deref(), Some("Initial"));
+
+        // Update to a new title
+        avatar.set_group_title(Some("New Title"));
+        assert_eq!(avatar.group_title().as_deref(), Some("New Title"));
+
+        // Clear title (none)
+        avatar.set_group_title(None);
+        assert_eq!(avatar.group_title(), None);
+        assert!(avatar.name_values.contains("FirstName STRING RW SV Test"));
+        assert!(avatar.name_values.contains("LastName STRING RW SV Resident"));
+        assert!(!avatar.name_values.contains("Title"));
+    }
 
     #[test]
     fn avatar_contact_plane_survives_absent_blocks_and_accepts_explicit_clears() {

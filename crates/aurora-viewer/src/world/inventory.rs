@@ -546,6 +546,13 @@ impl Inventory {
         self.items.len()
     }
 
+    /// Loaded items and folders, including both roots, the Library and links.
+    /// Follows LLPanelMainInventory::updateItemcountText and
+    /// LLInventoryModel::{getItemCount,getCategoryCount} (indra/newview).
+    pub fn total_count(&self) -> usize {
+        self.item_count() + self.folders.len()
+    }
+
     /// AIS deletions remove descendants too; retain no stale search results.
     pub fn remove(&mut self, ids: &[Uuid]) {
         let mut removed: HashSet<_> = ids.iter().copied().collect();
@@ -801,6 +808,80 @@ pub fn read_cache_in_background(path: std::path::PathBuf) -> crossbeam_channel::
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inventory_total_counts_folders_library_trash_and_links() {
+        let id = Uuid::from_u128;
+        let mut inv = Inventory {
+            root: id(1),
+            lib_root: id(2),
+            ..Default::default()
+        };
+        assert_eq!(inv.total_count(), 0);
+        for (n, parent, kind, library) in [
+            (1, 0, 8, false),
+            (2, 0, 8, true),
+            (3, 1, 14, false),
+            (4, 2, -1, true),
+            (5, 1, -1, false),
+        ] {
+            inv.folders.insert(
+                id(n),
+                Folder {
+                    info: InvFolder {
+                        id: id(n),
+                        parent: id(parent),
+                        type_default: kind,
+                        ..Default::default()
+                    },
+                    children: Vec::new(),
+                    items: Vec::new(),
+                    state: FetchState::Unknown,
+                    library,
+                },
+            );
+        }
+        inv.add_items(
+            [
+                (100, 1, 6, 0),
+                (101, 4, 6, 0),
+                (102, 1, 24, 100),
+                (103, 1, 24, 999),
+                (104, 1, 25, 5),
+                (105, 3, 6, 0),
+            ]
+            .into_iter()
+            .map(|(n, parent, asset_type, target)| InvItem {
+                id: id(n),
+                parent: id(parent),
+                asset_type,
+                asset_id: id(target),
+                ..Default::default()
+            })
+            .collect(),
+        );
+        inv.items_missing(vec![id(999)]);
+        assert_eq!(inv.item_count(), 6, "item-only consumers retain their count");
+        assert_eq!(
+            inv.total_count(),
+            11,
+            "five folders plus six records, including aliases and a broken link"
+        );
+        // Moving a record or receiving it again never counts it twice.
+        let mut moved = inv.items[&id(100)].clone();
+        moved.parent = id(5);
+        inv.add_items(vec![moved.clone(), moved]);
+        assert_eq!(inv.total_count(), 11);
+        inv.remove(&[id(3)]);
+        assert_eq!(inv.total_count(), 9, "removing Trash removes its category and contained item");
+        let folder = InvFolder {
+            id: id(6),
+            parent: inv.root,
+            ..Default::default()
+        };
+        inv.created_folders(vec![folder.clone(), folder]);
+        assert_eq!(inv.total_count(), 10, "a new empty folder counts once");
+    }
 
     fn fixture() -> Inventory {
         let mut inv = Inventory {
