@@ -8850,7 +8850,7 @@ impl App {
                 _ => {}
             }
         }
-        if self.updater.poll(&self.settings, &mut self.login_info, self.net.runtime()) {
+        if self.updater.poll(&mut self.settings, &mut self.login_info, self.net.runtime()) {
             self.shutdown(event_loop);
             return;
         }
