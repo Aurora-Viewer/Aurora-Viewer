@@ -94,6 +94,15 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     0.0..=60.0,
                     " s",
                 );
+                // ConsoleMaxLines (panel_preferences_chat.xml): count the
+                // wrapped text rows, as LLConsole::draw does.
+                cx.slider(
+                    tr!("ui-options-chat-console-max-lines"),
+                    tr!("ui-options-chat-console-max-lines-hint"),
+                    &field!(chat_console_max_lines),
+                    0..=50,
+                    "",
+                );
                 // the Legacy Viewer's Chat › Visuals (UseChatBubbles and what
                 // depends on it; ChatBubbleOpacity is in its Colors), #673
                 cx.toggle(

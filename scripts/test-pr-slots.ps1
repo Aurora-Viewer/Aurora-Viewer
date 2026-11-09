@@ -11,7 +11,7 @@ function Assert-Set($Actual, [int[]]$Expected, [string]$Name) {
 }
 # PR $n created on day $n (older = smaller number)
 function New-Pr([int]$n, [switch]$Draft, [switch]$Waiting, [switch]$OnHold, [switch]$Protected, [switch]$Reviewed) {
-    [pscustomobject]@{ Number = $n; Draft = [bool]($Draft -or $Waiting); Waiting = [bool]$Waiting; OnHold = [bool]$OnHold
+    [pscustomobject]@{ Number = $n; Draft = [bool]$Draft; Waiting = [bool]$Waiting; OnHold = [bool]$OnHold
         Protected = [bool]$Protected; Reviewed = [bool]$Reviewed; Created = ('2026-11-{0:d2}T00:00:00Z' -f $n) }
 }
 
@@ -34,7 +34,7 @@ Assert-Set $p.Wait @(3) 'a protected PR keeps its slot'
 $p = Get-PrSlotPlan @(1..4 | ForEach-Object { New-Pr $_ -Protected }) 3
 Assert-Set $p.Wait @() 'protected PRs never wait'
 
-# the one its author just marked ready takes a slot; their newest other waits
+# the one whose label a maintainer just removed takes a slot; the newest other waits
 $items = @((1..3 | ForEach-Object { New-Pr $_ }) + (New-Pr 4))
 $p = Get-PrSlotPlan $items 3 4
 Assert-Set $p.Wait @(3) 'the preferred PR stays in review'
@@ -51,23 +51,26 @@ $p = Get-PrSlotPlan $items 3
 Assert-Set $p.Wait @() 'no swap at the limit'
 Assert-Set $p.Back @() 'no swap at the limit, back'
 
-# the author's own drafts and PRs on hold take no slot and are left alone
+# drafts and PRs on hold take no slot and are left alone
 $items = @((New-Pr 1), (New-Pr 2), (New-Pr 3 -Draft), (New-Pr 4 -OnHold), (New-Pr 5 -Waiting))
 $p = Get-PrSlotPlan $items 3
-Assert-Set $p.Back @(5) 'own drafts and on-hold take no slot'
-Assert-Set $p.Wait @() 'own drafts and on-hold never wait'
+Assert-Set $p.Back @(5) 'drafts and on-hold take no slot'
+Assert-Set $p.Wait @() 'drafts and on-hold never wait'
+Assert-Set $p.Unlabel @() 'nothing to unlabel'
 
-# marked ready by its author while a slot was free: only the label goes
-$items = @((New-Pr 1), [pscustomobject]@{ Number = 2; Draft = $false; Waiting = $true; OnHold = $false; Protected = $false; Reviewed = $false; Created = '2026-11-02T00:00:00Z' })
+# a waiting PR its author turned into a draft, or put on hold: only the label goes
+$items = @((New-Pr 1), (New-Pr 2 -Waiting -Draft), (New-Pr 3 -Waiting -OnHold))
 $p = Get-PrSlotPlan $items 3
-Assert-Set $p.Unlabel @(2) 'a ready PR loses the label'
+Assert-Set $p.Unlabel @(2, 3) 'a waiting draft or on-hold PR loses the label'
+Assert-Set $p.Back @() 'a draft does not come back'
 
 # the comments
 $links = Get-PrSlotLinks 'Aurora-Viewer/Aurora-Viewer' 'someone'
-Assert-Slot ($links.Review.Contains('author%3Asomeone') -and $links.Review.Contains('-is%3Adraft')) 'The review link lists the author''s PRs in review.'
+Assert-Slot ($links.Review.Contains('author%3Asomeone') -and $links.Review.Contains('-is%3Adraft') -and $links.Review.Contains("-label%3A$PrSlotLabel")) 'The review link lists the author''s PRs in review.'
 Assert-Slot ($links.Waiting.Contains("label%3A$PrSlotLabel")) 'The waiting link lists the waiting PRs.'
 $wait = Format-PrSlotWait 'someone' 42 $links
 Assert-Slot ($wait.StartsWith('## Waiting for a review slot')) 'The waiting comment opens with its heading.'
+Assert-Slot ($wait.Contains("``$PrSlotLabel``") -and -not $wait.Contains('draft**')) 'The waiting comment names the label, not a draft.'
 Assert-Slot ($wait.Contains('Hi @someone') -and $wait.Contains('**42** open') -and $wait.Contains("**$PrSlotLimit pull requests in review**")) 'The waiting comment names the author, the count and the limit.'
 Assert-Slot ($wait.TrimEnd().EndsWith($PrSlotMarker)) 'The waiting comment ends with its marker.'
 $back = Format-PrSlotBack 'someone'
