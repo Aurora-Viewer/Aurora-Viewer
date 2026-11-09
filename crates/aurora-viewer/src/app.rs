@@ -4459,6 +4459,7 @@ impl App {
     fn walk_tap(&mut self, group: u8, pressed: bool) {
         if pressed && self.in_world() {
             if self.temp_run.is_none()
+                && self.settings.double_tap_run
                 && let Some((last, at)) = self.last_tap
                 && last == group
                 && at.elapsed().as_secs_f32() < NUDGE_TIME

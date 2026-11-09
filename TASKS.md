@@ -1,5 +1,7 @@
 # Aurora Viewer — task tracking
 
+- 🔧 Option to turn off double-tap running (human request, 2026-11-09; task `double-tap-run-toggle`; no issue): Preferences › Mouse and keyboard › Keyboard, "Double-tap a walk key to run", setting `double_tap_run`, on by default. Aurora extension: the Legacy Viewer always runs on a double tap (agent_handle_doubletap_run, llviewerinput.cpp). Off, walk keys and the steering right button never start a temporary run; Always run is unchanged.
+
 - 🟡 Always run stays on after a region change ([#3041](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/3041); [PR #3047](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/3047); task `always-run-region-3041`, 2026-11-09): re-send SetAlwaysRun on AgentMovementComplete like LLAgent::sendWalkRun after RegionHandshake. Demo / grid: enable Always run, cross a region or teleport, keep running.
   - ⬜ QA: on the grid, turn on Always run (Ctrl+R or Controls › Run), walk across a region border: the avatar keeps running and Controls still shows Run; same after a teleport; turn Always run off then cross again: the avatar walks; with RLVa @alwaysrun=n the avatar walks after a crossing; a double-tap run and a joystick run keep working across a border.
 

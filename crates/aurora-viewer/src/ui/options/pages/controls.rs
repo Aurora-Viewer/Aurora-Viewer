@@ -43,6 +43,11 @@ pub fn page(cx: &mut Cx) {
             &field!(arrows_strafe),
         );
         cx.toggle(
+            tr!("ui-options-double-tap-run"),
+            tr!("ui-options-double-tap-run-help"),
+            &field!(double_tap_run),
+        );
+        cx.toggle(
             tr!("ui-options-arrow-keys-always-move"),
             tr!("ui-options-arrow-keys-always-move-help"),
             &field!(arrow_keys_always_move),
