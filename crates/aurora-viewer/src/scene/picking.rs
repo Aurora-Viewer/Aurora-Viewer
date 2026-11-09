@@ -10,6 +10,7 @@ use rayon::prelude::*;
 use std::sync::atomic::Ordering::Relaxed;
 
 pub struct PickFace {
+    pub bounds: super::blend_order::FaceBounds,
     pub positions: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
     pub indices: Vec<u16>,
@@ -75,6 +76,7 @@ pub(super) enum FacePick {
 impl PickFace {
     pub fn new(positions: Vec<[f32; 3]>, uvs: Vec<[f32; 2]>, indices: Vec<u16>) -> PickFace {
         PickFace {
+            bounds: super::blend_order::FaceBounds::of(&positions),
             positions,
             uvs,
             indices,
@@ -2602,6 +2604,7 @@ pub(crate) mod tests {
             base_slot: 0,
             tex_id: Uuid::nil(),
             aux_tex: [Uuid::nil(); 3],
+            bump_height_source: Uuid::nil(),
             te_alpha: 1.0,
             pbr_alpha: None,
             legacy_alpha: None,
