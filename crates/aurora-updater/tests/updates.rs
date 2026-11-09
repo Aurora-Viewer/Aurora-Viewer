@@ -596,7 +596,9 @@ fn the_policy_sets_the_grace_period_below_a_new_minimum() {
         .to_string();
         let policy = format!("{{\"schema\":1,\"version\":\"0.3.0\",\"minimum_supported_version\":\"0.3.0\"{grace}}}");
         let server = serve(listener, vec![list, policy]);
-        let result = run(Source::local(&format!("{base}/releases")).expect("feed").check("0.2.0", Channel::Stable));
+        let result = run(Source::local(&format!("{base}/releases"))
+            .expect("feed")
+            .check("0.2.0", Channel::Stable));
         server.join().expect("server");
         result.map(|r| r.map(|r| (r.required, r.grace)))
     };

@@ -633,7 +633,13 @@ mod tests {
         // the first sight starts the grace and records it
         let (end, changed) = grace_deadline(&r, &mut seen, at(start));
         assert_eq!((end, changed), (Some(at(start) + 12 * hour), true));
-        assert_eq!(seen, Some(GraceStart { minimum: "0.3.0".into(), since: start }));
+        assert_eq!(
+            seen,
+            Some(GraceStart {
+                minimum: "0.3.0".into(),
+                since: start
+            })
+        );
         // a relaunch, or a later release with the same minimum, keeps it
         let later = at(start + 5 * 3600);
         assert_eq!(grace_deadline(&r, &mut seen, later), (Some(at(start) + 12 * hour), false));
@@ -645,8 +651,14 @@ mod tests {
         raised.grace = 12 * hour;
         assert_eq!(grace_deadline(&raised, &mut seen, later), (Some(later + 12 * hour), true));
         // a clock set back does not stretch it
-        let mut seen = Some(GraceStart { minimum: "0.3.0".into(), since: start });
-        assert_eq!(grace_deadline(&r, &mut seen, at(start - 100 * 3600)).0, Some(at(start - 100 * 3600) + 12 * hour));
+        let mut seen = Some(GraceStart {
+            minimum: "0.3.0".into(),
+            since: start,
+        });
+        assert_eq!(
+            grace_deadline(&r, &mut seen, at(start - 100 * 3600)).0,
+            Some(at(start - 100 * 3600) + 12 * hour)
+        );
         // no grace: the policy of a release that cannot wait, or not required
         let mut none = None;
         assert_eq!(grace_deadline(&release("v0.3.0", true), &mut none, at(start)), (None, false));
