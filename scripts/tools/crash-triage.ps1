@@ -232,7 +232,13 @@ $IgnoredFrame = '^(std|core|alloc|panic_unwind|backtrace|backtrace_rs)::|^__rust
 <#
     The crash's signature: its kind and its first three meaningful frames,
     by function name (stable across versions while the code stays). Without
-    symbols, the module offsets of this exact build.
+    symbols, the module offsets of this exact build. A stack with no frame
+    of the viewer at all (a thread of another program's DLL loaded in the
+    process) is signed by that module's first three offsets and its own
+    debug id instead: the same DLL crashing at the same place is one crash
+    whatever the viewer's version, and two such crashes of one build are no
+    longer one only because they share the build (#3006 and #2361, the same
+    osmimhk64+0x40835 under two versions, were kept apart).
 #>
 function Get-CrashSignature($Report, $Frames) {
     $kind = 'panic'
@@ -252,12 +258,24 @@ function Get-CrashSignature($Report, $Frames) {
             if ($keys.Count -ge 3) { break }
         }
     }
-    else {
-        $id = ''
-        if ($Report.Modules.ContainsKey($OwnModule)) { $id = $Report.Modules[$OwnModule].Id }
-        $keys = @("unsymbolized $id") + @($Report.Frames | Where-Object { $_.Module -eq $OwnModule } | Select-Object -First 3 | ForEach-Object { $_.Text })
+    $text = $null
+    if (-not $resolved.Count) {
+        $own = @($Report.Frames | Where-Object { $_.Module -eq $OwnModule } | Select-Object -First 3 | ForEach-Object { $_.Text })
+        $foreign = @($Report.Frames | Where-Object { $_.Module -and $_.Text -notmatch $IgnoredFrame } | Select-Object -First 1)
+        if (-not $own.Count -and $foreign.Count) {
+            $module = $foreign[0].Module
+            $keys = @($Report.Frames | Where-Object { $_.Module -eq $module } | Select-Object -First 3 | ForEach-Object { $_.Text })
+            $moduleId = ''
+            if ($Report.Modules.ContainsKey($module)) { $moduleId = $Report.Modules[$module].Id }
+            $text = "$kind|$($keys -join '|')|$module $moduleId"
+        }
+        else {
+            $id = ''
+            if ($Report.Modules.ContainsKey($OwnModule)) { $id = $Report.Modules[$OwnModule].Id }
+            $keys = @("unsymbolized $id") + $own
+        }
     }
-    $text = "$kind|$($keys -join '|')"
+    if (-not $text) { $text = "$kind|$($keys -join '|')" }
     $sha = [Security.Cryptography.SHA256]::Create()
     $hash = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text))
     @{ Id = (-join ($hash[0..7] | ForEach-Object { $_.ToString('x2') })); Frames = $keys }
