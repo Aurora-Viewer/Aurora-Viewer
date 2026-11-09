@@ -104,6 +104,71 @@ best implementation for Aurora.
   is justified (and then better for the user), and noted in the code and in
   `TASKS.md`.
 
+### Creators' permissions
+
+Every feature that reads, shows, copies, pastes, drops, exports, saves, sends
+or reuses someone's asset, or its id, applies the same rights as the Legacy
+Viewer, or stricter: never looser. The assets are textures, meshes,
+materials, animations, sounds, scripts, notecards, environment settings,
+gestures, wearables and object contents.
+
+- **Find the Legacy Viewer's check first**, and name it in the code comment,
+  as for any port. The usual ones: `LLViewerInventoryItem::getPermissionMask`
+  and `getProtectedAssetUUID` (indra/newview/llviewerinventory.cpp),
+  `LLPermissions::allowOperationBy` (indra/llinventory/llpermissions.cpp),
+  the UUID field of `LLFloaterTexturePicker` and `get_can_copy_texture`
+  (indra/newview/lltexturectrl.cpp), `LLPanelFace::onCopyTexture` and
+  `onPasteTexture` (indra/newview/llpanelface.cpp),
+  `LLMaterialEditor::canClipboardObjectsMaterial`
+  (indra/newview/llmaterialeditor.cpp), `LLPreviewTexture::canSaveAs`
+  (indra/newview/llpreviewtexture.cpp),
+  `LLToolDragAndDrop::willObjectAcceptInventory` and
+  `handleDropMaterialProtections` (indra/newview/lltooldraganddrop.cpp).
+- **One shared rule, never a mask computed by hand.** The rights come from
+  the shared helpers:
+  - `world::inventory::actions::agent_mask` and `held`: the rights the agent
+    holds on an item (its own, group-owned, someone else's, a Library item);
+    `actions::task_agent_mask` for an item of an object's contents;
+  - `actions::FULL` and `actions::asset_uuid_shown`: whether an asset id may
+    be shown;
+  - `world::inventory::asset_ids`: the same rule in bulk for the windows that
+    list ids; an id the rule does not allow is written `hidden-` and a short
+    tag;
+  - `build::texture_copy`: which texture and material ids a copy may carry
+    from one prim to another, and the items that follow them;
+  - `build::contents_drop::worn_refused`: what a worn object refuses, on
+    every path that applies a texture or a material.
+
+  A feature that needs a rule none of them gives adds it there, with its
+  tests, instead of reading `owner_mask` or `everyone_mask` itself.
+- **Both interface styles.** A window with an Aurora and a Legacy style (the
+  `*_style` settings, the `legacy_*` panels such as
+  `build/ui/legacy_texture.rs`) calls the same rule function in both. The
+  tests and the check by eye (section 7) cover both styles.
+- **Asset ids.** An asset id is never shown, copied to the clipboard, sent in
+  chat or in a message, or written to an exported or shared file, unless the
+  rule allows it: full permissions, a built-in texture, or one of the user's
+  own local textures. The viewer's log file may keep asset ids, like the
+  Legacy Viewer's log.
+- **No side route.** The developer tools (Dev Toolbox, explorers), the
+  scripting bridge, the RLVa replies, drag and drop, the clipboard, the IK
+  and other project or export files, the link previews, and the demo and test
+  tools apply the same rule as the main windows.
+  - An `AURORA_*` variable or a demo scenario never relaxes a permission
+    check. The only exception is the offline demo's own assets: the viewer
+    makes them up and they belong to no one, so the demo may show their ids.
+  - A published (release) build never serves the user's cache store to
+    anything.
+- **The server's check is not a reason to skip the viewer's.** The Legacy
+  Viewer greys the control out or refuses the drop before anything is sent:
+  do the same.
+- **Differences.** Stricter than the Legacy Viewer is allowed: say so in the
+  code comment, in `TASKS.md` and in the PR. Looser, never. If a feature
+  cannot be done within these rules, stop and ask the human.
+- **Tests.** Each rule has unit tests for an item of the owner, a group-owned
+  item, someone else's item, a Library item, no copy, no transfer, no modify,
+  and full permissions.
+
 ## 3. Working in parallel: one worktree per task
 
 **Never work directly in the main repository.** Each task has its own git
@@ -186,6 +251,13 @@ cargo run -p aurora-viewer -- --title "Test avatar-gaze"
   variable: one short line in the table of its topic, and the details (modes,
   images, what to look for) in the "Details" paragraph below, never in the
   table nor in the README.
+- The asset files of the disk cache (`cache/store`) are only read and
+  written through `crate::cache` (`read`, `read_touch`, `reader`,
+  `write`): never with an outside tool or `std::fs`. A scenario that takes
+  assets from a folder (`AURORA_DEMO_ARRIVAL`, `AURORA_DEMO_STREAM`'s
+  `j2k=`) reads it through `demo::source`: plain asset files in every
+  build, files of the cache's format (a store) in development builds only
+  (`dev`, `ci`, `debugging`); a `--release` build takes plain folders.
 - For a new feature, add a demo scenario (`AURORA_DEMO_<NAME>`) when possible:
   it shows the feature and makes it testable without a grid.
 - Some things can only be tested on the grid (real network, voice,
@@ -445,6 +517,20 @@ in English and must be **readable by a human in two minutes**:
   was tested).
 - **Limits and follow-up**: what is not done, ⬜ lines added to TASKS.md.
 
+**Keep the template's headings** (`## What it is for`, `## Legacy Viewer
+origin`, `## What changes`, `## Screenshots`, `## Tests`, `## Limits and
+follow-up`), the issue line first: the **PR description** workflow reads
+them on every pull request, the team's included. When the issue line is
+missing, or one of `What it is for`, `Legacy Viewer origin`, `What changes`
+and `Tests` is missing or left as the template has it, it posts a comment
+opening with `## Changes requested` and the `needs-description` label; both
+go away once the description is edited. Check your draft before
+`gh pr create`:
+
+```powershell
+./scripts/check-pr-description.ps1 -BodyFile .scratch/pr.md   # lists what it misses, sends nothing
+```
+
 Labels (created by `scripts/setup-labels.ps1`):
 
 - **one type**, for PRs only, which files the PR in the release notes:
@@ -462,6 +548,21 @@ Labels (created by `scripts/setup-labels.ps1`):
   showing it. An agent neither reviews nor merges a PR on hold. When the
   human resumes it, remove the label (`--remove-label on-hold`). Issues use
   the board's `On hold` Status instead (section 15).
+- **`needs-description`**, set and removed by the PR description workflow
+  (above), never by hand. Do not review a PR that carries it: its author
+  completes the description first. An outside contributor's PR that still
+  carries it 3 days after the workflow's comment is closed by the
+  workflow's daily sweep; the team's PRs never are.
+- **`waiting-for-slot`**, set and removed by the Review slots workflow:
+  an outside contributor has at most 10 PRs in review, the others carry
+  this label and come back on their own, oldest first, when a slot frees
+  up. The PR panel of `aurora-tools.cmd` hides them, like `on-hold`. Do not
+  review a PR that carries it. Never add it by hand; removing it by hand
+  is how a maintainer gives that PR a slot (when its author asks, or the
+  human wants it reviewed first): the author's newest other PR in review
+  then waits instead. A PR a maintainer has started reviewing (a team
+  `## Review`, `## Maintainer review` or `## Changes requested` comment),
+  or that is in the merge queue, keeps its slot.
 
 ### Link the PR and its issues
 
@@ -540,7 +641,11 @@ explain it to the human and propose 2–3 solutions.
 Then post the review as a comment (`gh pr comment <n> --body-file …`). The
 file given to `--body-file` (like the one of the PR description) is a draft
 in `.scratch/`, never committed: the review lives in the PR comment, not in
-the repository. When you ask the author of someone else's PR for changes,
+the repository. **Someone else's PR** is reviewed only once its description
+is complete (no `needs-description` label) and its PR CI is green: an
+outside contributor's CI waits for a maintainer's "Approve and run", so ask
+your human to approve it, and do not read the code before. When you ask the
+author of someone else's PR for changes,
 open that comment with `## Changes requested`: the PR tracking of
 `aurora-tools.cmd` lists the PR as waiting on its author until a new
 commit of its own (a merge of main does not count). Structure of your review (keep the `## Review` heading and the
@@ -559,6 +664,7 @@ them):
 | Demo scenarios (before / after) | ✅ screenshots below |
 | Non-regression of neighbouring features | ✅ … |
 | Legacy Viewer fidelity | ✅ files checked: … |
+| Creators' permissions | ✅ same as the Legacy Viewer or stricter, both interface styles |
 | Secrets / personal data | ✅ none |
 | Docs (README, ARCHITECTURE, TASKS) | ✅ |
 

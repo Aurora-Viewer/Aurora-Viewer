@@ -64,3 +64,25 @@ unsafe_op_in_unsafe_fn = "warn"
 # nested tuple types; splitting them would not make the code clearer.
 too_many_arguments = "allow"
 type_complexity = "allow"
+
+# wgpu 30.0.1 with one upstream fix only, until a wgpu release has it
+# (31, or a 30.0.x that carries it): gfx-rs/wgpu#10124, a Vulkan descriptor pool with
+# `poolSizeCount = 0` that the Intel driver of 6th to 9th generation
+# integrated GPUs (`igvk64`) reads past and crashes on at every start
+# (#1302). The organisation's fork `Aurora-Viewer/wgpu` holds the branch
+# `aurora/v30.0.1-empty-pool`: the v30.0.1 tag plus that commit (11 lines in
+# wgpu-hal), pinned by `rev`; never delete or rewrite that branch. The whole
+# family comes from it, so the crates keep sharing one `wgpu-types` and one
+# `naga`. Remove this section with the upgrade.
+[patch.crates-io]
+naga = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
+naga-types = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
+wgpu = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
+wgpu-core = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
+wgpu-core-deps-apple = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
+wgpu-core-deps-emscripten = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
+wgpu-core-deps-wasm = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
+wgpu-core-deps-windows-linux-android = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
+wgpu-hal = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
+wgpu-naga-bridge = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }
+wgpu-types = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "3bad1916ef435277b8edb3252941020a09779ce9" }

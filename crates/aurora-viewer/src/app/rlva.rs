@@ -118,7 +118,9 @@ impl App {
         self.rlva_camera_commands();
         if !self.world.rlva.appearance_busy && self.appearance_ui.pending.is_none() && !self.world.rlva.appearance.is_empty() {
             let (actor, action) = self.world.rlva.appearance.remove(0);
-            self.apply_appearance_action_from(action, actor);
+            if !self.world.rlva_force_settled(&action, Instant::now()) {
+                self.apply_appearance_action_from(action, actor);
+            }
         }
         for (actor, command) in commands {
             self.send_rlva(command, actor);
@@ -288,9 +290,25 @@ impl App {
                 self.panels.chat = false;
                 self.panels.inventory = false;
                 self.options_ui.rlva_tools.open = true;
-                self.options_ui.rlva_tools.tab = 3;
+                self.options_ui.rlva_tools.tab = ui::rlva::Tab::Console;
                 self.settings.rlva.debug_commands = true;
                 "@jump=n,detach=n,fly=n,fly=n,fly=y".to_owned()
+            } else if let Some(tab) = match scenario {
+                "tools-restrictions" => Some(ui::rlva::Tab::Restrictions),
+                "tools-exceptions" => Some(ui::rlva::Tab::Exceptions),
+                "tools-modifiers" => Some(ui::rlva::Tab::Modifiers),
+                _ => None,
+            } {
+                self.panels.settings = false;
+                self.panels.chat = false;
+                self.panels.inventory = false;
+                self.options_ui.rlva_tools.open = true;
+                self.options_ui.rlva_tools.tab = tab;
+                let (tess, loup) = (crate::demo::DEMO_TESS, crate::demo::DEMO_LOUP);
+                format!(
+                    "@jump=n,detach=n,recvim=n,recvim:{tess}=add,sendim:{loup}=add,tplure:{tess}=add,shownametags:{loup}=add,\
+                     recvim:20;50=n,fartouch:2.5=n,sittp=n,setcam_avdistmax:10=n,setcam_textures=n"
+                )
             } else if scenario == "named-blocked" {
                 let request = Uuid::from_u128(0x726c76616e616d65);
                 self.request_user_teleport(
@@ -728,7 +746,7 @@ impl App {
                         "getdebug_restrainedlovenosetenv" => u8::from(!self.settings.rlva.allow_environment_locks).to_string(),
                         _ => String::new(),
                     };
-                    self.world.rlva.reply(channel, text);
+                    self.world.rlva.reply(channel, &c.behaviour, text);
                 }
                 continue;
             }
@@ -741,7 +759,7 @@ impl App {
                 {
                     self.world
                         .rlva
-                        .reply(channel, format!("{:.2}", self.world.hover_height.value() * 100.0));
+                        .reply(channel, &c.behaviour, format!("{:.2}", self.world.hover_height.value() * 100.0));
                 }
                 continue;
             }
@@ -762,7 +780,7 @@ impl App {
                     .rlva
                     .camera_reply(&c, self.camera.position.distance(self.world.agent.position), fov)
                 {
-                    self.world.rlva.reply(channel, reply);
+                    self.world.rlva.reply(channel, &c.behaviour, reply);
                 }
                 continue;
             }

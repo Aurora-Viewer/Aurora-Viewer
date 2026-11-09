@@ -8,6 +8,8 @@
 //! - [`skeleton`] - avatar skeleton `avatar_skeleton.xml` (`llappearance/llavatarappearance.cpp`, `llcharacter/lljoint.cpp`)
 //! - [`material`] - GLTF material assets (`llprimitive/llgltfmaterial.cpp`, `newview/llgltfmateriallist.cpp`)
 //!
+//! [`sealed`] encrypts the files of the disk cache (with a key passed in).
+//!
 //! Every decoder is pure (no global state), returns [`AssetError`] on malformed
 //! input and never panics, so all of them can be called concurrently from rayon
 //! worker threads.
@@ -25,6 +27,7 @@ pub mod llm;
 pub mod material;
 pub mod mesh;
 pub mod mesh_physics;
+pub mod sealed;
 pub mod skeleton;
 pub mod wearable;
 

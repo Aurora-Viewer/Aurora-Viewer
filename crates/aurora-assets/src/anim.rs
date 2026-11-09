@@ -38,6 +38,10 @@ pub struct Animation {
     pub loop_in: f32,
     pub loop_out: f32,
     pub looping: bool,
+    /// Elapsed time after which a loop stops itself, from its raw loop
+    /// points (`legacy_loop_end`); `None` for a loop that never does and
+    /// for one-shots, whose timed stop comes from the duration.
+    pub ends_after: Option<f32>,
     pub ease_in: f32,
     pub ease_out: f32,
     pub hand_pose: u32,
@@ -93,6 +97,78 @@ fn cstring(r: &mut ByteReader) -> Result<String, AssetError> {
 
 pub fn parse_animation(data: &[u8]) -> Result<Animation, AssetError> {
     parse(data, false).map(|(animation, _)| animation)
+}
+
+/// One joint constraint of a keyframe animation
+/// (LLKeyframeMotion::JointConstraintSharedData).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Constraint {
+    pub chain_length: u8,
+    /// `CONSTRAINT_TYPE_POINT` (0) or `CONSTRAINT_TYPE_PLANE` (1).
+    pub constraint_type: u8,
+    pub source_volume: String,
+    pub source_offset: Vec3,
+    /// A collision volume, or "GROUND".
+    pub target_volume: String,
+    pub target_offset: Vec3,
+    pub target_dir: Vec3,
+    pub ease_in_start: f32,
+    pub ease_in_stop: f32,
+    pub ease_out_start: f32,
+    pub ease_out_stop: f32,
+}
+
+/// The animation with its constraints. A file that ends before them or holds
+/// a malformed one still plays its keyframes, without constraints.
+pub fn parse_animation_with_constraints(data: &[u8]) -> Result<(Animation, Vec<Constraint>), AssetError> {
+    let (animation, length) = parse(data, false)?;
+    let constraints = data
+        .get(length..)
+        .and_then(|tail| read_constraints(tail, animation.joints.len()))
+        .unwrap_or_default();
+    Ok((animation, constraints))
+}
+
+fn read_constraints(tail: &[u8], num_joints: usize) -> Option<Vec<Constraint>> {
+    fn volume(r: &mut ByteReader, field: &'static str) -> Option<String> {
+        let name = r.take(16, field).ok()?;
+        let end = name.iter().position(|b| *b == 0).unwrap_or(name.len());
+        Some(String::from_utf8_lossy(&name[..end]).into_owned())
+    }
+    fn vector(r: &mut ByteReader, field: &'static str) -> Option<Vec3> {
+        let v = Vec3::new(r.f32(field).ok()?, r.f32(field).ok()?, r.f32(field).ok()?);
+        v.is_finite().then_some(v)
+    }
+    fn time(r: &mut ByteReader, field: &'static str) -> Option<f32> {
+        r.f32(field).ok().filter(|v| v.is_finite())
+    }
+    let mut r = ByteReader::new(tail);
+    let count = r.i32("constraints").ok()?;
+    if !(0..=10).contains(&count) {
+        return None;
+    }
+    let mut constraints = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let chain_length = r.u8("chain length").ok()?;
+        let constraint_type = r.u8("constraint type").ok()?;
+        if usize::from(chain_length) > num_joints || constraint_type > 1 {
+            return None;
+        }
+        constraints.push(Constraint {
+            chain_length,
+            constraint_type,
+            source_volume: volume(&mut r, "source volume")?,
+            source_offset: vector(&mut r, "source offset")?,
+            target_volume: volume(&mut r, "target volume")?,
+            target_offset: vector(&mut r, "target offset")?,
+            target_dir: vector(&mut r, "target direction")?,
+            ease_in_start: time(&mut r, "ease in start")?,
+            ease_in_stop: time(&mut r, "ease in stop")?,
+            ease_out_start: time(&mut r, "ease out start")?,
+            ease_out_stop: time(&mut r, "ease out stop")?,
+        });
+    }
+    Some(constraints)
 }
 
 /// Validate the entire native file before paying for its upload. Playback
@@ -270,12 +346,48 @@ fn parse(data: &[u8], upload: bool) -> Result<(Animation, usize), AssetError> {
         loop_in: loop_in.clamp(0.0, duration),
         loop_out: loop_out.clamp(0.0, duration),
         looping,
+        ends_after: if looping {
+            legacy_loop_end(duration, loop_in, loop_out)
+        } else {
+            None
+        },
         ease_in: ease_in.max(0.0),
         ease_out: ease_out.max(0.0),
         hand_pose,
         joints,
     };
     Ok((animation, data.len() - r.remaining()))
+}
+
+/// When a loop ends itself in the Legacy Viewer: LLKeyframeMotion::onUpdate
+/// returns false once its looped time passes the duration, and
+/// LLMotionController::updateMotionsByType then stops the motion and tells
+/// the simulator (requestStopMotion). The loop points are not clamped
+/// there (LLKeyframeMotion::deserialize), so a loop-out past the duration,
+/// or a loop-in past it, makes a "loop" play once (#2869). Returns the
+/// elapsed time after which that happens, or `None` for a real loop.
+fn legacy_loop_end(duration: f32, loop_in: f32, loop_out: f32) -> Option<f32> {
+    if duration <= 0.0 {
+        return None;
+    }
+    if loop_out > duration {
+        // before loop_out the looped time is the elapsed time itself
+        return Some(duration);
+    }
+    if loop_out >= loop_in {
+        // wraps inside [loop_in, loop_out) or holds loop_out: never past
+        return None;
+    }
+    // loop_in > loop_out: fmod by a negative span, looped time in
+    // [loop_in, 2 loop_in - loop_out)
+    let past = duration - loop_in;
+    if past < 0.0 {
+        Some(loop_out.max(0.0))
+    } else if past < loop_in - loop_out {
+        Some((loop_out + past).max(0.0))
+    } else {
+        None
+    }
 }
 
 impl Animation {
@@ -285,12 +397,17 @@ impl Animation {
     /// Loop points saved the wrong way round (loop_out before loop_in) loop
     /// as the Legacy Viewer's fmod makes them: from loop_in, over the length
     /// between the two, not frozen on loop_out.
+    /// A loop that ends itself (`ends_after`) never wraps: its raw loop-out
+    /// lies past the duration, so the Legacy Viewer's time runs straight to
+    /// the end and, once stopped, holds the last frame (#2869). With
+    /// reversed raw loop points this samples straight time, an
+    /// approximation of the jump to loop-in before the end.
     pub fn local_time(&self, elapsed: f64) -> f64 {
         if self.duration <= 0.0 {
             return 0.0;
         }
         let (a, b) = (f64::from(self.loop_in), f64::from(self.loop_out));
-        if self.looping && elapsed > b {
+        if self.looping && self.ends_after.is_none() && elapsed > b {
             // fmod keeps the sign of the dividend (elapsed - b > 0): `%`
             if b == a { b } else { a + (elapsed - b) % (b - a) }
         } else {
@@ -638,6 +755,32 @@ mod tests {
         // No artificial minimum span in interpolation either.
         let joint = curve(&[(0.000001, 1.0), (0.000005, -1.0)]);
         assert!(joint.position_at_loop(0.0000005, a.loop_range()).expect("position").x.abs() < 1e-5);
+    }
+
+    /// LLKeyframeMotion::onUpdate's `mLastLoopedTime <= mDuration` with the
+    /// raw loop points (#2869).
+    #[test]
+    fn a_loop_past_its_duration_ends_itself_like_the_legacy_viewer() {
+        // ordinary loops, a held pose, a loop-in before zero: never
+        for (loop_in, loop_out) in [(0.0, 1.56), (0.5, 1.0), (1.56, 1.56), (0.0, 0.0), (-1.0, 1.0)] {
+            assert_eq!(legacy_loop_end(1.56, loop_in, loop_out), None, "{loop_in}..{loop_out}");
+        }
+        // loop-out past the duration: plays once, ends at the duration
+        assert_eq!(legacy_loop_end(1.56, 0.0, 1.6), Some(1.56));
+        assert_eq!(legacy_loop_end(1.56, 0.0, 100.0), Some(1.56));
+        // loop-in past the duration: ends on the first wrap
+        assert_eq!(legacy_loop_end(1.0, 2.0, 0.5), Some(0.5));
+        // reversed points: the looped time climbs past the duration
+        assert_eq!(legacy_loop_end(1.0, 0.75, 0.25), Some(0.5));
+        assert_eq!(legacy_loop_end(1.0, 0.625, 0.0), Some(0.375));
+        assert_eq!(legacy_loop_end(2.0, 0.75, 0.25), None);
+        assert_eq!(legacy_loop_end(0.0, 0.0, 1.0), None);
+        // the parser keeps the clamped points and the end
+        let mut data = build();
+        data[17..21].copy_from_slice(&5.0f32.to_le_bytes());
+        let a = parse_animation(&data).expect("loop past its duration");
+        assert!(a.looping);
+        assert_eq!((a.loop_out, a.ends_after), (a.duration, Some(a.duration)));
     }
 
     #[test]

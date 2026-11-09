@@ -34,9 +34,10 @@ use webrtc::media_stream::track_remote::{TrackRemote, TrackRemoteEvent};
 use webrtc::peer_connection::{
     MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCConfigurationBuilder, RTCIceCandidate,
     RTCIceGatheringState, RTCIceServer, RTCPeerConnectionIceEvent, RTCPeerConnectionState, RTCSessionDescription, Registry,
-    SettingEngineBuilder, register_default_interceptors,
+    SettingEngineBuilder, StatsSelector, register_default_interceptors,
 };
 
+use crate::link_stats::{self, ArrivalLag, LinkStats, RtcpView, STATS_PERIOD};
 use crate::protocol::{self, AUDIO_TRACK_ID, DATA_CHANNEL_LABEL, LocalCandidate, STREAM_ID};
 use crate::state::{LocalPrefs, ParticipantTable, SpatialState};
 use crate::transmit::{FRAME_DURATION, OPUS_SILENCE, Payload, Transmitter, TxControl};
@@ -53,6 +54,8 @@ const GATHER_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long the peer connection may take to come up after the answer.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+/// Largest provisioning answer read: an SDP and a few keys take a few KB.
+const MAX_REPLY_BYTES: usize = 1 << 20;
 const LOGOUT_TIMEOUT: Duration = Duration::from_secs(5);
 /// UDP port range used by llwebrtc (`set_min_port(60000)` / `set_max_port(60100)`).
 const UDP_PORT_MIN: u16 = 60_000;
@@ -294,6 +297,7 @@ struct Handler {
     /// (webrtc 0.17 bound it there and kept it bound until the close).
     connected: Arc<AtomicBool>,
     sink: Arc<Mutex<VoiceSink>>,
+    stats: Arc<LinkStats>,
     stop: watch::Receiver<bool>,
 }
 
@@ -322,7 +326,7 @@ impl PeerConnectionEventHandler for Handler {
     }
 
     async fn on_track(&self, track: Arc<dyn TrackRemote>) {
-        tokio::spawn(receive_audio(track, self.sink.clone(), self.stop.clone()));
+        tokio::spawn(receive_audio(track, self.sink.clone(), self.stats.clone(), self.stop.clone()));
     }
 }
 
@@ -345,7 +349,7 @@ fn to_local_candidate(c: &RTCIceCandidate) -> LocalCandidate {
 }
 
 async fn post_llsd(http: &reqwest::Client, url: &str, body: &Llsd, timeout: Duration) -> Result<Llsd, PostError> {
-    let resp = http
+    let mut resp = http
         .post(url)
         .header("Content-Type", "application/llsd+xml")
         .header("Accept", "application/llsd+xml")
@@ -358,7 +362,18 @@ async fn post_llsd(http: &reqwest::Client, url: &str, body: &Llsd, timeout: Dura
     if !(200..300).contains(&status) {
         return Err(PostError::Status(status));
     }
-    let bytes = resp.bytes().await.map_err(|e| PostError::Transport(e.without_url().to_string()))?;
+    let too_large = || PostError::Transport("reply too large".into());
+    if resp.content_length().is_some_and(|n| n > MAX_REPLY_BYTES as u64) {
+        return Err(too_large());
+    }
+    // read piece by piece so that the size is bounded before it is kept
+    let mut bytes = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(|e| PostError::Transport(e.without_url().to_string()))? {
+        if bytes.len() + chunk.len() > MAX_REPLY_BYTES {
+            return Err(too_large());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
     if bytes.iter().all(|b| b.is_ascii_whitespace()) {
         return Ok(Llsd::Undef);
     }
@@ -386,53 +401,96 @@ const MAX_OPUS_FRAME: usize = 5760;
 /// Samples per channel concealed for one lost packet (the server sends 20 ms).
 const PLC_FRAME: usize = 960;
 
-/// Decodes the incoming Opus track into the Voice channel.
-async fn receive_audio(track: Arc<dyn TrackRemote>, sink: Arc<Mutex<VoiceSink>>, mut stop: watch::Receiver<bool>) {
-    let mut decoder = match rusty_opus::OpusDecoder::new(48_000, 2) {
+/// Polls `fut` once without waiting: `Some` when it is ready now.
+fn ready_now<F: std::future::Future>(fut: F) -> Option<F::Output> {
+    let mut fut = std::pin::pin!(fut);
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    match fut.as_mut().poll(&mut cx) {
+        std::task::Poll::Ready(v) => Some(v),
+        std::task::Poll::Pending => None,
+    }
+}
+
+/// Opus decoder state of the incoming track.
+struct Playout {
+    decoder: rusty_opus::OpusDecoder,
+    pcm: Vec<f32>,
+    last_seq: Option<u16>,
+    lag: ArrivalLag,
+}
+
+impl Playout {
+    fn packet(&mut self, packet: &rtc::rtp::Packet, sink: &Mutex<VoiceSink>, stats: &LinkStats) {
+        let seq = packet.header.sequence_number;
+        if let Some(prev) = self.last_seq {
+            let gap = seq.wrapping_sub(prev).wrapping_sub(1);
+            if gap > 0x8000 {
+                // Late / duplicate packet: drop it.
+                return;
+            }
+            // Conceal short losses (packet loss concealment).
+            let concealed = gap.min(5);
+            for _ in 0..concealed {
+                if let Ok(n) = self.decoder.decode(&[], PLC_FRAME, &mut self.pcm) {
+                    sink.lock().push(&self.pcm[..(n * 2).min(self.pcm.len())], 2);
+                }
+            }
+            if gap > 0 {
+                stats.rx_missing(u32::from(gap));
+            }
+        }
+        self.last_seq = Some(seq);
+        stats.rx_packet(self.lag.packet(Instant::now(), packet.header.timestamp));
+        if packet.payload.is_empty() {
+            return;
+        }
+        match self.decoder.decode(&packet.payload, MAX_OPUS_FRAME, &mut self.pcm) {
+            Ok(n) => {
+                sink.lock().push(&self.pcm[..(n * 2).min(self.pcm.len())], 2);
+            }
+            Err(e) => log::debug!("voice: undecodable Opus packet: {e:?}"),
+        }
+    }
+}
+
+/// Decodes the incoming Opus track into the Voice channel. Each wake takes
+/// every event already queued; how many there were is the depth of
+/// webrtc's track queue at that moment ([`LinkStats::rx_wake`]).
+async fn receive_audio(track: Arc<dyn TrackRemote>, sink: Arc<Mutex<VoiceSink>>, stats: Arc<LinkStats>, mut stop: watch::Receiver<bool>) {
+    let decoder = match rusty_opus::OpusDecoder::new(48_000, 2) {
         Ok(d) => d,
         Err(e) => {
             log::error!("voice: cannot create Opus decoder: {e:?}");
             return;
         }
     };
-    let mut pcm = vec![0.0f32; MAX_OPUS_FRAME * 2];
-    let mut last_seq: Option<u16> = None;
-    loop {
+    let mut playout = Playout {
+        decoder,
+        pcm: vec![0.0f32; MAX_OPUS_FRAME * 2],
+        last_seq: None,
+        lag: ArrivalLag::default(),
+    };
+    'run: loop {
         // webrtc 0.21 keeps a closed connection's track queues open, so the
         // session's stop signal also ends the loop.
-        let event = tokio::select! {
+        let mut event = tokio::select! {
             event = track.poll() => event,
             _ = stop.changed() => break,
         };
-        let packet = match event {
-            Some(TrackRemoteEvent::OnRtpPacket(packet)) => packet,
-            None | Some(TrackRemoteEvent::OnEnded) => break,
-            Some(_) => continue,
-        };
-        let seq = packet.header.sequence_number;
-        if let Some(prev) = last_seq {
-            let gap = seq.wrapping_sub(prev).wrapping_sub(1);
-            if gap > 0x8000 {
-                // Late / duplicate packet: drop it.
-                continue;
+        let mut queued = 0u32;
+        loop {
+            match &event {
+                Some(TrackRemoteEvent::OnRtpPacket(packet)) => playout.packet(packet, &sink, &stats),
+                None | Some(TrackRemoteEvent::OnEnded) => break 'run,
+                Some(_) => {}
             }
-            // Conceal short losses (packet loss concealment).
-            for _ in 0..gap.min(5) {
-                if let Ok(n) = decoder.decode(&[], PLC_FRAME, &mut pcm) {
-                    sink.lock().push(&pcm[..(n * 2).min(pcm.len())], 2);
-                }
+            queued += 1;
+            match ready_now(track.poll()) {
+                Some(next) => event = next,
+                None => break,
             }
         }
-        last_seq = Some(seq);
-        if packet.payload.is_empty() {
-            continue;
-        }
-        match decoder.decode(&packet.payload, MAX_OPUS_FRAME, &mut pcm) {
-            Ok(n) => {
-                sink.lock().push(&pcm[..(n * 2).min(pcm.len())], 2);
-            }
-            Err(e) => log::debug!("voice: undecodable Opus packet: {e:?}"),
-        }
+        stats.rx_wake(queued, sink.lock().queued_frames());
     }
     log::debug!("voice: remote audio track ended");
 }
@@ -449,6 +507,7 @@ async fn send_audio(
     payload_type: u8,
     connected: Arc<AtomicBool>,
     shared: Arc<Shared>,
+    stats: Arc<LinkStats>,
     mut stop: watch::Receiver<bool>,
 ) {
     let mut tx = Transmitter::new();
@@ -459,6 +518,9 @@ async fn send_audio(
         tokio::select! {
             _ = tick.tick() => {
                 let mic = shared.tx.mic.lock().clone();
+                if let Some(mic) = &mic {
+                    stats.mic_backlog(mic.available());
+                }
                 let transmit = shared.tx.transmit();
                 tx.poll(Instant::now(), mic.as_ref(), transmit, shared.tx.gain(), &mut payloads);
                 shared.tx.set_level(tx.level(transmit));
@@ -475,9 +537,12 @@ async fn send_audio(
                         duration: FRAME_DURATION,
                         ..Sample::new(Instant::now())
                     };
+                    // The wait is webrtc's driver queue being full (#2702).
+                    let start = Instant::now();
                     if track.write_sample(ssrc, payload_type, &sample, &[]).await.is_err() {
                         break 'run;
                     }
+                    stats.tx_packet(start.elapsed());
                 }
             }
             _ = stop.changed() => break,
@@ -537,6 +602,7 @@ async fn connect_once(
         gathered: Notify::new(),
         connected: Arc::new(AtomicBool::new(false)),
         sink: sink.clone(),
+        stats: Arc::new(LinkStats::default()),
         stop: stop_rx.clone(),
     });
     let pc = match new_peer_connection(params, handler.clone()).await {
@@ -695,9 +761,10 @@ async fn negotiate_and_run(
             payload_type,
             handler.connected.clone(),
             shared.clone(),
+            handler.stats.clone(),
             stop_rx.clone(),
         ));
-        session_loop(params, shared, cmd_rx, &mut ev_rx).await
+        session_loop(params, shared, cmd_rx, &mut ev_rx, pc, &handler.stats).await
     }
     .await;
 
@@ -721,6 +788,8 @@ async fn session_loop(
     shared: &Arc<Shared>,
     cmd_rx: &mut mpsc::UnboundedReceiver<Cmd>,
     ev_rx: &mut mpsc::UnboundedReceiver<Event>,
+    pc: &Arc<dyn PeerConnection>,
+    stats: &LinkStats,
 ) -> Outcome {
     let spatial = params.channel.is_spatial();
     let started = Instant::now();
@@ -729,9 +798,20 @@ async fn session_loop(
     let mut data: Option<Arc<dyn DataChannel>> = None;
     let mut joined = false;
     let mut tick = tokio::time::interval(UPDATE_PERIOD);
+    let mut stats_tick = tokio::time::interval_at(tokio::time::Instant::now() + STATS_PERIOD, STATS_PERIOD);
+    stats_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
         tokio::select! {
+            _ = stats_tick.tick() => {
+                // The period's counters are taken in any case, so that a
+                // line covers the last period only.
+                let window = stats.take();
+                if connected && joined {
+                    let report = pc.get_stats(Instant::now(), StatsSelector::None).await;
+                    log::info!("{}", link_stats::line(&window, &RtcpView::from_report(&report)));
+                }
+            }
             cmd = cmd_rx.recv() => match cmd {
                 None | Some(Cmd::Shutdown) => return Outcome::Shutdown,
                 Some(Cmd::Data(msg)) => {

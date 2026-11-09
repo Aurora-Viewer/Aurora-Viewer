@@ -25,6 +25,7 @@ pub mod demo;
 pub(crate) mod elide_tests;
 pub(crate) mod hero;
 pub(crate) mod keycap;
+pub(crate) mod local_texture;
 mod modal_keys;
 pub(crate) mod pills;
 mod resize;
@@ -2961,6 +2962,27 @@ pub fn row_tag_ink(p: &Palette, active: bool) -> Color32 {
     if active { p.teal } else { p.muted }
 }
 
+/// Colors `(ink, fill)` for the active group tag pill.
+pub fn active_tag_colors(p: &Palette) -> (Color32, Color32) {
+    (p.teal, p.teal.gamma_multiply(0.14))
+}
+
+/// Measures a small row tag pill (such as "active" next to a group). Returns `(galley, total_width)`.
+pub fn tag_pill_layout(ui: &egui::Ui, text: &str, ink: Color32) -> (std::sync::Arc<egui::Galley>, f32) {
+    let g = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), egui::FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())), ink);
+    let w = g.size().x + 12.0;
+    (g, w)
+}
+
+/// Paints a small row tag pill (such as "active" next to a group) into `rect`.
+pub fn paint_tag_pill(ui: &egui::Ui, g: std::sync::Arc<egui::Galley>, rect: egui::Rect, ink: Color32, fill: Color32) {
+    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
+    let left = rect.center().x - g.size().x / 2.0;
+    paint_row_text(ui.painter(), g, left, rect.center().y, ink);
+}
+
 /// A small tag after an item's name, the same in every list: teal when
 /// `active` (worn, an active gesture), neutral for a plain fact (a link).
 /// Returns its width.
@@ -3030,6 +3052,9 @@ pub fn picture(
         egui::Stroke::new(1.0, p.raised),
         egui::StrokeKind::Inside,
     );
+    if let Some(texture) = tex {
+        local_texture::image(ui, p, rect, texture.id());
+    }
     resp
 }
 

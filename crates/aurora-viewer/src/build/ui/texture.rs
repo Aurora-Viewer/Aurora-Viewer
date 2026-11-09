@@ -9,11 +9,16 @@
 
 #[path = "legacy_texture.rs"]
 mod legacy_texture;
+#[cfg(test)]
+#[path = "texture_paste_tests.rs"]
+mod paste_tests;
+#[path = "texture_drop.rs"]
+pub(super) mod texture_drop;
 
-use super::common::{Edit, check, combo, row, same, small, spin, swatch};
+use super::common::{check, combo, row, same, small, spin, swatch};
 use super::{Confirm, Env, FaceClip, PickTarget};
 use crate::build::materials::{GltfUpdate, MF_HAS_MEDIA};
-use crate::build::{BuildSettings, BuildTool, Tool};
+use crate::build::{BuildSettings, BuildTool, Tool, texture_copy};
 use crate::scene::legacy_mat::{LegacyMaterial, alpha_mode};
 use crate::theme::Palette;
 use crate::ui::widgets::tabs;
@@ -143,9 +148,22 @@ impl BuildTool {
             .collect()
     }
 
-    /// Apply inventory cargo to explicitly picked faces, leaving selection and
-    /// other texture-entry properties unchanged. A texture on PBR replaces its
-    /// base map; Alt restores the legacy face, as dropTextureOneFace does.
+    /// Whether a texture dropped on `faces` of `idx` lands on one of them:
+    /// a PBR face takes it into its override only when `override_ok` (copy
+    /// and transfer, dropTextureOneFace), unless Alt removes the material or
+    /// the Blinn-Phong preview paints the diffuse. One object's faces, on a
+    /// drop or while one is held over it.
+    pub fn surface_takes_texture(world: &World, idx: usize, faces: &[u8], override_ok: bool, remove_pbr: bool) -> bool {
+        override_ok
+            || remove_pbr
+            || world.objects.get(idx).is_some_and(|o| o.render.blinn_phong_preview)
+            || faces.iter().any(|face| BuildTool::gltf_asset(world, idx, *face).is_none())
+    }
+
+    /// `apply_inventory_surface_with` for an item that may go on PBR faces
+    /// (the tests' shorthand).
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     pub fn apply_inventory_surface(
         &mut self,
         world: &mut World,
@@ -155,6 +173,28 @@ impl BuildTool {
         asset: Uuid,
         material: bool,
         remove_pbr: bool,
+    ) {
+        self.apply_inventory_surface_with(world, env, idx, faces, asset, material, remove_pbr, true);
+    }
+
+    /// Apply inventory cargo to explicitly picked faces, leaving selection and
+    /// other texture-entry properties unchanged. Follow the displayed shading
+    /// mode: a Blinn-Phong preview edits its diffuse while retaining PBR.
+    /// Otherwise a texture on PBR replaces its base map; Alt removes PBR,
+    /// as dropTextureOneFace does. `override_ok` is false for a texture the
+    /// agent may not both copy and transfer: its PBR faces are left as they
+    /// are (`surface_takes_texture`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn apply_inventory_surface_with(
+        &mut self,
+        world: &mut World,
+        env: &mut Env,
+        idx: usize,
+        faces: &[u8],
+        asset: Uuid,
+        material: bool,
+        remove_pbr: bool,
+        override_ok: bool,
     ) {
         if !self.can_modify(world, idx) {
             return;
@@ -176,6 +216,7 @@ impl BuildTool {
             self.apply_texture(world, env, PickTarget::PbrMaterial, asset, &selected);
             return;
         }
+        let blinn_phong = world.objects.get(idx).is_some_and(|o| o.render.blinn_phong_preview);
         let mut legacy = Vec::new();
         let mut updates = Vec::new();
         for face in selected {
@@ -188,7 +229,9 @@ impl BuildTool {
                         over: None,
                     });
                     legacy.push(face);
-                } else {
+                } else if blinn_phong {
+                    legacy.push(face);
+                } else if override_ok {
                     let mut over = BuildTool::gltf_override(world, idx, face.face);
                     over.textures[0] = asset;
                     updates.push(GltfUpdate {
@@ -255,12 +298,18 @@ impl BuildTool {
     /// Change the GLTF override of the selected faces with a material
     /// (FSRenderMaterialOverrideFunctor): only the faces with a base material.
     fn edit_gltf(&mut self, world: &mut World, sel: &[Sel], f: impl Fn(&mut PbrOverride)) {
+        self.edit_gltf_faces(world, sel, |_, o| f(o));
+    }
+
+    /// `edit_gltf` with the index of each face in `sel`.
+    fn edit_gltf_faces(&mut self, world: &mut World, sel: &[Sel], f: impl Fn(usize, &mut PbrOverride)) {
         let updates: Vec<GltfUpdate> = sel
             .iter()
-            .filter(|s| BuildTool::gltf_asset(world, s.idx, s.face).is_some())
-            .map(|s| {
+            .enumerate()
+            .filter(|(_, s)| BuildTool::gltf_asset(world, s.idx, s.face).is_some())
+            .map(|(k, s)| {
                 let mut o = BuildTool::gltf_override(world, s.idx, s.face);
-                f(&mut o);
+                f(k, &mut o);
                 GltfUpdate {
                     object: s.idx,
                     face: s.face,
@@ -393,25 +442,16 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 aurora_i18n::tr!("build-ui-texture-paste-texture-settings-from-the-clipboard"),
                 !sel.is_empty() && tool.ui.face_clipboard.is_some(),
             ) {
-                paste_faces(tool, world, &sel);
+                paste_faces(tool, world, env, &sel);
             }
-            let one_object = !sel.is_empty() && sel.iter().all(|x| x.idx == sel[0].idx);
             if super::common::icon_button(
                 ui,
                 p,
                 "copy-filled",
                 aurora_i18n::tr!("build-ui-texture-copy-texture-settings-to-clipboard"),
-                one_object,
+                copy_allowed(tool, world, &sel),
             ) {
-                let clip = sel
-                    .iter()
-                    .map(|x| FaceClip {
-                        face: x.te,
-                        legacy: tool.face_legacy(env, world, x.idx, x.face, &x.te),
-                        gltf: BuildTool::gltf_asset(world, x.idx, x.face).map(|a| (a, BuildTool::gltf_override(world, x.idx, x.face))),
-                    })
-                    .collect();
-                tool.ui.face_clipboard = Some(clip);
+                tool.ui.face_clipboard = Some(copy_faces(tool, env, world, &sel));
             }
         });
     });
@@ -480,10 +520,12 @@ fn material_tint(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn material_asset(
     ui: &mut egui::Ui,
     p: &Palette,
     tool: &mut BuildTool,
+    world: &World,
     asset: Option<Uuid>,
     mixed: bool,
     model: Option<std::sync::Arc<aurora_render::preview::Model>>,
@@ -530,15 +572,19 @@ fn material_asset(
         #[cfg(test)]
         ui.ctx()
             .data_mut(|d| d.insert_temp(egui::Id::unique(("material_preview", "PbrMaterial".to_string())), response.rect));
+        crate::ui::widgets::local_texture::asset(ui, p, response.rect, asset);
+        texture_drop::slot(ui, p, tool, world, response.rect, PickTarget::PbrMaterial, true);
         let caption = aurora_i18n::tr!("build-ui-texture-material");
         ui.add_sized(
             [size, if super::legacy::active(ui) { 14.0 } else { 16.0 }],
             egui::Label::new(RichText::new(caption).size(super::common::SMALL).color(p.muted)).truncate(),
         );
-        if response
-            .on_hover_text(asset.map_or_else(|| caption.to_string(), |id| id.to_string()))
-            .clicked()
-        {
+        // the material's id when the asset id rule allows it, as the picker
+        let tip = match asset {
+            Some(id) if response.hovered() && crate::world::inventory::asset_ids::AssetIds::per_frame(world).shown(&id) => id.to_string(),
+            _ => caption.to_string(),
+        };
+        if response.on_hover_text(tip).clicked() {
             tool.ui
                 .picker
                 .open_materials(aurora_i18n::tr!("build-ui-texture-choose-material"), asset.unwrap_or_default());
@@ -551,6 +597,7 @@ fn material_map(
     ui: &mut egui::Ui,
     p: &Palette,
     tool: &mut BuildTool,
+    world: &World,
     env: &mut Env,
     id: Option<Uuid>,
     mixed: bool,
@@ -564,6 +611,7 @@ fn material_map(
         ui.spacing_mut().item_spacing.y = if super::legacy::active(ui) { 0.0 } else { 6.0 };
         // A material asset is glTF, not an image: only its maps enter the image loader.
         let response = swatch(ui, p, env.images, &mut tool.ui.wanted_images, id, "", size, mixed, enabled);
+        texture_drop::slot(ui, p, tool, world, response.rect, target, enabled);
         #[cfg(test)]
         ui.ctx()
             .data_mut(|d| d.insert_temp(egui::Id::unique(("material_preview", format!("{target:?}"))), response.rect));
@@ -609,6 +657,13 @@ fn material_map(
 }
 
 /// Two UV rows, with scale/flip, offset and rotation visible together.
+///
+/// Returns the components to write to every selected face: one committed
+/// with a new value, or typed over a mixed ("—") field even when it equals
+/// the first face's hidden value. LLPanelFace sends each spinner's commit on
+/// its own (onCommitTextureScaleX / onCommitGLTFTextureScaleU…,
+/// indra/newview/llpanelface.cpp): only that component reaches the faces and
+/// the other, possibly mixed, components keep each face's value.
 fn uv_controls(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -617,8 +672,8 @@ fn uv_controls(
     decimals: usize,
     enabled: bool,
     axes: [&str; 2],
-) -> Edit {
-    let mut edit = Edit::default();
+) -> [bool; 5] {
+    let mut write = [false; 5];
     ui.add_enabled_ui(enabled, |ui| {
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
@@ -642,7 +697,8 @@ fn uv_controls(
                                 1 => (0.01, -1.0..=1.0, decimals),
                                 _ => (1.0, -360.0..=360.0, decimals.min(2)),
                             };
-                            edit = edit.or(super::common::spin_with_min_decimals(
+                            let before = values[index];
+                            let edit = super::common::spin_with_min_decimals(
                                 ui,
                                 &mut values[index],
                                 increment,
@@ -651,13 +707,20 @@ fn uv_controls(
                                 if column == 2 { 71.0 } else { 65.0 },
                                 mixed[index],
                                 d.min(3),
-                            ));
+                            );
+                            // A release that moved nothing sends nothing; a
+                            // number typed over "—" is sent as it is.
+                            if edit.typed_over_mixed || (edit.commit && (values[index] - before).abs() > 1e-6) {
+                                write[index] = true;
+                            }
+                            // FSPanelFace::onCommitFlip negates the shown value
+                            // and forces the spinner's commit.
                             if column == 0
                                 && super::compact::icon_button(ui, p, "arrows-exchange", aurora_i18n::tr!("common-rotate"), enabled)
                                     .clicked()
                             {
                                 values[index] = -values[index];
-                                edit.commit = true;
+                                write[index] = true;
                             }
                         });
                     }
@@ -665,13 +728,19 @@ fn uv_controls(
             }
         });
     });
-    edit
+    write
 }
 
 // ---------------------------------------------------------------- PBR
 
 fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, env: &mut Env, sel: &[Sel]) {
-    let (asset, asset_mixed) = same(sel.iter().map(|x| BuildTool::gltf_asset(world, x.idx, x.face)));
+    let (asset, asset_mixed) = same(sel.iter().map(|x| {
+        world
+            .objects
+            .get(x.idx)
+            .and_then(|object| object.local_texture(x.face as usize, crate::world::objects::LocalTextureSlot::Material))
+            .or_else(|| BuildTool::gltf_asset(world, x.idx, x.face))
+    }));
     let asset = asset.flatten();
     let has_all = sel.iter().all(|x| BuildTool::gltf_asset(world, x.idx, x.face).is_some());
     // effective material of the first face: base asset + override
@@ -680,8 +749,24 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
     let base = asset.and_then(|a| env.scene.materials.get(&a));
     let loaded = base.is_some();
     let mut mat = base.map(|m| (*m).clone()).unwrap_or_default();
-    mat.apply_override(&over);
-    let editable = has_all;
+    if !asset.is_some_and(|asset| world.local_assets.contains_key(&asset)) {
+        mat.apply_override(&over);
+    }
+    if let Some(appearance) = world
+        .objects
+        .get(first.idx)
+        .and_then(|object| object.local_appearance(first.face as usize))
+    {
+        appearance.apply_pbr(&mut mat);
+    }
+    let face_transforms: Vec<[TextureTransform; 4]> = sel.iter().map(|x| face_pbr_transforms(world, env, x)).collect();
+    // What each face's server override inherits; None while a material is
+    // still loading: the UV fields wait for it rather than guess the pair.
+    let inherited: Option<Vec<[TextureTransform; 4]>> = sel.iter().map(|x| face_server_pbr_transforms(world, env, x)).collect();
+    // LLMaterialEditor::canModifyObjectsMaterial; not editable, the maps show no id
+    let faces: Vec<(usize, u8)> = sel.iter().map(|x| (x.idx, x.face)).collect();
+    let editable = has_all && tool.material_edit_allowed(world, &faces);
+    let shown = |id: Option<Uuid>| id.filter(|_| editable);
     tool.ui.material_previews.poll();
     let model = asset.filter(|_| loaded && !asset_mixed).and_then(|asset| {
         tool.ui.material_previews.material_model(
@@ -701,7 +786,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
             .num_columns(3)
             .spacing(egui::vec2(10.0, 10.0))
             .show(ui, |ui| {
-                material_asset(ui, p, tool, asset, asset_mixed, model, size);
+                material_asset(ui, p, tool, world, asset, asset_mixed, model, size);
                 for (index, (id, caption, channel)) in [
                     (mat.base_color_texture, aurora_i18n::tr!("common-color"), 0),
                     (mat.normal_texture, aurora_i18n::tr!("build-ui-texture-normal"), 1),
@@ -711,7 +796,19 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                 .into_iter()
                 .enumerate()
                 {
-                    material_map(ui, p, tool, env, id, false, caption, PickTarget::PbrMap(channel), editable, size);
+                    material_map(
+                        ui,
+                        p,
+                        tool,
+                        world,
+                        env,
+                        shown(id),
+                        false,
+                        caption,
+                        PickTarget::PbrMap(channel),
+                        editable,
+                        size,
+                    );
                     if (index + 2) % 3 == 0 {
                         ui.end_row();
                     }
@@ -743,34 +840,99 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
             tabs(ui, p, &mut ch, &labels);
         }
         tool.ui.pbr_channel = ch;
-        // "All" shows the base color's, mixed when the channels differ;
-        // the others in the panel's order: base, normal, ORM, emissive
-        let (t, mixed) = if ch == 0 {
-            (mat.transforms[0], mat.transforms.iter().any(|x| *x != mat.transforms[0]))
-        } else {
-            (mat.transforms[ch - 1], false)
-        };
-        let mut nt = t;
-        let mut rot = nt.rotation.to_degrees();
-        let mut e = Edit::default();
-
-        let mut values = [nt.scale[0], nt.scale[1], nt.offset[0], nt.offset[1], rot];
-        e = e.or(uv_controls(ui, p, &mut values, [mixed; 5], 5, editable, ["U", "V"]));
-        nt.scale = [values[0], values[1]];
-        nt.offset = [values[2], values[3]];
-        rot = values[4];
-
-        nt.rotation = rot.to_radians();
-        if e.commit && nt != t {
-            tool.edit_gltf(world, sel, |o| {
-                if ch == 0 {
-                    o.transforms = [nt; 4];
-                } else {
-                    o.transforms[ch - 1] = nt;
+        // "All" covers the four channels and shows the base color's; the
+        // others in the panel's order: base, normal, ORM, emissive. A
+        // component is mixed when it differs between the selected faces or,
+        // under "All", between the channels
+        // (LLPanelFace::setMaterialOverridesFromSelection).
+        let channels = if ch == 0 { 0..4 } else { ch - 1..ch };
+        let components = |t: &TextureTransform| [t.scale[0], t.scale[1], t.offset[0], t.offset[1], t.rotation];
+        let shown = components(&mat.transforms[channels.start]);
+        let mixed: [bool; 5] = std::array::from_fn(|i| {
+            face_transforms
+                .iter()
+                .flat_map(|transforms| &transforms[channels.clone()])
+                .any(|t| (components(t)[i] - shown[i]).abs() > 1e-5)
+        });
+        let mut values = shown;
+        values[4] = values[4].to_degrees();
+        let write = uv_controls(ui, p, &mut values, mixed, 5, editable && inherited.is_some(), ["U", "V"]);
+        if let Some(inherited) = inherited.as_deref()
+            && write.contains(&true)
+        {
+            // LLPanelFace::updateGLTFTextureTransform: the committed
+            // component only, on each face's override and each channel.
+            // apply_override takes a scale or an offset as a whole pair, so
+            // a pair with a committed component starts from what that face
+            // and channel inherit on the server: the other component keeps
+            // its value, the base material's when the override has none.
+            // Better than LLPanelFace, which starts from the raw override
+            // and resets that component to the identity. Like it, a pair
+            // that ends at the identity (scale 1 1, offset 0 0) is "no
+            // override" to applyOverride: the material's own pair shows.
+            let new = [values[0], values[1], values[2], values[3], values[4].to_radians()];
+            tool.edit_gltf_faces(world, sel, |k, o| {
+                for channel in channels.clone() {
+                    let shown = inherited[k][channel];
+                    let t = &mut o.transforms[channel];
+                    if write[0] || write[1] {
+                        t.scale = shown.scale;
+                    }
+                    if write[2] || write[3] {
+                        t.offset = shown.offset;
+                    }
+                    let mut a = components(t);
+                    for i in (0..5).filter(|&i| write[i]) {
+                        a[i] = new[i];
+                    }
+                    *t = TextureTransform {
+                        scale: [a[0], a[1]],
+                        offset: [a[2], a[3]],
+                        rotation: a[4],
+                    };
                 }
             });
         }
     });
+}
+
+/// The texture transforms a face's server override applies over: its
+/// server material's (never a local material's preview, which only this
+/// viewer shows) under that override (LLGLTFMaterial::applyOverride).
+/// None while the material loads; a material that cannot be had renders
+/// as the default one, so the override applies over the identity.
+fn face_server_pbr_transforms(world: &World, env: &mut Env, x: &Sel) -> Option<[TextureTransform; 4]> {
+    let mut mat = aurora_assets::PbrMaterial::default();
+    if let Some(asset) = BuildTool::gltf_asset(world, x.idx, x.face) {
+        match env.scene.materials.resolve(&asset) {
+            crate::scene::meshes::MaterialStatus::Loaded(m) => mat.transforms = m.transforms,
+            crate::scene::meshes::MaterialStatus::Pending => return None,
+            crate::scene::meshes::MaterialStatus::Missing => {}
+        }
+    }
+    mat.apply_override(&BuildTool::gltf_override(world, x.idx, x.face));
+    Some(mat.transforms)
+}
+
+/// The texture transforms a face renders with: its material's under its
+/// override (LLGLTFMaterial::applyOverride), as `pbr` builds the first face's.
+fn face_pbr_transforms(world: &World, env: &mut Env, x: &Sel) -> [TextureTransform; 4] {
+    let asset = world
+        .objects
+        .get(x.idx)
+        .and_then(|object| object.local_texture(x.face as usize, crate::world::objects::LocalTextureSlot::Material))
+        .or_else(|| BuildTool::gltf_asset(world, x.idx, x.face));
+    let mut mat = aurora_assets::PbrMaterial {
+        transforms: asset
+            .and_then(|asset| env.scene.materials.get(&asset))
+            .map(|m| m.transforms)
+            .unwrap_or_default(),
+        ..Default::default()
+    };
+    if !asset.is_some_and(|asset| world.local_assets.contains_key(&asset)) {
+        mat.apply_override(&BuildTool::gltf_override(world, x.idx, x.face));
+    }
+    mat.transforms
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -886,8 +1048,23 @@ fn pbr_factors(
 
 #[allow(clippy::too_many_arguments)]
 fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, env: &mut Env, sel: &[Sel]) {
-    let legacy: Vec<Option<LegacyMaterial>> = sel.iter().map(|x| tool.face_legacy(env, world, x.idx, x.face, &x.te)).collect();
-    let (tex, tex_mixed) = same(sel.iter().map(|x| x.te.texture));
+    let legacy: Vec<Option<LegacyMaterial>> = sel
+        .iter()
+        .map(|x| {
+            let mut material = tool.face_legacy(env, world, x.idx, x.face, &x.te);
+            if let Some(appearance) = world.objects.get(x.idx).and_then(|object| object.local_appearance(x.face as usize)) {
+                let value = material.get_or_insert_with(|| default_legacy(env, &x.te));
+                appearance.apply_legacy(value);
+            }
+            material
+        })
+        .collect();
+    let (tex, tex_mixed) = same(sel.iter().map(|x| {
+        world
+            .objects
+            .get(x.idx)
+            .map_or(x.te.texture, |object| object.visual_texture_face(x.face as usize).texture)
+    }));
     let (normal, normal_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.normal_map).unwrap_or_default()));
     let (spec, spec_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.specular_map).unwrap_or_default()));
     let normal = normal.filter(|n| !n.is_nil());
@@ -912,7 +1089,7 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
                 PickTarget::Specular,
             ),
         ] {
-            material_map(ui, p, tool, env, id, mixed, caption, target, editable, size);
+            material_map(ui, p, tool, world, env, id, mixed, caption, target, editable, size);
         }
     });
     ui.vertical(|ui| {
@@ -1139,16 +1316,14 @@ fn bp_transforms(
         v[0] *= k;
         v[1] *= k;
         v[4] = v[4].to_degrees();
-        let before = v;
         let decimals = s.decimal_precision.min(7) as usize;
-        let mut e = Edit::default();
 
         let axes = if super::legacy::active(ui) { ["U", "V"] } else { ["H", "V"] };
-        e = e.or(uv_controls(ui, p, &mut v, std::array::from_fn(mixed), decimals, editable, axes));
+        let write = uv_controls(ui, p, &mut v, std::array::from_fn(mixed), decimals, editable, axes);
 
-        if e.commit && v != before {
-            // only the values that moved are written (non-tentative spinners)
-            let changed: Vec<usize> = (0..5).filter(|&i| (v[i] - before[i]).abs() > 1e-6).collect();
+        if write.contains(&true) {
+            // only the committed components; the others keep each face's value
+            let changed: Vec<usize> = (0..5).filter(|&i| write[i]).collect();
             let new = [v[0] / k, v[1] / k, v[2], v[3], v[4].to_radians()];
             let set = |a: &mut [f32; 5]| {
                 for &i in &changed {
@@ -1368,37 +1543,160 @@ fn face_options(
     });
 }
 
+/// Whether "Copy" may run (FSPanelFace::updateCopyTexButton): the faces of
+/// one object, whose material, if any, may be copied
+/// (`texture_copy::material_copy_allowed`).
+pub(super) fn copy_allowed(tool: &BuildTool, world: &World, sel: &[Sel]) -> bool {
+    let Some(first) = sel.first() else { return false };
+    let faces: Vec<u8> = sel.iter().map(|x| x.face).collect();
+    sel.iter().all(|x| x.idx == first.idx) && texture_copy::material_copy_allowed(tool, world, first.idx, &faces)
+}
+
+/// "Copy" (FSPanelFace::onCopyTexture, LLPanelFace::onCopyTexture): each
+/// id with what a paste may count on, and the normal and specular maps the
+/// agent may not copy left out, for the target to keep its own.
+pub(super) fn copy_faces(tool: &mut BuildTool, env: &Env, world: &World, sel: &[Sel]) -> Vec<FaceClip> {
+    let (inv, agent) = (&world.inventory, world.agent_id);
+    let Some(source) = sel.first().map(|x| x.idx) else {
+        return Vec::new();
+    };
+    let creator = texture_copy::creator_owned(tool, world, source);
+    let avail = |tool: &BuildTool, asset: Uuid| {
+        texture_copy::availability(inv, agent, asset, creator, texture_copy::held(tool, world, source, asset))
+    };
+    sel.iter()
+        .map(|x| {
+            let mut legacy = tool.face_legacy(env, world, x.idx, x.face, &x.te);
+            let (mut normal_kept, mut specular_kept) = (false, false);
+            if let Some(m) = legacy.as_mut() {
+                if !texture_copy::can_copy(inv, agent, m.normal_map) {
+                    m.normal_map = Uuid::nil();
+                    normal_kept = true;
+                }
+                if !texture_copy::can_copy(inv, agent, m.specular_map) {
+                    m.specular_map = Uuid::nil();
+                    specular_kept = true;
+                }
+            }
+            let gltf = BuildTool::gltf_asset(world, x.idx, x.face).map(|a| (a, BuildTool::gltf_override(world, x.idx, x.face)));
+            let (material, maps) = match &gltf {
+                Some((asset, over)) => (avail(tool, *asset), over.textures.map(|t| avail(tool, t))),
+                None => Default::default(),
+            };
+            FaceClip {
+                face: x.te,
+                legacy,
+                gltf,
+                image: avail(tool, x.te.texture),
+                material,
+                maps,
+                normal_kept,
+                specular_kept,
+            }
+        })
+        .collect()
+}
+
 /// "Paste" (FSPanelFace::onPasteFaces): the copied faces in order onto
-/// the selected ones; a single copied face goes on all of them.
-fn paste_faces(tool: &mut BuildTool, world: &mut World, sel: &[Sel]) {
+/// the selected ones; a single copied face goes on all of them. The ids
+/// follow LLPanelFace::onPasteTexture: a limited one needs its inventory
+/// item (else nothing is pasted), which goes into the target's contents
+/// when it cannot be transferred; a material whose override maps are not
+/// all free stays off the face, the target keeps its own.
+fn paste_faces(tool: &mut BuildTool, world: &mut World, env: &Env, sel: &[Sel]) {
+    use crate::world::notice_topics::Topic;
     let Some(clip) = tool.ui.face_clipboard.clone() else { return };
     if clip.is_empty() {
         return;
     }
     let pick = |i: usize| if clip.len() == 1 { &clip[0] } else { &clip[i.min(clip.len() - 1)] };
+    let ids = |c: &FaceClip| {
+        let material = c.gltf.is_some().then(|| std::iter::once(c.material).chain(c.maps));
+        std::iter::once(c.image).chain(material.into_iter().flatten()).collect::<Vec<_>>()
+    };
+    if clip.iter().any(|c| ids(c).iter().any(|a| !a.usable(&world.inventory))) {
+        world.system_notice(aurora_i18n::tr!("build-ui-texture-paste-not-in-inventory"), Topic::Items);
+        return;
+    }
+    // handleDropMaterialProtections asks for a target's contents first
+    let waiting = {
+        let (inv, agent) = (&world.inventory, world.agent_id);
+        let moves = |a: &texture_copy::Availability| {
+            !a.full
+                && a.item
+                    .and_then(|id| inv.items.get(&id))
+                    .is_some_and(|it| texture_copy::requires_contents(inv, it, agent))
+        };
+        let mut waiting = false;
+        for (i, x) in sel.iter().enumerate() {
+            let c = pick(i);
+            if (moves(&c.image) || c.gltf.is_some() && moves(&c.material)) && !tool.contents_ready(world, x.idx) {
+                waiting = true;
+            }
+        }
+        waiting
+    };
+    if waiting {
+        world.system_notice(aurora_i18n::tr!("build-ui-texture-paste-wait-contents"), Topic::Items);
+        return;
+    }
+    if clip.iter().any(|c| ids(c).iter().any(|a| !a.full)) {
+        world.system_notice(aurora_i18n::tr!("build-ui-texture-paste-limited"), Topic::Items);
+    }
+    let through = |tool: &mut BuildTool, world: &World, idx: usize, a: texture_copy::Availability| {
+        a.item
+            .is_none_or(|id| tool.retain_for_paste(world, idx, id) == texture_copy::Retain::Done)
+    };
+    let mut image_ok = Vec::with_capacity(sel.len());
+    let mut gltf_ok = Vec::with_capacity(sel.len());
+    for (i, x) in sel.iter().enumerate() {
+        let c = pick(i);
+        image_ok.push(through(tool, world, x.idx, c.image));
+        gltf_ok.push(c.gltf.is_none() || c.maps.iter().all(|m| m.full) && through(tool, world, x.idx, c.material));
+    }
     let order: Vec<(usize, u8)> = sel.iter().map(|x| (x.idx, x.face)).collect();
     tool.edit_faces(world, |f, idx, face| {
         let i = order.iter().position(|o| *o == (idx, face)).unwrap_or(0);
         let c = pick(i).face;
         // the material id is the simulator's: the legacy material is put below
-        let mat = f.material_id;
+        let (mat, texture) = (f.material_id, f.texture);
         *f = c;
         f.material_id = mat;
+        if !image_ok.get(i).copied().unwrap_or(false) {
+            f.texture = texture;
+        }
     });
     let mut puts = Vec::new();
     let mut gltf = Vec::new();
     for (i, x) in sel.iter().enumerate() {
         let c = pick(i);
-        puts.push((x.idx, x.face, c.legacy.clone()));
-        gltf.push(GltfUpdate {
-            object: x.idx,
-            face: x.face,
-            asset: Some(c.gltf.as_ref().map(|g| g.0).unwrap_or_default()),
-            over: c.gltf.as_ref().map(|g| g.1.clone()),
-        });
+        let mut legacy = c.legacy.clone();
+        if let Some(m) = legacy.as_mut()
+            && (c.normal_kept || c.specular_kept)
+        {
+            let own = tool.face_legacy(env, world, x.idx, x.face, &x.te);
+            let own = own.as_ref();
+            if c.normal_kept {
+                m.normal_map = own.map_or(Uuid::nil(), |o| o.normal_map);
+            }
+            if c.specular_kept {
+                m.specular_map = own.map_or(Uuid::nil(), |o| o.specular_map);
+            }
+        }
+        puts.push((x.idx, x.face, legacy));
+        if gltf_ok[i] {
+            gltf.push(GltfUpdate {
+                object: x.idx,
+                face: x.face,
+                asset: Some(c.gltf.as_ref().map(|g| g.0).unwrap_or_default()),
+                over: c.gltf.as_ref().map(|g| g.1.clone()),
+            });
+        }
     }
     tool.legacy_put(world, puts);
-    tool.gltf_update(world, gltf);
+    if !gltf.is_empty() {
+        tool.gltf_update(world, gltf);
+    }
 }
 
 // --------------------------------------------------------------- media

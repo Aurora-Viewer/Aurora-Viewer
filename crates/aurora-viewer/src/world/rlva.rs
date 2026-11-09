@@ -29,6 +29,7 @@ mod im_queries;
 mod inventory;
 pub mod last_points;
 pub mod login;
+pub mod modifiers;
 mod naming;
 pub mod offers;
 mod policy;
@@ -451,6 +452,8 @@ pub struct Rlva {
     pub pending: Vec<(Uuid, Command)>,
     pub out: Vec<NetCommand>,
     pub appearance: Vec<(Uuid, super::appearance::Action)>,
+    /// Attachments a forced batch asked for, not arrived yet (`rlva_force_settled`).
+    pub requested_wears: std::collections::HashMap<Uuid, std::time::Instant>,
     pub viewer: Vec<(Uuid, Command)>,
     pub camera_values: BTreeMap<String, String>,
     pub groups: groups::Groups,
@@ -775,7 +778,7 @@ impl Rlva {
                     _ => None,
                 };
                 if let Some(text) = reply {
-                    self.reply(channel, text);
+                    self.reply(channel, &c.behaviour, text);
                 } else if self.pending.len() < 256 {
                     self.pending.push((source, c));
                     outcome = Outcome::Queued;
@@ -801,9 +804,10 @@ impl Rlva {
         outcome
     }
 
-    pub fn reply(&mut self, channel: i32, message: String) {
+    /// `behaviour` is the query answered (the console masks a texture id).
+    pub fn reply(&mut self, channel: i32, behaviour: &str, message: String) {
         if self.enabled && channel == 0 && self.diagnostics.console_source.is_some() {
-            self.diagnostics.push_reply(message);
+            self.diagnostics.push_reply(behaviour, message);
             return;
         }
         if self.enabled && channel > 0 && channel != i32::MAX && self.out.len() < 256 {

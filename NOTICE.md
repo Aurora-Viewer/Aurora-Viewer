@@ -1,8 +1,17 @@
 # Notices — Aurora Viewer
 
+Copyright © 2026 the Aurora Viewer contributors (the authors in the project's
+Git history).
+
 Aurora Viewer is free software: you can redistribute it and/or modify it under
 the terms of the **GNU General Public License, version 3 or (at your option) any
-later version** (see [LICENSE](LICENSE)).
+later version** (see [LICENSE](LICENSE)). A modified version must keep these
+notices, including where the viewer shows them in its About window, and say
+that it was modified (sections 4 and 5 of the licence).
+
+The licence covers the code and the assets; it grants no right to the name
+"Aurora Viewer" or to the Aurora logo as trademarks. What a modified version may
+do with them is in [TRADEMARKS.md](TRADEMARKS.md).
 
 Aurora Viewer is not provided, endorsed or supported by Linden Research, Inc.
 ("Linden Lab") or The Phoenix Firestorm Project, Inc. Second Life® is a
@@ -67,6 +76,7 @@ GPL-3.0-or-later as described above.
 | Colour and dithering code of egui-wgpu's `egui.wgsl` — Copyright © Emil Ernerfeldt and the egui contributors | `crates/aurora-render/src/shaders/labels.wgsl` | MIT OR Apache-2.0, retained alongside this GPL-3.0-or-later adaptation |
 | Screen space shadows of Bend Studio (`bend_sss_gpu.h`, `bend_sss_cpu.h`, as shipped in Days Gone) — Copyright © 2023 Sony Interactive Entertainment, ported to WGSL and Rust | `crates/aurora-render/src/shaders/contact_shadows.wgsl`, `crates/aurora-render/src/contact_shadows.rs` | Apache-2.0, notice retained at the top of `contact_shadows.wgsl` |
 | Ground-truth ambient occlusion of Intel's XeGTAO (`XeGTAO.hlsli`, `vaGTAO.hlsl`, GameTechDev/XeGTAO), with its bent normals — Copyright © 2016-2021 Intel Corporation, ported to WGSL | `crates/aurora-render/src/shaders/gtao.wgsl`, `crates/aurora-render/src/gtao.rs` | MIT, notice retained at the top of `gtao.wgsl` |
+| AMD FidelityFX Super Resolution 3.1, the upscaler (FidelityFX SDK 1.1.4, `sdk/include/FidelityFX/gpu/fsr3upscaler/` and the RCAS of `gpu/fsr1/ffx_fsr1.h`) — Copyright © 2024 Advanced Micro Devices, Inc., ported to WGSL and Rust | `crates/aurora-render/src/shaders/fsr/`, `crates/aurora-render/src/fsr.rs` | MIT ([LICENSE-FidelityFX.txt](crates/aurora-render/src/shaders/fsr/LICENSE-FidelityFX.txt)), retained alongside this GPL-3.0-or-later adaptation |
 | Spherical caps' intersection and cone specular occlusion of Google's Filament (`sphericalCapsIntersection`, `specularAO_Cones`, google/filament) — Copyright © 2018 The Android Open Source Project, rewritten in WGSL | `crates/aurora-render/src/shaders/common.wgsl` (`spherical_caps_intersection`, `cone_specular_occlusion`) | Apache-2.0, retained alongside this GPL-3.0-or-later adaptation |
 
 Fonts keep their own license (the OFL allows bundling them with software under

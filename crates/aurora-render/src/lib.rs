@@ -19,11 +19,12 @@ mod cutout;
 #[cfg_attr(target_os = "macos", path = "dedicated_none.rs")]
 mod dedicated;
 mod device_lost;
-pub use device_lost::{GPU_WORK_NONE, GPU_WORK_VERDICTS, in_guarded_poll, is_loss_panic};
+pub use device_lost::{GPU_WORK_NONE, GPU_WORK_VERDICTS, in_guarded_poll, is_loss_panic, loss_details};
 mod dof;
 mod drawn_pick;
 mod exposure;
 pub mod frame_priority;
+mod fsr;
 pub mod gpu_alloc;
 pub mod gpu_cull;
 mod gtao;
@@ -46,6 +47,8 @@ mod portal_tests;
 pub mod present;
 pub mod preview;
 pub mod probes;
+pub mod projector_shadows;
+mod readback;
 mod render_thread;
 mod renderer;
 mod rlva;
@@ -89,6 +92,7 @@ pub fn vr_headset_ready() -> bool {
 }
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 mod vr_mirror;
+pub mod write_staging;
 pub mod writes;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod xr_device;
@@ -110,7 +114,7 @@ pub use gpu_cull::set_whole_chunk_uploads;
 pub use histogram::HISTOGRAM_BINS;
 pub use hud::HudView;
 pub use label_depth::{world_label_at, world_line_at};
-pub use main_thread::{GpuInfo, Renderer};
+pub use main_thread::{GpuInfo, Renderer, VulkanLimits};
 pub use renderer::{CASCADES, RenderError};
 pub use textures::{MASK_CUTOFF, MipLevel, alpha_coverage, build_mips, build_mips_alpha_weighted, preserve_alpha_coverage};
 pub use types::*;
@@ -306,7 +310,7 @@ fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);
         });
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: 8 * 256,
+            size: crate::readback::readback_size(8 * 256),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -573,7 +577,7 @@ fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);
                 readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("interface order readback"));
                 device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU completion");
                 let pixels = readback.get_mapped_range(..).expect("interface order samples");
-                let data: &[f32] = bytemuck::cast_slice(&pixels);
+                let data = crate::readback::f32s(&pixels);
                 let expected = 1.0 / (1.0 + (eye.z - 20.0) / (0.875 * (std::f32::consts::FRAC_PI_3 * 0.5).tan()));
                 let row = data[7 * 64..7 * 64 + 8].to_vec();
                 if let Some(previous) = &reference {
@@ -718,7 +722,7 @@ struct VsOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32
         );
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: 8 * 256,
+            size: crate::readback::readback_size(8 * 256),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -887,7 +891,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
         });
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("fog sample readback"),
-            size: 640,
+            size: crate::readback::readback_size(640),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -911,7 +915,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
         readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("fog sample readback"));
         device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU completion");
         let mapped = readback.get_mapped_range(..).expect("mapped fog samples");
-        let samples: &[[f32; 4]] = bytemuck::cast_slice(&mapped);
+        let samples = crate::readback::f32x4s(&mapped);
         for (a, b) in [(0, 1), (2, 3)] {
             for component in 0..2 {
                 for c in 0..3 {
