@@ -778,6 +778,39 @@ impl EnvSelector {
         self.drop_preset();
     }
 
+    /// Drop one list's local override ("Based on day cycle" / day "Nothing").
+    /// If nothing authored remains, clears the whole local environment.
+    pub fn clear_local_kind(&mut self, kind: SettingsKind) {
+        if self.rlva_locked {
+            return;
+        }
+        self.photo_yield(kind);
+        let Some(l) = self.local.as_mut() else {
+            return;
+        };
+        match kind {
+            SettingsKind::Sky => {
+                l.sky = None;
+                self.drop_preset();
+            }
+            SettingsKind::Water => l.water = None,
+            SettingsKind::Day => l.day = None,
+        }
+        let empty = self.local.as_ref().is_none_or(|l| {
+            l.day.is_none()
+                && !matches!(
+                    l.sky.as_ref().map(|(o, _)| o),
+                    Some(LocalOrigin::Item(_) | LocalOrigin::Preset(_) | LocalOrigin::Personal(_))
+                )
+                && !matches!(l.water.as_ref().map(|(o, _)| o), Some(LocalOrigin::Item(_)))
+        });
+        if empty {
+            self.clear_local();
+        } else {
+            self.local_dirty = true;
+        }
+    }
+
     pub fn has_local(&self) -> bool {
         self.local.is_some()
     }
@@ -1780,6 +1813,10 @@ mod tests {
                 day: ListShown::DayBased,
             }
         );
+        sel.clear_local_kind(SettingsKind::Sky);
+        assert_eq!(sel.local_view(), LocalView::SHARED, "clearing the only override returns to Shared");
+        sel.request_local(SKY, SettingsKind::Sky);
+        sel.on_settings(SKY, Some(sky_asset(1.9)));
         // then a water on top: the sky stays
         sel.request_local(WATER, SettingsKind::Water);
         sel.on_settings(WATER, Some(water_asset(9.0)));
