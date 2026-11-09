@@ -79,6 +79,7 @@ mod gestures;
 mod give_demo;
 mod gpu_recovery;
 mod gpu_stall;
+mod parcel_music;
 pub(crate) use gpu_stall::withdraw_all as withdraw_gpu_notices;
 mod debug_settings;
 mod draw_stepping;
@@ -855,8 +856,9 @@ pub struct App {
     remote_object: Option<crate::slapp::RemoteObject>,
     /// Parcels asked for the labels of `parcel` links (once each).
     app_link_parcels: HashSet<uuid::Uuid>,
-    /// Parcel music stream on (radio toggle).
-    music_playing: bool,
+    /// Radio intent and the last known station; neither is an engine status.
+    parcel_music: parcel_music::Radio,
+    music_status: ui::audio::MusicStatus,
     /// Parcel media and media on a prim (web / video plugins).
     media: crate::media::MediaManager,
     media_ui: ui::media::MediaUi,
@@ -864,7 +866,7 @@ pub struct App {
     media_cursor: Option<egui::CursorIcon>,
     /// Audio output (None: no device / failed to start).
     audio_engine: Option<aurora_audio::AudioEngine>,
-    /// Settings last applied to the engine, stream URL playing, parcel music URL seen.
+    /// Settings last applied to the engine and the authorized stream URL.
     applied_audio: Option<crate::settings::AudioSettings>,
     stream_url: String,
     /// The parcel music's title last told (ShowStreamMetadata).
@@ -891,10 +893,6 @@ pub struct App {
     instances: crate::instances::Instances,
     /// The Down key's latch (FSCrouchToggle).
     crouch_toggle: crate::movement::crouch_toggle::CrouchToggle,
-    music_parcel_url: String,
-    /// `/music` chat command: a stream played instead of the parcel's until
-    /// the parcel stream changes.
-    music_override: Option<String>,
     /// `key2name` chat commands waiting for a name.
     key_to_name: Vec<(uuid::Uuid, Instant)>,
     /// Voice chat (WebRTC) and the HTTP client it provisions with.
@@ -1766,7 +1764,8 @@ impl App {
             demo_lookups: Vec::new(),
             remote_object: None,
             app_link_parcels: HashSet::new(),
-            music_playing: false,
+            parcel_music: Default::default(),
+            music_status: Default::default(),
             audio_engine: match aurora_audio::AudioEngine::new_with_device(out_device) {
                 Ok(e) => {
                     let o = e.output_info();
@@ -1792,8 +1791,6 @@ impl App {
             busy_pause: Default::default(),
             instances: crate::instances::Instances::new(),
             crouch_toggle: Default::default(),
-            music_parcel_url: String::new(),
-            music_override: None,
             key_to_name: Vec::new(),
             media,
             media_ui: Default::default(),
@@ -2989,6 +2986,12 @@ impl App {
     }
 
     fn back_to_login(&mut self, error: Option<String>) {
+        self.parcel_music.enter(false);
+        self.stream_url.clear();
+        self.music_status = Default::default();
+        if let Some(engine) = &self.audio_engine {
+            engine.stop_stream();
+        }
         // the next login's arrival steps again; steps under way end with
         // the session, the user's draw distance back
         self.first_arrival_done = false;
@@ -3741,6 +3744,8 @@ impl App {
                 }
             }
             NetEvent::LoggedIn(l) => {
+                self.parcel_music
+                    .enter(!self.demo && self.settings.parcel_music_accounts.contains(&l.agent_id));
                 self.session_started(l.session_id);
                 self.refresh_grid_helper();
                 self.world.grid_currency = buy_currency::grid_currency(&l.raw, self.settings.grid == crate::settings::GridChoice::Custom);
@@ -5733,7 +5738,7 @@ impl App {
                 if let Some(parcel) = self.world.parcel.as_mut() {
                     Arc::make_mut(parcel).music_url = "http://radio.example.org:8000/live".into();
                 }
-                self.music_playing = true;
+                self.parcel_music.enter(true);
             }
             "list" => {
                 for (site, action) in [
@@ -5822,50 +5827,35 @@ impl App {
 
     fn update_audio(&mut self) {
         let in_world = self.in_world();
-        let url = if in_world {
-            self.world
-                .parcel
-                .as_ref()
-                .map(|pc| pc.music_url.trim().to_owned())
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
-        // only web streams
-        let url = if url.starts_with("http://") || url.starts_with("https://") {
-            url
-        } else {
-            String::new()
-        };
-        if url != self.music_parcel_url {
-            // new parcel stream: autoplay, or keep playing if the music was on;
-            // it replaces a stream started by `/music`
-            self.music_override = None;
-            self.music_playing = !url.is_empty() && (self.settings.audio.music_autoplay || self.music_playing);
-            self.music_parcel_url = url.clone();
+        if in_world {
+            self.parcel_music.update(
+                self.world.parcel.as_ref().map(|parcel| parcel.music_url.as_str()),
+                self.settings.audio.music_autoplay,
+            );
         }
+        let available = !self.parcel_music.station().is_empty();
+        let (want, verdict) = self.parcel_music.target(
+            in_world,
+            self.settings.audio.enabled[4],
+            self.settings.media.filter.then_some(&mut self.world.media_filter),
+        );
+        let want = want.to_owned();
         let Some(engine) = &self.audio_engine else {
+            self.music_status = ui::audio::MusicStatus::read(
+                available,
+                self.parcel_music.requested(),
+                &self.settings.audio,
+                self.minimized_mute.active,
+                verdict,
+                None,
+            );
             return;
         };
-        let url = match &self.music_override {
-            Some(u) if u.starts_with("http://") || u.starts_with("https://") => u.clone(),
-            _ => url,
-        };
-        let mut want = if self.music_playing { url } else { String::new() };
-        // the media filter (filterAudioUrl): nothing reaches the station
-        // before the resident answered; a refusal turns the radio off. A
-        // file or script URL never plays, with the filter off too.
-        if !want.is_empty() && (self.settings.media.filter || crate::media::filter::refused_scheme(&want).is_some()) {
-            use crate::media::filter::{Source, Verdict};
-            match self.world.media_filter.check(&want, Source::Music) {
-                Verdict::Allow => {}
-                Verdict::Ask => want.clear(),
-                Verdict::Deny => {
-                    self.music_playing = false;
-                    self.music_override = None;
-                    want.clear();
-                }
-            }
+        // Disable before submitting a station; enable only after the authorized
+        // URL replaced (or cleared) the controller's previous URL. Enabling the
+        // channel can otherwise reconnect that previous station before filtering.
+        if !self.settings.audio.enabled[4] {
+            engine.set_enabled(aurora_audio::Channel::Music, false);
         }
         if want != self.stream_url {
             if want.is_empty() {
@@ -5876,30 +5866,6 @@ impl App {
             }
             self.stream_url = want;
         }
-        // StreamTitleDisplay: the station's title, told when it changes
-        let title = match engine.stream_status() {
-            aurora_audio::StreamStatus::Playing { title } if !self.stream_url.is_empty() => title,
-            _ => None,
-        };
-        // the stream title window's (FSStreamTitleManager): the title now,
-        // empty once the stream stops; the demo's titles take its place
-        if !(self.demo && crate::demo::stream_title::scenario().is_some()) {
-            let now = if self.stream_url.is_empty() {
-                ""
-            } else {
-                title.as_deref().unwrap_or("")
-            };
-            self.stream_titles.update(now, self.settings.audio.stream_title_history as usize);
-        }
-        if self.stream_url.is_empty() {
-            self.stream_title_said = None;
-        } else if let Some(title) = title.filter(|t| self.stream_title_said.as_ref() != Some(t)) {
-            self.stream_title_said = Some(title.clone());
-            self.tell_stream_title(&title);
-        }
-        let Some(engine) = &self.audio_engine else {
-            return;
-        };
         if self.applied_audio.as_ref() != Some(&self.settings.audio) {
             let a = &self.settings.audio;
             if self.applied_audio.as_ref().map(|p| p.output_device.as_str()) != Some(a.output_device.as_str())
@@ -5915,7 +5881,48 @@ impl App {
             }
             self.applied_audio = Some(a.clone());
         }
+        let status = engine.stream_status();
+        self.music_status = ui::audio::MusicStatus::read(
+            available,
+            self.parcel_music.requested(),
+            &self.settings.audio,
+            self.minimized_mute.active,
+            verdict,
+            Some(&status),
+        );
+        // StreamTitleDisplay: metadata follows the actual connection, never the
+        // radio toggle. Leave the offline title scenario's metadata in place.
+        let title = match status {
+            aurora_audio::StreamStatus::Playing { title } if !self.stream_url.is_empty() => title,
+            _ => None,
+        };
+        if !(self.demo && crate::demo::stream_title::scenario().is_some()) {
+            let now = if self.stream_url.is_empty() {
+                ""
+            } else {
+                title.as_deref().unwrap_or("")
+            };
+            self.stream_titles.update(now, self.settings.audio.stream_title_history as usize);
+        }
+        if self.stream_url.is_empty() {
+            self.stream_title_said = None;
+        } else if let Some(title) = title.filter(|t| self.stream_title_said.as_ref() != Some(t)) {
+            self.stream_title_said = Some(title.clone());
+            self.tell_stream_title(&title);
+        }
         self.sync_minimized_mute();
+    }
+
+    fn remember_music_choice(&mut self) {
+        if self.demo || self.world.agent_id.is_nil() {
+            return;
+        }
+        if self.parcel_music.requested() {
+            self.settings.parcel_music_accounts.insert(self.world.agent_id);
+        } else {
+            self.settings.parcel_music_accounts.remove(&self.world.agent_id);
+        }
+        self.settings.save();
     }
 
     /// MuteWhenMinimized (audio_update_volume): every sound stops while the
@@ -13628,7 +13635,10 @@ impl App {
         }
         match a.audio.unwrap_or(ui::audio::AudioAction::None) {
             ui::audio::AudioAction::None => {}
-            ui::audio::AudioAction::ToggleMusic => self.music_playing = !self.music_playing,
+            ui::audio::AudioAction::ToggleMusic => {
+                self.parcel_music.toggle();
+                self.remember_music_choice();
+            }
             ui::audio::AudioAction::ToggleMedia => {
                 if self.media.parcel_playing() {
                     self.media.stop_parcel();
@@ -15614,8 +15624,9 @@ impl App {
                     },
                 };
                 let media = ui::audio::MediaState {
-                    music_available: self.world.parcel.as_ref().is_some_and(|pc| !pc.music_url.is_empty()),
-                    music_playing: self.music_playing,
+                    music_available: !self.parcel_music.station().is_empty() || self.parcel_music.requested(),
+                    music_playing: self.parcel_music.requested(),
+                    music_status: self.music_status,
                     media_available: self.settings.media.enabled
                         && self.world.parcel.as_ref().is_some_and(|pc| !pc.media_url.trim().is_empty()),
                     media_playing: self.media.parcel_playing(),
