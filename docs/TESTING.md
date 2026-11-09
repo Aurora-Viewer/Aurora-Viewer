@@ -4418,6 +4418,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]` | Geometry load: meshes filling the geometry arena |
 | `AURORA_GPU_OOM=<mb>[,<seconds>[,<after>]]` | Video memory full: every growth of a GPU buffer or texture page of at least that size fails, for the whole run or that long, from the start or `after` seconds |
 | `AURORA_GPU_OOM_TARGETS=<seconds>` | Video memory full for the render targets, that long after the start |
+| `AURORA_GPU_OOM_START=<seconds>` | Video memory full while the renderer is made, that long after the start |
 | `AURORA_GPU_OOM_FIRST_USE=<seconds>` | Video memory full for the targets made on first use (selection outline, depth of field, photo look, RLVa, TAA history), that long |
 | `AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]` | Fast camera turns, again and again |
 
@@ -4716,6 +4717,21 @@ both open states and the selection count. Capture at frame 620.
   with no usage, which wgpu refuses, and this leaves the same invalid
   textures, so the log holds `Invalid usage flags` lines a real card does
   not.
+- **`AURORA_GPU_OOM_START=<seconds>`** (demo or grid): for that long after
+  the renderer is first made, its placeholder textures (bound in place of
+  a target) come back invalid, as when the card fills while the viewer
+  opens and refuses part of what the renderer makes outside the render
+  targets. The log says `renderer: out of video memory while it was made,
+  made again once memory is freed`; the window shows the interface over
+  black with the `Video memory full` notice. The whole renderer is made
+  again on the same device and window, with the frame's settings (2 s,
+  then twice as long each time up to 30 s), each refused try repeating
+  that line and `renderer: try refused (<ms> ms)`, the time the try held
+  the frame; once the time is over the log says `renderer: made again,
+  whole (<ms> ms)` and the world comes back. A build without the remake stays black
+  for good: every later try of the render targets fails on the `frame
+  mask` bind group. Made with no usage, as for `AURORA_GPU_OOM_TARGETS`,
+  so the log holds `Invalid usage flags` lines a real card does not.
 - **`AURORA_GPU_OOM_FIRST_USE=<seconds>`** (demo or grid): for that long
   after the first one is made, every target made on first use counts as
   refused by a full video memory. An effect the frame can go without is
