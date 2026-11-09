@@ -75,6 +75,9 @@ impl App {
         }
         self.send(NetCommand::AgentAnimations { anims: stop, start: false });
         self.send(NetCommand::AnimationStateReset);
+        // The stop above includes STATIC_EYES: ask for it again, as after an
+        // arrival, or the eyes move until the next teleport (#1905).
+        self.static_eyes.on_arrival();
         let region = self
             .world
             .main_region
