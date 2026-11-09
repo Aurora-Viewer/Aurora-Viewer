@@ -16574,7 +16574,7 @@ impl App {
                         // the inventory's Share dialog confirms, then gives
                         // (LLGiveInventory::doGiveInventoryItem)
                         ui::chat::ConvAction::GiveItems { to, items } => {
-                            self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, to));
+                            self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, vec![to]));
                         }
                         // shown and in front even when already open
                         // (LLAvatarActions::share → showInstance), else the
@@ -17458,7 +17458,7 @@ impl App {
                         }
                         // the conversations' give confirmation (#991)
                         ui::profile::ProfileAction::Give { to, items } => {
-                            self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, to));
+                            self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, vec![to]));
                         }
                         // shown and in front, as the conversation's "Give an
                         // inventory item…"; RLVa @share refuses it first

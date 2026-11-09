@@ -149,6 +149,10 @@ impl AvatarPicker {
                 }
             };
             ui.add_space(4.0);
+            // Ctrl+A: every visible row, as LLScrollListCtrl with multiple selection
+            if self.multiple && !rows.is_empty() && ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::A)) {
+                self.selected = rows.iter().map(|(id, ..)| *id).collect();
+            }
             // fixed like the window: the available height of a window
             // sized from its content is the whole screen
             let list_h = LIST_H;

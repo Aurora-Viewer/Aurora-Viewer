@@ -20,9 +20,9 @@ pub(super) fn show(
     let Some(mut dialog) = st.dialog.take() else {
         return;
     };
-    if let EditDialog::Share(ids, resident) = &dialog {
-        let picture = facts.pictures.get(resident);
-        if !share(ctx, p, icons, inv, prefs, facts, picture, st.ui_id, ids, *resident, actions) {
+    if let EditDialog::Share(ids, residents) = &dialog {
+        let picture = residents.first().and_then(|id| facts.pictures.get(id));
+        if !share(ctx, p, icons, inv, prefs, facts, picture, st.ui_id, ids, residents, actions) {
             st.dialog = Some(dialog);
         }
         return;
@@ -349,10 +349,16 @@ fn share(
     picture: Option<&egui::TextureHandle>,
     ui_id: Uuid,
     ids: &[Uuid],
-    resident: Uuid,
+    residents: &[Uuid],
     actions: &mut Vec<InvAction>,
 ) -> bool {
-    let name = facts.names.get(&resident).map_or("…", String::as_str);
+    if residents.is_empty() {
+        return true;
+    }
+    // LLAvatarActions::buildResidentsString: names joined for the confirmation
+    let names: Vec<&str> = residents.iter().map(|id| facts.names.get(id).map_or("…", String::as_str)).collect();
+    let name = names.join(", ");
+    let first = residents[0];
     // ((icon, tint), name, fate, tag, why)
     let rows: Vec<((&str, egui::Color32), String, Fate, &str, String)> = ids
         .iter()
@@ -393,7 +399,7 @@ fn share(
         ui.set_width(360.0);
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(36.0), egui::Sense::hover());
-            crate::ui::widgets::avatar_disc(ui, p, rect, picture, name, false);
+            crate::ui::widgets::avatar_disc(ui, p, rect, picture, facts.names.get(&first).map_or("…", String::as_str), false);
             ui.add_space(4.0);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 1.0;
@@ -402,7 +408,7 @@ fn share(
                         .size(12.0)
                         .color(p.muted),
                 );
-                ui.add(egui::Label::new(RichText::new(name).size(15.0).strong().color(p.ink)).truncate());
+                ui.add(egui::Label::new(RichText::new(&name).size(15.0).strong().color(p.ink)).truncate());
             });
         });
         ui.add_space(10.0);
@@ -492,7 +498,12 @@ fn share(
         });
     });
     if give {
-        actions.push(InvAction::Share { items: given, resident });
+        for &resident in residents {
+            actions.push(InvAction::Share {
+                items: given.clone(),
+                resident,
+            });
+        }
     }
     give || cancel || modal.should_close()
 }
@@ -2169,7 +2180,7 @@ mod tests {
         let mut asked = ids.clone();
         asked.push(no_transfer);
         let mut st = InventoryUi {
-            dialog: Some(EditDialog::Share(asked.clone(), resident)),
+            dialog: Some(EditDialog::Share(asked.clone(), vec![resident])),
             ..Default::default()
         };
         let mut texts = Vec::new();
@@ -2223,14 +2234,14 @@ mod tests {
             repeat: false,
             modifiers: Default::default(),
         };
-        st.dialog = Some(EditDialog::Share(vec![no_transfer], resident));
+        st.dialog = Some(EditDialog::Share(vec![no_transfer], vec![resident]));
         for _ in 0..3 {
             frame(&mut st, Vec::new());
         }
         let (_, actions) = frame(&mut st, vec![enter]);
         assert!(actions.is_empty() && st.dialog.is_some(), "nothing to give");
         // Escape
-        st.dialog = Some(EditDialog::Share(ids.clone(), resident));
+        st.dialog = Some(EditDialog::Share(ids.clone(), vec![resident]));
         for _ in 0..3 {
             frame(&mut st, Vec::new());
         }

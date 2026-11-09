@@ -1190,7 +1190,8 @@ pub(super) fn execute(
         Command::Delete(ids, purge) => st.dialog = Some(EditDialog::Delete(ids, purge)),
         Command::Share(ids) => {
             st.share_items = ids;
-            st.share_picker.open(&format!("inventory_share_{}", st.ui_id), false);
+            // LLAvatarActions::shareWithAvatars: allow_multiple true
+            st.share_picker.open(&format!("inventory_share_{}", st.ui_id), true);
         }
         Command::Open(id) => super::context::open(inv, id, st, actions),
         Command::OpenMany(ids) => {
