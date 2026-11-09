@@ -1,7 +1,8 @@
 //! The world's hover tips in the offline demo
-//! (`AURORA_DEMO_HOVER_TIPS=<bubble|card|readout|legacy>[:all][:noland]`):
+//! (`AURORA_DEMO_HOVER_TIPS=<bubble|card|readout|legacy>[:all][:noland][:avatars]`):
 //! the tips on in that form for the session, without touching the saved
-//! settings, on land too unless `noland`, on every object with `all`. The
+//! settings, on land too unless `noland`, on every object with `all`; with
+//! `avatars`, the main switch off and avatar tips alone (#2475). The
 //! simulator answers the hovered parcel (two parcels: the plaza, the
 //! 128 m square in the middle, and a garden for sale around it) and the properties
 //! of the demo's objects. Rest the cursor somewhere with
@@ -23,8 +24,10 @@ pub fn scenario() -> Option<(HoverTips, bool)> {
         let mut parts = v.split(':').map(|s| s.trim().to_lowercase());
         let form = parts.next().unwrap_or_default();
         let rest: Vec<String> = parts.collect();
+        let avatars_only = rest.iter().any(|p| p == "avatars");
         let tips = HoverTips {
-            enabled: true,
+            enabled: !avatars_only,
+            avatars: avatars_only,
             form: match form.as_str() {
                 "bubble" => HoverTipForm::Bubble,
                 "readout" => HoverTipForm::Readout,

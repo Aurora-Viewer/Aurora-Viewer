@@ -14,8 +14,9 @@
 //!   Ambient channel.
 //! * The reverb of the surroundings ([`AudioEngine::set_reverb`]): one
 //!   shared bus the world sounds feed.
-//! * Device selection ([`output_devices`], [`input_devices`],
-//!   [`AudioEngine::set_output_device`]) and microphone capture
+//! * Device selection ([`output_devices`], [`input_devices`], listed off the
+//!   UI thread by [`DeviceLister`], [`AudioEngine::set_output_device`]) and
+//!   microphone capture
 //!   ([`MicCapture`]: 48 kHz mono, input gain, level meter) for voice.
 //!
 //! The device (cpal; WASAPI on Windows) is driven from a dedicated thread.
@@ -47,7 +48,7 @@ use parking_lot::Mutex;
 
 pub use capture::{CAPTURE_SAMPLE_RATE, MAX_INPUT_GAIN, MicCapture, MicFeed, OVERDRIVEN_POWER_LEVEL};
 pub use decode::SoundClip;
-pub use devices::{input_devices, output_devices};
+pub use devices::{DeviceLister, DeviceLists, input_devices, output_devices};
 pub use mixer::{Channel, ChannelSettings, ENGINE_SAMPLE_RATE};
 pub use output::OutputInfo;
 pub use processing::{EchoReference, MicProcessing};
