@@ -110,6 +110,7 @@ impl Default for WorldMapUi {
 }
 
 pub enum WorldMapAction {
+    TrackRegion(String),
     TeleportHome,
     TeleportLandmark(Uuid),
     /// A place of the history, by its global position: on another OpenSim
@@ -1057,6 +1058,24 @@ impl WorldMapUi {
                 && let Some((x, y)) = tracked
             {
                 self.center_on(world, cam, x, y);
+            }
+            // LLFloaterWorldMap::onTrackRegion; the name stays hidden under
+            // RLVa @showloc
+            let track_name = world
+                .map
+                .track
+                .as_ref()
+                .filter(|_| !world.rlva.has("showloc"))
+                .and_then(|t| world.map.sim_at_global(t.x, t.y).map(|(_, s)| s.name.clone()));
+            if ui
+                .add_enabled(
+                    track_name.is_some(),
+                    egui::Button::new(aurora_i18n::tr!("region-tracker-track-region")),
+                )
+                .clicked()
+                && let Some(name) = track_name
+            {
+                actions.push(WorldMapAction::TrackRegion(name));
             }
             self.clear_button(ui, world);
         });

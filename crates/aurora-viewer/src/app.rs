@@ -824,6 +824,7 @@ pub struct App {
     demo_slm: Option<crate::world::marketplace::demo::DemoSlm>,
     people_map_ui: ui::minimap::MiniMap,
     worldmap_ui: ui::worldmap::WorldMapUi,
+    region_tracker_ui: ui::region_tracker::RegionTrackerUi,
     map_tiles: ui::map_tiles::MapTiles,
     options_ui: ui::options::OptionsUi,
     grids_ui: ui::grids::Manager,
@@ -1746,6 +1747,7 @@ impl App {
             demo_slm: None,
             people_map_ui: Default::default(),
             worldmap_ui: Default::default(),
+            region_tracker_ui: Default::default(),
             map_tiles: ui::map_tiles::MapTiles::new(),
             options_ui: Default::default(),
             grids_ui: Default::default(),
@@ -17636,8 +17638,19 @@ impl App {
                     &mut open,
                 );
                 self.panels.world_map = open;
+                self.region_tracker_ui.show(
+                    &ctx,
+                    &p,
+                    &mut self.world,
+                    &mut self.panels.region_tracker,
+                    &mut self.panels.world_map,
+                );
                 for wa in wm {
                     match wa {
+                        ui::worldmap::WorldMapAction::TrackRegion(name) => {
+                            self.region_tracker_ui.track_region(&self.world, name);
+                            self.panels.region_tracker = true;
+                        }
                         ui::worldmap::WorldMapAction::TeleportHome => {
                             a.bar = BarAction::TeleportHome;
                             self.panels.world_map = false;

@@ -237,6 +237,7 @@ pub struct WorldMap {
     /// MAP_ITEM_AGENT_LOCATIONS by region: (global x, y, count).
     pub agents: HashMap<(u32, u32), Vec<(u32, u32, i32)>>,
     agents_asked: HashMap<(u32, u32), Instant>,
+    named_region_asked: HashMap<String, Instant>,
     pub track: Option<Track>,
     /// The friend `track` follows, if any.
     pub avatar: Option<AvatarTrack>,
@@ -615,6 +616,24 @@ impl WorldMap {
             item_type: map_item::AGENT_LOCATIONS,
             handle: aurora_net::origin_to_handle(key.0 * 256, key.1 * 256),
         });
+    }
+
+    /// Ask for a tracked region by name no more than once a minute.
+    pub fn want_named_region(&mut self, name: &str) {
+        let lower = name.trim().to_lowercase();
+        if lower.is_empty() {
+            return;
+        }
+        let now = Instant::now();
+        if self
+            .named_region_asked
+            .get(&lower)
+            .is_some_and(|t| now.duration_since(*t) < AGENTS_UPDATE)
+        {
+            return;
+        }
+        self.named_region_asked.insert(lower.clone(), now);
+        self.out.push(NetCommand::MapNameRequest { name: lower });
     }
 
     /// LLFloaterWorldMap::trackAvatar: follow a friend who lets us see them
@@ -1020,6 +1039,14 @@ pub fn teleport_command(x: f64, y: f64, z: f32) -> NetCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn named_region_tracker_refresh_is_limited_to_once_per_minute() {
+        let mut map = WorldMap::default();
+        map.want_named_region(" Ahern ");
+        map.want_named_region("ahern");
+        assert!(matches!(map.take_commands().as_slice(), [NetCommand::MapNameRequest { name }] if name == "ahern"));
+    }
 
     fn remote_friend() -> (super::super::World, Uuid) {
         let mut w = super::super::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
