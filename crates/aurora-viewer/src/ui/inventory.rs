@@ -562,6 +562,10 @@ pub struct InventoryUi {
     pub links_filter: Option<Uuid>,
     pub windows: Vec<InventoryWindow>,
     pub(super) tab_hosts: super::preview_tabs::Hosts,
+    /// Properties asked for in a folder or additional window: answered by
+    /// the main inventory's state, which holds every Properties window
+    /// (`document.rs`, `answer_properties`).
+    pub(super) properties_asked: Vec<document::PropertiesAsk>,
     pub(super) tab_host: Option<super::preview_tabs::View>,
     pub thumbnail: thumbnail::ThumbnailUi,
     hover: hover::State,
@@ -2291,6 +2295,7 @@ pub fn show(
         .filter_map(|window| st.tab_hosts.view(window.id).map(|view| (window.id, view)))
         .collect();
     let mut spawned = Vec::new();
+    let mut asked = Vec::new();
     for w in &mut windows {
         if !w.root.is_nil() && !world.inventory.folders.contains_key(&w.root) {
             w.open = false;
@@ -2458,6 +2463,7 @@ pub fn show(
         }
         st.tab_hosts.append(&mut w.state.tab_hosts);
         spawned.append(&mut w.state.windows);
+        asked.append(&mut w.state.properties_asked);
     }
     // Documents and confirmations outlive the inventory window which opened
     // them, just like the main inventory's auxiliary floaters.
@@ -2472,6 +2478,9 @@ pub fn show(
     });
     windows.append(&mut spawned);
     st.windows = windows;
+    for ask in asked {
+        st.answer_properties(ctx, ask);
+    }
     if let Some(id) = st.demo_menu {
         let mut menu_open = true;
         super::menu::popup_at(

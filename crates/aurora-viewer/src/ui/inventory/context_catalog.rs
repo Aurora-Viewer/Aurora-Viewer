@@ -1164,6 +1164,7 @@ pub(super) fn execute(
     facts: &Facts,
     actions: &mut Vec<InvAction>,
 ) {
+    let main = st.is_main();
     let mut submit = |plan: Result<Mutation, String>| match plan {
         Ok(m) => actions.push(InvAction::Edit(m)),
         Err(reason) => {
@@ -1220,6 +1221,11 @@ pub(super) fn execute(
             }
         }
         Command::Batch(batch) => actions.extend(batch),
+        // a folder window's own list holds none of the Properties windows
+        // (they move to the main inventory's each frame): it would open a
+        // second editor of an item already shown
+        Command::PropertiesMany(ids) if !main => st.properties_asked.push(super::document::PropertiesAsk::Many(ids)),
+        Command::Properties(id) if !main => st.properties_asked.push(super::document::PropertiesAsk::One(id)),
         Command::PropertiesMany(ids) => st.open_properties_many(&ids),
         Command::Properties(id) => {
             if st.focus_properties(ui.ctx(), id) {

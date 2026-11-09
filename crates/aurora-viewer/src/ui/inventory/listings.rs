@@ -271,8 +271,9 @@ mod tests {
         };
         let mut prefs = InventoryPreferences::default();
         execute("properties", item, &inv, &mut state, &mut prefs);
-        assert!(matches!(state.dialog, Some(EditDialog::Properties(id)) if id == item));
-        state.dialog = None;
+        // answered by the main inventory, which holds every Properties window
+        assert_eq!(state.properties_asked, [super::super::document::PropertiesAsk::One(item)]);
+        assert!(state.dialog.is_none());
         execute("rename", item, &inv, &mut state, &mut prefs);
         assert_eq!(state.rename.as_ref().map(|rename| rename.id), Some(item));
         execute("copy", item, &inv, &mut state, &mut prefs);

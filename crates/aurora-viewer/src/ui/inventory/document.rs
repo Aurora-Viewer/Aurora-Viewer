@@ -187,6 +187,14 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
     Vec::new()
 }
 
+/// Properties asked for in a folder or additional window
+/// (`InventoryUi::properties_asked`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PropertiesAsk {
+    One(Uuid),
+    Many(Vec<Uuid>),
+}
+
 impl InventoryUi {
     /// LLAnimationBridge::performAction / LLPreviewAnim::play: playback uses
     /// the existing preview, or opens one for a context-menu action.
@@ -268,6 +276,22 @@ impl InventoryUi {
             }
         }
         self.tab_hosts.group(members);
+    }
+
+    /// A folder or additional window's Properties request, on the main
+    /// inventory's state: an item already shown comes to the front (its
+    /// tab selected), the others open in windows of their own, grouped
+    /// when several were asked at once.
+    pub(super) fn answer_properties(&mut self, ctx: &egui::Context, ask: PropertiesAsk) {
+        match ask {
+            PropertiesAsk::Many(ids) => self.open_properties_many(&ids),
+            PropertiesAsk::One(id) => {
+                if !self.focus_properties(ctx, id) {
+                    self.open_properties_many(&[id]);
+                    self.focus_properties(ctx, id);
+                }
+            }
+        }
     }
 
     pub fn focus_properties(&mut self, ctx: &egui::Context, item: Uuid) -> bool {

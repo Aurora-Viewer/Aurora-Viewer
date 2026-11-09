@@ -40,11 +40,13 @@ pub struct View {
 }
 
 impl Hosts {
-    pub fn group(&mut self, keys: Vec<Uuid>) {
+    /// Whether a group was made: fewer than two distinct keys make none,
+    /// and those windows keep showing on their own.
+    pub fn group(&mut self, keys: Vec<Uuid>) -> bool {
         let mut seen = HashSet::new();
         let keys: Vec<_> = keys.into_iter().filter(|id| seen.insert(*id)).collect();
         if keys.len() < 2 {
-            return;
+            return false;
         }
         for group in &mut self.groups {
             group.keys.retain(|id| !seen.contains(id));
@@ -62,6 +64,7 @@ impl Hosts {
             closing: false,
             labels: Arc::from([]),
         });
+        true
     }
     pub fn append(&mut self, other: &mut Self) {
         self.groups.append(&mut other.groups);
@@ -80,6 +83,12 @@ impl Hosts {
             {
                 group.selected = *id;
             }
+            // every tab disabled (RLVa: no notecard previews) draws nothing
+            // that could carry a close on: a close under way is dropped, or
+            // the tabs would close themselves once the restriction lifts
+            if !group.keys.iter().any(|id| live[id].enabled) {
+                group.closing = false;
+            }
             group.labels = group.keys.iter().map(|id| live[id].clone()).collect();
         }
         self.groups.retain(|group| !group.keys.is_empty());
@@ -89,11 +98,15 @@ impl Hosts {
         group.selected = member;
         Some(window_id(group.id))
     }
-    pub fn cancel_member(&mut self, member: Uuid) {
-        if let Some(group) = self.groups.iter_mut().find(|group| group.keys.contains(&member)) {
-            group.selected = member;
-            group.closing = false;
-        }
+    /// A member that cannot close (a failed save): its group stops closing
+    /// and shows it. False for a window in no group.
+    pub fn cancel_member(&mut self, member: Uuid) -> bool {
+        let Some(group) = self.groups.iter_mut().find(|group| group.keys.contains(&member)) else {
+            return false;
+        };
+        group.selected = member;
+        group.closing = false;
+        true
     }
     pub fn view(&self, member: Uuid) -> Option<View> {
         let group = self.groups.iter().find(|group| group.keys.contains(&member))?;
@@ -200,6 +213,37 @@ mod tests {
         hosts.report(&mut second);
         assert!(!hosts.view(keys[1]).unwrap().closing);
         assert!(hosts.view(keys[2]).is_some());
+    }
+    #[test]
+    fn one_key_makes_no_group() {
+        let mut hosts = Hosts::default();
+        let key = Uuid::from_u128(1);
+        assert!(!hosts.group(vec![key, key]));
+        assert!(hosts.view(key).is_none());
+        assert!(!hosts.cancel_member(key), "a window in no group");
+        assert!(hosts.group(vec![key, Uuid::from_u128(2)]));
+        assert!(hosts.cancel_member(key));
+    }
+    #[test]
+    fn a_group_with_every_tab_disabled_drops_a_close_under_way() {
+        let mut hosts = Hosts::default();
+        let keys = [1, 2].map(Uuid::from_u128);
+        hosts.group(keys.to_vec());
+        hosts.update([member(1), member(2)]);
+        let mut view = hosts.view(keys[0]).unwrap();
+        view.closing(&mut false);
+        hosts.report(&mut view);
+        assert!(hosts.view(keys[0]).unwrap().closing);
+        // RLVa takes the previews away: nothing draws, nothing carries the close
+        let disabled = |n| Member {
+            enabled: false,
+            ..member(n)
+        };
+        hosts.update([disabled(1), disabled(2)]);
+        assert!(!hosts.view(keys[0]).unwrap().closing);
+        // the restriction lifts: the tabs stay open
+        hosts.update([member(1), member(2)]);
+        assert!(!hosts.view(keys[0]).unwrap().closing && hosts.view(keys[1]).is_some());
     }
     #[test]
     fn regrouping_does_not_let_stale_host_events_change_the_new_batch() {

@@ -706,7 +706,11 @@ impl LibraryUi {
                 });
             }
         }
-        if let Some(size) = widgets::take_floater_resize(ctx, &id) {
+        // the single preview's remembered size: a tab group (its strip of
+        // tabs, its own window) neither takes it nor gives it
+        if let Some(size) = widgets::take_floater_resize(ctx, &id)
+            && group.is_none()
+        {
             prefs.record_preview_size(material, size);
         }
         open

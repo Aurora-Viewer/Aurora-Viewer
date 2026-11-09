@@ -171,6 +171,29 @@ fn preview_tabs_properties_preserve_each_items_fields_and_reopen_the_existing_ho
 }
 
 #[test]
+fn properties_asked_in_a_folder_window_reach_the_open_windows_instead_of_a_copy() {
+    let mut f = Fixture::new(6);
+    let ids = [9101, 9102].map(Uuid::from_u128);
+    f.state.open_properties_many(&ids);
+    f.settle();
+    let before: Vec<_> = f.state.windows.iter().map(|w| w.id).collect();
+    // asked again from a folder window, one item then both
+    f.state.answer_properties(&f.ctx, document::PropertiesAsk::One(ids[1]));
+    f.settle();
+    assert_eq!(f.state.windows.iter().map(|w| w.id).collect::<Vec<_>>(), before);
+    assert!(f.state.windows[1].state.tab_host.as_ref().unwrap().active());
+    f.state.answer_properties(&f.ctx, document::PropertiesAsk::Many(ids.to_vec()));
+    f.settle();
+    assert_eq!(f.state.windows.iter().map(|w| w.id).collect::<Vec<_>>(), before);
+    // an item not shown yet gets a window of its own
+    f.close_host();
+    f.state.answer_properties(&f.ctx, document::PropertiesAsk::One(ids[0]));
+    f.settle();
+    assert_eq!(f.state.windows.len(), 1);
+    assert!(matches!(f.state.windows[0].state.dialog, Some(EditDialog::Properties(id)) if id == ids[0]));
+}
+
+#[test]
 fn preview_tabs_notecards_keep_background_saves_and_cancelled_closure_independent() {
     let mut f = Fixture::new(7);
     let ids = [9101, 9102].map(Uuid::from_u128);

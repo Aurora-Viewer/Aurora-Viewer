@@ -451,7 +451,11 @@ impl Editors {
                     .any(|e| e.target.object.is_nil() && e.target.item == *item && !e.closed)
             })
             .collect();
-        self.tab_hosts.group(keys.clone());
+        // one script alone (with notecards or textures beside it) makes no
+        // group: its editor keeps coming to the front like a single open
+        if !self.tab_hosts.group(keys.clone()) {
+            return;
+        }
         for editor in &mut self.documents {
             if editor.target.object.is_nil() && keys.contains(&editor.target.item) {
                 editor.raise = false;
@@ -593,8 +597,9 @@ impl Editors {
             Err(reason) => e.status.clone_from(reason),
         }
         e.close_after_save = false;
-        if !result.as_ref().is_ok_and(|saved| saved.compiled) {
-            self.tab_hosts.cancel_member(target.item);
+        // a tab that fails to compile stops its group's close and comes to
+        // the front; an editor of its own stays where it is, as before
+        if !result.as_ref().is_ok_and(|saved| saved.compiled) && self.tab_hosts.cancel_member(target.item) {
             e.raise = true;
         }
         true
@@ -1954,6 +1959,60 @@ mod tests {
         editors.saved(request, target, &Err("offline".into()));
         assert!(editors.documents[0].dirty());
         assert!(editors.documents[0].can_save());
+    }
+
+    #[test]
+    fn a_lone_script_opened_with_other_items_still_comes_to_the_front() {
+        let mut editors = Editors::default();
+        let target = target(1);
+        let request = editors.open(target, "Test".into(), true, true).expect("load");
+        editors.loaded(request, target, Ok("default {}".into()));
+        editors.documents[0].raise = true;
+        // the script with a notecard: only one script editor, no group
+        editors.group_inventory(&[target.item, Uuid::from_u128(77)]);
+        assert!(editors.documents[0].raise);
+        assert!(editors.tab_hosts.view(target.item).is_none());
+    }
+
+    #[test]
+    fn a_failed_compile_comes_to_the_front_only_as_a_tab() {
+        let failed = ScriptSaved {
+            asset: Uuid::from_u128(3),
+            compiled: false,
+            checked: true,
+            errors: vec!["(1, 1) Syntax error".into()],
+        };
+        let mut editors = Editors::default();
+        let targets = [
+            ScriptTarget {
+                object: Uuid::nil(),
+                item: Uuid::from_u128(801),
+            },
+            ScriptTarget {
+                object: Uuid::nil(),
+                item: Uuid::from_u128(802),
+            },
+        ];
+        for target in targets {
+            let request = editors.open(target, "Test".into(), true, true).expect("load");
+            editors.loaded(request, target, Ok("original".into()));
+        }
+        let save = |editors: &mut Editors, i: usize| {
+            editors.documents[i].source = "invalid source".into();
+            editors.documents[i].raise = false;
+            let Action::Save { request, .. } = editors.documents[i].save().expect("save script") else {
+                panic!("save action")
+            };
+            editors.saved(request, targets[i], &Ok(failed.clone()));
+        };
+        // an editor of its own stays where it is (minimized, behind others)
+        save(&mut editors, 0);
+        assert!(!editors.documents[0].raise);
+        // a tab stops its group's close and shows
+        editors.group_inventory(&targets.map(|t| t.item));
+        save(&mut editors, 1);
+        assert!(editors.documents[1].raise);
+        assert!(editors.tab_hosts.view(targets[1].item).unwrap().active());
     }
 
     #[test]
