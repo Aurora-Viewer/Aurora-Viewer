@@ -99,7 +99,7 @@ pub const COMMANDS: &[Command] = commands![
     "movelock", "lock-filled", "movelock-title", true;
     "water_walk", "walk", "movement-water-walk", true;
     "resync_animations", "refresh", "toolbar-command-resync-animations", true;
-    "regiontracker", "location-filled", "toolbar-command-region-tracker", false;
+    "regiontracker", "location-filled", "toolbar-command-region-tracker", true;
     "group_titles", "tags-filled", "toolbar-command-group-titles", true;
     "wearable_favorites", "hanger-2-filled", "toolbar-command-wearable-favorites", false;
     "discord", "brand-discord-filled", "toolbar-command-discord", false;

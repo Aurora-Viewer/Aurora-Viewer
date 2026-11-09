@@ -308,6 +308,10 @@ pub struct HoverTips {
     /// human's choice (2026-10-21); the Legacy Viewer's is on.
     pub enabled: bool,
     pub form: HoverTipForm,
+    /// Avatar tips even with `enabled` off, objects and land then showing
+    /// none (#2475; the Legacy Viewer has no such switch, its avatar tips
+    /// follow ShowHoverTips alone). Off, so nothing changes for anyone.
+    pub avatars: bool,
     /// ShowAllObjectHoverTip: every object, not only those that can be
     /// touched, paid, bought or have media (off, as in the Legacy Viewer).
     pub all_objects: bool,
@@ -330,6 +334,7 @@ impl Default for HoverTips {
         HoverTips {
             enabled: false,
             form: HoverTipForm::Card,
+            avatars: false,
             all_objects: false,
             land: false,
             group_titles: true,
@@ -501,6 +506,9 @@ pub struct Settings {
     /// Show Friends Only and keeping it after a teleport, for each account
     /// (FSRenderFriendsOnly, FSRenderFriendsOnlyPersistsTP: per-account settings).
     pub friends_only: std::collections::HashMap<uuid::Uuid, crate::world::friends_only::Preferences>,
+    /// Accounts whose radio was explicitly switched on. Only the intent is
+    /// remembered across logins (#2514), never a parcel or manual stream URL.
+    pub parcel_music_accounts: std::collections::HashSet<uuid::Uuid>,
     /// Photo window (Firestorm's snapshot floater settings).
     pub snapshot: crate::snapshot::Settings,
     /// Depth of field (Preferences › Graphics).
@@ -750,6 +758,12 @@ pub struct Settings {
     /// off by default; Preferences > Chat). "/n" before the text works
     /// without it.
     pub show_chat_channel: bool,
+    /// The emojis used last as a row under the chat fields (Preferences >
+    /// Chat, on; it takes no room before a first emoji is sent).
+    pub show_recent_emojis: bool,
+    /// The same row with the Legacy chat style: off, as the Legacy Viewer's
+    /// row starts closed behind its arrow (the human's choice, 2026-11-09).
+    pub show_recent_emojis_legacy: bool,
     /// Our own objects' script errors in the nearby chat, with a red
     /// warning sign, instead of opening the Script debug window, which
     /// still keeps them (ShowScriptErrorsLocation 0; on, the human's choice
@@ -1960,6 +1974,7 @@ impl Default for Settings {
             bridge: Default::default(),
             movements: Default::default(),
             friends_only: Default::default(),
+            parcel_music_accounts: Default::default(),
             snapshot: Default::default(),
             dof: Default::default(),
             loading_backdrop: true,
@@ -1978,6 +1993,8 @@ impl Default for Settings {
             chat_timestamps_im: true,
             former_chat_timestamps: None,
             show_chat_channel: false,
+            show_recent_emojis: true,
+            show_recent_emojis_legacy: false,
             script_errors_in_chat: true,
             script_errors_to_channel: false,
             script_errors_channel: 1,
@@ -3328,6 +3345,17 @@ impl WaterEffectsSettings {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn avatar_only_hover_tips_are_off_by_default_and_for_older_preferences() {
+        use super::HoverTips;
+        assert!(!HoverTips::default().avatars);
+        assert!(!HoverTips::default().enabled);
+        let old: HoverTips = serde_json::from_str(r#"{"enabled":true,"all_objects":false}"#).expect("older hover preferences");
+        assert!(!old.avatars);
+        assert!(old.enabled);
+        assert!(!old.all_objects);
+    }
+
+    #[test]
     fn console_max_lines_defaults_persist_and_sanitize() {
         let old: super::Settings = serde_json::from_str("{}").expect("old synthetic settings");
         assert_eq!(old.chat_console_max_lines, 40);
@@ -3855,6 +3883,22 @@ mod tests {
         let saved = serde_json::to_vec(&original).expect("serialize synthetic settings");
         let loaded: Settings = serde_json::from_slice(&saved).expect("reload synthetic settings");
         assert!(!loaded.sanitized().confirm_teleports);
+    }
+
+    #[test]
+    fn recent_emojis_are_shown_by_default_and_survive_reload() {
+        assert!(Settings::default().show_recent_emojis);
+        assert!(!Settings::default().show_recent_emojis_legacy, "off with the Legacy chat style");
+        let old: Settings = serde_json::from_str("{}").expect("synthetic old settings");
+        assert!(old.show_recent_emojis);
+        assert!(!old.show_recent_emojis_legacy);
+        let original = Settings {
+            show_recent_emojis: false,
+            ..Settings::default()
+        };
+        let saved = serde_json::to_vec(&original).expect("serialize synthetic preference");
+        let loaded: Settings = serde_json::from_slice(&saved).expect("reload synthetic preference");
+        assert!(!loaded.sanitized().show_recent_emojis);
     }
 
     #[test]
