@@ -2374,10 +2374,10 @@ impl Copied<'_> {
     }
 }
 
-/// The selection of the lines (`select.rs`), as in Firestorm's transcript:
+/// The selection of the lines (`select.rs`), as in the Legacy Viewer's transcript:
 /// a drag selects across them (never moving the window), a double click
-/// selects a word, a click without a drag clears it; a press gives them the
-/// keyboard, then Ctrl+A selects the
+/// selects a word, a triple click selects a paragraph, a click without a drag
+/// clears it; a press gives them the keyboard, then Ctrl+A selects the
 /// whole conversation, Ctrl+C (Ctrl+Insert) copies the selection, Escape
 /// clears it, and what is typed goes to the conversation's field.
 fn select_lines(
@@ -2428,10 +2428,16 @@ fn select_lines(
         sel.clear();
     }
     // a double click selects the word under the pointer (its second click
-    // cleared the selection just above)
+    // cleared the selection just above); a triple click selects the paragraph
     if content.double_clicked()
         && let Some(pos) = content.interact_pointer_pos().filter(|p| area.contains(*p))
         && let Some((seq, range, text)) = select::word_at(drawn, pos)
+    {
+        sel.select_in_row(seq, range, text);
+    }
+    if content.triple_clicked()
+        && let Some(pos) = content.interact_pointer_pos().filter(|p| area.contains(*p))
+        && let Some((seq, range, text)) = select::paragraph_at(drawn, pos)
     {
         sel.select_in_row(seq, range, text);
     }
