@@ -161,6 +161,8 @@ pub struct ChatUi {
     /// `AURORA_DEMO_CONV=aurora:local:volume`: open the menu of the nearby
     /// chat's volume once it is drawn.
     pub demo_volume_menu: bool,
+    /// The emojis used last, the row under the fields.
+    pub recent_emojis: super::emoji::recent::Recent,
     /// `AURORA_DEMO_CONV=aurora:local:channel`: the channel selector shown
     /// without changing the preferences.
     pub demo_channel: bool,
@@ -605,6 +607,66 @@ pub struct OutgoingChat {
 /// with nothing is not sent. The chat inputs never send an empty field.
 pub fn sends_local_line(channel: i32, message: &str) -> bool {
     channel != 0 || !message.is_empty()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SendKey {
+    Normal,
+    Shout,
+    Whisper,
+    Ooc,
+}
+
+impl SendKey {
+    /// OOC always uses normal volume, independently of the nearby volume
+    /// selector (FSNearbyChat::sendChat, indra/newview/fsnearbychathub.cpp).
+    fn chat_type(self, selected: ChatType) -> ChatType {
+        match self {
+            Self::Normal => selected,
+            Self::Shout => ChatType::Shout,
+            Self::Whisper => ChatType::Whisper,
+            Self::Ooc => ChatType::Normal,
+        }
+    }
+}
+
+/// Classify the Enter event once: releasing a modifier later in the same
+/// frame must change neither permission to send, OOC wrapping nor volume.
+/// FSNearbyChatControl / FSFloaterIM::handleKeyHere (indra/newview) read
+/// the event's mask; Alt alone is OOC, other Alt chords stay unclaimed.
+fn send_enter(i: &egui::InputState) -> Option<SendKey> {
+    i.events.iter().find_map(|event| {
+        let egui::Event::Key {
+            key: egui::Key::Enter,
+            pressed: true,
+            modifiers,
+            ..
+        } = event
+        else {
+            return None;
+        };
+        if modifiers.alt {
+            ooc_key(modifiers).then_some(SendKey::Ooc)
+        } else if modifiers.ctrl {
+            Some(SendKey::Shout)
+        } else if modifiers.shift {
+            Some(SendKey::Whisper)
+        } else {
+            Some(SendKey::Normal)
+        }
+    })
+}
+
+/// Alt+Enter alone sends ((OOC)) chat (FSUseAltOOC, on by default).
+fn ooc_key(m: &egui::Modifiers) -> bool {
+    m.alt && !m.ctrl && !m.shift && !m.mac_cmd
+}
+
+/// An OOC line as FSNearbyChat::sendChat (fsnearbychathub.cpp) and
+/// FSFloaterIM::sendMsgFromInputEditor build it: the default FSOOCPrefix and
+/// FSOOCPostfix around the text, before the channel is read.
+fn ooc(text: &str) -> String {
+    if text.is_empty() { String::new() } else { format!("(( {text} ))") }
 }
 
 /// Parse "/5 text" channel prefixes.
@@ -3219,7 +3281,7 @@ fn classic_pane(
             });
         ui.add_space(4.0);
     }
-    let input_h = input::height(ui.ctx(), egui::Id::unique(("conv_input", st.selected)), INPUT_H);
+    let input_h = input::height(ui.ctx(), egui::Id::unique(("conv_input", st.selected)), INPUT_H) + st.recent_emojis.height();
     // Ctrl+F opens the find field of the conversation shown (in
     // the head's row), when the keyboard is in this window, or
     // nowhere with the pointer over it
@@ -3273,6 +3335,13 @@ fn classic_pane(
     let mut emoji_btn = None;
     let mut send_clicked = false;
     let mut draft = std::mem::take(st.draft_mut(st.selected));
+    // the recent emojis, over the field (under it with the Legacy chat style)
+    let over = if st.recent_emojis.above {
+        let w = ui.available_width();
+        st.recent_emojis.strip(ui, p, emoji, w, conv_input, &mut draft)
+    } else {
+        None
+    };
     let resp = ui
         .horizontal(|ui| {
             // the edges of the lines above, half the theme's spacing between
@@ -3318,12 +3387,18 @@ fn classic_pane(
                 .on_hover_text(aurora_i18n::tr!("ui-chat-compose-shortcuts"))
         })
         .inner;
+    if !st.recent_emojis.above {
+        let w = ui.available_width();
+        st.recent_emojis.strip(ui, p, emoji, w, conv_input, &mut draft);
+    }
+    // the row over the field is not part of the strip
+    let field_top = over.map_or(resp.rect.top(), |row| row.top());
     // the strip between the lines and the field: egui reaches
     // both from it (interact_radius), it keeps the normal cursor
     // unless a drag goes through it
     if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
         && pos.y > strip_top
-        && pos.y < resp.rect.top()
+        && pos.y < field_top
         && ui.min_rect().x_range().contains(pos.x)
         && !ui.input(|i| i.pointer.any_down())
     {
@@ -3341,7 +3416,10 @@ fn classic_pane(
             .show(ui.ctx(), |ui| {
                 super::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
                     ui.set_width(300.0);
-                    let picked = emoji.picker(ui, p, icons);
+                    let picked = emoji.picker(ui, p, icons, st.recent_emojis.favorites());
+                    if let Some(c) = picked.favorite {
+                        st.recent_emojis.toggle_favorite(c);
+                    }
                     if let Some(c) = picked.chosen {
                         draft.push(c);
                         close = !ui.input(|i| i.modifiers.shift);
@@ -3362,8 +3440,18 @@ fn classic_pane(
         cursor_to_end(ui.ctx(), conv_input, &draft);
     }
     let mut sent = false;
-    if send_clicked || ((resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt)) {
-        let text = st.suggest.expand(st.selected, draft.trim());
+    let send = if send_clicked {
+        Some(SendKey::Normal)
+    } else if resp.has_focus() || resp.lost_focus() {
+        ui.input(send_enter)
+    } else {
+        None
+    };
+    if let Some(send) = send {
+        let mut text = st.suggest.expand(st.selected, draft.trim());
+        if send == SendKey::Ooc {
+            text = ooc(&text);
+        }
         if !text.is_empty() {
             sent = true;
             st.input_history.entry(st.selected).or_default().record(conv_input, &draft);
@@ -3373,16 +3461,7 @@ fn classic_pane(
                     actions.push(ConvAction::Local(OutgoingChat {
                         message,
                         channel,
-                        // Ctrl+Enter shouts, Shift+Enter whispers (like the chat bar)
-                        chat_type: ui.input(|i| {
-                            if i.modifiers.ctrl {
-                                ChatType::Shout
-                            } else if i.modifiers.shift {
-                                ChatType::Whisper
-                            } else {
-                                ChatType::Normal
-                            }
-                        }),
+                        chat_type: send.chat_type(ChatType::Normal),
                     }));
                 }
                 Some(to) => actions.push(ConvAction::Im { to, text }),
@@ -3997,7 +4076,7 @@ pub(crate) fn cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
 }
 
 /// The local chat's field, Firestorm's chat bar (LLFloaterIMNearbyChat):
-/// Enter says, Ctrl+Enter shouts, Shift+Enter whispers, `/channel` and the
+/// Enter says, Ctrl+Enter shouts, Shift+Enter whispers, Alt+Enter sends ((OOC)), `/channel` and the
 /// gestures' completion; Enter on an empty field returns to movement. Shared
 /// by the full-width bar and the chat island (`bars/dock.rs`), which draws
 /// its own frame (`build` dresses the field) and shows emoji pictures.
@@ -4055,27 +4134,31 @@ pub(crate) fn bar_input(
     }
     st.has_focus = resp.has_focus();
     // The editor leaves ordinary Enter to this send path.
-    let enter = !focusing && (resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt);
+    let send = if !focusing && (resp.has_focus() || resp.lost_focus()) {
+        ui.input(send_enter)
+    } else {
+        None
+    };
+    let enter = send.is_some();
     // Enter, even on an empty bar, ends the typing (sendChat → stopTyping)
     let said = typing::says_aloud(&st.input, st.type_during_emote, st.colon_emote);
     st.local_field(&resp, said, enter);
     if enter {
         resp.surrender_focus();
     }
-    if enter && !st.input.trim().is_empty() {
+    if let Some(send) = send
+        && !st.input.trim().is_empty()
+    {
         st.input_history.entry(None).or_default().record(bar_input_id(), &st.input);
-        let (shout, whisper) = ui.input(|i| (i.modifiers.ctrl, i.modifiers.shift));
-        let (channel, message) = parse_channel(&st.suggest.expand(None, st.input.trim()));
+        let mut text = st.suggest.expand(None, st.input.trim());
+        if send == SendKey::Ooc {
+            text = ooc(&text);
+        }
+        let (channel, message) = parse_channel(&text);
         out = Some(OutgoingChat {
             message,
             channel,
-            chat_type: if shout {
-                ChatType::Shout
-            } else if whisper {
-                ChatType::Whisper
-            } else {
-                ChatType::Normal
-            },
+            chat_type: send.chat_type(ChatType::Normal),
         });
         st.input.clear();
         if st.keep_focus {
@@ -4090,6 +4173,19 @@ pub(crate) fn bar_input(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn alt_enter_alone_sends_ooc_before_the_channel_is_read() {
+        let alt = egui::Modifiers::ALT;
+        assert!(super::ooc_key(&alt));
+        // AltGr (Ctrl+Alt) and other Alt chords stay unclaimed
+        assert!(!super::ooc_key(&(alt | egui::Modifiers::CTRL)));
+        assert!(!super::ooc_key(&(alt | egui::Modifiers::SHIFT)));
+        assert_eq!(super::ooc("brb"), "(( brb ))");
+        assert_eq!(super::ooc(""), "");
+        // like the Legacy Viewer, a channel typed after Alt+Enter stays text on channel 0
+        assert_eq!(super::parse_channel(&super::ooc("/5 hi")), (0, "(( /5 hi ))".into()));
+    }
+
     use super::*;
 
     fn nearby(apart: bool, shown: bool, minimized: bool, front: bool, focused: bool, tab_visible: bool) -> NearbyChatView {

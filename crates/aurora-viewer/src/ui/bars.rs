@@ -959,6 +959,14 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             "worldmap",
             &mut panels.world_map,
         );
+        flip_window(
+            ui,
+            p,
+            "location-filled",
+            aurora_i18n::tr!("toolbar-command-region-tracker"),
+            super::region_tracker::WINDOW,
+            &mut panels.region_tracker,
+        );
         // menu_viewer.xml: Stream Title (its window keeps the history of
         // the titles), then Landmark this Place, after the maps
         flip_window(
@@ -2094,6 +2102,15 @@ pub fn top_bars(
     if let Some((painter, slot)) = glass {
         super::widgets::finish_bar_glass(&painter, slot, bar.response.rect, p);
     }
+    if st.favorites.access == crate::settings::FavoritesAccess::Row {
+        let (row, a) = favorites::row(ui.ctx(), p, icons, st.favorites, bar.response.rect);
+        if let Some(a) = a {
+            action = a;
+        }
+        islands::set_favorites_row_bottom(ui.ctx(), Some(row.bottom()));
+    } else {
+        islands::set_favorites_row_bottom(ui.ctx(), None);
+    }
     (action, audio_action)
 }
 
@@ -2118,6 +2135,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "ao" => toggle("ao", &mut panels.ao),
         "minimap" => panels.minimap = !panels.minimap,
         "worldmap" => toggle("worldmap", &mut panels.world_map),
+        "regiontracker" => toggle(super::region_tracker::WINDOW, &mut panels.region_tracker),
         "places" => toggle("places", &mut panels.places),
         "search" => toggle(super::search::WINDOW, &mut panels.search),
         "areasearch" => toggle(super::area_search::WINDOW, &mut panels.area_search),
@@ -2227,6 +2245,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "soundexplorer" => panels.sound_explorer,
         "assetblacklist" => panels.asset_blacklist,
         "group_titles" => panels.group_titles,
+        "regiontracker" => panels.region_tracker,
         "gridstatus" => panels.grid_status,
         "webbrowser" => panels.web_browser,
         "voice" => panels.voice_controls,
