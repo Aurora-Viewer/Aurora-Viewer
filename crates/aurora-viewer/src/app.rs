@@ -17500,7 +17500,7 @@ impl App {
                     wanted_images: &mut self.place_images,
                     want_groups: &mut self.place_groups,
                 };
-                let window_acts = self.place_ui.show(&ctx, &mut c);
+                let window_acts = self.place_ui.show(&ctx, &mut c, !self.settings.classic_places);
                 let mut open = self.panels.places;
                 // Aurora's look orders the favourites as the bar does
                 let places_env = (!self.settings.classic_places).then(|| ui::places::aurora::Env {

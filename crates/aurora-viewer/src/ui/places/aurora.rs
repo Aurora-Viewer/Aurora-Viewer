@@ -458,7 +458,7 @@ impl PlacesUi {
                 .layout(egui::Layout::top_down(egui::Align::Min)),
         );
         let asked = actions.len();
-        self.profile_view(&mut inner, c, place, actions);
+        self.profile_view(&mut inner, c, place, true, actions);
         // back to the list: the preview has lost its profile, so it asks
         // again for the line it shows
         if actions[asked..].iter().any(|a| matches!(a, PlacesAction::CloseProfile)) {
@@ -1935,7 +1935,7 @@ mod tests {
             let mut frame = |events, places: &mut PlacesUi, world: &mut World| {
                 time += 0.1;
                 let mut actions = Vec::new();
-                let mut back = Pos2::ZERO;
+                let mut layer = egui::LayerId::background();
                 let mut output = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(width, 800.0))),
@@ -1944,8 +1944,7 @@ mod tests {
                         ..Default::default()
                     },
                     |ui| {
-                        // the arrow, first thing inside the window's margins
-                        back = ui.max_rect().min + Vec2::new(21.0, 19.0);
+                        layer = ui.layer_id();
                         let env = Env {
                             sort: PlacesSort::default(),
                             favorites: &[id(200)],
@@ -1963,6 +1962,15 @@ mod tests {
                     },
                 );
                 output.textures_delta.clear();
+                // the profile's Back arrow, the first button of its header,
+                // where this frame laid it out
+                let back = ctx.viewport(|v| {
+                    v.prev_pass
+                        .widgets
+                        .get_layer(layer)
+                        .find(|w| w.sense.senses_click())
+                        .map(|w| w.interact_rect.center())
+                });
                 // what the app does with them, before the next frame
                 let closed = actions.iter().any(|a| matches!(a, PlacesAction::CloseProfile));
                 for action in actions {
@@ -1989,6 +1997,7 @@ mod tests {
                 .open_panel(opened.clone(), &w.map, &mut w.landmarks, std::time::Instant::now());
             places.show_profile();
             let (back, _) = frame(vec![], &mut places, &mut world);
+            let back = back.expect("the profile's Back arrow");
             assert!(places.aurora.opened);
             assert_eq!(source(&world).as_ref(), Some(&opened), "no line takes the profile's place");
 
