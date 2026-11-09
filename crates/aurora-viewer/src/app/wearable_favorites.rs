@@ -21,7 +21,9 @@ impl App {
         self.panels.wearable_favorites = open;
         // the import is marked sent only once the inventory took it: a change
         // already pending discards it, and the button must stay
-        self.appearance_ui.wearable_favorites.import_settled(self.inventory_ui.pending.is_some());
+        self.appearance_ui
+            .wearable_favorites
+            .import_settled(self.inventory_ui.pending.is_some());
         if let Some(change) = ui::appearance::wearable_favorites::take_import(&mut self.appearance_ui) {
             self.apply_inventory_action(ui::inventory::InvAction::Edit(change));
             if self.inventory_ui.pending.is_some() {

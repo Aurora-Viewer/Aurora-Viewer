@@ -468,9 +468,11 @@ pub fn holds_originals(inv: &Inventory, id: Uuid) -> bool {
 
 /// remove_inventory_category: the folder and its links. Stricter than the
 /// Legacy Viewer: `None` while the folder holds an original anywhere in its
-/// subtree (`holds_originals`), so that no original is ever deleted.
+/// subtree (`holds_originals`) or while a subfolder is not fetched yet
+/// (`loaded`), so that no original is ever deleted.
 pub fn delete_folder(inv: &Inventory, id: Uuid) -> Option<Mutation> {
-    if holds_originals(inv, id) {
+    // An unfetched subfolder may hold an original that is not known yet.
+    if !loaded(inv, id) || holds_originals(inv, id) {
         return None;
     }
     let parent = inv.folders.get(&id)?.info.parent;
