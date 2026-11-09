@@ -52,6 +52,13 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         &field!(show_recent_emojis_legacy),
                     );
                 });
+                // an Aurora addition: favourites first in that row and a
+                // star tab in the picker, off
+                cx.toggle(
+                    tr!("ui-options-favorite-emojis"),
+                    tr!("ui-options-favorite-emojis-hint"),
+                    &field!(favorite_emojis),
+                );
                 // #475: objects' lines like the notices, off (not in the
                 // Legacy Viewer)
                 cx.toggle(

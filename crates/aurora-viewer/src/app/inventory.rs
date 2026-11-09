@@ -889,6 +889,17 @@ impl App {
             self.apply_inventory_action(crate::ui::inventory::InvAction::Edit(change));
             return;
         }
+        match action {
+            crate::world::appearance::Action::OutfitImage(id) => {
+                self.inventory_ui.thumbnail.open(id);
+                return;
+            }
+            crate::world::appearance::Action::OutfitSnapshot(id) => {
+                self.outfit_snapshot(id);
+                return;
+            }
+            _ => {}
+        }
         if self.appearance_ui.pending.is_some() {
             return;
         }

@@ -70,6 +70,16 @@ pub(super) fn matches_name(world: &World, id: &Uuid, shown: &str, filter: &str) 
 /// Id of the window.
 pub(crate) const WINDOW: &str = "people";
 
+/// Why a double click on the radar does not move the camera.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ZoomRefusal {
+    /// Not drawn, and farther than the draw distance (metres).
+    BeyondDrawDistance { range: f32, draw_distance: f32 },
+    /// Not drawn, and its coarse location has no height: there is no point
+    /// to look at.
+    Unplaced,
+}
+
 pub enum PeopleAction {
     OpenIm(Uuid),
     /// "View profile" (menu_people_nearby.xml / friends, Avatar.Profile).
@@ -89,9 +99,12 @@ pub enum PeopleAction {
         flag: u32,
         on: bool,
     },
-    /// Double click on an avatar of the radar that is not drawn
-    /// (ZoomToAvatarNotPossible).
-    TooFarToZoom,
+    /// Double click on an avatar of the radar the camera cannot go to
+    /// (FSRadar::zoomAvatar's camera_no_focus): the chat says why.
+    ZoomRefused {
+        name: String,
+        why: ZoomRefusal,
+    },
     /// "+" of the friends tab: choose a resident to offer friendship to
     /// (People.AddFriendWizard).
     PickFriend,
@@ -290,6 +303,9 @@ pub struct PeopleUi {
     pub wanted_images: HashSet<Uuid>,
     /// The tab shown last frame: another one starts afresh.
     shown_tab: Option<u8>,
+    /// The last refused zoom (resident, ui time): double clicks on the
+    /// same row say it once.
+    zoom_refused: Option<(Uuid, f64)>,
 }
 
 impl PeopleUi {
