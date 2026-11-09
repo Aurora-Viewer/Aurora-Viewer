@@ -345,6 +345,14 @@ impl Editor {
             }
             if mode == "poser-connected" {
                 self.pose_operation(rig, &pose, controls::Operation::TPose);
+            } else if mode == "poser-joint-off" {
+                self.toggle_pose_joint(rig.names["mHead"]);
+            } else if mode == "poser-finger-off" {
+                self.poser.group = 2;
+                self.set_pose_side(Side::Mirror, rig, &pose);
+                let bone = rig.names["mHandIndex1Left"];
+                self.select(bone, rig, &pose);
+                self.toggle_pose_joint(bone);
             } else if mode == "poser-scale" {
                 self.poser.transform = 2;
             } else if mode == "poser-hands" {

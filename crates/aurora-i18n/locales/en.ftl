@@ -13424,6 +13424,11 @@ picker-pipette-no-texture = No copyable texture found in your inventory.
 picker-pipette-no-material = No copyable material found in your inventory.
 
 local-texture-preview-hint = Local texture — preview from a file on this computer.
+poser-joint-pose = Pose this joint
+poser-joint-pose-tip = Turn off to let the current animation move this joint.
+poser-joint-off = Following animation
+poser-world-lock-animation-tip = A pin below a joint following animation can move with that animation.
+
 
 # Object linking: LLSelectMgr::linkObjects
 build-link-error-title = Unable to link objects
