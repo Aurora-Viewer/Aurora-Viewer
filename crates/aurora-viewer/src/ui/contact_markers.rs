@@ -104,21 +104,18 @@ fn sightings(world: &World, region: u64, now: Instant) -> Vec<Sighting> {
             marker,
         });
     }
-    let Some(list) = world.coarse.get(&region) else { return out };
-    let offset = world.region_offset(region).unwrap_or(Vec3::ZERO);
-    for (id, position) in list {
-        if *id == world.agent_id || seen.contains(id) {
+    for (id, position, altitude_known) in crate::world::radar::coarse_in(world, region) {
+        if seen.contains(&id) {
             continue;
         }
-        let Some(marker) = marked(world, id) else { continue };
-        let position = offset + *position;
-        if !allowed(id, position.distance(world.agent.position)) {
+        let Some(marker) = marked(world, &id) else { continue };
+        if !allowed(&id, position.distance(world.agent.position)) {
             continue;
         }
         out.push(Sighting {
-            id: *id,
+            id,
             position,
-            altitude_known: position.z != offset.z && position.z != offset.z + 1020.0,
+            altitude_known,
             exact: false,
             in_scope: in_scope(marker.scope, true, parcel, global(position)),
             marker,
