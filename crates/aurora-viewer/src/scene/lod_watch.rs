@@ -76,7 +76,7 @@ pub struct LodWatch {
     travelled: f64,
     eye: Option<Vec3>,
     /// (lod factor, field of view) the slacks were computed with.
-    settings: Option<(f32, f32)>,
+    settings: Option<(f32, f32, f32)>,
     /// (travel at which the object is due, object, stamp), soonest first.
     /// An entry whose stamp is no longer the object's is skipped.
     due: BinaryHeap<Reverse<(u64, u32, u32)>>,
@@ -90,7 +90,7 @@ impl LodWatch {
     /// The camera of this frame and the settings of the detail levels. A
     /// change of the settings makes every object due. Tells whether the
     /// camera moved, or the settings changed, since the last frame.
-    pub fn advance(&mut self, eye: Vec3, lod_factor: f32, fov_y: f32) -> bool {
+    pub fn advance(&mut self, eye: Vec3, lod_factor: f32, fov_y: f32, tree_factor: f32) -> bool {
         let mut moved = false;
         if eye.is_finite() {
             if let Some(last) = self.eye {
@@ -99,7 +99,7 @@ impl LodWatch {
             }
             self.eye = Some(eye);
         }
-        let settings = Some((lod_factor, fov_y));
+        let settings = Some((lod_factor, fov_y, tree_factor));
         if self.settings != settings {
             self.settings = settings;
             self.travelled += EVERYTHING;
@@ -271,7 +271,7 @@ mod tests {
             .collect();
         let mut eye = Vec3::new(128.0, 128.0, 25.0);
         let mut w = LodWatch::default();
-        w.advance(eye, lod_factor, fov_y);
+        w.advance(eye, lod_factor, fov_y, 0.5);
         let mut levels: Vec<u8> = Vec::new();
         for (idx, (p, r)) in objects.iter().enumerate() {
             let d = p.distance(eye);
@@ -292,7 +292,7 @@ mod tests {
             if frame == 1500 {
                 eye = Vec3::new(30.0, 220.0, 24.0);
             }
-            w.advance(eye, lod_factor, fov_y);
+            w.advance(eye, lod_factor, fov_y, 0.5);
             let before = checks;
             while let Some(idx) = w.pop_due() {
                 let (p, r) = objects[idx];
@@ -329,7 +329,7 @@ mod tests {
     #[test]
     fn objects_come_due_as_the_camera_travels() {
         let mut w = LodWatch::default();
-        w.advance(Vec3::ZERO, 2.0, 1.0);
+        w.advance(Vec3::ZERO, 2.0, 1.0, 0.5);
         // (the first settings made everything due: nothing was watched yet)
         w.watch(3, 5.0);
         w.watch(4, 1.0);
@@ -337,17 +337,17 @@ mod tests {
         assert_eq!(w.len(), 3);
         assert_eq!(w.pop_due(), None);
         // the camera at rest, or turning: nothing
-        assert!(!w.advance(Vec3::ZERO, 2.0, 1.0));
+        assert!(!w.advance(Vec3::ZERO, 2.0, 1.0, 0.5));
         assert_eq!(w.pop_due(), None);
         // 1.5 m: the object 1 m from a change
-        assert!(w.advance(Vec3::X * 1.5, 2.0, 1.0));
+        assert!(w.advance(Vec3::X * 1.5, 2.0, 1.0, 0.5));
         assert_eq!(w.pop_due(), Some(4));
         assert_eq!(w.pop_due(), None);
         assert!(!w.is_watched(4) && w.is_watched(3));
         // checked: watched again from where the camera is now
         w.watch(4, 0.8);
         // back and forth counts as travel (never more than the true margin)
-        w.advance(Vec3::X * 0.4, 2.0, 1.0);
+        w.advance(Vec3::X * 0.4, 2.0, 1.0, 0.5);
         assert_eq!(w.pop_due(), Some(4));
         assert_eq!(w.pop_due(), Some(5));
         assert_eq!(w.pop_due(), None);
@@ -357,24 +357,24 @@ mod tests {
     #[test]
     fn new_settings_make_everything_due_once() {
         let mut w = LodWatch::default();
-        w.advance(Vec3::ZERO, 2.0, 1.0);
+        w.advance(Vec3::ZERO, 2.0, 1.0, 0.5);
         for idx in 0..10 {
             w.watch(idx, 50.0 + idx as f32);
         }
         w.watch(10, MAX_SLACK * 3.0);
-        assert!(w.advance(Vec3::ZERO, 2.0, 0.9));
+        assert!(w.advance(Vec3::ZERO, 2.0, 0.9, 0.5));
         let mut due: Vec<usize> = std::iter::from_fn(|| w.pop_due()).collect();
         // soonest first; the longest wait too
         assert_eq!(due, (0..=10).collect::<Vec<_>>());
         due.clear();
-        w.advance(Vec3::ZERO, 2.0, 0.9);
+        w.advance(Vec3::ZERO, 2.0, 0.9, 0.5);
         assert_eq!(w.pop_due(), None);
     }
 
     #[test]
     fn a_check_before_its_turn_replaces_the_wait() {
         let mut w = LodWatch::default();
-        w.advance(Vec3::ZERO, 2.0, 1.0);
+        w.advance(Vec3::ZERO, 2.0, 1.0, 0.5);
         w.watch(1, 1.0);
         w.watch(2, 1.0);
         // updated by the simulator: checked by the sync, now far from a change
@@ -384,11 +384,11 @@ mod tests {
         w.forget(2);
         w.forget(99);
         assert_eq!(w.len(), 1);
-        w.advance(Vec3::Y * 2.0, 2.0, 1.0);
+        w.advance(Vec3::Y * 2.0, 2.0, 1.0, 0.5);
         assert_eq!(w.pop_due(), None);
         assert!(w.is_watched(1) && !w.is_watched(2));
         w.watch(2, 0.0);
-        w.advance(Vec3::Y * 2.5, 2.0, 1.0);
+        w.advance(Vec3::Y * 2.5, 2.0, 1.0, 0.5);
         assert_eq!(w.pop_due(), Some(2));
         assert_eq!(w.pop_due(), None);
         // emptied by removals alone: nothing left to skip
@@ -399,7 +399,7 @@ mod tests {
     #[test]
     fn skipped_entries_do_not_pile_up() {
         let mut w = LodWatch::default();
-        w.advance(Vec3::ZERO, 2.0, 1.0);
+        w.advance(Vec3::ZERO, 2.0, 1.0, 0.5);
         // objects checked at each frame while they are watched (a slice
         // that still visits them)
         for _ in 0..2000 {
@@ -410,8 +410,8 @@ mod tests {
         assert_eq!(w.len(), 8);
         assert!(w.due.len() <= 2 * 8 + 4096 + 1, "{}", w.due.len());
         // a camera position that is not a number is ignored
-        w.advance(Vec3::splat(f32::NAN), 2.0, 1.0);
-        w.advance(Vec3::X * 20.0, 2.0, 1.0);
+        w.advance(Vec3::splat(f32::NAN), 2.0, 1.0, 0.5);
+        w.advance(Vec3::X * 20.0, 2.0, 1.0, 0.5);
         let due: Vec<usize> = std::iter::from_fn(|| w.pop_due()).collect();
         assert_eq!(due.len(), 8);
     }

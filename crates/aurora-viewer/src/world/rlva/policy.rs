@@ -413,7 +413,7 @@ impl World {
                     _ => Some(String::new()),
                 };
                 if let Some(text) = text {
-                    self.rlva.reply(channel, text);
+                    self.rlva.reply(channel, &c.behaviour, text);
                 } else {
                     self.rlva.pending.push((source, c));
                     self.rlva.pending.extend(pending);
