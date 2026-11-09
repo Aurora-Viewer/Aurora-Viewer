@@ -92,9 +92,9 @@ pub fn summary(count: usize, errors: usize) -> String {
     if count == 0 {
         aurora_i18n::tr!("appearance-xml-none").into()
     } else if errors > 0 {
-        aurora_i18n::tr!("appearance-xml-partial", count = count, errors = errors).into()
+        aurora_i18n::tr!("appearance-xml-partial", count = count, errors = errors)
     } else {
-        aurora_i18n::tr!("appearance-xml-imported", count = count).into()
+        aurora_i18n::tr!("appearance-xml-imported", count = count)
     }
 }
 
