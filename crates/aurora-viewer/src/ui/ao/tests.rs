@@ -1040,6 +1040,34 @@ fn quick_pin_opens_the_persistent_mini_window() {
 }
 
 #[test]
+fn mini_ao_open_at_login_keeps_swimming_while_the_ao_loads() {
+    // The mini window stays open across logins: it is drawn before the AO
+    // folder arrives, and must not switch swimming off (and save that).
+    let mut f = Fixture::new();
+    f.account.mini_open = true;
+    f.movement_prefs.swimming = true;
+    f.catalog.loading = true;
+    let (actions, _) = f.draw(Vec::new());
+    assert!(f.movement_prefs.swimming, "swimming kept while the AO loads");
+    assert!(!actions.iter().any(|a| matches!(a, Action::MovementPreferences)), "nothing to save");
+    f.catalog.loading = false;
+    f.catalog.failed = true;
+    f.draw(Vec::new());
+    assert!(f.movement_prefs.swimming, "kept after a failed fetch too");
+    // loaded, without the swimming animations: off, as app/movement.rs does
+    f.catalog.failed = false;
+    f.catalog
+        .sets
+        .iter_mut()
+        .find(|s| s.id == f.account.selected)
+        .expect("set")
+        .states
+        .remove(&State::WaterEntry);
+    f.draw(Vec::new());
+    assert!(!f.movement_prefs.swimming);
+}
+
+#[test]
 fn mini_ao_movement_switches_emit_preference_changes() {
     let mut f = quick_fixture(true);
     f.quick = None;

@@ -13716,8 +13716,11 @@ impl App {
             BarAction::EditParticles => self.open_particle_editor(),
             BarAction::ShowHuds(visible) => self.set_show_huds(visible),
             BarAction::ToggleAoMini => {
+                // as every toolbar window (LLFloaterReg::toggleInstance): a
+                // minimized one expands; flipping the flag closed it, and it
+                // came back minimized
                 let saved = self.settings.ao.accounts.entry(self.world.agent_id).or_default();
-                saved.mini_open = !saved.mini_open;
+                ui::widgets::toggle_floater(&self.egui_ctx, "ao_mini", &mut saved.mini_open);
                 self.panels.ao_mini = saved.mini_open;
                 if !self.demo {
                     self.settings.save();

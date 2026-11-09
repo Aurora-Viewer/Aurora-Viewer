@@ -163,14 +163,19 @@ pub(super) fn body<'a>(
         ui.label(aurora_i18n::tr!("ao-now-playing-none", state = state.label()));
     }
     let ready = catalog.swimming_ready(account.selected);
-    if !ready {
+    // app/movement.rs's rule: only an AO loaded without swimming animations
+    // turns swimming off. While it loads (at login, when the mini window is
+    // drawn before the AO folder arrives) or after a failed fetch, the
+    // setting stays: it was switched off and saved at every login.
+    if !ready && !catalog.loading && !catalog.failed {
         prefs.swimming = false;
     }
-    let mut swimming = prefs.swimming;
+    let shown = prefs.swimming && ready;
+    let mut swimming = shown;
     ui.add_enabled_ui(ready, |ui| {
         widgets::switch_labeled(ui, p, &mut swimming, aurora_i18n::tr!("movement-swimming"));
     });
-    if swimming != prefs.swimming {
+    if swimming != shown {
         prefs.set_water_mode(false, swimming, ready);
     }
     let mut walking = prefs.water_walk;
