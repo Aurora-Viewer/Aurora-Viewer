@@ -4391,6 +4391,8 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_IMPOSTOR_FLIP=<seconds>` | The avatar limit alternates between its setting and one every `seconds` |
 | `AURORA_DEMO_OVERDRAW=<n>` | Overdraw test: n rows of opaque walls |
 | `AURORA_DEMO_ALPHA_MASK_AB=<shape>:<layers>:<mode>[:touch]` | Static layered alpha faces for the offline Mask/Blend A/B (#1696) |
+| `AURORA_DEMO_ALPHA_SORT=front\|back` | Original unrigged three-face DAE and PNG fixture, fixed front/back camera (#2575) |
+| `AURORA_ALPHA_FACE_SORT=0\|1` | Nonrigged alpha face-depth sorting, on by default; 0 retains object-centre sorting for A/B |
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
 | `AURORA_DEMO_REZ_EFFECT=1\|loop\|styles\|cold` | The rez effect: objects and an avatar appearing, dressing and leaving in front of the camera; `styles`: its three looks side by side; `cold`: a cold arrival with slow textures |
 | `AURORA_REZ_EFFECT=0\|1` | The rez effect off or on, whatever the setting (Preferences › Aurora) |
@@ -4424,6 +4426,19 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]` | Fast camera turns, again and again |
 
 ### Details
+
+- **`AURORA_DEMO_ALPHA_SORT=front|back`** loads the original three-material
+  unrigged fixture from `crates/aurora-viewer/assets/demo/alpha-sort/`, at frame
+  120, and frames its negative-Y (front) or positive-Y (back) side at frame 300.
+  With `AURORA_ALPHA_FACE_SORT=0`, the back blue layer incorrectly covers the red
+  front from the front camera. With sorting on (default), red covers green, then
+  blue; the back camera reverses that order. Check SMAA and MSAA 4x, then orbit,
+  rotate and wear the same mesh as a rigid attachment on the grid. Keep Alpha
+  Blending, white tint, zero face transparency, fullbright and unit UV repeats.
+  The PNGs contain true translucent areas as well as opaque bands and holes.
+  This tests ordering between nonrigged faces, not intersections inside one face
+  or the separate rigged attachment order. The switch also restores the former
+  radial ordering of portal and ban-line sort points for a consistent A/B.
 
 - **`AURORA_DEMO_ALPHA_MASK_AB=planes|cross|spheres:<layers>:mask|blend[:touch]`**:
   adds 1 to 512 static layered prims with a procedural alpha texture; `none`

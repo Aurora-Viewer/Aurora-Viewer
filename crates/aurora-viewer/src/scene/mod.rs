@@ -4783,6 +4783,13 @@ impl Scene {
         // the water's plane while the camera is above it: the blended
         // faces under it are drawn before the water (blend_order::water_sides)
         let under_water_plane = self.water.height.filter(|h| view.eye.z >= *h);
+        let face_sort = blend_order::face_sort_enabled();
+        // Tests and secondary cameras may not supply the texture-importance
+        // direction. The near plane faces into the same view frustum.
+        let alpha_forward = view
+            .forward
+            .try_normalize()
+            .unwrap_or_else(|| view.planes[4].truncate().normalize_or_zero());
         struct Local {
             water_exclusion: Vec<DrawCmd>,
             opaque: Vec<DrawCmd>,
@@ -4919,6 +4926,22 @@ impl Scene {
             let rig = g.rig_order.filter(|_| g.rigged);
             let blend_center = rig.and_then(|r| self.gpu.get(r.skeleton as usize)).map_or(g.center, |s| s.center);
             let blend_d = (blend_center - view.eye).length();
+            // Rigged meshes retain their attachment order. For ordinary faces,
+            // use the exact placement written to the GPU, including this frame's
+            // moving/worn anchor, without visiting the world's parent chain.
+            let face_depth = (face_sort && in_view && !g.rigged && !g.is_avatar && g.faces.iter().any(|f| f.pass == Pass::Blend))
+                .then(|| {
+                    let record = renderer.records.get(g.faces.first()?.record)?;
+                    let mut model = Mat4::from_cols_array_2d(&record.model);
+                    if let Some(anchor) = record.anchor() {
+                        model = Mat4::from_cols_array_2d(self.palettes.get(anchor as usize)?) * model;
+                    }
+                    let GeomState::Ready(geom) = &self.geoms.get(&g.geom?)?.state else {
+                        return None;
+                    };
+                    Some((blend_order::FaceDepth::new(model, view.eye, alpha_forward), geom))
+                })
+                .flatten();
             for f in &g.faces {
                 // object sphere for the GPU occlusion test
                 let in_view = in_view && !(own_first_person == Some(true) && (g.first_person_hidden || f.first_person_hidden));
@@ -5016,7 +5039,16 @@ impl Scene {
                 match pass {
                     Pass::Blend => {
                         let entry = blend_order::BlendEntry {
-                            distance: blend_d,
+                            distance: if face_sort && !g.rigged {
+                                face_depth
+                                    .as_ref()
+                                    .and_then(|(depth, geom)| {
+                                        geom.pick_faces.get(f.te_index as usize)?.as_ref().map(|face| depth.of(face.bounds))
+                                    })
+                                    .unwrap_or_else(|| (g.center - view.eye).dot(alpha_forward))
+                            } else {
+                                blend_d
+                            },
                             cmd,
                             glow: f.glow,
                             double_sided: f.two_sided,
@@ -5084,8 +5116,12 @@ impl Scene {
             ]
             .into_iter()
             .flat_map(|(cmds, glow, double_sided)| {
-                cmds.iter().map(move |(d, c)| blend_order::BlendEntry {
-                    distance: *d,
+                cmds.iter().map(move |(point, c)| blend_order::BlendEntry {
+                    distance: if face_sort {
+                        (*point - view.eye).dot(alpha_forward)
+                    } else {
+                        view.eye.distance(*point)
+                    },
                     cmd: *c,
                     glow,
                     double_sided,

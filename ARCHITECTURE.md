@@ -1,5 +1,17 @@
 # Aurora Viewer architecture
 
+Nonrigged alpha faces use the projected depth and world-AABB bias of
+`LLDrawable::updateDistance` and `LLFace::CompareDistanceGreater` (#2575),
+rather than one radial object distance. `scene/picking.rs::PickFace` caches
+each face's local bounds on the geometry worker. `scene/blend_order.rs::FaceDepth`
+factors the current GPU record placement and its animated anchor once per visible
+object, leaving two dot products per face in the parallel list build. Rigged and
+HUD ordering remain separate; glow and the under-water list follow the same face
+order. Portal and ban-line sort points use the same view-depth metric.
+`AURORA_ALPHA_FACE_SORT=0` retains the former ordering for controlled comparisons.
+`demo_alpha_sort.rs` loads the original three-face unrigged DAE and PNGs in
+`crates/aurora-viewer/assets/demo/alpha-sort/`, also supplied for grid testing.
+
 `ui/inventory/clipboard.rs` owns the cut feedback shared by the two inventory
 layouts and folder windows. It caches the cut roots and checks only visible
 rows' ancestors, following `LLFolderViewItem::isFadeItem`. Native clipboard
