@@ -39,6 +39,8 @@ pub mod aa_switch;
 pub mod about;
 #[path = "demo_alpha_mask_ab.rs"]
 pub mod alpha_mask_ab;
+#[path = "demo_alpha_sort.rs"]
+pub mod alpha_sort;
 /// AURORA_DEMO_ARRIVAL: an arrival in a busy region, every asset downloaded.
 #[path = "demo_arrival.rs"]
 pub mod arrival;
@@ -77,6 +79,14 @@ pub mod conference;
 /// The Conversations button flashing (AURORA_DEMO_CONV_BUTTON).
 #[path = "demo_conv_button.rs"]
 pub mod conv_button;
+/// A blended face lying exactly on an opaque face of the same mesh
+/// (AURORA_DEMO_COPLANAR_DECAL).
+#[path = "demo_coplanar_decal.rs"]
+pub mod coplanar_decal;
+/// A worn layer lying exactly on the skin, in strips
+/// (AURORA_DEMO_COPLANAR_LAYERS).
+#[path = "demo_coplanar_layers.rs"]
+pub mod coplanar_layers;
 /// A deformed avatar to reset (AURORA_DEMO_DEFORM).
 #[path = "demo_deform.rs"]
 pub mod deform;
@@ -1067,6 +1077,8 @@ pub enum Gifs {
     Klipy,
     /// `sent`: the first GIF sent, its preview under the message.
     Sent,
+    /// `recent`: open on the Recent tab, five GIFs sent before.
+    Recent,
     /// `menu`: the GIF button's right-click menu open.
     Menu,
     /// `nokey`: the real settings, no key: no button.
@@ -1089,6 +1101,7 @@ pub fn gifs_scenario() -> Option<Gifs> {
         "1" | "open" => Some(Gifs::Open),
         "klipy" => Some(Gifs::Klipy),
         "sent" => Some(Gifs::Sent),
+        "recent" => Some(Gifs::Recent),
         "menu" => Some(Gifs::Menu),
         "nokey" => Some(Gifs::NoKey),
         "net" => Some(Gifs::Net),
@@ -1097,6 +1110,16 @@ pub fn gifs_scenario() -> Option<Gifs> {
             None
         }
     })
+}
+
+/// AURORA_DEMO_RECENT_EMOJIS=1|<emojis>: the row under the chat fields, the
+/// given emojis or a full row; unset, it starts empty as a new account's.
+pub fn recent_emojis() -> String {
+    match std::env::var("AURORA_DEMO_RECENT_EMOJIS") {
+        Ok(v) if v.trim() == "1" => "🌟🐱🍕🎶🌈☕🤔😎🥳😍👏😢🙏🎉😅🔥👍❤😭😂".to_owned(),
+        Ok(v) => v,
+        Err(_) => String::new(),
+    }
 }
 
 /// AURORA_DEMO_CONV=bubbles[:busy|:group|:local|:legacy]: the
@@ -3078,13 +3101,22 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             if !group::adjust_groups(&mut groups) {
                 return vec![NetEvent::Groups(groups)];
             }
-            vec![
-                NetEvent::Groups(groups),
+            let active_group = if std::env::var("AURORA_DEMO_ACTIVE_GROUP").is_ok_and(|v| v == "none") {
+                NetEvent::ActiveGroup {
+                    id: Uuid::nil(),
+                    name: String::new(),
+                    title: String::new(),
+                }
+            } else {
                 NetEvent::ActiveGroup {
                     id: DEMO_GROUP1,
                     name: "Aurora Builders".into(),
                     title: aurora_i18n::tr!("demo-builder").into(),
-                },
+                }
+            };
+            vec![
+                NetEvent::Groups(groups),
+                active_group,
                 NetEvent::SessionInvite(aurora_net::SessionInvite {
                     session: DEMO_GROUP1,
                     from: DEMO_NOVA,
@@ -3096,11 +3128,24 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 }),
             ]
         }
-        aurora_net::NetCommand::ActivateGroup(id) => vec![NetEvent::ActiveGroup {
-            id: *id,
-            name: String::new(),
-            title: String::new(),
-        }],
+        aurora_net::NetCommand::ActivateGroup(id) => {
+            let (name, title) = if *id == DEMO_GROUP1 {
+                ("Aurora Builders".into(), aurora_i18n::tr!("demo-builder").into())
+            } else if *id == DEMO_GROUP2 {
+                (
+                    aurora_i18n::tr!("demo-northern-wolves").into(),
+                    aurora_i18n::tr!("demo-group-officer").into(),
+                )
+            } else if *id == DEMO_GROUP3 {
+                (
+                    aurora_i18n::tr!("common-plaza-market").into(),
+                    aurora_i18n::tr!("demo-group-member").into(),
+                )
+            } else {
+                (String::new(), String::new())
+            };
+            vec![NetEvent::ActiveGroup { id: *id, name, title }]
+        }
         aurora_net::NetCommand::LeaveGroup(id) => vec![NetEvent::GroupDropped(*id)],
         aurora_net::NetCommand::ChatSession { method, session } => {
             let agents = |ids: &[Uuid]| {
@@ -6925,6 +6970,12 @@ pub fn stress_texture(i: u32) -> Uuid {
     Uuid::from_u128(0xDE40_7E57_0000_0000_0000_0000_0000_0000 | i as u128)
 }
 
+/// The stress cube index of a texture of `stress_texture`, if it is one.
+pub fn stress_index(id: &Uuid) -> Option<u32> {
+    let v = id.as_u128();
+    (v >> 32 == 0xDE40_7E57_0000_0000_0000_0000).then_some(v as u32)
+}
+
 /// Level-0 sizes of the stress textures, cycled: the common square and
 /// oblong powers of two, plus one size that is not a power of two.
 const STRESS_SIZES: [(u32, u32); 8] = [(64, 64), (32, 32), (128, 64), (64, 128), (128, 128), (16, 16), (48, 48), (64, 32)];
@@ -8622,6 +8673,9 @@ fn alpha_panels() -> [(Uuid, Option<Uuid>, &'static str); 6] {
 
 /// Pixels and dimensions of a procedural demo texture (RGBA8).
 pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
+    if let Some(texture) = alpha_sort::texture(id) {
+        return Some(texture);
+    }
     if let Some(texture) = legacy_bump::texture(id) {
         return Some(texture);
     }
@@ -8629,6 +8683,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
         return Some(hud::mask_cutoff_texture());
     }
     if let Some(texture) = alpha_mask_ab::texture(id) {
+        return Some(texture);
+    }
+    if let Some(texture) = coplanar_decal::texture(id) {
         return Some(texture);
     }
     if let Some(pixels) = texture_library::texture(id) {

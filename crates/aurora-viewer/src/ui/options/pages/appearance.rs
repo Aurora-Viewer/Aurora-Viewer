@@ -190,10 +190,17 @@ fn font(cx: &mut Cx) {
                 let popup = system_font_popup(ui, salt);
                 let opening = !egui::Popup::is_id_open(ui.ctx(), popup);
                 if st.demo_font_list.is_some() {
+                    #[cfg(test)]
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(egui::Id::unique("font-list-popup-test-id"), popup));
                     egui::Popup::open_id(ui.ctx(), popup);
                 }
                 let_font_list_grow(ui.ctx(), popup, opening);
                 system_font_combo(salt, shown).show_ui(ui, |ui| {
+                    // one width for the whole popup: egui lays it out in its
+                    // last frame's size, so content a little wider than that
+                    // made it grow every frame (#2510, as #718)
+                    ui.set_width(FONT_LIST_W + crate::ui::widgets::scroll_strip(ui));
                     if opening {
                         // each opening starts on the whole list
                         st.font_filter.clear();
@@ -217,6 +224,7 @@ fn font(cx: &mut Cx) {
                     let size = egui::TextStyle::Button.resolve(ui.style()).size * fonts::scale(ui.ctx());
                     let mut previews = fonts::preview::Previews::begin(ui.ctx(), size, width - 2.0 * pad);
                     let list_area = egui::ScrollArea::vertical()
+                        .auto_shrink([false, true])
                         .max_height(FONT_LIST_H)
                         .show_rows(ui, row_h, shown.len(), |ui, rows| {
                             for i in rows {
@@ -427,8 +435,8 @@ fn system_font_combo(salt: egui::Id, shown: String) -> egui::ComboBox<'static> {
 /// The list's search field, focused as the list opens so typing filters
 /// at once.
 fn system_font_search(ui: &mut egui::Ui, filter: &mut String, opening: bool) -> egui::Response {
-    let width = ui.available_width();
-    let search = crate::ui::widgets::search_field(ui, filter, aurora_i18n::tr!("ui-options-search-fonts"), width);
+    // the list's own width, never what the popup offers (#2510)
+    let search = crate::ui::widgets::search_field(ui, filter, aurora_i18n::tr!("ui-options-search-fonts"), FONT_LIST_W);
     if opening {
         search.request_focus();
     }
