@@ -124,6 +124,7 @@ fn contact_markers_cascade_by_priority_and_round_trip() {
     sets.set_color("Staff", [1.0, 0.0, 0.0, 1.0]);
     sets.set_color("Friends", [0.0, 0.0, 1.0, 1.0]);
     assert_eq!(sets.appearance(&id).marker, None, "off by default");
+    assert!(!sets.has_markers(), "nobody to look for");
     sets.set_visuals(
         "Friends",
         Visuals {
@@ -135,6 +136,7 @@ fn contact_markers_cascade_by_priority_and_round_trip() {
         },
     );
     let friends = sets.appearance(&id).marker.expect("marker");
+    assert!(sets.has_markers());
     assert_eq!(
         friends,
         Marker {
@@ -184,4 +186,10 @@ fn contact_markers_cascade_by_priority_and_round_trip() {
     assert_eq!(plate.background, Some([0.0, 1.0, 0.0, 1.0]));
     assert_eq!(Visuals::read(&Llsd::new_map()).marker, MarkerScope::Off, "older files");
     assert_eq!(Visuals::read(&Llsd::new_map()).marker_shape, MarkerShape::Circle);
+    for name in ["Staff", "Friends"] {
+        let mut visuals = sets.set(name).unwrap().visuals.clone();
+        visuals.marker = MarkerScope::Off;
+        sets.set_visuals(name, visuals);
+    }
+    assert!(!sets.has_markers(), "every marker off again");
 }

@@ -146,9 +146,13 @@ pub fn draw(
     anchor: MarkerAnchor,
     shown: bool,
 ) {
-    // what says where residents are stays hidden with the mini-map
-    let hidden = world.rlva.has("shownearby") || world.rlva.has("showminimap");
-    let (true, false, Some(region)) = (shown, hidden, world.main_region) else {
+    // with every set's marker off (the default), nothing to look for: no
+    // walk through the avatars and the coarse locations
+    let wanted = shown
+        && world.contact_sets.has_markers()
+        // what says where residents are stays hidden with the mini-map
+        && !(world.rlva.has("shownearby") || world.rlva.has("showminimap"));
+    let (true, Some(region)) = (wanted, world.main_region) else {
         tracker.clear();
         return;
     };

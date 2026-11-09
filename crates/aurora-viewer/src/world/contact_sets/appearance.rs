@@ -270,6 +270,12 @@ impl ContactSets {
         self.appearances.get(id).unwrap_or(&EMPTY)
     }
 
+    /// Whether any resident has a marker in the world: with every set's
+    /// marker off (the default), the markers look at nobody.
+    pub fn has_markers(&self) -> bool {
+        self.markers
+    }
+
     pub fn ordered_set_names(&self) -> Vec<String> {
         let mut sets: Vec<_> = self.sets.values().collect();
         sets.sort_by(|a, b| b.priority.cmp(&a.priority).then_with(|| a.name.cmp(&b.name)));
@@ -371,6 +377,7 @@ impl ContactSets {
                 marker.background = a.background;
             }
         }
+        self.markers = resolved.values().any(|a| a.marker.is_some());
         self.appearances = resolved.into_iter().map(|(id, a)| (id, std::sync::Arc::new(a))).collect();
     }
 }
