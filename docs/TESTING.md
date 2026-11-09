@@ -7616,6 +7616,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   is hidden as by default); `compact` for the Compact style (one row
   per message, time, name and tags); `medium` (700 px), `narrow` (460
   px: the column becomes a rail of pictures) or a width in points;
+  `collapsed` (the column kept as a rail at any width by its button, in
+  the column's head, at the top of the rail; from
+  the scenario only: the settings keep nothing until the button is used),
+  `opened` (with a width of 560 to 599 points, such as `580`: the column
+  opened by its button in a narrow window; narrower, the button is greyed
+  out);
   `call-incoming` (Tess calls: the banner and the pulsing entry),
   `call` (the group's call: the stage, speaking ring, Tess muted by a
   moderator, the speaker in the column), `call-mini` (the stage reduced to
