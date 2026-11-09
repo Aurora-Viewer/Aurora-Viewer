@@ -17453,7 +17453,10 @@ impl App {
                     poser: self.ik_editor.open && self.ik_editor.posing(),
                     report_abuse: self.report_abuse.open,
                     marketplace_listings: self.listings_ui.open,
-                    teleport_history: self.panels.places && self.places_ui.history_shown(self.settings.classic_places),
+                    teleport_history: self.panels.places
+                        && self
+                            .places_ui
+                            .history_shown(self.settings.classic_places || self.places_ui.demo_classic),
                 };
                 self.toolbar_ui.chat_bar_active = self.chat_ui.bar_shown();
                 self.toolbar_ui.friends_only_active = self.world.friends_only();
@@ -17505,7 +17508,8 @@ impl App {
                     }
                 }
                 // place profiles: standalone windows and "Places"
-                let favorites_order = if self.panels.places && !self.settings.classic_places {
+                let classic_places = self.settings.classic_places || self.places_ui.demo_classic;
+                let favorites_order = if self.panels.places && !classic_places {
                     self.world.favorites.list(&self.world.inventory).to_vec()
                 } else {
                     Vec::new()
@@ -17522,7 +17526,7 @@ impl App {
                 let window_acts = self.place_ui.show(&ctx, &mut c);
                 let mut open = self.panels.places;
                 // Aurora's look orders the favourites as the bar does
-                let places_env = (!self.settings.classic_places).then(|| ui::places::aurora::Env {
+                let places_env = (!classic_places).then(|| ui::places::aurora::Env {
                     sort: self.settings.places_sort,
                     favorites: &favorites_order,
                 });
@@ -18676,7 +18680,8 @@ impl ApplicationHandler for App {
             }
             // AURORA_DEMO_PLACES=favorites|landmarks|history: "Places" on a tab
             // (after the tab, ":wide": Aurora's window widened to its rail and
-            // preview; ":open": its first place selected; both: ":wide,open")
+            // preview; ":open": its first place selected; both: ":wide,open";
+            // ":classic": the Legacy Viewer's tabs for this run, not saved)
             let demo_places = std::env::var("AURORA_DEMO_PLACES").unwrap_or_default();
             let (demo_tab, demo_how) = demo_places.split_once(':').unwrap_or((demo_places.as_str(), ""));
             if let Some(tab) = ui::places::tab_from_name(demo_tab) {
@@ -18687,6 +18692,7 @@ impl ApplicationHandler for App {
                     ui::widgets::size_floater(&self.egui_ctx, "places", egui::vec2(1040.0, 640.0));
                 }
                 self.places_ui.aurora.demo_open = demo_how.split(',').any(|w| w == "open");
+                self.places_ui.demo_classic = demo_how.split(',').any(|w| w == "classic");
             }
             // AURORA_DEMO_MARKETPLACE=<page>: World › SL Marketplace on that
             // page, open at start
