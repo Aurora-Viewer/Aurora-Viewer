@@ -5933,7 +5933,7 @@ impl App {
     }
 
     fn tell_music_error(&mut self, url: &str) {
-        if matches!(self.music_status, ui::audio::MusicStatus::Error(_))
+        if matches!(&self.music_status, ui::audio::MusicStatus::Error(e) if parcel_music::error_is_told(e))
             && parcel_music::first_error_notice(&mut self.music_error_said, url)
         {
             self.world

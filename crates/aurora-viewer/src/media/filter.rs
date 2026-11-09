@@ -133,6 +133,9 @@ pub struct MediaFilter {
     /// Lines for the local chat (FSCommon::report_to_nearby_chat), drained
     /// by the app.
     pub messages: Vec<String>,
+    /// The music URL whose refusal was last told in the local chat: the
+    /// radio is checked every frame, the refusal is told once per URL.
+    music_told: Option<String>,
 }
 
 /// Schemes whose URLs name no site: asked about under the scheme's name,
@@ -351,10 +354,20 @@ impl MediaFilter {
     }
 
     /// Radio checks run each frame while its toggle stays on. Keep pending
-    /// questions alive and honor edited rules without repeating denial notices;
-    /// the radio's status and the answer dialog already explain the refusal.
+    /// questions alive and honor edited rules; a refusal by the list (or a
+    /// refused scheme) is told in the local chat once per URL, as
+    /// LLViewerParcelMedia::filterAudioUrl reports MediaFilterAudioContentBlocked
+    /// (indra/newview/llviewerparcelmedia.cpp), not every frame.
     pub fn check_music(&mut self, url: &str) -> Verdict {
-        self.decide(url, Source::Music, true, false)
+        let url = url.trim();
+        let notify = self.music_told.as_deref() != Some(url);
+        let verdict = self.decide(url, Source::Music, true, notify);
+        if verdict == Verdict::Deny {
+            self.music_told = Some(url.to_owned());
+        } else {
+            self.music_told = None;
+        }
+        verdict
     }
 
     /// The same for a media the resident trusts without being asked (on
@@ -643,13 +656,26 @@ mod tests {
         for _ in 0..10 {
             assert_eq!(f.check_music(url), Verdict::Deny);
         }
-        assert_eq!(f.messages.len(), told);
+        assert_eq!(f.messages.len(), told, "the resident's own answer is not told again");
         f.apply(Edit::Set("radio.example".into(), Action::Allow));
         assert_eq!(f.check_music(url), Verdict::Allow);
         for _ in 0..10 {
             assert_eq!(f.check_music("file:///private"), Verdict::Deny);
         }
-        assert_eq!(f.messages.len(), told);
+        assert_eq!(f.messages.len(), told + 1, "a refused scheme is told once");
+    }
+
+    #[test]
+    fn parcel_music_refused_by_the_list_is_told_once_per_url() {
+        // LLViewerParcelMedia::filterAudioUrl: MediaFilterAudioContentBlocked
+        let mut f = MediaFilter::default();
+        f.apply(Edit::Set("blocked.example".into(), Action::Deny));
+        for _ in 0..10 {
+            assert_eq!(f.check_music("https://blocked.example/a"), Verdict::Deny);
+        }
+        assert_eq!(f.messages.len(), 1);
+        assert_eq!(f.check_music("https://blocked.example/b"), Verdict::Deny);
+        assert_eq!(f.messages.len(), 2, "a new denied music URL is told again");
     }
 
     #[test]
