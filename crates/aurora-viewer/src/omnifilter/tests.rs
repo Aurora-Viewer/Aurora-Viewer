@@ -499,7 +499,9 @@ fn a_failed_write_keeps_the_rules_unsaved_and_is_tried_again_later() {
     let retry_at = e.retry_after.expect("a wait before the next try");
     // the folder is fixed: nothing is written before the wait is over
     std::fs::remove_file(&blocker).expect("unblock");
-    e.update(retry_at - Duration::from_millis(1) + SAVE_DELAY);
+    // (the rules have waited their delay: only the back-off holds the write)
+    e.dirty_since = Some(retry_at - SAVE_DELAY * 2);
+    e.update(retry_at - Duration::from_millis(1));
     assert_eq!(e.in_flight, 0);
     // after it, the next try writes it
     let later = retry_at + SAVE_DELAY;

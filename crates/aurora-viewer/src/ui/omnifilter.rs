@@ -213,11 +213,15 @@ impl OmnifilterUi {
     /// frame would not report): it goes to the rule it was typed for, before
     /// the selection or the set moves. A blank or taken name is dropped.
     fn commit_rename(&mut self, engine: &mut Engine) {
-        let Some((set, index, name)) = self.filled.clone() else {
+        let Some((set, index, name)) = &self.filled else {
             return;
         };
-        let still_there = set == engine.current() && engine.current_set().rules.get(index).is_some_and(|r| r.name == name);
-        if still_there && self.name != name && engine.rename_rule(index, &self.name) {
+        let (set, index) = (*set, *index);
+        if self.name == *name {
+            return; // nothing typed: no allocation while the window is closed
+        }
+        let still_there = set == engine.current() && engine.current_set().rules.get(index).is_some_and(|r| r.name == *name);
+        if still_there && engine.rename_rule(index, &self.name) {
             self.filled = Some((set, index, self.name.clone()));
         }
     }
