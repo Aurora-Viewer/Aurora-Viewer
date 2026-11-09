@@ -3993,6 +3993,7 @@ media-filter-remember-domain = Always for { $domain }
 media-filter-remember-url = Always for this exact address
 media-filter-allow = Allow
 media-filter-deny = Deny
+media-filter-not-now = Not now: this media stays off until you log out
 media-filter-turn-off = Do not filter media
 world-inventory-demo-link-to-object = Link to object
 ui-inventory-controls-links-only = Links only
