@@ -2436,6 +2436,7 @@ common-copied = コピーしました
 ui-profile-copy-display-name = 表示名をコピー
 ui-places-copy-landmark = ランドマークをコピー
 build-ui-texture-copy-texture-settings-to-clipboard = テクスチャ設定をクリップボードにコピー
+build-ui-texture-select-same = このテクスチャの面を選択
 ui-inventory-context-copy-object-uuid = アセットＵＵＩＤをコピー
 inventory-copy-asset-uuid-help = コピー、変更、譲渡の権限があるアイテムを１つ選択してください。アセットＵＵＩＤを取得できる必要があります。
 world-inventory-actions-copy-this-item-to-your-inventory-first = 先にこのアイテムを持ち物にコピーしてください。

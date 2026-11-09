@@ -2443,6 +2443,7 @@ common-copied = Copié
 ui-profile-copy-display-name = Copier le nom d'affichage
 ui-places-copy-landmark = Copier le repère
 build-ui-texture-copy-texture-settings-to-clipboard = Copier les paramètres de texture dans le presse-papiers
+build-ui-texture-select-same = Sélectionner les faces avec cette texture
 ui-inventory-context-copy-object-uuid = Copier l’UUID de l’asset
 inventory-copy-asset-uuid-help = Sélectionnez un seul élément avec les droits de copie, modification et transfert. L’UUID de l’asset doit être disponible.
 world-inventory-actions-copy-this-item-to-your-inventory-first = Copiez d’abord cet élément dans votre inventaire.

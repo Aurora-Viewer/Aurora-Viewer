@@ -568,6 +568,7 @@ fn material_asset(
             .data_mut(|d| d.insert_temp(egui::Id::unique(("material_preview", "PbrMaterial".to_string())), response.rect));
         crate::ui::widgets::local_texture::asset(ui, p, response.rect, asset);
         texture_drop::slot(ui, p, tool, world, response.rect, PickTarget::PbrMaterial, true);
+        select_same_menu(p, &response, tool, world, None, PickTarget::PbrMaterial, asset.filter(|_| !mixed));
         let caption = aurora_i18n::tr!("build-ui-texture-material");
         ui.add_sized(
             [size, if super::legacy::active(ui) { 14.0 } else { 16.0 }],
@@ -585,6 +586,46 @@ fn material_asset(
             tool.ui.pick_target = Some(PickTarget::PbrMaterial);
         }
     });
+}
+
+/// Right click on a swatch in Face mode: "Select faces with this texture",
+/// every face of the selected linksets showing `id` in that slot. The
+/// Legacy Viewer has it as a button beside the swatch
+/// (LLPanelFace::onClickBtnSelectSameTexture, indra/newview/llpanelface.cpp).
+fn select_same_menu(
+    p: &Palette,
+    response: &egui::Response,
+    tool: &mut BuildTool,
+    world: &World,
+    env: Option<&Env>,
+    target: PickTarget,
+    id: Option<Uuid>,
+) {
+    let Some(id) = id.filter(|_| tool.face_mode()) else { return };
+    crate::ui::menu::context_menu(response, p, |ui| {
+        if crate::ui::menu::item(ui, p, "select-all", aurora_i18n::tr!("build-ui-texture-select-same")) {
+            tool.select_same_faces(world, id, |tool, world, idx, face| slot_id(tool, env, world, target, idx, face));
+        }
+    });
+}
+
+/// The id a face shows in a Texture tab slot, as the swatches read it.
+fn slot_id(tool: &mut BuildTool, env: Option<&Env>, world: &World, target: PickTarget, idx: usize, face: u8) -> Option<Uuid> {
+    let o = world.objects.get(idx)?;
+    match target {
+        PickTarget::Diffuse => Some(o.visual_texture_face(face as usize).texture),
+        PickTarget::Normal | PickTarget::Specular => {
+            let te = *o.te.as_ref()?.face(face as usize);
+            let m = tool.face_legacy(env?, world, idx, face, &te)?;
+            Some(if target == PickTarget::Normal {
+                m.normal_map
+            } else {
+                m.specular_map
+            })
+        }
+        PickTarget::PbrMaterial => BuildTool::gltf_asset(world, idx, face),
+        _ => None,
+    }
 }
 
 fn material_map(
@@ -606,6 +647,7 @@ fn material_map(
         // A material asset is glTF, not an image: only its maps enter the image loader.
         let response = swatch(ui, p, env.images, &mut tool.ui.wanted_images, id, "", size, mixed, enabled);
         texture_drop::slot(ui, p, tool, world, response.rect, target, enabled);
+        select_same_menu(p, &response, tool, world, Some(&*env), target, id.filter(|_| !mixed && enabled));
         #[cfg(test)]
         ui.ctx()
             .data_mut(|d| d.insert_temp(egui::Id::unique(("material_preview", format!("{target:?}"))), response.rect));
