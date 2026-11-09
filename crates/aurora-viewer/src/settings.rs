@@ -719,6 +719,29 @@ pub struct Settings {
     /// The former switch, read once: on was any resident we paid.
     #[serde(rename = "payment_sent_opens_conversation", skip_serializing)]
     pub(crate) former_payment_sent_opens_conversation: Option<bool>,
+    /// Preferences › Chat › Notifications: sales, objects paid, a group's
+    /// money and other L$ that are not a resident's direct payment show a
+    /// toast (#2675). Off by default, where the Legacy Viewer's
+    /// NotifyMoneyChange and NotifyMoneyReceived are on: the row under the
+    /// balance says it without covering the world, and a busy seller would
+    /// get one toast per sale.
+    pub notify_money_received: bool,
+    /// Preferences › Chat › Notifications: a resident's direct payment with
+    /// no card shows a toast (NotifyMoneyChange and NotifyMoneyReceived, on
+    /// by default, #2675).
+    pub notify_direct_payment: bool,
+    /// A direct payment's toast only above `notify_direct_threshold` L$.
+    pub notify_direct_above: bool,
+    pub notify_direct_threshold: i32,
+    /// A sale's toast only above `notify_money_threshold` L$.
+    pub notify_money_above: bool,
+    pub notify_money_threshold: i32,
+    /// Preferences › Layout › Bars and the balance's right click: L$
+    /// received (or bought) show under the balance, in green, before they
+    /// join it (`ui/balance_gains.rs`, Aurora's own, on by default).
+    pub balance_shows_received: bool,
+    /// The same for L$ spent, in red.
+    pub balance_shows_spent: bool,
     /// Mini-map and world map options (Firestorm MiniMap* / Map* settings).
     pub maps: MapSettings,
     /// "Search": last tab, rating boxes and land limits.
@@ -1984,6 +2007,14 @@ impl Default for Settings {
             former_payment_opens_conversation: None,
             payment_sent_opens: crate::world::payments::Opens::Never,
             former_payment_sent_opens_conversation: None,
+            notify_money_received: false,
+            notify_direct_payment: true,
+            notify_direct_above: false,
+            notify_direct_threshold: 200,
+            notify_money_above: false,
+            notify_money_threshold: 200,
+            balance_shows_received: true,
+            balance_shows_spent: true,
             maps: MapSettings::default(),
             search: Default::default(),
             show_people: true,
