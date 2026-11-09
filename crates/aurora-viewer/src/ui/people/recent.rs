@@ -10,7 +10,7 @@ use super::{Ctx, PeopleAction, PeopleUi};
 use crate::ui::context::{self, AvatarList, CtxAction};
 use crate::ui::{menu, widgets};
 use crate::world::recent::Met;
-use egui::{Rect, Sense, Vec2};
+use egui::{Rect, Vec2};
 use uuid::Uuid;
 
 /// The recent tab: the list, and the sheet of the person clicked.
@@ -75,8 +75,9 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     let p = c.p;
     let world = c.world;
     let id = met.id;
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), RICH_H), Sense::click_and_drag());
+    let (rect, resp) = rows::allocate(ui, id, Vec2::new(ui.available_width(), RICH_H));
     if !ui.is_rect_visible(rect) {
+        rows::person_menu(&resp, p, world, &st.sel, id);
         return;
     }
     if !data.pics.contains_key(&id) {
