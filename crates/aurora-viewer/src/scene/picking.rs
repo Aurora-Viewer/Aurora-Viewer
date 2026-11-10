@@ -68,6 +68,9 @@ pub(super) enum FacePick {
     Geometry,
     Inventory,
     HudMove,
+    /// HUD press: transparent scripted clickers win, plain alpha-zero
+    /// panels let a visible button behind them take the click.
+    HudClick,
     /// Left button: only world Blend faces test exact texels at the legacy alpha threshold.
     Left,
     LeftBlend,
@@ -741,7 +744,9 @@ impl Scene {
             .copied()
             .chain(all)
             .filter_map(|idx| Some((idx, self.gpu.get(idx)?)))
-            .filter(|(idx, gpu)| self.first_person_object_visible(*idx, gpu))
+            // (what is not drawn is not picked: a hidden rendering type, as
+            // LLPipeline::lineSegmentIntersectInWorld skips its partitions)
+            .filter(|(idx, gpu)| !gpu.hidden && self.first_person_object_visible(*idx, gpu))
     }
 
     pub fn click_bounds(&self, world: &World, idx: usize) -> Option<(Vec3, Vec3)> {
@@ -897,11 +902,19 @@ impl Scene {
             if mode == FacePick::LeftBlend && !self.blend_face_mode(world, o, g, face, mode == FacePick::LeftBlend) {
                 return None;
             }
-            let hidden = o.te.as_ref().is_some_and(|te| te.face(face).color[3] < 0.004);
+            let hud_click = g.hud && mode == FacePick::HudClick;
+            // LLVOVolume::lineSegmentIntersect skips exactly alpha 0: a HUD
+            // press keeps a face at 1/255, like the media hit test.
+            let hidden = o.te.as_ref().is_some_and(|te| {
+                let alpha = te.face(face).color[3];
+                if hud_click { alpha <= 0.0 } else { alpha < 0.004 }
+            });
             if only_hidden && !hidden && !Self::face_undrawn(g, face) {
                 return None;
             }
-            if !include_hidden && super::plants::plant_face(o).is_none() && hidden && !(g.hud && mode == FacePick::Surface) {
+            let hud_clicker = hud_click && crate::interaction::special_hover_cursor(o);
+            if !include_hidden && super::plants::plant_face(o).is_none() && hidden && !(g.hud && mode == FacePick::Surface) && !hud_clicker
+            {
                 return None;
             }
             let f = f.as_ref()?;
@@ -948,7 +961,7 @@ impl Scene {
                     // every alpha mode, including Mask cutouts. Hover follows
                     // the same target; quick movement keeps texture holes.
                     // Right-click selection already includes hidden surfaces.
-                    if g.hud && mode == FacePick::Surface {
+                    if g.hud && matches!(mode, FacePick::Surface | FacePick::HudClick) {
                         return Some(hit);
                     }
                     let draw = geom
@@ -957,7 +970,7 @@ impl Scene {
                         .and_then(Option::as_ref)
                         .and_then(|a| g.faces.iter().find(|f| f.cmd.first_index == a.index_offset))?;
                     if g.hud && (draw.pass == Pass::Hidden || draw.te_alpha < 0.004) {
-                        return (mode == FacePick::Surface).then_some(hit);
+                        return matches!(mode, FacePick::Surface | FacePick::HudClick).then_some(hit);
                     }
                     let ignore_alpha = draw.pbr_alpha == Some(0)
                         || matches!(
@@ -1987,6 +2000,11 @@ impl Scene {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    pub(crate) fn index_test_objects(scene: &mut Scene) {
+        scene.index_objects();
+    }
+
     /// LimitSelectDistance on, at the Legacy Viewer's default distance.
     const LIMIT: Option<f32> = Some(crate::build::MAX_SELECT_DISTANCE);
     #[test]
@@ -2968,7 +2986,7 @@ pub(crate) mod tests {
         }
         world.objects.get_mut(front).unwrap().rotation = Quat::from_rotation_z(std::f32::consts::PI);
         scene.index_objects();
-        scene.build_huds(&world, [1280, 720], true);
+        scene.build_huds(&world, [1280, 720], true, |_| None);
         let cursor = (640.0, 360.0);
         for hidden in [false, true] {
             assert_eq!(scene.hud_pick(&world, cursor, hidden).unwrap().0, back);
@@ -3028,6 +3046,73 @@ pub(crate) mod tests {
         assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, front);
     }
 
+    /// Ordinary HUD hover (no media focus) and HUD presses pick the same
+    /// target: a plain face at exactly alpha 0 lets the object behind it
+    /// take both, a face at 1/255 keeps both, and a transparent prim with a
+    /// special hover cursor (LLViewerObject::specialHoverCursor) stays the
+    /// target, as in LLVOVolume::lineSegmentIntersect.
+    #[test]
+    fn hud_hover_and_press_share_the_transparent_panel_policy() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let parent = world.objects.get(own).unwrap().key.local_id;
+        for (idx, x) in [(front, 3.0), (back, 7.0)] {
+            let o = world.objects.get_mut(idx).unwrap();
+            o.parent_id = parent;
+            o.state = 31u8.rotate_left(4);
+            o.position = Vec3::new(x, 0.0, 0.0);
+            o.click_action = crate::interaction::code::NONE;
+            o.update_flags = 0;
+            let g = &mut scene.gpu[idx];
+            g.hud = true;
+            g.owner_avatar = Some(own);
+            g.center = o.position;
+            g.radius = 1.0;
+        }
+        scene.index_objects();
+        scene.build_huds(&world, [1280, 720], true, |_| None);
+        let cursor = (640.0, 360.0);
+        let set_alpha = |world: &mut World, scene: &mut Scene, alpha: f32| {
+            Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].color[3] = alpha;
+            let draw = &mut scene.gpu[front].faces[0];
+            draw.te_alpha = alpha;
+            draw.pass = if alpha < 0.004 { Pass::Hidden } else { Pass::Blend };
+        };
+        let targets = |world: &World, scene: &mut Scene| {
+            let press = scene.hud_click_pick(world, cursor).map(|(idx, _, _)| idx);
+            let hover = scene.hover_hud(world, cursor);
+            assert_eq!(hover, press, "hover and press disagree");
+            press
+        };
+
+        set_alpha(&mut world, &mut scene, 0.0);
+        assert_eq!(targets(&world, &mut scene), Some(back), "plain alpha-zero panel");
+        // Beacon and poser checks still see the panel itself.
+        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
+
+        // A scripted button behind the invisible panel takes hover and press.
+        world.objects.get_mut(back).unwrap().update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        assert_eq!(targets(&world, &mut scene), Some(back), "scripted button behind");
+        world.objects.get_mut(back).unwrap().update_flags = 0;
+
+        // 1/255 is a valid nonzero alpha: the face stays the target.
+        set_alpha(&mut world, &mut scene, 1.0 / 255.0);
+        assert_eq!(targets(&world, &mut scene), Some(front), "alpha 1/255");
+
+        // Special hover cursors keep a transparent front face.
+        set_alpha(&mut world, &mut scene, 0.0);
+        for (click_action, flags) in [
+            (crate::interaction::code::SIT, 0),
+            (crate::interaction::code::NONE, crate::ui::context::flags::HANDLE_TOUCH),
+            (crate::interaction::code::NONE, 1), // FLAGS_USE_PHYSICS
+        ] {
+            let o = world.objects.get_mut(front).unwrap();
+            o.click_action = click_action;
+            o.update_flags = flags;
+            assert_eq!(targets(&world, &mut scene), Some(front), "special cursor {click_action}/{flags:#x}");
+        }
+    }
+
     #[test]
     fn hud_left_clicks_ignore_alpha_while_move_picks_respect_texture_holes() {
         let (mut world, mut scene, front, back) = scene_with_two_objects();
@@ -3045,7 +3130,7 @@ pub(crate) mod tests {
             g.radius = 1.0;
         }
         scene.index_objects();
-        scene.build_huds(&world, [1280, 720], true);
+        scene.build_huds(&world, [1280, 720], true, |_| None);
         let cursor = (640.0, 360.0);
         assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
         let texture = Uuid::from_u128(8888);
@@ -3138,19 +3223,19 @@ pub(crate) mod tests {
         assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
         scene.gpu[front].faces[0].legacy_alpha = None;
         scene.gpu[front].faces[0].pbr_alpha = Some(2);
-        scene.build_huds(&world, [1280, 720], true);
+        scene.build_huds(&world, [1280, 720], true, |_| None);
         assert!(scene.lists.hud_debug_blue.is_empty());
         // The overlay's displayed triangles become pickable, with no texture test.
         scene.debug_alpha = Some(false);
-        scene.build_huds(&world, [1280, 720], true);
+        scene.build_huds(&world, [1280, 720], true, |_| None);
         assert_eq!(scene.lists.hud_debug_red.len(), 1);
         assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
         scene.gpu[front].faces[0].pass = Pass::Mask;
-        scene.build_huds(&world, [1280, 720], true);
+        scene.build_huds(&world, [1280, 720], true, |_| None);
         assert_eq!(scene.lists.hud_debug_blue.len(), 1);
         assert!(scene.lists.hud_debug_red.is_empty());
         scene.debug_alpha = None;
-        scene.build_huds(&world, [1280, 720], true);
+        scene.build_huds(&world, [1280, 720], true, |_| None);
         assert!(scene.lists.hud_debug_blue.is_empty());
         // Faces that draw nothing still take ordinary clicks: a zero alpha,
         // or the library's transparent texture behind a Mask-classed slot.
@@ -3184,7 +3269,7 @@ pub(crate) mod tests {
         // for ordinary clicks and hover, whatever the material mode.
         Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].color[3] = 0.0;
         scene.gpu[front].faces.clear();
-        scene.build_huds(&world, [1280, 720], true);
+        scene.build_huds(&world, [1280, 720], true, |_| None);
         let (_, _, ray) = scene.hud_pick(&world, cursor, false).unwrap();
         assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
         assert_eq!(scene.hover_hud(&world, cursor), Some(front));
@@ -3519,7 +3604,7 @@ pub(crate) mod tests {
         child.state = 0;
         child.position = Vec3::new(4.0, 0.0, 0.0);
         scene.index_objects();
-        scene.build_huds(&world, [1280, 720], true);
+        scene.build_huds(&world, [1280, 720], true, |_| None);
         let cursor = (640.0, 360.0);
         let (picked, p, ray) = scene.hud_pick(&world, cursor, true).unwrap();
         assert_eq!(picked, front);
@@ -3544,10 +3629,10 @@ pub(crate) mod tests {
         assert_eq!(scene.hover_hud(&world, cursor), Some(front));
         assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
         scene.gpu[front].owner_avatar = None;
-        scene.build_huds(&world, [1280, 720], true);
+        scene.build_huds(&world, [1280, 720], true, |_| None);
         assert_eq!(scene.lists.hud_opaque.len(), 1);
         assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, back);
-        scene.build_huds(&world, [1280, 720], false);
+        scene.build_huds(&world, [1280, 720], false, |_| None);
         assert!(scene.lists.hud_opaque.is_empty());
         assert!(scene.hud_pick(&world, cursor, true).is_none());
         assert!(scene.hud_move_pick(&world, cursor).is_none());

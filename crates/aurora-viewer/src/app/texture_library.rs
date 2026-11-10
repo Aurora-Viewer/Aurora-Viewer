@@ -838,6 +838,12 @@ impl App {
             self.library_drag.end_worn_search(renderer);
             return None;
         };
+        // over another resident or what they wear, the texture is given
+        // (LLToolDragAndDrop::pick turns their attachments into DT_AVATAR)
+        if self.inventory_drag.giving {
+            self.library_drag.end_worn_search(renderer);
+            return None;
+        }
         let item = catalogue::resource(&self.world.inventory, drag.item)?;
         let asset = catalogue::asset(item);
         if asset.is_nil() {
