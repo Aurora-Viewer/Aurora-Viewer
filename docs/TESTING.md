@@ -2477,8 +2477,13 @@ again.
 
 **`AURORA_DEMO_BUILD="mode,x,y[,part,dx,dy]"`** — script of the build
 tools. Modes: `move`, `rotate`, `stretch`, `face`, `align`, `grab`,
-`focus`, `create`, `land`, `select`. `AURORA_DEMO_BUILD_FRAME` changes its
-start frame.
+`focus`, `create`, `land`, `select`, `select-join`.
+`AURORA_DEMO_BUILD_FRAME` changes its start frame.
+`select-join,620,540,xy,140,-80` simulates a multi-parcel reply with no unique
+owner and the same area as the selected rectangle. After frame 635, Join must
+be enabled and open its confirmation. Plain `select` keeps a single-parcel
+reply: Join explains that the selection must span several parcels. This is an
+offline button/confirmation fixture; the human validates actual joins on a grid.
 `shared,object:99620` and `shared-denied,object:99620` select another resident's
 linkset with granted or denied effective Modify rights. Use
 `AURORA_DEMO_BUILD_TAB=texture:bp|texture:pbr|shape|features|general|rights` and
