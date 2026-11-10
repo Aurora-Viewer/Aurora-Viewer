@@ -13550,4 +13550,4 @@ ui-options-attached-particles-hint = Draw the particles of what avatars wear: sp
 
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = Progressive draw distance
-ui-options-draw-distance-stepping-hint = After logging in and after a teleport to another region, the draw distance starts at 32 m and doubles back up to yours. It waits while objects are still loading or the last frame was too heavy, and steps back one level if frames stay slow.
+ui-options-draw-distance-stepping-hint = After logging in and after a teleport to another region, the draw distance starts at 32 m and grows back to yours as the load allows: it doubles every 2 seconds while objects have finished loading and frames are fast, waits while they are not, and steps back one level if frames stay too heavy.
