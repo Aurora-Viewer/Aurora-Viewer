@@ -101,8 +101,23 @@ pub(super) fn focus_id(st: &InventoryUi) -> egui::Id {
 }
 
 pub(super) fn request_focus(ui: &egui::Ui, st: &mut InventoryUi) {
-    st.list_focus_frame = Some(ui.ctx().cumulative_frame_nr());
-    ui.memory_mut(|m| {
+    request_focus_ctx(ui.ctx(), st);
+}
+
+/// Hands the keyboard back to the list when a modal dialog over it closes.
+/// egui keeps the closed modal as the top layer for one more pass, which
+/// drops this request and blocks [`list_focus`]'s restore; the restore window
+/// is moved one pass on so the list takes the focus once the modal is gone.
+pub(super) fn return_focus(ctx: &egui::Context, st: &mut InventoryUi) {
+    request_focus_ctx(ctx, st);
+    st.list_focus_frame = Some(ctx.cumulative_frame_nr() + 1);
+    // run those passes now, not at the next input
+    ctx.request_repaint();
+}
+
+fn request_focus_ctx(ctx: &egui::Context, st: &mut InventoryUi) {
+    st.list_focus_frame = Some(ctx.cumulative_frame_nr());
+    ctx.memory_mut(|m| {
         m.request_focus(focus_id(st));
         m.set_focus_lock_filter(
             focus_id(st),
@@ -327,7 +342,7 @@ pub(super) fn shortcuts(
         return;
     }
     if !actions.iter().any(|action| matches!(action, InvAction::Edit(_))) {
-        super::delete::shortcut(ui, inv, st, prefs, facts);
+        super::delete::shortcut(ui, inv, st, prefs, facts, actions);
     }
     if st.dialog.is_some() {
         return;
@@ -1172,6 +1187,62 @@ mod tests {
         assert_eq!(h.world.inventory.items[&id(8100)].parent, id(8000));
     }
 
+    fn key(key: egui::Key) -> Event {
+        Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }
+    }
+
+    #[test]
+    fn closing_the_delete_confirmation_gives_the_list_its_keyboard_back() {
+        // Enter, Escape and Cancel all hand the keyboard back to the list, as
+        // the Legacy alert restores the focus it saved; a click on the dimmed
+        // world behind the modal answers nothing.
+        for close in ["enter", "escape", "cancel"] {
+            let mut h = Harness::new();
+            h.add_trash();
+            h.frame(Vec::new());
+            h.select(id(8100), false);
+            assert!(h.frame(vec![delete_key(Default::default())]).is_empty());
+            assert!(h.st.dialog.is_some(), "{close}: Delete opens the confirmation");
+            h.frame(Vec::new());
+            assert!(h.click(Pos2::new(4.0, 4.0), Default::default()).is_empty());
+            assert!(h.st.dialog.is_some(), "{close}: a click outside the modal keeps it open");
+            h.frame(Vec::new());
+            let mut actions = match close {
+                "enter" => h.frame(vec![key(egui::Key::Enter)]),
+                "escape" => h.frame(vec![key(egui::Key::Escape)]),
+                _ => h.click(h.text(aurora_i18n::tr!("common-cancel")).center(), Default::default()),
+            };
+            // modal_keys clicks the default button on the pass after Enter
+            actions.extend(h.frame(Vec::new()));
+            assert_eq!(actions.len(), usize::from(close == "enter"), "{close}");
+            assert!(h.st.dialog.is_none(), "{close}: the confirmation closed");
+            h.frame(Vec::new());
+            h.frame(Vec::new());
+            assert!(
+                h.ctx.memory(|m| m.has_focus(focus_id(&h.st))),
+                "{close}: the list has the keyboard again"
+            );
+            if close != "enter" {
+                // released first, or egui reports the second press as a repeat
+                let release = Event::Key {
+                    key: egui::Key::Delete,
+                    physical_key: None,
+                    pressed: false,
+                    repeat: false,
+                    modifiers: Default::default(),
+                };
+                h.frame(vec![release, delete_key(Default::default())]);
+                assert!(h.st.dialog.is_some(), "{close}: Delete reaches the list without a click");
+            }
+        }
+    }
+
     #[test]
     fn trash_button_is_right_of_loaded_count_and_opens_same_confirmation() {
         let mut h = Harness::new();
@@ -1179,7 +1250,7 @@ mod tests {
         let button = h.trash_button(h.st.ui_id);
         let count = h.text(&aurora_i18n::tr!(
             "ui-inventory-objects-loaded",
-            value0 = format!("{}", h.world.inventory.item_count())
+            value0 = aurora_i18n::integer(h.world.inventory.total_count() as i64)
         ));
         assert!(button.left() > count.right());
         assert!(button.left() - count.right() < 18.0, "the count sits beside the trash button");
@@ -1193,6 +1264,58 @@ mod tests {
         );
         assert!(h.st.dialog.is_none());
         assert_eq!(h.world.inventory.items[&id(8100)].parent, id(8000));
+    }
+
+    #[test]
+    fn inventory_count_hover_shows_live_items_and_folders_in_both_layouts() {
+        fn collect(shape: &Shape, texts: &mut Vec<String>) {
+            match shape {
+                Shape::Text(text) => texts.push(text.galley.text().to_owned()),
+                Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect(shape, texts)),
+                _ => {}
+            }
+        }
+        for (classic, width) in [(true, 680.0), (false, 680.0), (false, 1180.0)] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            super::super::super::widgets::size_floater(&h.ctx, "inventory", egui::vec2(width, 800.0));
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            assert_eq!(h.world.inventory.item_count(), 14);
+            assert_eq!(h.world.inventory.folders.len(), 5);
+            for folders in [5, 4] {
+                if folders == 4 {
+                    h.world.inventory.remove(&[id(8001)]);
+                }
+                h.frame(Vec::new());
+                let total = aurora_i18n::integer(14 + folders);
+                let label = if classic {
+                    aurora_i18n::tr!("ui-inventory-objects-loaded", value0 = total)
+                } else {
+                    aurora::item_count(&h.world.inventory, aurora::Layout::of_window(&h.ctx, "inventory"))
+                };
+                let position = h.text(&label).center();
+                h.frame(vec![Event::PointerMoved(position)]);
+                for _ in 0..8 {
+                    h.frame(Vec::new());
+                }
+                let details = aurora_i18n::tr!(
+                    "inventory-count-tooltip",
+                    items = aurora_i18n::integer(14),
+                    folders = aurora_i18n::integer(folders)
+                );
+                let tooltip = if classic { format!("{label}\n{details}") } else { details };
+                let mut texts = Vec::new();
+                for shape in &h.output.shapes {
+                    collect(&shape.shape, &mut texts);
+                }
+                assert!(
+                    texts.contains(&tooltip),
+                    "classic={classic}, width={width}, folders={folders}, expected={tooltip:?}, painted={texts:?}"
+                );
+            }
+        }
     }
 
     #[test]

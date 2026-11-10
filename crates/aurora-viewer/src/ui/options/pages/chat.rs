@@ -34,6 +34,31 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-show-chat-channel-hint"),
                     &field!(show_chat_channel),
                 );
+                // the row of FSFloaterNearbyChat's recent emojis, a switch
+                // in place of its arrow: on, off with the Legacy chat style
+                // (its own switch, the one of the style in use shown)
+                let legacy = cx.s.chat_style == crate::settings::ChatStyle::Legacy;
+                cx.conditional(!legacy, |cx| {
+                    cx.toggle(
+                        tr!("ui-options-show-recent-emojis"),
+                        tr!("ui-options-show-recent-emojis-hint"),
+                        &field!(show_recent_emojis),
+                    );
+                });
+                cx.conditional(legacy, |cx| {
+                    cx.toggle(
+                        tr!("ui-options-show-recent-emojis-legacy"),
+                        tr!("ui-options-show-recent-emojis-legacy-hint"),
+                        &field!(show_recent_emojis_legacy),
+                    );
+                });
+                // an Aurora addition: favourites first in that row and a
+                // star tab in the picker, off
+                cx.toggle(
+                    tr!("ui-options-favorite-emojis"),
+                    tr!("ui-options-favorite-emojis-hint"),
+                    &field!(favorite_emojis),
+                );
                 // #475: objects' lines like the notices, off (not in the
                 // Legacy Viewer)
                 cx.toggle(
@@ -655,6 +680,22 @@ fn gifs(cx: &mut Cx) {
     });
 }
 
+/// The amount of a payment toast's limit, like the question's in
+/// Confirmations: greyed out while the limit is off.
+fn threshold(ui: &mut egui::Ui, on: bool, amount: &mut i32) -> bool {
+    ui.add_enabled_ui(on, |ui| {
+        ui.add(
+            egui::DragValue::new(amount)
+                .custom_parser(aurora_i18n::parse_number)
+                .range(0..=i32::MAX)
+                .speed(1.0)
+                .suffix(format!(" {}", aurora_i18n::currency())),
+        )
+        .changed()
+    })
+    .inner
+}
+
 /// The Legacy Viewer's Chat › Notifications (EnableIMChatPopups,
 /// EnableGroupChatPopups, ChatOnlineNotification), Notifications › People
 /// / Objects & Scripts (FSFlashOnMessage, FSFlashOnObjectIM,
@@ -704,6 +745,46 @@ fn notifications(cx: &mut Cx) {
             tr!("ui-options-friends-online-in-chat-hint"),
             &field!(friends_online_in_chat),
         );
+        // PaymentReceived's toast (NotifyMoneyReceived, #2675): a direct
+        // payment on by default, the others off, each with its limit
+        cx.toggle(
+            tr!("ui-options-notify-direct-payment"),
+            tr!("ui-options-notify-direct-payment-hint"),
+            &field!(notify_direct_payment),
+        );
+        let off = !cx.s.notify_direct_payment;
+        cx.subs(off, |cx| {
+            cx.toggle(
+                tr!("ui-options-notify-above"),
+                tr!("ui-options-notify-above-hint"),
+                &field!(notify_direct_above),
+            );
+            cx.row(
+                tr!("ui-options-notify-threshold"),
+                tr!("ui-options-notify-threshold-hint"),
+                &field!(notify_direct_threshold),
+                |ui, s| threshold(ui, s.notify_direct_above, &mut s.notify_direct_threshold),
+            );
+        });
+        cx.toggle(
+            tr!("ui-options-notify-money-received"),
+            tr!("ui-options-notify-money-received-hint"),
+            &field!(notify_money_received),
+        );
+        let off = !cx.s.notify_money_received;
+        cx.subs(off, |cx| {
+            cx.toggle(
+                tr!("ui-options-notify-above"),
+                tr!("ui-options-notify-above-hint"),
+                &field!(notify_money_above),
+            );
+            cx.row(
+                tr!("ui-options-notify-threshold"),
+                tr!("ui-options-notify-threshold-hint"),
+                &field!(notify_money_threshold),
+                |ui, s| threshold(ui, s.notify_money_above, &mut s.notify_money_threshold),
+            );
+        });
         // #465: an offer of friendship in the middle of the screen
         cx.toggle(
             tr!("ui-options-friend-request-prompt"),

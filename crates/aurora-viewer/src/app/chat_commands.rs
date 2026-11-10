@@ -124,8 +124,8 @@ impl App {
             }
             Command::Music(url) => {
                 // startInternetStreamWithAutoFade: until the parcel stream changes.
-                self.music_override = Some(url);
-                self.music_playing = true;
+                self.parcel_music.play(url);
+                self.remember_music_choice();
             }
             Command::KeyToName(id) => {
                 self.world.social.avatar_names.want(&id);

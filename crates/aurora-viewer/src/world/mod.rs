@@ -16,6 +16,7 @@ pub mod bridge;
 pub mod calls;
 pub mod chat_log;
 pub mod collisions;
+pub mod contact_markers;
 pub mod contact_sets;
 pub mod derender;
 pub mod dialog_names;
@@ -87,6 +88,7 @@ pub mod region_alerts;
 pub mod region_messages;
 pub mod region_restart;
 pub mod region_titles;
+pub mod region_tracker;
 pub mod rig_graph;
 pub mod rig_targets;
 pub mod rlva;
@@ -664,6 +666,9 @@ pub struct World {
     pub landmarks: landmarks::Landmarks,
     /// World map regions, items, tracking and parcel overlays.
     pub map: worldmap::WorldMap,
+    /// Regions watched by the per-account Region Tracker window.
+    pub region_tracker: region_tracker::RegionTracker,
+    region_tracker_path: Option<std::path::PathBuf>,
     /// Place details windows of place links (their parcel requests).
     pub place_details: place_details::PlaceDetails,
     /// Parcel snapshots of the favourites and the Places rows without a
@@ -740,6 +745,39 @@ fn saved_prefix(timestamp: u32) -> String {
 const MAX_REGION_SIZE: u32 = 4096;
 
 impl World {
+    pub fn add_tracked_region(&mut self, name: &str, label: &str) {
+        if self.region_tracker.add(name, label) {
+            self.save_tracked_regions();
+        }
+    }
+
+    pub fn remove_tracked_region(&mut self, name: &str) {
+        self.region_tracker.remove(name);
+        self.save_tracked_regions();
+    }
+
+    fn save_tracked_regions(&self) {
+        if let Some(path) = &self.region_tracker_path
+            && let Err(error) = self.region_tracker.save(path)
+        {
+            log::warn!("region tracker: could not save {}: {error}", path.display());
+        }
+    }
+
+    /// ALFloaterRegionTracker::refresh, while its window is open: every
+    /// region asked by name (sendNamedRegionRequest, for its online / down
+    /// state) and a known one's avatars (LLSimInfo::updateAgentCount), each
+    /// at most once a minute.
+    pub fn refresh_tracked_regions(&mut self) {
+        let names: Vec<_> = self.region_tracker.regions().iter().map(|r| r.name.clone()).collect();
+        for name in names {
+            self.map.want_named_region(&name);
+            if let Some(key) = self.map.region_by_name(&name) {
+                self.map.want_agents(key);
+            }
+        }
+    }
+
     pub fn water_visual_dz(&self, id: &Uuid) -> f32 {
         if *id == self.agent_id && !self.teleporting && self.movement_complete && !self.agent.is_sitting() {
             self.water_float.offset()
@@ -912,6 +950,8 @@ impl World {
             left_behind_since: None,
             landmarks: Default::default(),
             map: worldmap::WorldMap::default(),
+            region_tracker: Default::default(),
+            region_tracker_path: None,
             place_details: Default::default(),
             place_snapshots: Default::default(),
             search: Default::default(),
@@ -2537,6 +2577,8 @@ impl World {
                 self.agent.set_look_at(l.look_at);
                 self.social = social::Social::from_login(&l.raw);
                 let account = crate::settings::account_dir(&l.agent_id);
+                self.region_tracker_path = Some(account.join(region_tracker::FILE));
+                self.region_tracker = region_tracker::RegionTracker::load(&account.join(region_tracker::FILE));
                 self.contact_sets = contact_sets::ContactSets::load(account.join(contact_sets::CONTACT_SETS_FILE));
                 self.groups.load_favorites(account.join(groups::FAVORITE_GROUPS_FILE));
                 self.group_data.load_read(account.join(group_data::NOTICES_READ_FILE));
