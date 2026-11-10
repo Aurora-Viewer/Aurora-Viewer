@@ -148,7 +148,9 @@ impl Editor {
             || self.drag.is_some()
             || self.gizmo.dragging()
             || self.poser.scale_gizmo.dragging()
-            || ctx.input(|i| i.pointer.any_down() || i.modifiers.alt)
+            // none while a button is held, but on the press's own frame: the
+            // handles' way (`ctrl_hint`) is decided where the press lands
+            || ctx.input(|i| (i.pointer.any_down() && !i.pointer.primary_pressed()) || i.modifiers.alt)
         {
             return Hint::None;
         }

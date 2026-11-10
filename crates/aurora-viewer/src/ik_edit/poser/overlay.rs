@@ -82,9 +82,10 @@ impl Editor {
             // stay for the click that poses it
             let hint = self.world_hint(ctx, p, world, proj, &frame, self.poser.markers);
             // the handles give way to it next frame (`poser_ctrl_picks`); the
-            // decision taken before a press lasts until its release (no hint
-            // shows while a button is down), so the click reaches the part
-            if !ctx.input(|i| i.pointer.any_down()) {
+            // decision taken where a press lands lasts until its release (no
+            // hint shows while a button is held), so the click reaches the
+            // part, and a press moved onto the handles alone keeps them
+            if ctx.input(|i| !i.pointer.any_down() || i.pointer.primary_pressed()) {
                 self.poser.ctrl_hint = hint != world_hints::Hint::None;
             }
             // markers on, even hidden "On hover" away from the avatar: a
