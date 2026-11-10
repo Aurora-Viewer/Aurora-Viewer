@@ -632,4 +632,129 @@ mod tests {
         }
         assert_eq!(metadata(&[0xff, 0x4f, 0xff, 0x64, 0, 1]), Metadata::default());
     }
+
+    /// What a toolbar of `held` permissions lets be done, found by clicking:
+    /// (Copy UUID copies the asset id, Save As opens its list), in the flat
+    /// view or with the 360° switch on.
+    fn toolbar_gates(held: u32, panorama: bool) -> (bool, bool) {
+        use crate::ui::widgets::elide_tests::Frames;
+        let p = crate::theme::Theme::default().palette();
+        let item = aurora_net::inventory::InvItem {
+            asset_id: Uuid::from_u128(5),
+            ..Default::default()
+        };
+        let draw = |frames: &mut Frames, events: Vec<egui::Event>| {
+            let mut display = Display::default();
+            let mut on = panorama;
+            frames.run_with_output(events, |ui| {
+                let mut actions = Vec::new();
+                toolbar(
+                    ui,
+                    &p,
+                    &item,
+                    held,
+                    Some((2048, 1024)),
+                    &mut display,
+                    panorama.then_some(&mut on),
+                    &mut actions,
+                );
+            })
+        };
+        let click = |x: f32| {
+            let mut frames = Frames::new();
+            let pos = egui::pos2(x, 14.0);
+            let button = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            draw(&mut frames, Vec::new());
+            draw(&mut frames, vec![egui::Event::PointerMoved(pos)]);
+            draw(&mut frames, vec![button(true)]);
+            let (_, released) = draw(&mut frames, vec![button(false)]);
+            let copied = released
+                .commands
+                .iter()
+                .any(|c| matches!(c, egui::OutputCommand::CopyText(text) if *text == item.asset_id.to_string()));
+            // (the list a click on Save As opens, a frame later)
+            let (texts, _) = draw(&mut frames, Vec::new());
+            let listed = texts.iter().any(|t| t.source == "PNG");
+            (copied, listed)
+        };
+        let (mut copy, mut save) = (false, false);
+        for x in (4..420).step_by(5) {
+            let (copied, listed) = click(x as f32);
+            copy |= copied;
+            save |= listed;
+        }
+        (copy, save)
+    }
+
+    /// Copy UUID and Save As of the texture preview follow `gates` for the
+    /// item of the owner, a group-owned one, someone else's, a Library item
+    /// and each missing right, in the flat view and in the 360° view alike:
+    /// the panorama is a window on the image, never a way out.
+    #[test]
+    fn the_toolbar_follows_the_permission_gates_in_the_flat_and_the_360_view() {
+        use crate::world::inventory::actions::{COPY, FULL, MODIFY, TRANSFER};
+        let cases = [
+            ("the owner's, full", 0x7fff_ffffu32, true),
+            ("group-owned or someone else's", 0, false),
+            ("a Library item, copy only", COPY, false),
+            ("a Library item, everyone full", FULL, true),
+            ("no copy", MODIFY | TRANSFER, false),
+            ("no transfer", COPY | MODIFY, false),
+            ("no modify", COPY | TRANSFER, false),
+            ("full and more", FULL | 0x1_0000, true),
+        ];
+        for (name, held, allowed) in cases {
+            assert_eq!((gates(held).copy_uuid, gates(held).save_as), (allowed, allowed), "{name}");
+            for panorama in [false, true] {
+                assert_eq!(toolbar_gates(held, panorama), (allowed, allowed), "{name}, 360°: {panorama}");
+            }
+        }
+    }
+
+    /// The layout of the texture preview with its 360° switch on (the
+    /// toolbar, the viewer in the room above the footer) keeps its window's
+    /// size at every scale.
+    #[test]
+    fn the_360_texture_preview_layout_keeps_its_window_still() {
+        let image = Arc::new(aurora_render::preview::Image {
+            size: [2, 1],
+            rgba: Arc::from([0u8; 8]),
+        });
+        let item = aurora_net::inventory::InvItem {
+            asset_id: Uuid::from_u128(6),
+            ..Default::default()
+        };
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            "texture-360-test",
+            &[Vec2::new(460.0, 520.0), Vec2::new(300.0, 300.0)],
+            "OK",
+            || (Display::default(), crate::ui::panorama::PanoView::new(0.0)),
+            |(display, view), ctx, p| {
+                let mut open = true;
+                Floater::new("texture-360-test", "360", egui::pos2(40.0, 40.0), Vec2::new(460.0, 520.0)).show(ctx, p, &mut open, |ui| {
+                    let mut on = true;
+                    toolbar(
+                        ui,
+                        p,
+                        &item,
+                        0x7fff_ffff,
+                        Some((2048, 1024)),
+                        display,
+                        Some(&mut on),
+                        &mut Vec::new(),
+                    );
+                    let (mut room, foot) = crate::ui::widgets::above_footer(ui);
+                    panorama_picture(&mut room, p, egui::Id::unique("texture-360-test-view"), view, &image);
+                    foot.show(ui, |ui| {
+                        let _ = ui.button("OK");
+                    });
+                });
+            },
+        );
+    }
 }

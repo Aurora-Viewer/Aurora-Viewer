@@ -843,7 +843,7 @@ fn the_vertical_library_keeps_its_size_with_its_warnings() {
 /// item, a group-owned one, someone else's, a Library item, and each missing
 /// right (LLPreviewTexture::postBuild, canSaveAs).
 #[test]
-fn texture_preview_gates_need_full_permissions_in_both_views() {
+fn the_gates_need_full_permissions() {
     use crate::world::inventory::actions::{COPY, FULL, MODIFY, TRANSFER};
     let agent = Uuid::from_u128(77);
     let other = Uuid::from_u128(78);
@@ -890,4 +890,49 @@ fn only_wide_two_to_one_textures_offer_the_panorama_and_the_marker_turns_it_on()
     assert_eq!(panorama_state(Some((1024, 1024)), "360 Snapshot : Aurora", None), (false, false));
     assert_eq!(panorama_state(Some((128, 64)), "360 Snapshot : x", Some(true)), (false, false));
     assert_eq!(panorama_state(None, "360 Snapshot : x", None), (false, false), "size not known yet");
+}
+
+/// "Save as" of a batch (`begin_exports`) refuses what the preview's Save As
+/// refuses: an item the agent may not copy, modify and transfer is never
+/// exported, whatever the view it was looked at in.
+#[test]
+fn a_batch_export_refuses_what_lacks_full_permissions() {
+    use crate::world::inventory::actions::{COPY, FULL, MODIFY, TRANSFER};
+    let avatars = std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load());
+    let mut world = World::new(avatars);
+    world.agent_id = Uuid::from_u128(70);
+    world.inventory.owner = world.agent_id;
+    let masks = [
+        ("full", FULL),
+        ("no copy", MODIFY | TRANSFER),
+        ("no transfer", COPY | MODIFY),
+        ("no modify", COPY | TRANSFER),
+    ];
+    world.inventory.add_items(
+        masks
+            .iter()
+            .enumerate()
+            .map(|(n, (name, mask))| aurora_net::inventory::InvItem {
+                id: Uuid::from_u128(800 + n as u128),
+                asset_id: Uuid::from_u128(900 + n as u128),
+                asset_type: 0,
+                name: (*name).into(),
+                owner: world.agent_id,
+                owner_mask: *mask,
+                ..Default::default()
+            })
+            .collect(),
+    );
+    let ctx = egui::Context::default();
+    for (n, (name, mask)) in masks.iter().enumerate() {
+        let mut ui = LibraryUi::default();
+        ui.begin_exports(&ctx, &world, vec![Uuid::from_u128(800 + n as u128)], true);
+        let opened = ui.windows.iter().any(|w| w.id == Uuid::from_u128(800 + n as u128));
+        assert_eq!(opened, mask & FULL == FULL, "{name}: a single export opens its preview and starts");
+        assert!(ui.export_folder.is_none() && ui.export_items.is_empty());
+    }
+    // all at once: only the full one is exported (alone, so through its preview)
+    let mut ui = LibraryUi::default();
+    ui.begin_exports(&ctx, &world, (800..804).map(Uuid::from_u128).collect(), true);
+    assert_eq!(ui.windows.iter().map(|w| w.id).collect::<Vec<_>>(), vec![Uuid::from_u128(800)]);
 }

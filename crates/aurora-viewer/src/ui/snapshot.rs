@@ -1937,6 +1937,37 @@ mod tests {
         }
     }
 
+    /// The viewfinder's drawer in the 360° format (its settings, the
+    /// panorama above them, the shutter's row under them) keeps its size at
+    /// every scale; hosted in a window here, which measures it.
+    #[test]
+    fn the_viewfinder_drawer_in_360_keeps_its_size() {
+        widgets::steady_tests::assert_window_steady(
+            "drawer-360-test",
+            &[Vec2::new(340.0, 640.0)],
+            aurora_i18n::tr!("photo-take"),
+            || {
+                let mut ui = SnapshotUi::default();
+                ui.set_pano(true);
+                (ui, Settings::default(), crate::camera::DEFAULT_FOV)
+            },
+            |(panel, settings, fov), ctx, p| {
+                let catalog = crate::world::env_select::SettingsCatalog::default();
+                let view = test_view(&catalog);
+                let mut open = true;
+                Floater::new("drawer-360-test", "Drawer", Pos2::new(40.0, 40.0), Vec2::new(340.0, 640.0))
+                    .fixed()
+                    .auto_height()
+                    .show(ctx, p, &mut open, |ui| {
+                        // (the viewfinder's drawer is 316 points wide)
+                        ui.set_width(316.0);
+                        let mut out = Vec::new();
+                        panel.drawer(ui, p, settings, fov, crate::camera::DEFAULT_FOV, &view, 300.0, &mut out);
+                    });
+            },
+        );
+    }
+
     /// The photo window in its 360° format keeps its size at every scale, in
     /// both styles, with its shutter inside it.
     #[test]

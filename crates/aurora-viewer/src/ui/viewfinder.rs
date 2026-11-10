@@ -767,8 +767,14 @@ impl Viewfinder {
                     {
                         s.huds = !s.huds;
                     }
-                    let quality = if s.quality { p.ink } else { p.muted_dim };
-                    if icon_switch(ui, p, "sparkles-filled", quality, aurora_i18n::tr!("photo-vf-quality-tip")).clicked() {
+                    // (greyed in a 360° picture, as the window's "Photo quality" row)
+                    let quality = if s.quality && !panel.pano { p.ink } else { p.muted_dim };
+                    let tip = if panel.pano {
+                        aurora_i18n::tr!("photo-not-in-360")
+                    } else {
+                        aurora_i18n::tr!("photo-vf-quality-tip")
+                    };
+                    if icon_switch(ui, p, "sparkles-filled", quality, tip).clicked() && !panel.pano {
                         s.quality = !s.quality;
                     }
                     if icon_text_button(
@@ -2355,9 +2361,16 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
     ));
     v.push((
         aurora_i18n::tr!("photo-quality"),
-        yes_no(s.quality),
-        Box::new(|s, _| {
-            s.quality = !s.quality;
+        if panel.pano {
+            aurora_i18n::tr!("photo-vf-off").to_owned()
+        } else {
+            yes_no(s.quality)
+        },
+        Box::new(|s, panel| {
+            // (not in a 360° picture)
+            if !panel.pano {
+                s.quality = !s.quality;
+            }
             None
         }),
     ));
