@@ -101,7 +101,9 @@ pub fn table(id: &str) -> Option<Arc<Lut>> {
     let (_, table) = find(id)?;
     let data = table
         .colours
-        .chunks_exact(6)
+        .as_chunks::<6>()
+        .0
+        .iter()
         .map(|c| [0, 2, 4].map(|k| u16::from_le_bytes([c[k], c[k + 1]]) as f32 / 65535.0))
         .collect();
     let lut = Arc::new(Lut { size: table.size, data });
