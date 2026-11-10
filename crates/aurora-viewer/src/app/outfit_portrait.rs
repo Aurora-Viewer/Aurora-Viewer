@@ -468,7 +468,7 @@ impl App {
             return;
         }
         if let (Some(cost), Some(pixels)) = (hd, hd_pixels) {
-            self.outfit_hd_start(outfit, shot.size, pixels, side, cost);
+            self.outfit_hd_start(outfit, shot.size, pixels, side, cost, false);
         }
         log::info!("outfit portrait: photo used for {outfit}");
         if let Some(s) = &mut self.outfit_portrait {

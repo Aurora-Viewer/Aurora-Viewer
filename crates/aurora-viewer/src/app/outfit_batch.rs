@@ -14,9 +14,15 @@
 //! apart, as a person clicking would be. Pause holds the next outfit and
 //! the next photo; Stop, the window's X or the end put the starting outfit
 //! back. Outfits RLVa locks are not offered and skipped if locked since.
+//!
+//! The paid HD pictures, when ticked: the total for the outfits chosen
+//! (count × the texture upload price) is confirmed once at Start against
+//! the balance, like the auto portrait's single picture; each photo taken
+//! then goes the auto portrait's way (`outfit_hd`), paid as it is sent, so
+//! an outfit skipped costs nothing.
 
 use super::App;
-use crate::snapshot::portrait::PortraitSettings;
+use crate::snapshot::portrait::{self, HdOffer, PortraitSettings};
 use crate::ui::appearance::batch as window;
 use crate::world::appearance as model;
 use std::time::{Duration, Instant};
@@ -124,6 +130,11 @@ pub(super) struct Batch {
     /// The loading's signals last read.
     checked: Option<Instant>,
     open: bool,
+    /// Start waits for the HD pictures' total to be confirmed.
+    hd_confirm: Option<i32>,
+    /// The HD pictures confirmed at the start: their side and the price of
+    /// each.
+    hd: Option<(u32, i32)>,
 }
 
 /// What tells that an outfit has loaded.
@@ -267,6 +278,8 @@ impl App {
             last_wear: None,
             checked: None,
             open: true,
+            hd_confirm: None,
+            hd: None,
         });
         crate::ui::widgets::open_floater(&self.egui_ctx, window::WINDOW, &mut true);
     }
@@ -281,6 +294,45 @@ impl App {
         } else {
             None
         }
+    }
+
+    /// The HD pictures for the outfits ticked: (the side, the price of
+    /// each, the total's offer against the balance).
+    fn outfit_batch_hd_offer(&self) -> Option<(u32, Option<i32>, HdOffer)> {
+        let b = self.outfit_batch.as_ref()?;
+        let side = b.settings.hd_side.side();
+        let each = self.outfit_hd_price(side);
+        let count = b.entries.iter().filter(|e| e.chosen).count();
+        Some((side, each, portrait::hd_offer(portrait::hd_total(each, count), self.world.balance)))
+    }
+
+    /// Start: with the HD pictures ticked and payable, their total is
+    /// confirmed first (`confirmed`: the total agreed to); a total that
+    /// cannot be paid leaves them out, as their greyed box says.
+    fn outfit_batch_start_paid(&mut self, confirmed: Option<i32>) {
+        if self.outfit_batch_blocked().is_some() {
+            return;
+        }
+        let hd = match self.outfit_batch_hd_offer() {
+            Some((side, Some(each), HdOffer::Ready(total))) if self.outfit_batch.as_ref().is_some_and(|b| b.settings.hd) => {
+                Some((side, each, total))
+            }
+            _ => None,
+        };
+        let Some(b) = &mut self.outfit_batch else {
+            return;
+        };
+        if let Some((_, _, total)) = hd.filter(|(_, _, total)| *total > 0 && confirmed != Some(*total)) {
+            b.hd_confirm = Some(total);
+            return;
+        }
+        b.hd_confirm = None;
+        b.hd = hd.map(|(side, each, _)| (side, each));
+        if let Some((side, each, total)) = hd {
+            log::info!("outfit batch: HD pictures {side} x {side} at L$ {each} each, L$ {total} confirmed");
+        }
+        self.inventory_images.hd.batch = Default::default();
+        self.outfit_batch_start();
     }
 
     fn outfit_batch_start(&mut self) {
@@ -465,8 +517,13 @@ impl App {
                     if let Some(b) = &mut self.outfit_batch {
                         b.entries[i].picture = Some(texture);
                     }
+                    let hd = self.outfit_batch.as_ref().and_then(|b| b.hd);
+                    let hd_pixels = hd.map(|_| shot.pixels.clone());
                     if self.outfit_photo_pixels(outfit, shot.size, shot.pixels) {
                         log::info!("outfit batch: photo of {outfit} saving");
+                        if let (Some((side, each)), Some(pixels)) = (hd, hd_pixels) {
+                            self.outfit_hd_start(outfit, shot.size, pixels, side, each, true);
+                        }
                         Some(State::Saving { missing })
                     } else {
                         Some(State::Failed(self.appearance_ui.message.clone()))
@@ -625,7 +682,12 @@ impl App {
                     e.chosen = !e.chosen;
                 }
             }
-            window::Action::Start => self.outfit_batch_start(),
+            window::Action::Start => self.outfit_batch_start_paid(None),
+            window::Action::ConfirmHd => {
+                let total = b.hd_confirm;
+                self.outfit_batch_start_paid(total);
+            }
+            window::Action::CancelHd => b.hd_confirm = None,
             window::Action::Pause => self.outfit_batch_set_paused(true),
             window::Action::Resume => self.outfit_batch_set_paused(false),
             window::Action::Stop => {
@@ -719,7 +781,21 @@ impl App {
                 restored,
             },
         };
-        Some(window::View { phase, rows })
+        let tally = &self.inventory_images.hd.batch;
+        let hd = window::HdTotal {
+            offer: self.outfit_batch_hd_offer().map(|(_, _, offer)| offer),
+            each: self.outfit_batch_hd_offer().and_then(|(_, each, _)| each),
+            count: chosen,
+            balance: self.world.balance,
+            confirm: b.hd_confirm,
+            used: b.hd.is_some(),
+            saved: tally.saved,
+            paid: tally.paid,
+            pending: self.inventory_images.hd.batch_pending(),
+            failed: tally.failed,
+            error: tally.error.as_deref(),
+        };
+        Some(window::View { phase, rows, hd })
     }
 
     /// The batch portraits' window.
@@ -745,7 +821,7 @@ impl App {
     }
 }
 
-/// `AURORA_DEMO_APPEARANCE=batch|batch-run`.
+/// `AURORA_DEMO_APPEARANCE=batch|batch-run|batch-hd|batch-hd-poor`.
 fn demo_mode() -> Option<&'static str> {
     static MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     MODE.get_or_init(|| std::env::var("AURORA_DEMO_APPEARANCE").ok().filter(|m| m.starts_with("batch")))
@@ -756,7 +832,10 @@ impl App {
     /// The demo's steps (`AURORA_DEMO_APPEARANCE`): over the showcase, at
     /// frame 600 the batch portraits' window over the demo's outfits
     /// (`batch`); `batch-run` saves the current outfit's changes at frame
-    /// 640 and starts it at frame 700.
+    /// 640 and starts it at frame 700. `batch-hd`: the HD pictures ticked
+    /// at 1024 with a fictional L$ 500 balance (the demo's price is L$ 10
+    /// each), the changes saved at 640, Start left to the user;
+    /// `batch-hd-poor`: a L$ 15 balance, short of the total.
     pub(super) fn outfit_batch_demo(&mut self) {
         if !self.demo {
             return;
@@ -776,10 +855,17 @@ impl App {
                 outfits.sort_by_key(|id| inv.folders.get(id).map(|f| f.info.name.to_lowercase()));
                 log::info!("demo: outfit batch ({mode})");
                 self.open_outfit_batch(outfits);
+                if mode.starts_with("batch-hd") {
+                    if let Some(b) = &mut self.outfit_batch {
+                        b.settings.hd = true;
+                        b.settings.hd_side = portrait::HdSide::Side1024;
+                    }
+                    self.world.balance = Some(if mode == "batch-hd-poor" { 15 } else { 500 });
+                }
             }
             // (the demo's current outfit has unsaved changes: saved first,
             // as Start asks)
-            640 if mode == "batch-run" && model::dirty(&self.world.inventory) => {
+            640 if (mode == "batch-run" || mode.starts_with("batch-hd")) && model::dirty(&self.world.inventory) => {
                 self.apply_appearance_action(model::Action::Save(None));
             }
             700 if mode == "batch-run" => self.outfit_batch_start(),

@@ -5,6 +5,11 @@
 //! (`texture_upload_cost`), shown and confirmed before anything is paid. The
 //! showcase's large preview shows it; the cards keep the thumbnail.
 //!
+//! The batch portraits (`outfit_batch`) confirm the total once, then queue
+//! one picture an outfit here: they are sent one after the other, each at
+//! the price confirmed, and counted for the batch's summary instead of
+//! taking the gallery's message, which the batch reads for its own photos.
+//!
 //! One HD picture an outfit, as LLAppearanceMgr::removeOutfitPhoto kept one
 //! photo: once the new one is saved, the older ones this viewer sent go to
 //! the Trash (never deleted: a paid texture stays recoverable). A texture
@@ -18,11 +23,12 @@ use crate::snapshot::inventory;
 use crate::snapshot::portrait::{self, HdOffer};
 use aurora_net::NetCommand;
 use aurora_net::inventory::upload::{self, Kind, Receipt};
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use uuid::Uuid;
 
 /// The encoded texture and the pixels it was made from (shown at once in
-/// the showcase once it is saved, instead of being downloaded again).
+/// the showcase once it is saved, instead of being downloaded again; not
+/// kept for a batch's pictures).
 type Encoded = Result<(Vec<u8>, Vec<u8>), String>;
 
 enum Step {
@@ -30,39 +36,108 @@ enum Step {
     Sent { request: Uuid, pixels: Vec<u8> },
 }
 
+/// A confirmed picture waiting for its turn.
+struct Job {
+    outfit: Uuid,
+    size: (u32, u32),
+    pixels: Vec<u8>,
+    side: u32,
+    cost: i32,
+    batch: bool,
+}
+
 struct Upload {
     outfit: Uuid,
     side: u32,
     cost: i32,
+    batch: bool,
     step: Step,
 }
 
-/// The HD picture on its way, and the older ones waiting for the Trash.
+/// The batch's HD pictures so far (`outfit_batch`'s summary).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct BatchTally {
+    pub saved: usize,
+    pub paid: i32,
+    pub failed: usize,
+    /// The last failure's reason.
+    pub error: Option<String>,
+}
+
+/// The HD picture on its way, those waiting, and the older ones waiting
+/// for the Trash.
 #[derive(Default)]
 pub(super) struct OutfitHd {
     upload: Option<Upload>,
+    queue: VecDeque<Job>,
     /// Moved once no other inventory change is under way.
     trash: Vec<Uuid>,
+    pub batch: BatchTally,
+}
+
+impl OutfitHd {
+    /// The batch's pictures still encoded, sent or waiting.
+    pub(super) fn batch_pending(&self) -> usize {
+        self.queue.iter().filter(|j| j.batch).count() + usize::from(self.upload.as_ref().is_some_and(|u| u.batch))
+    }
 }
 
 impl App {
     /// The HD picture of this side, now: its price and whether the balance
     /// pays it.
     pub(super) fn outfit_hd_offer(&self, side: u32) -> HdOffer {
-        portrait::hd_offer(self.photo_prices().cost(Kind::Texture, (side, side)), self.world.balance)
+        portrait::hd_offer(self.outfit_hd_price(side), self.world.balance)
     }
 
-    /// An HD picture is being encoded or sent.
+    /// The price of one HD picture of this side (None: not known).
+    pub(super) fn outfit_hd_price(&self, side: u32) -> Option<i32> {
+        self.photo_prices().cost(Kind::Texture, (side, side))
+    }
+
+    /// An HD picture is being encoded or sent, or waits for its turn.
     pub(super) fn outfit_hd_busy(&self) -> bool {
-        self.inventory_images.hd.upload.is_some()
+        let hd = &self.inventory_images.hd;
+        hd.upload.is_some() || !hd.queue.is_empty()
     }
 
     /// The confirmed photo (square, `size`) as the outfit's HD picture of
-    /// `side`, at the confirmed price: reduced and encoded on a worker.
-    pub(super) fn outfit_hd_start(&mut self, outfit: Uuid, size: (u32, u32), pixels: Vec<u8>, side: u32, cost: i32) {
-        if self.outfit_hd_busy() {
+    /// `side`, at the confirmed price: reduced and encoded on a worker, or
+    /// queued behind the one on its way (`batch`: one of the batch
+    /// portraits', counted for its summary).
+    pub(super) fn outfit_hd_start(&mut self, outfit: Uuid, size: (u32, u32), pixels: Vec<u8>, side: u32, cost: i32, batch: bool) {
+        log::info!("outfit HD picture: {side} x {side} for {outfit}, L$ {cost} confirmed");
+        let hd = &mut self.inventory_images.hd;
+        hd.queue.push_back(Job {
+            outfit,
+            size,
+            pixels,
+            side,
+            cost,
+            batch,
+        });
+        if !batch {
+            self.appearance_ui.message = aurora_i18n::tr!("app-outfit-hd-sending", cost = cost).to_owned();
+        }
+        self.outfit_hd_next();
+    }
+
+    /// The next waiting picture, once none is on its way.
+    fn outfit_hd_next(&mut self) {
+        let hd = &mut self.inventory_images.hd;
+        if hd.upload.is_some() {
             return;
         }
+        let Some(job) = hd.queue.pop_front() else {
+            return;
+        };
+        let Job {
+            outfit,
+            size,
+            pixels,
+            side,
+            cost,
+            batch,
+        } = job;
         let (tx, rx) = crossbeam_channel::bounded(1);
         std::thread::spawn(move || {
             let t0 = std::time::Instant::now();
@@ -77,7 +152,7 @@ impl App {
                 })
                 .and_then(|image| {
                     let rgba = image.into_raw();
-                    inventory::encode(side, side, &rgba, (side, side)).map(|data| (data, rgba))
+                    inventory::encode(side, side, &rgba, (side, side)).map(|data| (data, if batch { Vec::new() } else { rgba }))
                 });
             if let Ok((data, _)) = &encoded {
                 log::info!(
@@ -88,21 +163,33 @@ impl App {
             }
             let _ = tx.send(encoded);
         });
-        log::info!("outfit HD picture: {side} x {side} for {outfit}, L$ {cost} confirmed");
-        self.inventory_images.hd.upload = Some(Upload {
+        hd.upload = Some(Upload {
             outfit,
             side,
             cost,
+            batch,
             step: Step::Encoding(rx),
         });
-        self.appearance_ui.message = aurora_i18n::tr!("app-outfit-hd-sending", cost = cost).to_owned();
     }
 
-    /// Every frame: the encoded picture is sent; the older ones go to the
-    /// Trash once the inventory is free.
+    /// Every frame: the encoded picture is sent, the next one started; the
+    /// older ones go to the Trash once the inventory is free.
     pub(super) fn poll_outfit_hd(&mut self) {
         self.outfit_hd_send();
+        self.outfit_hd_next();
         self.outfit_hd_trash();
+    }
+
+    /// A picture that will not be sent: the gallery's message, or the
+    /// batch's summary.
+    fn outfit_hd_failed(&mut self, batch: bool, text: String) {
+        if batch {
+            let tally = &mut self.inventory_images.hd.batch;
+            tally.failed += 1;
+            tally.error = Some(text);
+        } else {
+            self.appearance_ui.message = text;
+        }
     }
 
     fn outfit_hd_send(&mut self) {
@@ -115,20 +202,20 @@ impl App {
         let Ok(encoded) = rx.try_recv() else {
             return;
         };
-        let (outfit, cost) = (up.outfit, up.cost);
+        let (outfit, cost, batch) = (up.outfit, up.cost, up.batch);
         let (data, pixels) = match encoded {
             Ok(done) => done,
             Err(error) => {
                 log::warn!("outfit HD picture: not encoded: {error}");
                 self.inventory_images.hd.upload = None;
-                self.appearance_ui.message = aurora_i18n::tr!("app-outfit-hd-failed", error = error).to_owned();
+                self.outfit_hd_failed(batch, aurora_i18n::tr!("app-outfit-hd-failed", error = error).to_owned());
                 return;
             }
         };
         let inv = &self.world.inventory;
         let Some(name) = inv.folders.get(&outfit).map(|f| f.info.name.clone()) else {
             self.inventory_images.hd.upload = None;
-            self.appearance_ui.message = aurora_i18n::tr!("app-outfit-hd-outfit-gone").to_owned();
+            self.outfit_hd_failed(batch, aurora_i18n::tr!("app-outfit-hd-outfit-gone").to_owned());
             return;
         };
         let request = Uuid::new_v4();
@@ -208,22 +295,42 @@ impl App {
                     .filter(|old| *old != id)
                     .collect();
                 self.world.inventory.add_items(vec![item]);
-                let image = egui::ColorImage::from_rgba_unmultiplied([up.side as usize, up.side as usize], &pixels);
-                let texture = self
-                    .egui_ctx
-                    .load_texture(format!("img-{asset}"), image, egui::TextureOptions::LINEAR);
-                self.ui_images.insert(asset, texture);
+                // (a batch's pictures are fetched when shown, rather than
+                // each kept on the GPU)
+                if !pixels.is_empty() {
+                    let image = egui::ColorImage::from_rgba_unmultiplied([up.side as usize, up.side as usize], &pixels);
+                    let texture = self
+                        .egui_ctx
+                        .load_texture(format!("img-{asset}"), image, egui::TextureOptions::LINEAR);
+                    self.ui_images.insert(asset, texture);
+                }
                 log::info!(
                     "outfit HD picture: saved for L$ {}, {} older one(s) to the Trash",
                     receipt.cost,
                     older.len()
                 );
                 self.inventory_images.hd.trash.extend(older);
-                self.appearance_ui.message = aurora_i18n::tr!("app-outfit-hd-saved", cost = receipt.cost).to_owned();
+                if up.batch {
+                    let tally = &mut self.inventory_images.hd.batch;
+                    tally.saved += 1;
+                    tally.paid += receipt.cost;
+                } else {
+                    self.appearance_ui.message = aurora_i18n::tr!("app-outfit-hd-saved", cost = receipt.cost).to_owned();
+                }
             }
             Err(e) => {
                 log::warn!("outfit HD picture: upload failed: {e}");
-                self.appearance_ui.message = match e {
+                if up.batch && matches!(e, upload::Error::PriceChanged(_)) {
+                    // the price the batch confirmed no longer holds: the
+                    // batch's others are not sent at it either
+                    let hd = &mut self.inventory_images.hd;
+                    let before = hd.queue.len();
+                    hd.queue.retain(|j| !j.batch);
+                    let dropped = before - hd.queue.len();
+                    hd.batch.failed += dropped;
+                    log::warn!("outfit HD picture: the price changed, {dropped} more of the batch not sent");
+                }
+                let text = match e {
                     upload::Error::PriceChanged(Some(cost)) => aurora_i18n::tr!("app-outfit-hd-price-changed", cost = cost).to_owned(),
                     upload::Error::Unknown | upload::Error::Uncertain(_) | upload::Error::Verification => {
                         aurora_i18n::tr!("app-outfit-hd-unknown").to_owned()
@@ -231,7 +338,9 @@ impl App {
                     upload::Error::Rejected | upload::Error::Refused(_) => aurora_i18n::tr!("app-outfit-hd-refused").to_owned(),
                     other => aurora_i18n::tr!("app-outfit-hd-failed", error = other.to_string()).to_owned(),
                 };
+                self.outfit_hd_failed(up.batch, text);
             }
         }
+        self.outfit_hd_next();
     }
 }

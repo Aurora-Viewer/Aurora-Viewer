@@ -225,18 +225,48 @@ pub(super) fn choices_ui(ui: &mut egui::Ui, p: &Palette, s: &mut PortraitSetting
 /// The paid HD picture: its price, the side, and why it cannot be had now
 /// (the balance, the price not known, another on its way).
 fn hd_choice(ui: &mut egui::Ui, p: &Palette, s: &mut PortraitSettings, hd: &HdView) {
-    ui.label(
-        RichText::new(aurora_i18n::tr!("ui-appearance-portrait-hd-title"))
-            .size(12.0)
-            .family(fonts::semibold(ui.ctx()))
-            .color(p.muted),
-    );
     let ready = matches!(hd.offer, HdOffer::Ready(_)) && !hd.busy && hd.confirm.is_none();
     let label = match hd.offer {
         HdOffer::Ready(cost) | HdOffer::Short(cost) => aurora_i18n::tr!("ui-appearance-portrait-hd", cost = cost).to_string(),
         HdOffer::Unknown => aurora_i18n::tr!("ui-appearance-portrait-hd-no-price").to_string(),
     };
-    let mut on = s.hd && matches!(hd.offer, HdOffer::Ready(_));
+    let on = hd_box(
+        ui,
+        p,
+        s,
+        aurora_i18n::tr!("ui-appearance-portrait-hd-title"),
+        label,
+        ready,
+        matches!(hd.offer, HdOffer::Ready(_)),
+    );
+    let reason = match hd.offer {
+        HdOffer::Short(cost) => Some(aurora_i18n::tr!("ui-appearance-portrait-hd-short", cost = cost).to_string()),
+        HdOffer::Unknown => Some(aurora_i18n::tr!("ui-appearance-portrait-hd-unknown").to_string()),
+        HdOffer::Ready(_) if hd.busy => Some(aurora_i18n::tr!("ui-appearance-portrait-hd-busy").to_string()),
+        HdOffer::Ready(_) => None,
+    };
+    match reason {
+        Some(reason) => note(ui, p, "alert-triangle-filled", &reason),
+        None if on && hd.has_one => note(ui, p, "info-circle-filled", aurora_i18n::tr!("ui-appearance-portrait-hd-replaces")),
+        None => note(ui, p, "info-circle-filled", aurora_i18n::tr!("ui-appearance-portrait-hd-about")),
+    }
+}
+
+/// The HD box: its title, the box (`enabled`; shown ticked only when the
+/// price can be paid, `payable`) and the side under it. True when ticked.
+/// Shared with the batch portraits' start (`batch`).
+pub(super) fn hd_box(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    s: &mut PortraitSettings,
+    title: &str,
+    label: String,
+    enabled: bool,
+    payable: bool,
+) -> bool {
+    ui.label(RichText::new(title).size(12.0).family(fonts::semibold(ui.ctx())).color(p.muted));
+    let ready = enabled;
+    let mut on = s.hd && payable;
     ui.add_enabled_ui(ready, |ui| {
         if widgets::checkbox(ui, p, &mut on, label).changed() {
             s.hd = on;
@@ -258,33 +288,43 @@ fn hd_choice(ui: &mut egui::Ui, p: &Palette, s: &mut PortraitSettings, hd: &HdVi
             }
         }
     });
-    let reason = match hd.offer {
-        HdOffer::Short(cost) => Some(aurora_i18n::tr!("ui-appearance-portrait-hd-short", cost = cost).to_string()),
-        HdOffer::Unknown => Some(aurora_i18n::tr!("ui-appearance-portrait-hd-unknown").to_string()),
-        HdOffer::Ready(_) if hd.busy => Some(aurora_i18n::tr!("ui-appearance-portrait-hd-busy").to_string()),
-        HdOffer::Ready(_) => None,
-    };
-    match reason {
-        Some(reason) => note(ui, p, "alert-triangle-filled", &reason),
-        None if on && hd.has_one => note(ui, p, "info-circle-filled", aurora_i18n::tr!("ui-appearance-portrait-hd-replaces")),
-        None => note(ui, p, "info-circle-filled", aurora_i18n::tr!("ui-appearance-portrait-hd-about")),
-    }
+    on
 }
 
 /// The HD picture's price to confirm before Use pays it, like "Save to
 /// inventory" (LLPanelSnapshotInventory::onSend): Back, or Pay and use;
 /// one under the other in the photo mode's narrow panel (`stacked`).
 fn hd_confirm(ui: &mut egui::Ui, p: &Palette, cost: i32, stacked: bool, actions: &mut Vec<Action>) {
-    ui.add(
-        egui::Label::new(
-            RichText::new(aurora_i18n::tr!("ui-appearance-portrait-hd-confirm", cost = cost))
-                .size(12.0)
-                .color(p.ink),
-        )
-        .wrap(),
-    );
+    let text = aurora_i18n::tr!("ui-appearance-portrait-hd-confirm", cost = cost);
     let pay = aurora_i18n::tr!("ui-appearance-portrait-hd-pay", cost = cost).to_string();
+    match pay_or_back(ui, p, &text, None, &pay, stacked) {
+        Some(true) => actions.push(Action::ConfirmHd),
+        Some(false) => actions.push(Action::CancelHd),
+        None => {}
+    }
+}
+
+/// A price to confirm: its text (and the balance, when known), then Back
+/// or Pay; one under the other when `stacked` or when they do not fit side
+/// by side. Some(true): paid, Some(false): back. Shared with the batch
+/// portraits' start (`batch`).
+pub(super) fn pay_or_back(ui: &mut egui::Ui, p: &Palette, text: &str, balance: Option<&str>, pay: &str, stacked: bool) -> Option<bool> {
+    ui.add(egui::Label::new(RichText::new(text).size(12.0).color(p.ink)).wrap());
+    if let Some(balance) = balance {
+        ui.add(egui::Label::new(RichText::new(balance).size(12.0).color(p.muted)).wrap());
+    }
     let back = aurora_i18n::tr!("ui-appearance-portrait-hd-back");
+    let fit = widgets::action_button_fit(ui, "check", pay).max(widgets::action_button_fit(ui, "arrow-back-up", back));
+    if stacked || fit * 2.0 + ui.spacing().item_spacing.x > ui.available_width() {
+        let size = Vec2::new(ui.available_width(), 34.0);
+        if widgets::action_button(ui, p, "check", pay, widgets::ActionKind::Primary, size).clicked() {
+            return Some(true);
+        }
+        if widgets::action_button(ui, p, "arrow-back-up", back, widgets::ActionKind::Flat, size).clicked() {
+            return Some(false);
+        }
+        return None;
+    }
     let buttons = [
         widgets::DialogButton {
             icon: "arrow-back-up",
@@ -294,26 +334,12 @@ fn hd_confirm(ui: &mut egui::Ui, p: &Palette, cost: i32, stacked: bool, actions:
         },
         widgets::DialogButton {
             icon: "check",
-            label: &pay,
+            label: pay,
             kind: widgets::ActionKind::Primary,
             enabled: true,
         },
     ];
-    if stacked {
-        let size = Vec2::new(ui.available_width(), 34.0);
-        if widgets::action_button(ui, p, "check", &pay, widgets::ActionKind::Primary, size).clicked() {
-            actions.push(Action::ConfirmHd);
-        }
-        if widgets::action_button(ui, p, "arrow-back-up", back, widgets::ActionKind::Flat, size).clicked() {
-            actions.push(Action::CancelHd);
-        }
-        return;
-    }
-    match widgets::dialog_buttons(ui, p, &buttons, 32.0) {
-        Some(0) => actions.push(Action::CancelHd),
-        Some(_) => actions.push(Action::ConfirmHd),
-        None => {}
-    }
+    widgets::dialog_buttons(ui, p, &buttons, 32.0).map(|i| i == 1)
 }
 
 /// One choice: its title, then its options side by side, or one under the

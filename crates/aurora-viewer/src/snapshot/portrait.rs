@@ -140,6 +140,14 @@ pub fn hd_offer(cost: Option<i32>, balance: Option<i32>) -> HdOffer {
     }
 }
 
+/// The batch portraits' HD pictures: `count` pictures at `each`, their
+/// total confirmed once before the start and checked against the balance
+/// as one payment (None: the price is not known). Each picture is still
+/// paid on its own as it is sent, so an outfit skipped costs nothing.
+pub fn hd_total(each: Option<i32>, count: usize) -> Option<i32> {
+    each.map(|each| each.saturating_mul(i32::try_from(count).unwrap_or(i32::MAX)))
+}
+
 /// The HD picture's inventory name, from the Legacy Viewer's
 /// `outfit_photo_string` ("Photo of "[OUTFIT_NAME]" outfit",
 /// panel_outfit_gallery.xml), cut to the 63 bytes an item name holds.
@@ -443,6 +451,18 @@ mod tests {
         // an unknown balance leaves the check to the server
         assert_eq!(hd_offer(Some(10), None), HdOffer::Ready(10));
         assert_eq!(hd_offer(Some(0), Some(0)), HdOffer::Ready(0));
+    }
+
+    #[test]
+    fn the_batch_total_is_the_count_times_the_price_against_the_balance() {
+        assert_eq!(hd_total(Some(10), 7), Some(70));
+        assert_eq!(hd_total(None, 7), None);
+        assert_eq!(hd_total(Some(10), 0), Some(0));
+        assert_eq!(hd_total(Some(i32::MAX), 3), Some(i32::MAX), "never wraps");
+        // L$ 65 pays six pictures at L$ 10, not seven
+        assert_eq!(hd_offer(hd_total(Some(10), 7), Some(65)), HdOffer::Short(70));
+        assert_eq!(hd_offer(hd_total(Some(10), 6), Some(65)), HdOffer::Ready(60));
+        assert_eq!(hd_offer(hd_total(None, 6), Some(65)), HdOffer::Unknown);
     }
 
     #[test]
