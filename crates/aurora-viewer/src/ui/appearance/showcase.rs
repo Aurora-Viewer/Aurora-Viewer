@@ -39,7 +39,7 @@ const CARD_MIN: f32 = 150.0;
 const ROW_GAP: f32 = 14.0;
 /// The width the window takes, once, when the showcase first opens in a
 /// narrower window: its rail, three columns and its preview.
-pub(super) const OPEN_WIDTH: f32 = 1000.0;
+pub(super) const OPEN_WIDTH: f32 = 1080.0;
 pub(super) const OPEN_HEIGHT: f32 = 720.0;
 
 /// What the grid shows.
@@ -762,7 +762,8 @@ fn preview_panel(
     ui.add_space(6.0);
     if let Some(rules) = rules {
         use widgets::{ActionKind, action_button_if};
-        ui.horizontal(|ui| {
+        // a long Take off goes under Wear and Add rather than out of the panel
+        ui.horizontal_wrapped(|ui| {
             let size = Vec2::new(0.0, 30.0);
             if action_button_if(
                 ui,
@@ -1114,7 +1115,7 @@ mod tests {
     fn the_showcase_window_keeps_its_size() {
         crate::ui::widgets::steady_tests::assert_window_steady(
             "appearance",
-            &[Vec2::new(1000.0, 720.0), Vec2::new(700.0, 650.0), Vec2::new(480.0, 600.0)],
+            &[Vec2::new(1080.0, 720.0), Vec2::new(700.0, 650.0), Vec2::new(480.0, 600.0)],
             aurora_i18n::tr!("ui-appearance-save-as"),
             || {
                 let world = wardrobe(200);

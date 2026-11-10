@@ -8975,7 +8975,7 @@ gallery's double-click continues to open the outfit's contents.
   Aurora › Outfit gallery › Tiles (Legacy) brings back the small tiles): the
   demo folders of My Outfits (Club, Beach › Night, Spring), three local
   pictures, two favorites and the Cop outfit in the preview. The window widens
-  once to 1000 points the first time the showcase shows. Check the rail's
+  once to 1080 points the first time the showcase shows. Check the rail's
   counts (All, Favorites, No picture, the folders), the banner of outfits
   without a picture and its Show them, the star (amber on a favorite, a click
   toggles it), the hover actions of a card (Wear, Add, Take a snapshot), and

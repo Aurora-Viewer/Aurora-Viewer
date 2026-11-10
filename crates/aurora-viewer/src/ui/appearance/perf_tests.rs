@@ -110,7 +110,7 @@ fn appearance_showcase_frame_benchmark() {
             let ctx = egui::Context::default();
             crate::theme::Theme::default().apply(&ctx, 1.0);
             let _icons = icons::Icons::load(&ctx, None);
-            crate::ui::widgets::size_floater(&ctx, "appearance", Vec2::new(1000.0, 720.0));
+            crate::ui::widgets::size_floater(&ctx, "appearance", Vec2::new(1080.0, 720.0));
             ctx.data_mut(|d| d.insert_persisted(egui::Id::unique("appearance_showcase_widened"), true));
             let mut state = AppearanceUi {
                 showcase,
