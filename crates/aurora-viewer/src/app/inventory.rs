@@ -414,9 +414,10 @@ impl App {
                     if !self.inventory_ui.open_document(&self.egui_ctx, id, it.asset_type) {
                         return;
                     }
-                    // a god reads any (LLPreviewNotecard::loadAsset)
+                    // any god reads any (LLPreviewNotecard::loadAsset: isGodlike())
                     if matches!(it.asset_type, 7 | 10)
-                        && rules::held_for(&self.world.inventory, &it, self.world.god_level > 0) & rules::COPY == 0
+                        && self.world.god_level == 0
+                        && rules::held(&self.world.inventory, &it) & rules::COPY == 0
                     {
                         self.inventory_preview(
                             id,
@@ -441,7 +442,7 @@ impl App {
                 }
             }
             InvAction::SaveContent { editor, item, text, close } => {
-                let allowed = crate::world::inventory::preview::can_edit(&self.world.inventory, item);
+                let allowed = crate::world::inventory::preview::can_edit(&self.world.inventory, item, self.world.god_level);
                 let kind = self.world.inventory.items.get(&item).map_or(-1, |it| it.asset_type);
                 let busy = self.inventory_ui.preview == Some(item) && self.inventory_ui.save_pending
                     || self
@@ -703,7 +704,7 @@ impl App {
             return;
         }
         let kind = self.world.inventory.items.get(&item).map_or(-1, |it| it.asset_type);
-        let editable = crate::world::inventory::preview::can_edit(&self.world.inventory, item);
+        let editable = crate::world::inventory::preview::can_edit(&self.world.inventory, item, self.world.god_level);
         if self.inventory_ui.preview == Some(item) {
             self.inventory_ui.load_document(kind, editable, &result);
         }
@@ -872,8 +873,12 @@ impl App {
             return;
         };
         if let crate::world::appearance::Action::ShowOriginal(id) = action {
-            ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
-            self.inventory_ui.show_original(&self.world.inventory, id);
+            // show_item_original (llinventoryfunctions.cpp) refuses @showinv
+            // before opening Inventory or changing its selection and filters.
+            if !self.world.rlva.has("showinv") {
+                ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
+                self.inventory_ui.show_original(&self.world.inventory, id);
+            }
             return;
         }
         if let crate::world::appearance::Action::Favorite(id) = action {
@@ -891,6 +896,17 @@ impl App {
         if let crate::world::appearance::Action::Folders(change) = action {
             self.apply_inventory_action(crate::ui::inventory::InvAction::Edit(change));
             return;
+        }
+        match action {
+            crate::world::appearance::Action::OutfitImage(id) => {
+                self.inventory_ui.thumbnail.open(id);
+                return;
+            }
+            crate::world::appearance::Action::OutfitSnapshot(id) => {
+                self.outfit_snapshot(id);
+                return;
+            }
+            _ => {}
         }
         if self.appearance_ui.pending.is_some() {
             return;

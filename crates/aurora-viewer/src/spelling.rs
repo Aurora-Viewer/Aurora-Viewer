@@ -174,6 +174,10 @@ pub fn active() -> bool {
 }
 
 pub fn status() -> Status {
+    #[cfg(test)]
+    if let Some(pinned) = tests::PINNED_STATUS.with(|pinned| pinned.borrow().clone()) {
+        return pinned;
+    }
     STATE.lock().status.clone()
 }
 

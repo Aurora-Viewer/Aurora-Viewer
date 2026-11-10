@@ -53,6 +53,7 @@ pub mod terrain;
 mod test_http;
 pub mod text_validation;
 pub mod throttle;
+pub mod trans;
 pub mod transition;
 pub mod types;
 pub mod user_info;

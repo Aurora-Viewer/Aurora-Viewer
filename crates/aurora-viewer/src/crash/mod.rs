@@ -631,7 +631,8 @@ fn collect_os_events_once(dir: &Path) {
     let tick = watchdog::read_alive(dir)
         .iter()
         .find(|(k, _)| k == "tick")
-        .and_then(|(_, v)| v.parse().ok());
+        .and_then(|(_, v)| v.parse().ok())
+        .or_else(|| watchdog::alive_written(dir));
     os_events::collect(dir, stopped.or(tick));
 }
 

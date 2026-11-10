@@ -365,6 +365,9 @@ impl LibraryUi {
                     window.texture.export_path = None;
                 }
                 window.texture.prepare(ctx, asset, scene);
+                let copy_uuid = window
+                    .texture
+                    .copy_uuid_allowed(&world.inventory, item.asset_id, world.god_level > 0);
                 let image = window.texture.image.as_ref().or_else(|| images.get(&asset));
                 let dimensions = scene.textures.full_size(&asset).or(window.texture.dimensions);
                 let before = window.texture.display;
@@ -373,7 +376,7 @@ impl LibraryUi {
                     p,
                     &item,
                     &world.inventory,
-                    world.god_level > 0,
+                    copy_uuid,
                     dimensions,
                     &mut window.texture.display,
                     actions,

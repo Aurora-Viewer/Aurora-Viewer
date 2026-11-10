@@ -67,18 +67,30 @@ pub fn held(inv: &Inventory, item: &InvItem) -> u32 {
     agent_mask(item, inv.owner)
 }
 
-/// Apply a server-granted god level to asset permissions. This is the single
-/// god exception for inventory readers and UUID displays, following
-/// LLViewerInventoryItem::getProtectedAssetUUID and isGodlikeWithoutAdminMenuFakery
-/// (indra/newview/llviewerinventory.cpp). Showing the Admin menu alone never
-/// supplies this flag. Other ownership and object-editing rules stay separate.
-pub fn with_god(mask: u32, god: bool) -> u32 {
-    if god { mask | FULL } else { mask }
+/// GOD_MAINTENANCE (indra/llcommon/indra_constants.h): the god level from
+/// which LLAgent::allowOperation, at its default `god_minimum`, lets a god
+/// past an item's permissions.
+pub const GOD_MAINTENANCE: u8 = 250;
+
+/// A server-granted god level applied to an item's rights, as
+/// LLAgent::allowOperation (indra/newview/llagent.cpp) does with its default
+/// `god_minimum`: every asset right from [`GOD_MAINTENANCE`], none under it.
+/// What any god may do whatever the permissions is decided by the caller
+/// with `god_level > 0`, never here (the Legacy Viewer's `isGodlike()`):
+/// read a script or notecard (LLPreviewLSL::loadAsset,
+/// LLPreviewNotecard::loadAsset), see an asset UUID
+/// (LLViewerInventoryItem::getProtectedAssetUUID,
+/// isGodlikeWithoutAdminMenuFakery), take any texture as a material map
+/// (LLMaterialEditor::postBuild). So OpenSim's usual levels (200 to 249)
+/// read a no-modify script or notecard but cannot change it. Showing the
+/// Admin menu alone never raises the level.
+pub fn with_god(mask: u32, god_level: u8) -> u32 {
+    if god_level >= GOD_MAINTENANCE { mask | FULL } else { mask }
 }
 
-/// Rights held on an item, including a confirmed god level when applicable.
-pub fn held_for(inv: &Inventory, item: &InvItem, god: bool) -> u32 {
-    with_god(held(inv, item), god)
+/// Rights held on an item, with [`with_god`] for a confirmed god level.
+pub fn held_for(inv: &Inventory, item: &InvItem, god_level: u8) -> u32 {
+    with_god(held(inv, item), god_level)
 }
 
 /// Whether an asset UUID met outside its inventory item (a material map)
@@ -95,7 +107,7 @@ pub fn asset_uuid_shown(inv: &Inventory, asset: Uuid) -> bool {
 /// asset UUID (LLViewerInventoryItem::getProtectedAssetUUID,
 /// isGodlikeWithoutAdminMenuFakery).
 pub fn asset_uuid_shown_to(inv: &Inventory, asset: Uuid, god: bool) -> bool {
-    with_god(0, god) & FULL == FULL || asset_uuid_shown(inv, asset)
+    god || asset_uuid_shown(inv, asset)
 }
 
 pub fn parent(inv: &Inventory, id: Uuid) -> Option<Uuid> {
@@ -671,6 +683,7 @@ pub fn demo_mutate(inv: &mut Inventory, agent: Uuid, change: Mutation) -> Result
                     }
                     if body.has("thumbnail") {
                         f.info.thumbnail = body["thumbnail"]["asset_id"].as_uuid();
+                        f.info.thumbnail_known = true;
                     }
                 } else {
                     let it = inv.items.get_mut(&id).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
