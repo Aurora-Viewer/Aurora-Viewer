@@ -8418,10 +8418,14 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   environment, experiences, covenant, interventions): `access`, `rules` or `terrain` scrolls to
   that section, `pending` makes two changes there and scrolls to the bar
   "2 changes not sent yet" (Cancel / Apply), and `ask-override`,
-  `ask-linden`, `ask-bonus`, `ask-maturity`, `ask-heights` or `ask-bake`
-  opens that question (EstateParcelAccessOverride, ChangeLindenEstate,
+  `ask-linden`, `ask-restrict`, `ask-bonus`, `ask-maturity`,
+  `ask-heights` or `ask-bake` opens that question
+  (EstateParcelAccessOverride, ChangeLindenEstate, Aurora's "Restrict who
+  can come?" for the lists only with 3 people here,
   ChangeObjectBonusFactor, RegionMaturityChange, ConfirmTextureHeights,
-  ConfirmBakeTerrain). The demo simulator keeps what Apply sends and
+  ConfirmBakeTerrain). The pending access changes of `pending` turn on
+  "Payment info on file": their Apply asks "Restrict who can come?" too.
+  The demo simulator keeps what Apply sends and
   answers it in the next RegionInfo / `estateupdateinfo`; the terrain's
   textures and elevations, which a real simulator sends back in a new
   RegionHandshake, stay shown as sent. A manager sees the bake greyed
@@ -9007,7 +9011,7 @@ the Appearance window then opens on its Worn tab with the five objects
 worn. `cold` hides the five items from the inventory until FetchItems asks
 for them (`5 to look up`), as a cold inventory cache.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|showcase|portrait|portrait-not-worn|portrait-shot|portrait-bust|portrait-face|portrait-profile|photo-mode|batch|batch-run|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder|json-import|json-partial`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|showcase|portrait|portrait-not-worn|portrait-shot|portrait-bust|portrait-face|portrait-profile|photo-mode|portrait-hd|portrait-hd-poor|photo-mode-hd|batch|batch-run|batch-hd|batch-hd-poor|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder|json-import|json-partial`**
 — opens Appearance with four synthetic outfits:
 
 In My Outfits, double-click an unworn attachment or clothing item to add it
@@ -9068,6 +9072,17 @@ gallery's double-click continues to open the outfit's contents.
   chosen, the banner "Photo for the outfit …", the helpers Reframe on my
   avatar / A pose / Studio backdrop, the shutter shows the photo with Use for
   the outfit / Retake. The log says `outfit portrait: …` at each step.
+- `portrait-hd`, `portrait-hd-poor`, `photo-mode-hd`: the same, with the
+  paid HD picture chosen at 1024 × 1024 and a fictional balance (L$ 500, or
+  L$ 5 for `-poor`; the demo's texture price is L$ 10). The HD picture
+  block under the choices (and under the photo in the photo mode): "HD
+  picture (L$ 10)", 512 × 512 / 1024 × 1024, and a note; with L$ 5 the box
+  is greyed and says the balance is too low. Take the photo, Use this photo:
+  "Sending the HD picture into the outfit costs L$ 10…", Back or "Pay L$ 10
+  and use it". Paid: the card shows the free picture, the showcase's large
+  preview the HD one, the balance drops by L$ 10 and the outfit's folder
+  holds "Photo of "…" outfit"; a second HD picture sends the first to the
+  Trash. The log says `outfit HD picture: …` at each step.
 - `batch`, `batch-run`: the showcase, then at frame 600 the batch
   portraits' window (Fider #447, the banner's Take the portraits) over the
   demo's outfits: those without a picture ticked, those with one to tick to
@@ -9082,6 +9097,18 @@ gallery's double-click continues to open the outfit's contents.
   outfit is taken first, without a change. At the end the starting outfit
   is worn again and the window says how many portraits were taken and
   skipped. The log says `outfit batch: …` at each step.
+- `batch-hd`, `batch-hd-poor`: the batch window with the paid HD pictures
+  ticked at 1024 × 1024 and a fictional balance (L$ 500, or L$ 15 for
+  `-poor`; the demo's price is L$ 10 a picture); the current outfit's
+  changes are saved at frame 640, Start is left to you. Under the portrait
+  settings, "HD pictures (L$ T: N × L$ 10)" follows the outfits ticked, with
+  "Your balance: L$ 500."; with L$ 15 the box is greyed and says the balance
+  is too low for the total. Start: "Sending N HD pictures costs L$ T in
+  all…", Back or "Pay L$ T and start". Paid: each outfit photographed gets
+  its free picture and an HD texture in its folder (the balance drops by
+  L$ 10 each, the outfit's previous HD picture goes to the Trash); the
+  window counts "HD pictures saved: n (L$ …)", those still being sent and
+  those not sent. The log says `outfit HD picture: …` for each.
 - `gallery-fit` / `gallery-fill`: local portrait, landscape and square preview
   cards. Fit shows the whole image; Fill uses a centred crop without stretching.
   The discs stay round, the images stay inside their frames and the names and
