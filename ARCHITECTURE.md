@@ -503,7 +503,8 @@ bindings. `RenderSettings::render_scale_percent` reuses the separate world-targe
 path in `rlva/resolution.rs`; the RLVa resolution divisor takes precedence,
 following the reference RenderResolutionMultiplier behavior. The user
 scale uses CAS reconstruction and the Sharpness setting in one pass before
-native-resolution labels, HUDs and egui. The reduced post pass leaves CAS off;
+native-resolution labels, HUDs and egui (Catmull-Rom when no CAS applies:
+Sharpness 0, HDR off). The reduced post pass leaves CAS off;
 RLVa-only scaling retains its nearest-pixel behavior. Target changes
 invalidate depth/occlusion history, and snapshots bypass the user's scale.
 

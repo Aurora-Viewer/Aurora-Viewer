@@ -35,8 +35,11 @@ pub(crate) fn render_size(window: (u32, u32), divisor: u32, percent: u32) -> (u3
     )
 }
 
-pub(crate) fn sharpening(strength: f32, hdr: bool, spatial_upscale: bool) -> (f32, f32) {
-    let strength = if hdr { strength.clamp(0.0, 1.0) } else { 0.0 };
+/// The CAS strength of the post pass and of the world's upscale, in that
+/// order: one of them sharpens, never both. `cas` is off without HDR (the
+/// Legacy Viewer's gammaCorrect skips CAS) and under FSR (its own RCAS).
+pub(crate) fn sharpening(strength: f32, cas: bool, spatial_upscale: bool) -> (f32, f32) {
+    let strength = if cas { strength.clamp(0.0, 1.0) } else { 0.0 };
     if spatial_upscale { (0.0, strength) } else { (strength, 0.0) }
 }
 

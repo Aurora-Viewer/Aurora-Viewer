@@ -27,6 +27,13 @@ fn load(p: vec2<i32>) -> vec4<f32> {
     let c = textureLoad(scene, clamp(p, vec2<i32>(0), last), 0);
     return vec4<f32>(decode(c.rgb), c.a);
 }
+fn cubic_weights(t: f32) -> vec4<f32> {
+    return vec4<f32>(
+        t * (-0.5 + t * (1.0 - 0.5 * t)),
+        1.0 + t * t * (-2.5 + 1.5 * t),
+        t * (0.5 + t * (2.0 - 1.5 * t)),
+        t * t * (-0.5 + 0.5 * t));
+}
 struct Cross { center: vec3<f32>, neighbors: vec3<f32>, lo: vec3<f32>, hi: vec3<f32> };
 fn cross(n: vec3<f32>, w: vec3<f32>, c: vec3<f32>, e: vec3<f32>, s: vec3<f32>) -> Cross {
     return Cross(c, n + w + e + s, min(min(min(n, w), min(e, s)), c), max(max(max(n, w), max(e, s)), c));
@@ -46,7 +53,21 @@ fn cross(n: vec3<f32>, w: vec3<f32>, c: vec3<f32>, e: vec3<f32>, s: vec3<f32>) -
     let k = load(p + vec2<i32>(1, 1));
     let bilinear = mix(mix(f, g, phase.x), mix(j, k, phase.x), phase.y);
     if (upscale.sharpness <= 0.001) {
-        return vec4<f32>(encode(bilinear.rgb), bilinear.a);
+        // No sharpening asked (Sharpness 0, or HDR off as the Legacy
+        // Viewer's gammaCorrect): Catmull-Rom keeps the reduced world as
+        // crisp as before CAS moved here, where bilinear would blur it.
+        // Clamped to the four nearest texels: no halo, flat edges stay flat.
+        let wx = cubic_weights(phase.x);
+        let wy = cubic_weights(phase.y);
+        var color = vec3<f32>(0.0);
+        for (var y = 0; y < 4; y++) {
+            for (var x = 0; x < 4; x++) {
+                color += load(p + vec2<i32>(x - 1, y - 1)).rgb * wx[x] * wy[y];
+            }
+        }
+        let lo = min(min(f.rgb, g.rgb), min(j.rgb, k.rgb));
+        let hi = max(max(f.rgb, g.rgb), max(j.rgb, k.rgb));
+        return vec4<f32>(encode(clamp(color, lo, hi)), bilinear.a);
     }
     // Four overlapping five-tap CAS kernels share twelve source texels.
     // Adaptive interpolation keeps thin edges; sharpening happens only here.

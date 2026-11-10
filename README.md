@@ -1123,7 +1123,7 @@ an Apple GPU.
 
 Preferences › Graphics › Smoothness offers a 50–100% **3D render scale**.
 At lower scales, the world is reconstructed and sharpened in one AMD CAS spatial
-upscaler; controls, HUDs and world labels retain the window's native resolution.
+upscaler (Sharpness 0, or HDR off, keeps a Catmull-Rom reconstruction); controls, HUDs and world labels retain the window's native resolution.
 Saved photos render at their requested resolution. Its **Match the display**
 switch follows the display's logical resolution instead (50% on a 2× display,
 67% on 1.5×), as the Legacy Viewer draws a Retina Mac's world: on by default

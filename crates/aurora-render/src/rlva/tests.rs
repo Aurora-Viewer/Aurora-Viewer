@@ -424,7 +424,7 @@ fn world_upscale_controls_sharpness_preserves_alpha_and_matches_color_encodings(
         );
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: 256 * 8,
+            size: crate::readback::readback_size(256 * 8),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -460,26 +460,48 @@ fn world_upscale_controls_sharpness_preserves_alpha_and_matches_color_encodings(
                     let pos = [x as f64 * 0.5 - 0.25, y as f64 * 0.5 - 0.25];
                     let p = pos.map(f64::floor);
                     let phase = [pos[0] - p[0], pos[1] - p[1]];
-                    let mut expected = [0.0; 4];
-                    for dy in 0..2 {
-                        for dx in 0..2 {
-                            let ix = (p[0] as i32 + dx).clamp(0, 3) as usize;
-                            let iy = (p[1] as i32 + dy).clamp(0, 3) as usize;
-                            let weight = if dx == 0 { 1.0 - phase[0] } else { phase[0] } * if dy == 0 { 1.0 - phase[1] } else { phase[1] };
-                            for (c, channel) in expected.iter_mut().enumerate() {
-                                let value = f64::from(input[(iy * 4 + ix) * 4 + c]) / 255.0;
-                                let linear = if c == 3 {
-                                    value
-                                } else if value <= 0.04045 {
-                                    value / 12.92
-                                } else {
-                                    ((value + 0.055) / 1.055).powf(2.4)
-                                };
-                                *channel += weight * linear;
-                            }
+                    // the texel's linear value, clamped at the edges like the shader
+                    let texel = |dx: i32, dy: i32, c: usize| {
+                        let ix = (p[0] as i32 + dx).clamp(0, 3) as usize;
+                        let iy = (p[1] as i32 + dy).clamp(0, 3) as usize;
+                        let value = f64::from(input[(iy * 4 + ix) * 4 + c]) / 255.0;
+                        if c == 3 {
+                            value
+                        } else if value <= 0.04045 {
+                            value / 12.92
+                        } else {
+                            ((value + 0.055) / 1.055).powf(2.4)
                         }
-                    }
-                    for (c, &linear) in expected.iter().enumerate() {
+                    };
+                    let cubic = |t: f64| {
+                        [
+                            t * (-0.5 + t * (1.0 - 0.5 * t)),
+                            1.0 + t * t * (-2.5 + 1.5 * t),
+                            t * (0.5 + t * (2.0 - 1.5 * t)),
+                            t * t * (-0.5 + 0.5 * t),
+                        ]
+                    };
+                    let (wx, wy) = (cubic(phase[0]), cubic(phase[1]));
+                    for c in 0..4 {
+                        let near = [texel(0, 0, c), texel(1, 0, c), texel(0, 1, c), texel(1, 1, c)];
+                        let linear = if c == 3 {
+                            // alpha: bilinear at every sharpness
+                            let top = near[0] * (1.0 - phase[0]) + near[1] * phase[0];
+                            let bottom = near[2] * (1.0 - phase[0]) + near[3] * phase[0];
+                            top * (1.0 - phase[1]) + bottom * phase[1]
+                        } else {
+                            // Sharpness 0: Catmull-Rom, clamped to the four nearest texels
+                            let mut sum = 0.0;
+                            for (ty, wy) in wy.iter().enumerate() {
+                                for (tx, wx) in wx.iter().enumerate() {
+                                    sum += texel(tx as i32 - 1, ty as i32 - 1, c) * wx * wy;
+                                }
+                            }
+                            sum.clamp(
+                                near.iter().copied().fold(f64::MAX, f64::min),
+                                near.iter().copied().fold(f64::MIN, f64::max),
+                            )
+                        };
                         let value = if c == 3 {
                             linear
                         } else if linear <= 0.0031308 {
@@ -491,7 +513,7 @@ fn world_upscale_controls_sharpness_preserves_alpha_and_matches_color_encodings(
                         if c == 3 || sharpness == 0.0 {
                             assert!(
                                 pixels[(y * 8 + x) * 4 + c].abs_diff(expected) <= 1,
-                                "bilinear/alpha {format:?} sharpness={sharpness} ({x},{y}) channel {c}"
+                                "Catmull-Rom/alpha {format:?} sharpness={sharpness} ({x},{y}) channel {c}"
                             );
                         }
                     }
