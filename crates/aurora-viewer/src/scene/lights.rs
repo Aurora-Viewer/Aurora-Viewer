@@ -52,6 +52,8 @@ pub struct LightView {
     pub projector_shadow_limit: u8,
     /// Keep lights worn by other residents (Preferences › Graphics).
     pub others_attached_lights: bool,
+    /// Lights kept at most (Preferences › Graphics, RenderLocalLightCount).
+    pub max_lights: usize,
 }
 
 /// A light that may enter the frame's list.
@@ -84,10 +86,10 @@ fn gives_light(color: [f32; 4], radius: f32) -> bool {
 
 /// Keep the frame's lights: those that reach the view first, then the
 /// nearest (equal distances in object order, the order they came in).
-fn select(lights: &mut Vec<Candidate>) {
+fn select(lights: &mut Vec<Candidate>, max: usize) {
     // (unstable: a stable sort allocates a buffer as long as the list)
     lights.sort_unstable_by(|a, b| b.in_view.cmp(&a.in_view).then(a.dist.total_cmp(&b.dist)).then(a.idx.cmp(&b.idx)));
-    lights.truncate(MAX_LIGHTS);
+    lights.truncate(max.min(MAX_LIGHTS));
 }
 
 /// The light list's working buffers, kept between frames for their room.
@@ -283,7 +285,7 @@ impl Scene {
                 texture,
             });
         }
-        select(&mut lights);
+        select(&mut lights, view.max_lights);
         for c in &mut lights {
             if let (Some(id), Some(p)) = (c.texture, c.light.projector.as_mut()) {
                 p.texture = self.projected_texture(renderer, c.idx, id);
@@ -543,6 +545,7 @@ mod tests {
             projector_shadows: true,
             projector_shadow_limit: 2,
             others_attached_lights: true,
+            max_lights: MAX_LIGHTS,
         }
     }
 
@@ -580,7 +583,7 @@ mod tests {
                 let p = view.eye + forward * (5.0 + i as f32 * 1.5) + side * (i as f32 - 5.0) * 0.5;
                 lights.push(candidate(&view, 1000 + i, p, 3.0));
             }
-            select(&mut lights);
+            select(&mut lights, MAX_LIGHTS);
             assert_eq!(lights.len(), MAX_LIGHTS);
             let kept: Vec<usize> = lights.iter().map(|c| c.idx).collect();
             assert_eq!(kept[..10], (1000..1010).collect::<Vec<_>>(), "looking along {forward}");

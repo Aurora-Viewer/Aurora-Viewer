@@ -1341,6 +1341,9 @@ pub struct Settings {
     pub projector_shadows: bool,
     /// Include lights worn by other residents (Preferences › Graphics).
     pub others_attached_lights: bool,
+    /// Local lights drawn at most (RenderLocalLightCount, "Max. nearby
+    /// lights"): 256 at most, the size of the shaders' list.
+    pub local_lights: u16,
     /// Maximum simultaneous projector shadows, independent of local-light count.
     pub projector_shadow_limit: u8,
     /// Screen-space contact shadows of the sun or the moon, beyond the
@@ -1610,7 +1613,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 36;
+const SETTINGS_VERSION: u32 = 37;
 
 /// The world render percentage that draws at the display's logical
 /// resolution, as the Legacy Viewer does on a Mac with RenderHiDPI 0: 50 on
@@ -2274,6 +2277,7 @@ impl Default for Settings {
             shadow_quality: 3,
             projector_shadows: true,
             others_attached_lights: true,
+            local_lights: 256,
             projector_shadow_limit: 2,
             contact_shadows: false,
             antialiasing: 6,
@@ -2923,6 +2927,12 @@ impl Settings {
         if self.settings_version < 36 {
             self.upgrade_display_scale(cfg!(target_os = "macos"));
         }
+        if self.settings_version < 37 {
+            // the levels now set the number of local lights: a profile still
+            // exactly on Potato takes its 8 (the Legacy Viewer's Low), any
+            // other keeps 256
+            crate::graphics_presets::upgrade_local_lights(&mut self);
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -2936,6 +2946,7 @@ impl Settings {
         self.settings_version = SETTINGS_VERSION;
         self.max_particles = self.max_particles.min(8192);
         self.max_avatars = self.max_avatars.clamp(1, 100);
+        self.local_lights = self.local_lights.min(aurora_render::light_tiles::LIGHTS as u16);
         self.complexity_mode = self.complexity_mode.min(2);
         self.avatar_physics_detail = if self.avatar_physics_detail.is_finite() {
             self.avatar_physics_detail.clamp(0.0, 1.0)

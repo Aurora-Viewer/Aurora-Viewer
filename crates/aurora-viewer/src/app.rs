@@ -10697,6 +10697,7 @@ impl App {
                     gfx.renderer.max_texture_dimension(),
                 ),
                 others_attached_lights: self.settings.others_attached_lights,
+                max_lights: usize::from(self.settings.local_lights),
             };
             self.scene.local_lights(&self.world, &mut gfx.renderer, &view)
         } else {
