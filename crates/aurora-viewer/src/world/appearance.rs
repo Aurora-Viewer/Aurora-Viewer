@@ -1568,7 +1568,8 @@ pub fn seed_demo_wearables(inv: &mut Inventory, agent: Uuid) {
     demo_replace(inv, agent, cof, &links);
 }
 
-/// `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]`: the number of generated
+/// `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate][,newest][,oldest][,favorites][,images]`:
+/// the number of generated
 /// outfits added to the Appearance demo (a large wardrobe), 0 without it.
 pub fn demo_outfit_count() -> usize {
     std::env::var("AURORA_DEMO_OUTFITS")
@@ -1629,14 +1630,33 @@ pub fn seed_demo_take_off(inv: &mut Inventory, agent: Uuid) {
     demo_replace(inv, agent, sub, &hair);
 }
 
-/// A mode of `AURORA_DEMO_OUTFITS` (`closed`, `scroll`, `locate`).
+/// The outfit sort the modes of `AURORA_DEMO_OUTFITS` ask for, if any.
+pub fn demo_outfit_sort() -> Option<super::outfit_folders::Sort> {
+    use super::outfit_folders::{Sort, SortBy};
+    let modes = ["newest", "oldest", "favorites", "images"];
+    modes.iter().any(|mode| demo_outfit_mode(mode)).then(|| Sort {
+        by: if demo_outfit_mode("newest") {
+            SortBy::Newest
+        } else if demo_outfit_mode("oldest") {
+            SortBy::Oldest
+        } else {
+            SortBy::NameAscending
+        },
+        favorites_first: demo_outfit_mode("favorites"),
+        images_first: demo_outfit_mode("images"),
+    })
+}
+
+/// A mode of `AURORA_DEMO_OUTFITS` (`closed`, `scroll`, `locate`, ...).
 pub fn demo_outfit_mode(mode: &str) -> bool {
     std::env::var("AURORA_DEMO_OUTFITS").is_ok_and(|v| v.split(',').skip(1).any(|m| m.trim() == mode))
 }
 
 /// A large wardrobe for the Appearance demo: `count` outfits with generated
 /// names, 20 to 60 links each to a pool of generated clothes, objects and
-/// body parts, and a thumbnail (never loaded offline) on one in four.
+/// body parts, a thumbnail (never loaded offline) on one in four, and a
+/// date that does not follow the names; with the `favorites` mode, one in
+/// five is a favorite.
 pub fn seed_demo_many(inv: &mut Inventory, agent: Uuid, count: usize) {
     use super::inventory::Folder;
     let Some(my) = system_folder(inv, FT_MY_OUTFITS) else {
@@ -1668,10 +1688,13 @@ pub fn seed_demo_many(inv: &mut Inventory, agent: Uuid, count: usize) {
         })
         .collect();
     inv.add_items(pool.clone());
+    let favorites = demo_outfit_mode("favorites");
     let mut contents = Vec::with_capacity(count);
     let mut outfits = Vec::with_capacity(count);
     for i in 0..count {
         let id = Uuid::from_u128(2_000_000 + i as u128);
+        // a day apart: the names sort by style first, so not in their order
+        let saved = 1_700_000_000 + ((i * 7919) % count.max(1)) as i64 * 86_400;
         let name = format!("{} {} {:04}", STYLES[i % STYLES.len()], KINDS[(i / 7) % KINDS.len()], i);
         inv.folders.insert(
             id,
@@ -1687,6 +1710,7 @@ pub fn seed_demo_many(inv: &mut Inventory, agent: Uuid, count: usize) {
                     } else {
                         Uuid::nil()
                     },
+                    favorite: favorites && i % 5 == 0,
                     ..Default::default()
                 },
                 children: Vec::new(),
@@ -1711,6 +1735,7 @@ pub fn seed_demo_many(inv: &mut Inventory, agent: Uuid, count: usize) {
                     owner: agent,
                     base_mask: 0x7fffffff,
                     owner_mask: 0x7fffffff,
+                    created_at: saved,
                     ..Default::default()
                 }
             })

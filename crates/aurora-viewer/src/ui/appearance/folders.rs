@@ -261,7 +261,7 @@ pub(super) fn dialogs(ctx: &egui::Context, p: &Palette, world: &World, st: &mut 
             valid = crate::world::inventory::actions::clean_name(name).is_ok();
         } else if let Dialog::Delete(id) = dialog {
             let name = inv.folders.get(id).map(|f| f.info.name.clone()).unwrap_or_default();
-            let count = folders::tree(inv, "", false, folders::Order::List)
+            let count = folders::tree(inv, "", folders::Sort::default(), folders::Order::List)
                 .iter()
                 .find(|e| e.id == *id)
                 .map_or(0, |e| e.outfits);
