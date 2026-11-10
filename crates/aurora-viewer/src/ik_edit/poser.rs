@@ -164,6 +164,9 @@ pub(super) struct State {
     /// (`refresh_other_bones`); the rest of the wings, tail and hind limbs
     /// stay out of the way.
     other_used: std::collections::HashSet<String>,
+    /// The used Other bones inside the body (spine, groin, skull): in the
+    /// full window's list only, never in the world nor the compact window.
+    other_inner_used: std::collections::HashSet<String>,
     /// "On hover": the pointer was near the silhouette last frame, and when
     /// it last was (`overlay::markers_reveal`).
     markers_near: bool,
@@ -212,6 +215,11 @@ pub(super) fn group(name: &str) -> usize {
 }
 /// The tab of the Other bones (wings, tail, hind limbs, groin, skull).
 pub(super) const OTHER_GROUP: usize = 3;
+/// An Other bone inside the body: the spine, the groin, the skull (the
+/// Other bones that are not `optional_bone`). Full window's list only.
+pub(super) fn inner_bone(name: &str) -> bool {
+    group(name) == OTHER_GROUP && !optional_bone(name)
+}
 /// An Other bone that rests away from the body when nothing uses it: the
 /// wings, the tail and the hind limbs (the spine, groin and skull lie inside
 /// it). They do not widen a body's click or hover area.
@@ -267,17 +275,22 @@ impl Editor {
     /// The Other bones listed this frame: weighted by a rigged mesh of the
     /// subject, or moved by its pose (a loaded pose that bends a wing keeps
     /// it reachable to reset). Aurora's own: the Legacy Viewer lists every
-    /// Other bone. On a body that does not use them, the spine's are
-    /// collapsed pairs (mSpine2 back down on mSpine1, mSpine4 on mSpine3):
-    /// their markers sit upside down over the torso, and moving them tears
-    /// the body apart; the wings, the tail and the hind limbs rest unseen.
+    /// Other bone. The ones inside the body (`inner_bone`: the spine, the
+    /// groin, the skull) go to the full window's list alone, never to the
+    /// world nor the compact window, even used: the spine's are collapsed
+    /// pairs (mSpine2 back down on mSpine1, mSpine4 on mSpine3) whose markers
+    /// sit upside down over the torso and whose moves tear the body apart;
+    /// the body's own bones bend it. Unused, the wings, the tail and the
+    /// hind limbs rest unseen.
     pub(super) fn refresh_other_bones(&mut self, rig: &Rig) {
         let session = self.poser.sessions.get(&self.poser.subject);
-        self.poser.other_used = (0..rig.len())
+        let (inner, outer): (std::collections::HashSet<String>, _) = (0..rig.len())
             .filter(|b| group(&rig.canonical_names[*b]) == OTHER_GROUP)
             .filter(|b| self.poser.rigged.contains(b) || session.is_some_and(|s| s.edited(*b)))
             .map(|b| rig.canonical_names[b].clone())
-            .collect();
+            .partition(|name| inner_bone(name));
+        self.poser.other_used = outer;
+        self.poser.other_inner_used = inner;
     }
     /// Ctrl held in the poser with the parts or the avatars on: it picks
     /// something else in the world, so the selected joint's handles let the

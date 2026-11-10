@@ -71,7 +71,8 @@ fn poser_tabs_replace_visible_joints_and_selection_without_editing_the_pose() {
     let mut frames = Frames::new();
     let p = crate::theme::Theme::default().palette();
     let initial = editor.poser.sessions[&world.agent_id].pose.clone();
-    // as if a worn mesh used every Other bone: the tab shows them all
+    // as if a worn mesh used every Other bone: the tab shows them all but
+    // the spine, the groin and the skull (the full window's list alone)
     editor.poser.rigged = (0..rig.len()).filter(|b| group(&rig.canonical_names[*b]) == OTHER_GROUP).collect();
     let mut texts = Vec::new();
     for _ in 0..5 {
@@ -110,11 +111,12 @@ fn poser_tabs_replace_visible_joints_and_selection_without_editing_the_pose() {
             markers,
             (0..rig.len())
                 .filter(|b| group(&rig.canonical_names[*b]) == tab && proj.project(frame.joints[*b].w_axis.truncate()).is_some())
+                .filter(|b| !inner_bone(&rig.canonical_names[*b]))
                 .count(),
             "only active tab markers are painted"
         );
         for name in &rig.canonical_names {
-            assert_eq!(editor.bone_visible(name), group(name) == tab);
+            assert_eq!(editor.bone_visible(name), group(name) == tab && !inner_bone(name), "{name}");
         }
         for segment in editor.skeleton_segments(&world, &proj, &frame) {
             let segments::Source::Bone(bone) = segment.source else {
