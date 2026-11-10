@@ -18816,7 +18816,9 @@ impl ApplicationHandler for App {
             // AURORA_DEMO_PLACES=favorites|landmarks|history: "Places" on a tab
             // (after the tab, ":wide": Aurora's window widened to its rail and
             // preview; ":open": its first place selected; both: ":wide,open";
-            // ":classic": the Legacy Viewer's tabs for this run, not saved)
+            // ":classic": the Legacy Viewer's tabs for this run, not saved;
+            // ":narrow": the window 260 points wide, its least width at
+            // text size 1)
             let demo_places = std::env::var("AURORA_DEMO_PLACES").unwrap_or_default();
             let (demo_tab, demo_how) = demo_places.split_once(':').unwrap_or((demo_places.as_str(), ""));
             if let Some(tab) = ui::places::tab_from_name(demo_tab) {
@@ -18825,6 +18827,9 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
                 if demo_how.split(',').any(|w| w == "wide") {
                     ui::widgets::size_floater(&self.egui_ctx, "places", egui::vec2(1040.0, 640.0));
+                }
+                if demo_how.split(',').any(|w| w == "narrow") {
+                    ui::widgets::size_floater(&self.egui_ctx, "places", egui::vec2(260.0, 588.0));
                 }
                 self.places_ui.aurora.demo_open = demo_how.split(',').any(|w| w == "open");
                 self.places_ui.demo_classic = demo_how.split(',').any(|w| w == "classic");
