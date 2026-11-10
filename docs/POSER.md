@@ -157,6 +157,12 @@ while posing), Handling (markers, natural
 alignment, trackball sensitivity) and Files (overwrite confirmation, BVH,
 pelvis unlock, priority), with the note on the formats' limits.
 
+The eye next to the gear hides or shows the joint markers and gizmos in one
+click, the same setting as Handling's switch: an open eye while they are
+shown, a struck-through one once hidden. It follows the Legacy Viewer's
+visual manipulators button (`FSFloaterPoser::onToggleVisualManipulators`);
+Aurora keeps the choice at the next opening.
+
 With stop on close, closing the window (its cross, Ctrl+W, the photo
 viewfinder's wand) loses the edited joints of every subject. When some are
 edited, a dialog asks first: **Minimize** keeps the pose in the window's bar,

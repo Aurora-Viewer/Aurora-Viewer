@@ -433,6 +433,8 @@ pub enum Action {
     /// (Advanced.SetDoubleClickAction, Ctrl+Shift+D).
     DoubleClickTeleport,
     Beacons,
+    /// The contact sets' markers in the world (`Settings::contact_markers`).
+    ContactMarkers,
     PropertyLines,
     LandOwners,
     HideParticles,
@@ -593,6 +595,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::HoverTips, aurora_i18n::tr!("ui-options-hover-tips")),
                     (Action::Import, aurora_i18n::tr!("keybinds-import-files")),
                     (Action::MuteAll, aurora_i18n::tr!("keybinds-mute-all-sound")),
+                    (Action::ContactMarkers, aurora_i18n::tr!("ui-options-contact-markers")),
                     (Action::DoubleClickTeleport, aurora_i18n::tr!("keybinds-double-click-teleport")),
                     (Action::Quit, aurora_i18n::tr!("ui-bars-quit-aurora-viewer")),
                 ],
@@ -849,6 +852,7 @@ impl KeyBindings {
             // menu_viewer.xml: Mute/unmute sound, DoubleClick Teleport, Show
             // Selection Outlines
             (Action::MuteAll, [kalt(K::KeyM, true, true), None]),
+            (Action::ContactMarkers, [None, None]),
             (Action::DoubleClickTeleport, [kmod(K::KeyD, true, true), None]),
             (Action::SelectionOutlines, [kalt(K::KeyH, true, false), None]),
             (
@@ -2135,7 +2139,8 @@ mod tests {
     /// N / X / J, added to older settings files and rebindable.
     #[test]
     fn environment_shortcuts_pick_the_legacy_times_of_day() {
-        let mut kb = KeyBindings::us_places([KeyCode::KeyW, KeyCode::KeyS, KeyCode::KeyA, KeyCode::KeyD]);
+        let layout = layout::current();
+        let mut kb = KeyBindings::us_places(layout.movement_keys());
         kb.map.retain(|(a, _)| a.time_of_day().is_none());
         let mut kb = kb.sanitized();
         let ctrl_shift = Mods {
@@ -2143,13 +2148,14 @@ mod tests {
             shift: true,
             ..Default::default()
         };
-        for (code, action, time) in [
+        for (us_code, action, time) in [
             (KeyCode::KeyU, Action::EnvSunrise, 1),
             (KeyCode::KeyY, Action::EnvMidday, 2),
             (KeyCode::KeyN, Action::EnvSunset, 3),
             (KeyCode::KeyX, Action::EnvMidnight, 4),
             (KeyCode::KeyJ, Action::EnvShared, 0),
         ] {
+            let code = layout.named_key(us_code);
             assert_eq!(kb.triggered(&Input::key(code), ctrl_shift), Some(action), "{code:?}");
             assert_eq!(kb.users(&kb.get(action)[0].clone().expect("default binding")), [action]);
             assert_eq!(action.time_of_day(), Some(time));
@@ -2279,6 +2285,11 @@ mod tests {
             (Action::RefreshAttachments, (false, true, true), [K::KeyR; 4]),
             (Action::PhotoWindow, (true, true, false), [K::KeyS; 4]),
             (Action::SitGround, (false, true, true), [K::KeyS; 4]),
+            (Action::EnvSunrise, (true, true, false), [K::KeyU; 4]),
+            (Action::EnvMidday, (true, true, false), [K::KeyY, K::KeyY, K::KeyY, K::KeyZ]),
+            (Action::EnvSunset, (true, true, false), [K::KeyN; 4]),
+            (Action::EnvMidnight, (true, true, false), [K::KeyX; 4]),
+            (Action::EnvShared, (true, true, false), [K::KeyJ; 4]),
         ];
         for (i, layout) in [&us, &fr, &be, &de].into_iter().enumerate() {
             let kb = KeyBindings::for_layout(layout);

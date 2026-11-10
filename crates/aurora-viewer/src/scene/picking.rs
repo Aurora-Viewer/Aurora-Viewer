@@ -10,6 +10,7 @@ use rayon::prelude::*;
 use std::sync::atomic::Ordering::Relaxed;
 
 pub struct PickFace {
+    pub bounds: super::blend_order::FaceBounds,
     pub positions: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
     pub indices: Vec<u16>,
@@ -75,6 +76,7 @@ pub(super) enum FacePick {
 impl PickFace {
     pub fn new(positions: Vec<[f32; 3]>, uvs: Vec<[f32; 2]>, indices: Vec<u16>) -> PickFace {
         PickFace {
+            bounds: super::blend_order::FaceBounds::of(&positions),
             positions,
             uvs,
             indices,
@@ -2966,7 +2968,7 @@ pub(crate) mod tests {
         }
         world.objects.get_mut(front).unwrap().rotation = Quat::from_rotation_z(std::f32::consts::PI);
         scene.index_objects();
-        scene.build_huds(&world, [1280, 720], true);
+        scene.build_huds(&world, [1280, 720], true, |_| None);
         let cursor = (640.0, 360.0);
         for hidden in [false, true] {
             assert_eq!(scene.hud_pick(&world, cursor, hidden).unwrap().0, back);
@@ -3043,7 +3045,7 @@ pub(crate) mod tests {
             g.radius = 1.0;
         }
         scene.index_objects();
-        scene.build_huds(&world, [1280, 720], true);
+        scene.build_huds(&world, [1280, 720], true, |_| None);
         let cursor = (640.0, 360.0);
         assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
         let texture = Uuid::from_u128(8888);
@@ -3136,19 +3138,19 @@ pub(crate) mod tests {
         assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
         scene.gpu[front].faces[0].legacy_alpha = None;
         scene.gpu[front].faces[0].pbr_alpha = Some(2);
-        scene.build_huds(&world, [1280, 720], true);
+        scene.build_huds(&world, [1280, 720], true, |_| None);
         assert!(scene.lists.hud_debug_blue.is_empty());
         // The overlay's displayed triangles become pickable, with no texture test.
         scene.debug_alpha = Some(false);
-        scene.build_huds(&world, [1280, 720], true);
+        scene.build_huds(&world, [1280, 720], true, |_| None);
         assert_eq!(scene.lists.hud_debug_red.len(), 1);
         assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
         scene.gpu[front].faces[0].pass = Pass::Mask;
-        scene.build_huds(&world, [1280, 720], true);
+        scene.build_huds(&world, [1280, 720], true, |_| None);
         assert_eq!(scene.lists.hud_debug_blue.len(), 1);
         assert!(scene.lists.hud_debug_red.is_empty());
         scene.debug_alpha = None;
-        scene.build_huds(&world, [1280, 720], true);
+        scene.build_huds(&world, [1280, 720], true, |_| None);
         assert!(scene.lists.hud_debug_blue.is_empty());
         // Faces that draw nothing still take ordinary clicks: a zero alpha,
         // or the library's transparent texture behind a Mask-classed slot.
@@ -3182,7 +3184,7 @@ pub(crate) mod tests {
         // for ordinary clicks and hover, whatever the material mode.
         Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].color[3] = 0.0;
         scene.gpu[front].faces.clear();
-        scene.build_huds(&world, [1280, 720], true);
+        scene.build_huds(&world, [1280, 720], true, |_| None);
         let (_, _, ray) = scene.hud_pick(&world, cursor, false).unwrap();
         assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
         assert_eq!(scene.hover_hud(&world, cursor), Some(front));
@@ -3517,7 +3519,7 @@ pub(crate) mod tests {
         child.state = 0;
         child.position = Vec3::new(4.0, 0.0, 0.0);
         scene.index_objects();
-        scene.build_huds(&world, [1280, 720], true);
+        scene.build_huds(&world, [1280, 720], true, |_| None);
         let cursor = (640.0, 360.0);
         let (picked, p, ray) = scene.hud_pick(&world, cursor, true).unwrap();
         assert_eq!(picked, front);
@@ -3542,10 +3544,10 @@ pub(crate) mod tests {
         assert_eq!(scene.hover_hud(&world, cursor), Some(front));
         assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
         scene.gpu[front].owner_avatar = None;
-        scene.build_huds(&world, [1280, 720], true);
+        scene.build_huds(&world, [1280, 720], true, |_| None);
         assert_eq!(scene.lists.hud_opaque.len(), 1);
         assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, back);
-        scene.build_huds(&world, [1280, 720], false);
+        scene.build_huds(&world, [1280, 720], false, |_| None);
         assert!(scene.lists.hud_opaque.is_empty());
         assert!(scene.hud_pick(&world, cursor, true).is_none());
         assert!(scene.hud_move_pick(&world, cursor).is_none());

@@ -49,7 +49,12 @@ pub(super) enum Purpose {
     Profile,
     /// By e-mail.
     Postcard,
+    /// An outfit's picture, for the image request (#2716).
+    Outfit(Uuid),
 }
+
+/// The side of an outfit's picture as it is drawn, reduced to 256 afterwards.
+const OUTFIT_PHOTO_SIDE: u32 = 512;
 
 /// A photo on its way to the inventory or the profile feed.
 enum Upload {
@@ -788,6 +793,10 @@ impl App {
             Purpose::Inventory(cost) => self.photo_encode(job.size, job.pixels, cost, job.cutout),
             Purpose::Profile => self.photo_post(job.size, job.pixels, job.cutout),
             Purpose::Postcard => self.photo_postcard(job.size, job.pixels, job.cutout),
+            Purpose::Outfit(request) => {
+                self.inventory_images.photo = None;
+                self.prepare_inventory_photo(request, job.size.0, job.size.1, job.pixels);
+            }
         }
     }
 
@@ -1088,7 +1097,12 @@ impl App {
             return;
         }
         let window = renderer.size();
-        let full = self.photo_size(window);
+        let outfit = matches!(purpose, Purpose::Outfit(_));
+        let full = if outfit {
+            (OUTFIT_PHOTO_SIDE, OUTFIT_PHOTO_SIDE)
+        } else {
+            self.photo_size(window)
+        };
         let s = &self.settings.snapshot;
         let size = if purpose == Purpose::Preview {
             let (w, h) = full;
@@ -1101,7 +1115,7 @@ impl App {
             full
         };
         // the photo quality draws a photo (not its preview) at twice its size
-        let supersample = if purpose != Purpose::Preview && self.settings.photo_held.is_some() {
+        let supersample = if purpose != Purpose::Preview && !outfit && self.settings.photo_held.is_some() {
             snapshot::quality::supersample(size)
         } else {
             1
@@ -1130,7 +1144,9 @@ impl App {
                 }
             );
         }
-        let interface = s.interface && snapshot::same_proportions(full, window);
+        // an outfit's picture shows the outfit: never the interface, the
+        // HUDs or the photo's looks, whatever the Photo window has chosen
+        let interface = !outfit && s.interface && snapshot::same_proportions(full, window);
         // (with the ambient occlusion on: GTAO may be forced over its method)
         let context = ContextPass::plan(size, tiles.len(), self.settings.ssao > 0);
         self.snapshots.job = Some(Job {
@@ -1143,7 +1159,7 @@ impl App {
             waiting: None,
             pixels: Vec::new(),
             interface,
-            huds: s.huds,
+            huds: !outfit && s.huds,
             started: Instant::now(),
             supersample,
             cutout: self.world.photo_isolation.empty_background(),
@@ -1154,6 +1170,9 @@ impl App {
             context,
             paused: Default::default(),
         });
+        if outfit {
+            return;
+        }
         let stack = self.settings.snapshot.looks.clone();
         let settings = self.settings.snapshot.look_settings.clone();
         let resolved = looks::resolve_stack(&stack, &settings, self.photo_luts());
@@ -2371,6 +2390,9 @@ LUT_3D_SIZE {n}
                 v.isolate = false;
                 v.presets = false;
                 v.light = false;
+            } else if !self.build.selection.is_empty() {
+                self.build.deselect_all(&self.world);
+                self.flush_build();
             } else if self.camera.free().is_some() {
                 self.snapshots.ui.free.on = false;
                 self.photo_free_camera();
@@ -2382,6 +2404,11 @@ LUT_3D_SIZE {n}
             return true;
         }
         if self.photo_full_frame() {
+            if !self.build.selection.is_empty() {
+                self.build.deselect_all(&self.world);
+                self.flush_build();
+                return true;
+            }
             self.snapshots.ui.full_frame = false;
             return true;
         }

@@ -370,13 +370,13 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     let widths = [RECEIVED_W, GRANTED_W];
     let end = rows::end_before(
         bounds,
-        rows::names_left(bounds) + rows::actions_width_for(5, 18.0) + PARTS_GAP,
+        rows::names_left(bounds) + rows::actions_width_for(6, 18.0) + PARTS_GAP,
         &widths,
         PARTS_GAP,
         false,
     );
     let right = end.items.last().map_or(bounds.right(), |r| r.left()) - PARTS_GAP;
-    let count = 4 + usize::from(f.online);
+    let count = action_count(f);
     let (rect, resp) = rows::allocate(ui, f.id, Vec2::new(width, RICH_H));
     if !ui.is_rect_visible(rect) {
         rows::person_menu(&resp, p, c.world, &st.sel, f.id);
@@ -450,7 +450,13 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     rows::contact_tip(resp, (on_names && (cut || line.full != line.name)).then_some(line.full.as_str()));
 }
 
-/// Profile, IM, a teleport offer to a friend online, the contact
+/// The buttons `quick_actions` gives this friend, known before the row is hot
+/// so that the rights do not move when they appear.
+fn action_count(f: &Friend) -> usize {
+    4 + 2 * usize::from(f.online)
+}
+
+/// Profile, IM, a teleport offered to or requested from a friend online, the
 /// contact sheet, then the whole menu.
 fn quick_actions(f: &Friend) -> Vec<(&'static str, &'static str)> {
     let mut b = vec![
@@ -459,6 +465,7 @@ fn quick_actions(f: &Friend) -> Vec<(&'static str, &'static str)> {
     ];
     if f.online {
         b.push(("send-filled", aurora_i18n::tr!("common-offer-teleport")));
+        b.push(("car-filled", aurora_i18n::tr!("common-request-teleport")));
     }
     b.push(("info-circle-filled", aurora_i18n::tr!("people-show-contact-sheet")));
     b.push(("dots-filled", aurora_i18n::tr!("ui-chat-more")));
@@ -475,6 +482,7 @@ fn hover_actions(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, f: &Friend, 
             "user-filled" if resp.clicked() => c.actions.push(super::PeopleAction::Profile(f.id)),
             "message-circle-filled" if resp.clicked() => c.actions.push(super::PeopleAction::OpenIm(f.id)),
             "send-filled" if resp.clicked() => c.actions.push(super::PeopleAction::OfferTeleport(f.id)),
+            "car-filled" if resp.clicked() => context::request(ui.ctx(), CtxAction::RequestTeleport(f.id)),
             "info-circle-filled" if resp.clicked() => {
                 st.sel = vec![f.id];
                 st.anchor = Some(f.id);
@@ -670,7 +678,7 @@ mod tests {
                             fixed_name = Some(layout);
                         }
                         if hot {
-                            assert_eq!(quick.len(), 5, "{width}: every quick action remains visible");
+                            assert_eq!(quick.len(), 6, "{width}: every quick action remains visible");
                             if width <= 400.0 {
                                 assert!(
                                     name.pos.x + name.galley.size().x > quick[0].rect.right(),
@@ -743,6 +751,25 @@ mod tests {
             false,
         );
         assert_eq!(end.items.len(), 3);
+    }
+
+    /// Both teleport directions need the friend online, and the row reserves
+    /// a slot for each button it shows.
+    #[test]
+    fn a_friend_online_has_both_teleport_buttons() {
+        let friend = |online| Friend {
+            id: Uuid::from_u128(1),
+            online,
+            rights_given: 0,
+            rights_has: 0,
+        };
+        let icons = |online| quick_actions(&friend(online)).iter().map(|(icon, _)| *icon).collect::<Vec<_>>();
+        for icon in ["send-filled", "car-filled"] {
+            assert!(icons(true).contains(&icon), "{icon} online");
+            assert!(!icons(false).contains(&icon), "{icon} offline");
+        }
+        assert_eq!(quick_actions(&friend(true)).len(), action_count(&friend(true)));
+        assert_eq!(quick_actions(&friend(false)).len(), action_count(&friend(false)));
     }
 
     #[test]

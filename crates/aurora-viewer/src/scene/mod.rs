@@ -697,8 +697,16 @@ fn is_special(faces: &[FaceDraw]) -> bool {
 struct TerrainChunk {
     alloc: MeshAlloc,
     record: u32,
+    /// Region-local, like the mesh vertices; the current region offset is
+    /// applied for every visibility, shadow and reflection bound.
     center: Vec3,
     radius: f32,
+}
+
+impl TerrainChunk {
+    fn world_center(&self, offset: Vec3) -> Vec3 {
+        self.center + offset
+    }
 }
 
 struct RegionGpu {
@@ -1312,6 +1320,28 @@ fn tex_anim_record(
         offset: [tf.offset_s, tf.offset_t],
     };
     record_anim(&params, clock.ms(o.tex_anim_clock.start), o.tex_anim_clock.phase, &te)
+}
+
+/// Layer rank of a rigged face (`DrawRecord::set_layer_rank`).
+///
+/// Worn layers are often made from the body's own mesh, so their faces lie
+/// exactly on the body's. Equal depths are then won by the draw record drawn
+/// first (cull.wgsl keeps the record order), and records are recycled from a
+/// free list whenever an object is rebuilt: the winner changed face by face,
+/// showing bands of the body through a layer, bands that moved with every
+/// rebuild (the transparency overlay's Ctrl+Alt+T rebuilds them all).
+///
+/// The Legacy Viewer draws a layer whole and in a lasting order, sorted by
+/// skin, material and texture (CompareBatchBreakerRigged,
+/// indra/newview/llvovolume.cpp). Here the skin (a face showing a bake)
+/// stays at rank 0 and every other face of an object takes one rank of 1 to
+/// `LAYER_RANK_MAX`, chosen from its id: a layer covers the skin it lies on,
+/// and two layers that lie on each other keep the same winner everywhere.
+fn rigged_layer_rank(skin_face: bool, object: &Uuid) -> u32 {
+    if skin_face {
+        return 0;
+    }
+    1 + (object.as_u128() % u128::from(flags::LAYER_RANK_MAX)) as u32
 }
 
 /// Whether a texture animation set on `anim_face` (-1 = ALL_SIDES) moves
@@ -2702,6 +2732,37 @@ impl Scene {
         }
     }
 
+    /// LLWorld::shiftRegions (indra/newview/llworld.cpp) and
+    /// LLPipeline::shiftObjects (indra/newview/pipeline.cpp): an origin shift
+    /// changes transforms, not the region-local terrain mesh.
+    fn update_origin(&mut self, world: &mut World) -> bool {
+        let origin = world.main_origin();
+        if origin == self.last_origin {
+            return false;
+        }
+        if let (Some(old), Some(new)) = (self.last_origin, origin) {
+            let shift = Vec3::new((old.0 as f64 - new.0 as f64) as f32, (old.1 as f64 - new.1 as f64) as f32, 0.0);
+            for state in self.flexibles.values_mut() {
+                state.sim.shift(shift);
+            }
+        }
+        // clear/forget_gpu discards all allocations but keeps the world's
+        // received heightmaps. A fresh renderer still needs a full upload.
+        if self.last_origin.is_none() {
+            for region in world.regions.values_mut() {
+                region.dirty_chunks.extend(0..region.heightmap.chunk_count());
+            }
+        }
+        self.last_origin = origin;
+        for (idx, object) in world.objects.slots.iter_mut().enumerate() {
+            if let Some(object) = object {
+                object.render.needs_records = true;
+                self.sets.dirty.insert(idx);
+            }
+        }
+        true
+    }
+
     /// Bring GPU records up to date, visiting only the objects that need it
     /// (sync_sets.rs): what moves (avatars, their attachments, moving
     /// linksets), what changed, what waits for its geometry, and this
@@ -2773,37 +2834,13 @@ impl Scene {
             }
         }
 
-        // Render origin changed: every transform is stale.
-        let origin = world.main_origin();
-        if origin != self.last_origin {
-            if let (Some(old), Some(new)) = (self.last_origin, origin) {
-                let shift = Vec3::new((old.0 as f64 - new.0 as f64) as f32, (old.1 as f64 - new.1 as f64) as f32, 0.0);
-                for state in self.flexibles.values_mut() {
-                    state.sim.shift(shift);
-                }
-            }
-            self.last_origin = origin;
+        if self.update_origin(world) {
             renderer.cut_motion_history();
-            for (idx, o) in world.objects.slots.iter_mut().enumerate() {
-                if let Some(o) = o {
-                    o.render.needs_records = true;
-                    self.sets.dirty.insert(idx);
-                }
-            }
-            for r in self.regions.values_mut() {
-                for (_, c) in r.chunks.drain() {
-                    renderer.free_mesh(c.alloc);
-                    renderer.records.free(c.record);
-                }
-            }
-            for reg in world.regions.values_mut() {
-                reg.dirty_chunks.extend(0..reg.heightmap.chunk_count());
-            }
             self.water.clear(renderer);
         }
 
         step(&mut slow, "origin");
-        self.sync_terrain(renderer, world);
+        self.sync_terrain(renderer, world, view.eye);
         self.water.sync(renderer, world);
         step(&mut slow, "terrain");
 
@@ -4002,6 +4039,7 @@ impl Scene {
             }
             // texture (with bake-on-mesh redirection); without a bake wearer
             // the placeholder stays, an ordinary texture asset
+            let skin_face = avatar::bake_slot_for(&base_tex).is_some();
             let (texture, mut source) = self.face_texture(renderer, world, base_tex, bake_wearer);
             base_tex = texture;
             // media replaces the diffuse texture (LLViewerMediaTexture::switchTexture)
@@ -4057,6 +4095,7 @@ impl Scene {
                 g.tex_ids.push(base_tex);
             }
             rec.tex[0] = self.textures.acquire(renderer, base_tex, source);
+            let rigged = rigged_owner.is_some();
             if let Some((owner, _, binds)) = rigged_owner {
                 rec.flags[0] |= flags::SKINNED;
                 rec.flags[1] = self.palette_base(owner);
@@ -4091,6 +4130,9 @@ impl Scene {
                     && matches!(pbr_alpha, None | Some(1))
                     && matches!(legacy_alpha, None | Some(legacy_mat::alpha_mode::BLEND)),
             );
+            if rigged {
+                rec.set_layer_rank(rigged_layer_rank(skin_face, &o.full_id));
+            }
             rec.set_anchor(anchor.map(|a| a.matrix));
             let record = renderer.records.alloc(rec);
             g.faces.push(FaceDraw {
@@ -4508,7 +4550,8 @@ impl Scene {
         // terrain
         for (&handle, r) in &self.regions {
             for c in r.chunks.values() {
-                if (c.center - view.eye).length() - c.radius > dd * 1.5 {
+                let center = c.world_center(r.offset);
+                if (center - view.eye).length() - c.radius > dd * 1.5 {
                     continue;
                 }
                 let cmd = DrawCmd {
@@ -4521,7 +4564,7 @@ impl Scene {
                 if shadows {
                     self.lists.terrain_shadow_casters.push(ShadowCaster {
                         cmd,
-                        center: c.center,
+                        center,
                         radius: c.radius,
                         alpha: r.surface.masked,
                     });
@@ -4529,14 +4572,14 @@ impl Scene {
                 if self.reflections {
                     // with its bounds: each reflection pass keeps the chunks
                     // in its own frustum
-                    let reflected = cmd.with_bounds(c.center, c.radius);
+                    let reflected = cmd.with_bounds(center, c.radius);
                     if r.surface.pbr {
                         self.lists.reflection_terrain_pbr.push(reflected);
                     } else {
                         self.lists.reflection_terrain.push(reflected);
                     }
                 }
-                if view.sphere_visible(c.center, c.radius) {
+                if view.sphere_visible(center, c.radius) {
                     // one shader per kind of terrain (env.wgsl)
                     if r.surface.masked {
                         self.lists.terrain_mask.push(cmd);
@@ -4756,6 +4799,13 @@ impl Scene {
         // the water's plane while the camera is above it: the blended
         // faces under it are drawn before the water (blend_order::water_sides)
         let under_water_plane = self.water.height.filter(|h| view.eye.z >= *h);
+        let face_sort = blend_order::face_sort_enabled();
+        // Tests and secondary cameras may not supply the texture-importance
+        // direction. The near plane faces into the same view frustum.
+        let alpha_forward = view
+            .forward
+            .try_normalize()
+            .unwrap_or_else(|| view.planes[4].truncate().normalize_or_zero());
         struct Local {
             water_exclusion: Vec<DrawCmd>,
             opaque: Vec<DrawCmd>,
@@ -4892,6 +4942,22 @@ impl Scene {
             let rig = g.rig_order.filter(|_| g.rigged);
             let blend_center = rig.and_then(|r| self.gpu.get(r.skeleton as usize)).map_or(g.center, |s| s.center);
             let blend_d = (blend_center - view.eye).length();
+            // Rigged meshes retain their attachment order. For ordinary faces,
+            // use the exact placement written to the GPU, including this frame's
+            // moving/worn anchor, without visiting the world's parent chain.
+            let face_depth = (face_sort && in_view && !g.rigged && !g.is_avatar && g.faces.iter().any(|f| f.pass == Pass::Blend))
+                .then(|| {
+                    let record = renderer.records.get(g.faces.first()?.record)?;
+                    let mut model = Mat4::from_cols_array_2d(&record.model);
+                    if let Some(anchor) = record.anchor() {
+                        model = Mat4::from_cols_array_2d(self.palettes.get(anchor as usize)?) * model;
+                    }
+                    let GeomState::Ready(geom) = &self.geoms.get(&g.geom?)?.state else {
+                        return None;
+                    };
+                    Some((blend_order::FaceDepth::new(model, view.eye, alpha_forward), geom))
+                })
+                .flatten();
             for f in &g.faces {
                 // object sphere for the GPU occlusion test
                 let in_view = in_view && !(own_first_person == Some(true) && (g.first_person_hidden || f.first_person_hidden));
@@ -4989,7 +5055,16 @@ impl Scene {
                 match pass {
                     Pass::Blend => {
                         let entry = blend_order::BlendEntry {
-                            distance: blend_d,
+                            distance: if face_sort && !g.rigged {
+                                face_depth
+                                    .as_ref()
+                                    .and_then(|(depth, geom)| {
+                                        geom.pick_faces.get(f.te_index as usize)?.as_ref().map(|face| depth.of(face.bounds))
+                                    })
+                                    .unwrap_or_else(|| (g.center - view.eye).dot(alpha_forward))
+                            } else {
+                                blend_d
+                            },
                             cmd,
                             glow: f.glow,
                             double_sided: f.two_sided,
@@ -5057,8 +5132,12 @@ impl Scene {
             ]
             .into_iter()
             .flat_map(|(cmds, glow, double_sided)| {
-                cmds.iter().map(move |(d, c)| blend_order::BlendEntry {
-                    distance: *d,
+                cmds.iter().map(move |(point, c)| blend_order::BlendEntry {
+                    distance: if face_sort {
+                        (*point - view.eye).dot(alpha_forward)
+                    } else {
+                        view.eye.distance(*point)
+                    },
                     cmd: *c,
                     glow,
                     double_sided,
@@ -6096,6 +6175,23 @@ fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
             }
         }
         AlphaKind::Blend => Pass::Blend,
+    }
+}
+
+#[cfg(test)]
+mod layer_rank_tests {
+    use super::*;
+
+    #[test]
+    fn the_skin_stays_under_every_worn_layer() {
+        let ids = [Uuid::nil(), Uuid::from_u128(1), Uuid::from_u128(6), Uuid::from_u128(7), Uuid::max()];
+        for id in ids {
+            assert_eq!(rigged_layer_rank(true, &id), 0);
+            let rank = rigged_layer_rank(false, &id);
+            assert!((1..=flags::LAYER_RANK_MAX).contains(&rank), "{id}: {rank}");
+            // the same object keeps its rank on every rebuild
+            assert_eq!(rigged_layer_rank(false, &id), rank);
+        }
     }
 }
 

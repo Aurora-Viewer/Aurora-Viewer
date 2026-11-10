@@ -242,6 +242,12 @@ impl App {
             );
         }
         self.shape_ui.changed(&mut self.world);
+        // AURORA_DEMO_SHAPE_XML=<file>: the Import button's path without its dialog.
+        if let Ok(path) = std::env::var("AURORA_DEMO_SHAPE_XML")
+            && let Some(draft) = &self.shape_ui.draft
+        {
+            self.shape_ui.xml.start_file(&self.egui_ctx, draft, path.into());
+        }
         self.focus_shape_category();
         if mode == "mesh-drag" {
             self.shape_ui.demo_drag = Some(std::time::Instant::now());

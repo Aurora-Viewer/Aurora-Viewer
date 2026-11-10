@@ -71,6 +71,7 @@ pub const COMMANDS: &[Command] = commands![
     "beacons", "bulb-filled", "toolbar-command-beacons", true;
     // Aurora's own: the interface hidden but the chat (#859)
     "immersive", "maximize", "ui-bars-immersive", true;
+    "name_tags", "label-filled", "ui-bars-immersive-hide-tags", true;
     // Aurora's own: the photo reel's quick view, the session's photos
     "photo_roll", "carousel-horizontal-filled", "toolbar-command-photo-roll", true;
     // Firestorm's, not in Aurora yet
@@ -99,7 +100,7 @@ pub const COMMANDS: &[Command] = commands![
     "movelock", "lock-filled", "movelock-title", true;
     "water_walk", "walk", "movement-water-walk", true;
     "resync_animations", "refresh", "toolbar-command-resync-animations", true;
-    "regiontracker", "location-filled", "toolbar-command-region-tracker", false;
+    "regiontracker", "location-filled", "toolbar-command-region-tracker", true;
     "group_titles", "tags-filled", "toolbar-command-group-titles", true;
     "wearable_favorites", "hanger-2-filled", "toolbar-command-wearable-favorites", false;
     "discord", "brand-discord-filled", "toolbar-command-discord", false;
