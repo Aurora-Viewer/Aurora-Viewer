@@ -182,6 +182,7 @@ const BEFORE: &[&str] = &[
     "inventory.recent_hours",
     "inventory.show_worn",
     "inventory.show_favorites",
+    "inventory.favorites_show_parent_folders",
     "inventory.search_trash",
     "inventory.search_library",
     "inventory.search_outfits",
@@ -190,6 +191,7 @@ const BEFORE: &[&str] = &[
     "inventory.double_click_add_clothes",
     "inventory.warn_task_move",
     "inventory.warn_scripted_task_move",
+    "inventory.confirm_delete",
     // Fonts
     "font",
     "font_scale",
@@ -397,8 +399,9 @@ fn a_setting_has_one_page() {
     for (page, path) in &paths {
         // the push-to-talk keys: Sound and voice and Shortcuts, as before;
         // the colored sky ambient: Graphics, and Aurora with the other
-        // differences from the Legacy Viewer
-        if path == "keybinds" || path == "colored_sky_ambient" {
+        // differences from the Legacy Viewer;
+        // inventory delete confirm: Confirmations and Inventory (#2344)
+        if path == "keybinds" || path == "colored_sky_ambient" || path == "inventory.confirm_delete" {
             continue;
         }
         let elsewhere: Vec<_> = paths
@@ -817,6 +820,9 @@ fn preference_shapes(
 ) -> Vec<egui::Shape> {
     let p = crate::theme::Theme::default().palette();
     let d = Settings::default();
+    // the Spelling tab's status line must not follow the checker that
+    // other tests load at the same time
+    crate::spelling::tests::pin_status(crate::spelling::Status::Ready);
     frames.shapes(events, |ui| {
         ui.set_width(view.2);
         ui.spacing_mut().item_spacing.y = 0.0;

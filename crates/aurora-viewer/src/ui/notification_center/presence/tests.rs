@@ -149,6 +149,9 @@ fn status(classic: bool) -> StatusInfo<'static> {
         ping_ms: 38,
         balance: Some(1000),
         show_balance: true,
+        balance_gains: Vec::new(),
+        balance_ink: crate::theme::Theme::default().palette().ink,
+        balance_rows: crate::ui::balance_gains::Shown::BOTH,
         voice: (crate::voice::VoiceLight::Off, String::new()),
         slurl: String::new(),
         status: Default::default(),
@@ -196,6 +199,8 @@ fn status(classic: bool) -> StatusInfo<'static> {
         hover_tips: Default::default(),
         world_overlays: Default::default(),
         show_transparency: false,
+        hidden_types: Default::default(),
+        render_type_keys: Default::default(),
         conversation_thumbnails: 0,
     }
 }

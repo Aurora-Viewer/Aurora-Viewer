@@ -85,8 +85,10 @@ fn received_deliveries_can_be_deleted_without_unlocking_other_edits() {
         let menu = context_catalog::build(&inv, target, &st, &prefs, &facts);
         assert!(menu.entries.iter().any(|entry| entry.id == "delete" && entry.enabled));
     }
-    delete::request(&inv, &mut st, &prefs, &facts);
+    let mut actions = Vec::new();
+    delete::request(&inv, &mut st, &prefs, &facts, &mut actions);
     assert!(matches!(&st.dialog, Some(EditDialog::Delete(ids, false)) if ids.len() == 3));
+    assert!(actions.is_empty());
     let change = rules::move_selection(&inv, &selected, id(TRASH), &prefs.protected, &facts.worn).expect("trash received deliveries");
     assert!(change.move_only());
     assert_eq!(change.operations.len(), 2, "the selected child stays in its purchase folder");
@@ -280,9 +282,11 @@ fn measure() {
         let menu = menu.expect("menu");
         assert!(menu.entries.iter().any(|e| e.id == "delete"));
         let t = Instant::now();
-        delete::request(&inv, &mut st, &prefs, &facts);
+        let mut actions = Vec::new();
+        delete::request(&inv, &mut st, &prefs, &facts, &mut actions);
         let request = ms(t);
         assert!(matches!(&st.dialog, Some(EditDialog::Delete(d, false)) if d.len() == ids.len()));
+        assert!(actions.is_empty());
         let t = Instant::now();
         let change = rules::move_selection(&inv, &ids, id(TRASH), &prefs.protected, &facts.worn).expect("plan");
         let confirm = ms(t);
