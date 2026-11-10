@@ -10750,14 +10750,13 @@ impl App {
             probe_walk_list: self.frame_profile.probe_walk_list(),
             debug: self.settings.debug.render(),
             dof: {
-                // the image's own vertical field of view (a photo's may be
-                // wider than the window's)
-                let lens_proj = match &photo {
-                    Some(f) => self.camera.photo_proj(f.aspect, window_aspect),
-                    None => self.camera.proj(aspect),
+                // a photo is the part of the window's view its proportions
+                // frame: the window's lens, at the photo's pixels
+                let view = match &photo {
+                    Some(f) => crate::dof::View::photo(self.camera.fov_y, (w, h), f.aspect, lod_height),
+                    None => crate::dof::View::window(self.camera.fov_y, h),
                 };
-                let fov = 2.0 * (1.0 / lens_proj.y_axis.y.max(1e-6)).atan();
-                self.dof_frame(&mut gfx.renderer, dt, fov, lod_height, h)
+                self.dof_frame(&mut gfx.renderer, dt, view)
             },
             // the photo's isolation, "show only" on an empty background
             cutout: self.world.photo_isolation.empty_background(),

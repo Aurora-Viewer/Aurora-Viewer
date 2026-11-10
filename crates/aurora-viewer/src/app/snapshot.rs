@@ -1208,7 +1208,7 @@ impl App {
     fn photo_tiles(&self, renderer: &Renderer, size: (u32, u32)) -> Vec<snapshot::TilePass> {
         let bloom = if self.settings.bloom { self.settings.bloom_strength } else { 0.0 };
         let dof = self
-            .photo_dof_max_coc(size.1, renderer.size().1)
+            .photo_dof_max_coc(size, renderer.size())
             .map_or(0, aurora_render::dof_tile_reach);
         let scale = snapshot::viewfinder_scale(size, renderer.size(), self.settings.render_scale_percent);
         let contact = aurora_render::contact_tile_reach(self.settings.contact_shadows, scale);
