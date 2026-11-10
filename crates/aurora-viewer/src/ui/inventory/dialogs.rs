@@ -2032,7 +2032,7 @@ mod tests {
             ..Default::default()
         };
         let mut actions = Vec::new();
-        let _ = ctx.run_ui(
+        let _ = headless_output(ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0))),
                 events: vec![egui::Event::Key {
@@ -2057,7 +2057,7 @@ mod tests {
                     &mut actions,
                 );
             },
-        );
+        ));
         assert!(st.dialog.is_none(), "Escape closes the delete confirmation");
         assert!(actions.is_empty(), "cancelling changes neither inventory nor the preference");
         assert!(
