@@ -4819,7 +4819,7 @@ impl App {
             return;
         }
         let (x, y) = self.cursor_pos;
-        if let Some((idx, point, hud_ray)) = self.scene.hud_pick(&self.world, (x, y), false)
+        if let Some((idx, point, hud_ray)) = self.scene.hud_click_pick(&self.world, (x, y))
             && !(self.alt && self.world.hud_move_locked(idx))
         {
             self.media.build_mode = self.build.open;
@@ -4833,10 +4833,16 @@ impl App {
                     command: false,
                 };
                 let distance = (point - hud_ray.0).dot(hud_ray.1);
-                if self
-                    .media
-                    .on_click(&self.world, &self.scene, hud_ray, Some(distance), &self.settings.media, mods, true)
-                {
+                if self.media.on_click(
+                    &self.world,
+                    &self.scene,
+                    hud_ray,
+                    Some(distance),
+                    &self.settings.media,
+                    mods,
+                    true,
+                    Some(idx),
+                ) {
                     return;
                 }
                 if let Some(target) = crate::interaction::target(&self.world, idx, &self.interactions.props) {
@@ -4917,7 +4923,7 @@ impl App {
                 };
                 if self
                     .media
-                    .on_click(&self.world, &self.scene, ray, depth_t, &self.settings.media, mods, false)
+                    .on_click(&self.world, &self.scene, ray, depth_t, &self.settings.media, mods, false, None)
                 {
                     return;
                 }
@@ -10137,7 +10143,7 @@ impl App {
                     let depth = point.map(|p| (p - ray.0).dot(ray.1));
                     let (ray, depth, hud) = self
                         .scene
-                        .hud_pick(&self.world, self.cursor_pos, false)
+                        .hud_click_pick(&self.world, self.cursor_pos)
                         .map_or((ray, depth, false), |(_, p, r)| (r, Some((p - r.0).dot(r.1)), true));
                     if let Some(c) = self.media.on_hover(&self.world, &self.scene, ray, depth, mods, hud) {
                         self.media_cursor = Some(match c.as_str() {
@@ -21324,7 +21330,7 @@ impl ApplicationHandler for App {
                     Some(ray) => {
                         let (ray, depth, hud) = self
                             .scene
-                            .hud_pick(&self.world, self.cursor_pos, false)
+                            .hud_click_pick(&self.world, self.cursor_pos)
                             .map_or((ray, None, false), |(_, p, r)| (r, Some((p - r.0).dot(r.1)), true));
                         self.media.on_scroll(&self.world, &self.scene, ray, depth, steps, mods, hud)
                     }
