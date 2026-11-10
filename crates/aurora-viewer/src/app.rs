@@ -21116,11 +21116,9 @@ impl ApplicationHandler for App {
                         self.down.remove(&Input::key(code));
                         return;
                     }
-                    // a dialog over the photo mode (a pose request, the
-                    // upload's confirmation) reads its keys through egui:
-                    // Enter answers it and must not also take a photo, and
-                    // the viewfinder's letters and digits wait behind it
-                    if self.viewfinder_on() && self.egui_ctx.memory(|m| m.top_modal_layer()).is_some() {
+                    // a dialog over the photo mode reads its keys through
+                    // egui (`viewfinder::behind_dialog`)
+                    if self.viewfinder_key_behind_dialog(code, pressed) {
                         self.down.remove(&Input::key(code));
                         return;
                     }
