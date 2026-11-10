@@ -9314,6 +9314,14 @@ separate searches enabled and disabled; that preference controls only the text.
   `aurora-favorites-multi` show their selected rows and Add to Favorites
   menu; click it to check that every object receives its own star. Capture
   at frame 700; the `aurora` variants exercise the Aurora layout.
+- `favorites-flat`, `aurora-favorites-flat`: the same starred objects and a
+  starred Body folder below an ordinary parent. Favorites lists the objects
+  and Body directly, without My inventory or their parent folders. Body
+  retains its contents. `favorites-parents`, `aurora-favorites-parents` turn
+  on Preferences > Inventory > Display > Show parent folders in Favorites,
+  restoring the original hierarchy. The option is off by default, including
+  with existing settings. Capture at frame 700; test both layouts and turn
+  the option on and off while Favorites is open, then restart the viewer.
 - `aurora-sidebar-medium`, `aurora-sidebar-wide`: the expanded inventory
   with 80 extra folders for #970. Click folders near the top and bottom
   of the left column, then scroll it and repeat, including partly visible
