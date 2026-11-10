@@ -21117,13 +21117,22 @@ impl ApplicationHandler for App {
                         return;
                     }
                     // a dialog over the photo mode reads its keys through
-                    // egui (`viewfinder::behind_dialog`)
-                    if self.viewfinder_key_behind_dialog(code, pressed) {
+                    // egui: Enter is its own, the other keys go on to their
+                    // usual handling without the viewfinder's
+                    // (`viewfinder::behind_dialog`)
+                    let behind = self.viewfinder_behind_dialog(code, pressed);
+                    if matches!(
+                        behind,
+                        Some(viewfinder::BehindDialog::Answer | viewfinder::BehindDialog::ReleaseShutter)
+                    ) {
                         self.down.remove(&Input::key(code));
                         return;
                     }
                     // the photo viewfinder's keys (the shutter, its menu…)
-                    if !self.egui_ctx.egui_wants_keyboard_input() && self.viewfinder_key(code, &ke.logical_key, pressed, ke.repeat) {
+                    if behind.is_none()
+                        && !self.egui_ctx.egui_wants_keyboard_input()
+                        && self.viewfinder_key(code, &ke.logical_key, pressed, ke.repeat)
+                    {
                         self.down.remove(&Input::key(code));
                         return;
                     }
