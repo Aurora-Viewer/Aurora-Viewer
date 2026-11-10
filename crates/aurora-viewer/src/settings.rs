@@ -443,6 +443,8 @@ const FORMER_LOOK_AT_UNLIMITED: f32 = 64.0;
 /// sends what it allows of it (OpenSim's MaxDrawDistance, 512 by default).
 pub const DRAW_DISTANCE_MIN: f32 = 32.0;
 pub const DRAW_DISTANCE_MAX: f32 = 1024.0;
+/// The nearest reach of the automatic reflection probes (`probe_range`).
+pub const PROBE_RANGE_MIN: f32 = 32.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -1452,8 +1454,9 @@ pub struct Settings {
     /// Reflection probe cube slots (RenderReflectionProbeCount; 8..=256).
     pub probe_count: u32,
     /// How far automatic reflection probes are placed around the camera
-    /// (m, 32..=512), within the draw distance. The Legacy Viewer has no
-    /// such limit (the draw distance); 512 keeps its reach.
+    /// (m, 32 up to [`DRAW_DISTANCE_MAX`]), within the draw distance. The
+    /// Legacy Viewer has no such limit (the draw distance); the largest
+    /// value keeps its reach. 512 by default.
     pub probe_range: f32,
     /// RenderAvatarMaxComplexity: avatars above it show as grey silhouettes
     /// (0 = no limit; Firestorm's Ultra preset is 350 000).
@@ -3059,7 +3062,7 @@ impl Settings {
         self.reflection_probes = self.reflection_probes.min(3);
         self.probe_count = self.probe_count.clamp(8, 256);
         self.probe_range = if self.probe_range.is_finite() {
-            self.probe_range.clamp(32.0, 512.0)
+            self.probe_range.clamp(PROBE_RANGE_MIN, DRAW_DISTANCE_MAX)
         } else {
             512.0
         };
@@ -3592,6 +3595,21 @@ mod tests {
             }
             .sanitized();
             assert_eq!(s.draw_distance, kept, "{asked} m");
+        }
+    }
+
+    #[test]
+    fn probe_range_reaches_as_far_as_the_draw_distance() {
+        // the largest probe range keeps the whole draw distance's reach; the
+        // default stays 512 m
+        assert_eq!(super::Settings::default().probe_range, 512.0);
+        for (asked, kept) in [(8.0, 32.0), (512.0, 512.0), (1024.0, 1024.0), (5000.0, 1024.0), (f32::NAN, 512.0)] {
+            let s = super::Settings {
+                probe_range: asked,
+                ..Default::default()
+            }
+            .sanitized();
+            assert_eq!(s.probe_range, kept, "{asked} m");
         }
     }
 
