@@ -1,7 +1,7 @@
 # Folderstorm features to port
 
 The features of Folderstorm (C++) (DrCum/Folderstorm, branch `main` at
-`abbe3cb0ca`, 2026-11-05) to bring to Folderstorm 2. Compiled from its
+`abbe3cb0ca`, 2026-11-05) to bring to Folderstorm2. Compiled from its
 `README.md`, `doc/help.md`, `doc/plans/`, `doc/*.md` and its merged branches.
 **Draft for the human to edit**: reorder, cut, merge or add lines freely.
 
@@ -22,8 +22,8 @@ Needed before shipping any build. They also keep merges simple.
 
 | # | Feature | What it does | Aurora today | Source | Prio | Status |
 |---|---|---|---|---|---|---|
-| 0.1 | Own name and icon | Window title, icon, About, settings folder, crash reports and installer say Folderstorm; login screen with the winged folder, splash art, purple Log In, "I'm Sodie" feed. Required: Aurora's `TRADEMARKS.md` does not allow shipping a modified build as "Aurora Viewer" or with the wolf logo. Keep the GPL notices and say "based on Aurora Viewer". | Aurora branding throughout | `doc/help.md` "Login and identity" | P1 | ⬜ |
-| 0.2 | CI for a fork | Disable or retarget the upstream-only workflows (nightly, fuzz, PR-description and review-slot bots, release to the Aurora org); keep fmt / clippy / tests. | Upstream workflows run on the fork | `.github/workflows/` (this repo) | P1 | ⬜ |
+| 0.1 | Own name and icon | The viewer is called **Folderstorm2**. Window title, icon, About, settings folder, crash reports and installer use it. Logo for now: `folderstorm/branding/folderstorm2-logo.svg` (the winged folder with eyes; edits to come). Login screen with the winged folder, splash art, purple Log In, "I'm Sodie" feed. Required: Aurora's `TRADEMARKS.md` does not allow shipping a modified build as "Aurora Viewer" or with the wolf logo. Keep the GPL notices and say "based on Aurora Viewer". | Aurora branding throughout | `doc/help.md` "Login and identity" | P1 | ⬜ |
+| 0.2 | CI for a fork | Disable or retarget the upstream-only workflows (nightly, fuzz, PR-description and review-slot bots, release to the Aurora org); keep fmt / clippy / tests. | Upstream workflows run on the fork | [CI.md](CI.md) | P1 | 🟡 workflow file added; the human enables Actions and disables the upstream-only workflows (CI.md) |
 | 0.3 | Release checks and update feed | Check for updates against Folderstorm's own releases (Stable / Nightly), with highlights, Download, Skip this version. | `aurora-updater` crate, pointed at Aurora | `doc/plans/releases-crashes-and-updates.md`, `release-checks-validation.md`, `coordinated-updates-validation.md` | P2 | ⬜ |
 | 0.4 | Crash reports | Send crash reports to Folderstorm's own service (Folderstorm (C++) used Sentry), never to Aurora's. | `crash` module, Aurora's endpoint | `doc/plans/sentry-validation.md` | P2 | ⬜ |
 | 0.5 | Settings import | Optional copy of settings from another viewer on first run. Folderstorm (C++) had a `migrate-settings` tool for Firestorm → Folderstorm. Decide: import from Folderstorm (C++), from Aurora, or both. | check (Aurora has some import of Legacy settings) | `doc/help.md` "Settings from Firestorm" | P3 | ⬜ |
@@ -39,7 +39,7 @@ Needed before shipping any build. They also keep merges simple.
 | 1.5 | Workspace switcher | World → Workspaces & Layouts…, or a toolbar button. Type to filter, Enter to switch, favorites first, Preview…, Save new with a choice of what to capture. Keyboard switching, Previous arrangement, snapping and alignment, toolbar sets, export / import. | – | `doc/help.md`, `doc/plans/workspace-enhancements.md` | P1 | ⬜ |
 | 1.6 | Workspace favorites strip | Optional row under the navigation / landmark bars with favorite workspaces and layouts, overflow in More…; hidden in mouselook. | – | `doc/help.md` | P2 | ⬜ |
 | 1.7 | Workspace context | A workspace can also carry chosen graphics / camera settings and a set of worn HUDs (by inventory id); recovers when a monitor is missing. | – | `doc/plans/workspace-context-and-snapshot.md` | P2 | ⬜ |
-| 1.8 | Workspace backgrounds | Background images for the area outside the world viewport (Preferences → Move & View → Backgrounds). *Human: confirm what this does.* | – | branch `feat/native-workspace-backgrounds` | P3 | ⬜ |
+| 1.8 | Workspace backgrounds | When the window is stretched over several monitors, show a chosen wallpaper in the area outside the world viewport instead of black (Preferences → Move & View → Backgrounds). Optional. | – | branch `feat/native-workspace-backgrounds` | P3 | ⬜ |
 | 1.9 | Settings search keywords | Preferences search finds "MCP", "dual monitor", "workspace", "undo". | check (Aurora has a settings search) | `doc/help.md` | P3 | ⬜ |
 
 ## 2. Inventory management (P1: the other reason)
@@ -69,41 +69,29 @@ Needed before shipping any build. They also keep merges simple.
 | 3.4 | GIF board | GIF button beside the composer: picker with KLIPY Search / Trending / Favourites / Recent and "My GIFs", pop-out board window. Needs a KLIPY API key, which must never be committed (decide how builds get it). | – | `doc/plans/folderstorm-gif-board-klipy.md`, `gif-board-validation.md`, `klipy-validation.md` | P3 | ⬜ |
 | 3.5 | Squirty Notes | Desktop pop-ups for incoming IMs and friends coming online, through the Squirty Notes Windows app's local API (token, port 47831; Off / All / Custom lists; "squirt again after silence"). | – | `doc/squirty-notes.md` | P3 | ⬜ |
 
-## 4. Avatar
+## 4. Local assistant (MCP)
 
 | # | Feature | What it does | Aurora today | Source | Prio | Status |
 |---|---|---|---|---|---|---|
-| 4.1 | Shared poser | Share live poses with nearby Folderstorm users through the LSL bridge (Share my pose; Request permission to edit another's pose); several approved editors reserve joints while dragging; owner can remove editors or stop; visual only. | **Large overlap**: Aurora's poser already poses consenting nearby avatars through bridge 1.34. Port only what is missing (live sharing, several editors), and decide on compatibility with Folderstorm (C++) users. | `README.md` "Shared poser", branches `codex/shared-poser`, `codex/shared-pose-live-preview` | P3 | ⬜ |
+| 4.1 | Local assistant bridge | Off by default. Preferences → Local assistant: in-viewer bridge on 127.0.0.1 with a discovery file and bearer token; permission presets Read only / Ask before changes / Custom, "this session only"; Ask dialogs (60 s); permanent delete and empty Trash always refused. `--mcp-api` forces it on for one session. | check: Aurora has a "scripting bridge" | `README.md`, `doc/help.md` "The local assistant bridge", `doc/fs-mcp.md`, `doc/plans/assistant-*.md` | P1 | ⬜ |
+| 4.2 | `fs-mcp` sidecar | MCP server over stdio (Go, `tools/fs-mcp`) that finds the viewer and calls the bridge; ships beside the viewer. Could stay in Go or be rewritten in Rust as a separate crate. | – | `tools/fs-mcp/README.md` | P1 | ⬜ |
+| 4.3 | Inventory and outfit tools | Search, create folders, move, rename, copy, Trash and restore; list outfits, wear, detach; wait for the outfit to finish baking. | – | `doc/help.md` "Asking for something" | P1 | ⬜ |
+| 4.4 | Camera and snapshot tools | Camera presets (portrait, full body, front, back, left, right) and exact shots; snapshot of the window or the world viewport, sized and cropped; set it as an outfit / folder thumbnail (free) or upload as a texture (asks with the L$ price). | – | `doc/help.md` | P1 | ⬜ |
+| 4.5 | Setup page | Copy configuration for Codex, Cursor or Claude Code; Check connection; `fs-mcp --diagnose`. | – | `doc/help.md` "Copy configuration and check this viewer" | P2 | ⬜ |
+| 4.6 | Extended MCP tools | Navigation, world observation, object inspection and lifecycle, building, content editing, file uploads, gestures and posing, preferences, social and events, script testing, task scripts, session routing (multi-character). Port one group at a time once 4.1–4.4 work. | – | `doc/plans/mcp-*.md` | P3 | ⬜ |
 
-## 5. Local assistant (MCP)
-
-| # | Feature | What it does | Aurora today | Source | Prio | Status |
-|---|---|---|---|---|---|---|
-| 5.1 | Local assistant bridge | Off by default. Preferences → Local assistant: in-viewer bridge on 127.0.0.1 with a discovery file and bearer token; permission presets Read only / Ask before changes / Custom, "this session only"; Ask dialogs (60 s); permanent delete and empty Trash always refused. `--mcp-api` forces it on for one session. | check: Aurora has a "scripting bridge" | `README.md`, `doc/help.md` "The local assistant bridge", `doc/fs-mcp.md`, `doc/plans/assistant-*.md` | P1 | ⬜ |
-| 5.2 | `fs-mcp` sidecar | MCP server over stdio (Go, `tools/fs-mcp`) that finds the viewer and calls the bridge; ships beside the viewer. Could stay in Go or be rewritten in Rust as a separate crate. | – | `tools/fs-mcp/README.md` | P1 | ⬜ |
-| 5.3 | Inventory and outfit tools | Search, create folders, move, rename, copy, Trash and restore; list outfits, wear, detach; wait for the outfit to finish baking. | – | `doc/help.md` "Asking for something" | P1 | ⬜ |
-| 5.4 | Camera and snapshot tools | Camera presets (portrait, full body, front, back, left, right) and exact shots; snapshot of the window or the world viewport, sized and cropped; set it as an outfit / folder thumbnail (free) or upload as a texture (asks with the L$ price). | – | `doc/help.md` | P1 | ⬜ |
-| 5.5 | Setup page | Copy configuration for Codex, Cursor or Claude Code; Check connection; `fs-mcp --diagnose`. | – | `doc/help.md` "Copy configuration and check this viewer" | P2 | ⬜ |
-| 5.6 | Extended MCP tools | Navigation, world observation, object inspection and lifecycle, building, content editing, file uploads, gestures and posing, preferences, social and events, script testing, task scripts, session routing (multi-character). Port one group at a time once 5.1–5.4 work. | – | `doc/plans/mcp-*.md` | P3 | ⬜ |
-
-## 6. Multi-character
+## 5. Multi-character
 
 | # | Feature | What it does | Aurora today | Source | Prio | Status |
 |---|---|---|---|---|---|---|
-| 6.1 | Session host | Separate Windows app that runs up to five characters, one viewer process each, in one interface: warm / economy standby, switching the active character without relogging, shared chat for all characters, low-rate read-only monitors of the others, pop-out panels, restart and recovery, character quick-action buttons, profile copy, audio / voice follows the active character. Off by default. The largest feature by far: re-plan it for Aurora rather than port it as is. | – | `doc/plans/multi-character-*.md`, `session-*.md`, `host-*.md`, `character-quick-actions.md`, `tools/session-host/` | P3 | ⬜ |
+| 5.1 | Session host | Separate Windows app that runs up to five characters, one viewer process each, in one interface: warm / economy standby, switching the active character without relogging, shared chat for all characters, low-rate read-only monitors of the others, pop-out panels, restart and recovery, character quick-action buttons, profile copy, audio / voice follows the active character. Off by default. The largest feature by far: re-plan it for Aurora rather than port it as is. | – | `doc/plans/multi-character-*.md`, `session-*.md`, `host-*.md`, `character-quick-actions.md`, `tools/session-host/` | P3 | ⬜ |
 
-## 7. Look
-
-| # | Feature | What it does | Aurora today | Source | Prio | Status |
-|---|---|---|---|---|---|---|
-| 7.1 | Folderstorm colour themes | "Folderstorm Violet" (near-black purple, lavender / violet, gold highlights, as the website) and "Electric Jungle" (plum, magenta, cyan, lime selections). In Aurora these become palettes of its theme system. | Aurora theme and `Palette` | `doc/skins/folderstorm-themes.md` | P2 | ⬜ |
-
-## 8. Small extras
+## 6. Small extras
 
 | # | Feature | What it does | Aurora today | Source | Prio | Status |
 |---|---|---|---|---|---|---|
-| 8.1 | About: location choice | Choose whether the About report includes your in-world location. | check | branch `codex/about-location-choice` | P3 | ⬜ |
-| 8.2 | First-run notices | Installation notices shown one at a time on first run. | check | branch `codex/first-run-notices` | P3 | ⬜ |
+| 6.1 | About: location choice | Choose whether the About report includes your in-world location. | check | branch `codex/about-location-choice` | P3 | ⬜ |
+| 6.2 | First-run notices | Installation notices shown one at a time on first run. | check | branch `codex/first-run-notices` | P3 | ⬜ |
 
 ## Not porting (C++-specific or upstream fixes)
 
@@ -115,8 +103,10 @@ Listed so that nobody looks for them again.
   background inventory cache load (`codex/sl-inventory-cache`), startup
   prompts, the `upstream/20261101-*` sync branches.
 - The C++ build, NSIS / Velopack installers and the Windows MCP link cleanup
-  utility: Aurora has its own packaging. Revisit with 0.3 and 5.2.
+  utility: Aurora has its own packaging. Revisit with 0.3 and 4.2.
 - RLVa and script dialog changes: they came from the Legacy Viewer, and
   Aurora has its own versions.
+- Shared poser and the Folderstorm colour themes (Folderstorm Violet,
+  Electric Jungle): dropped by the human on 2026-11-10.
 - Unmerged experiments (`codex/ansastorm-*` theme editor, `feat/next-improvements`,
   `Texture_VRAM_Optimizations`, …): ask the human before including any.

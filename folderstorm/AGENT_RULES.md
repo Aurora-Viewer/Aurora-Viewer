@@ -1,6 +1,6 @@
-# Folderstorm 2 — rules for AI agents
+# Folderstorm2 — rules for AI agents
 
-Folderstorm 2 is a fork of [Aurora Viewer](https://github.com/Aurora-Viewer/Aurora-Viewer)
+Folderstorm2 is a fork of [Aurora Viewer](https://github.com/Aurora-Viewer/Aurora-Viewer)
 (Rust, Vulkan) that adds the features of the original Folderstorm
 (DrCum/Folderstorm, a C++ fork of the Legacy Viewer). The work has two goals:
 
@@ -68,7 +68,8 @@ upstream file is a possible conflict at every merge, so:
   and **merge** it into a sync branch (never rebase `main`, never squash the
   upstream history). Resolve conflicts keeping both sides' intent, run the
   checks (section 4), and list in the PR any `// Folderstorm:` hook that had
-  to move.
+  to move. Review any workflow the merge adds under `.github/`, as
+  [CI.md](CI.md) says.
 - A feature is one branch and one PR, from an up-to-date `main`. Never stack
   several features in one branch.
 
@@ -83,7 +84,7 @@ Read these sections when the task touches them:
 | Demo mode and `AURORA_*` variables | § 4, `docs/TESTING.md` | Yes |
 | Code quality (no `unwrap` on external data, `SAFETY` comments, performance) | § 5 | Yes |
 | Interface and branding (Palette, shared widgets, Tabler icons, theme guard) | § 7, `docs/BRANDING.md` | Yes, for any UI |
-| Commit message style (English, imperative) | § 10 | Yes |
+| Commit message style (English, imperative) | § 10 | Yes, but **not** its "no mention of AI" rule: see section 6 |
 | Worktrees and PowerShell scripts (`new-task.ps1`, `check.ps1`, …) | § 3, § 5 | Only on the human's Windows PC; elsewhere use the plain `cargo` commands of section 4 |
 | `TASKS.md`, project board, issue triage, merge queue, review slots, release process, PR description bot | § 6, § 8, § 9, § 11–13, § 15 | **No**: upstream's team process |
 
@@ -101,7 +102,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace            # filter by name if needed; never -p alone
 ```
 
-On the human's Windows PC, `./scripts/check.ps1` does all three. Demo mode
+On the human's Windows PC, `./scripts/check.ps1` does all three. On GitHub,
+CI runs them as well; which workflows run on the fork, and why, is in
+[CI.md](CI.md). Never edit an upstream workflow file: add a
+`folderstorm-*.yml` workflow instead. Demo mode
 (`AURORA_DEMO=1 cargo run -p aurora-viewer -- --title "Test <task>"`) is the
 test ground for anything visual; add an `AURORA_DEMO_<NAME>` scenario for a
 new feature when possible, and list it in `docs/TESTING.md`.
@@ -127,3 +131,15 @@ new feature when possible, and list it in `docs/TESTING.md`.
 
 Short and clear. Say what is done, what is left, and what they have to do
 (test, log in, decide). Never claim something was tested when it was not.
+
+## 7. Credit and working with other agents
+
+- **Credit AI work.** Commits and PRs made with an AI agent say so: keep the
+  attribution trailer your tool adds (for example `Co-Authored-By:`) at the
+  end of commit messages and PR descriptions. This replaces upstream's "no
+  mention of AI" rule.
+- **Subagents**: when you hand part of a task to a subagent, use the Sonnet
+  model where it is up to the job (searches, reading and summarising code,
+  routine edits, test runs). Keep the main model for planning, review and
+  the hard parts. Give the subagent a self-contained brief, and check its
+  results before you rely on them.

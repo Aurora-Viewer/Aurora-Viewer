@@ -1,0 +1,74 @@
+name: Folderstorm tests
+
+# Upstream's ci.yml runs the workspace tests only in its merge queue and on
+# pushes to main; a pull request gets formatting and clippy alone. This fork
+# has no merge queue (GitHub offers one to organizations only), so this
+# workflow runs the same Windows test parts on every pull request instead.
+# Kept in its own file so that upstream changes to ci.yml merge cleanly.
+# See folderstorm/CI.md.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: folderstorm-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  tests:
+    # The same three parts as upstream's tests job (ci.yml): filters and
+    # --skip are exact complements, so every test runs in one part only.
+    name: tests (Windows, PR, ${{ matrix.part }})
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - part: chat
+            filter: "ui::chat::"
+          - part: interface
+            filter: "ui:: --skip ui::chat::"
+          - part: rest
+            filter: "--skip ui::"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - name: Code changed?
+        id: changes
+        uses: ./.github/actions/code-changed
+      - name: Rust stable
+        if: steps.changes.outputs.code == 'true'
+        run: |
+          ./.github/drop-extra-targets.ps1
+          rustup update stable --no-self-update
+      # reads the "tests" cache that ci.yml writes on pushes to main
+      - uses: ./.github/actions/rust-cache
+        if: steps.changes.outputs.code == 'true'
+        with:
+          name: tests
+      - name: Tests (${{ matrix.part }})
+        if: steps.changes.outputs.code == 'true'
+        run: cargo test --profile ci --workspace --locked -- ${{ matrix.filter }}
+
+  result:
+    # One check to require in branch protection: green when every part
+    # passed (or skipped for a documentation-only change).
+    name: tests (Windows, PR)
+    if: always()
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every part
+        run: |
+          echo "parts: ${{ needs.tests.result }}"
+          case "${{ needs.tests.result }}" in success|skipped) ;; *) exit 1 ;; esac
