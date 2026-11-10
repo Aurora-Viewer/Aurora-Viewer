@@ -551,6 +551,13 @@ fn quality(cx: &mut Cx) {
 
 fn light(cx: &mut Cx) {
     use aurora_i18n::tr;
+    cx.group(tr!("ui-options-local-lights"), |cx| {
+        cx.toggle(
+            tr!("ui-options-others-attached-lights"),
+            tr!("ui-options-others-attached-lights-help"),
+            &field!(others_attached_lights),
+        );
+    });
     cx.group(tr!("ui-options-shadows"), |cx| {
         let p = cx.p;
         let levels = [

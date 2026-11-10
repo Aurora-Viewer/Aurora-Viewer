@@ -26,6 +26,26 @@ Une ligne vide commence un nouveau paragraphe.
 
 # Actualités d'Aurora Viewer
 
+## 2026-11-10 — Aurora 0.9.5 : le Suivi de région, les marqueurs des cercles et l'apparence en XML
+Monde › Suivi de région surveille une liste de régions, comme le Legacy Viewer : si chacune est en ligne et combien d'avatars s'y trouvent, sans ouvrir la carte ; Suivre la région, sur la Carte du monde, en ajoute une. Un cercle de contacts peut marquer ses membres dans le monde, à travers les murs et au bord de l'écran : réglez son Marqueur dans le monde dans Personnes › Cercles (désactivé par défaut). Importer XML, dans les éditeurs de silhouette, de physique et de vêtements, charge un fichier d'apparence d'un site de silhouettes ou d'un autre viewer. Cache et réglages sont gardés.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.5)
+
+## 2026-11-10 — Emojis, chat et L$
+Vos emojis récents forment une rangée près du champ de chat, et le sélecteur de GIF montre ceux que vous avez envoyés. Activez Emojis favoris dans Préférences › Chat pour garder les vôtres en tête, avec un onglet étoile dans le sélecteur. Alt+Entrée envoie du chat ((OOC)), et Demander une téléportation s'ajoute à Proposer une téléportation dans la conversation. Un bouton replie ou déplie la liste des conversations. Les L$ reçus ou dépensés s'affichent sous votre solde, et un résident qui vous paie affiche une notification.
+
+## 2026-11-10 — Votre vue, le monde et des correctifs
+Préférences › Graphismes peut masquer les lumières portées par les autres avatars en gardant les vôtres, et Monde › Masquer les étiquettes des avatars les cache toutes en un clic. Les infobulles des avatars peuvent rester sans celles du monde, et la question du filtre média devient un bandeau qui laisse voler. Le sol reste aux passages de région, une mémoire vidéo pleine ne fige plus le monde, et les radios de parcelle tiennent aux téléportations. Merci à circuskid, ClifHofmann, dash-sl, Gaalrauch, iGao, KanikaBreed, Nowalski, Odessa-Draekavik et RheaMercury.
+
+## 2026-11-08 — Aurora 0.9.4 : les Paramètres de débogage, et plus d'options du Legacy Viewer
+Le bouton Paramètres de débogage, ou Ctrl+Alt+Maj+S, ouvre une fenêtre avec chaque réglage par son nom : une recherche, une étoile sur ceux que vous avez changés et Rétablir la valeur par défaut. Préférences › Construire règle ce que devient une nouvelle prim : couleur, transparence, lueur, lumineux, physique, temporaire ou fantôme. Préférences › Graphismes gagne une distance d'affichage progressive (désactivée par défaut), le détail des Arbres et les Particules des objets portés, et Préférences › Protections peut masquer les objets à la surface démesurée. Cache et réglages sont gardés.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.4)
+
+## 2026-11-08 — Les régions voisines, des objets qui restent visibles, des appels qui tiennent
+Aurora demande désormais à la région votre propre distance d'affichage : les régions voisines apparaissent à 256 m et au-delà, comme dans le Legacy Viewer. Les objets bien en vue ne disparaissent plus sous certains angles de caméra, et le monde revient de lui-même quand la mémoire vidéo était pleine à la connexion. Les écrans média des régions chargées se remplissent et suivent leurs télécommandes, et les textures restées blanches reviennent sans vous reconnecter. Les appels privés tiennent pendant les téléportations, et la musique de la parcelle ne coupe plus quand vous bougez la caméra.
+
+## 2026-11-08 — Chat, caméra, avatars et correctifs
+Le lissage de caméra va jusqu'à 300 sans à-coups, et Préférences › Chat règle le nombre de lignes au-dessus du chat. Ctrl+Tab change de conversation, l'IME japonais montre le segment en conversion, et les zones de texte des scripts prennent plusieurs lignes. Les changements d'À propos du terrain tiennent, l'AO ne laisse plus de pose assise après une téléportation, et les outils RLVa ont un onglet Exceptions. Merci à AiAiCaptainn, anne-skydancer, circuskid, ClifHofmann, emmelinedevere, Gaalrauch, iGao, KanikaBreed, Marakiinfinity, MilkIsPrettyGood, Nowalski, Odessa-Draekavik et RheaMercury.
+
 ## 2026-11-06 — Aurora 0.9.3 : AMD FSR 3.1, et plus stable sur toutes les cartes graphiques
 Choisissez FSR 3.1 sous Anticrénelage dans Préférences › Graphismes : des bords lissés à la taille de la fenêtre, ou un monde dessiné plus petit puis reconstruit net, pour plus d'images par seconde. Après une réinitialisation de la carte graphique, Aurora rouvre sa fenêtre sans vous déconnecter (désactivable dans les Préférences). Les GPU intégrés Intel de 6e à 9e génération démarrent de nouveau, comme les portables AMD + NVIDIA ; les GPU intégrés comptent leur mémoire partagée dans le budget des textures. Le cache est vidé une fois au premier lancement de la 0.9.3 ; vos réglages sont gardés.
 [En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.3)
