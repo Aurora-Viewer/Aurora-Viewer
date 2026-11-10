@@ -10020,6 +10020,7 @@ region-people-ask-remove-managers = { $names } ne gérera plus le domaine.
 region-people-ask-remove-allowed = { $names } sera retiré des résidents autorisés.
 region-people-ask-remove-groups = { $names } sera retiré des groupes autorisés.
 region-people-ask-remove-banned = Le bannissement de { $names } sera levé.
+region-people-ask-sent-home = Ceux qui sont dans le domaine en ce moment sont renvoyés chez eux.
 region-people-applies-to = S'applique à
 region-people-this-estate = Ce domaine seulement
 region-people-all-owned = Tous les domaines dont vous êtes propriétaire
@@ -10266,6 +10267,17 @@ region-ask-override = Décocher cette option peut retirer des restrictions que l
 region-ask-linden-title = Modifier un domaine Linden ?
 region-ask-linden = Vous allez modifier un domaine qui appartient à Linden Lab (continent, grille ado, orientation…). C'est extrêmement dangereux : cela peut changer l'expérience de tous les résidents, et sur le continent des milliers de régions à la fois. Continuer ?
 region-ask-linden-ok = Modifier le domaine
+region-ask-restrict-title = Restreindre qui peut venir ?
+region-ask-restrict-lists = Seuls les résidents et groupes autorisés du domaine, ses gérants et son propriétaire pourront venir.
+region-ask-restrict-age = Les résidents de moins de 18 ans seront refusés.
+region-ask-restrict-payment = Les résidents sans infos de paiement enregistrées seront refusés.
+region-ask-restrict-bots = Les comptes déclarés comme agents scriptés seront refusés.
+region-ask-restrict-sent-home = Cela s'applique d'un coup à toutes les régions du domaine : ceux qui y sont déjà et ne remplissent plus les conditions sont renvoyés chez eux.
+region-ask-restrict-here = { $count ->
+    [one] { $count } autre personne est dans cette région en ce moment.
+   *[other] { $count } autres personnes sont dans cette région en ce moment.
+}
+region-ask-restrict-ok = Restreindre l'accès
 region-ask-bonus-title = Changer le bonus d'objets ?
 region-ask-bonus = Baisser le bonus d'objets une fois des constructions en place dans une région peut renvoyer ou supprimer des objets. Voulez-vous vraiment le changer ?
 region-ask-bonus-ok = Changer le bonus

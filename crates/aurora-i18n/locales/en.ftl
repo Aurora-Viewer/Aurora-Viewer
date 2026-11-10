@@ -10024,6 +10024,7 @@ region-people-ask-remove-managers = { $names } will no longer manage the estate.
 region-people-ask-remove-allowed = { $names } will be removed from the allowed residents.
 region-people-ask-remove-groups = { $names } will be removed from the allowed groups.
 region-people-ask-remove-banned = The ban of { $names } will be lifted.
+region-people-ask-sent-home = Those who are in the estate right now are sent home.
 region-people-applies-to = Applies to
 region-people-this-estate = This estate only
 region-people-all-owned = All the estates you own
@@ -10270,6 +10271,17 @@ region-ask-override = Turning this off may remove restrictions that parcel owner
 region-ask-linden-title = Change a Linden estate?
 region-ask-linden = You are about to change an estate owned by Linden Lab (mainland, teen grid, orientation…). This is extremely dangerous: it can change every resident's experience, and on the mainland thousands of regions at once. Proceed?
 region-ask-linden-ok = Change the estate
+region-ask-restrict-title = Restrict who can come?
+region-ask-restrict-lists = Only the estate's allowed residents and groups, its managers and its owner will be able to come.
+region-ask-restrict-age = Residents under 18 will be refused.
+region-ask-restrict-payment = Residents without payment info on file will be refused.
+region-ask-restrict-bots = Accounts declared as scripted agents will be refused.
+region-ask-restrict-sent-home = This applies to every region of the estate at once: those already there who no longer qualify are sent home.
+region-ask-restrict-here = { $count ->
+    [one] { $count } other person is in this region right now.
+   *[other] { $count } other people are in this region right now.
+}
+region-ask-restrict-ok = Restrict access
 region-ask-bonus-title = Change the object bonus?
 region-ask-bonus = Lowering the object bonus once builds are in place in a region may cause objects to be returned or deleted. Are you sure you want to change it?
 region-ask-bonus-ok = Change the bonus
