@@ -10772,7 +10772,11 @@ impl App {
             sky: aurora_render::SkyParams {
                 // the Clouds rendering type hidden: a cloud scale of zero
                 // draws none, nor their shadow (common.wgsl, clouds)
-                cloud_scale: if self.settings.debug.hidden_types.clouds { 0.0 } else { env.sky.cloud_scale },
+                cloud_scale: if self.settings.debug.hidden_types.clouds {
+                    0.0
+                } else {
+                    env.sky.cloud_scale
+                },
                 ..env.sky
             },
             water: env.water,

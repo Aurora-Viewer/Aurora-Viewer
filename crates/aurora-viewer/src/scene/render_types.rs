@@ -178,10 +178,7 @@ mod tests {
         let worn = index(&w, 9100);
         let none = Hidden::default();
         assert!(!none.any_object() && !none.hides_object(&w, prim) && !none.hides_object(&w, worn));
-        let avatars = Hidden {
-            avatars: true,
-            ..none
-        };
+        let avatars = Hidden { avatars: true, ..none };
         assert!(avatars.hides_object(&w, worn) && avatars.hides_object(&w, index(&w, 9001)));
         assert!(!avatars.hides_object(&w, prim) && !avatars.hides_object(&w, index(&w, 9200)));
         // the background kinds hide no object
