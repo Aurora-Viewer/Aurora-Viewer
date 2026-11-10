@@ -84,7 +84,7 @@ Read these sections when the task touches them:
 | Demo mode and `AURORA_*` variables | § 4, `docs/TESTING.md` | Yes |
 | Code quality (no `unwrap` on external data, `SAFETY` comments, performance) | § 5 | Yes |
 | Interface and branding (Palette, shared widgets, Tabler icons, theme guard) | § 7, `docs/BRANDING.md` | Yes, for any UI |
-| Commit message style (English, imperative) | § 10 | Yes, but **not** its "no mention of AI" rule: see section 6 |
+| Commit message style (English, imperative) | § 10 | Yes, but **not** its "no mention of AI" rule: see section 7 |
 | Worktrees and PowerShell scripts (`new-task.ps1`, `check.ps1`, …) | § 3, § 5 | Only on the human's Windows PC; elsewhere use the plain `cargo` commands of section 4 |
 | `TASKS.md`, project board, issue triage, merge queue, review slots, release process, PR description bot | § 6, § 8, § 9, § 11–13, § 15 | **No**: upstream's team process |
 
