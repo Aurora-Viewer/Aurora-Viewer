@@ -67,6 +67,11 @@ pub fn page(cx: &mut Cx) {
         cx.toggle(tr!("ui-inventory-controls-worn-tab"), "", &field!(inventory.show_worn));
         cx.toggle(tr!("ui-inventory-controls-favorites-tab"), "", &field!(inventory.show_favorites));
         cx.toggle(
+            tr!("inventory-favorites-show-parent-folders"),
+            tr!("inventory-favorites-show-parent-folders-help"),
+            &field!(inventory.favorites_show_parent_folders),
+        );
+        cx.toggle(
             tr!("ui-inventory-controls-separate-search-in-each-tab"),
             "",
             &field!(inventory.separate_searches),
