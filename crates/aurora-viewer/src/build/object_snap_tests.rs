@@ -60,20 +60,19 @@ fn grab(manip: &mut Manip, world: &mut World, s: &BuildSettings, cam: &Cam, sel:
     let g = f.grid.rotation;
     let len = arrow_length(cam, &f, f.pivot);
     // along an arrow, the first point not hidden by another handle
-    let points: Vec<Vec3> = match part {
-        Part::Arrow(i) => [0.9, 0.75, 1.0, 0.6].iter().map(|k| f.pivot + g * unit(i) * len * k).collect(),
+    let points: Vec<(f32, f32)> = match part {
+        Part::Arrow(i) => [0.9, 0.75, 1.0, 0.6]
+            .iter()
+            .filter_map(|k| cam.project_px(f.pivot + g * unit(i) * len * k))
+            .collect(),
         Part::Plane(i) => {
-            let at_g = g.inverse() * cam.at;
-            let signs = Vec3::new(at_g.x.signum(), at_g.y.signum(), at_g.z.signum());
-            let q = plane_quad(f.pivot, g, len, signs, i, 1.0);
-            vec![(q[0] + q[2]) * 0.5]
+            let q = plane_handles(cam, &f)[i]?;
+            let p = q[0].lerp(q[2], 0.5);
+            vec![(p.x * cam.ppp, p.y * cam.ppp)]
         }
         _ => unreachable!("move handles only"),
     };
-    let cursor = points
-        .into_iter()
-        .filter_map(|p| cam.project_px(p))
-        .find(|c| manip.pick(cam, &f, EditMode::Move, *c) == Some(part))?;
+    let cursor = points.into_iter().find(|c| manip.pick(cam, &f, EditMode::Move, *c) == Some(part))?;
     assert!(manip.try_grab(world, s, cam, &[sel], false, EditMode::Move, cursor, now));
     assert_eq!(manip.drag.as_ref().map(|d| d.part), Some(part));
     Some(cursor)
@@ -99,7 +98,52 @@ fn drag(manip: &mut Manip, world: &mut World, s: &BuildSettings, cam: &Cam, sel:
 
 /// The cursor that drags the grabbed handle by `by` metres (in its plane).
 fn along(cam: &Cam, manip: &Manip, by: Vec3) -> (f32, f32) {
-    cam.project_px(manip.drag.as_ref().unwrap().start_hit + by).unwrap()
+    let drag = manip.drag.as_ref().unwrap();
+    let p = cam.project_px(drag.start_hit + by).unwrap();
+    if matches!(drag.part, Part::Plane(_)) {
+        let offset = plane_cursor_offset(&drag.camera, drag.pivot, drag.start_cursor);
+        (p.0 + offset.0, p.1 + offset.1)
+    } else {
+        p
+    }
+}
+
+#[test]
+fn a_plane_anchor_beyond_the_ray_horizon_drags_without_a_jump() {
+    let mut w = world(Some(&[BLUE]));
+    let s = BuildSettings {
+        gizmo_scale: 3.0,
+        snap: false,
+        object_snap: false,
+        ..Default::default()
+    };
+    let (blue, sel) = key(&w, BLUE);
+    let start = w.objects.get(blue).unwrap().position;
+    let eye = start + Vec3::new(4.0, -8.0, 8.0);
+    let fov = 60f32.to_radians();
+    let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(fov, 1280.0 / 720.0, 0.01);
+    let cam = Cam::new(
+        eye,
+        start,
+        projection * glam::camera::rh::view::look_at_mat4(eye, start, Vec3::Z),
+        fov,
+        1280.0,
+        720.0,
+        1.0,
+    );
+    let mut manip = Manip::default();
+    let cursor = grab(&mut manip, &mut w, &s, &cam, sel, Part::Plane(0)).expect("displaced YZ anchor");
+    let (origin, direction) = cam.ray(cursor.0, cursor.1);
+    assert!(
+        ray_plane(origin, direction, start, Vec3::X).is_none(),
+        "the visible anchor is beyond the world-plane horizon"
+    );
+    drag(&mut manip, &mut w, &s, &cam, sel, cursor);
+    assert_eq!(w.objects.get(blue).unwrap().position, start, "a held cursor never jumps");
+    let by = Vec3::new(0.0, 0.4, -0.3);
+    let cursor = along(&cam, &manip, by);
+    drag(&mut manip, &mut w, &s, &cam, sel, cursor);
+    assert!(w.objects.get(blue).unwrap().position.abs_diff_eq(start + by, 2e-3));
 }
 
 fn snapping() -> BuildSettings {

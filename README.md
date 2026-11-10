@@ -111,37 +111,35 @@ while rethinking the user interface.
   </tr>
 </table>
 
-### New in 0.9.4 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+### New in 0.9.5 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>Debug settings, like the Legacy Viewer</h3>
-      Every setting by name in one window, from the toolbar or
-      Ctrl+Alt+Shift+S: search the names and descriptions, see the ones you
-      changed, and reset any of them to its default.
+      <h3>Region Tracker, like the Legacy Viewer</h3>
+      Watch a list of regions from World › Region tracker or the map's
+      Track region: whether each one is up and how many avatars are there,
+      without opening the map.
     </td>
     <td width="50%" valign="top">
-      <h3>More of the Legacy Viewer's options</h3>
-      Build preferences for new prims, a progressive draw distance, the
-      Trees detail, large surface protection, particles from worn objects,
-      camera smoothing up to 300 and a limit for the chat lines above the
-      chat bar.
+      <h3>Find your contacts in the world</h3>
+      A contact set can mark its members with a small circle or diamond,
+      seen through walls and held at the screen's edge when they are out of
+      view. Off by default, chosen set by set.
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <h3>A fuller world</h3>
-      Neighbouring regions appear at your draw distance, objects no longer
-      vanish at some camera angles, and the world comes back by itself
-      after video memory was full at login. Media screens in busy regions
-      load again.
+      <h3>Emojis and chat</h3>
+      A row of your recent emojis by the chat field, favourite emojis if
+      you want them, recent GIFs in the picker, Alt+Enter for ((OOC)) chat,
+      and Request teleport next to Offer teleport.
     </td>
     <td valign="top">
-      <h3>Calls, music and chat</h3>
-      Private calls stay connected across teleports, parcel music no longer
-      cuts out while you cam around, Ctrl+Tab cycles the conversations, and
-      the Japanese IME shows the active conversion segment.
+      <h3>Your avatar, your view</h3>
+      Import an appearance XML into the shape and clothing editors, hide
+      the face lights other avatars wear, hide every name tag in one click,
+      and keep avatar tips with world tooltips off.
     </td>
   </tr>
 </table>
@@ -1124,9 +1122,13 @@ clippy on a Mac, and the merge queue runs the tests and draws a demo frame on
 an Apple GPU.
 
 Preferences › Graphics › Smoothness offers a 50–100% **3D render scale**.
-At lower scales, the world is reconstructed with a nine-tap Catmull-Rom spatial
-upscaler; controls, HUDs and world labels retain the window's native resolution.
-Saved photos render at their requested resolution. The default remains 100%.
+At lower scales, the world is reconstructed and sharpened in one AMD CAS spatial
+upscaler (Sharpness 0, or HDR off, keeps a Catmull-Rom reconstruction); controls, HUDs and world labels retain the window's native resolution.
+Saved photos render at their requested resolution. Its **Match the display**
+switch follows the display's logical resolution instead (50% on a 2× display,
+67% on 1.5×), as the Legacy Viewer draws a Retina Mac's world: on by default
+on macOS, where a new profile also starts from the Legacy Viewer's Mac
+Mid-High values; elsewhere it is off and the default remains 100%.
 With AMD FSR 3.1 as the anti-aliasing, FSR's own mode (Native AA, Quality,
 Balanced, Performance, Ultra performance) takes the render scale's place.
 Bindless texture pages use the adapter's binding-array limit rather than its
