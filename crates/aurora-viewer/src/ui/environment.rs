@@ -445,13 +445,17 @@ impl EnvironmentUi {
     }
 }
 
-/// Personal Lighting's night sky rows: the same place and latitude as
+/// Personal Lighting's night sky rows: the same place, latitude and
+/// longitude as
 /// Preferences › Graphics › Environment (world/night_sky.rs), so a photo's
 /// stars can be set from the photo window's light panel.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NightSkyPick {
     pub place: crate::world::night_sky::SkyPlace,
     pub latitude: f32,
+    pub longitude: f32,
+    /// The longitude counts (the star hour is the real time).
+    pub real_time: bool,
     /// Changed this frame.
     pub changed: bool,
 }
@@ -482,6 +486,9 @@ fn night_sky_rows(ui: &mut egui::Ui, p: &Palette, night: &mut NightSkyPick) {
     if let Some(latitude) = night.place.latitude() {
         night.latitude = latitude;
     }
+    if let Some(longitude) = night.place.longitude() {
+        night.longitude = longitude;
+    }
     // a preset's latitude is shown, greyed; Custom sets its own
     let custom = night.place == SkyPlace::Custom;
     ui.add_enabled_ui(custom, |ui| {
@@ -492,6 +499,18 @@ fn night_sky_rows(ui: &mut egui::Ui, p: &Palette, night: &mut NightSkyPick) {
             &mut night.latitude,
             -90.0..=90.0,
         )
+        .changed();
+    });
+    // the longitude counts with the real time only (Preferences, "Star hour")
+    ui.add_enabled_ui(custom && night.real_time, |ui| {
+        night.changed |= slider(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-night-sky-longitude"),
+            &mut night.longitude,
+            -180.0..=180.0,
+        )
+        .on_hover_text(aurora_i18n::tr!("ui-options-night-sky-longitude-help"))
         .changed();
     });
 }
