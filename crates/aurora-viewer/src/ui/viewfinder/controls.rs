@@ -264,6 +264,10 @@ impl Viewfinder {
         f: &Frame,
         out: &mut Vec<Out>,
     ) {
+        // (the wheel and the keys too: a 360° picture has no lens or focus)
+        if super::dial_greyed(panel.pano, dial) {
+            return;
+        }
         let r = self.ring(dial, s, panel, *fov, f);
         let x = resp.interact_pointer_pos().map(|p| p.x);
         if resp.drag_started()

@@ -72,9 +72,10 @@ impl App {
         // the photo window's lens while it is open, off included (its All
         // sharp is sharp, not the Preferences' blur), else the Preferences'
         // (never changed by the window)
-        // a face of a 360° picture has no depth of field: the blur would differ
-        // from face to face and show at their edges
-        if self.capture_360.drawing_face() {
+        // a 360° picture has no depth of field (the blur would differ from
+        // face to face and show at their edges): the live view shows what
+        // the picture will, with none
+        if self.pano_open() || self.capture_360.drawing_face() {
             return None;
         }
         let photo = &self.settings.snapshot.dof;
