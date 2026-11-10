@@ -50,6 +50,28 @@ pub fn set(prefs: &mut InventoryPreferences, ids: &[Uuid], color: Option<[u8; 3]
     }
 }
 
+/// New folders take their parent's color (the switch on): `created` are the
+/// folders a change just made, under the ids the server gave them and parents
+/// first, so a tree made at once takes the color down. A folder already
+/// colored keeps its own; folders merely loaded never pass here. Whether a
+/// color was given (the preferences then need saving).
+pub fn inherit(prefs: &mut InventoryPreferences, created: &[aurora_net::inventory::InvFolder]) -> bool {
+    if !prefs.folder_colors_enabled || !prefs.folder_colors_inherit {
+        return false;
+    }
+    let mut given = false;
+    for folder in created {
+        if prefs.folder_colors.contains_key(&folder.id) {
+            continue;
+        }
+        if let Some(&color) = prefs.folder_colors.get(&folder.parent) {
+            prefs.folder_colors.insert(folder.id, color);
+            given = true;
+        }
+    }
+    given
+}
+
 /// The color all of `ids` share, if they share one.
 fn shared(prefs: &InventoryPreferences, ids: &[Uuid]) -> Option<[u8; 3]> {
     let first = *prefs.folder_colors.get(ids.first()?)?;
@@ -284,11 +306,22 @@ pub fn demo(st: &mut InventoryUi, prefs: &mut InventoryPreferences) {
 ///   (no folder: "Select a folder", the palette greyed);
 /// - `aurora-folder-colors-subfolders`: the tree open, "Also color its
 ///   subfolders" ticked (700), purple picked (720). Capture 690 (unticked, its
-///   count 3) and 780 (A — Personal folder and its 3 subfolders purple).
-pub fn demo_frame(ctx: &egui::Context, inv: &Inventory, st: &mut InventoryUi, prefs: &mut InventoryPreferences, frame: u64) {
-    let Ok(mode) = std::env::var("AURORA_DEMO_INVENTORY") else { return };
+///   count 3) and 780 (A — Personal folder and its 3 subfolders purple);
+/// - `aurora-folder-colors-inherit`: "New folders take their parent's color"
+///   on, a New Folder made in the green A — Personal folder (700) through the
+///   menu's own change. Capture 820 (the new folder green).
+///
+/// The change a step makes, for the app to run as the menu's would be.
+pub fn demo_frame(
+    ctx: &egui::Context,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &mut InventoryPreferences,
+    frame: u64,
+) -> Option<InvAction> {
+    let mode = std::env::var("AURORA_DEMO_INVENTORY").ok()?;
     if !mode.contains("folder-colors") {
-        return;
+        return None;
     }
     // as a click: the selection and its focused entry (the details card's)
     let select = |st: &mut InventoryUi, id: u128| {
@@ -319,8 +352,18 @@ pub fn demo_frame(ctx: &egui::Context, inv: &Inventory, st: &mut InventoryUi, pr
         }
         // the open tree is long: scroll to the colored ones (Body, the last)
         ("aurora-folder-colors-subfolders", 730) => st.reveal = Some(Uuid::from_u128(8204)),
+        // after the start-up selection (600, every mode)
+        ("aurora-folder-colors-inherit", 605) => prefs.folder_colors_inherit = true,
+        ("aurora-folder-colors-inherit", 610) => st.expand_all = Some(true),
+        ("aurora-folder-colors-inherit", 700) => {
+            let change = rules::create_folder(Uuid::from_u128(8200), aurora_i18n::tr!("common-new-folder")).ok()?;
+            return Some(InvAction::Edit(change));
+        }
+        // New Folder sorts after Clothing, the folder before it
+        ("aurora-folder-colors-inherit", 760) => st.reveal = Some(Uuid::from_u128(8203)),
         _ => {}
     }
+    None
 }
 
 #[cfg(test)]
@@ -413,6 +456,39 @@ mod tests {
         reach.dedup();
         assert_eq!(reach.len(), picker.colored_by_a_click(&inv).len(), "no folder twice");
         assert_eq!(reach.len(), 4);
+    }
+
+    fn made(id: u128, parent: u128) -> aurora_net::inventory::InvFolder {
+        aurora_net::inventory::InvFolder {
+            id: Uuid::from_u128(id),
+            parent: Uuid::from_u128(parent),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn new_folders_take_their_parents_color_only_with_the_switch_on() {
+        let mut prefs = InventoryPreferences::default();
+        assert!(!prefs.folder_colors_inherit, "off by default");
+        set(&mut prefs, &[Uuid::from_u128(1)], Some(PRESETS[4]));
+        let created = [made(10, 1), made(11, 10), made(12, 99)];
+        // off: nothing given
+        assert!(!inherit(&mut prefs, &created));
+        assert_eq!(prefs.folder_colors.len(), 1);
+        // on: the new folder, and the one made inside it in the same change
+        // (parents first); a folder under an uncolored parent stays plain
+        prefs.folder_colors_inherit = true;
+        assert!(inherit(&mut prefs, &created));
+        assert_eq!(prefs.folder_colors.get(&Uuid::from_u128(10)), Some(&PRESETS[4]));
+        assert_eq!(prefs.folder_colors.get(&Uuid::from_u128(11)), Some(&PRESETS[4]));
+        assert!(!prefs.folder_colors.contains_key(&Uuid::from_u128(12)));
+        // a folder that already has a color keeps it
+        set(&mut prefs, &[Uuid::from_u128(13)], Some(PRESETS[0]));
+        assert!(!inherit(&mut prefs, &[made(13, 1)]));
+        assert_eq!(prefs.folder_colors.get(&Uuid::from_u128(13)), Some(&PRESETS[0]));
+        // the colors off: nothing given either
+        prefs.folder_colors_enabled = false;
+        assert!(!inherit(&mut prefs, &[made(14, 1)]));
     }
 
     #[test]
