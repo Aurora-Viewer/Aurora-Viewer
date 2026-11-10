@@ -195,8 +195,45 @@ fn unscaled_bind_rotation(bind_shape: Mat4) -> Option<Quat> {
     };
     let m = glam::Mat3::from_cols(unit(m.x_axis), unit(m.y_axis), unit(m.z_axis));
     let m = if m.determinant().abs() > 0.000_001 { m.inverse() } else { m };
-    let q = Quat::from_mat3(&m).normalize();
+    let q = legacy_quaternion(&m).normalize();
     q.is_finite().then_some(q)
+}
+
+/// Port of LLMatrix3::quaternion (indra/llmath/m3math.cpp, originally LGPL
+/// 2.1), `m[i][j]` being glam's column `i`, row `j` (LL's row `i`). For a
+/// rotation it gives what `Quat::from_mat3` does; for a mirrored matrix
+/// (negative determinant) the two pick different branches, and only LL's
+/// keeps a ground animesh with a mirrored bind shape upright and facing
+/// forward, as the Legacy Viewer shows it.
+fn legacy_quaternion(m: &glam::Mat3) -> Quat {
+    let a = |i: usize, j: usize| m.col(i)[j];
+    let trace = a(0, 0) + a(1, 1) + a(2, 2);
+    if trace > 0.0 {
+        let s = (trace + 1.0).sqrt();
+        let w = s / 2.0;
+        let s = 0.5 / s;
+        return Quat::from_xyzw((a(1, 2) - a(2, 1)) * s, (a(2, 0) - a(0, 2)) * s, (a(0, 1) - a(1, 0)) * s, w);
+    }
+    // the diagonal is negative: start from its largest element
+    let mut i = 0;
+    if a(1, 1) > a(0, 0) {
+        i = 1;
+    }
+    if a(2, 2) > a(i, i) {
+        i = 2;
+    }
+    let j = [1, 2, 0][i];
+    let k = [1, 2, 0][j];
+    let mut s = ((a(i, i) - (a(j, j) + a(k, k))) + 1.0).sqrt();
+    let mut q = [0.0f32; 4];
+    q[i] = s * 0.5;
+    if s != 0.0 {
+        s = 0.5 / s;
+    }
+    q[3] = (a(j, k) - a(k, j)) * s;
+    q[j] = (a(i, j) + a(j, i)) * s;
+    q[k] = (a(i, k) + a(k, i)) * s;
+    Quat::from_xyzw(q[0], q[1], q[2], q[3])
 }
 
 /// Skeleton space (feet at z = 0) to world for a skeleton whose root, the
@@ -1041,6 +1078,32 @@ mod tests {
         );
         let flat = Mat4::from_cols(glam::Vec4::X, glam::Vec4::Y, glam::Vec4::ZERO, glam::Vec4::W);
         assert!(unscaled_bind_rotation(flat).is_some_and(|q| q.is_normalized()));
+        // A bind shape mirrored on one axis (negative scale at export): the
+        // Legacy Viewer keeps the animesh upright and facing forward, where
+        // Quat::from_mat3 turned it half a turn about Z (X mirror) or X (Z mirror).
+        for mirror in [Vec3::new(-1.0, 1.0, 1.0), Vec3::new(1.0, 1.0, -1.0), Vec3::new(1.0, -1.0, 1.0)] {
+            let q = unscaled_bind_rotation(Mat4::from_scale(mirror)).expect("a mirror");
+            assert!(
+                q.abs_diff_eq(Quat::IDENTITY, 1e-6) || q.abs_diff_eq(-Quat::IDENTITY, 1e-6),
+                "{mirror}: {q:?}"
+            );
+        }
+        // Proper rotations: the port agrees with glam on every branch
+        // (positive trace, and each axis being the largest of a negative one).
+        for turn in [
+            turn,
+            Quat::from_rotation_x(3.0),
+            Quat::from_rotation_y(3.0),
+            Quat::from_rotation_z(3.0),
+            Quat::from_euler(glam::EulerRot::XYZ, 2.9, -2.8, 1.7),
+        ] {
+            let m = glam::Mat3::from_quat(turn);
+            let (ours, glam) = (legacy_quaternion(&m).normalize(), Quat::from_mat3(&m));
+            assert!(
+                ours.abs_diff_eq(glam, 1e-5) || ours.abs_diff_eq(-glam, 1e-5),
+                "{turn:?}: {ours:?} vs {glam:?}"
+            );
+        }
     }
 
     #[test]
