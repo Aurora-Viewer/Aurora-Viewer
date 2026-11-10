@@ -349,6 +349,7 @@ impl Editor {
     /// A selectable joint row; true when clicked.
     fn joint_row(&self, ui: &mut egui::Ui, p: &Palette, label: &str, selected: bool, edited: bool, tip: &str) -> bool {
         let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_H), Sense::click());
+        widgets::reveal_search_selection(ui, &response, selected);
         let hovered = response.hovered();
         if selected || hovered {
             let face = if selected { p.violet } else { p.raised.gamma_multiply(0.5) };
