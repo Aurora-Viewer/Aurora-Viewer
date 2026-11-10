@@ -268,6 +268,10 @@ impl Editor {
     pub(super) fn bone_list(&mut self, ui: &mut egui::Ui, p: &Palette, rig: &Rig, frame: &Frame) {
         self.mirrors.initialize(rig);
         let filter = self.poser.filter.to_lowercase();
+        if self.poser.group == OTHER_GROUP && self.poser.other_used.is_empty() {
+            ui.label(egui::RichText::new(aurora_i18n::text("poser-other-none")).size(12.0).color(p.muted));
+            return;
+        }
         if self.poser.group == 0 {
             caption(ui, p, aurora_i18n::text("poser-whole-avatar"));
             let label = aurora_i18n::text("poser-avatar-position");
@@ -289,7 +293,8 @@ impl Editor {
         }
         let mut rows = BTreeMap::<(usize, usize, String), [Option<usize>; 2]>::new();
         for (bone, name) in rig.canonical_names.iter().enumerate() {
-            if group(name) != self.poser.group {
+            // the open tab's joints; of the Other bones, the used ones
+            if !self.poser_bone_visible(name) {
                 continue;
             }
             let (base, side) = stem(name);

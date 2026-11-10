@@ -1,0 +1,231 @@
+//! What the pointer offers in the world besides the joints and the gizmo,
+//! in both poser windows (Aurora's own: the Legacy Viewer's poser changes
+//! joint group and subject from its window only):
+//! - over a part of the subject that another joint group governs (a hand
+//!   while posing the Body), that part is tinted in the accent with "Ctrl +
+//!   click: Hands" by the cursor; Ctrl + click selects its nearest joint,
+//!   which opens its group;
+//! - over another avatar posed, or who accepted, their skeleton shows
+//!   faintly with "Click to pose …"; a click poses them
+//!   (`overlay::click_beside`).
+//!
+//! Physics is never offered: its volumes lie over the body. Of the Other
+//! bones, only the wings and the tail are, each its own part, and only when
+//! a rigged mesh of the subject uses them (`Scene::rigged_joints`): the
+//! hind limbs, the groin and the skull lie over the body.
+use super::*;
+
+/// What the pointer is over this frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Hint {
+    None,
+    /// A part another group governs: its nearest joint.
+    Group(usize),
+    /// Another avatar a click poses.
+    Avatar(Uuid),
+}
+
+/// How much nearer another group's joint must be than the current group's
+/// nearest for its part to be offered: the hind limbs and the folded wings
+/// lie near the legs and the back, and must not take them over.
+const NEARER: f32 = 0.6;
+/// The physics group, never offered.
+const PHYSICS: usize = 4;
+/// The Other group, and the parts its wings and tail make.
+const OTHER: usize = 3;
+pub(super) const WINGS: usize = 10;
+pub(super) const TAIL: usize = 11;
+/// The rest of the Other bones, never offered.
+const OTHER_REST: usize = 12;
+
+/// The part a joint belongs to: its group, the Other bones split into the
+/// wings, the tail and the rest.
+pub(super) fn part_key(name: &str) -> usize {
+    match group(name) {
+        OTHER if name.contains("Wing") => WINGS,
+        OTHER if name.contains("Tail") => TAIL,
+        OTHER => OTHER_REST,
+        g => g,
+    }
+}
+
+/// Whether a joint's part may be offered: not physics nor the rest of the
+/// Other bones, and the wings and the tail only when a mesh uses them.
+pub(super) fn offerable(key: usize, rigged: bool) -> bool {
+    match key {
+        PHYSICS | OTHER_REST => false,
+        WINGS | TAIL => rigged,
+        _ => true,
+    }
+}
+
+/// The joint whose part to offer: the nearest joint to the pointer among
+/// the current group's and the offerable ones, when it is not the current
+/// group's and is clearly nearer than the current group's nearest.
+/// `joints` are (joint, where on screen); `groups` and `offer` say each
+/// joint's group and whether it may be offered.
+pub(super) fn offered_joint(
+    joints: &[(usize, egui::Pos2)],
+    groups: &[usize],
+    offer: &[bool],
+    current: usize,
+    pointer: egui::Pos2,
+) -> Option<usize> {
+    let distance = |at: egui::Pos2| at.distance(pointer);
+    let nearest = joints
+        .iter()
+        .filter(|(j, _)| groups[*j] == current || offer[*j])
+        .min_by(|a, b| distance(a.1).total_cmp(&distance(b.1)))?;
+    if groups[nearest.0] == current {
+        return None;
+    }
+    let own = joints
+        .iter()
+        .filter(|(j, _)| groups[*j] == current)
+        .map(|(_, at)| distance(*at))
+        .fold(f32::INFINITY, f32::min);
+    (distance(nearest.1) < own * NEARER).then_some(nearest.0)
+}
+
+/// The joints of `start`'s part (`keys`, as `part_key`) that hang from the
+/// same joint outside it: one hand's fingers (each from the wrist), the
+/// face, the wings. Joined links alone would give a single finger.
+pub(super) fn part(parent: &[Option<usize>], keys: &[usize], start: usize) -> Vec<usize> {
+    let key = keys[start];
+    // the body is one part: the Bento spine joints between the pelvis, the
+    // torso and the chest are Other's, and would cut it in three
+    if key == 0 {
+        return (0..parent.len()).filter(|j| keys[*j] == 0).collect();
+    }
+    // the first joint up the skeleton outside the part, or the part's top
+    let entry = |mut joint: usize| {
+        while let Some(up) = parent[joint] {
+            if keys[up] != key {
+                return Some(up);
+            }
+            joint = up;
+        }
+        None
+    };
+    let from = entry(start);
+    (0..parent.len()).filter(|j| keys[*j] == key && entry(*j) == from).collect()
+}
+
+/// The part's name for the hint: its group's tab, or Wings / Tail.
+fn part_label(key: usize) -> &'static str {
+    match key {
+        WINGS => aurora_i18n::text("poser-part-wings"),
+        TAIL => aurora_i18n::text("poser-part-tail"),
+        g => aurora_i18n::text(["poser-body", "poser-face", "poser-hands", "poser-misc", "poser-physics"][g.min(4)]),
+    }
+}
+
+impl Editor {
+    /// Find, paint and announce what the pointer is over (`Hint`). Nothing
+    /// while the markers are turned off, over a window, on a joint, shaft or
+    /// gizmo, or during a drag.
+    pub(super) fn world_hint(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        world: &World,
+        proj: &Projector,
+        frame: &Frame,
+        markers_on: bool,
+    ) -> Hint {
+        let Some(pointer) = ctx.input(|i| i.pointer.hover_pos()) else {
+            return Hint::None;
+        };
+        let over_ui = ctx.layer_id_at(pointer).is_some_and(|l| l.order > egui::Order::Background);
+        if !markers_on
+            || !(self.poser.part_hints || self.poser.avatar_hints)
+            || over_ui
+            || self.poser.pointer_owned
+            || self.drag.is_some()
+            || self.gizmo.dragging()
+            || self.poser.scale_gizmo.dragging()
+            || ctx.input(|i| i.pointer.any_down() || i.modifiers.alt)
+        {
+            return Hint::None;
+        }
+        let rig = &world.avatar_lib.rig;
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::unique("poser-world-hints")));
+        let tip = |text: String| {
+            egui::Tooltip::always_open(
+                ctx.clone(),
+                egui::LayerId::background(),
+                egui::Id::unique("poser-world-hint-tip"),
+                egui::PopupAnchor::Position(pointer + egui::vec2(16.0, 14.0)),
+            )
+            .show(|ui| {
+                ui.label(text);
+            });
+        };
+        // a part of the subject another group governs
+        let groups: Vec<usize> = rig.canonical_names.iter().map(|n| group(n)).collect();
+        let keys: Vec<usize> = rig.canonical_names.iter().map(|n| part_key(n)).collect();
+        let offer: Vec<bool> = (0..rig.len()).map(|j| offerable(keys[j], self.poser.rigged.contains(&j))).collect();
+        let joints: Vec<(usize, egui::Pos2)> = (0..rig.len())
+            .filter_map(|j| proj.project(frame.joints[j].w_axis.truncate()).map(|(at, _)| (j, at)))
+            .collect();
+        if let Some(joint) = offered_joint(&joints, &groups, &offer, self.poser.group, pointer).filter(|_| self.poser.part_hints) {
+            let members = part(&rig.parent, &keys, joint);
+            let world_at: Vec<glam::Vec3> = frame.joints.iter().map(|m| m.w_axis.truncate()).collect();
+            let capsules = silhouette::capsules(
+                &rig.parent,
+                &rig.canonical_names,
+                &world_at,
+                &members,
+                silhouette::links_of(keys[joint]),
+                |at| proj.project(at).map(|(p, _)| p),
+            );
+            if silhouette::depth(&capsules, pointer) > 0.0 {
+                let ctrl = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
+                // the part's own shape, see-through in the accent; brighter
+                // while Ctrl is held
+                let fill = p.violet.gamma_multiply(if ctrl { 0.32 } else { 0.2 });
+                let shape = silhouette::trace(&capsules);
+                silhouette::paint(&painter, &shape, fill, Stroke::new(1.5, p.violet_light.gamma_multiply(0.7)));
+                if ctrl {
+                    for at in joints.iter().filter(|(j, _)| members.contains(j)).map(|(_, at)| at) {
+                        painter.circle_filled(*at, 2.5, p.violet_light);
+                    }
+                }
+                tip(aurora_i18n::tr!("poser-ctrl-click-group", group = part_label(keys[joint])).to_string());
+                return Hint::Group(joint);
+            }
+        }
+        // another avatar to pose
+        if !self.poser.avatar_hints {
+            return Hint::None;
+        }
+        let others: Vec<(Uuid, egui::Rect, f32, Frame)> = self
+            .poseable_others(world)
+            .into_iter()
+            .filter_map(|id| Frame::subject(world, id).map(|f| (id, f)))
+            .filter_map(|(id, f)| {
+                let (points, depth): (Vec<egui::Pos2>, Vec<f32>) =
+                    f.joints.iter().filter_map(|j| proj.project(j.w_axis.truncate())).unzip();
+                let near = depth.iter().copied().fold(f32::INFINITY, f32::min);
+                compact::body_area(points).map(|area| (id, area, near, f))
+            })
+            .collect();
+        let areas: Vec<(Uuid, egui::Rect, f32)> = others.iter().map(|(id, area, near, _)| (*id, *area, *near)).collect();
+        let Some(id) = compact::clicked_subject(&areas, pointer) else {
+            return Hint::None;
+        };
+        if let Some((_, _, _, other)) = others.iter().find(|o| o.0 == id) {
+            // their Body skeleton, faint, whatever group is open for the
+            // subject: what a click would pose (they open on the pelvis)
+            let open = std::mem::replace(&mut self.poser.group, 0);
+            let segments = self.skeleton_segments(world, proj, other);
+            self.poser.group = open;
+            for segment in segments {
+                painter.line_segment([segment.a.0, segment.b.0], Stroke::new(2.0, p.teal.gamma_multiply(0.6)));
+            }
+        }
+        ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+        tip(aurora_i18n::tr!("poser-click-to-pose", name = subjects::subject_short_name(world, id)).to_string());
+        Hint::Avatar(id)
+    }
+}

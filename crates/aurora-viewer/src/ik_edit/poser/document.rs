@@ -3,8 +3,9 @@ use super::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum LoadMode {
+    #[default]
     All,
     Rotations,
     Selective,

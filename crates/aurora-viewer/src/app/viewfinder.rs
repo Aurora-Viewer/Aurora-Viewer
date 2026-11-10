@@ -1102,7 +1102,8 @@ impl App {
                 Out::Preset(o) => self.vf_preset(o, ctx.pixels_per_point()),
                 Out::Poser => {
                     if self.ik_editor.toggle_poser() {
-                        crate::ui::widgets::open_floater(ctx, "poser", &mut self.ik_editor.open);
+                        let window = self.ik_editor.poser_window(&self.settings.poser);
+                        crate::ui::widgets::open_floater(ctx, window, &mut self.ik_editor.open);
                     }
                 }
                 Out::Reel(a) => self.photo_reel_action(a, renderer),

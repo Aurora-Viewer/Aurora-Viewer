@@ -1298,6 +1298,9 @@ updated when ordinary avatars would use impostors. Eligibility is checked
 every frame. Closing releases poses by default, with an explicit keep option.
 `poser/{data,controls,bones,ui}.rs` implement history, paired joint groups,
 presets, symmetry, numeric controls, trackball, library and settings.
+`poser/compact.rs` is the default compact window (the same state as the full
+one in `ui.rs`) and the pure rules of the markers on hover and of a click on
+another posed avatar.
 `poser/trackball.rs` projects joint axes and rotates in the rendered camera
 frame, including camera roll. `poser/scale_gizmo.rs` edits local scale channels
 with axis/uniform handles and one undo checkpoint per drag. Poser visibility

@@ -26,6 +26,47 @@ Consent); Privacy › "Who can ask to pose my avatar" is its last entry. Other s
 Several subjects can retain independent poses at once. Eligibility is
 checked every frame; losing it removes the corresponding local pose.
 
+### Compact window
+
+The poser opens in a small window by default (an Aurora addition: the
+Legacy Viewer's poser has one window). The title bar's ⤢ button switches
+to the full window described above, and ⤡ back; the choice is remembered,
+and the other window opens with the same top right corner. Both windows
+share the subject, the pose, the undo history and the settings.
+
+- **Head**: the subject's picture, name and state (a teal dot that breathes
+  while posing), Start / Stop. The picture opens the subject menu. Every
+  other avatar posed, or who accepted, has a small picture beside Start /
+  Stop: a click poses that one.
+- **Groups**: Body, Face, Hands, Other and Physics in one segmented strip.
+- **Transform and side**: two three-way toggles, Rotation / Position /
+  Scale and Left / Right / Mirror.
+- **Selected joint**: its name, what the transform does, and its reset.
+- **Last row**: the markers (Always or On hover), depth of field, then Save
+  (a small form: name, BVH, pelvis, priority), Load (the library as a list,
+  with the load mode in a submenu and Open file) and Upload.
+
+Posing in the compact window goes through the markers and gizmos in the
+world; the joint list, the sliders and the trackball are in the full window.
+
+The subject menu (both windows) uses the People list's rows: the picture,
+the name over the account name, and the distance at the right in Near
+you's colours. A nearby avatar's square button reads Ask, Asked (a click
+cancels), Accepted (a click poses them), Refused or No answer.
+
+**Markers on hover** (Settings › Handling, and the compact window's eye /
+hand button): the joints and shafts fade in while the pointer is over the
+avatar being posed, and out when it leaves; the selected joint's gizmo
+stays, and a drag keeps them.
+
+**Clicks in the world**, in both windows (Aurora's own: the Legacy Viewer
+changes joint from its list only): a click that no joint, shaft or gizmo
+takes unselects the joint, and the pelvis is not picked again by itself;
+a click on another avatar posed, or who accepted, poses that one at once.
+
+Reset on the selected joint, with Mirror chosen, also resets its
+counterpart, as the Legacy Viewer's mirror does (`FSPoserAnimator::resetJoint`).
+
 The pose captures the displayed shaped skeleton and overrides its final
 animation palette. Body, Face, Hands, Other bones and Physics expose the
 actual Bento joints and collision volumes. Whole-avatar movement is the
