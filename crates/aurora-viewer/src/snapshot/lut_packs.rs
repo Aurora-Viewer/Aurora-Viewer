@@ -5,8 +5,9 @@
 //! its origin and credit are in `assets/photo-luts/README.md` and NOTICE.md.
 //!
 //! A look of a pack is saved as `pack:<pack id>/<table name>`. A table is
-//! turned into a `Lut` the first time it is shown (a few tens of thousands
-//! of colours, well under a millisecond) and kept.
+//! stored compressed (8-bit colours, the precision of the texture the look
+//! samples) and turned into a `Lut` the first time it is shown (a few tens
+//! of thousands of colours, well under a millisecond) and kept.
 
 use aurora_render::looks::Lut;
 use std::collections::HashMap;
@@ -22,7 +23,7 @@ pub struct Pack {
     pub tables: Vec<Table>,
 }
 
-/// A table of a pack: its name and where its colours are.
+/// A table of a pack: its name and where its compressed colours are.
 pub struct Table {
     pub name: String,
     size: u32,
@@ -30,13 +31,20 @@ pub struct Table {
 }
 
 /// The packs' files, by id and creator.
-const FILES: &[(&str, &str, &[u8])] = &[(
-    "czar-fenris",
-    "Czar Fenris",
-    include_bytes!("../../../../assets/photo-luts/czar-fenris.bin"),
-)];
+const FILES: &[(&str, &str, &[u8])] = &[
+    (
+        "czar-fenris",
+        "Czar Fenris",
+        include_bytes!("../../../../assets/photo-luts/czar-fenris.bin"),
+    ),
+    (
+        "nanner-pudding",
+        "Nanner Pudding",
+        include_bytes!("../../../../assets/photo-luts/nanner-pudding.bin"),
+    ),
+];
 
-const MAGIC: &[u8] = b"AURLUTS1";
+const MAGIC: &[u8] = b"AURLUTS2";
 
 /// The packs, read once.
 pub fn packs() -> &'static [Pack] {
@@ -72,7 +80,8 @@ fn read(bytes: &'static [u8]) -> Option<Vec<Table>> {
         if size < 2 {
             return None;
         }
-        let colours = take((size * size * size) as usize * 6)?;
+        let packed = u32::from_le_bytes(take(4)?.try_into().ok()?);
+        let colours = take(packed as usize)?;
         tables.push(Table { name, size, colours });
     }
     rest.is_empty().then_some(tables)
@@ -99,16 +108,41 @@ pub fn table(id: &str) -> Option<Arc<Lut>> {
         return Some(lut.clone());
     }
     let (_, table) = find(id)?;
-    let data = table
-        .colours
-        .as_chunks::<6>()
-        .0
-        .iter()
-        .map(|c| [0, 2, 4].map(|k| u16::from_le_bytes([c[k], c[k + 1]]) as f32 / 65535.0))
-        .collect();
+    let Some(data) = colours(table) else {
+        log::warn!("photo LUT {id}: colours not read");
+        return None;
+    };
     let lut = Arc::new(Lut { size: table.size, data });
     made.lock().ok()?.insert(id.to_owned(), lut.clone());
     Some(lut)
+}
+
+/// A table's colours, inflated and undone from their differences to the
+/// previous colour's; None when they are cut or not as many as its size.
+fn colours(table: &Table) -> Option<Vec<[f32; 3]>> {
+    use std::io::Read;
+    let count = (table.size * table.size * table.size) as usize;
+    let mut bytes = Vec::with_capacity(count * 3);
+    // one byte more than needed: a longer table is refused, not cut
+    flate2::read::ZlibDecoder::new(table.colours)
+        .take(count as u64 * 3 + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() != count * 3 {
+        return None;
+    }
+    let mut prev = [0u8; 3];
+    Some(
+        bytes
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|d| {
+                prev = [0, 1, 2].map(|k| prev[k].wrapping_add(d[k]));
+                prev.map(|v| v as f32 / 255.0)
+            })
+            .collect(),
+    )
 }
 
 #[cfg(test)]
@@ -122,6 +156,9 @@ mod tests {
         let czar = packs.iter().find(|p| p.id == "czar-fenris").expect("Czar Fenris' pack");
         assert_eq!(czar.creator, "Czar Fenris");
         assert_eq!(czar.tables.len(), 20);
+        let nanner = packs.iter().find(|p| p.id == "nanner-pudding").expect("Nanner Pudding's pack");
+        assert_eq!(nanner.creator, "Nanner Pudding");
+        assert_eq!(nanner.tables.len(), 45);
         for pack in packs {
             assert!(!pack.tables.is_empty());
             for t in &pack.tables {
@@ -135,18 +172,55 @@ mod tests {
         // a table of the pack named in plain words
         assert!(find("czar-fenris/Film look").is_some());
         assert!(find("czar-fenris/Nothing").is_none());
+        assert!(find("nanner-pudding/Flip Phone").is_some());
+        assert_eq!(find("nanner-pudding/Tis Autumn").map(|(_, t)| t.size), Some(65));
         assert!(find("nobody/Film look").is_none());
+    }
+
+    /// A pack of one table "A" of side 2 whose colours are `raw` (already
+    /// as differences), compressed as the script does.
+    fn pack_of(raw: &[u8]) -> &'static [u8] {
+        use std::io::Write;
+        let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+        z.write_all(raw).expect("in memory");
+        let colours = z.finish().expect("in memory");
+        let mut out = b"AURLUTS2\x01\x00\x01A\x02".to_vec();
+        out.extend((colours.len() as u32).to_le_bytes());
+        out.extend(colours);
+        out.leak()
+    }
+
+    #[test]
+    fn a_table_is_undone_from_its_differences() {
+        // black, then each channel up by 255 / 85 / 1, then wrapping back
+        let mut raw = vec![0, 0, 0, 255, 85, 1, 1, 171, 254];
+        raw.resize(24, 0);
+        let tables = read(pack_of(&raw)).expect("reads");
+        let data = colours(&tables[0]).expect("colours");
+        assert_eq!(data.len(), 8);
+        assert_eq!(data[0], [0.0; 3]);
+        assert_eq!(data[1], [1.0, 85.0 / 255.0, 1.0 / 255.0]);
+        assert_eq!(data[2], [0.0, 0.0, 1.0]);
+        assert_eq!(data[7], [0.0, 0.0, 1.0]);
     }
 
     #[test]
     fn a_cut_or_foreign_file_is_refused() {
-        static GOOD: &[u8] = b"AURLUTS1\x01\x00\x01A\x02\
-            \0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\
-            \0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
-        assert_eq!(read(GOOD).map(|t| t.len()), Some(1));
-        assert!(read(&GOOD[..GOOD.len() - 1]).is_none());
-        assert!(read(b"AURLUTS2\x00\x00").is_none());
-        static LONGER: &[u8] = b"AURLUTS1\x00\x00\x00";
+        let good = pack_of(&[0; 24]);
+        assert_eq!(read(good).map(|t| t.len()), Some(1));
+        assert!(read(&good[..good.len() - 1]).is_none());
+        assert!(read(b"AURLUTS1\x00\x00").is_none());
+        static LONGER: &[u8] = b"AURLUTS2\x00\x00\x00";
         assert!(read(LONGER).is_none());
+        // colours fewer or more than the table's side asks for
+        for raw in [&[0u8; 23][..], &[0u8; 25][..]] {
+            let tables = read(pack_of(raw)).expect("the file itself reads");
+            assert!(colours(&tables[0]).is_none());
+        }
+        // colours that are not compressed
+        let mut plain = b"AURLUTS2\x01\x00\x01A\x02\x18\x00\x00\x00".to_vec();
+        plain.extend([7u8; 24]);
+        let tables = read(plain.leak()).expect("the file itself reads");
+        assert!(colours(&tables[0]).is_none());
     }
 }
