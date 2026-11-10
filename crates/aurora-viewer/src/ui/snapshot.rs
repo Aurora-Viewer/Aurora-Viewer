@@ -696,16 +696,20 @@ impl SnapshotUi {
             Destination::Profile => 2,
             Destination::Email => 3,
         };
-        if widgets::segmented(
+        // (a panorama goes to the disk or the inventory: the profile and the
+        // postcard are dimmed, with their reason)
+        let off = self.pano.then(|| aurora_i18n::tr!("photo-not-in-360"));
+        if widgets::segmented_with_disabled(
             ui,
             p,
             &mut dest,
             &[
                 (aurora_i18n::tr!("photo-destination-disk"), true),
                 (aurora_i18n::tr!("photo-destination-inventory"), true),
-                (aurora_i18n::tr!("photo-destination-profile"), !self.pano),
-                (aurora_i18n::tr!("photo-destination-email"), !self.pano),
+                (aurora_i18n::tr!("photo-destination-profile"), true),
+                (aurora_i18n::tr!("photo-destination-email"), true),
             ],
+            &[None, None, off, off],
         ) {
             self.destination = match dest {
                 1 => Destination::Inventory,

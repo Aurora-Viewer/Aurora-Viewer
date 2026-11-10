@@ -1919,6 +1919,19 @@ pub fn segmented_size(ui: &egui::Ui, options: &[(&str, bool)]) -> Vec2 {
 /// look), in `raised` otherwise (a legacy look). Returns true when the
 /// selection changed.
 pub fn segmented(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: &[(&str, bool)]) -> bool {
+    segmented_with_disabled(ui, p, selected, options, &[])
+}
+
+/// `segmented` with some options out of reach: `disabled[i]` is the tooltip
+/// that says why option `i` cannot be chosen (None, or past the end of the
+/// slice: it can). A disabled option is drawn dimmed, takes no hover or click.
+pub fn segmented_with_disabled(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    selected: &mut usize,
+    options: &[(&str, bool)],
+    disabled: &[Option<&str>],
+) -> bool {
     let galleys = segment_galleys(ui, options);
     let widths: Vec<f32> = galleys.iter().map(|g| g.size().x + SEGMENT_PAD_X).collect();
     let (track, _) = ui.allocate_exact_size(segmented_size(ui, options), Sense::hover());
@@ -1932,9 +1945,15 @@ pub fn segmented(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: 
             Vec2::new(widths[i], track.height() - SEGMENT_PAD * 2.0),
         );
         x += widths[i];
-        let resp = ui.interact(rect, ui.scope_id().with(("segmented", i, *label)), Sense::click());
+        let off = disabled.get(i).copied().flatten();
+        let resp = ui.interact(
+            rect,
+            ui.scope_id().with(("segmented", i, *label)),
+            if off.is_some() { Sense::hover() } else { Sense::click() },
+        );
         let sel = *selected == i;
         let (face, text) = match (sel, *accent) {
+            _ if off.is_some() => (None, p.muted_dim),
             (true, true) => (Some(p.violet), p.on_accent),
             (true, false) => (Some(p.raised), p.ink),
             (false, _) if resp.hovered() => (Some(p.raised.gamma_multiply(0.5)), p.ink),
@@ -1945,8 +1964,10 @@ pub fn segmented(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: 
         }
         let at = letters_in_middle(ui.painter(), &galley, rect);
         ui.painter().galley(at, galley, text);
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, sel, *label));
-        if resp.clicked() && !sel {
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, off.is_none(), sel, *label));
+        if let Some(tip) = off {
+            resp.on_hover_text(tip);
+        } else if resp.clicked() && !sel {
             *selected = i;
             changed = true;
         }
@@ -3220,5 +3241,53 @@ mod maturity_tests {
             let (got, _, _) = maturity_style(&p, super::super::bars::maturity_name(r)).unwrap();
             assert_eq!(got, letter);
         }
+    }
+}
+
+#[cfg(test)]
+mod segmented_disabled_tests {
+    use super::*;
+    use crate::ui::widgets::elide_tests::Frames;
+
+    /// A disabled option takes no click, whatever else is clicked changes
+    /// the choice.
+    #[test]
+    fn a_disabled_segment_cannot_be_chosen() {
+        let p = crate::theme::Theme::default().palette();
+        let mut chosen = Vec::new();
+        for (disabled, clicks_work) in [(Some("why"), false), (None, true)] {
+            let mut frames = Frames::new();
+            let mut selected = 0usize;
+            let draw = |frames: &mut Frames, events: Vec<egui::Event>, selected: &mut usize| {
+                frames.run(events, |ui| {
+                    segmented_with_disabled(
+                        ui,
+                        &p,
+                        selected,
+                        &[("Aaaa", true), ("Bbbb", true), ("Cccc", true)],
+                        &[None, disabled],
+                    );
+                })
+            };
+            draw(&mut frames, Vec::new(), &mut selected);
+            // the second segment's middle: after the first, in the track
+            let texts = draw(&mut frames, Vec::new(), &mut selected);
+            let b = texts.iter().find(|t| t.source == "Bbbb").expect("the label is drawn").rect.center();
+            draw(&mut frames, vec![egui::Event::PointerMoved(b)], &mut selected);
+            for pressed in [true, false] {
+                draw(
+                    &mut frames,
+                    vec![egui::Event::PointerButton {
+                        pos: b,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    }],
+                    &mut selected,
+                );
+            }
+            chosen.push((selected, clicks_work));
+        }
+        assert_eq!(chosen, vec![(0, false), (1, true)]);
     }
 }
