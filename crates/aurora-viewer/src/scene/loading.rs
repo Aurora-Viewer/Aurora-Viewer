@@ -431,6 +431,20 @@ impl Scene {
         self.avatar_load_parts(world, idx, None).2.is_empty()
     }
 
+    /// Our own avatar fully shown in its new look: not loading, its bakes
+    /// downloaded and shown (none held behind the last good one), what it
+    /// wears built; what the rez effect waits for after an outfit change.
+    /// The outfit's batch portraits wait for it before each photo.
+    pub fn own_look_complete(&self, world: &World) -> bool {
+        let Some(idx) = world.objects.index_of_uuid(&world.agent_id) else {
+            return false;
+        };
+        !self.loading.indices.contains(&idx)
+            && self.gpu.get(idx).is_some_and(|g| !g.faces.is_empty())
+            && self.avatar_complete(world, idx)
+            && !self.holds_bake(&world.agent_id)
+    }
+
     /// Diagnostic: the first missing parts with the state of what they wait
     /// for (asset ids and fetch states, never a URL).
     fn describe_missing(&self, world: &World, missing: &[Missing]) -> String {

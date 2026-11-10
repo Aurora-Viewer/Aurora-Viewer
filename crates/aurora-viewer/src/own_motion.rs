@@ -89,6 +89,11 @@ impl Intent {
     /// or a crouch on the spot (the simulator alone knows where a jump
     /// lands).
     pub fn from_flags(flags: u32, yaw: f32, running: bool) -> Option<Intent> {
+        // STOP brakes the avatar whatever the other keys ask: only the
+        // simulator knows how slowly it still moves, so nothing is led
+        if flags & control::STOP != 0 {
+            return None;
+        }
         let forward = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
         let left = Vec3::new(-yaw.sin(), yaw.cos(), 0.0);
         let mut direction = Vec3::ZERO;
@@ -263,6 +268,13 @@ impl Calibration {
     /// serves both ways.
     fn watch_stop(&mut self, mode: Mode) {
         self.stop_watch = Some((mode, None));
+    }
+
+    /// Stop moving held: the simulator brakes harder than a release, and
+    /// the ramp learned from a stop also paces the starts. Time neither.
+    fn forget_watches(&mut self) {
+        self.ramp_watch = None;
+        self.stop_watch = None;
     }
 
     /// A report of the simulator: `held` seconds after the keys last
@@ -500,6 +512,12 @@ fn horizontal(v: Vec3) -> Vec3 {
 impl Prediction {
     pub fn lead(&self) -> Vec3 {
         self.lead
+    }
+
+    /// A frame with Stop moving held, after `step`: the lead drains like a
+    /// release (no intent), but the simulator's braked stop teaches nothing.
+    pub fn brake(&mut self) {
+        self.calibration.forget_watches();
     }
 
     /// Back to the server's motion alone, keeping what was learned: a
@@ -1196,6 +1214,54 @@ mod tests {
         c.observe(None, 0.0, 0.2, Vec3::ZERO, at(now, 2.3), at(now, 2.3));
         let ramp = 0.15 + LEARN_RATE * (0.1 - 0.15);
         assert!((c.ramp(Mode::Run) - ramp).abs() < 1e-4, "{}", c.ramp(Mode::Run));
+    }
+
+    /// Stop moving held with the walk: nothing is led, whatever the keys.
+    #[test]
+    fn stop_moving_leads_nothing() {
+        let walk = control::AT_POS | control::FAST_AT;
+        assert!(Intent::from_flags(walk, 0.0, false).is_some());
+        assert_eq!(Intent::from_flags(walk | control::STOP, 0.0, false), None);
+        assert_eq!(Intent::from_flags(control::FLY | control::UP_POS | control::STOP, 0.0, false), None);
+    }
+
+    /// A walk braked by Stop moving: the simulator's quick braked stop is
+    /// not learned as the walk's ramp (a plain release would be).
+    #[test]
+    fn a_braked_stop_is_not_learned() {
+        let mut p = Prediction::default();
+        let ramp = p.calibration.ramp(Mode::Walk);
+        let now = Instant::now();
+        let dt = 0.01;
+        let mut t = 0.0;
+        for _ in 0..100 {
+            t += dt;
+            p.step(Step {
+                intent: walk(Vec3::X),
+                server_velocity: Vec3::X * 3.2,
+                rtt: 0.2,
+                flying: false,
+                dt,
+                now: at(now, t),
+            });
+        }
+        assert!(p.lead().x > 0.1);
+        // Space held: no intent, and the simulator stops in a report
+        for n in 0..100 {
+            t += dt;
+            p.step(Step {
+                intent: None,
+                server_velocity: if n < 20 { Vec3::X * 1.5 } else { Vec3::ZERO },
+                rtt: 0.2,
+                flying: false,
+                dt,
+                now: at(now, t),
+            });
+            p.brake();
+            let v = if n < 20 { Vec3::X * 1.5 } else { Vec3::ZERO };
+            p.calibration.observe(None, 0.0, 0.2, v, at(now, t), at(now, t));
+        }
+        assert_eq!(p.calibration.ramp(Mode::Walk), ramp, "the braked stop was learned");
     }
 
     #[test]
