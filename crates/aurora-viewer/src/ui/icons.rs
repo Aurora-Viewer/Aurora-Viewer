@@ -380,6 +380,8 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "player-eject",
     "player-pause",
     "player-play",
+    "player-skip-back",
+    "player-skip-forward",
     "player-stop",
     "playlist",
     "point",

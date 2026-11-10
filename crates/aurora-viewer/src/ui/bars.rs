@@ -84,6 +84,10 @@ pub enum BarAction {
     ToggleQuickjump,
     /// Advanced › Quiet snapshots (PlayModeUISndSnapshot).
     ToggleQuietSnapshots,
+    /// Advanced › Animation Speed: global session-only keyframe rate.
+    AnimationSpeed(f32),
+    /// Advanced › Animation Speed: local-avatar slow motion.
+    ToggleSlowMotionAnimations,
     ToggleWaterWalk,
     ToggleSwimming,
     MoveLockOptions,
@@ -267,6 +271,8 @@ pub struct StatusInfo<'a> {
     /// Photos are taken without the shutter sound nor the snapshot
     /// animation (Advanced › Quiet snapshots).
     pub quiet_snapshots: bool,
+    pub animation_speed: f32,
+    pub slow_motion_animations: bool,
     /// The grid has a Marketplace (World › SL Marketplace is shown only on
     /// the Second Life grids, GridCheck "secondlife").
     pub marketplace: bool,
@@ -1300,6 +1306,35 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             if menu::check(ui, p, "camera-off", quiet, st.quiet_snapshots, true) {
                 *action = BarAction::ToggleQuietSnapshots;
             }
+            menu::submenu(
+                ui,
+                p,
+                "player-play-filled",
+                aurora_i18n::tr!("ui-bars-animation-speed"),
+                true,
+                |ui| {
+                    if menu::item(ui, p, "player-skip-forward-filled", aurora_i18n::tr!("ui-bars-animation-faster")) {
+                        *action = BarAction::AnimationSpeed(crate::scene::anim::adjusted_animation_speed(st.animation_speed, 0.1));
+                    }
+                    if menu::item(ui, p, "player-skip-back-filled", aurora_i18n::tr!("ui-bars-animation-slower")) {
+                        *action = BarAction::AnimationSpeed(crate::scene::anim::adjusted_animation_speed(st.animation_speed, -0.1));
+                    }
+                    if menu::item(ui, p, "refresh", aurora_i18n::tr!("ui-bars-animation-reset")) {
+                        *action = BarAction::AnimationSpeed(1.0);
+                    }
+                    menu::separator(ui, p);
+                    if menu::check(
+                        ui,
+                        p,
+                        "player-pause-filled",
+                        aurora_i18n::tr!("ui-bars-slow-motion-animations"),
+                        st.slow_motion_animations,
+                        true,
+                    ) {
+                        *action = BarAction::ToggleSlowMotionAnimations;
+                    }
+                },
+            );
             // Advanced › Media Streams Backup: the parcel stream list to
             // and from an XML file (Streamlist.xml_import / xml_export)
             menu::submenu(

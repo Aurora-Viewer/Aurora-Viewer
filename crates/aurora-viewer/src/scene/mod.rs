@@ -838,6 +838,10 @@ pub struct Scene {
     pub poser: HashMap<Uuid, Arc<crate::ik_edit::poser::SubjectPose>>,
     /// Follow receipt clocks instead of the Legacy Viewer's activation / pause clock.
     pub synchronize_animations: bool,
+    /// Session-only keyframe animation rate for every avatar and animesh.
+    pub animation_speed: f32,
+    /// Session-only slow motion on our avatar (the Legacy Viewer's 0.2 factor).
+    pub slow_motion_animations: bool,
     pub ground_avatar_feet: bool,
     pub ground_feet_while_moving: bool,
     pub ground_feet_max_height: f32,
@@ -1540,6 +1544,8 @@ impl Scene {
             ik_edit: ik::EditRequest::default(),
             poser: HashMap::new(),
             synchronize_animations: false,
+            animation_speed: 1.0,
+            slow_motion_animations: false,
             ground_avatar_feet: false,
             ground_feet_while_moving: false,
             ground_feet_max_height: crate::settings::DEFAULT_GROUND_FEET_HEIGHT,
@@ -5497,6 +5503,10 @@ impl Scene {
             };
             let pose_now = preview.map_or(now, |(_, _, sample)| sample);
             motions.set_preview_clock(preview.map(|(id, start, _)| (Some(id), start)));
+            motions.set_time_factor(
+                anim::effective_animation_speed(self.animation_speed, self.slow_motion_animations, owner == world.agent_id),
+                now,
+            );
             motions.set_synchronized(self.synchronize_animations);
             // The static layer freezes the displayed pose, while normal motion
             // clocks keep running so Stop restores the current animation phase.
