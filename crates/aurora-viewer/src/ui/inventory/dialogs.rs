@@ -2171,7 +2171,7 @@ mod tests {
     fn confirmation_pass(ctx: &egui::Context, inv: &Inventory, st: &mut InventoryUi, events: Vec<egui::Event>) -> Vec<InvAction> {
         let p = crate::theme::Theme::default().palette();
         let mut actions = Vec::new();
-        let _ = ctx.run_ui(
+        let _ = headless_output(ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0))),
                 events,
@@ -2190,7 +2190,7 @@ mod tests {
                     &mut actions,
                 );
             },
-        );
+        ));
         actions
     }
 
@@ -2261,15 +2261,21 @@ mod tests {
     }
 
     /// Tab reaches the buttons (`LLPanel::handleKeyHere`: a focused button
-    /// clicks itself on Return): Delete first, then Cancel.
+    /// clicks itself on Return): the ignore choice when offered, then Delete
+    /// and Cancel. Purge has no ignore choice.
     #[test]
     fn tab_moves_between_the_confirmation_buttons_and_enter_answers_the_focused_one() {
-        let mut inv = Inventory::default();
-        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
-        for (tabs, deletes) in [(1, true), (2, false)] {
+        for (purge, tabs, deletes) in [(false, 2, true), (false, 3, false), (true, 1, true), (true, 2, false)] {
+            let mut inv = Inventory::default();
+            crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+            if purge {
+                let mut item = inv.items[&Uuid::from_u128(8100)].clone();
+                item.parent = rules::system(&inv, 14).expect("demo trash");
+                inv.server_updated(Vec::new(), vec![item]);
+            }
             let ctx = egui::Context::default();
             let mut st = InventoryUi {
-                dialog: Some(EditDialog::Delete(vec![Uuid::from_u128(8100)], false)),
+                dialog: Some(EditDialog::Delete(vec![Uuid::from_u128(8100)], purge)),
                 ..Default::default()
             };
             for _ in 0..3 {
@@ -2281,7 +2287,11 @@ mod tests {
             }
             let mut actions = confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Enter)]);
             actions.extend(confirmation_pass(&ctx, &inv, &mut st, Vec::new()));
-            assert_eq!(actions.len(), usize::from(deletes), "{tabs} Tab: Enter answers the focused button");
+            assert_eq!(
+                actions.len(),
+                usize::from(deletes),
+                "purge={purge}, {tabs} Tab: Enter answers the focused button"
+            );
             assert!(st.dialog.is_none());
         }
     }
