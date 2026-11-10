@@ -888,7 +888,11 @@ impl Editor {
             // picking: joints, Ctrl + click body parts, switching avatar
             cluster(ui, p, 3, |ui| {
                 let hover = self.poser.markers && self.poser.markers_hover;
-                let (icon, tag) = if hover {
+                // turned off in the full window (its eye): say so, a click
+                // brings them back
+                let (icon, tag) = if !self.poser.markers {
+                    ("eye-off", ("poser-tip-joints-off", "poser-tip-joints-off-detail"))
+                } else if hover {
                     ("hand-click", ("poser-tip-joints-hover", "poser-tip-joints-hover-detail"))
                 } else {
                     ("eye-filled", ("poser-tip-joints-always", "poser-tip-joints-always-detail"))
@@ -1012,7 +1016,8 @@ impl Editor {
     /// resets both (FSPoserAnimator::resetJoint,
     /// indra/newview/fsposeranimator.cpp).
     pub(super) fn reset_available(&self, whole: bool) -> bool {
-        let Some(session) = self.poser.sessions.get(&self.poser.subject) else {
+        let Some(session) = self.poser.sessions.get(&self.poser.subject).filter(|s| s.enabled) else {
+            // stopped: `pose_operation` leaves the pose as it is
             return false;
         };
         let changed = |b: usize| session.edited(b) || session.pose.locks.contains_key(&b);
@@ -1047,7 +1052,8 @@ impl Editor {
                         .desired_width(244.0)
                         .hint_text(aurora_i18n::tr!("poser-name"))
                 });
-                if !field.has_focus() && self.poser.name.is_empty() {
+                // on opening: not over a field the user moved to
+                if self.poser.name.is_empty() && ui.memory(|m| m.focused().is_none()) {
                     field.request_focus();
                 }
             });

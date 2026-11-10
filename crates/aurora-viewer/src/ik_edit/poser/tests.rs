@@ -1968,3 +1968,22 @@ fn a_click_a_worn_hud_took_keeps_the_joint_and_the_next_one_on_the_ground_unsele
     click(&mut editor);
     assert_eq!(editor.selected, None, "a click on the ground still unselects");
 }
+
+#[test]
+fn the_reset_greys_out_once_posing_is_stopped() {
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let elbow = rig.names["mElbowLeft"];
+    let frame = Frame::new(&world).unwrap();
+    editor.select(elbow, &rig, &frame);
+    editor.poser.side = Side::Left;
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    session.enabled = true;
+    Arc::make_mut(&mut session.pose).rotations[elbow] = Quat::from_rotation_z(0.6) * session.base.rotations[elbow];
+    assert!(editor.reset_available(false) && editor.reset_available(true), "posing, edited: lit");
+    editor.poser.sessions.get_mut(&world.agent_id).unwrap().enabled = false;
+    assert!(
+        !editor.reset_available(false) && !editor.reset_available(true),
+        "stopped: the reset would change nothing (pose_operation leaves a stopped pose)"
+    );
+}

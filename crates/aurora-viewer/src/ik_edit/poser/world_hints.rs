@@ -220,8 +220,16 @@ impl Editor {
             .into_iter()
             .filter_map(|id| Frame::subject(world, id).map(|f| (id, f)))
             .filter_map(|(id, f)| {
-                let (points, depth): (Vec<egui::Pos2>, Vec<f32>) =
-                    f.joints.iter().filter_map(|j| proj.project(j.w_axis.truncate())).unzip();
+                // their body, not the wings, tail and hind limbs every
+                // skeleton carries at rest beside it, unseen unless a mesh
+                // uses them
+                let (points, depth): (Vec<egui::Pos2>, Vec<f32>) = f
+                    .joints
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, _)| !optional_bone(&rig.canonical_names[*j]))
+                    .filter_map(|(_, m)| proj.project(m.w_axis.truncate()))
+                    .unzip();
                 let near = depth.iter().copied().fold(f32::INFINITY, f32::min);
                 compact::body_area(points).map(|area| (id, area, near, f))
             })

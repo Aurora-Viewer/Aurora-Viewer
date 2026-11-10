@@ -143,7 +143,15 @@ impl Editor {
                 .is_some_and(|l| l.order > egui::Order::Background && l.order != egui::Order::Tooltip)
         });
         let depth = pointer.map(|at| {
-            let body: Vec<usize> = (0..rig.len()).filter(|j| group(&rig.canonical_names[*j]) != 4).collect();
+            // the body, and the wings, tail and hind limbs only when listed
+            // (a mesh uses them, or the pose moved them): unused, they rest
+            // beside it in empty space
+            let body: Vec<usize> = (0..rig.len())
+                .filter(|j| {
+                    let name = &rig.canonical_names[*j];
+                    group(name) != 4 && (!optional_bone(name) || self.poser.other_used.contains(name))
+                })
+                .collect();
             let world_at: Vec<glam::Vec3> = frame.joints.iter().map(|m| m.w_axis.truncate()).collect();
             let capsules = silhouette::capsules(
                 &rig.parent,

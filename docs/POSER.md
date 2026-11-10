@@ -46,7 +46,7 @@ share the subject, the pose, the undo history and the settings.
   Handles Show / Hide, Values Total / Change, and an X, Y and Z slider,
   the full window's.
 - **Last row**, three groups of one kind each: picking (markers Always or
-  On hover, Ctrl + click body parts, click to switch avatar), going back
+  On hover, Ctrl + click body parts, Ctrl + click avatars), going back
   (undo, redo, reset) and files (Save, Load, Upload). The reset greys out
   when it would change nothing; its tip names the joint; with Shift it
   resets the whole pose. Save is a small form: the name, BVH, pelvis,
@@ -86,8 +86,16 @@ stays, and a drag keeps them.
 
 **Clicks in the world**, in both windows (Aurora's own: the Legacy Viewer
 changes joint from its list only): a click that no joint, shaft or gizmo
-takes unselects the joint, and the pelvis is not picked again by itself;
-a click on another avatar posed, or who accepted, poses that one at once.
+takes unselects the joint, and the pelvis is not picked again by itself (a
+click a worn HUD takes leaves it selected); Ctrl + click on another avatar
+posed, or who accepted, poses that one at once (with Ctrl held, their
+skeleton shows under the pointer). A plain click on them stays the
+world's: a photo's focus, a HUD drawn over them.
+
+**The Other tab** (both windows) lists the spine, the groin and the skull
+always, and the wings, the tail and the hind limbs only when a worn rigged
+mesh uses them or the pose moved them (Aurora's own: the Legacy Viewer
+lists them all, dozens a body without wings or tail cannot move).
 
 Reset on the selected joint, with Mirror chosen, also resets its
 counterpart, as the Legacy Viewer's mirror does (`FSPoserAnimator::resetJoint`).

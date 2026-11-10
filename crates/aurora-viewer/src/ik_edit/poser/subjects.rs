@@ -74,6 +74,8 @@ impl Editor {
         if !allowed(world, self.poser.subject) {
             self.poser.subject = world.agent_id;
             self.selected = None;
+            // a click beside on them must not leave you with none
+            self.poser.unselected = false;
             self.refresh = true;
         }
         if !self.poser.sessions.contains_key(&self.poser.subject)

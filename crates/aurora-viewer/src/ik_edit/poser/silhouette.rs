@@ -291,7 +291,9 @@ pub(super) fn trace<F: Field>(shapes: &[F]) -> Shape {
         return shape;
     };
     let bounds = bounds.expand(1.0);
-    let cell = (bounds.width().max(bounds.height()) / CELLS).clamp(2.0, 8.0);
+    // at most CELLS a side however large the part is on screen (a body
+    // close up on a 4K screen), so the work per frame stays bounded
+    let cell = (bounds.width().max(bounds.height()) / CELLS).max(2.0);
     let (nx, ny) = (
         (bounds.width() / cell).ceil() as usize + 1,
         (bounds.height() / cell).ceil() as usize + 1,
