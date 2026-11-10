@@ -60,7 +60,7 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, _data: &super::RadarData, st: &mut Peopl
             crate::ui::group_profile::request_create(ui.ctx());
         }
         let w = ui.available_width();
-        widgets::search_box(ui, p, &mut st.filter, aurora_i18n::tr!("people-groups-filter"), w);
+        widgets::clearable_search_box(ui, p, &mut st.filter, aurora_i18n::tr!("people-groups-filter"), w);
     });
     ui.add_space(6.0);
     count_line(ui, c);
@@ -190,6 +190,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, g: &GroupMembership) {
     let p = c.p;
     let world = c.world;
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), RICH_H), Sense::click());
+    widgets::reveal_search_selection(ui, &resp, st.sheet == Some(g.id) && st.sheet_group);
     if !ui.is_rect_visible(rect) {
         return;
     }

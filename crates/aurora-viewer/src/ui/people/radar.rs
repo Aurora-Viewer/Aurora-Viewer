@@ -157,7 +157,7 @@ pub struct RadarSettings {
     /// The seven UISndRadar* sounds all play: a mirror of the preferences
     /// (set by the app each frame, written back when the menu changes it),
     /// not a setting of its own. An Aurora entry: the Legacy Viewer sets
-    /// them one by one in Preferences › Chat › Radar only.
+    /// them one by one in Preferences â€º Chat â€º Radar only.
     #[serde(skip)]
     pub alert_sounds: bool,
     /// RadarEnterChannelAlert / RadarLeaveChannelAlert: the arrivals and
@@ -246,7 +246,7 @@ pub struct RadarData<'a> {
 pub fn radar_name(world: &World, id: &Uuid, format: u8) -> String {
     let names = &world.social.avatar_names;
     let Some(name) = names.get(id) else {
-        return world.person_name(id).unwrap_or_else(|| "…".into());
+        return world.person_name(id).unwrap_or_else(|| "â€¦".into());
     };
     let user = name.user_name_for_display(&names.options);
     let display = &name.display_name;
@@ -899,7 +899,7 @@ pub fn tab(
         tool_menu(ui, p, "adjustments-filled", aurora_i18n::tr!("radar-options"), true, |ui| {
             options_menu(ui, p, data.settings, blocked);
         });
-        widgets::search_field(ui, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
+        widgets::search_field(ui, p, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
     });
     ui.add_space(4.0);
     if data.settings.show_minimap {
@@ -926,6 +926,14 @@ pub fn tab(
         for row in &list {
             // dragged onto a conversation, the resident joins it
             let (rect, resp) = super::rows::allocate(ui, row.id, Vec2::new(ui.available_width(), 22.0));
+            widgets::reveal_search_selection(
+                ui,
+                &resp,
+                st.radar_anchor
+                    .filter(|id| st.radar_selected.contains(id))
+                    .or_else(|| st.radar_selected.last().copied())
+                    == Some(row.id),
+            );
             resp.dnd_set_drag_payload(crate::ui::call_invite::PersonDrag(row.id));
             if !ui.is_rect_visible(rect) {
                 super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
@@ -1015,7 +1023,7 @@ mod tests {
                 aurora_net::AvatarNameData {
                     id: Uuid::from_u128(1),
                     username: "jane.doe".into(),
-                    display_name: "Étoile ✧".into(),
+                    display_name: "Ã‰toile âœ§".into(),
                     legacy_first: "Jane".into(),
                     legacy_last: "Doe".into(),
                     ..Default::default()
@@ -1080,7 +1088,7 @@ mod tests {
     fn people_name_filter_matches_all_names_in_every_radar_format() {
         let (mut world, radar) = name_filter_world();
         for format in 0..=3 {
-            for query in ["  JANE DOE  ", "JaNe.DoE", "doe", "ÉTOILE", "✧"] {
+            for query in ["  JANE DOE  ", "JaNe.DoE", "doe", "Ã‰TOILE", "âœ§"] {
                 assert_eq!(
                     filtered_ids(&world, &radar, format, query),
                     vec![Uuid::from_u128(1)],
@@ -1114,7 +1122,7 @@ mod tests {
             assert_eq!(filtered_ids(&world, &radar, 0, query), vec![id]);
         }
         assert!(
-            filtered_ids(&world, &radar, 0, "étoile").is_empty(),
+            filtered_ids(&world, &radar, 0, "Ã©toile").is_empty(),
             "an alias still replaces the chosen display name"
         );
     }
@@ -1126,7 +1134,7 @@ mod tests {
         world.social.avatar_names.set_aliases(HashMap::from([(id, "Best friend".into())]));
         world.social.avatar_names.set_rlva_privacy(true, Default::default());
         for format in 0..=3 {
-            for query in ["jane doe", "jane.doe", "étoile", "best friend"] {
+            for query in ["jane doe", "jane.doe", "Ã©toile", "best friend"] {
                 assert!(filtered_ids(&world, &radar, format, query).is_empty());
             }
             let anonymous = radar_name(&world, &id, format);

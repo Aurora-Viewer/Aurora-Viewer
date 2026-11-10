@@ -1509,6 +1509,7 @@ fn drag_update(
                     by_region.entry(m.key.region).or_default().push(m.key.local_id);
                 }
                 for (handle, ids) in by_region {
+                    world.objects.expect_local_duplicates(handle, &ids, Vec3::ZERO, false, None);
                     out.push(BuildCmd::Duplicate {
                         handle,
                         local_ids: ids,
@@ -2050,6 +2051,8 @@ mod tests {
         }
         let idx = world.objects.index_of_uuid(&crate::demo::action_id(99622)).unwrap();
         let key = world.objects.get(idx).unwrap().key;
+        let local = crate::world::objects::LocalAppearance::Texture(Uuid::new_v4());
+        world.objects.get_mut(idx).unwrap().render.local_appearance.insert(Some(1), local);
         let land = world.groups.groups[0].id;
         let active = Uuid::from_u128(8800);
         let nil = Uuid::nil();
@@ -2142,6 +2145,20 @@ mod tests {
                 );
                 let after = world.objects.get(idx).unwrap().position;
                 assert!(after.distance(before) > 1e-4, "the original still moves along the arrow");
+                let source = world.objects.get(idx).unwrap();
+                let mut copy = crate::demo::action_avatar(false);
+                copy.local_id = 99980 + axis as u32;
+                copy.full_id = Uuid::new_v4();
+                copy.parent_id = 0;
+                copy.pcode = source.pcode;
+                copy.position = before;
+                copy.rotation = source.rotation;
+                copy.scale = source.scale;
+                copy.volume = source.volume;
+                copy.texture_entry = source.te.clone();
+                copy.extra = source.extra.clone();
+                let copy = world.objects.upsert(key.region, copy);
+                assert_eq!(world.objects.get(copy).unwrap().local_appearance(1), Some(local));
                 manip.update(
                     &mut world,
                     &settings,

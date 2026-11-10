@@ -3,6 +3,7 @@
 //! UI gets an image in the same frame without a readback or a GPU wait.
 
 use crate::pipeline_cache::CachedPipelines;
+pub use crate::preview_mesh::paint as paint_antialiased_mesh;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 use std::{
@@ -267,6 +268,7 @@ pub(crate) struct Cache {
     targets: HashMap<egui::Id, Target>,
     /// The panorama viewers (panorama.rs), drawn the same way.
     pano: crate::panorama::Cache,
+    meshes: crate::preview_mesh::Cache,
 }
 
 type ImageMap = HashMap<(usize, bool), (Option<Weak<Image>>, wgpu::TextureView)>;
@@ -743,6 +745,7 @@ impl Cache {
         primitives: &mut [egui::ClippedPrimitive],
         scale: f32,
     ) {
+        self.meshes.render(device, encoder, egui, primitives, scale);
         let mut seen = HashSet::new();
         let mut pano_seen = HashSet::new();
         for primitive in primitives {
