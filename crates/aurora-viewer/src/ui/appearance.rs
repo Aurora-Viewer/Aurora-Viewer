@@ -19,6 +19,7 @@ pub(crate) mod json;
 mod layers;
 #[cfg(test)]
 mod perf_tests;
+pub(crate) mod portrait;
 mod selection;
 mod showcase;
 pub use clipboard::{PasteTo, Request as ClipboardRequest};
