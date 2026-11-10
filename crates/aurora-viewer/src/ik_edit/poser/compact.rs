@@ -282,8 +282,8 @@ fn square_sized(
     help(response, p, title, detail)
 }
 
-/// A track holding one button as wide as `width` (the Ctrl + click
-/// switch, between the modes and the sides).
+/// A track holding one button as wide as `width` (the depth of field,
+/// between the modes and the sides).
 fn wide_cluster(ui: &mut egui::Ui, p: &Palette, width: f32, add: impl FnOnce(&mut egui::Ui, egui::Vec2)) {
     let (bar, _) = ui.allocate_exact_size(egui::vec2(width, BUTTON + INSET * 2.0), Sense::hover());
     ui.painter().rect_filled(bar, ui.visuals().widgets.inactive.corner_radius, p.bar);
@@ -377,7 +377,9 @@ impl Editor {
             floater.order = egui::Order::Foreground;
         }
         floater.actions = actions;
+        let mut anchor = None;
         floater.show(ctx, p, open, |ui| {
+            anchor = Some(egui::pos2(ui.max_rect().right(), ui.cursor().top()));
             ui.set_width(BODY_W);
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
             let rig = &world.avatar_lib.rig;
@@ -403,6 +405,68 @@ impl Editor {
                 ui.label(egui::RichText::new(message).size(11.5).color(p.muted));
             }
         });
+        self.poser.options_anchor = anchor;
+    }
+
+    /// The gear's popover: only the options the compact window does not
+    /// show itself (the full window's settings panel holds them all, with
+    /// the trackball's and the files' that this window has elsewhere: the
+    /// depth of field in its row, the handles in Fine-tune, the export
+    /// options in Save's form). A menu of the theme's rows under the title
+    /// bar, against the window's right edge, as a popover of Apple's
+    /// toolbars; it stays open while its switches change and closes on a
+    /// click outside. Closing the window's dependent option shows only
+    /// while its parent is on, as iOS Settings does.
+    pub(super) fn compact_options(&mut self, ctx: &egui::Context, p: &Palette) {
+        let Some(corner) = self.poser.options_anchor.filter(|_| self.poser.options_open) else {
+            return;
+        };
+        let id = egui::Id::new("poser-compact-options");
+        let width = ctx.read_response(id).map_or(240.0, |r| r.rect.width());
+        let mut open = true;
+        menu::popup_at(ctx, id, egui::pos2(corner.x - width, corner.y), &mut open, p, |ui| {
+            menu::section(ui, p, aurora_i18n::text("poser-options-closing"));
+            menu::toggle(
+                ui,
+                p,
+                "door-exit",
+                aurora_i18n::text("poser-options-stop"),
+                &mut self.poser.stop_on_close,
+            );
+            if self.poser.stop_on_close {
+                menu::toggle(
+                    ui,
+                    p,
+                    "alert-triangle-filled",
+                    aurora_i18n::text("poser-options-confirm-close"),
+                    &mut self.poser.confirm_close,
+                );
+            }
+            menu::separator(ui, p);
+            menu::section(ui, p, aurora_i18n::text("poser-options-handles"));
+            if menu::toggle(
+                ui,
+                p,
+                "rotate-3d",
+                aurora_i18n::text("poser-options-natural"),
+                &mut self.poser.natural,
+            ) {
+                // as the full window's switch: the gizmo turns in the
+                // joint's own axes, or the world's
+                self.space = if self.poser.natural { Space::Local } else { Space::World };
+                self.gizmo.cancel();
+            }
+            menu::separator(ui, p);
+            menu::section(ui, p, aurora_i18n::text("poser-options-files"));
+            menu::toggle(
+                ui,
+                p,
+                "replace-filled",
+                aurora_i18n::text("poser-options-overwrite"),
+                &mut self.poser.confirm_overwrite,
+            );
+        });
+        self.poser.options_open = open;
     }
 
     /// The subject's picture (a click opens the subject menu), its name and
@@ -434,8 +498,12 @@ impl Editor {
         ui.horizontal(|ui| {
             ui.set_min_height(HEAD_DISC + 4.0);
             // the picture: the subject menu opens under it
-            let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(HEAD_DISC + 4.0), Sense::click());
-            let disc = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(HEAD_DISC));
+            // the ring's outer edge lines up with the groups' first cell,
+            // `INSET` inside the window's edge (the ring reaches 0.5 past
+            // the picture's box)
+            let nudge = INSET + 0.5;
+            let (rect, response) = ui.allocate_exact_size(egui::vec2(HEAD_DISC + 4.0 + nudge, HEAD_DISC + 4.0), Sense::click());
+            let disc = egui::Rect::from_center_size(rect.center() + egui::vec2(nudge * 0.5, 0.0), egui::Vec2::splat(HEAD_DISC));
             let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
             widgets::avatar_disc(ui, p, disc, subject_pic.as_ref(), &initials_of(self.poser.subject), !enabled);
             let ring = if open || response.hovered() {
@@ -616,18 +684,18 @@ impl Editor {
         ];
         let (mut mode, mut side) = (None, None);
         ui.horizontal(|ui| {
-            // the two tracks at the edges, the Ctrl + click switch filling
-            // the room between them, an even gap on each side
+            // the two tracks at the edges, the depth of field filling the
+            // room between them, an even gap on each side
             ui.spacing_mut().item_spacing.x = 0.0;
             let track_w = 3.0 * TOGGLE.x + 2.0 * INSET;
             mode = track(ui, p, "modes", TOGGLE, self.poser.transform, Lit::Quiet, &modes);
             ui.add_space(ROW_GAP);
             let width = ui.available_width() - track_w - ROW_GAP;
             wide_cluster(ui, p, width, |ui, size| {
-                let on = self.poser.part_hints;
-                let tag = (aurora_i18n::text("poser-tip-parts"), aurora_i18n::text("poser-tip-parts-detail"));
-                if square_sized(ui, p, size, "click-filled", tag, on, true).clicked() {
-                    self.poser.part_hints = !on;
+                let dof = self.poser.dof;
+                let tag = (aurora_i18n::text("poser-tip-dof"), aurora_i18n::text("poser-tip-dof-detail"));
+                if square_sized(ui, p, size, "aperture", tag, dof, true).clicked() {
+                    self.poser.dof = !dof;
                 }
             });
             ui.add_space(ROW_GAP);
@@ -804,8 +872,8 @@ impl Editor {
     }
 
     /// Three clusters, one kind of control each, as Apple's toolbars group
-    /// theirs: the view on the left (switches: markers Always or On hover,
-    /// depth of field, the other avatars' hints), going back in the middle
+    /// theirs: picking on the left (switches: markers Always or On hover,
+    /// Ctrl + click body parts, the other avatars' hints), going back in the middle
     /// (actions: undo, redo, reset), the files on the right (Save as a small
     /// form, Load the pose library, the upload). Under them Start / Stop
     /// alone across the window, the one main action, as a sheet's bottom
@@ -817,7 +885,7 @@ impl Editor {
             ui.spacing_mut().item_spacing.x = 0.0;
             let cluster_w = 3.0 * BUTTON + 2.0 * 2.0 + 2.0 * INSET;
             let gap = ((ui.available_width() - 3.0 * cluster_w) * 0.5).max(0.0);
-            // the view: joints, depth of field, switching avatar
+            // picking: joints, Ctrl + click body parts, switching avatar
             cluster(ui, p, 3, |ui| {
                 let hover = self.poser.markers && self.poser.markers_hover;
                 let (icon, tag) = if hover {
@@ -830,10 +898,10 @@ impl Editor {
                     self.poser.markers_hover = self.poser.markers && !self.poser.markers_hover;
                     self.poser.markers = true;
                 }
-                let dof = self.poser.dof;
-                let tag = (aurora_i18n::text("poser-tip-dof"), aurora_i18n::text("poser-tip-dof-detail"));
-                if square(ui, p, "aperture", tag, dof, true).clicked() {
-                    self.poser.dof = !dof;
+                let on = self.poser.part_hints;
+                let tag = (aurora_i18n::text("poser-tip-parts"), aurora_i18n::text("poser-tip-parts-detail"));
+                if square(ui, p, "click-filled", tag, on, true).clicked() {
+                    self.poser.part_hints = !on;
                 }
                 let hints = self.poser.avatar_hints;
                 let tag = (aurora_i18n::text("poser-tip-switch"), aurora_i18n::text("poser-tip-switch-detail"));

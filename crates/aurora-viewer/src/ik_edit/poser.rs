@@ -110,6 +110,10 @@ pub(super) struct State {
     pub(super) transform: usize,
     delta: bool,
     settings_open: bool,
+    /// The compact window's options popover (its title bar's gear).
+    options_open: bool,
+    /// Where it opens: the compact body's upper right corner, last frame.
+    options_anchor: Option<egui::Pos2>,
     library_open: bool,
     storage: storage::Service,
     preset: usize,
@@ -473,6 +477,8 @@ impl Editor {
             self.poser.window_override = Some(mode.starts_with("poser-compact"));
             // compact-sliders: the joint row's sliders open
             self.poser.joint_open = mode == "poser-compact-sliders";
+            // compact-options: the gear's popover open
+            self.poser.options_open = mode == "poser-compact-options";
             self.pose_layers(world);
         }
         // the head edited at 450, then the window's cross: the confirmation

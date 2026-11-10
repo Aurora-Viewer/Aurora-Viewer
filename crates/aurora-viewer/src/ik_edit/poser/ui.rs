@@ -43,8 +43,12 @@ impl Editor {
             .sum();
         let mut open = self.open;
         if self.compact_mode() {
-            // undo and redo sit in the window's last row, with the reset
-            let actions = vec![("arrows-maximize", aurora_i18n::text("poser-full-mode"), &mut switch)];
+            // undo and redo sit in the window's last row, with the reset;
+            // the gear opens the few options the window does not show
+            let actions = vec![
+                ("arrows-maximize", aurora_i18n::text("poser-full-mode"), &mut switch),
+                ("settings-filled", aurora_i18n::text("poser-settings"), &mut settings),
+            ];
             self.compact_window(ctx, p, world, frame, &mut open, actions);
         } else {
             // The settings' "Show joint markers and gizmos" switch, one click
@@ -74,7 +78,18 @@ impl Editor {
             self.poser.library_open = !self.poser.library_open;
         }
         if settings {
-            self.poser.settings_open = !self.poser.settings_open;
+            if self.compact_mode() {
+                self.poser.options_open = !self.poser.options_open;
+            } else {
+                self.poser.settings_open = !self.poser.settings_open;
+            }
+        }
+        // after the gear's click, so that the click that closes it does not
+        // open it again
+        if self.compact_mode() && open {
+            self.compact_options(ctx, p);
+        } else {
+            self.poser.options_open = false;
         }
         if markers {
             self.poser.markers = !self.poser.markers;
