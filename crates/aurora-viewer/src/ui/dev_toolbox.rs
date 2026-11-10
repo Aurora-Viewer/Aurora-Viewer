@@ -253,7 +253,7 @@ fn header_row(ui: &mut egui::Ui, p: &Palette, st: &mut DevToolboxUi, view: &View
             if widgets::action_button(ui, p, icon, label, kind, Vec2::new(0.0, 26.0)).clicked() {
                 st.edit = !st.edit;
             }
-            widgets::search_box(ui, p, &mut st.query, tr!("dev-toolbox-search"), 250.0);
+            widgets::clearable_search_box(ui, p, &mut st.query, tr!("dev-toolbox-search"), 250.0);
         });
     });
 }
@@ -433,6 +433,7 @@ fn tool_button(
     let resp = ui.interact(rect, ui.scope_id().with(("dev_toolbox_tool", gi, rank)), sense);
     let on = tool.kind == Kind::Toggle && view.on.contains(id);
     let selected = shows_result(id) && st.selected == id;
+    widgets::reveal_search_selection(ui, &resp, selected);
     let radius = ui.visuals().widgets.inactive.corner_radius;
     let face = if on {
         p.violet

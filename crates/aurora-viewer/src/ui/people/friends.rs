@@ -1,5 +1,5 @@
-//! People › Friends in Aurora's look (the People mock-up v2): the friend
-//! list of Conversations › Contacts (FSFloaterContacts, fsfloatercontacts.cpp,
+//! People â€º Friends in Aurora's look (the People mock-up v2): the friend
+//! list of Conversations â€º Contacts (FSFloaterContacts, fsfloatercontacts.cpp,
 //! panel_fs_contacts_friends.xml) as rich rows, online and offline apart.
 //! Each row carries the three rights we grant, clickable as the list's
 //! boxes are (applyRightsToFriends: the map goes with the online status,
@@ -112,7 +112,7 @@ fn lines(c: &Ctx, filter: &str, set: Option<&str>) -> Vec<Line> {
                 aurora_i18n::tr!("common-offline")
             };
             let status = match (f.online, regions.get(&f.id)) {
-                (true, Some(region)) if status.pill() => format!("{state} · {region}"),
+                (true, Some(region)) if status.pill() => format!("{state} Â· {region}"),
                 (true, Some(region)) => region.clone(),
                 _ => state.to_owned(),
             };
@@ -243,7 +243,7 @@ fn toolbar(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi) {
             c.contacts.pick_new_friend();
         }
         let w = ui.available_width();
-        widgets::search_box(ui, c.p, &mut st.filter, aurora_i18n::tr!("people-friends-filter"), w);
+        widgets::clearable_search_box(ui, c.p, &mut st.filter, aurora_i18n::tr!("people-friends-filter"), w);
     });
 }
 
@@ -378,6 +378,15 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     let right = end.items.last().map_or(bounds.right(), |r| r.left()) - PARTS_GAP;
     let count = action_count(f);
     let (rect, resp) = rows::allocate(ui, f.id, Vec2::new(width, RICH_H));
+    widgets::reveal_search_selection(
+        ui,
+        &resp,
+        st.anchor
+            .filter(|id| st.sel.contains(id))
+            .or_else(|| st.sel.last().copied())
+            .or(st.sheet)
+            == Some(f.id),
+    );
     if !ui.is_rect_visible(rect) {
         rows::person_menu(&resp, p, c.world, &st.sel, f.id);
         return;

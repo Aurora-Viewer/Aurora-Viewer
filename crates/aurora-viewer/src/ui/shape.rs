@@ -293,7 +293,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 let width = (ui.available_width() - 32.0 - ui.spacing().item_spacing.x).max(80.0);
-                widgets::search_field(ui, &mut st.filter, aurora_i18n::tr!("shape-search"), width);
+                widgets::search_field(ui, p, &mut st.filter, aurora_i18n::tr!("shape-search"), width);
                 if widgets::icon_toggle(ui, p, "photo-filled", aurora_i18n::tr!("shape-hints"), st.hints) {
                     st.hints = !st.hints;
                 }

@@ -634,6 +634,27 @@ impl TexturePicker {
             } else {
                 world.inventory.root
             };
+            let hint = if self.materials {
+                aurora_i18n::tr!("ui-texture-picker-filter-materials")
+            } else {
+                aurora_i18n::tr!("common-filter-textures")
+            };
+            let was_filtering = !self.filter.trim().is_empty();
+            let width = ui.available_width();
+            let search = ui
+                .horizontal(|ui| widgets::clearable_search_box(ui, p, &mut self.filter, hint, width))
+                .inner;
+            let cleared = search.changed() && was_filtering && self.filter.trim().is_empty();
+            #[cfg(test)]
+            ctx.data_mut(|data| data.insert_temp(egui::Id::unique("picker_search_field"), (search.id, search.rect)));
+            if cleared {
+                // LLFloaterTexturePicker::onFilterEdit restores browsing and
+                // opens the selected item's ancestors before scrolling to it.
+                self.reveal_selection = true;
+                if self.source == 1 {
+                    self.local_open[0] = true;
+                }
+            }
             self.tree.prepare_root(
                 &mut world.inventory,
                 world.agent_id,
@@ -642,12 +663,13 @@ impl TexturePicker {
                 root,
                 super::inventory::view::picker_sort(ctx),
             );
-            let hint = if self.materials {
-                aurora_i18n::tr!("ui-texture-picker-filter-materials")
-            } else {
-                aurora_i18n::tr!("common-filter-textures")
-            };
-            widgets::search_field(ui, &mut self.filter, hint, ui.available_width());
+            if cleared
+                && self.source != 1
+                && let Some(item) = self.selected_item
+            {
+                self.tree.state.reveal(&world.inventory, item, 0);
+                self.tree.state.prepare(&self.tree.view, root, 0, true);
+            }
             ui.add_space(6.0);
             let font_scale = super::fonts::scale(ui.ctx());
             let footer = if self.footer_height > 0.0 && self.footer_font_scale == font_scale {
@@ -2219,6 +2241,159 @@ pub(crate) mod tests {
                         .expect("current item must be drawn and selected");
                     assert!(clip.contains(row.center()), "current item must be inside the picker viewport");
                     assert!(picker.take_preview().is_none(), "revealing a value must not edit the face");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn clearing_picker_search_keeps_the_clicked_resource_visible() {
+        for materials in [false, true] {
+            for source in [0, 1, 2] {
+                for key in [Some(egui::Key::Delete), Some(egui::Key::Backspace), None] {
+                    let mut ui = PickerUi::new();
+                    let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+                    world.inventory.root = Uuid::from_u128(1);
+                    let parent = if source == 2 { 3 } else { 1 };
+                    world.inventory.created_folders(
+                        [
+                            (1, 0, "Inventory"),
+                            (2, 1, "#Aurora"),
+                            (3, 2, "Aurora Library"),
+                            (4, parent, "Resources"),
+                            (5, parent, "Unrelated"),
+                            (6, 4, "Nested"),
+                        ]
+                        .into_iter()
+                        .map(|(id, parent, name)| aurora_net::inventory::InvFolder {
+                            id: Uuid::from_u128(id),
+                            parent: Uuid::from_u128(parent),
+                            name: name.into(),
+                            type_default: -1,
+                            ..Default::default()
+                        })
+                        .collect(),
+                    );
+                    for folder in world.inventory.folders.values_mut() {
+                        folder.state = crate::world::inventory::FetchState::Fetched;
+                    }
+                    world.inventory.add_items(
+                        (0..100)
+                            .map(|i| aurora_net::inventory::InvItem {
+                                id: Uuid::from_u128(100 + i),
+                                asset_id: Uuid::from_u128(1000 + i),
+                                parent: Uuid::from_u128(6),
+                                inv_type: if materials { INV_MATERIAL } else { INV_TEXTURE },
+                                asset_type: if materials { 57 } else { 0 },
+                                name: format!("Resource {i:03}"),
+                                owner_mask: actions::COPY,
+                                ..Default::default()
+                            })
+                            .collect(),
+                    );
+                    // A second inventory item for the same asset must not
+                    // replace the exact row chosen in the search results.
+                    let mut duplicate = world.inventory.items[&Uuid::from_u128(199)].clone();
+                    duplicate.id = Uuid::from_u128(10);
+                    duplicate.parent = Uuid::from_u128(parent);
+                    duplicate.name = "Duplicate asset".into();
+                    world.inventory.add_items(vec![duplicate]);
+                    if source == 1 {
+                        world
+                            .local_assets
+                            .extend((0..100).map(|i| (Uuid::from_u128(2000 + i), (format!("Resource {i:03}"), materials))));
+                    }
+                    let mut picker = TexturePicker::default();
+                    if materials {
+                        picker.open_materials("Material", Uuid::nil());
+                    } else {
+                        picker.open("Texture", Uuid::nil());
+                    }
+                    picker.allow_local = true;
+                    picker.source = source;
+                    picker.local_open[0] = false;
+                    let applied = std::cell::RefCell::new(Vec::new());
+                    let draw = |picker: &mut TexturePicker, world: &mut World, ctx: &egui::Context, p: &Palette| {
+                        if let Some(asset) = picker.show_live(ctx, p, world, &HashMap::new()) {
+                            applied.borrow_mut().push(asset);
+                        }
+                    };
+                    ui.settle(|ctx, p| draw(&mut picker, &mut world, ctx, p));
+                    let (field, rect) = ui.ctx.data(|data| {
+                        data.get_temp::<(egui::Id, egui::Rect)>(egui::Id::unique("picker_search_field"))
+                            .unwrap()
+                    });
+                    ui.ctx.memory_mut(|memory| memory.request_focus(field));
+                    ui.frame(vec![egui::Event::Text("Resource 099".into())], |ctx, p| {
+                        draw(&mut picker, &mut world, ctx, p)
+                    });
+                    ui.settle(|ctx, p| draw(&mut picker, &mut world, ctx, p));
+                    assert_eq!(picker.filter, "Resource 099");
+                    assert!(!picker.tree.state.is_open(Uuid::from_u128(4), 0));
+                    ui.click("Resource 099", |ctx, p| draw(&mut picker, &mut world, ctx, p));
+                    ui.settle(|ctx, p| draw(&mut picker, &mut world, ctx, p));
+                    let selected = Uuid::from_u128(if source == 1 { 2099 } else { 1099 });
+                    assert_eq!(picker.selected, Some(selected));
+                    assert_eq!(*applied.borrow(), vec![selected]);
+                    if let Some(key) = key {
+                        ui.ctx.memory_mut(|memory| memory.request_focus(field));
+                        ui.frame(
+                            vec![
+                                egui::Event::Key {
+                                    key: egui::Key::A,
+                                    physical_key: None,
+                                    pressed: true,
+                                    repeat: false,
+                                    modifiers: egui::Modifiers {
+                                        ctrl: true,
+                                        command: true,
+                                        ..Default::default()
+                                    },
+                                },
+                                egui::Event::Key {
+                                    key,
+                                    physical_key: None,
+                                    pressed: true,
+                                    repeat: false,
+                                    modifiers: egui::Modifiers::NONE,
+                                },
+                            ],
+                            |ctx, p| draw(&mut picker, &mut world, ctx, p),
+                        );
+                    } else {
+                        assert!(
+                            ui.ctx.read_response(field.with("clear")).is_some(),
+                            "filled search has a clear button"
+                        );
+                        ui.labels.insert("clear search".into(), rect.right_center() - Vec2::new(10.0, 0.0));
+                        ui.click("clear search", |ctx, p| draw(&mut picker, &mut world, ctx, p));
+                    }
+                    ui.settle(|ctx, p| draw(&mut picker, &mut world, ctx, p));
+                    assert!(picker.filter.is_empty(), "source={source}, key={key:?}");
+                    assert!(
+                        ui.ctx.read_response(field.with("clear")).is_none(),
+                        "empty search has no clear button"
+                    );
+                    assert_eq!(picker.source, source);
+                    assert_eq!(picker.selected, Some(selected));
+                    assert_eq!(picker.selected_item, (source != 1).then_some(Uuid::from_u128(199)));
+                    let (row, clip) = ui.ctx.data(|data| {
+                        data.get_temp::<(egui::Rect, egui::Rect)>(egui::Id::unique("picker_selected_row"))
+                            .expect("the selected resource must still be drawn")
+                    });
+                    assert!(
+                        clip.contains(row.center()),
+                        "source={source}, key={key:?}: {row:?} outside {clip:?}"
+                    );
+                    assert!(
+                        !picker.tree.state.is_open(Uuid::from_u128(5), 0),
+                        "unrelated folders stay collapsed"
+                    );
+                    assert_eq!(
+                        *applied.borrow(),
+                        vec![selected],
+                        "clearing the filter must not apply another resource"
+                    );
                 }
             }
         }

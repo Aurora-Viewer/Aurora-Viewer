@@ -185,7 +185,12 @@ pub fn show(
             let empty = state.rows.is_empty();
             let (mut list, foot) = widgets::above_footer(ui);
             let rows = &state.rows;
-            egui::ScrollArea::vertical()
+            let target = state
+                .anchor
+                .filter(|id| state.selected.contains(id))
+                .or_else(|| state.selected.first().copied());
+            let selected_row = rows.iter().position(|id| Some(*id) == target);
+            widgets::search_scroll_to_row(&list, egui::ScrollArea::vertical(), selected_row, 24.0)
                 .max_height(list.available_height())
                 .auto_shrink([false, false])
                 .show_rows(&mut list, 24.0, rows.len(), |ui, range| {
@@ -346,11 +351,12 @@ pub fn show(
                     ) {
                         out.push(Action::Active(state.selected.iter().copied().collect(), activate));
                     }
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.filter)
-                            .hint_text(aurora_i18n::tr!("gesture-filter"))
-                            .desired_width(ui.available_width() - 30.0),
-                    );
+                    {
+                        let width = ui.available_width();
+                        crate::ui::widgets::search_text_edit(ui, p, &mut state.filter, |edit| {
+                            edit.hint_text(aurora_i18n::tr!("gesture-filter")).desired_width(width - 30.0)
+                        })
+                    };
                     if widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("common-delete"), !state.selected.is_empty()) {
                         out.push(Action::Delete(state.selected.iter().copied().collect()));
                     }

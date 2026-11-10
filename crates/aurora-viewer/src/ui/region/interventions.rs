@@ -490,7 +490,7 @@ fn show_dialog(
                 // in a row: the field takes its own height
                 ui.horizontal(|ui| {
                     let w = ui.available_width();
-                    widgets::search_box(ui, p, query, aurora_i18n::tr!("region-int-home-search"), w);
+                    widgets::clearable_search_box(ui, p, query, aurora_i18n::tr!("region-int-home-search"), w);
                 });
                 ui.add_space(6.0);
                 egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {

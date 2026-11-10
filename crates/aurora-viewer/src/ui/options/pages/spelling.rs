@@ -447,11 +447,9 @@ fn keywords(ui: &mut egui::Ui, p: &Palette, st: &mut SpellingPage) {
     };
     let mut edited: Option<List> = None;
     ui.vertical(|ui| {
-        ui.add(
-            egui::TextEdit::singleline(&mut st.filter)
-                .desired_width(260.0)
-                .hint_text(tr!("ui-options-auto-replace-filter-hint")),
-        );
+        crate::ui::widgets::search_text_edit(ui, p, &mut st.filter, |edit| {
+            edit.desired_width(260.0).hint_text(tr!("ui-options-auto-replace-filter-hint"))
+        });
         let filter = st.filter.trim().to_lowercase();
         let shown: Vec<(&String, &String)> = list
             .replacements
@@ -462,7 +460,8 @@ fn keywords(ui: &mut egui::Ui, p: &Palette, st: &mut SpellingPage) {
             ui.label(RichText::new(tr!("ui-options-auto-replace-no-keyword")).size(12.0).color(p.muted));
         } else {
             let width = ui.available_width().min(520.0);
-            egui::ScrollArea::vertical()
+            let selected_row = shown.iter().position(|(keyword, _)| st.editing.as_ref() == Some(*keyword));
+            widgets::search_scroll_to_row(ui, egui::ScrollArea::vertical(), selected_row, ROW_H)
                 .id_salt(("autoreplace_keywords", st.list))
                 .max_height(TABLE_H)
                 .auto_shrink([false, true])

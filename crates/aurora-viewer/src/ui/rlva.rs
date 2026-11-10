@@ -305,11 +305,9 @@ impl Tools {
                     }
                 });
             } else {
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.filter)
-                        .hint_text(tr!("rlva-tools-filter"))
-                        .desired_width(f32::INFINITY),
-                );
+                crate::ui::widgets::search_text_edit(ui, p, &mut self.filter, |edit| {
+                    edit.hint_text(tr!("rlva-tools-filter")).desired_width(f32::INFINITY)
+                });
                 let filter = self.filter.to_lowercase();
                 let mut rows = match self.tab {
                     Tab::Exceptions => exception_rows(world, &mut actions.want_groups),

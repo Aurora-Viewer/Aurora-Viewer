@@ -1,4 +1,4 @@
-//! People › Recent in Aurora's look (the People mock-up v2): the residents
+//! People â€º Recent in Aurora's look (the People mock-up v2): the residents
 //! we dealt with lately (`world/recent.rs`, LLRecentPeople; the recent tab
 //! of LLPanelPeople, panel_people.xml) as Near you's rows, newest first,
 //! with how long ago and the region we were in. The menu is the avatar
@@ -18,14 +18,14 @@ pub(super) fn tab(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &
     super::split(ui, c, data, st, "people-recent-list", list, super::person_sheet);
 }
 
-/// "12 min ago · Ahern".
+/// "12 min ago Â· Ahern".
 fn ago(met: &Met) -> String {
     let seconds = met.when.elapsed().map_or(0.0, |d| d.as_secs_f64());
     let when = aurora_i18n::tr!("people-recent-ago", when = super::nearby::seen_text(seconds));
     if met.region.is_empty() {
         when
     } else {
-        format!("{when} · {}", met.region)
+        format!("{when} Â· {}", met.region)
     }
 }
 
@@ -40,7 +40,7 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
         Vec2::new(w, rows::TOOLBAR_H),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            widgets::search_box(ui, p, &mut st.filter, aurora_i18n::tr!("people-filter-short"), w);
+            widgets::clearable_search_box(ui, p, &mut st.filter, aurora_i18n::tr!("people-filter-short"), w);
         },
     );
     ui.add_space(7.0);
@@ -76,6 +76,15 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     let world = c.world;
     let id = met.id;
     let (rect, resp) = rows::allocate(ui, id, Vec2::new(ui.available_width(), RICH_H));
+    widgets::reveal_search_selection(
+        ui,
+        &resp,
+        st.anchor
+            .filter(|id| st.sel.contains(id))
+            .or_else(|| st.sel.last().copied())
+            .or(st.sheet)
+            == Some(id),
+    );
     if !ui.is_rect_visible(rect) {
         rows::person_menu(&resp, p, world, &st.sel, id);
         return;

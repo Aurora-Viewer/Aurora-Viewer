@@ -286,7 +286,7 @@ impl ContactsUi {
         self.ask_new_set_for(Vec::new());
     }
 
-    /// "New contact set…" of a resident's menu: the new set's name asked
+    /// "New contact setâ€¦" of a resident's menu: the new set's name asked
     /// (AddNewContactSet), then these residents added to it.
     pub fn ask_new_set_for(&mut self, ids: Vec<Uuid>) {
         self.new_set_members = ids;
@@ -621,7 +621,7 @@ pub fn panel(
     actions
 }
 
-/// The torn-off Contacts window (floater_fs_contacts.xml, 396 × 390); its
+/// The torn-off Contacts window (floater_fs_contacts.xml, 396 Ã— 390); its
 /// title bar button docks it back into Conversations. It shows what the
 /// docked tab shows (#961): People's friends tab in Aurora's look
 /// (`friends`, the same pane state as the docked tab, so the filter,
@@ -684,7 +684,7 @@ const PICKER_ID: &str = "contacts_avatar_picker";
 fn picked(world: &mut World, st: &mut ContactsUi, what: PickFor, ids: Vec<Uuid>) {
     match what {
         PickFor::Friend => {
-            // onAvatarPicked → requestFriendshipDialog; Firestorm's picker
+            // onAvatarPicked â†’ requestFriendshipDialog; Firestorm's picker
             // refuses friends (isItemsFreeOfFriends), the shared one does not
             match ids.iter().find(|id| **id != world.agent_id && !world.social.is_friend(id)) {
                 Some(to) => {
@@ -740,7 +740,7 @@ fn friend_rows(world: &World, settings: &ContactsSettings, filter: &str) -> Vec<
                     full_name(n, &o, settings.full_name_display_first),
                 ),
                 None => {
-                    let legacy = world.social.names.get(&f.id).cloned().unwrap_or_else(|| "…".into());
+                    let legacy = world.social.names.get(&f.id).cloned().unwrap_or_else(|| "â€¦".into());
                     (legacy.clone(), legacy.clone(), legacy)
                 }
             };
@@ -797,7 +797,7 @@ fn friends_tab(
         let list_w = (ui.available_width() - BUTTONS_W - 8.0).max(120.0);
         ui.vertical(|ui| {
             ui.set_width(list_w);
-            widgets::search_field(ui, &mut st.friend_filter, aurora_i18n::tr!("ui-contacts-filter-friends"), list_w);
+            widgets::search_field(ui, p, &mut st.friend_filter, aurora_i18n::tr!("ui-contacts-filter-friends"), list_w);
             ui.add_space(3.0);
             friend_table(ui, p, world, st, settings, &rows, &order, list_w, actions);
         });
@@ -926,6 +926,14 @@ fn friend_table(
                 for r in rows {
                     // dragged onto a conversation, a friend joins it
                     let (rect, resp) = ui.allocate_exact_size(Vec2::new(rows_w, ROW_H), Sense::click_and_drag());
+                    widgets::reveal_search_selection(
+                        ui,
+                        &resp,
+                        st.friends_anchor
+                            .filter(|id| st.friends_sel.contains(id))
+                            .or_else(|| st.friends_sel.last().copied())
+                            == Some(r.id),
+                    );
                     resp.dnd_set_drag_payload(super::call_invite::PersonDrag(r.id));
                     if !ui.is_rect_visible(rect) {
                         continue;
@@ -1307,7 +1315,7 @@ fn groups_tab(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Contac
         let list_w = (ui.available_width() - BUTTONS_W - 8.0).max(120.0);
         ui.vertical(|ui| {
             ui.set_width(list_w);
-            widgets::search_field(ui, &mut st.group_filter, aurora_i18n::tr!("ui-contacts-filter-groups"), list_w);
+            widgets::search_field(ui, p, &mut st.group_filter, aurora_i18n::tr!("ui-contacts-filter-groups"), list_w);
             ui.add_space(3.0);
             let list_h = (fill_height(ui, DEFAULT_TAB_H - 30.0) - footer_or_default(st.groups_footer)).max(60.0);
             let list = group_list(ui, p, world, st, pics, &groups, &filter, list_w, list_h, actions);
@@ -1408,6 +1416,7 @@ fn group_row(
 ) {
     let id = g.map(|g| g.id).unwrap_or_default();
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 22.0), Sense::click());
+    widgets::reveal_search_selection(ui, &resp, st.group_sel == Some(id));
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -1610,7 +1619,7 @@ fn sets_tab(
             .get(id)
             .map(|n| n.complete(&o))
             .or_else(|| social.names.get(id).cloned())
-            .unwrap_or_else(|| "…".into())
+            .unwrap_or_else(|| "â€¦".into())
     };
     let online = |id: &Uuid| social.friends.iter().any(|f| f.id == *id && f.online);
     let count = members.len();
@@ -1703,7 +1712,7 @@ fn sets_tab(
                 }
             });
             ui.add_space(3.0);
-            widgets::search_field(ui, &mut st.set_filter, aurora_i18n::tr!("ui-contacts-filter-people"), list_w);
+            widgets::search_field(ui, p, &mut st.set_filter, aurora_i18n::tr!("ui-contacts-filter-people"), list_w);
             ui.add_space(3.0);
             let list_h = (fill_height(ui, DEFAULT_TAB_H - 60.0) - footer_or_default(st.sets_footer)).max(60.0);
             let list = egui::Frame::new().fill(p.field.gamma_multiply(0.6)).show(ui, |ui| {
@@ -1725,6 +1734,14 @@ fn sets_tab(
                         let row_h = if settings.set_list_icons { 22.0 } else { ROW_H };
                         for (id, name, on, color) in &rows {
                             let (rect, resp) = ui.allocate_exact_size(Vec2::new(list_w - widgets::scroll_strip(ui), row_h), Sense::click());
+                            widgets::reveal_search_selection(
+                                ui,
+                                &resp,
+                                st.set_anchor
+                                    .filter(|id| st.set_sel.contains(id))
+                                    .or_else(|| st.set_sel.last().copied())
+                                    == Some(*id),
+                            );
                             if !ui.is_rect_visible(rect) {
                                 continue;
                             }
@@ -2204,7 +2221,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
                         .hint_text(hint.to_owned()),
                 )
                 .on_hover_text(aurora_i18n::tr!("ui-contacts-enter-to-confirm"));
-            // Enter while the field has focus (or just gave it up) confirms —
+            // Enter while the field has focus (or just gave it up) confirms â€”
             // same pattern as script search. Relying on lost_focus alone missed
             // presses that left the field focused, so Send never ran.
             if (r.has_focus() || r.lost_focus()) && widgets::enter_pressed(ui) {

@@ -480,11 +480,9 @@ impl PlacesUi {
             ui.spacing_mut().item_spacing.x = 3.0;
             let buttons = if history { 2.0 } else { 4.0 };
             let w = (ui.available_width() - buttons * 25.0).max(60.0);
-            ui.add(
-                egui::TextEdit::singleline(&mut self.filter)
-                    .hint_text(aurora_i18n::tr!("ui-places-filter-places"))
-                    .desired_width(w),
-            );
+            crate::ui::widgets::search_text_edit(ui, p, &mut self.filter, |edit| {
+                edit.hint_text(aurora_i18n::tr!("ui-places-filter-places")).desired_width(w)
+            });
             widgets::icon_menu(ui, p, "settings-filled", aurora_i18n::tr!("ui-places-show-options"), |ui| {
                 if history {
                     self.history_item_menu(ui, p, world, actions);
@@ -575,6 +573,12 @@ impl PlacesUi {
         self.want_fetch(&world.inventory, root, !self.filter.is_empty(), 0);
         // Favorites keep their own order (EXT-1758): by name here
         let by_date = by_date && self.tab == TAB_LANDMARKS;
+        if widgets::search_cleared(ui)
+            && let Some(Sel::Folder(id) | Sel::Item(id)) = self.selected
+        {
+            self.open_folders
+                .extend(crate::world::inventory::actions::ancestors(&world.inventory, id).skip(1));
+        }
         let rows = landmark_rows(
             &world.inventory,
             root,
@@ -1218,6 +1222,7 @@ fn list_row(
         Sense::click()
     };
     let (rect, response) = ui.allocate_exact_size(Vec2::new(w, 20.0), sense);
+    widgets::reveal_search_selection(ui, &response, selected);
     let painter = ui.painter();
     if selected {
         painter.rect_filled(rect, ui.visuals().window_corner_radius, p.violet.gamma_multiply(0.28));
