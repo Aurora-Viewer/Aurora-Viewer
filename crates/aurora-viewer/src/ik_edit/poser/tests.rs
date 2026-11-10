@@ -831,7 +831,14 @@ fn poser_library_saves_bvh_confirms_overwrite_and_correlates_loads_to_the_origin
     let ctx = egui::Context::default();
     let mut service = storage::Service::default();
     let tick = |service: &mut storage::Service| service.tick(&jobs, &ctx, owner, rig.clone(), world.avatar_lib.skeleton.as_ref());
-    service.job = Some(storage::Job::Save(document.clone(), session.pose.clone(), true, true, false));
+    service.job = Some(storage::Job::Save(storage::Save {
+        document: document.clone(),
+        pose: session.pose.clone(),
+        bvh: true,
+        unlock: true,
+        confirm: false,
+        pick: false,
+    }));
     for _ in 0..3 {
         tick(&mut service);
     }
@@ -846,7 +853,14 @@ fn poser_library_saves_bvh_confirms_overwrite_and_correlates_loads_to_the_origin
             .iter()
             .any(|j| j.joint_name == "mHead" && !j.rot_keys.is_empty())
     );
-    service.job = Some(storage::Job::Save(document, session.pose.clone(), false, false, true));
+    service.job = Some(storage::Job::Save(storage::Save {
+        document,
+        pose: session.pose.clone(),
+        bvh: false,
+        unlock: false,
+        confirm: true,
+        pick: false,
+    }));
     tick(&mut service);
     tick(&mut service);
     assert!(service.overwrite.is_some());

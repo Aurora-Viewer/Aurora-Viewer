@@ -127,7 +127,14 @@ impl Editor {
                     .clicked()
                     {
                         self.poser.storage.overwrite = None;
-                        self.poser.storage.job = Some(storage::Job::Save(document, pose, bvh, unlock, false));
+                        self.poser.storage.job = Some(storage::Job::Save(storage::Save {
+                            document,
+                            pose,
+                            bvh,
+                            unlock,
+                            confirm: false,
+                            pick: false,
+                        }));
                     }
                 });
             });
@@ -369,11 +376,16 @@ impl Editor {
                 .on_hover_text(aurora_i18n::text("poser-export-hint"))
                 .clicked()
                 {
-                    self.save_pose(rig, frame);
+                    self.save_pose(rig, frame, false);
                 }
                 let options = widgets::action_button(ui, p, "chevron-down", "", widgets::ActionKind::Primary, egui::vec2(26.0, 28.0))
                     .on_hover_text(aurora_i18n::text("poser-save-options"));
                 menu::dropdown(&options, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+                    let can_save = !self.poser.storage.busy && !self.poser.name.trim().is_empty();
+                    if menu::item_if(ui, p, "device-floppy-filled", aurora_i18n::text("poser-save-as"), can_save) {
+                        self.save_pose(rig, frame, true);
+                    }
+                    menu::separator(ui, p);
                     menu::toggle(
                         ui,
                         p,
@@ -454,7 +466,8 @@ impl Editor {
             .and_then(|i| self.poser.storage.entries.get(i))
             .map(|e| e.path.clone())
     }
-    fn save_pose(&mut self, rig: &Rig, frame: &Frame) {
+    /// `pick`: Save as…, the file is chosen in the system dialog.
+    fn save_pose(&mut self, rig: &Rig, frame: &Frame, pick: bool) {
         let Some(session) = self.poser.sessions.get(&self.poser.subject) else {
             return;
         };
@@ -469,13 +482,14 @@ impl Editor {
             self.poser.storage.message = Some(aurora_i18n::text("anim-edit-invalid").to_owned());
             return;
         };
-        self.poser.storage.job = Some(storage::Job::Save(
+        self.poser.storage.job = Some(storage::Job::Save(storage::Save {
             document,
-            Arc::new(authored),
-            self.poser.also_bvh,
-            self.poser.unlock_pelvis,
-            self.poser.confirm_overwrite,
-        ));
+            pose: Arc::new(authored),
+            bvh: self.poser.also_bvh,
+            unlock: self.poser.unlock_pelvis,
+            confirm: self.poser.confirm_overwrite,
+            pick,
+        }));
     }
     fn import_pose(&mut self, rig: &Rig, frame: &Frame) {
         let Some(session) = self.poser.sessions.get(&self.poser.subject) else {
