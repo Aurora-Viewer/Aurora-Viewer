@@ -279,6 +279,12 @@ impl Editor {
             .map(|b| rig.canonical_names[b].clone())
             .collect();
     }
+    /// Ctrl held in the poser with the parts or the avatars on: it picks
+    /// something else in the world, so the selected joint's handles let the
+    /// pointer through (they keep a drag already begun).
+    pub(in crate::ik_edit) fn poser_ctrl_picks(&self, modifiers: egui::Modifiers) -> bool {
+        self.poser.active && (modifiers.ctrl || modifiers.command) && (self.poser.part_hints || self.poser.avatar_hints)
+    }
     /// The subject posed now (you, an animesh or a resident).
     pub fn poser_subject(&self) -> Uuid {
         self.poser.subject
