@@ -10758,7 +10758,8 @@ What the inventory must show with these scenarios:
   thread reads from the depth what the others would have shared,
   `contact_shadows_no_shared.wgsl`). Both draw the same mask as Bend's
   (the GPU test `the_variants_that_keep_the_image_draw_bends_mask`, run
-  with `-- --ignored`). `short`: 16 samples per pixel instead of 60, the
+  with `-- --ignored`). Where two wavefronts cover one pixel, the mask
+  keeps the darker shadow. `short`: 16 samples per pixel instead of 60, the
   shadows about four times shorter; `skip`: the shader is not dispatched,
   no contact shadow (the mask is still cleared and filtered). Any other
   value keeps Bend's shader; the log says `contact shadows: diagnostic

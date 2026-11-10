@@ -28,7 +28,9 @@
 // the light, divide them by their distance to the light point (in that
 // space every ray of light is parallel), share them in workgroup memory,
 // and a pixel is in shadow when one of the depths before it along the ray
-// comes within a surface thickness of its own. Changes from the original:
+// comes within a surface thickness of its own. Neighbouring wavefronts can
+// floor onto the same texel; each keeps the darker shadow in `shadow_max`
+// (`keep_darker`), and `write_mask` stores that once. Changes from the original:
 // integer texel loads instead of a clamp-to-border sampler (outside the
 // screen reads the far depth), the early-out of a whole wavefront through
 // workgroup memory (no wave intrinsics in WGSL), the shadow stored rather
@@ -55,6 +57,25 @@ struct Params {
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var depth_tex: texture_depth_2d;
 @group(0) @binding(2) var out_tex: texture_storage_2d<rgba8unorm, write>;
+// One quantized shadow per pixel, 0 lit, 255 in contact shadow. Wavefronts
+// meet on a texel where their rays floor together; `atomicMax` keeps the
+// darker one. `clear` zeros it, `write_mask` stores it into `out_tex`.
+@group(0) @binding(3) var<storage, read_write> shadow_max: array<atomic<u32>>;
+
+// The mask value of `result` (1 lit, 0 in shadow), as the unorm8 the store
+// used to write: 0 lit, 255 in contact shadow.
+fn shadow_level(result: f32) -> u32 {
+    return u32(round(saturate(1.0 - result) * 255.0));
+}
+
+fn keep_darker(write_xy: vec2<i32>, result: f32) {
+    let size = vec2<i32>(textureDimensions(out_tex));
+    if (any(write_xy < vec2<i32>(0)) || any(write_xy >= size)) {
+        return;
+    }
+    let pixel = u32(write_xy.y) * u32(size.x) + u32(write_xy.x);
+    atomicMax(&shadow_max[pixel], shadow_level(result));
+}
 
 // Must match WAVE_SIZE in contact_shadows.rs.
 const WAVE_SIZE: i32 = 64;
@@ -234,10 +255,19 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
     shadow_value = saturate(shadow_value * contrast + (1.0 - contrast));
     hard_shadow = saturate(hard_shadow * contrast + (1.0 - contrast));
     let result = min(hard_shadow, dot(shadow_value, vec4<f32>(0.25)));
-    let size = vec2<i32>(textureDimensions(out_tex));
-    if (all(write_xy >= vec2<i32>(0)) && all(write_xy < size)) {
-        textureStore(out_tex, write_xy, vec4<f32>(1.0 - result, 0.0, 0.0, 0.0));
+    keep_darker(write_xy, result);
+}
+
+// The mask, after every wavefront: one store per pixel, the darker shadow.
+@compute @workgroup_size(8, 8, 1)
+fn write_mask(@builtin(global_invocation_id) id: vec3<u32>) {
+    let size = textureDimensions(out_tex);
+    if (id.x >= size.x || id.y >= size.y) {
+        return;
     }
+    let pixel = id.y * size.x + id.x;
+    let v = f32(atomicLoad(&shadow_max[pixel])) / 255.0;
+    textureStore(out_tex, vec2<i32>(id.xy), vec4<f32>(v, 0.0, 0.0, 0.0));
 }
 
 // Every pixel lit, before the wavefronts (wgpu's clear_texture needs a
@@ -247,5 +277,11 @@ fn clear(@builtin(global_invocation_id) id: vec3<u32>) {
     let size = textureDimensions(out_tex);
     if (id.x < size.x && id.y < size.y) {
         textureStore(out_tex, vec2<i32>(id.xy), vec4<f32>(0.0));
+        // (a placeholder buffer when the image is past the device's
+        // storage limit: nothing runs after the clear then)
+        let pixel = id.y * size.x + id.x;
+        if (pixel < arrayLength(&shadow_max)) {
+            atomicStore(&shadow_max[pixel], 0u);
+        }
     }
 }
