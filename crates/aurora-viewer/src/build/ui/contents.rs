@@ -350,8 +350,10 @@ fn item_row(
                     tool.ui.open_notecard = Some((object_id, item.item_id));
                 }
             }
+            // Every selected item gets its own window (LLInventoryAction::doToSelected "task_properties";
+            // the Legacy Viewer tabs them in one window, see item_properties::show).
             if menu::item(ui, p, "info-circle-filled", aurora_i18n::tr!("common-properties")) {
-                tool.open_task_item_properties(object_id, item);
+                tool.open_task_items_properties(object_id, &taken);
             }
             if menu::item_if(
                 ui,

@@ -194,7 +194,7 @@ fn script_properties_save_each_click_without_closing_and_survive_inventory_readb
     }
     assert!(updates(&tool).is_empty());
     for mask in [perm::MODIFY, perm::COPY, perm::COPY, perm::MODIFY] {
-        let previous = tool.ui.item_properties.as_ref().unwrap().edit.next;
+        let previous = tool.ui.item_properties.last().unwrap().edit.next;
         let labels = frame(vec![], &mut tool, &mut world);
         assert!(!labels.iter().any(|(text, _)| text == aurora_i18n::tr!("common-save")));
         let label = if mask == perm::MODIFY {
@@ -227,7 +227,7 @@ fn script_properties_save_each_click_without_closing_and_survive_inventory_readb
                 &mut world,
             );
         }
-        assert!(tool.ui.item_properties.is_some(), "Each click keeps properties open");
+        assert!(!tool.ui.item_properties.is_empty(), "Each click keeps properties open");
         assert_eq!(updates(&tool).len(), 1, "One update per click");
         let sent = updates(&tool)[0].clone();
         assert_eq!(sent.next_owner_mask, previous ^ mask);
@@ -235,7 +235,7 @@ fn script_properties_save_each_click_without_closing_and_survive_inventory_readb
         assert_eq!(sent.item_id, script.item_id);
         assert_eq!(
             sent.next_owner_mask & mask,
-            tool.ui.item_properties.as_ref().unwrap().edit.next & mask
+            tool.ui.item_properties.last().unwrap().edit.next & mask
         );
         assert!(matches!(&tool.out[..], [NetCommand::Build(BuildCmd::UpdateTaskInventory { .. })]));
         let mut readback = items.clone();
@@ -246,9 +246,9 @@ fn script_properties_save_each_click_without_closing_and_survive_inventory_readb
             frame(vec![], &mut tool, &mut world);
         }
         assert!(updates(&tool).is_empty(), "Readback and idle frames never resend");
-        tool.ui.item_properties = None;
+        tool.ui.item_properties.clear();
         tool.open_task_item_properties(object, &sent);
-        assert_eq!(tool.ui.item_properties.as_ref().unwrap().edit.next, sent.next_owner_mask);
+        assert_eq!(tool.ui.item_properties.last().unwrap().edit.next, sent.next_owner_mask);
     }
 }
 
@@ -394,4 +394,86 @@ fn bulk_permissions_keep_their_size() {
         },
         |(world, tool), ctx, p| show(ctx, p, tool, world),
     );
+}
+
+/// Draws the open properties windows and returns where each title is.
+fn property_window_titles(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World) -> Vec<egui::Rect> {
+    let mut titles = Vec::new();
+    for _ in 0..4 {
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 1000.0))),
+                ..Default::default()
+            },
+            |_| super::super::item_properties::show(ctx, &crate::theme::Theme::default().palette(), tool, world, &HashMap::new()),
+        );
+        fn text(shape: &egui::Shape, titles: &mut Vec<egui::Rect>) {
+            match shape {
+                egui::Shape::Text(t) if t.galley.text() == aurora_i18n::tr!("ui-inventory-dialogs-object-properties") => {
+                    titles.push(t.galley.rect.translate(t.pos.to_vec2()))
+                }
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| text(shape, titles)),
+                _ => {}
+            }
+        }
+        titles.clear();
+        for shape in &output.shapes {
+            text(&shape.shape, &mut titles);
+        }
+    }
+    titles
+}
+
+#[test]
+fn properties_open_one_window_for_each_selected_item() {
+    let (mut world, mut tool, object, items) = fixture();
+    let selection = &mut tool.ui.contents_selection;
+    selection.object = Some(object);
+    selection.order = items.iter().map(|it| it.item_id).collect();
+    selection.items = [1, 4, 6].iter().map(|i| items[*i].item_id).collect();
+    let acted = super::super::contents_selection::acted_on(&tool, object, &items[4]);
+    tool.open_task_items_properties(object, &acted);
+    let open = |tool: &BuildTool| tool.ui.item_properties.iter().map(|w| (w.object, w.item)).collect::<Vec<_>>();
+    let expected = [1, 4, 6].iter().map(|i| (object, items[*i].item_id)).collect::<Vec<_>>();
+    assert_eq!(open(&tool), expected, "One window per selected item, in list order");
+    tool.open_task_items_properties(object, &acted);
+    tool.open_task_item_properties(object, &items[4]);
+    assert_eq!(open(&tool), expected, "An item already shown gets no second window");
+
+    let ctx = egui::Context::default();
+    let titles = property_window_titles(&ctx, &mut tool, &mut world);
+    assert_eq!(titles.len(), 3, "Every window is drawn");
+    for (i, a) in titles.iter().enumerate() {
+        for b in &titles[i + 1..] {
+            assert!((a.min - b.min).length() > 8.0, "Windows cascade instead of hiding each other");
+        }
+    }
+    assert!(updates(&tool).is_empty(), "Opening and drawing sends nothing");
+}
+
+#[test]
+fn properties_skip_folders_and_a_single_row_opens_only_itself() {
+    let (mut world, mut tool, object, items) = fixture();
+    let mut folder = items[2].clone();
+    folder.item_id = Uuid::from_u128(98999);
+    folder.is_folder = true;
+    tool.open_task_items_properties(object, &[folder, items[3].clone()]);
+    assert_eq!(
+        tool.ui.item_properties.iter().map(|w| w.item).collect::<Vec<_>>(),
+        [items[3].item_id],
+        "A folder has no properties window"
+    );
+    // A right-click outside a multi-selection acts on that row alone.
+    let selection = &mut tool.ui.contents_selection;
+    selection.object = Some(object);
+    selection.order = items.iter().map(|it| it.item_id).collect();
+    selection.items = [1, 4].iter().map(|i| items[*i].item_id).collect();
+    let acted = super::super::contents_selection::acted_on(&tool, object, &items[7]);
+    tool.open_task_items_properties(object, &acted);
+    assert_eq!(
+        tool.ui.item_properties.iter().map(|w| w.item).collect::<Vec<_>>(),
+        [items[3].item_id, items[7].item_id]
+    );
+    let ctx = egui::Context::default();
+    assert_eq!(property_window_titles(&ctx, &mut tool, &mut world).len(), 2);
 }
