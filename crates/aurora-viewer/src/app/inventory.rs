@@ -293,6 +293,7 @@ impl App {
                 }
             }
             InvAction::TakeTask(request) => self.take_task_inventory(*request),
+            InvAction::StopConfirmingDelete => self.settings.inventory.confirm_delete = false,
             InvAction::Edit(change) => self.edit_inventory(change, false),
             InvAction::Drop(change) => self.edit_inventory(change, true),
             InvAction::Create { parent, kind, name } => {
@@ -869,8 +870,12 @@ impl App {
             return;
         };
         if let crate::world::appearance::Action::ShowOriginal(id) = action {
-            ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
-            self.inventory_ui.show_original(&self.world.inventory, id);
+            // show_item_original (llinventoryfunctions.cpp) refuses @showinv
+            // before opening Inventory or changing its selection and filters.
+            if !self.world.rlva.has("showinv") {
+                ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
+                self.inventory_ui.show_original(&self.world.inventory, id);
+            }
             return;
         }
         if let crate::world::appearance::Action::Favorite(id) = action {
@@ -888,6 +893,25 @@ impl App {
         if let crate::world::appearance::Action::Folders(change) = action {
             self.apply_inventory_action(crate::ui::inventory::InvAction::Edit(change));
             return;
+        }
+        match action {
+            crate::world::appearance::Action::OutfitImage(id) => {
+                self.inventory_ui.thumbnail.open(id);
+                return;
+            }
+            crate::world::appearance::Action::OutfitSnapshot(id) => {
+                self.outfit_snapshot(id);
+                return;
+            }
+            crate::world::appearance::Action::OutfitPortrait(id) => {
+                self.open_outfit_portrait(id, super::outfit_portrait::Kind::Studio);
+                return;
+            }
+            crate::world::appearance::Action::OutfitPhotoMode(id) => {
+                self.open_outfit_portrait(id, super::outfit_portrait::Kind::Viewfinder);
+                return;
+            }
+            _ => {}
         }
         if self.appearance_ui.pending.is_some() {
             return;

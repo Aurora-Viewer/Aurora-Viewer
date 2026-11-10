@@ -306,8 +306,15 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         st.open_audio(section);
     } else if what == "reset" {
         st.demo_reset = true;
-    } else if what == "modified" {
+    } else if what == "reset-ask" {
+        st.confirm_reset = Some(ResetAsk::Page(page));
+    } else if what == "reset-all-ask" {
+        st.confirm_reset = Some(ResetAsk::All);
+    } else if what == "modified" || what == "modified-ask" {
         st.modified_view = true;
+        if what == "modified-ask" {
+            st.confirm_reset = Some(ResetAsk::Modified);
+        }
     } else if what == "cogs" {
         st.demo_open_cogs = true;
     } else if what == "system-fonts" || what == "system-fonts-scroll" {
@@ -328,6 +335,16 @@ enum Done {
     /// The settings that differed from their defaults.
     Modified,
     /// Every setting (the app also forgets the windows' layout).
+    All,
+}
+
+/// A reset asked by a button, waiting for its "Reset" in a dialog. `Undo`
+/// still follows it: the dialog is for a slip of the mouse, the undo for a
+/// change of mind.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ResetAsk {
+    Page(Page),
+    Modified,
     All,
 }
 
@@ -408,6 +425,8 @@ pub struct OptionsUi {
     /// The session's "Show my favorite landmarks at login", while logged in
     /// with an account the login screen remembers (set by the app).
     pub login_favorites: Option<bool>,
+    /// The account's "Show Friends Only", while logged in (set by the app).
+    pub friends_only: Option<bool>,
     /// The account's "Keep Show Friends Only after teleporting", while
     /// logged in (set by the app).
     pub friends_only_keep: Option<bool>,
@@ -476,6 +495,10 @@ pub struct OptionsUi {
     pub chat_log_custom: bool,
     /// "Erase this account's history?" confirmation open.
     confirm_erase_logs: bool,
+    /// "Reset …?" confirmation open, then the reset it said yes to, done by
+    /// the next pass of the window's body.
+    confirm_reset: Option<ResetAsk>,
+    reset_confirmed: Option<ResetAsk>,
     /// The import of a Legacy Viewer's chat history (set by the app).
     pub chat_import: ChatImportUi,
     /// Files done and files to do of the import under way (set by the app).
@@ -648,6 +671,8 @@ pub struct OptionsResult {
     pub account: Option<crate::world::user_info::Change>,
     /// "Show my favorite landmarks at login" switched (Privacy).
     pub login_favorites: Option<bool>,
+    /// "Show Friends Only" switched (Controls).
+    pub friends_only: Option<bool>,
     /// "Keep Show Friends Only after teleporting" switched (Controls).
     pub friends_only_keep: Option<bool>,
     /// Open the Dev Toolbox (Network and cache › Logs and tools).
@@ -919,11 +944,7 @@ fn preset_choice(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
     let mut selected = current.and_then(|c| Preset::ALL.iter().position(|l| *l == c)).unwrap_or(usize::MAX);
     let changed = super::widgets::segmented(ui, p, &mut selected, &options);
     if current.is_none() && !changed {
-        ui.label(
-            RichText::new(aurora_i18n::tr!("ui-options-preset-custom"))
-                .size(12.0)
-                .color(p.violet_pale),
-        );
+        ui.label(RichText::new(preset_label(s)).size(12.0).color(p.violet_pale));
     }
     match Preset::ALL.get(selected) {
         Some(level) if changed => {
@@ -931,6 +952,16 @@ fn preset_choice(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
             true
         }
         _ => false,
+    }
+}
+
+/// The line under the level row when no level matches: the Mac's own
+/// default on macOS, "Custom" otherwise.
+fn preset_label(s: &Settings) -> &'static str {
+    if cfg!(target_os = "macos") && crate::graphics_presets::mac_mid_high::matches(s) {
+        aurora_i18n::tr!("ui-options-preset-mac-mid-high")
+    } else {
+        aurora_i18n::tr!("ui-options-preset-custom")
     }
 }
 
@@ -1244,6 +1275,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
         st.finish_undo(&mut r);
     }
     erase_logs_modal(ctx, p, st, &mut r, *open);
+    reset_modal(ctx, p, st, *open);
     chat_import_modal(ctx, p, st, &mut r, *open);
     backup::restore_modal(ctx, p, s, st, &mut r, *open);
     saved_graphics::confirm(ctx, p, s, st, &mut r, *open);
@@ -1421,7 +1453,13 @@ fn body(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, d: &Settings, st: &mut
         st.flash_scroll = row.is_some();
     }
     if std::mem::take(&mut st.demo_reset) {
-        reset_page(ui, p, s, d, st, r, now);
+        reset_page(ui, p, s, d, st, r, st.page, now);
+    }
+    match st.reset_confirmed.take() {
+        Some(ResetAsk::Page(page)) => reset_page(ui, p, s, d, st, r, page, now),
+        Some(ResetAsk::Modified) => reset_modified(ui, p, s, d, st, r, now),
+        Some(ResetAsk::All) => reset_all(s, st, r, now),
+        None => {}
     }
     // a row asked by its label (demo, another window): its page first,
     // then `Cx` opens its cog and lights it
@@ -1446,7 +1484,7 @@ fn body(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, d: &Settings, st: &mut
     sidebar(ui, p, s, d, st, r, side, now);
     let searching = !st.query.trim().is_empty();
     let content_rect = page_area(ui, p, s, d, st, r, main, searching);
-    footer_bar(ui, p, s, d, st, r, footer, searching, close, now);
+    footer_bar(ui, p, st, footer, searching, close);
     undo_bar(ui, p, s, st, r, content_rect);
     st.count_stale = input || r.changed;
 }
@@ -1733,18 +1771,7 @@ fn page_area(
                     )
                     .clicked()
                     {
-                        let before = Box::new(s.clone());
-                        reset_rows(ui, p, s, d, st, r, None);
-                        for page in Page::ALL {
-                            st.after_reset(page, s, r);
-                        }
-                        st.finish_undo(r);
-                        st.undo = Some(Undo {
-                            before,
-                            text: aurora_i18n::tr!("ui-options-modified-were-reset").to_owned(),
-                            shown: ui.input(|i| i.time),
-                            done: Done::Modified,
-                        });
+                        st.confirm_reset = Some(ResetAsk::Modified);
                     }
                 } else {
                     let legacy = action_button(
@@ -1851,19 +1878,7 @@ fn page_area(
     rows
 }
 
-#[allow(clippy::too_many_arguments)]
-fn footer_bar(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    s: &mut Settings,
-    d: &Settings,
-    st: &mut OptionsUi,
-    r: &mut OptionsResult,
-    footer: Rect,
-    searching: bool,
-    close: &mut bool,
-    now: f64,
-) {
+fn footer_bar(ui: &mut egui::Ui, p: &Palette, st: &mut OptionsUi, footer: Rect, searching: bool, close: &mut bool) {
     ui.painter().hline(
         footer.x_range(),
         footer.top() + 0.5,
@@ -1886,25 +1901,14 @@ fn footer_bar(
     )
     .on_hover_text(aurora_i18n::tr!("ui-options-reset-all-settings"));
     if reset_all.clicked() {
-        let before = Box::new(s.clone());
-        s.reset_keeping_account();
-        for page in Page::ALL {
-            st.after_reset(page, s, r);
-        }
-        st.finish_undo(r);
-        st.undo = Some(Undo {
-            before,
-            text: aurora_i18n::tr!("ui-options-all-were-reset").to_owned(),
-            shown: now,
-            done: Done::All,
-        });
+        st.confirm_reset = Some(ResetAsk::All);
     }
     if !searching && !st.modified_view {
         let label = aurora_i18n::tr!("ui-options-reset-page", page = st.page.name());
         let b = action_button(&mut ui, p, "restore", &label, ActionKind::Flat, size)
             .on_hover_text(aurora_i18n::tr!("ui-options-reset-section-help", section = st.page.name()));
         if b.clicked() {
-            reset_page(&mut ui, p, s, d, st, r, now);
+            st.confirm_reset = Some(ResetAsk::Page(st.page));
         }
     }
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1933,9 +1937,106 @@ fn footer_bar(
     });
 }
 
-/// The page shown back to its defaults, with an undo.
-fn reset_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, d: &Settings, st: &mut OptionsUi, r: &mut OptionsResult, now: f64) {
-    let page = st.page;
+/// "Reset …?": the reset waits for its "Reset" here, and is done by the
+/// next pass of the window's body, which has the rows to run.
+fn reset_modal(ctx: &egui::Context, p: &Palette, st: &mut OptionsUi, open: bool) {
+    let Some(ask) = st.confirm_reset.filter(|_| open) else {
+        st.confirm_reset = None;
+        return;
+    };
+    let (title, text): (String, String) = match ask {
+        ResetAsk::Page(page) => (
+            aurora_i18n::tr!("ui-options-reset-section-title", section = page.name()),
+            aurora_i18n::tr!("ui-options-reset-section-text").to_string(),
+        ),
+        ResetAsk::Modified => (
+            aurora_i18n::tr!("ui-options-modified-reset-title").to_string(),
+            aurora_i18n::tr!("ui-options-modified-reset-text").to_string(),
+        ),
+        ResetAsk::All => (
+            aurora_i18n::tr!("ui-options-reset-everything").to_string(),
+            aurora_i18n::tr!("ui-options-reset-everything-text").to_string(),
+        ),
+    };
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique("options_reset_confirm")).show(ctx, |ui| {
+        ui.set_width(360.0);
+        ui.label(RichText::new(title).size(15.0).strong().color(p.ink));
+        ui.add_space(6.0);
+        ui.label(RichText::new(text).size(12.5).color(p.muted));
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            use super::widgets::{ActionKind, action_button};
+            let size = Vec2::new(0.0, 26.0);
+            if action_button(
+                ui,
+                p,
+                "restore",
+                aurora_i18n::tr!("ui-options-reset-confirm"),
+                ActionKind::Danger,
+                size,
+            )
+            .clicked()
+            {
+                st.reset_confirmed = Some(ask);
+                st.confirm_reset = None;
+            }
+            if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                st.confirm_reset = None;
+            }
+        });
+    });
+    if modal.should_close() {
+        st.confirm_reset = None;
+    }
+    if st.reset_confirmed.is_some() {
+        ctx.request_repaint();
+    }
+}
+
+/// Every setting back to its default but the account's, with an undo.
+fn reset_all(s: &mut Settings, st: &mut OptionsUi, r: &mut OptionsResult, now: f64) {
+    let before = Box::new(s.clone());
+    s.reset_keeping_account();
+    for page in Page::ALL {
+        st.after_reset(page, s, r);
+    }
+    st.finish_undo(r);
+    st.undo = Some(Undo {
+        before,
+        text: aurora_i18n::tr!("ui-options-all-were-reset").to_owned(),
+        shown: now,
+        done: Done::All,
+    });
+}
+
+/// The settings that differ from their defaults back to them, with an undo.
+fn reset_modified(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, d: &Settings, st: &mut OptionsUi, r: &mut OptionsResult, now: f64) {
+    let before = Box::new(s.clone());
+    reset_rows(ui, p, s, d, st, r, None);
+    for page in Page::ALL {
+        st.after_reset(page, s, r);
+    }
+    st.finish_undo(r);
+    st.undo = Some(Undo {
+        before,
+        text: aurora_i18n::tr!("ui-options-modified-were-reset").to_owned(),
+        shown: now,
+        done: Done::Modified,
+    });
+}
+
+/// A page back to its defaults, with an undo.
+#[allow(clippy::too_many_arguments)]
+fn reset_page(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    s: &mut Settings,
+    d: &Settings,
+    st: &mut OptionsUi,
+    r: &mut OptionsResult,
+    page: Page,
+    now: f64,
+) {
     let before = Box::new(s.clone());
     reset_rows(ui, p, s, d, st, r, Some(page));
     st.after_reset(page, s, r);

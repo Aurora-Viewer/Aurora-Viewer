@@ -117,20 +117,24 @@ pub fn buffer_init(device: &wgpu::Device, label: &str, contents: &[u8], usage: w
 /// refused them. Whatever came back invalid is `make`'s to drop: unlike
 /// [`try_texture`] there is nothing to fall back on but trying again.
 pub fn scoped<T>(device: &wgpu::Device, make: impl FnOnce() -> T) -> (T, bool) {
+    let (made, oom, invalid) = scoped_apart(device, make);
+    (made, oom || invalid)
+}
+
+/// [`scoped`], with the two signs of a refusal apart: (made, the memory
+/// said so, an object came back invalid).
+pub fn scoped_apart<T>(device: &wgpu::Device, make: impl FnOnce() -> T) -> (T, bool, bool) {
     let oom = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
     let invalid = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let made = make();
     let invalid = pollster::block_on(invalid.pop());
     let oom = pollster::block_on(oom.pop());
-    let refused = memory_refused(
-        oom.as_ref().map(ToString::to_string).as_deref(),
-        invalid.as_ref().map(ToString::to_string).as_deref(),
-    );
+    let is_invalid = memory_refused(None, invalid.as_ref().map(ToString::to_string).as_deref());
     // said as outside a scope, refused or not
     for e in oom.iter().chain(&invalid) {
         say(e);
     }
-    (made, refused)
+    (made, oom.is_some(), is_invalid)
 }
 
 /// An error a scope caught, written as the device's handler writes the
@@ -253,6 +257,39 @@ pub fn first_use_refused() -> bool {
             .map(|seconds| Instant::now() + Duration::from_secs(seconds))
     });
     until.is_some_and(|t| Instant::now() < t)
+}
+
+/// `AURORA_GPU_OOM_START=<seconds>`: for that long after the renderer is
+/// first made, its placeholder textures come back invalid as if video
+/// memory were full, at start and at each remake of the renderer
+/// (testing). Made with no usage, as for `AURORA_GPU_OOM_TARGETS`.
+pub fn start_refused() -> bool {
+    static UNTIL: OnceLock<Option<Instant>> = OnceLock::new();
+    let until = *UNTIL.get_or_init(|| {
+        std::env::var("AURORA_GPU_OOM_START")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .map(|seconds| Instant::now() + Duration::from_secs(seconds))
+    });
+    until.is_some_and(|t| Instant::now() < t)
+}
+
+/// The usage a placeholder texture is made with: none while
+/// `AURORA_GPU_OOM_START` refuses it, which wgpu answers with an invalid
+/// texture.
+pub fn start_usage(usage: wgpu::TextureUsages, refuse: bool) -> wgpu::TextureUsages {
+    if refuse { wgpu::TextureUsages::empty() } else { usage }
+}
+
+/// Whether a renderer whose start scope saw these errors is made again
+/// later. Refused render targets leave invalid views in what binds them,
+/// made outside their own scope: with them refused, only the memory's own
+/// word counts (any resource it refuses says so when it is made), and the
+/// targets' retry is left to bring the world back. A refusal on a device
+/// lost meanwhile is the loss, which ends the viewer (or recovers it), not
+/// a full video memory.
+pub fn start_remade(oom: bool, invalid: bool, targets_refused: bool, lost: bool) -> bool {
+    (oom || (invalid && !targets_refused)) && !lost
 }
 
 /// The interface's blur and glass of a window this size fall under
@@ -577,6 +614,28 @@ pub fn ahead_allowance(budget: u64, usage: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_renderer_refused_at_start_is_made_again_unless_the_device_was_lost() {
+        // (oom, invalid, targets refused, lost)
+        assert!(start_remade(true, false, false, false));
+        assert!(start_remade(false, true, false, false), "an invalid object with the targets made");
+        assert!(start_remade(true, true, true, false), "the memory refused more than the targets");
+        assert!(
+            !start_remade(false, true, true, false),
+            "what binds the refused targets: their own retry"
+        );
+        assert!(!start_remade(true, true, false, true), "a lost device is not a full video memory");
+        assert!(!start_remade(false, false, false, false));
+        assert!(!start_remade(false, false, true, false));
+    }
+
+    #[test]
+    fn a_refused_start_texture_is_made_with_no_usage() {
+        let u = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
+        assert_eq!(start_usage(u, false), u);
+        assert!(start_usage(u, true).is_empty());
+    }
 
     #[test]
     #[ignore]
