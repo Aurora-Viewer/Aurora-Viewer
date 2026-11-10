@@ -84,6 +84,8 @@ impl Imports {
     /// Clear this account/grid's applications, including absent objects, while
     /// keeping the local library, source files and local mesh geometry intact.
     pub fn clear_all_appearance_targets(&mut self, objects: &mut crate::world::objects::ObjectStore) {
+        self.sync_local_duplicate_bindings(objects);
+        objects.cancel_local_duplicates();
         let ids: Vec<_> = self
             .local_appearance_targets
             .keys()
@@ -324,6 +326,29 @@ impl Imports {
             }
         }
     }
+
+    pub fn sync_local_duplicate_bindings(&mut self, objects: &mut crate::world::objects::ObjectStore) {
+        let mut changes = objects.take_local_duplicate_changes();
+        for (id, face, appearance) in &mut changes {
+            let retained =
+                appearance.and_then(|value| value.retain(|id| self.entries.iter().any(|entry| entry.id == id && entry.local_published)));
+            // A local file may have been removed while the copy was in flight.
+            if retained != *appearance
+                && let Some(index) = objects.index_of_uuid(id)
+                && let Some(object) = objects.get_mut(index)
+            {
+                if let Some(value) = retained {
+                    object.render.local_appearance.insert(*face, value);
+                } else {
+                    object.render.local_appearance.remove(face);
+                }
+                object.material_dirty = true;
+                object.render.needs_records = true;
+            }
+            *appearance = retained;
+        }
+        self.sync_local_appearance_changes(changes);
+    }
     pub fn clear_appearance_targets(&mut self, objects: &mut crate::world::objects::ObjectStore, ids: &[Uuid], entry: Option<Uuid>) {
         self.local_appearance_targets.retain(|(id, _), appearance| {
             if !ids.contains(id) {
@@ -441,6 +466,128 @@ impl Imports {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deleting_scene_objects_reduces_live_appearances_and_preserves_restoration() {
+        use crate::world::objects::{ObjKey, ObjectStore};
+        for count in [1, 3] {
+            for material in [false, true] {
+                let source = if material {
+                    Source::Material {
+                        value: PbrMaterial::default(),
+                        images: Box::new(std::array::from_fn(|_| None)),
+                    }
+                } else {
+                    Source::Texture(Arc::new(DecodedImage {
+                        width: 1,
+                        height: 1,
+                        components: 3,
+                        data: vec![255; 3],
+                        discard: 0,
+                    }))
+                };
+                let mut entry = Entry::new("local-demo".into(), Ok(source), Default::default());
+                entry.local = true;
+                entry.local_published = true;
+                let id = entry.id;
+                let mut imports = Imports {
+                    entries: vec![entry],
+                    ..Default::default()
+                };
+                let mut objects = ObjectStore::default();
+                let mut updates = Vec::new();
+                for n in 0..count {
+                    let mut update = crate::demo::action_avatar(false);
+                    update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+                    update.parent_id = 0;
+                    update.local_id = 970 + n as u32;
+                    update.full_id = Uuid::new_v4();
+                    objects.upsert(1, update.clone());
+                    imports.target_local(id, update.full_id, &[], false);
+                    updates.push(update);
+                }
+                imports.apply_appearance_targets(&mut objects);
+                assert_eq!(imports.appearance_status(&objects).faces.len(), count);
+                for (n, update) in updates.iter().enumerate() {
+                    objects.remove(&ObjKey {
+                        region: 1,
+                        local_id: update.local_id,
+                    });
+                    let status = imports.appearance_status(&objects);
+                    assert_eq!(status.faces.len(), count - n - 1);
+                    assert_eq!(status.textures + status.materials, usize::from(n + 1 < count));
+                    assert_eq!(status.remembered_objects, count, "absent objects keep their stored applications");
+                }
+                objects.upsert(1, updates[0].clone());
+                imports.apply_appearance_targets(&mut objects);
+                let status = imports.appearance_status(&objects);
+                assert_eq!(status.faces.len(), 1);
+                assert_eq!((status.textures, status.materials), if material { (0, 1) } else { (1, 0) });
+                assert_eq!(imports.entries.len(), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn local_duplicates_join_the_registry_and_share_file_removal_without_resurrection() {
+        use crate::world::objects::{LocalAppearance, ObjectStore};
+        for removal in 0..3 {
+            let removed_in_flight = removal != 0;
+            let mut update = crate::demo::action_avatar(false);
+            update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+            update.parent_id = 0;
+            let original_id = update.full_id;
+            let mut objects = ObjectStore::default();
+            objects.upsert(0, update.clone());
+            let mut entry = Entry::new(
+                "local.gltf".into(),
+                Ok(Source::Material {
+                    value: PbrMaterial::default(),
+                    images: Box::new(std::array::from_fn(|_| None)),
+                }),
+                Default::default(),
+            );
+            entry.local = true;
+            entry.local_published = true;
+            let material = entry.id;
+            let mut imports = Imports {
+                entries: vec![entry],
+                ..Default::default()
+            };
+            imports.set_local_appearance_target(original_id, Some(1), Some(LocalAppearance::Material(material)));
+            imports.apply_appearance_targets(&mut objects);
+            objects.expect_local_duplicates(0, &[update.local_id], glam::Vec3::X, false, None);
+            if removal == 1 {
+                imports.entries.clear();
+            } else if removal == 2 {
+                imports.clear_all_appearance_targets(&mut objects);
+            }
+            update.local_id += 100;
+            update.full_id = Uuid::new_v4();
+            update.position += glam::Vec3::X;
+            let copy_id = update.full_id;
+            let copy = objects.upsert(0, update);
+            imports.sync_local_duplicate_bindings(&mut objects);
+            if removed_in_flight {
+                assert!(objects.get(copy).unwrap().render.local_appearance.is_empty());
+                assert!(!imports.local_appearance_targets.contains_key(&(copy_id, Some(1))));
+                continue;
+            }
+            assert_eq!(
+                imports.local_appearance_targets[&(copy_id, Some(1))],
+                LocalAppearance::Material(material)
+            );
+            assert_eq!(imports.appearance_status(&objects).remembered_objects, 2);
+            imports.clear_appearance_targets(&mut objects, &[original_id], None);
+            assert_eq!(
+                objects.get(copy).unwrap().local_appearance(1),
+                Some(LocalAppearance::Material(material))
+            );
+            imports.clear_appearance_targets(&mut objects, &[copy_id], Some(material));
+            imports.apply_appearance_targets(&mut objects);
+            assert!(objects.get(copy).unwrap().render.local_appearance.is_empty());
+        }
+    }
 
     #[test]
     fn removing_a_local_map_preserves_other_channels_and_does_not_reapply_it() {

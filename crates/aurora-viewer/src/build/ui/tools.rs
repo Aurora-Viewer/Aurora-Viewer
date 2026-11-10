@@ -10,7 +10,7 @@ use crate::build::{BuildSettings, BuildTool, EditMode, FocusMode, GrabMode, Mods
 use crate::theme::Palette;
 use crate::world::World;
 use aurora_net::build::land_action;
-use egui::{Color32, RichText, Vec2};
+use egui::{RichText, Vec2};
 
 /// "text status": the hint of the current tool (floater.string status_*).
 pub fn status_text(tool: &BuildTool, s: &BuildSettings, mods: Mods) -> &'static str {
@@ -145,15 +145,15 @@ fn create_shapes(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, cell: Ve
                 let name = match i {
                     i if i < shapes().len() => {
                         let sh = &shapes()[i];
-                        super::object::shape_preview(ui, rect.shrink(3.0), &sh.params(), sh.rotation(), col);
+                        super::shape_preview::paint(ui, rect.shrink(3.0), &sh.params(), sh.rotation(), col);
                         sh.name
                     }
                     i if i == shapes().len() => {
-                        tree_icon(ui, rect.shrink(4.0), col, true);
+                        super::shape_preview::paint_plant(ui, rect.shrink(3.0), true, col);
                         aurora_i18n::tr!("build-ui-tools-tree")
                     }
                     _ => {
-                        tree_icon(ui, rect.shrink(4.0), col, false);
+                        super::shape_preview::paint_plant(ui, rect.shrink(3.0), false, col);
                         aurora_i18n::tr!("build-ui-tools-grass")
                     }
                 };
@@ -241,33 +241,6 @@ fn create_options(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
     });
 }
 
-/// A small tree / grass glyph for the last two shape buttons.
-fn tree_icon(ui: &egui::Ui, r: egui::Rect, col: Color32, tree: bool) {
-    let painter = ui.painter();
-    let s = egui::Stroke::new(1.2, col);
-    if tree {
-        let top = egui::pos2(r.center().x, r.top());
-        painter.line_segment([top, egui::pos2(r.left() + 2.0, r.bottom() - 5.0)], s);
-        painter.line_segment([top, egui::pos2(r.right() - 2.0, r.bottom() - 5.0)], s);
-        painter.line_segment(
-            [
-                egui::pos2(r.left() + 2.0, r.bottom() - 5.0),
-                egui::pos2(r.right() - 2.0, r.bottom() - 5.0),
-            ],
-            s,
-        );
-        painter.line_segment(
-            [egui::pos2(r.center().x, r.bottom() - 5.0), egui::pos2(r.center().x, r.bottom())],
-            s,
-        );
-    } else {
-        for k in 0..4 {
-            let x = r.left() + 2.0 + k as f32 * (r.width() - 4.0) / 3.0;
-            painter.line_segment([egui::pos2(x, r.bottom()), egui::pos2(x + 2.0 - k as f32, r.top() + 3.0)], s);
-        }
-    }
-}
-
 /// Land tool: brush radio, size / force, apply.
 pub fn land_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings) {
     ui.columns(2, |cols| {
@@ -327,9 +300,6 @@ pub fn land_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
             }
         }
     });
-    if let Some(m) = tool.land.take_message() {
-        tool.status = m;
-    }
 }
 
 /// GP_LAND_DIVIDE_JOIN, GP_LAND_RELEASE (llagent / roles_constants.h).
@@ -337,8 +307,6 @@ const GP_LAND_DIVIDE_JOIN: u64 = 1 << 19;
 const GP_LAND_RELEASE: u64 = 1 << 20;
 /// REGION_FLAGS_ALLOW_PARCEL_CHANGES.
 const REGION_FLAGS_ALLOW_PARCEL_CHANGES: u32 = 1 << 26;
-/// PARCEL_UNIT_AREA (m²).
-const PARCEL_UNIT_AREA: f32 = 16.0;
 
 /// The land info panel (LLPanelLandInfo::refresh).
 pub fn parcel_panel(
@@ -439,6 +407,9 @@ pub fn parcel_panel(
         .and_then(|r| r.info.as_ref())
         .is_none_or(|i| i.region_flags & REGION_FLAGS_ALLOW_PARCEL_CHANGES != 0);
     let whole = parcel.as_ref().is_some_and(|pi| (sel_area - pi.area as f32).abs() < 1.0);
+    if let Some(message) = tool.land.message() {
+        small(ui, p, message);
+    }
     super::common::section(ui, p, aurora_i18n::tr!("build-ui-tools-edit-parcel"));
     ui.horizontal(|ui| {
         let divide = owner_divide && region_allows && tool.land.selection.is_some() && !whole;
@@ -451,10 +422,11 @@ pub fn parcel_panel(
         {
             tool.ui.confirm = Some(Confirm::Divide);
         }
-        let join = sel_area > PARCEL_UNIT_AREA && !whole && owner_divide;
+        let join = tool.land.can_join(world);
         if ui
             .add_enabled(join, egui::Button::new(RichText::new(aurora_i18n::tr!("common-join")).size(12.0)))
             .clicked()
+            && tool.land.join_command(world).is_some()
         {
             tool.ui.confirm = Some(Confirm::Join);
         }
@@ -561,5 +533,126 @@ impl BuildTool {
         }
         let n = self.selected_link_number(world)?;
         Some(aurora_i18n::tr!("build-ui-tools-link-number", n = n))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aurora_net::land::{PARCEL_RESULT_MULTIPLE, PARCEL_RESULT_SUCCESS};
+    use std::sync::Arc;
+
+    fn fixture(result: i32) -> (World, BuildTool, BuildSettings) {
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        world.agent_id = crate::demo::DEMO_AGENT;
+        let handle = world.main_region.expect("demo region");
+        let off = world.region_offset(handle).expect("region offset").truncate();
+        let mut tool = BuildTool::default();
+        tool.open_build(Tool::Land);
+        tool.land.selection = Some((off + glam::Vec2::new(4.0, 4.0), off + glam::Vec2::new(12.0, 8.0)));
+        tool.land.parcel = Some((
+            handle,
+            Arc::new(aurora_net::ParcelInfo {
+                request_result: result,
+                owner_id: world.agent_id,
+                area: 16384,
+                ..Default::default()
+            }),
+        ));
+        (world, tool, BuildSettings::default())
+    }
+
+    fn text_rect(shape: &egui::Shape, text: &str) -> Option<egui::Rect> {
+        match shape {
+            egui::Shape::Text(t) if t.galley.text() == text => Some(egui::Rect::from_min_size(t.pos, t.galley.size())),
+            egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| text_rect(s, text)),
+            _ => None,
+        }
+    }
+
+    fn click_join(world: &mut World, tool: &mut BuildTool, settings: &mut BuildSettings) -> bool {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let mut frame = 0;
+        let mut show = |events| {
+            frame += 1;
+            let output = crate::ui::login::test_output(ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(420.0, 720.0))),
+                    time: Some(frame as f64 / 60.0),
+                    focused: true,
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.set_width(400.0);
+                    parcel_panel(ui, &p, tool, world, settings, &mut false);
+                },
+            ));
+            let button = output
+                .shapes
+                .iter()
+                .find_map(|s| text_rect(&s.shape, aurora_i18n::tr!("common-join")))
+                .expect("Join button");
+            let feedback = output
+                .shapes
+                .iter()
+                .any(|s| text_rect(&s.shape, aurora_i18n::tr!("build-land-join-select-multiple-parcels")).is_some());
+            (button, feedback)
+        };
+        show(Vec::new());
+        let pos = show(Vec::new()).0.center();
+        for pressed in [true, false] {
+            show(vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+        }
+        show(Vec::new()).1
+    }
+
+    #[test]
+    fn parcel_join_button_accepts_aggregate_ownership_and_equal_area() {
+        let (mut world, mut tool, mut settings) = fixture(PARCEL_RESULT_MULTIPLE);
+        for (owner, area) in [
+            (uuid::Uuid::nil(), 32),
+            (world.agent_id, 32),
+            (uuid::Uuid::from_u128(0xABCD), 16384),
+        ] {
+            let parcel = Arc::make_mut(&mut tool.land.parcel.as_mut().unwrap().1);
+            parcel.owner_id = owner;
+            parcel.area = area;
+            tool.ui.confirm = None;
+            assert!(!click_join(&mut world, &mut tool, &mut settings));
+            assert!(matches!(tool.ui.confirm, Some(Confirm::Join)));
+            assert!(tool.out.is_empty(), "joining still requires confirmation");
+        }
+    }
+
+    #[test]
+    fn parcel_join_button_explains_a_single_parcel_and_waits_for_a_selection_reply() {
+        let (mut world, mut tool, mut settings) = fixture(PARCEL_RESULT_SUCCESS);
+        assert!(
+            click_join(&mut world, &mut tool, &mut settings),
+            "the rejection is painted in the parcel panel"
+        );
+        assert!(tool.ui.confirm.is_none());
+        assert_eq!(
+            tool.land.take_message().as_deref(),
+            Some(aurora_i18n::tr!("build-land-join-select-multiple-parcels"))
+        );
+        tool.land.parcel = None;
+        assert!(!click_join(&mut world, &mut tool, &mut settings));
+        assert!(tool.ui.confirm.is_none());
+        assert!(tool.land.take_message().is_none(), "pending selection keeps the button disabled");
+        assert!(tool.out.is_empty());
     }
 }

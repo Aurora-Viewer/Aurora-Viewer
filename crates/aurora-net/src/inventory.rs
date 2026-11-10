@@ -31,6 +31,9 @@ pub struct InvFolder {
     /// A complete AIS record, or explicit metadata, can replace this flag.
     pub favorite_known: bool,
     pub thumbnail: Uuid,
+    /// A complete AIS record, or explicit metadata, can clear the thumbnail.
+    /// A login skeleton, a legacy listing or a UDP update says nothing of it.
+    pub thumbnail_known: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -157,6 +160,7 @@ pub fn folder_from_llsd(v: &Llsd) -> Option<InvFolder> {
         favorite: v["favorite"]["toggled"].as_bool(),
         favorite_known: v.has("favorite"),
         thumbnail: v["thumbnail"]["asset_id"].as_uuid(),
+        thumbnail_known: v.has("thumbnail"),
     })
 }
 
