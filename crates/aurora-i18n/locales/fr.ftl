@@ -6054,6 +6054,7 @@ common-always = Toujours
 ui-context-always-show-full-detail = Toujours afficher tous les détails
 ui-land-access-always-allowed-max = Toujours autorisé ({ $value0 }{ ", max. " }{ $PARCEL_MAX_ACCESS_LIST })
 keybinds-always-run = Toujours courir
+keybinds-stop-moving = S'arrêter (freiner)
 app-always-run-enabled = Toujours courir : activé
 app-always-run-disabled = Toujours courir : désactivé
 keybinds-sit-ground-stand = S'asseoir par terre / se lever

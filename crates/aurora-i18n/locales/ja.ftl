@@ -6033,6 +6033,7 @@ common-always = 常に
 ui-context-always-show-full-detail = 常に完全に描画
 ui-land-access-always-allowed-max = 常に許可（{ $value0 }{ "、最大" }{ $PARCEL_MAX_ACCESS_LIST }{ "）" }
 keybinds-always-run = 常に走る
+keybinds-stop-moving = 移動を止める（ブレーキ）
 app-always-run-enabled = 常に走る：有効
 app-always-run-disabled = 常に走る：無効
 keybinds-sit-ground-stand = 地面に座る／立ち上がる

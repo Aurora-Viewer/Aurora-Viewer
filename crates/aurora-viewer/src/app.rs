@@ -7842,6 +7842,10 @@ impl App {
             i.up = k(Action::Up) && !passing;
             // Page Down / C: crouch on the ground (crouch-walk while moving), descend in flight
             i.down = k(Action::Down);
+            // Space: brake, on the ground or in the air. The Legacy Viewer
+            // binds stop_moving in first and third person, not when seated
+            // (app_settings/key_bindings.xml).
+            i.stop = k(Action::StopMoving) && !self.world.agent.is_sitting();
         }
         // the Controls window's buttons, held like their keys
         let held = |a: Action| self.controls_held.contains(&a);
