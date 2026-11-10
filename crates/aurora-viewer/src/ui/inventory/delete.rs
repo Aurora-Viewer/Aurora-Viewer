@@ -180,10 +180,11 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &InventoryUi) -> Vec<egu
     }
     // `delete-enter`: the Delete key, then Enter answers the confirmation
     let key = match (mode, frame) {
-        ("delete-key" | "delete-enter", 680) => Some(egui::Key::Delete),
+        ("delete-key" | "delete-enter" | "delete-tab", 680) => Some(egui::Key::Delete),
+        ("delete-tab", 710) => Some(egui::Key::Tab),
         ("delete-confirm", 680) if aurora => Some(egui::Key::Delete),
         ("delete-confirm", 740) if aurora => Some(egui::Key::Enter),
-        ("delete-enter", 740) => Some(egui::Key::Enter),
+        ("delete-enter" | "delete-tab", 740) => Some(egui::Key::Enter),
         _ => None,
     };
     if let Some(key) = key {

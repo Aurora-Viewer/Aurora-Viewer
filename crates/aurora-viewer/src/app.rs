@@ -1402,7 +1402,7 @@ impl App {
         let mut settings = Settings::load();
         if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
             && std::env::var("AURORA_DEMO_INVENTORY")
-                .is_ok_and(|mode| mode == "delete-confirm" || mode.starts_with("aurora-delete-confirm"))
+                .is_ok_and(|mode| matches!(mode.as_str(), "delete-confirm" | "delete-tab") || mode.starts_with("aurora-delete-confirm"))
         {
             settings.inventory.confirm_delete = true;
         }

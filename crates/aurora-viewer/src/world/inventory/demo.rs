@@ -512,6 +512,7 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "delete-key"
         | "delete-button"
         | "delete-enter"
+        | "delete-tab"
         | "clipboard"
         | "clipboard-copy"
         | "clipboard-cut"

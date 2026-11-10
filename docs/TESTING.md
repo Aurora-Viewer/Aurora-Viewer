@@ -9450,6 +9450,10 @@ separate searches enabled and disabled; that preference controls only the text.
 - `delete-enter`: as `delete-key`, then Enter at frame 740 answers the
   confirmation. Capture 720 (the modal confirmation), then 780: the folder
   is in the Trash and the dialog is closed.
+- `delete-tab`: as `delete-key`, then the first Tab at frame 710 focuses
+  Cancel and Enter at 740 cancels. Capture 700 (Delete focused), 720 (Cancel
+  focused) and 780 (dialog closed, original folder still selected). Also
+  check the full Delete / Cancel / Do not show again cycle and Shift+Tab.
 - `keyboard`, `aurora-keyboard`, `aurora-keyboard-wide`: click the demo
   object at frame 650, extend its selection with Shift+Down twice, then
   shrink it with Shift+Up at frame 710. Capture at 690 (three selected rows)

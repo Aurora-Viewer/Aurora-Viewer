@@ -2290,13 +2290,11 @@ mod tests {
             );
             assert!(!accented(&output, cancel, fill));
             assert!(
-                ctx.memory(|m| m.focused()).is_none(),
-                "the hint must not steal focus or change Tab order"
+                ctx.memory(|m| m.focused()).is_some(),
+                "the visible Enter action must own keyboard focus"
             );
-            for _ in 0..if empty { 2 } else { 3 } {
-                confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Tab)]);
-                confirmation_pass(&ctx, &inv, &mut st, Vec::new());
-            }
+            confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Tab)]);
+            confirmation_pass(&ctx, &inv, &mut st, Vec::new());
             let (_, output) = confirmation_frame(&ctx, &inv, &mut st, Vec::new());
             assert!(!accented(&output, label, fill), "Cancel owns Enter after Tab");
             assert!(accented(&output, cancel, fill));
@@ -2332,9 +2330,11 @@ mod tests {
                 dialog: Some(dialog()),
                 ..Default::default()
             };
+            let mut opening = confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Enter)]);
             for _ in 0..3 {
-                confirmation_pass(&ctx, &inv, &mut st, Vec::new());
+                opening.extend(confirmation_pass(&ctx, &inv, &mut st, Vec::new()));
             }
+            assert!(opening.is_empty() && st.dialog.is_some(), "{name}: opening Enter must not confirm");
             let mut actions = confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Enter)]);
             actions.extend(confirmation_pass(&ctx, &inv, &mut st, Vec::new()));
             assert!(
@@ -2370,11 +2370,20 @@ mod tests {
     }
 
     /// Tab reaches the buttons (`LLPanel::handleKeyHere`: a focused button
-    /// clicks itself on Return): the ignore choice when offered, then Delete
-    /// and Cancel. Purge has no ignore choice.
+    /// clicks itself on Return). Focus starts on Delete, then Cancel, then
+    /// the ignore choice when offered. Purge has no ignore choice.
     #[test]
     fn tab_moves_between_the_confirmation_buttons_and_enter_answers_the_focused_one() {
-        for (purge, tabs, deletes) in [(false, 2, true), (false, 3, false), (true, 1, true), (true, 2, false)] {
+        for (purge, tabs, deletes) in [
+            (false, 0, true),
+            (false, 1, false),
+            (false, 3, true),
+            (false, 4, false),
+            (true, 0, true),
+            (true, 1, false),
+            (true, 2, true),
+            (true, 3, false),
+        ] {
             let mut inv = Inventory::default();
             crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
             if purge {
@@ -2403,6 +2412,44 @@ mod tests {
             );
             assert!(st.dialog.is_none());
         }
+    }
+
+    #[test]
+    fn delete_confirmation_tabs_cycle_from_the_visible_default_in_both_directions() {
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let ctx = egui::Context::default();
+        let mut st = InventoryUi {
+            dialog: Some(EditDialog::Delete(vec![Uuid::from_u128(8100)], false)),
+            ..Default::default()
+        };
+        for _ in 0..3 {
+            confirmation_pass(&ctx, &inv, &mut st, Vec::new());
+        }
+        let default = ctx.memory(|m| m.focused()).expect("initial Delete focus");
+        let tab = |st: &mut InventoryUi, shift| {
+            let mut event = key(egui::Key::Tab);
+            if let egui::Event::Key { modifiers, .. } = &mut event {
+                *modifiers = if shift { egui::Modifiers::SHIFT } else { egui::Modifiers::NONE };
+            }
+            assert!(confirmation_pass(&ctx, &inv, st, vec![event]).is_empty());
+            assert!(confirmation_pass(&ctx, &inv, st, Vec::new()).is_empty());
+            ctx.memory(|m| m.focused()).expect("focused confirmation control")
+        };
+        let cancel = tab(&mut st, false);
+        let ignore = tab(&mut st, false);
+        assert_ne!(cancel, default);
+        assert_ne!(ignore, cancel);
+        assert_ne!(ignore, default);
+        assert!(confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Space)]).is_empty());
+        assert!(
+            st.delete_dont_ask && st.dialog.is_some(),
+            "the third stop toggles the ignore choice only"
+        );
+        assert_eq!(tab(&mut st, false), default);
+        assert_eq!(tab(&mut st, true), ignore);
+        assert_eq!(tab(&mut st, true), cancel);
+        assert_eq!(tab(&mut st, true), default);
     }
 
     /// The give confirmation (#627): the resident by name, the entries with
