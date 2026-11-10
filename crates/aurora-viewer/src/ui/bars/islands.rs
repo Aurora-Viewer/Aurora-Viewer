@@ -266,7 +266,7 @@ pub fn top(
     right = bell_rect.left() - MARGIN;
     let sys_rect = row(screen, right - system_width(ui, st), right);
     right = sys_rect.left() - MARGIN;
-    let acc_rect = row(screen, right - account_width(ui, p, st), right);
+    let acc_rect = row(screen, right - account_width(ui, st), right);
     right = acc_rect.left() - MARGIN;
     // the conversations' thumbnails in an island of their own, left of the
     // account, where the Legacy Viewer's chiclets stand (#1134); the place
@@ -414,32 +414,34 @@ pub(crate) fn area<R>(ctx: &egui::Context, p: &Palette, name: &'static str, rect
 /// The account's picture.
 const DISC: f32 = 22.0;
 
-fn balance_galley(ui: &egui::Ui, p: &Palette, st: &StatusInfo) -> Option<std::sync::Arc<egui::Galley>> {
-    let font = FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
+fn balance_font(ui: &egui::Ui) -> FontId {
+    FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()))
+}
+
+/// The balance as it reads, and how wide it stands.
+fn balance_text(ui: &egui::Ui, st: &StatusInfo) -> Option<(String, f32)> {
     st.balance.filter(|_| st.show_balance).map(|b| {
-        ui.painter().layout_no_wrap(
-            format!("{} {}", aurora_i18n::integer(i64::from(b)), aurora_i18n::currency()),
-            font,
-            p.ink,
-        )
+        let text = format!("{} {}", aurora_i18n::integer(i64::from(b)), aurora_i18n::currency());
+        let width = crate::ui::balance_gains::number_width(ui.painter(), &text, &balance_font(ui));
+        (text, width)
     })
 }
 
 /// The account's slot: 4 before the picture, 6 between, 8 after the text.
-fn account_slot_width(balance: Option<&std::sync::Arc<egui::Galley>>) -> f32 {
-    4.0 + DISC + balance.map_or(0.0, |g| 6.0 + g.size().x.ceil()) + 8.0
+fn account_slot_width(balance: Option<f32>) -> f32 {
+    4.0 + DISC + balance.map_or(0.0, |width| 6.0 + width.ceil()) + 8.0
 }
 
-fn account_width(ui: &egui::Ui, p: &Palette, st: &StatusInfo) -> f32 {
-    PAD * 2.0 + account_slot_width(balance_galley(ui, p, st).as_ref())
+fn account_width(ui: &egui::Ui, st: &StatusInfo) -> f32 {
+    PAD * 2.0 + account_slot_width(balance_text(ui, st).map(|(_, width)| width))
 }
 
 /// The account island: our picture with the online status on it (a click
 /// opens the status menu), the balance (a click buys L$). A right click on
 /// either shows or hides the balance (#1340): hidden, the picture stays.
 fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action: &mut BarAction) {
-    let balance = balance_galley(ui, p, st);
-    let w = account_slot_width(balance.as_ref());
+    let balance = balance_text(ui, st);
+    let w = account_slot_width(balance.as_ref().map(|(_, width)| *width));
     let rect = Rect::from_min_size(Pos2::new(island.left() + PAD, island.center().y - SLOT / 2.0), Vec2::new(w, SLOT));
     let disc = Rect::from_center_size(Pos2::new(rect.left() + 4.0 + DISC / 2.0, rect.center().y), Vec2::splat(DISC));
     // the picture and its status: one target; the balance: another
@@ -462,26 +464,34 @@ fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action
     let col = status_color(p, &st.status);
     ui.painter().circle_filled(dot, 4.5, p.bar);
     crate::ui::presence::paint_mark(ui.painter(), dot, 3.0, status_shape(&st.status), col, p.bar);
-    if let Some(g) = balance {
-        crate::ui::widgets::paint_ink_left(ui.painter(), g, Pos2::new(disc.right() + 6.0, rect.center().y), p.ink);
+    if let Some((text, width)) = balance {
+        let font = balance_font(ui);
+        let left = Pos2::new(disc.right() + 6.0, rect.center().y);
+        crate::ui::balance_gains::paint_number(ui.painter(), &text, &font, left, st.balance_ink);
+        let anchor = crate::ui::balance_gains::Anchor {
+            right: left.x + width,
+            text_top: rect.center().y - font.size / 2.0,
+            top: island.bottom() + MARGIN,
+        };
+        crate::ui::balance_gains::paint(ui.ctx(), p, &st.balance_gains, &anchor, font);
     }
     if let Some(money) = money {
         if money.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
-        menu::context_menu(&money, p, |ui| super::balance_menu(ui, p, st.show_balance, action));
+        menu::context_menu(&money, p, |ui| super::balance_menu(ui, p, st, action));
         if money.on_hover_text(aurora_i18n::tr!("ui-bars-balance-click-to-buy-l")).clicked() {
             *action = BarAction::BuyCurrency;
         }
     }
-    menu::context_menu_of_button(&status, p, |ui| super::balance_menu(ui, p, st.show_balance, action));
+    menu::context_menu_of_button(&status, p, |ui| super::balance_menu(ui, p, st, action));
     // the demo cannot right-click: the same menu under the island
     let ctx = ui.ctx().clone();
     if super::demo::get().open == Some(super::demo::Open::Account) && ctx.cumulative_frame_nr() >= 300 {
         let id = Id::unique("bars_account_demo_menu");
         let mut open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(true);
         let at = Pos2::new(rect.left(), island.bottom() + MARGIN);
-        menu::popup_at(&ctx, id, at, &mut open, p, |ui| super::balance_menu(ui, p, st.show_balance, action));
+        menu::popup_at(&ctx, id, at, &mut open, p, |ui| super::balance_menu(ui, p, st, action));
         ctx.data_mut(|d| d.insert_temp(id, open));
     }
     demo_open(ui.ctx(), &status, super::demo::Open::Status);
@@ -1149,6 +1159,9 @@ mod tests {
             ping_ms: 38,
             balance: Some(1000),
             show_balance: true,
+            balance_gains: Vec::new(),
+            balance_ink: crate::theme::Theme::default().palette().ink,
+            balance_rows: crate::ui::balance_gains::Shown::BOTH,
             voice: (crate::voice::VoiceLight::Off, String::new()),
             slurl: String::new(),
             status: Default::default(),
@@ -1196,6 +1209,8 @@ mod tests {
             hover_tips: Default::default(),
             world_overlays: Default::default(),
             show_transparency: false,
+            hidden_types: Default::default(),
+            render_type_keys: Default::default(),
             conversation_thumbnails: 0,
         }
     }
@@ -1545,9 +1560,7 @@ mod tests {
         let mut st = status(true, true);
         let width = |st: &StatusInfo| {
             let mut w = 0.0;
-            let mut out = ctx.run_ui(Default::default(), |ui| {
-                w = account_width(ui, &crate::theme::Theme::default().palette(), st)
-            });
+            let mut out = ctx.run_ui(Default::default(), |ui| w = account_width(ui, st));
             out.textures_delta.clear();
             w
         };
@@ -1566,6 +1579,25 @@ mod tests {
         let account = ctx.memory(|m| m.area_rect(Id::unique(("bars_island", "account")))).unwrap();
         assert_eq!(account.width(), hidden);
         assert_eq!(system_rect(&ctx).left() - account.right(), MARGIN);
+    }
+
+    /// The balance ticking does not resize the island (#2675): one digit
+    /// is as wide as another, only a new digit takes more room.
+    #[test]
+    fn the_account_island_keeps_its_width_while_the_balance_ticks() {
+        let ctx = egui::Context::default();
+        let mut st = status(true, true);
+        let mut width = |balance: i32| {
+            st.balance = Some(balance);
+            let mut w = 0.0;
+            let mut out = ctx.run_ui(Default::default(), |ui| w = account_width(ui, &st));
+            out.textures_delta.clear();
+            w
+        };
+        let first = width(11_111);
+        assert_eq!(width(88_888), first);
+        assert_eq!(width(10_750), first);
+        assert!(width(111_111) > first);
     }
 
     /// A readout keeps the widest width it needed in the last `HOLD`

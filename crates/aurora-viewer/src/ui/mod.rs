@@ -10,6 +10,7 @@ pub mod aurora_bg;
 pub mod avatar_picker;
 pub mod avatar_render_settings;
 pub mod backdrop;
+pub mod balance_gains;
 pub mod bars;
 pub mod bidi;
 pub mod blacklist;

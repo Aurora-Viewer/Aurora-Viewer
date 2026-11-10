@@ -326,6 +326,9 @@ pub enum Action {
     StrafeRight,
     Up,
     Down,
+    /// Stop moving (Legacy Viewer key_bindings.xml: SPACE -> stop_moving):
+    /// held, the simulator brakes the avatar, on the ground and in flight.
+    StopMoving,
     Fly,
     /// Fly override (Legacy Viewer menu_viewer.xml "Fly Override",
     /// FSAlwaysFly, shortcut="control|alt|V").
@@ -438,6 +441,16 @@ pub enum Action {
     PropertyLines,
     LandOwners,
     HideParticles,
+    /// Advanced › Rendering types, one kind each (menu_viewer.xml: Develop ›
+    /// Rendering Types, Ctrl+Alt+Shift+3 Tree … - Clouds).
+    RenderTrees,
+    RenderAvatars,
+    RenderTerrain,
+    RenderSky,
+    RenderWater,
+    RenderObjects,
+    RenderGrass,
+    RenderClouds,
     /// Aurora's Dev Toolbox window (Ctrl+Alt+D).
     DevToolbox,
     /// Advanced.ShowDebugSettings.
@@ -495,6 +508,7 @@ pub fn is_held(a: Action) -> bool {
             | Action::StrafeRight
             | Action::Up
             | Action::Down
+            | Action::StopMoving
             | Action::PushToTalk
             | Action::CamOrbitCw
             | Action::CamOrbitCcw
@@ -526,6 +540,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::StrafeRight, aurora_i18n::tr!("keybinds-strafe-right")),
                     (Action::Up, aurora_i18n::tr!("extra-jump-ascend")),
                     (Action::Down, aurora_i18n::tr!("status-crouch-descend")),
+                    (Action::StopMoving, aurora_i18n::tr!("keybinds-stop-moving")),
                     (Action::Fly, aurora_i18n::tr!("extra-fly-land")),
                     (Action::FlyOverride, aurora_i18n::tr!("ui-bars-fly-override")),
                     (Action::AlwaysRun, aurora_i18n::tr!("keybinds-always-run")),
@@ -644,6 +659,14 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::PropertyLines, aurora_i18n::tr!("world-property-lines")),
                     (Action::LandOwners, aurora_i18n::tr!("world-land-owners")),
                     (Action::HideParticles, aurora_i18n::tr!("world-hide-particles")),
+                    (Action::RenderTrees, aurora_i18n::tr!("keybinds-render-trees")),
+                    (Action::RenderAvatars, aurora_i18n::tr!("keybinds-render-avatars")),
+                    (Action::RenderTerrain, aurora_i18n::tr!("keybinds-render-terrain")),
+                    (Action::RenderSky, aurora_i18n::tr!("keybinds-render-sky")),
+                    (Action::RenderWater, aurora_i18n::tr!("keybinds-render-water")),
+                    (Action::RenderObjects, aurora_i18n::tr!("keybinds-render-objects")),
+                    (Action::RenderGrass, aurora_i18n::tr!("keybinds-render-grass")),
+                    (Action::RenderClouds, aurora_i18n::tr!("keybinds-render-clouds")),
                 ],
             ),
         ]
@@ -752,6 +775,7 @@ impl KeyBindings {
             (Action::StrafeRight, [None, None]),
             (Action::Up, [k(K::PageUp), k(K::KeyE)]),
             (Action::Down, [k(K::PageDown), k(K::KeyC)]),
+            (Action::StopMoving, [k(K::Space), None]),
             (Action::Fly, [k(K::Home), k(K::KeyF)]),
             (Action::FlyOverride, [kalt(K::KeyV, true, false), None]),
             (Action::AlwaysRun, [kmod(K::KeyR, true, false), None]),
@@ -903,6 +927,18 @@ impl KeyBindings {
                     None,
                 ],
             ),
+            // menu_viewer.xml: Develop › Rendering Types, control|alt|shift
+            // and 3 Tree, 4 Avatars, 5 Surface Patch, 6 Sky, 7 Water, 9
+            // Volume, 0 Grass, - Clouds (the digits keep their place, the
+            // minus follows the layout)
+            (Action::RenderTrees, [kalt(K::Digit3, true, true), None]),
+            (Action::RenderAvatars, [kalt(K::Digit4, true, true), None]),
+            (Action::RenderTerrain, [kalt(K::Digit5, true, true), None]),
+            (Action::RenderSky, [kalt(K::Digit6, true, true), None]),
+            (Action::RenderWater, [kalt(K::Digit7, true, true), None]),
+            (Action::RenderObjects, [kalt(K::Digit9, true, true), None]),
+            (Action::RenderGrass, [kalt(K::Digit0, true, true), None]),
+            (Action::RenderClouds, [kalt(K::Minus, true, true), None]),
             // menu_viewer.xml: Show HUD Attachments, shortcut="alt|shift|H"
             (Action::ShowHuds, [kalt(K::KeyH, false, true), None]),
             // Aurora's direct HUD gesture must leave Alt to Firestorm's camera (#266).
@@ -1267,8 +1303,15 @@ impl KeyBindings {
         let defaults = KeyBindings::default();
         let mut seen = HashSet::new();
         self.map.retain(|(a, _)| seen.insert(*a));
-        for (a, b) in defaults.map {
+        for (a, mut b) in defaults.map {
             if !self.map.iter().any(|(x, _)| *x == a) {
+                // a new action's default key may already be the user's own
+                // choice for another action (Space for jumping): theirs stays
+                for slot in &mut b {
+                    if slot.as_ref().is_some_and(|d| !self.users(d).is_empty()) {
+                        *slot = None;
+                    }
+                }
                 self.map.push((a, b));
             }
         }
@@ -1469,6 +1512,27 @@ impl KeyBindings {
 mod tests {
     use super::*;
     use crate::build::ui::Shortcut;
+
+    /// Space stops moving while held, as the Legacy Viewer's stop_moving;
+    /// a settings file from before it keeps a Space the user gave to
+    /// another action.
+    #[test]
+    fn space_stops_moving_unless_the_user_already_uses_it() {
+        let kb = KeyBindings::default();
+        assert_eq!(kb.get(Action::StopMoving), [k(KeyCode::Space), None]);
+        assert!(is_held(Action::StopMoving));
+        let space: HashSet<Input> = [Input::key(KeyCode::Space)].into();
+        assert!(kb.held(Action::StopMoving, &space, Mods::default()));
+
+        let mut old = KeyBindings::default();
+        old.map.retain(|(a, _)| *a != Action::StopMoving);
+        let fresh = old.clone().sanitized();
+        assert_eq!(fresh.get(Action::StopMoving), [k(KeyCode::Space), None]);
+        old.set(Action::Up, 1, k(KeyCode::Space));
+        let kept = old.sanitized();
+        assert_eq!(kept.get(Action::StopMoving), [None, None]);
+        assert_eq!(kept.get(Action::Up)[1], k(KeyCode::Space));
+    }
 
     #[test]
     fn gesture_chat_uses_the_typed_slash_without_ctrl_or_alt() {
@@ -2277,6 +2341,9 @@ mod tests {
                 (true, true, true),
                 [K::Equal, K::Equal, K::Slash, K::BracketRight],
             ),
+            (Action::RenderTrees, (true, true, true), [K::Digit3; 4]),
+            (Action::RenderObjects, (true, true, true), [K::Digit9; 4]),
+            (Action::RenderGrass, (true, true, true), [K::Digit0; 4]),
             (Action::DevToolbox, (true, false, true), [K::KeyD; 4]),
             (Action::DebugSettings, (true, true, true), [K::KeyS; 4]),
             (Action::Rebake, (true, false, true), [K::KeyR; 4]),
