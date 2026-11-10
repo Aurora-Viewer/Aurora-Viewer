@@ -1,5 +1,12 @@
 # Aurora Viewer architecture
 
+`build/ui/shape_preview.rs` renders Create thumbnails from the actual volume
+parameters and placement rotations. Cached high-detail geometry shares one
+orthographic camera for projection, back-face culling, depth ordering and soft studio
+lighting (diffuse, sky fill and broad satin highlights); each solid is centered and fitted to its palette cell. Both editor
+layouts share these shaded meshes and generic tree/grass volumes. Painted meshes
+are reused until their rectangle or skin colors change.
+
 Land-tool Join eligibility and command validation live in `build/land.rs`, shared
 by the parcel panel in both editor layouts and the confirmation callback. A drag
 uses `SnapSelection=false`; area equality and an aggregate reply's owner do not
