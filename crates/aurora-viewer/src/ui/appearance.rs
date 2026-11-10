@@ -24,6 +24,11 @@ pub use clipboard::{PasteTo, Request as ClipboardRequest};
 
 #[derive(Default)]
 pub struct AppearanceUi {
+    /// The account whose outfit pictures were read this session.
+    pictures_read: Option<Uuid>,
+    /// The pictures found inside the outfits that have no thumbnail
+    /// (`outfit_picture`), and the inventory generation they were found at.
+    fallback_pictures: (u64, HashMap<Uuid, Uuid>),
     pub(crate) json: json::State,
     pub tab: usize,
     pub fill_previews: bool,
@@ -503,6 +508,53 @@ impl AppearanceUi {
             .collect()
     }
 
+    /// A cached folder is current while its version is: a picture set from
+    /// another viewer can leave it without one. My Outfits and its groups
+    /// are read again once per session, one AIS read each that gives the
+    /// pictures of the outfits it holds (#2716). A read under way will do,
+    /// and one held for the cache would find the folder restored: wait for it.
+    fn read_pictures(&mut self, world: &mut World) {
+        use crate::world::inventory::FetchState;
+        if self.pictures_read == Some(world.agent_id) || world.inventory.requests_held() {
+            return;
+        }
+        let Some(my) = model::system_folder(&world.inventory, model::FT_MY_OUTFITS) else {
+            return;
+        };
+        self.pictures_read = Some(world.agent_id);
+        let inv = &mut world.inventory;
+        let groups: Vec<Uuid> = crate::world::outfit_folders::folders(inv)
+            .into_iter()
+            .filter(|id| inv.folders.get(id).is_some_and(|f| f.info.type_default != model::FT_OUTFIT))
+            .collect();
+        for id in std::iter::once(my).chain(groups) {
+            if let Some(folder) = inv.folders.get_mut(&id)
+                && folder.state == FetchState::Fetched
+            {
+                folder.state = FetchState::Unknown;
+                inv.request(id);
+            }
+        }
+    }
+
+    /// The picture of an outfit in the gallery: its thumbnail, else the one
+    /// `outfit_image` finds inside, which walks the outfit's folders: kept
+    /// until the inventory changes, so that a frame only looks it up.
+    fn outfit_picture(&mut self, inv: &crate::world::inventory::Inventory, outfit: Uuid) -> Uuid {
+        let Some(folder) = inv.folders.get(&outfit) else {
+            return Uuid::nil();
+        };
+        if !folder.info.thumbnail.is_nil() {
+            return folder.info.thumbnail;
+        }
+        let (generation, found) = &mut self.fallback_pictures;
+        if *generation != inv.generation {
+            *generation = inv.generation;
+            found.clear();
+        }
+        *found.entry(outfit).or_insert_with(|| model::outfit_image(inv, outfit))
+    }
+
     pub fn refresh(&mut self, inv: &mut crate::world::inventory::Inventory) {
         self.requested_items.clear();
         self.prepared = None;
@@ -686,15 +738,17 @@ fn not_worn_row(ui: &mut egui::Ui, p: &Palette, icon_name: &str, text: &str) {
 }
 
 /// LLWearingContextMenu (llpanelwearing.cpp) on the worn `selected` items:
-/// Edit needs one; Take off / Detach takes them all.
+/// Edit and Show original need one; Take off / Detach takes them all.
 fn item_menu(
     response: &egui::Response,
     p: &Palette,
-    inv: &crate::world::inventory::Inventory,
+    world: &World,
     locks: &crate::world::rlva::WearLocks,
     selected: &[Uuid],
     actions: &mut Vec<Action>,
+    edit: bool,
 ) {
+    let inv = &world.inventory;
     menu::context_menu(response, p, |ui| {
         let items: Vec<&InvItem> = selected.iter().filter_map(|id| inv.items.get(id)).collect();
         if let [it] = items.as_slice()
@@ -704,6 +758,19 @@ fn item_menu(
             super::context::request(ui.ctx(), super::context::CtxAction::EditWorn(it.id));
         }
         items::remove_item(ui, p, &items, locks, aurora_i18n::tr!("common-remove"), actions);
+        if !edit && let [it] = items.as_slice() {
+            // menu_wearing_tab.xml: Worn-only, disabled by RLV.EnableIfNot(showinv).
+            menu::separator(ui, p);
+            if menu::item_if(
+                ui,
+                p,
+                "external-link-filled",
+                aurora_i18n::tr!("ui-appearance-items-show-original"),
+                !world.rlva.has("showinv"),
+            ) {
+                actions.push(Action::ShowOriginal(it.id));
+            }
+        }
     });
 }
 
@@ -827,7 +894,7 @@ fn gallery(
                             egui::Stroke::new(1.0, if selected { p.violet } else { p.raised }),
                             egui::StrokeKind::Inside,
                         );
-                        let image = folder.info.thumbnail;
+                        let image = st.outfit_picture(&world.inventory, *id);
                         if !image.is_nil() {
                             st.wanted_images.insert(image);
                         }
@@ -1128,9 +1195,8 @@ fn outfit_list(
                     let rect = response.header.rect;
                     let left = rect.left() + ui.spacing().indent;
                     if let Some(offset) = widgets::faux_bold_offset(ui) {
-                        let pos = egui::pos2(left, rect.center().y - galley.size().y * 0.5);
-                        let name = outfit_label(ui, &f.info.name, false, font_id, p.ink, galley.size().x);
-                        ui.painter().galley(pos + offset, name, p.ink);
+                        let pos = widgets::row_text_origin(ui.painter(), &galley, left, rect.center().y);
+                        ui.painter().galley(pos + offset, galley.clone(), p.ink);
                     }
                     worn_tag(ui, p, left + galley.size().x, rect.center().y);
                 }
@@ -1261,10 +1327,18 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
                     clipboard::request_focus(ui.ctx());
                     st.selected_item = Some(it.id);
                 }
-                item_menu(&resp, p, inv, &locks, &[it.id], actions);
+                item_menu(&resp, p, world, &locks, &[it.id], actions, true);
             } else {
                 st.select_item(&resp, WORN_SCOPE, it.id, &order);
-                item_menu(&resp, p, inv, &locks, &st.selected_items(WORN_SCOPE, it.id, &order), actions);
+                item_menu(
+                    &resp,
+                    p,
+                    world,
+                    &locks,
+                    &st.selected_items(WORN_SCOPE, it.id, &order),
+                    actions,
+                    false,
+                );
             }
             // a body part has none of these buttons: no empty row under it
             if edit && st.selected_item == Some(it.id) && it.asset_type != 13 {
@@ -1541,6 +1615,9 @@ pub fn show(
     )
     .help(aurora_i18n::tr!("ui-appearance-choose-an-outfit-manage-worn-items-or-save-your"));
     floater.min_size = Vec2::new(390.0, 520.0);
+    if *open {
+        st.read_pictures(world);
+    }
     if *open && !st.editing && st.tab == 2 {
         let temporary = world.temp_attachments();
         world.request_temp_attachment_names(&temporary, std::time::Instant::now());
@@ -1961,7 +2038,7 @@ pub fn show(
     }
     json::confirmation(ctx, p, world, st, &mut actions);
     items::profile(ctx, p, world, st, &mut actions);
-    gallery::dialogs(ctx, p, world, st, images, &mut actions);
+    gallery::dialogs(ctx, p, world, st, &mut actions);
     folders::dialogs(ctx, p, world, st, &mut actions);
     gallery::finish_copy(ctx, world, st);
     actions
@@ -2573,6 +2650,78 @@ mod tests {
         // Headless tests do not submit texture uploads to a renderer.
         output.textures_delta.clear();
         (actions, output.shapes)
+    }
+
+    #[test]
+    fn a_current_outfit_header_faux_bold_uses_the_same_pixel_aligned_origin() {
+        fn collect(shape: &egui::Shape, name: &str, positions: &mut Vec<egui::Pos2>) {
+            match shape {
+                egui::Shape::Text(text) if text.galley.text() == name => positions.push(text.pos),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect(shape, name, positions)),
+                _ => {}
+            }
+        }
+
+        for ppp in [0.75, 0.9, 1.0, 1.25, 1.5, 2.0] {
+            let ctx = egui::Context::default();
+            ctx.set_pixels_per_point(ppp);
+            crate::theme::Theme::default().apply(&ctx, ppp);
+            assert!(!crate::ui::fonts::has_semibold(&ctx), "fresh context uses faux bold at {ppp}");
+            let _icons = icons::Icons::load(&ctx, None);
+            let mut world = wardrobe(0);
+            let current = model::base(&world.inventory).expect("current outfit");
+            let name = "Faux bold alignment outfit";
+            world.inventory.folders.get_mut(&current).expect("outfit").info.name = name.into();
+            world.inventory.generation += 1;
+            let entry = Entry {
+                id: current,
+                depth: 0,
+                group: false,
+                outfits: 0,
+            };
+            let mut st = AppearanceUi::default();
+            let p = crate::theme::Theme::default().palette();
+            let mut expected_offset = 0.0;
+            let mut output = egui::FullOutput::default();
+            for _ in 0..2 {
+                output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(800.0, 500.0))),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        ui.set_width(600.0);
+                        expected_offset = widgets::faux_bold_offset(ui).expect("faux bold").x;
+                        outfit_list(
+                            ui,
+                            &p,
+                            &world,
+                            &mut st,
+                            std::slice::from_ref(&entry),
+                            &[current],
+                            Some(current),
+                            &mut vec![],
+                        );
+                    },
+                );
+                // Headless tests do not submit texture uploads to a renderer.
+                output.textures_delta.clear();
+            }
+            let mut positions = Vec::new();
+            for shape in &output.shapes {
+                collect(&shape.shape, name, &mut positions);
+            }
+            positions.sort_by(|a, b| a.x.total_cmp(&b.x));
+            assert_eq!(positions.len(), 2, "two header text shapes at {ppp}: {positions:?}");
+            assert!(
+                (positions[0].y - positions[1].y).abs() < 0.01,
+                "same baseline at {ppp}: {positions:?}"
+            );
+            assert!(
+                ((positions[1].x - positions[0].x) - expected_offset).abs() < 0.01,
+                "one faux-bold pixel at {ppp}: {positions:?}, offset {expected_offset}"
+            );
+        }
     }
 
     #[test]
@@ -3803,6 +3952,348 @@ mod tests {
         assert!(part.len() > 10 && part.len() < 40, "{}", part.len());
         for (text, pos) in &part {
             assert_eq!(whole.get(text), Some(pos), "{text} moved");
+        }
+    }
+
+    /// #2716: a cached folder is current while its version is, whatever was
+    /// done to its pictures elsewhere: one read of My Outfits per session.
+    #[test]
+    fn the_outfit_pictures_are_read_again_once_per_session() {
+        use crate::world::inventory::FetchState;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(1);
+        let (outfits, group, outfit) = (Uuid::from_u128(48), Uuid::from_u128(49), Uuid::from_u128(50));
+        let folder = |id, parent, type_default| aurora_net::inventory::InvFolder {
+            id,
+            parent,
+            type_default,
+            ..Default::default()
+        };
+        world.inventory.add_folders(
+            vec![
+                folder(outfits, Uuid::nil(), model::FT_MY_OUTFITS),
+                folder(group, outfits, -1),
+                folder(outfit, group, model::FT_OUTFIT),
+            ],
+            false,
+        );
+        let state = |world: &World, id| world.inventory.folders[&id].state;
+        let fetched = |world: &mut World| {
+            for id in [outfits, group, outfit] {
+                world.inventory.folders.get_mut(&id).expect("folder").state = FetchState::Fetched;
+            }
+        };
+        fetched(&mut world);
+        let mut st = AppearanceUi::default();
+        // the cache being read would restore the folder: not yet
+        world.inventory.hold_requests();
+        st.read_pictures(&mut world);
+        assert_eq!(state(&world, outfits), FetchState::Fetched);
+        world.inventory.release_requests();
+        st.read_pictures(&mut world);
+        assert_eq!(state(&world, outfits), FetchState::Fetching, "asked once");
+        // a group's outfits have their pictures in the group's listing
+        assert_eq!(state(&world, group), FetchState::Fetching);
+        assert_eq!(state(&world, outfit), FetchState::Fetched, "an outfit is not listed again");
+        fetched(&mut world);
+        st.read_pictures(&mut world);
+        assert_eq!(state(&world, outfits), FetchState::Fetched, "not twice");
+        // another account in the same run
+        world.agent_id = Uuid::from_u128(2);
+        st.read_pictures(&mut world);
+        assert_eq!(state(&world, outfits), FetchState::Fetching);
+    }
+
+    /// The picture found inside an outfit is looked for again only once
+    /// the inventory changed: the gallery draws it at every frame.
+    #[test]
+    fn an_outfit_s_fallback_picture_is_kept_until_the_inventory_changes() {
+        let id = Uuid::from_u128;
+        let mut inv = crate::world::inventory::Inventory::default();
+        inv.add_folders(
+            vec![aurora_net::inventory::InvFolder {
+                id: id(1),
+                type_default: model::FT_OUTFIT,
+                ..Default::default()
+            }],
+            false,
+        );
+        let texture = |n, asset| InvItem {
+            id: id(n),
+            parent: id(1),
+            asset_type: 0,
+            asset_id: id(asset),
+            ..Default::default()
+        };
+        inv.items.insert(id(10), texture(10, 500));
+        inv.folders.get_mut(&id(1)).expect("outfit").items.push(id(10));
+        let mut st = AppearanceUi::default();
+        assert_eq!(st.outfit_picture(&inv, id(1)), id(500));
+        // the same inventory generation: what was found
+        inv.items.insert(id(10), texture(10, 501));
+        assert_eq!(st.outfit_picture(&inv, id(1)), id(500));
+        inv.generation += 1;
+        assert_eq!(st.outfit_picture(&inv, id(1)), id(501));
+        // a thumbnail comes first, with no walk
+        inv.folders.get_mut(&id(1)).expect("outfit").info.thumbnail = id(502);
+        assert_eq!(st.outfit_picture(&inv, id(1)), id(502));
+        assert!(st.outfit_picture(&inv, id(99)).is_nil(), "unknown outfit");
+    }
+    #[test]
+    fn review_2376_worn_show_original_dispatches_the_original_without_changing_the_outfit() {
+        for target in [710, 714, 717] {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let _icons = icons::Icons::load(&ctx, None);
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+            let id = Uuid::from_u128(target);
+            let name = world.inventory.items[&id].name.clone();
+            let before = world.inventory.generation;
+            let mut st = AppearanceUi::default();
+            st.open(2, false);
+            for _ in 0..5 {
+                draw(&ctx, &mut world, &mut st, None);
+            }
+            click_row(
+                &ctx,
+                &mut world,
+                &mut st,
+                &name,
+                egui::Modifiers::NONE,
+                egui::PointerButton::Secondary,
+            );
+            let actions = click_menu(&ctx, &mut world, &mut st, aurora_i18n::tr!("ui-appearance-items-show-original"));
+            assert!(
+                matches!(actions.as_slice(), [Action::ShowOriginal(actual)] if *actual == id),
+                "{target}: {actions:?}"
+            );
+            assert_eq!(
+                world.inventory.generation, before,
+                "revealing an original does not mutate the outfit"
+            );
+        }
+    }
+
+    #[test]
+    fn review_2376_show_original_is_absent_for_multiple_worn_items() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+        let names: Vec<_> = [714, 715].map(|id| world.inventory.items[&Uuid::from_u128(id)].name.clone()).into();
+        let mut st = AppearanceUi::default();
+        st.open(2, false);
+        for _ in 0..5 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &names[0],
+            egui::Modifiers::NONE,
+            egui::PointerButton::Primary,
+        );
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &names[1],
+            egui::Modifiers::CTRL,
+            egui::PointerButton::Primary,
+        );
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &names[0],
+            egui::Modifiers::NONE,
+            egui::PointerButton::Secondary,
+        );
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0));
+        let shapes = draw_output(
+            &ctx,
+            &mut world,
+            &mut st,
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+        )
+        .1;
+        let label = aurora_i18n::tr!("ui-appearance-items-show-original");
+        assert!(
+            !shapes
+                .iter()
+                .any(|s| s.clip_rect.contains_rect(screen) && text_position(&s.shape, label).is_some())
+        );
+    }
+
+    #[test]
+    fn review_2376_show_original_stays_out_of_the_outfit_editor() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+        let name = world.inventory.items[&Uuid::from_u128(714)].name.clone();
+        let mut st = AppearanceUi::default();
+        st.open(2, true);
+        for _ in 0..5 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &name,
+            egui::Modifiers::NONE,
+            egui::PointerButton::Secondary,
+        );
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0));
+        let shapes = draw_output(
+            &ctx,
+            &mut world,
+            &mut st,
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+        )
+        .1;
+        let label = aurora_i18n::tr!("ui-appearance-items-show-original");
+        assert!(
+            !shapes
+                .iter()
+                .any(|s| s.clip_rect.contains_rect(screen) && text_position(&s.shape, label).is_some()),
+            "the Worn-only command leaked into Edit outfit"
+        );
+    }
+    #[test]
+    fn review_2376_show_original_obeys_showinv_and_recovers_when_released() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+        world.rlva.configure(true);
+        let mut command = aurora_net::ChatMessage {
+            from_name: String::new(),
+            source_id: Uuid::from_u128(9000),
+            owner_id: Uuid::from_u128(1),
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            position: glam::Vec3::ZERO,
+            message: "@showinv=n".into(),
+        };
+        assert!(world.rlva.receive(&command));
+        assert!(world.rlva.has("showinv"));
+        let target = Uuid::from_u128(714);
+        let name = world.inventory.items[&target].name.clone();
+        let mut st = AppearanceUi::default();
+        st.open(2, false);
+        for _ in 0..5 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &name,
+            egui::Modifiers::NONE,
+            egui::PointerButton::Secondary,
+        );
+        let label = aurora_i18n::tr!("ui-appearance-items-show-original");
+        assert!(
+            click_menu(&ctx, &mut world, &mut st, label).is_empty(),
+            "showinv must disable the inventory-reveal command"
+        );
+        assert!(egui::Popup::is_any_open(&ctx), "a disabled row keeps the menu open");
+        command.message = "@showinv=y".into();
+        assert!(world.rlva.receive(&command));
+        assert!(!world.rlva.has("showinv"));
+        let actions = click_menu(&ctx, &mut world, &mut st, label);
+        assert!(
+            matches!(actions.as_slice(), [Action::ShowOriginal(id)] if *id == target),
+            "{actions:?}"
+        );
+    }
+
+    #[test]
+    fn outfit_original_controls_obey_showinv_and_recover_after_release_or_disable() {
+        for profile in [false, true] {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let _icons = icons::Icons::load(&ctx, None);
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+            world.rlva.configure(true);
+            let target = Uuid::from_u128(723);
+            let folder = Uuid::from_u128(704);
+            let name = world.inventory.items[&target].name.clone();
+            let links: Vec<_> = world.inventory.folders[&folder]
+                .items
+                .iter()
+                .copied()
+                .filter(|id| world.inventory.items[id].asset_id == target)
+                .collect();
+            assert!(!links.is_empty());
+            world.inventory.folders.get_mut(&folder).expect("outfit").items = links;
+            let mut st = AppearanceUi::default();
+            st.open_outfit(folder);
+            st.reveal_outfit = None;
+            st.profile_item = profile.then_some(target);
+            let mut command = aurora_net::ChatMessage {
+                from_name: String::new(),
+                source_id: Uuid::from_u128(9000),
+                owner_id: Uuid::from_u128(1),
+                source_type: aurora_net::ChatSourceType::Object,
+                chat_type: aurora_net::ChatType::OwnerSay,
+                position: glam::Vec3::ZERO,
+                message: String::new(),
+            };
+            for (restriction, enabled) in [("n", false), ("y", true), ("n", false), ("disabled", true)] {
+                if restriction == "disabled" {
+                    world.rlva.configure(false);
+                } else {
+                    command.message = format!("@showinv={restriction}");
+                    assert!(world.rlva.receive(&command));
+                }
+                assert_eq!(world.rlva.has("showinv"), !enabled);
+                for _ in 0..5 {
+                    draw(&ctx, &mut world, &mut st, None);
+                }
+                let label = aurora_i18n::tr!("ui-appearance-items-show-original");
+                let actions = if profile {
+                    let pos = label_position(&ctx, &mut world, &mut st, label);
+                    modified_click(&ctx, &mut world, &mut st, pos, egui::Modifiers::NONE, egui::PointerButton::Primary)
+                } else {
+                    if !egui::Popup::is_any_open(&ctx) {
+                        click_row(
+                            &ctx,
+                            &mut world,
+                            &mut st,
+                            &name,
+                            egui::Modifiers::NONE,
+                            egui::PointerButton::Secondary,
+                        );
+                    }
+                    click_menu(&ctx, &mut world, &mut st, label)
+                };
+                if enabled {
+                    assert!(
+                        matches!(actions.as_slice(), [Action::ShowOriginal(id)] if *id == target),
+                        "profile={profile}, restriction={restriction}: {actions:?}"
+                    );
+                } else {
+                    assert!(actions.is_empty(), "profile={profile}: a disabled command must not dispatch");
+                    if !profile {
+                        assert!(egui::Popup::is_any_open(&ctx), "clicking the disabled entry keeps its menu open");
+                    }
+                }
+            }
         }
     }
 }

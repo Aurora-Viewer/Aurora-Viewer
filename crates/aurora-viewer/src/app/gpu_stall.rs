@@ -71,6 +71,7 @@ impl App {
         // a VR session is not recovered yet (TASKS.md): it closes as before
         let recovers = super::gpu_recovery::enabled(self.settings.gpu_recovery) && !renderer.vr_engaged();
         if renderer.device_lost() && recovers && !self.gpu_stall.lost {
+            crate::crash::gpu_loss_snapshot();
             use super::gpu_recovery::LossStep;
             match super::gpu_recovery::loss_step(&mut self.gpu_losses, now) {
                 step @ (LossStep::Recover | LossStep::RecoverSafe) => {

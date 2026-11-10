@@ -327,9 +327,6 @@ pub fn land_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
             }
         }
     });
-    if let Some(m) = tool.land.take_message() {
-        tool.status = m;
-    }
 }
 
 /// GP_LAND_DIVIDE_JOIN, GP_LAND_RELEASE (llagent / roles_constants.h).
@@ -337,8 +334,6 @@ const GP_LAND_DIVIDE_JOIN: u64 = 1 << 19;
 const GP_LAND_RELEASE: u64 = 1 << 20;
 /// REGION_FLAGS_ALLOW_PARCEL_CHANGES.
 const REGION_FLAGS_ALLOW_PARCEL_CHANGES: u32 = 1 << 26;
-/// PARCEL_UNIT_AREA (m²).
-const PARCEL_UNIT_AREA: f32 = 16.0;
 
 /// The land info panel (LLPanelLandInfo::refresh).
 pub fn parcel_panel(
@@ -439,6 +434,9 @@ pub fn parcel_panel(
         .and_then(|r| r.info.as_ref())
         .is_none_or(|i| i.region_flags & REGION_FLAGS_ALLOW_PARCEL_CHANGES != 0);
     let whole = parcel.as_ref().is_some_and(|pi| (sel_area - pi.area as f32).abs() < 1.0);
+    if let Some(message) = tool.land.message() {
+        small(ui, p, message);
+    }
     super::common::section(ui, p, aurora_i18n::tr!("build-ui-tools-edit-parcel"));
     ui.horizontal(|ui| {
         let divide = owner_divide && region_allows && tool.land.selection.is_some() && !whole;
@@ -451,10 +449,11 @@ pub fn parcel_panel(
         {
             tool.ui.confirm = Some(Confirm::Divide);
         }
-        let join = sel_area > PARCEL_UNIT_AREA && !whole && owner_divide;
+        let join = tool.land.can_join(world);
         if ui
             .add_enabled(join, egui::Button::new(RichText::new(aurora_i18n::tr!("common-join")).size(12.0)))
             .clicked()
+            && tool.land.join_command(world).is_some()
         {
             tool.ui.confirm = Some(Confirm::Join);
         }
@@ -561,5 +560,126 @@ impl BuildTool {
         }
         let n = self.selected_link_number(world)?;
         Some(aurora_i18n::tr!("build-ui-tools-link-number", n = n))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aurora_net::land::{PARCEL_RESULT_MULTIPLE, PARCEL_RESULT_SUCCESS};
+    use std::sync::Arc;
+
+    fn fixture(result: i32) -> (World, BuildTool, BuildSettings) {
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        world.agent_id = crate::demo::DEMO_AGENT;
+        let handle = world.main_region.expect("demo region");
+        let off = world.region_offset(handle).expect("region offset").truncate();
+        let mut tool = BuildTool::default();
+        tool.open_build(Tool::Land);
+        tool.land.selection = Some((off + glam::Vec2::new(4.0, 4.0), off + glam::Vec2::new(12.0, 8.0)));
+        tool.land.parcel = Some((
+            handle,
+            Arc::new(aurora_net::ParcelInfo {
+                request_result: result,
+                owner_id: world.agent_id,
+                area: 16384,
+                ..Default::default()
+            }),
+        ));
+        (world, tool, BuildSettings::default())
+    }
+
+    fn text_rect(shape: &egui::Shape, text: &str) -> Option<egui::Rect> {
+        match shape {
+            egui::Shape::Text(t) if t.galley.text() == text => Some(egui::Rect::from_min_size(t.pos, t.galley.size())),
+            egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| text_rect(s, text)),
+            _ => None,
+        }
+    }
+
+    fn click_join(world: &mut World, tool: &mut BuildTool, settings: &mut BuildSettings) -> bool {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let mut frame = 0;
+        let mut show = |events| {
+            frame += 1;
+            let output = crate::ui::login::test_output(ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(420.0, 720.0))),
+                    time: Some(frame as f64 / 60.0),
+                    focused: true,
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.set_width(400.0);
+                    parcel_panel(ui, &p, tool, world, settings, &mut false);
+                },
+            ));
+            let button = output
+                .shapes
+                .iter()
+                .find_map(|s| text_rect(&s.shape, aurora_i18n::tr!("common-join")))
+                .expect("Join button");
+            let feedback = output
+                .shapes
+                .iter()
+                .any(|s| text_rect(&s.shape, aurora_i18n::tr!("build-land-join-select-multiple-parcels")).is_some());
+            (button, feedback)
+        };
+        show(Vec::new());
+        let pos = show(Vec::new()).0.center();
+        for pressed in [true, false] {
+            show(vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+        }
+        show(Vec::new()).1
+    }
+
+    #[test]
+    fn parcel_join_button_accepts_aggregate_ownership_and_equal_area() {
+        let (mut world, mut tool, mut settings) = fixture(PARCEL_RESULT_MULTIPLE);
+        for (owner, area) in [
+            (uuid::Uuid::nil(), 32),
+            (world.agent_id, 32),
+            (uuid::Uuid::from_u128(0xABCD), 16384),
+        ] {
+            let parcel = Arc::make_mut(&mut tool.land.parcel.as_mut().unwrap().1);
+            parcel.owner_id = owner;
+            parcel.area = area;
+            tool.ui.confirm = None;
+            assert!(!click_join(&mut world, &mut tool, &mut settings));
+            assert!(matches!(tool.ui.confirm, Some(Confirm::Join)));
+            assert!(tool.out.is_empty(), "joining still requires confirmation");
+        }
+    }
+
+    #[test]
+    fn parcel_join_button_explains_a_single_parcel_and_waits_for_a_selection_reply() {
+        let (mut world, mut tool, mut settings) = fixture(PARCEL_RESULT_SUCCESS);
+        assert!(
+            click_join(&mut world, &mut tool, &mut settings),
+            "the rejection is painted in the parcel panel"
+        );
+        assert!(tool.ui.confirm.is_none());
+        assert_eq!(
+            tool.land.take_message().as_deref(),
+            Some(aurora_i18n::tr!("build-land-join-select-multiple-parcels"))
+        );
+        tool.land.parcel = None;
+        assert!(!click_join(&mut world, &mut tool, &mut settings));
+        assert!(tool.ui.confirm.is_none());
+        assert!(tool.land.take_message().is_none(), "pending selection keeps the button disabled");
+        assert!(tool.out.is_empty());
     }
 }
