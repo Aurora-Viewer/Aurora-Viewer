@@ -97,17 +97,20 @@ Japanese, beyond the plural:
   window or tab; never 人々), 区画 (parcel),
   リージョン, 不動産 (estate), オブジェクト, 装着 (attach), 装着物
   (attachment), アウトフィット, 容姿 (appearance), 所有者 (owner),
-  初期設定 (Preferences), 設定 (Aurora's own settings), 近くのチャット,
+  初期設定 (Preferences; a default value is デフォルト), 設定 (Aurora's
+  own settings), 近くのチャット,
   テレポート, ランドマーク, スクリプト, テクスチャ, フォルダ, ごみ箱,
   複製 (copy, the permission: 複製不可, 複製と譲渡の権限; and Duplicate),
   コピー (copy, anywhere else: the clipboard, a copy of an item), モニター
   (a display),
   ビルド (build: the tools, the window, the permission), 建物 (a building
   in the world), 体験 (experience), 自然環境 (environment, EEP), 露光
-  (exposure), 射影テクスチャ (a light's projected texture), メタル (metal);
+  (exposure), 光源 (a light: a prim's Light, the local and worn lights),
+  射影テクスチャ (a light's projected texture), メタル (metal);
   look an existing one up in `ja.ftl` before choosing a new one. Never
-  持ち物, エクスペリエンス, アタッチ, オーナー, 露出, フォルダー nor
-  モニタ: they are the variants these replace. 建築 stays only in the
+  持ち物, エクスペリエンス, アタッチ, オーナー, 露出, フォルダー, モニタ
+  nor ライト for a light: they are the variants these replace (ハイライト,
+  スポットライト and the residents' フェイスライト stay). 建築 stays only in the
   residents' own words of the demo (今夜は広場を建築するよ), never for the
   tools.
 - A material map keeps its Japanese name with the usual katakana between
@@ -135,7 +138,9 @@ Japanese, beyond the plural:
   of the catalogues stay in English and keep ›.
 - A continuation line of a multi-line message cannot start with `*`, `[`
   or `.`: Fluent reads it as a variant. Reword it (Japanese often starts
-  with the Markdown bold of the English, `**…**`).
+  with the Markdown bold of the English, `**…**`). Its indent is ASCII
+  spaces, never the full-width space: Fluent does not take 　 as an indent
+  and reads the line as a broken entry.
 
 `tr!` borrows labels without variables from the cache; a message with
 variables returns a `String`. `Localized<T>` caches an array of labels for
