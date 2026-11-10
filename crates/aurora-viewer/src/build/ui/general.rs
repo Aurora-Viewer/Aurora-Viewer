@@ -381,11 +381,12 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 if r.changed() {
                     tool.ui.edits.insert(field, v.clone());
                 }
-                if r.lost_focus() {
+                let end = super::common::field_end(ui, &r);
+                if end != super::common::FieldEnd::Open {
                     tool.ui.edits.remove(field);
-                    if modify && v != current && (description || !v.trim().is_empty()) {
-                        tool.set_name(world, &v, description);
-                    }
+                }
+                if end == super::common::FieldEnd::Commit && modify && v != current && (description || !v.trim().is_empty()) {
+                    tool.set_name(world, &v, description);
                 }
             });
         }
