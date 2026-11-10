@@ -2221,3 +2221,26 @@ fn a_press_moved_from_a_part_onto_the_handles_alone_keeps_the_joint() {
     }
     panic!("no point of the handles free of markers during a press ({tried} tried)");
 }
+
+#[test]
+fn the_body_outline_stops_at_the_neck_and_leaves_the_head_to_the_face() {
+    let (world, _) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = Frame::new(&world).unwrap();
+    let proj = projector(frame.joints[rig.names["mHead"]].w_axis.truncate());
+    let at: Vec<glam::Vec3> = frame.joints.iter().map(|m| m.w_axis.truncate()).collect();
+    let project = |w: glam::Vec3| proj.project(w).map(|(p, _)| p);
+    let keys: Vec<usize> = rig.canonical_names.iter().map(|n| world_hints::part_key(n)).collect();
+    let body = world_hints::part(&rig.parent, &keys, rig.pelvis);
+    assert!(body.contains(&rig.names["mHead"]), "the head is still a Body bone to pose");
+    let outline = world_hints::outline_members(0, &body, &rig.canonical_names);
+    let caps = silhouette::capsules(&rig.parent, &rig.canonical_names, &at, &outline, silhouette::Links::Inside, project);
+    // inside the head (its sphere is 9.5 cm): outside the body's outline;
+    // the neck: inside
+    let crown = project(at[rig.names["mHead"]] + glam::Vec3::Z * 0.05).unwrap();
+    assert!(silhouette::depth(&caps, crown) < 0.0, "the head is not the body's outline");
+    assert!(
+        silhouette::depth(&caps, project(at[rig.names["mNeck"]]).unwrap()) > 0.0,
+        "the neck is"
+    );
+}

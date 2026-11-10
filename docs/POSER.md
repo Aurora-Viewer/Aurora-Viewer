@@ -70,7 +70,9 @@ the accent, with "Ctrl + click: Hands" by the cursor, and Ctrl + click
 selects its nearest joint and opens its group. Without Ctrl nothing shows
 and the click stays the world's (in the photo mode, a plain click on the
 face still sets the focus, and a Ctrl + click on a part stays the
-poser's instead of passing to the world). The body is one part, a hand reaches its
+poser's instead of passing to the world). The body is one part, drawn
+without the head (the face's oval shows it, and a Ctrl over the head does
+not offer the body), a hand reaches its
 wrist, the face is an oval that follows the head, and the wings and the
 tail are offered only when a worn rigged mesh uses them.
 

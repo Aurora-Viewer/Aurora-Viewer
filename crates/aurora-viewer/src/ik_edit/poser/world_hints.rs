@@ -111,6 +111,16 @@ pub(super) fn part(parent: &[Option<usize>], keys: &[usize], start: usize) -> Ve
     (0..parent.len()).filter(|j| keys[*j] == key && entry(*j) == from).collect()
 }
 
+/// The joints a part's outline is drawn from: the body without the head,
+/// which is the face's to show (its oval), so the body stops at the neck and
+/// a Ctrl over the head does not offer it.
+pub(super) fn outline_members(key: usize, members: &[usize], names: &[String]) -> Vec<usize> {
+    if key == 0 {
+        return members.iter().copied().filter(|j| names[*j] != "mHead").collect();
+    }
+    members.to_vec()
+}
+
 /// The part's name for the hint: its group's tab, or Wings / Tail.
 fn part_label(key: usize) -> &'static str {
     match key {
@@ -201,11 +211,12 @@ impl Editor {
                 }
                 oval.is_some()
             } else {
+                let outline = outline_members(keys[joint], &members, &rig.canonical_names);
                 let capsules = silhouette::capsules(
                     &rig.parent,
                     &rig.canonical_names,
                     &world_at,
-                    &members,
+                    &outline,
                     silhouette::links_of(keys[joint]),
                     project,
                 );
