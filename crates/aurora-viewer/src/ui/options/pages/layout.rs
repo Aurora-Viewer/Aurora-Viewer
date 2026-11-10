@@ -46,6 +46,18 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-show-balance-help"),
                     &field!(show_balance),
                 );
+                // the L$ received and spent under it (#2675), each on its
+                // own; also the balance's right click and the account island's
+                cx.toggle(
+                    tr!("ui-options-balance-received"),
+                    tr!("ui-options-balance-received-hint"),
+                    &field!(balance_shows_received),
+                );
+                cx.toggle(
+                    tr!("ui-options-balance-spent"),
+                    tr!("ui-options-balance-spent-hint"),
+                    &field!(balance_shows_spent),
+                );
                 // also a left click on the clock, and the island's right click
                 use crate::settings::ClockZone;
                 cx.choice(
