@@ -11,6 +11,7 @@ use egui::{RichText, Vec2};
 use model::Action;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
+pub(crate) mod batch;
 mod clipboard;
 mod folders;
 mod gallery;
@@ -19,6 +20,7 @@ pub(crate) mod json;
 mod layers;
 #[cfg(test)]
 mod perf_tests;
+pub(crate) mod portrait;
 mod selection;
 mod showcase;
 pub use clipboard::{PasteTo, Request as ClipboardRequest};

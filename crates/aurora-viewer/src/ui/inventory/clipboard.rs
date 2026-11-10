@@ -101,8 +101,23 @@ pub(super) fn focus_id(st: &InventoryUi) -> egui::Id {
 }
 
 pub(super) fn request_focus(ui: &egui::Ui, st: &mut InventoryUi) {
-    st.list_focus_frame = Some(ui.ctx().cumulative_frame_nr());
-    ui.memory_mut(|m| {
+    request_focus_ctx(ui.ctx(), st);
+}
+
+/// Hands the keyboard back to the list when a modal dialog over it closes.
+/// egui keeps the closed modal as the top layer for one more pass, which
+/// drops this request and blocks [`list_focus`]'s restore; the restore window
+/// is moved one pass on so the list takes the focus once the modal is gone.
+pub(super) fn return_focus(ctx: &egui::Context, st: &mut InventoryUi) {
+    request_focus_ctx(ctx, st);
+    st.list_focus_frame = Some(ctx.cumulative_frame_nr() + 1);
+    // run those passes now, not at the next input
+    ctx.request_repaint();
+}
+
+fn request_focus_ctx(ctx: &egui::Context, st: &mut InventoryUi) {
+    st.list_focus_frame = Some(ctx.cumulative_frame_nr());
+    ctx.memory_mut(|m| {
         m.request_focus(focus_id(st));
         m.set_focus_lock_filter(
             focus_id(st),
@@ -1170,6 +1185,62 @@ mod tests {
         assert_eq!(h.world.inventory.items[&id(8104)].parent, id(8001));
         assert_eq!(h.world.inventory.items[&id(8109)].parent, trash);
         assert_eq!(h.world.inventory.items[&id(8100)].parent, id(8000));
+    }
+
+    fn key(key: egui::Key) -> Event {
+        Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }
+    }
+
+    #[test]
+    fn closing_the_delete_confirmation_gives_the_list_its_keyboard_back() {
+        // Enter, Escape and Cancel all hand the keyboard back to the list, as
+        // the Legacy alert restores the focus it saved; a click on the dimmed
+        // world behind the modal answers nothing.
+        for close in ["enter", "escape", "cancel"] {
+            let mut h = Harness::new();
+            h.add_trash();
+            h.frame(Vec::new());
+            h.select(id(8100), false);
+            assert!(h.frame(vec![delete_key(Default::default())]).is_empty());
+            assert!(h.st.dialog.is_some(), "{close}: Delete opens the confirmation");
+            h.frame(Vec::new());
+            assert!(h.click(Pos2::new(4.0, 4.0), Default::default()).is_empty());
+            assert!(h.st.dialog.is_some(), "{close}: a click outside the modal keeps it open");
+            h.frame(Vec::new());
+            let mut actions = match close {
+                "enter" => h.frame(vec![key(egui::Key::Enter)]),
+                "escape" => h.frame(vec![key(egui::Key::Escape)]),
+                _ => h.click(h.text(aurora_i18n::tr!("common-cancel")).center(), Default::default()),
+            };
+            // modal_keys clicks the default button on the pass after Enter
+            actions.extend(h.frame(Vec::new()));
+            assert_eq!(actions.len(), usize::from(close == "enter"), "{close}");
+            assert!(h.st.dialog.is_none(), "{close}: the confirmation closed");
+            h.frame(Vec::new());
+            h.frame(Vec::new());
+            assert!(
+                h.ctx.memory(|m| m.has_focus(focus_id(&h.st))),
+                "{close}: the list has the keyboard again"
+            );
+            if close != "enter" {
+                // released first, or egui reports the second press as a repeat
+                let release = Event::Key {
+                    key: egui::Key::Delete,
+                    physical_key: None,
+                    pressed: false,
+                    repeat: false,
+                    modifiers: Default::default(),
+                };
+                h.frame(vec![release, delete_key(Default::default())]);
+                assert!(h.st.dialog.is_some(), "{close}: Delete reaches the list without a click");
+            }
+        }
     }
 
     #[test]
