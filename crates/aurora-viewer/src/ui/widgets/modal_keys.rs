@@ -82,6 +82,20 @@ fn is_text_field(ctx: &Context, id: Id) -> bool {
     egui::TextEdit::load_state(ctx, id).is_some()
 }
 
+/// A plain default button is the Enter target until a widget inside the
+/// modal takes the keyboard. Keep that hint separate from keyboard focus:
+/// taking focus here would change Tab order and the opening-Enter guard.
+pub(super) fn show_default_hint(ui: &egui::Ui) -> bool {
+    ui.is_enabled()
+        && ui.ctx().data(|d| {
+            d.get_temp::<Current>(current_id())
+                .is_some_and(|c| c.layer == ui.layer_id() && c.primary.is_none())
+        })
+        && ui
+            .memory(|m| m.focused())
+            .is_none_or(|id| layer_of(ui.ctx(), id) != Some(ui.layer_id()))
+}
+
 /// Before the dialog's body.
 pub(super) fn begin(ctx: &Context, layer: LayerId) -> Scope {
     let id = layer.id;

@@ -227,6 +227,10 @@ mod tests {
                         Err(e) => panic!("test listener: {e}"),
                     }
                 };
+                // On macOS (BSD sockets) an accepted socket inherits the
+                // listener's O_NONBLOCK, so the reads below would fail with
+                // WouldBlock instead of waiting for the request.
+                socket.set_nonblocking(false).unwrap();
                 socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
                 let mut reader = BufReader::new(socket.try_clone().unwrap());
                 let mut request = String::new();
