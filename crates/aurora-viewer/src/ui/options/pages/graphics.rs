@@ -3,7 +3,7 @@
 //! reflections and Aurora's water, the image (anti-aliasing, tone mapping,
 //! depth of field), smoothness and parcel visibility.
 
-use super::super::cx::{Cx, Nothing, field};
+use super::super::cx::{Custom, Cx, Nothing, field};
 use super::super::{COMBO_W, preset_choice, stepped, toggle};
 use egui::RichText;
 
@@ -202,14 +202,34 @@ fn overlays(cx: &mut Cx) {
 fn frames_per_second(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-frames-per-second"), |cx| {
-        // FSR's mode sets the world's size in its place
-        cx.greyed(cx.s.antialiasing == 7);
-        cx.slider(
+        // FSR's mode sets the world's size in their place
+        let fsr = cx.s.antialiasing == 7;
+        cx.greyed(fsr);
+        cx.toggle(
+            tr!("ui-options-render-scale-auto"),
+            tr!("ui-options-render-scale-auto-help"),
+            &field!(render_scale_auto),
+        );
+        // While the world matches the display, the slider shows the
+        // percentage the display gives, greyed: not a choice of the user,
+        // so neither modified nor reset by this row.
+        let scale = Custom {
+            path: "render_scale_percent",
+            modified: |s: &crate::settings::Settings, d: &crate::settings::Settings| {
+                !s.render_scale_auto && s.render_scale_percent != d.render_scale_percent
+            },
+            reset: |s: &mut crate::settings::Settings, d: &crate::settings::Settings| {
+                if !s.render_scale_auto {
+                    s.render_scale_percent = d.render_scale_percent;
+                }
+            },
+        };
+        cx.greyed(fsr || cx.s.render_scale_auto);
+        cx.row(
             tr!("ui-options-render-scale"),
             tr!("ui-options-render-scale-help"),
-            &field!(render_scale_percent),
-            50..=100,
-            "%",
+            &scale,
+            |ui, s| super::super::slider(ui, &mut s.render_scale_percent, 50..=100, "%"),
         );
         cx.greyed(false);
         // across, its switch in line with those of the limits below

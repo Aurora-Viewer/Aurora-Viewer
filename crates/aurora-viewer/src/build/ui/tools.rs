@@ -10,7 +10,7 @@ use crate::build::{BuildSettings, BuildTool, EditMode, FocusMode, GrabMode, Mods
 use crate::theme::Palette;
 use crate::world::World;
 use aurora_net::build::land_action;
-use egui::{Color32, RichText, Vec2};
+use egui::{RichText, Vec2};
 
 /// "text status": the hint of the current tool (floater.string status_*).
 pub fn status_text(tool: &BuildTool, s: &BuildSettings, mods: Mods) -> &'static str {
@@ -145,15 +145,15 @@ fn create_shapes(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, cell: Ve
                 let name = match i {
                     i if i < shapes().len() => {
                         let sh = &shapes()[i];
-                        super::object::shape_preview(ui, rect.shrink(3.0), &sh.params(), sh.rotation(), col);
+                        super::shape_preview::paint(ui, rect.shrink(3.0), &sh.params(), sh.rotation(), col);
                         sh.name
                     }
                     i if i == shapes().len() => {
-                        tree_icon(ui, rect.shrink(4.0), col, true);
+                        super::shape_preview::paint_plant(ui, rect.shrink(3.0), true, col);
                         aurora_i18n::tr!("build-ui-tools-tree")
                     }
                     _ => {
-                        tree_icon(ui, rect.shrink(4.0), col, false);
+                        super::shape_preview::paint_plant(ui, rect.shrink(3.0), false, col);
                         aurora_i18n::tr!("build-ui-tools-grass")
                     }
                 };
@@ -239,33 +239,6 @@ fn create_options(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
                 });
         });
     });
-}
-
-/// A small tree / grass glyph for the last two shape buttons.
-fn tree_icon(ui: &egui::Ui, r: egui::Rect, col: Color32, tree: bool) {
-    let painter = ui.painter();
-    let s = egui::Stroke::new(1.2, col);
-    if tree {
-        let top = egui::pos2(r.center().x, r.top());
-        painter.line_segment([top, egui::pos2(r.left() + 2.0, r.bottom() - 5.0)], s);
-        painter.line_segment([top, egui::pos2(r.right() - 2.0, r.bottom() - 5.0)], s);
-        painter.line_segment(
-            [
-                egui::pos2(r.left() + 2.0, r.bottom() - 5.0),
-                egui::pos2(r.right() - 2.0, r.bottom() - 5.0),
-            ],
-            s,
-        );
-        painter.line_segment(
-            [egui::pos2(r.center().x, r.bottom() - 5.0), egui::pos2(r.center().x, r.bottom())],
-            s,
-        );
-    } else {
-        for k in 0..4 {
-            let x = r.left() + 2.0 + k as f32 * (r.width() - 4.0) / 3.0;
-            painter.line_segment([egui::pos2(x, r.bottom()), egui::pos2(x + 2.0 - k as f32, r.top() + 3.0)], s);
-        }
-    }
 }
 
 /// Land tool: brush radio, size / force, apply.
