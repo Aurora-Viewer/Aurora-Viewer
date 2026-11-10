@@ -173,6 +173,19 @@ impl AppearanceUi {
         self.editing = editing;
         self.adding = false;
     }
+    /// The window on the tab shown at the last exit (`Settings::appearance_tab`),
+    /// as LLPanelOutfitsInventory::onOpen selects `LastAppearanceTab`.
+    pub fn restored(tab: u8) -> Self {
+        Self {
+            tab: usize::from(tab).min(2),
+            ..Default::default()
+        }
+    }
+    /// "Change outfit": the outfit view in use, the gallery or the list;
+    /// from the worn tab, the gallery.
+    pub fn open_outfits(&mut self) {
+        self.open(if self.tab < 2 { self.tab } else { 0 }, false);
+    }
 
     /// Scrolls the gallery or the list to the current outfit and selects
     /// it, after clearing a filter that hides it; from the worn tab, in the
@@ -2181,6 +2194,33 @@ mod tests {
             let saved = serde_json::to_vec(&settings).expect("save settings");
             let restored: Settings = serde_json::from_slice(&saved).expect("restore settings");
             assert_eq!(restored.appearance_fill_previews, fill);
+        }
+    }
+
+    #[test]
+    fn appearance_reopens_on_the_tab_shown_at_exit() {
+        use crate::settings::Settings;
+        let old: Settings = serde_json::from_str("{}").expect("old settings");
+        assert_eq!(AppearanceUi::restored(old.appearance_tab).tab, 0, "the gallery by default");
+        for tab in 0..3usize {
+            let settings = Settings {
+                appearance_tab: u8::try_from(tab).expect("tab"),
+                ..Default::default()
+            };
+            let saved = serde_json::to_vec(&settings).expect("save settings");
+            let restored: Settings = serde_json::from_slice(&saved).expect("restore settings");
+            assert_eq!(AppearanceUi::restored(restored.appearance_tab).tab, tab);
+        }
+        assert_eq!(AppearanceUi::restored(9).tab, 2, "an unknown tab falls back to the last one");
+    }
+
+    #[test]
+    fn change_outfit_keeps_the_outfit_view_in_use() {
+        for (from, to) in [(0, 0), (1, 1), (2, 0)] {
+            let mut st = AppearanceUi::restored(from);
+            st.editing = true;
+            st.open_outfits();
+            assert_eq!((st.tab, st.editing), (to, false), "from tab {from}");
         }
     }
 

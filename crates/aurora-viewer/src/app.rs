@@ -1480,6 +1480,7 @@ impl App {
         });
 
         let panels = Panels::from_settings(&settings);
+        let appearance_ui = ui::appearance::AppearanceUi::restored(settings.appearance_tab);
         let chat_ui = ChatUi::from_settings(&settings);
         let mut scene = Scene::new(cache, lib.clone());
         scene.jobs.execute(|| {
@@ -1923,7 +1924,7 @@ impl App {
             demo_script_sources: Default::default(),
             demo_script_experiences: Default::default(),
             inventory_images: Default::default(),
-            appearance_ui: Default::default(),
+            appearance_ui,
             shape_ui: Default::default(),
             shape_camera: None,
             physics_ui: Default::default(),
@@ -17938,6 +17939,7 @@ impl App {
                 self.settings.people_tab = self.panels.people_tab;
                 self.settings.show_inventory = self.panels.inventory;
                 self.settings.show_appearance = self.panels.appearance;
+                self.settings.appearance_tab = u8::try_from(self.appearance_ui.tab).unwrap_or(0);
                 self.settings.show_ao = self.panels.ao;
                 // (the photo's time of day is its own layer, never saved)
                 if self.panels.time_of_day != self.settings.time_of_day {
