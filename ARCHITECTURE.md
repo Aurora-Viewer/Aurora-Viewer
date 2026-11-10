@@ -75,6 +75,14 @@ its virtual list to the selected row on opening or following a new face (#2362).
 
 `world/objects/local_appearance.rs` combines local surface, normal, specular, PBR map and projector bindings per face. The render state, appearance registry and removal path retain every channel independently; scene records read these bindings without changing simulator texture entries or material overrides.
 
+`world/objects/local_duplicates.rs` retains local face/channel bindings while
+ObjectDuplicate or ObjectDuplicateOnRay is in flight. New server prims are
+matched by placement and unchanged server appearance, with children matched
+under the new root even when they arrive first. The imports registry receives
+the copied bindings through the same persistence/removal path as the picker.
+The local-appearance warning uses live face bindings; stored applications for
+absent objects remain available for restoration without keeping the banner open.
+
 `ui/texture_picker/pipette.rs` routes a transient world sample to the picker session that armed it, independently of its opening window. `app/texture_picker.rs` samples the nearest volume face through the shared scene pipette ray query; inventory copy permissions, material assets and reversible previews remain owned by the picker.
 
 `ui/resource_drop.rs` resolves inventory and resource-inspector cargo for editable
