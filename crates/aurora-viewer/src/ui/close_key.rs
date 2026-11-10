@@ -15,8 +15,10 @@
 //! while it is drawn ([`shown`]) and closes as its cross would when the key
 //! is for it ([`take`]). The Conversations window asks first, to close its
 //! conversation shown instead (LLMultiFloater::closeDockedFloater); Close
-//! All still closes that window. The mini-map has no title bar, so it is
-//! not in the frontmost list ([`shown_extra`]) and only Close All takes it.
+//! All still closes that window. The mini-map hides its title bar but is a
+//! window like the others (`LLFloaterMap`, `floater_map.xml`), so Close
+//! Window takes it. A script prompt kept in the notification list is not in
+//! the frontmost list ([`shown_extra`]): only Close All takes it.
 
 use crate::keybinds::{Input, Mods};
 use egui::{Id, Order};
@@ -62,8 +64,8 @@ pub fn shown(ctx: &egui::Context, id: Id) {
     note(ctx, id, false);
 }
 
-/// A window drawn this frame that Ctrl+W does not pick as frontmost.
-/// Ctrl+Shift+W still closes it (the mini-map).
+/// A surface drawn this frame that Ctrl+W does not pick as frontmost.
+/// Ctrl+Shift+W still closes it (a script prompt kept in the list).
 pub fn shown_extra(ctx: &egui::Context, id: Id) {
     note(ctx, id, true);
 }
