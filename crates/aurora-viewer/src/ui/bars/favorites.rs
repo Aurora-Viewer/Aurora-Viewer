@@ -477,7 +477,7 @@ pub fn menu_body(ui: &mut egui::Ui, p: &Palette, icons: &Icons, view: &View, out
         ui.horizontal(|ui| {
             ui.add_space(2.0);
             let w = ui.available_width() - 2.0;
-            crate::ui::widgets::pills::search_box(ui, p, &mut filter, aurora_i18n::tr!("favorites-filter"), w);
+            crate::ui::widgets::clearable_search_box(ui, p, &mut filter, aurora_i18n::tr!("favorites-filter"), w);
         });
         ui.add_space(6.0);
         let rows = filtered(view, &filter);
