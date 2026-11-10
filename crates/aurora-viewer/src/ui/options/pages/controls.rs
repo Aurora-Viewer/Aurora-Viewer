@@ -35,19 +35,6 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-block-click-sit-help"),
             &field!(block_click_sit),
         );
-        // Legacy Viewer › Protection (FSRevokePerms)
-        let revoke = [
-            (0u8, tr!("ui-options-revoke-never")),
-            (1, tr!("ui-options-revoke-on-sit")),
-            (2, tr!("ui-options-revoke-on-stand")),
-            (3, tr!("ui-options-revoke-on-sit-and-stand")),
-        ];
-        cx.keywords("FSRevokePerms permissions animation").combo(
-            tr!("ui-options-revoke-permissions"),
-            tr!("ui-options-revoke-permissions-help"),
-            &field!(revoke_permissions),
-            &revoke,
-        );
     });
     cx.group(tr!("ui-options-keyboard"), |cx| {
         cx.toggle(
@@ -70,15 +57,6 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-walk-backwards-without-turning"),
             tr!("ui-options-walk-backwards-without-turning-help"),
             &field!(walk_backwards_without_turning),
-        );
-        // FSAvatarTurnSpeed (panel_preferences_move.xml av_turn_spd: 0 to
-        // 100, steps of 0.5)
-        cx.keywords("FSAvatarTurnSpeed rotation").slider(
-            tr!("ui-options-avatar-turn-speed"),
-            tr!("ui-options-avatar-turn-speed-help"),
-            &field!(avatar_turn_speed),
-            0.0..=100.0,
-            " %",
         );
         // AutomaticFly (agent_jump / LLAgent::propagate), split into two
         // independent choices at the human's request.
@@ -104,6 +82,7 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-fly-after-teleport-help"),
             &field!(fly_after_teleport),
         );
+        friends_only_row(cx);
         friends_only_keep_row(cx);
         cx.link(
             tr!("ui-options-shortcuts"),
@@ -112,6 +91,28 @@ pub fn page(cx: &mut Cx) {
             Page::Shortcuts,
             0,
         );
+    });
+}
+
+/// "Show Friends Only" itself (FSRenderFriendsOnly), the switch of the
+/// toolbar button and the World menu: an Aurora addition, the Legacy Viewer
+/// has only the next row in its Preferences. Kept per account, so it waits
+/// for a login.
+fn friends_only_row(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    let p = cx.p;
+    let state = cx.st.friends_only;
+    let mut on = state.unwrap_or(false);
+    let hint = if state.is_some() {
+        tr!("ui-options-friends-only-show-help")
+    } else {
+        tr!("ui-options-friends-only-keep-login")
+    };
+    cx.row_with(tr!("toolbar-command-friends-only"), hint, &Nothing, |ui, _, _, r| {
+        if ui.add_enabled_ui(state.is_some(), |ui| toggle(ui, &p, &mut on)).inner {
+            r.friends_only = Some(on);
+        }
+        false
     });
 }
 

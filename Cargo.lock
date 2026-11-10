@@ -552,6 +552,7 @@ dependencies = [
  "rtrb",
  "rustls",
  "rustls-platform-verifier",
+ "serde_json",
  "sonora",
  "symphonia",
  "thiserror 2.0.21",

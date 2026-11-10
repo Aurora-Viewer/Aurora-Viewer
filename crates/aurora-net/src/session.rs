@@ -364,8 +364,7 @@ struct Session<'a> {
 fn packets_counted(stats: &NetStats) -> throttle::Counted {
     throttle::Counted {
         received: stats.packets_in.load(Ordering::Relaxed),
-        gaps: stats.seq_gaps.load(Ordering::Relaxed),
-        late: stats.seq_late.load(Ordering::Relaxed),
+        lost: stats.packets_lost.load(Ordering::Relaxed),
     }
 }
 
@@ -1392,7 +1391,6 @@ impl Session<'_> {
         self.send_queued_attachment(now);
         self.publish_motion();
         self.object_cache.save_when_due(now);
-        self.update_throttle(now);
         let stats = self.sh.stats.clone();
         // Deferred CompleteAgentMovement once UseCircuitCode is acked. At
         // login it waits for the ack itself, as llstartup.cpp STATE_WORLD_WAIT
@@ -1489,6 +1487,9 @@ impl Session<'_> {
                 dead.push(*addr);
             }
         }
+        // Circuit ticks confirm expired holes before this five-second
+        // sample, so a genuine loss is not deferred to the next sample.
+        self.update_throttle(now);
         stats.unacked.store(unacked as u32, Ordering::Relaxed);
         for addr in ping_targets {
             if let Some(sim) = self.sims.get_mut(&addr) {
@@ -4035,7 +4036,7 @@ impl Session<'_> {
             stats.duplicates.fetch_add(1, Ordering::Relaxed);
             return;
         }
-        sim.circuit.note_sequence(pkt.sequence, stats);
+        sim.circuit.note_sequence(pkt.sequence, pkt.resent(), stats);
         match self.dispatch(from, &pkt) {
             // ack only now (the handler may also have removed the circuit)
             Ok(()) => {

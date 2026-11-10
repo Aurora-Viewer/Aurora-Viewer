@@ -17,12 +17,57 @@ pub(super) fn typography(ui: &mut egui::Ui) {
     crate::ui::widgets::organization_typography(ui);
 }
 
+/// How a build field's keyboard entry stands this pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FieldEnd {
+    /// Still typing, or not being typed in.
+    Open,
+    /// Focus moved away or Enter: send the typed value.
+    Commit,
+    /// Escape: drop the typed text and send nothing, as LLLineEditor and
+    /// LLSpinCtrl::handleKeyHere (indra/llui/llspinctrl.cpp) revert it.
+    Revert,
+    /// The pass after the entry ended: egui reports lost_focus again and
+    /// DragValue parses the abandoned text once more. Nothing to send.
+    Repeat,
+}
+
+/// Escape pressed this pass, read from the raw input: a window drawn before
+/// the build inspector may consume the key, but the field still has to know
+/// that its entry was abandoned rather than committed.
+pub(crate) fn escape_pressed(ui: &egui::Ui) -> bool {
+    ui.input(|i| {
+        i.raw
+            .events
+            .iter()
+            .any(|e| matches!(e, egui::Event::Key { key: egui::Key::Escape, pressed: true, modifiers, .. } if !modifiers.any()))
+    })
+}
+
+/// The shared end rule of every build field that commits typed text on its
+/// own (spinners, name, description, sale price): one decision per entry.
+pub(crate) fn field_end(ui: &egui::Ui, r: &egui::Response) -> FieldEnd {
+    if !r.lost_focus() {
+        return FieldEnd::Open;
+    }
+    let ended_id = r.id.with("build_field_ended");
+    let pass = ui.ctx().cumulative_pass_nr();
+    if ui.data(|d| d.get_temp::<u64>(ended_id)).is_some_and(|ended| ended + 1 == pass) {
+        return FieldEnd::Repeat;
+    }
+    ui.data_mut(|d| d.insert_temp(ended_id, pass));
+    if escape_pressed(ui) { FieldEnd::Revert } else { FieldEnd::Commit }
+}
+
 /// What a value control did this frame: changed (live) and / or must be
 /// sent (typed value, end of a drag).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Edit {
     pub changed: bool,
     pub commit: bool,
+    /// A number typed over a mixed ("—") field: committed even when it
+    /// equals the first selected value the field holds underneath.
+    pub typed_over_mixed: bool,
 }
 
 impl Edit {
@@ -30,6 +75,7 @@ impl Edit {
         Edit {
             changed: self.changed || o.changed,
             commit: self.commit || o.commit,
+            typed_over_mixed: self.typed_over_mixed || o.typed_over_mixed,
         }
     }
 }
@@ -83,7 +129,8 @@ pub fn row<R>(ui: &mut egui::Ui, p: &Palette, name: &str, width: f32, body: impl
 }
 
 /// LLSpinCtrl: a number to drag or type. `tentative` shows it as mixed
-/// (several values selected).
+/// (several values selected); a number typed over the mixed value is
+/// committed even when it equals the hidden first value.
 pub fn spin(
     ui: &mut egui::Ui,
     v: &mut f32,
@@ -106,6 +153,39 @@ pub fn spin_with_min_decimals(
     width: f32,
     tentative: bool,
     min_decimals: usize,
+) -> Edit {
+    spinner(ui, v, increment, range, decimals, width, tentative, min_decimals, true)
+}
+
+/// A position, size or rotation field: LLPanelObject::sendPosition /
+/// sendScale / sendRotation (indra/newview/llpanelobject.cpp) send only a
+/// value that differs from the object's, so a number typed over a mixed
+/// axis that equals the primary object's sends nothing.
+#[allow(clippy::too_many_arguments)]
+pub fn transform_spin(
+    ui: &mut egui::Ui,
+    v: &mut f32,
+    increment: f32,
+    range: std::ops::RangeInclusive<f32>,
+    decimals: usize,
+    width: f32,
+    tentative: bool,
+    min_decimals: usize,
+) -> Edit {
+    spinner(ui, v, increment, range, decimals, width, tentative, min_decimals, false)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spinner(
+    ui: &mut egui::Ui,
+    v: &mut f32,
+    increment: f32,
+    range: std::ops::RangeInclusive<f32>,
+    decimals: usize,
+    width: f32,
+    tentative: bool,
+    min_decimals: usize,
+    commit_typed_mixed: bool,
 ) -> Edit {
     // Commit-only fields are read from the object again each frame. Keep the
     // gesture's value until release, without sending intermediate server edits.
@@ -134,16 +214,25 @@ pub fn spin_with_min_decimals(
             1.0
         };
     let before = *v;
+    // Whether the field wrote a value this frame: a typed entry writes its
+    // parsed number even when it equals the one shown underneath.
+    let written = std::cell::Cell::new(false);
     // LLSpinCtrl::setValue displays server values (including megaprims)
     // unchanged; LLPanelObject::sendScale bounds only deliberate edits.
-    let mut dv = egui::DragValue::new(v)
-        .speed(speed)
-        .update_while_editing(false)
-        .range(range.clone())
-        .clamp_existing_to_range(false)
-        .custom_parser(aurora_i18n::parse_number)
-        .max_decimals(decimals)
-        .min_decimals(min_decimals.min(decimals));
+    let mut dv = egui::DragValue::from_get_set(|new| {
+        if let Some(new) = new {
+            *v = new as f32;
+            written.set(true);
+        }
+        f64::from(*v)
+    })
+    .speed(speed)
+    .update_while_editing(false)
+    .range(range.clone())
+    .clamp_existing_to_range(false)
+    .custom_parser(aurora_i18n::parse_number)
+    .max_decimals(decimals)
+    .min_decimals(min_decimals.min(decimals));
     if tentative {
         dv = dv.custom_formatter(|_, _| "—".into());
     }
@@ -156,6 +245,13 @@ pub fn spin_with_min_decimals(
             (r, step)
         })
         .inner;
+    // A spin click or a drag is not a typed entry; otherwise an abandoned
+    // or already ended entry writes nothing, even if DragValue parsed its
+    // text again.
+    if step == 0 && !r.dragged() && !r.drag_stopped() && matches!(field_end(ui, &r), FieldEnd::Revert | FieldEnd::Repeat) {
+        *v = before;
+        return Edit::default();
+    }
     if step != 0 {
         *v = (*v + increment * step as f32).clamp(*range.start(), *range.end());
     }
@@ -165,6 +261,7 @@ pub fn spin_with_min_decimals(
     let mut e = Edit {
         changed: step != 0,
         commit: step != 0,
+        ..Edit::default()
     };
     // TextEdit also reports changed while only its uncommitted text changed.
     if r.changed() && *v != before {
@@ -176,6 +273,16 @@ pub fn spin_with_min_decimals(
     if r.drag_stopped() {
         e.changed |= draft.is_some();
         e.commit = true;
+    }
+    // LLSpinCtrl::onEditorCommit (indra/llui/llspinctrl.cpp) commits every
+    // typed entry. A mixed field shows "—" over the first selected value, so
+    // typing that same value (0 % over a linkset part with one transparent
+    // face) must still reach every selected face. Escape and an untouched
+    // "—" write nothing.
+    if commit_typed_mixed && tentative && written.get() && r.lost_focus() {
+        e.changed = true;
+        e.commit = true;
+        e.typed_over_mixed = true;
     }
     e
 }
@@ -198,12 +305,17 @@ pub fn spin_i(ui: &mut egui::Ui, v: &mut i32, range: std::ops::RangeInclusive<i3
             (r, crate::ui::widgets::step_buttons(ui, height))
         })
         .inner;
+    if step == 0 && !r.dragged() && !r.drag_stopped() && matches!(field_end(ui, &r), FieldEnd::Revert | FieldEnd::Repeat) {
+        *v = before;
+        return Edit::default();
+    }
     if step != 0 {
         *v = v.saturating_add(step as i32).clamp(*range.start(), *range.end());
     }
     Edit {
         changed: (r.changed() && *v != before) || step != 0,
         commit: step != 0 || (r.changed() && *v != before && !r.dragged()) || r.drag_stopped(),
+        ..Edit::default()
     }
 }
 
