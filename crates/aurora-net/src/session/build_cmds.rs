@@ -10,11 +10,11 @@ use aurora_msg::{IncomingPacket, Msg, field_str, str_field};
 use std::ops::Range;
 
 /// Most objects per message (LLSelectMgr::sendListToRegions MAX_OBJECTS_PER_PACKET).
-const MAX_PER_PACKET: usize = 254;
+pub(super) const MAX_PER_PACKET: usize = 254;
 
 /// Keep variable-length object-name and description messages within the UDP
 /// packet limit as well as the protocol's block-count limit.
-fn mtu_bounded_ranges<T>(items: &[T], mut packet_len: impl FnMut(&[T]) -> usize) -> Vec<Range<usize>> {
+pub(super) fn mtu_bounded_ranges<T>(items: &[T], mut packet_len: impl FnMut(&[T]) -> usize) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
     let mut start = 0;
     while start < items.len() {
@@ -28,7 +28,7 @@ fn mtu_bounded_ranges<T>(items: &[T], mut packet_len: impl FnMut(&[T]) -> usize)
     ranges
 }
 
-fn encoded_packet_len<M: Msg>(message: &M) -> usize {
+pub(super) fn encoded_packet_len<M: Msg>(message: &M) -> usize {
     let mut bytes = Vec::new();
     aurora_msg::build_packet(message, 0, true, false, &[], &mut bytes);
     bytes.len()

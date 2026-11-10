@@ -16,7 +16,7 @@ pub(super) fn exposes_asset_uuid(kind: i32) -> bool {
 /// The asset UUID of a full-permission item, or of any for a god
 /// (LLViewerInventoryItem::getProtectedAssetUUID: isGodlikeWithoutAdminMenuFakery).
 pub(super) fn copyable_asset_uuid(inv: &Inventory, item: &aurora_net::inventory::InvItem, god: bool) -> Option<Uuid> {
-    (exposes_asset_uuid(item.asset_type) && (rules::held_for(inv, item, god) & rules::FULL == rules::FULL) && !item.asset_id.is_nil())
+    (exposes_asset_uuid(item.asset_type) && (god || rules::held(inv, item) & rules::FULL == rules::FULL) && !item.asset_id.is_nil())
         .then_some(item.asset_id)
 }
 

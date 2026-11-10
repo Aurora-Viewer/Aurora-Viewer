@@ -414,9 +414,10 @@ impl App {
                     if !self.inventory_ui.open_document(&self.egui_ctx, id, it.asset_type) {
                         return;
                     }
-                    // a god reads any (LLPreviewNotecard::loadAsset)
+                    // any god reads any (LLPreviewNotecard::loadAsset: isGodlike())
                     if matches!(it.asset_type, 7 | 10)
-                        && rules::held_for(&self.world.inventory, &it, self.world.god_level > 0) & rules::COPY == 0
+                        && self.world.god_level == 0
+                        && rules::held(&self.world.inventory, &it) & rules::COPY == 0
                     {
                         self.inventory_preview(
                             id,
@@ -441,7 +442,7 @@ impl App {
                 }
             }
             InvAction::SaveContent { editor, item, text, close } => {
-                let allowed = crate::world::inventory::preview::can_edit(&self.world.inventory, item);
+                let allowed = crate::world::inventory::preview::can_edit(&self.world.inventory, item, self.world.god_level);
                 let kind = self.world.inventory.items.get(&item).map_or(-1, |it| it.asset_type);
                 let busy = self.inventory_ui.preview == Some(item) && self.inventory_ui.save_pending
                     || self
@@ -703,7 +704,7 @@ impl App {
             return;
         }
         let kind = self.world.inventory.items.get(&item).map_or(-1, |it| it.asset_type);
-        let editable = crate::world::inventory::preview::can_edit(&self.world.inventory, item);
+        let editable = crate::world::inventory::preview::can_edit(&self.world.inventory, item, self.world.god_level);
         if self.inventory_ui.preview == Some(item) {
             self.inventory_ui.load_document(kind, editable, &result);
         }

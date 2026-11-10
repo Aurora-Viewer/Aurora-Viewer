@@ -2020,8 +2020,6 @@ impl World {
         self.system_notice(text, notice_topics::Topic::Info);
     }
 
-    /// A notice of the viewer in the nearby chat, about `topic` (the icon
-    /// of its compact row, #741).
     /// set_god_level (llviewermenu.cpp): the level the region granted, said
     /// as the EnteringGodMode / LeavingGodMode notifications say it.
     pub fn set_god_level(&mut self, level: u8) {
@@ -2038,6 +2036,8 @@ impl World {
         self.system_notice(text, notice_topics::Topic::Region);
     }
 
+    /// A notice of the viewer in the nearby chat, about `topic` (the icon
+    /// of its compact row, #741).
     pub fn system_notice(&mut self, text: impl Into<String>, topic: notice_topics::Topic) {
         let line = ChatLine {
             time: SystemTime::now(),

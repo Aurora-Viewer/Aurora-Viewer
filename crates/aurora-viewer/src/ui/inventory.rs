@@ -109,7 +109,19 @@ pub fn show_document(
         names: Default::default(),
         ..Default::default()
     };
-    dialogs::preview(ctx, p, icons, inv, drag_inventory, st, images, prefs, script_settings, &mut actions);
+    dialogs::preview(
+        ctx,
+        p,
+        icons,
+        inv,
+        drag_inventory,
+        st,
+        images,
+        prefs,
+        script_settings,
+        facts.god_level,
+        &mut actions,
+    );
     dialogs::show(ctx, p, icons, inv, st, prefs, &facts, images, &mut actions);
     actions
 }
@@ -219,6 +231,8 @@ pub struct Facts {
     pub agent: Uuid,
     /// We hold a god level (Copy Asset UUID of any item).
     pub god: bool,
+    /// The server-granted god level (actions::with_god).
+    pub god_level: u8,
     pub worn: HashSet<Uuid>,
     pub active_gestures: std::collections::BTreeSet<Uuid>,
     pub worn_labels: std::collections::HashMap<Uuid, String>,
@@ -274,6 +288,7 @@ impl Facts {
         Self {
             agent: world.agent_id,
             god: world.god_level > 0,
+            god_level: world.god_level,
             worn,
             active_gestures: world.active_gestures.clone(),
             worn_labels,
@@ -2225,7 +2240,19 @@ pub fn show(
     finish_hidden_rename(inv, st, &mut actions);
     dialogs::show(ctx, p, icons, inv, st, prefs, &facts, images, &mut actions);
     move_to::show(ctx, p, icons, inv, st, prefs, &facts, &mut actions);
-    dialogs::preview(ctx, p, icons, inv, inv, st, images, prefs, script_settings, &mut actions);
+    dialogs::preview(
+        ctx,
+        p,
+        icons,
+        inv,
+        inv,
+        st,
+        images,
+        prefs,
+        script_settings,
+        facts.god_level,
+        &mut actions,
+    );
     st.thumbnail.show(
         ctx,
         p,
@@ -2371,6 +2398,7 @@ pub fn show(
             images,
             prefs,
             script_settings,
+            facts.god_level,
             &mut actions,
         );
         w.state.thumbnail.show(

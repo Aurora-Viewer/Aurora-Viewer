@@ -1267,10 +1267,12 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             // Status (Advanced.RequestAdminStatus / LeaveAdminStatus): asked
             // of the region, which grants it or not
             if st.god_level == 0 {
-                if menu::item_keys(ui, p, "crown-filled", aurora_i18n::tr!("god-mode-request"), "Ctrl+Alt+G") {
+                // the default chord (⌘⌥G on macOS), as the other menu rows
+                let keys = crate::keybinds::chord_label("KeyG", true, true, false);
+                if menu::item_keys(ui, p, "crown-filled", aurora_i18n::tr!("god-mode-request"), &keys) {
                     *action = BarAction::AdminStatus(true);
                 }
-            } else if menu::item(ui, p, "crown", aurora_i18n::tr!("god-mode-leave")) {
+            } else if menu::item(ui, p, "crown-filled", aurora_i18n::tr!("god-mode-leave")) {
                 *action = BarAction::AdminStatus(false);
             }
             // Advanced › Admin (menu_viewer.xml), while the region keeps
@@ -3298,7 +3300,7 @@ fn admin_menu(ui: &mut egui::Ui, p: &Palette, objects: bool, requests: bool, act
             *action = BarAction::Admin(a);
         }
     };
-    menu::submenu(ui, p, "shield-filled", aurora_i18n::tr!("admin-menu"), true, |ui| {
+    menu::submenu(ui, p, "crown-filled", aurora_i18n::tr!("admin-menu"), true, |ui| {
         menu::submenu(ui, p, "cube", aurora_i18n::tr!("admin-object"), true, |ui| {
             row(
                 ui,

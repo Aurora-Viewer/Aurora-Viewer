@@ -502,7 +502,7 @@ fn is_texture(item: &aurora_net::inventory::InvItem) -> bool {
 /// LLMaterialEditor::postBuild filters replacement maps by COPY|TRANSFER,
 /// for the picker and for drops alike, except for a god.
 fn map_source(inv: &crate::world::inventory::Inventory, item: &aurora_net::inventory::InvItem, god: bool) -> bool {
-    is_texture(item) && (rules::held_for(inv, item, god) & (rules::COPY | rules::TRANSFER) == rules::COPY | rules::TRANSFER)
+    is_texture(item) && (god || rules::held(inv, item) & (rules::COPY | rules::TRANSFER) == rules::COPY | rules::TRANSFER)
 }
 fn scalar(ui: &mut egui::Ui, label: &str, value: &mut f32) {
     ui.label(label);

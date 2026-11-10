@@ -63,13 +63,14 @@ struct ScriptInfo {
 }
 
 /// Read and edit rights: copy and modify, or copy alone for the library
-/// (read only); a god reads and edits any (LLPreviewLSL::loadAsset,
-/// LLLiveLSLEditor::loadAsset: isGodlike() first).
-fn permissions(mask: u32, library: bool, god: bool) -> (bool, bool) {
-    let mask = rules::with_god(mask, god);
+/// (read only). Any god reads any script (LLPreviewLSL::loadAsset,
+/// LLLiveLSLEditor::loadAsset: isGodlike() first); editing goes through
+/// LLAgent::allowOperation, so only from GOD_MAINTENANCE ([`rules::with_god`]).
+fn permissions(mask: u32, library: bool, god_level: u8) -> (bool, bool) {
+    let mask = rules::with_god(mask, god_level);
     let copy = mask & perm::COPY != 0;
     let modify = mask & perm::MODIFY != 0;
-    (copy && (modify || library), copy && modify && !library)
+    (god_level > 0 || copy && (modify || library), copy && modify && !library)
 }
 
 /// What an `#include` may take of an inventory script, from least to most.
@@ -94,7 +95,7 @@ enum IncludeUse {
 /// id (fslslpreproc.cpp, found_include_directive, opened_include_file).
 fn include_use(mask: u32, library: bool, creator: Uuid, agent: Uuid) -> IncludeUse {
     let full = perm::COPY | perm::MODIFY | perm::TRANSFER;
-    if !permissions(mask, library, false).0 {
+    if !permissions(mask, library, 0).0 {
         IncludeUse::Unreadable
     } else if mask & full == full {
         IncludeUse::SourceAndAsset
@@ -462,7 +463,7 @@ impl App {
             let inv = &self.world.inventory;
             let it = inv.items.get(&target.item).filter(|it| it.asset_type == 10)?;
             let library = !inv.lib_root.is_nil() && crate::world::inventory::actions::under(inv, it.id, inv.lib_root);
-            let (can_read, can_edit) = permissions(rules::held(inv, it), library, self.world.god_level > 0);
+            let (can_read, can_edit) = permissions(rules::held(inv, it), library, self.world.god_level);
             Some(ScriptInfo {
                 name: it.name.clone(),
                 handle: self.world.main_region.unwrap_or_default(),
@@ -485,7 +486,7 @@ impl App {
             let member = !it.group_id.is_nil() && self.world.groups.is_member(&it.group_id);
             let mask = rules::task_script_mask(it, self.world.agent_id, member);
             let modify = !task_script_refused(&self.build, &self.world, target.object);
-            let (can_read, can_edit) = permissions(mask, false, self.world.god_level > 0);
+            let (can_read, can_edit) = permissions(mask, false, self.world.god_level);
             Some(ScriptInfo {
                 name: it.name.clone(),
                 handle: object.key.region,
@@ -838,14 +839,23 @@ mod tests {
 
     #[test]
     fn script_source_requires_copy_and_modify_except_read_only_library() {
-        assert_eq!(permissions(perm::COPY | perm::MODIFY, false, false), (true, true));
-        assert_eq!(permissions(perm::COPY, false, false), (false, false));
-        assert_eq!(permissions(perm::MODIFY, false, false), (false, false));
-        assert_eq!(permissions(perm::COPY, true, false), (true, false));
-        assert_eq!(permissions(perm::COPY | perm::MODIFY, true, false), (true, false));
-        // a god reads and edits any script, the library's read only
-        assert_eq!(permissions(0, false, true), (true, true));
-        assert_eq!(permissions(0, true, true), (true, false));
+        assert_eq!(permissions(perm::COPY | perm::MODIFY, false, 0), (true, true));
+        assert_eq!(permissions(perm::COPY, false, 0), (false, false));
+        assert_eq!(permissions(perm::MODIFY, false, 0), (false, false));
+        assert_eq!(permissions(perm::COPY, true, 0), (true, false));
+        assert_eq!(permissions(perm::COPY | perm::MODIFY, true, 0), (true, false));
+        // any god reads any script; only from GOD_MAINTENANCE does it edit
+        // one without modify (LLAgent::allowOperation), OpenSim's 200 to 249 not
+        for level in [1, 200, 225, rules::GOD_MAINTENANCE - 1] {
+            assert_eq!(permissions(0, false, level), (true, false), "level {level}");
+            assert_eq!(permissions(perm::COPY | perm::MODIFY, false, level), (true, true), "level {level}");
+        }
+        assert_eq!(permissions(0, false, rules::GOD_MAINTENANCE), (true, true));
+        assert_eq!(
+            permissions(0, true, rules::GOD_MAINTENANCE),
+            (true, false),
+            "the library stays read only"
+        );
     }
 
     #[test]

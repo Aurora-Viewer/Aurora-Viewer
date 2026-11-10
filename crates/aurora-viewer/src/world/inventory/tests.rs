@@ -903,15 +903,23 @@ fn god_permission_table_keeps_ordinary_agent_rights_and_grants_only_asset_bits()
             ..Default::default()
         };
         inv.items.insert(item.id, item.clone());
-        for god in [false, true] {
-            let expected = if god { ordinary | FULL } else { ordinary };
-            assert_eq!(held_for(&inv, &item, god), expected, "{name}, god={god}");
-            assert_eq!(asset_uuid_shown_to(&inv, asset, god), expected & FULL == FULL, "{name}, god={god}");
+        // OpenSim's usual god levels (200 to 249) keep the ordinary rights
+        // (LLAgent::allowOperation's default god_minimum is GOD_MAINTENANCE)
+        // but see every asset UUID (isGodlikeWithoutAdminMenuFakery)
+        for level in [0u8, 1, 225, GOD_MAINTENANCE - 1, GOD_MAINTENANCE, 255] {
+            let expected = if level >= GOD_MAINTENANCE { ordinary | FULL } else { ordinary };
+            assert_eq!(held_for(&inv, &item, level), expected, "{name}, level {level}");
+            assert_eq!(
+                asset_uuid_shown_to(&inv, asset, level > 0),
+                level > 0 || ordinary & FULL == FULL,
+                "{name}, level {level}"
+            );
         }
     }
-    assert_eq!(with_god(MOVE, false), MOVE);
-    assert_eq!(with_god(MOVE, true), MOVE | FULL);
-    assert_eq!(with_god(0, true) & MOVE, 0, "asset rights do not grant other powers");
+    assert_eq!(with_god(MOVE, 0), MOVE);
+    assert_eq!(with_god(MOVE, 225), MOVE, "under GOD_MAINTENANCE: no right added");
+    assert_eq!(with_god(MOVE, GOD_MAINTENANCE), MOVE | FULL);
+    assert_eq!(with_god(0, 255) & MOVE, 0, "asset rights do not grant other powers");
 }
 
 #[test]
