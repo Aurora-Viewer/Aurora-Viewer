@@ -1304,6 +1304,7 @@ fn apply_test_overrides(settings: &mut Settings) {
         settings.fsr_quality = v.min(4);
     }
     if let Some(v) = std::env::var("AURORA_RENDER_SCALE").ok().and_then(|v| v.parse::<u32>().ok()) {
+        settings.render_scale_auto = false;
         settings.render_scale_percent = v.clamp(50, 100);
     }
     if let Some(v) = std::env::var("AURORA_TEXTURE_BUDGET_MB").ok().and_then(|v| v.parse::<u32>().ok()) {
@@ -1336,6 +1337,24 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Ok(v) = std::env::var("AURORA_OCCLUSION") {
         settings.occlusion_culling = v != "0";
     }
+}
+
+/// While "Match the display" is on (`render_scale_auto`),
+/// `render_scale_percent` follows the window's scale factor, as the Legacy
+/// Viewer's RenderHiDPI 0 draws a Retina Mac's world at its logical
+/// resolution: moving the window to a 1×, 1.5× or 2× display changes the
+/// world resolution without a restart. Returns whether the percentage
+/// changed.
+fn sync_auto_render_scale(settings: &mut crate::settings::Settings, scale_factor: f64) -> bool {
+    if !settings.render_scale_auto {
+        return false;
+    }
+    let percent = crate::settings::auto_render_scale(scale_factor);
+    if settings.render_scale_percent == percent {
+        return false;
+    }
+    settings.render_scale_percent = percent;
+    true
 }
 
 /// Shows `conversation` with its field taking the keyboard, ready to type
@@ -11397,6 +11416,7 @@ impl App {
             crate::autoreplace::set_enabled(self.settings.auto_replace);
             crate::link_trust::configure(&self.settings.trusted_sites);
             crate::link_preview::configure_sites(&self.settings.link_previews.picture_sites, crate::demo::picture_sites());
+            sync_auto_render_scale(&mut self.settings, gfx.window.scale_factor());
             gfx.renderer.apply_settings(self.settings.render_settings());
             self.panels.time_of_day = self.settings.time_of_day;
             self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));
@@ -18208,6 +18228,7 @@ impl ApplicationHandler for App {
         // Cmd+Q asks like the close button (mac_quit.rs). Cmd+H stays Hide.
         #[cfg(target_os = "macos")]
         crate::mac_quit::route_quit_to_close();
+        sync_auto_render_scale(&mut self.settings, window.scale_factor());
         let created = self.open_renderer(&window);
         let renderer = match created {
             Ok(r) => r,
@@ -18248,6 +18269,12 @@ impl ApplicationHandler for App {
                 system_mb
             );
             level.apply(&mut self.settings);
+            if cfg!(target_os = "macos") && level == crate::graphics_presets::Preset::Medium {
+                // a Mac starts where the Legacy Viewer's Mac table puts
+                // Apple GPUs (GPU class 3, MidHigh)
+                crate::graphics_presets::mac_mid_high::apply(&mut self.settings);
+                log::info!("new profile: the Mac MidHigh values (featuretable_mac.txt)");
+            }
             apply_test_overrides(&mut self.settings);
             self.settings.save();
         }
@@ -20972,9 +20999,20 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Resized(s) => {
                 ui::menu::window_geometry_changed(&self.egui_ctx);
+                if sync_auto_render_scale(&mut self.settings, g.window.scale_factor()) {
+                    g.renderer.apply_settings(self.settings.render_settings());
+                }
                 g.renderer.resize(s.width, s.height);
                 self.geom_changed = Some(Instant::now());
                 self.sync_minimized_mute();
+            }
+            WindowEvent::ScaleFactorChanged { .. } => {
+                // Moving the window to a display of another scale recomputes
+                // the automatic world resolution before the Resized event that
+                // winit sends next.
+                if sync_auto_render_scale(&mut self.settings, g.window.scale_factor()) {
+                    g.renderer.apply_settings(self.settings.render_settings());
+                }
             }
             WindowEvent::Moved(_) => {
                 ui::menu::window_geometry_changed(&self.egui_ctx);
