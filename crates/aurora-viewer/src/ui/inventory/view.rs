@@ -353,6 +353,8 @@ pub struct InventoryPreferences {
     pub show_recent: bool,
     pub show_worn: bool,
     pub show_favorites: bool,
+    /// The favorite folders listed in Aurora's folder sidebar.
+    pub sidebar_favorite_folders: bool,
     pub show_hover_tooltips: bool,
     pub thumbnail_tooltips: bool,
     pub separate_searches: bool,
@@ -408,6 +410,8 @@ impl Default for InventoryPreferences {
             show_recent: true,
             show_worn: true,
             show_favorites: true,
+            // an Aurora addition: nothing changes until it is turned on
+            sidebar_favorite_folders: false,
             // off until a better hover card replaces it
             show_hover_tooltips: false,
             // its own switch since #3008, off like the tooltips it used to
