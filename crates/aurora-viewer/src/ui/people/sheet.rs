@@ -676,6 +676,7 @@ mod tests {
             settings: &mut settings,
             voice: &voice,
             draw_distance: 64.0,
+            second_life: true,
             now: 0.0,
             pics: &pics,
         };

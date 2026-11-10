@@ -1641,6 +1641,8 @@ pub(crate) struct Backend {
     water_effects: crate::water_effects::WaterGpu,
     /// The night sky's stars (stars.rs), made once.
     stars: wgpu::Buffer,
+    /// The Milky Way map (stars.rs milky_way_texels), made once.
+    milky_way: wgpu::TextureView,
     contact: crate::contact_shadows::ContactShadows,
     /// This frame draws the contact shadows (`AURORA_CONTACT_SHADOWS=alt`
     /// switches them each second).
@@ -3090,6 +3092,17 @@ impl Backend {
                     },
                     count: None,
                 },
+                // the Milky Way map (stars.rs milky_way_texels)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 25,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let records_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -3361,6 +3374,38 @@ impl Backend {
             &crate::stars::buffer_contents(),
             wgpu::BufferUsages::STORAGE,
         );
+        let milky_way = {
+            use crate::stars::{MILKY_WAY_HEIGHT, MILKY_WAY_WIDTH};
+            let (texture, view) = make_view(
+                &device,
+                "milky way map",
+                MILKY_WAY_WIDTH,
+                MILKY_WAY_HEIGHT,
+                wgpu::TextureFormat::R32Uint,
+                1,
+                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            );
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytemuck::cast_slice(&crate::stars::milky_way_texels()),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(MILKY_WAY_WIDTH * 4),
+                    rows_per_image: Some(MILKY_WAY_HEIGHT),
+                },
+                wgpu::Extent3d {
+                    width: MILKY_WAY_WIDTH,
+                    height: MILKY_WAY_HEIGHT,
+                    depth_or_array_layers: 1,
+                },
+            );
+            view
+        };
         let groups = Self::make_frame_groups(
             &device,
             &frame_layout,
@@ -3375,6 +3420,7 @@ impl Backend {
             &probes,
             &water_effects,
             &stars,
+            &milky_way,
         );
         let indirect = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("indirect"),
@@ -3443,6 +3489,7 @@ impl Backend {
             gtao,
             water_effects,
             stars,
+            milky_way,
             contact,
             contact_now: false,
             gtao_normals_now: false,
@@ -4685,6 +4732,7 @@ impl Backend {
         probes: &crate::probes::Probes,
         water_effects: &crate::water_effects::WaterGpu,
         stars: &wgpu::Buffer,
+        milky_way: &wgpu::TextureView,
     ) -> FrameGroups {
         let mk = |label: &str,
                   buffer: &wgpu::Buffer,
@@ -4708,6 +4756,10 @@ impl Backend {
                     wgpu::BindGroupEntry {
                         binding: 24,
                         resource: stars.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 25,
+                        resource: wgpu::BindingResource::TextureView(milky_way),
                     },
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -5030,6 +5082,7 @@ impl Backend {
                 &self.probes,
                 &self.water_effects,
                 &self.stars,
+                &self.milky_way,
             );
         }
     }
@@ -5050,6 +5103,7 @@ impl Backend {
             &self.probes,
             &self.water_effects,
             &self.stars,
+            &self.milky_way,
         );
         self.gbuf_group = self.targets.gbuf.as_ref().map(|g| {
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {

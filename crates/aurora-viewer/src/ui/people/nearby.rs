@@ -406,7 +406,7 @@ fn list_part(
                 // double click: the camera goes to the avatar and follows it
                 // (LLAvatarActions::zoomIn, FSPanelRadar)
                 if action.activate {
-                    radar::zoom_from_list(ui, st, row, data.draw_distance, actions);
+                    radar::zoom_from_list(ui, st, row, data, actions);
                 }
                 // menu_fs_radar.xml, menu_fs_radar_multiselect.xml for several
                 super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
@@ -1018,6 +1018,7 @@ mod tests {
             settings: &mut settings,
             voice: &voice,
             draw_distance: 96.0,
+            second_life: true,
             now: 0.0,
             pics: &pics,
         };

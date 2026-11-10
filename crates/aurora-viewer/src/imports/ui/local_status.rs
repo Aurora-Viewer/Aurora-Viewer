@@ -43,9 +43,9 @@ impl State {
 }
 
 pub fn show(ctx: &egui::Context, p: &Palette, state: &mut State, status: &AppearanceStatus) -> Option<Action> {
-    if status.remembered_objects == 0 || widgets::interface_hidden(ctx) {
+    if status.faces.is_empty() || widgets::interface_hidden(ctx) {
         state.confirm = false;
-        if status.remembered_objects == 0 {
+        if status.faces.is_empty() {
             state.reveal = None;
         }
         return None;
@@ -59,11 +59,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut State, status: &Appear
         .show(ctx, |ui| {
             widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
                 ui.horizontal(|ui| {
-                    let label = if status.faces.is_empty() {
-                        aurora_i18n::tr!("local-appearance-pending").to_owned()
-                    } else {
-                        aurora_i18n::tr!("local-appearance-warning", count = status.faces.len())
-                    };
+                    let label = aurora_i18n::tr!("local-appearance-warning", count = status.faces.len());
                     let response =
                         widgets::action_button(ui, p, "alert-triangle-filled", &label, ActionKind::Caution, egui::vec2(0.0, 28.0));
                     ctx.data_mut(|d| d.insert_temp(egui::Id::unique("local_appearance_warning_rect"), response.rect));
@@ -93,13 +89,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut State, status: &Appear
                     } else {
                         aurora_i18n::tr!("local-appearance-reveal")
                     };
-                    let toggle = ui.scope(|ui| {
-                        if on || !status.faces.is_empty() {
-                            widgets::icon_toggle(ui, p, "focus-centered", tip, on)
-                        } else {
-                            widgets::icon_button(ui, p, "focus-centered", tip, false)
-                        }
-                    });
+                    let toggle = ui.scope(|ui| widgets::icon_toggle(ui, p, "focus-centered", tip, on));
                     ctx.data_mut(|d| d.insert_temp(egui::Id::unique("local_appearance_reveal_rect"), toggle.response.rect));
                     if toggle.inner {
                         state.toggle_reveal(Instant::now());
@@ -153,6 +143,51 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut State, status: &Appear
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn warning_disappears_after_the_last_scene_object_and_returns_on_restoration() {
+        for count in [1, 3] {
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let mut state = State::default();
+            let mut status = AppearanceStatus {
+                remembered_objects: count,
+                textures: 1,
+                faces: (0..count).map(|index| (index, 1)).collect(),
+                ..Default::default()
+            };
+            let marker = egui::Id::unique("local_appearance_warning_rect");
+            let frame = |state: &mut State, status: &AppearanceStatus| {
+                ctx.data_mut(|data| data.remove::<egui::Rect>(marker));
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 700.0))),
+                        ..Default::default()
+                    },
+                    |ui| assert!(show(ui.ctx(), &theme.palette(), state, status).is_none()),
+                );
+                output.textures_delta.clear();
+                ctx.data(|data| data.get_temp::<egui::Rect>(marker)).is_some()
+            };
+            assert!(frame(&mut state, &status));
+            state.toggle_reveal(Instant::now());
+            for index in 0..count {
+                status.faces.remove(&index);
+                if status.faces.is_empty() {
+                    state.confirm = true;
+                    assert!(!frame(&mut state, &status), "stored references alone do not show a scene warning");
+                    assert!(!state.confirm && !state.revealing());
+                } else {
+                    assert!(frame(&mut state, &status), "remaining objects still need the warning");
+                    assert!(state.revealing());
+                }
+            }
+            assert_eq!(status.remembered_objects, count);
+            status.faces.insert(0, 1);
+            assert!(frame(&mut state, &status), "a restored appearance shows the warning again");
+        }
+    }
 
     #[test]
     fn local_reveal_toggle_stays_active_until_disabled_and_reduced_motion_is_steady() {

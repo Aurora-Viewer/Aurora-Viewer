@@ -1499,6 +1499,7 @@ impl App {
         });
 
         let panels = Panels::from_settings(&settings);
+        let appearance_ui = ui::appearance::AppearanceUi::restored(settings.appearance_tab);
         let chat_ui = ChatUi::from_settings(&settings);
         let mut scene = Scene::new(cache, lib.clone());
         scene.jobs.execute(|| {
@@ -1942,7 +1943,7 @@ impl App {
             demo_script_sources: Default::default(),
             demo_script_experiences: Default::default(),
             inventory_images: Default::default(),
-            appearance_ui: Default::default(),
+            appearance_ui,
             shape_ui: Default::default(),
             shape_camera: None,
             physics_ui: Default::default(),
@@ -10579,11 +10580,20 @@ impl App {
         env.sky.halo_texture = slots[5];
         env.sky.stars = crate::world::night_sky::star_frame(
             self.settings.night_sky,
-            self.settings.night_sky_latitude,
+            crate::world::night_sky::Observer {
+                latitude: self.settings.night_sky_latitude,
+                longitude: self.settings.night_sky_longitude,
+                hour: self.settings.night_sky_hour,
+            },
             self.settings.night_sky_gain,
             env.sky.sun_dir,
-            crate::world::night_sky::unix_days_now(),
-            self.start.elapsed().as_secs_f64(),
+            // the sky's moment: a photo's held instant for all its parts
+            // (snapshot::Hold, Freeze World), the demo's fixed one in the
+            // demo only
+            self.demo.then(crate::demo::night_sky::instant).flatten().unwrap_or_else(|| {
+                crate::world::night_sky::unix_days_now() - hold.map_or(0.0, |h| h.at.elapsed().as_secs_f64() / 86_400.0)
+            }),
+            f64::from(world_clock()),
         );
         t_part = self.scene.parts.lap(Part::ParamsEnv, t_part);
         let mirror = if in_world && self.settings.mirrors > 0 {
@@ -14997,6 +15007,12 @@ impl App {
         self.login_form.mfa_for = Some(key.clone());
     }
 
+    /// Logged in (or about to) on Second Life rather than an OpenSim grid
+    /// (AURORA_DEMO_USERINFO=opensim: the demo plays another grid).
+    fn second_life(&self) -> bool {
+        !matches!(self.settings.grid, crate::settings::GridChoice::Custom) && !(self.demo && crate::demo::home::opensim())
+    }
+
     /// The preferences window, in the world and over the login screen. Every
     /// setting is the viewer's own (settings.rs), so all of them can change
     /// before login; only the transcripts folder belongs to an account, and
@@ -15042,8 +15058,7 @@ impl App {
         self.options_ui.maturity = self.world.login.is_some().then(|| self.world.agent_access());
         // the account settings the grid keeps, asked at each opening
         // (AURORA_DEMO_USERINFO=opensim: another grid's)
-        let second_life =
-            !matches!(self.settings.grid, crate::settings::GridChoice::Custom) && !(self.demo && crate::demo::home::opensim());
+        let second_life = self.second_life();
         self.world.follow_preferences(self.panels.settings, second_life);
         self.options_ui.account = self.world.login.is_some().then(|| ui::options::privacy::Account {
             info: self.world.user_info.info.clone(),
@@ -16603,11 +16618,13 @@ impl App {
                 // friends tab
                 let people_aurora = !self.settings.classic_people && !(self.demo && crate::demo::people::legacy());
                 let friends_before = self.settings.friends_list.clone();
+                let second_life = self.second_life();
                 let contacts_radar = ui::people::RadarData {
                     radar: &self.radar,
                     settings: &mut self.settings.radar,
                     voice: &voice_levels,
                     draw_distance: self.settings.draw_distance,
+                    second_life,
                     now: self.radar_clock.elapsed().as_secs_f64(),
                     pics: &self.avatar_pics,
                 };
@@ -16826,6 +16843,7 @@ impl App {
                     self.on_contacts_action(c, &mut a);
                 }
                 t = self.ui_parts.lap(Part::UiChat, t);
+                let second_life = self.second_life();
                 let mut people_map = |ui: &mut egui::Ui, size: egui::Vec2| {
                     let acts = self.people_map_ui.draw(
                         ui,
@@ -16848,6 +16866,7 @@ impl App {
                     settings: &mut self.settings.radar,
                     voice: &voice_levels,
                     draw_distance: self.settings.draw_distance,
+                    second_life,
                     now: self.radar_clock.elapsed().as_secs_f64(),
                     pics: &self.avatar_pics,
                 };
@@ -17949,6 +17968,7 @@ impl App {
                 self.settings.people_tab = self.panels.people_tab;
                 self.settings.show_inventory = self.panels.inventory;
                 self.settings.show_appearance = self.panels.appearance;
+                self.settings.appearance_tab = u8::try_from(self.appearance_ui.tab).unwrap_or(0);
                 self.settings.show_ao = self.panels.ao;
                 // (the photo's time of day is its own layer, never saved)
                 if self.panels.time_of_day != self.settings.time_of_day {
@@ -18644,6 +18664,16 @@ impl ApplicationHandler for App {
                 if let Some(gain) = gain {
                     self.settings.night_sky_gain = gain;
                 }
+                self.settings.sync_night_sky();
+            }
+            // AURORA_DEMO_NIGHT_SKY_CLOCK: the real time at this longitude
+            if let Some(longitude) = crate::demo::night_sky::clock_longitude() {
+                if self.settings.night_sky_place != crate::world::night_sky::SkyPlace::Custom {
+                    // keep the preset's latitude, as Custom
+                    self.settings.night_sky_place = crate::world::night_sky::SkyPlace::Custom;
+                }
+                self.settings.night_sky_longitude = longitude;
+                self.settings.night_sky_hour = crate::world::night_sky::StarHour::RealTime;
                 self.settings.sync_night_sky();
             }
             if let Some(t) = std::env::var("AURORA_DEMO_TOD").ok().and_then(|v| v.parse::<u8>().ok()) {
