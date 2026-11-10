@@ -65,6 +65,38 @@ pub(super) fn appearance_controls(ui: &mut egui::Ui, p: &Palette, mut controls: 
     actions
 }
 
+/// The editor's title row: the item's name, then LLPanelEditWearable's
+/// Import button (panel_edit_wearable.xml `import_btn`), shared by the shape,
+/// physics and layer editors. Import reads an appearance XML into the draft
+/// (`shape_editor::xml_import`); it is greyed out without modify rights, as
+/// there. True when it was clicked.
+pub(super) fn name_row(ui: &mut egui::Ui, p: &Palette, glyph: Option<&str>, name: RichText, import: bool) -> bool {
+    let mut clicked = false;
+    ui.horizontal(|ui| {
+        if let Some(icon) = glyph {
+            widgets::glyph(ui, icon, p.muted, 24.0);
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            clicked = widgets::action_button_if(
+                ui,
+                p,
+                "file-import",
+                aurora_i18n::tr!("appearance-xml-import-button"),
+                ActionKind::Flat,
+                Vec2::new(0.0, 26.0),
+                import,
+            )
+            .on_hover_text(aurora_i18n::tr!("appearance-xml-import-hint"))
+            .on_disabled_hover_text(aurora_i18n::tr!("appearance-xml-import-hint"))
+            .clicked();
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.add(egui::Label::new(name).truncate());
+            });
+        });
+    });
+    clicked
+}
+
 fn groups() -> [&'static str; 9] {
     [
         aurora_i18n::tr!("shape-group-body"),
@@ -149,6 +181,12 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
     let mut open = true;
     let mut close = false;
     let mut reset = false;
+    let mut import = false;
+    let modify = st.draft.as_ref().is_some_and(|draft| draft.can_modify(world));
+    if let Some((message, imported)) = st.xml.poll(st.draft.as_mut(), modify, &world.avatar_lib.shape_params) {
+        st.message = message;
+        changed |= imported;
+    }
     let mut floater = widgets::Floater::new(
         "shape_editor",
         aurora_i18n::tr!("shape-title"),
@@ -165,10 +203,13 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
             let male = draft.edited.params.get(&80).copied().unwrap_or(0.0) > 0.5;
             widgets::surface(ui, p, |ui| {
                 ui.set_min_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    widgets::glyph(ui, "man-filled", p.muted, 24.0);
-                    ui.add(egui::Label::new(RichText::new(&draft.item.name).strong().size(15.0).color(p.ink)).truncate());
-                });
+                import = name_row(
+                    ui,
+                    p,
+                    Some("man-filled"),
+                    RichText::new(&draft.item.name).strong().size(15.0).color(p.ink),
+                    modify && !busy && !st.xml.busy(),
+                );
                 ui.columns(2, |columns| {
                     columns[0].add_enabled_ui(modify && !busy, |ui| {
                         let mut selection = male;
@@ -252,7 +293,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 let width = (ui.available_width() - 32.0 - ui.spacing().item_spacing.x).max(80.0);
-                widgets::search_field(ui, &mut st.filter, aurora_i18n::tr!("shape-search"), width);
+                widgets::search_field(ui, p, &mut st.filter, aurora_i18n::tr!("shape-search"), width);
                 if widgets::icon_toggle(ui, p, "photo-filled", aurora_i18n::tr!("shape-hints"), st.hints) {
                     st.hints = !st.hints;
                 }
@@ -476,6 +517,10 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
     });
     if reset && let Some(draft) = &mut st.draft {
         draft.edited = draft.original.clone();
+    }
+    if import && let Some(draft) = &st.draft {
+        st.message.clear();
+        st.xml.start(ctx, draft);
     }
     if changed || reset {
         st.changed(world);

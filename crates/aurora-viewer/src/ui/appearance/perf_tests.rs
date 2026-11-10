@@ -97,3 +97,50 @@ fn appearance_large_inventory_frame_benchmark() {
         }
     }
 }
+
+/// The gallery tab with 200 outfits, the Legacy tiles against the showcase
+/// (wide: rail, grid and preview), the window at the showcase's size; with
+/// the pointer still and over a card (its hover actions and menu rules).
+#[test]
+#[ignore = "manual showcase frame benchmark"]
+fn appearance_showcase_frame_benchmark() {
+    for showcase in [false, true] {
+        for hover in [false, true] {
+            let mut world = tests::wardrobe(200);
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let _icons = icons::Icons::load(&ctx, None);
+            crate::ui::widgets::size_floater(&ctx, "appearance", Vec2::new(1080.0, 720.0));
+            ctx.data_mut(|d| d.insert_persisted(egui::Id::unique("appearance_showcase_widened"), true));
+            let mut state = AppearanceUi {
+                showcase,
+                ..Default::default()
+            };
+            let input = || egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                events: if hover {
+                    vec![egui::Event::PointerMoved(egui::pos2(300.0, 300.0))]
+                } else {
+                    Vec::new()
+                },
+                ..Default::default()
+            };
+            for _ in 0..30 {
+                tests::draw_output(&ctx, &mut world, &mut state, input());
+            }
+            let mut times = Vec::with_capacity(300);
+            for _ in 0..300 {
+                let start = Instant::now();
+                black_box(tests::draw_output(&ctx, &mut world, &mut state, input()));
+                times.push(start.elapsed().as_secs_f64() * 1000.0);
+            }
+            times.sort_by(f64::total_cmp);
+            let mean = times.iter().sum::<f64>() / times.len() as f64;
+            eprintln!(
+                "gallery showcase={showcase} hover={hover} outfits=200: mean {mean:.3} ms, median {:.3} ms, p95 {:.3} ms",
+                times[times.len() / 2],
+                times[times.len() * 95 / 100]
+            );
+        }
+    }
+}

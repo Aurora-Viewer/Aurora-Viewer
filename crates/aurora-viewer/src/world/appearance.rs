@@ -53,6 +53,17 @@ pub struct WearRequest {
 
 #[derive(Clone, Debug)]
 pub enum Action {
+    /// The image editor on an outfit (the menu's Image…, Outfit.Thumbnail).
+    OutfitImage(Uuid),
+    /// A snapshot of the scene, set as the outfit's picture at once.
+    OutfitSnapshot(Uuid),
+    /// The auto portrait of an outfit (`snapshot::portrait`).
+    OutfitPortrait(Uuid),
+    /// The photo mode, square, for an outfit's picture.
+    OutfitPhotoMode(Uuid),
+    /// The batch portraits' window, over these outfits (the showcase's,
+    /// in its order).
+    OutfitBatch(Vec<Uuid>),
     Wear(Uuid, bool),
     WearOutfits {
         folders: Vec<Uuid>,
@@ -113,6 +124,63 @@ pub enum Action {
     /// closest to the body (LLAppearanceMgr::reorderWearable).
     PlaceLayer(Uuid, usize),
     Revert,
+}
+
+/// The picture of an outfit (LLOutfitGallery::refreshOutfit): the folder's
+/// thumbnail, else the first texture in it or linked from it, its subfolders
+/// included. Nil without one.
+pub fn outfit_image(inv: &Inventory, outfit: Uuid) -> Uuid {
+    let Some(folder) = inv.folders.get(&outfit) else {
+        return Uuid::nil();
+    };
+    if !folder.info.thumbnail.is_nil() {
+        return folder.info.thumbnail;
+    }
+    let mut todo = vec![outfit];
+    let mut seen = HashSet::new();
+    while let Some(id) = todo.pop() {
+        let Some(folder) = inv.folders.get(&id).filter(|_| seen.insert(id)) else {
+            continue;
+        };
+        for item in folder.items.iter().filter_map(|id| inv.items.get(id)) {
+            let item = if item.asset_type == 24 {
+                inv.items.get(&item.asset_id).unwrap_or(item)
+            } else {
+                item
+            };
+            if item.asset_type == 0 && !item.asset_id.is_nil() {
+                return item.asset_id;
+            }
+        }
+        todo.extend(&folder.children);
+    }
+    Uuid::nil()
+}
+
+/// The HD pictures this viewer uploaded into an outfit's own folder
+/// (`snapshot::portrait::HD_PICTURE_DESC`): our own textures, not links,
+/// oldest first. The showcase shows the newest in its large preview; the
+/// cards keep the thumbnail, as LLOutfitGallery::refreshOutfit does.
+pub fn hd_pictures(inv: &Inventory, outfit: Uuid) -> Vec<&InvItem> {
+    let Some(folder) = inv.folders.get(&outfit) else {
+        return Vec::new();
+    };
+    let mut found: Vec<(usize, &InvItem)> = folder
+        .items
+        .iter()
+        .filter_map(|id| inv.items.get(id))
+        .filter(|it| {
+            it.parent == outfit && it.asset_type == 0 && !it.asset_id.is_nil() && it.desc == crate::snapshot::portrait::HD_PICTURE_DESC
+        })
+        .enumerate()
+        .collect();
+    found.sort_by_key(|(at, it)| (it.created_at, *at));
+    found.into_iter().map(|(_, it)| it).collect()
+}
+
+/// The newest HD picture of an outfit, its texture's asset.
+pub fn outfit_hd_picture(inv: &Inventory, outfit: Uuid) -> Option<Uuid> {
+    hd_pictures(inv, outfit).last().map(|it| it.asset_id)
 }
 
 /// LLInventoryModel::findCategoryUUIDForTypeInRoot (llinventorymodel.cpp),
@@ -878,6 +946,11 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
         }
         Action::ShowOriginal(_)
         | Action::Favorite(_)
+        | Action::OutfitImage(_)
+        | Action::OutfitSnapshot(_)
+        | Action::OutfitPortrait(_)
+        | Action::OutfitPhotoMode(_)
+        | Action::OutfitBatch(_)
         | Action::Category(..)
         | Action::Folders(_)
         | Action::DeleteFromOutfit { .. }
@@ -2308,6 +2381,38 @@ mod tests {
     }
 
     #[test]
+    fn the_newest_hd_picture_is_found_and_never_worn() {
+        let mut inv = fixture();
+        let outfit = Uuid::from_u128(702);
+        let before = folder_links(&inv, outfit);
+        assert_eq!(outfit_hd_picture(&inv, outfit), None);
+        let texture = |n: u128, desc: &str, created_at: i64| InvItem {
+            id: Uuid::from_u128(0x4d00 + n),
+            parent: outfit,
+            name: format!("Photo {n}"),
+            desc: desc.to_owned(),
+            asset_type: 0,
+            asset_id: Uuid::from_u128(0x4e00 + n),
+            created_at,
+            ..Default::default()
+        };
+        let ours = crate::snapshot::portrait::HD_PICTURE_DESC;
+        inv.add_items(vec![
+            texture(1, ours, 10),
+            texture(2, ours, 20),
+            // a texture the user keeps in the folder is not ours
+            texture(3, "a merchant's picture", 30),
+        ]);
+        assert_eq!(outfit_hd_picture(&inv, outfit), Some(Uuid::from_u128(0x4e02)));
+        assert_eq!(
+            hd_pictures(&inv, outfit).iter().map(|it| it.id).collect::<Vec<_>>(),
+            [Uuid::from_u128(0x4d01), Uuid::from_u128(0x4d02)]
+        );
+        // a texture in the folder is never part of what the outfit wears
+        assert_eq!(folder_links(&inv, outfit).len(), before.len());
+    }
+
+    #[test]
     fn save_to_selected_outfit_updates_its_links_and_the_cof_base() {
         let mut inv = fixture();
         let selected = Uuid::from_u128(702);
@@ -3208,5 +3313,46 @@ mod tests {
             assert_eq!(found, expected, "folder {id}");
         }
         assert!(any, "some originals are missing");
+    }
+
+    /// LLOutfitGallery::refreshOutfit: the thumbnail, else a texture in the
+    /// outfit or linked from it, its subfolders included.
+    #[test]
+    fn an_outfit_s_picture_falls_back_on_a_texture_inside() {
+        let id = Uuid::from_u128;
+        let folder = |n, parent, thumbnail| InvFolder {
+            id: id(n),
+            parent: id(parent),
+            type_default: 47,
+            thumbnail: id(thumbnail),
+            ..Default::default()
+        };
+        let item = |n, parent, asset_type, asset_id| InvItem {
+            id: id(n),
+            parent: id(parent),
+            asset_type,
+            asset_id: id(asset_id),
+            ..Default::default()
+        };
+        let mut inv = Inventory::default();
+        inv.add_folders(vec![folder(1, 48, 0), folder(2, 1, 0)], false);
+        assert!(outfit_image(&inv, id(1)).is_nil(), "nothing to show");
+        assert!(outfit_image(&inv, id(99)).is_nil(), "unknown outfit");
+        // a wearable is no picture
+        inv.items.insert(id(10), item(10, 1, 13, 500));
+        inv.folders.get_mut(&id(1)).expect("outfit").items.push(id(10));
+        assert!(outfit_image(&inv, id(1)).is_nil());
+        // in a subfolder
+        inv.items.insert(id(11), item(11, 2, 0, 501));
+        inv.folders.get_mut(&id(2)).expect("subfolder").items.push(id(11));
+        assert_eq!(outfit_image(&inv, id(1)), id(501));
+        // a link to a texture elsewhere, in the outfit itself
+        inv.items.insert(id(12), item(12, 7, 0, 502));
+        inv.items.insert(id(13), item(13, 1, 24, 12));
+        inv.folders.get_mut(&id(1)).expect("outfit").items.push(id(13));
+        assert_eq!(outfit_image(&inv, id(1)), id(502));
+        // the folder's own thumbnail comes first
+        inv.folders.get_mut(&id(1)).expect("outfit").info.thumbnail = id(503);
+        assert_eq!(outfit_image(&inv, id(1)), id(503));
     }
 }
