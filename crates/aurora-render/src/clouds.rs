@@ -128,12 +128,14 @@ pub struct Params {
 }
 
 impl Params {
-    /// None when the Legacy layer would draw nothing: no cloud scale, or no
-    /// cloud texture yet.
+    /// None when the Legacy layer would draw nothing: no cloud scale, no
+    /// cloud texture yet, or a density of 0 (the Legacy shader multiplies the
+    /// cloud alpha by `cloud_pos_density1.z`, cloudsF.glsl under
+    /// indra/newview/app_settings/shaders/class1/deferred).
     pub fn new(f: &crate::types::FrameParams, c: &crate::types::CloudsFrame, vp: Mat4, inv_vp: Mat4) -> Option<Params> {
         let origin_m = c.region_origin;
         let s = &f.sky;
-        if s.cloud_scale < 0.001 || s.cloud_texture == 0 {
+        if !layer_drawn(s.cloud_scale, s.cloud_texture, s.cloud_pos_density1.z) {
             return None;
         }
         let kind = cloud_type(coverage(s.cloud_shadow));
@@ -270,10 +272,17 @@ pub fn tile_km(cloud_scale: f32) -> f32 {
     (PERIOD_KM / n) as f32
 }
 
+/// Whether the Legacy layer draws anything: a cloud scale, a cloud texture
+/// and a density above 0.
+fn layer_drawn(cloud_scale: f32, cloud_texture: u32, density: f32) -> bool {
+    cloud_scale >= 0.001 && cloud_texture != 0 && density > 0.001
+}
+
 /// Extinction scale from the Legacy density (`cloud_pos_density1.z`, 1 by
-/// default): thicker clouds, more opaque.
+/// default): thicker clouds, more opaque, fading out to nothing at 0 (the
+/// layer is not drawn at all below 0.001, see [`Params::new`]).
 pub fn extinction(density: f32) -> f32 {
-    density.clamp(0.25, 1.5)
+    density.clamp(0.0, 1.5)
 }
 
 /// The light on a cloud, linear and scaled like the sky.
@@ -392,6 +401,9 @@ pub(crate) struct Clouds {
     pipelines: Pipelines,
     uniform: wgpu::Buffer,
     sampler: wgpu::Sampler,
+    /// Clamped copy of the sampler for the screen-space history and the
+    /// composite: the repeat sampler would blend the opposite edge in.
+    screen_sampler: wgpu::Sampler,
     base: wgpu::TextureView,
     detail: wgpu::TextureView,
     curl: wgpu::TextureView,
@@ -489,6 +501,15 @@ impl Clouds {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        let screen_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("clouds screen"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("clouds"),
             size: std::mem::size_of::<CloudU>() as u64,
@@ -532,6 +553,7 @@ impl Clouds {
             pipelines,
             uniform,
             sampler,
+            screen_sampler,
             base: view(&base),
             detail: view(&detail),
             curl: view(&curl),
@@ -789,7 +811,7 @@ impl Clouds {
                 layout: &self.layout,
                 entries: &[
                     entry(0, self.uniform.as_entire_binding()),
-                    entry(9, wgpu::BindingResource::Sampler(&self.sampler)),
+                    entry(9, wgpu::BindingResource::Sampler(&self.screen_sampler)),
                     entry(15, tv(target)),
                 ],
             }));
@@ -827,7 +849,7 @@ impl Clouds {
                 "recon",
                 &[
                     entry(0, self.uniform.as_entire_binding()),
-                    entry(9, wgpu::BindingResource::Sampler(&self.sampler)),
+                    entry(9, wgpu::BindingResource::Sampler(&self.screen_sampler)),
                     entry(13, tv(&sized.trace)),
                     entry(14, tv(&sized.depth)),
                     entry(15, tv(&sized.history[read])),
@@ -842,7 +864,7 @@ impl Clouds {
             layout: &self.layout,
             entries: &[
                 entry(0, self.uniform.as_entire_binding()),
-                entry(9, wgpu::BindingResource::Sampler(&self.sampler)),
+                entry(9, wgpu::BindingResource::Sampler(&self.screen_sampler)),
                 entry(15, tv(&sized.history[write])),
             ],
         }));
@@ -1208,6 +1230,30 @@ mod tests {
         );
         assert!(red.sun.x > 2.0 * red.sun.z, "{:?}", red.sun);
         assert!(red.ambient.x > red.ambient.z, "{:?}", red.ambient);
+    }
+
+    #[test]
+    fn no_density_draws_no_layer() {
+        assert!(layer_drawn(0.42, 1, 1.0));
+        assert!(layer_drawn(0.42, 1, 0.05));
+        assert!(!layer_drawn(0.42, 1, 0.0));
+        assert!(!layer_drawn(0.42, 1, 0.001));
+        assert!(!layer_drawn(0.0, 1, 1.0));
+        assert!(!layer_drawn(0.42, 0, 1.0));
+    }
+
+    #[test]
+    fn extinction_fades_to_nothing_with_the_density() {
+        assert_eq!(extinction(0.0), 0.0);
+        assert_eq!(extinction(-1.0), 0.0);
+        let mut last = -1.0;
+        for i in 0..=40 {
+            let e = extinction(i as f32 * 0.05);
+            assert!(e >= last, "{e} < {last} at {i}");
+            last = e;
+        }
+        assert_eq!(extinction(1.0), 1.0);
+        assert_eq!(extinction(9.0), 1.5);
     }
 
     #[test]

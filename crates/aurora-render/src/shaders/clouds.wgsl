@@ -291,14 +291,16 @@ fn march(dir: vec3f, steps: u32, lsteps: u32, jitter: f32, off: vec2f) -> Res {
     var wsum = 0.0;
     // Steps grow with the distance, but a grazing ray crosses tens of km of
     // layer: the warp is eased so that no step is longer than STEP_MAX_KM
-    // (steps this long sampled a cloud's edge in slabs, terraces).
-    let warp = clamp(STEP_MAX_KM * f32(steps) / len, 1.0, STEP_WARP);
+    // (steps this long sampled a cloud's edge in slabs, terraces), and past
+    // what the warp can ease the count grows with the length, up to 96.
+    let n = min(max(steps, u32(ceil(len / STEP_MAX_KM))), 96u);
+    let warp = clamp(STEP_MAX_KM * f32(n) / len, 1.0, STEP_WARP);
     var prev_t = t0;
     var prev_in = false;
-    for (var i = 0u; i < steps; i++) {
-        let x = (f32(i) + max(jitter, 0.02)) / f32(steps);
+    for (var i = 0u; i < n; i++) {
+        let x = (f32(i) + max(jitter, 0.02)) / f32(n);
         var tt = t0 + len * pow(x, warp);
-        var ds = len * warp * pow(x, warp - 1.0) / f32(steps);
+        var ds = len * warp * pow(x, warp - 1.0) / f32(n);
         var p = dir * tt;
         var w = weather_at(p, off);
         var dens = density(p, w, off, true);
@@ -391,6 +393,21 @@ fn view_dir(px: vec2f) -> vec3f {
 fn is_sky(px: vec2u) -> bool {
     return textureLoad(depth_t, min(px, u.sizes.xy - 1u), 0) == 0.0;
 }
+// A half-res pixel takes clouds when its centre is sky or when any pixel of
+// the 4x4 full-res block around it is: the blocks on a silhouette (foliage,
+// MSAA edges) hold the sky samples the full-res composite still reads.
+fn near_sky(hp: vec2u) -> bool {
+    if is_sky(vec2u((vec2f(hp) + 0.5) * 2.0)) { return true; }
+    let lo = vec2i(hp) * 2 - 1;
+    let hi = vec2i(u.sizes.xy) - 1;
+    for (var dy = 0; dy < 4; dy++) {
+        for (var dx = 0; dx < 4; dx++) {
+            let q = clamp(lo + vec2i(dx, dy), vec2i(0), hi);
+            if is_sky(vec2u(q)) { return true; }
+        }
+    }
+    return false;
+}
 fn checker(frame: u32) -> vec2u {
     switch frame % 4u {
         case 0u: { return vec2u(0u, 0u); }
@@ -413,7 +430,7 @@ fn trace(@builtin(global_invocation_id) id: vec3u) {
     if any(id.xy >= ts) { return; }
     let hp = id.xy * 2u + checker(u.misc.x);
     let fpx = (vec2f(hp) + 0.5) * 2.0;
-    if any(hp >= u.sizes.zw) || !is_sky(vec2u(fpx)) {
+    if any(hp >= u.sizes.zw) || !near_sky(hp) {
         textureStore(trace_w, id.xy, vec4f(0.0, 0.0, 0.0, 1.0));
         textureStore(tdepth_w, id.xy, vec4f(FAR_KM));
         return;
@@ -490,7 +507,7 @@ fn recon(@builtin(global_invocation_id) id: vec3u) {
     let hp = id.xy;
     if any(hp >= u.sizes.zw) { return; }
     let fpx = (vec2f(hp) + 0.5) * 2.0;
-    if !is_sky(vec2u(fpx)) {
+    if !near_sky(hp) {
         textureStore(hist_w, hp, vec4f(0.0, 0.0, 0.0, 1.0));
         return;
     }
