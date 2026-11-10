@@ -1,8 +1,8 @@
 //! The user's 3D look-up tables for the photo's look (issue #969): .cube
 //! files copied into `photo-luts` in the configuration folder, listed by
 //! file name and read on a worker when one is shown (a 65³ table is a few
-//! megabytes of text). An import reads the chosen file first: only a table
-//! that reads is copied.
+//! megabytes of text). An import reads each chosen file first (several can
+//! be chosen at once): only a table that reads is copied.
 
 use aurora_render::looks::{Lut, parse_cube};
 use std::collections::HashMap;
@@ -131,6 +131,20 @@ impl LutLibrary {
         Ok((name, Arc::new(lut)))
     }
 
+    /// Imports the files chosen together, in their order: each one's
+    /// outcome, a failure naming its file.
+    pub fn import_all(dir: &Path, paths: &[PathBuf]) -> Vec<Imported> {
+        paths
+            .iter()
+            .map(|path| {
+                LutLibrary::import(dir, path).map_err(|e| {
+                    let file = path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+                    format!("{file}: {e}")
+                })
+            })
+            .collect()
+    }
+
     /// An import done: its table kept, the list read again.
     pub fn imported(&mut self, name: String, lut: Arc<Lut>) {
         self.broken.remove(&name);
@@ -189,6 +203,23 @@ mod tests {
         library.imported(second, lut);
         assert_eq!(library.names(), ["Warm (2).cube", "Warm.cube"]);
         assert_eq!(library.table("Warm.cube").map(|l| l.size), Some(4));
+
+        // several files chosen at once: each one imported or said
+        let cool = root.join("Cool.cube");
+        std::fs::write(&cool, cube(3)).expect("write");
+        let all = LutLibrary::import_all(&dir, &[cool.clone(), bad.clone(), root.join("Gone.cube")]);
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0].as_ref().map(|(n, _)| n.as_str()), Ok("Cool.cube"));
+        assert!(
+            all[1].as_ref().is_err_and(|e| e.starts_with("Bad.cube: ")),
+            "{:?}",
+            all[1].as_ref().err()
+        );
+        assert!(all[2].as_ref().is_err_and(|e| e.starts_with("Gone.cube: ")));
+        let mut imported = all.into_iter().flatten();
+        let (name, lut) = imported.next().expect("one");
+        library.imported(name, lut);
+        library.remove("Cool.cube").expect("removed");
 
         // a table read on the worker
         let mut fresh = LutLibrary::new(dir.clone());

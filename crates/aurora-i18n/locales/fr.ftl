@@ -6841,7 +6841,7 @@ photo-knob-darken = Assombrissement
 photo-knob-subject-zone = Zone du sujet
 photo-looks-legacy = Legacy
 photo-looks-aurora = Aurora
-photo-looks-luts = Mes LUT
+photo-looks-luts = LUT
 photo-looks-search = Rechercher un filtre
 photo-looks-no-result = Aucun filtre ne porte ce nom
 photo-looks-film = Pellicule
@@ -6849,14 +6849,21 @@ photo-looks-color = Couleur
 photo-looks-lens = Objectif
 photo-looks-creative = Créatif
 photo-looks-depth = Profondeur
-photo-lut-import = Importer un fichier .cube…
+photo-lut-import = Importer des fichiers .cube…
 photo-lut-folder = Ouvrir le dossier
 photo-lut-remove = Supprimer cette LUT
 photo-lut-empty = Aucune LUT pour l'instant. Importez les rendus de Lightroom, DaVinci Resolve ou Photoshop en fichiers .cube.
 photo-lut-hint = LUT 3D pour la photo et la vidéo (.cube), jusqu'à 128 points par côté.
-photo-lut-dialog = Importer une LUT
+photo-lut-dialog = Importer des LUT
 photo-lut-files = LUT 3D
 photo-lut-imported = { $name } importée
+photo-lut-imported-many = { $count ->
+    [one] { $count } LUT importée
+   *[other] { $count } LUT importées
+    }
+photo-lut-pack = Par { $creator }
+photo-lut-pack-tip = LUT créées par { $creator } et offertes à tous les utilisateurs d'Aurora
+photo-lut-mine = Mes LUT
 photo-lut-failed = LUT illisible : { $error }
 photo-look-a-fine-grain = Grain fin
 photo-look-a-fine-grain-tip = Un léger grain de pellicule, surtout visible dans les tons moyens
