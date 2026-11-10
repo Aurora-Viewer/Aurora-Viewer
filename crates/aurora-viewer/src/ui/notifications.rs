@@ -766,15 +766,22 @@ pub(super) fn card(
     out
 }
 
-/// The windows a scripted object opens that the Legacy Viewer closes with
-/// Close Window: its `LLScriptFloater` types -- `ScriptDialog` (llDialog
-/// and llTextBox), `LoadWebPage` (llLoadURL), `ObjectGiveItem` and
-/// `OwnObjectGiveItem` (llGiveInventory). A permission question
-/// (`ScriptQuestion`) is a toast there, not a floater, and stays out.
+/// The windows a scripted object opens that Close Window closes: the Legacy
+/// Viewer's `LLScriptFloater` types -- `ScriptDialog` (llDialog and
+/// llTextBox), `LoadWebPage` (llLoadURL), `ObjectGiveItem` and
+/// `OwnObjectGiveItem` (llGiveInventory) -- and, beyond the Legacy Viewer, a
+/// permission question (`ScriptQuestion`).
+///
+/// A permission question is `LLToastScriptQuestion`, a toast, in the Legacy
+/// Viewer: Close Window never reaches it there. Aurora stacks it with the
+/// script windows, though, so Ctrl+W on the top card would otherwise skip it
+/// and close the card below, surprising the user. Closing it refuses the
+/// request, as its own cross does (the `ScriptAnswer` with no permission
+/// bit).
 fn script_window(n: &Notification) -> bool {
     matches!(
         n.data,
-        Data::Dialog { .. } | Data::TextBox { .. } | Data::Url(_) | Data::Inventory { task: true, .. }
+        Data::Dialog { .. } | Data::TextBox { .. } | Data::Url(_) | Data::Inventory { task: true, .. } | Data::Permissions { .. }
     )
 }
 
@@ -1139,11 +1146,11 @@ fn script_rows(count: usize) -> impl Iterator<Item = std::ops::Range<usize>> {
 mod tests {
     use super::*;
 
-    /// Close Window reaches the Legacy Viewer's script floaters, and only
-    /// those: an object's inventory offer and a URL too, but not a resident's
-    /// offer nor a permission question (toasts there).
+    /// Close Window reaches the Legacy Viewer's script floaters (a dialog,
+    /// a text box, a URL, an object's offer) and Aurora's stacked permission
+    /// question; a resident's offer stays out.
     #[test]
-    fn script_windows_match_the_legacy_viewers_script_floaters() {
+    fn script_windows_include_permission_questions_over_the_legacy_viewer() {
         let note = |data| Notification {
             id: 1,
             time: std::time::SystemTime::UNIX_EPOCH,
@@ -1183,18 +1190,18 @@ mod tests {
             },
             Data::Url("https://example.invalid".into()),
             offer(true, Uuid::nil()),
+            Data::Permissions {
+                task: Uuid::nil(),
+                item: Uuid::nil(),
+                questions: 0,
+                region: Default::default(),
+                experience: None,
+                caution: None,
+            },
         ] {
             assert!(script_window(&note(data)));
         }
         assert!(!script_window(&note(offer(false, Uuid::from_u128(7)))));
-        assert!(!script_window(&note(Data::Permissions {
-            task: Uuid::nil(),
-            item: Uuid::nil(),
-            questions: 0,
-            region: Default::default(),
-            experience: None,
-            caution: None,
-        })));
     }
 
     #[test]
