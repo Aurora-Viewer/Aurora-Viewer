@@ -238,9 +238,6 @@ pub(super) fn show(
                         Err(reason) => st.message = reason,
                     }
                 }
-                if done {
-                    st.delete_dont_ask = false;
-                }
             }
             EditDialog::Empty(id) => {
                 ui.label(aurora_i18n::tr!(
@@ -302,6 +299,8 @@ pub(super) fn show(
     });
     if open && !done {
         st.dialog = Some(dialog);
+    } else if matches!(dialog, EditDialog::Delete(..)) {
+        st.delete_dont_ask = false;
     }
 }
 
@@ -2019,6 +2018,52 @@ mod tests {
             assert_eq!(st.preview_dirty, !discard);
             assert!(st.dialog.is_none());
         }
+    }
+
+    #[test]
+    fn escape_discards_the_unconfirmed_delete_ignore_choice() {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let mut st = InventoryUi {
+            dialog: Some(EditDialog::Delete(vec![Uuid::from_u128(8100)], false)),
+            delete_dont_ask: true,
+            ..Default::default()
+        };
+        let mut actions = Vec::new();
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0))),
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Default::default(),
+                }],
+                ..Default::default()
+            },
+            |_ui| {
+                show(
+                    &ctx,
+                    &p,
+                    &Icons::default(),
+                    &inv,
+                    &mut st,
+                    &InventoryPreferences::default(),
+                    &Facts::default(),
+                    &Default::default(),
+                    &mut actions,
+                );
+            },
+        );
+        assert!(st.dialog.is_none(), "Escape closes the delete confirmation");
+        assert!(actions.is_empty(), "cancelling changes neither inventory nor the preference");
+        assert!(
+            !st.delete_dont_ask,
+            "an unconfirmed ignore choice must not leak into the next dialog"
+        );
     }
 
     #[test]
