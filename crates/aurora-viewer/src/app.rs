@@ -16625,6 +16625,14 @@ impl App {
                 {
                     self.world.apply(ev);
                 }
+                // AURORA_DEMO_CHAT_LINES=stagger: the nearby chat lines said
+                // one at a time
+                if self.demo
+                    && self.in_world()
+                    && let Some(ev) = crate::demo::chat_lines_due()
+                {
+                    self.world.apply(ev);
+                }
                 // AURORA_DEMO_SNOOZE: Tess writes in the group chat, which
                 // `auto` snoozes by itself
                 if self.demo && self.in_world() {
