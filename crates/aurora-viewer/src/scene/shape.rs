@@ -56,6 +56,9 @@ struct Param {
     max: f32,
     default: f32,
     sex: u8,
+    /// The wearable type that carries it (`wearable=`), as an index of
+    /// LLWearableType.
+    wearable: Option<u8>,
     kind: Kind,
 }
 
@@ -227,6 +230,7 @@ impl ShapeParams {
             max,
             default,
             sex,
+            wearable: e.attr("wearable").and_then(crate::world::inventory::wearable::kind_of),
             kind,
         })
     }
@@ -234,6 +238,13 @@ impl ShapeParams {
     #[cfg(test)]
     pub fn transmitted_count(&self) -> usize {
         self.transmitted.len()
+    }
+
+    /// Weight range of a parameter that a wearable of `kind` carries, as
+    /// LLWearable::createVisualParams clones the avatar's parameters whose
+    /// wearable type matches (indra/llappearance/llwearable.cpp).
+    pub fn wearable_range(&self, id: i32, kind: u8) -> Option<(f32, f32)> {
+        self.params.get(&id).filter(|p| p.wearable == Some(kind)).map(|p| (p.min, p.max))
     }
 
     /// Range and default weight of a parameter.

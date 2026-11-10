@@ -27,6 +27,7 @@ pub mod layout;
 mod linking;
 pub mod manip;
 mod material_preview;
+use material_preview::MaterialTabKey;
 pub mod materials;
 mod new_defaults;
 mod object_snap;
@@ -231,6 +232,10 @@ pub struct BuildSettings {
     pub show_parcel_owners: bool,
     /// SyncMaterialSettings: normal / specular maps follow the diffuse UVs.
     pub sync_materials: bool,
+    /// Texture tab: a new selection opens the PBR or Blinn-Phong tab that
+    /// fits its faces, as LLPanelFace::updateUI does (`material_preview.rs`).
+    /// On by default; off keeps the last tab chosen.
+    pub auto_material_tab: bool,
     /// ShowPhysicsShapeInEdit (Features tab eye toggle).
     pub show_physics_shape: bool,
     /// FSCopyObjKeySeparator for "Copy UUID".
@@ -654,6 +659,7 @@ impl Default for BuildSettings {
             expanded: true,
             show_parcel_owners: false,
             sync_materials: false,
+            auto_material_tab: true,
             show_physics_shape: false,
             copy_key_separator: ",".into(),
             limit_select_distance: true,
@@ -763,6 +769,10 @@ pub struct BuildTool {
     /// Last inspected selection/mode; object display choices live in the world.
     material_preview_selection: HashSet<Uuid>,
     material_preview_mode: Option<bool>,
+    /// Selection the Texture tab was last chosen for (`auto_material_tab`).
+    material_tab_for: Option<MaterialTabKey>,
+    /// `keep_texture_tab`: the next selection keeps the tab asked for.
+    keep_material_tab: bool,
     /// The build floater is open (build mode).
     pub open: bool,
     pub tool: Tool,
@@ -854,6 +864,8 @@ impl Default for BuildTool {
             wheel_selection: cycle::Wheel::default(),
             material_preview_selection: HashSet::new(),
             material_preview_mode: None,
+            material_tab_for: None,
+            keep_material_tab: false,
             open: false,
             tool: Tool::Edit,
             edit_mode: EditMode::Move,
