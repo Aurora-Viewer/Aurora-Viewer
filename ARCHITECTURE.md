@@ -115,6 +115,13 @@ CPU transforms and GPU anchors share this frame; missing poses use the
 existing bone/rest fallback, and HUD points stay in screen space.
 
 
+The inventory Favorites view in `ui/inventory/view.rs` lists starred items
+and folders directly by default, without ancestor
+folders or the inventory root. `favorites_show_parent_folders` restores the
+original hierarchy when enabled. Paths inside starred folders remain intact;
+nested stars are not promoted a second time. The shared `TreeState` hides the
+inventory root only for the flat Favorites view, in both window layouts.
+
 Inventory Favorites membership in `ui/inventory/view.rs` and its shortcut
 count in `ui/inventory/aurora.rs` read each record's own favorite flag,
 following `LLInventoryFavoritesItemsPanel::findAndInitRootContent`
