@@ -38,6 +38,8 @@ pub(super) struct ImageJobs {
     /// encoded or sent: a job of its own, that no image editor shows, so
     /// one the user has open on another item is left as it is.
     outfit: Option<Uuid>,
+    /// The outfit's paid HD picture (`outfit_hd`).
+    pub hd: super::outfit_hd::OutfitHd,
 }
 impl Default for ImageJobs {
     fn default() -> Self {
@@ -53,6 +55,7 @@ impl Default for ImageJobs {
             auto_capture_pending: false,
             photo: None,
             outfit: None,
+            hd: Default::default(),
         }
     }
 }

@@ -109,6 +109,7 @@ mod object_actions;
 mod object_menu;
 mod object_menu_demo;
 mod outfit_batch;
+mod outfit_hd;
 mod outfit_portrait;
 mod own_motion;
 mod pay;
@@ -3311,6 +3312,10 @@ impl App {
             }
             if self.photo_owns_upload(request) {
                 self.photo_uploaded(result);
+                return;
+            }
+            if self.outfit_hd_owns(request) {
+                self.outfit_hd_uploaded(result);
                 return;
             }
             let material_map = self.imports.uploading_entry(request);
@@ -9024,6 +9029,7 @@ impl App {
             self.options_ui.media_filter = rules.map(<[_]>::to_vec);
         }
         self.poll_inventory_images();
+        self.poll_outfit_hd();
         // a click whose depth is back already (the render thread finished
         // the last frame while this thread waited for its next one)
         self.resolve_clicks();
