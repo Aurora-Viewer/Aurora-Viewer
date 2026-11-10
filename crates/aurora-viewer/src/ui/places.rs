@@ -1045,7 +1045,9 @@ impl PlacesUi {
             r.clicked()
         };
         let gap = 3.0;
-        ui.horizontal(|ui| {
+        // top-aligned: a label taller than the bar (a large text) grows its
+        // button, and a centred row would step each next button lower
+        ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = gap;
             let w = ((ui.available_width() - 2.0 * gap) / 3.0).max(60.0);
             if natural(place_details::button(
@@ -1435,9 +1437,10 @@ mod tests {
     /// width the three buttons need: they ran past its right edge before.
     #[test]
     fn legacy_tabs_keep_their_bottom_buttons_whole() {
-        fn collect(shape: &egui::epaint::Shape, clip: egui::Rect, out: &mut Vec<(String, egui::Rect, egui::Rect)>) {
+        // each text: its glyphs' bounds, its clip, the top of its line
+        fn collect(shape: &egui::epaint::Shape, clip: egui::Rect, out: &mut Vec<(String, egui::Rect, egui::Rect, f32)>) {
             match shape {
-                egui::epaint::Shape::Text(t) => out.push((t.galley.text().to_owned(), t.visual_bounding_rect(), clip)),
+                egui::epaint::Shape::Text(t) => out.push((t.galley.text().to_owned(), t.visual_bounding_rect(), clip, t.pos.y)),
                 egui::epaint::Shape::Vec(v) => v.iter().for_each(|s| collect(s, clip, out)),
                 _ => {}
             }
@@ -1502,7 +1505,7 @@ mod tests {
                 );
             }
             for label in &buttons {
-                let (_, rect, clip) = drawn
+                let (_, rect, clip, _) = drawn
                     .iter()
                     .find(|(t, ..)| t == label)
                     .unwrap_or_else(|| panic!("« {label} » drawn ({size:?}, zoom {zoom}, tab {tab}, text {text})"));
@@ -1511,6 +1514,14 @@ mod tests {
                     "« {label} » cut off ({size:?}, zoom {zoom}, tab {tab}, text {text}): text {rect:?}, clip {clip:?}"
                 );
             }
+            let tops: Vec<f32> = buttons
+                .iter()
+                .filter_map(|label| drawn.iter().find(|(t, ..)| t == label).map(|(.., top)| *top))
+                .collect();
+            assert!(
+                tops.iter().all(|top| (top - tops[0]).abs() < 0.5),
+                "the three buttons' labels on one line ({size:?}, zoom {zoom}, tab {tab}, text {text}): tops {tops:?}"
+            );
         }
     }
 
