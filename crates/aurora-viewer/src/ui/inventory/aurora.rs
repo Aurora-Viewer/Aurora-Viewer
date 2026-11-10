@@ -115,6 +115,8 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
             | "aurora-sidebar-wide"
             | "aurora-smart-wide"
             | "aurora-favorite-folders"
+            | "aurora-favorite-folders-many"
+            | "aurora-favorite-folders-off"
             | "aurora-keyboard-wide"
             | "aurora-rights"
             | "aurora-columns"

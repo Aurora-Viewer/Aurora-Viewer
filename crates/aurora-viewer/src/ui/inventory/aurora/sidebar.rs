@@ -223,6 +223,17 @@ fn jump(st: &mut InventoryUi, prefs: &InventoryPreferences, folder: Uuid) {
     st.browse = folder;
 }
 
+/// The favorite folders the column lists: none with the option off (the
+/// default), and none in a window scoped to one folder, which shows that
+/// folder's own tree only.
+fn listed_favorites(side: &mut Sidebar, inv: &Inventory, prefs: &InventoryPreferences, scoped: bool) -> Vec<Uuid> {
+    if scoped || !prefs.sidebar_favorite_folders {
+        Vec::new()
+    } else {
+        side.favorites(inv).to_vec()
+    }
+}
+
 /// The favorite folders, each one click away from its place in the tree.
 /// An Aurora addition: the Legacy Viewer lists them in its Favorites tab
 /// only. A row takes drops and has the folder's menu, as in the tree.
@@ -447,11 +458,7 @@ pub(super) fn show(
         ui.add_space(2.0);
         smart_searches(ui, p, inv, st, prefs, &saved);
     }
-    let favorites = if scoped || !prefs.sidebar_favorite_folders {
-        Vec::new()
-    } else {
-        st.side.favorites(inv).to_vec()
-    };
+    let favorites = listed_favorites(&mut st.side, inv, prefs, scoped);
     if !favorites.is_empty() {
         ui.add_space(10.0);
         menu::section(ui, p, aurora_i18n::tr!("inventory-favorite-folders"));
@@ -710,5 +717,79 @@ mod tests {
         view.prepare(&inv, view::Sort::default());
         side.prepare(&view, &inv, inv.root, true);
         assert!(side.rows.iter().any(|row| row.id == id(12) && row.depth == 2));
+    }
+
+    fn favorite(inv: &mut Inventory, n: u128, parent: u128, name: &str) {
+        inv.folders.insert(
+            id(n),
+            Folder {
+                info: InvFolder {
+                    id: id(n),
+                    parent: id(parent),
+                    name: name.into(),
+                    type_default: -1,
+                    favorite: true,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+    }
+
+    #[test]
+    fn favorite_folders_are_listed_only_with_the_option_on_and_outside_a_scoped_window() {
+        let mut inv = Inventory {
+            root: id(1),
+            ..Default::default()
+        };
+        favorite(&mut inv, 10, 1, "Clothing");
+        favorite(&mut inv, 20, 1, "Objects");
+        let mut side = Sidebar::default();
+        let mut prefs = InventoryPreferences::default();
+        assert!(!prefs.sidebar_favorite_folders, "off by default");
+        assert!(listed_favorites(&mut side, &inv, &prefs, false).is_empty(), "off: no section");
+        prefs.sidebar_favorite_folders = true;
+        assert_eq!(listed_favorites(&mut side, &inv, &prefs, false), [id(10), id(20)]);
+        assert!(
+            listed_favorites(&mut side, &inv, &prefs, true).is_empty(),
+            "a scoped window: no section"
+        );
+        // The option goes off again: the section leaves at once, whatever was cached.
+        prefs.sidebar_favorite_folders = false;
+        assert!(listed_favorites(&mut side, &inv, &prefs, false).is_empty());
+        // No favorite left: nothing to list, so `show` draws no header.
+        prefs.sidebar_favorite_folders = true;
+        for folder in inv.folders.values_mut() {
+            folder.info.favorite = false;
+        }
+        inv.generation += 1;
+        assert!(listed_favorites(&mut side, &inv, &prefs, false).is_empty());
+    }
+
+    #[test]
+    fn a_jump_to_a_favorite_folder_shows_it_in_the_main_tab_with_the_search_cleared() {
+        let prefs = InventoryPreferences::default();
+        let mut st = InventoryUi::default();
+        set_tab(&mut st, &prefs, 2);
+        st.search = "dress".into();
+        st.browse = id(10);
+        st.side.shown = id(10);
+        jump(&mut st, &prefs, id(12));
+        assert_eq!((st.tab, st.browse), (0, id(12)));
+        assert!(st.search.is_empty(), "a search would hide the folder's content");
+        assert_eq!(st.side.shown, id(10), "not marked as in sight: the tree scrolls to it");
+
+        // A click in the tree itself marks the folder as already in sight.
+        browse(&mut st, &prefs, id(11));
+        assert_eq!((st.browse, st.side.shown), (id(11), id(11)));
+
+        // From the main tab, with a search typed: the jump still clears it.
+        st.search = "shoes".into();
+        jump(&mut st, &prefs, id(12));
+        assert_eq!((st.tab, st.browse), (0, id(12)));
+        assert!(st.search.is_empty());
     }
 }

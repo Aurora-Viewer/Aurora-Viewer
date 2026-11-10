@@ -6162,8 +6162,12 @@ failure. Grid validation and any paid upload are performed by the human.
   favorites, two of them inside "A personal folder". Aurora's wide inventory
   lists them by name under "Favorite folders", between the smart searches
   and the folder tree. Click one: the list opens on it, and the tree opens
-  its parents and scrolls to it. With the setting off (the default), the
-  sidebar is unchanged.
+  its parents and scrolls to it (`AURORA_DEMO_POINTER="103,443,l"` clicks
+  the first row, Body). With the setting off (the default), the sidebar is
+  unchanged. `aurora-favorite-folders-many`: nine favorite folders, the
+  list shows six rows and scrolls. `aurora-favorite-folders-off`: the same
+  three favorite folders with the setting off, no list. `favorite-folders`:
+  the setting on in the Legacy-style window, which has no list.
 - **`AURORA_DEMO_INVENTORY=bulk-multi|bulk-folder|bulk-permissions`**: selected items
   and folder context menus expose Bulk permissions; the last mode opens the
   shared type/permission controls directly. Apply/OK use synthetic inventory
