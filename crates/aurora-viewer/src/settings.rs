@@ -397,6 +397,9 @@ pub struct DebugView {
     pub lod_info: bool,
     /// Dev Toolbox R3: every face tinted by the pass it is drawn in.
     pub pass_view: bool,
+    /// Advanced › Rendering types: what is not drawn (the Legacy Viewer's
+    /// render types, not saved there either).
+    pub hidden_types: crate::scene::render_types::Hidden,
 }
 
 impl DebugView {

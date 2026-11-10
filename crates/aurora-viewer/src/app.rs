@@ -9797,6 +9797,7 @@ impl App {
             self.scene.surface_protection = self.settings.surface_protection();
             self.scene.textures.set_max_resolution(self.settings.max_texture_resolution);
             self.scene.max_avatars = self.settings.max_avatars as usize;
+            self.scene.hidden_types = self.settings.debug.hidden_types;
             if self.demo {
                 self.scene.max_avatars = crate::demo::impostor_flip(self.scene.max_avatars);
             }
@@ -10768,7 +10769,12 @@ impl App {
             lights,
             spot_shadows,
             clear_color: Vec4::new(env.fog_color.x, env.fog_color.y, env.fog_color.z, 1.0),
-            sky: env.sky,
+            sky: aurora_render::SkyParams {
+                // the Clouds rendering type hidden: a cloud scale of zero
+                // draws none, nor their shadow (common.wgsl, clouds)
+                cloud_scale: if self.settings.debug.hidden_types.clouds { 0.0 } else { env.sky.cloud_scale },
+                ..env.sky
+            },
             water: env.water,
             mirror,
             probes,
@@ -10789,6 +10795,7 @@ impl App {
             },
             // the photo's isolation, "show only" on an empty background
             cutout: self.world.photo_isolation.empty_background(),
+            hide_sky: self.settings.debug.hidden_types.sky,
             look: None,
         };
         // a photo's look, or the live view's in the photo mode
@@ -13989,6 +13996,13 @@ impl App {
                 self.settings.save();
             }
             BarAction::ShowTransparency => self.settings.debug.show_alpha = !self.settings.debug.show_alpha,
+            BarAction::RenderTypes(hidden, particles) => {
+                self.settings.debug.hidden_types = hidden;
+                if self.settings.world_overlays.hide_particles != particles {
+                    self.settings.world_overlays.hide_particles = particles;
+                    self.settings.save();
+                }
+            }
             BarAction::OwnedLand => {
                 ui::widgets::open_floater(&self.egui_ctx, ui::owned_land::WINDOW, &mut self.panels.owned_land);
                 self.world.group_money.request_owned_land();
@@ -15721,6 +15735,7 @@ impl App {
                     ban_lines: self.settings.maps.ban_lines,
                     world_overlays: self.settings.world_overlays,
                     show_transparency: self.settings.debug.show_alpha,
+                    hidden_types: self.settings.debug.hidden_types,
                     conversation_thumbnails: self.chat_ui.thumbnails.top_count(),
                     region: if self.world.rlva.has("showloc") {
                         aurora_i18n::tr!("rlva-hidden-region")
@@ -18752,6 +18767,13 @@ impl ApplicationHandler for App {
                     self.panels.owned_land = true;
                     self.world.group_money.request_owned_land();
                 }
+            }
+            // AURORA_DEMO_RENDER_TYPES=water,avatars,…: those rendering
+            // types hidden from the start (Advanced › Rendering types)
+            if let Ok(list) = std::env::var("AURORA_DEMO_RENDER_TYPES") {
+                let (hidden, particles) = crate::scene::render_types::Hidden::parse(&list);
+                self.settings.debug.hidden_types = hidden;
+                self.settings.world_overlays.hide_particles |= particles;
             }
             // AURORA_DEMO_CAM="yaw,pitch,distance" (radians, meters) for captures
             if let Ok(v) = std::env::var("AURORA_DEMO_CAM") {

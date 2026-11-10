@@ -190,6 +190,9 @@ pub enum BarAction {
     HoverTips(HoverTipsMenu),
     WorldOverlays(crate::world::beacons::Overlays),
     ShowTransparency,
+    /// Advanced › Rendering types: what is not drawn, and whether the
+    /// particles are hidden (their own switch, World › Show more).
+    RenderTypes(crate::scene::render_types::Hidden, bool),
     OwnedLand,
 }
 
@@ -325,6 +328,8 @@ pub struct StatusInfo<'a> {
     pub hover_tips: HoverTipsMenu,
     pub world_overlays: crate::world::beacons::Overlays,
     pub show_transparency: bool,
+    /// Advanced › Rendering types (not saved).
+    pub hidden_types: crate::scene::render_types::Hidden,
     /// The conversations' thumbnails at the top right (#1134): how many,
     /// 0 for none (`thumbnails::reserve_top`).
     pub conversation_thumbnails: usize,
@@ -577,6 +582,51 @@ fn flip(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: &mut bool, 
         *on = !*on;
     }
     clicked
+}
+
+/// Advanced › Rendering types: a tick on what is drawn, as the Legacy
+/// Viewer's Develop › Rendering Types (render_type_from_string,
+/// indra/newview/llviewermenu.cpp); the menu stays open, to turn several
+/// off in a row. The Legacy Viewer's material passes (Simple, Alpha,
+/// Bump…) are not listed: Aurora does not split its draws that way.
+fn render_types_menu(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    hidden: crate::scene::render_types::Hidden,
+    hide_particles: bool,
+    action: &mut BarAction,
+) {
+    use aurora_i18n::tr;
+    let mut h = hidden;
+    let mut particles = hide_particles;
+    let mut changed = false;
+    for (icon, label, off) in [
+        ("mountain-filled", tr!("render-types-terrain"), &mut h.terrain),
+        ("droplet-filled", tr!("render-types-water"), &mut h.water),
+        ("sun-filled", tr!("render-types-sky"), &mut h.sky),
+        ("cloud-filled", tr!("render-types-clouds"), &mut h.clouds),
+        ("box", tr!("render-types-objects"), &mut h.objects),
+        ("user-filled", tr!("render-types-avatars"), &mut h.avatars),
+        ("run", tr!("render-types-animesh"), &mut h.animesh),
+        ("tree", tr!("render-types-trees"), &mut h.trees),
+        ("seedling-filled", tr!("render-types-grass"), &mut h.grass),
+        ("sparkles-filled", tr!("render-types-particles"), &mut particles),
+    ] {
+        let mut drawn = !*off;
+        if menu::toggle(ui, p, icon, label, &mut drawn) {
+            *off = !drawn;
+            changed = true;
+        }
+    }
+    let any_hidden = h != Default::default() || particles;
+    if menu::item_if(ui, p, "eye-filled", tr!("render-types-show-all"), any_hidden) {
+        h = Default::default();
+        particles = false;
+        changed = true;
+    }
+    if changed {
+        *action = BarAction::RenderTypes(h, particles);
+    }
 }
 
 /// Check row of a menu for the floater `id`, ticked while it is open: it
@@ -1282,6 +1332,10 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 crate::ui::debug_settings::WINDOW,
                 &mut panels.debug_settings,
             );
+            // Develop › Rendering Types (LLAdvancedToggleRenderType)
+            menu::submenu(ui, p, "stack-2-filled", aurora_i18n::tr!("render-types-menu"), true, |ui| {
+                render_types_menu(ui, p, st.hidden_types, st.world_overlays.hide_particles, action);
+            });
             // Develop › Consoles › Region Debug Console, for those the
             // region gives the console to
             if st.region_console {
