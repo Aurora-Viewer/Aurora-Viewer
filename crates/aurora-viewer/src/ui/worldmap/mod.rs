@@ -1859,11 +1859,7 @@ mod size_tests {
                 let found: Vec<_> = texts.iter().filter(|t| t.source == label).collect();
                 assert!(!found.is_empty(), "{case}: {label:?} is drawn");
                 for t in found {
-                    assert!(
-                        room.contains_rect(t.rect),
-                        "{case}: {label:?} at {:?} out of {room:?}",
-                        t.rect
-                    );
+                    assert!(room.contains_rect(t.rect), "{case}: {label:?} at {:?} out of {room:?}", t.rect);
                 }
             }
             // the column's list keeps a few rows above the footer
