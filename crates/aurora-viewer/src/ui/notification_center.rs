@@ -718,11 +718,13 @@ pub(super) fn history_list(
         {
             hist.clear();
         }
-        ui.add(
-            egui::TextEdit::singleline(query)
-                .hint_text(aurora_i18n::tr!("ui-notifications-search-history"))
-                .desired_width(ui.available_width()),
-        );
+        {
+            let width = ui.available_width();
+            crate::ui::widgets::search_text_edit(ui, p, query, |edit| {
+                edit.hint_text(aurora_i18n::tr!("ui-notifications-search-history"))
+                    .desired_width(width)
+            })
+        };
     });
     ui.add_space(4.0);
     let query = query.trim().to_lowercase();
@@ -777,6 +779,9 @@ fn center_card(
     wanted_images: &mut std::collections::HashSet<uuid::Uuid>,
     n: &mut Notification,
 ) -> Option<Response> {
+    if super::notifications::close_script_prompt(ui.ctx(), n) {
+        return Some(Response::Dismiss);
+    }
     if matches!(n.data, Data::RegionRestart)
         && let Some(info) = &env.restart
     {

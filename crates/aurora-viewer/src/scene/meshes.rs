@@ -436,6 +436,17 @@ impl MeshStreamer {
         })
     }
 
+    /// LLMeshRepository::getEstTrianglesMax / LLMeshCostData::init: the
+    /// largest LOD estimate, also before skin data arrives. Unknown is zero.
+    pub fn estimated_max_triangles(&self, id: &Uuid) -> f32 {
+        self.entries.get(id).and_then(|e| e.header.as_ref()).map_or(0.0, |h| {
+            h.lods
+                .iter()
+                .map(|lod| (lod.map_or(0, |(_, size)| size) as f32 - 384.0).max(16.0) / 16.0)
+                .fold(0.0, f32::max)
+        })
+    }
+
     pub fn meta(&self, id: &Uuid) -> Option<MeshMeta> {
         let e = self.entries.get(id).filter(|e| e.ready())?;
         let h = e.header.as_ref()?;
@@ -954,7 +965,7 @@ fn build_mesh_lod(
                 .as_ref()
                 .filter(|s| !s.joint_names.is_empty())
                 .map(|s| (0..s.joint_names.len()).map(|i| i.min(255) as u8).collect());
-            JobResult::geometry(key, mesh_to_faces(&faces, xform, map.as_deref()), 1.0, pool)
+            JobResult::geometry(key, mesh_to_faces(&faces, xform, map.as_deref()), (1.0, 0.0), pool)
         }
         Err(e) => {
             log::debug!("mesh {id} lod {lod}: {e}");
@@ -1360,6 +1371,7 @@ mod tests {
             complete: true,
             offset: 0,
             data: Err(format!("HTTP {status}")),
+            cancelled: false,
         }
     }
 
@@ -1413,7 +1425,36 @@ mod tests {
             complete: false,
             offset: offset as u64,
             data: Ok(data.to_vec()),
+            cancelled: false,
         }
+    }
+
+    #[test]
+    fn linking_triangle_estimates_use_header_sizes_before_skin_arrives() {
+        let mut streamer = MeshStreamer::new(PathBuf::new());
+        let id = Uuid::from_u128(2706);
+        assert_eq!(streamer.estimated_max_triangles(&id), 0.0);
+        let header = MeshHeader {
+            header_size: 100,
+            lods: [None, Some((100, 400)), Some((500, 1984)), Some((2484, 1184))],
+            skin: Some((3668, 100)),
+            physics_convex: None,
+            physics_mesh: None,
+            version: 1,
+        };
+        streamer.entries.insert(
+            id,
+            MeshEntry {
+                header: Some(header),
+                ..Default::default()
+            },
+        );
+        assert!(streamer.meta(&id).is_none(), "skin is not loaded");
+        assert_eq!(
+            streamer.estimated_max_triangles(&id),
+            100.0,
+            "largest LOD, minus 384 metadata bytes, at 16 bytes per triangle"
+        );
     }
 
     #[test]
@@ -1762,6 +1803,7 @@ mod tests {
                 complete: true,
                 offset: 0,
                 data: Ok(vec![1, 2, 3]),
+                cancelled: false,
             },
             &jobs,
         );
@@ -1829,6 +1871,7 @@ mod tests {
                 complete: true,
                 offset: 0,
                 data: Ok(asset),
+                cancelled: false,
             },
             &jobs,
         );

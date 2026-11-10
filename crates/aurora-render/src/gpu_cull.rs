@@ -81,8 +81,10 @@ pub mod avatar_state {
     pub const LOADING: u32 = 4;
 }
 
-pub const BINS: usize = 30;
+pub const BINS: usize = 31;
 pub const BIN_WATER_EXCLUSION: usize = 29;
+/// Shadow casters of the probe being captured, drawn with the alpha test.
+pub const BIN_PROBE_SHADOW: usize = 30;
 pub const MAIN_BINS: usize = 4;
 /// Shadow casters of each cascade drawn depth only: opaque faces, which
 /// `fs_shadow` never discards.
@@ -115,7 +117,7 @@ pub const COUNT_PRE2: usize = COUNT_PRE1 + MAIN_BINS;
 const COUNT_SHADOW: usize = COUNT_PRE2 + MAIN_BINS;
 #[cfg(test)]
 const SHADOW_STATS: usize = 9;
-const COUNTS: usize = 52;
+const COUNTS: usize = 53;
 
 /// `CullFrame::sizes.w`.
 pub mod frame_flags {
@@ -131,6 +133,8 @@ pub mod frame_flags {
     /// Every caster drawn with the alpha test, none depth only
     /// (AURORA_SHADOW_LEGACY).
     pub const SHADOW_ALPHA_ALL: u32 = 128;
+    /// The shadow map of the probe being captured is drawn this frame.
+    pub const PROBE_SHADOW: u32 = 256;
     /// Projector shadow map 0 is drawn (map 1: the next bit).
     pub const SPOT: u32 = 1 << 16;
     /// Exterior refraction shares the water bin, with a union of frustums.
@@ -339,6 +343,8 @@ pub struct CullFrame {
     /// Frustums of the projector shadow maps (`frame_flags::SPOT`).
     pub spots: [[[f32; 4]; 6]; SPOT_SHADOWS],
     pub cascades: [[[f32; 4]; 4]; 3],
+    /// Shadow map of the probe being captured (`frame_flags::PROBE_SHADOW`).
+    pub probe_shadow: [[f32; 4]; 4],
     /// Per cascade: planes around what can cast a shadow the main view
     /// samples in it (`caster_planes`).
     pub shadow_planes: [[[f32; 4]; SHADOW_PLANES]; 3],
@@ -369,9 +375,13 @@ impl CullFrame {
         merge_size: f32,
         [water, mirror, probe]: [Mat4; 3],
         spots: [Option<Mat4>; SPOT_SHADOWS],
+        probe_shadow: Option<Mat4>,
         mut flags: u32,
     ) -> CullFrame {
         let planes = |vp: Mat4| view_planes(vp).map(|p| p.to_array());
+        if probe_shadow.is_some() {
+            flags |= frame_flags::PROBE_SHADOW;
+        }
         if let Some((_, show)) = view.first_person {
             flags |= frame_flags::FIRST_PERSON;
             if show {
@@ -394,6 +404,7 @@ impl CullFrame {
             // nothing is left out for being before the near one)
             spots: spots.map(|s| planes(s.unwrap_or(Mat4::IDENTITY))),
             cascades: cascades.map(|m| m.to_cols_array_2d()),
+            probe_shadow: probe_shadow.unwrap_or(Mat4::IDENTITY).to_cols_array_2d(),
             shadow_planes: *shadow_planes,
             eye: view.eye.extend(view.draw_distance).to_array(),
             dist: [view.shadow_distance, view.reflection_distance, view.pixel_scale, merge_size],
@@ -530,6 +541,14 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
                 m |= 1 << (BIN_SPOT + k);
             }
         }
+    }
+    if reflects
+        && fl & frame_flags::PROBE_SHADOW != 0
+        && o.flags & object_flags::NO_PROBE == 0
+        && (p != pass::BLEND || fl & frame_flags::BLEND_CASTS != 0)
+        && in_cascade(&Mat4::from_cols_array_2d(&frame.probe_shadow), c, r)
+    {
+        m |= 1 << BIN_PROBE_SHADOW;
     }
     let solid = (pass::OPAQUE..=pass::MASK_2S).contains(&p);
     if reflects && solid {
@@ -1061,7 +1080,7 @@ impl GpuCull {
             .map(|_| {
                 let b = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("cull readback"),
-                    size: (COUNTS * 4) as u64,
+                    size: crate::readback::readback_size((COUNTS * 4) as u64),
                     usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
@@ -1299,7 +1318,7 @@ impl GpuCull {
         for (buf, ready, pending) in self.readback.iter_mut() {
             if *pending && ready.load(Ordering::Acquire) {
                 if let Ok(view) = buf.get_mapped_range(..) {
-                    let n: &[u32] = bytemuck::cast_slice(&view[..COUNTS * 4]);
+                    let n = crate::readback::u32_array::<COUNTS>(&view[..COUNTS * 4]);
                     let mut c = CullCounts::default();
                     c.bins.copy_from_slice(&n[..BINS]);
                     c.visible_objects = n[COUNT_VISIBLE];
@@ -1394,10 +1413,10 @@ mod tests {
         assert!(src.contains(&format!("const POSED_RADIUS_MAX: f32 = {POSED_RADIUS_MAX:?};")));
         assert!(src.contains("const POSED_COORD_MAX: f32 = 1.0e6;") && POSED_COORD_MAX == 1.0e6);
         // Main, water reflection/exterior, mirror, probe and spot frusta;
-        // the capture's origin; then 3 matrices, 3 x 12 shadow planes and 4 vectors.
+        // the capture's origin; then 4 matrices, 3 x 12 shadow planes and 4 vectors.
         assert_eq!(
             std::mem::size_of::<CullFrame>(),
-            (5 + SPOT_SHADOWS) * 6 * 16 + 16 + 3 * 64 + 3 * SHADOW_PLANES * 16 + 4 * 16
+            (5 + SPOT_SHADOWS) * 6 * 16 + 16 + 4 * 64 + 3 * SHADOW_PLANES * 16 + 4 * 16
         );
         assert_eq!(
             wgsl_fields(src, "CullFrame"),
@@ -1410,6 +1429,7 @@ mod tests {
                 "probe_eye",
                 "spots",
                 "cascades",
+                "probe_shadow",
                 "shadow_planes",
                 "eye",
                 "dist",
@@ -1512,7 +1532,8 @@ mod tests {
                 .trim_end_matches('u');
             v.parse().unwrap_or_else(|_| panic!("{name}: {v}"))
         };
-        let pairs: [(&str, u32); 47] = [
+        let pairs: [(&str, u32); 49] = [
+            ("F_PROBE_SHADOW", frame_flags::PROBE_SHADOW),
             ("F_FIRST_PERSON", frame_flags::FIRST_PERSON),
             ("F_SHOW_SELF", frame_flags::SHOW_SELF),
             ("OBJ_FIRST_PERSON_HIDDEN", object_flags::FIRST_PERSON_HIDDEN),
@@ -1535,6 +1556,7 @@ mod tests {
             ("BIN_REFL_WATER", BIN_REFL_WATER as u32),
             ("BIN_REFL_MIRROR", BIN_REFL_MIRROR as u32),
             ("BIN_PROBE", BIN_PROBE as u32),
+            ("BIN_PROBE_SHADOW", BIN_PROBE_SHADOW as u32),
             ("REGION_PRE1", REGION_PRE1 as u32),
             ("REGION_PRE2", REGION_PRE2 as u32),
             ("COUNT_VISIBLE", COUNT_VISIBLE as u32),
@@ -1690,6 +1712,7 @@ mod tests {
             probe_eye: [0.0; 4],
             spots: [planes; SPOT_SHADOWS],
             cascades: [cascade.to_cols_array_2d(); 3],
+            probe_shadow: cascade.to_cols_array_2d(),
             shadow_planes: [crate::shadow_cull::CASTER_PLANES_ALL; 3],
             eye: [0.0, 0.0, 0.0, 64.0],
             dist: [64.0, 32.0, 1000.0 / 0.5, 0.0],
@@ -2320,7 +2343,7 @@ mod tests {
         let read = |label| {
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
-                size,
+                size: crate::readback::readback_size(size),
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             })
@@ -2334,9 +2357,9 @@ mod tests {
         counts_read.map_async(wgpu::MapMode::Read, .., |_| {});
         let _ = device.poll(wgpu::PollType::wait_indefinitely());
         let args = args_read.get_mapped_range(..).expect("args mapped");
-        let args: &[u32] = bytemuck::cast_slice(&args);
+        let args = crate::readback::u32s(&args[..size as usize]);
         let counts = counts_read.get_mapped_range(..).expect("counts mapped");
-        let counts: &[u32] = bytemuck::cast_slice(&counts[..COUNTS * 4]);
+        let counts = crate::readback::u32s(&counts[..COUNTS * 4]);
         let mut expect: Vec<Vec<u32>> = vec![Vec::new(); BINS];
         let (mut visible, mut tris) = (0, 0);
         for i in 0..n_faces {

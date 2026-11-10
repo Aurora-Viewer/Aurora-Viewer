@@ -363,6 +363,9 @@ fn section<R>(
             state.toggle(ui);
             header.mark_changed();
         }
+        if super::search_cleared(ui) {
+            ui.ctx().animate_bool_with_time(id, open, 0.0);
+        }
     } else if header.clicked() {
         state.toggle(ui);
         header.mark_changed();
@@ -480,6 +483,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "people" | "group_picker" | "group_profile" | "contact_set_config" => "users-group",
         "group_invite" | "group_invite_choice" => "user-plus",
         "group_titles" => "tags-filled",
+        "region_tracker" => "location-filled",
         "search" => "search-filled",
         "options" => "settings-filled",
         "worldmap" | "minimap" => "map",

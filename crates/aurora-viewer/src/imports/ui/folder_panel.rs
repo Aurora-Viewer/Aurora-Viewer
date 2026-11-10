@@ -108,7 +108,6 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, imports: &mut Imports, world:
     let preview = folder_preview::build(ui.ctx(), imports, world);
     imports.folders.collapsed.retain(|path| preview.nodes.contains_key(path));
     let paths = &preview.nodes;
-    let files = &preview.files;
     let root = imports
         .folders
         .active()
@@ -123,25 +122,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, imports: &mut Imports, world:
         let body_top = columns[0].cursor().top().max(columns[1].cursor().top());
         let room = (height - (body_top - top) - footer_height - columns[0].spacing().item_spacing.y).max(0.0);
         // A flattened tree is virtualized even when every folder is expanded.
-        let mut rows: Vec<(Vec<String>, Option<usize>)> = Vec::new();
-        for index in files.get(&Vec::new()).into_iter().flatten() {
-            rows.push((Vec::new(), Some(*index)));
-        }
-        let mut hidden: Option<&Vec<String>> = None;
-        for path in paths.keys() {
-            if hidden.is_some_and(|parent| path.starts_with(parent) && path.len() > parent.len()) {
-                continue;
-            }
-            hidden = None;
-            rows.push((path.clone(), None));
-            if imports.folders.collapsed.contains(path) {
-                hidden = Some(path);
-                continue;
-            }
-            for index in files.get(path).into_iter().flatten() {
-                rows.push((path.clone(), Some(*index)));
-            }
-        }
+        let rows = preview.ordered_rows(&imports.folders.collapsed);
         let mut toggle = None;
         egui::ScrollArea::both()
             .id_salt("import_plan_tree")

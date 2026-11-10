@@ -7,6 +7,12 @@
 //! the update window by itself and says nothing when it fails; a version it
 //! finds becomes a `Notice` (downloaded first in the Automatic mode), shown
 //! once per version and session.
+//!
+//! Below a new minimum supported version, the viewer may still sign in for
+//! the release's grace period (12 hours unless the policy says otherwise),
+//! counted from the first time this installation saw that minimum (#3014):
+//! a show, a DJ set or a class under way ends before the update is needed.
+//! The Legacy Viewer blocks at once; a policy with `grace_hours: 0` does too.
 
 use crate::{
     settings::Settings,
@@ -17,7 +23,7 @@ use aurora_updater::{
     feed::{Channel, Release, Source},
     install::Workspace,
 };
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Mode {
@@ -52,6 +58,39 @@ impl Interval {
         };
         Some(Duration::from_secs(minutes * 60))
     }
+}
+
+/// When this installation first saw a minimum supported version above its
+/// own (`Settings::update_grace`): the grace period counts from there, and
+/// a later release with the same minimum does not start it again.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GraceStart {
+    pub minimum: String,
+    /// Seconds since the Unix epoch.
+    pub since: u64,
+}
+
+/// The end of the grace period of a release below its minimum, the start
+/// recorded in `start` (set when this minimum is new to it): `None` when
+/// the release is not required or gives no grace. Returns whether `start`
+/// changed. A clock set back never stretches the grace beyond its length.
+fn grace_deadline(release: &Release, start: &mut Option<GraceStart>, now: SystemTime) -> (Option<SystemTime>, bool) {
+    let Some(minimum) = release.minimum.as_ref().filter(|_| release.required && !release.grace.is_zero()) else {
+        return (None, false);
+    };
+    let now_secs = now.duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let (since, changed) = match start {
+        Some(s) if &s.minimum == minimum => (s.since, false),
+        _ => {
+            *start = Some(GraceStart {
+                minimum: minimum.clone(),
+                since: now_secs,
+            });
+            (now_secs, true)
+        }
+    };
+    let end = SystemTime::UNIX_EPOCH + Duration::from_secs(since) + release.grace;
+    (Some(end.min(now + release.grace)), changed)
 }
 
 /// A new version a periodic check found, for the notice in the world (or
@@ -114,6 +153,9 @@ pub struct Updater {
     /// check does not announce it again, "Later" means the next launch.
     announced: String,
     notice: Option<Notice>,
+    /// Until when a release below its minimum still lets this version sign
+    /// in (`grace_deadline`).
+    grace_until: Option<SystemTime>,
 }
 
 pub fn checks_enabled() -> bool {
@@ -155,6 +197,7 @@ impl Updater {
             last_check: None,
             announced: String::new(),
             notice: None,
+            grace_until: None,
         };
         // Disabled still checks the minimum supported version, as Firestorm does.
         if enabled {
@@ -170,8 +213,39 @@ impl Updater {
     pub fn busy(&self) -> bool {
         matches!(self.state, State::Checking | State::Downloading(_) | State::Handoff)
     }
+    /// The update is needed to sign in: below the minimum, grace over.
     pub fn required(&self) -> bool {
-        self.release.as_ref().is_some_and(|r| r.required)
+        self.release.as_ref().is_some_and(|r| r.required) && self.grace_left().is_none()
+    }
+
+    /// Below the minimum, the time this version may still sign in.
+    pub fn grace_left(&self) -> Option<Duration> {
+        self.grace_left_at(SystemTime::now())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn start_grace_for_test(&mut self, left: Duration) {
+        self.grace_until = Some(SystemTime::now() + left);
+    }
+
+    fn grace_left_at(&self, now: SystemTime) -> Option<Duration> {
+        self.release.as_ref().filter(|r| r.required)?;
+        self.grace_until?.duration_since(now).ok().filter(|left| !left.is_zero())
+    }
+
+    /// A release just answered: below its minimum, its grace period starts
+    /// now unless this minimum was already seen (saved at once, so that a
+    /// relaunch does not start it again).
+    fn follow_grace(&mut self, settings: &mut Settings) {
+        let Some(release) = &self.release else {
+            self.grace_until = None;
+            return;
+        };
+        let (until, changed) = grace_deadline(release, &mut settings.update_grace, SystemTime::now());
+        self.grace_until = until;
+        if changed && !cfg!(test) {
+            settings.save();
+        }
     }
     pub fn blocks_login(&self) -> bool {
         self.required() || self.policy_pending || matches!(self.state, State::Handoff)
@@ -245,7 +319,7 @@ impl Updater {
             && self.last_check.is_some_and(|at| now.duration_since(at) >= every)
     }
 
-    pub fn poll(&mut self, settings: &Settings, info: &mut LoginInfo, runtime: &tokio::runtime::Handle) -> bool {
+    pub fn poll(&mut self, settings: &mut Settings, info: &mut LoginInfo, runtime: &tokio::runtime::Handle) -> bool {
         info.can_check_updates = self.enabled;
         // Joining the Beta channel shows its newest beta now; leaving it
         // forgets an offered beta (a stable newer than the installed one
@@ -276,6 +350,7 @@ impl Updater {
                     self.last_check = Some(Instant::now());
                     self.policy_pending = false;
                     self.release = release;
+                    self.follow_grace(settings);
                     self.state = if self.release.is_some() { State::Offer } else { State::Current };
                     if let Some(r) = &self.release {
                         info.version = VersionState::Available {
@@ -372,7 +447,7 @@ impl Updater {
     fn quiet_result(
         &mut self,
         result: Result<Option<Release>, Failure>,
-        settings: &Settings,
+        settings: &mut Settings,
         info: &mut LoginInfo,
         runtime: &tokio::runtime::Handle,
     ) {
@@ -386,6 +461,7 @@ impl Updater {
         };
         let Some(r) = release else {
             self.release = None;
+            self.grace_until = None;
             self.state = State::Current;
             info.version = VersionState::UpToDate;
             return;
@@ -397,6 +473,7 @@ impl Updater {
         let announce = announces(&r, &self.announced, &settings.ignored_update);
         let (tag, version, required) = (r.tag.clone(), r.version.clone(), r.required);
         self.release = Some(r);
+        self.follow_grace(settings);
         self.state = State::Offer;
         if !announce {
             return;
@@ -539,7 +616,75 @@ mod tests {
             archive: None,
             checksum: None,
             required,
+            minimum: required.then(|| tag.trim_start_matches('v').into()),
+            // these tests are about the block itself
+            grace: Duration::ZERO,
         }
+    }
+
+    #[test]
+    fn a_new_minimum_still_lets_this_version_sign_in_for_its_grace_period() {
+        let hour = Duration::from_secs(3600);
+        let at = |secs: u64| SystemTime::UNIX_EPOCH + Duration::from_secs(secs);
+        let start = 1_000_000;
+        let mut r = release("v0.3.0", true);
+        r.grace = 12 * hour;
+        let mut seen = None;
+        // the first sight starts the grace and records it
+        let (end, changed) = grace_deadline(&r, &mut seen, at(start));
+        assert_eq!((end, changed), (Some(at(start) + 12 * hour), true));
+        assert_eq!(
+            seen,
+            Some(GraceStart {
+                minimum: "0.3.0".into(),
+                since: start
+            })
+        );
+        // a relaunch, or a later release with the same minimum, keeps it
+        let later = at(start + 5 * 3600);
+        assert_eq!(grace_deadline(&r, &mut seen, later), (Some(at(start) + 12 * hour), false));
+        let mut next = r.clone();
+        next.tag = "v0.3.1".into();
+        assert_eq!(grace_deadline(&next, &mut seen, later).0, Some(at(start) + 12 * hour));
+        // a higher minimum starts a new one
+        let mut raised = release("v0.4.0", true);
+        raised.grace = 12 * hour;
+        assert_eq!(grace_deadline(&raised, &mut seen, later), (Some(later + 12 * hour), true));
+        // a clock set back does not stretch it
+        let mut seen = Some(GraceStart {
+            minimum: "0.3.0".into(),
+            since: start,
+        });
+        assert_eq!(
+            grace_deadline(&r, &mut seen, at(start - 100 * 3600)).0,
+            Some(at(start - 100 * 3600) + 12 * hour)
+        );
+        // no grace: the policy of a release that cannot wait, or not required
+        let mut none = None;
+        assert_eq!(grace_deadline(&release("v0.3.0", true), &mut none, at(start)), (None, false));
+        assert_eq!(grace_deadline(&release("v0.3.0", false), &mut none, at(start)), (None, false));
+        assert_eq!(none, None);
+    }
+
+    #[test]
+    fn sign_in_is_allowed_during_the_grace_and_blocked_after() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
+        let mut updater = Updater::new(rt.handle(), Channel::Stable);
+        let mut r = release("v0.3.0", true);
+        r.grace = Duration::from_secs(12 * 3600);
+        checked(&updater, Ok(Some(r)));
+        let mut settings = Settings::default();
+        updater.poll(&mut settings, &mut LoginInfo::preview_release("0.3.0"), rt.handle());
+        assert!(settings.update_grace.is_some(), "the start is recorded");
+        // the window is offered, but signing in is not blocked
+        assert!(updater.open && !updater.required() && !updater.blocks_login());
+        let left = updater.grace_left().expect("grace");
+        assert!(left > Duration::from_secs(11 * 3600) && left <= Duration::from_secs(12 * 3600));
+        // once it is over, the update is needed again
+        let now = SystemTime::now();
+        assert_eq!(updater.grace_left_at(now + Duration::from_secs(12 * 3600 + 1)), None);
+        updater.grace_until = Some(now - Duration::from_secs(1));
+        assert!(updater.required() && updater.blocks_login());
     }
 
     fn checked(updater: &Updater, result: Result<Option<Release>, Failure>) {
@@ -555,7 +700,7 @@ mod tests {
         assert!(updater.blocks_login());
         assert!(updater.login_block_reason().is_some());
         checked(&updater, Err(Failure::Network));
-        updater.poll(&Settings::default(), &mut LoginInfo::preview_release("0.3.0"), rt.handle());
+        updater.poll(&mut Settings::default(), &mut LoginInfo::preview_release("0.3.0"), rt.handle());
         assert!(!updater.blocks_login());
         assert!(updater.login_block_reason().is_none());
     }
@@ -567,13 +712,13 @@ mod tests {
         updater.rollback_notice = true;
         updater.state = State::Rollback;
         checked(&updater, Ok(Some(release("v0.3.0", true))));
-        let settings = Settings {
+        let mut settings = Settings {
             update_mode: Mode::Disabled,
             ignored_update: "v0.3.0".into(),
             ..Default::default()
         };
         let mut info = LoginInfo::preview_release("0.3.0");
-        updater.poll(&settings, &mut info, rt.handle());
+        updater.poll(&mut settings, &mut info, rt.handle());
         assert!(updater.blocks_login());
         assert!(updater.open && matches!(updater.state, State::Rollback));
     }
@@ -633,13 +778,13 @@ mod tests {
         updater.enabled = true;
         updater.state = State::Current;
         updater.last_check = Some(Instant::now() - Duration::from_secs(3600));
-        let settings = Settings::default();
+        let mut settings = Settings::default();
         let mut info = LoginInfo::preview_release("0.3.0");
         // the poll starts the periodic check; its answer comes back
-        updater.poll(&settings, &mut info, rt.handle());
+        updater.poll(&mut settings, &mut info, rt.handle());
         assert!(updater.quiet_check && !updater.blocks_login());
         checked(&updater, Ok(Some(release("v0.4.0", false))));
-        updater.poll(&settings, &mut info, rt.handle());
+        updater.poll(&mut settings, &mut info, rt.handle());
         assert!(!updater.open && !updater.blocks_login());
         assert!(matches!(updater.state, State::Offer));
         let notice = updater.take_notice().expect("notice");
@@ -660,17 +805,17 @@ mod tests {
         updater.enabled = true;
         updater.state = State::Current;
         updater.last_check = Some(Instant::now() - Duration::from_secs(3600));
-        let settings = Settings::default();
+        let mut settings = Settings::default();
         let mut info = LoginInfo::preview_release("0.3.0");
-        updater.poll(&settings, &mut info, rt.handle());
+        updater.poll(&mut settings, &mut info, rt.handle());
         checked(&updater, Err(Failure::Network));
-        updater.poll(&settings, &mut info, rt.handle());
+        updater.poll(&mut settings, &mut info, rt.handle());
         assert!(!updater.open && matches!(updater.state, State::Current));
         assert!(updater.take_notice().is_none());
         // a periodic check running, then the user checks: the periodic answer
         // is stale and the manual one opens the window
         updater.last_check = Some(Instant::now() - Duration::from_secs(3600));
-        updater.poll(&settings, &mut info, rt.handle());
+        updater.poll(&mut settings, &mut info, rt.handle());
         let stale = updater.generation;
         updater.check(rt.handle(), true);
         updater
@@ -680,10 +825,10 @@ mod tests {
                 generation: stale,
             })
             .expect("stale");
-        updater.poll(&settings, &mut info, rt.handle());
+        updater.poll(&mut settings, &mut info, rt.handle());
         assert!(updater.open && matches!(updater.state, State::Checking));
         checked(&updater, Ok(Some(release("v0.4.0", false))));
-        updater.poll(&settings, &mut info, rt.handle());
+        updater.poll(&mut settings, &mut info, rt.handle());
         assert!(updater.open && matches!(updater.state, State::Offer));
         assert!(updater.take_notice().is_none());
     }

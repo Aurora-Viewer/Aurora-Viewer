@@ -9,6 +9,9 @@ use uuid::Uuid;
 impl App {
     /// Right click on the world: the menu of what is under the cursor.
     pub(super) fn open_context_menu(&mut self) {
+        if self.photo_full_frame() {
+            return;
+        }
         self.click(click_pick::Click::Menu);
     }
 
@@ -71,7 +74,6 @@ impl App {
         if self.gfx.is_none() {
             return;
         }
-        let now = Instant::now();
         let Some((picked, point)) = self.menu_pick() else {
             return;
         };
@@ -114,9 +116,9 @@ impl App {
                         attachment: Some(full_id),
                     },
                     None => {
-                        let offset = Scene::object_transform(&self.world, idx, now, 0)
-                            .map(|(pos, rot, _)| rot.inverse() * (point - pos))
-                            .unwrap_or(Vec3::ZERO);
+                        let ray = self.object_menu.ray;
+                        let offset =
+                            super::object_actions::object_sit_offset(&self.world, &self.camera, idx, point, ray).unwrap_or(Vec3::ZERO);
                         // selected and outlined while the menu is open
                         // (LLToolSelect::handleObjectSelection, temp_select)
                         self.build.select_for_menu_with(&mut self.world, &self.settings.build, idx, extend);
@@ -310,7 +312,7 @@ impl App {
         } else {
             w.place_details.open_panel(source, &w.map, &mut w.landmarks, now);
             self.panels.places = true;
-            self.places_ui.raise();
+            self.places_ui.show_profile();
         }
     }
 
@@ -369,7 +371,7 @@ impl App {
         let (commands, requests, properties) = self.object_profile.take_output();
         if !commands.is_empty() {
             self.interactions.on_properties(&properties);
-            self.build.on_properties(properties);
+            self.build.on_properties(&self.world, properties);
         }
         for command in commands {
             self.send(command);
@@ -425,6 +427,7 @@ impl App {
                 self.on_ctx_action(CtxAction::Edit(id));
                 self.build.tab = 3;
                 self.build.ui.tex_tab = 1;
+                self.build.keep_texture_tab();
             }
             CtxAction::TakeOffClothing(kind) => {
                 let items = crate::world::appearance::worn_clothing(&self.world.inventory)
@@ -578,7 +581,13 @@ impl App {
             CtxAction::CreateLandmark => self.open_create_landmark(None),
             CtxAction::OpenAppearance { tab, editing } => {
                 self.panels.appearance = true;
-                self.appearance_ui.open(tab, editing);
+                // "Change outfit" (tab 0) opens the outfit view in use,
+                // the gallery or the list, rather than always the gallery
+                if tab == 0 && !editing {
+                    self.appearance_ui.open_outfits();
+                } else {
+                    self.appearance_ui.open(tab, editing);
+                }
             }
             CtxAction::StandUp => self.send(NetCommand::OneShotControl(control::STAND_UP)),
             CtxAction::SitGround => self.send(NetCommand::OneShotControl(control::SIT_ON_GROUND)),
@@ -802,11 +811,14 @@ impl App {
             }
             CtxAction::ZoomAvatar(id) => {
                 // a drawn avatar is followed; one only known by its map
-                // position is a fixed point (handle_zoom_to_object)
+                // position is a fixed point (handle_zoom_to_object with the
+                // radar entry's position), followed once drawn
+                self.zoom_awaited = None;
                 if let Some(avatar) = self.zoom_focus_object(&id).filter(|o| o.1.avatar) {
                     self.camera.zoom_avatar(avatar, &mut self.world.agent, &self.settings.camera);
-                } else if let Some(p) = ui::context::avatar_position(&self.world, &id) {
+                } else if let Some(p) = self.unloaded_avatar_point(&id) {
                     self.camera.zoom_to(p, None, &mut self.world.agent, &self.settings.camera);
+                    self.zoom_awaited = Some((id, p));
                 }
             }
             CtxAction::TeleportToAvatar(id) | CtxAction::ShowOnMap(id) => {
@@ -824,7 +836,9 @@ impl App {
                 let Some(region) = self.grid_region(&region) else {
                     return;
                 };
-                self.world.map.track_region(&region, pos);
+                // LLWorldMapHandler::handle: trackURL, then the map opens
+                // centred on the place ("center")
+                self.world.map.show_region(&region, pos);
                 ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
             }
             CtxAction::TeleportToPlace(region, pos) if self.settings.confirm_teleports => self.place_confirm = Some((region, pos, false)),
@@ -906,6 +920,34 @@ impl App {
     fn zoom_focus_object(&self, id: &uuid::Uuid) -> Option<(uuid::Uuid, crate::camera::FocusObject)> {
         let idx = self.world.objects.index_of_uuid(id)?;
         crate::camera::pick_focus_object(&self.world, idx, Instant::now())
+    }
+
+    /// Where to look for an avatar the camera cannot follow yet: its radar
+    /// position (exact when drawn, else its coarse location with a known
+    /// height), else its map position. The object's own position is not
+    /// used first: seated on a seat not loaded yet, it is relative to it.
+    fn unloaded_avatar_point(&self, id: &uuid::Uuid) -> Option<glam::Vec3> {
+        match self.radar.get(id) {
+            Some(e) if e.range.is_some() => Some(e.position),
+            _ => ui::context::avatar_position(&self.world, id),
+        }
+    }
+
+    /// The resident a zoom waits for is drawn: the camera now follows it,
+    /// unless it was moved off the point meanwhile (another focus, a reset,
+    /// Alt-click…).
+    pub(super) fn follow_awaited_zoom(&mut self) {
+        let Some((id, point)) = self.zoom_awaited else {
+            return;
+        };
+        let still_there =
+            self.camera.focus_object_id().is_none() && self.camera.focus_point().is_some_and(|f| f.distance_squared(point) < 0.01);
+        if !still_there {
+            self.zoom_awaited = None;
+        } else if let Some(avatar) = self.zoom_focus_object(&id).filter(|o| o.1.avatar) {
+            self.zoom_awaited = None;
+            self.camera.zoom_avatar(avatar, &mut self.world.agent, &self.settings.camera);
+        }
     }
 }
 

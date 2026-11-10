@@ -27,6 +27,7 @@ mod mesh;
 mod object;
 pub(crate) mod particles;
 mod replace;
+mod shape_preview;
 pub(in crate::build) mod texture;
 mod texture_preview;
 mod tools;
@@ -200,6 +201,7 @@ pub struct FloaterState {
     pub group_picker_open: bool,
     pub media_settings: Option<MediaSettingsState>,
     pub confirm: Option<Confirm>,
+    pub link_error: Option<String>,
     pub picker: TexturePicker,
     pub pick_target: Option<PickTarget>,
     /// A texture or material dropped on a Texture tab slot, applied next
@@ -233,9 +235,59 @@ pub struct FloaterState {
 const LABEL_W: f32 = 112.0;
 pub(crate) const INSPECTOR_ID: &str = "build_tools_inspector_c3";
 
+/// LLButton::handleMouseDown (indra/llui/llbutton.cpp) takes the keyboard
+/// focus on the press, so a field of the build window commits its typed
+/// text to the selection it was typed for before the next part or face,
+/// the edit mode or Edit linked act on the release. egui lets the focus go
+/// only after the click's pass (ui/click_away_focus.rs), once the selection
+/// has already changed. Only a press on the build window itself, outside
+/// the focused field: a field's menu and the other windows keep that rule.
+/// The world press is app.rs's (`press_while_typing`).
+fn press_takes_build_field_focus(ctx: &egui::Context) {
+    let Some(pos) = ctx.input(|i| i.pointer.press_origin().filter(|_| i.pointer.any_pressed())) else {
+        return;
+    };
+    if !ctx.text_edit_focused() {
+        return;
+    }
+    let Some(focused) = ctx.memory(|m| m.focused()) else {
+        return;
+    };
+    let Some(field) = ctx.read_response(focused) else {
+        return;
+    };
+    let window = egui::Id::unique(INSPECTOR_ID);
+    if field.layer_id.id != window || ctx.layer_id_at(pos).map(|layer| layer.id) != Some(window) || field.interact_rect.contains(pos) {
+        return;
+    }
+    ctx.memory_mut(|m| m.surrender_focus(focused));
+}
+
 /// Build shortcuts (menu_viewer.xml): Ctrl+B, Ctrl+1..5, delete, duplicate,
 /// link, edit linked parts, grid, undo...
 pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings) {
+    // egui drops a text field's focus on Escape before this pass starts, so
+    // remember whether one had the keyboard on the previous pass: that
+    // Escape is the field's (LLLineEditor reverts the typed text), not the
+    // build tool's. Taking it here would hide it from the field, which then
+    // commits its text as if focus had moved away.
+    // Only the pass just before counts: this runs only while no web page or
+    // media face has the keyboard, and an older mark would take an Escape.
+    let typing_id = egui::Id::unique("build_shortcuts_typing");
+    let pass = ctx.cumulative_pass_nr();
+    let typing_before = ctx.data(|d| d.get_temp::<u64>(typing_id)).is_some_and(|typed| typed + 1 == pass);
+    // Only a text entry: a focused button or list row leaves Escape to the
+    // shortcuts, so Organize mode still closes on the first press.
+    // (read before data_mut: egui's context lock is not reentrant)
+    if ctx.text_edit_focused() {
+        ctx.data_mut(|d| d.insert_temp(typing_id, pass));
+    }
+    if typing_before && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        return;
+    }
+    if tool.ui.link_error.is_some() {
+        return;
+    }
     tool.ui.legacy_window = s.legacy_window;
     if tool.ui.layout.organizing || tool.ui.notecards.open.is_some() {
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
@@ -303,6 +355,7 @@ pub fn show(
     mods: super::Mods,
     env: &mut Env,
 ) -> bool {
+    floaters::link_error(ctx, p, tool);
     contents_selection::finish_if_hidden_or_blurred(ctx, tool, world);
     if !tool.open {
         tool.dismiss_texture_picker();
@@ -313,6 +366,7 @@ pub fn show(
         tool.ui.layout.drag = None;
         return false;
     }
+    press_takes_build_field_focus(ctx);
     let before = s.clone();
     let property_lines_before = *env.property_lines;
     // drafts belong to the selection they were typed for
