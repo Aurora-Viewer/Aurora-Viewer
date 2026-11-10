@@ -18,12 +18,13 @@ nothing else to install. macOS support is new: tell us what does not work
 
 On a Retina Mac the world is drawn at the display's logical resolution
 (50% on a 2× display, 67% on 1.5×) and upscaled, while the interface and
-HUDs stay native and saved photos keep their full resolution. This follows
-the Legacy Viewer's `RenderHiDPI 0` default and is the largest performance
-setting on a Mac. Preferences › Graphics › Frames per second has the
-**Match the display** switch; turn it off to choose a percentage. A new
-Apple Silicon profile also starts from the Legacy Viewer's Mac Mid-High
-values (no shadows or ambient occlusion, FXAA, manual reflection probes).
+HUDs stay sharp and saved photos keep their full resolution. This follows
+the Legacy Viewer's `RenderHiDPI 0` default and is the setting that gains
+the most frame rate on a Mac. Preferences › Graphics › Smoothness has the
+**Match the display** switch; turn it off to choose the percentage. A new
+Mac profile also starts from the Legacy Viewer's Mac Mid-High values (no
+shadows or ambient occlusion, FXAA, manual reflection probes), shown as
+"Mid-High (recommended for this Mac)" under the quality levels.
 
 ## 1. Download and install
 

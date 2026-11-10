@@ -36,6 +36,12 @@
 //! (`saved.rs`) does restore the Glow it was saved with, as the Legacy
 //! Viewer's graphics presets do (RenderGlow is in
 //! app_settings/graphic_preset_controls.xml).
+//!
+//! A Mac has a sixth set of values (`mac_mid_high`), the Legacy Viewer's Mac
+//! "MidHigh" table: not a level of the row (it does not rise from Medium in
+//! every setting), but a new Mac profile's default where other systems start
+//! on Medium, and the one-time move of a Mac profile still exactly on that
+//! former default.
 
 use crate::settings::{MAX_TEXTURE_RESOLUTION, Settings};
 
@@ -296,20 +302,21 @@ impl Preset {
     }
 }
 
-/// macOS only: the Legacy Viewer's Mac "MidHigh" default. Kept behind
-/// `cfg` so a non-mac build neither compiles nor sees these values.
-#[cfg(target_os = "macos")]
-pub(crate) mod macos {
+/// The Legacy Viewer's Mac "MidHigh" default: indra/newview/featuretable_mac.txt,
+/// the list of GPU class 3, at which `LLFeatureManager::loadGPUClass`
+/// (indra/newview/llfeaturemanager.cpp) caps Apple GPUs ("high throughput,
+/// low capability"). Applied on macOS only, but built and tested on every
+/// system.
+pub(crate) mod mac_mid_high {
     use super::{Preset, Settings, Values};
 
-    /// The values of a new Apple Silicon profile: the Legacy Viewer's Mac
-    /// "MidHigh" list (`featuretable_mac.txt`, the class 3 default of
-    /// `llfeaturemanager.cpp`), mapped onto Aurora's Medium level. It keeps
-    /// the moderate distance, LOD and particle budget, turns the ambient
-    /// occlusion off (no RenderDeferredSSAO), uses FXAA, manual probes and no
-    /// screen-space effects; the avatar budget, complexity, probe count and
-    /// anisotropy follow the Mac table. Specular AA, an Aurora improvement
-    /// with no measurable cost, stays as the user has it.
+    /// The values of a new Mac profile: the Mac "MidHigh" list mapped onto
+    /// Aurora's Medium level. It keeps the moderate distance, LOD and
+    /// particle budget, turns the ambient occlusion off (RenderDeferredSSAO
+    /// 0), uses FXAA, manual probes and no screen-space effects; the avatar
+    /// budget (RenderAvatarMaxNonImpostors 9), complexity (250 000), probe
+    /// count (64) and anisotropy (2) follow the Mac table. Specular AA, an
+    /// Aurora improvement with no measurable cost, stays as the user has it.
     pub(crate) fn values() -> Values {
         Values {
             max_avatars: 9,
@@ -323,14 +330,14 @@ pub(crate) mod macos {
         }
     }
 
-    /// Writes the Apple Silicon default (a new profile's level, and the
-    /// one-time migration of a profile still exactly on the old Mac default).
+    /// Writes the Mac default (a new Mac profile's level, and the one-time
+    /// move of a Mac profile still exactly on the former Medium default).
     pub(crate) fn apply(s: &mut Settings) {
         values().write(s);
         s.graphics_saved_active = None;
     }
 
-    /// Whether the profile is exactly the Apple Silicon default.
+    /// Whether the profile is exactly the Mac default.
     pub(crate) fn matches(s: &Settings) -> bool {
         Values::read(s).as_shown() == values().as_shown()
     }
@@ -341,7 +348,7 @@ pub(crate) mod macos {
         use crate::graphics_presets::Effects;
 
         #[test]
-        fn the_apple_silicon_default_is_the_mac_mid_high_table() {
+        fn the_mac_default_is_the_legacy_mac_mid_high_table() {
             let v = values();
             assert_eq!(v.draw_distance, 128.0);
             assert_eq!(v.lod_factor, 2.0);
@@ -359,7 +366,7 @@ pub(crate) mod macos {
         }
 
         #[test]
-        fn the_apple_silicon_default_is_recognized_and_is_not_a_level() {
+        fn the_mac_default_is_recognized_and_is_not_a_level() {
             let mut s = Settings::default();
             apply(&mut s);
             assert!(matches(&s));

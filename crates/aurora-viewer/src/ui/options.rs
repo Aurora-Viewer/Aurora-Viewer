@@ -956,19 +956,13 @@ fn preset_choice(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
 }
 
 /// The line under the level row when no level matches: the Mac's own
-/// default on macOS, "Custom" elsewhere.
-#[cfg(target_os = "macos")]
+/// default on macOS, "Custom" otherwise.
 fn preset_label(s: &Settings) -> &'static str {
-    if crate::graphics_presets::macos::matches(s) {
-        aurora_i18n::tr!("ui-options-preset-apple-silicon")
+    if cfg!(target_os = "macos") && crate::graphics_presets::mac_mid_high::matches(s) {
+        aurora_i18n::tr!("ui-options-preset-mac-mid-high")
     } else {
         aurora_i18n::tr!("ui-options-preset-custom")
     }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn preset_label(_: &Settings) -> &'static str {
-    aurora_i18n::tr!("ui-options-preset-custom")
 }
 
 /// Device combo: "" = system default. Returns (a device was chosen, the

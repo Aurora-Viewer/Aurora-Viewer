@@ -1339,11 +1339,12 @@ fn apply_test_overrides(settings: &mut Settings) {
     }
 }
 
-/// macOS: `render_scale_percent` follows the window's backing scale while
-/// `render_scale_auto` is on (the Legacy Viewer's RenderHiDPI 0), so moving
-/// the window to a 1x, 1.5x or 2x display changes the world resolution
-/// without a restart. Returns whether the percentage changed.
-#[cfg(target_os = "macos")]
+/// While "Match the display" is on (`render_scale_auto`),
+/// `render_scale_percent` follows the window's scale factor, as the Legacy
+/// Viewer's RenderHiDPI 0 draws a Retina Mac's world at its logical
+/// resolution: moving the window to a 1×, 1.5× or 2× display changes the
+/// world resolution without a restart. Returns whether the percentage
+/// changed.
 fn sync_auto_render_scale(settings: &mut crate::settings::Settings, scale_factor: f64) -> bool {
     if !settings.render_scale_auto {
         return false;
@@ -1354,11 +1355,6 @@ fn sync_auto_render_scale(settings: &mut crate::settings::Settings, scale_factor
     }
     settings.render_scale_percent = percent;
     true
-}
-
-#[cfg(not(target_os = "macos"))]
-fn sync_auto_render_scale(_: &mut crate::settings::Settings, _: f64) -> bool {
-    false
 }
 
 /// Shows `conversation` with its field taking the keyboard, ready to type
@@ -18253,11 +18249,11 @@ impl ApplicationHandler for App {
                 system_mb
             );
             level.apply(&mut self.settings);
-            #[cfg(target_os = "macos")]
-            if level == crate::graphics_presets::Preset::Medium {
-                // Apple Silicon: the Legacy Viewer's Mac MidHigh table
-                crate::graphics_presets::macos::apply(&mut self.settings);
-                log::info!("new profile: Apple Silicon MidHigh defaults (featuretable_mac.txt)");
+            if cfg!(target_os = "macos") && level == crate::graphics_presets::Preset::Medium {
+                // a Mac starts where the Legacy Viewer's Mac table puts
+                // Apple GPUs (GPU class 3, MidHigh)
+                crate::graphics_presets::mac_mid_high::apply(&mut self.settings);
+                log::info!("new profile: the Mac MidHigh values (featuretable_mac.txt)");
             }
             apply_test_overrides(&mut self.settings);
             self.settings.save();
