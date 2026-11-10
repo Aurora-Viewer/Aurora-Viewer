@@ -73,6 +73,11 @@ pub struct VolumeMesh {
     /// `LLVolume::getSurfaceArea`: 1 for every prim, the swept grid's area
     /// for sculpts (attachment surface area limit of avatars).
     pub surface_area: f32,
+    /// The swept grid's area at unit scale, for prims and sculpts alike, as
+    /// the Legacy Viewer measures every volume for its large surface
+    /// protection (LLVOVolume::setVolume, `calcSurfaceArea`); 0 for what has
+    /// no grid (meshes, trees, grass, flexible prims).
+    pub grid_area: f32,
 }
 
 impl VolumeMesh {
@@ -97,6 +102,7 @@ pub fn generate_volume(params: &VolumeParams, detail: f32) -> VolumeMesh {
     let detail = sanitize_detail(detail);
     match Volume::generate(&p, detail) {
         Some(vol) => VolumeMesh {
+            grid_area: vol.grid_area(),
             faces: vol.create_faces(LL_SCULPT_TYPE_NONE),
             surface_area: 1.0,
         },
@@ -151,7 +157,11 @@ pub fn generate_flexible_volume(
             *normal = (Vec3::from_array(*normal) * scale).normalize_or(Vec3::Z).to_array();
         }
     }
-    VolumeMesh { faces, surface_area: 1.0 }
+    VolumeMesh {
+        faces,
+        surface_area: 1.0,
+        grid_area: 0.0,
+    }
 }
 
 /// `LLVolume::getLoDTriangleCounts`: triangles of the four LODs estimated
@@ -411,6 +421,30 @@ pub(crate) struct Volume {
 }
 
 impl Volume {
+    /// `LLVolume::sculptGetSurfaceArea`: the area of the swept grid, two
+    /// triangles per quad of the path x profile points.
+    pub(crate) fn grid_area(&self) -> f32 {
+        let size_s = self.path.points.len();
+        let size_t = self.profile.points.len();
+        let m = &self.mesh;
+        if m.len() < size_s * size_t {
+            return 0.0;
+        }
+        let mut area = 0.0f32;
+        for s in 0..size_s.saturating_sub(1) {
+            for t in 0..size_t.saturating_sub(1) {
+                let p1 = m[s * size_t + t];
+                let p2 = m[(s + 1) * size_t + t];
+                let p3 = m[s * size_t + t + 1];
+                let p4 = m[(s + 1) * size_t + t + 1];
+                let cross1 = (p1 - p2).cross(p1 - p3);
+                let cross2 = (p4 - p2).cross(p4 - p3);
+                area += (cross1.length() + cross2.length()) / 2.0;
+            }
+        }
+        area
+    }
+
     /// `LLVolume::generate` split computation.
     fn split_for(params: &VolumeParams, detail: f32) -> i32 {
         let mut split = (detail * 0.66) as i32;

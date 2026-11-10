@@ -21,7 +21,7 @@ pub mod aurora;
 pub(crate) mod drag;
 pub mod model;
 
-use super::place_details::{self, Ctx};
+use super::place_details::{self, ButtonLook, Ctx};
 use super::widgets::{self, Floater};
 use crate::theme::Palette;
 use crate::world::World;
@@ -283,6 +283,9 @@ pub struct PlacesUi {
     /// Inventory changes asked from a menu, sent with the window's actions.
     pending_edits: Vec<aurora_net::inventory::operations::Mutation>,
     raise: bool,
+    /// AURORA_DEMO_PLACES=…:classic: the Legacy Viewer's tabs for this run,
+    /// whatever Preferences › Aurora › Places says (not saved).
+    pub demo_classic: bool,
 }
 
 impl PlacesUi {
@@ -307,6 +310,16 @@ impl PlacesUi {
     /// Bring the window to the front (a profile was opened).
     pub fn raise(&mut self) {
         self.raise = true;
+    }
+
+    /// A place profile opened from outside the lists (a notecard's landmark,
+    /// the inventory, the map): the window comes to the front and Aurora's
+    /// shows that profile (LLFloaterSidePanelContainer::showPanel "places",
+    /// indra/newview/fsfloaterplacedetails.cpp). The Legacy tabs show any
+    /// open profile on their own and clear the flag.
+    pub fn show_profile(&mut self) {
+        self.raise();
+        self.aurora.opened = true;
     }
 
     /// TeleportFromLandmark from elsewhere (a standalone landmark window).
@@ -360,6 +373,9 @@ impl PlacesUi {
             return actions;
         }
         self.aurora.pending_click = None;
+        // a profile shown here is the Legacy tabs' own: Aurora's must not
+        // take it over after a switch of look
+        self.aurora.opened = false;
         floater.show(ctx, c.p, open, |ui| {
             let body = egui::Rect::from_min_max(ui.cursor().min, ui.max_rect().max);
             ui.allocate_rect(body, Sense::hover());
@@ -371,7 +387,7 @@ impl PlacesUi {
             child.set_clip_rect(body.intersect(ui.clip_rect()));
             let ui = &mut child;
             match c.world.place_details.panel.clone() {
-                Some(place) => self.profile_view(ui, c, &place, &mut actions),
+                Some(place) => self.profile_view(ui, c, &place, false, &mut actions),
                 None => self.list_view(ui, c, by_date, &mut actions),
             }
         });
@@ -507,22 +523,25 @@ impl PlacesUi {
             self.selected = None;
         }
         ui.add_space(4.0);
-        // the list, above the bottom bar
-        let list_h = (ui.available_height() - 32.0).max(40.0);
+        // panel_places.xml: button_layout_panel keeps its height at the
+        // bottom and places_layout_panel takes what is left above it. A
+        // fixed share for the buttons cut them off once the theme's spacing
+        // and button height outgrew it (#2641)
+        let (mut list, foot) = widgets::above_footer(ui);
         egui::ScrollArea::vertical()
             .id_salt(("places-list", self.tab))
-            .max_height(list_h)
-            .min_scrolled_height(list_h)
             .auto_shrink([false, false])
-            .show(ui, |ui| {
+            .show(&mut list, |ui| {
                 if history {
                     self.history_list(ui, p, world, actions);
                 } else {
                     self.landmark_list(ui, p, world, by_date, actions);
                 }
             });
-        ui.add_space(6.0);
-        self.list_buttons(ui, p, world, actions);
+        foot.show(ui, |ui| {
+            ui.add_space(6.0);
+            self.list_buttons(ui, p, world, actions);
+        });
     }
 
     /// The landmark selected, with its asset.
@@ -1063,11 +1082,14 @@ impl PlacesUi {
 
     // -------------------------------------------------------------- profile
 
+    /// `aurora`: drawn in Aurora's look (a profile opened from outside its
+    /// lists), which gives the bottom bar Aurora's buttons.
     fn profile_view(
         &mut self,
         ui: &mut egui::Ui,
         c: &mut Ctx,
         place: &crate::world::place_details::Place,
+        aurora: bool,
         actions: &mut Vec<PlacesAction>,
     ) {
         let p = c.p;
@@ -1080,60 +1102,54 @@ impl PlacesUi {
             ui.label(RichText::new(place_details::header_title(place)).size(16.0).strong().color(p.ink));
         });
         ui.add_space(4.0);
-        // the buttons are laid out first, from the bottom, and the profile
-        // takes what is left above them: a fixed share for the buttons cut
-        // them off when the theme's spacing differed from it
-        let rest = ui.available_rect_before_wrap();
-        ui.allocate_rect(rest, Sense::hover());
-        let mut bottom_up = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(rest)
-                .layout(egui::Layout::bottom_up(egui::Align::Min)),
-        );
-        let ui = &mut bottom_up;
+        // the profile takes what the buttons leave above them: a fixed share
+        // for the buttons cut them off when the theme's spacing differed
+        // from it
+        let (mut body, foot) = widgets::above_footer(ui);
+        egui::ScrollArea::vertical()
+            .id_salt(("places-profile", place.serial))
+            .auto_shrink([false, false])
+            .show(&mut body, |ui| place_details::profile_body(ui, c, place));
         // updateVerbs with a profile shown: Teleport, Map and the
         // overflow menu (Profile hidden)
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 3.0;
-            let w = ((ui.available_width() - 30.0) / 2.0).max(60.0);
-            if place_details::button(
-                ui,
-                p,
-                aurora_i18n::tr!("common-teleport"),
-                aurora_i18n::tr!("ui-places-teleport-to-a-location-of-your-choice"),
-                place.global.is_some() && place_details::teleport_allowed(place, world),
-                w,
-            ) && let Some(a) = place_details::teleport_action(place, world)
-            {
-                match a {
-                    place_details::PlaceAction::TeleportLandmark { asset, name } => {
-                        self.confirm = Some(Confirm::Landmark { asset, name });
+        foot.show(ui, |ui| {
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = ButtonLook::gap(aurora);
+                // the Legacy style's two halves, beside the menu button
+                let look = ButtonLook::of(aurora, ((ui.available_width() - 30.0) / 2.0).max(60.0));
+                if place_details::teleport_button(
+                    ui,
+                    p,
+                    look,
+                    aurora_i18n::tr!("common-teleport"),
+                    aurora_i18n::tr!("ui-places-teleport-to-a-location-of-your-choice"),
+                    place.global.is_some() && place_details::teleport_allowed(place, world),
+                ) && let Some(a) = place_details::teleport_action(place, world)
+                {
+                    match a {
+                        place_details::PlaceAction::TeleportLandmark { asset, name } => {
+                            self.confirm = Some(Confirm::Landmark { asset, name });
+                        }
+                        place_details::PlaceAction::Teleport(g) => actions.push(PlacesAction::Teleport(g)),
+                        _ => {}
                     }
-                    place_details::PlaceAction::Teleport(g) => actions.push(PlacesAction::Teleport(g)),
-                    _ => {}
                 }
-            }
-            if place_details::button(
-                ui,
-                p,
-                aurora_i18n::tr!("common-map"),
-                aurora_i18n::tr!("ui-places-show-the-corresponding-location-on-the-map"),
-                place.global.is_some(),
-                w,
-            ) && let Some(g) = place.global
-            {
-                actions.push(PlacesAction::ShowOnMap(g));
-            }
-            widgets::icon_menu(ui, p, "caret-up-filled", aurora_i18n::tr!("ui-places-show-more-options"), |ui| {
-                place_details::overflow_menu(ui, p, world, place);
+                if place_details::map_button(
+                    ui,
+                    p,
+                    look,
+                    aurora_i18n::tr!("common-map"),
+                    aurora_i18n::tr!("ui-places-show-the-corresponding-location-on-the-map"),
+                    place.global.is_some(),
+                ) && let Some(g) = place.global
+                {
+                    actions.push(PlacesAction::ShowOnMap(g));
+                }
+                widgets::icon_menu(ui, p, "caret-up-filled", aurora_i18n::tr!("ui-places-show-more-options"), |ui| {
+                    place_details::overflow_menu(ui, p, world, place);
+                });
             });
-        });
-        ui.add_space(6.0);
-        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt(("places-profile", place.serial))
-                .auto_shrink([false, false])
-                .show(ui, |ui| place_details::profile_body(ui, c, place));
         });
     }
 }
@@ -1334,6 +1350,169 @@ mod tests {
         actions
     }
 
+    /// A profile opened from outside while the Legacy tabs are shown is
+    /// theirs: switching to Aurora's look later does not open on it.
+    #[test]
+    fn the_legacy_tabs_clear_an_opened_profile() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let images = std::collections::HashMap::new();
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let (mut names, mut wanted_images, mut groups) = (HashSet::new(), HashSet::new(), HashSet::new());
+        let mut places = PlacesUi::default();
+        places.show_profile();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let mut c = Ctx {
+                p: &p,
+                world: &world,
+                images: &images,
+                emoji: &mut emoji,
+                want_names: &mut names,
+                wanted_images: &mut wanted_images,
+                want_groups: &mut groups,
+            };
+            places.show(ui.ctx(), &mut c, &mut true, false, false, None);
+        });
+        output.textures_delta.clear();
+        assert!(!places.aurora.opened);
+    }
+
+    /// A world with a long teleport history (80 lines): the list must give
+    /// way, not the buttons under it.
+    fn long_history_world() -> World {
+        let library = std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load());
+        let mut world = World::new(library);
+        for i in 0..80 {
+            let global = glam::DVec3::new(256000.0 + f64::from(i), 256000.0, 25.0);
+            world
+                .tp_storage
+                .add(&format!("Parcel {i}, Region"), global, 1.7e9 + f64::from(i), String::new());
+        }
+        world
+    }
+
+    /// One frame of "Places" in the Legacy Viewer's tabs.
+    fn show_legacy(places: &mut PlacesUi, ctx: &egui::Context, p: &Palette, world: &World, emoji: &mut crate::ui::emoji::Emoji) {
+        let images = std::collections::HashMap::new();
+        let (mut names, mut wanted, mut groups) = (HashSet::new(), HashSet::new(), HashSet::new());
+        let mut c = Ctx {
+            p,
+            world,
+            images: &images,
+            emoji,
+            want_names: &mut names,
+            wanted_images: &mut wanted,
+            want_groups: &mut groups,
+        };
+        places.show(ctx, &mut c, &mut true, false, false, None);
+    }
+
+    /// #2641: in the Legacy Viewer's tabs, Teleport / Map / Profile stay
+    /// whole at the bottom of the window (the list gives way): at its
+    /// opening size, at its minimum, wide, and at more than one interface
+    /// scale, with an empty list and a long teleport history.
+    #[test]
+    fn legacy_tabs_keep_their_bottom_buttons_whole() {
+        fn collect(shape: &egui::epaint::Shape, clip: egui::Rect, out: &mut Vec<(String, egui::Rect, egui::Rect)>) {
+            match shape {
+                egui::epaint::Shape::Text(t) => out.push((t.galley.text().to_owned(), t.visual_bounding_rect(), clip)),
+                egui::epaint::Shape::Vec(v) => v.iter().for_each(|s| collect(s, clip, out)),
+                _ => {}
+            }
+        }
+        let world = long_history_world();
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let buttons = [
+            aurora_i18n::tr!("common-teleport"),
+            aurora_i18n::tr!("common-map"),
+            aurora_i18n::tr!("common-profile"),
+        ];
+        let min = Vec2::new(260.0, 300.0);
+        // the tab shown: 0 Favorites (empty), 2 Teleport history (80 lines)
+        for (size, zoom, tab) in [
+            (None, 1.0, 0),
+            (Some(min), 1.0, 0),
+            (Some(min), 1.5, 0),
+            (Some(Vec2::new(700.0, 588.0)), 1.0, 0),
+            (None, 1.5, 0),
+            (None, 1.0, 2),
+            (Some(min), 1.0, 2),
+            (Some(min), 1.5, 2),
+        ] {
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            ctx.set_zoom_factor(zoom);
+            // the icons as in the viewer (without them, the menus fall back
+            // to wider text buttons)
+            let _icons = crate::ui::icons::Icons::load(&ctx, None);
+            let p = theme.palette();
+            if let Some(size) = size {
+                widgets::size_floater(&ctx, "places", size);
+            }
+            let mut places = PlacesUi { tab, ..Default::default() };
+            let mut shapes = Vec::new();
+            for _ in 0..4 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                        ..Default::default()
+                    },
+                    |root| show_legacy(&mut places, root.ctx(), &p, &world, &mut emoji),
+                );
+                output.textures_delta.clear();
+                shapes = output.shapes;
+            }
+            let mut drawn = Vec::new();
+            for s in &shapes {
+                collect(&s.shape, s.clip_rect, &mut drawn);
+            }
+            if tab == 2 {
+                assert!(
+                    drawn.iter().any(|(t, ..)| t.starts_with("Parcel ")),
+                    "the teleport history is listed ({size:?}, zoom {zoom})"
+                );
+            }
+            for label in &buttons {
+                let (_, rect, clip) = drawn
+                    .iter()
+                    .find(|(t, ..)| t == label)
+                    .unwrap_or_else(|| panic!("« {label} » drawn ({size:?}, zoom {zoom}, tab {tab})"));
+                assert!(
+                    clip.contains_rect(rect.expand(-0.5)),
+                    "« {label} » cut off ({size:?}, zoom {zoom}, tab {tab}): text {rect:?}, clip {clip:?}"
+                );
+            }
+        }
+    }
+
+    /// The Legacy Viewer's tabs keep the window's size frame after frame,
+    /// the buttons inside it, on the empty Favorites and on the long
+    /// teleport history (`widgets::above_footer`): at the opening size and
+    /// at the minimum height. The minimum width is checked at the interface
+    /// scales above; with the text twice as large, the three buttons no
+    /// longer fit side by side in it.
+    #[test]
+    fn legacy_tabs_window_keeps_its_size() {
+        let world = long_history_world();
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        // the icons as in the viewer: without them, the header's menus fall
+        // back to text buttons wider than the window
+        let _icons = crate::ui::icons::Icons::load(&egui::Context::default(), None);
+        for tab in [0, 2] {
+            crate::ui::widgets::steady_tests::assert_window_steady(
+                "places",
+                &[Vec2::new(400.0, 588.0), Vec2::new(400.0, 300.0)],
+                aurora_i18n::tr!("common-profile"),
+                || PlacesUi { tab, ..Default::default() },
+                |places, ctx, p| show_legacy(places, ctx, p, &world, &mut emoji),
+            );
+        }
+    }
+
     #[test]
     fn teleport_confirmation_has_a_do_not_show_again_box() {
         let asset = Uuid::from_u128(7);
@@ -1401,6 +1580,7 @@ mod tests {
             favorite: false,
             favorite_known: false,
             thumbnail: Uuid::nil(),
+            thumbnail_known: false,
         }
     }
 
