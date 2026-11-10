@@ -944,8 +944,28 @@ fn poser_library_saves_bvh_confirms_overwrite_and_correlates_loads_to_the_origin
     let path = service.entries[0].path.clone();
     assert_eq!(service.saved_path, None);
     assert_eq!(service.selected, Some(0));
-    assert!(service.filter.is_empty());
+    assert!(service.filter.is_empty(), "a search that hides the saved pose is cleared");
+    assert!(service.scroll_to_selected, "the list scrolls to the saved pose once");
     assert!(service.message.as_ref().unwrap().contains(path.to_string_lossy().as_ref()));
+
+    // A search the saved pose matches stays.
+    service.filter = "PORT".into();
+    service.scroll_to_selected = false;
+    service.job = Some(storage::Job::Save(document.clone(), session.pose.clone(), true, true, false));
+    for _ in 0..3 {
+        tick(&mut service);
+    }
+    if let Some((document, pose, bvh, unlock)) = service.overwrite.take() {
+        // saving the same name again asks to overwrite: confirm it
+        service.job = Some(storage::Job::Save(document, pose, bvh, unlock, true));
+        for _ in 0..3 {
+            tick(&mut service);
+        }
+    }
+    assert_eq!(service.selected, Some(0));
+    assert_eq!(service.filter, "PORT", "a search the saved pose matches is kept");
+    assert!(service.scroll_to_selected);
+    service.scroll_to_selected = false;
 
     // A user can select an existing row while the post-save refresh is pending.
     service.saved_path = Some(path.clone());
