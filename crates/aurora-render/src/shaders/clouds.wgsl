@@ -291,9 +291,13 @@ fn march(dir: vec3f, steps: u32, lsteps: u32, jitter: f32, off: vec2f) -> Res {
     var wsum = 0.0;
     // Steps grow with the distance, but a grazing ray crosses tens of km of
     // layer: the warp is eased so that no step is longer than STEP_MAX_KM
-    // (steps this long sampled a cloud's edge in slabs, terraces), and past
-    // what the warp can ease the count grows with the length, up to 96.
-    let n = min(max(steps, u32(ceil(len / STEP_MAX_KM))), 96u);
+    // (steps this long sampled a cloud's edge in slabs, terraces). Past what
+    // the warp can ease, the count grows with the length, up to 96 on top of
+    // `steps`: the cap holds while the layer interval is under 96 x
+    // STEP_MAX_KM (28.8 km, not reached with FAR_KM and the layer heights);
+    // past that the steps stretch. A caller's own count (stills: 128) is never
+    // cut. Mirrored by `march_steps` in clouds.rs (a test pins this line).
+    let n = max(steps, min(u32(ceil(len / STEP_MAX_KM)), 96u));
     let warp = clamp(STEP_MAX_KM * f32(n) / len, 1.0, STEP_WARP);
     var prev_t = t0;
     var prev_in = false;
@@ -408,6 +412,18 @@ fn near_sky(hp: vec2u) -> bool {
     }
     return false;
 }
+// Stills have no half-res composite, but the same silhouette fringe: a pixel
+// takes clouds when it or any of its 3x3 neighbours (clamped to the viewport)
+// is sky.
+fn still_near_sky(px: vec2u) -> bool {
+    let hi = vec2i(u.sizes.xy) - 1;
+    for (var dy = -1; dy <= 1; dy++) {
+        for (var dx = -1; dx <= 1; dx++) {
+            if is_sky(vec2u(clamp(vec2i(px) + vec2i(dx, dy), vec2i(0), hi))) { return true; }
+        }
+    }
+    return false;
+}
 fn checker(frame: u32) -> vec2u {
     switch frame % 4u {
         case 0u: { return vec2u(0u, 0u); }
@@ -484,7 +500,7 @@ fn jitter_still(p: vec2u, s: u32, n: u32) -> f32 {
 @compute @workgroup_size(8, 8)
 fn trace_still(@builtin(global_invocation_id) id: vec3u) {
     if any(id.xy >= u.sizes.xy) { return; }
-    if !is_sky(id.xy) {
+    if !still_near_sky(id.xy) {
         textureStore(hist_w, id.xy, vec4f(0.0, 0.0, 0.0, 1.0));
         return;
     }

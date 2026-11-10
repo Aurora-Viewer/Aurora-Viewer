@@ -21,7 +21,7 @@
 //!    thread and uploaded the frame it is done, then nothing; when the file
 //!    cannot be read, a slice of the base noise a frame for 16 frames;
 //! 3. the trace: a quarter of the half resolution sky pixels, a march of 64
-//!    steps with a light march per sample;
+//!    steps (up to 96 at grazing angles; stills 128) with a light march per sample;
 //! 4. the reconstruction: the half resolution image from the trace and the
 //!    history, reprojected for the camera's rotation and its horizontal
 //!    move, clamped to the trace's neighbourhood;
@@ -129,8 +129,9 @@ pub struct Params {
 
 impl Params {
     /// None when the Legacy layer would draw nothing: no cloud scale, no
-    /// cloud texture yet, or a density of 0 (the Legacy shader multiplies the
-    /// cloud alpha by `cloud_pos_density1.z`, cloudsF.glsl under
+    /// cloud texture yet, or a density of at most [`LAYER_MIN`]
+    /// (`cloud_pos_density1.z`: the Legacy shader scales the cloud term by it
+    /// before it saturates, ×10 then min 1, cloudsF.glsl under
     /// indra/newview/app_settings/shaders/class1/deferred).
     pub fn new(f: &crate::types::FrameParams, c: &crate::types::CloudsFrame, vp: Mat4, inv_vp: Mat4) -> Option<Params> {
         let origin_m = c.region_origin;
@@ -272,10 +273,20 @@ pub fn tile_km(cloud_scale: f32) -> f32 {
     (PERIOD_KM / n) as f32
 }
 
-/// Whether the Legacy layer draws anything: a cloud scale, a cloud texture
-/// and a density above 0.
+/// Below this the Legacy layer is taken as off (a cloud scale or a density).
+const LAYER_MIN: f32 = 0.001;
+
+/// Whether the Legacy layer draws anything: a cloud scale of at least
+/// [`LAYER_MIN`], a cloud texture and a density above [`LAYER_MIN`].
 fn layer_drawn(cloud_scale: f32, cloud_texture: u32, density: f32) -> bool {
-    cloud_scale >= 0.001 && cloud_texture != 0 && density > 0.001
+    cloud_scale >= LAYER_MIN && cloud_texture != 0 && density > LAYER_MIN
+}
+
+/// CPU mirror of the step count of `march` in shaders/clouds.wgsl (kept in
+/// sync by `the_step_count_matches_the_shader`).
+#[cfg(test)]
+fn march_steps(steps: u32, len_km: f32) -> u32 {
+    steps.max(((len_km / 0.3).ceil() as u32).min(96))
 }
 
 /// Extinction scale from the Legacy density (`cloud_pos_density1.z`, 1 by
@@ -1016,6 +1027,19 @@ mod tests {
         // the sub-samples are spread over the step grid
         let j: Vec<f32> = (0..STILL_SAMPLES).map(|s| still_jitter(a, s, STILL_SAMPLES)).collect();
         assert!(j.windows(2).all(|w| w[0] != w[1]));
+    }
+
+    #[test]
+    fn the_step_count_matches_the_shader() {
+        let src = include_str!("shaders/clouds.wgsl");
+        assert!(src.contains("let n = max(steps, min(u32(ceil(len / STEP_MAX_KM)), 96u));"));
+        assert!(src.contains("const STEP_MAX_KM: f32 = 0.3;"));
+        assert_eq!(march_steps(STILL_STEPS, 20.0), 128);
+        assert_eq!(march_steps(STILL_STEPS, 28.8), 128);
+        assert_eq!(march_steps(STEPS, 28.8), 96);
+        assert_eq!(march_steps(STEPS, 100.0), 96);
+        assert_eq!(march_steps(STEPS, 10.0), 64);
+        assert_eq!(march_steps(STEPS, 1.0), 64);
     }
 
     #[test]
