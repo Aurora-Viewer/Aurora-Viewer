@@ -5858,6 +5858,7 @@ build-ui-tools-select-next-part-or-face-ctrl = Select next part or face (Ctrl+.)
 ui-land-dialogs-select-2 = Select
 build-mod-select-at-least-two-objects-to-link = Select at least two objects to link
 build-land-select-land-first-the-select-land-tool = Select land first (the “Select land” tool).
+build-land-join-select-multiple-parcels = To join land, select an area spanning more than one parcel within a single region.
 build-mod-select-the-objects-to-copy-first = Select the objects to copy first.
 build-mod-no-copyable-object = None of the selected objects can be copied.
 world-inventory-actions-select-items-from-the-same-folder = Select items from the same folder.

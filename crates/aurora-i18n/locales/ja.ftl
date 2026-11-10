@@ -5845,6 +5845,7 @@ build-ui-tools-select-next-part-or-face-ctrl = 次のパーツまたは面を選
 ui-land-dialogs-select-2 = 選択
 build-mod-select-at-least-two-objects-to-link = リンクするオブジェクトを2つ以上選択してください
 build-land-select-land-first-the-select-land-tool = まず土地を選択してください（「土地を選択」ツール）。
+build-land-join-select-multiple-parcels = 土地を結合するには、同じリージョン内の複数の区画にまたがる範囲を選択してください。
 build-mod-select-the-objects-to-copy-first = まずコピーするオブジェクトを選択してください。
 build-mod-no-copyable-object = 選択したオブジェクトはどれもコピーできません。
 world-inventory-actions-select-items-from-the-same-folder = 同じフォルダのアイテムを選択してください。

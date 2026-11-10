@@ -1,5 +1,13 @@
 # Aurora Viewer architecture
 
+Land-tool Join eligibility and command validation live in `build/land.rs`, shared
+by the parcel panel in both editor layouts and the confirmation callback. A drag
+uses `SnapSelection=false`; area equality and an aggregate reply's owner do not
+identify a whole parcel or grant join rights. The tool waits for its current
+rectangle's reply, checks single-region bounds and requires `PARCEL_RESULT_MULTIPLE`
+before confirmation and sending. The simulator checks ownership/group/estate
+rights, following LLPanelLandInfo and LLViewerParcelMgr::startJoinLand.
+
 Nonrigged alpha faces use the projected depth and world-AABB bias of
 `LLDrawable::updateDistance` and `LLFace::CompareDistanceGreater` (#2575),
 rather than one radial object distance. `scene/picking.rs::PickFace` caches

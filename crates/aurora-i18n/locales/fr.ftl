@@ -5863,6 +5863,7 @@ build-ui-tools-select-next-part-or-face-ctrl = Sélectionner la partie ou face s
 ui-land-dialogs-select-2 = Sélectionnez
 build-mod-select-at-least-two-objects-to-link = Sélectionnez au moins deux objets à lier
 build-land-select-land-first-the-select-land-tool = Sélectionnez d'abord du terrain (outil « Sélectionner le terrain »).
+build-land-join-select-multiple-parcels = Pour fusionner des terrains, sélectionnez une zone qui chevauche plusieurs parcelles dans une même région.
 build-mod-select-the-objects-to-copy-first = Sélectionnez d'abord les objets à copier.
 build-mod-no-copyable-object = Aucun des objets sélectionnés ne peut être copié.
 world-inventory-actions-select-items-from-the-same-folder = Sélectionnez des éléments du même dossier.
