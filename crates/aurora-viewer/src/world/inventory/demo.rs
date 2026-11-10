@@ -749,6 +749,36 @@ pub fn seed_view(inv: &mut Inventory, agent: Uuid, large: bool) {
     inv.sort_all();
 }
 
+/// Hundreds of empty top folders, as some residents keep: still a long list
+/// once every folder is collapsed.
+pub fn seed_many_folders(inv: &mut Inventory, count: u128) {
+    let root = inv.root;
+    for n in 0..count {
+        let id = Uuid::from_u128(0x00c0_11a9_5e00_0000 + n);
+        inv.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    parent: root,
+                    name: aurora_i18n::tr!("world-inventory-demo-folder", n = format!("{n:03}")),
+                    type_default: -1,
+                    version: 1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        if let Some(folder) = inv.folders.get_mut(&root) {
+            folder.children.push(id);
+        }
+    }
+    inv.sort_all();
+}
+
 /// Long labels in nested folders, for narrowing and horizontal scrolling.
 pub fn seed_long_names(inv: &mut Inventory) {
     for (id, name) in [

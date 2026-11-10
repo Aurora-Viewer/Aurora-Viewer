@@ -3,7 +3,8 @@
 //! their grid snapping, snap rulers and the position readout.
 //!
 //! Sizes follow LL: handles keep a constant size on screen (50 px arrows,
-//! 100 px rotation sphere). Aurora uses thicker strokes and 14 px stretch
+//! 100 px rotation sphere), in interface points: like LL's
+//! LLUI::getScaleFactor(), the display scale grows them. Aurora uses thicker strokes and 14 px stretch
 //! boxes for readability, and scales the whole manipulator, pick areas
 //! included, by the "Manipulator size" setting (`gizmo_scale`). Objects follow the mouse locally;
 //! MultipleObjectUpdate goes out on release (stretching also every
@@ -774,7 +775,9 @@ impl Manip {
         if d.in_snap {
             let (a, b) = (center - sa * so, center + sa * so);
             p.guide_line(a, b, white, opacity);
-            let cone = cam.meters_for_pixels(center, ARROW_PX) / 4.0 * SNAP_ARROW_SCALE;
+            // LLManipTranslate's mConeSize: a quarter of the arrow, display
+            // scale and manipulator size included.
+            let cone = arrow_length(cam, f, center) / 4.0 * SNAP_ARROW_SCALE;
             p.tri(a - sa * cone, a + axis * cone, a - axis * cone, cam.at, fade(white, opacity));
             p.tri(b + sa * cone, b + axis * cone, b - axis * cone, cam.at, fade(white, opacity));
             p.flush();
@@ -1009,15 +1012,16 @@ fn snap_offset_axis(arrow: usize, at_abs: Vec3) -> usize {
     }
 }
 
-/// Arrow length (m) at `at`: LLManipTranslate's 50 px times the manipulator size.
+/// Arrow length (m) at `at`: LLManipTranslate's 50 px times the display
+/// scale and the manipulator size.
 pub(super) fn arrow_length(cam: &Cam, f: &Frame, at: Vec3) -> f32 {
-    cam.meters_for_pixels(at, ARROW_PX * f.size)
+    cam.meters_for_points(at, ARROW_PX * f.size)
 }
 
 /// Rotation sphere radius (m) at `c`: LLManipRotate's 100 px times the
-/// manipulator size.
+/// display scale and the manipulator size.
 pub(super) fn ring_radius(cam: &Cam, f: &Frame, c: Vec3) -> f32 {
-    let px = RING_PX * f.size;
+    let px = RING_PX * f.size * cam.ppp;
     if cam.hud.is_some() {
         return cam.meters_for_pixels(c, px);
     }
@@ -1505,6 +1509,7 @@ fn drag_update(
                     by_region.entry(m.key.region).or_default().push(m.key.local_id);
                 }
                 for (handle, ids) in by_region {
+                    world.objects.expect_local_duplicates(handle, &ids, Vec3::ZERO, false, None);
                     out.push(BuildCmd::Duplicate {
                         handle,
                         local_ids: ids,
@@ -2046,6 +2051,8 @@ mod tests {
         }
         let idx = world.objects.index_of_uuid(&crate::demo::action_id(99622)).unwrap();
         let key = world.objects.get(idx).unwrap().key;
+        let local = crate::world::objects::LocalAppearance::Texture(Uuid::new_v4());
+        world.objects.get_mut(idx).unwrap().render.local_appearance.insert(Some(1), local);
         let land = world.groups.groups[0].id;
         let active = Uuid::from_u128(8800);
         let nil = Uuid::nil();
@@ -2138,6 +2145,20 @@ mod tests {
                 );
                 let after = world.objects.get(idx).unwrap().position;
                 assert!(after.distance(before) > 1e-4, "the original still moves along the arrow");
+                let source = world.objects.get(idx).unwrap();
+                let mut copy = crate::demo::action_avatar(false);
+                copy.local_id = 99980 + axis as u32;
+                copy.full_id = Uuid::new_v4();
+                copy.parent_id = 0;
+                copy.pcode = source.pcode;
+                copy.position = before;
+                copy.rotation = source.rotation;
+                copy.scale = source.scale;
+                copy.volume = source.volume;
+                copy.texture_entry = source.te.clone();
+                copy.extra = source.extra.clone();
+                let copy = world.objects.upsert(key.region, copy);
+                assert_eq!(world.objects.get(copy).unwrap().local_appearance(1), Some(local));
                 manip.update(
                     &mut world,
                     &settings,
@@ -2464,6 +2485,39 @@ mod tests {
             let beyond = cam.project(piv + unit(i) * len * 1.6).unwrap();
             assert_eq!(pick_translate(&small, &f1, beyond), None);
             assert_eq!(pick_translate(&cam, &f2, beyond), Some(Part::Arrow(i)));
+        }
+    }
+
+    /// LLUI::getScaleFactor in LLManipTranslate / Rotate: a window at 200 %
+    /// display scale has twice the pixels, and the handles cover twice as
+    /// many, the same size in interface points as at 100 %.
+    #[test]
+    fn handles_keep_their_size_in_points_at_any_display_scale() {
+        let (piv, at_100, f) = translate_view(1.0);
+        let at_200 = Cam::new(
+            at_100.eye,
+            piv,
+            at_100.view_proj,
+            at_100.fov_y,
+            at_100.width * 2.0,
+            at_100.height * 2.0,
+            2.0,
+        );
+        let points = |cam: &Cam, length: f32| {
+            let tip = cam.project(piv + Vec3::Z * length).unwrap();
+            cam.project(piv).unwrap().distance(tip)
+        };
+        let (arrow, ring) = (
+            points(&at_100, arrow_length(&at_100, &f, piv)),
+            points(&at_100, ring_radius(&at_100, &f, piv)),
+        );
+        assert!((points(&at_200, arrow_length(&at_200, &f, piv)) - arrow).abs() < 0.5, "{arrow}");
+        assert!((points(&at_200, ring_radius(&at_200, &f, piv)) - ring).abs() < 0.5, "{ring}");
+        // the arrow is picked on the same spot, in points, at both scales
+        for i in 0..3 {
+            let near_tip = at_100.project(piv + unit(i) * arrow_length(&at_100, &f, piv) * 0.9).unwrap();
+            assert_eq!(pick_translate(&at_100, &f, near_tip), Some(Part::Arrow(i)));
+            assert_eq!(pick_translate(&at_200, &f, near_tip), Some(Part::Arrow(i)));
         }
     }
 

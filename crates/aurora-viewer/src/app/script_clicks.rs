@@ -105,7 +105,7 @@ impl App {
         if self.clicks.replaying() || !self.huds_shown() {
             return false;
         }
-        let Some((idx, point, hud_ray)) = self.scene.hud_pick(&self.world, self.cursor_pos, false) else {
+        let Some((idx, point, hud_ray)) = self.scene.hud_click_pick(&self.world, self.cursor_pos) else {
             return false;
         };
         self.left_down = true;

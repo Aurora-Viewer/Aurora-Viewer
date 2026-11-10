@@ -718,11 +718,13 @@ pub(super) fn history_list(
         {
             hist.clear();
         }
-        ui.add(
-            egui::TextEdit::singleline(query)
-                .hint_text(aurora_i18n::tr!("ui-notifications-search-history"))
-                .desired_width(ui.available_width()),
-        );
+        {
+            let width = ui.available_width();
+            crate::ui::widgets::search_text_edit(ui, p, query, |edit| {
+                edit.hint_text(aurora_i18n::tr!("ui-notifications-search-history"))
+                    .desired_width(width)
+            })
+        };
     });
     ui.add_space(4.0);
     let query = query.trim().to_lowercase();

@@ -342,7 +342,7 @@ pub(super) fn shortcuts(
         return;
     }
     if !actions.iter().any(|action| matches!(action, InvAction::Edit(_))) {
-        super::delete::shortcut(ui, inv, st, prefs, facts);
+        super::delete::shortcut(ui, inv, st, prefs, facts, actions);
     }
     if st.dialog.is_some() {
         return;
@@ -1250,7 +1250,7 @@ mod tests {
         let button = h.trash_button(h.st.ui_id);
         let count = h.text(&aurora_i18n::tr!(
             "ui-inventory-objects-loaded",
-            value0 = format!("{}", h.world.inventory.item_count())
+            value0 = aurora_i18n::integer(h.world.inventory.total_count() as i64)
         ));
         assert!(button.left() > count.right());
         assert!(button.left() - count.right() < 18.0, "the count sits beside the trash button");
@@ -1264,6 +1264,58 @@ mod tests {
         );
         assert!(h.st.dialog.is_none());
         assert_eq!(h.world.inventory.items[&id(8100)].parent, id(8000));
+    }
+
+    #[test]
+    fn inventory_count_hover_shows_live_items_and_folders_in_both_layouts() {
+        fn collect(shape: &Shape, texts: &mut Vec<String>) {
+            match shape {
+                Shape::Text(text) => texts.push(text.galley.text().to_owned()),
+                Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect(shape, texts)),
+                _ => {}
+            }
+        }
+        for (classic, width) in [(true, 680.0), (false, 680.0), (false, 1180.0)] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            super::super::super::widgets::size_floater(&h.ctx, "inventory", egui::vec2(width, 800.0));
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            assert_eq!(h.world.inventory.item_count(), 14);
+            assert_eq!(h.world.inventory.folders.len(), 5);
+            for folders in [5, 4] {
+                if folders == 4 {
+                    h.world.inventory.remove(&[id(8001)]);
+                }
+                h.frame(Vec::new());
+                let total = aurora_i18n::integer(14 + folders);
+                let label = if classic {
+                    aurora_i18n::tr!("ui-inventory-objects-loaded", value0 = total)
+                } else {
+                    aurora::item_count(&h.world.inventory, aurora::Layout::of_window(&h.ctx, "inventory"))
+                };
+                let position = h.text(&label).center();
+                h.frame(vec![Event::PointerMoved(position)]);
+                for _ in 0..8 {
+                    h.frame(Vec::new());
+                }
+                let details = aurora_i18n::tr!(
+                    "inventory-count-tooltip",
+                    items = aurora_i18n::integer(14),
+                    folders = aurora_i18n::integer(folders)
+                );
+                let tooltip = if classic { format!("{label}\n{details}") } else { details };
+                let mut texts = Vec::new();
+                for shape in &h.output.shapes {
+                    collect(&shape.shape, &mut texts);
+                }
+                assert!(
+                    texts.contains(&tooltip),
+                    "classic={classic}, width={width}, folders={folders}, expected={tooltip:?}, painted={texts:?}"
+                );
+            }
+        }
     }
 
     #[test]

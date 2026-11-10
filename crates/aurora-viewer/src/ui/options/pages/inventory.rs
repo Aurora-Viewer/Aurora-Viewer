@@ -88,6 +88,13 @@ pub fn page(cx: &mut Cx) {
         cx.toggle(tr!("task-transfer-warn-move"), "", &field!(inventory.warn_task_move));
         cx.toggle(tr!("task-transfer-warn-scripted"), "", &field!(inventory.warn_scripted_task_move));
     });
+    cx.group(tr!("ui-options-before-acting"), |cx| {
+        cx.toggle(
+            tr!("ui-options-confirm-inventory-delete"),
+            tr!("ui-options-confirm-inventory-delete-help"),
+            &field!(inventory.confirm_delete),
+        );
+    });
     cx.group(tr!("ui-inventory-controls-also-search-in"), |cx| {
         cx.toggle(tr!("ui-inventory-controls-library"), "", &field!(inventory.search_library));
         cx.toggle(tr!("ui-inventory-controls-trash"), "", &field!(inventory.search_trash));
