@@ -770,7 +770,7 @@ struct Out { @location(0) color: vec4<f32>, @builtin(sample_mask) mask: u32 }
     let resolved = texture(1);
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("spirv-fix readback"),
-        size: 256 * 8,
+        size: crate::readback::readback_size(256 * 8),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
