@@ -466,7 +466,7 @@ mod tests {
         }
         Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].color[3] = 0.0;
         crate::scene::picking::tests::index_test_objects(&mut scene);
-        scene.build_huds(&world, [1280, 720], true);
+        scene.build_huds(&world, [1280, 720], true, |_| None);
         let cursor = (640.0, 360.0);
         let press = |media: &mut MediaManager, world: &World, scene: &Scene| {
             let (idx, point, ray) = scene.hud_click_pick(world, cursor).unwrap();

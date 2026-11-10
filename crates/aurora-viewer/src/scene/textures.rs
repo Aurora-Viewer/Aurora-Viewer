@@ -102,6 +102,46 @@ const EVICT_LOOKS_PER_FRAME: usize = 512;
 /// Uploads set aside in a frame because their texture page is still being
 /// made, before the frame stops looking for one that can go.
 const PAGE_WAITS: usize = 16;
+/// Shortest wait before a texture refused by a full video memory is
+/// decoded and sent again (the renderer's own page wait is 2 s to 30 s).
+const MEMORY_RETRY_MIN: Duration = Duration::from_secs(1);
+
+/// Textures whose upload a full video memory refused, waiting to be sent
+/// again: one warning when the first waits, one line when none waits.
+#[derive(Default)]
+struct MemoryWaits(std::collections::HashSet<Uuid>);
+
+impl MemoryWaits {
+    /// `id` was refused: true when it is the first to wait.
+    fn refused(&mut self, id: Uuid) -> bool {
+        let first = self.0.is_empty();
+        self.0.insert(id) && first
+    }
+
+    /// `id` went through: true when it was the last to wait.
+    fn uploaded(&mut self, id: Uuid) -> bool {
+        self.0.remove(&id) && self.0.is_empty()
+    }
+
+    /// Keeps the textures still wanted at that level: true when none waits
+    /// any more because of it.
+    fn retain(&mut self, keep: impl FnMut(&Uuid) -> bool) -> bool {
+        let before = self.0.len();
+        self.0.retain(keep);
+        before > 0 && self.0.is_empty()
+    }
+
+    fn ids(&self) -> impl Iterator<Item = &Uuid> {
+        self.0.iter()
+    }
+}
+
+/// When a texture refused by a full video memory is decoded and sent
+/// again: at the renderer's next page try, and never sooner than
+/// `MEMORY_RETRY_MIN` (no decode in a loop when the try is due).
+fn memory_retry_at(next_try: Instant, now: Instant) -> Instant {
+    next_try.max(now + MEMORY_RETRY_MIN)
+}
 /// Downloaded data is written to the disk cache this often.
 const HOUSEKEEPING_EVERY: Duration = Duration::from_secs(2);
 /// The memory budget is checked this often (a query to the driver).
@@ -1102,6 +1142,9 @@ pub struct TextureStreamer {
     pub demo_source: Option<DemoSource>,
     /// Textures also wanted as egui images (profile pictures...): small CPU copies.
     ui_wanted: std::collections::HashSet<Uuid>,
+    /// Textures whose upload a full video memory refused, waiting to be
+    /// sent again (one warning while any wait, one line when all went).
+    memory_waits: MemoryWaits,
     /// Session-long UI users, independent from the bounded hover cache.
     ui_permanent: std::collections::HashSet<Uuid>,
     ui_ready: HashMap<Uuid, (u32, u32, Vec<u8>)>,
@@ -1497,6 +1540,7 @@ impl TextureStreamer {
             can_fetch: false,
             demo_source: None,
             ui_wanted: Default::default(),
+            memory_waits: Default::default(),
             ui_permanent: Default::default(),
             ui_ready: HashMap::new(),
             ui_previews: Default::default(),
@@ -3108,17 +3152,45 @@ impl TextureStreamer {
         }
     }
 
+    /// AURORA_DEMO_TEXTURES with AURORA_GPU_OOM: the stress textures whose
+    /// upload waits for video memory (`memory_waits`) have no data to
+    /// decode again, unlike a grid texture; once their wait is over their
+    /// texels come again, as a download would bring them.
+    pub fn refeed_demo_memory_waits(&mut self) {
+        let now = Instant::now();
+        let ids: Vec<Uuid> = self
+            .memory_waits
+            .ids()
+            .copied()
+            .filter(|id| self.demo_needs_data(id) && self.entries.get(id).is_some_and(|e| e.retry_at.is_none_or(|t| now >= t)))
+            .collect();
+        for id in ids {
+            if let Some(i) = crate::demo::stress_index(&id) {
+                self.feed_demo_stress(i);
+            }
+        }
+    }
+
     fn feed_demo_stress(&mut self, i: u32) {
         let id = crate::demo::stress_texture(i);
         for discard in [2, 0] {
-            self.on_job(texture_result(
-                id,
-                discard as u8,
-                crate::demo::stress_texture_mips(i, discard),
-                (AlphaKind::Opaque, false),
-                None,
-                self.staging.as_deref(),
-            ));
+            let mips = crate::demo::stress_texture_mips(i, discard);
+            // staged without waiting: this runs on the main thread, which
+            // never waits for the pool. While the texture pages are refused
+            // (AURORA_GPU_OOM), the uploads waiting for them hold the whole
+            // pool, and a refeed of the set waited 100 ms per texture,
+            // minutes without a frame. Not staged, it is written directly.
+            let staged = self.staging.as_deref().and_then(|pool| {
+                let levels: Vec<(u32, u32, &[u8])> = mips.iter().map(|(w, h, d)| (*w, *h, d.as_slice())).collect();
+                StagedTexture::try_new(pool, &levels)
+            });
+            let mut result = texture_result(id, discard as u8, mips, (AlphaKind::Opaque, false), None, None);
+            if let (Some(texture), JobResult::Texture { mips, staged: slot, .. }) = (staged, &mut result) {
+                // as texture_result keeps them once staged
+                mips.retain(|m| m.0.max(m.1) <= 256);
+                *slot = Some(texture);
+            }
+            self.on_job(result);
         }
     }
 
@@ -3268,6 +3340,24 @@ impl TextureStreamer {
                 }
             };
             done += usize::from(placed);
+            if !accepted
+                && placed
+                && let Some(at) = renderer.textures.retry_after_refusal()
+            {
+                // video memory full (another program took it, or the
+                // scene outgrew it): the slot keeps its texels and the
+                // level is decoded and sent again once the renderer tries
+                // its pages again, instead of being settled as loaded,
+                // which left the texture blurred or grey after the memory
+                // came back. Not a failure: it would end as unavailable.
+                if self.memory_waits.refused(u.id) {
+                    log::warn!("textures: video memory full, uploads wait until it can take them");
+                }
+                e.retry_at = Some(memory_retry_at(at, Instant::now()));
+                Self::settle(&mut self.todo, &mut self.counts, u.id, e);
+                u.retire(&mut self.trash);
+                continue;
+            }
             if !accepted {
                 // keep the current texels, and do not decode it again in a loop
                 if placed {
@@ -3286,6 +3376,9 @@ impl TextureStreamer {
                 Self::settle(&mut self.todo, &mut self.counts, u.id, e);
                 u.retire(&mut self.trash);
                 continue;
+            }
+            if self.memory_waits.uploaded(u.id) {
+                log::info!("textures: video memory took the uploads that waited for it");
             }
             spent += match &u.staged {
                 Some(staged) => {
@@ -3387,6 +3480,15 @@ impl TextureStreamer {
         }
         self.last_maintenance = now;
         self.report_slotless(renderer.textures.capacity());
+        // (a texture refused by a full video memory that is no longer
+        // wanted at that level, or gone, waits no more)
+        let entries = &self.entries;
+        if self
+            .memory_waits
+            .retain(|id| entries.get(id).is_some_and(|e| e.refs > 0 && e.needs_decode(e.want)))
+        {
+            log::info!("textures: no upload waits for video memory any more");
+        }
         // downloaded data to persist: shared, not copied, and queued in one go
         let mut writes = Vec::new();
         let mut later = Vec::new();
@@ -3979,6 +4081,34 @@ fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &D
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_refused_upload_waits_for_the_page_try_and_at_least_a_second() {
+        let now = Instant::now();
+        let s = Duration::from_secs;
+        assert_eq!(memory_retry_at(now + s(8), now), now + s(8));
+        // a try already due: no decode again in the same second
+        assert_eq!(memory_retry_at(now, now), now + MEMORY_RETRY_MIN);
+        assert_eq!(memory_retry_at(now - s(3), now), now + MEMORY_RETRY_MIN);
+    }
+
+    #[test]
+    fn the_memory_waits_warn_once_and_say_when_none_waits() {
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let mut w = MemoryWaits::default();
+        assert!(w.refused(a), "the first refusal warns");
+        assert!(!w.refused(a), "refused again: no second warning");
+        assert!(!w.refused(b));
+        assert!(!w.uploaded(a), "one still waits");
+        assert!(!w.uploaded(a), "not waiting any more");
+        assert!(w.uploaded(b), "the last one went");
+        // a texture no longer wanted waits no more, and says so once
+        assert!(w.refused(a));
+        assert!(!w.retain(|_| true));
+        assert!(w.retain(|_| false));
+        assert!(!w.retain(|_| false), "nothing was waiting");
+        assert!(!w.uploaded(a), "a pruned texture is not counted");
+    }
 
     #[test]
     fn alpha_just_under_opaque_is_kept_though_classed_opaque() {
