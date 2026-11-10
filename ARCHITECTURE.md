@@ -1370,6 +1370,20 @@ import preview. `poser/storage.rs` returns the successful save path to the UI;
 the refreshed library selects that entry and reports its full path, and native
 file pickers start in the account-local poses directory (#3169). Poser does not
 start IK-project autosaves or object imports.
+The poser's part under Ctrl is drawn and picked from the subject's meshes:
+`poser/world_hints.rs` turns the part into a 256-bit palette joint mask
+(collision volumes, attachment points and the inner spine follow their bone;
+the face takes the head, a hand its wrist) that the frame uniform carries
+(`FrameParams::part_joints`); `scene/mod.rs` lists the subject's skinned faces
+(`part_faces`, visited with the GPU lists too); `vs_part_mask` grades each
+vertex's weight share on those joints into a two-channel mask drawn with the
+scene's depth test, composited by `selection::Overlay::new_part` (a fading
+tint on the subject, a halo on the outer outline only). While Ctrl hovers the
+subject, `aurora-render/src/part_pick.rs` draws those faces again with each
+pixel's dominant joint (`vs_part_pick`) and reads back the texel under the
+cursor a frame or two later (`FramePacket` request, `FrameResult::part_pick`,
+`Renderer::take_part_pick`); the poser offers that joint's part, and the
+bones decide until it answers or for an animesh.
 `world/poser_consent.rs` owns region-scoped request/accept/refuse/cancel/withdraw
 state, privacy, nonces, timeouts and cooldowns. `app/poser.rs` drives transport
 and the independent target modal/reminder. Bridge 1.34 adds authenticated
