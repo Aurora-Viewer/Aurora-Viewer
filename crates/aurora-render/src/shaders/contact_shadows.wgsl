@@ -277,6 +277,11 @@ fn clear(@builtin(global_invocation_id) id: vec3<u32>) {
     let size = textureDimensions(out_tex);
     if (id.x < size.x && id.y < size.y) {
         textureStore(out_tex, vec2<i32>(id.xy), vec4<f32>(0.0));
-        atomicStore(&shadow_max[id.y * size.x + id.x], 0u);
+        // (a placeholder buffer when the image is past the device's
+        // storage limit: nothing runs after the clear then)
+        let pixel = id.y * size.x + id.x;
+        if (pixel < arrayLength(&shadow_max)) {
+            atomicStore(&shadow_max[pixel], 0u);
+        }
     }
 }

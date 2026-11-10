@@ -1255,7 +1255,11 @@ impl App {
             .video_memory
             .read(&renderer.device)
             .map_or(DEFAULT_TARGET_BYTES, |m| m.budget.saturating_sub(m.usage) / 2);
-        snapshot::pass_pixels(free, per_pixel, renderer.size()).min(self.snapshots.gpu_cost.pass_pixels(renderer.size(), ms))
+        snapshot::pass_pixels(free, per_pixel, renderer.size())
+            .min(self.snapshots.gpu_cost.pass_pixels(renderer.size(), ms))
+            // the contact shadows' combine buffer, one u32 a pixel, within the
+            // device's storage limit (only 128 MB guaranteed): tiles beyond
+            .min(aurora_render::contact_shadow_max_pixels(&renderer.device.limits()))
     }
 
     /// LLViewerWindow::playSnapshotAnimAndSound: the snapshot animation and

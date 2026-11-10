@@ -562,6 +562,9 @@ pub(crate) struct Targets {
     /// One `u32` per pixel, the quantized shadow the wavefronts `atomicMax`.
     /// Kept alive for the bind groups.
     shadow_max: wgpu::Buffer,
+    /// The combine buffer fits the device ([`max_pixels`]): otherwise it
+    /// is a placeholder, and no wavefront runs (the mask stays lit).
+    fits: bool,
 }
 
 /// Bytes of the combine buffer for an image of `width` by `height`: one
@@ -569,6 +572,14 @@ pub(crate) struct Targets {
 /// the 7680 × 4108 photo that used to be drawn in one pass.
 pub(crate) fn combine_bytes(width: u32, height: u32) -> u64 {
     u64::from(width.max(1)) * u64::from(height.max(1)) * 4
+}
+
+/// The most pixels one image may have for its contact shadows: the combine
+/// buffer must fit one storage binding and one buffer of the device. Only
+/// 128 MB is guaranteed (about 33.5 Mpx); a photo pass is planned within
+/// it (tiles beyond), and a larger window draws no contact shadow.
+pub fn max_pixels(limits: &wgpu::Limits) -> u64 {
+    limits.max_buffer_size.min(limits.max_storage_buffer_binding_size) / 4
 }
 
 const RESULT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -738,9 +749,18 @@ impl ContactShadows {
         };
         // the pass writes `raw`, the filter `result`
         let (raw, result) = (mask("contact shadows raw"), mask("contact shadows"));
+        let fits = u64::from(size.0) * u64::from(size.1) <= max_pixels(&device.limits());
+        if !fits {
+            log::warn!(
+                "contact shadows: an image of {}x{} is past this GPU's storage-buffer limit ({} Mpx): no contact shadow at this size",
+                size.0,
+                size.1,
+                max_pixels(&device.limits()) / 1_000_000
+            );
+        }
         let shadow_max = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("contact shadows combine"),
-            size: combine_bytes(size.0, size.1),
+            size: if fits { combine_bytes(size.0, size.1) } else { 4 },
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
@@ -819,6 +839,7 @@ impl ContactShadows {
             #[cfg(test)]
             raw,
             shadow_max,
+            fits,
         }
     }
 
@@ -877,7 +898,7 @@ impl ContactShadows {
             Some((s, photo)) if *s == self.samples => photo,
             _ => &self.pipeline,
         };
-        let list = if self.variant == Variant::Skip {
+        let list = if self.variant == Variant::Skip || !t.fits {
             &[][..]
         } else {
             self.list.dispatches()
@@ -891,7 +912,7 @@ impl ContactShadows {
             pass.set_bind_group(0, group, &[(i as u64 * self.stride) as u32]);
             pass.dispatch_workgroups(d.wave_count[0] as u32, d.wave_count[1] as u32, d.wave_count[2] as u32);
         }
-        {
+        if t.fits {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("contact shadows mask"),
                 timestamp_writes: None,
@@ -1146,6 +1167,20 @@ mod tests {
         let photo = combine_bytes(7680, 4108);
         assert!(photo <= 1 << 27, "{photo}");
         assert_eq!(combine_bytes(1, 1), 4);
+        // the guaranteed minimum: 128 MB of storage binding
+        let minimum = wgpu::Limits {
+            max_storage_buffer_binding_size: 1 << 27,
+            ..wgpu::Limits::default()
+        };
+        assert_eq!(max_pixels(&minimum), (1 << 27) / 4);
+        assert!(7680 * 4320 <= max_pixels(&minimum), "an 8K window fits");
+        assert!(10240 * 4320 > max_pixels(&minimum), "a 10K ultrawide does not");
+        // the smaller of the binding and the buffer limits
+        let small_buffer = wgpu::Limits {
+            max_buffer_size: 1 << 20,
+            ..minimum
+        };
+        assert_eq!(max_pixels(&small_buffer), (1 << 20) / 4);
     }
 
     /// Neighbouring wavefronts of the GPU test's light share pixels. The
