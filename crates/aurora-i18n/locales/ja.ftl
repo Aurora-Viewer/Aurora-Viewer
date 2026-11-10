@@ -13461,17 +13461,11 @@ picker-pipette-no-material = コピー可能なマテリアルがインベント
 local-texture-preview-hint = ローカルテクスチャ — このコンピューターのファイルのプレビュー。
 
 # ３６０度スナップショットのウィンドウ（LLFloater360Capture, floater_360capture.xml）
-capture-360-quality-label = 品質
 capture-360-quality-preview = プレビュー（高速）
 capture-360-quality-medium = 通常
 capture-360-quality-high = 高
 capture-360-quality-maximum = 最高品位
-capture-360-quality-preview-tip = プレビュー程度の品質
-capture-360-quality-medium-tip = 通常品質
-capture-360-quality-high-tip = 高品質
-capture-360-quality-maximum-tip = 最高品質
 capture-360-hide-avatars = アバターをすべて隠す
-capture-360-create = ３６０度画像を作成
 capture-360-capturing = ６面中{ $face }面目を描画中…
 capture-360-projecting = ３６０度画像を作成中…
 capture-360-saving = ３６０度画像を保存中…
@@ -13554,3 +13548,12 @@ panorama-help = ドラッグで見回し、ホイールでズーム、ダブル�
 
 # Texture preview: look into a 2:1 texture as a panorama
 resource-preview-360 = 360°
+
+# Photo window: the 360° format
+photo-format-360 = 360°
+photo-not-in-360 = 360°画像では使えません。
+photo-360-inventory-size = パノラマ：{ $width } × { $height }（最大のテクスチャ）
+photo-360-output = パノラマ：{ $width } × { $height }
+photo-360-format = JPEG · 360°
+photo-360-placeholder = シャッターを押すと、ここにパノラマが表示されます。
+photo-looks-not-in-360 = 360°画像には適用されません。色調フィルターのみ適用されます。

@@ -198,22 +198,21 @@ impl PanoView {
             egui::pos2(rect.right() - 2.0 * 24.0 - 6.0, rect.top() + 6.0),
             Vec2::new(2.0 * 24.0, 22.0),
         );
-        ui.scope_builder(
-            egui::UiBuilder::new().max_rect(strip).layout(egui::Layout::right_to_left(egui::Align::Min)),
-            |ui| {
-                let (icon, tip) = if self.full {
-                    ("arrows-minimize", aurora_i18n::tr!("panorama-leave-full"))
-                } else {
-                    ("arrows-maximize", aurora_i18n::tr!("panorama-enlarge"))
-                };
-                if widgets::icon_button(ui, p, icon, tip, true) {
-                    self.full = !self.full;
-                }
-                if widgets::icon_button(ui, p, "refresh", aurora_i18n::tr!("panorama-reset"), true) {
-                    self.reset();
-                }
-            },
-        );
+        // (a child, not a scope: a scope would move the parent's cursor back
+        // up to the corner)
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(strip).layout(egui::Layout::right_to_left(egui::Align::Min)));
+        let ui = &mut child;
+        let (icon, tip) = if self.full {
+            ("arrows-minimize", aurora_i18n::tr!("panorama-leave-full"))
+        } else {
+            ("arrows-maximize", aurora_i18n::tr!("panorama-enlarge"))
+        };
+        if widgets::icon_button(ui, p, icon, tip, true) {
+            self.full = !self.full;
+        }
+        if widgets::icon_button(ui, p, "refresh", aurora_i18n::tr!("panorama-reset"), true) {
+            self.reset();
+        }
     }
 
     /// The enlarged viewer over the whole window, while `self.full`; Escape

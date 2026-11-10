@@ -277,13 +277,16 @@ pub struct Renderer {
     /// Last captured frame (width, height, RGBA8).
     pub captured: Option<(u32, u32, Vec<u8>)>,
     /// A photo for the next frame: it is drawn offscreen at its own size
-    /// (see `frame_size`), waited for, and its image put in `snapshot`.
+    /// (see `frame_size`), waited for, and its image put in `snapshot`. A
+    /// face of a 360° capture (`SnapshotSpec::cube`) is not waited for: it is
+    /// taken out of this slot when the frame carrying it is sent, and stays
+    /// on the GPU.
     pub snapshot_request: Option<crate::SnapshotSpec>,
     /// The answer to the last photo: its image (width, height, RGBA8), or
     /// None when it could not be drawn.
     pub snapshot: Option<Option<(u32, u32, Vec<u8>)>>,
-    /// The six faces of a 360° snapshot to project with the next frame
-    /// (equirect.rs), their panorama in `equirect` a frame or two later.
+    /// The panorama to project from the six faces the cube holds, with the
+    /// next frame (equirect.rs); it comes in `equirect` a few frames later.
     pub equirect_request: Option<Box<crate::EquirectJob>>,
     /// The answer to the last panorama asked (width, height, RGBA8), or
     /// None when it could not be made.
@@ -1436,6 +1439,12 @@ impl Renderer {
         // for the answer of a photo still on the GPU)
         let capture = match self.snapshot_request {
             Some(_) if self.snapshot_sent => None,
+            // a face of a 360° capture is sent and forgotten: nothing comes
+            // back for it, the next face can be asked at once
+            Some(s) if s.cube.is_some() => {
+                self.snapshot_request = None;
+                Some(crate::packet::Capture::Snapshot(s))
+            }
             Some(s) => Some(crate::packet::Capture::Snapshot(s)),
             None => capture_for(self.capture_scene, self.capture_request, self.can_capture),
         };
@@ -1487,7 +1496,8 @@ impl Renderer {
                     }
                     Err(_) => gone = true,
                 }
-                if capture.is_some() && !gone {
+                let cube_face = matches!(capture, Some(crate::packet::Capture::Snapshot(s)) if s.cube.is_some());
+                if capture.is_some() && !cube_face && !gone {
                     // the capture is read right after this call; a GPU that
                     // stops answering in it leaves it for a later frame
                     let t = Instant::now();

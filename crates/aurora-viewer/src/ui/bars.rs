@@ -70,6 +70,10 @@ pub enum BarAction {
     PhotoToDisk,
     /// The toolbar's Photo roll: the reel's quick view on its newest photo.
     PhotoRoll,
+    /// The toolbar's 360° snapshot (Floater.ToggleOrBringToFront
+    /// 360capture): the photo window in its 360° format, or closed when it
+    /// is already open in it.
+    Photo360,
     /// Our profile on its Picks tab, or closed when Picks is shown
     /// (Avatar.TogglePicks, llviewermenu.cpp).
     MyPicks,
@@ -2202,7 +2206,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "performance" | "statistics" => toggle("perf", &mut panels.perf),
         "snapshot" => toggle(super::snapshot::WINDOW, &mut panels.snapshot),
         // Floater.ToggleOrBringToFront 360capture
-        "360capture" => toggle(super::capture_360::WINDOW, &mut panels.capture_360),
+        "360capture" => return BarAction::Photo360,
         // File.TakeSnapshotToDisk: a photo saved with the last settings,
         // without the window (the keyboard's Save to disk)
         "snapshot_to_disk" => return BarAction::PhotoToDisk,
@@ -2294,7 +2298,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "places" => panels.places,
         "search" => panels.search,
         "areasearch" => panels.area_search,
-        "360capture" => panels.capture_360,
+        "360capture" => panels.snapshot && panels.snapshot_pano,
         "soundexplorer" => panels.sound_explorer,
         "assetblacklist" => panels.asset_blacklist,
         "group_titles" => panels.group_titles,
@@ -3748,7 +3752,6 @@ mod tests {
             ("people", "people", |p| p.people),
             ("preferences", "options", |p| p.settings),
             ("areasearch", super::super::area_search::WINDOW, |p| p.area_search),
-            ("360capture", super::super::capture_360::WINDOW, |p| p.capture_360),
             ("soundexplorer", super::super::sound_explorer::WINDOW, |p| p.sound_explorer),
             ("assetblacklist", super::super::blacklist::WINDOW, |p| p.asset_blacklist),
             ("group_titles", super::super::group_titles::WINDOW, |p| p.group_titles),
@@ -3793,6 +3796,23 @@ mod tests {
         assert!(super::super::toolbar::ready("snapshot_to_disk"));
         assert!(matches!(run_command(&ctx, "snapshot_to_disk", &mut panels), BarAction::PhotoToDisk));
         assert!(!panels.snapshot);
+    }
+
+    /// The 360° button opens the photo window in its 360° format and is lit
+    /// while it is open in it; it does not toggle a window of its own.
+    #[test]
+    fn the_360_button_is_the_photo_window_in_360() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        assert!(super::super::toolbar::ready("360capture"));
+        assert!(matches!(run_command(&ctx, "360capture", &mut panels), BarAction::Photo360));
+        assert!(!command_active("360capture", &panels, false, false, false));
+        panels.snapshot = true;
+        assert!(!command_active("360capture", &panels, false, false, false), "open in the ordinary format");
+        panels.snapshot_pano = true;
+        assert!(command_active("360capture", &panels, false, false, false));
+        panels.snapshot = false;
+        assert!(!command_active("360capture", &panels, false, false, false));
     }
 
     #[test]

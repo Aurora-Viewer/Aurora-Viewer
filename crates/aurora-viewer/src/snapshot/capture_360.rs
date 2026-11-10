@@ -3,13 +3,20 @@
 //! side of the six faces), the heading written in the image, the file name
 //! proposed, and the JPEG's XMP block (the GPano fields the Legacy Viewer's
 //! stitching page writes, so that photo sites show the file as a panorama).
-//! The capture itself is `app/capture_360.rs`, the window `ui/capture_360.rs`,
-//! the projection `aurora_render::equirect`.
+//! The capture itself is `app/capture_360.rs`, its controls the photo window's
+//! 360° format (`ui/snapshot.rs`), the projection `aurora_render::equirect`,
+//! the viewer `aurora_render::panorama` with `ui/panorama.rs`.
 
 use serde::{Deserialize, Serialize};
 
-/// Width of the panorama (360CaptureOutputImageWidth); its height is half.
+/// The width the Legacy Viewer writes (360CaptureOutputImageWidth), the
+/// fallback of a card that cannot make the panorama of the quality chosen.
 pub const OUTPUT_WIDTH: u32 = 4096;
+/// The faces of a panorama uploaded to the inventory: four of them across
+/// the equator make the 2048 pixels of the largest texture the grid takes.
+pub const INVENTORY_FACE: u32 = 512;
+/// The texture an inventory panorama is (2048 is the upload's largest side).
+pub const INVENTORY_OUTPUT: (u32, u32) = (2048, 1024);
 /// JPEG quality of the saved panorama (360CaptureJPEGEncodeQuality).
 pub const JPEG_QUALITY: u8 = 95;
 /// What an Aurora 360° upload's item name starts with. ASCII only: the grid
@@ -59,14 +66,13 @@ impl Quality {
         }
     }
 
-    /// The radio's tooltip, which the page shows over the panorama.
-    pub fn tip_key(self) -> &'static str {
-        match self {
-            Quality::Preview => "capture-360-quality-preview-tip",
-            Quality::Medium => "capture-360-quality-medium-tip",
-            Quality::High => "capture-360-quality-high-tip",
-            Quality::Maximum => "capture-360-quality-maximum-tip",
-        }
+    /// The panorama's size this quality asks for: four faces across the
+    /// equator, so that every pixel of a face is used. The Legacy Viewer
+    /// writes 4096 whatever the faces (a visible difference: Preview is
+    /// smaller, Maximum larger).
+    pub fn output(self) -> (u32, u32) {
+        let width = self.face_size() * 4;
+        (width, width / 2)
     }
 
     /// The level named by a word of a demo scenario.
@@ -88,6 +94,45 @@ impl Quality {
 pub struct Settings {
     pub quality: Quality,
     pub hide_avatars: bool,
+}
+
+/// The panorama's size for faces of `face_size` on a card whose textures go up
+/// to `max_texture`: four faces across, or 4096 (the Legacy Viewer's) when
+/// the card cannot make that, or the card's own limit when it cannot even do
+/// that. Width over height is 2.
+pub fn output_size(face_size: u32, max_texture: u32) -> (u32, u32) {
+    let wanted = face_size.saturating_mul(4);
+    let width = if wanted <= max_texture {
+        wanted
+    } else if OUTPUT_WIDTH <= max_texture {
+        OUTPUT_WIDTH
+    } else {
+        max_texture
+    };
+    // (an even width, for the half height)
+    let width = (width & !1).max(2);
+    (width, width / 2)
+}
+
+/// The panorama turned so that the compass heading `heading` (degrees, north
+/// 0, east 90) is its middle column. The XMP block that carries the heading
+/// does not survive the texture upload, so the inventory's picture is
+/// rolled instead: a viewer that opens a panorama at its middle looks where
+/// the camera did. `rgba` is `width` x `height`, rows top to bottom.
+pub fn roll_to_heading(rgba: &[u8], width: u32, height: u32, heading: u32) -> Vec<u8> {
+    let (w, h) = (width as usize, height as usize);
+    if w == 0 || rgba.len() != w * h * 4 {
+        return rgba.to_vec();
+    }
+    // the heading's column is at (heading / 360 + 0.5) of the width; the
+    // middle column takes its place
+    let shift = ((f64::from(heading % 360) / 360.0) * w as f64).round() as usize % w;
+    let mut out = Vec::with_capacity(rgba.len());
+    for row in rgba.chunks_exact(w * 4) {
+        out.extend_from_slice(&row[shift * 4..]);
+        out.extend_from_slice(&row[..shift * 4]);
+    }
+    out
 }
 
 /// The compass heading the camera looks at, as the XMP's
@@ -406,6 +451,47 @@ mod tests {
         assert!(!is_equirect((1024, 1024)));
         assert!(!is_equirect((2048, 1025)));
         assert!(!is_equirect((0, 0)));
+    }
+
+    #[test]
+    fn the_panorama_has_four_faces_across_the_equator() {
+        assert_eq!(Quality::ALL.map(Quality::output), [(512, 256), (2048, 1024), (4096, 2048), (8192, 4096)]);
+        // a card that takes them all
+        assert_eq!(output_size(2048, 16384), (8192, 4096));
+        assert_eq!(output_size(128, 16384), (512, 256));
+        // a card limited to 4096: the Legacy Viewer's width
+        assert_eq!(output_size(2048, 4096), (4096, 2048));
+        assert_eq!(output_size(1024, 4096), (4096, 2048));
+        // a card that cannot make even that
+        assert_eq!(output_size(2048, 2048), (2048, 1024));
+        assert_eq!(output_size(2048, 2047), (2046, 1023));
+        // the inventory's: 4 x 512 = 2048 wide, the texture's size
+        assert_eq!(output_size(INVENTORY_FACE, 16384), INVENTORY_OUTPUT);
+    }
+
+    /// A column marked at the heading comes to the middle; nothing else is
+    /// lost, and a whole turn changes nothing.
+    #[test]
+    fn rolling_puts_the_heading_in_the_middle_column() {
+        let (w, h) = (8u32, 2u32);
+        let image = |marked: usize| {
+            let mut rgba = vec![0u8; (w * h * 4) as usize];
+            for row in 0..h as usize {
+                rgba[(row * w as usize + marked) * 4] = 255;
+            }
+            rgba
+        };
+        // north is the middle already
+        assert_eq!(roll_to_heading(&image(4), w, h, 0), image(4));
+        // east, 90 degrees, a quarter of the width right of the middle
+        assert_eq!(roll_to_heading(&image(6), w, h, 90), image(4));
+        // west is left of the middle
+        assert_eq!(roll_to_heading(&image(2), w, h, 270), image(4));
+        // south wraps round to the edge
+        assert_eq!(roll_to_heading(&image(0), w, h, 180), image(4));
+        assert_eq!(roll_to_heading(&image(4), w, h, 360), image(4));
+        // a malformed image comes back as it is
+        assert_eq!(roll_to_heading(&[1, 2, 3], w, h, 90), vec![1, 2, 3]);
     }
 
     #[test]

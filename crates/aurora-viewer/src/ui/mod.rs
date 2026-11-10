@@ -23,7 +23,6 @@ pub mod beacons;
 pub mod buy_currency;
 pub mod buy_land;
 pub mod call_invite;
-pub mod capture_360;
 pub mod panorama;
 pub mod chat;
 pub mod chat_bubbles;
@@ -163,8 +162,9 @@ pub struct Panels {
     pub group_titles: bool,
     /// The photo window (Firestorm's snapshot floater).
     pub snapshot: bool,
-    /// The 360° snapshot window (LLFloater360Capture).
-    pub capture_360: bool,
+    /// The photo window is in its 360° format (`SnapshotUi::pano`, which the
+    /// app copies here for the toolbar's button).
+    pub snapshot_pano: bool,
     pub people: bool,
     pub minimap: bool,
     /// World map (Ctrl+M).
@@ -248,7 +248,7 @@ impl Panels {
             sim_console: false,
             group_titles: false,
             snapshot: false,
-            capture_360: false,
+            snapshot_pano: false,
             people: settings.show_people,
             minimap: settings.show_minimap,
             world_map: false,

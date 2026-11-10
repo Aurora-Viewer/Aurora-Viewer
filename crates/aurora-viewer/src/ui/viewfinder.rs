@@ -529,7 +529,8 @@ impl Viewfinder {
         }
         let border = if shows { 0.5 } else { 0.25 };
         back.rect_stroke(frame, 0.0, Stroke::new(1.0, p.ink.gamma_multiply(border)), StrokeKind::Inside);
-        if shows && s.guide != Guide::None {
+        // (a 360° picture has no frame to compose in)
+        if shows && s.guide != Guide::None && !panel.pano {
             panel::guide_lines(&back, frame, s.guide, p.ink.gamma_multiply(0.4));
         }
         if !s.looks.is_empty() {
@@ -794,8 +795,15 @@ impl Viewfinder {
                     }
                     // a common resolution as its badge (HD, QHD, 4K…), the
                     // pixels in its tip; the window's or a typed size in pixels
-                    let pixels = format!("{} × {}", f.photo.0, f.photo.1);
-                    let preset = (panel.destination == Destination::Disk).then(|| s.resolution.short()).flatten();
+                    let photo = if panel.pano {
+                        panel.pano_output(s)
+                    } else {
+                        f.photo
+                    };
+                    let pixels = format!("{} × {}", photo.0, photo.1);
+                    let preset = (panel.destination == Destination::Disk && !panel.pano)
+                        .then(|| s.resolution.short())
+                        .flatten();
                     let clicked = match preset {
                         Some(short) => {
                             let tip = format!("{pixels} · {}", aurora_i18n::tr!("photo-vf-size-tip"));
@@ -807,9 +815,19 @@ impl Viewfinder {
                         next_size(s, panel.destination);
                     }
                     dot(ui, p);
-                    if text_button(ui, p, aspect_label(s.aspect), font, p.ink, aurora_i18n::tr!("photo-vf-format-tip")).clicked() {
-                        let i = Aspect::ALL.iter().position(|a| *a == s.aspect).unwrap_or(0);
-                        s.set_aspect(Aspect::ALL[(i + 1) % Aspect::ALL.len()], f.window);
+                    let format = if panel.pano {
+                        aurora_i18n::tr!("photo-format-360")
+                    } else {
+                        aspect_label(s.aspect)
+                    };
+                    if text_button(ui, p, format, font, p.ink, aurora_i18n::tr!("photo-vf-format-tip")).clicked() {
+                        if panel.pano {
+                            // (a click on the badge leaves the 360° format)
+                            panel.set_pano(false);
+                        } else {
+                            let i = Aspect::ALL.iter().position(|a| *a == s.aspect).unwrap_or(0);
+                            s.set_aspect(Aspect::ALL[(i + 1) % Aspect::ALL.len()], f.window);
+                        }
                     }
                 });
             });

@@ -9741,9 +9741,17 @@ impl App {
         let mut proj = frame_proj(&self.camera);
         let mut vp = proj * view;
         let camera_fast = self.texture_motion.update(self.camera.position, self.camera.forward(), dt);
+        // the photo window in 360°: every direction counts as in view for the
+        // textures, so that the faces behind the camera are as sharp as the
+        // one it looks at (within the same texture budget)
+        let texture_aspect = if self.panels.snapshot && self.snapshots.ui.pano && self.in_world() {
+            1000.0
+        } else {
+            aspect
+        };
         let mut cull = CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y).with_texture_camera(
             self.camera.forward(),
-            aspect,
+            texture_aspect,
             camera_fast,
         );
         // The experimental XR worker can look in any direction after these
@@ -10075,7 +10083,7 @@ impl App {
                 vp = proj * view;
                 cull = CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y).with_texture_camera(
                     self.camera.forward(),
-                    aspect,
+                    texture_aspect,
                     camera_fast,
                 );
                 if self.settings.debug.freeze_culling {
@@ -13992,6 +14000,14 @@ impl App {
             BarAction::CreateLandmark => self.open_create_landmark(None),
             BarAction::PhotoToDisk => self.photo_to_disk(),
             BarAction::PhotoRoll => self.photo_reel_show_newest(),
+            BarAction::Photo360 => {
+                if self.panels.snapshot && self.snapshots.ui.pano {
+                    self.panels.snapshot = false;
+                } else {
+                    self.panels.snapshot = true;
+                    self.snapshots.ui.set_pano(true);
+                }
+            }
             BarAction::LandmarkStar(star) => self.landmark_star(star),
             BarAction::PlaceBar { stretch, rights_text } => {
                 self.settings.place_bar_stretch = stretch;
@@ -17508,7 +17524,6 @@ impl App {
                 }
                 self.blacklist_window(&ctx, &p);
                 self.group_titles_window(&ctx, &p);
-                self.capture_360_window(&ctx, &p);
                 self.area_search_window(&ctx, &p);
                 self.sound_explorer_window(&ctx, &p);
                 self.animation_explorer_window(&ctx, &p);

@@ -1630,6 +1630,18 @@ pub(crate) struct Backend {
     cutout: Option<crate::cutout::Cutout>,
     /// The 360° snapshot's panorama pass (equirect.rs), made on first use.
     equirect: Option<crate::equirect::Equirect>,
+    /// The faces of the 360° capture in progress, on the GPU (equirect.rs).
+    cube: Option<crate::equirect::CubeTarget>,
+    /// The panoramas being read back, asked in order (equirect.rs).
+    equirect_reads: crate::equirect::Readbacks,
+    /// The six faces of a 360° capture are drawn one after the other: the
+    /// snapshot size stays (the render targets are made once, not twice per
+    /// face) from the first face to the frame after the last.
+    cube_hold: bool,
+    /// The frame in hand draws a face that is not the last: the hold goes on.
+    cube_keep: bool,
+    /// The capture camera (its step) of the face the frame in hand draws.
+    cube_step: Option<usize>,
     frame_layout: wgpu::BindGroupLayout,
     records_layout: wgpu::BindGroupLayout,
     /// Layout of the scene's texture pages (textures.rs), for the pipelines.
@@ -3480,6 +3492,11 @@ impl Backend {
             selection: None,
             cutout: None,
             equirect: None,
+            cube: None,
+            equirect_reads: Default::default(),
+            cube_hold: false,
+            cube_keep: false,
+            cube_step: None,
             hud_selection: None,
             frame_layout,
             records_layout,
@@ -5980,7 +5997,10 @@ impl Backend {
     /// What a frame gives back: its statistics, the readbacks that have
     /// arrived, the packet's buffers.
     fn result(&mut self, index: u64, stats: RenderStats, captured: Option<(u32, u32, Vec<u8>)>, spent: Spent) -> FrameResult {
-        let snapshot = self.end_snapshot();
+        let cube_face = std::mem::take(&mut self.cube_step).is_some();
+        // (a face of a 360° capture is answered by nothing: it stays on the
+        // GPU, and the main thread did not wait for it)
+        let snapshot = self.end_snapshot() && !cube_face;
         FrameResult {
             index,
             stats,
@@ -5998,20 +6018,57 @@ impl Backend {
 
     /// A photo frame draws every pass at the photo's size: the render size
     /// (`config`, which every pass reads) takes it for this frame, the
-    /// swapchain keeps the window's (it is not reconfigured).
+    /// swapchain keeps the window's (it is not reconfigured). The faces of a
+    /// 360° capture (`SnapshotSpec::cube`) share one set of targets: they are
+    /// made for the first face and kept until the frame after the last.
     fn begin_snapshot(&mut self, s: SnapshotSpec) {
-        self.snapshot_window = Some((self.config.width, self.config.height));
+        let held = self.cube_hold && self.snapshot_window.is_some();
+        if !held {
+            self.snapshot_window = Some((self.config.width, self.config.height));
+        }
+        let same = held && (self.config.width, self.config.height) == (s.width, s.height);
         self.config.width = s.width;
         self.config.height = s.height;
         self.gtao.photo = Some(s.photo);
-        self.rebuild_targets();
+        self.cube_step = s.cube.map(usize::from);
+        self.cube_keep = s.cube.is_some_and(|step| usize::from(step) + 1 < crate::equirect::CAPTURE_CAMERAS.len());
+        if same {
+            // the face before left its images in the history of the passes
+            // that remember the last frame: each face starts afresh (the
+            // targets made again do that by themselves)
+            self.occlusion.invalidate();
+            self.depth_pick.scene_changed();
+            self.prev_view_proj = None;
+            self.prev_motion_view = None;
+            if let Some(taa) = &mut self.taa {
+                taa.reset = true;
+            }
+        } else {
+            self.rebuild_targets();
+        }
     }
 
-    /// Back to the window's size after a photo frame, however it ended.
-    /// True when the frame was one.
+    /// Back to the window's size after a photo frame, however it ended; a
+    /// face of a 360° capture that is not the last keeps the targets for the
+    /// next one. True when the frame was a photo's.
     fn end_snapshot(&mut self) -> bool {
-        let Some((w, h)) = self.snapshot_window.take() else {
+        if self.snapshot_window.is_none() {
             return false;
+        }
+        if std::mem::take(&mut self.cube_keep) {
+            self.cube_hold = true;
+            return true;
+        }
+        self.release_snapshot();
+        true
+    }
+
+    /// The window's size again, the targets made for it.
+    fn release_snapshot(&mut self) {
+        self.cube_hold = false;
+        self.cube_keep = false;
+        let Some((w, h)) = self.snapshot_window.take() else {
+            return;
         };
         // the video memory at the photo's peak (its targets still alive)
         let live = self.device.get_internal_counters().hal;
@@ -6027,7 +6084,6 @@ impl Backend {
         self.config.height = h;
         self.gtao.photo = None;
         self.rebuild_targets();
-        true
     }
 
     /// End of a frame that cannot be drawn (no swapchain image, or its
@@ -6212,14 +6268,24 @@ impl Backend {
     }
 
     pub fn render(&mut self, mut packet: FramePacket) -> FrameResult {
-        // the 360° snapshot's panorama, before the frame: its faces are
-        // uploaded, projected and read back here (equirect.rs)
-        let equirect = packet.equirect.take().map(|job| {
+        // the 360° snapshot's panorama, before the frame: projected from the
+        // cube the faces filled, its readback begun and answered by a later
+        // frame (equirect.rs). The cube is let go once the GPU has the job.
+        if let Some(job) = packet.equirect.take() {
             let pass = self.equirect.get_or_insert_with(|| crate::equirect::Equirect::new(&self.device));
-            pass.run(&self.device, &self.queue, &self.lost, packet.index, *job)
-        });
+            pass.start(
+                &self.device,
+                &self.queue,
+                &self.lost,
+                packet.index,
+                self.cube.as_ref(),
+                *job,
+                &mut self.equirect_reads,
+            );
+            self.cube = None;
+        }
         let mut result = self.render_frame(packet);
-        result.equirect = equirect;
+        result.equirect = self.equirect_reads.poll();
         result
     }
 
@@ -6377,8 +6443,18 @@ impl Backend {
             self.last_inv_vp,
             picks,
         );
+        // a 360° capture's faces share the snapshot targets; any other frame
+        // ends the hold (the capture was given up, or it is over)
+        let cube_face = matches!(&wanted, Some(Capture::Snapshot(s)) if s.width > 0 && s.height > 0 && s.cube.is_some());
+        if self.cube_hold && !cube_face {
+            self.release_snapshot();
+        }
         // the window and the settings as the main thread had them for this frame
-        self.apply_surface(surface);
+        if self.cube_hold {
+            self.set_vsync(surface.vsync);
+        } else {
+            self.apply_surface(surface);
+        }
         if self.rlva_resolution_divisor != params.rlva_resolution_divisor {
             self.rlva_resolution_divisor = params.rlva_resolution_divisor;
             self.rebuild_targets();
@@ -9593,6 +9669,16 @@ impl Backend {
         }
         if wanted == Some(Capture::Full) {
             capture = self.encode_capture(&mut encoder, surface_tex.texture(), false);
+        } else if let (Some(step), Some(_)) = (self.cube_step, snapshot) {
+            // a face of a 360° capture stays on the GPU: copied into its
+            // layer of the cube, never read back
+            let (size, format) = (self.config.width, surface_tex.texture().format());
+            if self.cube.as_ref().is_none_or(|cube| !cube.fits(size, format)) {
+                self.cube = Some(crate::equirect::CubeTarget::new(&self.device, size, format));
+            }
+            if let Some(cube) = &mut self.cube {
+                cube.add_face(&mut encoder, surface_tex.texture(), step);
+            }
         } else if snapshot.is_some() {
             capture = self.encode_capture(&mut encoder, surface_tex.texture(), true);
         }
@@ -9647,6 +9733,7 @@ impl Backend {
         self.motion_kept = self.motion_now;
         // staging chunks whose copies are now submitted are mapped again
         frame_uploads.after_submit();
+        // (a face of a 360° capture is on the GPU, with nothing to read)
         let captured = capture.and_then(|capture| self.read_capture(capture, f.cutout));
 
         if let (Some(t), Some(slot)) = (&mut self.timer, timer_slot) {

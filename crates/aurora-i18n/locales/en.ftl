@@ -13494,17 +13494,11 @@ picker-pipette-no-material = No copyable material found in your inventory.
 local-texture-preview-hint = Local texture — preview from a file on this computer.
 
 # The 360° snapshot window (LLFloater360Capture, floater_360capture.xml)
-capture-360-quality-label = Quality level
 capture-360-quality-preview = Preview (fast)
 capture-360-quality-medium = Medium
 capture-360-quality-high = High
 capture-360-quality-maximum = Maximum
-capture-360-quality-preview-tip = Preview quality
-capture-360-quality-medium-tip = Medium quality
-capture-360-quality-high-tip = High quality
-capture-360-quality-maximum-tip = Maximum quality
 capture-360-hide-avatars = Hide all avatars
-capture-360-create = Create 360 image
 capture-360-capturing = Drawing face { $face } of 6…
 capture-360-projecting = Building the 360° image…
 capture-360-saving = Saving the 360° image…
@@ -13587,3 +13581,12 @@ panorama-help = Drag to look around, wheel to zoom, double-click to reset. Click
 
 # Texture preview: look into a 2:1 texture as a panorama
 resource-preview-360 = 360°
+
+# Photo window: the 360° format
+photo-format-360 = 360°
+photo-not-in-360 = Not in 360° pictures.
+photo-360-inventory-size = Panorama: { $width } × { $height } (the largest texture)
+photo-360-output = Panorama: { $width } × { $height }
+photo-360-format = JPEG · 360°
+photo-360-placeholder = Press the shutter: the panorama appears here.
+photo-looks-not-in-360 = Not drawn in a 360° picture: only the colour looks are.

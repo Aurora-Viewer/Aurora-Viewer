@@ -4,10 +4,14 @@
 //! one click, file, what the image holds, focal length, latest photos), and
 //! the full-frame view: the interface gone but a small command strip, the
 //! world outside the photo's proportions darkened, a composition guide.
+//! The window also takes 360° panoramas (the format chip after the
+//! proportions): its settings follow, and its preview is the last panorama,
+//! in the panorama viewer (`ui/panorama.rs`).
 
 use super::widgets::{self, ActionKind, Floater};
 use crate::snapshot::inventory::TextureSize;
 use crate::snapshot::profile::ProfileSize;
+use crate::snapshot::capture_360::Quality;
 use crate::snapshot::{Aspect, FileFormat, Guide, Resolution, Settings};
 use crate::theme::Palette;
 use egui::{Color32, Pos2, Rect, RichText, Sense, Stroke, Vec2};
@@ -50,6 +54,45 @@ pub struct SnapshotUi {
     pub looks: super::looks_editor::LooksUi,
     /// The user's 3D tables, by file name (`snapshot::luts`).
     pub lut_names: Vec<String>,
+    /// The 360° format: the shutter takes a panorama. Not kept between
+    /// sessions, like the destination: Ctrl+` and the reel keep taking
+    /// ordinary photos.
+    pub pano: bool,
+    /// The destination before the 360° format took the disk (the profile and
+    /// the postcard have no panorama).
+    pano_restore: Option<Destination>,
+    /// The viewer of the last panorama, and the capture it was made for.
+    pano_view: Option<super::panorama::PanoView>,
+    pano_serial: u64,
+}
+
+impl SnapshotUi {
+    /// The size of the panorama the shutter will take: the quality's for the
+    /// disk, the texture's for the inventory.
+    pub fn pano_output(&self, s: &Settings) -> (u32, u32) {
+        match self.destination {
+            Destination::Inventory => crate::snapshot::capture_360::INVENTORY_OUTPUT,
+            _ => s.capture_360.quality.output(),
+        }
+    }
+
+    /// The 360° format on or off. Turning it on leaves the profile and the
+    /// postcard (they take no panorama) for the disk; turning it off gives
+    /// the destination back.
+    pub fn set_pano(&mut self, on: bool) {
+        if on == self.pano {
+            return;
+        }
+        self.pano = on;
+        if on {
+            if matches!(self.destination, Destination::Profile | Destination::Email) {
+                self.pano_restore = Some(self.destination);
+                self.destination = Destination::Disk;
+            }
+        } else if let Some(destination) = self.pano_restore.take() {
+            self.destination = destination;
+        }
+    }
 }
 
 /// Where a photo goes (Firestorm's snapshot panels; the profile feed
@@ -159,6 +202,17 @@ pub struct View<'a> {
     pub back_key: Option<crate::keybinds::Binding>,
     /// The photo quality is lowered to stay within the video memory.
     pub quality_reduced: bool,
+    /// The last 360° panorama made, for the 360° format's preview.
+    pub pano: Option<PanoShown>,
+}
+
+/// The panorama the 360° format shows.
+pub struct PanoShown {
+    pub image: std::sync::Arc<aurora_render::preview::Image>,
+    /// Radians: where the viewer opens.
+    pub yaw: f32,
+    /// Which capture it is: a new one starts the viewer afresh.
+    pub serial: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -243,6 +297,13 @@ impl SnapshotUi {
         if full {
             self.full_frame = true;
         }
+        // the enlarged panorama, over the whole window
+        if let (Some(pano), Some(shown)) = (&mut self.pano_view, &view.pano)
+            && self.pano
+            && *open
+        {
+            pano.show_full(ctx, p, egui::Id::unique("photo_panorama"), &shown.image);
+        }
         if !*open {
             self.full_frame = false;
             if self.freeze {
@@ -266,7 +327,9 @@ impl SnapshotUi {
     ) {
         ui.set_width(WIDTH - 24.0);
         ui.spacing_mut().item_spacing.y = 6.0;
-        if preview(ui, p, s, view) {
+        if self.pano {
+            self.pano_preview(ui, p, view);
+        } else if preview(ui, p, s, view) {
             out.push(Action::Refresh);
         }
 
@@ -302,6 +365,10 @@ impl SnapshotUi {
         ui.spacing_mut().item_spacing.y = 6.0;
         let before = s.clone();
         let freeze = self.freeze;
+        // (the viewfinder is the preview of a photo; a panorama is shown here)
+        if self.pano {
+            self.pano_preview(ui, p, view);
+        }
         egui::ScrollArea::vertical()
             .id_salt("photo_drawer")
             .max_height(room)
@@ -321,6 +388,35 @@ impl SnapshotUi {
         light_rows(ui, p, &mut self.light, view.exposure, view.hdr, &view.env, out);
         if self.light != before && !out.contains(&Action::Changed) {
             out.push(Action::Changed);
+        }
+    }
+
+    /// The 360° format's preview: the last panorama in the panorama viewer
+    /// (2:1, the room's width), or a line telling to press the shutter.
+    fn pano_preview(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View) {
+        let width = ui.available_width();
+        let size = Vec2::new(width, (width / 2.0).min(300.0));
+        match &view.pano {
+            Some(shown) => {
+                if self.pano_serial != shown.serial || self.pano_view.is_none() {
+                    self.pano_serial = shown.serial;
+                    self.pano_view = Some(super::panorama::PanoView::new(shown.yaw));
+                }
+                if let Some(pano) = &mut self.pano_view {
+                    pano.show(ui, p, egui::Id::unique("photo_panorama_view"), &shown.image, size);
+                }
+            }
+            None => {
+                let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+                ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
+                ui.painter().text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    aurora_i18n::tr!("photo-360-placeholder"),
+                    egui::FontId::proportional(12.0),
+                    p.muted,
+                );
+            }
         }
     }
 
@@ -527,7 +623,9 @@ impl SnapshotUi {
             ui.vertical(|ui| {
                 ui.set_width(CLASSIC_PREVIEW);
                 ui.spacing_mut().item_spacing.y = 6.0;
-                if preview(ui, p, s, view) {
+                if self.pano {
+                    self.pano_preview(ui, p, view);
+                } else if preview(ui, p, s, view) {
                     out.push(Action::Refresh);
                 }
             });
@@ -552,17 +650,35 @@ impl SnapshotUi {
             ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
             for a in Aspect::ALL {
                 let label = a.short().unwrap_or(aurora_i18n::tr!("photo-aspect-window"));
-                if chip(ui, p, label, None, s.aspect == a, true).clicked() {
+                // (a proportion chosen leaves the 360° format)
+                if chip(ui, p, label, None, s.aspect == a && !self.pano, true).clicked() {
                     s.set_aspect(a, view.window);
+                    if self.pano {
+                        self.set_pano(false);
+                        out.push(Action::Changed);
+                    }
                 }
             }
+            if chip(ui, p, aurora_i18n::tr!("photo-format-360"), None, self.pano, true).clicked() {
+                self.set_pano(!self.pano);
+                if self.pano && self.freeze {
+                    // (the held photo has no panorama)
+                    self.freeze = false;
+                    out.push(Action::Freeze(false));
+                }
+                out.push(Action::Changed);
+            }
         });
-
         section(ui, p, "dimensions", aurora_i18n::tr!("photo-section-resolution"));
         match (&view.email, &view.inventory, &view.profile) {
             (Some(mail), _, _) => long_sides(ui, p, &mut s.postcard_size, mail.size),
             (None, _, Some(prof)) => long_sides(ui, p, &mut s.profile_size, prof.size),
+            (None, Some(_), None) if self.pano => {
+                let (w, h) = crate::snapshot::capture_360::INVENTORY_OUTPUT;
+                ui.label(RichText::new(aurora_i18n::tr!("photo-360-inventory-size", width = w, height = h)).color(p.ink));
+            }
             (None, Some(inv), None) => texture_sizes(ui, p, s, inv),
+            (None, None, None) if self.pano => pano_qualities(ui, p, s),
             (None, None, None) => resolutions(ui, p, s, view),
         }
         // the photo quality lowered for the video memory (the switch is
@@ -585,8 +701,8 @@ impl SnapshotUi {
             &[
                 (aurora_i18n::tr!("photo-destination-disk"), true),
                 (aurora_i18n::tr!("photo-destination-inventory"), true),
-                (aurora_i18n::tr!("photo-destination-profile"), true),
-                (aurora_i18n::tr!("photo-destination-email"), true),
+                (aurora_i18n::tr!("photo-destination-profile"), !self.pano),
+                (aurora_i18n::tr!("photo-destination-email"), !self.pano),
             ],
         ) {
             self.destination = match dest {
@@ -626,6 +742,13 @@ impl SnapshotUi {
                 };
                 ui.label(RichText::new(cost).color(p.ink));
             }
+            (None, None, None) if self.pano => {
+                // (the Legacy Viewer's 360° picture: a JPEG at quality 95 with its
+                // panorama XMP block)
+                row(ui, p, aurora_i18n::tr!("photo-file-format"), None, |ui| {
+                    ui.label(RichText::new(aurora_i18n::tr!("photo-360-format")).color(p.ink));
+                });
+            }
             (None, None, None) => {
                 row(ui, p, aurora_i18n::tr!("photo-file-format"), None, |ui| {
                     let mut i = FileFormat::ALL.iter().position(|f| *f == s.format).unwrap_or(0);
@@ -644,23 +767,32 @@ impl SnapshotUi {
         }
 
         section(ui, p, "adjustments-horizontal-filled", aurora_i18n::tr!("photo-section-in-image"));
-        let interface_possible = crate::snapshot::same_proportions(view.photo, view.window);
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("photo-interface"),
-            (!interface_possible).then(|| aurora_i18n::tr!("photo-interface-hint")),
-            |ui| {
-                let mut on = s.interface && interface_possible;
-                ui.add_enabled_ui(interface_possible, |ui| {
-                    if widgets::switch(ui, p, &mut on).changed() {
-                        s.interface = on;
-                    }
-                });
-            },
-        );
-        row(ui, p, aurora_i18n::tr!("photo-huds"), None, |ui| {
-            widgets::switch(ui, p, &mut s.huds);
+        let pano = self.pano;
+        if pano {
+            row(ui, p, aurora_i18n::tr!("capture-360-hide-avatars"), None, |ui| {
+                widgets::switch(ui, p, &mut s.capture_360.hide_avatars);
+            });
+            ui.add(egui::Label::new(RichText::new(aurora_i18n::tr!("photo-not-in-360")).size(11.0).color(p.muted)).wrap());
+        }
+        ui.add_enabled_ui(!pano, |ui| {
+            let interface_possible = crate::snapshot::same_proportions(view.photo, view.window);
+            row(
+                ui,
+                p,
+                aurora_i18n::tr!("photo-interface"),
+                (!interface_possible && !pano).then(|| aurora_i18n::tr!("photo-interface-hint")),
+                |ui| {
+                    let mut on = s.interface && interface_possible && !pano;
+                    ui.add_enabled_ui(interface_possible, |ui| {
+                        if widgets::switch(ui, p, &mut on).changed() {
+                            s.interface = on;
+                        }
+                    });
+                },
+            );
+            row(ui, p, aurora_i18n::tr!("photo-huds"), None, |ui| {
+                widgets::switch(ui, p, &mut s.huds);
+            });
         });
         row(
             ui,
@@ -671,42 +803,47 @@ impl SnapshotUi {
                 widgets::switch(ui, p, &mut s.quality);
             },
         );
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("photo-freeze"),
-            Some(aurora_i18n::tr!("photo-freeze-hint")),
-            |ui| {
-                let mut on = self.freeze;
-                if widgets::switch(ui, p, &mut on).changed() {
-                    self.freeze = on;
-                    out.push(Action::Freeze(on));
-                }
-            },
-        );
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("photo-freeze-world"),
-            Some(aurora_i18n::tr!("photo-freeze-world-hint")),
-            |ui| {
-                widgets::switch(ui, p, &mut self.freeze_world);
-            },
-        );
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("photo-auto-refresh"),
-            Some(aurora_i18n::tr!("photo-auto-refresh-hint")),
-            |ui| {
-                widgets::switch(ui, p, &mut s.auto_refresh);
-            },
-        );
+        ui.add_enabled_ui(!pano, |ui| {
+            row(
+                ui,
+                p,
+                aurora_i18n::tr!("photo-freeze"),
+                Some(aurora_i18n::tr!("photo-freeze-hint")),
+                |ui| {
+                    let mut on = self.freeze;
+                    if widgets::switch(ui, p, &mut on).changed() {
+                        self.freeze = on;
+                        out.push(Action::Freeze(on));
+                    }
+                },
+            );
+            row(
+                ui,
+                p,
+                aurora_i18n::tr!("photo-freeze-world"),
+                Some(aurora_i18n::tr!("photo-freeze-world-hint")),
+                |ui| {
+                    widgets::switch(ui, p, &mut self.freeze_world);
+                },
+            );
+            row(
+                ui,
+                p,
+                aurora_i18n::tr!("photo-auto-refresh"),
+                Some(aurora_i18n::tr!("photo-auto-refresh-hint")),
+                |ui| {
+                    widgets::switch(ui, p, &mut s.auto_refresh);
+                },
+            );
+        });
 
         section(ui, p, "camera-filled", aurora_i18n::tr!("photo-section-camera"));
-        if focal(ui, p, fov, default_fov) {
-            out.push(Action::Saved);
-        }
+        // (a 360° picture is six faces of 90°)
+        ui.add_enabled_ui(!self.pano, |ui| {
+            if focal(ui, p, fov, default_fov) {
+                out.push(Action::Saved);
+            }
+        });
         row(ui, p, aurora_i18n::tr!("photo-free-camera"), None, |ui| {
             widgets::switch(ui, p, &mut self.free.on);
         });
@@ -726,7 +863,7 @@ impl SnapshotUi {
         }
 
         section(ui, p, "focus-centered", aurora_i18n::tr!("photo-section-dof"));
-        dof_rows(ui, p, &mut s.dof);
+        ui.add_enabled_ui(!self.pano, |ui| dof_rows(ui, p, &mut s.dof));
         // (the photo's light: the viewfinder dock's sun button, `light_only`)
 
         let filter = ui.cursor();
@@ -735,6 +872,7 @@ impl SnapshotUi {
             list_height: 220.0,
             compare: false,
             luts: &self.lut_names,
+            pano: self.pano,
         };
         self.looks.show(ui, p, s, opts, out);
         if std::mem::take(&mut self.looks.reveal) {
@@ -965,6 +1103,22 @@ impl SnapshotUi {
         }
         out
     }
+}
+
+/// The 360° panorama's qualities: the side of the six faces, and the
+/// panorama they make (four faces across).
+fn pano_qualities(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+        for q in Quality::ALL {
+            let sub = q.output().0.to_string();
+            if chip(ui, p, aurora_i18n::text(q.label_key()), Some(&sub), s.capture_360.quality == q, true).clicked() {
+                s.capture_360.quality = q;
+            }
+        }
+    });
+    let (w, h) = s.capture_360.quality.output();
+    ui.label(RichText::new(aurora_i18n::tr!("photo-360-output", width = w, height = h)).color(p.ink));
 }
 
 /// The disk's sizes: presets, the window's, or typed, with how the photo

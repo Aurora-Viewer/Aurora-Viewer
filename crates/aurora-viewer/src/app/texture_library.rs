@@ -521,6 +521,29 @@ impl App {
                 self.panels.texture_library = false;
             }
         }
+        // `panorama`: the Aurora 360° upload opens as a panorama; `-switch`:
+        // a plain 2:1 texture, its 360° switch turned on; `-full`: enlarged;
+        // `-nocopy`: a marked item the agent may not copy (Copy UUID and
+        // Save As stay off)
+        if self.demo
+            && self.library_demo_seeded
+            && let Ok(mode) = std::env::var("AURORA_DEMO_TEXTURE_LIBRARY")
+            && mode.starts_with("panorama")
+        {
+            let items = crate::demo::texture_library::panorama_items();
+            let item = match mode.as_str() {
+                "panorama-switch" => items[1],
+                "panorama-nocopy" => items[2],
+                _ => items[0],
+            };
+            if self.frame_count == 620 {
+                ui::widgets::place_floater(ctx, &library::preview_window_id(item), egui::pos2(20.0, 60.0), egui::vec2(720.0, 480.0));
+                self.texture_library.open_preview(ctx, &self.world, item);
+            }
+            if self.frame_count == 700 {
+                self.texture_library.demo_panorama(&mode);
+            }
+        }
         if self.demo && self.library_demo_seeded && std::env::var("AURORA_DEMO_TEXTURE_LIBRARY").as_deref() == Ok("preview-sizes") {
             let items = crate::demo::texture_library::preview_items();
             for (item, frame) in items.into_iter().zip([620, 670, 690, 740]) {

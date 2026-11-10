@@ -127,8 +127,8 @@ pub(crate) struct FramePacket {
     /// answered with a later result (drawn_pick.rs).
     pub drawn: Vec<DrawnRequest>,
     pub capture: Option<Capture>,
-    /// The six faces of a 360° snapshot to project to a panorama before the
-    /// frame is drawn (equirect.rs); answered with the result.
+    /// The panorama to project from the cube of the six faces, before the
+    /// frame is drawn (equirect.rs); answered by a later result.
     pub equirect: Option<Box<crate::EquirectJob>>,
     /// Count the luminance histogram of this frame shown at that exposure
     /// (the photo viewfinder; answered a few frames later).
@@ -158,8 +158,8 @@ pub(crate) struct FrameResult {
     /// The frame was a photo (`Capture::Snapshot`): `captured` is its image,
     /// None when it could not be drawn.
     pub snapshot: bool,
-    /// The panorama asked with this frame (width, height, RGBA8); Some(None)
-    /// when it could not be made.
+    /// The oldest panorama asked whose readback is over (width, height,
+    /// RGBA8); Some(None) when it could not be made.
     pub equirect: Option<Option<(u32, u32, Vec<u8>)>>,
     /// The luminance histogram counted lately (`FramePacket::histogram`).
     pub histogram: Option<Box<[u32; crate::HISTOGRAM_BINS]>>,

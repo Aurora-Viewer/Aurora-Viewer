@@ -1,77 +1,111 @@
-//! The 360° snapshot on the app's side. Port of LLFloater360Capture
+//! The 360° snapshot on the app's side: a format of the photo window
+//! (`ui/snapshot.rs`), taken by its shutter. Port of LLFloater360Capture
 //! (indra/newview/llfloater360capture.cpp, originally LGPL 2.1): while the
-//! window is open the simulator is asked to send everything around (the
-//! InterestList capability, mode "360"); a capture freezes the world, hides
-//! every avatar when asked, and draws six square 90° faces from the camera's
-//! position through the photo frames (`Renderer::snapshot_request`), one
-//! per frame; the renderer then projects them to the panorama on the GPU
-//! (`aurora_render::equirect`), shown flat in the window and saved as a
-//! JPEG with its XMP block (`snapshot::capture_360`). The Legacy Viewer
-//! shows the panorama in a draggable three.js view: Aurora shows the
-//! equirectangular image itself.
+//! photo window is open in 360° the simulator is asked to send everything
+//! around (the InterestList capability, mode "360"); a capture freezes the
+//! world, hides every avatar when asked, and draws six square 90° faces from
+//! the camera's position through the photo frames, one per frame. Each face
+//! is copied on the GPU into a cube (`Renderer::snapshot_request` with
+//! `SnapshotSpec::cube`): no face is read back, the main thread waits for none
+//! of them, and the renderer projects the cube to the panorama
+//! (`aurora_render::equirect`) and reads only that back, asynchronously.
+//!
+//! The panorama goes to a JPEG with its XMP block (`snapshot::capture_360`)
+//! or, for the inventory, rolled so that the camera's heading is its middle
+//! column and uploaded as a 2048 x 1024 texture named for the marker
+//! (`capture_360::item_name`) to the Photo Album. It is shown in the photo
+//! window by the panorama viewer (`aurora_render::panorama`), which the Legacy
+//! Viewer's three.js page also is; the Legacy Viewer has no inventory upload
+//! and no viewer in the inventory.
+//!
+//! Differences from the Legacy Viewer, deliberate: the capture is taken by the
+//! shutter, not when the window opens; the disk panorama is four faces wide
+//! (512 to 8192 pixels, `Quality::output`) instead of always 4096; the viewer
+//! also zooms; the colour looks of the photo window apply to the faces.
 
 use super::App;
+use super::snapshot::PhotoFrame;
 use crate::camera::FixedView;
 use crate::snapshot::capture_360::{self as rules, Meta, Quality};
-use crate::ui::capture_360::{Action, Capture360Ui, View};
 use aurora_net::{InterestListMode, NetCommand};
+use aurora_render::preview::Image;
 use aurora_render::{CAPTURE_CAMERAS, EquirectJob, Renderer, SnapshotSpec};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-/// Frames a face may wait for its answer before the capture is given up
-/// (a GPU that never finishes: the photo's own limit is 30 s).
+/// Frames a face may wait for the render thread before the capture is given
+/// up (a GPU that never finishes: the photo's own limit is 30 s).
 const FACE_WAIT: u32 = 1800;
 
-/// The frame `AURORA_DEMO_SNAPSHOT_360` opens the window.
+/// The frame `AURORA_DEMO_SNAPSHOT_360` opens the photo window.
 const DEMO_OPEN_FRAME: u64 = 600;
+/// The frame it presses the shutter (the window has been drawn by then).
+const DEMO_SHUTTER_FRAME: u64 = 630;
+
+/// Where a capture goes: a JPEG (the folder's, or the file chosen) or the
+/// inventory (at this price, already confirmed).
+#[derive(Debug, Clone, PartialEq)]
+pub(super) enum Shutter {
+    Disk(Option<PathBuf>),
+    Inventory(i32),
+}
 
 /// A capture in progress.
 enum Stage {
-    /// The faces drawn so far, by cube layer; `next` is the capture camera
-    /// to draw, `asked` whether its frame is out, `waited` how many frames
-    /// it has been.
+    /// `next` is the capture camera to draw, `asked` whether its frame was
+    /// asked and not yet sent, `waited` how many frames it has been.
     Faces {
-        faces: [Vec<u8>; 6],
         next: usize,
         asked: bool,
         waited: u32,
         started: Instant,
     },
-    /// The faces handed to the renderer, the panorama awaited.
+    /// The six faces sent; the cube projected and read back by the renderer.
     Projecting { started: Instant, faces_ms: u128 },
 }
 
 /// What a capture was started with: the settings and the camera of that
-/// instant, so that the window's controls and the camera's motion during
-/// the capture change nothing of it.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// instant, so that the window's controls and the camera's motion during the
+/// capture change nothing of it.
+#[derive(Debug, Clone, PartialEq)]
 struct Plan {
     quality: Quality,
     face_size: u32,
+    /// The panorama's size.
+    output: (u32, u32),
     hide_avatars: bool,
-    /// Degrees, for the XMP block.
+    /// Degrees, for the XMP block and the roll.
     heading: u32,
     /// The eye of all six faces.
     eye: glam::Vec3,
+    dest: Shutter,
 }
 
 impl Plan {
-    fn new(quality: Quality, hide_avatars: bool, forward: glam::Vec3, eye: glam::Vec3) -> Self {
+    fn new(quality: Quality, hide_avatars: bool, forward: glam::Vec3, eye: glam::Vec3, max_texture: u32, dest: Shutter) -> Self {
+        // the inventory's panorama is the texture the grid takes, whatever
+        // the quality chosen for the disk
+        let face_size = match dest {
+            Shutter::Inventory(_) => rules::INVENTORY_FACE,
+            Shutter::Disk(_) => quality.face_size(),
+        }
+        .min(max_texture);
         Plan {
             quality,
-            face_size: quality.face_size(),
+            face_size,
+            output: rules::output_size(face_size, max_texture),
             hide_avatars,
             heading: rules::heading_degrees(forward),
             eye,
+            dest,
         }
     }
 }
 
 /// Renderer replies owed to captures given up: the renderer answers a
 /// request once, whoever still waits for it, and the answer of a capture
-/// that is gone must not reach the next capture or an ordinary photo.
+/// that is gone must not reach the next capture.
 #[derive(Debug, Default, PartialEq)]
 struct Stale(u32);
 
@@ -105,34 +139,32 @@ impl Stale {
     }
 }
 
-/// The last panorama made.
-pub(super) struct Panorama {
-    width: u32,
-    height: u32,
-    /// Shared with the worker that makes the preview and with the saves.
-    rgba: Arc<Vec<u8>>,
-    /// What the XMP block says of it.
-    heading: u32,
-    quality: Quality,
-    face_size: u32,
-    /// Local date and time of the capture.
-    taken: (u16, u16, u16, u16, u16, u16),
-    region_name: String,
-    region_url: String,
+/// The last panorama, as the photo window shows it.
+pub(super) struct Shown {
+    pub image: Arc<Image>,
+    /// Radians: where the viewer opens (the camera's heading on disk, the
+    /// middle column for the inventory's rolled picture).
+    pub yaw: f32,
+    /// Which capture it is, to start the viewer afresh for a new one.
+    pub serial: u64,
 }
 
-/// `AURORA_DEMO_SNAPSHOT_360=<folder>[:preview|medium|high|maximum][:hide]`.
+/// `AURORA_DEMO_SNAPSHOT_360=<folder>[:preview|medium|high|maximum][:hide][:inventory][:panel|:classic]`.
 struct Demo {
     folder: PathBuf,
     quality: Option<Quality>,
     hide: bool,
+    inventory: bool,
+    /// The photo window's style for the demo (the viewfinder otherwise).
+    style: Option<crate::settings::PhotoWindowStyle>,
     opened: bool,
-    saved: bool,
+    pressed: bool,
 }
+
+type Saved = Result<PathBuf, String>;
 
 #[derive(Default)]
 pub(super) struct Capture360 {
-    pub ui: Capture360Ui,
     stage: Option<Stage>,
     /// The camera looks along a face this frame; its own view comes back
     /// next frame.
@@ -141,22 +173,24 @@ pub(super) struct Capture360 {
     face_frame: Option<u32>,
     /// What the capture in progress (or the last) was started with.
     plan: Option<Plan>,
+    /// The colour looks of the photo window, applied to each face.
+    look: Option<aurora_render::looks::PhotoLook>,
     /// Panorama answers still owed to captures given up.
     stale_equirect: Stale,
-    /// The preview of the last panorama, reduced on a worker.
-    preview_work: Option<crossbeam_channel::Receiver<(u32, u32, Vec<u8>)>>,
-    image: Option<Panorama>,
-    preview: Option<egui::TextureHandle>,
-    saving: Option<crossbeam_channel::Receiver<Result<PathBuf, String>>>,
+    /// A shutter pressed, waiting for the world to be ready.
+    wanted: Option<Shutter>,
+    /// The photo window was open in 360° last frame.
+    interest: bool,
+    /// The picture shown in the photo window, being made on a worker.
+    display_work: Option<crossbeam_channel::Receiver<Arc<Image>>>,
+    display_yaw: f32,
+    shown: Option<Shown>,
+    serial: u64,
+    saving: Option<crossbeam_channel::Receiver<Saved>>,
     dialog: Option<crossbeam_channel::Receiver<Option<PathBuf>>>,
-    /// The window's status line, and whether it is an error.
-    message: Option<(String, bool)>,
-    /// The window was open last frame.
-    was_open: bool,
-    /// A capture asked (the window's opening, its button).
-    wanted: bool,
     demo: Option<Demo>,
     demo_read: bool,
+    demo_inventory_asked: bool,
 }
 
 impl Capture360 {
@@ -166,15 +200,38 @@ impl Capture360 {
         self.stage.is_some()
     }
 
+    /// Work that keeps the photo window's shutter busy.
+    pub fn busy(&self) -> bool {
+        self.stage.is_some() || self.saving.is_some() || self.dialog.is_some() || self.stale_equirect.pending()
+    }
+
+    /// The progress line of the photo window.
+    pub fn busy_line(&self) -> Option<(f32, String)> {
+        match &self.stage {
+            Some(Stage::Faces { next, .. }) => Some((
+                0.1 + 0.4 * *next as f32 / 6.0,
+                aurora_i18n::tr!("capture-360-capturing", face = *next + 1).to_owned(),
+            )),
+            Some(Stage::Projecting { .. }) => Some((0.6, aurora_i18n::tr!("capture-360-projecting").to_owned())),
+            None if self.saving.is_some() => Some((0.85, aurora_i18n::tr!("capture-360-saving").to_owned())),
+            None => None,
+        }
+    }
+
+    /// The panorama the photo window shows, if there is one.
+    pub fn shown(&self) -> Option<&Shown> {
+        self.shown.as_ref()
+    }
+
     /// The face frame of this frame, as the photo frame describes one.
-    pub fn photo_frame(&self, window: (u32, u32), render_scale_percent: u32) -> Option<super::snapshot::PhotoFrame> {
+    pub fn photo_frame(&self, window: (u32, u32), render_scale_percent: u32) -> Option<PhotoFrame> {
         let size = self.face_frame?;
-        Some(super::snapshot::PhotoFrame {
+        Some(PhotoFrame {
             aspect: 1.0,
             tile: glam::Mat4::IDENTITY,
             height: size,
             scale: crate::snapshot::viewfinder_scale((size, size), window, render_scale_percent),
-            look: None,
+            look: self.look.clone(),
             context: aurora_render::PhotoContext::None,
             cube_face: true,
         })
@@ -184,19 +241,20 @@ impl Capture360 {
 impl App {
     /// Every frame, before the photo frame is chosen: the camera of the
     /// last face put back, the window's opening and closing told to the
-    /// simulator, the faces and the panorama taken in, the next face set up.
+    /// simulator, the panorama taken in, the next face set up.
     pub(super) fn capture_360_frame(&mut self, renderer: &mut Renderer) {
-        self.capture_360_demo();
+        self.capture_360_demo(renderer);
+        self.panels.snapshot_pano = self.snapshots.ui.pano;
         self.capture_360.face_frame = None;
         if std::mem::take(&mut self.capture_360.face_view) {
             self.camera.release_fixed_view();
             renderer.cut_motion_history();
         }
-        let open = self.panels.capture_360 && self.in_world();
-        if open != self.capture_360.was_open {
-            self.capture_360.was_open = open;
+        let open = self.panels.snapshot && self.snapshots.ui.pano && self.in_world();
+        if open != self.capture_360.interest {
+            self.capture_360.interest = open;
             // LLFloater360Capture's constructor and destructor: everything
-            // around while the window is open, the camera's view again after
+            // around while the 360° window is open, the camera's view after
             let mode = if open {
                 InterestListMode::Capture360
             } else {
@@ -204,61 +262,103 @@ impl App {
             };
             log::info!("360 capture: interest list mode {} asked of the regions", mode.as_str());
             self.send(NetCommand::SetInterestListMode(mode));
-            if open {
-                // onOpen: a first capture at the chosen quality
-                self.capture_360.wanted = true;
-            } else {
-                self.capture_360_abandon(renderer, "the window closed");
-            }
+        }
+        if !open && (self.capture_360.stage.is_some() || self.capture_360.wanted.is_some()) {
+            self.capture_360_abandon(renderer, "the 360° format was left");
         }
         self.capture_360_take_answers(renderer);
         // (a photo's preview or part still on its way would be taken for a
         // face, and a panorama owed to a capture given up for this one's)
-        if self.capture_360.wanted
+        if self.capture_360.wanted.is_some()
             && self.capture_360.stage.is_none()
             && open
             && !self.photo_work_pending(renderer)
             && !self.capture_360.stale_equirect.pending()
+            && let Some(dest) = self.capture_360.wanted.take()
         {
-            self.capture_360.wanted = false;
-            self.capture_360_start();
+            self.capture_360_start(renderer, dest);
         }
         self.capture_360_set_up_face(renderer);
         self.capture_360_poll_workers();
     }
 
+    /// The shutter in 360°: a capture to `dest` as soon as the world is ready.
+    pub(super) fn capture_360_shutter(&mut self, dest: Shutter) {
+        if self.capture_360.wanted.is_some() || self.photo_busy() {
+            return;
+        }
+        self.snapshots.message = None;
+        self.snapshots.message_item = None;
+        self.snapshots.message_profile = false;
+        self.capture_360.wanted = Some(dest);
+    }
+
     /// LLFloater360Capture::capture360Images: the world frozen, the
     /// avatars hidden when asked, the heading recorded, six faces to draw.
-    fn capture_360_start(&mut self) {
+    fn capture_360_start(&mut self, renderer: &Renderer, dest: Shutter) {
         let settings = self.settings.snapshot.capture_360;
-        let plan = Plan::new(settings.quality, settings.hide_avatars, self.camera.forward(), self.camera.position);
-        let face_size = plan.face_size;
+        let plan = Plan::new(
+            settings.quality,
+            settings.hide_avatars,
+            self.camera.forward(),
+            self.camera.position,
+            renderer.max_texture_dimension(),
+            dest,
+        );
         self.world.photo_isolation.set_hide_avatars(settings.hide_avatars);
-        self.capture_360.plan = Some(plan);
-        self.capture_360.message = None;
+        self.capture_360.look = self.capture_360_look(plan.face_size);
+        self.capture_360.plan = Some(plan.clone());
         self.capture_360.stage = Some(Stage::Faces {
-            faces: Default::default(),
             next: 0,
             asked: false,
             waited: 0,
             started: Instant::now(),
         });
         log::info!(
-            "360 capture: heading {}°, faces of {face_size} px, avatars {}",
+            "360 capture: heading {}°, faces of {} px, panorama {} x {}, avatars {}, {}",
             plan.heading,
-            if settings.hide_avatars { "hidden" } else { "drawn" }
+            plan.face_size,
+            plan.output.0,
+            plan.output.1,
+            if plan.hide_avatars { "hidden" } else { "drawn" },
+            match plan.dest {
+                Shutter::Disk(_) => "to disk",
+                Shutter::Inventory(_) => "to the inventory",
+            }
         );
+    }
+
+    /// The photo window's looks that a face can take alone (the colour
+    /// ones: a vignette, a blur or a grain would differ from face to face),
+    /// placed over a face.
+    fn capture_360_look(&mut self, face: u32) -> Option<aurora_render::looks::PhotoLook> {
+        use crate::snapshot::looks;
+        let stack = self.settings.snapshot.looks.clone();
+        let settings = self.settings.snapshot.look_settings.clone();
+        let mut layers = looks::resolve_stack(&stack, &settings, self.photo_luts());
+        layers.retain(|(look, _)| look.ops.iter().all(aurora_render::looks::LookOp::is_pointwise));
+        looks::frame_look(
+            &layers,
+            looks::Placement {
+                origin: [0.0, 0.0],
+                photo: (face, face),
+                scale: 1.0,
+            },
+            None,
+            false,
+            None,
+        )
     }
 
     /// The face to draw this frame: the camera swapped for the capture
     /// camera (put back next frame), the square photo frame asked. A face
-    /// whose answer has not come yet is asked again, as a photo's part is.
+    /// the render thread did not take is asked again, as a photo's part is.
     fn capture_360_set_up_face(&mut self, renderer: &mut Renderer) {
         let (next, asked, waited) = match &self.capture_360.stage {
             Some(Stage::Faces { next, asked, waited, .. }) => (*next, *asked, *waited),
             _ => return,
         };
-        let Some(plan) = self.capture_360.plan else {
+        let Some(plan) = self.capture_360.plan.clone() else {
             return;
         };
         if asked {
@@ -301,54 +401,30 @@ impl App {
             interface: false,
             huds: false,
             photo: (size, size),
+            cube: Some(next as u8),
         });
         self.capture_360.face_frame = Some(size);
     }
 
-    /// After a frame was drawn, before the photo takes its answer: the face
-    /// asked, if this frame carried it.
+    /// After a frame was drawn: the face asked, if this frame carried it
+    /// (the renderer took the request), and the projection asked when it was
+    /// the last. Nothing comes back for a face: it stays on the GPU.
     pub(super) fn capture_360_drawn(&mut self, renderer: &mut Renderer) {
         let Some(Stage::Faces { asked, .. }) = &self.capture_360.stage else {
             return;
         };
-        if !*asked || renderer.snapshot.is_none() {
+        if !*asked || renderer.snapshot_request.is_some() {
             return;
         }
-        let Some(answer) = renderer.snapshot.take() else {
+        let Some(plan) = self.capture_360.plan.clone() else {
             return;
         };
-        let Some(size) = self.capture_360.plan.map(|p| p.face_size) else {
-            return;
-        };
-        let Some((_, _, pixels)) = answer.filter(|(w, h, _)| (*w, *h) == (size, size)) else {
-            self.capture_360_fail(renderer, "a face was not drawn");
-            return;
-        };
-        if renderer.device_lost() {
-            self.capture_360_fail(renderer, "the GPU was lost while a face was drawn");
-            return;
-        }
         let Some(Stage::Faces {
-            faces,
-            next,
-            asked,
-            waited,
-            started,
+            next, asked, waited, started, ..
         }) = &mut self.capture_360.stage
         else {
             return;
         };
-        let layer = CAPTURE_CAMERAS[*next].layer;
-        // the demo keeps each face as a PNG beside the panorama, as the
-        // Legacy Viewer's 360CaptureDebugSaveImage does
-        if let Some(folder) = self.capture_360.demo.as_ref().map(|d| d.folder.clone()) {
-            let path = folder.join(format!("face_{layer}.png"));
-            let _ = std::fs::create_dir_all(&folder);
-            if let Err(e) = image::save_buffer(&path, &pixels, size, size, image::ExtendedColorType::Rgba8) {
-                log::warn!("360 capture: face {layer} not kept: {e}");
-            }
-        }
-        faces[layer] = pixels;
         *next += 1;
         *asked = false;
         *waited = 0;
@@ -356,15 +432,13 @@ impl App {
             return;
         }
         let faces_ms = started.elapsed().as_millis();
-        log::info!("360 capture: 6 faces of {size} px drawn in {faces_ms} ms");
-        let faces = std::mem::take(faces);
-        // the faces drawn: the world moves again, the avatars come back
+        log::info!("360 capture: 6 faces of {} px sent in {faces_ms} ms", plan.face_size);
+        // the faces are in the frames sent: the world moves again, the
+        // avatars come back
         self.world.photo_isolation.set_hide_avatars(false);
         renderer.equirect_request = Some(Box::new(EquirectJob {
-            face_size: size,
-            faces,
-            width: rules::OUTPUT_WIDTH,
-            height: rules::OUTPUT_WIDTH / 2,
+            width: plan.output.0,
+            height: plan.output.1,
         }));
         self.capture_360.stage = Some(Stage::Projecting {
             started: Instant::now(),
@@ -404,51 +478,97 @@ impl App {
             return;
         };
         log::info!(
-            "360 capture: {width} x {height} panorama in {} ms ({faces_ms} ms of faces)",
+            "360 capture: {width} x {height} panorama read back {} ms after the last face ({faces_ms} ms of faces)",
             started.elapsed().as_millis()
         );
         self.capture_360.stage = None;
-        let Some(plan) = self.capture_360.plan else {
+        self.capture_360.look = None;
+        self.capture_360_arrived(width, height, rgba);
+    }
+
+    /// The panorama in hand: shown in the photo window, and sent where the
+    /// shutter said.
+    fn capture_360_arrived(&mut self, width: u32, height: u32, rgba: Vec<u8>) {
+        let Some(plan) = self.capture_360.plan.clone() else {
             return;
         };
-        let region_name = self.world.region_name();
-        let region_url = if region_name.is_empty() {
-            "https://secondlife.com".to_owned()
-        } else {
-            crate::slurl::make(&region_name, self.world.agent.position)
-        };
-        // the preview at half the panorama's width: the window never shows
-        // more, and the texture stays modest; reduced on a worker, the
-        // frame does not wait for 8 megapixels
-        let rgba = Arc::new(rgba);
+        match plan.dest.clone() {
+            Shutter::Disk(chosen) => {
+                let region_name = self.world.region_name();
+                let region_url = if region_name.is_empty() {
+                    "https://secondlife.com".to_owned()
+                } else {
+                    crate::slurl::make(&region_name, self.world.agent.position)
+                };
+                let taken = crate::snapshot::local_time();
+                let path = chosen.unwrap_or_else(|| {
+                    let name = rules::proposed_file_name(&region_name, width, height, plan.face_size, &rules::compact_stamp(taken));
+                    unique(self.settings.snapshot.folder().join(name))
+                });
+                let meta = Meta {
+                    software: format!("Aurora Viewer {}", aurora_version::version()),
+                    width,
+                    height,
+                    heading: plan.heading,
+                    source_size: plan.quality.face_size(),
+                    scaled_source_size: plan.face_size,
+                    date: rules::ctime_stamp(taken),
+                    region_name,
+                    region_url,
+                };
+                let rgba = Arc::new(rgba);
+                self.capture_360_show(width, height, rgba.clone(), (plan.heading as f32).to_radians(), plan.quality);
+                self.capture_360_save(path, width, height, rgba, meta);
+            }
+            Shutter::Inventory(cost) => {
+                // the XMP block with the heading does not survive the
+                // texture upload: the picture is rolled instead
+                let rolled = rules::roll_to_heading(&rgba, width, height, plan.heading);
+                let shown = Arc::new(rolled.clone());
+                self.capture_360_show(width, height, shown, 0.0, plan.quality);
+                self.photo_encode_panorama((width, height), rolled, cost);
+                if let Some(folder) = self.capture_360.demo.as_ref().filter(|d| d.inventory).map(|d| d.folder.clone()) {
+                    // (the demo has no grid to look at the item in: the
+                    // picture that was encoded, beside the log)
+                    let (w, h, px) = (width, height, Arc::new(rgba));
+                    let rolled = rules::roll_to_heading(&px, w, h, plan.heading);
+                    std::thread::spawn(move || {
+                        let _ = std::fs::create_dir_all(&folder);
+                        match crate::snapshot::save::encode_jpeg(w, h, &rolled, 90) {
+                            Ok(bytes) => {
+                                let path = folder.join("inventory_360.jpg");
+                                if let Err(e) = std::fs::write(&path, bytes) {
+                                    log::warn!("360 capture: demo picture not kept: {e}");
+                                } else {
+                                    log::info!("360 capture: demo inventory picture {}", path.display());
+                                }
+                            }
+                            Err(e) => log::warn!("360 capture: demo picture not encoded: {e}"),
+                        }
+                    });
+                }
+            }
+        }
+    }
+
+    /// The picture for the photo window, made on a worker (the panorama is
+    /// reduced to what the viewer needs: 4096 wide, 8192 at Maximum).
+    fn capture_360_show(&mut self, width: u32, height: u32, rgba: Arc<Vec<u8>>, yaw: f32, quality: Quality) {
+        let cap = if quality == Quality::Maximum { 8192 } else { 4096 };
         let (tx, rx) = crossbeam_channel::bounded(1);
-        let source = rgba.clone();
-        let spawned = std::thread::Builder::new().name("aurora-360-preview".into()).spawn(move || {
-            let _ = tx.send(crate::snapshot::save::downscale(width, height, &source, width / 2));
+        let spawned = std::thread::Builder::new().name("aurora-360-shown".into()).spawn(move || {
+            let (w, h, px) = crate::snapshot::save::downscale(width, height, &rgba, cap);
+            let _ = tx.send(Arc::new(Image {
+                size: [w, h],
+                rgba: Arc::from(px),
+            }));
         });
         match spawned {
-            Ok(_) => self.capture_360.preview_work = Some(rx),
-            Err(e) => log::warn!("360 capture: cannot start the preview thread: {e}"),
-        }
-        self.capture_360.image = Some(Panorama {
-            width,
-            height,
-            rgba,
-            heading: plan.heading,
-            quality: plan.quality,
-            face_size: plan.face_size,
-            taken: crate::snapshot::local_time(),
-            region_name,
-            region_url,
-        });
-        self.capture_360.message = None;
-        if self.capture_360.demo.as_ref().is_some_and(|d| !d.saved) {
-            let folder = self.capture_360.demo.as_ref().map(|d| d.folder.clone()).unwrap_or_default();
-            if let Some(d) = self.capture_360.demo.as_mut() {
-                d.saved = true;
+            Ok(_) => {
+                self.capture_360.display_work = Some(rx);
+                self.capture_360.display_yaw = yaw;
             }
-            let name = self.capture_360_proposed_name();
-            self.capture_360_save(folder.join(name));
+            Err(e) => log::warn!("360 capture: cannot start the display thread: {e}"),
         }
     }
 
@@ -458,10 +578,10 @@ impl App {
             Some(Stage::Faces { asked, .. }) => {
                 log::info!("360 capture: given up, {why}");
                 if asked {
-                    // the face asked is drawn for nobody: its answer is
-                    // swallowed, and one that already came is thrown away
+                    // the face asked is drawn for nobody: its request is
+                    // withdrawn (one already sent is drawn into a cube that
+                    // the next capture starts afresh)
                     renderer.drop_snapshot();
-                    renderer.snapshot = None;
                 }
             }
             Some(Stage::Projecting { .. }) => {
@@ -476,48 +596,19 @@ impl App {
         }
         self.camera.release_fixed_view();
         self.capture_360.face_view = false;
-        self.capture_360.wanted = false;
+        self.capture_360.wanted = None;
+        self.capture_360.look = None;
         self.world.photo_isolation.set_hide_avatars(false);
     }
 
     fn capture_360_fail(&mut self, renderer: &mut Renderer, why: &str) {
         log::warn!("360 capture: {why}");
         self.capture_360_abandon(renderer, why);
-        self.capture_360.message = Some((aurora_i18n::tr!("capture-360-failed").to_owned(), true));
+        self.snapshots.message = Some((aurora_i18n::tr!("capture-360-failed").to_owned(), true));
     }
 
-    /// LLFloater360Capture::generate_proposed_filename for the last panorama.
-    fn capture_360_proposed_name(&self) -> String {
-        let Some(image) = &self.capture_360.image else {
-            return String::new();
-        };
-        rules::proposed_file_name(
-            &image.region_name,
-            image.width,
-            image.height,
-            image.face_size,
-            &rules::compact_stamp(image.taken),
-        )
-    }
-
-    /// The last panorama encoded and written at `path` on a worker.
-    fn capture_360_save(&mut self, path: PathBuf) {
-        let Some(image) = &self.capture_360.image else {
-            return;
-        };
-        let software = format!("Aurora Viewer {}", aurora_version::version());
-        let meta = Meta {
-            software,
-            width: image.width,
-            height: image.height,
-            heading: image.heading,
-            source_size: image.quality.face_size(),
-            scaled_source_size: image.face_size,
-            date: rules::ctime_stamp(image.taken),
-            region_name: image.region_name.clone(),
-            region_url: image.region_url.clone(),
-        };
-        let (width, height, rgba) = (image.width, image.height, image.rgba.clone());
+    /// The panorama encoded and written at `path` on a worker.
+    fn capture_360_save(&mut self, path: PathBuf, width: u32, height: u32, rgba: Arc<Vec<u8>>, meta: Meta) {
         let (tx, rx) = crossbeam_channel::bounded(1);
         let spawned = std::thread::Builder::new().name("aurora-360-save".into()).spawn(move || {
             let result = rules::encode(width, height, &rgba, &meta).and_then(|bytes| {
@@ -530,41 +621,53 @@ impl App {
             });
             let _ = tx.send(result);
         });
-        if let Err(e) = spawned {
-            log::warn!("360 capture: cannot start the save thread: {e}");
-            return;
+        match spawned {
+            Ok(_) => {
+                self.capture_360.saving = Some(rx);
+                self.photo_shutter();
+            }
+            Err(e) => log::warn!("360 capture: cannot start the save thread: {e}"),
         }
-        self.capture_360.saving = Some(rx);
-        self.capture_360.message = Some((aurora_i18n::tr!("capture-360-saving").to_owned(), false));
     }
 
-    /// The save dialog's choice and the save's end.
+    /// The save dialog's choice, the picture for the window, the save's end.
     fn capture_360_poll_workers(&mut self) {
-        if let Some(rx) = &self.capture_360.preview_work
-            && let Ok((pw, ph, preview)) = rx.try_recv()
+        if let Some(rx) = &self.capture_360.display_work
+            && let Ok(image) = rx.try_recv()
         {
-            self.capture_360.preview_work = None;
-            let image = egui::ColorImage::from_rgba_unmultiplied([pw as usize, ph as usize], &preview);
-            self.capture_360.preview = Some(
-                self.egui_ctx
-                    .load_texture("capture_360_preview", image, egui::TextureOptions::LINEAR),
-            );
+            self.capture_360.display_work = None;
+            self.capture_360.serial += 1;
+            self.capture_360.shown = Some(Shown {
+                image,
+                yaw: self.capture_360.display_yaw,
+                serial: self.capture_360.serial,
+            });
         }
         if let Some(rx) = &self.capture_360.dialog
             && let Ok(choice) = rx.try_recv()
         {
             self.capture_360.dialog = None;
             if let Some(path) = choice {
-                self.capture_360_save(path);
+                if let Some(folder) = path.parent() {
+                    self.settings.snapshot.folder = Some(folder.to_path_buf());
+                    self.settings.save();
+                }
+                let path = if path.extension().is_some() {
+                    path
+                } else {
+                    path.with_extension("jpg")
+                };
+                self.capture_360_shutter(Shutter::Disk(Some(path)));
             }
         }
         if let Some(rx) = &self.capture_360.saving
             && let Ok(result) = rx.try_recv()
         {
             self.capture_360.saving = None;
-            self.capture_360.message = Some(match result {
+            self.snapshots.message = Some(match result {
                 Ok(path) => {
                     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    self.snapshots.last_saved = Some(path);
                     (aurora_i18n::tr!("capture-360-saved", name = name.as_str()).to_owned(), false)
                 }
                 Err(e) => {
@@ -575,44 +678,21 @@ impl App {
         }
     }
 
-    /// The window, while open.
-    pub(super) fn capture_360_window(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
-        let mut open = self.panels.capture_360;
-        if !open {
+    /// "Save as…" in 360°: the save dialog with the proposed name for the
+    /// quality chosen, in the photos' folder; the capture follows its answer.
+    pub(super) fn capture_360_ask_path(&mut self) {
+        if self.capture_360.busy() || self.photo_busy() {
             return;
         }
-        let c = &mut self.capture_360;
-        let progress = match &c.stage {
-            Some(Stage::Faces { next, .. }) => Some(aurora_i18n::tr!("capture-360-capturing", face = *next + 1).to_owned()),
-            Some(Stage::Projecting { .. }) => Some(aurora_i18n::tr!("capture-360-projecting").to_owned()),
-            None => None,
-        };
-        let view = View {
-            busy: c.stage.is_some() || c.saving.is_some() || c.dialog.is_some(),
-            progress: progress.as_deref(),
-            preview: c.preview.as_ref(),
-            can_save: c.image.is_some() && c.stage.is_none() && c.saving.is_none() && c.dialog.is_none(),
-            message: c.message.as_ref().map(|(m, err)| (m.as_str(), *err)),
-            quality_shown: c.image.as_ref().map(|i| i.quality),
-        };
-        let actions = c.ui.show(ctx, p, &view, &mut self.settings.snapshot.capture_360, &mut open);
-        self.panels.capture_360 = open;
-        for action in actions {
-            match action {
-                Action::Capture => self.capture_360.wanted = true,
-                Action::Changed => self.settings.save(),
-                Action::SaveAs => self.capture_360_ask_path(),
-            }
-        }
-    }
-
-    /// LLFloater360Capture::onSaveLocalBtn: the save dialog with the
-    /// proposed name, in the photos' folder.
-    fn capture_360_ask_path(&mut self) {
-        if self.capture_360.image.is_none() || self.capture_360.dialog.is_some() {
-            return;
-        }
-        let name = self.capture_360_proposed_name();
+        let quality = self.settings.snapshot.capture_360.quality;
+        let (w, h) = quality.output();
+        let name = rules::proposed_file_name(
+            &self.world.region_name(),
+            w,
+            h,
+            quality.face_size(),
+            &rules::compact_stamp(crate::snapshot::local_time()),
+        );
         let folder = self.settings.snapshot.folder();
         let (tx, rx) = crossbeam_channel::bounded(1);
         let spawned = std::thread::Builder::new().name("aurora-360-dialog".into()).spawn(move || {
@@ -632,9 +712,12 @@ impl App {
     }
 
     /// `AURORA_DEMO_SNAPSHOT_360=<folder>[:preview|medium|high|maximum]
-    /// [:hide]`: the window opened at frame 600 (its capture follows), the
-    /// panorama written to the folder under its proposed name.
-    fn capture_360_demo(&mut self) {
+    /// [:hide][:inventory][:panel|:classic]`: the photo window opened in 360° at frame 600
+    /// and its shutter pressed a few frames later; the panorama is written
+    /// to the folder under its proposed name (with `:inventory`, the
+    /// inventory's picture is kept there instead and the upload is only
+    /// logged: there is no grid).
+    fn capture_360_demo(&mut self, renderer: &mut Renderer) {
         if !self.demo {
             return;
         }
@@ -644,40 +727,99 @@ impl App {
                 self.capture_360.demo = parse_demo(&value);
             }
         }
-        let due = self.capture_360.demo.as_ref().is_some_and(|d| !d.opened) && self.frame_count >= DEMO_OPEN_FRAME && self.in_world();
-        if !due {
-            return;
-        }
+        let in_world = self.in_world();
         let Some(demo) = self.capture_360.demo.as_mut() else {
             return;
         };
-        demo.opened = true;
-        let (quality, hide) = (demo.quality, demo.hide);
-        let s = &mut self.settings.snapshot.capture_360;
-        if let Some(q) = quality {
-            s.quality = q;
+        if !in_world {
+            return;
         }
-        s.hide_avatars = hide;
-        log::info!(
-            "demo: 360 capture at frame {}, quality {:?}, avatars {}",
-            self.frame_count,
-            s.quality,
-            if s.hide_avatars { "hidden" } else { "drawn" }
-        );
-        self.panels.capture_360 = true;
+        if !demo.opened && self.frame_count >= DEMO_OPEN_FRAME {
+            demo.opened = true;
+            let (quality, hide, inventory, style) = (demo.quality, demo.hide, demo.inventory, demo.style);
+            if let Some(style) = style {
+                self.settings.photo_window = style;
+            }
+            let s = &mut self.settings.snapshot.capture_360;
+            if let Some(q) = quality {
+                s.quality = q;
+            }
+            s.hide_avatars = hide;
+            log::info!(
+                "demo: 360 capture at frame {}, quality {:?}, avatars {}, {}",
+                self.frame_count,
+                s.quality,
+                if s.hide_avatars { "hidden" } else { "drawn" },
+                if inventory { "to the inventory" } else { "to disk" }
+            );
+            self.panels.snapshot = true;
+            self.snapshots.ui.pano = true;
+            self.snapshots.ui.destination = if inventory {
+                crate::ui::snapshot::Destination::Inventory
+            } else {
+                crate::ui::snapshot::Destination::Disk
+            };
+            return;
+        }
+        if demo.opened && !demo.pressed && self.frame_count >= DEMO_SHUTTER_FRAME {
+            demo.pressed = true;
+            let (folder, inventory) = (demo.folder.clone(), demo.inventory);
+            if inventory {
+                self.photo_action(crate::ui::snapshot::Action::Take, renderer);
+                self.capture_360.demo_inventory_asked = true;
+            } else {
+                let quality = self.settings.snapshot.capture_360.quality;
+                let (w, h) = quality.output();
+                let name = rules::proposed_file_name(
+                    &self.world.region_name(),
+                    w,
+                    h,
+                    quality.face_size(),
+                    &rules::compact_stamp(crate::snapshot::local_time()),
+                );
+                self.capture_360_shutter(Shutter::Disk(Some(folder.join(name))));
+            }
+            return;
+        }
+        // the price of the demo's upload accepted
+        if self.capture_360.demo_inventory_asked && self.snapshots.confirm.is_some() {
+            self.capture_360.demo_inventory_asked = false;
+            self.photo_action(crate::ui::snapshot::Action::Confirm(true), renderer);
+        }
     }
 }
 
+/// `path`, or the same name with `_1`, `_2`… when the file exists.
+fn unique(path: PathBuf) -> PathBuf {
+    if !path.exists() {
+        return path;
+    }
+    let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let extension = path.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
+    (1..1000)
+        .map(|n| path.with_file_name(format!("{stem}_{n}.{extension}")))
+        .find(|candidate| !candidate.exists())
+        .unwrap_or(path)
+}
+
 /// The scenario's words: the folder first (it may hold a drive letter),
-/// then a quality level and `hide`, in any order.
+/// then a quality level, `hide` and `inventory`, in any order.
 fn parse_demo(value: &str) -> Option<Demo> {
     let mut parts: Vec<&str> = value.split(':').collect();
     let mut quality = None;
     let mut hide = false;
+    let mut inventory = false;
+    let mut style = None;
     while parts.len() > 1 {
         let word = parts[parts.len() - 1].trim();
         if word == "hide" {
             hide = true;
+        } else if word == "inventory" {
+            inventory = true;
+        } else if word == "panel" {
+            style = Some(crate::settings::PhotoWindowStyle::Panel);
+        } else if word == "classic" {
+            style = Some(crate::settings::PhotoWindowStyle::Legacy);
         } else if let Some(q) = Quality::from_word(word) {
             quality = Some(q);
         } else {
@@ -693,8 +835,10 @@ fn parse_demo(value: &str) -> Option<Demo> {
         folder: PathBuf::from(folder.trim()),
         quality,
         hide,
+        inventory,
+        style,
         opened: false,
-        saved: false,
+        pressed: false,
     })
 }
 
@@ -707,24 +851,40 @@ mod tests {
         let d = parse_demo(r"C:\work\.scratch:high:hide").expect("a folder");
         assert_eq!(d.folder, PathBuf::from(r"C:\work\.scratch"));
         assert_eq!(d.quality, Some(Quality::High));
-        assert!(d.hide);
-        let d = parse_demo("out").expect("a folder");
-        assert_eq!(d.quality, None);
-        assert!(!d.hide);
+        assert!(d.hide && !d.inventory);
+        let d = parse_demo("out:inventory").expect("a folder");
+        assert!(d.inventory && d.quality.is_none() && !d.hide);
         assert!(parse_demo("").is_none());
     }
 
-    /// The plan keeps the quality, the eye and the heading of the start.
+    /// The plan keeps the quality, the eye and the heading of the start;
+    /// the panorama follows the faces, the card's limit, and the inventory.
     #[test]
     fn the_plan_is_the_start_of_the_capture() {
         let eye = glam::Vec3::new(10.0, 20.0, 30.0);
-        let plan = Plan::new(Quality::High, true, glam::Vec3::Y, eye);
+        let plan = Plan::new(Quality::High, true, glam::Vec3::Y, eye, 16384, Shutter::Disk(None));
         assert_eq!(plan.quality, Quality::High);
         assert_eq!(plan.face_size, Quality::High.face_size());
+        assert_eq!(plan.output, (4096, 2048));
         assert_eq!(plan.eye, eye);
         assert!(plan.hide_avatars);
-        let other = Plan::new(Quality::Preview, false, glam::Vec3::Y, eye);
+        let other = Plan::new(Quality::Preview, false, glam::Vec3::Y, eye, 16384, Shutter::Disk(None));
         assert_ne!(plan.face_size, other.face_size);
+        // the biggest on a card of 4096: the Legacy Viewer's width
+        let small = Plan::new(Quality::Maximum, false, glam::Vec3::Y, eye, 4096, Shutter::Disk(None));
+        assert_eq!((small.face_size, small.output), (2048, (4096, 2048)));
+        // a card whose textures end at 1024: the faces too
+        let tiny = Plan::new(Quality::Maximum, false, glam::Vec3::Y, eye, 1024, Shutter::Disk(None));
+        assert_eq!((tiny.face_size, tiny.output), (1024, (1024, 512)));
+    }
+
+    #[test]
+    fn the_inventory_panorama_is_the_texture_the_grid_takes_whatever_the_quality() {
+        for quality in Quality::ALL {
+            let plan = Plan::new(quality, false, glam::Vec3::Y, glam::Vec3::ZERO, 16384, Shutter::Inventory(10));
+            assert_eq!(plan.face_size, 512);
+            assert_eq!(plan.output, (2048, 1024));
+        }
     }
 
     /// The answers owed to captures given up are thrown away, in order,
@@ -755,5 +915,16 @@ mod tests {
         stale.abandon_projecting(false, false);
         assert!(stale.pending(), "the render thread has the request: its answer is owed");
         assert!(!Stale::default().swallow(true), "the next capture keeps its own answer");
+    }
+
+    #[test]
+    fn a_file_that_exists_gets_a_number() {
+        let dir = std::env::temp_dir().join(format!("aurora-360-unique-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temporary folder");
+        let first = dir.join("sl360_a.jpg");
+        assert_eq!(unique(first.clone()), first);
+        std::fs::write(&first, b"x").expect("file");
+        assert_eq!(unique(first.clone()), dir.join("sl360_a_1.jpg"));
+        std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 }
