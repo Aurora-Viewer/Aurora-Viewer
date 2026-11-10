@@ -121,6 +121,103 @@ pub(super) fn outline_members(key: usize, members: &[usize], names: &[String]) -
     members.to_vec()
 }
 
+/// A joint that is a part of its own: a bone of a group, or a wing, the
+/// tail or a hind limb. The others (collision volumes and attachment points,
+/// named without the "m", and the spine, groin and skull inside the body)
+/// follow the part of the bone they hang from.
+fn own_part(name: &str) -> bool {
+    name.starts_with('m') && !(group(name) == OTHER && !optional_bone(name))
+}
+
+/// The bone whose part `joint` is: itself when it is a part's own, else the
+/// nearest such bone up the skeleton (`own_part`).
+fn part_owner(parent: &[Option<usize>], names: &[String], mut joint: usize) -> Option<usize> {
+    loop {
+        if own_part(&names[joint]) {
+            return Some(joint);
+        }
+        joint = parent[joint]?;
+    }
+}
+
+/// A body bone a part takes for its own on the meshes: the head the
+/// face's, a wrist its hand's. A Bento face shares its weights with mHead
+/// and a hand's palm is the wrist's: without them a face is patchy and
+/// fingers are a thin target. They stay Body bones to pose.
+fn lends_to_part(name: &str) -> bool {
+    name == "mHead" || name.starts_with("mWrist")
+}
+
+/// The joint whose part the mesh pick offers (part_pick.rs gives the joint
+/// of the most weight under the pointer): its part's bone, a bone lent to a
+/// part (`lends_to_part`) giving that part's first child bone (the head the
+/// face root, a wrist its hand's fingers), when that part is offered
+/// (`offer`) and not the open group's (`current`).
+pub(super) fn picked_part(
+    joint: usize,
+    parent: &[Option<usize>],
+    names: &[String],
+    groups: &[usize],
+    offer: &[bool],
+    current: usize,
+) -> Option<usize> {
+    let mut owner = part_owner(parent, names, joint)?;
+    if lends_to_part(&names[owner]) {
+        let lent = owner;
+        owner = (0..names.len()).find(|j| parent[*j] == Some(lent) && groups[*j] != groups[lent] && own_part(&names[*j]))?;
+    }
+    (offer[owner] && groups[owner] != current).then_some(owner)
+}
+
+/// The renderer's mask of `members` (`FrameParams::part_joints`): bit j for
+/// each palette joint whose part they are, the joints that follow a bone
+/// included. A fitted mesh body weights its vertices to the collision
+/// volumes (BELLY, PEC…) and a Bento body to the spine: they tint with the
+/// body. Joints past 256 have no bit (the skeleton has 206).
+pub(super) fn mask_joints(parent: &[Option<usize>], names: &[String], members: &[usize]) -> [u32; 8] {
+    let mut mask = [0u32; 8];
+    for j in 0..names.len().min(256) {
+        if part_owner(parent, names, j).is_some_and(|o| members.contains(&o)) {
+            mask[j >> 5] |= 1 << (j & 31);
+        }
+    }
+    mask
+}
+
+/// The joints the renderer keeps for a part on the subject's meshes (the
+/// tint fades where the weights pass from them to others):
+/// - the body without the bones it lends (`lends_to_part`: the head, the
+///   wrists) and what follows them, so it meets the face and the hands in a
+///   fade at the neck and the wrists instead of lighting them;
+/// - the face and the hands with the bone they hang from (the head, the
+///   wrist): the whole head, the whole hand;
+/// - another part, its own joints when a worn mesh weights them (rigged
+///   wings, a tail), else also the bone it hangs from.
+pub(super) fn mask_members(
+    key: usize,
+    members: &[usize],
+    parent: &[Option<usize>],
+    keys: &[usize],
+    names: &[String],
+    rigged: &std::collections::HashSet<usize>,
+) -> Vec<usize> {
+    if key == 0 {
+        return members.iter().copied().filter(|j| !lends_to_part(&names[*j])).collect();
+    }
+    let mut joints = members.to_vec();
+    if key != 1 && key != 2 && members.iter().any(|j| rigged.contains(j)) {
+        return joints;
+    }
+    for &m in members {
+        if let Some(up) = parent[m].filter(|up| !members.contains(up) && keys[*up] != key)
+            && !joints.contains(&up)
+        {
+            joints.push(up);
+        }
+    }
+    joints
+}
+
 /// The part's name for the hint: its group's tab, or Wings / Tail.
 fn part_label(key: usize) -> &'static str {
     match key {
@@ -193,20 +290,45 @@ impl Editor {
         // photo (a modifier's affordance shows with the modifier, as the
         // Mac's Cmd + hover link)
         let ctrl = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
-        if let Some(joint) = offered_joint(&joints, &groups, &offer, self.poser.group, pointer).filter(|_| self.poser.part_hints && ctrl) {
+        // an avatar's part is drawn by the renderer from its meshes, and
+        // picked there (part_pick.rs); an animesh's keeps the bones (its
+        // skeleton is not an avatar's)
+        let meshes = world
+            .objects
+            .index_of_uuid(&self.poser.subject)
+            .and_then(|i| world.objects.get(i))
+            .is_some_and(|o| o.is_avatar());
+        self.poser.pick_wanted = ctrl && self.poser.part_hints && meshes;
+        // the mesh pick, once one came back: on the subject's surface, the
+        // part of its joint; off it, none. Until then, the bones.
+        let picked = self
+            .poser
+            .mesh_pick
+            .filter(|_| self.poser.pick_wanted)
+            .map(|v| v.checked_sub(1).map(|j| j as usize).filter(|j| *j < rig.len()));
+        let candidate = match picked {
+            Some(Some(j)) => picked_part(j, &rig.parent, &rig.canonical_names, &groups, &offer, self.poser.group),
+            Some(None) => None,
+            None => offered_joint(&joints, &groups, &offer, self.poser.group, pointer),
+        };
+        if let Some(joint) = candidate.filter(|_| self.poser.part_hints && ctrl) {
             let members = part(&rig.parent, &keys, joint);
             let world_at: Vec<glam::Vec3> = frame.joints.iter().map(|m| m.w_axis.truncate()).collect();
             let project = |at| proj.project(at).map(|(p, _)| p);
             // the part's own shape, see-through in the accent: the face an
             // oval around the head (one smooth outline), the others their
-            // bones' union
+            // bones' union (an animesh's: an avatar's is the renderer's)
             let fill = p.violet.gamma_multiply(0.32);
             let stroke = Stroke::new(1.5, p.violet_light.gamma_multiply(0.7));
-            let inside = if keys[joint] == 1 {
+            // the mesh pick already found the pointer on the part; the bones
+            // decide only without it
+            let inside = if picked.is_some() {
+                true
+            } else if keys[joint] == 1 {
                 let head = frame.joints[rig.names.get("mHead").copied().unwrap_or(rig.pelvis)];
                 let oval = silhouette::face(&rig.canonical_names, &world_at, &members, head, project)
                     .filter(|oval| silhouette::depth(&[*oval], pointer) > 0.0);
-                if let Some(oval) = oval {
+                if let Some(oval) = oval.filter(|_| !meshes) {
                     painter.add(egui::Shape::convex_polygon(oval.outline(64), fill, stroke));
                 }
                 oval.is_some()
@@ -221,12 +343,16 @@ impl Editor {
                     project,
                 );
                 let inside = silhouette::depth(&capsules, pointer) > 0.0;
-                if inside {
+                if inside && !meshes {
                     silhouette::paint(&painter, &silhouette::trace(&capsules), fill, stroke);
                 }
                 inside
             };
             if inside {
+                if meshes {
+                    let joints = mask_members(keys[joint], &members, &rig.parent, &keys, &rig.canonical_names, &self.poser.rigged);
+                    self.poser.part_overlay = Some((self.poser.subject, mask_joints(&rig.parent, &rig.canonical_names, &joints)));
+                }
                 tip(aurora_i18n::tr!("poser-ctrl-click-group", group = part_label(keys[joint])).to_string());
                 return Hint::Group(joint);
             }

@@ -167,6 +167,17 @@ pub(super) struct State {
     /// Last frame, Ctrl showed another part or avatar under the pointer:
     /// the handles let it through this frame (`poser_ctrl_picks`).
     ctrl_hint: bool,
+    /// The part the renderer draws on the subject's meshes this frame (its
+    /// joints as `world_hints::mask_joints`), when Ctrl hovers one the
+    /// meshes carry; None draws nothing (the bone outline, if any, is the
+    /// poser's own painting).
+    part_overlay: Option<(Uuid, [u32; 8])>,
+    /// Ctrl hovers the subject (an avatar) with the parts on: the renderer
+    /// is asked for its part under the cursor (part_pick.rs).
+    pick_wanted: bool,
+    /// Its newest answer: the dominant joint + 1 under the cursor, 0 off
+    /// the subject; None before the first since Ctrl came.
+    mesh_pick: Option<u32>,
     /// The joints edited over every subject, counted as the window shows:
     /// what a close that stops the pose would lose.
     edited_total: usize,
@@ -334,6 +345,25 @@ impl Editor {
     /// and a drag already begun keeps them.
     pub(in crate::ik_edit) fn poser_ctrl_picks(&self, modifiers: egui::Modifiers) -> bool {
         self.poser.active && (modifiers.ctrl || modifiers.command) && self.poser.ctrl_hint
+    }
+    /// The part the renderer draws on the subject's meshes (the avatar and
+    /// the joints mask of `aurora_render::FrameParams::part_joints`).
+    pub fn poser_part_overlay(&self) -> Option<(Uuid, [u32; 8])> {
+        self.poser.part_overlay.filter(|_| self.poser.active)
+    }
+    /// The subject whose part under the cursor the renderer reads this
+    /// frame (part_pick.rs), while Ctrl hovers it.
+    pub fn poser_pick_subject(&self) -> Option<Uuid> {
+        (self.poser.active && self.poser.pick_wanted).then_some(self.poser.subject)
+    }
+    /// The renderer's part pick (`Renderer::take_part_pick`): the newest
+    /// answer is kept while Ctrl is held, forgotten once it is let go.
+    pub fn set_poser_mesh_pick(&mut self, answer: Option<u32>) {
+        if !self.poser.pick_wanted {
+            self.poser.mesh_pick = None;
+        } else if answer.is_some() {
+            self.poser.mesh_pick = answer;
+        }
     }
     /// The subject posed now (you, an animesh or a resident).
     pub fn poser_subject(&self) -> Uuid {
@@ -552,11 +582,20 @@ impl Editor {
         if mode == "poser-compact-save" && frame == 480 {
             self.poser.name = "Demo pose".into();
         }
-        // compact-face: no joint selected, so that no gizmo covers the face
+        // compact-face: no joint selected, so that no gizmo covers the face;
+        // compact-body: the Hands posed, so the body is another group's part
         if mode == "poser-compact-face" && frame == 500 {
+            // as a click beside: the pelvis is not picked again
             self.selected = None;
             self.poser.unselected = true;
             self.clear_together();
+        }
+        if mode == "poser-compact-body"
+            && frame == 500
+            && let Some(pose) = self.editor_frame(world)
+        {
+            self.poser.group = 2;
+            self.select_pose_group(2, &world.avatar_lib.rig, &pose);
         }
         // the head edited at 450, then the window's cross: the confirmation
         if mode == "poser-close" && frame == 700 {

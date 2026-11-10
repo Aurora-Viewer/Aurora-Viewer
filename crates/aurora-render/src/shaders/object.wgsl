@@ -1798,6 +1798,105 @@ fn fs_selection_mask(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(1.0, 0.0, 0.0, 1.0);
 }
 
+// The poser's hovered part on the subject's skinned faces (Aurora's own):
+// each vertex's share of skinning weight on the part's palette joints
+// (`frame.part_joints`), graded across the mesh where the weights turn from
+// one part to the next. The position is vs_main's, so the depth test
+// against the scene matches.
+struct PoserPartOut {
+    @invariant @builtin(position) clip: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+    @location(1) part: f32,
+    @location(2) uv: vec2<f32>,
+    @location(3) @interpolate(flat) record: u32,
+};
+
+fn in_poser_part(joint: u32) -> bool {
+    let word = frame.part_joints[(joint >> 7u) & 1u][(joint >> 5u) & 3u];
+    return joint < 256u && ((word >> (joint & 31u)) & 1u) != 0u;
+}
+
+@vertex
+fn vs_part_mask(in: VsIn) -> PoserPartOut {
+    let rec = records[in.instance];
+    let ep = eye_model(rec, in) * vec4<f32>(vertex_position(rec, in), 1.0);
+    var out: PoserPartOut;
+    out.clip = eye_clip(rec, ep);
+    out.world_pos = ep.xyz + frame.eye.xyz;
+    out.uv = te_uv(face_st(in, rec), rec);
+    out.record = in.instance;
+    out.part = 0.0;
+    if ((rec.flags.x & FLAG_SKINNED) != 0u) {
+        let w = in.weights;
+        var share = 0.0;
+        for (var k = 0u; k < 4u; k++) {
+            if (w[k] > 0.0 && in_poser_part(skin_binds[rec.flags.z + in.joints[k]].joint.x)) {
+                share += w[k];
+            }
+        }
+        out.part = share / max(w.x + w.y + w.z + w.w, 1e-4);
+    }
+    return out;
+}
+
+@fragment
+fn fs_part_mask(in: PoserPartOut) -> @location(0) vec4<f32> {
+    portal_clip(records[in.record], in.world_pos);
+    let rec = records[in.record];
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u) {
+        let alpha = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
+        if (rec.base_color.a >= 0.004 && alpha < rec.params.w) { discard; }
+    }
+    // the part's share, eased so the tint fades where the weights pass to
+    // the next part (Overlay::new_part); green: the subject is here
+    return vec4<f32>(smoothstep(0.15, 0.85, in.part), 1.0, 0.0, 1.0);
+}
+
+// The poser's part under the cursor (part_pick.rs): each pixel of the
+// subject's skinned faces holds its dominant palette joint + 1 (the joint of
+// the most weight at the triangle's first vertex), with the scene's depth
+// test, so only what is seen answers.
+struct PoserPickOut {
+    @invariant @builtin(position) clip: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+    @location(1) @interpolate(flat) joint: u32,
+    @location(2) uv: vec2<f32>,
+    @location(3) @interpolate(flat) record: u32,
+};
+
+@vertex
+fn vs_part_pick(in: VsIn) -> PoserPickOut {
+    let rec = records[in.instance];
+    let ep = eye_model(rec, in) * vec4<f32>(vertex_position(rec, in), 1.0);
+    var out: PoserPickOut;
+    out.clip = eye_clip(rec, ep);
+    out.world_pos = ep.xyz + frame.eye.xyz;
+    out.uv = te_uv(face_st(in, rec), rec);
+    out.record = in.instance;
+    out.joint = 0u;
+    if ((rec.flags.x & FLAG_SKINNED) != 0u) {
+        var best = 0u;
+        for (var k = 1u; k < 4u; k++) {
+            if (in.weights[k] > in.weights[best]) { best = k; }
+        }
+        if (in.weights[best] > 0.0) {
+            out.joint = skin_binds[rec.flags.z + in.joints[best]].joint.x + 1u;
+        }
+    }
+    return out;
+}
+
+@fragment
+fn fs_part_pick(in: PoserPickOut) -> @location(0) vec4<u32> {
+    portal_clip(records[in.record], in.world_pos);
+    let rec = records[in.record];
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u) {
+        let alpha = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
+        if (rec.base_color.a >= 0.004 && alpha < rec.params.w) { discard; }
+    }
+    return vec4<u32>(in.joint, 0u, 0u, 0u);
+}
+
 // Glow suppression of a face LL draws in its alpha pool: the glow under it
 // is scaled by (1 - its alpha) before it adds its own (fs_glow).
 @fragment

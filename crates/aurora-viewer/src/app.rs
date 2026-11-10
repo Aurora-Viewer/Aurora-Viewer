@@ -10048,6 +10048,17 @@ impl App {
             }
             // what carries an edited attachment stands still (pauseAssociatedAvatars)
             self.scene.paused_skeletons = crate::build::anim_pause::paused_skeletons(&self.world, &self.build.selection);
+            // the avatar whose part the poser shows, drawn from its meshes
+            // (the joints go with the frame's parameters), or whose part
+            // under the cursor it asks (part_pick.rs): its faces listed
+            let pick = gfx.renderer.take_part_pick();
+            self.ik_editor.set_poser_mesh_pick(pick);
+            self.scene.poser_part = self
+                .ik_editor
+                .poser_part_overlay()
+                .map(|(id, _)| id)
+                .or(self.ik_editor.poser_pick_subject())
+                .and_then(|id| self.world.objects.index_of_uuid(&id));
             if self.world.teleporting {
                 self.ik_editor.stop_editing();
             }
@@ -10897,6 +10908,19 @@ impl App {
                 })
                 .collect(),
             rlva_spheres: self.world.rlva_sphere_frames(self.camera.position, Instant::now()),
+            // the poser's hovered part, drawn from the subject's meshes
+            part_joints: self.ik_editor.poser_part_overlay().map_or([0; 8], |(_, mask)| mask),
+            part_pick: self
+                .ik_editor
+                .poser_pick_subject()
+                .filter(|_| self.cursor_pos.0 >= 0.0 && self.cursor_pos.1 >= 0.0)
+                .map(|_| [self.cursor_pos.0 as u32, self.cursor_pos.1 as u32]),
+            // softer than a selection: the alpha scales the halo, its dark
+            // edge and the tint inside (PART_TINT)
+            part_color: {
+                let [r, g, b, _] = egui::Rgba::from(self.palette.violet_light).to_array();
+                [r, g, b, 0.65]
+            },
             selection_color: egui::Rgba::from(if self.imports.local_status.revealing() {
                 self.palette.warn
             } else {
@@ -11242,17 +11266,29 @@ impl App {
             }
         }
         // AURORA_DEMO_POSER=compact-face: Ctrl held over the face while
-        // posing the Body, for its oval tint (`poser::world_hints`)
+        // posing the Body, for its oval tint; compact-body: over the chest
+        // while posing the Hands, for the body drawn from its mesh
+        // (`poser::world_hints`)
+        let hovered = std::env::var("AURORA_DEMO_POSER").ok().and_then(|mode| match mode.as_str() {
+            // the forehead: from the demo camera, behind, the nose falls on
+            // the head's marker, which takes the pointer first
+            "compact-face" => Some("mFaceForeheadCenter"),
+            "compact-body" => Some("mChest"),
+            _ => None,
+        });
         if self.demo
             && self.frame_count >= 560
-            && std::env::var("AURORA_DEMO_POSER").is_ok_and(|mode| mode == "compact-face")
+            && let Some(joint) = hovered
             && let Some(pos) = self
                 .ik_editor
-                .poser_focus(&self.world, "mFaceNoseBase")
+                .poser_focus(&self.world, joint)
                 .and_then(|point| self.build.cam.project(point))
         {
             raw.events.push(egui::Event::ModifiersChanged(egui::Modifiers::CTRL));
             raw.events.push(egui::Event::PointerMoved(pos));
+            // the renderer's part pick reads at the app's cursor
+            let ppp = ctx.pixels_per_point();
+            self.cursor_pos = (pos.x * ppp, pos.y * ppp);
         }
         if self.demo && ui::widgets::demo::rez_mode().is_some() {
             let mode = ui::widgets::demo::rez_mode().unwrap_or("1");

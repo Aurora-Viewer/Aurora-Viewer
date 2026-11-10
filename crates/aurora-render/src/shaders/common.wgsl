@@ -81,6 +81,9 @@ struct Frame {
     sky_star_pass: vec4<f32>,   // this pass's target: width, height, 1/w, 1/h (0: frame.screen)
     anim_clock: vec4<u32>,      // effects clock (rez, portals): x ms (wrapping), y sub-ms fraction (f32 bits); zw the same for texture animations (held while the world is frozen)
     selection_color: vec4<f32>, // selected-face overlay, from the UI palette
+    // the poser's hovered part (`fs_part_mask`): bit j of the skeleton's
+    // palette joint j, 256 joints in two vectors (word j >> 5)
+    part_joints: array<vec4<u32>, 2>,
     rez_gradient: array<vec4<f32>, 3>, // rez effect: the brand gradient (linear rgb), edge to trail; [0].w its look
     cascade_vp: array<mat4x4<f32>, 3>,
     lights: array<Light, 64>,
