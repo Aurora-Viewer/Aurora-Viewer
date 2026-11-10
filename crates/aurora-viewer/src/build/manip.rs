@@ -31,12 +31,13 @@ const ARROW_PX: f32 = 80.0;
 const SELECTED_ARROW_SCALE: f32 = 1.3;
 const HOTSPOT_START: f32 = 0.2;
 const HOTSPOT_END: f32 = 1.2;
-/// Aurora: squares between their two axes, clear of the pivot and shafts
-/// (center and half side, in arrow lengths). Their resting visible quad is
-/// also their hit area. LLManipTranslate::renderTranslationHandles places
-/// its plane triangles at 1.8 arrow lengths instead.
-pub(super) const PLANE_OFFSET: f32 = 0.90;
-const PLANE_HALF: f32 = 0.11;
+/// Aurora: paired axis-colored triangles, nominally beyond the arrows
+/// (center and half side, in arrow lengths). Screen-space clearance also
+/// keeps them outside the arrows at oblique angles. The Legacy Viewer's
+/// LLManipTranslate::renderTranslationHandles uses 1.8 arrow lengths.
+const PLANE_OFFSET: f32 = 1.50;
+const PLANE_HALF: f32 = 0.14;
+const PLANE_GAP_PX: f32 = 12.0;
 /// Arrow head: height and radius, in arrow lengths.
 const ARROW_HEAD: (f32, f32) = (0.26, 0.12);
 /// Aurora: thicker than LLManipTranslate's 2 px shafts, with its picking
@@ -95,6 +96,116 @@ fn plane_quad(piv: Vec3, g: Quat, len: f32, signs: Vec3, i: usize, scale: f32) -
         piv + g * q
     };
     [at(-1.0, -1.0), at(1.0, -1.0), at(1.0, 1.0), at(-1.0, 1.0)]
+}
+
+/// The complete arrow envelope, including the maximum hover enlargement
+/// and the picking tolerance. Using the hover size keeps the plane anchors
+/// still when an arrow grows under the cursor.
+fn translate_arrow_bounds(cam: &Cam, f: &Frame, len: f32) -> Option<egui::Rect> {
+    let mut bounds = egui::Rect::NOTHING;
+    let mut include = |p| {
+        bounds.extend_with(cam.project(p)?);
+        Some(())
+    };
+    include(f.pivot)?;
+    for i in 0..3 {
+        let axis = f.grid.rotation * unit(i);
+        let height = len * ARROW_HEAD.0 * SELECTED_ARROW_SCALE;
+        let radius = len * ARROW_HEAD.1 * SELECTED_ARROW_SCALE;
+        let base = f.pivot + axis * (len - height * 0.5);
+        include(f.pivot + axis * len * HOTSPOT_END)?;
+        include(f.pivot + axis * (len + height * 0.5))?;
+        let u = axis.any_orthonormal_vector() * radius;
+        let v = axis.cross(u);
+        // A square enclosing the cone's base circle, including all sixteen
+        // vertices painted by Painter3d::cone.
+        for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+            include(base + u * x + v * y)?;
+        }
+    }
+    Some(bounds.expand(10.0 * f.size))
+}
+
+/// Shared painted/picked plane quads, in interface points. A 3D offset
+/// alone cannot prevent a projected overlap with another axis. Push the
+/// whole quad outside the arrows' screen envelope, retaining its planar
+/// orientation and a gap even around its highlighted outline.
+pub(super) fn plane_handles(cam: &Cam, f: &Frame) -> [Option<[Pos2; 4]>; 3] {
+    let len = arrow_length(cam, f, f.pivot);
+    let (Some(bounds), Some(pivot)) = (translate_arrow_bounds(cam, f, len), cam.project(f.pivot)) else {
+        return [None; 3];
+    };
+    let protected = bounds.expand((PLANE_GAP_PX + 2.0) * f.size);
+    let g = f.grid.rotation;
+    let signs = (g.inverse() * cam.at).signum();
+    let rel = (g.inverse() * cam.direction_to(f.pivot)).abs();
+    std::array::from_fn(|i| {
+        if rel[i] <= MIN_PLANE_MANIP_DOT {
+            return None;
+        }
+        let [Some(a), Some(b), Some(c), Some(d)] = plane_quad(f.pivot, g, len, signs, i, 1.0).map(|p| cam.project(p)) else {
+            return None;
+        };
+        let mut q = [a, b, c, d];
+        let rect = egui::Rect::from_points(&q);
+        if rect.intersects(protected) {
+            let outward = a.lerp(c, 0.5) - pivot;
+            if outward.length_sq() < 1e-6 {
+                return None;
+            }
+            let direction = outward.normalized();
+            let exit = |d: f32, low: f32, high: f32, min: f32, max: f32| {
+                if d > 1e-6 {
+                    (max - low) / d
+                } else if d < -1e-6 {
+                    (min - high) / d
+                } else {
+                    f32::INFINITY
+                }
+            };
+            let distance = exit(direction.x, rect.left(), rect.right(), protected.left(), protected.right()).min(exit(
+                direction.y,
+                rect.top(),
+                rect.bottom(),
+                protected.top(),
+                protected.bottom(),
+            ));
+            let offset = direction * (distance + f.size);
+            q = q.map(|p| p + offset);
+        }
+        Some(q)
+    })
+}
+
+/// A displaced screen anchor must not cast its own world ray: on an
+/// oblique plane it can sit beyond that plane's horizon. Measure the drag
+/// from the pivot's initial projection instead, without moving on press.
+fn plane_cursor_offset(camera: &Cam, pivot: Vec3, start_cursor: (f32, f32)) -> (f32, f32) {
+    camera
+        .project_px(pivot)
+        .map(|p| (start_cursor.0 - p.0, start_cursor.1 - p.1))
+        .unwrap_or_default()
+}
+
+fn paint_plane_handle(painter: &egui::Painter, pal: &crate::theme::Palette, q: [Pos2; 4], i: usize, highlighted: bool, size: f32) {
+    let colors = [axis_color(pal, (i + 1) % 3), axis_color(pal, (i + 2) % 3)];
+    let mut mesh = egui::Mesh::default();
+    for (triangle, color) in [[q[0], q[1], q[2]], [q[0], q[2], q[3]]].into_iter().zip(colors) {
+        let start = mesh.vertices.len() as u32;
+        for point in triangle {
+            mesh.colored_vertex(point, fade(color, if highlighted { 0.85 } else { 0.65 }));
+        }
+        mesh.add_triangle(start, start + 1, start + 2);
+    }
+    painter.add(egui::Shape::mesh(mesh));
+    for j in 0..4 {
+        let color = if highlighted { pal.violet_light } else { colors[j / 2] };
+        painter.line_segment(
+            [q[j], q[(j + 1) % 4]],
+            Stroke::new((if highlighted { 3.5 } else { 2.5 }) * size, color),
+        );
+    }
+    painter.line_segment([q[0], q[2]], Stroke::new(size, fade(pal.navy, 0.65)));
 }
 
 /// Is `m` inside the convex screen quad `q` (either winding)?
@@ -519,7 +630,9 @@ impl Manip {
             Part::Roll => {}
             Part::Corner(_) | Part::Face(_, _) => {}
         }
-        if matches!(part, Part::Arrow(_) | Part::Plane(_)) {
+        // Plane drags start at the pivot, with a screen grab offset. Their
+        // displaced two-color anchor need not project onto the world plane.
+        if matches!(part, Part::Arrow(_)) {
             match ray_plane(o, dir, f.pivot, d.normal) {
                 Some(h) => d.start_hit = h,
                 None => return false,
@@ -629,8 +742,8 @@ impl Manip {
     }
 
     /// Aurora look of LLManipTranslate::renderTranslationHandles: pale axes
-    /// with one positive arrow per axis, square plane handles in the
-    /// color of their normal, and the accent of the theme under the cursor.
+    /// with one positive arrow per axis and two-color plane handles outside
+    /// their envelope. Hover keeps both axis colors and accents the outline.
     fn draw_translate(&self, p: &mut Painter3d, s: &BuildSettings, f: &Frame, drag: Option<&Drag>) {
         let cam = p.cam;
         let pal = p.pal;
@@ -653,24 +766,15 @@ impl Manip {
             }
             draw_object_snap(p, &d.snap_guides);
         }
-        // plane handles
-        let at_g = g.inverse() * cam.at;
-        let signs = Vec3::new(at_g.x.signum(), at_g.y.signum(), at_g.z.signum());
-        let rel = (g.inverse() * cam.direction_to(piv)).abs();
-        for i in 0..3 {
-            if !(active.is_none() || active == Some(Part::Plane(i))) || rel[i] <= MIN_PLANE_MANIP_DOT {
+        // Plane anchors use the same screen geometry for painting and picking.
+        p.flush();
+        for (i, q) in plane_handles(cam, f).into_iter().enumerate() {
+            if !(active.is_none() || active == Some(Part::Plane(i))) {
                 continue;
             }
+            let Some(q) = q else { continue };
             let hl = self.hover == Some(Part::Plane(i)) || active == Some(Part::Plane(i));
-            let q = plane_quad(piv, g, len, signs, i, 1.0);
-            let color = if hl { pal.violet_light } else { axis_color(&pal, i) };
-            let fill = fade(color, if hl { 0.5 } else { 0.3 });
-            p.tri_plain(q[0], q[1], q[2], fill);
-            p.tri_plain(q[0], q[2], q[3], fill);
-            p.flush();
-            for j in 0..4 {
-                p.line(q[j], q[(j + 1) % 4], color, (if hl { 3.5 } else { 2.5 }) * k);
-            }
+            paint_plane_handle(&p.painter, &pal, q, i, hl, k);
         }
         // Only positive ends have handles; guidelines show the full axes.
         let mut arrows: [(f32, usize); 3] = std::array::from_fn(|i| (cam.depth(piv + g * unit(i) * len), i));
@@ -1115,16 +1219,9 @@ fn pick_translate(cam: &Cam, f: &Frame, m: Pos2) -> Option<Part> {
             return Some(part);
         }
     }
-    let at_g = g.inverse() * cam.at;
-    let signs = Vec3::new(at_g.x.signum(), at_g.y.signum(), at_g.z.signum());
-    let rel = (g.inverse() * cam.direction_to(piv)).abs();
-    for i in 0..3 {
-        if rel[i] <= MIN_PLANE_MANIP_DOT {
-            continue;
-        }
-        let q = plane_quad(piv, g, len, signs, i, 1.0);
-        if let [Some(a), Some(b), Some(c), Some(d)] = q.map(|v| cam.project(v))
-            && in_quad(m, [a, b, c, d])
+    for (i, q) in plane_handles(cam, f).into_iter().enumerate() {
+        if let Some(q) = q
+            && in_quad(m, q)
         {
             return Some(Part::Plane(i));
         }
@@ -1512,19 +1609,27 @@ fn drag_update(
         }
     }
     // Test the real mouse movement for slop before constraining the ray.
+    let plane_offset = if matches!(d.part, Part::Plane(_)) {
+        plane_cursor_offset(&d.camera, d.pivot, d.start_cursor)
+    } else {
+        (0.0, 0.0)
+    };
     let cursor = if d.mode == EditMode::Move && !s.follow_edit_object && cam.hud.is_none() {
         // The grab offset in pixels changes when an oblique axis approaches
         // the camera. Bound the pivot rather than just the mouse ray.
-        let offset = cam
-            .project_px(d.start_hit + d.delta)
-            .zip(cam.project_px(d.pivot + d.delta))
-            .map(|(grab, pivot)| (grab.0 - pivot.0, grab.1 - pivot.1))
-            .unwrap_or_default();
+        let offset = if matches!(d.part, Part::Plane(_)) {
+            plane_offset
+        } else {
+            cam.project_px(d.start_hit + d.delta)
+                .zip(cam.project_px(d.pivot + d.delta))
+                .map(|(grab, pivot)| (grab.0 - pivot.0, grab.1 - pivot.1))
+                .unwrap_or_default()
+        };
         super::edge_pan::drag_cursor(cam, cursor, d.start_cursor, offset)
     } else {
         cursor
     };
-    let (o, dir) = cam.ray(cursor.0, cursor.1);
+    let (o, dir) = cam.ray(cursor.0 - plane_offset.0, cursor.1 - plane_offset.1);
     // Stop the edge camera if the translation solver rejects this ray.
     d.edge_pan_blocked = true;
     match d.part {
@@ -2419,12 +2524,9 @@ mod tests {
     fn plane_handles_are_picked_on_their_square_and_leave_the_arrows() {
         let (piv, cam, f) = translate_view(1.0);
         let len = arrow_length(&cam, &f, piv);
-        let at = cam.at;
-        let signs = Vec3::new(at.x.signum(), at.y.signum(), at.z.signum());
-        for i in 0..3 {
-            // the middle of each square, between the two axes of its plane
-            let q = plane_quad(piv, Quat::IDENTITY, len, signs, i, 1.0);
-            let middle = cam.project((q[0] + q[2]) * 0.5).unwrap();
+        for (i, q) in plane_handles(&cam, &f).into_iter().enumerate() {
+            let q = q.unwrap();
+            let middle = q[0].lerp(q[2], 0.5);
             assert_eq!(pick_translate(&cam, &f, middle), Some(Part::Plane(i)));
             let on_arrow = cam.project(piv + unit(i) * len * 0.9).unwrap();
             assert_eq!(pick_translate(&cam, &f, on_arrow), Some(Part::Arrow(i)));
@@ -2437,17 +2539,127 @@ mod tests {
     #[test]
     fn plane_handles_have_no_invisible_pick_margin() {
         for size in [0.5, 1.0, 2.0] {
-            let (piv, cam, f) = translate_view(size);
-            let len = arrow_length(&cam, &f, piv);
-            let signs = cam.at.signum();
-            for i in 0..3 {
-                let q = plane_quad(piv, f.grid.rotation, len, signs, i, 1.0);
-                let center = (q[0] + q[2]) * 0.5;
+            let (_, cam, f) = translate_view(size);
+            for (i, q) in plane_handles(&cam, &f).into_iter().enumerate() {
+                let q = q.unwrap();
+                let center = q[0].lerp(q[2], 0.5);
                 // Outside the visible square, but inside the old 30% halo.
                 for corner in q {
-                    let outside = cam.project(center + (corner - center) * 1.15).unwrap();
+                    let outside = center + (corner - center) * 1.15;
                     assert_ne!(pick_translate(&cam, &f, outside), Some(Part::Plane(i)));
                 }
+            }
+        }
+    }
+
+    fn assert_plane_anchors_outside_arrows(cam: &Cam, f: &Frame) {
+        let len = arrow_length(cam, f, f.pivot);
+        let protected = translate_arrow_bounds(cam, f, len).unwrap().expand(PLANE_GAP_PX * f.size);
+        let handles = plane_handles(cam, f);
+        assert!(handles.iter().any(Option::is_some));
+        for (i, q) in handles.into_iter().enumerate() {
+            let Some(q) = q else { continue };
+            assert!(
+                !egui::Rect::from_points(&q).expand(2.0 * f.size).intersects(protected),
+                "{i}: {q:?}"
+            );
+            // Both colored triangles are usable, including their shared diagonal.
+            for point in [
+                q[0] + ((q[1] - q[0]) + (q[2] - q[0])) / 3.0,
+                q[0] + ((q[2] - q[0]) + (q[3] - q[0])) / 3.0,
+                q[0].lerp(q[2], 0.5),
+            ] {
+                assert_eq!(pick_translate(cam, f, point), Some(Part::Plane(i)), "{i}: {point:?}");
+            }
+        }
+        // Sample actual arrow clicks and their tolerance, independently of
+        // the envelope calculation: none may ever grab a plane.
+        for i in 0..3 {
+            for along in [0.2, 0.5, 0.9, 1.13, 1.2] {
+                let at = cam.project(f.pivot + f.grid.rotation * unit(i) * len * along).unwrap();
+                for offset in [egui::Vec2::ZERO, egui::vec2(9.0, 0.0), egui::vec2(0.0, -9.0)] {
+                    assert!(!matches!(pick_translate(cam, f, at + offset * f.size), Some(Part::Plane(_))));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn plane_anchors_stay_outside_the_arrow_frame_in_world_local_and_hud_views() {
+        for size in [0.5, 1.0, 3.0] {
+            for ppp in [1.0, 2.0] {
+                for rotation in [Quat::IDENTITY, Quat::from_euler(EulerRot::XYZ, 0.4, 0.7, -0.2)] {
+                    let (piv, _, mut f) = translate_view(size);
+                    f.grid.rotation = rotation;
+                    for direction in [
+                        Vec3::new(6.0, -8.0, 5.0),
+                        Vec3::new(4.0, -8.0, 8.0),
+                        Vec3::new(-7.0, 4.0, -3.0),
+                        Vec3::new(0.0, 0.0, 10.0),
+                        Vec3::new(10.0, 0.0, 0.0),
+                        Vec3::new(4.0, 8.0, 0.1),
+                    ] {
+                        for distance in [1.0, 3.0] {
+                            let eye = piv + rotation * direction * distance;
+                            let up = (rotation * direction).normalize().any_orthonormal_vector();
+                            let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 16.0 / 9.0, 0.01);
+                            let cam = Cam::new(
+                                eye,
+                                piv,
+                                projection * glam::camera::rh::view::look_at_mat4(eye, piv, up),
+                                1.0,
+                                1280.0 * ppp,
+                                720.0 * ppp,
+                                ppp,
+                            );
+                            assert_plane_anchors_outside_arrows(&cam, &f);
+                        }
+                    }
+                }
+                for zoom in [0.5, 1.0, 2.0] {
+                    let cam = Cam::for_hud(
+                        aurora_render::HudView::new([(1280.0 * ppp) as u32, (720.0 * ppp) as u32], zoom, -1.0, 1.0),
+                        ppp,
+                    );
+                    let (_, _, mut f) = translate_view(size);
+                    f.pivot = Vec3::ZERO;
+                    assert_plane_anchors_outside_arrows(&cam, &f);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn plane_triangles_keep_both_axis_colors_even_when_highlighted() {
+        let (_, cam, f) = translate_view(1.0);
+        let pal = crate::theme::Theme::default().palette();
+        for (i, axes) in [(0, [1, 2]), (1, [2, 0]), (2, [0, 1])] {
+            for highlighted in [false, true] {
+                let ctx = egui::Context::default();
+                let q = plane_handles(&cam, &f)[i].unwrap();
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1280.0, 720.0))),
+                        ..Default::default()
+                    },
+                    |ui| paint_plane_handle(&ui.ctx().layer_painter(egui::LayerId::background()), &pal, q, i, highlighted, 1.0),
+                );
+                output.textures_delta.clear();
+                let mesh = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Mesh(mesh) if mesh.vertices.len() == 6 => Some(mesh),
+                        _ => None,
+                    })
+                    .expect("two plane triangles");
+                assert_eq!(mesh.indices.len(), 6);
+                for (triangle, axis) in mesh.vertices.as_chunks::<3>().0.iter().zip(axes) {
+                    let color = fade(axis_color(&pal, axis), if highlighted { 0.85 } else { 0.65 });
+                    assert!(triangle.iter().all(|vertex| vertex.color == color));
+                }
+                assert_eq!(mesh.vertices[0].pos, mesh.vertices[3].pos);
+                assert_eq!(mesh.vertices[2].pos, mesh.vertices[4].pos);
             }
         }
     }
