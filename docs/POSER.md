@@ -35,19 +35,44 @@ and the other window opens with the same top right corner. Both windows
 share the subject, the pose, the undo history and the settings.
 
 - **Head**: the subject's picture, name and state (a teal dot that breathes
-  while posing), Start / Stop. The picture opens the subject menu. Every
-  other avatar posed, or who accepted, has a small picture beside Start /
-  Stop: a click poses that one.
+  while posing). The picture opens the subject menu. Every other avatar
+  posed, or who accepted, has a small picture at the right (a "+n" past
+  four): a click poses that one.
 - **Groups**: Body, Face, Hands, Other and Physics in one segmented strip.
-- **Transform and side**: two three-way toggles, Rotation / Position /
-  Scale and Left / Right / Mirror.
-- **Selected joint**: its name, what the transform does, and its reset.
-- **Last row**: the markers (Always or On hover), depth of field, then Save
-  (a small form: name, BVH, pelvis, priority), Load (the library as a list,
-  with the load mode in a submenu and Open file) and Upload.
+- **Transform, depth of field and side**: Rotation / Position / Scale, the
+  depth of field switch, then Left / Right / Mirror.
+- **Selected joint**: a disclosure row with its name (a violet dot when it
+  is edited) and its values (X · Y · Z). Opened, it shows Fine-tune:
+  Handles Show / Hide, Values Total / Change, and an X, Y and Z slider,
+  the full window's.
+- **Last row**, three groups of one kind each: picking (markers Always or
+  On hover, Ctrl + click body parts, click to switch avatar), going back
+  (undo, redo, reset) and files (Save, Load, Upload). The reset greys out
+  when it would change nothing; its tip names the joint; with Shift it
+  resets the whole pose. Save is a small form: the name, BVH, pelvis,
+  priority, Save to the library, and Save as… (the file chosen in the
+  system dialog). Load lists the library, with the load mode in a submenu
+  and Open file.
+- **Start / Stop**, alone across the window under the last row.
+- **Options** (the title bar's gear): only the settings the window does not
+  show itself: stop posing when the window closes (and the question before
+  losing the pose, shown while it is on), natural rotation, and the
+  question before replacing a pose. The full window's settings hold them
+  all.
 
 Posing in the compact window goes through the markers and gizmos in the
-world; the joint list, the sliders and the trackball are in the full window.
+world, and the Fine-tune sliders; the joint list and the trackball are in
+the full window.
+
+**Other parts with Ctrl** (Ctrl + click body parts on): holding Ctrl over a
+part that another group governs (a hand while posing the Body) tints it in
+the accent, with "Ctrl + click: Hands" by the cursor, and Ctrl + click
+selects its nearest joint and opens its group. Without Ctrl nothing shows
+and the click stays the world's (in the photo mode, a plain click on the
+face still sets the focus, and a Ctrl + click on a part stays the
+poser's instead of passing to the world). The body is one part, a hand reaches its
+wrist, the face is an oval that follows the head, and the wings and the
+tail are offered only when a worn rigged mesh uses them.
 
 The subject menu (both windows) uses the People list's rows: the picture,
 the name over the account name, and the distance at the right in Near
