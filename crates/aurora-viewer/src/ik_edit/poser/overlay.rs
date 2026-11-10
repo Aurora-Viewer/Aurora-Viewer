@@ -53,7 +53,10 @@ impl Editor {
                 self.poser.drag_checkpoint = false;
             }
         }
-        let Some(frame) = self.editor_frame(world) else { return };
+        let Some(frame) = self.editor_frame(world) else {
+            self.poser.ctrl_hint = false;
+            return;
+        };
         let rig = &world.avatar_lib.rig;
         self.refresh_other_bones(rig);
         self.poser.camera = gizmo::camera(proj);
@@ -78,8 +81,12 @@ impl Editor {
             // avatar hides the subject's own markers, and its preview must
             // stay for the click that poses it
             let hint = self.world_hint(ctx, p, world, proj, &frame, self.poser.markers);
-            // the handles give way to it next frame (`poser_ctrl_picks`)
-            self.poser.ctrl_hint = hint != world_hints::Hint::None;
+            // the handles give way to it next frame (`poser_ctrl_picks`); the
+            // decision taken before a press lasts until its release (no hint
+            // shows while a button is down), so the click reaches the part
+            if !ctx.input(|i| i.pointer.any_down()) {
+                self.poser.ctrl_hint = hint != world_hints::Hint::None;
+            }
             // markers on, even hidden "On hover" away from the avatar: a
             // click on the ground still unselects
             self.click_beside(ctx, world, hint, self.poser.markers);
@@ -88,6 +95,7 @@ impl Editor {
         } else {
             self.gizmo.cancel();
             self.poser.scale_gizmo.cancel();
+            self.poser.ctrl_hint = false;
         }
     }
     /// A click in the world that no joint, shaft or gizmo took
@@ -267,6 +275,12 @@ impl Editor {
             response.on_hover_text(name);
         }
         if gizmo_owns || self.drag.is_some() || self.gizmo.dragging() || self.poser.scale_gizmo.dragging() {
+            // a shaft under the handles still counts as a marker for Ctrl
+            // (`world_hint` does not look under it): without it, the hint
+            // and the shaft would take turns frame by frame
+            self.poser.marker_hover |= ctx
+                .input(|i| i.pointer.interact_pos())
+                .is_some_and(|at| segments::pick(&segments, at).is_some());
             self.poser.pointer_owned = true;
             return;
         }

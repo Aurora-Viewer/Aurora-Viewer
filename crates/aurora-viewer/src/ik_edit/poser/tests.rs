@@ -2066,3 +2066,116 @@ fn a_bone_inside_the_body_is_listed_in_the_full_window_and_dropped_by_the_compac
     }
     assert_eq!(editor.selected, None, "no bone inside the body in the compact window");
 }
+
+#[test]
+fn a_ctrl_click_through_the_handles_reaches_the_part_under_them_across_frames() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (world, mut editor) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = Frame::new(&world).unwrap();
+    let proj = projector(frame.joints[rig.pelvis].w_axis.truncate());
+    let p = crate::theme::Theme::default().palette();
+    // the left wrist chosen (Body): its rotation handles around it, over the
+    // fingers (Hands)
+    editor.select(rig.names["mWristLeft"], rig, &frame);
+    editor.poser.group = 0;
+    let mut frames = Frames::new();
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser");
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser-compact");
+    let wrist = proj.project(frame.joints[rig.names["mWristLeft"]].w_axis.truncate()).unwrap().0;
+    let finger = proj
+        .project(frame.joints[rig.names["mHandMiddle3Left"]].w_axis.truncate())
+        .unwrap()
+        .0;
+    let toward = (finger - wrist).normalized();
+    let mut run = |frames: &mut Frames, editor: &mut Editor, keys: egui::Modifiers, at: egui::Pos2, button: Option<bool>| {
+        let mut events = vec![egui::Event::ModifiersChanged(keys), egui::Event::PointerMoved(at)];
+        if let Some(pressed) = button {
+            events.push(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: keys,
+            });
+        }
+        frames.run(events, |ui| editor.show(ui.ctx(), &p, &world, &proj));
+    };
+    // a point where the handles take the pointer and Ctrl shows the hand
+    // under them
+    let mut found = None;
+    for step in 0..60 {
+        let at = wrist + toward * (step as f32 * 2.0);
+        run(&mut frames, &mut editor, egui::Modifiers::NONE, at, None);
+        run(&mut frames, &mut editor, egui::Modifiers::CTRL, at, None);
+        if editor.poser.gizmo_hover && editor.poser.ctrl_hint {
+            found = Some(at);
+            break;
+        }
+    }
+    let at = found.expect("a point of the wrist's handles over the fingers");
+    // hovered, then pressed, held and let go on separate frames
+    let ctrl = egui::Modifiers::CTRL;
+    run(&mut frames, &mut editor, ctrl, at, None);
+    run(&mut frames, &mut editor, ctrl, at, Some(true));
+    run(&mut frames, &mut editor, ctrl, at, None);
+    run(&mut frames, &mut editor, ctrl, at, None);
+    run(&mut frames, &mut editor, ctrl, at, Some(false));
+    run(&mut frames, &mut editor, ctrl, at, None);
+    assert!(
+        editor.selected.is_some_and(|b| group(&rig.canonical_names[b]) == 2),
+        "the Ctrl + click picks the hand: {:?}",
+        editor.selected.map(|b| rig.canonical_names[b].clone())
+    );
+}
+
+#[test]
+fn ctrl_on_the_handles_with_nothing_under_them_keeps_them_and_the_joint() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (world, mut editor) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = Frame::new(&world).unwrap();
+    let proj = projector(frame.joints[rig.pelvis].w_axis.truncate());
+    let p = crate::theme::Theme::default().palette();
+    let wrist = rig.names["mWristLeft"];
+    editor.select(wrist, rig, &frame);
+    editor.poser.group = 0;
+    let mut frames = Frames::new();
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser");
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser-compact");
+    let at_wrist = proj.project(frame.joints[wrist].w_axis.truncate()).unwrap().0;
+    let elbow = proj.project(frame.joints[rig.names["mElbowLeft"]].w_axis.truncate()).unwrap().0;
+    let toward = (elbow - at_wrist).normalized();
+    let ctrl = egui::Modifiers::CTRL;
+    let mut run = |frames: &mut Frames, editor: &mut Editor, at: egui::Pos2, button: Option<bool>| {
+        let mut events = vec![egui::Event::ModifiersChanged(ctrl), egui::Event::PointerMoved(at)];
+        if let Some(pressed) = button {
+            events.push(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: ctrl,
+            });
+        }
+        frames.run(events, |ui| editor.show(ui.ctx(), &p, &world, &proj));
+    };
+    // toward the elbow (the Body's own): the handles, and no part to pick
+    let mut found = None;
+    for step in 2..60 {
+        let at = at_wrist + toward * (step as f32 * 2.0);
+        run(&mut frames, &mut editor, at, None);
+        run(&mut frames, &mut editor, at, None);
+        if editor.poser.gizmo_hover && !editor.poser.marker_hover && !editor.poser.ctrl_hint {
+            found = Some(at);
+            break;
+        }
+    }
+    let at = found.expect("a point of the wrist's handles with nothing to pick");
+    // the handles keep the pointer with Ctrl: in the photo mode the press
+    // stays the poser's (`poser_owns_pointer`), not the world's
+    assert!(editor.poser_owns_pointer(), "the handles own the pointer");
+    run(&mut frames, &mut editor, at, Some(true));
+    run(&mut frames, &mut editor, at, None);
+    run(&mut frames, &mut editor, at, Some(false));
+    run(&mut frames, &mut editor, at, None);
+    assert_eq!(editor.selected, Some(wrist), "the Ctrl + click on the handles does not unselect");
+}
