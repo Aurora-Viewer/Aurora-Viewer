@@ -9993,6 +9993,7 @@ region-people-ask-remove-managers = { $names }は不動産の管理者ではな�
 region-people-ask-remove-allowed = { $names }を許可された住人から削除します。
 region-people-ask-remove-groups = { $names }を許可されたグループから削除します。
 region-people-ask-remove-banned = { $names }のバンを解除します。
+region-people-ask-sent-home = 現在不動産にいる人はホームに送られます。
 region-people-applies-to = 適用先
 region-people-this-estate = この不動産のみ
 region-people-all-owned = 自分が所有するすべての不動産
@@ -10239,6 +10240,17 @@ region-ask-override = これをオフにすると、区画所有者が嫌がら�
 region-ask-linden-title = Lindenの不動産を変更しますか？
 region-ask-linden = Linden Labが所有する不動産（メインランド、ティーングリッド、オリエンテーション…）を変更しようとしています。これは非常に危険です：すべての住人の体験が変わる可能性があり、メインランドでは数千のリージョンが一度に変更されます。続けますか？
 region-ask-linden-ok = 不動産を変更
+region-ask-restrict-title = 来られる人を制限しますか？
+region-ask-restrict-lists = 不動産で許可された住人とグループ、管理者、所有者だけが来られるようになります。
+region-ask-restrict-age = １８歳未満の住人は拒否されます。
+region-ask-restrict-payment = 支払情報が登録されていない住人は拒否されます。
+region-ask-restrict-bots = スクリプトエージェントとして登録されたアカウントは拒否されます。
+region-ask-restrict-sent-home = 不動産のすべてのリージョンに一度に適用されます。すでにいて条件を満たさなくなった人はホームに送られます。
+region-ask-restrict-here = { $count ->
+    [one] 現在このリージョンには他に{ $count }人います。
+   *[other] 現在このリージョンには他に{ $count }人います。
+}
+region-ask-restrict-ok = アクセスを制限
 region-ask-bonus-title = オブジェクトボーナスを変更しますか？
 region-ask-bonus = リージョンにすでに建築物がある状態でオブジェクトボーナスを下げると、オブジェクトが返却または削除される場合があります。本当に変更しますか？
 region-ask-bonus-ok = ボーナスを変更

@@ -8418,10 +8418,14 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   environment, experiences, covenant, interventions): `access`, `rules` or `terrain` scrolls to
   that section, `pending` makes two changes there and scrolls to the bar
   "2 changes not sent yet" (Cancel / Apply), and `ask-override`,
-  `ask-linden`, `ask-bonus`, `ask-maturity`, `ask-heights` or `ask-bake`
-  opens that question (EstateParcelAccessOverride, ChangeLindenEstate,
+  `ask-linden`, `ask-restrict`, `ask-bonus`, `ask-maturity`,
+  `ask-heights` or `ask-bake` opens that question
+  (EstateParcelAccessOverride, ChangeLindenEstate, Aurora's "Restrict who
+  can come?" for the lists only with 3 people here,
   ChangeObjectBonusFactor, RegionMaturityChange, ConfirmTextureHeights,
-  ConfirmBakeTerrain). The demo simulator keeps what Apply sends and
+  ConfirmBakeTerrain). The pending access changes of `pending` turn on
+  "Payment info on file": their Apply asks "Restrict who can come?" too.
+  The demo simulator keeps what Apply sends and
   answers it in the next RegionInfo / `estateupdateinfo`; the terrain's
   textures and elevations, which a real simulator sends back in a new
   RegionHandshake, stay shown as sent. A manager sees the bake greyed
