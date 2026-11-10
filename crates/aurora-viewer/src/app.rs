@@ -14987,6 +14987,12 @@ impl App {
         self.login_form.mfa_for = Some(key.clone());
     }
 
+    /// Logged in (or about to) on Second Life rather than an OpenSim grid
+    /// (AURORA_DEMO_USERINFO=opensim: the demo plays another grid).
+    fn second_life(&self) -> bool {
+        !matches!(self.settings.grid, crate::settings::GridChoice::Custom) && !(self.demo && crate::demo::home::opensim())
+    }
+
     /// The preferences window, in the world and over the login screen. Every
     /// setting is the viewer's own (settings.rs), so all of them can change
     /// before login; only the transcripts folder belongs to an account, and
@@ -15032,8 +15038,7 @@ impl App {
         self.options_ui.maturity = self.world.login.is_some().then(|| self.world.agent_access());
         // the account settings the grid keeps, asked at each opening
         // (AURORA_DEMO_USERINFO=opensim: another grid's)
-        let second_life =
-            !matches!(self.settings.grid, crate::settings::GridChoice::Custom) && !(self.demo && crate::demo::home::opensim());
+        let second_life = self.second_life();
         self.world.follow_preferences(self.panels.settings, second_life);
         self.options_ui.account = self.world.login.is_some().then(|| ui::options::privacy::Account {
             info: self.world.user_info.info.clone(),
@@ -16593,11 +16598,13 @@ impl App {
                 // friends tab
                 let people_aurora = !self.settings.classic_people && !(self.demo && crate::demo::people::legacy());
                 let friends_before = self.settings.friends_list.clone();
+                let second_life = self.second_life();
                 let contacts_radar = ui::people::RadarData {
                     radar: &self.radar,
                     settings: &mut self.settings.radar,
                     voice: &voice_levels,
                     draw_distance: self.settings.draw_distance,
+                    second_life,
                     now: self.radar_clock.elapsed().as_secs_f64(),
                     pics: &self.avatar_pics,
                 };
@@ -16816,6 +16823,7 @@ impl App {
                     self.on_contacts_action(c, &mut a);
                 }
                 t = self.ui_parts.lap(Part::UiChat, t);
+                let second_life = self.second_life();
                 let mut people_map = |ui: &mut egui::Ui, size: egui::Vec2| {
                     let acts = self.people_map_ui.draw(
                         ui,
@@ -16838,6 +16846,7 @@ impl App {
                     settings: &mut self.settings.radar,
                     voice: &voice_levels,
                     draw_distance: self.settings.draw_distance,
+                    second_life,
                     now: self.radar_clock.elapsed().as_secs_f64(),
                     pics: &self.avatar_pics,
                 };

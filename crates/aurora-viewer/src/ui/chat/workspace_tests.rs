@@ -115,6 +115,7 @@ impl Harness {
             settings: &mut radar_settings,
             voice: &voice,
             draw_distance: 64.0,
+            second_life: true,
             now: 0.0,
             pics: &pics,
         };
@@ -2017,6 +2018,7 @@ fn the_contacts_tab_shows_peoples_friends() {
         settings: &mut radar_settings,
         voice: &voice,
         draw_distance: 64.0,
+        second_life: true,
         now: 0.0,
         pics: &pics,
     };
