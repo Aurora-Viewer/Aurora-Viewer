@@ -8997,7 +8997,7 @@ the Appearance window then opens on its Worn tab with the five objects
 worn. `cold` hides the five items from the inventory until FetchItems asks
 for them (`5 to look up`), as a cold inventory cache.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|showcase|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder|json-import|json-partial`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|showcase|portrait|portrait-not-worn|portrait-shot|portrait-bust|portrait-face|portrait-profile|photo-mode|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder|json-import|json-partial`**
 — opens Appearance with four synthetic outfits:
 
 In My Outfits, double-click an unworn attachment or clothing item to add it
@@ -9038,6 +9038,26 @@ gallery's double-click continues to open the outfit's contents.
   and a hover Wear, and Copy outfit list. Make the window narrower: under
   820 points the rail becomes a menu over the grid, under 600 the preview
   gives way to the selection card under the grid.
+- `portrait`, `portrait-not-worn`, `portrait-shot`, `portrait-bust`,
+  `portrait-face`, `portrait-profile`, `photo-mode`: the showcase, then at
+  frame 600 the outfit's auto portrait (Fider #447) of the outfit worn (in
+  that framing or angle), of one not worn, or the square photo mode;
+  `portrait-shot` also takes the photo at frame 900. The window: the live preview framed on
+  the avatar (thirds, corners, "Framed automatically"), Framing / Pose /
+  Angle / Backdrop / Light, Hide the other avatars, Keep these settings,
+  Cancel / Take the photo, then Retake / Use this photo, and the link to the
+  photo mode. Check that the whole body, the bust or the face fills the
+  square with a small margin, from the front, three-quarter or profile; the
+  A pose lowers the arms to about 45°, Arms by the sides to the body; the
+  backdrops flatten the cut-out avatar over dark, grey or light, The scene
+  keeps the region; Studio lights the avatar from behind the camera. Cancel
+  (or the X) puts the camera, the pose and the light back. Not worn: Take
+  is off and "Wear it for the photo" wears it; once the photo is used or
+  cancelled, a small window offers "Put … back on" or "Keep this outfit".
+  Photo mode: the viewfinder with a square frame whatever the photo window
+  chosen, the banner "Photo for the outfit …", the helpers Reframe on my
+  avatar / A pose / Studio backdrop, the shutter shows the photo with Use for
+  the outfit / Retake. The log says `outfit portrait: …` at each step.
 - `gallery-fit` / `gallery-fill`: local portrait, landscape and square preview
   cards. Fit shows the whole image; Fill uses a centred crop without stretching.
   The discs stay round, the images stay inside their frames and the names and
@@ -9416,6 +9436,9 @@ separate searches enabled and disabled; that preference controls only the text.
   unavailable), a text field (the Delete key edits the text) and a folder
   window. A selection entirely in the Trash asks for confirmation
   before permanent deletion.
+- `delete-enter`: as `delete-key`, then Enter at frame 740 answers the
+  confirmation. Capture 720 (the modal confirmation), then 780: the folder
+  is in the Trash and the dialog is closed.
 - `keyboard`, `aurora-keyboard`, `aurora-keyboard-wide`: click the demo
   object at frame 650, extend its selection with Shift+Down twice, then
   shrink it with Shift+Up at frame 710. Capture at 690 (three selected rows)
@@ -10318,7 +10341,7 @@ What the inventory must show with these scenarios:
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
 | `AURORA_PROJECTOR_TRACE=1` | Log projector shadow selection and fades each frame |
 | `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
-| `AURORA_CONTACT_VARIANT=no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs on some AMD cards) |
+| `AURORA_CONTACT_VARIANT=bend`, `no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs of the AMD RX 9000 cards) |
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
@@ -10760,20 +10783,24 @@ What the inventory must show with these scenarios:
   `AURORA_DEMO_FEET` seen from above (`AURORA_DEMO_CAMERA=alt,615,672`,
   frame 690). Softened, neither shows and no shadow spreads from the
   ground onto a caster nor the reverse.
-  **`AURORA_CONTACT_VARIANT=no-early-out|no-shared|short|skip`**: a
-  diagnostic of the GPU hangs (device lost, Windows TDR) some AMD RX 9070 XT
+  **`AURORA_CONTACT_VARIANT=bend|no-early-out|no-shared|short|skip`**: a
+  diagnostic of the GPU hangs (device lost, Windows TDR) the AMD RX 9070 XT
   cards had as soon as the pass ran, each value without one construct of
   the window's shader (`variant_source`, contact_shadows.rs; photos keep
-  Bend's): `no-early-out`, no early exit of an all-sky wavefront through
+  Bend's, except with `no-shared`): `no-early-out`, no early exit of an all-sky wavefront through
   `workgroupUniformLoad`; `no-shared`, no workgroup memory nor barrier (each
   thread reads from the depth what the others would have shared,
   `contact_shadows_no_shared.wgsl`). Both draw the same mask as Bend's
   (the GPU test `the_variants_that_keep_the_image_draw_bends_mask`, run
   with `-- --ignored`). `short`: 16 samples per pixel instead of 60, the
   shadows about four times shorter; `skip`: the shader is not dispatched,
-  no contact shadow (the mask is still cleared and filtered). Any other
-  value keeps Bend's shader; the log says `contact shadows: diagnostic
-  variant …` when one is taken. They only draw with the
+  no contact shadow (the mask is still cleared and filtered). `bend` or
+  any other value keeps Bend's shader; the log says `contact shadows:
+  diagnostic variant …` when the variable is set. Unset, the AMD RX 9000
+  (RDNA 4) cards get `no-shared` for the window and the photos, as the
+  only variant that stopped their hangs (2026-11-10, #2238): the log says
+  `contact shadows: without workgroup memory on <card>`; `bend` puts
+  Bend's back on them, to compare. They only draw with the
   sun shadows on. To see them, `AURORA_DEBUG_SHADOWS=1` (the shadow view
   takes them too) with `AURORA_DEMO_TOD=2` (high sun) or `3` (low sun),
   `AURORA_DEMO_CROWD=40` and `AURORA_DEMO_POS=129,134`: thin shadows appear

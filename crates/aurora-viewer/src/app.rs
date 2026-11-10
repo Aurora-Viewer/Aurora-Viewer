@@ -108,6 +108,7 @@ mod movement;
 mod object_actions;
 mod object_menu;
 mod object_menu_demo;
+mod outfit_portrait;
 mod own_motion;
 mod pay;
 mod photo_isolate;
@@ -1083,6 +1084,8 @@ pub struct App {
     demo_script_sources: std::collections::HashMap<aurora_net::scripts::ScriptTarget, String>,
     demo_script_experiences: std::collections::HashMap<aurora_net::scripts::ScriptTarget, uuid::Uuid>,
     inventory_images: inventory_thumbnail::ImageJobs,
+    /// The outfit's auto portrait or square photo mode under way.
+    outfit_portrait: Option<outfit_portrait::Session>,
     appearance_ui: ui::appearance::AppearanceUi,
     shape_ui: crate::shape_editor::State,
     shape_camera: Option<Camera>,
@@ -1943,6 +1946,7 @@ impl App {
             demo_script_sources: Default::default(),
             demo_script_experiences: Default::default(),
             inventory_images: Default::default(),
+            outfit_portrait: None,
             appearance_ui,
             shape_ui: Default::default(),
             shape_camera: None,
@@ -7859,6 +7863,10 @@ impl App {
             i.up = k(Action::Up) && !passing;
             // Page Down / C: crouch on the ground (crouch-walk while moving), descend in flight
             i.down = k(Action::Down);
+            // Space: brake, on the ground or in the air. The Legacy Viewer
+            // binds stop_moving in first and third person, not when seated
+            // (app_settings/key_bindings.xml).
+            i.stop = k(Action::StopMoving) && !self.world.agent.is_sitting();
         }
         // the Controls window's buttons, held like their keys
         let held = |a: Action| self.controls_held.contains(&a);
@@ -8933,6 +8941,7 @@ impl App {
                 crate::world::appearance::DEMO_TAKE_OFF_FOLDER,
             ));
         }
+        self.outfit_portrait_demo();
         // AURORA_DEMO_GROUP_REGION: the Group titles window
         if self.demo && self.frame_count == 600 && crate::demo::group_region::on() {
             self.panels.group_titles = true;
@@ -9395,6 +9404,7 @@ impl App {
         let (w, h) = gfx.renderer.size();
         // a photo drawn at its own size this frame: its proportions, the
         // part of it this frame draws, the height its details are chosen for
+        self.outfit_portrait_frame(&gfx.renderer);
         self.photo_update(&gfx.renderer);
         self.viewfinder_frame(&mut gfx.renderer);
         self.photo_isolate_frame(&mut gfx.renderer);
@@ -9904,6 +9914,7 @@ impl App {
                 self.settings.save();
             }
             self.scene.poser = self.ik_editor.pose_layers(&self.world);
+            self.outfit_portrait_pose();
             self.ik_editor.tick_pose_storage(&self.scene.jobs, &self.egui_ctx, &self.world);
             if !self.scene.poser.is_empty() {
                 self.scene.ik_edit = Default::default();
@@ -17081,6 +17092,7 @@ impl App {
                     self.settings.save();
                 }
                 self.panels.appearance = open;
+                self.outfit_portrait_window(&ctx, &p);
                 self.update_demo_shape_mesh();
                 self.shape_ui.update(&mut self.world, &self.scene, &ctx);
                 let shape_preferences = (self.shape_ui.hints, self.shape_ui.feet);
@@ -19802,7 +19814,8 @@ impl ApplicationHandler for App {
             if let Ok(view) = std::env::var("AURORA_DEMO_APPEARANCE") {
                 crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);
                 // showcase: the gallery's showcase with folders, pictures and favorites
-                if view.starts_with("folders") || view == "showcase" {
+                let showcase = view == "showcase" || view.starts_with("portrait") || view == "photo-mode";
+                if view.starts_with("folders") || showcase {
                     crate::world::outfit_folders::seed_demo(&mut self.world.inventory, self.world.agent_id);
                     if view.starts_with("folders-many") {
                         crate::world::outfit_folders::seed_demo_many(&mut self.world.inventory);
@@ -19824,7 +19837,7 @@ impl ApplicationHandler for App {
                     ui::appearance::demo_previews(&self.egui_ctx, &mut self.world.inventory, &mut self.ui_images);
                     self.settings.appearance_fill_previews = view == "gallery-fill";
                 }
-                if view == "showcase" {
+                if showcase {
                     ui::appearance::demo_previews(&self.egui_ctx, &mut self.world.inventory, &mut self.ui_images);
                     ui::appearance::demo_showcase(&mut self.world.inventory, &mut self.appearance_ui);
                 }
