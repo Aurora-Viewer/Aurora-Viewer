@@ -72,6 +72,11 @@ pub fn page(cx: &mut Cx) {
             &field!(inventory.favorites_show_parent_folders),
         );
         cx.toggle(
+            tr!("ui-inventory-controls-favorite-folders"),
+            "",
+            &field!(inventory.sidebar_favorite_folders),
+        );
+        cx.toggle(
             tr!("ui-inventory-controls-separate-search-in-each-tab"),
             "",
             &field!(inventory.separate_searches),

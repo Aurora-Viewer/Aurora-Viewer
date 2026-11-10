@@ -180,6 +180,7 @@ const BEFORE: &[&str] = &[
     "inventory.show_worn",
     "inventory.show_favorites",
     "inventory.favorites_show_parent_folders",
+    "inventory.sidebar_favorite_folders",
     "inventory.search_trash",
     "inventory.search_library",
     "inventory.search_outfits",
