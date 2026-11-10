@@ -50,6 +50,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.classic_search = !aurora;
     s.classic_region_estate = !aurora;
     s.classic_inventory = !aurora;
+    s.classic_outfit_gallery = !aurora;
     s.build.legacy_window = !aurora;
     s.classic_places = !aurora;
     s.classic_pay_window = !aurora;
@@ -271,6 +272,14 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 aurora,
                 classic,
                 &field!(classic_inventory),
+            );
+            look(
+                cx,
+                tr!("ui-options-aurora-outfit-gallery"),
+                tr!("ui-options-aurora-outfit-gallery-help"),
+                tr!("ui-options-aurora-outfit-gallery-aurora"),
+                tr!("ui-options-aurora-outfit-gallery-classic"),
+                &field!(classic_outfit_gallery),
             );
             look(
                 cx,
@@ -512,6 +521,7 @@ mod tests {
         assert!(s.classic_search, "Search opens the Legacy Viewer's tabs");
         assert!(s.classic_region_estate);
         assert!(s.classic_inventory, "the Legacy Viewer's single inventory tree");
+        assert!(s.classic_outfit_gallery, "the Legacy Viewer's small outfit tiles");
         assert!(s.build.legacy_window, "the Legacy Viewer's build tools and tabs");
         assert!(s.classic_places, "Places opens the Legacy Viewer's three tabs");
         assert!(s.classic_pay_window);
@@ -551,6 +561,10 @@ mod tests {
             "the Aurora inventory is the default"
         );
         assert!(!s.classic_places && !fresh.classic_places, "Aurora's Places is the default");
+        assert!(
+            !s.classic_outfit_gallery && !fresh.classic_outfit_gallery,
+            "the showcase is the default"
+        );
         assert!(!s.build.legacy_window && !fresh.build.legacy_window);
         assert!(!s.classic_pay_window && !fresh.classic_pay_window);
         assert!(!s.legacy_money_tracker && !fresh.legacy_money_tracker);

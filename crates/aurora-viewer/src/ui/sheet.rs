@@ -931,6 +931,7 @@ pub struct RowAnswer {
 /// the right end. A double click opens the profile.
 pub fn person_row(ui: &mut egui::Ui, p: &Palette, world: &World, row: &Person<'_>, width: f32) -> RowAnswer {
     let (rect, r) = ui.allocate_exact_size(Vec2::new(width, ROW_H), Sense::click());
+    widgets::reveal_search_selection(ui, &r, row.selected);
     let radius = ui.visuals().widgets.inactive.corner_radius;
     if row.selected {
         ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.18));

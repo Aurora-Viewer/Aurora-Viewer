@@ -180,6 +180,9 @@ pub enum InvAction {
         items: Vec<Uuid>,
         png: bool,
     },
+    /// Preferences › Confirmations / Inventory: stop asking before a Trash
+    /// move (`DeleteItems` ignore box). Purge still always asks (#2344).
+    StopConfirmingDelete,
     WearLibrary {
         item: Uuid,
         replace: bool,
@@ -534,12 +537,17 @@ pub struct InventoryUi {
     pub selection: HashSet<Uuid>,
     anchor: Option<Uuid>,
     keyboard_selection: bool,
+    /// "Do not show again" on the Delete confirmation (Trash moves only).
+    delete_dont_ask: bool,
     /// Last actual scroll offset and viewport height of this window's list.
     list_viewport: Option<(f32, f32)>,
     list_focus_frame: Option<u64>,
     visible: Vec<Uuid>,
     pub clipboard: Vec<Uuid>,
     pub cut: bool,
+    cut_rows: clipboard::CutRows,
+    #[cfg(windows)]
+    clipboard_sequence: Option<u32>,
     pub consume_clipboard: bool,
     pub pending_refresh: Vec<Uuid>,
     pub created_selection: Option<Uuid>,
@@ -1105,6 +1113,8 @@ fn item_row(
     };
     st.visible.push(*id);
     ui.horizontal(|ui| {
+        let opacity = ui.opacity();
+        ui.multiply_opacity(clipboard::opacity(inv, st, *id));
         ui.spacing_mut().item_spacing.x = 4.0;
         resolved_item_type_icon(ui, icons, inv, it, p);
         if rename_row(ui, p, inv, *id, st, actions) {
@@ -1134,6 +1144,7 @@ fn item_row(
                 super::widgets::inventory_item_label_tagged(ui, label, st.selection.contains(id), egui::Sense::click_and_drag(), name, tag)
             })
             .inner;
+        ui.set_opacity(opacity);
         item_response(ui, p, inv, it, r, permissions, st, prefs, facts, actions);
     });
 }
@@ -1198,6 +1209,8 @@ fn folder_row(
     let name = folder_name(inv, id);
     let fetch_state = folder.state;
     ui.horizontal(|ui| {
+        let opacity = ui.opacity();
+        ui.multiply_opacity(clipboard::opacity(inv, state, id));
         ui.spacing_mut().item_spacing.x = 4.0;
         let resp = tree::caret(ui, p, *open);
         clipboard::demo_caret(&resp, state, id);
@@ -1228,6 +1241,7 @@ fn folder_row(
             (p, text, super::widgets::reserve_row_tag(ui, &mut job, text, p), false)
         });
         let r = super::widgets::inventory_item_label_tagged(ui, job, state.selection.contains(&id), sense, None, tag);
+        ui.set_opacity(opacity);
         if folder_response(ui, p, inv, id, r, Some(resp.rect), open, state, prefs, facts, actions).double_clicked() {
             *open = !*open;
         }
@@ -1369,6 +1383,9 @@ use tree::spacing as tree_spacing;
 fn prepare_result_tree(st: &mut InventoryUi, inv: &Inventory, root: Uuid) {
     if let Some(open) = st.expand_all.take() {
         st.result_tree.set_all(&st.view, root, st.tab, open);
+        if !open {
+            st.scroll_restore = Some(rows::top_after_collapse(st));
+        }
     }
     if let Some(id) = st.reveal {
         st.result_tree.reveal(inv, id, st.tab);
@@ -1394,6 +1411,16 @@ fn scroll_to_row(ui: &egui::Ui, row: &egui::Response, align: egui::Align) {
     ui.scroll_to_rect(rect, Some(align));
 }
 
+/// Breakdown of LLPanelMainInventory::updateItemcountText's tooltip
+/// (indra/newview/llpanelmaininventory.cpp), shared by both layouts.
+fn count_tooltip(inv: &Inventory) -> String {
+    aurora_i18n::tr!(
+        "inventory-count-tooltip",
+        items = aurora_i18n::integer(inv.item_count() as i64),
+        folders = aurora_i18n::integer(inv.folders.len() as i64)
+    )
+}
+
 fn status(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -1411,10 +1438,13 @@ fn status(
         aurora_i18n::tr!(
             "ui-inventory-results-objects-loaded",
             value0 = format!("{}", st.view.results.len()),
-            value1 = format!("{}", inv.item_count())
+            value1 = aurora_i18n::integer(inv.total_count() as i64)
         )
     } else {
-        aurora_i18n::tr!("ui-inventory-objects-loaded", value0 = format!("{}", inv.item_count()))
+        aurora_i18n::tr!(
+            "ui-inventory-objects-loaded",
+            value0 = aurora_i18n::integer(inv.total_count() as i64)
+        )
     };
     ui.horizontal(|ui| {
         let to = st
@@ -1432,13 +1462,17 @@ fn status(
                 .color(p.muted),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            delete::button(ui, p, inv, st, prefs, facts);
+            delete::button(ui, p, inv, st, prefs, facts, actions);
             if st.busy() {
                 ui.add(egui::Spinner::new().size(14.0).color(p.violet));
             }
             let label = if message.is_empty() { &count } else { &message };
             ui.add(egui::Label::new(RichText::new(label).size(11.0).color(color)).truncate())
-                .on_hover_text(if message.is_empty() { count } else { format!("{message}\n{count}") });
+                .on_hover_text(if message.is_empty() {
+                    format!("{count}\n{}", count_tooltip(inv))
+                } else {
+                    format!("{message}\n{count}\n{}", count_tooltip(inv))
+                });
         });
     });
 }
@@ -2070,6 +2104,7 @@ pub fn show(
     classic: bool,
 ) -> Vec<InvAction> {
     let mut actions = Vec::new();
+    clipboard::prepare(st);
     st.focus_search = *open && (st.focus_search || !st.was_open);
     // What is worn, the attachment points and the names are read for the
     // windows and dialogs that show them, not every frame while closed.
@@ -2156,7 +2191,7 @@ pub fn show(
         }
     }
     let inv = &mut world.inventory;
-    context_catalog::process_deferred(inv, st, prefs, &facts);
+    context_catalog::process_deferred(inv, st, prefs, &facts, &mut actions);
     bulk_permissions::show(ctx, p, inv, st, world.agent_id, &mut actions);
     st.visible.clear();
     fetch_whole_inventory(inv, st);
@@ -2193,7 +2228,9 @@ pub fn show(
     } else {
         // The title bar follows the width the window had last frame.
         let layout = aurora::Layout::of_window(ctx, "inventory");
-        floater = floater.title_note(aurora::item_count(inv, layout));
+        floater = floater
+            .title_note(aurora::item_count(inv, layout))
+            .title_note_tooltip(count_tooltip(inv));
         if layout != aurora::Layout::Compact {
             let (dot, text) = aurora::sync_state(p, inv, st);
             floater = floater.title_state(dot, text);
@@ -2251,6 +2288,7 @@ pub fn show(
         }
         w.state.clipboard.clone_from(&st.clipboard);
         w.state.cut = st.cut;
+        clipboard::prepare(&mut w.state);
         w.state.pending = st.pending;
         w.state.progress.clone_from(&st.progress);
         w.state.copy_jobs.clone_from(&st.copy_jobs);
@@ -2306,7 +2344,9 @@ pub fn show(
             let layout = aurora::Layout::of_window(ctx, &window_id);
             let mut floater = floater;
             if w.additional {
-                floater = floater.title_note(aurora::item_count(&world.inventory, layout));
+                floater = floater
+                    .title_note(aurora::item_count(&world.inventory, layout))
+                    .title_note_tooltip(count_tooltip(&world.inventory));
                 if layout != aurora::Layout::Compact {
                     let (dot, text) = aurora::sync_state(p, &world.inventory, &w.state);
                     floater = floater.title_state(dot, text);
@@ -2347,7 +2387,7 @@ pub fn show(
         }
         controls::dialogs(ctx, p, &mut w.state, prefs);
         folder_colors::show(ctx, p, &world.inventory, &mut w.state, prefs);
-        context_catalog::process_deferred(&mut world.inventory, &mut w.state, prefs, &facts);
+        context_catalog::process_deferred(&mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
         dialogs::show(ctx, p, icons, &world.inventory, &mut w.state, prefs, &facts, images, &mut actions);
         move_to::show(ctx, p, icons, &mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
         dialogs::preview(
@@ -2720,6 +2760,69 @@ mod tests {
         frame(&ctx, &palette, &icons, &mut inv, &mut st, &mut prefs, &facts);
         assert_eq!(st.selected, Some(accepted));
         assert!(st.visible.contains(&accepted), "the revealed item is selected and drawn");
+    }
+
+    #[test]
+    fn collapse_goes_back_to_the_top_folders() {
+        let ctx = egui::Context::default();
+        let mut inv = view_inventory(true);
+        let root = inv.root;
+        crate::world::inventory::demo::seed_many_folders(&mut inv, 300);
+        let facts = Facts {
+            agent: Uuid::from_u128(2),
+            ..Default::default()
+        };
+        let mut st = InventoryUi {
+            expand_all: Some(true),
+            ..Default::default()
+        };
+        let mut prefs = InventoryPreferences::default();
+        let palette = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let mut frame = |inv: &mut Inventory, st: &mut InventoryUi| {
+            let mut out = None;
+            headless_output(ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(500.0, 340.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    out = Some(list(
+                        ui,
+                        &palette,
+                        &icons,
+                        inv,
+                        st,
+                        &mut prefs,
+                        &facts,
+                        &mut vec![],
+                        260.0,
+                        root,
+                        false,
+                        true,
+                    ));
+                },
+            ));
+            out.expect("inventory list drawn")
+        };
+
+        let open = frame(&mut inv, &mut st);
+        crate::ui::widgets::scroll_offset::set(&ctx, open.id, egui::vec2(0.0, open.content_size.y));
+        let bottom = frame(&mut inv, &mut st);
+        assert!(bottom.state.unclamped_offset().y > 1_000.0, "scrolled down the open tree");
+
+        st.expand_all = Some(false);
+        let collapsed = frame(&mut inv, &mut st);
+        assert!(collapsed.content_size.y > 2_000.0, "the closed top folders still make a long list");
+        assert!(collapsed.state.unclamped_offset().y < 1.0, "Collapse shows the top folders");
+        let settled = frame(&mut inv, &mut st);
+        assert!(settled.state.unclamped_offset().y < 1.0, "and stays there");
+
+        // The search results' tree does the same.
+        st.scroll_hold = Some(ScrollHold { offset: 900.0, until: 0.0 });
+        st.expand_all = Some(false);
+        prepare_result_tree(&mut st, &inv, root);
+        assert_eq!((st.scroll_restore, st.scroll_hold), (Some(0.0), None));
     }
 
     #[test]

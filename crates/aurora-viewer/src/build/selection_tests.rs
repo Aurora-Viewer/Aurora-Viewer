@@ -1447,6 +1447,33 @@ fn duplicate_copies_only_roots_with_copy_and_link_needs_modify() {
 }
 
 #[test]
+fn local_duplicates_follow_the_real_build_command_and_copy_permission_gate() {
+    use crate::ui::context::flags::{OBJECT_COPY, OBJECT_MOVE};
+    for allowed in [false, true] {
+        let (mut world, mut tool, settings) = fixture();
+        let handle = world.main_region.unwrap();
+        let mut update = crate::demo::action_avatar(false);
+        update.local_id = 99990;
+        update.full_id = Uuid::new_v4();
+        update.parent_id = 0;
+        update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        update.update_flags = OBJECT_MOVE | if allowed { OBJECT_COPY } else { 0 };
+        let index = world.objects.upsert(handle, update.clone());
+        let local = LocalAppearance::Texture(Uuid::new_v4());
+        world.objects.get_mut(index).unwrap().render.local_appearance.insert(Some(2), local);
+        tool.click_select(&mut world, &settings, Some(index), false);
+        tool.duplicate(&mut world, &settings, Vec3::X, true);
+        update.local_id += 1;
+        update.full_id = Uuid::new_v4();
+        update.position += Vec3::X;
+        update.update_flags |= FLAGS_CREATE_SELECTED;
+        let copy = world.objects.upsert(handle, update);
+        assert_eq!(world.objects.get(copy).unwrap().local_appearance(2), allowed.then_some(local));
+        assert_eq!(world.objects.take_local_duplicate_changes().len(), usize::from(allowed));
+    }
+}
+
+#[test]
 fn right_click_extends_with_shift_or_ctrl_alone() {
     // pick.mKeyMask == MASK_SHIFT || pick.mKeyMask == MASK_CONTROL
     for (shift, ctrl, alt, extends) in [
@@ -1509,4 +1536,93 @@ fn right_click_outside_build_selects_one_object_at_a_time() {
     assert!(tool.select_for_menu_with(&mut world, &settings, b, true));
     assert_eq!(selected(&tool), [99612]);
     assert_eq!(tool.menu_roots(&world, b), [b]);
+}
+
+#[test]
+fn photo_mode_releases_menu_selection_and_deselects_objects() {
+    let (mut world, mut tool, settings) = fixture();
+    tool.open = false;
+    let a = object(&world, 99610);
+    assert!(tool.select_for_menu_with(&mut world, &settings, a, false));
+    assert_eq!(selected(&tool), [99610]);
+    // Entering photo mode or right-clicking/clicking/escaping in photo mode releases the selection
+    tool.release_menu_selection(&world);
+    assert!(tool.selection.is_empty());
+    // Active selections can be cleared via deselect_all without affecting settings
+    tool.click_select(&mut world, &settings, Some(a), false);
+    assert_eq!(selected(&tool), [99610]);
+    tool.deselect_all(&world);
+    assert!(tool.selection.is_empty());
+}
+
+/// #1956, LLSelectMgr::selectionSetAlphaOnly over LLSelectNode::isTESelected
+/// (indra/newview/llselectmgr.cpp): a linked part selected whole under Edit
+/// linked parts edits all its faces, even after one of them was edited alone
+/// in face mode; a picked face edits that face only.
+#[test]
+fn face_edits_cover_a_whole_linked_part_or_only_the_picked_face() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let root = object(&world, 99610);
+    let child = object(&world, 99611);
+    world.objects.get_mut(root).unwrap().update_flags |= crate::ui::context::flags::OBJECT_MODIFY;
+    let n = tool.num_faces(&world, child);
+    let alphas = |world: &World| -> Vec<f32> {
+        let te = world.objects.get(child).unwrap().te.clone().unwrap();
+        te.faces[..n].iter().map(|f| f.color[3]).collect()
+    };
+    let before = alphas(&world);
+    tool.set_edit_mode(&mut world, &mut settings, EditMode::Face);
+    tool.face_click(&mut world, Some(child), Some(2), false);
+    assert_eq!(tool.sel_te(&world), [(child, 2)]);
+    tool.edit_faces(&mut world, |f, _, _| f.color[3] = 0.0);
+    let mut expected = before.clone();
+    expected[2] = 0.0;
+    assert_eq!(alphas(&world), expected);
+
+    tool.set_edit_mode(&mut world, &mut settings, EditMode::Move);
+    settings.edit_linked = true;
+    tool.click_select(&mut world, &settings, Some(child), false);
+    assert_eq!(tool.sel_faces(&world, child), (0..n as u8).collect::<Vec<_>>());
+    tool.out.clear();
+    tool.edit_faces(&mut world, |f, _, _| f.color[3] = 1.0);
+    assert!(alphas(&world).iter().all(|a| *a == 1.0));
+    assert!(matches!(
+        &tool.out[..],
+        [NetCommand::Build(BuildCmd::SetTextures { local_id: 99611, .. })]
+    ));
+}
+
+/// The hollow face of a hollow sphere is its own texture entry: LLProfile::
+/// generate (indra/llmath/llvolume.cpp) adds the outer face, the hole, then
+/// the two degenerate profile edges of the open half circle, so the inner
+/// face is TE 1 of 4. Picking it edits it alone; the whole prim edits all.
+#[test]
+fn face_edits_on_a_hollow_sphere_keep_the_inner_face_separate() {
+    use aurora_prim::params::{LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF};
+    let (mut world, mut tool, mut settings) = fixture();
+    let idx = object(&world, 99612);
+    let o = world.objects.get_mut(idx).unwrap();
+    o.update_flags |= crate::ui::context::flags::OBJECT_MODIFY;
+    o.volume.profile.curve_type = LL_PCODE_PROFILE_CIRCLE_HALF;
+    o.volume.profile.hollow = 0.5;
+    o.volume.path.curve_type = LL_PCODE_PATH_CIRCLE;
+    let n = tool.num_faces(&world, idx);
+    assert_eq!(n, 4);
+    let colors = |world: &World| -> Vec<[f32; 4]> {
+        let te = world.objects.get(idx).unwrap().te.clone().unwrap();
+        te.faces[..n].iter().map(|f| f.color).collect()
+    };
+    let mut expected = colors(&world);
+    tool.set_edit_mode(&mut world, &mut settings, EditMode::Face);
+    tool.face_click(&mut world, Some(idx), Some(1), false);
+    tool.edit_faces(&mut world, |f, _, _| f.color = [1.0, 0.0, 0.0, 0.0]);
+    expected[1] = [1.0, 0.0, 0.0, 0.0];
+    assert_eq!(colors(&world), expected);
+
+    tool.set_edit_mode(&mut world, &mut settings, EditMode::Move);
+    settings.edit_linked = true;
+    tool.click_select(&mut world, &settings, Some(idx), false);
+    assert_eq!(tool.sel_te(&world), (0..n as u8).map(|f| (idx, f)).collect::<Vec<_>>());
+    tool.edit_faces(&mut world, |f, _, _| f.color = [0.0, 0.0, 1.0, 0.5]);
+    assert_eq!(colors(&world), vec![[0.0, 0.0, 1.0, 0.5]; n]);
 }

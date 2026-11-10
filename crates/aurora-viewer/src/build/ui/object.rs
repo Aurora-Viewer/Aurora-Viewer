@@ -267,20 +267,6 @@ pub fn volume_from_ui(u: &ShapeUi, prev_ty: usize, flexible: bool) -> VolumePara
     v
 }
 
-/// Small isometric drawing of a shape's outline (Create palette).
-pub fn shape_preview(ui: &egui::Ui, rect: egui::Rect, params: &VolumeParams, rot: Quat, color: Color32) {
-    let edges = crate::build::silhouette::preview_edges(params);
-    let view = Quat::from_rotation_x(-0.6) * Quat::from_rotation_z(0.75) * rot;
-    let s = rect.width().min(rect.height()) * 0.62;
-    let proj = |v: Vec3| {
-        let q = view * v;
-        egui::pos2(rect.center().x + q.x * s, rect.center().y - q.z * s)
-    };
-    for (a, b) in edges.iter() {
-        ui.painter().line_segment([proj(*a), proj(*b)], egui::Stroke::new(1.0, color));
-    }
-}
-
 /// "<x, y, z>" with the decimal precision (LLPanelObject::onCopyPos...).
 pub fn vector_text(v: Vec3, decimals: usize) -> String {
     format!("<{:.*}, {:.*}, {:.*}>", decimals, v.x, decimals, v.y, decimals, v.z)
@@ -408,7 +394,7 @@ fn vec_block(
                     let (letter, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
                     let drop = 0.35 * (value_size - LETTER).max(0.0);
                     ui.painter().galley(letter.min + egui::vec2(0.0, drop), galley, color);
-                    e = e.or(super::common::spin_with_min_decimals(
+                    e = e.or(super::common::transform_spin(
                         ui,
                         value,
                         increment,
@@ -476,7 +462,7 @@ fn legacy_vec_block(
                     ),
                 );
                 let width = (ui.available_width() - 23.0).max(45.0);
-                edit = edit.or(super::common::spin_with_min_decimals(
+                edit = edit.or(super::common::transform_spin(
                     ui,
                     value,
                     increment,
@@ -918,6 +904,7 @@ fn shape_column(
     let mut e = Edit {
         changed: chosen_type.is_some(),
         commit: chosen_type.is_some(),
+        ..Edit::default()
     };
     if let Some(ty) = chosen_type {
         u.ty = ty;
@@ -954,6 +941,7 @@ fn shape_column(
                     e = e.or(Edit {
                         changed: true,
                         commit: true,
+                        ..Edit::default()
                     });
                 }
             };
