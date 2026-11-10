@@ -50,6 +50,18 @@ pub fn favorites_row_bottom(ctx: &egui::Context) -> Option<f32> {
     ctx.data(|d| d.get_temp::<f32>(Id::unique("bars_favorites_row_bottom")))
 }
 
+/// Save or clear the row edge shared by both top-bar styles.
+pub(crate) fn set_favorites_row_bottom(ctx: &egui::Context, bottom: Option<f32>) {
+    let id = Id::unique("bars_favorites_row_bottom");
+    ctx.data_mut(|d| {
+        if let Some(bottom) = bottom {
+            d.insert_temp(id, bottom);
+        } else {
+            d.remove_temp::<f32>(id);
+        }
+    });
+}
+
 /// The rectangle of an island between `left` and `right` on the row.
 fn row(screen: Rect, left: f32, right: f32) -> Rect {
     let top = screen.top() + MARGIN;
@@ -358,15 +370,14 @@ pub fn top(
     });
     // the favourites' row (F2) under the place island: the windows stay
     // under it too
-    let row_id = Id::unique("bars_favorites_row_bottom");
     if st.favorites.access == crate::settings::FavoritesAccess::Row {
         let (row, a) = super::favorites::row(&ctx, p, icons, st.favorites, place_rect);
         if let Some(a) = a {
             action = a;
         }
-        ctx.data_mut(|d| d.insert_temp(row_id, row.bottom()));
+        set_favorites_row_bottom(&ctx, Some(row.bottom()));
     } else {
-        ctx.data_mut(|d| d.remove_temp::<f32>(row_id));
+        set_favorites_row_bottom(&ctx, None);
     }
     (action, audio_action)
 }
@@ -1033,13 +1044,7 @@ fn tip_body(
         *action = BarAction::NetworkGraph;
     }
 
-    let music = if !media.music_available {
-        aurora_i18n::tr!("ui-bars-tip-music-none")
-    } else if media.music_playing {
-        aurora_i18n::tr!("ui-bars-tip-music-playing")
-    } else {
-        aurora_i18n::tr!("ui-bars-tip-music-stopped")
-    };
+    let music = media.music_status.text();
     let (rect, _) = ui.allocate_exact_size(Vec2::new(w, TIP_ROW), Sense::hover());
     paint_tip_row(
         ui,
@@ -1048,7 +1053,7 @@ fn tip_body(
         rect,
         "radio",
         aurora_i18n::tr!("ui-bars-tip-music"),
-        music,
+        &music,
         p.muted,
         11.5,
     );
@@ -1112,6 +1117,18 @@ mod tests {
     use super::super::{IslandsLook, StatusInfo};
     use super::*;
 
+    #[test]
+    fn favorites_row_bottom_is_shared_and_clears_when_hidden() {
+        let ctx = egui::Context::default();
+        assert_eq!(favorites_row_bottom(&ctx), None);
+        set_favorites_row_bottom(&ctx, Some(86.0));
+        assert_eq!(favorites_row_bottom(&ctx), Some(86.0));
+        // Classic and island bars both use this shared report. Clearing it
+        // on a hidden row or chrome-style switch prevents stale reservation.
+        set_favorites_row_bottom(&ctx, None);
+        assert_eq!(favorites_row_bottom(&ctx), None);
+    }
+
     fn status(stretch: bool, bug: bool) -> StatusInfo<'static> {
         StatusInfo {
             location_hidden: false,
@@ -1142,6 +1159,7 @@ mod tests {
             double_click: Default::default(),
             quickjump: false,
             friends_only: false,
+            show_name_tags: true,
             fly_override: false,
             quiet_snapshots: false,
             marketplace: false,

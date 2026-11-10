@@ -78,6 +78,7 @@ pub enum BarAction {
     ToggleChatBar,
     /// Show Friends Only switched (RFO, FSRenderFriendsOnly).
     ToggleFriendsOnly,
+    ToggleNameTags,
     ToggleMoveLock,
     /// Me › Quickjump (Self.toggleIgnorePreJump, FSIgnoreFinishAnimation).
     ToggleQuickjump,
@@ -252,6 +253,7 @@ pub struct StatusInfo<'a> {
     pub quickjump: bool,
     /// Show Friends Only is on (World › Show Friends only).
     pub friends_only: bool,
+    pub show_name_tags: bool,
     /// The fly override is on (Me › Fly override).
     pub fly_override: bool,
     /// Photos are taken without the shutter sound nor the snapshot
@@ -957,6 +959,14 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             "worldmap",
             &mut panels.world_map,
         );
+        flip_window(
+            ui,
+            p,
+            "location-filled",
+            aurora_i18n::tr!("toolbar-command-region-tracker"),
+            super::region_tracker::WINDOW,
+            &mut panels.region_tracker,
+        );
         // menu_viewer.xml: Stream Title (its window keeps the history of
         // the titles), then Landmark this Place, after the maps
         flip_window(
@@ -1167,6 +1177,16 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         ) {
             *action = BarAction::ToggleFriendsOnly;
         }
+        if menu::check(
+            ui,
+            p,
+            "label-off",
+            aurora_i18n::tr!("ui-bars-immersive-hide-tags"),
+            !st.show_name_tags,
+            true,
+        ) {
+            *action = BarAction::ToggleNameTags;
+        }
         menu::separator(ui, p);
         // Firestorm's View › Camera Controls and Movement Controls
         let camera = crate::keybinds::chord_label("KeyC", true, false, true);
@@ -1213,6 +1233,16 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 toolbox,
                 crate::ui::dev_toolbox::WINDOW,
                 &mut panels.dev_toolbox,
+            );
+            // Advanced.ShowDebugSettings
+            let debug_settings = aurora_i18n::tr!("toolbar-command-debug-settings");
+            flip_window(
+                ui,
+                p,
+                "terminal-2",
+                debug_settings,
+                crate::ui::debug_settings::WINDOW,
+                &mut panels.debug_settings,
             );
             // Develop › Consoles › Region Debug Console, for those the
             // region gives the console to
@@ -2072,6 +2102,15 @@ pub fn top_bars(
     if let Some((painter, slot)) = glass {
         super::widgets::finish_bar_glass(&painter, slot, bar.response.rect, p);
     }
+    if st.favorites.access == crate::settings::FavoritesAccess::Row {
+        let (row, a) = favorites::row(ui.ctx(), p, icons, st.favorites, bar.response.rect);
+        if let Some(a) = a {
+            action = a;
+        }
+        islands::set_favorites_row_bottom(ui.ctx(), Some(row.bottom()));
+    } else {
+        islands::set_favorites_row_bottom(ui.ctx(), None);
+    }
     (action, audio_action)
 }
 
@@ -2096,6 +2135,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "ao" => toggle("ao", &mut panels.ao),
         "minimap" => panels.minimap = !panels.minimap,
         "worldmap" => toggle("worldmap", &mut panels.world_map),
+        "regiontracker" => toggle(super::region_tracker::WINDOW, &mut panels.region_tracker),
         "places" => toggle("places", &mut panels.places),
         "search" => toggle(super::search::WINDOW, &mut panels.search),
         "areasearch" => toggle(super::area_search::WINDOW, &mut panels.area_search),
@@ -2118,12 +2158,15 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "beacons" => toggle(super::beacons::WINDOW, &mut panels.beacons),
         // Floater.Toggle quickprefs
         "quickprefs" => toggle(super::quick_prefs::WINDOW, &mut panels.quick_prefs),
+        // Floater.ToggleOrBringToFront settings_debug
+        "settings_debug" => toggle(super::debug_settings::WINDOW, &mut panels.debug_settings),
         // Avatar.TogglePicks: our profile on its Picks tab
         "picks" => return BarAction::MyPicks,
         // MainChatbarVisible: the nearby chat bar shown or put away
         "defaultchatbar" => return BarAction::ToggleChatBar,
         // TogglePerAccountControl FSRenderFriendsOnly
         "RFO" => return BarAction::ToggleFriendsOnly,
+        "name_tags" => return BarAction::ToggleNameTags,
         "preferences" => toggle("options", &mut panels.settings),
         // Firestorm's Move and View buttons open the controls
         "move" => {
@@ -2202,6 +2245,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "soundexplorer" => panels.sound_explorer,
         "assetblacklist" => panels.asset_blacklist,
         "group_titles" => panels.group_titles,
+        "regiontracker" => panels.region_tracker,
         "gridstatus" => panels.grid_status,
         "webbrowser" => panels.web_browser,
         "voice" => panels.voice_controls,
@@ -2209,6 +2253,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "snapshot" => panels.snapshot,
         "beacons" => panels.beacons,
         "quickprefs" => panels.quick_prefs,
+        "settings_debug" => panels.debug_settings,
         "preferences" => panels.settings,
         "move" => panels.movement_controls,
         "view" => panels.camera_controls,
@@ -2481,6 +2526,8 @@ pub struct MicButton<'a> {
     pub output_device: String,
     pub input_devices: &'a [String],
     pub output_devices: &'a [String],
+    /// The device lists are being read again.
+    pub devices_listing: bool,
     /// Output: a device was chosen.
     pub devices_changed: bool,
     /// Output: the panel opens, its lists of devices are to be read again.
@@ -2769,7 +2816,7 @@ fn mic_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, mic: &mut MicButton,
                 hover.on_hover_text(name);
                 ui.add_space(9.0);
                 let width = ui.available_width();
-                let (changed, open) = super::options::device_combo(ui, id, device, list, width);
+                let (changed, open) = super::options::device_combo(ui, id, device, list, width, mic.devices_listing);
                 mic.devices_changed |= changed;
                 *list_open |= open;
             });
@@ -2924,6 +2971,8 @@ pub(crate) fn toolbar_row(
             toolbar.photo_roll_active
         } else if b.command == "defaultchatbar" {
             toolbar.chat_bar_active
+        } else if b.command == "name_tags" {
+            !toolbar.show_name_tags
         } else if b.command == "RFO" {
             toolbar.friends_only_active
         } else if b.command == "vr_view" {
@@ -2949,6 +2998,13 @@ pub(crate) fn toolbar_row(
                 value0 = super::toolbar::label(b).to_string(),
                 unread = format!("{}", row.unread)
             )
+        } else if b.command == "name_tags" {
+            if active {
+                aurora_i18n::tr!("toolbar-use-name-tag-preferences")
+            } else {
+                aurora_i18n::tr!("ui-bars-immersive-hide-tags")
+            }
+            .to_owned()
         } else if !super::toolbar::ready(&b.command) {
             format!("{}\n{}", super::toolbar::label(b), menu::not_yet())
         } else if !usable {
@@ -2970,7 +3026,7 @@ pub(crate) fn toolbar_row(
             p,
             icons,
             &b.command,
-            &b.icon,
+            if b.command == "name_tags" && active { "label-off" } else { &b.icon },
             super::toolbar::label(b),
             &tip,
             active,
@@ -3646,6 +3702,7 @@ mod tests {
             ("webbrowser", super::super::web_browser::WINDOW, |p| p.web_browser),
             ("beacons", super::super::beacons::WINDOW, |p| p.beacons),
             ("quickprefs", super::super::quick_prefs::WINDOW, |p| p.quick_prefs),
+            ("settings_debug", super::super::debug_settings::WINDOW, |p| p.debug_settings),
             ("statistics", "perf", |p| p.perf),
             ("voice", super::super::voice_controls::WINDOW, |p| p.voice_controls),
         ] {
@@ -3718,6 +3775,9 @@ mod tests {
         assert!(!panels.web_browser);
         assert!(super::super::toolbar::ready("RFO"));
         assert!(matches!(run_command(&ctx, "RFO", &mut panels), BarAction::ToggleFriendsOnly));
+        // World › Hide name tags' button
+        assert!(super::super::toolbar::ready("name_tags"));
+        assert!(matches!(run_command(&ctx, "name_tags", &mut panels), BarAction::ToggleNameTags));
     }
 
     #[test]
