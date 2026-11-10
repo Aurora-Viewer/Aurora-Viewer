@@ -161,9 +161,15 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &InventoryUi) -> Vec<egu
     if frame == 640 {
         super::super::widgets::place_floater(ctx, "inventory", egui::pos2(20.0, 56.0), egui::vec2(680.0, 850.0));
     }
-    if mode == "delete-key" && frame == 680 {
+    // `delete-enter`: the Delete key, then Enter answers the confirmation
+    let key = match (mode, frame) {
+        ("delete-key" | "delete-enter", 680) => Some(egui::Key::Delete),
+        ("delete-enter", 740) => Some(egui::Key::Enter),
+        _ => None,
+    };
+    if let Some(key) = key {
         return vec![egui::Event::Key {
-            key: egui::Key::Delete,
+            key,
             physical_key: None,
             pressed: true,
             repeat: false,
