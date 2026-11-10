@@ -427,6 +427,7 @@ impl App {
                 self.on_ctx_action(CtxAction::Edit(id));
                 self.build.tab = 3;
                 self.build.ui.tex_tab = 1;
+                self.build.keep_texture_tab();
             }
             CtxAction::TakeOffClothing(kind) => {
                 let items = crate::world::appearance::worn_clothing(&self.world.inventory)
@@ -580,7 +581,13 @@ impl App {
             CtxAction::CreateLandmark => self.open_create_landmark(None),
             CtxAction::OpenAppearance { tab, editing } => {
                 self.panels.appearance = true;
-                self.appearance_ui.open(tab, editing);
+                // "Change outfit" (tab 0) opens the outfit view in use,
+                // the gallery or the list, rather than always the gallery
+                if tab == 0 && !editing {
+                    self.appearance_ui.open_outfits();
+                } else {
+                    self.appearance_ui.open(tab, editing);
+                }
             }
             CtxAction::StandUp => self.send(NetCommand::OneShotControl(control::STAND_UP)),
             CtxAction::SitGround => self.send(NetCommand::OneShotControl(control::SIT_ON_GROUND)),

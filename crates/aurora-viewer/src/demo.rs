@@ -1140,8 +1140,14 @@ pub fn gifs_scenario() -> Option<Gifs> {
     })
 }
 
-/// AURORA_DEMO_RECENT_EMOJIS=1|<emojis>: the row under the chat fields, the
-/// given emojis or a full row; unset, it starts empty as a new account's.
+/// Whether `AURORA_DEMO_RECENT_EMOJIS` is set: the row is shown then.
+pub fn recent_emojis_on() -> bool {
+    std::env::var_os("AURORA_DEMO_RECENT_EMOJIS").is_some()
+}
+
+/// AURORA_DEMO_RECENT_EMOJIS=1|<emojis>: the row by the chat fields, the
+/// given emojis or a full row, shown even though Preferences › Chat keeps it
+/// off by default; unset, it starts empty as a new account's.
 pub fn recent_emojis() -> String {
     match std::env::var("AURORA_DEMO_RECENT_EMOJIS") {
         Ok(v) if v.trim() == "1" => "🌟🐱🍕🎶🌈☕🤔😎🥳😍👏😢🙏🎉😅🔥👍❤😭😂".to_owned(),

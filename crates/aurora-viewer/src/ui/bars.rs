@@ -137,6 +137,8 @@ pub enum BarAction {
     BuyCurrency,
     /// The balance shown or hidden (its right click, the account island's).
     ShowBalance(bool),
+    /// "L$ received" and "L$ spent" under the balance, from its menu.
+    BalanceRows(super::balance_gains::Shown),
     /// Me › Double-click on the ground (Firestorm's "DoubleClick Teleport"
     /// of its movement menu, Advanced.SetDoubleClickAction).
     SetDoubleClick(crate::autopilot::DoubleClick),
@@ -232,6 +234,12 @@ pub struct StatusInfo<'a> {
     pub balance: Option<i32>,
     /// The balance shown (`show_balance`, #1340).
     pub show_balance: bool,
+    /// The L$ gained and spent, under the balance.
+    pub balance_gains: Vec<super::balance_gains::GainRow>,
+    /// The balance's colour this frame: it flashes when a row lands.
+    pub balance_ink: Color32,
+    /// The switches of those rows, for the balance's menu.
+    pub balance_rows: super::balance_gains::Shown,
     /// Voice connection light and its explanation.
     pub voice: (crate::voice::VoiceLight, String),
     /// SLURL of the current position (shown when the location is edited).
@@ -437,9 +445,39 @@ pub(super) fn home_menu(resp: &egui::Response, p: &Palette, can_set_home: bool) 
 /// The balance's right click (the account island's in the islands): the
 /// Legacy Viewer's "Show Currency Balance" of its status bar menu
 /// (menu_hide_navbar.xml, FSShowCurrencyBalanceInStatusbar), then Buy L$.
-pub(super) fn balance_menu(ui: &mut egui::Ui, p: &Palette, shown: bool, action: &mut BarAction) {
+pub(super) fn balance_menu(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, action: &mut BarAction) {
+    let shown = st.show_balance;
     if menu::check(ui, p, "coin-filled", aurora_i18n::tr!("ui-bars-show-balance"), shown, true) {
         *action = BarAction::ShowBalance(!shown);
+    }
+    // the L$ received and spent under it, each on its own: nowhere to show
+    // them while it is hidden
+    let rows = st.balance_rows;
+    if menu::check(
+        ui,
+        p,
+        "square-rounded-plus-filled",
+        aurora_i18n::tr!("ui-bars-balance-received"),
+        rows.received,
+        shown,
+    ) {
+        *action = BarAction::BalanceRows(super::balance_gains::Shown {
+            received: !rows.received,
+            ..rows
+        });
+    }
+    if menu::check(
+        ui,
+        p,
+        "square-rounded-minus-filled",
+        aurora_i18n::tr!("ui-bars-balance-spent"),
+        rows.spent,
+        shown,
+    ) {
+        *action = BarAction::BalanceRows(super::balance_gains::Shown {
+            spent: !rows.spent,
+            ..rows
+        });
     }
     if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("currency-menu")) {
         *action = BarAction::BuyCurrency;
@@ -1990,14 +2028,26 @@ pub fn top_bars(
                     }
                     if let Some(b) = st.balance.filter(|_| st.show_balance) {
                         // a click opens the L$ purchase, a right click hides it
-                        let balance = ui
-                            .add(egui::Label::new(small(format!("{b} {}", aurora_i18n::currency()), p.ink)).sense(egui::Sense::click()))
+                        let text = format!("{b} {}", aurora_i18n::currency());
+                        let font = egui::FontId::proportional(12.0);
+                        let width = super::balance_gains::number_width(ui.painter(), &text, &font);
+                        let height = ui.fonts_mut(|f| f.row_height(&font));
+                        let (rect, balance) = ui.allocate_exact_size(Vec2::new(width.ceil(), height), egui::Sense::click());
+                        let left = egui::pos2(rect.left(), rect.center().y);
+                        super::balance_gains::paint_number(ui.painter(), &text, &font, left, st.balance_ink);
+                        let balance = balance
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
                             .on_hover_text(aurora_i18n::tr!("ui-bars-balance-click-to-buy-l"));
                         if balance.clicked() {
                             action = BarAction::BuyCurrency;
                         }
-                        menu::context_menu(&balance, p, |ui| balance_menu(ui, p, st.show_balance, &mut action));
+                        let anchor = super::balance_gains::Anchor {
+                            right: balance.rect.right(),
+                            text_top: balance.rect.top(),
+                            top: balance.rect.bottom() + 4.0,
+                        };
+                        super::balance_gains::paint(ui.ctx(), p, &st.balance_gains, &anchor, font);
+                        menu::context_menu(&balance, p, |ui| balance_menu(ui, p, st, &mut action));
                     }
                     // the conversations' thumbnails, left of the balance as
                     // the Legacy Viewer's chiclets (#1134)

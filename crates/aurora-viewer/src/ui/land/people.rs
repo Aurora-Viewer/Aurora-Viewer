@@ -126,7 +126,7 @@ fn list_card(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &m
         ui.spacing_mut().item_spacing.x = 6.0;
         let filter = if ban { &mut s.ban_filter } else { &mut s.access_filter };
         let width = ui.available_width() - 2.0 * 26.0 - 12.0;
-        widgets::search_box(ui, p, filter, aurora_i18n::tr!("common-search"), width);
+        widgets::clearable_search_box(ui, p, filter, aurora_i18n::tr!("common-search"), width);
         if widgets::icon_button(
             ui,
             p,

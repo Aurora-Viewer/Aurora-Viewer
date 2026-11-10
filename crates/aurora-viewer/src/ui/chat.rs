@@ -346,6 +346,26 @@ impl ChatUi {
         settings.nearby_chat_window = self.popped.nearby_state();
     }
 
+    /// LLViewerWindow::handleKey lets keys a chat editor does not use reach
+    /// LLGestureMgr::triggerGesture (indra/newview/llviewerwindow.cpp).
+    /// Only function keys pass through our chat fields: text, navigation,
+    /// other editors and popup menus keep their keyboard ownership.
+    pub(crate) fn allows_gesture_key(&self, ctx: &egui::Context, key: Option<u8>) -> bool {
+        if egui::Popup::is_any_open(ctx) {
+            return false;
+        }
+        if !ctx.egui_wants_keyboard_input() {
+            return true;
+        }
+        matches!(key, Some(0xa1..=0xac))
+            && ctx.memory(|m| m.focused()).is_some_and(|focused| {
+                focused == bar_input_id()
+                    || std::iter::once(self.selected)
+                        .chain(self.popped.conversations())
+                        .any(|conversation| focused == egui::Id::unique(("conv_input", conversation)))
+            })
+    }
+
     /// `start_gesture` and FSNearbyChat::showDefaultChatBar
     /// (indra/newview/llviewerinput.cpp, fsnearbychathub.cpp): take the local
     /// bar's keyboard, adding `/` only to an empty editor. A conversation's
@@ -2368,6 +2388,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                 return;
             };
             let width = (ui.available_width() * 2.0).round() / 2.0;
+            let clearing_filter = view.is_filtered() && filter.is_empty();
             let changed = view.sync(
                 &view::Source {
                     lines,
@@ -2392,6 +2413,15 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             }
             let mark = (!needle.is_empty()).then_some(Mark { needle: &needle, wash });
             let selection = &mut st.selection.1;
+            if clearing_filter
+                && !selection.is_empty()
+                && let Some(head) = selection.head
+            {
+                let selected_row = view.lines().position(|index| clock.first + index as u64 == head.seq);
+                if let Some(row) = selected_row {
+                    view.scroll_to(row);
+                }
+            }
             let content = view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
                 let Some(line) = lines.get(row.line) else {
                     return;
@@ -4426,6 +4456,126 @@ mod tests {
         assert!(st.gesture_key(&frames.ctx, &slash, code, false, mods));
         assert_eq!(st.input, "/");
         assert!(st.focus_request);
+    }
+
+    #[test]
+    fn focused_chat_function_gestures_keep_drafts_and_release_waits() {
+        use crate::gestures::{Effect, Entry, Manager};
+        use aurora_assets::gesture::{Gesture, Step, WAIT_RELEASE};
+        use std::collections::BTreeSet;
+
+        let mut frames = Frames::new();
+        let docked = uuid::Uuid::from_u128(101);
+        let detached = uuid::Uuid::from_u128(102);
+        let mut st = ChatUi {
+            selected: Some(docked),
+            ..Default::default()
+        };
+        st.popped.pop_out(None, false, false, false);
+        st.popped.pop_out(Some(detached), false, false, false);
+        // All conversation styles use these same field ids, including
+        // nearby chat and IM/group/conference windows torn off the tabs.
+        let fields = [
+            bar_input_id(),
+            egui::Id::unique(("conv_input", None::<uuid::Uuid>)),
+            egui::Id::unique(("conv_input", Some(docked))),
+            egui::Id::unique(("conv_input", Some(detached))),
+        ];
+        for field in fields {
+            let mut draft = "Unsent chat draft".to_owned();
+            frames.run(vec![], |ui| {
+                egui::TextEdit::multiline(&mut draft).id(field).show(ui).response.request_focus();
+            });
+            assert!(frames.ctx.egui_wants_keyboard_input());
+            for key in 0xa1..=0xac {
+                for mask in [0, 1, 4, 5] {
+                    let mut manager = Manager::default();
+                    let id = uuid::Uuid::from_u128(1);
+                    let definition = Gesture {
+                        key,
+                        mask,
+                        steps: vec![
+                            Step::Wait {
+                                seconds: 0.0,
+                                flags: WAIT_RELEASE,
+                            },
+                            Step::Chat {
+                                text: "Gesture played".into(),
+                                flags: 0,
+                            },
+                        ],
+                        ..Default::default()
+                    };
+                    manager.active.insert(id);
+                    manager.entries.insert(
+                        id,
+                        Entry {
+                            asset: uuid::Uuid::nil(),
+                            definition: definition.clone(),
+                        },
+                    );
+                    let triggered = st
+                        .allows_gesture_key(&frames.ctx, Some(key))
+                        .then(|| manager.key_trigger(key, mask))
+                        .flatten();
+                    assert_eq!(triggered, Some(id), "F{} mask={mask}, field={field:?}", key - 0xa0);
+                    manager.play(id, definition, Some(key));
+                    let now = std::time::Instant::now();
+                    assert!(manager.tick(now, &BTreeSet::new()).is_empty());
+                    manager.release(Some(key));
+                    assert_eq!(manager.tick(now, &BTreeSet::new()), [Effect::Chat("Gesture played".into())]);
+                    assert_eq!(frames.ctx.memory(|m| m.focused()), Some(field));
+                }
+            }
+            assert_eq!(draft, "Unsent chat draft");
+        }
+    }
+
+    #[test]
+    fn focused_chat_function_gestures_preserve_other_keyboard_owners() {
+        let mut frames = Frames::new();
+        let st = ChatUi::default();
+        assert!(st.allows_gesture_key(&frames.ctx, Some(b'G')), "world shortcuts still work");
+        let mut draft = "Draft".to_owned();
+        frames.run(vec![], |ui| {
+            egui::TextEdit::multiline(&mut draft)
+                .id(bar_input_id())
+                .show(ui)
+                .response
+                .request_focus();
+        });
+        for key in [
+            None,
+            Some(b'A'),
+            Some(b'6'),
+            Some(32),
+            Some(0x81),
+            Some(0x82),
+            Some(0x86),
+            Some(0x89),
+            Some(0x94),
+        ] {
+            assert!(
+                !st.allows_gesture_key(&frames.ctx, key),
+                "text, editing and modifier keys stay in chat: {key:?}"
+            );
+        }
+        let popup = egui::Id::unique("function_gesture_popup");
+        egui::Popup::open_id(&frames.ctx, popup);
+        assert!(!st.allows_gesture_key(&frames.ctx, Some(0xa6)), "a menu keeps Ctrl+F6");
+        egui::Popup::close_all(&frames.ctx);
+        for field in [
+            egui::Id::unique("search"),
+            egui::Id::unique(("conv_input", Some(uuid::Uuid::from_u128(999)))),
+        ] {
+            frames.run(vec![], |ui| {
+                egui::TextEdit::multiline(&mut draft).id(field).show(ui).response.request_focus();
+            });
+            assert!(
+                !st.allows_gesture_key(&frames.ctx, Some(0xa6)),
+                "other editors retain function keys"
+            );
+        }
     }
 
     /// One frame of a notification text with place links: the regions
