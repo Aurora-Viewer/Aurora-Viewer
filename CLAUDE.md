@@ -1,1 +1,1 @@
-@AGENTS.md
+@folderstorm/AGENT_RULES.md
