@@ -122,7 +122,7 @@ fn body(ui: &mut egui::Ui, p: &Palette, settings: &mut PortraitSettings, view: &
     });
 }
 
-fn choices_ui(ui: &mut egui::Ui, p: &Palette, s: &mut PortraitSettings) {
+pub(super) fn choices_ui(ui: &mut egui::Ui, p: &Palette, s: &mut PortraitSettings) {
     choice(
         ui,
         p,
@@ -279,7 +279,7 @@ fn preview(ui: &egui::Ui, p: &Palette, square: Rect, view: &View) {
 }
 
 /// An icon and a muted, wrapped line.
-fn note(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &str) {
+pub(super) fn note(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &str) {
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         if let Some(t) = icons::global(icon) {
