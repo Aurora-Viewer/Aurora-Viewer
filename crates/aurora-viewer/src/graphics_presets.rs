@@ -29,8 +29,19 @@
 //! What a level does not touch: the texture memory (sized from the video
 //! memory), the frame rate limits and vertical sync (comfort, not quality),
 //! occlusion culling (only a gain), the environment and the image tuning
-//! (exposure, tone mapping), and the limits of the worn surface and of the
-//! complexity rule, which are choices about other people.
+//! (exposure, tone mapping), the limits of the worn surface and of the
+//! complexity rule, which are choices about other people, and the Glow
+//! switch: RenderGlow is in none of the Legacy Viewer's lists, so its
+//! quality slider never turns it back on (#2388). A saved profile
+//! (`saved.rs`) does restore the Glow it was saved with, as the Legacy
+//! Viewer's graphics presets do (RenderGlow is in
+//! app_settings/graphic_preset_controls.xml).
+//!
+//! A Mac has a sixth set of values (`mac_mid_high`), the Legacy Viewer's Mac
+//! "MidHigh" table: not a level of the row (it does not rise from Medium in
+//! every setting), but a new Mac profile's default where other systems start
+//! on Medium, and the one-time move of a Mac profile still exactly on that
+//! former default.
 
 use crate::settings::{MAX_TEXTURE_RESOLUTION, Settings};
 
@@ -76,8 +87,7 @@ impl Preset {
             // 256 particles, textures at 512 px at most, no shadows, SSAO,
             // water or probe reflections,
             // no anti-aliasing, anisotropy or sharpening, no HDR and Emissive
-            // (RenderDisableVintageMode 0); glow off as well (a full-screen
-            // pass the oldest cards feel)
+            // (RenderDisableVintageMode 0)
             Preset::Potato => Values {
                 draw_distance: 64.0,
                 lod_factor: 1.5,
@@ -99,7 +109,8 @@ impl Preset {
                 antialiasing: 0,
                 anisotropy: 1,
                 sharpen: 0.0,
-                glow: false,
+                // never written by a level (`apply`): the default
+                glow: true,
                 avatar_physics_detail: 0.0,
                 hdr_emissive: false,
                 max_texture_resolution: 512,
@@ -273,9 +284,14 @@ impl Preset {
     }
 
     /// Writes the level's settings (the shadow switch follows its quality,
-    /// like the slider of the page).
+    /// like the slider of the page). The Glow switch stays the user's
+    /// (module comment).
     pub fn apply(self, s: &mut Settings) {
-        self.values().write(s);
+        Values {
+            glow: s.glow,
+            ..self.values()
+        }
+        .write(s);
         s.graphics_saved_active = None;
     }
 
@@ -283,6 +299,85 @@ impl Preset {
     pub fn matching(s: &Settings) -> Option<Preset> {
         let current = Values::read(s).as_shown();
         Preset::ALL.into_iter().find(|p| p.values().as_shown() == current)
+    }
+}
+
+/// The Legacy Viewer's Mac "MidHigh" default: indra/newview/featuretable_mac.txt,
+/// the list of GPU class 3, at which `LLFeatureManager::loadGPUClass`
+/// (indra/newview/llfeaturemanager.cpp) caps Apple GPUs ("high throughput,
+/// low capability"). Applied on macOS only, but built and tested on every
+/// system.
+pub(crate) mod mac_mid_high {
+    use super::{Preset, Settings, Values};
+
+    /// The values of a new Mac profile: the Mac "MidHigh" list mapped onto
+    /// Aurora's Medium level. It keeps the moderate distance, LOD and
+    /// particle budget, turns the ambient occlusion off (RenderDeferredSSAO
+    /// 0), uses FXAA, manual probes and no screen-space effects; the avatar
+    /// budget (RenderAvatarMaxNonImpostors 9), complexity (250 000), probe
+    /// count (64) and anisotropy (2) follow the Mac table. Specular AA, an
+    /// Aurora improvement with no measurable cost, stays as the user has it.
+    pub(crate) fn values() -> Values {
+        Values {
+            max_avatars: 9,
+            max_complexity: 250_000,
+            ssao: 0,
+            ao_method: 0,
+            gtao_quality: 2,
+            probe_count: 64,
+            anisotropy: 2,
+            ..Preset::Medium.values()
+        }
+    }
+
+    /// Writes the Mac default (a new Mac profile's level, and the one-time
+    /// move of a Mac profile still exactly on the former Medium default).
+    pub(crate) fn apply(s: &mut Settings) {
+        values().write(s);
+        s.graphics_saved_active = None;
+    }
+
+    /// Whether the profile is exactly the Mac default.
+    pub(crate) fn matches(s: &Settings) -> bool {
+        Values::read(s).as_shown() == values().as_shown()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::graphics_presets::Effects;
+
+        #[test]
+        fn the_mac_default_is_the_legacy_mac_mid_high_table() {
+            let v = values();
+            assert_eq!(v.draw_distance, 128.0);
+            assert_eq!(v.lod_factor, 2.0);
+            assert_eq!(v.max_avatars, 9);
+            assert_eq!(v.max_complexity, 250_000);
+            assert_eq!(v.max_particles, 4096);
+            assert_eq!((v.shadow_quality, v.ssao), (0, 0));
+            assert!(!v.projector_shadows);
+            assert_eq!((v.water_reflections, v.mirrors, v.ssr), (0, 0, false));
+            assert_eq!((v.reflection_probes, v.probe_count), (1, 64));
+            assert_eq!((v.antialiasing, v.anisotropy), (1, 2));
+            assert_eq!(v.sharpen, 0.0);
+            assert!(v.glow && v.hdr_emissive);
+            assert_eq!(v.effects, Effects::OFF);
+        }
+
+        #[test]
+        fn the_mac_default_is_recognized_and_is_not_a_level() {
+            let mut s = Settings::default();
+            apply(&mut s);
+            assert!(matches(&s));
+            assert_eq!(Preset::matching(&s), None, "it is the Mac default, not a row level");
+            Preset::Medium.apply(&mut s);
+            assert!(!matches(&s));
+            // a single setting moved by hand is Custom again
+            apply(&mut s);
+            s.draw_distance = 200.0;
+            assert!(!matches(&s));
+        }
     }
 }
 
@@ -560,6 +655,9 @@ pub struct Values {
     pub antialiasing: u8,
     pub anisotropy: u16,
     pub sharpen: f32,
+    /// RenderGlow. Kept by a saved profile and the safe graphics backup; a
+    /// level neither writes it nor compares it (`Preset::apply`,
+    /// `as_shown`), and the photo boost leaves it as it is.
     pub glow: bool,
     /// RenderAvatarPhysicsLODFactor: 0 in Low, 0.75 in LowMid, 1 above.
     pub avatar_physics_detail: f32,
@@ -600,6 +698,8 @@ impl Values {
     /// and GTAO's quality only under GTAO (the page greys them out); the
     /// same for the effects: the contact shadows only with the shadows, the
     /// indirect light only with GTAO, a strength only while its effect is on.
+    /// The Glow switch never counts: no level sets it, so turning it off
+    /// keeps the level lit instead of "Custom".
     fn as_shown(self) -> Values {
         use crate::scene::complexity::slider;
         let round = |v: f32, step: f32| (v / step).round() * step;
@@ -635,6 +735,7 @@ impl Values {
             },
             ao_method,
             gtao_quality: if ao_method == 1 { self.gtao_quality } else { 2 },
+            glow: true,
             effects,
             ..self
         }
@@ -790,6 +891,29 @@ mod tests {
             assert_eq!(s.exposure, 1.7);
             assert_eq!(s.max_attachment_area, 123.0);
         }
+    }
+
+    /// RenderGlow is in none of the Legacy Viewer's featuretable.txt lists
+    /// (#2388).
+    #[test]
+    fn levels_keep_the_glow_switch_of_the_user() {
+        for glow in [false, true] {
+            let mut s = Settings {
+                glow,
+                ..Settings::default()
+            };
+            for preset in Preset::ALL {
+                preset.apply(&mut s);
+                assert_eq!(s.glow, glow, "{preset:?}");
+                // the level stays lit, not "Custom"
+                assert_eq!(Preset::matching(&s), Some(preset), "{preset:?}");
+            }
+        }
+        // switched by hand on a level: still that level
+        let mut s = Settings::default();
+        Preset::High.apply(&mut s);
+        s.glow = !s.glow;
+        assert_eq!(Preset::matching(&s), Some(Preset::High));
     }
 
     #[test]

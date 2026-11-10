@@ -5,7 +5,7 @@
 
 use super::super::COMBO_W;
 use super::super::cx::{Cx, Nothing, field, fields};
-use crate::camera::{CameraPreset, CameraSettings, DEFAULT_FOV, FOV_RANGE};
+use crate::camera::{CameraPreset, CameraSettings, DEFAULT_FOV, FOV_RANGE, SMOOTHING_RANGE};
 use egui::RichText;
 
 /// Three fields x / y / z (x forward, y left, z up).
@@ -160,7 +160,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-camera-smoothing"),
                     tr!("ui-options-camera-the-camera-follows-your-avatar-with-a-slight-lag"),
                     &field!(camera.smoothing),
-                    0.0..=9.0,
+                    SMOOTHING_RANGE,
                     "",
                 );
                 cx.slider(

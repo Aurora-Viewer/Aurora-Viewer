@@ -12,7 +12,7 @@ use super::App;
 use crate::snapshot::looks::{self, Placement, Resolved};
 use crate::snapshot::luts::{Imported, LutLibrary};
 use crate::snapshot::reel::Place;
-use crate::snapshot::{self, ContextPass, TilePass, gallery, inventory, profile, save};
+use crate::snapshot::{self, ContextPass, PausedPart, TilePass, gallery, inventory, profile, save};
 use crate::ui::snapshot::{Action, Destination, EmailView, InventoryView, ProfileView};
 use crate::ui_sound::UiSound;
 use aurora_net::NetCommand;
@@ -49,7 +49,12 @@ pub(super) enum Purpose {
     Profile,
     /// By e-mail.
     Postcard,
+    /// An outfit's picture, for the image request (#2716).
+    Outfit(Uuid),
 }
+
+/// The side of an outfit's picture as it is drawn, reduced to 256 afterwards.
+const OUTFIT_PHOTO_SIDE: u32 = 512;
 
 /// A photo on its way to the inventory or the profile feed.
 enum Upload {
@@ -117,6 +122,8 @@ struct Job {
     hold: Option<snapshot::Hold>,
     /// The whole photo drawn small before its tiles, for their occlusion.
     context: ContextPass,
+    /// Its parts wait while the 3D drawing is paused behind.
+    paused: snapshot::PausedWait,
 }
 
 /// A held photo (freeze frame) and what shows it.
@@ -172,7 +179,7 @@ pub(super) struct Snapshots {
     luts: Option<LutLibrary>,
     /// A table being imported (its file chosen, read and copied on a
     /// worker; None: the dialog was closed).
-    lut_import: Option<crossbeam_channel::Receiver<Option<Imported>>>,
+    lut_import: Option<crossbeam_channel::Receiver<Option<Vec<Imported>>>>,
     /// The focus distance of the depth of field last frame, for the depth
     /// looks (None: off, the middle of the photo then).
     pub look_focus: Option<f32>,
@@ -502,6 +509,18 @@ impl App {
         self.snapshots.world_freeze
     }
 
+    /// Whether this frame's 3D drawing is paused behind
+    /// (texture_budget::Background::paused, busy_pause.rs): not for a frame
+    /// that carries a part of a photo. No part is asked while the drawing is
+    /// paused for memory (`snapshot::PausedWait`), but the pause can begin
+    /// after the part of the frame was asked, or while one asked is still on
+    /// its way; the busy card's pause only ends after the frame of a photo's
+    /// first part. Drawn paused, it was only sky (the empty lists, at a
+    /// sixteenth of its size).
+    pub(super) fn scene_paused(&self) -> bool {
+        self.drawing_paused() && self.snapshots.capturing.is_none()
+    }
+
     /// Whether the photo mode holds the world still.
     pub(super) fn photo_world_frozen(&self) -> bool {
         self.snapshots.world_freeze.is_some()
@@ -509,9 +528,36 @@ impl App {
 
     /// Before a frame is laid out: the photo frame it carries, if any.
     pub(super) fn photo_frame(&mut self, renderer: &mut Renderer) -> Option<PhotoFrame> {
+        let textures = &self.scene.textures;
+        let (paused, pending, passes) = (textures.drawing_paused(), textures.pending_in_view(), textures.wants_passes());
+        let occlusion = self.settings.ssao > 0;
         let s = &mut self.snapshots;
         s.capturing = None;
         let job = s.job.as_mut()?;
+        // (a part already asked is drawn all the same: the frame that
+        // carries it draws the scene, `App::scene_paused`)
+        if !job.asked {
+            let waited = job.paused.waiting();
+            match job.paused.next(Instant::now(), paused, pending, passes) {
+                PausedPart::Draw if waited => {
+                    log::info!("photo: the 3D drawing resumed, drawn from its first part ({pending} textures in view left)");
+                }
+                PausedPart::Draw => {}
+                PausedPart::Wait => return None,
+                PausedPart::StartOver => {
+                    log::info!(
+                        "photo: the 3D drawing is paused behind, the photo waits for it ({} of {} part(s) drawn, drawn again)",
+                        job.next,
+                        job.tiles.len()
+                    );
+                    job.next = 0;
+                    job.pixels = Vec::new();
+                    job.hold = None;
+                    job.context = ContextPass::plan(job.size, job.tiles.len(), occlusion);
+                    return None;
+                }
+            }
+        }
         if job.asked {
             if renderer.failed() || renderer.device_lost() {
                 // the frame asked never came back (the render thread is gone)
@@ -736,6 +782,10 @@ impl App {
             Purpose::Inventory(cost) => self.photo_encode(job.size, job.pixels, cost, job.cutout),
             Purpose::Profile => self.photo_post(job.size, job.pixels, job.cutout),
             Purpose::Postcard => self.photo_postcard(job.size, job.pixels, job.cutout),
+            Purpose::Outfit(request) => {
+                self.inventory_images.photo = None;
+                self.prepare_inventory_photo(request, job.size.0, job.size.1, job.pixels);
+            }
         }
     }
 
@@ -1030,7 +1080,12 @@ impl App {
     /// Start a photo of the destination's size.
     pub(super) fn photo_job(&mut self, purpose: Purpose, renderer: &Renderer) {
         let window = renderer.size();
-        let full = self.photo_size(window);
+        let outfit = matches!(purpose, Purpose::Outfit(_));
+        let full = if outfit {
+            (OUTFIT_PHOTO_SIDE, OUTFIT_PHOTO_SIDE)
+        } else {
+            self.photo_size(window)
+        };
         let s = &self.settings.snapshot;
         let size = if purpose == Purpose::Preview {
             let (w, h) = full;
@@ -1043,7 +1098,7 @@ impl App {
             full
         };
         // the photo quality draws a photo (not its preview) at twice its size
-        let supersample = if purpose != Purpose::Preview && self.settings.photo_held.is_some() {
+        let supersample = if purpose != Purpose::Preview && !outfit && self.settings.photo_held.is_some() {
             snapshot::quality::supersample(size)
         } else {
             1
@@ -1072,7 +1127,9 @@ impl App {
                 }
             );
         }
-        let interface = s.interface && snapshot::same_proportions(full, window);
+        // an outfit's picture shows the outfit: never the interface, the
+        // HUDs or the photo's looks, whatever the Photo window has chosen
+        let interface = !outfit && s.interface && snapshot::same_proportions(full, window);
         // (with the ambient occlusion on: GTAO may be forced over its method)
         let context = ContextPass::plan(size, tiles.len(), self.settings.ssao > 0);
         self.snapshots.job = Some(Job {
@@ -1085,7 +1142,7 @@ impl App {
             waiting: None,
             pixels: Vec::new(),
             interface,
-            huds: s.huds,
+            huds: !outfit && s.huds,
             started: Instant::now(),
             supersample,
             cutout: self.world.photo_isolation.empty_background(),
@@ -1094,7 +1151,11 @@ impl App {
             photo: full,
             hold: None,
             context,
+            paused: Default::default(),
         });
+        if outfit {
+            return;
+        }
         let stack = self.settings.snapshot.looks.clone();
         let settings = self.settings.snapshot.look_settings.clone();
         let resolved = looks::resolve_stack(&stack, &settings, self.photo_luts());
@@ -1147,7 +1208,7 @@ impl App {
     fn photo_tiles(&self, renderer: &Renderer, size: (u32, u32)) -> Vec<snapshot::TilePass> {
         let bloom = if self.settings.bloom { self.settings.bloom_strength } else { 0.0 };
         let dof = self
-            .photo_dof_max_coc(size.1, renderer.size().1)
+            .photo_dof_max_coc(size, renderer.size())
             .map_or(0, aurora_render::dof_tile_reach);
         let scale = snapshot::viewfinder_scale(size, renderer.size(), self.settings.render_scale_percent);
         let contact = aurora_render::contact_tile_reach(self.settings.contact_shadows, scale);
@@ -1808,8 +1869,8 @@ impl App {
                     let picked = rfd::FileDialog::new()
                         .set_title(aurora_i18n::tr!("photo-lut-dialog"))
                         .add_filter(aurora_i18n::tr!("photo-lut-files"), &["cube", "CUBE"])
-                        .pick_file();
-                    let _ = tx.send(picked.map(|path| LutLibrary::import(&dir, &path)));
+                        .pick_files();
+                    let _ = tx.send(picked.map(|paths| LutLibrary::import_all(&dir, &paths)));
                 });
                 self.snapshots.lut_import = Some(rx);
             }
@@ -1849,32 +1910,50 @@ impl App {
         let Some(rx) = &self.snapshots.lut_import else { return };
         let Ok(result) = rx.try_recv() else { return };
         self.snapshots.lut_import = None;
-        match result {
-            None => {}
-            Some(Ok((name, lut))) => {
-                let text = aurora_i18n::tr!("photo-lut-imported", name = looks::lut_display(&name));
-                self.photo_luts().imported(name.clone(), lut);
-                let id = format!("{}{name}", looks::LUT);
-                self.snapshots.ui.looks.pick(&mut self.settings.snapshot, &id);
-                self.settings.save();
-                self.snapshots.message = Some((text.clone(), false));
-                let now = self.egui_ctx.input(|i| i.time);
-                self.snapshots.vf.say(text, false, now);
+        let Some(results) = result else { return };
+        // the tables kept, the first one chosen; the failures said together
+        let mut first = None;
+        let mut count = 0;
+        let mut failures = Vec::new();
+        for outcome in results {
+            match outcome {
+                Ok((name, lut)) => {
+                    self.photo_luts().imported(name.clone(), lut);
+                    count += 1;
+                    first.get_or_insert(name);
+                }
+                Err(e) => {
+                    log::warn!("photo LUT not imported: {e}");
+                    failures.push(e);
+                }
             }
-            Some(Err(e)) => {
-                log::warn!("photo LUT not imported: {e}");
-                let text = aurora_i18n::tr!("photo-lut-failed", error = e);
-                self.snapshots.message = Some((text.clone(), true));
-                self.photo_vf_error(&text);
-            }
+        }
+        if let Some(name) = first {
+            let text = if count == 1 {
+                aurora_i18n::tr!("photo-lut-imported", name = looks::lut_display(&name))
+            } else {
+                aurora_i18n::tr!("photo-lut-imported-many", count = count)
+            };
+            let id = format!("{}{name}", looks::LUT);
+            self.snapshots.ui.looks.pick(&mut self.settings.snapshot, &id);
+            self.settings.save();
+            self.snapshots.message = Some((text.clone(), false));
+            let now = self.egui_ctx.input(|i| i.time);
+            self.snapshots.vf.say(text, false, now);
+        }
+        if !failures.is_empty() {
+            let text = aurora_i18n::tr!("photo-lut-failed", error = failures.join("; "));
+            self.snapshots.message = Some((text.clone(), true));
+            self.photo_vf_error(&text);
         }
     }
 
     /// AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel]
     /// [:tab=legacy|aurora|luts][:search=<text>][:set=<n>,<v>,…], with
     /// AURORA_DEMO_SNAPSHOT: the looks stacked in that order (`Sepia`,
-    /// `aurora:vhs`, `lut:<file>`, or `lut:demo` for a warm table written
-    /// into the library), the last one chosen, at that strength (100 by
+    /// `aurora:vhs`, `lut:<file>`, `lut:demo` for a warm table written
+    /// into the library, or `pack:<pack>/<table>` for a creator's table
+    /// built in), the last one chosen, at that strength (100 by
     /// default), the before / after line in the middle, the viewfinder's
     /// filter panel open on the chosen look's tab or the one given, a
     /// search typed, the chosen Aurora look's settings set (the photo
@@ -1885,10 +1964,10 @@ impl App {
         let mut parts: Vec<&str> = value.split('+').collect();
         let last = parts.pop().unwrap_or_default();
         let mut tokens = last.split(':');
-        // `aurora:` and `lut:` ids hold a colon
+        // `aurora:`, `lut:` and `pack:` ids hold a colon
         let id_of = |tokens: &mut std::str::Split<'_, char>| {
             let mut id = tokens.next().unwrap_or_default().to_owned();
-            if matches!(id.as_str(), "aurora" | "lut")
+            if matches!(id.as_str(), "aurora" | "lut" | "pack")
                 && let Some(rest) = tokens.next()
             {
                 id = format!("{id}:{rest}");
@@ -2305,6 +2384,9 @@ LUT_3D_SIZE {n}
                 v.isolate = false;
                 v.presets = false;
                 v.light = false;
+            } else if !self.build.selection.is_empty() {
+                self.build.deselect_all(&self.world);
+                self.flush_build();
             } else if self.camera.free().is_some() {
                 self.snapshots.ui.free.on = false;
                 self.photo_free_camera();
@@ -2316,6 +2398,11 @@ LUT_3D_SIZE {n}
             return true;
         }
         if self.photo_full_frame() {
+            if !self.build.selection.is_empty() {
+                self.build.deselect_all(&self.world);
+                self.flush_build();
+                return true;
+            }
             self.snapshots.ui.full_frame = false;
             return true;
         }
