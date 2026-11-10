@@ -1,5 +1,13 @@
 # Aurora Viewer architecture
 
+Land-tool Join eligibility and command validation live in `build/land.rs`, shared
+by the parcel panel in both editor layouts and the confirmation callback. A drag
+uses `SnapSelection=false`; area equality and an aggregate reply's owner do not
+identify a whole parcel or grant join rights. The tool waits for its current
+rectangle's reply, checks single-region bounds and requires `PARCEL_RESULT_MULTIPLE`
+before confirmation and sending. The simulator checks ownership/group/estate
+rights, following LLPanelLandInfo and LLViewerParcelMgr::startJoinLand.
+
 Nonrigged alpha faces use the projected depth and world-AABB bias of
 `LLDrawable::updateDistance` and `LLFace::CompareDistanceGreater` (#2575),
 rather than one radial object distance. `scene/picking.rs::PickFace` caches
@@ -1288,7 +1296,10 @@ changing tabs replaces selection before drawing the scene overlay.
 `poser/{document,storage,bvh}.rs` keep identity-free, shape-relative pose
 documents, bounded file I/O and BVH export on the background pool. Native
 animation preparation reuses the existing document/codec and human-controlled
-import preview. Poser does not start IK-project autosaves or object imports.
+import preview. `poser/storage.rs` returns the successful save path to the UI;
+the refreshed library selects that entry and reports its full path, and native
+file pickers start in the account-local poses directory (#3169). Poser does not
+start IK-project autosaves or object imports.
 `world/poser_consent.rs` owns region-scoped request/accept/refuse/cancel/withdraw
 state, privacy, nonces, timeouts and cooldowns. `app/poser.rs` drives transport
 and the independent target modal/reminder. Bridge 1.34 adds authenticated
@@ -2480,6 +2491,8 @@ bobbing. `Scene::name_tag_anchor` keeps it above the root with 0.2 m clearance;
 both drawing (`ui/hud.rs`) and click depth (`App::pick_name_tag`) use that anchor.
 This deliberately differs from Firestorm's posed-head tracking, at the
 human's request (#261). An animation change may change the height envelope.
+
+Gesture playback preloads use the shared fetcher's highest urgent rank, including re-ranking an already queued sound or animation; no extra connections are created. A cache miss is distinct from a failed load. Each playback waits for its preload batch once, then its timers and simulator-animation tracking continue independently of later retries or sound eviction (#2931).
 
 Gestures: `aurora-assets/src/gesture.rs` reads/writes the bounded Legacy Viewer v2 newline format. `gestures.rs` owns active definitions and a nonblocking playback state machine; `gestures/keys.rs` and `windows.rs` map SL key/mask and Windows virtual-key values and `builtins.rs` lists the Legacy Viewer's 69 stock animations. `app/gestures.rs` correlates loads/saves, restores login/COF gestures, preloads motion/sound assets and routes effects to the existing avatar/audio/chat systems. `ui/gestures.rs` and `ui/gestures/editor.rs` provide the Ctrl+G manager and independent draft editors through shared Aurora floaters. `ui/chat/completion.rs` selects inline trigger suffixes in both local-chat inputs, using the active manager's case-insensitive exact/common-prefix matching; `ui/chat/suggest.rs` lists the matching triggers under it (`Manager::matching`). Inventory links resolve to original items; activation labels are mirrored in `World::active_gestures`. Per-account enable/filter preferences live in settings; active gestures persist through the server. `aurora-net/src/session/gestures.rs` loads and parses on network/workers and sends the Legacy Viewer activation/sound messages; uploads use UpdateGestureAgentInventory and inventory read-back.
 

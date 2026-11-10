@@ -738,15 +738,17 @@ fn not_worn_row(ui: &mut egui::Ui, p: &Palette, icon_name: &str, text: &str) {
 }
 
 /// LLWearingContextMenu (llpanelwearing.cpp) on the worn `selected` items:
-/// Edit needs one; Take off / Detach takes them all.
+/// Edit and Show original need one; Take off / Detach takes them all.
 fn item_menu(
     response: &egui::Response,
     p: &Palette,
-    inv: &crate::world::inventory::Inventory,
+    world: &World,
     locks: &crate::world::rlva::WearLocks,
     selected: &[Uuid],
     actions: &mut Vec<Action>,
+    edit: bool,
 ) {
+    let inv = &world.inventory;
     menu::context_menu(response, p, |ui| {
         let items: Vec<&InvItem> = selected.iter().filter_map(|id| inv.items.get(id)).collect();
         if let [it] = items.as_slice()
@@ -756,6 +758,19 @@ fn item_menu(
             super::context::request(ui.ctx(), super::context::CtxAction::EditWorn(it.id));
         }
         items::remove_item(ui, p, &items, locks, aurora_i18n::tr!("common-remove"), actions);
+        if !edit && let [it] = items.as_slice() {
+            // menu_wearing_tab.xml: Worn-only, disabled by RLV.EnableIfNot(showinv).
+            menu::separator(ui, p);
+            if menu::item_if(
+                ui,
+                p,
+                "external-link-filled",
+                aurora_i18n::tr!("ui-appearance-items-show-original"),
+                !world.rlva.has("showinv"),
+            ) {
+                actions.push(Action::ShowOriginal(it.id));
+            }
+        }
     });
 }
 
@@ -1312,10 +1327,18 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
                     clipboard::request_focus(ui.ctx());
                     st.selected_item = Some(it.id);
                 }
-                item_menu(&resp, p, inv, &locks, &[it.id], actions);
+                item_menu(&resp, p, world, &locks, &[it.id], actions, true);
             } else {
                 st.select_item(&resp, WORN_SCOPE, it.id, &order);
-                item_menu(&resp, p, inv, &locks, &st.selected_items(WORN_SCOPE, it.id, &order), actions);
+                item_menu(
+                    &resp,
+                    p,
+                    world,
+                    &locks,
+                    &st.selected_items(WORN_SCOPE, it.id, &order),
+                    actions,
+                    false,
+                );
             }
             // a body part has none of these buttons: no empty row under it
             if edit && st.selected_item == Some(it.id) && it.asset_type != 13 {
@@ -4015,5 +4038,262 @@ mod tests {
         inv.folders.get_mut(&id(1)).expect("outfit").info.thumbnail = id(502);
         assert_eq!(st.outfit_picture(&inv, id(1)), id(502));
         assert!(st.outfit_picture(&inv, id(99)).is_nil(), "unknown outfit");
+    }
+    #[test]
+    fn review_2376_worn_show_original_dispatches_the_original_without_changing_the_outfit() {
+        for target in [710, 714, 717] {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let _icons = icons::Icons::load(&ctx, None);
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+            let id = Uuid::from_u128(target);
+            let name = world.inventory.items[&id].name.clone();
+            let before = world.inventory.generation;
+            let mut st = AppearanceUi::default();
+            st.open(2, false);
+            for _ in 0..5 {
+                draw(&ctx, &mut world, &mut st, None);
+            }
+            click_row(
+                &ctx,
+                &mut world,
+                &mut st,
+                &name,
+                egui::Modifiers::NONE,
+                egui::PointerButton::Secondary,
+            );
+            let actions = click_menu(&ctx, &mut world, &mut st, aurora_i18n::tr!("ui-appearance-items-show-original"));
+            assert!(
+                matches!(actions.as_slice(), [Action::ShowOriginal(actual)] if *actual == id),
+                "{target}: {actions:?}"
+            );
+            assert_eq!(
+                world.inventory.generation, before,
+                "revealing an original does not mutate the outfit"
+            );
+        }
+    }
+
+    #[test]
+    fn review_2376_show_original_is_absent_for_multiple_worn_items() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+        let names: Vec<_> = [714, 715].map(|id| world.inventory.items[&Uuid::from_u128(id)].name.clone()).into();
+        let mut st = AppearanceUi::default();
+        st.open(2, false);
+        for _ in 0..5 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &names[0],
+            egui::Modifiers::NONE,
+            egui::PointerButton::Primary,
+        );
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &names[1],
+            egui::Modifiers::CTRL,
+            egui::PointerButton::Primary,
+        );
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &names[0],
+            egui::Modifiers::NONE,
+            egui::PointerButton::Secondary,
+        );
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0));
+        let shapes = draw_output(
+            &ctx,
+            &mut world,
+            &mut st,
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+        )
+        .1;
+        let label = aurora_i18n::tr!("ui-appearance-items-show-original");
+        assert!(
+            !shapes
+                .iter()
+                .any(|s| s.clip_rect.contains_rect(screen) && text_position(&s.shape, label).is_some())
+        );
+    }
+
+    #[test]
+    fn review_2376_show_original_stays_out_of_the_outfit_editor() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+        let name = world.inventory.items[&Uuid::from_u128(714)].name.clone();
+        let mut st = AppearanceUi::default();
+        st.open(2, true);
+        for _ in 0..5 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &name,
+            egui::Modifiers::NONE,
+            egui::PointerButton::Secondary,
+        );
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0));
+        let shapes = draw_output(
+            &ctx,
+            &mut world,
+            &mut st,
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+        )
+        .1;
+        let label = aurora_i18n::tr!("ui-appearance-items-show-original");
+        assert!(
+            !shapes
+                .iter()
+                .any(|s| s.clip_rect.contains_rect(screen) && text_position(&s.shape, label).is_some()),
+            "the Worn-only command leaked into Edit outfit"
+        );
+    }
+    #[test]
+    fn review_2376_show_original_obeys_showinv_and_recovers_when_released() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+        world.rlva.configure(true);
+        let mut command = aurora_net::ChatMessage {
+            from_name: String::new(),
+            source_id: Uuid::from_u128(9000),
+            owner_id: Uuid::from_u128(1),
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            position: glam::Vec3::ZERO,
+            message: "@showinv=n".into(),
+        };
+        assert!(world.rlva.receive(&command));
+        assert!(world.rlva.has("showinv"));
+        let target = Uuid::from_u128(714);
+        let name = world.inventory.items[&target].name.clone();
+        let mut st = AppearanceUi::default();
+        st.open(2, false);
+        for _ in 0..5 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        click_row(
+            &ctx,
+            &mut world,
+            &mut st,
+            &name,
+            egui::Modifiers::NONE,
+            egui::PointerButton::Secondary,
+        );
+        let label = aurora_i18n::tr!("ui-appearance-items-show-original");
+        assert!(
+            click_menu(&ctx, &mut world, &mut st, label).is_empty(),
+            "showinv must disable the inventory-reveal command"
+        );
+        assert!(egui::Popup::is_any_open(&ctx), "a disabled row keeps the menu open");
+        command.message = "@showinv=y".into();
+        assert!(world.rlva.receive(&command));
+        assert!(!world.rlva.has("showinv"));
+        let actions = click_menu(&ctx, &mut world, &mut st, label);
+        assert!(
+            matches!(actions.as_slice(), [Action::ShowOriginal(id)] if *id == target),
+            "{actions:?}"
+        );
+    }
+
+    #[test]
+    fn outfit_original_controls_obey_showinv_and_recover_after_release_or_disable() {
+        for profile in [false, true] {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let _icons = icons::Icons::load(&ctx, None);
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+            world.rlva.configure(true);
+            let target = Uuid::from_u128(723);
+            let folder = Uuid::from_u128(704);
+            let name = world.inventory.items[&target].name.clone();
+            let links: Vec<_> = world.inventory.folders[&folder]
+                .items
+                .iter()
+                .copied()
+                .filter(|id| world.inventory.items[id].asset_id == target)
+                .collect();
+            assert!(!links.is_empty());
+            world.inventory.folders.get_mut(&folder).expect("outfit").items = links;
+            let mut st = AppearanceUi::default();
+            st.open_outfit(folder);
+            st.reveal_outfit = None;
+            st.profile_item = profile.then_some(target);
+            let mut command = aurora_net::ChatMessage {
+                from_name: String::new(),
+                source_id: Uuid::from_u128(9000),
+                owner_id: Uuid::from_u128(1),
+                source_type: aurora_net::ChatSourceType::Object,
+                chat_type: aurora_net::ChatType::OwnerSay,
+                position: glam::Vec3::ZERO,
+                message: String::new(),
+            };
+            for (restriction, enabled) in [("n", false), ("y", true), ("n", false), ("disabled", true)] {
+                if restriction == "disabled" {
+                    world.rlva.configure(false);
+                } else {
+                    command.message = format!("@showinv={restriction}");
+                    assert!(world.rlva.receive(&command));
+                }
+                assert_eq!(world.rlva.has("showinv"), !enabled);
+                for _ in 0..5 {
+                    draw(&ctx, &mut world, &mut st, None);
+                }
+                let label = aurora_i18n::tr!("ui-appearance-items-show-original");
+                let actions = if profile {
+                    let pos = label_position(&ctx, &mut world, &mut st, label);
+                    modified_click(&ctx, &mut world, &mut st, pos, egui::Modifiers::NONE, egui::PointerButton::Primary)
+                } else {
+                    if !egui::Popup::is_any_open(&ctx) {
+                        click_row(
+                            &ctx,
+                            &mut world,
+                            &mut st,
+                            &name,
+                            egui::Modifiers::NONE,
+                            egui::PointerButton::Secondary,
+                        );
+                    }
+                    click_menu(&ctx, &mut world, &mut st, label)
+                };
+                if enabled {
+                    assert!(
+                        matches!(actions.as_slice(), [Action::ShowOriginal(id)] if *id == target),
+                        "profile={profile}, restriction={restriction}: {actions:?}"
+                    );
+                } else {
+                    assert!(actions.is_empty(), "profile={profile}: a disabled command must not dispatch");
+                    if !profile {
+                        assert!(egui::Popup::is_any_open(&ctx), "clicking the disabled entry keeps its menu open");
+                    }
+                }
+            }
+        }
     }
 }

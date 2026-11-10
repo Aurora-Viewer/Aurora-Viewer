@@ -4819,7 +4819,7 @@ impl App {
             return;
         }
         let (x, y) = self.cursor_pos;
-        if let Some((idx, point, hud_ray)) = self.scene.hud_pick(&self.world, (x, y), false)
+        if let Some((idx, point, hud_ray)) = self.scene.hud_click_pick(&self.world, (x, y))
             && !(self.alt && self.world.hud_move_locked(idx))
         {
             self.media.build_mode = self.build.open;
@@ -4833,10 +4833,16 @@ impl App {
                     command: false,
                 };
                 let distance = (point - hud_ray.0).dot(hud_ray.1);
-                if self
-                    .media
-                    .on_click(&self.world, &self.scene, hud_ray, Some(distance), &self.settings.media, mods, true)
-                {
+                if self.media.on_click(
+                    &self.world,
+                    &self.scene,
+                    hud_ray,
+                    Some(distance),
+                    &self.settings.media,
+                    mods,
+                    true,
+                    Some(idx),
+                ) {
                     return;
                 }
                 if let Some(target) = crate::interaction::target(&self.world, idx, &self.interactions.props) {
@@ -4917,7 +4923,7 @@ impl App {
                 };
                 if self
                     .media
-                    .on_click(&self.world, &self.scene, ray, depth_t, &self.settings.media, mods, false)
+                    .on_click(&self.world, &self.scene, ray, depth_t, &self.settings.media, mods, false, None)
                 {
                     return;
                 }
@@ -10137,7 +10143,7 @@ impl App {
                     let depth = point.map(|p| (p - ray.0).dot(ray.1));
                     let (ray, depth, hud) = self
                         .scene
-                        .hud_pick(&self.world, self.cursor_pos, false)
+                        .hud_click_pick(&self.world, self.cursor_pos)
                         .map_or((ray, depth, false), |(_, p, r)| (r, Some((p - r.0).dot(r.1)), true));
                     if let Some(c) = self.media.on_hover(&self.world, &self.scene, ray, depth, mods, hud) {
                         self.media_cursor = Some(match c.as_str() {
@@ -10744,14 +10750,13 @@ impl App {
             probe_walk_list: self.frame_profile.probe_walk_list(),
             debug: self.settings.debug.render(),
             dof: {
-                // the image's own vertical field of view (a photo's may be
-                // wider than the window's)
-                let lens_proj = match &photo {
-                    Some(f) => self.camera.photo_proj(f.aspect, window_aspect),
-                    None => self.camera.proj(aspect),
+                // a photo is the part of the window's view its proportions
+                // frame: the window's lens, at the photo's pixels
+                let view = match &photo {
+                    Some(f) => crate::dof::View::photo(self.camera.fov_y, (w, h), f.aspect, lod_height),
+                    None => crate::dof::View::window(self.camera.fov_y, h),
                 };
-                let fov = 2.0 * (1.0 / lens_proj.y_axis.y.max(1e-6)).atan();
-                self.dof_frame(&mut gfx.renderer, dt, fov, lod_height, h)
+                self.dof_frame(&mut gfx.renderer, dt, view)
             },
             // the photo's isolation, "show only" on an empty background
             cutout: self.world.photo_isolation.empty_background(),
@@ -16440,12 +16445,14 @@ impl App {
                 self.chat_ui.compact_im_notices =
                     self.settings.compact_im_system_lines || (self.demo && crate::demo::object_chat::scene().is_some_and(|s| s.im_lines));
                 self.chat_ui.show_channel = self.settings.show_chat_channel || self.chat_ui.demo_channel;
-                // the Legacy chat style keeps its own switch, off
-                self.chat_ui.recent_emojis.enabled = if self.settings.chat_style == crate::settings::ChatStyle::Legacy {
-                    self.settings.show_recent_emojis_legacy
-                } else {
-                    self.settings.show_recent_emojis
-                };
+                // the Legacy chat style keeps its own switch; both are off by
+                // default, the demo switch shows the row whatever they say
+                self.chat_ui.recent_emojis.enabled = (self.demo && crate::demo::recent_emojis_on())
+                    || if self.settings.chat_style == crate::settings::ChatStyle::Legacy {
+                        self.settings.show_recent_emojis_legacy
+                    } else {
+                        self.settings.show_recent_emojis
+                    };
                 self.chat_ui.recent_emojis.favorites_enabled = self.settings.favorite_emojis;
                 self.chat_ui.recent_emojis.above = self.settings.chat_style != crate::settings::ChatStyle::Legacy;
                 self.chat_ui.send_typing = self.settings.send_typing_state;
@@ -18819,7 +18826,9 @@ impl ApplicationHandler for App {
             // AURORA_DEMO_PLACES=favorites|landmarks|history: "Places" on a tab
             // (after the tab, ":wide": Aurora's window widened to its rail and
             // preview; ":open": its first place selected; both: ":wide,open";
-            // ":classic": the Legacy Viewer's tabs for this run, not saved)
+            // ":classic": the Legacy Viewer's tabs for this run, not saved;
+            // ":narrow": the window 260 points wide, its least width at
+            // text size 1)
             let demo_places = std::env::var("AURORA_DEMO_PLACES").unwrap_or_default();
             let (demo_tab, demo_how) = demo_places.split_once(':').unwrap_or((demo_places.as_str(), ""));
             if let Some(tab) = ui::places::tab_from_name(demo_tab) {
@@ -18828,6 +18837,9 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
                 if demo_how.split(',').any(|w| w == "wide") {
                     ui::widgets::size_floater(&self.egui_ctx, "places", egui::vec2(1040.0, 640.0));
+                }
+                if demo_how.split(',').any(|w| w == "narrow") {
+                    ui::widgets::size_floater(&self.egui_ctx, "places", egui::vec2(260.0, 588.0));
                 }
                 self.places_ui.aurora.demo_open = demo_how.split(',').any(|w| w == "open");
                 self.places_ui.demo_classic = demo_how.split(',').any(|w| w == "classic");
@@ -21133,7 +21145,7 @@ impl ApplicationHandler for App {
                         && !lens_shortcut
                         && !build_shortcut.is_some_and(|s| s.takes_gesture_key(history_open))
                         && (!ke.repeat || gesture_key.is_some_and(crate::gestures::Manager::repeat_triggers))
-                        && !typing
+                        && self.chat_ui.allows_gesture_key(&self.egui_ctx, gesture_key)
                         && self.in_world()
                         && !mods.alt
                         && !self.web_has_focus()
@@ -21322,7 +21334,7 @@ impl ApplicationHandler for App {
                     Some(ray) => {
                         let (ray, depth, hud) = self
                             .scene
-                            .hud_pick(&self.world, self.cursor_pos, false)
+                            .hud_click_pick(&self.world, self.cursor_pos)
                             .map_or((ray, None, false), |(_, p, r)| (r, Some((p - r.0).dot(r.1)), true));
                         self.media.on_scroll(&self.world, &self.scene, ray, depth, steps, mods, hud)
                     }
