@@ -2372,3 +2372,98 @@ fn ctrl_over_the_subject_stays_the_subjects_with_a_partner_close_behind() {
     }
     assert_eq!(editor.poser.subject, me, "the partner behind is not picked through us");
 }
+
+/// Bit `joint` of a renderer part mask (`world_hints::mask_joints`).
+fn in_mask(mask: &[u32; 8], joint: usize) -> bool {
+    joint < 256 && mask[joint >> 5] & (1 << (joint & 31)) != 0
+}
+
+#[test]
+fn the_body_mask_carries_its_volumes_and_spine_and_leaves_the_head_and_wrists() {
+    let (world, _) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let keys: Vec<usize> = rig.canonical_names.iter().map(|n| world_hints::part_key(n)).collect();
+    let body = world_hints::part(&rig.parent, &keys, rig.pelvis);
+    let joints = world_hints::mask_members(0, &body, &rig.parent, &keys, &rig.canonical_names, &Default::default());
+    let mask = world_hints::mask_joints(&rig.parent, &rig.canonical_names, &joints);
+    // a fitted body's volumes and a Bento body's spine tint with the body
+    for name in [
+        "mTorso",
+        "mChest",
+        "mElbowLeft",
+        "BELLY",
+        "LEFT_PEC",
+        "UPPER_BACK",
+        "L_UPPER_ARM",
+        "mSpine1",
+        "mSpine3",
+        "NECK",
+    ] {
+        assert!(in_mask(&mask, rig.names[name]), "{name} is the body's");
+    }
+    // the head (its volume and the skull follow it) is the face's, a wrist
+    // (its hand's volume) its hand's; the fingers and the face's own bones
+    for name in ["mHead", "HEAD", "mSkull", "mWristLeft", "L_HAND", "mHandMiddle1Left", "mFaceRoot"] {
+        assert!(!in_mask(&mask, rig.names[name]), "{name} is not the body's");
+    }
+}
+
+#[test]
+fn the_face_takes_the_head_and_a_hand_its_wrist_rigged_or_not() {
+    let (world, _) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let keys: Vec<usize> = rig.canonical_names.iter().map(|n| world_hints::part_key(n)).collect();
+    let mask_of = |start: &str, rigged: &std::collections::HashSet<usize>| {
+        let members = world_hints::part(&rig.parent, &keys, rig.names[start]);
+        let key = keys[rig.names[start]];
+        let joints = world_hints::mask_members(key, &members, &rig.parent, &keys, &rig.canonical_names, rigged);
+        world_hints::mask_joints(&rig.parent, &rig.canonical_names, &joints)
+    };
+    let none = std::collections::HashSet::new();
+    // a Bento head weights the face's bones; the system head mHead alone:
+    // either way the whole head lights, the skull and its volume with it
+    let bento: std::collections::HashSet<usize> = (0..rig.len()).filter(|j| keys[*j] == 1).collect();
+    for rigged in [&none, &bento] {
+        let face = mask_of("mFaceLipUpperCenter", rigged);
+        for name in ["mFaceLipUpperCenter", "mHead", "HEAD", "mSkull"] {
+            assert!(in_mask(&face, rig.names[name]), "{name} lights with the face");
+        }
+        assert!(!in_mask(&face, rig.names["mNeck"]), "the neck is the body's");
+    }
+    // a hand: its fingers and its wrist (the palm), not the other hand
+    let fingers: std::collections::HashSet<usize> = (0..rig.len()).filter(|j| keys[*j] == 2).collect();
+    for rigged in [&none, &fingers] {
+        let hand = mask_of("mHandIndex1Left", rigged);
+        for name in ["mHandIndex1Left", "mHandThumb1Left", "mWristLeft", "L_HAND"] {
+            assert!(in_mask(&hand, rig.names[name]), "{name} lights with the left hand");
+        }
+        for name in ["mWristRight", "mHandIndex1Right", "mElbowLeft"] {
+            assert!(!in_mask(&hand, rig.names[name]), "{name} is not the left hand's");
+        }
+    }
+}
+
+#[test]
+fn the_mesh_pick_offers_the_part_its_joint_follows() {
+    let (world, _) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let names = &rig.canonical_names;
+    let groups: Vec<usize> = names.iter().map(|n| group(n)).collect();
+    let keys: Vec<usize> = names.iter().map(|n| world_hints::part_key(n)).collect();
+    let offer: Vec<bool> = (0..rig.len()).map(|j| world_hints::offerable(keys[j], false)).collect();
+    let picked = |joint: &str, current: usize| {
+        world_hints::picked_part(rig.names[joint], &rig.parent, names, &groups, &offer, current).map(|j| groups[j])
+    };
+    // posing the Hands: a fitted body's volume, a Bento spine: the body
+    assert_eq!(picked("BELLY", 2), Some(0));
+    assert_eq!(picked("mSpine2", 2), Some(0));
+    // posing the Body: the head is the face's, a wrist its hand's
+    assert_eq!(picked("mHead", 0), Some(1));
+    assert_eq!(picked("HEAD", 0), Some(1), "the head's volume follows the head");
+    assert_eq!(picked("mWristLeft", 0), Some(2));
+    // the open group's own: nothing to offer
+    assert_eq!(picked("mChest", 0), None);
+    assert_eq!(picked("mHead", 1), None, "posing the face, the head is its own");
+    // a wing nobody wears: not offered
+    assert_eq!(picked("mWing1Left", 0), None);
+}
