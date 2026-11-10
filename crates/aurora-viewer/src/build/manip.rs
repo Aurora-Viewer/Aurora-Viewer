@@ -2490,7 +2490,10 @@ mod tests {
             let tip = cam.project(piv + Vec3::Z * length).unwrap();
             cam.project(piv).unwrap().distance(tip)
         };
-        let (arrow, ring) = (points(&at_100, arrow_length(&at_100, &f, piv)), points(&at_100, ring_radius(&at_100, &f, piv)));
+        let (arrow, ring) = (
+            points(&at_100, arrow_length(&at_100, &f, piv)),
+            points(&at_100, ring_radius(&at_100, &f, piv)),
+        );
         assert!((points(&at_200, arrow_length(&at_200, &f, piv)) - arrow).abs() < 0.5, "{arrow}");
         assert!((points(&at_200, ring_radius(&at_200, &f, piv)) - ring).abs() < 0.5, "{ring}");
         // the arrow is picked on the same spot, in points, at both scales
