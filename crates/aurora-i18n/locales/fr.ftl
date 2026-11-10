@@ -87,6 +87,26 @@ world-property-lines = Limites des parcelles
 common-show-boundaries = Afficher les frontières
 world-land-owners = Propriétaires des terrains
 world-hide-particles = Masquer les particules
+render-types-menu = Types de rendu
+render-types-terrain = Terrain
+render-types-water = Eau
+render-types-sky = Ciel
+render-types-clouds = Nuages
+render-types-objects = Objets
+render-types-avatars = Avatars
+render-types-animesh = Animesh
+render-types-trees = Arbres
+render-types-grass = Herbe
+render-types-particles = Particules
+render-types-show-all = Tout afficher
+keybinds-render-trees = Type de rendu : arbres
+keybinds-render-avatars = Type de rendu : avatars
+keybinds-render-terrain = Type de rendu : terrain
+keybinds-render-sky = Type de rendu : ciel
+keybinds-render-water = Type de rendu : eau
+keybinds-render-objects = Type de rendu : objets
+keybinds-render-grass = Type de rendu : herbe
+keybinds-render-clouds = Type de rendu : nuages
 owned-land-title = Mes terrains
 owned-land-refresh = Actualiser
 owned-land-empty = Vous ne possédez aucune parcelle.
@@ -3427,7 +3447,7 @@ ui-appearance-showcase-missing = { $count ->
     [one] { $count } tenue n’a pas encore de photo.
    *[other] { $count } tenues n’ont pas encore de photo.
     }
-ui-appearance-showcase-show-them = Les afficher
+ui-appearance-batch-open = Faire les portraits
 ui-appearance-showcase-dismiss = Masquer ce message
 ui-appearance-showcase-pick = Choisissez une tenue pour la voir ici.
 ui-appearance-showcase-no-picture-yet = Pas encore de photo
@@ -3507,6 +3527,52 @@ app-outfit-hd-outfit-gone = La photo HD n'a pas été envoyée : la tenue n'exis
 app-outfit-hd-price-changed = Le prix d'envoi est passé à { $cost } L$ : utilisez de nouveau la photo HD pour le confirmer.
 app-outfit-hd-unknown = Le résultat de l'envoi de la photo HD est inconnu : vérifiez le dossier de la tenue avant de recommencer.
 app-outfit-hd-refused = Le serveur a refusé la photo HD.
+ui-appearance-batch-title = Portraits des tenues
+ui-appearance-batch-choose = Tenues à photographier
+ui-appearance-batch-none = Aucune de ces tenues n'est à vous : rien à photographier.
+ui-appearance-batch-progress = Photo de { $index } sur { $count }…
+ui-appearance-batch-paused = En pause — photo { $index } sur { $count }
+ui-appearance-batch-restoring = Remise de votre tenue…
+ui-appearance-batch-finished = Portraits terminés
+ui-appearance-batch-summary = { $done ->
+    [one] { $done } portrait fait
+   *[other] { $done } portraits faits
+    }, { $skipped ->
+    [one] { $skipped } sautée
+   *[other] { $skipped } sautées
+    }.
+ui-appearance-batch-not-restored = Votre tenue de départ n'a pas pu être remise : portez-la de nouveau depuis la galerie.
+ui-appearance-batch-redo = { $name } (refaire)
+ui-appearance-batch-no-picture = Sans photo
+ui-appearance-batch-has-picture = A une photo : cochez pour la refaire
+ui-appearance-batch-locked = Bloquée par RLVa
+ui-appearance-batch-empty = Rien à porter dedans
+ui-appearance-batch-waiting = En attente
+ui-appearance-batch-wearing = Enfilage de la tenue…
+ui-appearance-batch-loading = Chargement de la tenue… { $worn } / { $total } objets
+ui-appearance-batch-loading-look = Chargement de la tenue… textures et calques
+ui-appearance-batch-framing = Cadrage…
+ui-appearance-batch-shooting = Prise du portrait…
+ui-appearance-batch-saving = Enregistrement de la photo…
+ui-appearance-batch-done = Fait
+ui-appearance-batch-done-missing = Fait, { $missing } objets encore en chargement
+ui-appearance-batch-not-done = Pas faite
+ui-appearance-batch-skipped-locked = Sautée : bloquée par RLVa
+ui-appearance-batch-skipped-refused = Sautée : RLVa a refusé le changement
+ui-appearance-batch-skipped-slow = Sautée : toujours en chargement après { $seconds } s
+ui-appearance-batch-skipped-gone = Sautée : la tenue n'existe plus
+ui-appearance-batch-skipped-empty = Sautée : rien à porter dedans
+ui-appearance-batch-failed = Échec : { $reason }
+ui-appearance-batch-settings = Réglages du portrait
+ui-appearance-batch-how = Aurora enfile chaque tenue, attend qu'elle soit chargée (textures, calques), prend le portrait, puis passe à la suivante.
+ui-appearance-batch-seen = Les autres vous voient changer de tenue.
+ui-appearance-batch-back = Votre tenue de départ revient à la fin, ou dès que vous arrêtez. Les tenues bloquées par RLVa sont sautées.
+ui-appearance-batch-unsaved = Enregistrez ou annulez d'abord les changements de votre tenue actuelle : c'est elle qui revient à la fin.
+ui-appearance-batch-no-start = Portez d'abord une tenue enregistrée : c'est elle qui revient à la fin.
+ui-appearance-batch-start = Commencer ({ $count })
+ui-appearance-batch-stop = Arrêter et remettre ma tenue
+ui-appearance-batch-pause = Pause
+ui-appearance-batch-resume = Reprendre
 ui-appearance-showcase-body = Parties du corps
 ui-appearance-showcase-clothing = Vêtements et calques
 ui-appearance-showcase-attachments = Éléments attachés

@@ -242,6 +242,11 @@ impl App {
         true
     }
 
+    /// An outfit's picture is still being drawn, encoded or sent.
+    pub(super) fn outfit_photo_busy(&self) -> bool {
+        self.inventory_images.outfit.is_some()
+    }
+
     /// Every frame: the outfit's picture starts once no photo is being
     /// drawn; a job that ended without its pixels says so.
     pub(super) fn poll_outfit_photo(&mut self, renderer: &aurora_render::Renderer) {

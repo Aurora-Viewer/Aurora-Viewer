@@ -16,6 +16,10 @@
 //!
 //! An outfit that is not worn is never put on behind the user's back: the
 //! window offers to wear it, then to put the previous outfit back.
+//!
+//! The batch portraits (`app::outfit_batch`) drive a session of their own,
+//! without this window: they turn it from one outfit to the next, take its
+//! photo and save it, and end it once the batch stops.
 
 use super::App;
 use super::snapshot::Purpose;
@@ -53,9 +57,9 @@ const KEY_HEIGHT: f32 = 40.0;
 
 /// The photo awaiting "Use".
 pub(super) struct Shot {
-    size: (u32, u32),
-    pixels: Vec<u8>,
-    texture: egui::TextureHandle,
+    pub(super) size: (u32, u32),
+    pub(super) pixels: Vec<u8>,
+    pub(super) texture: egui::TextureHandle,
 }
 
 pub(super) struct Session {
@@ -99,11 +103,21 @@ pub(super) struct Session {
     vf_studio: bool,
     /// The window is open (its X closes the session).
     open: bool,
+    /// Driven by the batch portraits: no window of its own.
+    batch: bool,
 }
 
 impl App {
     /// The outfit's auto portrait (`Kind::Studio`) or its square photo mode.
     pub(super) fn open_outfit_portrait(&mut self, outfit: Uuid, kind: Kind) {
+        // the batch portraits hold the camera until they stop
+        if self.outfit_portrait.as_ref().is_some_and(|s| s.batch) {
+            return;
+        }
+        self.start_outfit_portrait(outfit, kind, false);
+    }
+
+    fn start_outfit_portrait(&mut self, outfit: Uuid, kind: Kind, batch: bool) {
         if self
             .outfit_portrait
             .as_ref()
@@ -154,10 +168,11 @@ impl App {
             vf_pose: false,
             vf_studio: false,
             open: true,
+            batch,
         });
         if kind == Kind::Viewfinder {
             self.panels.snapshot = true;
-        } else {
+        } else if !batch {
             crate::ui::widgets::open_floater(&self.egui_ctx, window::WINDOW, &mut true);
         }
     }
@@ -499,7 +514,7 @@ impl App {
         let Some(s) = &self.outfit_portrait else {
             return;
         };
-        if s.kind == Kind::Viewfinder && !s.over {
+        if (s.kind == Kind::Viewfinder && !s.over) || s.batch {
             return;
         }
         let mut settings = s.settings;
@@ -609,6 +624,62 @@ impl App {
                     iso.set_transparent(s.isolation.transparent);
                 }
             }
+        }
+    }
+}
+
+impl App {
+    /// The batch portraits' session on `outfit`, with these choices: opened,
+    /// or turned to it (the camera follows the joints again, the pose and
+    /// the studio light are made again, the last photo dropped).
+    pub(super) fn outfit_portrait_batch(&mut self, outfit: Uuid, settings: PortraitSettings) {
+        match &mut self.outfit_portrait {
+            Some(s) if s.batch && !s.over => {
+                s.outfit = outfit;
+                s.settings = settings;
+                s.framed = None;
+                s.pose = None;
+                s.shot = None;
+                s.shot_wanted = false;
+                s.preview_at = None;
+            }
+            _ => {
+                if self.outfit_portrait.is_some() {
+                    self.close_outfit_portrait();
+                }
+                self.start_outfit_portrait(outfit, Kind::Studio, true);
+                if let Some(s) = &mut self.outfit_portrait {
+                    s.settings = settings;
+                }
+            }
+        }
+        log::info!("outfit portrait: batch on {outfit}");
+    }
+
+    /// The batch's session is open.
+    pub(super) fn outfit_portrait_batch_open(&self) -> bool {
+        self.outfit_portrait.as_ref().is_some_and(|s| s.batch && !s.over)
+    }
+
+    /// The batch's photo, once drawn: taken from the session, which goes on
+    /// with its previews.
+    pub(super) fn outfit_portrait_batch_shot(&mut self) -> Option<Shot> {
+        let s = self.outfit_portrait.as_mut().filter(|s| s.batch)?;
+        let shot = s.shot.take()?;
+        s.preview_at = None;
+        Some(shot)
+    }
+
+    /// The batch's live preview.
+    pub(super) fn outfit_portrait_batch_preview(&self) -> Option<&egui::TextureHandle> {
+        self.outfit_portrait.as_ref().filter(|s| s.batch)?.preview.as_ref()
+    }
+
+    /// The batch's session ended: the camera, the isolation, the light and
+    /// the pose back.
+    pub(super) fn close_outfit_portrait_batch(&mut self) {
+        if self.outfit_portrait.as_ref().is_some_and(|s| s.batch) {
+            self.close_outfit_portrait();
         }
     }
 }

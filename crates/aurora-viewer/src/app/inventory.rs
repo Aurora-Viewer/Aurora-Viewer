@@ -911,6 +911,10 @@ impl App {
                 self.open_outfit_portrait(id, super::outfit_portrait::Kind::Viewfinder);
                 return;
             }
+            crate::world::appearance::Action::OutfitBatch(outfits) => {
+                self.open_outfit_batch(outfits);
+                return;
+            }
             _ => {}
         }
         if self.appearance_ui.pending.is_some() {
