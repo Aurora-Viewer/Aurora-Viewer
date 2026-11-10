@@ -29,6 +29,7 @@ pub const PREVIEW_REGION: RegionHandle = u64::MAX;
 
 mod local_appearance;
 pub use local_appearance::{LocalAppearance, LocalTextureSlot};
+mod local_duplicates;
 
 /// GPU-side state owned by the scene; kept here so it moves with the object.
 #[derive(Debug, Default)]
@@ -675,6 +676,7 @@ impl ChangeFeed {
 /// objects (`take_particle_changes`, `take_sound_changes`).
 #[derive(Default)]
 pub struct ObjectStore {
+    local_duplicates: local_duplicates::LocalDuplicates,
     pub slots: Vec<Option<Object>>,
     free: Vec<usize>,
     by_key: FastMap<ObjKey, usize>,
@@ -1453,6 +1455,7 @@ impl ObjectStore {
                 self.by_uuid.insert(new, idx);
             }
             self.touch(idx);
+            self.apply_local_duplicates(idx, old_uuid != new_uuid);
             return idx;
         }
         // The same UUID under another key: the simulator renumbered it, or
@@ -1485,7 +1488,9 @@ impl ObjectStore {
         if received.is_some() {
             obj.motion_time = self.report_clock(region, received);
         }
-        self.insert(obj)
+        let idx = self.insert(obj);
+        self.apply_local_duplicates(idx, true);
+        idx
     }
 
     /// Insert a render-only attachment with an explicit real avatar parent.
