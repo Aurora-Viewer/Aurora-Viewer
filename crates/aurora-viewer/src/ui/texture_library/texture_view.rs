@@ -310,7 +310,13 @@ pub(super) fn toolbar(
         }
         // LLPreviewTexture::postBuild shows "Copy UUID" for full permissions only
         let gates = gates(held);
-        if widgets::icon_button(ui, p, "copy-filled", aurora_i18n::tr!("resource-preview-copy-uuid"), gates.copy_uuid) {
+        if widgets::icon_button(
+            ui,
+            p,
+            "copy-filled",
+            aurora_i18n::tr!("resource-preview-copy-uuid"),
+            gates.copy_uuid,
+        ) {
             ui.ctx().copy_text(item.asset_id.to_string());
         }
         ui.add_enabled_ui(gates.save_as, |ui| {
@@ -356,22 +362,22 @@ pub(crate) fn display_mode(ui: &mut egui::Ui, p: &Palette, display: &mut Display
 /// The picture's dimensions, small and muted.
 fn dimensions_label(ui: &mut egui::Ui, p: &Palette, dimensions: Option<(u32, u32)>) {
     ui.add(
-            egui::Label::new(
-                RichText::new(dimensions.map_or_else(
-                    || aurora_i18n::tr!("resource-preview-dimensions-loading").to_owned(),
-                    |(width, height)| {
-                        aurora_i18n::tr!(
-                            "resource-preview-dimensions",
-                            width = width.to_string(),
-                            height = height.to_string()
-                        )
-                    },
-                ))
-                .small()
-                .color(p.muted),
-            )
-            .wrap_mode(egui::TextWrapMode::Extend),
-        );
+        egui::Label::new(
+            RichText::new(dimensions.map_or_else(
+                || aurora_i18n::tr!("resource-preview-dimensions-loading").to_owned(),
+                |(width, height)| {
+                    aurora_i18n::tr!(
+                        "resource-preview-dimensions",
+                        width = width.to_string(),
+                        height = height.to_string()
+                    )
+                },
+            ))
+            .small()
+            .color(p.muted),
+        )
+        .wrap_mode(egui::TextWrapMode::Extend),
+    );
 }
 
 /// The ratio choices and the picture's dimensions.

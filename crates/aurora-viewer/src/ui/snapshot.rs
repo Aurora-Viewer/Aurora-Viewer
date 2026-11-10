@@ -9,9 +9,9 @@
 //! in the panorama viewer (`ui/panorama.rs`).
 
 use super::widgets::{self, ActionKind, Floater};
+use crate::snapshot::capture_360::Quality;
 use crate::snapshot::inventory::TextureSize;
 use crate::snapshot::profile::ProfileSize;
-use crate::snapshot::capture_360::Quality;
 use crate::snapshot::{Aspect, FileFormat, Guide, Resolution, Settings};
 use crate::theme::Palette;
 use egui::{Color32, Pos2, Rect, RichText, Sense, Stroke, Vec2};
@@ -1112,7 +1112,16 @@ fn pano_qualities(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
         for q in Quality::ALL {
             let sub = q.output().0.to_string();
-            if chip(ui, p, aurora_i18n::text(q.label_key()), Some(&sub), s.capture_360.quality == q, true).clicked() {
+            if chip(
+                ui,
+                p,
+                aurora_i18n::text(q.label_key()),
+                Some(&sub),
+                s.capture_360.quality == q,
+                true,
+            )
+            .clicked()
+            {
                 s.capture_360.quality = q;
             }
         }

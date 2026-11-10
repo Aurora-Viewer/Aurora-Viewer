@@ -420,7 +420,11 @@ impl App {
             return;
         };
         let Some(Stage::Faces {
-            next, asked, waited, started, ..
+            next,
+            asked,
+            waited,
+            started,
+            ..
         }) = &mut self.capture_360.stage
         else {
             return;

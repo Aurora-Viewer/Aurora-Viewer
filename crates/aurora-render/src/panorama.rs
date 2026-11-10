@@ -227,7 +227,13 @@ impl Source {
     /// Uploads `image` (level 0) and records the blits of the other levels
     /// in `encoder`. None when the image is empty, malformed or larger than
     /// the card takes.
-    fn new(device: &wgpu::Device, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, pipelines: &Pipelines, image: &Image) -> Option<Self> {
+    fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        pipelines: &Pipelines,
+        image: &Image,
+    ) -> Option<Self> {
         let [w, h] = image.size;
         let limit = device.limits().max_texture_dimension_2d;
         if w == 0 || h == 0 || w > limit || h > limit || image.rgba.len() != w as usize * h as usize * 4 {
@@ -508,7 +514,10 @@ mod tests {
         let (w, h) = (4096u32, 2048u32);
         for (x, y) in [(2048.0, 1024.0), (3072.0, 1024.0), (1.0, 700.0), (4095.0, 300.0), (1500.5, 1900.5)] {
             let uv = uv_of(pixel_direction(x, y, w, h));
-            assert!((uv.x - x / w as f32).abs() < 1e-4 && (uv.y - y / h as f32).abs() < 1e-4, "({x}, {y}): {uv:?}");
+            assert!(
+                (uv.x - x / w as f32).abs() < 1e-4 && (uv.y - y / h as f32).abs() < 1e-4,
+                "({x}, {y}): {uv:?}"
+            );
         }
     }
 
@@ -750,6 +759,9 @@ mod tests {
             return;
         };
         let centre = pixels[((4 * 16 + 8) * 4) as usize];
-        assert!((i32::from(centre) - 128).abs() < 40, "a minified checkerboard is grey, got {centre}");
+        assert!(
+            (i32::from(centre) - 128).abs() < 40,
+            "a minified checkerboard is grey, got {centre}"
+        );
     }
 }

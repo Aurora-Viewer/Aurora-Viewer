@@ -406,10 +406,9 @@ impl App {
                 } else {
                     library::Presentation::Vertical
                 };
-            self.panels.texture_library =
-                !matches!(mode.as_str(), "baseline" | "preview" | "preview-drag" | "inventory-drag")
-                    && !mode.starts_with("cascade")
-                    && !mode.starts_with("panorama");
+            self.panels.texture_library = !matches!(mode.as_str(), "baseline" | "preview" | "preview-drag" | "inventory-drag")
+                && !mode.starts_with("cascade")
+                && !mode.starts_with("panorama");
             self.panels.chat = false;
             self.panels.people = false;
             self.panels.perf = false;
@@ -537,7 +536,12 @@ impl App {
                 _ => items[0],
             };
             if self.frame_count == 620 {
-                ui::widgets::place_floater(ctx, &library::preview_window_id(item), egui::pos2(20.0, 60.0), egui::vec2(720.0, 480.0));
+                ui::widgets::place_floater(
+                    ctx,
+                    &library::preview_window_id(item),
+                    egui::pos2(20.0, 60.0),
+                    egui::vec2(720.0, 480.0),
+                );
                 self.texture_library.open_preview(ctx, &self.world, item);
             }
             if self.frame_count == 700 {

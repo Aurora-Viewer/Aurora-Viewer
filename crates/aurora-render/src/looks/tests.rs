@@ -907,7 +907,7 @@ fn only_pointwise_operations_are_applied_to_the_faces_of_a_360_snapshot() {
         }
         if expected { kept.push(name) } else { dropped.push(name) }
     }
-    for name in ["Sepia", "BlackAndWhite", "Negative", "keep-red"] {
+    for name in ["Sepia", "BlackAndWhite", "Intense", "keep-red"] {
         assert!(kept.iter().any(|k| k == name), "{name} is a colour look: {kept:?}");
     }
     for name in ["Sharpen", "Spotlight", "Posterize", "fine-grain", "fisheye", "pixel", "haze"] {

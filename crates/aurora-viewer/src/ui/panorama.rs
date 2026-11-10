@@ -200,7 +200,11 @@ impl PanoView {
         );
         // (a child, not a scope: a scope would move the parent's cursor back
         // up to the corner)
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(strip).layout(egui::Layout::right_to_left(egui::Align::Min)));
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(strip)
+                .layout(egui::Layout::right_to_left(egui::Align::Min)),
+        );
         let ui = &mut child;
         let (icon, tip) = if self.full {
             ("arrows-minimize", aurora_i18n::tr!("panorama-leave-full"))

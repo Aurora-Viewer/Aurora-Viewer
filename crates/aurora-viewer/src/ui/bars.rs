@@ -3808,7 +3808,10 @@ mod tests {
         assert!(matches!(run_command(&ctx, "360capture", &mut panels), BarAction::Photo360));
         assert!(!command_active("360capture", &panels, false, false, false));
         panels.snapshot = true;
-        assert!(!command_active("360capture", &panels, false, false, false), "open in the ordinary format");
+        assert!(
+            !command_active("360capture", &panels, false, false, false),
+            "open in the ordinary format"
+        );
         panels.snapshot_pano = true;
         assert!(command_active("360capture", &panels, false, false, false));
         panels.snapshot = false;

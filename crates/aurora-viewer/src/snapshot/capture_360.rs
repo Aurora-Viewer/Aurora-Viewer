@@ -161,7 +161,10 @@ pub fn proposed_file_name(region: &str, width: u32, height: u32, face_size: u32,
 /// Viewer's "Snapshot : <place>": `360 Snapshot : <place>`, clipped to the
 /// grid's 63 bytes. The place is cleaned to ASCII, the marker is never cut.
 pub fn item_name(place: &str) -> String {
-    let place: String = place.chars().map(|c| if c.is_ascii() && !c.is_control() { c } else { '_' }).collect();
+    let place: String = place
+        .chars()
+        .map(|c| if c.is_ascii() && !c.is_control() { c } else { '_' })
+        .collect();
     let mut name = format!("{MARKER} : {place}");
     name.truncate(NAME_LIMIT);
     name.trim_end().to_owned()
@@ -455,7 +458,10 @@ mod tests {
 
     #[test]
     fn the_panorama_has_four_faces_across_the_equator() {
-        assert_eq!(Quality::ALL.map(Quality::output), [(512, 256), (2048, 1024), (4096, 2048), (8192, 4096)]);
+        assert_eq!(
+            Quality::ALL.map(Quality::output),
+            [(512, 256), (2048, 1024), (4096, 2048), (8192, 4096)]
+        );
         // a card that takes them all
         assert_eq!(output_size(2048, 16384), (8192, 4096));
         assert_eq!(output_size(128, 16384), (512, 256));

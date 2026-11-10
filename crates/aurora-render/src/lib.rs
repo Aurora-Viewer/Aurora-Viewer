@@ -41,12 +41,12 @@ mod motion_history;
 mod occlusion;
 pub mod pacing;
 mod packet;
+pub mod panorama;
 mod pick;
 pub mod pipeline_cache;
 #[cfg(test)]
 mod portal_tests;
 pub mod present;
-pub mod panorama;
 pub mod preview;
 pub mod probes;
 pub mod projector_shadows;

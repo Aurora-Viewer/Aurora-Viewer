@@ -795,11 +795,7 @@ impl Viewfinder {
                     }
                     // a common resolution as its badge (HD, QHD, 4K…), the
                     // pixels in its tip; the window's or a typed size in pixels
-                    let photo = if panel.pano {
-                        panel.pano_output(s)
-                    } else {
-                        f.photo
-                    };
+                    let photo = if panel.pano { panel.pano_output(s) } else { f.photo };
                     let pixels = format!("{} × {}", photo.0, photo.1);
                     let preset = (panel.destination == Destination::Disk && !panel.pano)
                         .then(|| s.resolution.short())

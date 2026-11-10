@@ -847,8 +847,10 @@ fn texture_preview_gates_need_full_permissions_in_both_views() {
     use crate::world::inventory::actions::{COPY, FULL, MODIFY, TRANSFER};
     let agent = Uuid::from_u128(77);
     let other = Uuid::from_u128(78);
-    let mut inv = Inventory::default();
-    inv.owner = agent;
+    let inv = Inventory {
+        owner: agent,
+        ..Default::default()
+    };
     let item = |owner: Uuid, group_owned: bool, owner_mask: u32, everyone_mask: u32| aurora_net::inventory::InvItem {
         owner,
         group_owned,

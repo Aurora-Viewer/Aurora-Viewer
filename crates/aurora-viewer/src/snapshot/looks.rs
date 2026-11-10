@@ -427,7 +427,7 @@ mod tests {
     /// aurora-render's looks tests).
     #[test]
     fn colour_looks_are_kept_for_a_360_snapshot_and_the_others_are_not() {
-        assert!(is_pointwise("Sepia") && is_pointwise("BlackAndWhite") && is_pointwise("Negative"));
+        assert!(is_pointwise("Sepia") && is_pointwise("BlackAndWhite") && is_pointwise("Intense"));
         assert!(is_pointwise(&format!("{AURORA}keep-red")));
         assert!(is_pointwise(&format!("{LUT}warm.cube")), "a table is a colour operation");
         assert!(!is_pointwise("Spotlight") && !is_pointwise("Sharpen") && !is_pointwise("Posterize"));

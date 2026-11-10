@@ -6031,7 +6031,9 @@ impl Backend {
         self.config.height = s.height;
         self.gtao.photo = Some(s.photo);
         self.cube_step = s.cube.map(usize::from);
-        self.cube_keep = s.cube.is_some_and(|step| usize::from(step) + 1 < crate::equirect::CAPTURE_CAMERAS.len());
+        self.cube_keep = s
+            .cube
+            .is_some_and(|step| usize::from(step) + 1 < crate::equirect::CAPTURE_CAMERAS.len());
         if same {
             // the face before left its images in the history of the passes
             // that remember the last frame: each face starts afresh (the
