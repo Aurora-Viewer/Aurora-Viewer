@@ -1455,7 +1455,7 @@ impl Camera {
     pub fn look(&mut self, dx: f32, dy: f32, sensitivity: f32, agent: &mut AgentState) {
         let k = DRAG_RATE * sensitivity;
         agent.yaw -= dx * k;
-        agent.pitch = (agent.pitch - dy * k).clamp(-1.5, 1.5);
+        agent.pitch = crate::agent::clamp_pitch(agent.pitch - dy * k);
     }
 
     /// Camera keys held this frame (LLAgentCamera::updateCamera); like

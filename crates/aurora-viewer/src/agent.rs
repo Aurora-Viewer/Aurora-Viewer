@@ -65,6 +65,16 @@ impl MoveInput {
     }
 }
 
+/// The avatar's pitch within the Legacy Viewer's limits (LLAgent::pitch,
+/// indra/newview/llagent.cpp): down to 179° from straight up, 89° below the
+/// horizon, and up to 5° from it, 85° above. Positive looks up.
+pub const PITCH_DOWN_LIMIT: f32 = 89.0 * std::f32::consts::PI / 180.0;
+pub const PITCH_UP_LIMIT: f32 = 85.0 * std::f32::consts::PI / 180.0;
+
+pub fn clamp_pitch(pitch: f32) -> f32 {
+    pitch.clamp(-PITCH_DOWN_LIMIT, PITCH_UP_LIMIT)
+}
+
 #[derive(Debug, Clone)]
 pub struct AgentState {
     /// Render-space position (main-region local).
@@ -686,7 +696,7 @@ impl AgentState {
     /// Advance smoothing and turning.
     pub fn update(&mut self, input: &MoveInput, mouselook: bool, dt: f32, camera_distance: f32) {
         self.yaw += input.joystick_yaw * dt.clamp(0.0, 0.2);
-        self.pitch = (self.pitch + input.joystick_pitch * dt.clamp(0.0, 0.2)).clamp(-1.55, 1.55);
+        self.pitch = clamp_pitch(self.pitch + input.joystick_pitch * dt.clamp(0.0, 0.2));
         if !mouselook && input.turn_left != input.turn_right {
             let step = TURN_RATE * yaw_rate(input.turn_held) * dt;
             self.yaw += if input.turn_left { step } else { -step };
@@ -1055,6 +1065,13 @@ mod tests {
         };
         walker.simulate_locally(&input, true, Some(0.0), 0.1, false);
         assert_eq!(walker.server_pos.z, 0.84, "walking stays level in mouselook");
+    }
+
+    #[test]
+    fn pitch_stops_where_the_legacy_viewer_stops() {
+        assert!((clamp_pitch(-2.0).to_degrees() + 89.0).abs() < 1e-3, "89° down");
+        assert!((clamp_pitch(2.0).to_degrees() - 85.0).abs() < 1e-3, "85° up");
+        assert_eq!(clamp_pitch(-0.2), -0.2);
     }
 
     #[test]
