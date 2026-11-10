@@ -536,8 +536,7 @@ fn confirmation_buttons(ui: &mut egui::Ui, p: &Palette, enabled: bool, label: &s
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_enabled_ui(enabled, |ui| {
                 // the Legacy Viewer's default="true" OK: Enter clicks it
-                let button = widgets::flat_button_sized(ui, p, label, Vec2::new(120.0, 28.0));
-                confirm = widgets::default_button(button).clicked();
+                confirm = widgets::default_button_sized(ui, p, label, Vec2::new(120.0, 28.0)).clicked();
             });
             if super::super::widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), Vec2::new(96.0, 28.0)).clicked() {
                 *done = true;
@@ -2169,9 +2168,18 @@ mod tests {
 
     /// One pass of the delete and Empty Trash confirmations, with `events`.
     fn confirmation_pass(ctx: &egui::Context, inv: &Inventory, st: &mut InventoryUi, events: Vec<egui::Event>) -> Vec<InvAction> {
+        confirmation_frame(ctx, inv, st, events).0
+    }
+
+    fn confirmation_frame(
+        ctx: &egui::Context,
+        inv: &Inventory,
+        st: &mut InventoryUi,
+        events: Vec<egui::Event>,
+    ) -> (Vec<InvAction>, egui::FullOutput) {
         let p = crate::theme::Theme::default().palette();
         let mut actions = Vec::new();
-        let _ = headless_output(ctx.run_ui(
+        let output = headless_output(ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0))),
                 events,
@@ -2191,7 +2199,7 @@ mod tests {
                 );
             },
         ));
-        actions
+        (actions, output)
     }
 
     fn key(key: egui::Key) -> egui::Event {
@@ -2201,6 +2209,88 @@ mod tests {
             pressed: true,
             repeat: false,
             modifiers: Default::default(),
+        }
+    }
+
+    #[test]
+    fn confirmation_shows_the_enter_target_before_tab_and_follows_keyboard_focus() {
+        fn accented(output: &egui::FullOutput, label: &str, fill: egui::Color32) -> bool {
+            // Empty Trash repeats the button label in the dialog's header.
+            output
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::epaint::Shape::Text(t) if t.galley.text() == label => Some(t.pos + t.galley.size() * 0.5),
+                    _ => None,
+                })
+                .any(|center| {
+                    output
+                        .shapes
+                        .iter()
+                        .any(|s| matches!(&s.shape, egui::epaint::Shape::Rect(r) if r.fill == fill && r.rect.contains(center)))
+                })
+        }
+
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let trash = rules::system(&inv, 14).expect("demo trash");
+        for empty in [false, true] {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            // Compare final colors independently of the modal's opening fade.
+            ctx.global_style_mut(|style| style.animation_time = 0.0);
+            let fill = ctx.global_style().visuals.widgets.active.weak_bg_fill;
+            let label = if empty {
+                aurora_i18n::tr!("common-empty-trash")
+            } else {
+                aurora_i18n::tr!("common-delete")
+            };
+            let cancel = aurora_i18n::tr!("common-cancel");
+            let mut st = InventoryUi {
+                dialog: Some(if empty {
+                    EditDialog::Empty(trash)
+                } else {
+                    EditDialog::Delete(vec![Uuid::from_u128(8100)], false)
+                }),
+                pending: Some(Uuid::from_u128(1)),
+                ..Default::default()
+            };
+            for _ in 0..3 {
+                confirmation_pass(&ctx, &inv, &mut st, Vec::new());
+            }
+            let (_, output) = confirmation_frame(&ctx, &inv, &mut st, Vec::new());
+            assert!(!accented(&output, label, fill), "a disabled action has no Enter hint");
+            st.pending = None;
+            // egui 0.37 styles a widget from its previous pass's state.
+            confirmation_pass(&ctx, &inv, &mut st, Vec::new());
+            let (_, output) = confirmation_frame(&ctx, &inv, &mut st, Vec::new());
+            assert!(
+                accented(&output, label, fill),
+                "{label}: expected the default Enter face {fill:?}; painted fills: {:?}",
+                output
+                    .shapes
+                    .iter()
+                    .filter_map(|s| match &s.shape {
+                        egui::epaint::Shape::Rect(r) => Some(r.fill),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+            );
+            assert!(!accented(&output, cancel, fill));
+            assert!(
+                ctx.memory(|m| m.focused()).is_none(),
+                "the hint must not steal focus or change Tab order"
+            );
+            for _ in 0..if empty { 2 } else { 3 } {
+                confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Tab)]);
+                confirmation_pass(&ctx, &inv, &mut st, Vec::new());
+            }
+            let (_, output) = confirmation_frame(&ctx, &inv, &mut st, Vec::new());
+            assert!(!accented(&output, label, fill), "Cancel owns Enter after Tab");
+            assert!(accented(&output, cancel, fill));
+            let mut actions = confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Enter)]);
+            actions.extend(confirmation_pass(&ctx, &inv, &mut st, Vec::new()));
+            assert!(actions.is_empty() && st.dialog.is_none(), "the accented Cancel answers Enter alone");
         }
     }
 

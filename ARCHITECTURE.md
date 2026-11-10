@@ -3493,6 +3493,10 @@ unless a focused button or a multi-line field keeps it, and the first text
 field takes the focus, its text selected, when the dialog opens
 (`LLPanel::handleKeyHere`, `LLToastAlertPanel`); a dialog that does
 something else with Enter takes it with `widgets::enter_pressed`.
+Inventory confirmations use `widgets::default_button_sized` to show the
+default Enter action with the theme's keyboard highlight until a widget in
+the modal takes focus. This visual hint does not request keyboard focus or
+change Tab order, and disabled actions stay neutral.
 `ui/widgets/keycap.rs` draws the keys of a shortcut (list of
 shortcuts, microphone panel). `ui/widgets/color.rs` is the compact colour picker (`color_button`,
 `color_panel`, RGB / HSV / hexadecimal conversions) and the eyedropper it shares
