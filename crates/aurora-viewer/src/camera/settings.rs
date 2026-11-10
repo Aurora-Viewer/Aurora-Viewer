@@ -203,6 +203,11 @@ pub struct CameraSettings {
     pub offset_scale: f32,
     /// CameraAngle: vertical field of view, radians ("Viewing angle").
     pub fov: f32,
+    /// Distance of the near clip plane, metres ("Near clip"); limits
+    /// `NEAR_CLIP_RANGE`. Aurora addition: the Legacy Viewer has no
+    /// preference for it. The far plane is infinite (reverse-Z), and what
+    /// the Legacy Viewer calls the far clip is the Draw Distance.
+    pub near_clip: f32,
     /// ZoomTime: seconds of a transition between camera modes.
     pub zoom_time: f32,
     /// CameraPositionSmoothing ("Smoothing"), × 0.02 s half-life. Limits:
@@ -278,6 +283,7 @@ impl Default for CameraSettings {
             focus_offset,
             offset_scale,
             fov: DEFAULT_FOV,
+            near_clip: DEFAULT_NEAR_CLIP,
             zoom_time: 0.4,
             smoothing: 1.0,
             dynamic_strength: 2.0,
@@ -384,6 +390,13 @@ impl CameraSettings {
 pub const DEFAULT_FOV: f32 = std::f32::consts::FRAC_PI_3;
 /// LLViewerCamera min / max view angles of the "Viewing angle" slider.
 pub const FOV_RANGE: std::ops::RangeInclusive<f32> = 0.17..=2.97;
+/// The camera's near plane before the setting existed, kept as its default.
+pub const DEFAULT_NEAR_CLIP: f32 = 0.1;
+/// Limits of the "Near clip" slider: 1 cm lets a close-up or a build come
+/// within a hand of the lens; past 1 m the avatar is cut by the default
+/// third-person view. The projection is infinite reverse-Z, so the depth
+/// precision stays fine across the whole range.
+pub const NEAR_CLIP_RANGE: std::ops::RangeInclusive<f32> = 0.01..=1.0;
 /// CameraPositionSmoothing: the limits of Phototools' "Cam. Smoothing" slider
 /// (floater_phototools_camera.xml, floater_phototools.xml), up to a half-life
 /// of 6 s, and not the 9 of panel_preferences_move.xml: both sliders drive the
@@ -440,6 +453,7 @@ impl CameraSettings {
         let fix = |v: f32, lo: f32, hi: f32, def: f32| if v.is_finite() { v.clamp(lo, hi) } else { def };
         self.offset_scale = fix(self.offset_scale, 0.5, 3.0, d.offset_scale);
         self.fov = fix(self.fov, 5.0f32.to_radians(), 175.0f32.to_radians(), d.fov);
+        self.near_clip = fix(self.near_clip, *NEAR_CLIP_RANGE.start(), *NEAR_CLIP_RANGE.end(), d.near_clip);
         self.mouselook_zoom_fov = super::mouselook_zoom::sanitize(self.mouselook_zoom_fov);
         self.zoom_time = fix(self.zoom_time, 0.0, 4.0, d.zoom_time);
         self.smoothing = fix(self.smoothing, *SMOOTHING_RANGE.start(), *SMOOTHING_RANGE.end(), d.smoothing);
@@ -545,6 +559,34 @@ mod smoothing_range_tests {
         assert_eq!(saved(f32::NAN), CameraSettings::default().smoothing);
         // the default stays the Legacy Viewer's
         assert_eq!(CameraSettings::default().smoothing, 1.0);
+    }
+}
+
+#[cfg(test)]
+mod near_clip_tests {
+    use super::*;
+
+    #[test]
+    fn a_saved_near_clip_keeps_the_range_and_an_older_file_the_old_plane() {
+        let saved = |near_clip| {
+            CameraSettings {
+                near_clip,
+                ..Default::default()
+            }
+            .sanitized()
+            .near_clip
+        };
+        assert_eq!(saved(0.01), 0.01);
+        assert_eq!(saved(1.0), 1.0);
+        assert_eq!(saved(0.0), 0.01);
+        assert_eq!(saved(-3.0), 0.01);
+        assert_eq!(saved(5.0), 1.0);
+        assert_eq!(saved(f32::NAN), DEFAULT_NEAR_CLIP);
+        assert_eq!(saved(f32::INFINITY), DEFAULT_NEAR_CLIP);
+        // the plane every camera had before the setting
+        assert_eq!(CameraSettings::default().near_clip, 0.1);
+        let older: CameraSettings = serde_json::from_str(r#"{"fov":1.0}"#).expect("an older camera section");
+        assert_eq!(older.near_clip, DEFAULT_NEAR_CLIP);
     }
 }
 
