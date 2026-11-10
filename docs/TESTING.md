@@ -4793,7 +4793,7 @@ both open states and the selection count. Capture at frame 620.
 - **`AURORA_DEMO_SOFT_SHADOWS=1`**: things standing in the sun to see how
   the penumbra of a shadow grows with the distance of its caster
   (`demo_soft_shadows.rs`), from `AURORA_DEMO_POS="132,126"`: a pergola
-  (a 6 m roof 3 m up), a pole 8 m high, a table (top 0.75 m up) and a
+  (a 6 m roof 3 m up), a pole 14 m high, a table (top 0.75 m up) and a
   sphere on the ground. The sun is fixed 35 degrees up
   (`AURORA_DEMO_SUN` overrides it), the soft shadows are on at the
   Preferences' softness, and the shadows are on at least at High.

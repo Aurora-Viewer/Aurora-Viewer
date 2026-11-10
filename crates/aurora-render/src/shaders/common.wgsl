@@ -1444,10 +1444,20 @@ fn sun_shadow(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32, frag: vec2<
     }
     s = min(s, contact_shadow(frag));
     // the light a shadow lets through, 0 at full intensity: untouched then
-    if (frame.soft.y > 0.0) {
+    // (a classic sky's sun is min(N.L, shadow), where the lift would hide
+    // under N.L: `classic_shadowed` lifts the result there)
+    if (frame.soft.y > 0.0 && frame.sky_ll.x < 0.5) {
         s = s + (1.0 - s) * frame.soft.y;
     }
     return s;
+}
+
+// The Legacy `min(N.L, shadow)` of a classic sky's sun, with the shadow
+// intensity: what the shadow takes of the sun's light, `nl - min(nl, shadow)`,
+// is scaled by the intensity (1 - frame.soft.y), 0 lifts it away.
+fn classic_shadowed(nl: f32, shadow: f32) -> f32 {
+    let lit = min(nl, shadow);
+    return lit + (nl - lit) * frame.soft.y;
 }
 
 fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32) -> f32 {
@@ -2482,7 +2492,7 @@ fn ll_classic_sun_ambient(base: vec3<f32>, n: vec3<f32>, shadow: f32, frag: vec2
     if (ll_classic_mode()) {
         let sunlit = a.sunlit * 1.35;
         let irr = ll_ssao(a.amblit * ll_ambient_lighting(n), frag);
-        let sun_contrib = vec3<f32>(min(pow(nl_sun, 1.2), shadow));
+        let sun_contrib = vec3<f32>(classic_shadowed(pow(nl_sun, 1.2), shadow));
         // GTAO's indirect light (Aurora's own: the Legacy Viewer has none)
         return (srgb_to_linear(irr * 0.9 + ll_linear_to_srgb(sun_contrib) * sunlit * 0.7) + screen_indirect(frag)) * base;
     }
@@ -2490,7 +2500,7 @@ fn ll_classic_sun_ambient(base: vec3<f32>, n: vec3<f32>, shadow: f32, frag: vec2
     let amb_lin = srgb_to_linear(a.amblit * ll_ambient_lighting(n));
     let amb_grey = vec3<f32>(dot(amb_lin, vec3<f32>(0.2126, 0.7152, 0.0722)));
     let irr = ll_ssao(select(amb_grey, amb_lin, colored_sky_ambient()), frag);
-    return (irr + min(nl_sun, shadow) * srgb_to_linear(a.sunlit) + screen_indirect(frag)) * base;
+    return (irr + classic_shadowed(nl_sun, shadow) * srgb_to_linear(a.sunlit) + screen_indirect(frag)) * base;
 }
 
 // Local lights on a classic surface (multiPointLightF): light color x n.l x
@@ -2550,7 +2560,7 @@ fn ll_classic_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32
         let f = f_schlick(f0, vh);
         let spec = d_ggx(nh, ra) * v_smith(nv, nl, ra) * f;
         let diff = (vec3<f32>(1.0) - f) * diffuse_color / PI;
-        let sun_contrib = srgb_to_linear(ll_linear_to_srgb(vec3<f32>(min(pow(nl, 1.2), shadow))) * sunlit * 0.7) * PI;
+        let sun_contrib = srgb_to_linear(ll_linear_to_srgb(vec3<f32>(classic_shadowed(pow(nl, 1.2), shadow))) * sunlit * 0.7) * PI;
         final_sun = clamp(sun_contrib * (diff + spec) * shadow, vec3<f32>(0.0), vec3<f32>(10.0));
     }
     var col = srgb_to_linear(ll_linear_to_srgb(irr * diffuse_color) + ll_linear_to_srgb(final_sun) * 1.1);
