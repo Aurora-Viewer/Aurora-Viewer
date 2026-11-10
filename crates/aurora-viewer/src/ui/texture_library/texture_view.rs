@@ -92,6 +92,9 @@ pub(crate) struct ImageView {
     pub(super) metadata: Metadata,
     pub message: String,
     pixels: Option<Arc<aurora_render::preview::Image>>,
+    /// The latest decoded level, complete or not: what the panorama viewer
+    /// looks into (the export keeps using `pixels`, complete only).
+    pub(super) shown: Option<Arc<aurora_render::preview::Image>>,
     revision: Option<crate::scene::textures::PreviewRevision>,
     pending: Option<crossbeam_channel::Receiver<Decoded>>,
     export_reply: Option<crossbeam_channel::Receiver<String>>,
@@ -115,11 +118,15 @@ impl ImageView {
             self.metadata = decoded.metadata;
             if let Some((texture, image, complete)) = decoded.image {
                 let [w, h] = image.size;
+                let first = self.pixels.is_none();
+                if complete || first {
+                    self.shown = Some(image.clone());
+                }
                 if complete {
                     self.dimensions = Some((w, h));
                     self.pixels = Some(image);
                 }
-                if complete || self.pixels.is_none() {
+                if complete || first {
                     self.image = Some(texture);
                 }
             }
@@ -262,6 +269,27 @@ pub(super) fn image_size(display: Display, source: Vec2, available: Vec2, pixels
     Vec2::new(width, width / ratio)
 }
 
+/// What the toolbar lets an item's holder do with its texture: copy the asset
+/// UUID and save the image, both for full permissions only
+/// (LLPreviewTexture::postBuild shows "Copy UUID" for them, and Save As needs
+/// the same, LLPreviewTexture::canSaveAs / get_can_copy_texture, indra/newview/
+/// llpreviewtexture.cpp, lltexturectrl.cpp). The panorama view of a texture
+/// reads the same gates: it opens a window on the image, never a way out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Gates {
+    pub copy_uuid: bool,
+    pub save_as: bool,
+}
+
+/// The gates of an item whose holder has the permission bits `held`.
+pub(super) fn gates(held: u32) -> Gates {
+    let full = held & rules::FULL == rules::FULL;
+    Gates {
+        copy_uuid: full,
+        save_as: full,
+    }
+}
+
 /// The display choices over the picture: fit or actual size, refresh, copy
 /// the UUID, save as, the ratio and the dimensions.
 pub(super) fn toolbar(
@@ -271,6 +299,8 @@ pub(super) fn toolbar(
     held: u32,
     dimensions: Option<(u32, u32)>,
     display: &mut Display,
+    // the 360° switch of a texture that is 2:1, and whether it is on
+    mut panorama: Option<&mut bool>,
     actions: &mut Vec<Action>,
 ) {
     ui.horizontal_wrapped(|ui| {
@@ -279,11 +309,11 @@ pub(super) fn toolbar(
             actions.push(Action::RefreshTexture(item.asset_id));
         }
         // LLPreviewTexture::postBuild shows "Copy UUID" for full permissions only
-        let full = held & rules::FULL == rules::FULL;
-        if widgets::icon_button(ui, p, "copy-filled", aurora_i18n::tr!("resource-preview-copy-uuid"), full) {
+        let gates = gates(held);
+        if widgets::icon_button(ui, p, "copy-filled", aurora_i18n::tr!("resource-preview-copy-uuid"), gates.copy_uuid) {
             ui.ctx().copy_text(item.asset_id.to_string());
         }
-        ui.add_enabled_ui(full, |ui| {
+        ui.add_enabled_ui(gates.save_as, |ui| {
             egui::ComboBox::from_id_salt("texture_export")
                 .selected_text(aurora_i18n::tr!("common-save-as"))
                 .show_ui(ui, |ui| {
@@ -295,8 +325,16 @@ pub(super) fn toolbar(
                     }
                 });
         });
+        if let Some(on) = panorama.as_deref_mut() {
+            widgets::switch_labeled(ui, p, on, aurora_i18n::tr!("resource-preview-360"));
+        }
     });
-    ratio_row(ui, p, dimensions, display);
+    if panorama.is_some_and(|on| *on) {
+        // (a panorama has no ratio to keep)
+        ui.horizontal_wrapped(|ui| dimensions_label(ui, p, dimensions));
+    } else {
+        ratio_row(ui, p, dimensions, display);
+    }
 }
 
 /// Shared by inventory textures and profile photos; one image pixel per
@@ -313,6 +351,27 @@ pub(crate) fn display_mode(ui: &mut egui::Ui, p: &Palette, display: &mut Display
         ],
     );
     display.actual_size = mode == 1;
+}
+
+/// The picture's dimensions, small and muted.
+fn dimensions_label(ui: &mut egui::Ui, p: &Palette, dimensions: Option<(u32, u32)>) {
+    ui.add(
+            egui::Label::new(
+                RichText::new(dimensions.map_or_else(
+                    || aurora_i18n::tr!("resource-preview-dimensions-loading").to_owned(),
+                    |(width, height)| {
+                        aurora_i18n::tr!(
+                            "resource-preview-dimensions",
+                            width = width.to_string(),
+                            height = height.to_string()
+                        )
+                    },
+                ))
+                .small()
+                .color(p.muted),
+            )
+            .wrap_mode(egui::TextWrapMode::Extend),
+        );
 }
 
 /// The ratio choices and the picture's dimensions.
@@ -344,23 +403,7 @@ fn ratio_row(ui: &mut egui::Ui, p: &Palette, dimensions: Option<(u32, u32)>, dis
                 }
             });
         });
-        ui.add(
-            egui::Label::new(
-                RichText::new(dimensions.map_or_else(
-                    || aurora_i18n::tr!("resource-preview-dimensions-loading").to_owned(),
-                    |(width, height)| {
-                        aurora_i18n::tr!(
-                            "resource-preview-dimensions",
-                            width = width.to_string(),
-                            height = height.to_string()
-                        )
-                    },
-                ))
-                .small()
-                .color(p.muted),
-            )
-            .wrap_mode(egui::TextWrapMode::Extend),
-        );
+        dimensions_label(ui, p, dimensions);
     });
 }
 
@@ -427,6 +470,19 @@ pub(super) fn picture(
         }
     });
     image_rect
+}
+
+/// The 360° view of a texture in all the room `ui` has: the panorama
+/// viewer (drag, wheel, keys, enlarge), not the flat picture.
+pub(super) fn panorama_picture(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    id: egui::Id,
+    view: &mut crate::ui::panorama::PanoView,
+    image: &Arc<aurora_render::preview::Image>,
+) {
+    let available = Vec2::new(ui.available_width().max(24.0), ui.available_height().max(24.0));
+    view.show(ui, p, id, image, available);
 }
 
 fn checkerboard(ui: &egui::Ui, p: &Palette, image: egui::Rect) {

@@ -24,6 +24,7 @@ pub mod buy_currency;
 pub mod buy_land;
 pub mod call_invite;
 pub mod capture_360;
+pub mod panorama;
 pub mod chat;
 pub mod chat_bubbles;
 pub mod click_away_focus;

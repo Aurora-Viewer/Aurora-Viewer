@@ -22,6 +22,89 @@ pub fn preview_items() -> [Uuid; 4] {
     [id(300), id(301), id(400), id(401)]
 }
 
+/// The panorama demo's items (`AURORA_DEMO_TEXTURE_LIBRARY=panorama*`): an
+/// Aurora 360° upload by its name, a plain 2:1 texture, and a marked one
+/// the agent may not copy.
+pub fn panorama_items() -> [Uuid; 3] {
+    [id(1000), id(1001), id(1002)]
+}
+
+pub fn seed_panorama(inv: &mut Inventory, agent: Uuid) {
+    let item = |n: u128, name: &str, owner_mask: u32| InvItem {
+        id: id(1000 + n),
+        parent: inv.root,
+        asset_id: id(1100 + n),
+        asset_type: 0,
+        inv_type: 0,
+        name: name.into(),
+        owner: agent,
+        creator: agent,
+        base_mask: 0x7fffffff,
+        owner_mask,
+        next_owner_mask: 0x7fffffff,
+        ..Default::default()
+    };
+    let items = vec![
+        item(0, &aurora_snapshot_name("Aurora Demo"), 0x7fffffff),
+        item(1, "Wide sky", 0x7fffffff),
+        item(
+            2,
+            &aurora_snapshot_name("No copy"),
+            0x7fffffff & !(crate::world::inventory::actions::COPY | crate::world::inventory::actions::TRANSFER),
+        ),
+    ];
+    inv.add_items(items);
+}
+
+fn aurora_snapshot_name(place: &str) -> String {
+    crate::snapshot::capture_360::item_name(place)
+}
+
+/// An equirectangular test image, 2048 x 1024: a hue per direction, a line
+/// every 30 degrees of longitude and latitude, the north in the middle, a
+/// white meridian split across the two edges (the seam to look for) and a
+/// bright zenith disc.
+fn panorama_pixels() -> (Vec<u8>, u32, u32) {
+    let (w, h) = (2048u32, 1024u32);
+    let mut pixels = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let lon = (x as f32 + 0.5) / w as f32;
+            let lat = 0.5 - (y as f32 + 0.5) / h as f32;
+            let hue = lon * 6.0;
+            let k = |n: f32| (((hue + n) % 6.0 - 3.0).abs() - 1.0).clamp(0.0, 1.0);
+            let sat = 0.65;
+            let value = 0.45 + 0.5 * (lat + 0.5);
+            let mut c = [
+                value * (1.0 - sat * (1.0 - k(3.0))),
+                value * (1.0 - sat * (1.0 - k(1.0))),
+                value * (1.0 - sat * (1.0 - k(5.0))),
+            ];
+            let near = |v: f32, step: f32, width: f32| {
+                let r = (v / step).fract();
+                r.min(1.0 - r) * step < width
+            };
+            if near(lon * 360.0, 30.0, 0.35) || near((lat + 0.5) * 180.0, 30.0, 0.35) {
+                c = [0.08; 3];
+            }
+            let wrap = lon.min(1.0 - lon) * w as f32;
+            if wrap < 3.0 {
+                c = [1.0; 3];
+            }
+            // north, the centre column
+            if (lon - 0.5).abs() * w as f32 <= 2.0 && lat.abs() < 0.2 {
+                c = [1.0, 0.1, 0.1];
+            }
+            if lat > 0.46 {
+                c = [1.0, 1.0, 0.7];
+            }
+            pixels.extend(c.map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8));
+            pixels.push(255);
+        }
+    }
+    (pixels, w, h)
+}
+
 pub fn cascade_items(kind: i32) -> [Uuid; 6] {
     let start = match kind {
         57 => 400,
@@ -247,6 +330,9 @@ pub fn seed(inv: &mut Inventory, scene: &mut Scene, agent: Uuid, empty: bool) {
 
 /// Tileable content pixels, independent of interface palette colors.
 pub fn texture(uuid: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
+    if (1100..1103).any(|n| *uuid == id(n)) {
+        return Some(panorama_pixels());
+    }
     let number = uuid.as_u128().checked_sub(BASE + 100)?;
     if number >= 12 {
         return None;

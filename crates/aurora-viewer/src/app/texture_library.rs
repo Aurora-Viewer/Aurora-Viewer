@@ -407,7 +407,9 @@ impl App {
                     library::Presentation::Vertical
                 };
             self.panels.texture_library =
-                !matches!(mode.as_str(), "baseline" | "preview" | "preview-drag" | "inventory-drag") && !mode.starts_with("cascade");
+                !matches!(mode.as_str(), "baseline" | "preview" | "preview-drag" | "inventory-drag")
+                    && !mode.starts_with("cascade")
+                    && !mode.starts_with("panorama");
             self.panels.chat = false;
             self.panels.people = false;
             self.panels.perf = false;
@@ -463,6 +465,9 @@ impl App {
                 self.panels.texture_library = false;
                 self.panels.inventory = false;
                 ui::inventory::drag::demo::setup(ctx, &mut self.world.inventory, &mut self.inventory_ui);
+            }
+            if mode.starts_with("panorama") {
+                crate::demo::texture_library::seed_panorama(&mut self.world.inventory, self.world.agent_id);
             }
             if mode.starts_with("cascade") {
                 let kind = match mode.as_str() {

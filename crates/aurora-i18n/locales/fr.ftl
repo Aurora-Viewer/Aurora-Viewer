@@ -13574,3 +13574,12 @@ ui-options-attached-particles-hint = Affiche les particules de ce que portent le
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = Distance d'affichage progressive
 ui-options-draw-distance-stepping-hint = Après la connexion et après une téléportation vers une autre région, la distance d'affichage part de 32 m et double jusqu'à la vôtre, pour que ce qui est proche se charge d'abord.
+
+# Panorama viewer (ui/panorama.rs)
+panorama-reset = Réinitialiser la vue
+panorama-enlarge = Agrandir
+panorama-leave-full = Quitter la vue agrandie
+panorama-help = Glisser pour regarder autour, molette pour zoomer, double-clic pour réinitialiser. Cliquez dessus, puis les flèches pour regarder et + / - pour zoomer.
+
+# Texture preview: look into a 2:1 texture as a panorama
+resource-preview-360 = 360°

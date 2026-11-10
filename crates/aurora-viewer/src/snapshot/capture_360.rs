@@ -12,6 +12,14 @@ use serde::{Deserialize, Serialize};
 pub const OUTPUT_WIDTH: u32 = 4096;
 /// JPEG quality of the saved panorama (360CaptureJPEGEncodeQuality).
 pub const JPEG_QUALITY: u8 = 95;
+/// What an Aurora 360° upload's item name starts with. ASCII only: the grid
+/// (and the Legacy Viewer, `LLStringUtil::replaceNonstandardASCII` through
+/// `LLInventoryObject::correctInventoryName`) replace every byte above 0x7f
+/// in an item name, so a "°" would not come back.
+pub const MARKER: &str = "360 Snapshot";
+/// Longest item name the grid keeps (DB_INV_ITEM_NAME_STR_LEN).
+const NAME_LIMIT: usize = 63;
+
 /// The XMP packet's GPano version written by the Legacy Viewer.
 const PANO_VERSION: &str = "2.2.1";
 /// How many faces a capture is made of (GPano:SourcePhotosCount).
@@ -102,6 +110,31 @@ pub fn proposed_file_name(region: &str, width: u32, height: u32, face_size: u32,
         name.push('_');
     }
     format!("{name}{width}x{height}_{face_size}_{stamp}.jpg")
+}
+
+/// The inventory item's name of an uploaded 360° picture, after the Legacy
+/// Viewer's "Snapshot : <place>": `360 Snapshot : <place>`, clipped to the
+/// grid's 63 bytes. The place is cleaned to ASCII, the marker is never cut.
+pub fn item_name(place: &str) -> String {
+    let place: String = place.chars().map(|c| if c.is_ascii() && !c.is_control() { c } else { '_' }).collect();
+    let mut name = format!("{MARKER} : {place}");
+    name.truncate(NAME_LIMIT);
+    name.trim_end().to_owned()
+}
+
+/// A texture an Aurora 360° upload made: its name starts with the marker
+/// (any case, after any leading spaces). Whether it is a panorama still
+/// depends on its shape (`is_equirect`).
+pub fn is_marked(name: &str) -> bool {
+    name.trim_start()
+        .get(..MARKER.len())
+        .is_some_and(|start| start.eq_ignore_ascii_case(MARKER))
+}
+
+/// An equirectangular panorama covers 360° by 180°: twice as wide as high.
+/// Smaller than 256 wide, it is too small to look around in.
+pub fn is_equirect((width, height): (u32, u32)) -> bool {
+    width >= 256 && width == height.saturating_mul(2)
 }
 
 /// What the XMP block says of a panorama (the `xmp_details` the Legacy
@@ -341,6 +374,38 @@ mod tests {
         assert_eq!(ctime_stamp((2000, 1, 1, 0, 0, 0)), "Sat Jan  1 00:00:00 2000");
         assert_eq!(ctime_stamp((2024, 2, 29, 23, 59, 59)), "Thu Feb 29 23:59:59 2024");
         assert_eq!(compact_stamp((2026, 11, 7, 14, 3, 5)), "20261107_140305");
+    }
+
+    #[test]
+    fn the_marker_is_ascii_and_survives_a_long_place_name() {
+        let name = item_name("A place with a very long name that goes on and on and on, far past the limit of an item");
+        assert!(name.is_ascii(), "the grid replaces every non-ASCII byte of a name");
+        assert!(name.len() <= 63);
+        assert!(is_marked(&name));
+        assert!(MARKER.is_ascii());
+        assert!(item_name("Démo ° (2)").is_ascii());
+        assert!(is_marked(&item_name("Démo ° (2)")));
+        assert_eq!(item_name("Aurora"), "360 Snapshot : Aurora");
+    }
+
+    #[test]
+    fn marked_names_are_found_whatever_the_case_or_the_spaces() {
+        for name in ["360 Snapshot : Aurora", "360 snapshot", "  360 SNAPSHOT : x", "360 Snapshot"] {
+            assert!(is_marked(name), "{name}");
+        }
+        for name in ["Snapshot : Aurora", "My 360 Snapshot", "", "360", "360 Snap", "360 Snapshé"] {
+            assert!(!is_marked(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn only_two_to_one_textures_of_enough_width_are_panoramas() {
+        assert!(is_equirect((2048, 1024)));
+        assert!(is_equirect((256, 128)));
+        assert!(!is_equirect((128, 64)), "too small to look around in");
+        assert!(!is_equirect((1024, 1024)));
+        assert!(!is_equirect((2048, 1025)));
+        assert!(!is_equirect((0, 0)));
     }
 
     #[test]

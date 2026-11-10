@@ -837,3 +837,38 @@ fn the_vertical_library_keeps_its_size_with_its_warnings() {
         },
     );
 }
+
+/// The 360° view of a texture opens a window on the image, never a way out:
+/// Copy UUID and Save As keep the gates of the flat preview, for the owner's
+/// item, a group-owned one, someone else's, a Library item, and each missing
+/// right (LLPreviewTexture::postBuild, canSaveAs).
+#[test]
+fn texture_preview_gates_need_full_permissions_in_both_views() {
+    use crate::world::inventory::actions::{COPY, FULL, MODIFY, TRANSFER};
+    let agent = Uuid::from_u128(77);
+    let other = Uuid::from_u128(78);
+    let mut inv = Inventory::default();
+    inv.owner = agent;
+    let item = |owner: Uuid, group_owned: bool, owner_mask: u32, everyone_mask: u32| aurora_net::inventory::InvItem {
+        owner,
+        group_owned,
+        owner_mask,
+        everyone_mask,
+        ..Default::default()
+    };
+    let cases = [
+        ("the owner's, full", item(agent, false, 0x7fffffff, 0), true),
+        ("group-owned", item(agent, true, 0x7fffffff, 0), false),
+        ("someone else's", item(other, false, 0x7fffffff, 0), false),
+        ("a Library item, copy only", item(other, false, 0, COPY), false),
+        ("a Library item, everyone full", item(other, false, 0, FULL), true),
+        ("no copy", item(agent, false, MODIFY | TRANSFER, 0), false),
+        ("no transfer", item(agent, false, COPY | MODIFY, 0), false),
+        ("no modify", item(agent, false, COPY | TRANSFER, 0), false),
+    ];
+    assert_eq!(cases.len(), 8);
+    for (name, it, allowed) in cases {
+        let gates = texture_view::gates(rules::held(&inv, &it));
+        assert_eq!((gates.copy_uuid, gates.save_as), (allowed, allowed), "{name}");
+    }
+}

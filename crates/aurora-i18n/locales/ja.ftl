@@ -13545,3 +13545,12 @@ ui-options-attached-particles-hint = アバターが装着しているものの�
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = 描画距離を段階的に広げる
 ui-options-draw-distance-stepping-hint = ログイン後と別のリージョンへのテレポート後、描画距離を32mから始めて設定値まで倍々に広げ、近くのものから読み込みます。
+
+# Panorama viewer (ui/panorama.rs)
+panorama-reset = 表示をリセット
+panorama-enlarge = 拡大
+panorama-leave-full = 拡大表示を終了
+panorama-help = ドラッグで見回し、ホイールでズーム、ダブルクリックでリセット。クリックしてから、矢印キーで見回し、+ / - でズームします。
+
+# Texture preview: look into a 2:1 texture as a panorama
+resource-preview-360 = 360°
