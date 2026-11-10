@@ -388,6 +388,7 @@ pub(super) fn show(
     // The folders.
     st.view.prepare(inv, prefs.sort_for(st.tab));
     let follow = st.side.follow(inv, st.browse, base);
+    let mut collapsed = false;
     if !st.result_view()
         && let Some(open) = st.expand_all.take()
     {
@@ -397,6 +398,7 @@ pub(super) fn show(
                 inv.request(id);
             }
         }
+        collapsed = !open;
     }
     st.side.prepare(&st.view, inv, base, prefs.show_library);
     let trash = rules::system(inv, 14).filter(|_| !scoped);
@@ -417,6 +419,10 @@ pub(super) fn show(
         let offset = egui::scroll_area::State::load(ui.ctx(), id).map_or(0.0, |state| state.unclamped_offset().y);
         let top = index as f32 * ROW;
         area = area.vertical_scroll_offset(offset.min(top).max(top + ROW - height).max(0.0));
+    }
+    if collapsed {
+        // As the tree's Collapse: back to the top folders.
+        area = area.vertical_scroll_offset(0.0);
     }
     #[cfg(test)]
     st.side.drawn.clear();

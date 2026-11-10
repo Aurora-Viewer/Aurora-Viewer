@@ -46,6 +46,7 @@ pub mod pipeline_cache;
 mod portal_tests;
 pub mod present;
 pub mod preview;
+mod preview_mesh;
 pub mod probes;
 pub mod projector_shadows;
 mod readback;
@@ -120,7 +121,7 @@ pub use textures::{MASK_CUTOFF, MipLevel, alpha_coverage, build_mips, build_mips
 pub use types::*;
 pub use ui_blur::blurred_backdrop;
 pub use ui_frame::{EguiFrame, EguiHandOver, vr_hint_marker};
-pub use ui_glass::{glass_panel, glass_panel_faded, glass_region};
+pub use ui_glass::{glass_diamond, glass_panel, glass_panel_faded, glass_region};
 pub use ui_world::end_world_labels;
 pub use upload::{StagedMesh, StagedTexture, StagingPool, TexelFormat};
 

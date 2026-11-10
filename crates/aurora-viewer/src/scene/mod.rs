@@ -697,8 +697,16 @@ fn is_special(faces: &[FaceDraw]) -> bool {
 struct TerrainChunk {
     alloc: MeshAlloc,
     record: u32,
+    /// Region-local, like the mesh vertices; the current region offset is
+    /// applied for every visibility, shadow and reflection bound.
     center: Vec3,
     radius: f32,
+}
+
+impl TerrainChunk {
+    fn world_center(&self, offset: Vec3) -> Vec3 {
+        self.center + offset
+    }
 }
 
 struct RegionGpu {
@@ -2724,6 +2732,37 @@ impl Scene {
         }
     }
 
+    /// LLWorld::shiftRegions (indra/newview/llworld.cpp) and
+    /// LLPipeline::shiftObjects (indra/newview/pipeline.cpp): an origin shift
+    /// changes transforms, not the region-local terrain mesh.
+    fn update_origin(&mut self, world: &mut World) -> bool {
+        let origin = world.main_origin();
+        if origin == self.last_origin {
+            return false;
+        }
+        if let (Some(old), Some(new)) = (self.last_origin, origin) {
+            let shift = Vec3::new((old.0 as f64 - new.0 as f64) as f32, (old.1 as f64 - new.1 as f64) as f32, 0.0);
+            for state in self.flexibles.values_mut() {
+                state.sim.shift(shift);
+            }
+        }
+        // clear/forget_gpu discards all allocations but keeps the world's
+        // received heightmaps. A fresh renderer still needs a full upload.
+        if self.last_origin.is_none() {
+            for region in world.regions.values_mut() {
+                region.dirty_chunks.extend(0..region.heightmap.chunk_count());
+            }
+        }
+        self.last_origin = origin;
+        for (idx, object) in world.objects.slots.iter_mut().enumerate() {
+            if let Some(object) = object {
+                object.render.needs_records = true;
+                self.sets.dirty.insert(idx);
+            }
+        }
+        true
+    }
+
     /// Bring GPU records up to date, visiting only the objects that need it
     /// (sync_sets.rs): what moves (avatars, their attachments, moving
     /// linksets), what changed, what waits for its geometry, and this
@@ -2795,37 +2834,13 @@ impl Scene {
             }
         }
 
-        // Render origin changed: every transform is stale.
-        let origin = world.main_origin();
-        if origin != self.last_origin {
-            if let (Some(old), Some(new)) = (self.last_origin, origin) {
-                let shift = Vec3::new((old.0 as f64 - new.0 as f64) as f32, (old.1 as f64 - new.1 as f64) as f32, 0.0);
-                for state in self.flexibles.values_mut() {
-                    state.sim.shift(shift);
-                }
-            }
-            self.last_origin = origin;
+        if self.update_origin(world) {
             renderer.cut_motion_history();
-            for (idx, o) in world.objects.slots.iter_mut().enumerate() {
-                if let Some(o) = o {
-                    o.render.needs_records = true;
-                    self.sets.dirty.insert(idx);
-                }
-            }
-            for r in self.regions.values_mut() {
-                for (_, c) in r.chunks.drain() {
-                    renderer.free_mesh(c.alloc);
-                    renderer.records.free(c.record);
-                }
-            }
-            for reg in world.regions.values_mut() {
-                reg.dirty_chunks.extend(0..reg.heightmap.chunk_count());
-            }
             self.water.clear(renderer);
         }
 
         step(&mut slow, "origin");
-        self.sync_terrain(renderer, world);
+        self.sync_terrain(renderer, world, view.eye);
         self.water.sync(renderer, world);
         step(&mut slow, "terrain");
 
@@ -4535,7 +4550,8 @@ impl Scene {
         // terrain
         for (&handle, r) in &self.regions {
             for c in r.chunks.values() {
-                if (c.center - view.eye).length() - c.radius > dd * 1.5 {
+                let center = c.world_center(r.offset);
+                if (center - view.eye).length() - c.radius > dd * 1.5 {
                     continue;
                 }
                 let cmd = DrawCmd {
@@ -4548,7 +4564,7 @@ impl Scene {
                 if shadows {
                     self.lists.terrain_shadow_casters.push(ShadowCaster {
                         cmd,
-                        center: c.center,
+                        center,
                         radius: c.radius,
                         alpha: r.surface.masked,
                     });
@@ -4556,14 +4572,14 @@ impl Scene {
                 if self.reflections {
                     // with its bounds: each reflection pass keeps the chunks
                     // in its own frustum
-                    let reflected = cmd.with_bounds(c.center, c.radius);
+                    let reflected = cmd.with_bounds(center, c.radius);
                     if r.surface.pbr {
                         self.lists.reflection_terrain_pbr.push(reflected);
                     } else {
                         self.lists.reflection_terrain.push(reflected);
                     }
                 }
-                if view.sphere_visible(c.center, c.radius) {
+                if view.sphere_visible(center, c.radius) {
                     // one shader per kind of terrain (env.wgsl)
                     if r.surface.masked {
                         self.lists.terrain_mask.push(cmd);

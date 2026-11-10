@@ -231,7 +231,20 @@ impl App {
         }
     }
 
-    pub(super) fn submit_inventory_change(&mut self, mut change: aurora_net::inventory::operations::Mutation) {
+    pub(super) fn submit_inventory_change(&mut self, change: aurora_net::inventory::operations::Mutation) {
+        self.submit_inventory_edit(change, None);
+    }
+
+    pub(super) fn submit_inventory_delete(&mut self, deletion: ui::inventory::DeleteRequest) {
+        self.inventory_ui.consume_clipboard = false;
+        self.submit_inventory_edit(deletion.change, Some(deletion.selection));
+    }
+
+    fn submit_inventory_edit(
+        &mut self,
+        mut change: aurora_net::inventory::operations::Mutation,
+        selection: Option<ui::inventory::DeleteSelection>,
+    ) {
         if self.inventory_ui.pending.is_some() {
             self.inventory_ui.consume_clipboard = false;
             return;
@@ -250,6 +263,9 @@ impl App {
             change.copies.len()
         );
         self.inventory_ui.begin_mutation(request, &change);
+        if let Some(selection) = selection {
+            self.inventory_ui.begin_delete(request, selection);
+        }
         self.inventory_ui.pending_refresh.clone_from(&change.refresh);
         self.inventory_ui.created_selection = change.operations.iter().find_map(|op| {
             if let aurora_net::inventory::operations::Operation::Folder { id, .. } = op {
@@ -293,7 +309,13 @@ impl App {
                 }
             }
             InvAction::TakeTask(request) => self.take_task_inventory(*request),
+            InvAction::StopConfirmingDelete => self.settings.inventory.confirm_delete = false,
             InvAction::Edit(change) => self.edit_inventory(change, false),
+            InvAction::Delete(deletion) => {
+                if let Some(deletion) = self.listings_ui.guard_inventory_delete(&self.world.inventory, *deletion) {
+                    self.submit_inventory_delete(deletion);
+                }
+            }
             InvAction::Drop(change) => self.edit_inventory(change, true),
             InvAction::Create { parent, kind, name } => {
                 if rules::destination(&self.world.inventory, parent) {
@@ -627,6 +649,8 @@ impl App {
             result => result,
         };
         self.inventory_ui.finish_bulk_permissions(result.as_ref().err().map(String::as_str));
+        self.inventory_ui
+            .finish_delete(request, result.is_ok(), result.as_ref().is_ok_and(|reply| reply.moves_queued));
         self.inventory_ui.finish_mutation(result.is_ok());
         if result.as_ref().is_ok_and(|reply| reply.moves_queued) {
             self.inventory_ui.moves_queued_notice();
@@ -869,8 +893,12 @@ impl App {
             return;
         };
         if let crate::world::appearance::Action::ShowOriginal(id) = action {
-            ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
-            self.inventory_ui.show_original(&self.world.inventory, id);
+            // show_item_original (llinventoryfunctions.cpp) refuses @showinv
+            // before opening Inventory or changing its selection and filters.
+            if !self.world.rlva.has("showinv") {
+                ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
+                self.inventory_ui.show_original(&self.world.inventory, id);
+            }
             return;
         }
         if let crate::world::appearance::Action::Favorite(id) = action {
@@ -888,6 +916,25 @@ impl App {
         if let crate::world::appearance::Action::Folders(change) = action {
             self.apply_inventory_action(crate::ui::inventory::InvAction::Edit(change));
             return;
+        }
+        match action {
+            crate::world::appearance::Action::OutfitImage(id) => {
+                self.inventory_ui.thumbnail.open(id);
+                return;
+            }
+            crate::world::appearance::Action::OutfitSnapshot(id) => {
+                self.outfit_snapshot(id);
+                return;
+            }
+            crate::world::appearance::Action::OutfitPortrait(id) => {
+                self.open_outfit_portrait(id, super::outfit_portrait::Kind::Studio);
+                return;
+            }
+            crate::world::appearance::Action::OutfitPhotoMode(id) => {
+                self.open_outfit_portrait(id, super::outfit_portrait::Kind::Viewfinder);
+                return;
+            }
+            _ => {}
         }
         if self.appearance_ui.pending.is_some() {
             return;

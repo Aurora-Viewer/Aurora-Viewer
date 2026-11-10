@@ -85,8 +85,10 @@ fn received_deliveries_can_be_deleted_without_unlocking_other_edits() {
         let menu = context_catalog::build(&inv, target, &st, &prefs, &facts);
         assert!(menu.entries.iter().any(|entry| entry.id == "delete" && entry.enabled));
     }
-    delete::request(&inv, &mut st, &prefs, &facts);
+    let mut actions = Vec::new();
+    delete::request(&inv, &mut st, &prefs, &facts, &mut actions);
     assert!(matches!(&st.dialog, Some(EditDialog::Delete(ids, false)) if ids.len() == 3));
+    assert!(actions.is_empty());
     let change = rules::move_selection(&inv, &selected, id(TRASH), &prefs.protected, &facts.worn).expect("trash received deliveries");
     assert!(change.move_only());
     assert_eq!(change.operations.len(), 2, "the selected child stays in its purchase folder");
@@ -280,9 +282,11 @@ fn measure() {
         let menu = menu.expect("menu");
         assert!(menu.entries.iter().any(|e| e.id == "delete"));
         let t = Instant::now();
-        delete::request(&inv, &mut st, &prefs, &facts);
+        let mut actions = Vec::new();
+        delete::request(&inv, &mut st, &prefs, &facts, &mut actions);
         let request = ms(t);
         assert!(matches!(&st.dialog, Some(EditDialog::Delete(d, false)) if d.len() == ids.len()));
+        assert!(actions.is_empty());
         let t = Instant::now();
         let change = rules::move_selection(&inv, &ids, id(TRASH), &prefs.protected, &facts.worn).expect("plan");
         let confirm = ms(t);
@@ -347,7 +351,10 @@ fn the_row_after_a_deletion_is_the_next_one_that_stays() {
         ..Default::default()
     };
     st.plain.order = order.to_vec();
-    delete::select_next(&inv, &mut st, &[id(11), id(20)]);
+    let deletion = delete::DeleteRequest::new(&inv, &st, &[id(11), id(20)], Default::default());
+    st.begin_delete(id(90), deletion.selection);
+    st.finish_delete(id(90), true, false);
+    assert!(delete::reconcile_selection(&inv, &mut st));
     assert_eq!(
         st.selection,
         HashSet::from([id(12)]),
@@ -355,6 +362,9 @@ fn the_row_after_a_deletion_is_the_next_one_that_stays() {
     );
     assert_eq!((st.selected, st.anchor), (Some(id(12)), Some(id(12))));
     st.selected = Some(id(99));
-    delete::select_next(&inv, &mut st, &[id(12), id(20)]);
+    let deletion = delete::DeleteRequest::new(&inv, &st, &[id(12), id(20)], Default::default());
+    st.begin_delete(id(91), deletion.selection);
+    st.finish_delete(id(91), true, false);
+    assert!(delete::reconcile_selection(&inv, &mut st));
     assert_eq!(st.selected, Some(id(30)), "else after the lowest deleted row");
 }
