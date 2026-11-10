@@ -92,11 +92,19 @@ posed, or who accepted, poses that one at once (with Ctrl held, their
 skeleton shows under the pointer). A plain click on them stays the
 world's: a photo's focus, a HUD drawn over them.
 
-**The Other tab** (both windows) lists only the bones a worn rigged mesh
-uses or the pose moved (Aurora's own: the Legacy Viewer lists them all). On
-a body that does not use them, the spine's bones are collapsed pairs whose
-markers sit upside down over the torso and whose moves tear the body apart,
-and the wings, the tail and the hind limbs rest unseen.
+**The Other tab** lists only the bones a worn rigged mesh uses or the pose
+moved (Aurora's own: the Legacy Viewer lists them all). The bones inside the
+body (the spine, the groin, the skull) are left to the full window's list,
+even used, posed there with the sliders and the trackball, with no markers
+nor handles in the world: the spine's are collapsed pairs whose markers sit
+upside down over the torso and whose moves tear the body apart, and the
+body's own bones bend it. Unused, the wings, the tail and the hind limbs
+rest unseen.
+
+**Ctrl and the handles:** while Ctrl is held with the parts or the avatars
+on, the selected joint's handles let the pointer through, so a Ctrl + click
+reaches a part they cover (a spine bone's rotation sphere over the torso);
+a drag already begun keeps them.
 
 Reset on the selected joint, with Mirror chosen, also resets its
 counterpart, as the Legacy Viewer's mirror does (`FSPoserAnimator::resetJoint`).
