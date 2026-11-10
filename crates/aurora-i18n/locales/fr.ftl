@@ -3420,6 +3420,24 @@ common-join = Fusionner
 build-ui-floaters-join-the-selected-parcels-into-one = Fusionner les parcelles sélectionnées en une seule ?
 ui-options-microphone-gain = Gain du micro
 ui-appearance-outfit-gallery = Galerie des tenues
+ui-appearance-showcase-all = Toutes les tenues
+ui-appearance-showcase-no-picture = Sans photo
+ui-appearance-showcase-folders = Dossiers
+ui-appearance-showcase-missing = { $count ->
+    [one] { $count } tenue n’a pas encore de photo.
+   *[other] { $count } tenues n’ont pas encore de photo.
+    }
+ui-appearance-showcase-show-them = Les afficher
+ui-appearance-showcase-dismiss = Masquer ce message
+ui-appearance-showcase-pick = Choisissez une tenue pour la voir ici.
+ui-appearance-showcase-no-picture-yet = Pas encore de photo
+ui-appearance-showcase-no-picture-hint = Prenez une photo de ce que vous voyez, ou choisissez une image de votre inventaire.
+ui-appearance-showcase-body = Parties du corps
+ui-appearance-showcase-clothing = Vêtements et calques
+ui-appearance-showcase-attachments = Éléments attachés
+ui-appearance-showcase-other = Autres
+ui-appearance-showcase-wear-item = Porter cet élément
+ui-appearance-showcase-more = Plus d’actions
 world-appearance-gloves = Gants
 ui-options-keep-the-current-culling-view-move-the-camera-to = Garde la vue de culling actuelle : déplacez la caméra pour voir ce qui n'est pas dessiné
 ui-notifications-keep = Garder
@@ -9182,6 +9200,10 @@ ui-options-aurora-search-help = Un seul champ, des puces par type et le détail 
 ui-options-aurora-search-classic = Onglets (Legacy)
 ui-options-aurora-region-estate-help = Aperçu, gestion par intention et interventions regroupées, ou les 8 onglets du Legacy Viewer.
 ui-options-aurora-inventory-help = Une fenêtre qui s’élargit de l’arbre à un explorateur avec ses détails, ou l’arbre unique du Legacy Viewer.
+ui-options-aurora-outfit-gallery = Galerie des tenues
+ui-options-aurora-outfit-gallery-help = La galerie d’Apparence en vitrine, avec vos dossiers, de grandes images et un aperçu de la tenue choisie, ou la grille de petites vignettes du Legacy Viewer.
+ui-options-aurora-outfit-gallery-aurora = Vitrine
+ui-options-aurora-outfit-gallery-classic = Vignettes (Legacy)
 ui-options-aurora-build = Outils de construction
 ui-options-aurora-build-help = L’espace de travail personnalisable Aurora, ou la barre d’outils et les onglets Général, Objet, Attributs, Texture et Contenu du Legacy Viewer.
 build-legacy-object = Objet

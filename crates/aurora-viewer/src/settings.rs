@@ -1243,6 +1243,10 @@ pub struct Settings {
     /// footer instead of Aurora's window that widens from a compact tree to
     /// an explorer (`ui/inventory/aurora`).
     pub classic_inventory: bool,
+    /// Appearance's outfit gallery as the Legacy Viewer's grid of small
+    /// tiles instead of Aurora's showcase: collections, large pictures and
+    /// a preview of the chosen outfit (`ui/appearance/showcase.rs`).
+    pub classic_outfit_gallery: bool,
     /// "Places" as the Legacy Viewer's three tabs (`ui/places.rs`) instead
     /// of Aurora's list and preview (`ui/places/aurora.rs`).
     pub classic_places: bool,
@@ -2232,6 +2236,7 @@ impl Default for Settings {
             classic_search: false,
             classic_region_estate: false,
             classic_inventory: false,
+            classic_outfit_gallery: false,
             classic_places: false,
             places_sort: PlacesSort::Visit,
             invert_mouse: false,

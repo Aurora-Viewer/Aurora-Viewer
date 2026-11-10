@@ -17017,6 +17017,7 @@ impl App {
                 let complexity = self.scene.avatar_complexity.get(&self.world.agent_id).copied().unwrap_or_default();
                 let mut open = self.panels.appearance;
                 self.appearance_ui.fill_previews = self.settings.appearance_fill_previews;
+                self.appearance_ui.showcase = !self.settings.classic_outfit_gallery;
                 for action in ui::appearance::show(
                     &ctx,
                     &p,
@@ -19749,7 +19750,8 @@ impl ApplicationHandler for App {
             }
             if let Ok(view) = std::env::var("AURORA_DEMO_APPEARANCE") {
                 crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);
-                if view.starts_with("folders") {
+                // showcase: the gallery's showcase with folders, pictures and favorites
+                if view.starts_with("folders") || view == "showcase" {
                     crate::world::outfit_folders::seed_demo(&mut self.world.inventory, self.world.agent_id);
                     if view.starts_with("folders-many") {
                         crate::world::outfit_folders::seed_demo_many(&mut self.world.inventory);
@@ -19770,6 +19772,10 @@ impl ApplicationHandler for App {
                 if matches!(view.as_str(), "gallery-fit" | "gallery-fill") {
                     ui::appearance::demo_previews(&self.egui_ctx, &mut self.world.inventory, &mut self.ui_images);
                     self.settings.appearance_fill_previews = view == "gallery-fill";
+                }
+                if view == "showcase" {
+                    ui::appearance::demo_previews(&self.egui_ctx, &mut self.world.inventory, &mut self.ui_images);
+                    ui::appearance::demo_showcase(&mut self.world.inventory, &mut self.appearance_ui);
                 }
                 let many = crate::world::appearance::demo_outfit_count();
                 if many > 0 {

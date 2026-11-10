@@ -22,6 +22,7 @@ use super::{Confirm, PlacesAction, PlacesUi, history_sections, now_secs, slurl_a
 use crate::theme::Palette;
 use crate::ui::place_card::{self, RowSize, Thumb};
 use crate::ui::place_details::{self, Ctx};
+use crate::ui::widgets::rail_row;
 use crate::ui::{menu, widgets};
 use crate::world::World;
 use crate::world::inventory::Inventory;
@@ -1718,44 +1719,6 @@ fn kv(ui: &mut egui::Ui, p: &Palette, label: &str, value: &str) {
             ui.label(egui::RichText::new(value).size(12.5).color(p.ink));
         });
     });
-}
-
-/// A row of the rail: icon, name, count; `depth` indents a sub-folder.
-#[allow(clippy::too_many_arguments)]
-fn rail_row(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    icon: &str,
-    tint: Color32,
-    label: &str,
-    count: Option<usize>,
-    on: bool,
-    depth: usize,
-) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::click());
-    let radius = ui.visuals().window_corner_radius;
-    if on {
-        ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.28));
-    } else if resp.hovered() {
-        ui.painter().rect_filled(rect, radius, p.raised);
-    }
-    let x = rect.left() + 10.0 + depth as f32 * 14.0;
-    paint_icon(
-        ui.painter(),
-        icon,
-        Rect::from_center_size(Pos2::new(x + 8.0, rect.center().y), Vec2::splat(16.0)),
-        if on && tint == p.muted { p.violet_pale } else { tint },
-    );
-    let num = count.map(|n| line(ui, &n.to_string(), 11.5, p.muted, false, 40.0));
-    let num_w = num.as_ref().map_or(0.0, |g| g.size().x + 10.0);
-    let ink = if tint == p.violet_light { tint } else { p.ink };
-    let g = line(ui, label, 13.0, ink, false, rect.right() - num_w - x - 25.0);
-    widgets::paint_row_text(ui.painter(), g, x + 25.0, rect.center().y, ink);
-    if let Some(g) = num {
-        let w = g.size().x;
-        widgets::paint_row_text(ui.painter(), g, rect.right() - 10.0 - w, rect.center().y, p.muted);
-    }
-    resp
 }
 
 /// The favourite star at a row's right end: true when clicked.

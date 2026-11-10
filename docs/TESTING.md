@@ -8957,7 +8957,7 @@ the Appearance window then opens on its Worn tab with the five objects
 worn. `cold` hides the five items from the inventory until FetchItems asks
 for them (`5 to look up`), as a cold inventory cache.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder|json-import|json-partial`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|showcase|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder|json-import|json-partial`**
 — opens Appearance with four synthetic outfits:
 
 In My Outfits, double-click an unworn attachment or clothing item to add it
@@ -8985,6 +8985,19 @@ gallery's double-click continues to open the outfit's contents.
   seconds, an unanswered creator lookup uses its UUID; an item with no creator
   reports unknown / multiple. Closing Appearance still completes the copy;
   changing sessions cancels it. Inventory menus have no such action.
+- `showcase`: the gallery tab as Aurora's showcase (the default; Preferences ›
+  Aurora › Outfit gallery › Tiles (Legacy) brings back the small tiles): the
+  demo folders of My Outfits (Club, Beach › Night, Spring), three local
+  pictures, two favorites and the Cop outfit in the preview. The window widens
+  once to 1080 points the first time the showcase shows. Check the rail's
+  counts (All, Favorites, No picture, the folders), the banner of outfits
+  without a picture and its Show them, the star (amber on a favorite, a click
+  toggles it), the hover actions of a card (Wear, Add, Take a snapshot), and
+  the preview: picture buttons, folder path, ⋯ menu, Wear / Add / Edit or
+  Take off, the items by Body parts / Clothing / Attachments with Worn tags
+  and a hover Wear, and Copy outfit list. Make the window narrower: under
+  820 points the rail becomes a menu over the grid, under 600 the preview
+  gives way to the selection card under the grid.
 - `gallery-fit` / `gallery-fill`: local portrait, landscape and square preview
   cards. Fit shows the whole image; Fill uses a centred crop without stretching.
   The discs stay round, the images stay inside their frames and the names and
