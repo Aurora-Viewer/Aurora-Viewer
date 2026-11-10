@@ -220,6 +220,13 @@ impl AgentState {
     }
 
     /// LLAgent::isSitting: on an object or on the ground.
+    /// Flying in mouselook, not seated: the region moves the avatar along
+    /// the camera's pitch, which the body rotation carries (LLToolGun calls
+    /// gAgent.pitch); walking, the region keeps it on the ground.
+    pub fn follows_camera_pitch(&self, mouselook: bool) -> bool {
+        mouselook && self.flying && !self.is_sitting()
+    }
+
     pub fn is_sitting(&self) -> bool {
         self.seated || self.ground_sit
     }
@@ -591,13 +598,14 @@ impl AgentState {
             return;
         }
         let dt = dt.min(0.1);
-        let use_mouselook_pitch = mouselook && self.flying && !self.is_sitting();
+        let use_mouselook_pitch = self.follows_camera_pitch(mouselook);
         let fwd = if use_mouselook_pitch {
             (self.body_rotation() * Quat::from_rotation_y(-self.pitch)) * Vec3::X
         } else {
             self.forward()
         };
-        let left = Vec3::new(-fwd.y, fwd.x, 0.0);
+        // from the heading alone: a pitch about this axis leaves it whole
+        let left = Vec3::new(-self.yaw.sin(), self.yaw.cos(), 0.0);
         let mut dir = Vec3::ZERO;
         if input.forward {
             dir += fwd;
@@ -1027,15 +1035,17 @@ mod tests {
             forward: true,
             ..Default::default()
         };
+        // high above the ground, so that a dive is not held at the floor
         for (pitch, rises) in [(0.55, true), (-0.55, false)] {
             let mut flyer = AgentState {
                 flying: true,
                 pitch,
-                server_pos: Vec3::Z * 0.84,
+                server_pos: Vec3::Z * 10.0,
                 ..Default::default()
             };
             flyer.simulate_locally(&input, true, Some(0.0), 0.1, false);
-            assert_eq!(flyer.server_pos.z > 0.84, rises, "pitch {pitch}");
+            assert_eq!(flyer.server_pos.z > 10.0, rises, "pitch {pitch}");
+            assert!((flyer.server_pos.z - 10.0).abs() > 0.1, "pitch {pitch} moves height");
         }
 
         let mut walker = AgentState {
@@ -1045,6 +1055,46 @@ mod tests {
         };
         walker.simulate_locally(&input, true, Some(0.0), 0.1, false);
         assert_eq!(walker.server_pos.z, 0.84, "walking stays level in mouselook");
+    }
+
+    #[test]
+    fn pitched_flight_strafes_at_full_weight() {
+        // W + A at 70°: the region turns a unit left axis by the body
+        // rotation, so the sideways share is 1/√2 of the speed, not cos(70°)
+        let input = MoveInput {
+            forward: true,
+            strafe_left: true,
+            ..Default::default()
+        };
+        let mut flyer = AgentState {
+            flying: true,
+            pitch: 70f32.to_radians(),
+            server_pos: Vec3::Z * 50.0,
+            ..Default::default()
+        };
+        flyer.simulate_locally(&input, true, Some(0.0), 0.1, false);
+        let sideways = flyer.server_pos.y / (10.0 * 0.1);
+        assert!(
+            (sideways - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.02,
+            "sideways share {sideways}"
+        );
+    }
+
+    #[test]
+    fn only_flight_in_mouselook_follows_the_camera_pitch() {
+        let flyer = AgentState {
+            flying: true,
+            ..Default::default()
+        };
+        assert!(flyer.follows_camera_pitch(true));
+        assert!(!flyer.follows_camera_pitch(false), "third person");
+        assert!(!AgentState::default().follows_camera_pitch(true), "walking");
+        let seated = AgentState {
+            flying: true,
+            seated: true,
+            ..Default::default()
+        };
+        assert!(!seated.follows_camera_pitch(true), "seated");
     }
 
     #[test]
