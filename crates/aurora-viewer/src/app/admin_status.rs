@@ -92,12 +92,11 @@ impl App {
             // handle_object_asset_ids: the region answers in chat
             AdminAction::AssetIds => {
                 for (handle, local_ids) in selection {
-                    let mut params = vec!["assetids".to_owned()];
-                    params.extend(local_ids.iter().map(u32::to_string));
                     god.push(GodCommand::Request {
                         handle,
                         method: "objectinfo".into(),
-                        params,
+                        params: vec!["assetids".into()],
+                        objects: local_ids,
                     });
                 }
             }
@@ -126,6 +125,7 @@ impl App {
                         handle: sel.handle,
                         method: "claimpublicland".into(),
                         params: [west, south, east, north].iter().map(|v| format!("{v:.6}")).collect(),
+                        objects: Vec::new(),
                     });
                 }
                 _ => self.world.system_message(aurora_i18n::tr!("admin-claim-public-land-select")),
