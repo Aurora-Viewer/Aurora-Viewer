@@ -3413,7 +3413,10 @@ That ignored test creates and removes its own isolated profile.
   the remaining modes select the corresponding controls. The other modes
   count as a ready bridge; `bridge-*` modes open the subject menu at 440 with
   the peer's Ask disabled and the matching hint (starting, query script
-  silent, failed, taken off), plus Repair for `silent` and `failed`. Synthetic events
+  silent, failed, taken off), plus Repair for `silent` and `failed`. With
+  `AURORA_DEMO_SNAPSHOT=viewfinder`, `consent-request` and `consent-reminder`
+  show the question and the reminder over the full-frame photo mode, above
+  the poser window. Synthetic events
   do not validate real LSL delivery: two human-controlled grid clients must
   check bridge 1.34 provisioning and the complete consent round trip.
 - **`AURORA_DEMO_IK_EDIT=1|move|release|gizmo|gizmo-local|gizmo-rotate`**: reuse the synthetic motorcycle,

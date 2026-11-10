@@ -15466,6 +15466,12 @@ impl App {
                         self.ik_editor.show(&ctx, &p, &self.world, projector);
                         self.ik_editor.over_viewfinder = false;
                     }
+                    // the posing consent too, poser open or not: a request
+                    // asked from the poser goes out now, another resident's
+                    // request shows its answer at once (it would time out
+                    // behind the photo mode), and the reminder that someone
+                    // may pose us stays in sight
+                    self.poser_consent_ui(&ctx, &p);
                     // Personal Lighting, opened from the light panel, stays
                     // over it too: the photo's light refined without leaving
                     if self.panels.personal_lighting {
