@@ -13546,4 +13546,4 @@ ui-options-attached-particles-hint = Affiche les particules de ce que portent le
 
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = Distance d'affichage progressive
-ui-options-draw-distance-stepping-hint = Après la connexion et après une téléportation vers une autre région, la distance d'affichage part de 32 m et double jusqu'à la vôtre, pour que ce qui est proche se charge d'abord.
+ui-options-draw-distance-stepping-hint = Après la connexion et après une téléportation vers une autre région, la distance d'affichage part de 32 m et double jusqu'à la vôtre. Elle attend tant que des objets se chargent ou que la dernière image est trop lourde, et recule d'un palier si les images restent lentes.

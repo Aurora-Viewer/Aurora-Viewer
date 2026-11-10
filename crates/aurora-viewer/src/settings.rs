@@ -556,7 +556,8 @@ pub struct Settings {
     /// FSRenderFarClipStepping: after the login and a teleport to another
     /// region, the draw distance starts at 32 m and doubles every
     /// `draw_distance_stepping_interval` seconds (settings/draw_stepping.rs;
-    /// off).
+    /// off). A step waits while objects are still arriving or the last
+    /// frame was too slow, and a frame that stays slow steps back one level.
     pub draw_distance_stepping: bool,
     /// FSRenderFarClipSteppingInterval: 20 s, 5 to 30 (Debug Settings only).
     pub draw_distance_stepping_interval: u32,

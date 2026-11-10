@@ -46,12 +46,18 @@ impl App {
             self.settings.draw_distance,
             self.settings.draw_distance_stepping,
             self.world.teleporting,
+            self.draw_load(),
             self.draw_stepping_interval(),
             Instant::now(),
         ) {
             Tick::Wait => {}
+            Tick::Hold(next) => self.settings.draw_stepping = Some(next),
             Tick::Step(next, value) => {
-                log::info!("draw distance stepping: {value} m");
+                if value < steps.step {
+                    log::info!("draw distance stepping: back to {value} m, the frame is too heavy");
+                } else {
+                    log::info!("draw distance stepping: {value} m");
+                }
                 self.settings.draw_stepping = Some(next);
                 self.settings.draw_distance = value;
             }
@@ -60,6 +66,25 @@ impl App {
                 self.settings.draw_stepping = None;
                 self.settings.draw_distance = value;
             }
+        }
+    }
+
+    /// The arrival queue and the last finished frame. Absent GPU times stay
+    /// absent: a device without timestamps does not pretend the frame was slow.
+    fn draw_load(&self) -> draw_stepping::Load {
+        let tex = &self.scene.textures.stats;
+        let waiting = tex
+            .fetching
+            .saturating_add(tex.decoding)
+            .saturating_add(tex.pending_upload)
+            .saturating_add(self.scene.stats.geom_pending);
+        draw_stepping::Load {
+            waiting: waiting.min(u32::MAX as usize) as u32,
+            gpu_ms: self.last_render.gpu_ms,
+            shadow_ms: self
+                .last_render
+                .gpu_elements
+                .map(|elements| elements[aurora_render::GpuElement::ShadowsDepth as usize]),
         }
     }
 }
