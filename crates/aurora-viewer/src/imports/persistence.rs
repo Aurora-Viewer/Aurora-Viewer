@@ -164,12 +164,18 @@ impl Asset {
         entry.local_saved = Some(self.clone());
     }
     pub fn restore(&self, prefs: &Preferences) -> Result<Entry, String> {
-        let options = import_texture::Options {
+        let mut options = import_texture::Options {
             max_width: self.size[0],
             max_height: self.size[1],
             lossless_small: self.lossless,
             strip_alpha: self.strip_alpha,
         };
+        // A material saved before its maps kept 2K holds the 1024 default
+        // (#2425): restored, it takes the same maximum as a new row.
+        if matches!(self.parameters, Some(Parameters::Material { .. })) {
+            options.max_width = super::MATERIAL_MAP_MAX;
+            options.max_height = super::MATERIAL_MAP_MAX;
+        }
         let prefs = Preferences {
             local_assume_meters: self.meters,
             ..prefs.clone()
@@ -986,6 +992,9 @@ mod tests {
         map.path = Some(custom.clone());
         images[0] = Some(map);
         material.local_published = true;
+        // saved by a build that gave material rows the 1024 texture default
+        material.options.max_width = 1024;
+        material.options.max_height = 1024;
         let mut mesh = files.entry("mesh-demo.dae");
         mesh.local_published = true;
         mesh.local_use_scale = true;
@@ -1031,6 +1040,11 @@ mod tests {
         assert_eq!(value.roughness_factor, 0.8);
         assert_eq!(images[0].as_ref().expect("custom map").path.as_ref(), Some(&custom));
         assert!(restarted.entries[1].watch.as_ref().expect("watch").paths.contains(&custom));
+        assert_eq!(
+            (restarted.entries[1].options.max_width, restarted.entries[1].options.max_height),
+            (super::super::MATERIAL_MAP_MAX, super::super::MATERIAL_MAP_MAX),
+            "a material saved with the old 1024 default uploads its maps at 2K once restored"
+        );
         let Some(Source::Mesh(draft)) = &restarted.entries[2].source else {
             panic!("restored mesh")
         };
