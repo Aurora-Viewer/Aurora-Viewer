@@ -233,7 +233,7 @@ pub(super) fn show(
         collection_menu(&mut g, p, world, st, entries, shown.len(), favorites, no_picture);
         g.add_space(6.0);
     }
-    banner(&mut g, p, st, no_picture);
+    banner(&mut g, p, world, st, shown, no_picture, actions);
     egui::ScrollArea::vertical()
         .id_salt("appearance_showcase")
         .auto_shrink([false, false])
@@ -391,9 +391,10 @@ fn collection_menu(
     });
 }
 
-/// "N outfits have no picture yet", with the way to see them; closed for
-/// the session by its cross.
-fn banner(ui: &mut egui::Ui, p: &Palette, st: &mut AppearanceUi, no_picture: usize) {
+/// "N outfits have no picture yet", with Take the portraits (the batch
+/// portraits' window, over our own outfits shown); closed for the session
+/// by its cross.
+fn banner(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi, shown: &[Uuid], no_picture: usize, actions: &mut Vec<Action>) {
     let state = &mut st.showcase_state;
     if no_picture == 0 || state.banner_hidden || state.filter == Filter::NoPicture {
         return;
@@ -407,9 +408,10 @@ fn banner(ui: &mut egui::Ui, p: &Palette, st: &mut AppearanceUi, no_picture: usi
                 if super::icon_button(ui, p, "x", aurora_i18n::tr!("ui-appearance-showcase-dismiss")).clicked() {
                     state.banner_hidden = true;
                 }
-                let show = aurora_i18n::tr!("ui-appearance-showcase-show-them");
-                if widgets::flat_button(ui, p, show).clicked() {
-                    state.filter = Filter::NoPicture;
+                let take = aurora_i18n::tr!("ui-appearance-batch-open");
+                if widgets::flat_button(ui, p, take).clicked() {
+                    let own = shown.iter().copied().filter(|id| own_outfit(world, *id)).collect();
+                    actions.push(Action::OutfitBatch(own));
                 }
                 ui.add(egui::Label::new(egui::RichText::new(text).size(12.0).color(p.muted)).truncate());
             });

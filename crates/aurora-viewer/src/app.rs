@@ -108,6 +108,7 @@ mod movement;
 mod object_actions;
 mod object_menu;
 mod object_menu_demo;
+mod outfit_batch;
 mod outfit_portrait;
 mod own_motion;
 mod pay;
@@ -1086,6 +1087,8 @@ pub struct App {
     inventory_images: inventory_thumbnail::ImageJobs,
     /// The outfit's auto portrait or square photo mode under way.
     outfit_portrait: Option<outfit_portrait::Session>,
+    /// The outfits' batch portraits, from their window's opening.
+    outfit_batch: Option<outfit_batch::Batch>,
     appearance_ui: ui::appearance::AppearanceUi,
     shape_ui: crate::shape_editor::State,
     shape_camera: Option<Camera>,
@@ -1947,6 +1950,7 @@ impl App {
             demo_script_experiences: Default::default(),
             inventory_images: Default::default(),
             outfit_portrait: None,
+            outfit_batch: None,
             appearance_ui,
             shape_ui: Default::default(),
             shape_camera: None,
@@ -8917,6 +8921,7 @@ impl App {
             ));
         }
         self.outfit_portrait_demo();
+        self.outfit_batch_demo();
         // AURORA_DEMO_GROUP_REGION: the Group titles window
         if self.demo && self.frame_count == 600 && crate::demo::group_region::on() {
             self.panels.group_titles = true;
@@ -9379,6 +9384,7 @@ impl App {
         let (w, h) = gfx.renderer.size();
         // a photo drawn at its own size this frame: its proportions, the
         // part of it this frame draws, the height its details are chosen for
+        self.outfit_batch_frame();
         self.outfit_portrait_frame(&gfx.renderer);
         self.photo_update(&gfx.renderer);
         self.viewfinder_frame(&mut gfx.renderer);
@@ -17045,6 +17051,7 @@ impl App {
                 }
                 self.panels.appearance = open;
                 self.outfit_portrait_window(&ctx, &p);
+                self.outfit_batch_window(&ctx, &p);
                 self.update_demo_shape_mesh();
                 self.shape_ui.update(&mut self.world, &self.scene, &ctx);
                 let shape_preferences = (self.shape_ui.hints, self.shape_ui.feet);
@@ -19759,7 +19766,7 @@ impl ApplicationHandler for App {
             if let Ok(view) = std::env::var("AURORA_DEMO_APPEARANCE") {
                 crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);
                 // showcase: the gallery's showcase with folders, pictures and favorites
-                let showcase = view == "showcase" || view.starts_with("portrait") || view == "photo-mode";
+                let showcase = view == "showcase" || view.starts_with("portrait") || view == "photo-mode" || view.starts_with("batch");
                 if view.starts_with("folders") || showcase {
                     crate::world::outfit_folders::seed_demo(&mut self.world.inventory, self.world.agent_id);
                     if view.starts_with("folders-many") {

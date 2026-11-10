@@ -8994,7 +8994,7 @@ the Appearance window then opens on its Worn tab with the five objects
 worn. `cold` hides the five items from the inventory until FetchItems asks
 for them (`5 to look up`), as a cold inventory cache.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|showcase|portrait|portrait-not-worn|portrait-shot|portrait-bust|portrait-face|portrait-profile|photo-mode|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder|json-import|json-partial`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|showcase|portrait|portrait-not-worn|portrait-shot|portrait-bust|portrait-face|portrait-profile|photo-mode|batch|batch-run|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder|json-import|json-partial`**
 — opens Appearance with four synthetic outfits:
 
 In My Outfits, double-click an unworn attachment or clothing item to add it
@@ -9055,6 +9055,18 @@ gallery's double-click continues to open the outfit's contents.
   chosen, the banner "Photo for the outfit …", the helpers Reframe on my
   avatar / A pose / Studio backdrop, the shutter shows the photo with Use for
   the outfit / Retake. The log says `outfit portrait: …` at each step.
+- `batch`, `batch-run`: the showcase, then at frame 600 the batch
+  portraits' window (Fider #447, the banner's Take the portraits) over the
+  demo's outfits: those without a picture ticked, those with one to tick to
+  redo, the portrait settings folded, the note on what happens, Cancel /
+  Start (n). `batch-run` starts it at frame 700: "Photo i of n…", the
+  progress, the current row with its live preview and its state (Loading
+  the outfit… worn / total items, Framing, Taking the portrait, Saving),
+  the others Waiting or Done with their photo, Pause / Resume and Stop and
+  put my outfit back. Two outfit changes are at least 5 s apart; the worn
+  outfit is taken first, without a change. At the end the starting outfit
+  is worn again and the window says how many portraits were taken and
+  skipped. The log says `outfit batch: …` at each step.
 - `gallery-fit` / `gallery-fill`: local portrait, landscape and square preview
   cards. Fit shows the whole image; Fill uses a centred crop without stretching.
   The discs stay round, the images stay inside their frames and the names and

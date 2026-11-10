@@ -3424,7 +3424,7 @@ ui-appearance-showcase-missing = { $count ->
     [one] { $count } outfit has no picture yet.
    *[other] { $count } outfits have no picture yet.
     }
-ui-appearance-showcase-show-them = Show them
+ui-appearance-batch-open = Take the portraits
 ui-appearance-showcase-dismiss = Hide this message
 ui-appearance-showcase-pick = Pick an outfit to see it here.
 ui-appearance-showcase-no-picture-yet = No picture yet
@@ -3485,6 +3485,49 @@ ui-appearance-portrait-vf-studio = Studio backdrop
 ui-appearance-portrait-vf-how = How it works
 ui-appearance-portrait-vf-how-text = The usual viewfinder, with all its settings. Only the square is kept: it becomes the outfit's picture. Take the photo, then “Use for the outfit”.
 ui-appearance-portrait-vf-use = Use for the outfit
+ui-appearance-batch-title = Outfit portraits
+ui-appearance-batch-choose = Outfits to photograph
+ui-appearance-batch-none = None of these outfits is yours to photograph.
+ui-appearance-batch-progress = Photo { $index } of { $count }…
+ui-appearance-batch-paused = Paused — photo { $index } of { $count }
+ui-appearance-batch-restoring = Putting your outfit back…
+ui-appearance-batch-finished = Portraits done
+ui-appearance-batch-summary = { $done ->
+    [one] { $done } portrait taken
+   *[other] { $done } portraits taken
+    }, { $skipped } skipped.
+ui-appearance-batch-not-restored = Your starting outfit could not be put back: wear it again from the gallery.
+ui-appearance-batch-redo = { $name } (redo)
+ui-appearance-batch-no-picture = No picture
+ui-appearance-batch-has-picture = Has a picture: tick to take it again
+ui-appearance-batch-locked = Locked by RLVa
+ui-appearance-batch-empty = Nothing to wear in it
+ui-appearance-batch-waiting = Waiting
+ui-appearance-batch-wearing = Putting the outfit on…
+ui-appearance-batch-loading = Loading the outfit… { $worn } / { $total } items
+ui-appearance-batch-loading-look = Loading the outfit… textures and layers
+ui-appearance-batch-framing = Framing…
+ui-appearance-batch-shooting = Taking the portrait…
+ui-appearance-batch-saving = Saving the picture…
+ui-appearance-batch-done = Done
+ui-appearance-batch-done-missing = Done, { $missing } items still loading
+ui-appearance-batch-not-done = Not done
+ui-appearance-batch-skipped-locked = Skipped: locked by RLVa
+ui-appearance-batch-skipped-refused = Skipped: RLVa refused the change
+ui-appearance-batch-skipped-slow = Skipped: still loading after { $seconds } s
+ui-appearance-batch-skipped-gone = Skipped: the outfit is gone
+ui-appearance-batch-skipped-empty = Skipped: nothing to wear in it
+ui-appearance-batch-failed = Failed: { $reason }
+ui-appearance-batch-settings = Portrait settings
+ui-appearance-batch-how = Aurora puts on each outfit, waits until it has loaded (textures, layers), takes the portrait, then moves on to the next one.
+ui-appearance-batch-seen = Others see you change outfits.
+ui-appearance-batch-back = Your starting outfit comes back at the end, or as soon as you stop. Outfits locked by RLVa are skipped.
+ui-appearance-batch-unsaved = Save or undo the changes to your current outfit first: it is the one put back at the end.
+ui-appearance-batch-no-start = Wear a saved outfit first: it is the one put back at the end.
+ui-appearance-batch-start = Start ({ $count })
+ui-appearance-batch-stop = Stop and put my outfit back
+ui-appearance-batch-pause = Pause
+ui-appearance-batch-resume = Resume
 ui-appearance-showcase-body = Body parts
 ui-appearance-showcase-clothing = Clothing and layers
 ui-appearance-showcase-attachments = Attachments
