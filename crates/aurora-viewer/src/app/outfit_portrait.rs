@@ -10,8 +10,9 @@
 //! us as usual. The window's preview is a small photo drawn a few times a
 //! second while it is open, nothing while it is closed; the photo itself is
 //! shown for confirmation, then becomes the outfit's free thumbnail through
-//! the gallery snapshot's steps (`inventory_thumbnail`). Closing restores
-//! the camera, the isolation and the light.
+//! the gallery snapshot's steps (`inventory_thumbnail`), and when chosen
+//! and its price confirmed, the outfit's paid HD picture too (`outfit_hd`).
+//! Closing restores the camera, the isolation and the light.
 //!
 //! An outfit that is not worn is never put on behind the user's back: the
 //! window offers to wear it, then to put the previous outfit back.
@@ -89,6 +90,8 @@ pub(super) struct Session {
     shot_wanted: bool,
     shooting: bool,
     shot: Option<Shot>,
+    /// Use waits for the HD picture's price to be confirmed.
+    hd_confirm: Option<i32>,
     /// Worn from here: the outfit worn before (None: none was known).
     previous: Option<Option<Uuid>>,
     /// The photo part is over (camera, isolation and light restored): the
@@ -158,6 +161,7 @@ impl App {
             shot_wanted: false,
             shooting: false,
             shot: None,
+            hd_confirm: None,
             previous: None,
             over: false,
             saved: false,
@@ -187,6 +191,7 @@ impl App {
         s.pose = None;
         s.preview = None;
         s.shot = None;
+        s.hd_confirm = None;
         s.shot_wanted = false;
         self.camera = s.camera.clone();
         self.world.agent.yaw = s.yaw;
@@ -431,17 +436,39 @@ impl App {
         s.shot = Some(Shot { size, pixels, texture });
     }
 
-    /// The photo becomes the outfit's picture.
-    fn outfit_portrait_use(&mut self) {
+    /// The photo becomes the outfit's picture; with the HD picture chosen,
+    /// its price is confirmed first (`confirmed`: the price agreed to).
+    fn outfit_portrait_use(&mut self, confirmed: Option<i32>) {
+        let Some(s) = &self.outfit_portrait else {
+            return;
+        };
+        if s.shot.is_none() {
+            return;
+        }
+        let side = s.settings.hd_side.side();
+        let hd = match self.outfit_hd_offer(side) {
+            portrait::HdOffer::Ready(cost) if s.settings.hd && !self.outfit_hd_busy() => Some(cost),
+            _ => None,
+        };
         let Some(s) = &mut self.outfit_portrait else {
             return;
         };
+        // a price not yet agreed to (or changed since): asked first
+        if let Some(cost) = hd.filter(|cost| *cost > 0 && confirmed != Some(*cost)) {
+            s.hd_confirm = Some(cost);
+            return;
+        }
+        s.hd_confirm = None;
         let Some(shot) = s.shot.take() else {
             return;
         };
         let outfit = s.outfit;
+        let hd_pixels = hd.map(|_| shot.pixels.clone());
         if !self.outfit_photo_pixels(outfit, shot.size, shot.pixels) {
             return;
+        }
+        if let (Some(cost), Some(pixels)) = (hd, hd_pixels) {
+            self.outfit_hd_start(outfit, shot.size, pixels, side, cost, false);
         }
         log::info!("outfit portrait: photo used for {outfit}");
         if let Some(s) = &mut self.outfit_portrait {
@@ -456,6 +483,12 @@ impl App {
         let name = inv.folders.get(&s.outfit).map_or("", |f| f.info.name.as_str());
         let base = crate::world::appearance::base(inv);
         let image = crate::world::appearance::outfit_image(inv, s.outfit);
+        let hd = window::HdView {
+            offer: self.outfit_hd_offer(s.settings.hd_side.side()),
+            busy: self.outfit_hd_busy(),
+            confirm: s.hd_confirm,
+            has_one: !crate::world::appearance::hd_pictures(inv, s.outfit).is_empty(),
+        };
         Some(window::View {
             name,
             preview: s.preview.as_ref(),
@@ -471,6 +504,7 @@ impl App {
             saved: s.saved,
             pose: s.vf_pose,
             studio: s.vf_studio,
+            hd,
         })
     }
 
@@ -505,10 +539,16 @@ impl App {
         if !self.outfit_photo_mode() {
             return;
         }
+        let Some(mut settings) = self.outfit_portrait.as_ref().map(|s| s.settings) else {
+            return;
+        };
         let actions = match self.outfit_portrait_view() {
-            Some(view) => window::photo_mode(ctx, p, &view),
+            Some(view) => window::photo_mode(ctx, p, &mut settings, &view),
             None => return,
         };
+        if let Some(s) = &mut self.outfit_portrait {
+            s.settings = settings;
+        }
         for action in actions {
             self.outfit_portrait_action(action);
         }
@@ -521,8 +561,14 @@ impl App {
         let outfit = s.outfit;
         match action {
             window::Action::Shoot => self.outfit_portrait_shoot(),
-            window::Action::Use => self.outfit_portrait_use(),
+            window::Action::Use => self.outfit_portrait_use(None),
+            window::Action::ConfirmHd => {
+                let cost = s.hd_confirm;
+                self.outfit_portrait_use(cost);
+            }
+            window::Action::CancelHd => s.hd_confirm = None,
             window::Action::Retake => {
+                s.hd_confirm = None;
                 s.shot = None;
                 s.preview_at = None;
             }
@@ -638,13 +684,14 @@ impl App {
     }
 }
 
-/// `AURORA_DEMO_APPEARANCE=portrait|portrait-not-worn|portrait-shot|photo-mode`.
+/// `AURORA_DEMO_APPEARANCE=portrait|portrait-not-worn|portrait-shot|photo-mode`,
+/// and the HD picture's `portrait-hd|portrait-hd-poor|photo-mode-hd`.
 fn demo_mode() -> Option<&'static str> {
     static MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     MODE.get_or_init(|| {
         std::env::var("AURORA_DEMO_APPEARANCE")
             .ok()
-            .filter(|m| m.starts_with("portrait") || m == "photo-mode")
+            .filter(|m| m.starts_with("portrait") || m.starts_with("photo-mode"))
     })
     .as_deref()
 }
@@ -653,7 +700,11 @@ impl App {
     /// The demo's steps (`AURORA_DEMO_APPEARANCE`): over the showcase, at
     /// frame 600 the auto portrait of the outfit worn (`portrait`), of one
     /// not worn (`portrait-not-worn`), the square photo mode
-    /// (`photo-mode`); `portrait-shot` takes the photo at frame 900.
+    /// (`photo-mode`); `portrait-shot` takes the photo at frame 900. The HD
+    /// picture's: chosen at 1024 with a fictional L$ 500 balance
+    /// (`portrait-hd`, `photo-mode-hd`), or a L$ 5 one that cannot pay the
+    /// demo's L$ 10 (`portrait-hd-poor`); the demo's upload takes the price
+    /// off the balance.
     pub(super) fn outfit_portrait_demo(&mut self) {
         if !self.demo {
             return;
@@ -673,7 +724,7 @@ impl App {
                             .unwrap_or(worn),
                         Kind::Studio,
                     ),
-                    "photo-mode" => (worn, Kind::Viewfinder),
+                    "photo-mode" | "photo-mode-hd" => (worn, Kind::Viewfinder),
                     _ => (worn, Kind::Studio),
                 };
                 log::info!("demo: outfit portrait ({mode})");
@@ -687,6 +738,15 @@ impl App {
                         "portrait-profile" => s.settings.angle = portrait::Angle::Profile,
                         _ => {}
                     }
+                    if mode.ends_with("-hd") || mode == "portrait-hd-poor" {
+                        s.settings.hd = true;
+                        s.settings.hd_side = portrait::HdSide::Side1024;
+                    }
+                }
+                match mode {
+                    "portrait-hd" | "photo-mode-hd" => self.world.balance = Some(500),
+                    "portrait-hd-poor" => self.world.balance = Some(5),
+                    _ => {}
                 }
             }
             900 if mode == "portrait-shot" => self.outfit_portrait_shoot(),
