@@ -114,6 +114,7 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
             | "aurora-worn-wide"
             | "aurora-sidebar-wide"
             | "aurora-smart-wide"
+            | "aurora-favorite-folders"
             | "aurora-keyboard-wide"
             | "aurora-rights"
             | "aurora-columns"

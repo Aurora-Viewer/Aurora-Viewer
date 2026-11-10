@@ -66,6 +66,12 @@ pub(super) fn preferences_for_tab(ui: &mut egui::Ui, p: &Palette, prefs: &mut In
     changed |= check(
         ui,
         p,
+        aurora_i18n::tr!("ui-inventory-controls-favorite-folders"),
+        &mut prefs.sidebar_favorite_folders,
+    );
+    changed |= check(
+        ui,
+        p,
         aurora_i18n::tr!("ui-inventory-controls-separate-search-in-each-tab"),
         &mut prefs.separate_searches,
     );

@@ -13,6 +13,9 @@ const ROW: f32 = super::rows::HEIGHT;
 const INDENT: f32 = 14.0;
 const CARET: f32 = 13.0;
 const ICON: f32 = 16.0;
+/// The favorite folders in sight before their list scrolls: the tree below
+/// keeps most of the column.
+const FAVORITES_SHOWN: f32 = 6.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Row {
@@ -33,6 +36,10 @@ pub struct Sidebar {
     /// The explorer's folder last shown: a new one opens its ancestors and
     /// scrolls into sight.
     shown: Uuid,
+    /// The favorite folders the column lists, and the inventory generation
+    /// they were read at.
+    favorites: Vec<Uuid>,
+    favorites_at: Option<u64>,
     #[cfg(test)]
     pub(super) drawn: std::collections::HashMap<Uuid, Rect>,
     #[cfg(test)]
@@ -60,6 +67,24 @@ impl Sidebar {
         if changed {
             self.revision = self.revision.wrapping_add(1);
         }
+    }
+
+    /// The account's favorite folders, by name: the column's shortcuts to
+    /// them. A favorite thrown in the Trash is not one to go back to, and
+    /// the Library's folders cannot be favorites (`rules::set_favorites`).
+    fn favorites(&mut self, inv: &Inventory) -> &[Uuid] {
+        if self.favorites_at != Some(inv.generation) {
+            self.favorites_at = Some(inv.generation);
+            let mut named: Vec<(String, Uuid)> = inv
+                .folders
+                .values()
+                .filter(|f| f.info.favorite && !f.library && !rules::in_type(inv, f.info.id, 14))
+                .map(|f| (folder_name(inv, f.info.id).to_lowercase(), f.info.id))
+                .collect();
+            named.sort();
+            self.favorites = named.into_iter().map(|(_, id)| id).collect();
+        }
+        &self.favorites
     }
 
     /// The folders under the root, in the inventory's order, the Trash
@@ -188,6 +213,46 @@ fn browse(st: &mut InventoryUi, prefs: &InventoryPreferences, folder: Uuid) {
     st.browse = folder;
     // A pointer selection is already in sight, even if its row is partly clipped.
     st.side.shown = folder;
+}
+
+/// Show the explorer in `folder` from outside the tree: the tree then opens
+/// the folder's ancestors and scrolls to it (`Sidebar::follow`).
+fn jump(st: &mut InventoryUi, prefs: &InventoryPreferences, folder: Uuid) {
+    set_tab(st, prefs, 0);
+    st.search.clear();
+    st.browse = folder;
+}
+
+/// The favorite folders, each one click away from its place in the tree.
+/// An Aurora addition: the Legacy Viewer lists them in its Favorites tab
+/// only. A row takes drops and has the folder's menu, as in the tree.
+#[allow(clippy::too_many_arguments)]
+fn favorite_folders(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    favorites: &[Uuid],
+    st: &mut InventoryUi,
+    prefs: &mut InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
+    egui::ScrollArea::vertical()
+        .id_salt("aurora_inventory_side_favorites")
+        .max_height(FAVORITES_SHOWN * (ROW + ui.spacing().item_spacing.y))
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            for id in favorites {
+                let selected = st.tab == 0 && st.browse == *id;
+                let color = folder_colors::tint(prefs, *id);
+                let response = entry_tinted(ui, p, "folder-filled", &folder_name(inv, *id), None, 0, selected, 8.0, color);
+                if response.clicked() {
+                    jump(st, prefs, *id);
+                }
+                let mut open = false;
+                folder_target(ui, p, inv, *id, &response, &mut open, st, prefs, facts, actions);
+            }
+        });
 }
 
 /// The account's saved smart searches: a click shows one over the whole
@@ -381,6 +446,17 @@ pub(super) fn show(
         menu::section(ui, p, aurora_i18n::tr!("inventory-smart-section"));
         ui.add_space(2.0);
         smart_searches(ui, p, inv, st, prefs, &saved);
+    }
+    let favorites = if scoped || !prefs.sidebar_favorite_folders {
+        Vec::new()
+    } else {
+        st.side.favorites(inv).to_vec()
+    };
+    if !favorites.is_empty() {
+        ui.add_space(10.0);
+        menu::section(ui, p, aurora_i18n::tr!("inventory-favorite-folders"));
+        ui.add_space(2.0);
+        favorite_folders(ui, p, inv, &favorites, st, prefs, facts, actions);
     }
     ui.add_space(10.0);
     crate::ui::menu::section(ui, p, aurora_i18n::tr!("inventory-folders"));
@@ -577,5 +653,62 @@ mod tests {
         side.prepare(&view, &inv, inv.root, true);
         let listed: Vec<_> = side.rows.iter().map(|r| (r.id.as_u128(), r.depth)).collect();
         assert_eq!(listed, [(10, 0), (11, 1), (20, 0)]);
+    }
+
+    #[test]
+    fn the_column_lists_favorite_folders_by_name_and_follows_a_jump_to_one() {
+        let mut inv = Inventory {
+            root: id(1),
+            ..Default::default()
+        };
+        for (n, parent, kind, name, favorite, library) in [
+            (1, 0, 8, "root", false, false),
+            (10, 1, -1, "Clothing", false, false),
+            (11, 10, -1, "Evening", false, false),
+            (12, 11, -1, "shoes", true, false),
+            (14, 1, 14, "Trash", false, false),
+            (15, 14, -1, "Thrown away", true, false),
+            (20, 1, -1, "Objects", true, false),
+            (30, 0, -1, "Library folder", true, true),
+        ] {
+            inv.folders.insert(
+                id(n),
+                Folder {
+                    info: InvFolder {
+                        id: id(n),
+                        parent: id(parent),
+                        name: name.into(),
+                        type_default: kind,
+                        favorite,
+                        ..Default::default()
+                    },
+                    children: Vec::new(),
+                    items: Vec::new(),
+                    state: FetchState::Fetched,
+                    library,
+                },
+            );
+        }
+        for (folder, child) in [(1, 10), (10, 11), (11, 12), (1, 14), (14, 15), (1, 20)] {
+            inv.folders.get_mut(&id(folder)).expect("folder").children.push(id(child));
+        }
+        let mut side = Sidebar::default();
+        let listed: Vec<_> = side.favorites(&inv).iter().map(|id| id.as_u128()).collect();
+        assert_eq!(listed, [20, 12], "by name whatever the case; none of the Trash or the Library");
+
+        // Read again only when the inventory changed.
+        inv.folders.get_mut(&id(20)).expect("folder").info.favorite = false;
+        assert_eq!(side.favorites(&inv).len(), 2);
+        inv.generation += 1;
+        let listed: Vec<_> = side.favorites(&inv).iter().map(|id| id.as_u128()).collect();
+        assert_eq!(listed, [12]);
+
+        // A jump leaves `shown` alone, so the tree opens the way to the folder.
+        assert!(side.follow(&inv, id(12), inv.root), "a new folder: the tree scrolls to it");
+        assert!(side.open.contains(&id(10)) && side.open.contains(&id(11)));
+        let mut view = ViewCache::default();
+        view.prepare(&inv, view::Sort::default());
+        side.prepare(&view, &inv, inv.root, true);
+        assert!(side.rows.iter().any(|row| row.id == id(12) && row.depth == 2));
     }
 }

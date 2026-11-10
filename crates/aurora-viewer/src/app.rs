@@ -19887,6 +19887,7 @@ impl ApplicationHandler for App {
                         | "aurora-folder-colors"
                         | "aurora-folder-colors-behind"
                         | "aurora-folder-colors-follow"
+                        | "aurora-favorite-folders"
                 );
                 if configured_view {
                     crate::world::inventory::demo::seed_view(
@@ -19905,6 +19906,16 @@ impl ApplicationHandler for App {
                     }
                     if view.contains("folder-colors") {
                         ui::inventory::folder_colors_demo(&mut self.inventory_ui, &mut self.settings.inventory);
+                    }
+                    if view.ends_with("favorite-folders") {
+                        // three favorite folders, one of them two levels down
+                        self.settings.inventory.sidebar_favorite_folders = true;
+                        for folder in [8000, 8203, 8204] {
+                            if let Some(f) = self.world.inventory.folders.get_mut(&uuid::Uuid::from_u128(folder)) {
+                                f.info.favorite = true;
+                            }
+                        }
+                        self.world.inventory.generation += 1;
                     }
                     self.inventory_ui.filters_open = view == "filters";
                     self.inventory_ui.preferences_open = view == "preferences";
