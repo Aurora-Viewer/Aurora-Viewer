@@ -416,6 +416,11 @@ impl Editor {
                 widgets::action_menu_button(ui, p, "folder-open-filled", aurora_i18n::text("poser-load-menu"), open, 28.0)
             });
             menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                if menu::item(ui, p, "book-filled", aurora_i18n::text("poser-library")) {
+                    self.poser.library_open = true;
+                    self.poser.storage.ready = false;
+                }
+                menu::separator(ui, p);
                 for (mode, key) in [
                     (LoadMode::All, "poser-load-all"),
                     (LoadMode::Rotations, "poser-load-rotations"),
@@ -533,7 +538,8 @@ impl Editor {
                 .hint_text(aurora_i18n::tr!("poser-library-search"))
                 .desired_width(f32::INFINITY),
         );
-        let filter = self.poser.storage.filter.to_lowercase();
+        let filter = self.poser.storage.filter.clone();
+        let scroll_to = std::mem::take(&mut self.poser.storage.scroll_to_selected);
         let height = (ui.available_height() - 40.0).max(30.0);
         let mut load = None;
         egui::ScrollArea::vertical()
@@ -543,7 +549,7 @@ impl Editor {
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
                 for (i, entry) in self.poser.storage.entries.iter().enumerate() {
-                    if !entry.name.to_lowercase().contains(&filter) {
+                    if !storage::filter_matches(&entry.name, &filter) {
                         continue;
                     }
                     let selected = self.poser.storage.selected == Some(i);
@@ -567,6 +573,9 @@ impl Editor {
                         egui::FontId::proportional(11.0),
                         p.muted,
                     );
+                    if selected && scroll_to {
+                        response.scroll_to_me(Some(egui::Align::Center));
+                    }
                     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, &entry.name));
                     if response.clicked() {
                         self.poser.storage.selected = Some(i);

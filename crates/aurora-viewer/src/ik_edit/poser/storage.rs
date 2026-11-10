@@ -37,7 +37,7 @@ enum Output {
     Listed(Vec<Entry>),
     Loaded(Uuid, Loaded),
     Overwrite(Document, Arc<SubjectPose>, bool, bool),
-    Saved,
+    Saved(PathBuf),
     /// Saved outside the library by Save as…
     SavedTo(PathBuf),
     Prepared(clip::Prepared),
@@ -49,6 +49,11 @@ pub(super) enum Job {
     Load(Option<PathBuf>, LoadMode, Uuid),
     Save(Save),
     Import(Arc<SubjectPose>, Vec<usize>, String, i32),
+}
+/// Whether a library entry named `name` shows under the search `filter`
+/// (case-insensitive, anywhere in the name).
+pub(super) fn filter_matches(name: &str, filter: &str) -> bool {
+    name.to_lowercase().contains(&filter.to_lowercase())
 }
 /// A save request. `pick` asks for the file in the system dialog (Save as…)
 /// instead of the library; the dialog asks about an existing file itself, so
@@ -90,7 +95,10 @@ pub(super) struct Service {
     pub busy: bool,
     pub message: Option<String>,
     pub selected: Option<usize>,
+    pub saved_path: Option<PathBuf>,
     pub filter: String,
+    /// The saved pose was just selected: the library list scrolls to it once.
+    pub scroll_to_selected: bool,
     pub job: Option<Job>,
     pub ready: bool,
     pub prepared: Vec<clip::Prepared>,
@@ -106,7 +114,9 @@ impl Default for Service {
             busy: false,
             message: None,
             selected: None,
+            saved_path: None,
             filter: String::new(),
+            scroll_to_selected: false,
             job: None,
             ready: false,
             prepared: Vec::new(),
@@ -193,17 +203,30 @@ impl Service {
             self.busy = false;
             match output {
                 Output::Listed(entries) => {
-                    let selected = self.selected.and_then(|i| self.entries.get(i)).map(|e| e.path.clone());
+                    let saved_path = self.saved_path.take();
+                    let kept = self.selected.and_then(|i| self.entries.get(i)).map(|e| e.path.clone());
+                    let from_save = kept.is_none() && saved_path.is_some();
+                    let selected = kept.or(saved_path);
                     self.selected = selected.and_then(|path| entries.iter().position(|e| e.path == path));
+                    // the pose just saved: shown even under a search that
+                    // would hide it, and scrolled to once
+                    if from_save && let Some(entry) = self.selected.and_then(|i| entries.get(i)) {
+                        if !filter_matches(&entry.name, &self.filter) {
+                            self.filter.clear();
+                        }
+                        self.scroll_to_selected = true;
+                    }
                     self.entries = entries;
                     self.ready = true;
                 }
                 Output::Loaded(subject, value) => loaded.push((subject, value)),
                 Output::Overwrite(document, pose, bvh, unlock) => self.overwrite = Some((document, pose, bvh, unlock)),
                 Output::Prepared(value) => self.prepared.push(value),
-                Output::Saved => {
+                Output::Saved(path) => {
                     self.ready = false;
-                    self.message = Some(aurora_i18n::tr!("poser-saved").to_string());
+                    self.selected = None;
+                    self.message = Some(aurora_i18n::tr!("poser-saved-to", path = path.display().to_string()).to_string());
+                    self.saved_path = Some(path);
                 }
                 Output::SavedTo(path) => {
                     self.ready = false;
@@ -324,7 +347,7 @@ impl Service {
                         if pick && dir != root {
                             Output::SavedTo(path)
                         } else {
-                            Output::Saved
+                            Output::Saved(path)
                         }
                     }
                     Job::Import(pose, translations, name, priority) => {

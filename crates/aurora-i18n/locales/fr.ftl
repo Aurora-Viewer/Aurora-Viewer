@@ -12050,7 +12050,6 @@ poser-sensitivity = Sensibilité de la boule
 poser-unlock-pelvis = Libérer le bassin dans le .bvh
 poser-overwrite = Confirmer avant d’écraser une pose
 poser-file-filter = Pose Aurora, animation native ou BVH
-poser-saved = Pose enregistrée dans votre bibliothèque locale.
 poser-saved-to = Pose enregistrée dans { $path }.
 poser-save-as = Enregistrer sous…
 poser-pose-filter = Pose Aurora

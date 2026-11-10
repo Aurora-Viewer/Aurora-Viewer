@@ -12054,7 +12054,6 @@ poser-sensitivity = Trackball sensitivity
 poser-unlock-pelvis = Unlock pelvis in .bvh
 poser-overwrite = Confirm before overwriting a pose
 poser-file-filter = Aurora pose, native animation or BVH
-poser-saved = Pose saved in your local library.
 poser-saved-to = Pose saved to { $path }.
 poser-save-as = Save as…
 poser-pose-filter = Aurora pose

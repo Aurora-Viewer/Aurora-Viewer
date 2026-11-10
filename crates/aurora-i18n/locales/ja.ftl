@@ -12026,7 +12026,6 @@ poser-sensitivity = トラックボールの感度
 poser-unlock-pelvis = .bvhで骨盤のロックを解除
 poser-overwrite = ポーズを上書きする前に確認
 poser-file-filter = Auroraのポーズ、ネイティブアニメーション、またはＢＶＨ
-poser-saved = ポーズをローカルのライブラリに保存しました。
 poser-saved-to = ポーズを{ $path }に保存しました。
 poser-save-as = 別名で保存…
 poser-pose-filter = Auroraのポーズ
