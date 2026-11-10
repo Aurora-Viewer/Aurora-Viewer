@@ -71,20 +71,28 @@ pub enum Skip {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowState<'a> {
     /// Before the start: ticked or not.
-    Choose { chosen: bool, had_picture: bool },
+    Choose {
+        chosen: bool,
+        had_picture: bool,
+    },
     /// Before the start: not offered.
     Locked,
     Empty,
     Waiting,
     Wearing,
     /// Its items worn so far.
-    Loading { worn: usize, total: usize },
+    Loading {
+        worn: usize,
+        total: usize,
+    },
     /// Every item worn: the textures and the layers are still coming.
     LoadingLook,
     Framing,
     Shooting,
     Saving,
-    Done { missing: usize },
+    Done {
+        missing: usize,
+    },
     /// Left when the batch stopped.
     NotDone,
     Skipped(Skip),
@@ -139,10 +147,7 @@ fn body(ui: &mut egui::Ui, p: &Palette, settings: &mut PortraitSettings, view: &
         Phase::Restoring => aurora_i18n::tr!("ui-appearance-batch-restoring").to_string(),
         Phase::Finished { .. } => aurora_i18n::tr!("ui-appearance-batch-finished").to_string(),
     };
-    ui.add(
-        egui::Label::new(RichText::new(headline).size(18.0).family(fonts::semibold(ui.ctx())).color(p.ink))
-            .truncate(),
-    );
+    ui.add(egui::Label::new(RichText::new(headline).size(18.0).family(fonts::semibold(ui.ctx())).color(p.ink)).truncate());
     match view.phase {
         Phase::Running { count, done, .. } => {
             let fraction = if count == 0 { 0.0 } else { done as f32 / count as f32 };
@@ -158,10 +163,17 @@ fn body(ui: &mut egui::Ui, p: &Palette, settings: &mut PortraitSettings, view: &
         _ => {}
     }
     if let Phase::Setup(_) = view.phase {
-        widgets::collapsing(ui, p, "outfit_batch_settings", aurora_i18n::tr!("ui-appearance-batch-settings"), false, |ui| {
-            ui.spacing_mut().item_spacing.y = 6.0;
-            portrait::choices_ui(ui, p, settings);
-        });
+        widgets::collapsing(
+            ui,
+            p,
+            "outfit_batch_settings",
+            aurora_i18n::tr!("ui-appearance-batch-settings"),
+            false,
+            |ui| {
+                ui.spacing_mut().item_spacing.y = 6.0;
+                portrait::choices_ui(ui, p, settings);
+            },
+        );
         if view.rows.is_empty() {
             portrait::note(ui, p, "info-circle-filled", aurora_i18n::tr!("ui-appearance-batch-none"));
         }
@@ -189,7 +201,10 @@ fn row_ui(ui: &mut egui::Ui, p: &Palette, index: usize, row: &Row, actions: &mut
     if let RowState::Choose { chosen, .. } = row.state {
         let mut child = ui.new_child(
             egui::UiBuilder::new()
-                .max_rect(Rect::from_min_max(egui::pos2(left, rect.top()), egui::pos2(left + 24.0, rect.bottom())))
+                .max_rect(Rect::from_min_max(
+                    egui::pos2(left, rect.top()),
+                    egui::pos2(left + 24.0, rect.bottom()),
+                ))
                 .layout(egui::Layout::left_to_right(egui::Align::Center))
                 .id_salt(("outfit_batch_tick", index)),
         );
@@ -250,12 +265,8 @@ enum Mark {
 fn state_text(p: &Palette, state: RowState) -> (String, egui::Color32, Mark) {
     let busy = |text: &str| (text.to_owned(), p.violet_light, Mark::Busy);
     match state {
-        RowState::Choose { had_picture: false, .. } => {
-            (aurora_i18n::tr!("ui-appearance-batch-no-picture").to_owned(), p.muted, Mark::None)
-        }
-        RowState::Choose { had_picture: true, .. } => {
-            (aurora_i18n::tr!("ui-appearance-batch-has-picture").to_owned(), p.muted, Mark::None)
-        }
+        RowState::Choose { had_picture: false, .. } => (aurora_i18n::tr!("ui-appearance-batch-no-picture").to_owned(), p.muted, Mark::None),
+        RowState::Choose { had_picture: true, .. } => (aurora_i18n::tr!("ui-appearance-batch-has-picture").to_owned(), p.muted, Mark::None),
         RowState::Locked => (
             aurora_i18n::tr!("ui-appearance-batch-locked").to_owned(),
             p.warn,
@@ -343,9 +354,7 @@ fn footer_ui(ui: &mut egui::Ui, p: &Palette, view: &View, actions: &mut Vec<Acti
                 let start = aurora_i18n::tr!("ui-appearance-batch-start", count = count);
                 let ready = blocked.is_none() && count > 0;
                 let size = Vec2::new(ui.available_width(), height);
-                if widgets::action_button_if(ui, p, "camera-filled", &start, widgets::ActionKind::Primary, size, ready).clicked()
-                    && ready
-                {
+                if widgets::action_button_if(ui, p, "camera-filled", &start, widgets::ActionKind::Primary, size, ready).clicked() && ready {
                     actions.push(Action::Start);
                 }
             }
@@ -388,17 +397,25 @@ mod tests {
     use super::*;
 
     fn rows(state: RowState<'static>) -> Vec<Row<'static>> {
-        ["Cloud pyjamas", "Ball gown", "Sportswear", "Velvet evening", "Beach day", "Winter coat", "Club night"]
-            .into_iter()
-            .enumerate()
-            .map(|(i, name)| Row {
-                name,
-                picture: None,
-                redo: i % 2 == 1,
-                current: i == 1,
-                state,
-            })
-            .collect()
+        [
+            "Cloud pyjamas",
+            "Ball gown",
+            "Sportswear",
+            "Velvet evening",
+            "Beach day",
+            "Winter coat",
+            "Club night",
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(i, name)| Row {
+            name,
+            picture: None,
+            redo: i % 2 == 1,
+            current: i == 1,
+            state,
+        })
+        .collect()
     }
 
     #[test]
@@ -439,10 +456,7 @@ mod tests {
                 },
                 PortraitSettings::default,
                 |settings, ctx, p| {
-                    let view = View {
-                        phase,
-                        rows: rows(state),
-                    };
+                    let view = View { phase, rows: rows(state) };
                     window(ctx, p, settings, &view, &mut true);
                 },
             );

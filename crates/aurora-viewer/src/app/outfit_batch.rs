@@ -160,7 +160,11 @@ enum Load {
 /// The outfit's loading, `waited` after its change, loaded for `settled`.
 fn load_step(s: &Signals, waited: Duration, settled: Option<Duration>) -> Load {
     if s.loaded() {
-        return if settled.is_some_and(|d| d >= SETTLE) { Load::Shoot(0) } else { Load::Wait };
+        return if settled.is_some_and(|d| d >= SETTLE) {
+            Load::Shoot(0)
+        } else {
+            Load::Wait
+        };
     }
     if waited < LOAD_LIMIT {
         return Load::Wait;
@@ -352,17 +356,18 @@ impl App {
         let check_due = b.checked.is_none_or(|t| now.saturating_duration_since(t) >= CHECK_EVERY);
         // the photo mode opened over the batch closes its session: the
         // batch waits for it
-        if matches!(state, State::Framing { .. } | State::Shooting { .. })
-            && !self.outfit_portrait_batch_open()
-            && self.panels.snapshot
-        {
+        if matches!(state, State::Framing { .. } | State::Shooting { .. }) && !self.outfit_portrait_batch_open() && self.panels.snapshot {
             self.outfit_batch_set_paused(true);
             return;
         }
         let new = match state {
             State::Waiting => {
                 let inv = &self.world.inventory;
-                if !inv.folders.get(&outfit).is_some_and(|f| !f.library && f.info.type_default == model::FT_OUTFIT) {
+                if !inv
+                    .folders
+                    .get(&outfit)
+                    .is_some_and(|f| !f.library && f.info.type_default == model::FT_OUTFIT)
+                {
                     Some(State::Skipped(window::Skip::Gone))
                 } else if !self.world.rlva_wear_locks().folder_allows(outfit, true) {
                     Some(State::Skipped(window::Skip::Locked))
@@ -571,14 +576,18 @@ impl App {
         let parts = b.start_parts.clone();
         b.phase = phase;
         match phase {
-            Phase::Restoring { step: Restore::OutfitSent, .. } => {
+            Phase::Restoring {
+                step: Restore::OutfitSent, ..
+            } => {
                 if let Some(start) = start {
                     log::info!("outfit batch: putting {start} back");
                     b.last_wear = Some(now);
                     self.apply_appearance_action(model::Action::Wear(start, false));
                 }
             }
-            Phase::Restoring { step: Restore::PartsSent, .. } => {
+            Phase::Restoring {
+                step: Restore::PartsSent, ..
+            } => {
                 log::info!("outfit batch: putting the {} starting body parts back", parts.len());
                 b.last_wear = Some(now);
                 self.apply_appearance_action(model::Action::WearItems {

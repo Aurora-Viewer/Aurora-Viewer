@@ -394,7 +394,15 @@ fn collection_menu(
 /// "N outfits have no picture yet", with Take the portraits (the batch
 /// portraits' window, over our own outfits shown); closed for the session
 /// by its cross.
-fn banner(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi, shown: &[Uuid], no_picture: usize, actions: &mut Vec<Action>) {
+fn banner(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    st: &mut AppearanceUi,
+    shown: &[Uuid],
+    no_picture: usize,
+    actions: &mut Vec<Action>,
+) {
     let state = &mut st.showcase_state;
     if no_picture == 0 || state.banner_hidden || state.filter == Filter::NoPicture {
         return;
