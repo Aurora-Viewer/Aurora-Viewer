@@ -11,6 +11,9 @@
 //! ([`build_dispatch_list`], a port of Bend's `BuildDispatchList`,
 //! bend_sss_cpu.h): each workgroup is a wavefront of [`WAVE_SIZE`] pixels
 //! along a ray towards that point, in up to eight dispatches.
+//! Neighbouring wavefronts can floor onto the same output texel. They
+//! `atomicMax` a quantized shadow (0 lit, 255 shadowed) and one later
+//! dispatch writes the mask, so the darker shadow stays.
 //!
 //! What casts: the depth prepass (opaque and masked faces, terrain), and,
 //! drawn into a copy of it each frame, the blended faces opaque enough
@@ -453,6 +456,8 @@ pub(crate) struct ContactShadows {
     samples: (i32, i32),
     pipeline_layout: wgpu::PipelineLayout,
     clear: wgpu::ComputePipeline,
+    /// Writes `shadow_max` into the mask, after the wavefronts.
+    combine: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
     buffer: wgpu::Buffer,
     /// Bytes between the constants of two dispatches.
@@ -554,6 +559,16 @@ pub(crate) struct Targets {
     /// The pass's mask before the filter (the variants' test).
     #[cfg(test)]
     raw: wgpu::TextureView,
+    /// One `u32` per pixel, the quantized shadow the wavefronts `atomicMax`.
+    /// Kept alive for the bind groups.
+    shadow_max: wgpu::Buffer,
+}
+
+/// Bytes of the combine buffer for an image of `width` by `height`: one
+/// `u32` per pixel. The Vulkan minimum storage range (128 MB) still holds
+/// the 7680 × 4108 photo that used to be drawn in one pass.
+pub(crate) fn combine_bytes(width: u32, height: u32) -> u64 {
+    u64::from(width.max(1)) * u64::from(height.max(1)) * 4
 }
 
 const RESULT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -614,6 +629,16 @@ impl ContactShadows {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
         let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -631,7 +656,7 @@ impl ContactShadows {
                 cache: None,
             })
         };
-        let (pipeline, clear) = (make("main"), make("clear"));
+        let (pipeline, clear, combine) = (make("main"), make("clear"), make("write_mask"));
         let filter = Filter::new(device);
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("contact shadows params"),
@@ -645,6 +670,7 @@ impl ContactShadows {
             samples: samples(1.0),
             pipeline_layout: pl,
             clear,
+            combine,
             layout,
             buffer,
             stride,
@@ -712,6 +738,12 @@ impl ContactShadows {
         };
         // the pass writes `raw`, the filter `result`
         let (raw, result) = (mask("contact shadows raw"), mask("contact shadows"));
+        let shadow_max = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("contact shadows combine"),
+            size: combine_bytes(size.0, size.1),
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
         let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("contact shadows depth"),
             size: wgpu::Extent3d {
@@ -748,6 +780,10 @@ impl ContactShadows {
                         binding: 2,
                         resource: wgpu::BindingResource::TextureView(&raw),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: shadow_max.as_entire_binding(),
+                    },
                 ],
             })
         };
@@ -782,6 +818,7 @@ impl ContactShadows {
             result,
             #[cfg(test)]
             raw,
+            shadow_max,
         }
     }
 
@@ -811,41 +848,67 @@ impl ContactShadows {
     }
 
     /// The dispatches of `write`, after the depth prepass (`more`: after
-    /// the blended faces and the cards were drawn into `depth`). No barrier is
-    /// needed between them: each writes its own pixels. The target is
-    /// emptied first (0, lit): the pixel under the light's point, which no
-    /// wavefront writes, and the sky stay lit. Then the filter softens the
-    /// mask into `result`, over the same depth.
+    /// the blended faces and the cards were drawn into `depth`). The mask
+    /// and the combine buffer are cleared first (0, lit): the pixel under
+    /// the light's point, which no wavefront writes, and the sky stay lit.
+    /// Each wavefront dispatch is its own pass, so an `atomicMax` in one is
+    /// visible to the next where two dispatches share a pixel. `write_mask`
+    /// then stores one value per pixel, and the filter softens that mask
+    /// into `result`, over the same depth.
     pub(crate) fn encode(&self, encoder: &mut wgpu::CommandEncoder, t: &Targets, more: bool) {
+        // The bind groups borrow the combine buffer; hold it for the submits.
+        let _held = &t.shadow_max;
         let (group, filter_group) = if more {
             (&t.group_more, &t.filter_group_more)
         } else {
             (&t.group, &t.filter_group)
         };
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("contact shadows"),
-            timestamp_writes: None,
-        });
-        pass.set_pipeline(&self.clear);
-        pass.set_bind_group(0, group, &[0]);
-        pass.dispatch_workgroups(t.size.0.div_ceil(8), t.size.1.div_ceil(8), 1);
+        let groups = (t.size.0.div_ceil(8), t.size.1.div_ceil(8), 1);
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("contact shadows clear"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.clear);
+            pass.set_bind_group(0, group, &[0]);
+            pass.dispatch_workgroups(groups.0, groups.1, groups.2);
+        }
         let pipeline = match &self.photo {
             Some((s, photo)) if *s == self.samples => photo,
             _ => &self.pipeline,
         };
-        pass.set_pipeline(pipeline);
         let list = if self.variant == Variant::Skip {
             &[][..]
         } else {
             self.list.dispatches()
         };
         for (i, d) in list.iter().enumerate() {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("contact shadows"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(pipeline);
             pass.set_bind_group(0, group, &[(i as u64 * self.stride) as u32]);
             pass.dispatch_workgroups(d.wave_count[0] as u32, d.wave_count[1] as u32, d.wave_count[2] as u32);
         }
-        pass.set_pipeline(if soft_from_env() { &self.filter.soft } else { &self.filter.copy });
-        pass.set_bind_group(0, filter_group, &[]);
-        pass.dispatch_workgroups(t.size.0.div_ceil(8), t.size.1.div_ceil(8), 1);
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("contact shadows mask"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.combine);
+            pass.set_bind_group(0, group, &[0]);
+            pass.dispatch_workgroups(groups.0, groups.1, groups.2);
+        }
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("contact shadows filter"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(if soft_from_env() { &self.filter.soft } else { &self.filter.copy });
+            pass.set_bind_group(0, filter_group, &[]);
+            pass.dispatch_workgroups(groups.0, groups.1, groups.2);
+        }
     }
 }
 
@@ -1072,6 +1135,34 @@ mod tests {
         }
         assert_eq!(no_shared.matches("stored_depth(wave, sample_index + i)").count(), 3);
         assert!(variant_source(Variant::Short).contains("const SAMPLE_COUNT: i32 = 16;"));
+        assert!(bend.contains("atomicMax(&shadow_max[pixel]"));
+        assert!(no_shared.contains("keep_darker(write_xy, result)"));
+    }
+
+    /// The 7680 × 4108 photo drawn in one pass stays inside the Vulkan
+    /// minimum storage-buffer range (128 MB) with one `u32` per pixel.
+    #[test]
+    fn combine_buffer_fits_the_one_pass_photo() {
+        let photo = combine_bytes(7680, 4108);
+        assert!(photo <= 1 << 27, "{photo}");
+        assert_eq!(combine_bytes(1, 1), 4);
+    }
+
+    /// Neighbouring wavefronts of the GPU test's light share pixels. The
+    /// mask used to race there.
+    #[test]
+    fn neighbouring_wavefronts_share_pixels() {
+        let light = [0.2, 1.6, 0.0, 0.8];
+        let (w, h) = (320i32, 192i32);
+        let list = build_dispatch_list(light, [w, h], [0, 0], [w, h], WAVE_SIZE);
+        let mut writes = vec![0u8; (w * h) as usize];
+        written_pixels(&list, WAVE_SIZE, |x, y| {
+            if x >= 0 && y >= 0 && x < w && y < h {
+                writes[(y * w + x) as usize] = writes[(y * w + x) as usize].saturating_add(1);
+            }
+        });
+        let shared = writes.iter().filter(|&&n| n > 1).count();
+        assert!(shared > 1000, "{shared} pixels written by two wavefronts");
     }
 
     /// The mask each variant draws over a ground with a box on it, read
@@ -1210,8 +1301,9 @@ mod tests {
         let bend = mask(Variant::Bend);
         let shadowed = bend.iter().filter(|&&v| v > 128).count();
         assert!(shadowed > 50 && shadowed < bend.len() / 2, "a shadow to compare: {shadowed} pixels");
-        // the pixels two wavefronts write (where Bend's dispatches meet) take
-        // whichever lands last: only the others are compared
+        // the pixels two wavefronts write, included in the comparison: the
+        // combine keeps the darker shadow, so they no longer depend on which
+        // store landed last
         let mut writes = vec![0u8; (w * h) as usize];
         let list = build_dispatch_list(light, [w as i32, h as i32], [0, 0], [w as i32, h as i32], WAVE_SIZE);
         written_pixels(&list, WAVE_SIZE, |x, y| {
@@ -1221,11 +1313,14 @@ mod tests {
         });
         let once = writes.iter().filter(|&&n| n == 1).count();
         assert!(once > writes.len() * 3 / 4, "{once} pixels written once");
+        assert!(writes.iter().any(|&n| n > 1), "pixels with more than one writer");
+        // shared pixels included: the darker shadow is defined, so a second
+        // run matches there too
         let differ = |other: &[u8]| -> Vec<(usize, u8, u8)> {
             bend.iter()
                 .zip(other)
                 .enumerate()
-                .filter(|(i, (a, b))| a != b && writes[*i] == 1)
+                .filter(|(_, (a, b))| a != b)
                 .map(|(i, (a, b))| (i, *a, *b))
                 .collect()
         };
