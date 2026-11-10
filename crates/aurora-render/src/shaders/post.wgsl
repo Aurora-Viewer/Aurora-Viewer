@@ -29,15 +29,20 @@ struct PostParams {
     // shows through each pixel; 1: the photo, straight color and coverage,
     // 2: the live view, over a checkerboard
     cutout: f32,
-    _pad: f32,
+    // light shafts from the sun (god_rays below), 0 off
+    god_rays: f32,
     // the part of the photo this frame draws, in fractions of the photo
     // (left, top, width, height; 0, 0, 1, 1 outside a tiled photo): the
     // glow's 512 x 512 texels are the whole photo's, as in one pass
     photo_part: vec4<f32>,
+    // the share of rays_tex the sun rays fill (top left)
+    rays_res: f32,
 };
 @group(0) @binding(2) var<uniform> post: PostParams;
 // Blurred glow (512x512, display space), see glow.wgsl.
 @group(0) @binding(3) var glow_tex: texture_2d<f32>;
+// The volumetric sun rays (volumetric.wgsl), half resolution, scene units.
+@group(0) @binding(4) var rays_tex: texture_2d<f32>;
 // The bloom levels added up (half resolution, scene units), see bloom.wgsl.
 @group(1) @binding(0) var bloom_tex: texture_2d<f32>;
 
@@ -323,6 +328,14 @@ fn fs_post(in: Out) -> @location(0) vec4<f32> {
         m = legacy_gamma(srgb_to_linear_post(cas(in.uv)));
     } else {
         m = tap(in.uv);
+    }
+    if (post.god_rays > 0.0) {
+        // screen blend: the beams brighten without clipping
+        // kept half a texel inside the drawn part: past it is black
+        let edge = post.rays_res - 0.5 / vec2<f32>(textureDimensions(rays_tex));
+        let ruv = min(in.uv * post.rays_res, edge);
+        let rays = textureSampleLevel(rays_tex, hdr_sampler, ruv, 0.0).rgb * post.god_rays;
+        m += (vec3<f32>(1.0) - min(m, vec3<f32>(1.0))) * tonemap(rays);
     }
     if (post.glow > 0.5) {
         // glowcombineF.glsl: added in display space, then clamped by the 8-bit target

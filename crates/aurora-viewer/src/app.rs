@@ -10743,6 +10743,15 @@ impl App {
             sharpen: self.settings.sharpen,
             glow: self.settings.glow,
             bloom: if self.settings.bloom { self.settings.bloom_strength } else { 0.0 },
+            god_rays: if self.settings.god_rays {
+                self.settings.god_rays_strength
+            } else {
+                0.0
+            },
+            god_rays_haze: self.settings.god_rays_haze,
+            god_rays_glow: self.settings.god_rays_glow,
+            god_rays_res: self.settings.god_rays_resolution,
+            god_rays_side: self.settings.god_rays_side,
             water_height: self.world.main_water_height(),
             shadows: self.settings.shadow_quality > 0 && matches!(self.screen, Screen::World),
             shadow_distance: self.settings.shadow_params().1,

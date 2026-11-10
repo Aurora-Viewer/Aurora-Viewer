@@ -612,6 +612,22 @@ pub struct Settings {
     pub bloom: bool,
     /// The share of the light over the threshold it spreads (0.05 to 1).
     pub bloom_strength: f32,
+    /// Light shafts from the sun through the bright parts of the image
+    /// (Aurora's own, the Legacy Viewer has none): off by default.
+    pub god_rays: bool,
+    /// How bright the sun rays are (0.1 to 2, 0.5 by default).
+    pub god_rays_strength: f32,
+    /// How thick the air of the sun rays is (0.1 to 3, 0.5 by default).
+    pub god_rays_haze: f32,
+    /// How tightly their glow gathers around the sun (0 to 0.9, 0.6 by
+    /// default).
+    pub god_rays_glow: f32,
+    /// The resolution the sun rays draw at, a share of the image's size
+    /// (0.25 to 1, 1 by default): lower is cheaper and blockier.
+    pub god_rays_resolution: f32,
+    /// How bright the beams are away from the sun, from the side and behind
+    /// (0 to 2, 1 by default).
+    pub god_rays_side: f32,
     /// GPU occlusion culling: objects hidden behind others are not drawn
     /// (Firestorm UseOcclusion, on by default). Renamed from `gpu_occlusion`
     /// (off while it cost more than it saved) so that saved settings take
@@ -1971,6 +1987,12 @@ impl Default for Settings {
             glow: true,
             bloom: false,
             bloom_strength: BLOOM_STRENGTH,
+            god_rays: false,
+            god_rays_strength: 0.5,
+            god_rays_haze: 0.5,
+            god_rays_glow: 0.6,
+            god_rays_resolution: 1.0,
+            god_rays_side: 1.0,
             occlusion_culling: true,
             lod_factor: 2.0,
             tree_lod_factor: 0.5,
@@ -2961,6 +2983,31 @@ impl Settings {
             self.bloom_strength.clamp(0.05, 1.0)
         } else {
             BLOOM_STRENGTH
+        };
+        self.god_rays_strength = if self.god_rays_strength.is_finite() {
+            self.god_rays_strength.clamp(0.1, 2.0)
+        } else {
+            0.5
+        };
+        self.god_rays_haze = if self.god_rays_haze.is_finite() {
+            self.god_rays_haze.clamp(0.1, 3.0)
+        } else {
+            0.5
+        };
+        self.god_rays_glow = if self.god_rays_glow.is_finite() {
+            self.god_rays_glow.clamp(0.0, 0.9)
+        } else {
+            0.6
+        };
+        self.god_rays_resolution = if self.god_rays_resolution.is_finite() {
+            self.god_rays_resolution.clamp(0.25, 1.0)
+        } else {
+            1.0
+        };
+        self.god_rays_side = if self.god_rays_side.is_finite() {
+            self.god_rays_side.clamp(0.0, 2.0)
+        } else {
+            1.0
         };
         self.lod_factor = self.lod_factor.clamp(0.5, 4.0);
         let area = |v: f32, default: f32| if v.is_finite() { v.clamp(0.0, 1.0e6) } else { default };

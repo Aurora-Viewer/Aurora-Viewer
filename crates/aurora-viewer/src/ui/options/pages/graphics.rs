@@ -726,6 +726,81 @@ fn light(cx: &mut Cx) {
                 },
             );
         });
+        cx.experimental()
+            .toggle(tr!("ui-options-god-rays"), tr!("ui-options-god-rays-help"), &field!(god_rays));
+        let off = !cx.s.god_rays;
+        cx.subs(off, |cx| {
+            cx.row(
+                tr!("ui-options-god-rays-strength"),
+                tr!("ui-options-god-rays-strength-help"),
+                &field!(god_rays_strength),
+                |ui, s| {
+                    ui.add(
+                        egui::Slider::new(&mut s.god_rays_strength, 0.1..=2.0)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .step_by(0.05)
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                },
+            );
+            cx.row(
+                tr!("ui-options-god-rays-haze"),
+                tr!("ui-options-god-rays-haze-help"),
+                &field!(god_rays_haze),
+                |ui, s| {
+                    ui.add(
+                        egui::Slider::new(&mut s.god_rays_haze, 0.1..=3.0)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .step_by(0.05)
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                },
+            );
+            cx.row(
+                tr!("ui-options-god-rays-glow"),
+                tr!("ui-options-god-rays-glow-help"),
+                &field!(god_rays_glow),
+                |ui, s| {
+                    ui.add(
+                        egui::Slider::new(&mut s.god_rays_glow, 0.0..=0.9)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .step_by(0.05)
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                },
+            );
+            cx.row(
+                tr!("ui-options-god-rays-side"),
+                tr!("ui-options-god-rays-side-help"),
+                &field!(god_rays_side),
+                |ui, s| {
+                    ui.add(
+                        egui::Slider::new(&mut s.god_rays_side, 0.0..=2.0)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .step_by(0.05)
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                },
+            );
+            cx.row(
+                tr!("ui-options-god-rays-resolution"),
+                tr!("ui-options-god-rays-resolution-help"),
+                &field!(god_rays_resolution),
+                |ui, s| {
+                    ui.add(
+                        egui::Slider::new(&mut s.god_rays_resolution, 0.25..=1.0)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .step_by(0.05)
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                },
+            );
+        });
     });
 }
 

@@ -1390,6 +1390,19 @@ pub struct FrameParams {
     /// Aurora's bloom (bloom.rs): the share of the light over the
     /// threshold spread around the bright parts, 0 = off.
     pub bloom: f32,
+    /// Light shafts from the sun through the bright parts of the image
+    /// (0 = off, up to 2).
+    pub god_rays: f32,
+    /// How thick the air of the sun rays is (1 = the default haze).
+    pub god_rays_haze: f32,
+    /// How tightly their glow gathers around the sun (0 to 0.9).
+    pub god_rays_glow: f32,
+    /// The resolution the sun rays draw at, a share of the image's size
+    /// (0.25 to 1).
+    pub god_rays_res: f32,
+    /// How bright the beams are away from the sun, from the side and
+    /// behind (0 only toward the sun).
+    pub god_rays_side: f32,
     pub water_height: f32,
     pub shadows: bool,
     /// Distance covered by the shadow cascades.

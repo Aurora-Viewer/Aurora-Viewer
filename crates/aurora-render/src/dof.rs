@@ -67,6 +67,37 @@ pub(crate) struct PostInputs<'a> {
     pub sampler: &'a wgpu::Sampler,
     pub buffer: &'a wgpu::Buffer,
     pub glow: &'a wgpu::TextureView,
+    pub rays: &'a wgpu::TextureView,
+}
+
+/// The post pass's group 0 over the DoF's output.
+fn post_bind_group(device: &wgpu::Device, post: &PostInputs, out: &wgpu::TextureView) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("post (dof)"),
+        layout: post.layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(out),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(post.sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: post.buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(post.glow),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::TextureView(post.rays),
+            },
+        ],
+    })
 }
 
 fn tex(binding: u32, sample_type: wgpu::TextureSampleType) -> wgpu::BindGroupLayoutEntry {
@@ -197,28 +228,7 @@ impl Dof {
             let (hw, hh) = (size.0.div_ceil(2), size.1.div_ceil(2));
             let (tw, th) = (hw.div_ceil(TILE), hh.div_ceil(TILE));
             let out = view("dof out", size.0, size.1, hdr);
-            let post_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("post (dof)"),
-                layout: post.layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&out),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(post.sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: post.buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::TextureView(post.glow),
-                    },
-                ],
-            });
+            let post_bg = post_bind_group(device, post, &out);
             self.targets = Some(Targets {
                 size,
                 half: view("dof half", hw, hh, HALF_FORMAT),
@@ -229,6 +239,9 @@ impl Dof {
                 out,
                 post_bg,
             });
+        } else if let Some(t) = &mut self.targets {
+            // the rays may be a new view at the same size
+            t.post_bg = post_bind_group(device, post, &t.out);
         }
     }
 
