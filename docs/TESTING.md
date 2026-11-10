@@ -5396,7 +5396,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
-| `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|play\|replay\|channel\|channel-replace\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric shortcuts, playback, back-to-back replays, commands to worn scripts and replacements on a channel, completion, the chat bar's list of gestures and menu access |
+| `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|play\|replay\|once\|channel\|channel-replace\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric shortcuts, playback, back-to-back replays, commands to worn scripts and replacements on a channel, completion, the chat bar's list of gestures and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open empty tabs; `icon-bar` opens the quick import bar; `type-*` opens independent type windows |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
@@ -9095,7 +9095,7 @@ rezzed object must disappear while its inventory original stays in place and
 no inventory deletion dialog opens. Capture at frames 710 and 780. Clicking
 an inventory row afterwards must give its ordinary shortcuts back to the list.
 
-**`AURORA_DEMO_GESTURES=manager|editor|numpad|play|replay|channel|channel-replace|completion|completion-send|list|communicate|communicate-open`** — three synthetic gestures:
+**`AURORA_DEMO_GESTURES=manager|editor|numpad|play|replay|once|channel|channel-replace|completion|completion-send|list|communicate|communicate-open`** — three synthetic gestures:
 chat with a replacement and F8 shortcut, an animated pose on F9, and an
 inactive chime on F10. `manager` opens the list; `editor` also opens the
 chat gesture's editor; `play` starts the chat and animation at frame 650.
@@ -9105,6 +9105,11 @@ playback. Change and save its key or modifier to check other digits,
 Ctrl and Shift; keypad digit shortcuts also work with NumLock off.
 Capture at frame 620 for the list/editor, 680 during playback and 800
 after the explicit pause. Sounds stay muted unless `AURORA_DEMO_SOUND=1`.
+`once` (#2931) adds an authored one-shot on `/once` (F6), plays it at frames 650 and 1010,
+and waits for its natural completion before writing the finished chat line;
+there is no Stop Animation step. At 60 FPS capture frames 680, 950 and 1310:
+the motion plays, ends and can be played again. Each run sends one timed stop
+and completes the gesture. Busy-region latency still needs human grid validation.
 `replay` adds a clap gesture on F7 (the chime three times, 0.3 s apart),
 a gesture on Ctrl+Z and one on Ctrl+B, and opens the Ctrl+B gesture's
 editor, whose shortcut row warns that the build tools keep Ctrl+B. The
