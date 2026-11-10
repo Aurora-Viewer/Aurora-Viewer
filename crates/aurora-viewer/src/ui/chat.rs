@@ -2388,6 +2388,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                 return;
             };
             let width = (ui.available_width() * 2.0).round() / 2.0;
+            let clearing_filter = view.is_filtered() && filter.is_empty();
             let changed = view.sync(
                 &view::Source {
                     lines,
@@ -2412,6 +2413,15 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             }
             let mark = (!needle.is_empty()).then_some(Mark { needle: &needle, wash });
             let selection = &mut st.selection.1;
+            if clearing_filter
+                && !selection.is_empty()
+                && let Some(head) = selection.head
+            {
+                let selected_row = view.lines().position(|index| clock.first + index as u64 == head.seq);
+                if let Some(row) = selected_row {
+                    view.scroll_to(row);
+                }
+            }
             let content = view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
                 let Some(line) = lines.get(row.line) else {
                     return;

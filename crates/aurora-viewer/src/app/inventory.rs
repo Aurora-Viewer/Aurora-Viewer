@@ -293,6 +293,7 @@ impl App {
                 }
             }
             InvAction::TakeTask(request) => self.take_task_inventory(*request),
+            InvAction::StopConfirmingDelete => self.settings.inventory.confirm_delete = false,
             InvAction::Edit(change) => self.edit_inventory(change, false),
             InvAction::Drop(change) => self.edit_inventory(change, true),
             InvAction::Create { parent, kind, name } => {
@@ -900,6 +901,14 @@ impl App {
             }
             crate::world::appearance::Action::OutfitSnapshot(id) => {
                 self.outfit_snapshot(id);
+                return;
+            }
+            crate::world::appearance::Action::OutfitPortrait(id) => {
+                self.open_outfit_portrait(id, super::outfit_portrait::Kind::Studio);
+                return;
+            }
+            crate::world::appearance::Action::OutfitPhotoMode(id) => {
+                self.open_outfit_portrait(id, super::outfit_portrait::Kind::Viewfinder);
                 return;
             }
             _ => {}

@@ -1447,6 +1447,33 @@ fn duplicate_copies_only_roots_with_copy_and_link_needs_modify() {
 }
 
 #[test]
+fn local_duplicates_follow_the_real_build_command_and_copy_permission_gate() {
+    use crate::ui::context::flags::{OBJECT_COPY, OBJECT_MOVE};
+    for allowed in [false, true] {
+        let (mut world, mut tool, settings) = fixture();
+        let handle = world.main_region.unwrap();
+        let mut update = crate::demo::action_avatar(false);
+        update.local_id = 99990;
+        update.full_id = Uuid::new_v4();
+        update.parent_id = 0;
+        update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        update.update_flags = OBJECT_MOVE | if allowed { OBJECT_COPY } else { 0 };
+        let index = world.objects.upsert(handle, update.clone());
+        let local = LocalAppearance::Texture(Uuid::new_v4());
+        world.objects.get_mut(index).unwrap().render.local_appearance.insert(Some(2), local);
+        tool.click_select(&mut world, &settings, Some(index), false);
+        tool.duplicate(&mut world, &settings, Vec3::X, true);
+        update.local_id += 1;
+        update.full_id = Uuid::new_v4();
+        update.position += Vec3::X;
+        update.update_flags |= FLAGS_CREATE_SELECTED;
+        let copy = world.objects.upsert(handle, update);
+        assert_eq!(world.objects.get(copy).unwrap().local_appearance(2), allowed.then_some(local));
+        assert_eq!(world.objects.take_local_duplicate_changes().len(), usize::from(allowed));
+    }
+}
+
+#[test]
 fn right_click_extends_with_shift_or_ctrl_alone() {
     // pick.mKeyMask == MASK_SHIFT || pick.mKeyMask == MASK_CONTROL
     for (shift, ctrl, alt, extends) in [
