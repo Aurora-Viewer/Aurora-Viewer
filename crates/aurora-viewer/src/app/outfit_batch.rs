@@ -91,11 +91,24 @@ struct Entry {
     picture: Option<egui::TextureHandle>,
 }
 
+/// Where putting the starting outfit back stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Restore {
+    /// The outfit to wear again.
+    Outfit,
+    /// The outfit sent.
+    OutfitSent,
+    /// The body parts worn at the start sent too: an outfit without one
+    /// keeps those of the last outfit photographed (the gallery's Replace
+    /// swaps body parts only for those it holds).
+    PartsSent,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Phase {
     Setup,
     Running { paused: bool },
-    Restoring { since: Instant, sent: bool },
+    Restoring { since: Instant, step: Restore },
     Finished { restored: bool },
 }
 
@@ -103,8 +116,10 @@ pub(super) struct Batch {
     entries: Vec<Entry>,
     phase: Phase,
     settings: PortraitSettings,
-    /// The outfit worn at the start, put back at the end.
+    /// The outfit worn at the start, put back at the end, and its body
+    /// parts.
     start: Option<Uuid>,
+    start_parts: Vec<Uuid>,
     last_wear: Option<Instant>,
     /// The loading's signals last read.
     checked: Option<Instant>,
@@ -179,6 +194,20 @@ fn next(entries: &[Entry]) -> Option<usize> {
     entries.iter().position(|e| e.chosen && !e.state.finished())
 }
 
+/// The body parts the Current Outfit links, in order.
+fn body_parts(inv: &crate::world::inventory::Inventory) -> Vec<Uuid> {
+    let mut parts: Vec<Uuid> = model::cof(inv)
+        .map(|cof| model::folder_links(inv, cof))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|l| !l.folder && inv.items.get(&l.target).is_some_and(|it| it.asset_type == 13))
+        .map(|l| l.target)
+        .collect();
+    parts.sort_unstable();
+    parts.dedup();
+    parts
+}
+
 /// The items an outfit puts on: its body parts, clothes and objects.
 fn wearables(inv: &crate::world::inventory::Inventory, outfit: Uuid) -> Vec<Uuid> {
     model::usable_links(inv, outfit)
@@ -230,6 +259,7 @@ impl App {
             phase: Phase::Setup,
             settings: PortraitSettings::opening(&self.settings.outfit_portrait),
             start,
+            start_parts: Vec::new(),
             last_wear: None,
             checked: None,
             open: true,
@@ -254,6 +284,7 @@ impl App {
             return;
         }
         let start = model::base(&self.world.inventory);
+        let parts = body_parts(&self.world.inventory);
         // the auto portrait's window or the square photo mode give way
         if self.outfit_portrait.is_some() {
             self.close_outfit_portrait();
@@ -262,6 +293,7 @@ impl App {
             return;
         };
         b.start = start;
+        b.start_parts = parts;
         b.phase = Phase::Running { paused: false };
         log::info!(
             "outfit batch: started on {} outfits, {start:?} put back at the end",
@@ -286,7 +318,7 @@ impl App {
         }
         b.phase = Phase::Restoring {
             since: Instant::now(),
-            sent: false,
+            step: Restore::Outfit,
         };
         log::info!("outfit batch: stopping, the starting outfit back");
     }
@@ -299,7 +331,7 @@ impl App {
         match b.phase {
             Phase::Setup | Phase::Finished { .. } => {}
             Phase::Running { paused } => self.outfit_batch_run(paused),
-            Phase::Restoring { since, sent } => self.outfit_batch_restore(since, sent),
+            Phase::Restoring { since, step } => self.outfit_batch_restore(since, step),
         }
     }
 
@@ -503,7 +535,7 @@ impl App {
         })
     }
 
-    fn outfit_batch_restore(&mut self, since: Instant, sent: bool) {
+    fn outfit_batch_restore(&mut self, since: Instant, step: Restore) {
         let now = Instant::now();
         let inv = &self.world.inventory;
         let Some(b) = &mut self.outfit_batch else {
@@ -511,27 +543,49 @@ impl App {
         };
         let pending = self.appearance_ui.pending.is_some();
         let back = b.start.is_some_and(|start| model::base(inv) == Some(start));
-        let phase = if b.start.is_none() || (back && !pending) {
-            Some(Phase::Finished { restored: b.start.is_some() })
-        } else if !sent {
-            (!pending && wear_due(b.last_wear, now)).then_some(Phase::Restoring { since, sent: true })
-        } else if (!pending && !back) || now.saturating_duration_since(since) >= RESTORE_LIMIT {
-            Some(Phase::Finished { restored: false })
-        } else {
-            None
+        let parts_back = b.start_parts.is_empty() || body_parts(inv) == b.start_parts;
+        let due = !pending && wear_due(b.last_wear, now);
+        let late = now.saturating_duration_since(since) >= RESTORE_LIMIT;
+        let phase = match step {
+            _ if b.start.is_none() => Some(Phase::Finished { restored: false }),
+            _ if back && parts_back && !pending => Some(Phase::Finished { restored: true }),
+            _ if late => Some(Phase::Finished { restored: false }),
+            Restore::Outfit => due.then_some(Phase::Restoring {
+                since,
+                step: Restore::OutfitSent,
+            }),
+            Restore::OutfitSent if pending => None,
+            Restore::OutfitSent if !back => Some(Phase::Finished { restored: false }),
+            Restore::OutfitSent => due.then_some(Phase::Restoring {
+                since,
+                step: Restore::PartsSent,
+            }),
+            Restore::PartsSent if pending => None,
+            // (a body part RLVa holds, or gone since)
+            Restore::PartsSent => Some(Phase::Finished { restored: false }),
         };
         let Some(phase) = phase else {
             return;
         };
         let start = b.start;
+        let parts = b.start_parts.clone();
         b.phase = phase;
         match phase {
-            Phase::Restoring { .. } => {
+            Phase::Restoring { step: Restore::OutfitSent, .. } => {
                 if let Some(start) = start {
                     log::info!("outfit batch: putting {start} back");
                     b.last_wear = Some(now);
                     self.apply_appearance_action(model::Action::Wear(start, false));
                 }
+            }
+            Phase::Restoring { step: Restore::PartsSent, .. } => {
+                log::info!("outfit batch: putting the {} starting body parts back", parts.len());
+                b.last_wear = Some(now);
+                self.apply_appearance_action(model::Action::WearItems {
+                    items: parts,
+                    replace: true,
+                    point: 0,
+                });
             }
             Phase::Finished { restored } => log::info!("outfit batch: finished, starting outfit back: {restored}"),
             _ => {}
@@ -692,7 +746,8 @@ fn demo_mode() -> Option<&'static str> {
 impl App {
     /// The demo's steps (`AURORA_DEMO_APPEARANCE`): over the showcase, at
     /// frame 600 the batch portraits' window over the demo's outfits
-    /// (`batch`); `batch-run` starts it at frame 700.
+    /// (`batch`); `batch-run` saves the current outfit's changes at frame
+    /// 640 and starts it at frame 700.
     pub(super) fn outfit_batch_demo(&mut self) {
         if !self.demo {
             return;
@@ -712,6 +767,11 @@ impl App {
                 outfits.sort_by_key(|id| inv.folders.get(id).map(|f| f.info.name.to_lowercase()));
                 log::info!("demo: outfit batch ({mode})");
                 self.open_outfit_batch(outfits);
+            }
+            // (the demo's current outfit has unsaved changes: saved first,
+            // as Start asks)
+            640 if mode == "batch-run" && model::dirty(&self.world.inventory) => {
+                self.apply_appearance_action(model::Action::Save(None));
             }
             700 if mode == "batch-run" => self.outfit_batch_start(),
             _ => {}

@@ -9059,7 +9059,9 @@ gallery's double-click continues to open the outfit's contents.
   portraits' window (Fider #447, the banner's Take the portraits) over the
   demo's outfits: those without a picture ticked, those with one to tick to
   redo, the portrait settings folded, the note on what happens, Cancel /
-  Start (n). `batch-run` starts it at frame 700: "Photo i of n…", the
+  Start (n), Start off while the current outfit has unsaved changes (as
+  in the demo). `batch-run` saves them and starts it at frame 700: "Photo
+  i of n…", the
   progress, the current row with its live preview and its state (Loading
   the outfit… worn / total items, Framing, Taking the portrait, Saving),
   the others Waiting or Done with their photo, Pause / Resume and Stop and
