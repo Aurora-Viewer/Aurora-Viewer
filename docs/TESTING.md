@@ -7205,8 +7205,9 @@ failure. Grid validation and any paid upload are performed by the human.
   fields (the island's, the Conversations window's), `1` a full row of 20,
   or the emojis given, the last one first. Nothing is saved. A click adds
   the emoji at the caret; a message sent moves its emojis to the front.
-  Unset, the row takes no room until a first emoji is sent. Preferences ›
-  Chat › Show recent emojis turns it off. The Legacy bars
+  Unset, the row takes no room until a first emoji is sent. Set, the row
+  shows even though Preferences › Chat › Show recent emojis is off by
+  default. The Legacy bars
   (`AURORA_DEMO_BARS=legacy`) have no emojis in their field, so no row.
 - **`AURORA_DEMO_FAVORITE_EMOJIS=<emojis>`**: the favourites, turned on for
   the run whatever Preferences › Chat › Favorite emojis says: first in the row with a small star, and the emoji picker opening on their

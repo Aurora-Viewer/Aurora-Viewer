@@ -16437,12 +16437,14 @@ impl App {
                 self.chat_ui.compact_im_notices =
                     self.settings.compact_im_system_lines || (self.demo && crate::demo::object_chat::scene().is_some_and(|s| s.im_lines));
                 self.chat_ui.show_channel = self.settings.show_chat_channel || self.chat_ui.demo_channel;
-                // the Legacy chat style keeps its own switch, off
-                self.chat_ui.recent_emojis.enabled = if self.settings.chat_style == crate::settings::ChatStyle::Legacy {
-                    self.settings.show_recent_emojis_legacy
-                } else {
-                    self.settings.show_recent_emojis
-                };
+                // the Legacy chat style keeps its own switch; both are off by
+                // default, the demo switch shows the row whatever they say
+                self.chat_ui.recent_emojis.enabled = (self.demo && crate::demo::recent_emojis_on())
+                    || if self.settings.chat_style == crate::settings::ChatStyle::Legacy {
+                        self.settings.show_recent_emojis_legacy
+                    } else {
+                        self.settings.show_recent_emojis
+                    };
                 self.chat_ui.recent_emojis.favorites_enabled = self.settings.favorite_emojis;
                 self.chat_ui.recent_emojis.above = self.settings.chat_style != crate::settings::ChatStyle::Legacy;
                 self.chat_ui.send_typing = self.settings.send_typing_state;
