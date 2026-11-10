@@ -27,7 +27,9 @@ pub mod layout;
 mod linking;
 pub mod manip;
 mod material_preview;
+use material_preview::MaterialTabKey;
 pub mod materials;
+mod new_defaults;
 mod object_snap;
 pub mod particle_editor;
 pub mod place;
@@ -174,6 +176,26 @@ pub struct BuildSettings {
     pub new_prim_size: [f32; 3],
     /// New prim material (FSBuildPrefs_Material, LL_MCODE_WOOD).
     pub new_prim_material: u8,
+    /// New prim colour (FSBuildPrefs_Color, white); its alpha is not used,
+    /// the transparency below is (new_defaults.rs).
+    pub new_prim_color: crate::settings::Rgba,
+    /// New prim transparency in percent (FSBuildPrefs_Alpha, 0).
+    pub new_prim_transparency: f32,
+    /// New prim glow (FSBuildPrefs_Glow, 0).
+    pub new_prim_glow: f32,
+    /// New prim full bright (FSBuildPrefs_FullBright, off).
+    pub new_prim_fullbright: bool,
+    /// New prim shininess, 0 none to 3 high (FSBuildPrefs_Shiny, None).
+    pub new_prim_shiny: u8,
+    /// New prim physical (FSBuildPrefs_Physical, off).
+    pub new_prim_physical: bool,
+    /// New prim temporary (FSBuildPrefs_Temporary, off).
+    pub new_prim_temporary: bool,
+    /// New prim phantom (FSBuildPrefs_Phantom, off).
+    pub new_prim_phantom: bool,
+    /// RenderParcelSelection: the selected parcel's yellow walls (on; Debug
+    /// Settings only, to keep Preferences short).
+    pub parcel_selection_outline: bool,
     /// Land tool: 0..5 brush actions (RadioLandBrushAction), 6 select land.
     pub land_action: u8,
     /// LandBrushSize (m).
@@ -210,6 +232,10 @@ pub struct BuildSettings {
     pub show_parcel_owners: bool,
     /// SyncMaterialSettings: normal / specular maps follow the diffuse UVs.
     pub sync_materials: bool,
+    /// Texture tab: a new selection opens the PBR or Blinn-Phong tab that
+    /// fits its faces, as LLPanelFace::updateUI does (`material_preview.rs`).
+    /// On by default; off keeps the last tab chosen.
+    pub auto_material_tab: bool,
     /// ShowPhysicsShapeInEdit (Features tab eye toggle).
     pub show_physics_shape: bool,
     /// FSCopyObjKeySeparator for "Copy UUID".
@@ -607,6 +633,15 @@ impl Default for BuildSettings {
             rez_under_land_group: true,
             new_prim_size: [0.5; 3],
             new_prim_material: 3,
+            new_prim_color: [255; 4],
+            new_prim_transparency: 0.0,
+            new_prim_glow: 0.0,
+            new_prim_fullbright: false,
+            new_prim_shiny: 0,
+            new_prim_physical: false,
+            new_prim_temporary: false,
+            new_prim_phantom: false,
+            parcel_selection_outline: true,
             land_action: 6,
             land_brush_size: 2.0,
             land_brush_force: 1.0,
@@ -624,6 +659,7 @@ impl Default for BuildSettings {
             expanded: true,
             show_parcel_owners: false,
             sync_materials: false,
+            auto_material_tab: true,
             show_physics_shape: false,
             copy_key_separator: ",".into(),
             limit_select_distance: true,
@@ -733,6 +769,10 @@ pub struct BuildTool {
     /// Last inspected selection/mode; object display choices live in the world.
     material_preview_selection: HashSet<Uuid>,
     material_preview_mode: Option<bool>,
+    /// Selection the Texture tab was last chosen for (`auto_material_tab`).
+    material_tab_for: Option<MaterialTabKey>,
+    /// `keep_texture_tab`: the next selection keeps the tab asked for.
+    keep_material_tab: bool,
     /// The build floater is open (build mode).
     pub open: bool,
     pub tool: Tool,
@@ -805,6 +845,9 @@ pub struct BuildTool {
     /// Objects created / duplicated with FLAGS_CREATE_SELECTED: select them
     /// when they arrive (LLViewerObjectList). (Sent at, objects already flagged.)
     pending_create: Option<(Instant, HashSet<Uuid>)>,
+    /// Prims the Create tool asked for whose new objects' look is still to
+    /// be given (new_defaults.rs).
+    new_defaults_pending: u32,
     /// Selection rectangle being dragged (start, current in pixels, extend).
     pub rect: Option<((f32, f32), (f32, f32), bool)>,
     /// Compact section (Rights, Transform, Features, Materials, Contents, Shape).
@@ -821,6 +864,8 @@ impl Default for BuildTool {
             wheel_selection: cycle::Wheel::default(),
             material_preview_selection: HashSet::new(),
             material_preview_mode: None,
+            material_tab_for: None,
+            keep_material_tab: false,
             open: false,
             tool: Tool::Edit,
             edit_mode: EditMode::Move,
@@ -859,6 +904,7 @@ impl Default for BuildTool {
             land: land::LandTool::default(),
             silhouettes: silhouette::Cache::default(),
             pending_create: None,
+            new_defaults_pending: 0,
             rect: None,
             tab: 6,
             status: String::new(),
@@ -1695,6 +1741,7 @@ impl BuildTool {
         }
         let flags = if select_copy { FLAGS_CREATE_SELECTED } else { 0 };
         for (handle, ids) in self.group_by_region(world, &roots) {
+            world.objects.expect_local_duplicates(handle, &ids, offset, select_copy, None);
             self.send(BuildCmd::Duplicate {
                 handle,
                 local_ids: ids,
@@ -1782,7 +1829,7 @@ impl BuildTool {
         self.pending_create = Some((Instant::now(), flagged));
     }
 
-    fn pick_up_created(&mut self, world: &World, s: &BuildSettings) {
+    fn pick_up_created(&mut self, world: &mut World, s: &BuildSettings) {
         let Some((at, known)) = &self.pending_create else {
             return;
         };
@@ -1811,6 +1858,7 @@ impl BuildTool {
         }
         self.selection_linked = s.edit_linked;
         for i in new {
+            self.apply_new_defaults(world, i, s);
             if let Some(unit) = Self::unit_of(world, i, false) {
                 self.add(world, unit);
             }
@@ -2335,10 +2383,12 @@ impl BuildTool {
             state,
         };
         self.deselect_all(world);
+        self.send(BuildCmd::Add(Box::new(p)));
         if !plant {
             self.expect_created(world);
+            // (trees and grass are not created selected: no look of their own)
+            self.expect_new_defaults();
         }
-        self.send(BuildCmd::Add(Box::new(p)));
         // LLToolPlacer::addObject
         world.ui_sounds.push(crate::ui_sound::UiSound::ObjectCreate);
         if !s.keep_tool {
@@ -2367,6 +2417,8 @@ impl BuildTool {
         }
         let Some((_, off)) = Self::region_at(world, point) else { return };
         let (ray_start, ray_end, ray_target, bypass) = self.placement_ray(world, s, point, target, cursor, off);
+        // The simulator chooses the surface offset and, optionally, rotation.
+        let radius = bounds_of(world, &self.selection, false, Instant::now()).map_or(1.0, |bounds| bounds.half.length() * 2.0 + 1.0);
         let mut by_region: HashMap<RegionHandle, Vec<u32>> = HashMap::new();
         for r in roots {
             if let Some(o) = world.objects.get(r) {
@@ -2374,6 +2426,9 @@ impl BuildTool {
             }
         }
         for (handle, local_ids) in by_region {
+            world
+                .objects
+                .expect_local_duplicates(handle, &local_ids, Vec3::ZERO, false, Some((point - off, radius, s.copy_rotates)));
             self.send(BuildCmd::DuplicateOnRay {
                 handle,
                 local_ids,

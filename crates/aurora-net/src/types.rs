@@ -335,9 +335,11 @@ pub struct AvatarAppearance {
     /// the block.
     pub appearance_version: u8,
     pub hover_height: f32,
-    /// Worn objects the simulator lists (AttachmentBlock entries with an
-    /// id, each once: LLVOAvatar::mSimAttachments).
-    pub attachments: u32,
+    /// Worn objects the simulator lists: object id and attachment point of
+    /// the AttachmentBlock entries with an id, each id once
+    /// (LLVOAvatar::mSimAttachments). The Dev Toolbox's J2 compares them
+    /// with the objects that came (issue #2747).
+    pub attachments: Vec<(Uuid, u8)>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1650,8 +1652,6 @@ pub enum NetCommand {
         position: Vec3,
         look_at: Vec3,
     },
-    /// Change the draw distance used in AgentUpdate (`Far`).
-    SetDrawDistance(f32),
     /// No connection to the neighbouring regions while true
     /// (FSDisableNeighbourRegionConnections): the viewer sends false while
     /// the agent is outside its region, so that a crossing still connects.
@@ -1812,12 +1812,15 @@ pub enum NetCommand {
         object: Uuid,
     },
     /// Sent only after the user confirms the displayed price (ObjectBuy).
+    /// `group_id` is the agent's active group at that moment (nil for
+    /// none): the simulator sets it as the bought object's group.
     BuyObject {
         handle: RegionHandle,
         local_id: u32,
         folder: Uuid,
         sale_type: u8,
         price: i32,
+        group_id: Uuid,
     },
     /// Payment to the clicked prim, not directly to its owner.
     PayObject {
@@ -2376,6 +2379,8 @@ pub struct AgentControls {
     pub camera_at: Vec3,
     pub camera_left: Vec3,
     pub camera_up: Vec3,
+    /// The draw distance (RenderFarClip): AgentUpdate's `Far` follows it by
+    /// the steps of `agent_update::FarStep`.
     pub far: f32,
     /// The render state (LLAgent::getRenderState): `AGENT_STATE_TYPING`
     /// while we type in the nearby chat.

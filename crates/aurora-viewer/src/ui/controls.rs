@@ -11,7 +11,7 @@
 //! (Aurora's own: Firestorm has no keyboard free camera, `camera/free.rs`).
 
 use super::widgets::{self, Floater, keycap};
-use crate::camera::{CameraPreset, CameraShot, free};
+use crate::camera::{CameraPreset, CameraShot, SavedViews, free};
 use crate::keybinds::{Action, Binding, KeyBindings};
 use crate::theme::Palette;
 use egui::{FontId, Pos2, Rect, Sense, Vec2};
@@ -99,6 +99,8 @@ pub struct View<'a> {
     pub roll: f32,
     pub preset: CameraPreset,
     pub shots: &'a [CameraShot],
+    /// The views the user saved over their templates.
+    pub views: &'a SavedViews,
     pub flying: bool,
     pub always_run: bool,
     pub seated: bool,
@@ -143,6 +145,10 @@ pub enum ControlAction {
     UseShot(usize),
     SaveShot(String),
     DeleteShot(usize),
+    /// The camera where it is becomes this view (a view's right click).
+    SaveView(CameraPreset),
+    /// The view back to its template.
+    RestoreView(CameraPreset),
 }
 
 #[derive(Default)]
@@ -173,7 +179,9 @@ impl ControlsUi {
                     size,
                 )
                 .auto_height()
-                .show(ctx, p, camera, |ui| classic_camera(ui, p, view, &mut out));
+                .show(ctx, p, camera, |ui| {
+                    classic_camera(ui, p, view, (&mut self.naming, &mut self.shot_name), &mut out)
+                });
             }
             if *movement {
                 let size = Vec2::new(230.0, 140.0);
@@ -284,7 +292,8 @@ impl ControlsUi {
                 (CameraPreset::Shoulder, "user-scan"),
             ] {
                 let chip = view_chip(ui, p, icon, short_view(preset), view.preset == preset, w);
-                if chip.on_hover_text(preset.label()).clicked() {
+                view_menu(&chip, p, view, preset, out);
+                if chip.on_hover_text(view_tip(preset)).clicked() {
                     out.actions.push(ControlAction::Preset(preset));
                 }
             }
@@ -338,21 +347,7 @@ impl ControlsUi {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = ROW_GAP;
             if self.naming {
-                let edit = ui.add_sized(
-                    Vec2::new(grid.field, BUTTON_H),
-                    egui::TextEdit::singleline(&mut self.shot_name).hint_text(aurora_i18n::tr!("controls-shot-name")),
-                );
-                edit.request_focus();
-                let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                let name = self.shot_name.trim().to_owned();
-                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                    self.naming = false;
-                }
-                if (square_button(ui, p, "check", aurora_i18n::tr!("controls-shot-save")) || enter) && !name.is_empty() {
-                    out.actions.push(ControlAction::SaveShot(name));
-                    self.naming = false;
-                    self.shot_name.clear();
-                }
+                name_row(ui, p, (&mut self.naming, &mut self.shot_name), grid.field, out);
                 return;
             }
             let text = if view.shots.is_empty() {
@@ -1059,15 +1054,14 @@ fn modes(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
 
 /// Firestorm's camera window: views on top, the joysticks and the zoom,
 /// then its presets (floater_camera.xml).
-fn classic_camera(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
+fn classic_camera(ui: &mut egui::Ui, p: &Palette, view: &View, naming: (&mut bool, &mut String), out: &mut Output) {
     ui.spacing_mut().item_spacing.y = 6.0;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 3.0;
         for preset in [CameraPreset::Front, CameraPreset::Side, CameraPreset::Rear, CameraPreset::Shoulder] {
-            if widgets::flat_button(ui, p, short_view(preset))
-                .on_hover_text(preset.label())
-                .clicked()
-            {
+            let button = widgets::flat_button(ui, p, short_view(preset));
+            view_menu(&button, p, view, preset, out);
+            if button.on_hover_text(view_tip(preset)).clicked() {
                 out.actions.push(ControlAction::Preset(preset));
             }
         }
@@ -1085,8 +1079,13 @@ fn classic_camera(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output)
     roll_controls(ui, p, view, out);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
+        if *naming.0 {
+            let width = ui.available_width() - BUTTON_H - ROW_GAP;
+            name_row(ui, p, naming, width, out);
+            return;
+        }
         egui::ComboBox::from_id_salt("camera_shots_classic")
-            .width(ui.available_width() - 52.0)
+            .width(ui.available_width() - 76.0)
             .selected_text(aurora_i18n::tr!("controls-use-preset"))
             .show_ui(ui, |ui| {
                 for (i, shot) in view.shots.iter().enumerate() {
@@ -1095,6 +1094,10 @@ fn classic_camera(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output)
                     }
                 }
             });
+        // save_preset_btn of floater_camera.xml ("Save as Preset")
+        if widgets::icon_button(ui, p, "device-floppy-filled", aurora_i18n::tr!("controls-shot-save-tip"), true) {
+            *naming.0 = true;
+        }
         if widgets::icon_button(ui, p, "restore", aurora_i18n::tr!("controls-reset-camera"), true) {
             out.actions.push(ControlAction::ResetCamera);
         }
@@ -1130,6 +1133,49 @@ fn classic_movement(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Outpu
             out.actions.push(ControlAction::StandUp);
         }
     });
+}
+
+/// The name of a new camera preset being typed and its save button (the
+/// Legacy Viewer's LLFloaterSaveCameraPreset, inline): Enter or the button
+/// saves, Escape gives up. A view's name ("Front View") replaces that view
+/// (`CameraPreset::from_preset_name`, in the app).
+fn name_row(ui: &mut egui::Ui, p: &Palette, (naming, name): (&mut bool, &mut String), width: f32, out: &mut Output) {
+    let edit = ui.add_sized(
+        Vec2::new(width, BUTTON_H),
+        egui::TextEdit::singleline(name).hint_text(aurora_i18n::tr!("controls-shot-name")),
+    );
+    edit.request_focus();
+    let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+    let typed = name.trim().to_owned();
+    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        *naming = false;
+    }
+    if (square_button(ui, p, "check", aurora_i18n::tr!("controls-shot-save")) || enter) && !typed.is_empty() {
+        out.actions.push(ControlAction::SaveShot(typed));
+        *naming = false;
+        name.clear();
+    }
+}
+
+/// A view's right click, in both styles: the camera where it is becomes
+/// the view, or the view goes back to its template (the Legacy Viewer's
+/// "Save as preset" over "Front View", and the reset button of its Camera
+/// Presets window, LLFloaterCameraPresets).
+fn view_menu(resp: &egui::Response, p: &Palette, view: &View, preset: CameraPreset, out: &mut Output) {
+    super::menu::context_menu(resp, p, |ui| {
+        let save = aurora_i18n::tr!("controls-view-save", view = preset.label());
+        if super::menu::item(ui, p, "device-floppy-filled", &save) {
+            out.actions.push(ControlAction::SaveView(preset));
+        }
+        let restore = aurora_i18n::tr!("controls-view-restore", view = preset.label());
+        if super::menu::item_if(ui, p, "restore", &restore, view.views.get(preset).is_some()) {
+            out.actions.push(ControlAction::RestoreView(preset));
+        }
+    });
+}
+
+fn view_tip(preset: CameraPreset) -> String {
+    aurora_i18n::tr!("controls-view-tip", view = preset.label())
 }
 
 fn short_view(preset: CameraPreset) -> &'static str {
@@ -1506,6 +1552,7 @@ mod tests {
             roll: 0.0,
             preset: CameraPreset::Rear,
             shots: &[],
+            views: &SavedViews::default(),
             flying: false,
             always_run: false,
             seated: false,
@@ -1592,6 +1639,7 @@ mod tests {
                 roll: 0.3,
                 preset: CameraPreset::Rear,
                 shots: &[],
+                views: &SavedViews::default(),
                 flying: false,
                 always_run: false,
                 seated: false,
@@ -1811,6 +1859,7 @@ mod tests {
                 roll: 0.0,
                 preset: CameraPreset::Rear,
                 shots: &shots,
+                views: &SavedViews::default(),
                 flying: false,
                 always_run: false,
                 seated: false,

@@ -312,6 +312,7 @@ impl World {
             if let Param::Reply(channel) = command.param {
                 self.rlva.reply(
                     channel,
+                    &command.behaviour,
                     if self.rlva.environment_day.is_some() || (self.rlva.environment.is_none() && !self.eep.has_fixed_sky()) {
                         "-1.000000"
                     } else {
@@ -345,7 +346,7 @@ impl World {
                 self.rlva.environment_day = None;
             }
         } else if let Param::Reply(channel) = command.param {
-            self.rlva.reply(channel, result.unwrap_or_default());
+            self.rlva.reply(channel, &command.behaviour, result.unwrap_or_default());
         }
         true
     }

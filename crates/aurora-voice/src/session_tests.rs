@@ -340,6 +340,19 @@ fn provisioning_reply_size_is_bounded() {
 }
 
 #[test]
+fn ready_now_takes_only_what_is_queued() {
+    let (tx, mut rx) = mpsc::unbounded_channel::<u8>();
+    assert_eq!(ready_now(rx.recv()), None);
+    tx.send(1).unwrap();
+    tx.send(2).unwrap();
+    assert_eq!(ready_now(rx.recv()), Some(Some(1)));
+    assert_eq!(ready_now(rx.recv()), Some(Some(2)));
+    assert_eq!(ready_now(rx.recv()), None);
+    drop(tx);
+    assert_eq!(ready_now(rx.recv()), Some(None));
+}
+
+#[test]
 fn loopback_webrtc_session() {
     LOOPBACK_ONLY.store(true, std::sync::atomic::Ordering::Relaxed);
     check_loopback_channel(ChannelKind::Local { parcel_local_id: Some(5) });
