@@ -429,6 +429,13 @@ whatever the setting. With the textures of a cache instead,
 `AURORA_DEMO_STREAM=60,60,j2k=<folder>,size=4` (2048 px files) shows the
 same on real pictures, softer under 512.
 
+At user scales below 100%, the upscale applies the Sharpness setting once
+through CAS's scaling filter; the reduced post pass does not sharpen first.
+Compare Sharpness 0 (Catmull-Rom, no sharpening), 0.4 and 1 under MSAA and
+SMAA, then return to 100% (the existing post sharpening). HDR off and FSR
+disable CAS (FSR sharpens with its own RCAS); RLVa's
+nearest-pixel scaling and full-resolution photos keep their existing paths.
+
 `AURORA_WINDOW_SIZE`: width and height of the render area, in logical pixels
 (at least 800 × 560), to measure according to the size of the window:
 without it, the demo opens at the size the window had in the last launch
