@@ -27,6 +27,12 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
     let mut open = true;
     let mut close = false;
     let mut revert = false;
+    let mut import = false;
+    let modify = st.draft.as_ref().is_some_and(|draft| draft.can_modify(world));
+    if let Some((message, imported)) = st.xml.poll(st.draft.as_mut(), modify, &world.avatar_lib.shape_params) {
+        st.message = message;
+        changed |= imported;
+    }
     let mut floater = widgets::Floater::new(
         "physics_editor",
         aurora_i18n::tr!("physics-title"),
@@ -43,10 +49,13 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
             let copy = draft.can_copy(world);
             widgets::surface(ui, p, |ui| {
                 ui.set_min_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    widgets::glyph(ui, "shirt-filled", p.muted, 24.0);
-                    ui.add(egui::Label::new(RichText::new(&draft.item.name).strong().size(15.0).color(p.ink)).truncate());
-                });
+                import = super::shape::name_row(
+                    ui,
+                    p,
+                    Some("shirt-filled"),
+                    RichText::new(&draft.item.name).strong().size(15.0).color(p.ink),
+                    modify && !busy && !st.xml.busy(),
+                );
                 if !physics_on {
                     ui.label(RichText::new(aurora_i18n::tr!("physics-preview-off")).size(12.0).color(p.warn));
                 }
@@ -167,6 +176,10 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
             }
         }
     });
+    if import && let Some(draft) = &st.draft {
+        st.message.clear();
+        st.xml.start(ctx, draft);
+    }
     if revert {
         st.revert(world);
     } else if changed {

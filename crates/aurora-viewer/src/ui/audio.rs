@@ -70,54 +70,66 @@ fn enable_box(audio: &mut AudioSettings, i: usize) -> Option<&mut bool> {
     }
 }
 
-/// Radio intent and actual output are distinct: a requested stream may be
-/// waiting for consent, disabled, connecting or failing.
+/// The requested radio can be on while its connection is still silent.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum MusicStatus {
     #[default]
-    None,
+    Unavailable,
     Stopped,
+    Disabled,
+    Muted,
+    Waiting,
+    Blocked,
     Connecting,
     Playing,
-    WaitingFilter,
-    BlockedFilter,
-    ChannelOff,
-    Muted,
-    NoDevice,
+    /// The last attempt failed, with its reason; kept while a retry connects.
     Error(aurora_audio::StreamError),
+    NoDevice,
+}
+
+/// Why the station cannot be heard, in the resident's language; the server's
+/// own text stays in the log.
+fn error_reason(error: aurora_audio::StreamError) -> String {
+    use aurora_audio::StreamError;
+    match error {
+        StreamError::WebPage => aurora_i18n::tr!("music-error-web-page").to_owned(),
+        StreamError::Playlist => aurora_i18n::tr!("music-error-playlist").to_owned(),
+        StreamError::HttpStatus(code) => aurora_i18n::tr!("music-error-http", code = code.to_string()),
+        StreamError::Tls => aurora_i18n::tr!("music-error-tls").to_owned(),
+        StreamError::Connection => aurora_i18n::tr!("music-error-connection").to_owned(),
+        StreamError::Address => aurora_i18n::tr!("music-error-address").to_owned(),
+        StreamError::AudioFormat => aurora_i18n::tr!("music-error-format").to_owned(),
+        StreamError::Interrupted => aurora_i18n::tr!("music-error-interrupted").to_owned(),
+        StreamError::Worker => aurora_i18n::tr!("music-error-worker").to_owned(),
+    }
 }
 
 impl MusicStatus {
-    pub fn from_stream(
+    pub fn read(
         available: bool,
         requested: bool,
-        enabled: bool,
-        muted: bool,
-        filter: crate::media::filter::Verdict,
+        audio: &AudioSettings,
+        minimized: bool,
+        verdict: crate::media::filter::Verdict,
         stream: Option<&aurora_audio::StreamStatus>,
-        blocked_scheme: bool,
     ) -> Self {
         use crate::media::filter::Verdict;
         if !available {
-            return Self::None;
+            return Self::Unavailable;
         }
         if !requested {
             return Self::Stopped;
         }
-        if blocked_scheme {
-            return Self::Error(aurora_audio::StreamError::Address);
+        if !audio.enabled[4] {
+            return Self::Disabled;
         }
-        if matches!(filter, Verdict::Deny) {
-            return Self::BlockedFilter;
+        match verdict {
+            Verdict::Ask => return Self::Waiting,
+            Verdict::Deny => return Self::Blocked,
+            Verdict::Allow => {}
         }
-        if !enabled {
-            return Self::ChannelOff;
-        }
-        if muted {
+        if minimized || audio.muted[0] || audio.muted[4] || audio.volume[0] <= 0.0 || audio.volume[4] <= 0.0 {
             return Self::Muted;
-        }
-        if matches!(filter, Verdict::Ask) {
-            return Self::WaitingFilter;
         }
         match stream {
             None => Self::NoDevice,
@@ -128,33 +140,19 @@ impl MusicStatus {
     }
 
     pub fn text(self) -> String {
-        use aurora_audio::StreamError;
-        let text = match self {
-            Self::None => aurora_i18n::tr!("ui-bars-tip-music-none"),
+        match self {
+            Self::Unavailable => aurora_i18n::tr!("ui-bars-tip-music-none"),
             Self::Stopped => aurora_i18n::tr!("ui-bars-tip-music-stopped"),
             Self::Playing => aurora_i18n::tr!("ui-bars-tip-music-playing"),
-            Self::Connecting => aurora_i18n::tr!("music-state-connecting"),
-            Self::WaitingFilter => aurora_i18n::tr!("music-state-filter-waiting"),
-            Self::BlockedFilter => aurora_i18n::tr!("music-state-filter-blocked"),
-            Self::ChannelOff => aurora_i18n::tr!("music-state-channel-off"),
-            Self::Muted => aurora_i18n::tr!("music-state-muted"),
-            Self::NoDevice => aurora_i18n::tr!("music-state-no-device"),
-            Self::Error(error) => {
-                let reason = match error {
-                    StreamError::WebPage => aurora_i18n::tr!("music-error-web-page").to_owned(),
-                    StreamError::Playlist => aurora_i18n::tr!("music-error-playlist").to_owned(),
-                    StreamError::HttpStatus(code) => aurora_i18n::tr!("music-error-http", code = code.to_string()),
-                    StreamError::Tls => aurora_i18n::tr!("music-error-tls").to_owned(),
-                    StreamError::Connection => aurora_i18n::tr!("music-error-connection").to_owned(),
-                    StreamError::Address => aurora_i18n::tr!("music-error-address").to_owned(),
-                    StreamError::AudioFormat => aurora_i18n::tr!("music-error-format").to_owned(),
-                    StreamError::Interrupted => aurora_i18n::tr!("music-error-interrupted").to_owned(),
-                    StreamError::Worker => aurora_i18n::tr!("music-error-worker").to_owned(),
-                };
-                return aurora_i18n::tr!("music-state-error", reason = reason);
-            }
-        };
-        text.to_owned()
+            Self::Disabled => aurora_i18n::tr!("ui-music-disabled"),
+            Self::Muted => aurora_i18n::tr!("ui-music-muted"),
+            Self::Waiting => aurora_i18n::tr!("ui-music-waiting"),
+            Self::Blocked => aurora_i18n::tr!("ui-music-blocked"),
+            Self::Connecting => aurora_i18n::tr!("ui-music-connecting"),
+            Self::NoDevice => aurora_i18n::tr!("ui-music-no-device"),
+            Self::Error(error) => return aurora_i18n::tr!("music-state-error", reason = error_reason(error)),
+        }
+        .to_owned()
     }
 }
 
@@ -268,20 +266,20 @@ pub fn top_controls(
                 toggle_master_mute(audio);
                 action = AudioAction::Changed;
             }
-            let tip = if !media.music_available {
-                aurora_i18n::tr!("ui-audio-no-music-on-this-parcel").to_owned()
+            let action_tip = if !media.music_available {
+                aurora_i18n::tr!("ui-audio-no-music-on-this-parcel")
+            } else if media.music_playing {
+                aurora_i18n::tr!("ui-audio-stop-parcel-music")
             } else {
-                format!(
-                    "{}\n{}",
-                    if media.music_playing {
-                        aurora_i18n::tr!("ui-audio-stop-parcel-music")
-                    } else {
-                        aurora_i18n::tr!("ui-audio-listen-to-parcel-music")
-                    },
-                    media.music_status.text()
-                )
+                aurora_i18n::tr!("ui-audio-listen-to-parcel-music")
             };
-            let music = toggle(ui, "radio", &tip, media.music_playing, media.music_available);
+            // A parcel without music says so alone, without a second "none".
+            let music_tip = if media.music_available {
+                format!("{action_tip}\n{}", media.music_status.text())
+            } else {
+                action_tip.to_owned()
+            };
+            let music = toggle(ui, "radio", &music_tip, media.music_playing, media.music_available);
             if music.clicked() && media.music_available {
                 action = AudioAction::ToggleMusic;
             }
@@ -401,6 +399,65 @@ mod tests {
     use super::*;
 
     #[test]
+    fn parcel_music_status_distinguishes_intent_consent_and_engine_playback() {
+        use crate::media::filter::Verdict;
+        use aurora_audio::StreamStatus;
+        let mut audio = AudioSettings::default();
+        let playing = StreamStatus::Playing { title: None };
+        let failed = StreamStatus::Error(aurora_audio::StreamError::Connection);
+        let read = |audio: &AudioSettings, verdict, stream| MusicStatus::read(true, true, audio, false, verdict, stream);
+        assert_eq!(
+            read(&audio, Verdict::Allow, Some(&StreamStatus::Connecting)),
+            MusicStatus::Connecting
+        );
+        assert_eq!(
+            read(&audio, Verdict::Allow, Some(&failed)),
+            MusicStatus::Error(aurora_audio::StreamError::Connection)
+        );
+        assert_eq!(read(&audio, Verdict::Ask, Some(&playing)), MusicStatus::Waiting);
+        assert_eq!(read(&audio, Verdict::Deny, Some(&playing)), MusicStatus::Blocked);
+        assert_eq!(read(&audio, Verdict::Allow, Some(&playing)), MusicStatus::Playing);
+        audio.enabled[4] = false;
+        assert_eq!(read(&audio, Verdict::Allow, Some(&playing)), MusicStatus::Disabled);
+        audio.enabled[4] = true;
+        audio.muted[4] = true;
+        assert_eq!(read(&audio, Verdict::Allow, Some(&playing)), MusicStatus::Muted);
+        audio.muted[4] = false;
+        assert_eq!(read(&audio, Verdict::Allow, None), MusicStatus::NoDevice);
+        assert_eq!(
+            MusicStatus::read(true, false, &audio, false, Verdict::Allow, Some(&playing)),
+            MusicStatus::Stopped
+        );
+        assert_eq!(
+            MusicStatus::read(false, true, &audio, false, Verdict::Allow, Some(&playing)),
+            MusicStatus::Unavailable
+        );
+        assert_eq!(
+            MusicStatus::read(true, true, &audio, true, Verdict::Allow, Some(&playing)),
+            MusicStatus::Muted
+        );
+    }
+
+    #[test]
+    fn a_music_error_names_its_reason() {
+        use aurora_audio::StreamError;
+        let text = MusicStatus::Error(StreamError::HttpStatus(404)).text();
+        assert!(text.contains("404"), "{text}");
+        let reasons: Vec<_> = [
+            StreamError::WebPage,
+            StreamError::Playlist,
+            StreamError::Tls,
+            StreamError::Connection,
+        ]
+        .into_iter()
+        .map(|error| MusicStatus::Error(error).text())
+        .collect();
+        for (i, text) in reasons.iter().enumerate() {
+            assert!(reasons.iter().skip(i + 1).all(|other| other != text), "{reasons:?}");
+        }
+    }
+
+    #[test]
     fn the_speaker_click_mutes_and_restores_all_sound() {
         let mut a = AudioSettings::default();
         let before = a.clone();
@@ -480,62 +537,6 @@ mod tests {
                 aurora_i18n::tr!("settings-multimedia"),
                 aurora_i18n::tr!("common-voice")
             ]
-        );
-    }
-}
-
-#[cfg(test)]
-mod music_status_tests {
-    use super::*;
-    use crate::media::filter::Verdict;
-    use aurora_audio::{StreamError, StreamStatus};
-
-    #[test]
-    fn parcel_music_ui_requires_engine_playback_and_audible_channel() {
-        let playing = StreamStatus::Playing { title: None };
-        assert_eq!(
-            MusicStatus::from_stream(true, true, true, false, Verdict::Allow, Some(&playing), true),
-            MusicStatus::Error(StreamError::Address)
-        );
-        assert_eq!(
-            MusicStatus::from_stream(true, true, true, false, Verdict::Allow, Some(&playing), false),
-            MusicStatus::Playing
-        );
-        assert_eq!(
-            MusicStatus::from_stream(true, true, true, false, Verdict::Ask, Some(&playing), false),
-            MusicStatus::WaitingFilter
-        );
-        assert_eq!(
-            MusicStatus::from_stream(true, true, false, false, Verdict::Allow, Some(&playing), false),
-            MusicStatus::ChannelOff
-        );
-        assert_eq!(
-            MusicStatus::from_stream(true, true, true, true, Verdict::Allow, Some(&playing), false),
-            MusicStatus::Muted
-        );
-        assert_eq!(
-            MusicStatus::from_stream(true, true, true, false, Verdict::Allow, None, false),
-            MusicStatus::NoDevice
-        );
-        assert_eq!(
-            MusicStatus::from_stream(
-                true,
-                true,
-                true,
-                false,
-                Verdict::Allow,
-                Some(&StreamStatus::Error(StreamError::WebPage)),
-                false
-            ),
-            MusicStatus::Error(StreamError::WebPage)
-        );
-        assert_eq!(
-            MusicStatus::from_stream(true, true, true, false, Verdict::Allow, Some(&StreamStatus::Connecting), false),
-            MusicStatus::Connecting
-        );
-        assert_eq!(
-            MusicStatus::from_stream(true, false, true, false, Verdict::Allow, Some(&playing), false),
-            MusicStatus::Stopped
         );
     }
 }

@@ -12,6 +12,16 @@ pub mod registry;
 mod saver;
 pub mod stream_list;
 
+/// Where a contact-set marker stands on an avatar (`ui/contact_markers.rs`).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum MarkerAnchor {
+    /// Above the name plate, or the head without one.
+    #[default]
+    AboveName,
+    /// On the avatar's chest.
+    Body,
+}
+
 /// How the Conversations window looks (Preferences › Aurora): Aurora's
 /// workspace (the default: a column of conversations, messages grouped by
 /// author with their picture, `ui/chat/aurora.rs`), its compact variant (one
@@ -308,6 +318,10 @@ pub struct HoverTips {
     /// human's choice (2026-10-21); the Legacy Viewer's is on.
     pub enabled: bool,
     pub form: HoverTipForm,
+    /// Avatar tips even with `enabled` off, objects and land then showing
+    /// none (#2475; the Legacy Viewer has no such switch, its avatar tips
+    /// follow ShowHoverTips alone). Off, so nothing changes for anyone.
+    pub avatars: bool,
     /// ShowAllObjectHoverTip: every object, not only those that can be
     /// touched, paid, bought or have media (off, as in the Legacy Viewer).
     pub all_objects: bool,
@@ -330,6 +344,7 @@ impl Default for HoverTips {
         HoverTips {
             enabled: false,
             form: HoverTipForm::Card,
+            avatars: false,
             all_objects: false,
             land: false,
             group_titles: true,
@@ -432,6 +447,10 @@ pub struct Settings {
     /// a notice. Aurora only: the Legacy Viewer checks at launch.
     pub update_check_interval: crate::updater::Interval,
     pub ignored_update: String,
+    /// When this installation first saw the minimum supported version that
+    /// is above it: its grace period to sign in counts from there (#3014).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update_grace: Option<crate::updater::GraceStart>,
     pub area_search: area_search::AreaSearch,
     pub crash_reports: CrashReports,
     /// Firestorm Language: default follows the OS.
@@ -497,6 +516,9 @@ pub struct Settings {
     /// Show Friends Only and keeping it after a teleport, for each account
     /// (FSRenderFriendsOnly, FSRenderFriendsOnlyPersistsTP: per-account settings).
     pub friends_only: std::collections::HashMap<uuid::Uuid, crate::world::friends_only::Preferences>,
+    /// Accounts whose radio was explicitly switched on. Only the intent is
+    /// remembered across logins (#2514), never a parcel or manual stream URL.
+    pub parcel_music_accounts: std::collections::HashSet<uuid::Uuid>,
     /// Photo window (Firestorm's snapshot floater settings).
     pub snapshot: crate::snapshot::Settings,
     /// Depth of field (Preferences › Graphics).
@@ -572,6 +594,12 @@ pub struct Settings {
     /// Its latitude (degrees north): the preset's, or the one typed for
     /// Custom.
     pub night_sky_latitude: f32,
+    /// Its longitude (degrees east), the same way; it counts with the real
+    /// time only.
+    pub night_sky_longitude: f32,
+    /// What sets the real sky's hour: the region's sun (default) or the
+    /// clock.
+    pub night_sky_hour: crate::world::night_sky::StarHour,
     /// Brightness of the real stars, 0.5 to 4 times the catalogue's.
     pub night_sky_gain: f32,
     pub exposure: f32,
@@ -697,6 +725,29 @@ pub struct Settings {
     /// The former switch, read once: on was any resident we paid.
     #[serde(rename = "payment_sent_opens_conversation", skip_serializing)]
     pub(crate) former_payment_sent_opens_conversation: Option<bool>,
+    /// Preferences › Chat › Notifications: sales, objects paid, a group's
+    /// money and other L$ that are not a resident's direct payment show a
+    /// toast (#2675). Off by default, where the Legacy Viewer's
+    /// NotifyMoneyChange and NotifyMoneyReceived are on: the row under the
+    /// balance says it without covering the world, and a busy seller would
+    /// get one toast per sale.
+    pub notify_money_received: bool,
+    /// Preferences › Chat › Notifications: a resident's direct payment with
+    /// no card shows a toast (NotifyMoneyChange and NotifyMoneyReceived, on
+    /// by default, #2675).
+    pub notify_direct_payment: bool,
+    /// A direct payment's toast only above `notify_direct_threshold` L$.
+    pub notify_direct_above: bool,
+    pub notify_direct_threshold: i32,
+    /// A sale's toast only above `notify_money_threshold` L$.
+    pub notify_money_above: bool,
+    pub notify_money_threshold: i32,
+    /// Preferences › Layout › Bars and the balance's right click: L$
+    /// received (or bought) show under the balance, in green, before they
+    /// join it (`ui/balance_gains.rs`, Aurora's own, on by default).
+    pub balance_shows_received: bool,
+    /// The same for L$ spent, in red.
+    pub balance_shows_spent: bool,
     /// Mini-map and world map options (Firestorm MiniMap* / Map* settings).
     pub maps: MapSettings,
     /// "Search": last tab, rating boxes and land limits.
@@ -708,6 +759,9 @@ pub struct Settings {
     pub show_appearance: bool,
     /// Crop outfit gallery previews to fill their frames (off: fit the whole image).
     pub appearance_fill_previews: bool,
+    /// The Appearance tab shown at exit (gallery, outfit list, worn), shown
+    /// again at the next start, as the Legacy Viewer's `LastAppearanceTab`.
+    pub appearance_tab: u8,
     pub show_ao: bool,
     /// Loading / teleport screens show the last view, blurred.
     pub loading_backdrop: bool,
@@ -746,6 +800,17 @@ pub struct Settings {
     /// off by default; Preferences > Chat). "/n" before the text works
     /// without it.
     pub show_chat_channel: bool,
+    /// The emojis used last as a row above the chat fields (Preferences >
+    /// Chat; off, the human's choice of 2026-11-10; no room before a first
+    /// emoji is sent).
+    pub show_recent_emojis: bool,
+    /// The same row with the Legacy chat style: off, as the Legacy Viewer's
+    /// row starts closed behind its arrow (the human's choice, 2026-11-09).
+    pub show_recent_emojis_legacy: bool,
+    /// Favourite emojis, kept by a right-click on an emoji: first in the
+    /// recent row and a star tab in the picker. Off (the human's choice,
+    /// 2026-11-09; an Aurora addition); Preferences > Chat.
+    pub favorite_emojis: bool,
     /// Our own objects' script errors in the nearby chat, with a red
     /// warning sign, instead of opening the Script debug window, which
     /// still keeps them (ShowScriptErrorsLocation 0; on, the human's choice
@@ -970,6 +1035,9 @@ pub struct Settings {
     pub show_other_name_tags: bool,
     /// LLVOAvatar::idleUpdateNameTag: fade after a continuous visible interval.
     pub temporary_name_tags: bool,
+    /// The contact sets' markers in the world (each set says where it wants one).
+    pub contact_markers: bool,
+    pub contact_marker_anchor: MarkerAnchor,
     pub name_tag_show_seconds: f32,
     /// Avatar name tags drawn as before the name plates (`ui::nameplate`):
     /// lines of text on a flat tag, in the tag colors of the preferences.
@@ -1025,6 +1093,8 @@ pub struct Settings {
     /// Firestorm's ConfirmHideUI ("Confirm before hiding UI"): with
     /// Firestorm's bars, hiding the interface asks first.
     pub confirm_hide_interface: bool,
+    /// Normal-mode visibility, applied before the individual avatar tag preferences.
+    pub show_name_tags: bool,
     /// The avatars' name tags in immersive mode (#859): off by default, its
     /// button beside the one that leaves it.
     pub immersive_name_tags: bool,
@@ -1139,6 +1209,9 @@ pub struct Settings {
     /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
     /// legacy lines).
     pub chat_style: ChatStyle,
+    /// The column of the conversations' workspace stays a rail at any
+    /// window width (its button; off, the column follows the window).
+    pub chat_column_collapsed: bool,
     /// Pictures and videos under the links of the Conversations window
     /// (Preferences › Chat; `link_preview.rs`).
     pub link_previews: crate::link_preview::Settings,
@@ -1170,6 +1243,13 @@ pub struct Settings {
     /// footer instead of Aurora's window that widens from a compact tree to
     /// an explorer (`ui/inventory/aurora`).
     pub classic_inventory: bool,
+    /// Appearance's outfit gallery as the Legacy Viewer's grid of small
+    /// tiles instead of Aurora's showcase: collections, large pictures and
+    /// a preview of the chosen outfit (`ui/appearance/showcase.rs`).
+    pub classic_outfit_gallery: bool,
+    /// The outfit portrait's choices, kept for the next one when asked
+    /// (`snapshot::portrait`).
+    pub outfit_portrait: crate::snapshot::portrait::PortraitSettings,
     /// "Places" as the Legacy Viewer's three tabs (`ui/places.rs`) instead
     /// of Aurora's list and preview (`ui/places/aurora.rs`).
     pub classic_places: bool,
@@ -1256,6 +1336,8 @@ pub struct Settings {
     /// Projectors cast shadows within the configured budget
     /// (Legacy Viewer RenderShadowDetail 2, "Sun/Moon + Projectors").
     pub projector_shadows: bool,
+    /// Include lights worn by other residents (Preferences › Graphics).
+    pub others_attached_lights: bool,
     /// Maximum simultaneous projector shadows, independent of local-light count.
     pub projector_shadow_limit: u8,
     /// Screen-space contact shadows of the sun or the moon, beyond the
@@ -1273,6 +1355,14 @@ pub struct Settings {
     pub fsr_sharpness: u32,
     /// World resolution as a percentage of the window; HUDs and UI stay native.
     pub render_scale_percent: u32,
+    /// "Match the display": the world follows the display's logical
+    /// resolution (`auto_render_scale` of the window's scale factor), with
+    /// `render_scale_percent` holding the resolved value. On by default on
+    /// macOS, as the Legacy Viewer's RenderHiDPI 0 draws a Retina Mac's world
+    /// (indra/newview/app_settings/settings.xml); off elsewhere, where the
+    /// Legacy Viewer draws at the full resolution. With FSR, its mode sets
+    /// the world's size instead.
+    pub render_scale_auto: bool,
     /// Geometric specular anti-aliasing (common.wgsl `specular_aa_roughness`):
     /// highlights widened where the shading normal turns faster than a
     /// pixel, so they stop shimmering as the camera moves. An Aurora
@@ -1517,7 +1607,19 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 34;
+const SETTINGS_VERSION: u32 = 36;
+
+/// The world render percentage that draws at the display's logical
+/// resolution, as the Legacy Viewer does on a Mac with RenderHiDPI 0: 50 on
+/// a 2× display, 67 on 1.5× and 100 on 1×. Rounded, then kept in the
+/// setting's range (a 3× display stays at 50); an unreadable scale leaves
+/// the world native.
+pub fn auto_render_scale(scale_factor: f64) -> u32 {
+    if !scale_factor.is_finite() || scale_factor <= 0.0 {
+        return 100;
+    }
+    (100.0 / scale_factor).round().clamp(50.0, 100.0) as u32
+}
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1827,6 +1929,7 @@ impl Default for Settings {
             update_check_interval: crate::updater::Interval::default(),
             update_channel: aurora_updater::feed::Channel::Stable,
             ignored_update: String::new(),
+            update_grace: None,
             area_search: Default::default(),
             crash_reports: CrashReports::Ask,
             language: "default".into(),
@@ -1887,6 +1990,8 @@ impl Default for Settings {
             night_sky: Default::default(),
             night_sky_place: Default::default(),
             night_sky_latitude: crate::world::night_sky::LATITUDE as f32,
+            night_sky_longitude: crate::world::night_sky::LONGITUDE as f32,
+            night_sky_hour: Default::default(),
             night_sky_gain: crate::world::night_sky::DEFAULT_GAIN,
             exposure: 1.0,
             sharpen: 0.4,
@@ -1941,6 +2046,14 @@ impl Default for Settings {
             former_payment_opens_conversation: None,
             payment_sent_opens: crate::world::payments::Opens::Never,
             former_payment_sent_opens_conversation: None,
+            notify_money_received: false,
+            notify_direct_payment: true,
+            notify_direct_above: false,
+            notify_direct_threshold: 200,
+            notify_money_above: false,
+            notify_money_threshold: 200,
+            balance_shows_received: true,
+            balance_shows_spent: true,
             maps: MapSettings::default(),
             search: Default::default(),
             show_people: true,
@@ -1948,11 +2061,13 @@ impl Default for Settings {
             show_inventory: false,
             show_appearance: false,
             appearance_fill_previews: false,
+            appearance_tab: 0,
             show_ao: false,
             ao: Default::default(),
             bridge: Default::default(),
             movements: Default::default(),
             friends_only: Default::default(),
+            parcel_music_accounts: Default::default(),
             snapshot: Default::default(),
             dof: Default::default(),
             loading_backdrop: true,
@@ -1971,6 +2086,9 @@ impl Default for Settings {
             chat_timestamps_im: true,
             former_chat_timestamps: None,
             show_chat_channel: false,
+            show_recent_emojis: false,
+            show_recent_emojis_legacy: false,
+            favorite_emojis: false,
             script_errors_in_chat: true,
             script_errors_to_channel: false,
             script_errors_channel: 1,
@@ -2050,6 +2168,8 @@ impl Default for Settings {
             show_friend_name_tags: true,
             show_other_name_tags: true,
             temporary_name_tags: false,
+            contact_markers: true,
+            contact_marker_anchor: MarkerAnchor::AboveName,
             name_tag_show_seconds: 10.0,
             classic_name_tags: false,
             classic_profiles: false,
@@ -2063,6 +2183,7 @@ impl Default for Settings {
             favorites_row_folded: false,
             system_island: SystemIsland::default(),
             confirm_hide_interface: true,
+            show_name_tags: true,
             immersive_name_tags: false,
             immersive_huds: true,
             show_net_stats: false,
@@ -2107,6 +2228,7 @@ impl Default for Settings {
             plate_shift_click: PlateClick::Nothing,
             plate_ctrl_click: PlateClick::Nothing,
             chat_style: ChatStyle::Aurora,
+            chat_column_collapsed: false,
             link_previews: Default::default(),
             gifs: Default::default(),
             notifications_style: NotificationsStyle::Aurora,
@@ -2117,6 +2239,8 @@ impl Default for Settings {
             classic_search: false,
             classic_region_estate: false,
             classic_inventory: false,
+            classic_outfit_gallery: false,
+            outfit_portrait: Default::default(),
             classic_places: false,
             places_sort: PlacesSort::Visit,
             invert_mouse: false,
@@ -2146,12 +2270,14 @@ impl Default for Settings {
             former_look_at_range: None,
             shadow_quality: 3,
             projector_shadows: true,
+            others_attached_lights: true,
             projector_shadow_limit: 2,
             contact_shadows: false,
             antialiasing: 6,
             fsr_quality: 1,
             fsr_sharpness: 80,
             render_scale_percent: 100,
+            render_scale_auto: cfg!(target_os = "macos"),
             specular_aa: true,
             colored_sky_ambient: false,
             tonemapper: 1,
@@ -2500,15 +2626,20 @@ impl Settings {
         s
     }
 
-    /// The night sky's place and latitude agree (a preset gives its own
-    /// latitude, Custom keeps the one typed), within range; the stars'
+    /// The night sky's place, latitude and longitude agree (a preset gives
+    /// its own, Custom keeps the ones typed), within range; the stars'
     /// brightness within 0.5 to 4.
     pub(crate) fn sync_night_sky(&mut self) {
-        use crate::world::night_sky::{DEFAULT_GAIN, GAIN_RANGE, LATITUDE};
+        use crate::world::night_sky::{DEFAULT_GAIN, GAIN_RANGE, LATITUDE, LONGITUDE};
         self.night_sky_latitude = match self.night_sky_place.latitude() {
             Some(latitude) => latitude,
             None if self.night_sky_latitude.is_finite() => self.night_sky_latitude.clamp(-90.0, 90.0),
             None => LATITUDE as f32,
+        };
+        self.night_sky_longitude = match self.night_sky_place.longitude() {
+            Some(longitude) => longitude,
+            None if self.night_sky_longitude.is_finite() => self.night_sky_longitude.clamp(-180.0, 180.0),
+            None => LONGITUDE as f32,
         };
         self.night_sky_gain = if self.night_sky_gain.is_finite() {
             self.night_sky_gain.clamp(*GAIN_RANGE.start(), *GAIN_RANGE.end())
@@ -2778,6 +2909,16 @@ impl Settings {
             // on Potato or Deluxe takes theirs (0 and 1, the Legacy Viewer's
             // Low and Ultra), any other keeps 0.5
             crate::graphics_presets::upgrade_tree_detail(&mut self);
+        }
+        if self.settings_version < 35 {
+            // pictures on hover used to show only inside the text tooltips
+            // (#3008): an earlier file keeps what it really showed, so the
+            // pictures stay on only where the tooltips were on too
+            let inventory = &mut self.inventory;
+            inventory.thumbnail_tooltips &= inventory.show_hover_tooltips;
+        }
+        if self.settings_version < 36 {
+            self.upgrade_display_scale(cfg!(target_os = "macos"));
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -3105,6 +3246,24 @@ impl Settings {
         }
     }
 
+    /// Settings version 36: "Match the display" is new, and a file written
+    /// before it reads the new default (serde), on on a Mac. Only a Mac
+    /// profile still exactly on the former default (Medium, 100 %, no named
+    /// saved profile) takes the new Mac default: the Legacy Viewer's Mac
+    /// MidHigh values and the display's resolution. Every other profile
+    /// keeps its world resolution and its quality: a High or custom profile
+    /// at 100 % may be a choice of sharpness.
+    fn upgrade_display_scale(&mut self, mac: bool) {
+        use crate::graphics_presets::{Preset, mac_mid_high};
+        let former_default =
+            self.render_scale_percent == 100 && self.graphics_saved_active.is_none() && Preset::matching(self) == Some(Preset::Medium);
+        self.render_scale_auto = mac && former_default;
+        if self.render_scale_auto {
+            mac_mid_high::apply(self);
+            log::info!("settings v36: a Mac profile on the former default takes the Mac MidHigh values and matches the display");
+        }
+    }
+
     pub fn render_settings(&self) -> aurora_render::RenderSettings {
         use aurora_render::{AntiAliasing, AoMethod, FsrQuality, Tonemapper};
         let mut water_effects = self.water_effects.render();
@@ -3312,6 +3471,17 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn avatar_only_hover_tips_are_off_by_default_and_for_older_preferences() {
+        use super::HoverTips;
+        assert!(!HoverTips::default().avatars);
+        assert!(!HoverTips::default().enabled);
+        let old: HoverTips = serde_json::from_str(r#"{"enabled":true,"all_objects":false}"#).expect("older hover preferences");
+        assert!(!old.avatars);
+        assert!(old.enabled);
+        assert!(!old.all_objects);
+    }
+
     #[test]
     fn console_max_lines_defaults_persist_and_sanitize() {
         let old: super::Settings = serde_json::from_str("{}").expect("old synthetic settings");
@@ -3843,6 +4013,24 @@ mod tests {
     }
 
     #[test]
+    fn recent_emojis_are_hidden_by_default_and_survive_reload() {
+        assert!(!Settings::default().show_recent_emojis, "off by default");
+        assert!(!Settings::default().show_recent_emojis_legacy, "off with the Legacy chat style");
+        let old: Settings = serde_json::from_str("{}").expect("synthetic old settings");
+        assert!(!old.show_recent_emojis);
+        assert!(!old.show_recent_emojis_legacy);
+        assert!(!Settings::default().favorite_emojis, "favourites off by default");
+        assert!(!old.favorite_emojis);
+        let original = Settings {
+            show_recent_emojis: true,
+            ..Settings::default()
+        };
+        let saved = serde_json::to_vec(&original).expect("serialize synthetic preference");
+        let loaded: Settings = serde_json::from_slice(&saved).expect("reload synthetic preference");
+        assert!(loaded.sanitized().show_recent_emojis);
+    }
+
+    #[test]
     fn chat_channel_selector_is_hidden_by_default_and_survives_reload() {
         assert!(!Settings::default().show_chat_channel);
         let old: Settings = serde_json::from_str("{}").expect("synthetic old settings");
@@ -3957,7 +4145,13 @@ mod tests {
             former.write(&mut old);
             assert_eq!(Preset::matching(&old), None, "{preset:?}");
             let now = old.sanitized();
-            assert_eq!(Preset::matching(&now), Some(preset));
+            if cfg!(target_os = "macos") && preset == Preset::Medium {
+                // version 36 then takes a Mac on the former default to the
+                // Mac MidHigh values
+                assert!(crate::graphics_presets::mac_mid_high::matches(&now));
+            } else {
+                assert_eq!(Preset::matching(&now), Some(preset));
+            }
             // customized on that level: kept
             let mut custom = Settings {
                 settings_version: 20,
@@ -4044,6 +4238,32 @@ mod tests {
             ..Settings::default()
         };
         assert!(chosen.sanitized().show_perf);
+    }
+
+    /// Pictures on hover used to show only inside the text tooltips (#3008).
+    #[test]
+    fn inventory_hover_pictures_keep_what_earlier_files_showed() {
+        let fresh = Settings::default().sanitized().inventory;
+        assert!(!fresh.show_hover_tooltips && !fresh.thumbnail_tooltips, "both off by default");
+        // (tooltips, pictures) in an earlier file → pictures afterwards: the
+        // pictures only showed inside the tooltips
+        for (tips, pictures, kept) in [(false, true, false), (true, true, true), (true, false, false)] {
+            let mut old = Settings {
+                settings_version: 34,
+                ..Settings::default()
+            };
+            old.inventory.show_hover_tooltips = tips;
+            old.inventory.thumbnail_tooltips = pictures;
+            let migrated = old.sanitized();
+            assert_eq!(migrated.inventory.show_hover_tooltips, tips);
+            assert_eq!(migrated.inventory.thumbnail_tooltips, kept, "tips {tips}, pictures {pictures}");
+        }
+        // a later choice of pictures alone stays
+        let mut chosen = Settings::default();
+        chosen.inventory.thumbnail_tooltips = true;
+        let chosen = chosen.sanitized();
+        assert!(chosen.inventory.thumbnail_tooltips);
+        assert!(chosen.sanitized().inventory.thumbnail_tooltips, "migrated only once");
     }
 
     /// The head turns toward the cursor's side by default; earlier files all
@@ -4744,5 +4964,112 @@ mod tests {
         // a key no build writes any more is not carried forward
         assert!(written.get("former_key").is_none());
         assert_eq!(written["settings_version"], SETTINGS_VERSION);
+    }
+
+    #[test]
+    fn the_logical_resolution_follows_the_scale_factor() {
+        assert_eq!(super::auto_render_scale(1.0), 100);
+        assert_eq!(super::auto_render_scale(1.25), 80);
+        assert_eq!(super::auto_render_scale(1.5), 67);
+        assert_eq!(super::auto_render_scale(2.0), 50);
+        // beyond 2×, the setting's floor
+        assert_eq!(super::auto_render_scale(3.0), 50);
+        // no display reading: native, like the former default
+        assert_eq!(super::auto_render_scale(0.0), 100);
+        assert_eq!(super::auto_render_scale(-1.0), 100);
+        assert_eq!(super::auto_render_scale(f64::NAN), 100);
+        assert_eq!(super::auto_render_scale(f64::INFINITY), 100);
+    }
+
+    #[test]
+    fn a_new_profile_matches_the_display_on_macos_only() {
+        let new = Settings::default();
+        assert_eq!(new.render_scale_auto, cfg!(target_os = "macos"));
+        assert_eq!(new.sanitized().render_scale_auto, cfg!(target_os = "macos"));
+    }
+
+    /// A profile of version 35 on the former default (Medium, 100 %, no
+    /// named saved profile), as such a file loads.
+    fn former_default_v35() -> Settings {
+        let mut s = Settings::default();
+        crate::graphics_presets::Preset::Medium.apply(&mut s);
+        s.settings_version = 35;
+        s.render_scale_percent = 100;
+        s
+    }
+
+    #[test]
+    fn a_mac_on_the_former_default_takes_the_mac_default_once() {
+        use crate::graphics_presets::mac_mid_high;
+        let mut mac = former_default_v35();
+        mac.upgrade_display_scale(true);
+        assert!(mac.render_scale_auto);
+        assert!(mac_mid_high::matches(&mac));
+        assert_eq!(mac.render_scale_percent, 100, "the window resolves it");
+        // the version is written: a later load changes nothing
+        let mut later = mac.clone().sanitized();
+        later.render_scale_auto = false;
+        later.render_scale_percent = 100;
+        assert!(!later.sanitized().render_scale_auto);
+        // another system keeps Medium at full resolution
+        let mut other = former_default_v35();
+        other.render_scale_auto = true;
+        other.upgrade_display_scale(false);
+        assert!(!other.render_scale_auto);
+        assert_eq!(
+            crate::graphics_presets::Preset::matching(&other),
+            Some(crate::graphics_presets::Preset::Medium)
+        );
+    }
+
+    #[test]
+    fn a_mac_profile_off_the_former_default_keeps_its_resolution_and_quality() {
+        use crate::graphics_presets::{Preset, mac_mid_high};
+        // serde gives an earlier file the new default, on on a Mac: every
+        // case starts from it
+        let earlier = || Settings {
+            render_scale_auto: true,
+            ..former_default_v35()
+        };
+        // an explicit percentage
+        let mut explicit = earlier();
+        explicit.render_scale_percent = 67;
+        explicit.upgrade_display_scale(true);
+        assert!(!explicit.render_scale_auto);
+        assert_eq!(explicit.render_scale_percent, 67);
+        assert_eq!(Preset::matching(&explicit), Some(Preset::Medium));
+        // High or Deluxe at 100 %: maybe a choice of sharpness
+        for level in [Preset::High, Preset::Deluxe] {
+            let mut chosen = earlier();
+            level.apply(&mut chosen);
+            chosen.upgrade_display_scale(true);
+            assert!(!chosen.render_scale_auto, "{level:?}");
+            assert_eq!(Preset::matching(&chosen), Some(level));
+        }
+        // a named saved profile
+        let mut saved = earlier();
+        saved.graphics_saved.insert("my profile".into(), Default::default());
+        saved.graphics_saved_active = Some("my profile".into());
+        saved.upgrade_display_scale(true);
+        assert!(!saved.render_scale_auto);
+        assert_eq!(Preset::matching(&saved), Some(Preset::Medium));
+        assert_eq!(saved.graphics_saved_active.as_deref(), Some("my profile"));
+        // customized on Medium
+        let mut custom = earlier();
+        custom.draw_distance = 200.0;
+        custom.upgrade_display_scale(true);
+        assert!(!custom.render_scale_auto);
+        assert!(!mac_mid_high::matches(&custom));
+        assert_eq!(custom.draw_distance, 200.0);
+    }
+
+    #[test]
+    fn an_earlier_file_keeps_its_render_scale_on_every_system() {
+        // no render_scale_auto in the file: the field's default, then the
+        // upgrade of version 36
+        let file: Settings = serde_json::from_str(r#"{"settings_version":35,"render_scale_percent":67}"#).expect("synthetic settings");
+        let loaded = file.sanitized();
+        assert!(!loaded.render_scale_auto);
+        assert_eq!(loaded.render_scale_percent, 67);
     }
 }

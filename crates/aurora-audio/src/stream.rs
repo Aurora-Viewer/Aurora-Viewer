@@ -18,6 +18,7 @@ use crate::decode::{DecodeStream, hint_for_content_type, hint_for_path};
 use crate::http;
 use crate::icy::{IcyReader, TitleSlot};
 use crate::mixer::{Channel, Command, ENGINE_SAMPLE_RATE, PcmSource};
+use crate::playlist;
 use crate::resample::{Resampler, to_stereo};
 
 /// State of the parcel music stream.
@@ -37,9 +38,9 @@ pub enum StreamStatus {
 /// Stable error categories for translated UI text; server text stays in the log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum StreamError {
-    #[error("this address is a web page, not a stream")]
+    #[error("web page with no radio stream")]
     WebPage,
-    #[error("this address is a playlist, not a stream")]
+    #[error("radio playlist the decoder cannot follow")]
     Playlist,
     #[error("HTTP status {0}")]
     HttpStatus(u16),
@@ -62,10 +63,26 @@ impl From<http::HttpError> for StreamError {
         log::warn!("music HTTP failure: {error}");
         match error {
             http::HttpError::Status(code) => Self::HttpStatus(code),
-            http::HttpError::Tls(_) | http::HttpError::NoTlsReply => Self::Tls,
+            http::HttpError::Tls(_) => Self::Tls,
             http::HttpError::Io(ref error) if error.get_ref().is_some_and(|cause| cause.is::<rustls::Error>()) => Self::Tls,
-            http::HttpError::Url(_) | http::HttpError::Scheme(_) => Self::Address,
+            http::HttpError::Url(_) | http::HttpError::Scheme(_) | http::HttpError::PlaylistOrigin => Self::Address,
             _ => Self::Connection,
+        }
+    }
+}
+
+impl From<playlist::PlaylistError> for StreamError {
+    fn from(error: playlist::PlaylistError) -> Self {
+        match error {
+            playlist::PlaylistError::Http(error) => error.into(),
+            other => {
+                log::warn!("music playlist failure: {other}");
+                match other {
+                    playlist::PlaylistError::WebPage(_) => Self::WebPage,
+                    playlist::PlaylistError::Read(_) => Self::Connection,
+                    _ => Self::Playlist,
+                }
+            }
         }
     }
 }
@@ -304,19 +321,12 @@ fn stream_thread(url: String, stop: Arc<AtomicBool>, status: StatusHandle, cmd_t
 }
 
 fn play_once(url: &str, stop: &Arc<AtomicBool>, status: &StatusHandle, cmd_tx: &Sender<Command>) -> Result<EndReason, StreamError> {
-    let resp = http::open(url, stop).map_err(StreamError::from)?;
-    match resp.content_type.as_deref() {
-        Some("text/html" | "application/xhtml+xml") => return Err(StreamError::WebPage),
-        Some("audio/x-mpegurl" | "audio/mpegurl" | "application/x-mpegurl" | "application/vnd.apple.mpegurl" | "audio/x-scpls") => {
-            return Err(StreamError::Playlist);
-        }
-        _ => {}
-    }
+    let resp = playlist::open(url, stop)?;
     let hint = resp
         .content_type
         .as_deref()
         .and_then(hint_for_content_type)
-        .or_else(|| url::Url::parse(url).ok().and_then(|u| hint_for_path(u.path())));
+        .or_else(|| hint_for_path(resp.url.path()));
     let title: TitleSlot = Arc::new(Mutex::new(None));
     let reader: Box<dyn std::io::Read + Send + Sync> = match resp.metaint {
         Some(mi) => Box::new(IcyReader::new(resp.body, mi, title.clone())),
@@ -437,7 +447,9 @@ mod tests {
         assert_eq!(slot.lock().status, StreamStatus::Playing { title: None });
     }
 
-    fn loopback_content_error(content_type: &str, body: &str) -> String {
+    /// The error a station serving `body` as `content_type` ends in, through
+    /// the controller's real path (`playlist::open`, then the decoder).
+    fn loopback_content_error(content_type: &str, body: &str) -> StreamError {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/stream", listener.local_addr().unwrap());
         let response = format!("HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nConnection: close\r\n\r\n{body}");
@@ -464,7 +476,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(5);
         let error = loop {
             if let StreamStatus::Error(error) = ctl.status() {
-                break error.to_string();
+                break error;
             }
             assert!(Instant::now() < deadline, "{:?}", ctl.status());
             thread::sleep(Duration::from_millis(10));
@@ -476,16 +488,29 @@ mod tests {
 
     #[test]
     fn parcel_music_loopback_html_has_a_readable_error() {
+        // A page that exports no radio playlist (not an AzuraCast player).
         let error = loopback_content_error("text/html; charset=utf-8", "<html>Not a radio stream</html>");
-        assert!(error.contains("web page"), "{error}");
+        assert_eq!(error, StreamError::WebPage);
+        assert!(error.to_string().contains("web page"), "{error}");
     }
 
     #[test]
     fn parcel_music_loopback_playlists_have_a_readable_error() {
-        for mime in ["audio/x-mpegurl", "audio/x-scpls", "application/vnd.apple.mpegurl"] {
-            let error = loopback_content_error(mime, "http://radio.example/stream");
-            assert!(error.contains("playlist"), "{error}");
+        // Playlists the radio decoder cannot follow: HLS, and one without a stream.
+        for (mime, body) in [
+            ("application/vnd.apple.mpegurl", "#EXTM3U\n#EXT-X-TARGETDURATION:10\nsegment.ts"),
+            ("audio/x-mpegurl", "#EXTM3U\n#EXTINF:-1,nothing"),
+            ("audio/x-scpls", "[playlist]\nNumberOfEntries=0"),
+        ] {
+            let error = loopback_content_error(mime, body);
+            assert_eq!(error, StreamError::Playlist, "{mime}");
+            assert!(error.to_string().contains("playlist"), "{error}");
         }
+        // A playlist link to another site is refused as an address.
+        assert_eq!(
+            loopback_content_error("audio/x-mpegurl", "http://radio.example/stream"),
+            StreamError::Address
+        );
     }
 
     #[test]
@@ -508,6 +533,7 @@ mod tests {
                         Err(e) => panic!("{e}"),
                     }
                 };
+                sock.set_nonblocking(false).unwrap();
                 sock.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
                 let mut request = Vec::new();
                 let mut buf = [0; 1024];
@@ -539,10 +565,11 @@ mod tests {
     }
 
     #[test]
-    fn parcel_music_classifies_tls_handshake_and_http_errors() {
+    fn parcel_music_classifies_tls_address_and_http_errors() {
         assert_eq!(StreamError::from(http::HttpError::Status(503)), StreamError::HttpStatus(503));
         let tls = std::io::Error::other(rustls::Error::General("handshake failed".into()));
         assert_eq!(StreamError::from(http::HttpError::Io(tls)), StreamError::Tls);
+        assert_eq!(StreamError::from(http::HttpError::PlaylistOrigin), StreamError::Address);
         assert_eq!(
             StreamError::from(http::HttpError::Connect("unreachable".into())),
             StreamError::Connection
@@ -593,21 +620,10 @@ mod tests {
     }
 
     /// Serves one ICY response on loopback: MP3 frames with in-band metadata.
-    fn serve_icy_once(metaint: usize, tls_probe: bool) -> (String, thread::JoinHandle<()>) {
+    fn serve_icy_once(metaint: usize) -> (String, thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let handle = thread::spawn(move || {
-            if tls_probe {
-                let (mut probe, _) = listener.accept().unwrap();
-                probe.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-                let mut hello = [0; 4096];
-                let n = probe.read(&mut hello).unwrap();
-                assert!(n > 0 && hello[0] == 22);
-                // A plain Shoutcast server may simply close on a TLS hello.
-                probe.shutdown(std::net::Shutdown::Write).unwrap();
-                let mut drain = Vec::new();
-                let _ = probe.read_to_end(&mut drain);
-            }
             let Ok((mut sock, _)) = listener.accept() else {
                 return;
             };
@@ -644,21 +660,12 @@ mod tests {
             let _ = sock.set_read_timeout(Some(Duration::from_secs(10)));
             while matches!(sock.read(&mut buf), Ok(n) if n > 0) {}
         });
-        (format!("{}://{addr}/stream", if tls_probe { "https" } else { "http" }), handle)
+        (format!("http://{addr}/stream"), handle)
     }
 
     #[test]
     fn loopback_icy_stream_plays_and_reports_title() {
-        assert_icy_playback(false);
-    }
-
-    #[test]
-    fn parcel_music_plain_icy_https_fallback_decodes_audio() {
-        assert_icy_playback(true);
-    }
-
-    fn assert_icy_playback(tls_probe: bool) {
-        let (url, server) = serve_icy_once(4096, tls_probe);
+        let (url, server) = serve_icy_once(4096);
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
         let mut ctl = StreamController::new(cmd_tx);
         ctl.play(&url);

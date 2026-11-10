@@ -5,8 +5,6 @@
 //! which strict HTTP parsers reject. Supports http/https, redirects and
 //! chunked transfer encoding; every blocking read honours a stop flag.
 
-use parking_lot::Mutex;
-use std::collections::HashSet;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -43,14 +41,15 @@ pub(crate) enum HttpError {
     Status(u16),
     #[error("too many redirects")]
     Redirects,
-    #[error("server did not send a TLS reply")]
-    NoTlsReply,
+    #[error("radio playlist links must stay on the same HTTP(S) origin")]
+    PlaylistOrigin,
     #[error("stopped")]
     Stopped,
 }
 
 /// Body + interesting headers of a successful response.
 pub(crate) struct HttpResponse {
+    pub url: Url,
     pub content_type: Option<String>,
     pub metaint: Option<usize>,
     pub body: Box<dyn Read + Send + Sync>,
@@ -239,7 +238,7 @@ fn tls_config() -> Result<Arc<rustls::ClientConfig>, HttpError> {
         .map_err(HttpError::Tls)
 }
 
-fn connect(url: &Url, stop: &AtomicBool) -> Result<Conn, HttpError> {
+fn connect(url: &Url) -> Result<Conn, HttpError> {
     let https = match url.scheme() {
         "http" | "icy" => false,
         "https" => true,
@@ -266,7 +265,7 @@ fn connect(url: &Url, stop: &AtomicBool) -> Result<Conn, HttpError> {
             Err(e) => last_err = e.to_string(),
         }
     }
-    let mut tcp = tcp.ok_or(HttpError::Connect(last_err))?;
+    let tcp = tcp.ok_or(HttpError::Connect(last_err))?;
     tcp.set_read_timeout(Some(READ_POLL))?;
     tcp.set_write_timeout(Some(CONNECT_TIMEOUT))?;
     let _ = tcp.set_nodelay(true);
@@ -280,143 +279,8 @@ fn connect(url: &Url, stop: &AtomicBool) -> Result<Conn, HttpError> {
         .trim_end_matches(']')
         .to_string();
     let name = rustls::pki_types::ServerName::try_from(host).map_err(|e| HttpError::Tls(e.to_string()))?;
-    let mut conn = rustls::ClientConnection::new(tls_config()?, name).map_err(|e| HttpError::Tls(e.to_string()))?;
-    handshake(&mut conn, &mut tcp, stop)?;
+    let conn = rustls::ClientConnection::new(tls_config()?, name).map_err(|e| HttpError::Tls(e.to_string()))?;
     Ok(Conn::Tls(Box::new(rustls::StreamOwned::new(conn, tcp))))
-}
-
-/// Observe the first response byte before rustls consumes it. Any TLS record
-/// type is enough to forbid fallback, even if that record is incomplete.
-struct HandshakeIo<'a> {
-    socket: &'a mut TcpStream,
-    first_byte: Option<u8>,
-}
-
-impl Read for HandshakeIo<'_> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let n = self.socket.read(buf)?;
-        if n > 0 && self.first_byte.is_none() {
-            self.first_byte = Some(buf[0]);
-        }
-        Ok(n)
-    }
-}
-
-impl Write for HandshakeIo<'_> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.socket.write(buf)
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        self.socket.flush()
-    }
-}
-
-fn no_tls_reply(error: &io::Error, first_byte: Option<u8>) -> bool {
-    if first_byte.is_some_and(|byte| (20..=24).contains(&byte)) {
-        return false;
-    }
-    if let Some(error) = error.get_ref().and_then(|cause| cause.downcast_ref::<rustls::Error>()) {
-        return matches!(
-            error,
-            rustls::Error::InvalidMessage(
-                rustls::InvalidMessage::InvalidContentType
-                    | rustls::InvalidMessage::UnknownProtocolVersion
-                    | rustls::InvalidMessage::MessageTooLarge
-                    | rustls::InvalidMessage::MessageTooShort
-            )
-        );
-    }
-    // A server without TLS that drops the connection on our ClientHello
-    // can surface as a reset, an abort or a broken pipe instead of an EOF
-    // (Windows especially): the same case, no TLS record came back.
-    matches!(
-        error.kind(),
-        io::ErrorKind::UnexpectedEof | io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionAborted
-    )
-}
-
-fn handshake(conn: &mut rustls::ClientConnection, tcp: &mut TcpStream, stop: &AtomicBool) -> Result<(), HttpError> {
-    let deadline = Instant::now() + STALL_TIMEOUT;
-    let mut transport = HandshakeIo {
-        socket: tcp,
-        first_byte: None,
-    };
-    while conn.is_handshaking() {
-        if stop.load(Ordering::Relaxed) {
-            return Err(HttpError::Stopped);
-        }
-        if Instant::now() >= deadline {
-            return Err(io::Error::new(io::ErrorKind::TimedOut, "TLS handshake timed out").into());
-        }
-        match conn.complete_io(&mut transport) {
-            Ok(_) => {}
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted
-                ) => {}
-            Err(error) => {
-                if conn.is_handshaking()
-                    && conn.protocol_version().is_none()
-                    && conn.peer_certificates().is_none()
-                    && no_tls_reply(&error, transport.first_byte)
-                {
-                    return Err(HttpError::NoTlsReply);
-                }
-                return Err(HttpError::Io(error));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn plain_music_url(url: &Url) -> Option<Url> {
-    let port = url.port()?;
-    if url.scheme() != "https" || port == 443 {
-        return None;
-    }
-    let mut plain = url.clone();
-    plain.set_scheme("http").ok()?;
-    plain.set_port(Some(port)).ok()?;
-    Some(plain)
-}
-
-/// This client is used only for music. Remember exact station URLs, never a
-/// blanket host policy, and never fall back after certificate/alert failures.
-fn connect_music(url: &mut Url, stop: &AtomicBool) -> Result<Conn, HttpError> {
-    static PLAIN_STATIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-    let stations = PLAIN_STATIONS.get_or_init(|| Mutex::new(HashSet::new()));
-    let original = url.as_str().to_owned();
-    let plain = plain_music_url(url);
-    let remembered = stations.lock().contains(&original);
-    if let Some(plain) = plain.as_ref()
-        && remembered
-    {
-        *url = plain.clone();
-        return connect(url, stop);
-    }
-    match connect(url, stop) {
-        Err(HttpError::NoTlsReply) if plain.is_some() && !stop.load(Ordering::Relaxed) => {
-            let mut cache = stations.lock();
-            // Keep memory and the once-per-URL log bounded for a long session.
-            if cache.len() >= 256 && !cache.contains(&original) {
-                return Err(HttpError::NoTlsReply);
-            }
-            if cache.insert(original) {
-                log::warn!(
-                    "music stream: {}:{} does not speak TLS, trying http",
-                    url.host_str().unwrap_or("unknown"),
-                    url.port().unwrap_or(443)
-                );
-            }
-            drop(cache);
-            if let Some(plain) = plain {
-                *url = plain;
-            }
-            connect(url, stop)
-        }
-        result => result,
-    }
 }
 
 fn request_target(url: &Url) -> String {
@@ -471,12 +335,26 @@ fn read_head<R: BufRead>(r: &mut R) -> Result<Head, HttpError> {
 
 /// Opens `url` for streaming, following redirects. Sends `Icy-MetaData: 1`.
 pub(crate) fn open(url: &str, stop: &Arc<AtomicBool>) -> Result<HttpResponse, HttpError> {
+    open_with_origin(url, stop, None)
+}
+
+/// Discovered playlist links cannot acquire access to another site, including
+/// through a redirect. Ordinary stream redirects retain their existing policy.
+pub(crate) fn open_with_origin(url: &str, stop: &Arc<AtomicBool>, origin: Option<&Url>) -> Result<HttpResponse, HttpError> {
     let mut url = Url::parse(url.trim()).map_err(|e| HttpError::Url(e.to_string()))?;
     for _ in 0..=MAX_REDIRECTS {
         if stop.load(Ordering::Relaxed) {
             return Err(HttpError::Stopped);
         }
-        let mut conn = connect_music(&mut url, stop)?;
+        if origin.is_some_and(|base| {
+            !matches!(url.scheme(), "http" | "https")
+                || url.origin() != base.origin()
+                || !url.username().is_empty()
+                || url.password().is_some()
+        }) {
+            return Err(HttpError::PlaylistOrigin);
+        }
+        let mut conn = connect(&url)?;
         let req = format!(
             "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: {}\r\nAccept: */*\r\nIcy-MetaData: 1\r\nConnection: close\r\n\r\n",
             request_target(&url),
@@ -509,6 +387,7 @@ pub(crate) fn open(url: &str, stop: &Arc<AtomicBool>) -> Result<HttpResponse, Ht
                     Box::new(reader)
                 };
                 return Ok(HttpResponse {
+                    url,
                     content_type,
                     metaint,
                     body,
@@ -528,105 +407,6 @@ pub(crate) fn open(url: &str, stop: &Arc<AtomicBool>) -> Result<HttpResponse, Ht
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parcel_music_plain_icy_https_fallback_preserves_request_and_is_remembered() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.set_nonblocking(true).unwrap();
-        let addr = listener.local_addr().unwrap();
-        let url = format!("https://{addr}/live?station=1");
-        let server = std::thread::spawn(move || {
-            for attempt in 0..3 {
-                let deadline = Instant::now() + Duration::from_secs(10);
-                let (mut sock, _) = loop {
-                    match listener.accept() {
-                        Ok(client) => break client,
-                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                            assert!(Instant::now() < deadline, "connection {attempt} missing");
-                            std::thread::sleep(Duration::from_millis(10));
-                        }
-                        Err(e) => panic!("{e}"),
-                    }
-                };
-                sock.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-                if attempt == 0 {
-                    let mut hello = [0; 4096];
-                    let n = sock.read(&mut hello).unwrap();
-                    assert!(n > 0 && hello[0] == 22, "first request must try TLS");
-                    sock.write_all(b"HTTP/1.0 400 Bad Request\r\n\r\n").unwrap();
-                } else {
-                    let mut reader = BufReader::new(sock);
-                    let mut request = String::new();
-                    loop {
-                        let mut line = String::new();
-                        let n = reader.read_line(&mut line).unwrap();
-                        assert!(n > 0);
-                        request.push_str(&line);
-                        if line == "\r\n" {
-                            break;
-                        }
-                    }
-                    assert!(request.starts_with("GET /live?station=1 HTTP/1.1\r\n"), "{request}");
-                    assert!(request.contains(&format!("Host: {addr}\r\n")), "{request}");
-                    assert!(request.contains(&format!("User-Agent: {USER_AGENT}\r\n")), "{request}");
-                    assert!(request.contains("Icy-MetaData: 1\r\n"));
-                    reader
-                        .get_mut()
-                        .write_all(b"ICY 200 OK\r\nContent-Type: audio/mpeg\r\n\r\nMP3")
-                        .unwrap();
-                    reader.get_mut().shutdown(std::net::Shutdown::Write).unwrap();
-                    let mut drain = Vec::new();
-                    let _ = reader.read_to_end(&mut drain);
-                }
-            }
-        });
-        let stop = Arc::new(AtomicBool::new(false));
-        for _ in 0..2 {
-            let mut response = open(&url, &stop).unwrap();
-            assert_eq!(response.content_type.as_deref(), Some("audio/mpeg"));
-            let mut body = [0; 3];
-            response.body.read_exact(&mut body).unwrap();
-            assert_eq!(&body, b"MP3");
-        }
-        server.join().unwrap();
-    }
-
-    #[test]
-    fn parcel_music_fallback_excludes_standard_tls_and_certificate_failures() {
-        assert!(plain_music_url(&Url::parse("https://radio.example/live").unwrap()).is_none());
-        assert!(plain_music_url(&Url::parse("https://radio.example:443/live").unwrap()).is_none());
-        assert!(plain_music_url(&Url::parse("http://radio.example:8443/live").unwrap()).is_none());
-        let plain = plain_music_url(&Url::parse("https://radio.example:1701/live?q=1").unwrap()).unwrap();
-        assert_eq!(plain.as_str(), "http://radio.example:1701/live?q=1");
-        assert!(no_tls_reply(&io::ErrorKind::UnexpectedEof.into(), None));
-        assert!(!no_tls_reply(&io::ErrorKind::UnexpectedEof.into(), Some(22)));
-        assert!(!no_tls_reply(&io::ErrorKind::TimedOut.into(), None));
-        assert!(!no_tls_reply(&io::ErrorKind::ConnectionRefused.into(), None));
-        for kind in [
-            io::ErrorKind::BrokenPipe,
-            io::ErrorKind::ConnectionReset,
-            io::ErrorKind::ConnectionAborted,
-        ] {
-            assert!(no_tls_reply(&kind.into(), None), "{kind:?} before any reply");
-            assert!(!no_tls_reply(&kind.into(), Some(22)), "{kind:?} after a TLS handshake record");
-            assert!(no_tls_reply(&kind.into(), Some(b'H')), "{kind:?} after a plain reply byte");
-        }
-        let record = io::Error::new(
-            io::ErrorKind::InvalidData,
-            rustls::Error::InvalidMessage(rustls::InvalidMessage::InvalidContentType),
-        );
-        assert!(no_tls_reply(&record, Some(b'H')));
-        let cert = io::Error::new(
-            io::ErrorKind::InvalidData,
-            rustls::Error::InvalidCertificate(rustls::CertificateError::BadEncoding),
-        );
-        assert!(!no_tls_reply(&cert, None));
-        let alert = io::Error::new(
-            io::ErrorKind::InvalidData,
-            rustls::Error::AlertReceived(rustls::AlertDescription::HandshakeFailure),
-        );
-        assert!(!no_tls_reply(&alert, None));
-    }
 
     #[test]
     fn https_rejects_an_untrusted_certificate() {
@@ -649,24 +429,10 @@ mod tests {
             sock.set_write_timeout(Some(Duration::from_secs(5))).unwrap();
             let mut tls = rustls::ServerConnection::new(Arc::new(config)).unwrap();
             let _ = tls.complete_io(&mut sock);
-            drop(sock);
-            listener.set_nonblocking(true).unwrap();
-            let deadline = Instant::now() + Duration::from_millis(300);
-            while Instant::now() < deadline {
-                match listener.accept() {
-                    Ok((mut plain, _)) => {
-                        let _ = plain.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
-                        return true;
-                    }
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(10)),
-                    Err(e) => panic!("{e}"),
-                }
-            }
-            false
         });
         let stop = Arc::new(AtomicBool::new(false));
         let error = open(&url, &stop).err().expect("a self-signed station must be rejected");
-        assert!(!server.join().unwrap(), "certificate failure must not make a plaintext request");
+        server.join().unwrap();
         let HttpError::Io(error) = error else {
             panic!("expected a TLS handshake error: {error}");
         };

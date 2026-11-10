@@ -102,6 +102,12 @@ pub fn show(
     let mut cancel = false;
     let mut choose = None;
     let mut dropped = None;
+    let mut import = false;
+    let modify = st.draft.as_ref().is_some_and(|draft| draft.can_modify(world));
+    if let Some((message, imported)) = st.xml.poll(st.draft.as_mut(), modify, &world.avatar_lib.shape_params) {
+        st.message = message;
+        changed |= imported;
+    }
     let mut floater = widgets::Floater::new(
         "wearable_editor",
         aurora_i18n::tr!("wearable-title"),
@@ -125,7 +131,13 @@ pub fn show(
         let modify = draft.can_modify(world);
         let local = editor::has_local_textures(world, draft);
         let copy = draft.can_copy(world) && (modify || !draft.dirty()) && !picking;
-        ui.label(RichText::new(&draft.item.name).strong().size(16.0));
+        import = super::shape::name_row(
+            ui,
+            p,
+            None,
+            RichText::new(&draft.item.name).strong().size(16.0),
+            modify && !busy && !picking && !st.xml.busy(),
+        );
         actions.extend(
             super::shape::appearance_controls(ui, p, controls)
                 .into_iter()
@@ -330,6 +342,10 @@ pub fn show(
             });
         });
     });
+    if import && let Some(draft) = &st.draft {
+        st.message.clear();
+        st.xml.start(ctx, draft);
+    }
     if let Some(slot) = choose {
         st.open_picker(world, slot);
     }
