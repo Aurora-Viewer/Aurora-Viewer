@@ -13318,6 +13318,7 @@ inventory-folder-color-restore = デフォルトに戻す
 inventory-folder-color-private = この色はあなたにだけ表示されます。
 inventory-folder-color-many = { $count }個のフォルダ
 inventory-folder-color-none = 色を付けるフォルダを選択してください。
+inventory-folder-color-subfolders = サブフォルダにも色を付ける（{ $count }）
 
 area-search-group = グループ
 area-search-last-owner = 前のオーナー

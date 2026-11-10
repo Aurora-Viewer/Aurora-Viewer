@@ -67,6 +67,12 @@ pub(super) struct Picker {
     /// its id, so egui reopens it at its old depth, under an inventory
     /// clicked since (the expanded window covers it).
     raise: bool,
+    /// "Also color its subfolders": off at every opening, so a click never
+    /// recolors a whole tree by surprise.
+    subfolders: bool,
+    /// The folders below `ids`, kept for the inventory generation they were
+    /// gathered at (a tree under "My Inventory" can hold thousands).
+    below: Option<(Vec<Uuid>, u64, Vec<Uuid>)>,
 }
 
 impl Picker {
@@ -76,7 +82,29 @@ impl Picker {
             ids,
             custom: [r, g, b, 255],
             raise: true,
+            subfolders: false,
+            below: None,
         }
+    }
+
+    /// The folders below the targets, gathered again when they or the
+    /// inventory changed.
+    fn below(&mut self, inv: &Inventory) -> &[Uuid] {
+        let fresh = matches!(&self.below, Some((ids, generation, _)) if *ids == self.ids && *generation == inv.generation);
+        if !fresh {
+            self.below = Some((self.ids.clone(), inv.generation, descendants(inv, &self.ids)));
+        }
+        self.below.as_ref().map_or(&[], |(_, _, below)| below.as_slice())
+    }
+
+    /// What a click colors: the targets, and the folders below them when the
+    /// toggle is on.
+    fn colored_by_a_click(&mut self, inv: &Inventory) -> Vec<Uuid> {
+        let mut ids = self.ids.clone();
+        if self.subfolders {
+            ids.extend_from_slice(self.below(inv));
+        }
+        ids
     }
 
     /// Follows the selection: new folders also bring their color to the
@@ -96,6 +124,25 @@ pub(super) fn folders<'a>(inv: &Inventory, ids: impl IntoIterator<Item = &'a Uui
     let mut folders: Vec<Uuid> = ids.into_iter().copied().filter(|id| inv.folders.contains_key(id)).collect();
     folders.sort_unstable();
     folders
+}
+
+/// Every folder below `roots` (not the roots themselves), each once, even if
+/// a corrupt tree loops or a root lies under another one.
+fn descendants(inv: &Inventory, roots: &[Uuid]) -> Vec<Uuid> {
+    let mut seen: HashSet<Uuid> = roots.iter().copied().collect();
+    let mut below = Vec::new();
+    let mut next: Vec<Uuid> = roots.to_vec();
+    while let Some(id) = next.pop() {
+        let Some(folder) = inv.folders.get(&id) else { continue };
+        for &child in &folder.children {
+            if inv.folders.contains_key(&child) && seen.insert(child) {
+                below.push(child);
+                next.push(child);
+            }
+        }
+    }
+    below.sort_unstable();
+    below
 }
 
 /// The palette window: a click on a swatch colors the selected folders at
@@ -131,7 +178,15 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut I
             Some(name) => ui.label(RichText::new(name).strong().color(p.ink)),
             None => ui.label(RichText::new(aurora_i18n::tr!("inventory-folder-color-none")).color(p.muted)),
         };
-        ui.add_enabled_ui(target.is_some(), |ui| palette(ui, p, ui_id, picker, prefs, current));
+        ui.add_enabled_ui(target.is_some(), |ui| {
+            // off by default; greyed when the folders have no subfolder
+            let count = picker.below(inv).len();
+            ui.add_enabled_ui(count > 0, |ui| {
+                let label = aurora_i18n::tr!("inventory-folder-color-subfolders", count = count);
+                crate::ui::widgets::checkbox(ui, p, &mut picker.subfolders, label);
+            });
+            palette(ui, p, ui_id, inv, picker, prefs, current);
+        });
         ui.label(
             RichText::new(aurora_i18n::tr!("inventory-folder-color-private"))
                 .size(11.0)
@@ -146,13 +201,22 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut I
     }
 }
 
-/// The swatches, the custom color and "Restore default" of the picker's folders.
-fn palette(ui: &mut egui::Ui, p: &Palette, ui_id: Uuid, picker: &mut Picker, prefs: &mut InventoryPreferences, current: Option<[u8; 3]>) {
+/// The swatches, the custom color and "Restore default" of the picker's
+/// folders (and of the folders below them, the toggle on).
+fn palette(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    ui_id: Uuid,
+    inv: &Inventory,
+    picker: &mut Picker,
+    prefs: &mut InventoryPreferences,
+    current: Option<[u8; 3]>,
+) {
     for row in PRESETS.chunks(PER_ROW) {
         ui.horizontal(|ui| {
             for &color in row {
                 if swatch(ui, p, color, current == Some(color)).clicked() {
-                    set(prefs, &picker.ids, Some(color));
+                    set(prefs, &picker.colored_by_a_click(inv), Some(color));
                     let [r, g, b] = color;
                     picker.custom = [r, g, b, 255];
                 }
@@ -163,16 +227,17 @@ fn palette(ui: &mut egui::Ui, p: &Palette, ui_id: Uuid, picker: &mut Picker, pre
     ui.horizontal(|ui| {
         if color_button(ui, p, ("inventory_folder_color_custom", ui_id), &mut picker.custom, false).changed() {
             let [r, g, b, _] = picker.custom;
-            set(prefs, &picker.ids, Some([r, g, b]));
+            set(prefs, &picker.colored_by_a_click(inv), Some([r, g, b]));
         }
         ui.label(RichText::new(aurora_i18n::tr!("inventory-folder-color-custom")).color(p.ink));
     });
-    let colored = picker.ids.iter().any(|id| prefs.folder_colors.contains_key(id));
+    let reach = picker.colored_by_a_click(inv);
+    let colored = reach.iter().any(|id| prefs.folder_colors.contains_key(id));
     if ui
         .add_enabled(colored, egui::Button::new(aurora_i18n::tr!("inventory-folder-color-restore")))
         .clicked()
     {
-        set(prefs, &picker.ids, None);
+        set(prefs, &reach, None);
     }
 }
 
@@ -216,8 +281,11 @@ pub fn demo(st: &mut InventoryUi, prefs: &mut InventoryPreferences) {
 ///   "Right-click tests" (760). Capture 750 (palette covered), 820 (in front);
 /// - `aurora-folder-colors-follow`: "Clothing" selected (700), then an item
 ///   (780). Capture 750 (the palette names Clothing, its pink outlined) and 830
-///   (no folder: "Select a folder", the palette greyed).
-pub fn demo_frame(ctx: &egui::Context, st: &mut InventoryUi, prefs: &InventoryPreferences, frame: u64) {
+///   (no folder: "Select a folder", the palette greyed);
+/// - `aurora-folder-colors-subfolders`: the tree open, "Also color its
+///   subfolders" ticked (700), purple picked (720). Capture 690 (unticked, its
+///   count 3) and 780 (A — Personal folder and its 3 subfolders purple).
+pub fn demo_frame(ctx: &egui::Context, inv: &Inventory, st: &mut InventoryUi, prefs: &mut InventoryPreferences, frame: u64) {
     let Ok(mode) = std::env::var("AURORA_DEMO_INVENTORY") else { return };
     if !mode.contains("folder-colors") {
         return;
@@ -238,6 +306,19 @@ pub fn demo_frame(ctx: &egui::Context, st: &mut InventoryUi, prefs: &InventoryPr
         }
         ("aurora-folder-colors-follow", 700) => select(st, 8203),
         ("aurora-folder-colors-follow", 780) => select(st, 8100),
+        ("aurora-folder-colors-subfolders", 610) => st.expand_all = Some(true),
+        ("aurora-folder-colors-subfolders", 700) => {
+            if let Some(picker) = &mut st.folder_color {
+                picker.subfolders = true;
+            }
+        }
+        ("aurora-folder-colors-subfolders", 720) => {
+            if let Some(picker) = &mut st.folder_color {
+                set(prefs, &picker.colored_by_a_click(inv), Some(PRESETS[8]));
+            }
+        }
+        // the open tree is long: scroll to the colored ones (Body, the last)
+        ("aurora-folder-colors-subfolders", 730) => st.reveal = Some(Uuid::from_u128(8204)),
         _ => {}
     }
 }
@@ -277,6 +358,61 @@ mod tests {
         assert_eq!(picker.custom, [0xD6, 0x40, 0x9F, 255]);
         picker.retarget(&prefs, Vec::new());
         assert!(picker.ids.is_empty());
+    }
+
+    /// The demo's "A — Personal folder" (8200) holds Attachments, Clothing
+    /// and Body (8202–8204).
+    fn personal_tree() -> Inventory {
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        crate::world::inventory::demo::seed_view(&mut inv, Uuid::from_u128(2), false);
+        inv
+    }
+
+    #[test]
+    fn subfolders_are_colored_only_with_the_toggle_on() {
+        let inv = personal_tree();
+        let mut prefs = InventoryPreferences::default();
+        let personal = Uuid::from_u128(8200);
+        let below: Vec<Uuid> = (8202..=8204).map(Uuid::from_u128).collect();
+        let mut picker = Picker::new(&prefs, vec![personal]);
+        assert!(!picker.subfolders, "off at every opening");
+        assert_eq!(picker.below(&inv), below.as_slice());
+        // off: the folder alone
+        set(&mut prefs, &picker.colored_by_a_click(&inv), Some(PRESETS[0]));
+        assert_eq!(prefs.folder_colors.keys().copied().collect::<Vec<_>>(), vec![personal]);
+        // on: the folder and every folder below it; Restore default the same
+        picker.subfolders = true;
+        set(&mut prefs, &picker.colored_by_a_click(&inv), Some(PRESETS[8]));
+        assert_eq!(prefs.folder_colors.len(), 4);
+        assert!(below.iter().all(|id| prefs.folder_colors[id] == PRESETS[8]));
+        set(&mut prefs, &picker.colored_by_a_click(&inv), None);
+        assert!(prefs.folder_colors.is_empty());
+    }
+
+    #[test]
+    fn a_looping_tree_gives_each_folder_once() {
+        let mut inv = personal_tree();
+        let personal = Uuid::from_u128(8200);
+        // a corrupt tree: Body lists its own ancestor as a child
+        inv.folders.get_mut(&Uuid::from_u128(8204)).expect("Body").children.push(personal);
+        let below = descendants(&inv, &[personal]);
+        assert_eq!(below, (8202..=8204).map(Uuid::from_u128).collect::<Vec<_>>());
+        // a selected folder under another selected one is a target, not below:
+        // the two selected and the two others, each colored once
+        let clothing = Uuid::from_u128(8203);
+        assert_eq!(
+            descendants(&inv, &[personal, clothing]),
+            vec![Uuid::from_u128(8202), Uuid::from_u128(8204)]
+        );
+        let prefs = InventoryPreferences::default();
+        let mut picker = Picker::new(&prefs, vec![personal, clothing]);
+        picker.subfolders = true;
+        let mut reach = picker.colored_by_a_click(&inv);
+        reach.sort_unstable();
+        reach.dedup();
+        assert_eq!(reach.len(), picker.colored_by_a_click(&inv).len(), "no folder twice");
+        assert_eq!(reach.len(), 4);
     }
 
     #[test]

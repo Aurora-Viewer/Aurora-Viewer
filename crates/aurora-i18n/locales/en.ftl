@@ -13349,6 +13349,7 @@ inventory-folder-color-restore = Restore default
 inventory-folder-color-private = Only you see these colors.
 inventory-folder-color-many = { $count } folders
 inventory-folder-color-none = Select a folder to color it.
+inventory-folder-color-subfolders = Also color its subfolders ({ $count })
 
 area-search-group = Group
 area-search-last-owner = Last owner
