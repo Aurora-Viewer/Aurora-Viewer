@@ -5488,6 +5488,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GROUP_REGION=1\|still` | Group titles window with region rules; `1` teleports to a region with its own title and back |
 | `AURORA_DEMO_SOCIAL_MENU=<step>` | A resident's "Invite to group", "Add to contact set", "Block particles" and calling card |
 | `AURORA_DEMO_LAND_MODERATION=menu\|none\|freeze\|eject\|eject-ban` | "Freeze" and "Eject" of a resident on our land |
+| `AURORA_DEMO_GOD=1` | Admin status (Advanced › Request Admin Status) granted |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
 | `AURORA_DEMO_PLACES=<tab>[:wide,open,classic,narrow]` | "Places" on a tab, widened, its first place selected, in the Legacy Viewer's tabs, or at its narrowest |
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
@@ -8635,6 +8636,18 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (Group Name, insignia and charter, Anyone can join, Cost to join, the
   maturity list, the fees by membership, Create group for L$ 100, the
   48-hour note), and the new group's classic profile.
+- **`AURORA_DEMO_GOD=1`**: at frame 400 Advanced › Request Admin Status is
+  asked, and the demo grants god level 200 at once (OpenSim's level for a
+  region owner or a grid god): the crown leads the navigation bar's parcel
+  icons, its tooltip names the level, and nearby chat says "Entering god
+  mode, level 200". Advanced then offers "Leave Admin Status", which takes
+  the crown away with "Leaving god mode, level 200". Outside the demo the
+  request goes to the region (RequestGodlikePowers), which answers with
+  GrantGodlikePowers or not at all. On an OpenSim grid, test as the region
+  owner: the crown and the notice on Ctrl+Alt+G, then gone on Leave. With the
+  level, Advanced › Admin appears: Object (its entries need a selection),
+  Parcel and, outside OpenSim, Region. In the demo they are only logged
+  ("admin: …").
 - **`AURORA_DEMO_LAND_MODERATION=menu|none|freeze|eject|eject-ban`**: the
   violet wolf stands on our land (the ParcelOverlay cell under it becomes
   ours), then at frame 600 `menu` opens its world menu from its name plate

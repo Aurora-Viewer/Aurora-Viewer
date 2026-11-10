@@ -220,6 +220,7 @@ impl App {
                 f.voice_volume = crate::ui::context::voice_volume_of(w, *id);
                 f.worn = !super::inspect::worn_roots(w, id).is_empty();
                 f.moderation = self.moderation_rights(*id);
+                f.god = w.god_level > 0;
             }
             _ => {}
         }
@@ -482,6 +483,7 @@ impl App {
             CtxAction::NewPhysics => self.new_physics(),
             CtxAction::Freeze(id) => self.ask_moderation(id, false),
             CtxAction::Eject(id) => self.ask_moderation(id, true),
+            CtxAction::GodKick(id, flags) => self.ask_god_kick(id, flags),
             CtxAction::EditWorn(item) => {
                 if self.world.inventory.items.get(&item).is_some_and(crate::wearable_editor::supported) {
                     self.open_wearable_editor(item);
