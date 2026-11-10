@@ -17,6 +17,7 @@ pub mod light;
 pub mod looks;
 pub mod lut_packs;
 pub mod luts;
+pub mod portrait;
 pub mod profile;
 pub mod quality;
 pub mod reel;

@@ -1247,6 +1247,9 @@ pub struct Settings {
     /// tiles instead of Aurora's showcase: collections, large pictures and
     /// a preview of the chosen outfit (`ui/appearance/showcase.rs`).
     pub classic_outfit_gallery: bool,
+    /// The outfit portrait's choices, kept for the next one when asked
+    /// (`snapshot::portrait`).
+    pub outfit_portrait: crate::snapshot::portrait::PortraitSettings,
     /// "Places" as the Legacy Viewer's three tabs (`ui/places.rs`) instead
     /// of Aurora's list and preview (`ui/places/aurora.rs`).
     pub classic_places: bool,
@@ -2237,6 +2240,7 @@ impl Default for Settings {
             classic_region_estate: false,
             classic_inventory: false,
             classic_outfit_gallery: false,
+            outfit_portrait: Default::default(),
             classic_places: false,
             places_sort: PlacesSort::Visit,
             invert_mouse: false,

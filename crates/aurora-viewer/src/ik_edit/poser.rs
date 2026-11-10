@@ -25,6 +25,28 @@ pub(crate) use data::Pose as SubjectPose;
 #[cfg(test)]
 mod tests;
 
+/// The outfit portrait's standing pose (`snapshot::portrait`): the
+/// skeleton's T, as the poser's T-pose sets it
+/// (FSPoserAnimator::setAllAvatarStartingRotationsToZero), with both
+/// shoulders lowered by `lowered` radians; the shape's own joint positions
+/// and scales are kept. A poser layer like the others: drawn on our screen
+/// only, nothing is sent.
+pub(crate) fn standing_pose(world: &World, subject: Uuid, lowered: f32) -> Option<Arc<SubjectPose>> {
+    let rig = &world.avatar_lib.rig;
+    let frame = Frame::subject(world, subject)?;
+    let mut pose = SubjectPose::capture(rig, &frame)?;
+    pose.rotations.clone_from(&rig.local_rot);
+    pose.origin.clone_from(&rig.local_rot);
+    // the arms reach along ±Y in the T, the avatar facing +X: a turn about
+    // X brings them down on both sides
+    for (name, sign) in [("mShoulderLeft", -1.0), ("mShoulderRight", 1.0)] {
+        if let Some(&joint) = rig.names.get(name) {
+            pose.rotations[joint] = Quat::from_rotation_x(sign * lowered) * pose.rotations[joint];
+        }
+    }
+    pose.valid(rig).then(|| Arc::new(pose))
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
