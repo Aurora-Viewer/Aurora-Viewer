@@ -45,10 +45,9 @@ pub(super) fn preferences_for_tab(ui: &mut egui::Ui, p: &Palette, prefs: &mut In
         aurora_i18n::tr!("ui-inventory-controls-show-library"),
         &mut prefs.show_library,
     );
+    // Separate switches (#3008): pictures on hover must work with tooltips off.
     changed |= check(ui, p, aurora_i18n::tr!("inventory-hover-tooltips"), &mut prefs.show_hover_tooltips);
-    if prefs.show_hover_tooltips {
-        changed |= check(ui, p, aurora_i18n::tr!("inventory-hover-pictures"), &mut prefs.thumbnail_tooltips);
-    }
+    changed |= check(ui, p, aurora_i18n::tr!("inventory-hover-pictures"), &mut prefs.thumbnail_tooltips);
     changed |= check(ui, p, aurora_i18n::tr!("inventory-folder-colors"), &mut prefs.folder_colors_enabled);
     changed |= check(ui, p, aurora_i18n::tr!("ui-inventory-controls-recent-tab"), &mut prefs.show_recent);
     if prefs.show_recent {
