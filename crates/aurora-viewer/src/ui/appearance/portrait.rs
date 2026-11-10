@@ -5,9 +5,11 @@
 //! light), then Take, the photo to confirm, Use or Retake. An outfit not
 //! worn is offered to be worn first; once the photo is over, the previous
 //! outfit is offered back. Nothing is worn or taken off without a click.
+//! The paid HD picture (`hd_choice`) can be chosen with the photo shown:
+//! its price comes first, and Use asks to confirm it before it is paid.
 
 use super::super::{icons, widgets};
-use crate::snapshot::portrait::{Angle, Backdrop, Framing, Lighting, PortraitSettings, Pose};
+use crate::snapshot::portrait::{Angle, Backdrop, Framing, HdOffer, HdSide, Lighting, PortraitSettings, Pose};
 use crate::theme::Palette;
 use crate::ui::fonts;
 use egui::{Align2, Rect, RichText, Sense, Vec2};
@@ -36,6 +38,23 @@ pub enum Action {
     Reframe,
     Pose,
     Studio,
+    /// The HD picture's price confirmed: the photo is used, and sent.
+    ConfirmHd,
+    /// Back to the photo, nothing paid.
+    CancelHd,
+}
+
+/// The paid HD picture, as the window offers it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HdView {
+    /// Its price for the side chosen, and whether the balance pays it.
+    pub offer: HdOffer,
+    /// Another one is still on its way.
+    pub busy: bool,
+    /// Use asked to confirm this price.
+    pub confirm: Option<i32>,
+    /// The outfit has an HD picture already (it goes to the Trash).
+    pub has_one: bool,
 }
 
 /// What the window shows.
@@ -59,6 +78,7 @@ pub struct View<'a> {
     /// The photo mode's helpers that are on.
     pub pose: bool,
     pub studio: bool,
+    pub hd: HdView,
 }
 
 const FRAMINGS: [Framing; 3] = [Framing::Body, Framing::Bust, Framing::Face];
@@ -66,6 +86,7 @@ const POSES: [Pose; 3] = [Pose::A, Pose::ArmsDown, Pose::Current];
 const ANGLES: [Angle; 3] = [Angle::Front, Angle::ThreeQuarter, Angle::Profile];
 const BACKDROPS: [Backdrop; 4] = [Backdrop::Dark, Backdrop::Grey, Backdrop::Light, Backdrop::Scene];
 const LIGHTINGS: [Lighting; 2] = [Lighting::Studio, Lighting::Region];
+const HD_SIDES: [HdSide; 2] = [HdSide::Side512, HdSide::Side1024];
 
 /// The auto portrait's window, or once its photo is over, the previous
 /// outfit's question; `open` is cleared by its X.
@@ -115,9 +136,19 @@ fn body(ui: &mut egui::Ui, p: &Palette, settings: &mut PortraitSettings, view: &
             }
         });
         ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing.y = 6.0;
-            let shot = view.shot.is_some() || view.shooting;
-            ui.add_enabled_ui(!shot, |ui| choices_ui(ui, p, settings));
+            // (scrolled when a large text or a short window leaves no room)
+            egui::ScrollArea::vertical()
+                .id_salt("outfit_portrait_choices")
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 6.0;
+                    let shot = view.shot.is_some() || view.shooting;
+                    ui.add_enabled_ui(!shot, |ui| choices_ui(ui, p, settings));
+                    ui.add_space(6.0);
+                    // (chosen with the photo shown too: it is drawn at the
+                    // largest side)
+                    ui.add_enabled_ui(!view.shooting, |ui| hd_choice(ui, p, settings, &view.hd));
+                });
         });
     });
 }
@@ -189,6 +220,126 @@ pub(super) fn choices_ui(ui: &mut egui::Ui, p: &Palette, s: &mut PortraitSetting
         widgets::checkbox(ui, p, &mut s.hide_others, aurora_i18n::tr!("ui-appearance-portrait-hide-others"));
     });
     widgets::checkbox(ui, p, &mut s.keep, aurora_i18n::tr!("ui-appearance-portrait-keep"));
+}
+
+/// The paid HD picture: its price, the side, and why it cannot be had now
+/// (the balance, the price not known, another on its way).
+fn hd_choice(ui: &mut egui::Ui, p: &Palette, s: &mut PortraitSettings, hd: &HdView) {
+    let ready = matches!(hd.offer, HdOffer::Ready(_)) && !hd.busy && hd.confirm.is_none();
+    let label = match hd.offer {
+        HdOffer::Ready(cost) | HdOffer::Short(cost) => aurora_i18n::tr!("ui-appearance-portrait-hd", cost = cost).to_string(),
+        HdOffer::Unknown => aurora_i18n::tr!("ui-appearance-portrait-hd-no-price").to_string(),
+    };
+    let on = hd_box(
+        ui,
+        p,
+        s,
+        aurora_i18n::tr!("ui-appearance-portrait-hd-title"),
+        label,
+        ready,
+        matches!(hd.offer, HdOffer::Ready(_)),
+    );
+    let reason = match hd.offer {
+        HdOffer::Short(cost) => Some(aurora_i18n::tr!("ui-appearance-portrait-hd-short", cost = cost).to_string()),
+        HdOffer::Unknown => Some(aurora_i18n::tr!("ui-appearance-portrait-hd-unknown").to_string()),
+        HdOffer::Ready(_) if hd.busy => Some(aurora_i18n::tr!("ui-appearance-portrait-hd-busy").to_string()),
+        HdOffer::Ready(_) => None,
+    };
+    match reason {
+        Some(reason) => note(ui, p, "alert-triangle-filled", &reason),
+        None if on && hd.has_one => note(ui, p, "info-circle-filled", aurora_i18n::tr!("ui-appearance-portrait-hd-replaces")),
+        None => note(ui, p, "info-circle-filled", aurora_i18n::tr!("ui-appearance-portrait-hd-about")),
+    }
+}
+
+/// The HD box: its title, the box (`enabled`; shown ticked only when the
+/// price can be paid, `payable`) and the side under it. True when ticked.
+/// Shared with the batch portraits' start (`batch`).
+pub(super) fn hd_box(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    s: &mut PortraitSettings,
+    title: &str,
+    label: String,
+    enabled: bool,
+    payable: bool,
+) -> bool {
+    ui.label(RichText::new(title).size(12.0).family(fonts::semibold(ui.ctx())).color(p.muted));
+    let ready = enabled;
+    let mut on = s.hd && payable;
+    ui.add_enabled_ui(ready, |ui| {
+        if widgets::checkbox(ui, p, &mut on, label).changed() {
+            s.hd = on;
+        }
+    });
+    ui.add_enabled_ui(ready && on, |ui| {
+        let mut selected = HD_SIDES.iter().position(|v| *v == s.hd_side).unwrap_or(0);
+        let options = [("512 × 512", false), ("1024 × 1024", false)];
+        // (side by side, or one under the other in a narrow panel)
+        if widgets::segmented_size(ui, &options).x <= ui.available_width() {
+            if widgets::segmented(ui, p, &mut selected, &options) {
+                s.hd_side = HD_SIDES[selected];
+            }
+        } else {
+            for (i, (label, _)) in options.iter().enumerate() {
+                if widgets::radio(ui, p, selected == i, *label).clicked() {
+                    s.hd_side = HD_SIDES[i];
+                }
+            }
+        }
+    });
+    on
+}
+
+/// The HD picture's price to confirm before Use pays it, like "Save to
+/// inventory" (LLPanelSnapshotInventory::onSend): Back, or Pay and use;
+/// one under the other in the photo mode's narrow panel (`stacked`).
+fn hd_confirm(ui: &mut egui::Ui, p: &Palette, cost: i32, stacked: bool, actions: &mut Vec<Action>) {
+    let text = aurora_i18n::tr!("ui-appearance-portrait-hd-confirm", cost = cost);
+    let pay = aurora_i18n::tr!("ui-appearance-portrait-hd-pay", cost = cost).to_string();
+    match pay_or_back(ui, p, &text, None, &pay, stacked) {
+        Some(true) => actions.push(Action::ConfirmHd),
+        Some(false) => actions.push(Action::CancelHd),
+        None => {}
+    }
+}
+
+/// A price to confirm: its text (and the balance, when known), then Back
+/// or Pay; one under the other when `stacked` or when they do not fit side
+/// by side. Some(true): paid, Some(false): back. Shared with the batch
+/// portraits' start (`batch`).
+pub(super) fn pay_or_back(ui: &mut egui::Ui, p: &Palette, text: &str, balance: Option<&str>, pay: &str, stacked: bool) -> Option<bool> {
+    ui.add(egui::Label::new(RichText::new(text).size(12.0).color(p.ink)).wrap());
+    if let Some(balance) = balance {
+        ui.add(egui::Label::new(RichText::new(balance).size(12.0).color(p.muted)).wrap());
+    }
+    let back = aurora_i18n::tr!("ui-appearance-portrait-hd-back");
+    let fit = widgets::action_button_fit(ui, "check", pay).max(widgets::action_button_fit(ui, "arrow-back-up", back));
+    if stacked || fit * 2.0 + ui.spacing().item_spacing.x > ui.available_width() {
+        let size = Vec2::new(ui.available_width(), 34.0);
+        if widgets::action_button(ui, p, "check", pay, widgets::ActionKind::Primary, size).clicked() {
+            return Some(true);
+        }
+        if widgets::action_button(ui, p, "arrow-back-up", back, widgets::ActionKind::Flat, size).clicked() {
+            return Some(false);
+        }
+        return None;
+    }
+    let buttons = [
+        widgets::DialogButton {
+            icon: "arrow-back-up",
+            label: back,
+            kind: widgets::ActionKind::Flat,
+            enabled: true,
+        },
+        widgets::DialogButton {
+            icon: "check",
+            label: pay,
+            kind: widgets::ActionKind::Primary,
+            enabled: true,
+        },
+    ];
+    widgets::dialog_buttons(ui, p, &buttons, 32.0).map(|i| i == 1)
 }
 
 /// One choice: its title, then its options side by side, or one under the
@@ -365,6 +516,10 @@ fn current(ui: &mut egui::Ui, p: &Palette, t: &egui::TextureHandle) {
 /// to the photo mode.
 fn footer_ui(ui: &mut egui::Ui, p: &Palette, view: &View, actions: &mut Vec<Action>) {
     let height = 36.0;
+    if let Some(cost) = view.hd.confirm.filter(|_| view.shot.is_some()) {
+        hd_confirm(ui, p, cost, false, actions);
+        return;
+    }
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         if view.shot.is_some() {
@@ -465,7 +620,7 @@ fn done(ui: &mut egui::Ui, p: &Palette, view: &View, actions: &mut Vec<Action>) 
 /// The square photo mode over the viewfinder: the banner with the
 /// outfit's name and its X, the helpers on the left, how it goes on the
 /// right, and once the photo is taken, the photo with Use and Retake.
-pub fn photo_mode(ctx: &egui::Context, p: &Palette, view: &View) -> Vec<Action> {
+pub fn photo_mode(ctx: &egui::Context, p: &Palette, settings: &mut PortraitSettings, view: &View) -> Vec<Action> {
     let mut actions = Vec::new();
     let screen = ctx.content_rect();
     let glass = p.navy.gamma_multiply(0.82);
@@ -639,6 +794,11 @@ pub fn photo_mode(ctx: &egui::Context, p: &Palette, view: &View) -> Vec<Action> 
                                 .fit_to_exact_size(Vec2::splat(side))
                                 .corner_radius(ui.visuals().window_corner_radius),
                         );
+                        if let Some(cost) = view.hd.confirm {
+                            hd_confirm(ui, p, cost, true, &mut actions);
+                            return;
+                        }
+                        hd_choice(ui, p, settings, &view.hd);
                         let height = 34.0;
                         let use_it = aurora_i18n::tr!("ui-appearance-portrait-vf-use");
                         if widgets::action_button(ui, p, "check", use_it, widgets::ActionKind::Primary, Vec2::new(side, height)).clicked() {
@@ -704,6 +864,12 @@ mod tests {
             saved: false,
             pose: false,
             studio: false,
+            hd: HdView {
+                offer: HdOffer::Short(10),
+                busy: false,
+                confirm: None,
+                has_one: true,
+            },
         }
     }
 
