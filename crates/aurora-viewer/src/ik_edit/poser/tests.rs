@@ -2088,7 +2088,7 @@ fn a_ctrl_click_through_the_handles_reaches_the_part_under_them_across_frames() 
         .unwrap()
         .0;
     let toward = (finger - wrist).normalized();
-    let mut run = |frames: &mut Frames, editor: &mut Editor, keys: egui::Modifiers, at: egui::Pos2, button: Option<bool>| {
+    let run = |frames: &mut Frames, editor: &mut Editor, keys: egui::Modifiers, at: egui::Pos2, button: Option<bool>| {
         let mut events = vec![egui::Event::ModifiersChanged(keys), egui::Event::PointerMoved(at)];
         if let Some(pressed) = button {
             events.push(egui::Event::PointerButton {
@@ -2146,7 +2146,7 @@ fn ctrl_on_the_handles_with_nothing_under_them_keeps_them_and_the_joint() {
     let elbow = proj.project(frame.joints[rig.names["mElbowLeft"]].w_axis.truncate()).unwrap().0;
     let toward = (elbow - at_wrist).normalized();
     let ctrl = egui::Modifiers::CTRL;
-    let mut run = |frames: &mut Frames, editor: &mut Editor, at: egui::Pos2, button: Option<bool>| {
+    let run = |frames: &mut Frames, editor: &mut Editor, at: egui::Pos2, button: Option<bool>| {
         let mut events = vec![egui::Event::ModifiersChanged(ctrl), egui::Event::PointerMoved(at)];
         if let Some(pressed) = button {
             events.push(egui::Event::PointerButton {
