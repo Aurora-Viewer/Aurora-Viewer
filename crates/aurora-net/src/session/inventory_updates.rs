@@ -366,6 +366,7 @@ mod tests {
         let (caps_tx, _) = mpsc::unbounded_channel();
         let (notecard_copy_tx, _) = mpsc::unbounded_channel();
         let (inventory_move_tx, _) = mpsc::unbounded_channel();
+        let (inventory_udp_tx, _) = mpsc::unbounded_channel();
         let sim = Sim::new(address, 10);
         let mut session = Session {
             asset_imports: Default::default(),
@@ -378,12 +379,16 @@ mod tests {
             caps_tx,
             notecard_copy_tx,
             inventory_move_tx,
+            inventory_udp_tx,
+            appearance_serial: 0,
+            appearance_queue: Default::default(),
+            own_profile: None,
             notecard_copies: HashMap::new(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,
             one_shot: 0,
             cam_warned: false,
-            far: 128.0,
+            far: FarStep::new(Instant::now()),
             refuse_neighbours: false,
             fov: DEFAULT_FOV,
             logout_started: None,
@@ -392,6 +397,7 @@ mod tests {
             viewer_stats: Default::default(),
             regions_visited: Default::default(),
             cam_requested_at: None,
+            login_arrival: false,
             agent_parcel: None,
             pending_named_tp: None,
             object_cache: super::object_cache::ObjectCaches::new(None).0,
@@ -402,6 +408,7 @@ mod tests {
             estate_invoice: uuid::Uuid::nil(),
             terrain_raw: Default::default(),
             decode_failures: HashMap::new(),
+            rejected_full: Default::default(),
             inventory_uploads: Default::default(),
             inventory_previews: Default::default(),
             script_transfers: Default::default(),

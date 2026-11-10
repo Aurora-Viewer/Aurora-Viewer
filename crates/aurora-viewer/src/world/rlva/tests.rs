@@ -260,10 +260,12 @@ fn rlva_inventory_wire_order_attachment_groups_and_own_locks_match_the_reference
     );
     command(&mut world.rlva, head, "@remattach:head=force");
     world.rlva_pending();
-    assert!(matches!(world.rlva.appearance.pop(), Some((_, crate::world::appearance::Action::RemoveItems(ids))) if ids.is_empty()));
+    assert!(world.rlva.appearance.is_empty(), "nothing removable, no outfit change");
     command(&mut world.rlva, head, "@detach=y,remattach:head=force");
     world.rlva_pending();
-    assert!(matches!(world.rlva.appearance.pop(), Some((_, crate::world::appearance::Action::RemoveItems(ids))) if ids == vec![head]));
+    assert!(
+        matches!(world.rlva.appearance.pop(), Some((_, crate::world::appearance::Action::Force { remove, wear })) if remove == vec![head] && wear.is_empty())
+    );
     command(&mut world.rlva, A, "@detach:skull=n,remoutfit:shirt=n");
     assert!(
         !world
@@ -435,21 +437,31 @@ fn rlva_attachment_replacement_preserves_locked_cof_links_but_explicit_removal_i
             }],
         },
     };
-    assert!(!w.rlva_allows_command(&cmd, Uuid::nil()));
-    w.rlva.preferences.replace_unlocked = false;
-    w.rlva_prepare_outfit(&mut cmd, Uuid::nil());
+    let targets = |cmd: &aurora_net::NetCommand| {
+        let aurora_net::NetCommand::UpdateOutfit { change, .. } = cmd else {
+            unreachable!()
+        };
+        change.links.iter().map(|l| l.target).collect::<Vec<_>>()
+    };
+    let unprepared = cmd.clone();
     assert!(
         !w.rlva_allows_command(&cmd, Uuid::nil()),
-        "strict replacement cannot discard the locked predecessor"
+        "the raw change would take off the locked item"
     );
+    w.rlva.preferences.replace_unlocked = false;
+    w.rlva_prepare_outfit(&mut cmd, Uuid::nil());
+    assert_eq!(
+        targets(&cmd),
+        [old],
+        "strict replacement keeps the locked item and leaves the new one out"
+    );
+    assert!(w.rlva_allows_command(&cmd, Uuid::nil()));
     w.rlva.preferences.replace_unlocked = true;
+    let mut cmd = unprepared;
     w.rlva_prepare_outfit(&mut cmd, Uuid::nil());
     assert!(w.rlva_allows_command(&cmd, Uuid::nil()));
     w.rlva_prepare_outfit(&mut cmd, Uuid::nil());
-    let aurora_net::NetCommand::UpdateOutfit { change, .. } = &cmd else {
-        unreachable!()
-    };
-    assert_eq!(change.links.len(), 2, "preparation is idempotent");
+    assert_eq!(targets(&cmd), [new, old], "preparation is idempotent");
     assert!(!w.rlva_can_remove(old, Uuid::nil()));
     assert!(!w.rlva_can_remove(old, watchdog::ACTOR));
     assert!(!w.rlva_can_add(new, 5, watchdog::ACTOR));
@@ -458,12 +470,182 @@ fn rlva_attachment_replacement_preserves_locked_cof_links_but_explicit_removal_i
     };
     change.links.clear();
     w.rlva_prepare_outfit(&mut cmd, Uuid::nil());
-    assert!(
-        !w.rlva_allows_command(&cmd, Uuid::nil()),
-        "explicit removal remains subject to locks"
-    );
+    assert_eq!(targets(&cmd), [old], "taking everything off still leaves the locked item on");
+    assert!(w.rlva_allows_command(&cmd, Uuid::nil()));
     w.rlva.configure(false);
     assert!(w.rlva_allows_command(&cmd, Uuid::nil()));
+}
+
+/// LLAppearanceMgr::updateCOF (llappearancemgr.cpp): replacing or taking
+/// off an outfit under clothing and body-part locks keeps the locked layers
+/// and blocked additions out, and changes everything else.
+#[test]
+fn rlva_outfit_changes_keep_locked_wearables_and_skip_blocked_additions() {
+    use crate::world::inventory::{FetchState, Folder};
+    use aurora_net::{
+        inventory::{InvFolder, InvItem},
+        outfits::{OutfitLink, OutfitMutation},
+    };
+    let mut w = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    w.rlva.configure(true);
+    let cof = Uuid::from_u128(20);
+    // (id, asset type, wearable type): shirt, shape, pants, new shape,
+    // new jacket, new socks, new attachment.
+    let items = [(21, 5, 4), (22, 13, 0), (23, 5, 5), (24, 13, 0), (25, 5, 8), (26, 5, 7), (27, 6, 9)];
+    let link = |id: u128| OutfitLink {
+        target: Uuid::from_u128(id),
+        name: String::new(),
+        desc: String::new(),
+        folder: false,
+        inv_type: 0,
+    };
+    w.inventory.folders.insert(
+        cof,
+        Folder {
+            info: InvFolder {
+                id: cof,
+                type_default: 46,
+                ..Default::default()
+            },
+            items: vec![],
+            children: vec![],
+            state: FetchState::Fetched,
+            library: false,
+        },
+    );
+    for (n, (id, asset_type, flags)) in items.into_iter().enumerate() {
+        w.inventory.items.insert(
+            Uuid::from_u128(id),
+            InvItem {
+                id: Uuid::from_u128(id),
+                asset_type,
+                flags,
+                ..Default::default()
+            },
+        );
+        if n < 3 {
+            let cof_link = Uuid::from_u128(id + 100);
+            w.inventory.items.insert(
+                cof_link,
+                InvItem {
+                    id: cof_link,
+                    parent: cof,
+                    asset_id: Uuid::from_u128(id),
+                    asset_type: 24,
+                    ..Default::default()
+                },
+            );
+            w.inventory.folders.get_mut(&cof).expect("cof").items.push(cof_link);
+        }
+    }
+    command(&mut w.rlva, A, "@remoutfit:shirt=n");
+    command(&mut w.rlva, A, "@remoutfit:shape=n");
+    command(&mut w.rlva, A, "@addoutfit:socks=n");
+    let mut cmd = aurora_net::NetCommand::UpdateOutfit {
+        request: TARGET,
+        change: OutfitMutation {
+            folder: cof,
+            create: None,
+            cof: None,
+            links: vec![link(24), link(25), link(26), link(27)],
+        },
+    };
+    assert!(!w.rlva_allows_command(&cmd, Uuid::nil()));
+    w.rlva_prepare_outfit(&mut cmd, Uuid::nil());
+    let aurora_net::NetCommand::UpdateOutfit { change, .. } = &cmd else {
+        unreachable!()
+    };
+    let mut kept: Vec<_> = change.links.iter().map(|l| l.target.as_u128()).collect();
+    kept.sort_unstable();
+    assert_eq!(
+        kept,
+        [21, 22, 25, 27],
+        "locked shirt and shape stay, unlocked pants go, the new shape and the socks are left out"
+    );
+    assert!(w.rlva_allows_command(&cmd, Uuid::nil()));
+}
+
+/// Wearing three attachments, one on a point locked by @addattach: the
+/// outfit write and the rez that follows both leave out the blocked one
+/// only, in strict mode too, instead of RLVa refusing the whole rez.
+#[test]
+fn rlva_multi_wear_leaves_out_only_the_blocked_attachment() {
+    use crate::world::appearance::{Action, attachments_for_action};
+    use crate::world::inventory::{FetchState, Folder};
+    use aurora_net::{
+        inventory::{InvFolder, InvItem},
+        outfits::{OutfitLink, OutfitMutation},
+    };
+    let mut w = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    w.rlva.configure(true);
+    let cof = Uuid::from_u128(40);
+    w.inventory.folders.insert(
+        cof,
+        Folder {
+            info: InvFolder {
+                id: cof,
+                type_default: 46,
+                ..Default::default()
+            },
+            items: vec![],
+            children: vec![],
+            state: FetchState::Fetched,
+            library: false,
+        },
+    );
+    // (id, attachment point): spine, skull, left hand.
+    let items = [(41, 9), (42, 2), (43, 5)];
+    for (id, point) in items {
+        w.inventory.items.insert(
+            Uuid::from_u128(id),
+            InvItem {
+                id: Uuid::from_u128(id),
+                asset_type: 6,
+                flags: point,
+                ..Default::default()
+            },
+        );
+    }
+    command(&mut w.rlva, A, "@addattach:spine=n");
+    let ids: Vec<_> = items.iter().map(|(id, _)| Uuid::from_u128(*id)).collect();
+    for replace_unlocked in [true, false] {
+        w.rlva.preferences.replace_unlocked = replace_unlocked;
+        let mut cmd = aurora_net::NetCommand::UpdateOutfit {
+            request: TARGET,
+            change: OutfitMutation {
+                folder: cof,
+                create: None,
+                cof: None,
+                links: ids
+                    .iter()
+                    .map(|id| OutfitLink {
+                        target: *id,
+                        name: String::new(),
+                        desc: String::new(),
+                        folder: false,
+                        inv_type: 18,
+                    })
+                    .collect(),
+            },
+        };
+        let dropped = w.rlva_prepare_outfit(&mut cmd, Uuid::nil());
+        assert_eq!(dropped, [ids[0]]);
+        assert!(w.rlva_allows_command(&cmd, Uuid::nil()));
+        let action = Action::WearItems {
+            items: ids.clone(),
+            replace: true,
+            point: 0,
+        };
+        let mut attachments = attachments_for_action(&w.inventory, TARGET, &action);
+        assert_eq!(attachments.len(), 3);
+        assert!(
+            !w.rlva_allows_command(&aurora_net::NetCommand::RezAttachments(attachments.clone()), Uuid::nil()),
+            "the unfiltered rez is refused as a whole"
+        );
+        attachments.retain(|a| !dropped.contains(&a.item_id));
+        assert_eq!(attachments.iter().map(|a| a.item_id).collect::<Vec<_>>(), ids[1..]);
+        assert!(w.rlva_allows_command(&aurora_net::NetCommand::RezAttachments(attachments), Uuid::nil()));
+    }
 }
 
 fn chat(text: &str) -> ChatMessage {
@@ -583,7 +765,8 @@ fn rlva_maturity_deferred_teleports_keep_the_actor_recheck_locks_and_cancel_on_d
     maturity.request(SIM_ACCESS_MATURE, SIM_ACCESS_PG);
     maturity.take_commands();
     maturity.hold(NetCommand::TeleportHome, A);
-    command(&mut world.rlva, A, "@tplm=n");
+    // home is locked only by @tplm and @tploc together (teleportViaLandmark)
+    command(&mut world.rlva, A, "@tplm=n,tploc=n");
     assert_eq!(maturity.answer(Some(SIM_ACCESS_MATURE)), Outcome::Synced);
     let (actor, teleport) = maturity.take_commands().pop().unwrap();
     assert_eq!(actor, A);
@@ -591,7 +774,7 @@ fn rlva_maturity_deferred_teleports_keep_the_actor_recheck_locks_and_cancel_on_d
         world.rlva_allows_command(&teleport, actor),
         "the original issuer can still force through its own lock"
     );
-    command(&mut world.rlva, B, "@tplm=n");
+    command(&mut world.rlva, B, "@tplm=n,tploc=n");
     assert!(
         !world.rlva_allows_command(&teleport, actor),
         "a new other issuer's lock applies before the delayed send"
@@ -1258,7 +1441,7 @@ fn rlva_editing_and_permissions_are_enforced_on_linksets_and_wire_commands() {
     assert!(!crate::build::selectable(&w, child));
     let edit = NetCommand::Build(BuildCmd::SetName {
         handle: key.region,
-        local_id: key.local_id,
+        local_ids: vec![key.local_id],
         name: "new".into(),
     });
     assert!(!w.rlva_allows_command(&edit, Uuid::nil()));
@@ -1432,21 +1615,16 @@ fn rlva_folder_locks_respect_scope_nearest_exception_other_issuers_and_folded_fo
     w.inventory.folders.get_mut(&ids[3]).unwrap().items.push(object);
     let c = Command::parse("attachalloverorreplace:Outfit=force").unwrap();
     assert!(w.rlva_inventory_force(A, &c));
-    assert_eq!(w.rlva.appearance.len(), 5);
-    assert!(matches!(
-        w.rlva.appearance[0],
-        (_, crate::world::appearance::Action::WearItem { replace: true, .. })
-    ));
+    assert_eq!(w.rlva.appearance.len(), 1, "the whole folder is one outfit change");
+    let crate::world::appearance::Action::Force { remove, wear } = &w.rlva.appearance[0].1 else {
+        panic!("a forced folder wear is one Force batch");
+    };
+    assert!(remove.is_empty());
+    assert_eq!(wear.len(), 5);
+    assert!(wear[0].replace);
+    assert!(wear.iter().skip(1).take(3).all(|w| !w.replace));
     assert!(
-        w.rlva
-            .appearance
-            .iter()
-            .skip(1)
-            .take(3)
-            .all(|(_, action)| matches!(action, crate::world::appearance::Action::WearItem { replace: false, .. }))
-    );
-    assert!(
-        matches!(w.rlva.appearance[4], (_, crate::world::appearance::Action::WearItem { item, point: 1, replace: true }) if item == object),
+        wear[4].item == object && wear[4].point == 1 && wear[4].replace,
         "a folded attachment folder chooses the attachment point"
     );
     w.rlva.appearance.clear();
@@ -1568,14 +1746,53 @@ fn rlva_local_teleports_use_global_xy_and_sit_radius_uses_xyz_across_region_edge
     command(&mut world.rlva, A, "@sittp=y");
     command(&mut world.rlva, A, "@sittp:10=y");
     assert!(
-        world.rlva_allows_command(&teleport(handle, Vec3::new(250.0, 128.0, 1000.0)), Uuid::nil()),
-        "tplocal measures XY, not height"
+        !world.rlva_allows_command(&teleport(handle, Vec3::new(250.0, 128.0, 1000.0)), Uuid::nil()),
+        "tplocal measures in 3D: going straight up does not get around it"
     );
+    assert!(world.rlva_allows_command(&teleport(handle, Vec3::new(250.0, 128.0, 45.0)), Uuid::nil()));
     assert!(!world.rlva_allows_command(&teleport(neighbor, Vec3::new(250.0, 128.0, 30.0)), Uuid::nil()));
     assert!(
         world.rlva_allows_command(&teleport(neighbor, Vec3::new(250.0, 128.0, 30.0)), A),
         "a forced action bypasses its own issuer"
     );
+}
+
+#[test]
+fn rlva_teleport_home_landmarks_and_bare_tplocal_follow_the_legacy_rules() {
+    use glam::Vec3;
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    world.rlva.configure(true);
+    world.agent.position = Vec3::new(128.0, 128.0, 30.0);
+    let here = world.agent_global().unwrap();
+    let at = |dx: f64, dz: f64| here + glam::DVec3::new(dx, 0.0, dz);
+    // LLAgent::teleportViaLandmark: home only under both @tplm and @tploc
+    command(&mut world.rlva, A, "@tplm=n");
+    assert!(world.rlva_can_teleport_home() && !world.rlva_can_teleport_landmark());
+    assert!(world.rlva_allows_command(&NetCommand::TeleportHome, Uuid::nil()));
+    command(&mut world.rlva, A, "@tploc=n");
+    assert!(!world.rlva_can_teleport_home());
+    assert!(!world.rlva_allows_command(&NetCommand::TeleportHome, Uuid::nil()));
+    command(&mut world.rlva, A, "@tplm=y");
+    assert!(world.rlva_can_teleport_home() && world.rlva_can_teleport_landmark());
+    assert!(!world.rlva_can_teleport_global(at(1000.0, 0.0)), "@tploc closes distant places");
+    assert!(world.rlva_can_teleport_global(at(100.0, 0.0)), "a local teleport ignores @tploc");
+    // RLV_MODIFIER_TPLOCAL_DEFAULT: a bare @tplocal allows 1.5 m, in 3D
+    command(&mut world.rlva, A, "@tploc=y,tplocal=n");
+    assert!(world.rlva_can_teleport_global(at(1.0, 0.0)));
+    assert!(!world.rlva_can_teleport_global(at(2.0, 0.0)));
+    assert!(!world.rlva_can_teleport_global(at(0.0, 2.0)));
+    assert!(world.rlva_can_teleport_global(at(1000.0, 0.0)), "beyond a region it is not local");
+    // seated under @unsit, nothing goes, home and landmarks included
+    command(&mut world.rlva, A, "@tplocal=y,unsit=n");
+    world.agent.ground_sit = true;
+    assert!(!world.rlva_can_teleport_home() && !world.rlva_can_teleport_landmark());
+    assert!(!world.rlva_can_teleport_global(at(1.0, 0.0)));
+    world.agent.ground_sit = false;
+    world.rlva.configure(false);
+    assert!(world.rlva_can_teleport_home() && world.rlva_can_teleport_landmark() && world.rlva_can_teleport_global(at(0.0, 2.0)));
 }
 
 #[test]
@@ -1848,4 +2065,554 @@ fn rlva_watchdog_checks_run_again_only_after_a_change() {
     );
     command(&mut world.rlva, collar_item, "@detachallthis=y");
     assert!(tick(&mut world).is_empty(), "a removed rule is checked at once");
+}
+
+/// RlvAttachmentLocks::canAttach / RlvWearableLocks::canWear and the folder
+/// locks of LLAppearanceMgr::getCanAddToCOF (rlvlocks.h, llappearancemgr.cpp):
+/// what the wear menus grey out.
+#[test]
+fn rlva_wear_locks_follow_the_legacy_wear_masks() {
+    use super::wear_locks::Wear;
+    use crate::world::inventory::{FetchState, Folder};
+    use aurora_net::inventory::{InvFolder, InvItem};
+    let mut w = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let root = Uuid::from_u128(30);
+    let cof = Uuid::from_u128(31);
+    let clothes = Uuid::from_u128(32);
+    w.inventory.root = root;
+    for (id, parent, kind, name) in [
+        (root, Uuid::nil(), 8, "Inventory"),
+        (cof, root, 46, "Current Outfit"),
+        (clothes, root, -1, "Clothes"),
+    ] {
+        w.inventory.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    parent,
+                    name: name.into(),
+                    type_default: kind,
+                    ..Default::default()
+                },
+                items: vec![],
+                children: vec![],
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+    }
+    // (id, asset type, flags, name): worn shirt and shape, then a new shirt,
+    // jacket, shape, an object naming the chest, one naming no point and
+    // never worn, and one naming no point last worn on the chest.
+    let items = [
+        (40, 5, 4, "Old shirt"),
+        (41, 13, 0, "Old shape"),
+        (42, 5, 4, "New shirt"),
+        (43, 5, 8, "Jacket"),
+        (44, 13, 0, "New shape"),
+        (45, 6, 0, "Collar (chest)"),
+        (46, 6, 0, "Bracelet"),
+        (47, 6, 1, "Necklace"),
+    ];
+    for (n, (id, asset_type, flags, name)) in items.into_iter().enumerate() {
+        let id = Uuid::from_u128(id);
+        w.inventory.items.insert(
+            id,
+            InvItem {
+                id,
+                parent: clothes,
+                name: name.into(),
+                asset_type,
+                flags,
+                owner_mask: 0x4000,
+                ..Default::default()
+            },
+        );
+        w.inventory.folders.get_mut(&clothes).expect("clothes").items.push(id);
+        if n < 2 {
+            let link = Uuid::from_u128(id.as_u128() + 100);
+            w.inventory.items.insert(
+                link,
+                InvItem {
+                    id: link,
+                    parent: cof,
+                    asset_id: id,
+                    asset_type: 24,
+                    ..Default::default()
+                },
+            );
+            w.inventory.folders.get_mut(&cof).expect("cof").items.push(link);
+        }
+    }
+    let id = |n: u128| Uuid::from_u128(n);
+    let all = Wear { add: true, replace: true };
+    let locked = Wear {
+        add: false,
+        replace: false,
+    };
+
+    let locks = w.rlva_wear_locks();
+    assert_eq!(locks.wear(&w.inventory, id(42), 0), all, "RLVa off allows everything");
+    w.rlva.configure(true);
+    let locks = w.rlva_wear_locks();
+    assert!(
+        locks.can_remove(id(40)) && locks.folder_allows(clothes, true),
+        "no lock, no greying"
+    );
+
+    command(
+        &mut w.rlva,
+        A,
+        "@remoutfit:shirt=n,remoutfit:shape=n,addoutfit:jacket=n,addattach:chest=n",
+    );
+    let locks = w.rlva_wear_locks();
+    assert!(!locks.can_remove(id(40)) && !locks.can_remove(id(41)));
+    assert_eq!(
+        locks.wear(&w.inventory, id(42), 0),
+        Wear { add: true, replace: false },
+        "a shirt stacks beside the locked one"
+    );
+    assert_eq!(locks.wear(&w.inventory, id(43), 0), locked, "@addoutfit:jacket");
+    assert_eq!(
+        locks.wear(&w.inventory, id(44), 0),
+        locked,
+        "a body part cannot be added beside the locked one"
+    );
+    assert_eq!(locks.wear(&w.inventory, id(45), 0), locked, "the item names the locked chest");
+    assert_eq!(locks.wear(&w.inventory, id(46), 0), all, "no point named: it attaches where it can");
+    assert_eq!(locks.wear(&w.inventory, id(46), 1), locked, "Attach To the chest");
+    assert_eq!(locks.wear(&w.inventory, id(46), 2), all);
+    assert_eq!(
+        locks.wear(&w.inventory, id(47), 0),
+        locked,
+        "Wear goes to the chest it was last worn on"
+    );
+    assert_eq!(locks.wear(&w.inventory, id(47), 2), all, "Attach To another point still works");
+    w.rlva.last_points.note(id(46), 1, std::time::Instant::now());
+    assert_eq!(
+        w.rlva_wear_locks().wear(&w.inventory, id(46), 0),
+        locked,
+        "without a saved point, the point it was last seen on"
+    );
+    w.rlva.last_points = Default::default();
+    assert!(locks.folder_allows(clothes, true) && locks.folder_allows(clothes, false));
+
+    command(&mut w.rlva, A, "@clear");
+    command(&mut w.rlva, A, "@unsharedwear=n");
+    let locks = w.rlva_wear_locks();
+    assert!(!locks.folder_allows(clothes, true), "outside #RLV nothing can be worn");
+    assert!(locks.folder_allows(clothes, false));
+    assert_eq!(locks.wear(&w.inventory, id(42), 0), locked);
+    assert!(locks.can_remove(id(40)));
+    w.rlva.configure(false);
+    assert_eq!(w.rlva_wear_locks().wear(&w.inventory, id(42), 0), all);
+}
+
+/// Wear onto a point a locked attachment holds is greyed (deliberate
+/// difference, human decision of 2026-10-31), Add stays: RLV lets an object
+/// attach beside a locked one.
+#[test]
+fn rlva_wear_on_a_point_held_by_a_locked_attachment_keeps_add() {
+    use super::wear_locks::Wear;
+    use aurora_net::{AttachRequest, inventory::InvItem};
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    world.rlva.configure(true);
+    let region = world.main_region.expect("demo region");
+    let (held, named, unnamed) = (Uuid::from_u128(60), Uuid::from_u128(61), Uuid::from_u128(62));
+    for (id, flags) in [(held, 1), (named, 1), (unnamed, 0)] {
+        world.inventory.items.insert(
+            id,
+            InvItem {
+                id,
+                asset_type: 6,
+                flags,
+                owner_mask: 0x4000,
+                ..Default::default()
+            },
+        );
+    }
+    world.objects.upsert(
+        region,
+        crate::demo::outfit_attachment(&AttachRequest {
+            item_id: held,
+            owner_id: world.agent_id,
+            point: 1,
+            add: true,
+            flags: 1,
+            group_mask: 0,
+            everyone_mask: 0,
+            next_owner_mask: 0,
+            name: String::new(),
+            desc: String::new(),
+        }),
+    );
+    let all = Wear { add: true, replace: true };
+    let add_only = Wear { add: true, replace: false };
+    assert_eq!(world.rlva_wear_locks().wear(&world.inventory, named, 0), all, "no lock yet");
+    command(&mut world.rlva, A, "@remattach:chest=n");
+    let locks = world.rlva_wear_locks();
+    assert!(!locks.can_remove(held));
+    assert_eq!(locks.wear(&world.inventory, named, 0), add_only, "the item names the held chest");
+    assert_eq!(locks.wear(&world.inventory, named, 2), all, "Attach To another point");
+    assert_eq!(
+        locks.wear(&world.inventory, unnamed, 0),
+        all,
+        "no point known: it attaches where it can"
+    );
+    world.rlva.last_points.note(unnamed, 1, std::time::Instant::now());
+    assert_eq!(
+        world.rlva_wear_locks().wear(&world.inventory, unnamed, 0),
+        add_only,
+        "last worn on the held chest"
+    );
+}
+
+#[test]
+fn rlva_drop_and_detach_of_a_worn_object_follow_its_remove_lock_and_rez() {
+    use aurora_net::{AttachRequest, build::BuildCmd, inventory::InvItem};
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    world.rlva.configure(true);
+    let region = world.main_region.expect("demo region");
+    let (chest, skull) = (Uuid::from_u128(70), Uuid::from_u128(71));
+    for (id, point) in [(chest, 1), (skull, 2)] {
+        world.inventory.items.insert(
+            id,
+            InvItem {
+                id,
+                asset_type: 6,
+                flags: point,
+                owner_mask: 0x4000,
+                ..Default::default()
+            },
+        );
+        world.objects.upsert(
+            region,
+            crate::demo::outfit_attachment(&AttachRequest {
+                item_id: id,
+                owner_id: world.agent_id,
+                point: point as u8,
+                add: true,
+                flags: 1,
+                group_mask: 0,
+                everyone_mask: 0,
+                next_owner_mask: 0,
+                name: String::new(),
+                desc: String::new(),
+            }),
+        );
+    }
+    let key = |item: Uuid| {
+        world
+            .objects
+            .iter()
+            .find(|(_, o)| o.attachment_item_id() == Some(item))
+            .map(|(_, o)| o.key)
+            .expect("worn")
+    };
+    let (chest_key, skull_key) = (key(chest), key(skull));
+    let drop = |world: &crate::world::World, k: crate::world::objects::ObjKey| {
+        let cmd = NetCommand::Build(BuildCmd::DropAttachment {
+            handle: k.region,
+            local_ids: vec![k.local_id],
+        });
+        (
+            world.rlva_can_drop(k.region, &[k.local_id]),
+            world.rlva_allows_command(&cmd, Uuid::nil()),
+        )
+    };
+    assert_eq!(drop(&world, chest_key), (true, true), "no lock yet");
+    command(&mut world.rlva, A, "@remattach:chest=n");
+    // LLAttachmentDrop / enable_detach: the locked one stays, the other goes
+    assert_eq!(drop(&world, chest_key), (false, false));
+    assert!(!world.rlva_can_remove(chest, Uuid::nil()));
+    assert_eq!(drop(&world, skull_key), (true, true));
+    assert!(world.rlva_can_remove(skull, Uuid::nil()));
+    // @rez: nothing can be put in-world, a detach still can
+    command(&mut world.rlva, A, "@rez=n");
+    assert_eq!(drop(&world, skull_key), (false, false));
+    assert!(world.rlva_can_remove(skull, Uuid::nil()));
+}
+
+/// RlvForceWear::done (rlvhelper.cpp): a JasX-style state change, one
+/// folder off and the next on in a single message, is one COF update that
+/// takes the old folder off even while its object is still on the avatar
+/// (#1265). One update per item rebaked once per step, and a step planned
+/// before the previous detach landed put the object back.
+#[test]
+fn rlva_folder_state_change_is_one_outfit_change_that_drops_the_old_folder() {
+    use crate::world::appearance::{self, Action, WearRequest};
+    use crate::world::inventory::{FetchState, Folder};
+    use aurora_net::inventory::{InvFolder, InvItem};
+    let mut w = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    w.rlva.configure(true);
+    let root = Uuid::from_u128(10);
+    let (shared, jasx, dressed, underwear, cof) = (
+        Uuid::from_u128(11),
+        Uuid::from_u128(12),
+        Uuid::from_u128(13),
+        Uuid::from_u128(14),
+        Uuid::from_u128(20),
+    );
+    let id = Uuid::from_u128;
+    w.inventory.root = root;
+    for (folder, parent, name, kind, children, contents) in [
+        (root, Uuid::nil(), "My Inventory", -1, vec![shared, cof], vec![]),
+        (shared, root, "#RLV", -1, vec![jasx], vec![]),
+        (jasx, shared, "JasX", -1, vec![dressed, underwear], vec![]),
+        (dressed, jasx, "Dressed", -1, vec![], vec![id(31), id(32)]),
+        (underwear, jasx, "Underwear", -1, vec![], vec![id(33), id(34)]),
+        (cof, root, "Current Outfit", 46, vec![], vec![id(131), id(132)]),
+    ] {
+        w.inventory.folders.insert(
+            folder,
+            Folder {
+                info: InvFolder {
+                    id: folder,
+                    parent,
+                    name: name.to_owned(),
+                    type_default: kind,
+                    ..Default::default()
+                },
+                children,
+                items: contents,
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+    }
+    // (id, folder, name, asset type, flags): shirt and jacket dressed, the
+    // undershirt and a chest attachment underneath.
+    for (item, parent, name, asset_type, flags) in [
+        (31, dressed, "Shirt", 5, 4),
+        (32, dressed, "Jacket", 6, 5),
+        (33, underwear, "Undershirt", 5, 10),
+        (34, underwear, "Bra", 6, 1),
+    ] {
+        w.inventory.items.insert(
+            id(item),
+            InvItem {
+                id: id(item),
+                parent,
+                name: name.to_owned(),
+                asset_type,
+                flags,
+                ..Default::default()
+            },
+        );
+    }
+    for item in [31, 32] {
+        w.inventory.items.insert(
+            id(item + 100),
+            InvItem {
+                id: id(item + 100),
+                parent: cof,
+                asset_id: id(item),
+                asset_type: 24,
+                ..Default::default()
+            },
+        );
+    }
+    command(&mut w.rlva, A, "@detachall:JasX/Dressed=force,attachallover:JasX/Underwear=force");
+    w.rlva_pending();
+    assert_eq!(w.rlva.appearance.len(), 1, "both commands share one outfit change");
+    let (actor, action) = w.rlva.appearance[0].clone();
+    assert_eq!(actor, A);
+    let Action::Force { remove, wear } = &action else {
+        panic!("a forced state change is one Force batch");
+    };
+    assert_eq!(remove, &[id(31), id(32)]);
+    let mut worn: Vec<_> = wear.iter().map(|w| (w.item.as_u128(), w.replace)).collect();
+    worn.sort_unstable();
+    assert_eq!(worn, [(33, false), (34, false)], "attachallover adds");
+    // The jacket's object is still on the avatar: its detach is in flight.
+    let on_avatar = std::collections::HashMap::from([(id(32), 5)]);
+    let (change, sync) = appearance::plan(&w.inventory, action.clone(), &on_avatar).expect("planned");
+    let mut links: Vec<_> = change.links.iter().map(|l| l.target.as_u128()).collect();
+    links.sort_unstable();
+    assert_eq!(links, [33, 34], "the old folder goes, the new one comes, in one write");
+    assert!(sync);
+    let rez = appearance::attachments_for_action(&w.inventory, A, &action);
+    assert_eq!(rez.iter().map(|a| (a.item_id.as_u128(), a.add)).collect::<Vec<_>>(), [(34, true)]);
+    // A wear planned on its own while that object is still on: the planner
+    // folds it back, why the queue waits for detaches (rlva_detach_in_flight).
+    let alone = Action::WearItem {
+        item: id(33),
+        replace: false,
+        point: 0,
+    };
+    let (change, _) = appearance::plan(&w.inventory, alone, &on_avatar).expect("planned");
+    assert!(change.links.iter().any(|l| l.target == id(32)));
+    // A wear after a removal of the same item keeps it on.
+    w.rlva.appearance.clear();
+    command(&mut w.rlva, A, "@remattach=force,attach:JasX/Dressed=force");
+    w.rlva_pending();
+    let [(_, Action::Force { remove, wear })] = w.rlva.appearance.as_slice() else {
+        panic!("one batch");
+    };
+    assert!(!remove.contains(&id(32)), "re-worn in the same batch");
+    assert!(wear.iter().any(|w| w.item == id(32)));
+    // A removal after a wear cancels it.
+    w.rlva.appearance.clear();
+    command(&mut w.rlva, A, "@attach:JasX/Dressed=force,detachall:JasX/Dressed=force");
+    w.rlva_pending();
+    assert!(
+        matches!(w.rlva.appearance.as_slice(), [(_, Action::Force { wear, .. })] if wear.is_empty()),
+        "the later removal cancels the wear"
+    );
+    // A later replacing wear of the same layer wins (RlvForceWear::addWearable).
+    w.rlva.appearance.clear();
+    let other_shirt = id(35);
+    w.inventory.items.insert(
+        other_shirt,
+        InvItem {
+            id: other_shirt,
+            asset_type: 5,
+            flags: 4,
+            ..Default::default()
+        },
+    );
+    let shirt = WearRequest {
+        item: id(31),
+        replace: true,
+        point: 0,
+    };
+    w.rlva_force_wear(A, shirt);
+    w.rlva_force_wear(
+        A,
+        WearRequest {
+            item: other_shirt,
+            replace: true,
+            point: 0,
+        },
+    );
+    assert!(matches!(w.rlva.appearance.as_slice(), [(_, Action::Force { wear, .. })] if wear.len() == 1 && wear[0].item == other_shirt));
+    // Another object's commands open their own batch.
+    w.rlva_force_wear(B, shirt);
+    assert_eq!(w.rlva.appearance.len(), 2);
+}
+
+/// The COF write of an outfit change is acknowledged before its detaches
+/// land: RLVa's next step waits while a detach it asked for is still worn,
+/// for a bounded time.
+#[test]
+fn rlva_waits_for_requested_detaches_to_leave_the_avatar() {
+    use aurora_net::AttachRequest;
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    world.rlva.configure(true);
+    let item = Uuid::from_u128(900);
+    world.inventory.items.insert(
+        item,
+        aurora_net::inventory::InvItem {
+            id: item,
+            asset_type: 6,
+            flags: 5,
+            ..Default::default()
+        },
+    );
+    let region = world.main_region.unwrap();
+    let object = crate::demo::outfit_attachment(&AttachRequest {
+        item_id: item,
+        owner_id: world.agent_id,
+        point: 5,
+        add: true,
+        flags: 5,
+        group_mask: 0,
+        everyone_mask: 0,
+        next_owner_mask: 0,
+        name: String::new(),
+        desc: String::new(),
+    });
+    let index = world.objects.upsert(region, object);
+    assert!(world.outfit_attachment_items().contains(&item));
+    let now = std::time::Instant::now();
+    assert!(!world.rlva_detach_in_flight(now), "nothing requested");
+    world.rlva_note_attachment_command(&NetCommand::DetachAttachments(vec![item]), Uuid::nil(), now);
+    assert!(world.rlva_detach_in_flight(now));
+    assert!(
+        !world.rlva_detach_in_flight(now + std::time::Duration::from_secs(11)),
+        "a detach that never lands stops holding the queue"
+    );
+    world.objects.remove_idx(index);
+    assert!(!world.rlva_detach_in_flight(now), "landed");
+}
+
+#[test]
+fn empty_trash_ignores_rlva_locks_without_exempting_other_purges() {
+    use crate::world::inventory::{FetchState, Folder};
+    use aurora_net::inventory::{
+        InvFolder,
+        operations::{Mutation, Operation},
+    };
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    world.rlva.configure(true);
+    command(&mut world.rlva, A, "@detach=n");
+    assert!(world.rlva.inventory_locked());
+    let trash = Uuid::from_u128(90);
+    let unloaded = Uuid::from_u128(91);
+    for (id, kind, state) in [(trash, 14, FetchState::Fetched), (unloaded, -1, FetchState::Unknown)] {
+        world.inventory.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    type_default: kind,
+                    ..Default::default()
+                },
+                children: vec![],
+                items: vec![],
+                state,
+                library: false,
+            },
+        );
+    }
+    let purge = |id| Mutation {
+        operations: vec![Operation::Purge(id)],
+        ..Default::default()
+    };
+    assert!(world.rlva_inventory_mutation_allowed(&purge(trash), Uuid::nil()));
+    assert!(!world.rlva_inventory_mutation_allowed(&purge(unloaded), Uuid::nil()));
+    assert!(!world.rlva_inventory_mutation_allowed(&purge(Uuid::from_u128(92)), Uuid::nil()));
+}
+
+#[test]
+fn rlva_linking_refuses_the_locked_seat_like_can_stand_but_sittp_alone_does_not() {
+    use crate::world::World;
+    let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events()
+        .into_iter()
+        .chain(crate::demo::selection_cycle_events())
+        .chain(crate::demo::sit_events(250))
+        .chain(crate::demo::sit_events(300))
+    {
+        world.apply(event);
+    }
+    world.agent.seated = true;
+    world.rlva_configure(true);
+    let index = |world: &World, id| world.objects.iter().find(|(_, o)| o.key.local_id == id).unwrap().0;
+    let seat = index(&world, 950);
+    let other = index(&world, 99610);
+    command(&mut world.rlva, A, "@sittp=n");
+    assert!(world.rlva_can_link(&[seat, other]));
+    command(&mut world.rlva, A, "@unsit=n");
+    assert!(!world.rlva_can_link(&[seat, other]));
+    assert!(world.rlva_can_link(&[other]));
+    let object = world.objects.get(seat).unwrap();
+    assert!(!world.rlva_allows_build(&aurora_net::build::BuildCmd::Link {
+        handle: object.key.region,
+        local_ids: vec![object.key.local_id]
+    }));
+    command(&mut world.rlva, A, "@unsit=y");
+    assert!(world.rlva_can_link(&[seat, other]));
+    command(&mut world.rlva, A, "@editworld=n");
+    assert!(!world.rlva_can_link(&[seat, other]));
 }

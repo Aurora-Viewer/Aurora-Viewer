@@ -20,6 +20,7 @@ use super::widgets::{self, Floater};
 use crate::theme::Palette;
 use crate::world::World;
 use crate::world::place_details::{Place, PlaceError, Source, Stage};
+use crate::world::worldmap::WorldMap;
 use aurora_net::ParcelSummary;
 use aurora_net::land::RemoteParcelError;
 use egui::{RichText, Vec2};
@@ -111,13 +112,10 @@ pub fn maturity(flags: u8) -> &'static str {
 /// LLPanelPlaceInfo::processParcelInfo: "%s (%d, %d, %d)" with the position
 /// in the region rounded, or the parcel's global position modulo 256 when
 /// there is none.
-pub fn region_name_pos(sim_name: &str, pos: glam::Vec3, global: DVec3) -> String {
+pub fn region_name_pos(sim_name: &str, pos: glam::Vec3, global: DVec3, map: &WorldMap) -> String {
     let (x, y, z) = if pos == glam::Vec3::ZERO {
-        (
-            (global.x.round() as i64).rem_euclid(256),
-            (global.y.round() as i64).rem_euclid(256),
-            global.z.round() as i64,
-        )
+        let (x, y) = map.local_xy(global.x.round(), global.y.round());
+        (x.round() as i64, y.round() as i64, global.z.round() as i64)
     } else {
         (pos.x.round() as i64, pos.y.round() as i64, pos.z.round() as i64)
     };
@@ -214,6 +212,16 @@ fn slurl_of(place: &Place, world: &World) -> Option<String> {
     (!region.is_empty() && !world.rlva_private_region(&region)).then(|| crate::slurl::make(&region, place.region_pos))
 }
 
+/// RLVa leaves the place's Teleport allowed (LLPanelPlaces::updateVerbs,
+/// FSFloaterPlaceDetails: @tplm for a landmark, canTeleportToLocation for
+/// any other place).
+pub fn teleport_allowed(place: &Place, world: &World) -> bool {
+    match &place.source {
+        Source::Landmark { .. } => world.rlva_can_teleport_landmark(),
+        _ => place.global.is_none_or(|g| world.rlva_can_teleport_global(g)),
+    }
+}
+
 /// "Teleport" of a profile (onTeleportButtonClicked).
 pub fn teleport_action(place: &Place, world: &World) -> Option<PlaceAction> {
     match &place.source {
@@ -250,7 +258,9 @@ impl PlaceDetailsUi {
         self.raise.insert(serial);
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, c: &mut Ctx) -> Vec<PlaceAction> {
+    /// `aurora`: Aurora's Places look (`!Settings::classic_places`), which
+    /// gives the bottom bar Aurora's buttons.
+    pub fn show(&mut self, ctx: &egui::Context, c: &mut Ctx, aurora: bool) -> Vec<PlaceAction> {
         let mut actions = Vec::new();
         let screen = ctx.content_rect();
         let (p, world) = (c.p, c.world);
@@ -274,7 +284,7 @@ impl PlaceDetailsUi {
                         .layout(egui::Layout::bottom_up(egui::Align::Min)),
                 );
                 let ui = &mut child;
-                window_buttons(ui, p, world, place, &mut actions);
+                window_buttons(ui, p, world, place, aurora, &mut actions);
                 ui.add_space(6.0);
                 ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                     egui::ScrollArea::vertical()
@@ -294,41 +304,44 @@ impl PlaceDetailsUi {
 /// Bottom bar of floater_fs_placedetails.xml (updateVerbs: "Teleport" and
 /// "Map" enabled with a position; "Edit" for a landmark) and the
 /// overflow menu.
-fn window_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, place: &Place, actions: &mut Vec<PlaceAction>) {
+fn window_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, place: &Place, aurora: bool, actions: &mut Vec<PlaceAction>) {
     let global = place.global;
+    let look = |legacy_width| ButtonLook::of(aurora, legacy_width);
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 3.0;
-        if button(
+        ui.spacing_mut().item_spacing.x = ButtonLook::gap(aurora);
+        if teleport_button(
             ui,
             p,
+            look(108.0),
             aurora_i18n::tr!("common-teleport-3"),
             aurora_i18n::tr!("ui-place-details-teleport-to-the-specified-location"),
-            global.is_some(),
-            108.0,
+            global.is_some() && teleport_allowed(place, world),
         ) && let Some(a) = teleport_action(place, world)
         {
             actions.push(a);
         }
-        if button(
+        if map_button(
             ui,
             p,
+            look(85.0),
             aurora_i18n::tr!("common-map"),
             aurora_i18n::tr!("ui-place-details-show-the-corresponding-location-on-the-map"),
             global.is_some(),
-            85.0,
         ) && let Some(g) = global
         {
             actions.push(PlaceAction::ShowOnMap(g));
         }
         if matches!(place.source, Source::Landmark { .. }) {
             ui.add_enabled_ui(false, |ui| {
-                button(
+                profile_button(
                     ui,
                     p,
+                    look(70.0),
+                    "",
+                    widgets::ActionKind::Flat,
                     aurora_i18n::tr!("common-edit"),
                     aurora_i18n::tr!("ui-place-details-edit-this-landmark"),
                     true,
-                    70.0,
                 )
             })
             .response
@@ -344,14 +357,72 @@ fn window_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, place: &Place, 
     });
 }
 
-/// A flat button of the Places bottom bars.
-pub fn button(ui: &mut egui::Ui, p: &Palette, label: &str, tip: &str, enabled: bool, width: f32) -> bool {
+/// A flat button of the Places bottom bars; its response keeps the label's
+/// width on one line (`Response::intrinsic_size`), for a bar sizing its window.
+pub fn button(ui: &mut egui::Ui, p: &Palette, label: &str, tip: &str, enabled: bool, width: f32) -> egui::Response {
     let b = egui::Button::new(RichText::new(label).size(12.0).color(p.ink))
         .fill(p.raised)
         .corner_radius(ui.visuals().widgets.inactive.corner_radius);
     ui.add_enabled(enabled, |ui: &mut egui::Ui| ui.add_sized([width, 23.0], b))
         .on_hover_text(tip)
-        .clicked()
+}
+
+/// The look of a place profile's bottom buttons, which follows the Places
+/// style (`Settings::classic_places`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ButtonLook {
+    /// Aurora's Places window: action buttons 26 px tall, as wide as their
+    /// label, Teleport in the highlight colour.
+    Aurora,
+    /// The Legacy style: the plain `button` of this width, like the lists'.
+    Legacy(f32),
+}
+
+impl ButtonLook {
+    pub fn of(aurora: bool, legacy_width: f32) -> Self {
+        if aurora { Self::Aurora } else { Self::Legacy(legacy_width) }
+    }
+
+    /// The space between the buttons of the bar.
+    pub fn gap(aurora: bool) -> f32 {
+        if aurora { 6.0 } else { 3.0 }
+    }
+}
+
+/// A button of a place profile's bottom bar, in its look (the icon and kind
+/// are Aurora's only).
+#[allow(clippy::too_many_arguments)]
+fn profile_button(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    look: ButtonLook,
+    icon: &str,
+    kind: widgets::ActionKind,
+    label: &str,
+    tip: &str,
+    enabled: bool,
+) -> bool {
+    match look {
+        ButtonLook::Legacy(width) => button(ui, p, label, tip, enabled, width).clicked(),
+        ButtonLook::Aurora => {
+            let size = egui::vec2(widgets::action_button_fit(ui, icon, label), 26.0);
+            widgets::action_button_if(ui, p, icon, label, kind, size, enabled)
+                .on_hover_text(tip)
+                .clicked()
+        }
+    }
+}
+
+/// The Teleport button of a place profile. In Aurora's look it takes the
+/// highlight colour and the icon of Aurora's Places window (deliberate
+/// difference: the Legacy Viewer's is plain, and so is the Legacy style's).
+pub fn teleport_button(ui: &mut egui::Ui, p: &Palette, look: ButtonLook, label: &str, tip: &str, enabled: bool) -> bool {
+    profile_button(ui, p, look, "location-filled", widgets::ActionKind::Primary, label, tip, enabled)
+}
+
+/// The Map button beside `teleport_button`.
+pub fn map_button(ui: &mut egui::Ui, p: &Palette, look: ButtonLook, label: &str, tip: &str, enabled: bool) -> bool {
+    profile_button(ui, p, look, "map", widgets::ActionKind::Flat, label, tip, enabled)
 }
 
 /// The panel of a place: landmark info for a landmark, place profile else.
@@ -420,7 +491,7 @@ fn titles(data: &Shown, place: &Place, world: &World) -> (String, Option<String>
             (!d.sim_name.is_empty()).then(|| {
                 aurora_i18n::tr!(
                     "ui-place-details-region-3",
-                    value0 = region_name_pos(&d.sim_name, place.region_pos, d.global).to_string()
+                    value0 = region_name_pos(&d.sim_name, place.region_pos, d.global, &world.map).to_string()
                 )
             }),
         ),
@@ -701,6 +772,66 @@ mod tests {
     use super::*;
     use glam::Vec3;
 
+    /// The standalone window's bar in each Places style: the Legacy style
+    /// keeps its plain Teleport and Map (108 and 85 wide, 3 apart), Aurora's
+    /// look sizes its 26 px action buttons to their labels.
+    #[test]
+    fn window_buttons_follow_the_places_style() {
+        use crate::world::landmarks::Landmarks;
+        use crate::world::place_details::PlaceDetails;
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut details = PlaceDetails::default();
+        let landmark = Source::Landmark {
+            item: Uuid::from_u128(1),
+            asset: Uuid::from_u128(2),
+        };
+        details.open_panel(landmark, &WorldMap::default(), &mut Landmarks::default(), std::time::Instant::now());
+        let mut place = details.panel.expect("the landmark's profile");
+        // resolved: Teleport and Map can be clicked
+        place.global = Some(DVec3::new(256_128.0, 256_128.0, 22.0));
+        // Teleport and Map, where the frame laid them out
+        let bar = |aurora: bool| {
+            let mut layer = egui::LayerId::background();
+            let mut fits = Vec::new();
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                layer = ui.layer_id();
+                fits = [
+                    (aurora_i18n::tr!("common-teleport-3"), "location-filled"),
+                    (aurora_i18n::tr!("common-map"), "map"),
+                ]
+                .map(|(label, icon)| widgets::action_button_fit(ui, icon, label))
+                .to_vec();
+                window_buttons(ui, &p, &world, &place, aurora, &mut Vec::new());
+            });
+            output.textures_delta.clear();
+            let rects: Vec<egui::Rect> = ctx.viewport(|v| {
+                v.prev_pass
+                    .widgets
+                    .get_layer(layer)
+                    .filter(|w| w.sense.senses_click())
+                    .take(2)
+                    .map(|w| w.rect)
+                    .collect()
+            });
+            (rects, fits)
+        };
+
+        let (legacy, _) = bar(false);
+        let widths: Vec<f32> = legacy.iter().map(|r| r.width()).collect();
+        assert_eq!(widths, [108.0, 85.0]);
+        assert_eq!(legacy[1].min.x - legacy[0].max.x, 3.0);
+
+        let (aurora, fits) = bar(true);
+        let sizes: Vec<Vec2> = aurora.iter().map(|r| r.size()).collect();
+        let fitted: Vec<Vec2> = fits.iter().map(|&w| Vec2::new(w, 26.0)).collect();
+        assert_eq!(sizes, fitted);
+        assert_eq!(aurora[1].min.x - aurora[0].max.x, 6.0);
+    }
+
     #[test]
     fn maturity_from_flags() {
         assert_eq!(maturity(0), aurora_i18n::tr!("common-general"));
@@ -715,11 +846,14 @@ mod tests {
     fn region_and_position() {
         let g = DVec3::new(256_140.4, 256_119.6, 24.5);
         assert_eq!(
-            region_name_pos("Aurora Démo", Vec3::new(140.4, 119.6, 24.6), g),
+            region_name_pos("Aurora Démo", Vec3::new(140.4, 119.6, 24.6), g, &WorldMap::default()),
             "Aurora Démo (140, 120, 25)"
         );
         // no position of our own: the parcel's, modulo the region width
-        assert_eq!(region_name_pos("Aurora Démo", Vec3::ZERO, g), "Aurora Démo (140, 120, 25)");
+        assert_eq!(
+            region_name_pos("Aurora Démo", Vec3::ZERO, g, &WorldMap::default()),
+            "Aurora Démo (140, 120, 25)"
+        );
     }
 
     #[test]

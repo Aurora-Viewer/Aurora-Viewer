@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 pub mod fallback;
+pub mod preview;
 
 pub const INTER: &str = "Inter";
 pub const NOTO: &str = "Noto Sans";
@@ -111,7 +112,7 @@ fn font_dirs() -> Vec<PathBuf> {
         if let Some(local) = std::env::var_os("LOCALAPPDATA") {
             dirs.push(PathBuf::from(local).join("Microsoft").join("Windows").join("Fonts"));
         }
-    } else {
+    } else if cfg!(target_os = "macos") {
         dirs.push(PathBuf::from("/usr/share/fonts"));
         dirs.push(PathBuf::from("/usr/local/share/fonts"));
         if let Some(home) = std::env::var_os("HOME") {
@@ -119,23 +120,135 @@ fn font_dirs() -> Vec<PathBuf> {
         }
         dirs.push(PathBuf::from("/System/Library/Fonts"));
         dirs.push(PathBuf::from("/Library/Fonts"));
+    } else {
+        dirs = xdg_font_dirs(
+            std::env::var_os("HOME").map(PathBuf::from),
+            std::env::var_os("XDG_DATA_HOME").map(PathBuf::from),
+            std::env::var_os("XDG_DATA_DIRS"),
+        );
     }
     dirs
+}
+
+/// fontconfig's own directories that `usual` (from `font_dirs`) does not
+/// list already. Each scan reads them after the usual ones, so a large
+/// tree of theirs (TeX Live's) cannot use up its budget nor replace a
+/// system copy of a file: `system_fonts` takes its directories from the
+/// end (they go first), the fallback index from the start (they go last).
+fn extra_font_dirs(usual: &[PathBuf]) -> Vec<PathBuf> {
+    fontconfig_dirs().into_iter().filter(|d| !usual.contains(d)).collect()
+}
+
+/// The `<dir>`s of fontconfig's configuration file and of what it
+/// includes, the user's own file among them. NixOS and other set-ups keep
+/// fonts only in such directories; the Legacy Viewer reaches them by asking
+/// fontconfig for each missing character
+/// (LLWindowSDL::findFallbackFontForChar).
+#[cfg(target_os = "linux")]
+fn fontconfig_dirs() -> Vec<PathBuf> {
+    let Some(file) = fontconfig_file(
+        std::env::var_os("FONTCONFIG_FILE"),
+        std::env::var_os("FONTCONFIG_PATH"),
+        std::env::var_os("HOME").map(PathBuf::from),
+        |p| p.is_file(),
+    ) else {
+        log::info!("no fontconfig configuration found");
+        return Vec::new();
+    };
+    let mut config = fontconfig_parser::FontConfig::default();
+    if let Err(e) = config.merge_config(&file) {
+        // the directories read before the error are kept
+        log::warn!("fontconfig configuration {} not fully read: {e}", file.display());
+    }
+    config.dirs.into_iter().map(|d| d.path).filter(|p| p.is_absolute()).collect()
+}
+
+/// The configuration file fontconfig reads (FcConfigGetFilename):
+/// `$FONTCONFIG_FILE`, else `fonts.conf`; a name that is not absolute (nor
+/// starts with `~/`) is looked for in each directory of `$FONTCONFIG_PATH`,
+/// then in `/etc/fonts`.
+#[cfg(any(target_os = "linux", all(test, unix)))]
+fn fontconfig_file(
+    file: Option<std::ffi::OsString>,
+    path: Option<std::ffi::OsString>,
+    home: Option<PathBuf>,
+    exists: impl Fn(&std::path::Path) -> bool,
+) -> Option<PathBuf> {
+    let name = file
+        .filter(|f| !f.is_empty())
+        .map_or_else(|| PathBuf::from("fonts.conf"), PathBuf::from);
+    if let Ok(rest) = name.strip_prefix("~") {
+        return home.map(|h| h.join(rest)).filter(|p| exists(p));
+    }
+    if name.is_absolute() {
+        return Some(name).filter(|p| exists(p));
+    }
+    let search = path.map(|p| std::env::split_paths(&p).filter(|d| !d.as_os_str().is_empty()).collect::<Vec<_>>());
+    search
+        .unwrap_or_default()
+        .into_iter()
+        .chain([PathBuf::from("/etc/fonts")])
+        .map(|d| d.join(&name))
+        .find(|p| exists(p))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn fontconfig_dirs() -> Vec<PathBuf> {
+    Vec::new()
+}
+
+/// The font directories of the XDG base directories, which fontconfig
+/// reads too: `fonts` in `$XDG_DATA_DIRS` (Flatpak exports, NixOS
+/// profiles…) after the two usual system directories, then
+/// `$XDG_DATA_HOME/fonts` and the older `~/.fonts`. Relative entries are
+/// ignored and unset or empty variables take their defaults, as the XDG
+/// specification says; each directory is listed once.
+fn xdg_font_dirs(home: Option<PathBuf>, data_home: Option<PathBuf>, data_dirs: Option<std::ffi::OsString>) -> Vec<PathBuf> {
+    let mut dirs = vec![PathBuf::from("/usr/share/fonts"), PathBuf::from("/usr/local/share/fonts")];
+    let data_dirs: Vec<PathBuf> = data_dirs
+        .map(|v| std::env::split_paths(&v).filter(|p| p.is_absolute()).collect())
+        .filter(|v: &Vec<PathBuf>| !v.is_empty())
+        .unwrap_or_else(|| vec![PathBuf::from("/usr/local/share"), PathBuf::from("/usr/share")]);
+    dirs.extend(data_dirs.into_iter().map(|d| d.join("fonts")));
+    let home = home.filter(|h| h.is_absolute());
+    let data_home = data_home
+        .filter(|d| d.is_absolute())
+        .or_else(|| home.as_ref().map(|h| h.join(".local/share")));
+    dirs.extend(data_home.map(|d| d.join("fonts")));
+    dirs.extend(home.map(|h| h.join(".fonts")));
+    let mut seen = std::collections::HashSet::new();
+    dirs.retain(|d| seen.insert(d.clone()));
+    dirs
+}
+
+/// Is this the first time a scan reaches `dir`? A directory reached again
+/// through a link (a loop, or two links to one folder) is skipped: whatever
+/// the order the system lists entries in, a file keeps the path of its
+/// first, shortest way, and a loop does not use up the scan's budget.
+fn first_visit(seen: &mut std::collections::HashSet<PathBuf>, dir: &std::path::Path) -> bool {
+    std::fs::canonicalize(dir).map_or(true, |real| seen.insert(real))
 }
 
 /// Regular-weight TrueType/OpenType fonts installed on the system, by family name.
 pub fn system_fonts() -> Vec<SystemFont> {
     let mut out: Vec<SystemFont> = Vec::new();
-    let mut stack = font_dirs();
+    let usual = font_dirs();
+    let mut stack = extra_font_dirs(&usual);
+    stack.extend(usual);
     let mut visited = 0;
+    let mut seen = std::collections::HashSet::new();
     while let Some(d) = stack.pop() {
+        if !first_visit(&mut seen, &d) {
+            continue;
+        }
+        // only directories that exist count: most XDG data directories have no fonts
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
         visited += 1;
         if visited > 64 {
             break;
         }
-        let Ok(rd) = std::fs::read_dir(&d) else {
-            continue;
-        };
         for e in rd.flatten() {
             let path = e.path();
             if path.is_dir() {
@@ -163,7 +276,7 @@ pub fn system_fonts() -> Vec<SystemFont> {
             out.push(SystemFont { name, path });
         }
     }
-    out.sort_by_key(|f| f.name.to_lowercase());
+    out.sort_by_key(|f| crate::natural_order::key(&f.name));
     out
 }
 
@@ -205,6 +318,68 @@ pub fn apply(ctx: &egui::Context, choice: &str) -> bool {
 const DEFINITIONS_ID: &str = "aurora-font-definitions";
 const SEMIBOLD_ID: &str = "aurora-font-has-semibold";
 const SCALE_ID: &str = "aurora-font-scale";
+const BASELINE_ID: &str = "aurora-font-baseline";
+const INSTALLED_ID: &str = "aurora-font-installed";
+
+#[derive(Clone, Copy)]
+struct BaselineFace {
+    ascent: f32,
+    descent: f32,
+    scale: f32,
+    offset_factor: f32,
+    offset: f32,
+}
+
+impl BaselineFace {
+    fn of(definitions: &egui::FontDefinitions) -> Option<Self> {
+        let data = definitions.font_data.get(MAIN).or_else(|| {
+            definitions
+                .families
+                .get(&egui::FontFamily::Proportional)?
+                .iter()
+                .find_map(|name| definitions.font_data.get(name))
+        })?;
+        let face = ttf_parser::Face::parse(data.bytes(), data.index).ok()?;
+        let em = f32::from(face.units_per_em());
+        (em > 0.0).then(|| Self {
+            ascent: f32::from(face.ascender()) / em,
+            descent: -f32::from(face.descender()) / em,
+            scale: data.tweak.scale,
+            offset_factor: data.tweak.y_offset_factor,
+            offset: data.tweak.y_offset,
+        })
+    }
+}
+
+pub struct BaselineMetrics {
+    pub advance: f32,
+    /// The optical centering of UI glyphs, removed for baseline-anchored text.
+    pub offset: f32,
+}
+
+/// LLFontGL::getLineHeight (indra/llrender/llfontgl.cpp) rounds ascent and
+/// descent separately, without the font's line gap; LLHUDText subtracts one.
+/// Keep unscaled face metrics at installation, not a font parse every frame.
+pub fn baseline_metrics(ctx: &egui::Context, size: f32) -> BaselineMetrics {
+    use egui::emath::GuiRounding as _;
+    let face = ctx
+        .data(|data| data.get_temp::<Option<BaselineFace>>(egui::Id::unique(BASELINE_ID)))
+        .flatten()
+        .or_else(|| ctx.fonts(|fonts| BaselineFace::of(fonts.definitions())));
+    let scale = scale(ctx);
+    if let Some(face) = face {
+        let em = size * scale * face.scale;
+        BaselineMetrics {
+            advance: ((face.ascent * em).ceil() + (face.descent * em).ceil() - 1.0).max(1.0),
+            offset: (em * face.offset_factor + face.offset * scale).round_ui(),
+        }
+    } else {
+        BaselineMetrics {
+            advance: ctx.fonts_mut(|fonts| fonts.row_height(&egui::FontId::proportional(size))).max(2.0) - 1.0,
+            offset: 0.0,
+        }
+    }
+}
 
 /// Combined skin and preference scale, also used by inline emoji pictures.
 pub fn scale(ctx: &egui::Context) -> f32 {
@@ -225,14 +400,39 @@ pub fn set_scale(ctx: &egui::Context, scale: f32) {
     install(ctx, definitions.as_deref().cloned().unwrap_or_default());
 }
 
+const CHAT_ID: &str = "aurora-chat-text-ratio";
+
+/// Size the conversations' text on their own (Preferences › Chat › Text
+/// size): `chat_scale` replaces the interface's `text_scale` for them, the
+/// skin's scale kept. The faces stay scaled for the interface, so the
+/// conversations ask `chat_size` for every size they draw.
+pub fn set_chat_scale(ctx: &egui::Context, chat_scale: f32, text_scale: f32) {
+    let ratio = chat_ratio(chat_scale, text_scale);
+    ctx.data_mut(|data| data.insert_temp(egui::Id::unique(CHAT_ID), ratio));
+}
+
+fn chat_ratio(chat_scale: f32, text_scale: f32) -> f32 {
+    let ratio = chat_scale / text_scale;
+    if ratio.is_finite() && ratio > 0.0 { ratio } else { 1.0 }
+}
+
+/// A text size of the conversations, once the faces' scale is applied
+/// the size the chat's own text size asks for.
+pub fn chat_size(ctx: &egui::Context, size: f32) -> f32 {
+    size * ctx.data(|data| data.get_temp(egui::Id::unique(CHAT_ID))).unwrap_or(1.0)
+}
+
 /// Keep the unscaled faces so live changes never compound their scale and
 /// late system fallbacks or a font change inherit the current preference.
 fn install(ctx: &egui::Context, definitions: egui::FontDefinitions) {
+    let frame = ctx.cumulative_frame_nr();
     let heavier =
         definitions.font_data.contains_key(SEMIBOLD) || definitions.font_data.get(MAIN).is_some_and(|face| has_weight_axis(face.bytes()));
     ctx.data_mut(|data| {
         data.insert_temp(egui::Id::unique(DEFINITIONS_ID), Arc::new(definitions.clone()));
         data.insert_temp(egui::Id::unique(SEMIBOLD_ID), heavier);
+        data.insert_temp(egui::Id::unique(BASELINE_ID), BaselineFace::of(&definitions));
+        data.insert_temp(egui::Id::unique(INSTALLED_ID), frame);
     });
     let scale = scale(ctx);
     let mut scaled = definitions;
@@ -307,11 +507,56 @@ pub fn semibold_format(family: &egui::FontFamily, size: f32, color: egui::Color3
     format
 }
 
+/// Emphasis shared by plain text, emoji runs and laid-out chat cards.
+/// `RichText::strong` changes the colour only; weight needs our font face
+/// and the variable-font axis, as in `semibold_format`.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct TextEmphasis {
+    pub italics: bool,
+    pub strong: bool,
+}
+
+impl From<bool> for TextEmphasis {
+    fn from(italics: bool) -> Self {
+        Self { italics, strong: false }
+    }
+}
+
+impl TextEmphasis {
+    pub fn rich_text(self, ctx: &egui::Context, text: impl Into<String>, size: f32, color: egui::Color32) -> egui::RichText {
+        let mut text = egui::RichText::new(text).size(size).color(color);
+        if self.strong {
+            text = text.family(semibold(ctx)).variation(b"wght", 600.0);
+        }
+        if self.italics {
+            text = text.italics();
+        }
+        text
+    }
+
+    pub fn format(self, ctx: &egui::Context, size: f32, color: egui::Color32) -> egui::TextFormat {
+        let mut format = if self.strong {
+            semibold_format(&semibold(ctx), size, color)
+        } else {
+            egui::TextFormat::simple(egui::FontId::proportional(size), color)
+        };
+        format.italics = self.italics;
+        format
+    }
+}
+
 /// Does `semibold_format` draw heavier than the regular text? Yes with an
 /// embedded font or a variable system font; a static system font draws its
 /// semi-bold texts with its regular face.
 pub fn has_semibold(ctx: &egui::Context) -> bool {
     ctx.data(|data| data.get_temp(egui::Id::unique(SEMIBOLD_ID))).unwrap_or(false)
+}
+
+/// The frame the fonts were last installed in: they are in use from the
+/// next one on (`Context::set_fonts`), so a text measured in a later frame
+/// was measured with them. `None` before any install (the tests).
+pub fn installed_at(ctx: &egui::Context) -> Option<u64> {
+    ctx.data(|data| data.get_temp(egui::Id::unique(INSTALLED_ID)))
 }
 
 fn has_weight_axis(font: &[u8]) -> bool {
@@ -366,6 +611,73 @@ fn embedded_has(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn fontconfig_file_is_looked_for_like_fontconfig() {
+        let p = PathBuf::from;
+        let present = [
+            p("/etc/fonts/fonts.conf"),
+            p("/opt/fc/fonts.conf"),
+            p("/opt/fc/app.conf"),
+            p("/home/u/fc.conf"),
+        ];
+        let find = |file: Option<&str>, path: Option<&str>| {
+            fontconfig_file(file.map(Into::into), path.map(Into::into), Some(p("/home/u")), |f| {
+                present.iter().any(|x| x == f)
+            })
+        };
+        // default name in /etc/fonts, or first in FONTCONFIG_PATH
+        assert_eq!(find(None, None), Some(p("/etc/fonts/fonts.conf")));
+        assert_eq!(find(Some(""), Some("/missing:/opt/fc")), Some(p("/opt/fc/fonts.conf")));
+        // a relative FONTCONFIG_FILE is searched the same way, not in the working directory
+        assert_eq!(find(Some("app.conf"), Some("/opt/fc")), Some(p("/opt/fc/app.conf")));
+        assert_eq!(find(Some("app.conf"), None), None);
+        // absolute and home names are taken as they are
+        assert_eq!(find(Some("~/fc.conf"), Some("/opt/fc")), Some(p("/home/u/fc.conf")));
+        assert_eq!(find(Some("/home/u/fc.conf"), None), Some(p("/home/u/fc.conf")));
+        assert_eq!(find(Some("/nowhere.conf"), None), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn xdg_font_dirs_follow_the_variables_and_their_defaults() {
+        let p = PathBuf::from;
+        // unset: the specification's defaults, each directory once
+        assert_eq!(
+            xdg_font_dirs(Some(p("/home/u")), None, None),
+            [
+                p("/usr/share/fonts"),
+                p("/usr/local/share/fonts"),
+                p("/home/u/.local/share/fonts"),
+                p("/home/u/.fonts"),
+            ]
+        );
+        // set: every data directory in order, relative entries ignored
+        let data_dirs = std::env::join_paths([
+            "/run/current-system/sw/share",
+            "rel/share",
+            "/var/lib/flatpak/exports/share",
+            "/usr/share",
+        ])
+        .ok();
+        assert_eq!(
+            xdg_font_dirs(Some(p("/home/u")), Some(p("/data/u")), data_dirs),
+            [
+                p("/usr/share/fonts"),
+                p("/usr/local/share/fonts"),
+                p("/run/current-system/sw/share/fonts"),
+                p("/var/lib/flatpak/exports/share/fonts"),
+                p("/data/u/fonts"),
+                p("/home/u/.fonts"),
+            ]
+        );
+        // empty or relative values count as unset; no home, no user directories
+        assert_eq!(
+            xdg_font_dirs(None, Some(p("data")), Some("".into())),
+            [p("/usr/share/fonts"), p("/usr/local/share/fonts")]
+        );
+    }
 
     fn measure(ctx: &egui::Context, family: egui::FontFamily, size: f32, width: f32) -> (egui::Vec2, usize) {
         let mut measured = Default::default();
@@ -470,6 +782,39 @@ mod tests {
         assert_eq!(egui::TextStyle::Body.resolve(&ctx.style_of(ctx.theme())).size, size);
         let (scaled, _) = measure(&ctx, family, size, f32::INFINITY);
         assert!((scaled.x / base.x - 1.32).abs() < 0.03);
+    }
+
+    #[test]
+    fn chat_text_follows_its_own_size_whatever_the_interface_text_size() {
+        let ctx = egui::Context::default();
+        let mut theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        install(&ctx, definitions_for(INTER, &[]));
+        let family = egui::FontFamily::Proportional;
+        // no chat size set yet: the conversations draw as the interface
+        assert_eq!(chat_size(&ctx, 13.5), 13.5);
+        let (base, _) = measure(&ctx, family.clone(), 13.5, f32::INFINITY);
+        // the same chat text at 1.5×, the interface's text small or large
+        for text in [0.8, 1.0, 2.0] {
+            theme.apply(&ctx, text);
+            set_chat_scale(&ctx, 1.5, text);
+            let (chat, _) = measure(&ctx, family.clone(), chat_size(&ctx, 13.5), f32::INFINITY);
+            assert!((chat.x / base.x - 1.5).abs() < 0.03, "text {text}: {}", chat.x / base.x);
+        }
+        // the skin's own scale stays on the chat too
+        theme.font_scale = 1.2;
+        theme.apply(&ctx, 2.0);
+        set_chat_scale(&ctx, 1.0, 2.0);
+        let (chat, _) = measure(&ctx, family, chat_size(&ctx, 13.5), f32::INFINITY);
+        assert!((chat.x / base.x - 1.2).abs() < 0.03);
+    }
+
+    #[test]
+    fn chat_ratio_never_breaks_the_text() {
+        assert_eq!(chat_ratio(1.5, 1.0), 1.5);
+        assert_eq!(chat_ratio(1.0, 2.0), 0.5);
+        assert_eq!(chat_ratio(1.0, 0.0), 1.0);
+        assert_eq!(chat_ratio(f32::NAN, 1.0), 1.0);
     }
 
     #[test]

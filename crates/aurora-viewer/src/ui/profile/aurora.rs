@@ -332,13 +332,9 @@ fn right_change(given: i32, bit: i32) -> RightChange {
 }
 
 /// The tabs of the Aurora window, as the classic window's tab numbers.
-fn tabs_of(own: bool) -> Vec<usize> {
-    // no private notes on oneself (the mock-up of our own profile)
-    let mut t = vec![TAB_SL, TAB_PICKS, TAB_CLASSIFIEDS, TAB_RL, TAB_FEED];
-    if !own {
-        t.push(TAB_NOTES);
-    }
-    t
+fn tabs_of() -> Vec<usize> {
+    // The Legacy Viewer keeps the Notes tab on our own profile too.
+    vec![TAB_SL, TAB_PICKS, TAB_CLASSIFIEDS, TAB_RL, TAB_FEED, TAB_NOTES]
 }
 
 /// What is edited and not saved, for the bar ("bio, 1 place").
@@ -407,7 +403,7 @@ fn body(ui: &mut egui::Ui, env: &mut Env, w: &mut Window) {
     ui.spacing_mut().item_spacing.y = 0.0;
     let f = facts(world, &w.id, own, profile);
     let before = w.tab;
-    if !tabs_of(own).contains(&w.tab) {
+    if !tabs_of().contains(&w.tab) {
         w.tab = TAB_SL;
     }
     if compact {
@@ -1004,7 +1000,7 @@ fn more_menu(resp: &Response, env: &Env, w: &Window, f: &Facts, compact: bool) {
         }
         // no Share: it only brought the inventory forward, and an item
         // dropped anywhere on the window is given (`super::give_drop`)
-        if menu::item(ui, p, "plane-arrival-filled", aurora_i18n::tr!("ui-profile-aurora-request-tp")) {
+        if menu::item(ui, p, "car-filled", aurora_i18n::tr!("ui-profile-aurora-request-tp")) {
             act(CtxAction::RequestTeleport(id));
         }
         if compact && menu::item(ui, p, "users", aurora_i18n::tr!("ui-profile-aurora-view-in-people")) {
@@ -1315,7 +1311,7 @@ struct TabLook {
 fn tab_looks(env: &Env, w: &Window, own: bool) -> Vec<TabLook> {
     let world = env.world;
     let profile = world.profiles.get(&w.id);
-    tabs_of(own)
+    tabs_of()
         .into_iter()
         .map(|tab| {
             let (icon, label) = match tab {
@@ -1935,7 +1931,7 @@ fn groups_card(ui: &mut egui::Ui, env: &mut Env, w: &Window) {
             return;
         }
         let mut groups: Vec<_> = pr.groups.iter().collect();
-        groups.sort_by_key(|g| g.name.to_lowercase());
+        groups.sort_by_key(|g| crate::natural_order::key(&g.name));
         ui.spacing_mut().item_spacing.y = 0.0;
         for g in groups {
             let member = world.groups.is_member(&g.id);
@@ -1986,9 +1982,6 @@ fn groups_card(ui: &mut egui::Ui, env: &mut Env, w: &Window) {
 
 /// Our private notes on someone, a click away from the Notes tab.
 fn notes_card(ui: &mut egui::Ui, env: &Env, w: &mut Window) {
-    if w.id == env.world.agent_id {
-        return;
-    }
     let p = env.p;
     let text = w.notes.text.trim().to_owned();
     let clicked = card(

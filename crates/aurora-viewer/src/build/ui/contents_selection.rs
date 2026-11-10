@@ -106,14 +106,11 @@ pub(super) fn rename_row(ui: &mut egui::Ui, tool: &mut BuildTool, world: &World,
     let id = rename_id(edit);
     // TextEdit consumes Escape/Enter while changing focus. Keep the user's
     // intent before adding it, so Escape cannot become a blur commit.
-    let cancel = ui.input(|i| i.key_pressed(Key::Escape));
+    let cancel = super::common::escape_pressed(ui);
     let enter = ui.input(|i| i.key_pressed(Key::Enter));
-    let r = ui.add(
-        egui::TextEdit::singleline(&mut edit.text)
-            .id(id)
-            .desired_width(160.0)
-            .char_limit(63),
-    );
+    let r = crate::ui::widgets::restricted_text_field(ui, true, &mut edit.text, crate::ui::widgets::TextPolicy::PrintableNoPipe, |b, _| {
+        egui::TextEdit::singleline(b).id(id).desired_width(160.0).char_limit(63)
+    });
     if cancel {
         tool.ui.rename = None;
         ui.memory_mut(|m| m.request_focus(focus_id(object)));

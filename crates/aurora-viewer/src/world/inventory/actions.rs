@@ -3,6 +3,7 @@
 
 use super::{FetchState, Inventory};
 use aurora_llsd::{Llsd, llsd_map};
+use aurora_net::inventory::InvItem;
 use aurora_net::inventory::operations::{CopyItem, Mutation, Operation};
 use aurora_net::outfits::OutfitLink;
 use std::collections::HashSet;
@@ -12,6 +13,47 @@ pub const COPY: u32 = 0x8000;
 pub const MODIFY: u32 = 0x4000;
 pub const TRANSFER: u32 = 0x2000;
 pub const MOVE: u32 = 0x80000;
+/// Copy, modify and transfer: what LLViewerInventoryItem::getProtectedAssetUUID
+/// (indra/newview/llviewerinventory.cpp) asks before an asset UUID is shown.
+pub const FULL: u32 = COPY | MODIFY | TRANSFER;
+
+/// The permission bits `agent` holds on an inventory item, which every rule
+/// on the agent's inventory and the Library reads instead of a mask of the
+/// item: LLViewerInventoryItem::getPermissionMask
+/// (indra/newview/llviewerinventory.cpp), that is
+/// LLPermissions::allowOperationBy with no group
+/// (indra/llinventory/llpermissions.cpp). The owner mask for the item's
+/// owner, the everyone mask for anyone else: a Library item, owned by the
+/// Library's account, allows what it allows everyone. An item built here
+/// before the server's reply (no owner yet), or asked before the login (no
+/// agent), counts as the agent's.
+pub fn agent_mask(item: &InvItem, agent: Uuid) -> u32 {
+    let owned = !item.group_owned && (item.owner == agent || item.owner.is_nil() || agent.is_nil());
+    if owned { item.owner_mask } else { item.everyone_mask }
+}
+
+/// [`agent_mask`] for an item of an object's contents, the same reading
+/// (LLViewerInventoryItem::getIsFullPerm): an object we may only modify
+/// keeps its owner's mask for its owner.
+pub fn task_agent_mask(item: &aurora_net::build::TaskItem, agent: Uuid) -> u32 {
+    let owned = !item.group_owned && (item.owner_id == agent || item.owner_id.is_nil() || agent.is_nil());
+    if owned { item.owner_mask } else { item.everyone_mask }
+}
+
+/// [`agent_mask`] for the agent whose inventory `inv` is.
+pub fn held(inv: &Inventory, item: &InvItem) -> u32 {
+    agent_mask(item, inv.owner)
+}
+
+/// Whether an asset UUID met outside its inventory item (a material map)
+/// may be shown: a built-in texture, or an item of the inventory holding it
+/// with full permissions, like the UUID field of LLFloaterTexturePicker
+/// (indra/newview/lltexturectrl.cpp).
+pub fn asset_uuid_shown(inv: &Inventory, asset: Uuid) -> bool {
+    use aurora_prim::te::{BLANK_TEXTURE, DEFAULT_TEXTURE, TRANSPARENT_TEXTURE};
+    [BLANK_TEXTURE, DEFAULT_TEXTURE, TRANSPARENT_TEXTURE].contains(&asset)
+        || inv.items.values().any(|it| it.asset_id == asset && held(inv, it) & FULL == FULL)
+}
 
 pub fn parent(inv: &Inventory, id: Uuid) -> Option<Uuid> {
     inv.folders
@@ -52,31 +94,121 @@ pub fn in_type(inv: &Inventory, id: Uuid, kind: i32) -> bool {
 pub fn library(inv: &Inventory, id: Uuid) -> bool {
     inv.folders.get(&id).is_some_and(|f| f.library) || parent(inv, id).and_then(|p| inv.folders.get(&p)).is_some_and(|f| f.library)
 }
-pub fn mutable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
+/// "Restore to last position" may rez the object back: in Second Life only
+/// a copy of it, since a no-copy object could be lost on the way
+/// (LLItemBridge::restoreToWorld, "CantRestoreToWorldNoCopy"); OpenSim
+/// keeps it in any case.
+pub fn restorable(it: &aurora_net::inventory::InvItem, opensim: bool) -> bool {
+    opensim || it.owner_mask & COPY != 0
+}
+/// The next owner's rights of an item can be changed: by an owner who may
+/// transfer it, never on a calling card or a landmark
+/// (LLSidepanelItemInfo::refreshFromItem: can_agent_sell with PERM_TRANSFER,
+/// LLInventoryType::cannotRestrictPermissions).
+pub fn next_owner_editable(it: &aurora_net::inventory::InvItem) -> bool {
+    it.owner_mask & TRANSFER != 0 && !matches!(it.inv_type, 2 | 3) && !matches!(it.asset_type, 2 | 3)
+}
+/// Can be edited (renamed, created in, shared…): not in the Library, the
+/// current outfit nor Received Items, which only lets its contents leave.
+/// The locked folders do not count: they only hold themselves in place
+/// (`movable`).
+pub fn mutable(inv: &Inventory, id: Uuid) -> bool {
+    mutable_content(inv, id, system(inv, 50))
+}
+fn mutable_content(inv: &Inventory, id: Uuid, inbox: Option<Uuid>) -> bool {
     if !(inv.items.contains_key(&id) || inv.folders.contains_key(&id)) || library(inv, id) {
         return false;
     }
-    // Not in the current outfit, Received Items nor a locked folder: one
-    // walk up the parents answers all three (asked per selected entry).
-    let (cof, inbox) = (system(inv, 46), system(inv, 50));
-    !ancestors(inv, id).any(|a| Some(a) == cof || Some(a) == inbox || protected.contains(&a))
+    // one parent walk checks the current outfit and the optional inbox
+    // (asked per selected entry)
+    let cof = system(inv, 46);
+    !ancestors(inv, id).any(|a| Some(a) == cof || Some(a) == inbox)
 }
+/// Can leave its folder, for another one or the Trash. Port of
+/// LLInvFVBridge::isItemMovable / LLFolderBridge::isItemMovable
+/// (indra/newview/llinventorybridge.cpp, originally LGPL 2.1): Received
+/// contents move out (no inbox check there; the inbox itself is a system
+/// folder), and a locked folder (LLFolderBridge::isProtected, #1728) stays
+/// in place while its contents are ordinary entries. A listed listing and
+/// its version folder stay too, like every listing folder before the SLM
+/// data loads (`marketplace::Holds`).
 pub fn movable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
-    mutable(inv, id, protected) && inv.folders.get(&id).is_none_or(|f| matches!(f.info.type_default, -1 | 47 | 54))
+    mutable_content(inv, id, None)
+        && !protected.contains(&id)
+        && !inv.listing_holds.holds(inv, id)
+        && inv.folders.get(&id).is_none_or(|f| matches!(f.info.type_default, -1 | 47 | 54))
 }
-pub fn renameable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
-    mutable(inv, id, protected)
+/// get_is_item_removable / get_is_category_removable
+/// (indra/newview/llinventoryfunctions.cpp): what may leave its folder may go
+/// to Trash, Received contents included; a locked folder may not, but its
+/// parent may, taking it along like the Legacy Viewer (the children check,
+/// get_is_category_and_children_removable, only refuses system folders).
+pub fn removable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
+    movable(inv, id, protected)
+}
+/// The viewer support folders the Legacy Viewer keeps in place at the root
+/// (FIRE-28977 in LLFolderBridge::isItemMovable, llinventorybridge.cpp):
+/// #RLV, which RLVa only finds there (RlvInventory::getSharedRootID),
+/// #Firestorm and its Aurora counterpart #Aurora. Deleting and renaming
+/// stay allowed. Unlike the Legacy Viewer, only a root child is held: one
+/// misplaced elsewhere can still be moved back.
+pub fn pinned(inv: &Inventory, id: Uuid) -> bool {
+    inv.folders
+        .get(&id)
+        .is_some_and(|f| !f.library && f.info.parent == inv.root && matches!(f.info.name.as_str(), "#RLV" | "#Firestorm" | "#Aurora"))
+}
+/// Can move to another folder than the trash: drag, cut, Move to.
+pub fn relocatable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
+    movable(inv, id, protected) && !pinned(inv, id)
+}
+/// get_is_category_renameable (indra/newview/llinventoryfunctions.cpp): a
+/// locked folder keeps its rename; Received contents do not
+/// (LLItemBridge::isItemRenameable refuses the inbox).
+pub fn renameable(inv: &Inventory, id: Uuid) -> bool {
+    mutable(inv, id)
         && inv.folders.get(&id).map_or_else(
             || {
                 inv.items
                     .get(&id)
-                    .is_some_and(|it| it.owner_mask & MODIFY != 0 && !matches!(it.asset_type, 2 | 24 | 25))
+                    .is_some_and(|it| held(inv, it) & MODIFY != 0 && !matches!(it.asset_type, 2 | 24 | 25))
             },
             |f| matches!(f.info.type_default, -1 | 47 | 54),
         )
 }
-pub fn destination(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
-    inv.folders.contains_key(&id) && mutable(inv, id, protected) && !in_type(inv, id, 14) && !in_type(inv, id, 48)
+/// A folder that receives a new entry, a move or a paste; a locked folder
+/// does too. A folder in the Current Outfit or Received Items stays closed,
+/// as do the Trash (moved to by the delete path) and My Outfits
+/// (`outfit_folders::move_into`).
+pub fn destination(inv: &Inventory, id: Uuid) -> bool {
+    inv.folders.contains_key(&id) && mutable(inv, id) && !in_type(inv, id, 14) && !in_type(inv, id, 48)
+}
+/// Where a link can be pasted: `destination` plus My Outfits and its
+/// folders, whose contents are links (LLFolderBridge::pasteLinkFromClipboard,
+/// indra/newview/llinventorybridge.cpp, originally LGPL 2.1).
+pub fn link_destination(inv: &Inventory, id: Uuid) -> bool {
+    let (cof, inbox) = (system(inv, 46), system(inv, 50));
+    inv.folders.contains_key(&id)
+        && !library(inv, id)
+        && !ancestors(inv, id).any(|a| Some(a) == cof || Some(a) == inbox)
+        && !in_type(inv, id, 14)
+}
+/// A folder whose pasted links follow the outfit rule: My Outfits and its
+/// folders, or any outfit folder (LLFolderBridge::pasteLinkFromClipboard's
+/// `move_is_into_outfit`).
+fn outfit_destination(inv: &Inventory, id: Uuid) -> bool {
+    in_type(inv, id, 48) || inv.folders.get(&id).is_some_and(|f| f.info.type_default == 47)
+}
+/// What a link pasted into an outfit may point at (can_move_to_outfit,
+/// indra/newview/llinventoryfunctions.cpp; LLFolderBridge::dropToOutfit,
+/// indra/newview/llinventorybridge.cpp, originally LGPL 2.1): a wearable, a
+/// gesture or an object to attach, never a coalesced object nor a folder.
+/// Textures and snapshots, the outfit pictures of old, are not linked
+/// either, and the other types are skipped.
+pub fn outfit_link_target(inv: &Inventory, original: Uuid) -> bool {
+    // IT_OBJECT, IT_ATTACHMENT, IT_WEARABLE, IT_GESTURE
+    inv.items
+        .get(&original)
+        .is_some_and(|it| matches!(it.inv_type, 6 | 17 | 18 | 20) && it.flags & crate::ui::inventory::OBJECT_HAS_MULTIPLE_ITEMS == 0)
 }
 pub fn original(inv: &Inventory, mut id: Uuid) -> Option<Uuid> {
     // Most rows are no link: answer them without the cycle guard's set
@@ -145,6 +277,22 @@ pub fn set_favorites(inv: &Inventory, ids: &[Uuid], favorite: bool) -> Result<Mu
 }
 
 pub fn patch(inv: &Inventory, id: Uuid, body: Llsd) -> Result<Mutation, String> {
+    // Metadata edits can also originate in previews/imports, without the
+    // inventory properties field's prevalidation.
+    if body.has("name") && body["name"].to_string_value() != name(inv, id) {
+        crate::text_validation::require_edit(
+            crate::text_validation::Policy::PrintableNoPipe,
+            &name(inv, id),
+            &body["name"].to_string_value(),
+        )?;
+    }
+    if body.has("desc") && inv.items.get(&id).is_none_or(|item| body["desc"].to_string_value() != item.desc) {
+        crate::text_validation::require_edit(
+            crate::text_validation::Policy::MultilineNoPipe,
+            inv.items.get(&id).map_or("", |item| item.desc.as_str()),
+            &body["desc"].to_string_value(),
+        )?;
+    }
     let old = parent(inv, id).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
     let mut refresh = vec![old];
     if body.has("parent_id") {
@@ -168,6 +316,8 @@ pub fn name(inv: &Inventory, id: Uuid) -> String {
         .unwrap_or_default()
 }
 pub fn clean_name(name: &str) -> Result<String, String> {
+    // Shared with received names and RLVa paths: character prevalidation
+    // belongs to the editor, not to this structural/length check.
     let name = name.trim();
     if name.is_empty() || name.chars().any(|c| c.is_control() || c == '|') {
         return Err(aurora_i18n::tr!("world-inventory-actions-enter-a-valid-name").into());
@@ -180,7 +330,9 @@ pub fn create_folder(parent: Uuid, name: &str) -> Result<Mutation, String> {
         operations: vec![Operation::Folder {
             id,
             parent,
-            name: clean_name(name)?,
+            // Names can come from translated defaults or object/file labels,
+            // rather than an edit. Keep creation usable after prevalidation.
+            name: crate::text_validation::generated_name(&clean_name(name)?, 63),
             type_default: -1,
         }],
         refresh: vec![parent, id],
@@ -224,12 +376,12 @@ pub fn move_selection(
     // LLFolderBridge::dragCategoryIntoFolder permits saved outfits and their
     // groups inside My Outfits, while ordinary item drops remain forbidden.
     if in_type(inv, to, 48) {
-        if !mutable(inv, to, protected) || ids.iter().any(|id| !movable(inv, *id, protected)) {
+        if !mutable(inv, to) || ids.iter().any(|id| !relocatable(inv, *id, protected)) {
             return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-protected-system-or-worn-item").into());
         }
         return super::super::outfit_folders::move_into(inv, ids, to);
     }
-    if !destination(inv, to, protected) && Some(to) != system(inv, 14) {
+    if !destination(inv, to) && Some(to) != system(inv, 14) {
         return Err(aurora_i18n::tr!("world-inventory-actions-this-folder-cannot-receive-the-selection").into());
     }
     let mut change = Mutation::default();
@@ -241,7 +393,17 @@ pub fn move_selection(
         holds_worn.extend(ancestors(inv, current));
     }
     for id in roots(inv, ids) {
-        if !movable(inv, id, protected) || holds_worn.contains(&id) {
+        // the Trash is a delete, checked like Delete
+        let allowed = if to_trash {
+            removable(inv, id, protected)
+        } else {
+            relocatable(inv, id, protected)
+        };
+        if inv.listing_holds.active.contains(&id) {
+            // TooltipOutboxDragActive (LLFolderBridge::dragCategoryIntoFolder)
+            return Err(aurora_i18n::tr!("marketplace-reason-drag-active").into());
+        }
+        if !allowed || holds_worn.contains(&id) {
             return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-protected-system-or-worn-item").into());
         }
         push_move(inv, id, to, &mut change)?;
@@ -264,7 +426,13 @@ fn copy_one(inv: &Inventory, id: Uuid, to: Uuid, change: &mut Mutation, visited:
             id: new,
             parent: to,
             name: f.info.name.clone(),
-            type_default: -1,
+            // copy_inventory_category keeps the folder's type: a copied
+            // outfit stays an outfit. No other system type is copied.
+            type_default: if f.info.type_default == super::super::appearance::FT_OUTFIT {
+                f.info.type_default
+            } else {
+                -1
+            },
         });
         change.refresh.extend([to, new]);
         for child in f.children.iter().chain(&f.items) {
@@ -284,7 +452,7 @@ fn copy_one(inv: &Inventory, id: Uuid, to: Uuid, change: &mut Mutation, visited:
                 }],
             });
         } else {
-            if it.owner_mask & COPY == 0 && !library(inv, id) {
+            if held(inv, it) & COPY == 0 && !library(inv, id) {
                 return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-no-copy-item").into());
             }
             change.copies.push(CopyItem {
@@ -300,6 +468,16 @@ fn copy_one(inv: &Inventory, id: Uuid, to: Uuid, change: &mut Mutation, visited:
     }
     Ok(())
 }
+/// A copy of the folder or item `id` into `to`, without the destination
+/// checks of `paste`: the outfit rules (`outfit_paste`) make their own.
+pub fn copy_tree(inv: &Inventory, id: Uuid, to: Uuid) -> Result<Mutation, String> {
+    let mut change = Mutation {
+        defer_folder_contents: true,
+        ..Default::default()
+    };
+    copy_one(inv, id, to, &mut change, &mut HashSet::new())?;
+    Ok(change)
+}
 pub fn paste(
     inv: &Inventory,
     ids: &[Uuid],
@@ -309,7 +487,7 @@ pub fn paste(
     protected: &HashSet<Uuid>,
     worn: &HashSet<Uuid>,
 ) -> Result<Mutation, String> {
-    if ids.is_empty() || !destination(inv, to, protected) {
+    if ids.is_empty() || !(if links { link_destination(inv, to) } else { destination(inv, to) }) {
         return Err(aurora_i18n::tr!("world-inventory-actions-the-clipboard-is-empty-or-the-folder-is-protected").into());
     }
     if let Some(root) = crate::world::marketplace::root(inv).filter(|root| under(inv, to, *root)) {
@@ -330,6 +508,7 @@ pub fn paste(
         defer_folder_contents: true,
         ..Default::default()
     };
+    let outfit = links && outfit_destination(inv, to);
     for id in roots(inv, ids) {
         if id == to || under(inv, to, id) {
             return Err(aurora_i18n::tr!("world-inventory-actions-a-folder-cannot-be-copied-into-itself").into());
@@ -338,6 +517,11 @@ pub fn paste(
             let id = original(inv, id).ok_or(aurora_i18n::tr!("common-the-link-is-broken"))?;
             if library(inv, id) || in_type(inv, id, 14) {
                 return Err(aurora_i18n::tr!("world-inventory-actions-copy-this-item-to-your-inventory-first").into());
+            }
+            // an outfit links only what can be worn; the rest of the
+            // clipboard is skipped, as the Legacy Viewer does
+            if outfit && !outfit_link_target(inv, id) {
+                continue;
             }
             let folder = inv.folders.contains_key(&id);
             let it = inv.items.get(&id);
@@ -359,6 +543,9 @@ pub fn paste(
             copy_one(inv, id, to, &mut change, &mut HashSet::new())?;
         }
     }
+    if outfit && change.operations.is_empty() {
+        return Err(aurora_i18n::tr!("world-inventory-actions-this-item-type-cannot-be-linked").into());
+    }
     Ok(change)
 }
 pub fn group(inv: &Inventory, ids: &[Uuid], protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Result<Mutation, String> {
@@ -367,7 +554,7 @@ pub fn group(inv: &Inventory, ids: &[Uuid], protected: &HashSet<Uuid>, worn: &Ha
         .first()
         .and_then(|id| parent(inv, *id))
         .ok_or(aurora_i18n::tr!("world-inventory-actions-empty-selection"))?;
-    if !destination(inv, to, protected) || ids.iter().any(|id| parent(inv, *id) != Some(to)) {
+    if !destination(inv, to) || ids.iter().any(|id| parent(inv, *id) != Some(to)) {
         return Err(aurora_i18n::tr!("world-inventory-actions-select-items-from-the-same-folder").into());
     }
     let mut change = create_folder(to, aurora_i18n::tr!("common-new-folder"))?;
@@ -377,7 +564,7 @@ pub fn group(inv: &Inventory, ids: &[Uuid], protected: &HashSet<Uuid>, worn: &Ha
     };
     let holds_worn = worn_ancestors(inv, worn);
     for id in ids {
-        if !movable(inv, id, protected) || holds_worn.contains(&id) {
+        if !relocatable(inv, id, protected) || holds_worn.contains(&id) {
             return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-protected-or-worn-item").into());
         }
         push_move(inv, id, new, &mut change)?;
@@ -386,7 +573,7 @@ pub fn group(inv: &Inventory, ids: &[Uuid], protected: &HashSet<Uuid>, worn: &Ha
 }
 pub fn ungroup(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Result<Mutation, String> {
     let f = inv.folders.get(&id).ok_or(aurora_i18n::tr!("common-folder-not-found"))?;
-    if f.state != FetchState::Fetched || !movable(inv, id, protected) {
+    if f.state != FetchState::Fetched || !relocatable(inv, id, protected) {
         return Err(aurora_i18n::tr!("world-inventory-actions-load-an-unprotected-folder-before-ungrouping-it").into());
     }
     let ids: Vec<_> = f.children.iter().chain(&f.items).copied().collect();
@@ -441,6 +628,7 @@ pub fn demo_mutate(inv: &mut Inventory, agent: Uuid, change: Mutation) -> Result
                     }
                     if body.has("thumbnail") {
                         f.info.thumbnail = body["thumbnail"]["asset_id"].as_uuid();
+                        f.info.thumbnail_known = true;
                     }
                 } else {
                     let it = inv.items.get_mut(&id).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
@@ -570,7 +758,7 @@ pub fn marketplace(inv: &Inventory, ids: &[Uuid], copy: bool, protected: &HashSe
             }
         } else {
             let it = inv.items.get(&id).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
-            if it.owner_mask & TRANSFER == 0 || matches!(it.asset_type, 2 | 24 | 25) || (copy && it.owner_mask & COPY == 0) {
+            if held(inv, it) & TRANSFER == 0 || matches!(it.asset_type, 2 | 24 | 25) || (copy && held(inv, it) & COPY == 0) {
                 return Err(aurora_i18n::tr!("world-inventory-actions-every-item-must-be-transferable-and-for-a-copy").into());
             }
         }
@@ -596,7 +784,12 @@ pub fn marketplace(inv: &Inventory, ids: &[Uuid], copy: bool, protected: &HashSe
     });
     let holds_worn = worn_ancestors(inv, worn);
     for id in roots(inv, ids) {
-        if !mutable(inv, id, protected) || in_type(inv, id, 14) || in_type(inv, id, 53) || holds_worn.contains(&id) {
+        if !mutable(inv, id)
+            || (!copy && !movable(inv, id, protected))
+            || in_type(inv, id, 14)
+            || in_type(inv, id, 53)
+            || holds_worn.contains(&id)
+        {
             return Err(aurora_i18n::tr!("world-inventory-actions-a-protected-worn-trashed-or-already-listed-item-cannot").into());
         }
         let mut seen = HashSet::new();
@@ -617,7 +810,7 @@ pub fn marketplace(inv: &Inventory, ids: &[Uuid], copy: bool, protected: &HashSe
                 for item in seen
                     .into_iter()
                     .filter_map(|id| inv.items.get(&id))
-                    .filter(|it| it.owner_mask & COPY == 0)
+                    .filter(|it| held(inv, it) & COPY == 0)
                 {
                     let stock = Uuid::new_v4();
                     change.operations.push(Operation::Folder {
@@ -640,7 +833,7 @@ pub fn marketplace(inv: &Inventory, ids: &[Uuid], copy: bool, protected: &HashSe
             });
             change.refresh.push(version);
             let item = &inv.items[&id];
-            let to = if item.owner_mask & COPY == 0 {
+            let to = if held(inv, item) & COPY == 0 {
                 let stock = Uuid::new_v4();
                 change.operations.push(Operation::Folder {
                     id: stock,
@@ -684,7 +877,7 @@ pub fn paste_allowed(
             if matches!(it.asset_type, 24 | 25) {
                 original(inv, id).is_some()
             } else {
-                it.owner_mask & COPY != 0 || library(inv, id)
+                held(inv, it) & COPY != 0 || library(inv, id)
             }
         })
     }
@@ -694,14 +887,18 @@ pub fn paste_allowed(
         HashSet::new()
     };
     !ids.is_empty()
-        && destination(inv, to, protected)
+        && (if links {
+            link_destination(inv, to)
+        } else {
+            destination(inv, to)
+        })
         && !(links && cut)
         && ids.iter().all(|id| {
             if *id == to || under(inv, to, *id) {
                 return false;
             }
             if cut {
-                movable(inv, *id, protected) && !holds_worn.contains(id)
+                relocatable(inv, *id, protected) && !holds_worn.contains(id)
             } else if links {
                 original(inv, *id).is_some_and(|id| {
                     !library(inv, id) && !in_type(inv, id, 14) && inv.items.get(&id).is_none_or(|it| !matches!(it.asset_type, 2 | 49))
@@ -710,12 +907,16 @@ pub fn paste_allowed(
                 copyable(inv, *id, &mut HashSet::new())
             }
         })
+        // an outfit takes the links of what can be worn, the rest skipped
+        && (!links
+            || !outfit_destination(inv, to)
+            || ids.iter().any(|id| original(inv, *id).is_some_and(|id| outfit_link_target(inv, id))))
 }
 
 /// LLGiveInventory::giveInventoryCategory: type/UUID tuples, bounded below
 /// the simulator's UDP MTU. Refuse a partially loaded folder rather than offer
 /// an incomplete selection. Copy-protected contents need UI confirmation.
-pub fn offer(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>, worn: &HashSet<Uuid>) -> Result<Vec<u8>, String> {
+pub fn offer(inv: &Inventory, id: Uuid, worn: &HashSet<Uuid>) -> Result<Vec<u8>, String> {
     let mut todo = vec![id];
     let mut seen = HashSet::new();
     let mut bucket = Vec::new();
@@ -723,7 +924,7 @@ pub fn offer(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>, worn: &HashSe
         if !seen.insert(id) || seen.len() > 42 {
             return Err(aurora_i18n::tr!("world-inventory-actions-sharing-is-limited-to-42-items-per-folder").into());
         }
-        if !mutable(inv, id, protected) || in_type(inv, id, 14) || worn.contains(&id) {
+        if !mutable(inv, id) || in_type(inv, id, 14) || worn.contains(&id) {
             return Err(aurora_i18n::tr!("world-inventory-actions-a-protected-trashed-or-worn-item-cannot-be-shared").into());
         }
         if let Some(f) = inv.folders.get(&id) {
@@ -735,7 +936,7 @@ pub fn offer(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>, worn: &HashSe
             todo.extend(f.items.iter().chain(&f.children).copied());
         } else {
             let it = inv.items.get(&id).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
-            if it.owner_mask & TRANSFER == 0 || matches!(it.asset_type, 24 | 25) {
+            if held(inv, it) & TRANSFER == 0 || matches!(it.asset_type, 24 | 25) {
                 return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-non-transferable-item-or-a").into());
             }
             bucket.push(it.asset_type as u8);
@@ -754,7 +955,7 @@ pub fn offer_has_no_copy(inv: &Inventory, bucket: &[u8]) -> bool {
         Uuid::from_slice(&tuple[1..])
             .ok()
             .and_then(|id| inv.items.get(&id))
-            .is_some_and(|it| it.owner_mask & COPY == 0)
+            .is_some_and(|it| held(inv, it) & COPY == 0)
     })
 }
 

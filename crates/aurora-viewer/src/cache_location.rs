@@ -37,12 +37,7 @@ pub fn chosen() -> Option<&'static Path> {
 /// written (else the default folder is used, like initCache's fallback),
 /// and removes the cache the previous run used when it was elsewhere.
 pub fn init() {
-    let path = crate::settings::Settings::path();
-    let wanted = std::fs::read(&path)
-        .ok()
-        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
-        .and_then(|v| v.get("cache_location").and_then(|c| c.as_str()).map(str::to_owned))
-        .unwrap_or_default();
+    let wanted = crate::settings::Settings::saved_text("cache_location");
     let chosen = root_for(&wanted).filter(|root| match std::fs::create_dir_all(root) {
         Ok(()) => true,
         Err(e) => {
@@ -55,6 +50,7 @@ pub fn init() {
     log::info!("cache folder: {}", now.display());
     let marker = crate::settings::config_dir().join(MARKER);
     let last = std::fs::read_to_string(&marker).ok().map(|s| PathBuf::from(s.trim()));
+    let unchanged = last.as_deref() == Some(now.as_path());
     if let Some(last) = last.filter(|l| !l.as_os_str().is_empty() && *l != now)
         && is_ours(&last)
     {
@@ -67,10 +63,15 @@ pub fn init() {
             }
         });
     }
+    // written on the disk (a marker emptied by a reset forgot the folder,
+    // #1809), only when it changes: this runs before the window shows
+    if unchanged {
+        return;
+    }
     if let Some(dir) = marker.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    if let Err(e) = std::fs::write(&marker, now.to_string_lossy().as_bytes()) {
+    if let Err(e) = crate::atomic_file::write(&marker, now.to_string_lossy().as_bytes()) {
         log::warn!("cache folder marker not written: {e}");
     }
 }

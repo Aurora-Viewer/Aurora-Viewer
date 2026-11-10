@@ -88,7 +88,7 @@ impl Cam {
     /// LLViewerCamera::getPixelMeterRatio: pixels per meter at 1 m.
     pub fn pixel_meter_ratio(&self) -> f32 {
         if let Some(view) = self.hud {
-            return self.height * view.zoom;
+            return view.unit();
         }
         self.height / (2.0 * (self.fov_y * 0.5).tan())
     }
@@ -104,6 +104,15 @@ impl Cam {
             return 1.0;
         }
         range * (px / self.height * self.fov_y).tan()
+    }
+
+    /// World size of `points` interface points at `p`: the pixels of a
+    /// handle at 100 % display scale, grown with it. LLManipTranslate,
+    /// LLManipRotate, LLManipScale and QToolAlign multiply their pixel sizes
+    /// by LLUI::getScaleFactor() for the same reason: at 200 % scaling, a
+    /// 50 px arrow covers 100 window pixels.
+    pub fn meters_for_points(&self, p: Vec3, points: f32) -> f32 {
+        self.meters_for_pixels(p, points * self.ppp)
     }
 
     /// Distance along the view direction (z depth).
@@ -153,6 +162,61 @@ impl Cam {
     pub fn project_px(&self, p: Vec3) -> Option<(f32, f32)> {
         self.project(p).map(|q| (q.x * self.ppp, q.y * self.ppp))
     }
+
+    /// Whether `p` projects inside the pixel rectangle `r` (never behind the
+    /// camera).
+    pub fn in_rect(&self, p: Vec3, r: egui::Rect) -> bool {
+        self.project_px(p).is_some_and(|(x, y)| r.contains(Pos2::new(x, y)))
+    }
+
+    /// Where the box `min..max` placed by `model` falls against the pixel
+    /// rectangle `r`: the role of sphereInFrustum in
+    /// LLToolSelectRect::handleRectangleSelection, with the tighter box.
+    /// What it covers is convex, so all of its corners inside put every
+    /// vertex inside; a box partly behind the camera counts as `Across`.
+    pub fn box_in_rect(&self, model: Mat4, min: Vec3, max: Vec3, r: egui::Rect) -> RectCover {
+        let (mut inside, mut behind) = (0, 0);
+        let mut seen = egui::Rect::NOTHING;
+        for i in 0..8 {
+            let corner = Vec3::new(
+                if i & 1 == 0 { min.x } else { max.x },
+                if i & 2 == 0 { min.y } else { max.y },
+                if i & 4 == 0 { min.z } else { max.z },
+            );
+            match self.project_px(model.transform_point3(corner)) {
+                Some((x, y)) => {
+                    let p = Pos2::new(x, y);
+                    inside += usize::from(r.contains(p));
+                    seen.extend_with(p);
+                }
+                None => behind += 1,
+            }
+        }
+        if inside == 8 {
+            RectCover::Inside
+        } else if behind == 8 || (behind == 0 && !seen.intersects(r)) {
+            RectCover::Outside
+        } else {
+            RectCover::Across
+        }
+    }
+}
+
+/// A prim's box against the selection rectangle (`Cam::box_in_rect`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RectCover {
+    Inside,
+    Outside,
+    /// Across an edge: its vertices decide.
+    Across,
+}
+
+/// LLViewerCamera::areVertsVisible over the selection rectangle: with
+/// `all` (RectangleSelectInclusive, "Select by surrounding") every vertex
+/// must be inside, otherwise one is enough. `inside` tells for each vertex.
+pub fn verts_in_rect(inside: impl IntoIterator<Item = bool>, all: bool) -> bool {
+    let mut inside = inside.into_iter();
+    if all { inside.all(|v| v) } else { inside.any(|v| v) }
 }
 
 /// Intersection of a ray with a plane.
@@ -224,14 +288,17 @@ mod tests {
     fn hud_handles_keep_pixel_size_and_parallel_rays_after_zoom_and_resize() {
         for size in [[1280, 720], [720, 1280]] {
             for zoom in [1.0, 0.5, 0.1] {
-                let cam = Cam::for_hud(aurora_render::HudView::new(size, zoom, -3.0, 7.0), 2.0);
-                for p in [Vec3::ZERO, Vec3::new(5.0, 0.3, -0.4)] {
-                    let a = cam.project_px(p).unwrap();
-                    let b = cam.project_px(p + Vec3::Y * cam.meters_for_pixels(p, 50.0)).unwrap();
-                    assert!((a.0 - b.0 - 50.0).abs() < 1e-3);
-                    let (o, d) = cam.ray(a.0, a.1);
-                    assert_eq!(d, Vec3::X);
-                    assert!((o.y - p.y).abs() < 1e-5 && (o.z - p.z).abs() < 1e-5);
+                let full = aurora_render::HudView::new(size, zoom, -3.0, 7.0);
+                for view in [full, full.in_area([0.0, 29.0, size[0] as f32, size[1] as f32])] {
+                    let cam = Cam::for_hud(view, 2.0);
+                    for p in [Vec3::ZERO, Vec3::new(5.0, 0.3, -0.4)] {
+                        let a = cam.project_px(p).unwrap();
+                        let b = cam.project_px(p + Vec3::Y * cam.meters_for_pixels(p, 50.0)).unwrap();
+                        assert!((a.0 - b.0 - 50.0).abs() < 1e-3);
+                        let (o, d) = cam.ray(a.0, a.1);
+                        assert_eq!(d, Vec3::X);
+                        assert!((o.y - p.y).abs() < 1e-5 && (o.z - p.z).abs() < 1e-5);
+                    }
                 }
             }
         }

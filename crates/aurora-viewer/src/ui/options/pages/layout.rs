@@ -46,6 +46,18 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-show-balance-help"),
                     &field!(show_balance),
                 );
+                // the L$ received and spent under it (#2675), each on its
+                // own; also the balance's right click and the account island's
+                cx.toggle(
+                    tr!("ui-options-balance-received"),
+                    tr!("ui-options-balance-received-hint"),
+                    &field!(balance_shows_received),
+                );
+                cx.toggle(
+                    tr!("ui-options-balance-spent"),
+                    tr!("ui-options-balance-spent-hint"),
+                    &field!(balance_shows_spent),
+                );
                 // also a left click on the clock, and the island's right click
                 use crate::settings::ClockZone;
                 cx.choice(
@@ -127,7 +139,17 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 tr!("ui-options-hover-tips-show-help"),
                 &field!(hover_tips.enabled),
             );
-            cx.greyed(!cx.s.hover_tips.enabled);
+            // the one exception to the main switch (#2475): it only acts
+            // while world tooltips are off, so it is greyed while they are on
+            cx.greyed(cx.s.hover_tips.enabled);
+            cx.toggle(
+                tr!("ui-options-hover-tips-avatars"),
+                tr!("ui-options-hover-tips-avatars-help"),
+                &field!(hover_tips.avatars),
+            );
+            // form, group titles and delay serve the avatar-only tips too
+            let any = crate::hover_tips::any_enabled(&cx.s.hover_tips);
+            cx.greyed(!any);
             use crate::settings::HoverTipForm;
             let forms = [tr!("hover-tips-bubble"), tr!("hover-tips-card"), tr!("hover-tips-readout")];
             let choices: Vec<(HoverTipForm, &str, bool)> = HoverTipForm::ALL.iter().zip(forms).map(|(f, l)| (*f, l, true)).collect();
@@ -137,6 +159,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 &field!(hover_tips.form),
                 &choices,
             );
+            cx.greyed(!cx.s.hover_tips.enabled);
             cx.choice(
                 tr!("ui-options-hover-tips-objects"),
                 tr!("ui-options-hover-tips-objects-help"),
@@ -151,6 +174,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 tr!("ui-options-hover-tips-land-help"),
                 &field!(hover_tips.land),
             );
+            cx.greyed(!any);
             cx.toggle(tr!("ui-options-hover-tips-group-titles"), "", &field!(hover_tips.group_titles));
             cx.slider(
                 tr!("ui-options-hover-tips-delay"),

@@ -7,13 +7,18 @@
 //!   a mute flag and an "enabled" flag; gain changes are smoothed (no clicks).
 //! * Parcel music: Shoutcast/Icecast streams over HTTP(S) (MP3, AAC/ADTS,
 //!   Ogg Vorbis) with ICY `StreamTitle` metadata and automatic reconnection.
+//!   Radio URLs may also name PLS/M3U playlists or AzuraCast public players;
+//!   discovered links stay on the player's HTTP(S) origin.
 //! * PCM sinks ([`VoiceSink`]) used by the voice client (and later media)
 //!   to push 48 kHz audio with jitter buffering.
 //! * One-shot sounds ([`SoundClip`]) for UI / sound effects.
 //! * The ambient wind noise ([`AudioEngine::set_wind`]), synthesised on the
 //!   Ambient channel.
-//! * Device selection ([`output_devices`], [`input_devices`],
-//!   [`AudioEngine::set_output_device`]) and microphone capture
+//! * The reverb of the surroundings ([`AudioEngine::set_reverb`]): one
+//!   shared bus the world sounds feed.
+//! * Device selection ([`output_devices`], [`input_devices`], listed off the
+//!   UI thread by [`DeviceLister`], [`AudioEngine::set_output_device`]) and
+//!   microphone capture
 //!   ([`MicCapture`]: 48 kHz mono, input gain, level meter) for voice.
 //!
 //! The device (cpal; WASAPI on Windows) is driven from a dedicated thread.
@@ -27,12 +32,15 @@
 mod capture;
 mod decode;
 mod devices;
+mod hrtf;
 mod http;
 mod icy;
 mod mixer;
 mod output;
+mod playlist;
 mod processing;
 mod resample;
+mod reverb;
 mod stream;
 mod wind;
 
@@ -43,10 +51,11 @@ use parking_lot::Mutex;
 
 pub use capture::{CAPTURE_SAMPLE_RATE, MAX_INPUT_GAIN, MicCapture, MicFeed, OVERDRIVEN_POWER_LEVEL};
 pub use decode::SoundClip;
-pub use devices::{input_devices, output_devices};
+pub use devices::{DeviceLister, DeviceLists, input_devices, output_devices};
 pub use mixer::{Channel, ChannelSettings, ENGINE_SAMPLE_RATE};
 pub use output::OutputInfo;
 pub use processing::{EchoReference, MicProcessing};
+pub use reverb::ReverbParams;
 pub use stream::StreamStatus;
 pub use wind::WindTarget;
 
@@ -233,9 +242,50 @@ impl AudioEngine {
             .try_send(Command::PlayWorld(WorldVoice::new(id, ch, clip.samples.clone(), looped, gain)));
     }
 
-    /// New (left, right) gains of a world sound (ramped over one buffer).
+    /// Like [`AudioEngine::play_world`], rendered binaurally (3D sound for
+    /// headphones): `gain` is the distance gain, `direction` the source's
+    /// direction in the listener's frame (x to the right, y ahead, z up),
+    /// updated by [`AudioEngine::world_binaural`].
+    pub fn play_world_binaural(&self, id: u64, ch: Channel, clip: &SoundClip, looped: bool, gain: f32, direction: [f32; 3]) {
+        let voice = WorldVoice::new_binaural(id, ch, clip.samples.clone(), looped, gain, direction);
+        let _ = self.inner.cmd_tx.try_send(Command::PlayWorld(voice));
+    }
+
+    /// New (left, right) gains of a world sound (ramped over one buffer); a
+    /// sound rendered binaurally crossfades back to the panning.
     pub fn world_gain(&self, id: u64, gain: (f32, f32)) {
         let _ = self.inner.cmd_tx.try_send(Command::WorldGain(id, gain));
+    }
+
+    /// New distance gain and direction of a world sound, rendered
+    /// binaurally through the head-related filters of that direction (3D
+    /// sound for headphones): the filters crossfade and the delays glide to
+    /// it; a panned sound crossfades to the binaural rendering.
+    pub fn world_binaural(&self, id: u64, gain: f32, direction: [f32; 3]) {
+        let _ = self.inner.cmd_tx.try_send(Command::WorldBinaural(id, gain, direction));
+    }
+
+    /// How much a world sound is muffled by what stands between it and the
+    /// listener: 0 clear, 0.5 behind one wall, 1 behind two or more. The
+    /// low-pass and the gain cut glide to the new value; a sound that has
+    /// not played yet takes it at once.
+    pub fn world_occlusion(&self, id: u64, amount: f32) {
+        let _ = self.inner.cmd_tx.try_send(Command::WorldOcclusion(id, amount));
+    }
+
+    /// How much more of a world sound goes to the reverb of the surroundings
+    /// than its distance gain (a farther sound sends relatively more; 0, the
+    /// value of a new sound, keeps it dry). Glides over a buffer; a sound
+    /// that has not played yet takes it at once.
+    pub fn world_reverb_send(&self, id: u64, factor: f32) {
+        let _ = self.inner.cmd_tx.try_send(Command::WorldReverbSend(id, factor));
+    }
+
+    /// The reverb of the surroundings on with these parameters (they glide
+    /// there), or off (`None`: its output fades out, then the mix is the dry
+    /// one, bit for bit).
+    pub fn set_reverb(&self, params: Option<ReverbParams>) {
+        let _ = self.inner.cmd_tx.try_send(Command::Reverb(params));
     }
 
     /// Fades a world sound out and removes it.
@@ -327,6 +377,14 @@ impl PcmSink {
         let (pushed, _) = prod.push_partial_slice(stereo);
         pushed.len() / 2
     }
+
+    /// Frames queued and not yet taken by the mixer (0 for a null sink): the
+    /// sound waiting between the producer and the output. One atomic load.
+    pub fn queued_frames(&self) -> usize {
+        self.prod
+            .as_ref()
+            .map_or(0, |p| p.buffer().capacity().saturating_sub(p.slots()) / 2)
+    }
 }
 
 /// Consumer end of [`PcmSink::loopback`]: interleaved stereo 48 kHz samples.
@@ -362,9 +420,12 @@ mod tests {
         let (mut sink, mut tap) = PcmSink::loopback(16);
         assert_eq!(sink.push(&[0.5, -0.5], 2), 1);
         assert_eq!(tap.available(), 2);
+        assert_eq!(sink.queued_frames(), 1);
         let mut out = [0.0; 4];
         assert_eq!(tap.read(&mut out), 2);
         assert_eq!(&out[..2], &[0.5, -0.5]);
+        assert_eq!(sink.queued_frames(), 0);
+        assert_eq!(PcmSink::null().queued_frames(), 0);
     }
 
     #[test]

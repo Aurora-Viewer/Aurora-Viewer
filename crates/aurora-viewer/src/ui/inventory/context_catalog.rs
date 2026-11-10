@@ -24,6 +24,7 @@ pub(super) enum Command {
     Rename(Uuid),
     Image(Uuid),
     Protect(Uuid),
+    FolderColor(Vec<Uuid>),
     Reload(Uuid),
     Window(Uuid),
     Asset(Uuid),
@@ -336,8 +337,8 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
     let ids = st.selected_ids(id);
     let single = ids.len() == 1;
     let ready = st.pending.is_none();
-    let writable = rules::mutable(inv, id, &prefs.protected);
-    let movable = ids.iter().all(|id| rules::movable(inv, *id, &prefs.protected));
+    let writable = rules::mutable(inv, id);
+    let movable = ids.iter().all(|id| rules::relocatable(inv, *id, &prefs.protected));
     let worn = target.is_some_and(|id| facts.worn.contains(&id));
     let trash = rules::in_type(inv, id, 14);
     let linked = item.is_some_and(|it| matches!(it.asset_type, 24 | 25));
@@ -346,9 +347,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
     let can_create = ready
         && single
         && !trash
-        && to.is_some_and(|to| {
-            rules::destination(inv, to, &prefs.protected) && inv.folders.get(&to).is_some_and(|f| f.info.type_default != 16)
-        });
+        && to.is_some_and(|to| rules::destination(inv, to) && inv.folders.get(&to).is_some_and(|f| f.info.type_default != 16));
     let new = c.group(
         "new",
         "top",
@@ -399,8 +398,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
         ready && movable,
         Command::Copy(ids.clone(), true),
     );
-    let paste =
-        ready && single && to.is_some_and(|to| rules::paste_allowed(inv, &st.clipboard, to, st.cut, false, &prefs.protected, &facts.worn));
+    let paste = ready && single && to.is_some_and(|to| clipboard::paste_allowed(inv, st, to, prefs, facts));
     c.add(
         "paste",
         "top",
@@ -510,7 +508,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                     } else {
                         aurora_i18n::tr!("common-open")
                     },
-                    opens,
+                    opens && !(kind == 3 && facts.landmark_blocked),
                     if single {
                         Command::Open(id)
                     } else {
@@ -553,9 +551,9 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                     aurora_i18n::tr!("ui-inventory-context-return-to-last-location"),
                     writable
                         && ids.iter().all(|id| {
-                            rules::original(inv, *id)
-                                .and_then(|id| inv.items.get(&id))
-                                .is_some_and(|item| item.asset_type == 6 && !facts.worn.contains(&item.id))
+                            rules::original(inv, *id).and_then(|id| inv.items.get(&id)).is_some_and(|item| {
+                                item.asset_type == 6 && !facts.worn.contains(&item.id) && rules::restorable(item, facts.opensim)
+                            })
                         }),
                     InvAction::Restore(target.unwrap_or(id)),
                 );
@@ -640,7 +638,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                     TEXT,
                     "pencil-filled",
                     aurora_i18n::tr!("common-edit"),
-                    original.is_some_and(|item| item.owner_mask & rules::MODIFY != 0),
+                    original.is_some_and(|item| rules::held(inv, item) & rules::MODIFY != 0),
                     Command::Worn(crate::ui::context::CtxAction::EditWorn(target.unwrap_or(id))),
                 );
             }
@@ -691,7 +689,9 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                         &zone,
                         icon,
                         label,
-                        ready && can_wear,
+                        // LLAppearanceMgr::getCanAddToCOF / getCanReplaceCOF:
+                        // an RLVa add lock on the folder greys them.
+                        ready && can_wear && facts.rlva.folder_allows(id, true),
                         InvAction::Appearance(Wear::WearContents { folder: id, mode }),
                     );
                 }
@@ -700,7 +700,8 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                     &zone,
                     "circle-x-filled",
                     aurora_i18n::tr!("ui-inventory-context-remove-from-current-outfit"),
-                    ready && can_wear && content.iter().any(|l| facts.worn.contains(&l.target)),
+                    // getCanRemoveFromCOF: and its remove lock this one.
+                    ready && can_wear && facts.rlva.folder_allows(id, false) && content.iter().any(|l| facts.worn.contains(&l.target)),
                     InvAction::Appearance(Wear::RemoveOutfit(id)),
                 );
             }
@@ -726,7 +727,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                 TEXT,
                 "lock-filled",
                 aurora_i18n::tr!("inventory-bulk-permissions"),
-                ready && ids.iter().any(|id| bulk_permissions::eligible(inv, *id, prefs, facts.agent)),
+                ready && ids.iter().any(|id| bulk_permissions::eligible(inv, *id, facts.agent)),
                 Command::BulkPermissions(ids.clone()),
             );
         }
@@ -735,10 +736,10 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
             TEXT,
             "pencil-filled",
             aurora_i18n::tr!("common-rename"),
-            ready && single && rules::renameable(inv, id, &prefs.protected),
+            ready && single && rules::renameable(inv, id),
             Command::Rename(id),
         );
-        let share = ready && writable && ids.iter().all(|id| rules::offer(inv, *id, &prefs.protected, &facts.worn).is_ok());
+        let share = ready && writable && ids.iter().all(|id| rules::offer(inv, *id, &facts.worn).is_ok());
         c.add(
             "share",
             TEXT,
@@ -761,6 +762,17 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                 },
                 true,
                 Command::Protect(id),
+            );
+        }
+        if prefs.folder_colors_enabled && (all || folder.is_some()) {
+            let folders = super::folder_colors::folders(inv, &ids);
+            c.add(
+                "folder-color",
+                TEXT,
+                "palette-filled",
+                aurora_i18n::tr!("inventory-folder-color"),
+                !folders.is_empty(),
+                Command::FolderColor(folders),
             );
         }
     }
@@ -855,7 +867,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
         .filter(|it| !trash && super::context::exposes_asset_uuid(it.asset_type))
         .or_else(|| all.then_some(&placeholder))
     {
-        let asset = super::context::copyable_asset_uuid(it);
+        let asset = super::context::copyable_asset_uuid(inv, it);
         c.add(
             "asset-uuid",
             &organize,
@@ -970,7 +982,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
     }
     extra::build(&mut c, inv, id, st, prefs, facts, all);
     if !all {
-        super::listings::restrict(&mut c, inv, id, st);
+        super::listings::restrict(&mut c, inv, id);
     }
     c
 }
@@ -1052,13 +1064,21 @@ fn item_attachments(
                 && !rules::in_type(inv, *id, 14)
                 && inv.items.get(id).is_some_and(|it| matches!(it.asset_type, 5 | 6 | 13))
         });
+    // RLVa: what a lock forbids is greyed (ERlvWearMask in LLObjectBridge
+    // and LLWearableBridge::buildContextMenu, llinventorybridge.cpp).
+    let rlva = |point: u8, replace: bool| {
+        selected.iter().all(|id| {
+            let wear = facts.rlva.wear(inv, *id, point);
+            if replace { wear.replace } else { wear.add }
+        })
+    };
     if !worn_objects || c.editing {
         c.invoke(
             "wear",
             &zone,
             "shirt-filled",
             aurora_i18n::tr!("common-wear"),
-            wear && single,
+            wear && single && rlva(0, true),
             InvAction::Appearance(Wear::WearItem {
                 item: target,
                 replace: true,
@@ -1070,7 +1090,7 @@ fn item_attachments(
             &zone,
             "plus",
             aurora_i18n::tr!("common-add"),
-            wear && selected.iter().all(|id| inv.items.get(id).is_some_and(|it| it.asset_type != 13)),
+            wear && rlva(0, false) && selected.iter().all(|id| inv.items.get(id).is_some_and(|it| it.asset_type != 13)),
             InvAction::Appearance(Wear::WearItems {
                 items: selected.to_vec(),
                 replace: false,
@@ -1099,7 +1119,7 @@ fn item_attachments(
                         &attach,
                         "man-filled",
                         &label,
-                        wear && objects,
+                        wear && objects && rlva(*point, false),
                         Command::Invoke(InvAction::Appearance(Wear::WearItems {
                             items: selected.to_vec(),
                             replace: false,
@@ -1125,9 +1145,11 @@ fn item_attachments(
             ready
                 && !facts.appearance_busy
                 && selected.len() == ids.len()
-                && selected
-                    .iter()
-                    .all(|id| facts.worn.contains(id) && inv.items.get(id).is_some_and(|it| matches!(it.asset_type, 5 | 6))),
+                && selected.iter().all(|id| {
+                    facts.worn.contains(id)
+                        && inv.items.get(id).is_some_and(|it| matches!(it.asset_type, 5 | 6))
+                        && facts.rlva.can_remove(*id)
+                }),
             InvAction::Appearance(Wear::RemoveItems(selected.to_vec())),
         );
     }
@@ -1211,6 +1233,7 @@ pub(super) fn execute(
                 prefs.protected.insert(id);
             }
         }
+        Command::FolderColor(ids) => st.folder_color = Some(super::folder_colors::Picker::new(prefs, ids)),
         Command::Reload(id) => {
             st.message.clear();
             actions.push(InvAction::Preview(id));

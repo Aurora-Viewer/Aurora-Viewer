@@ -11,7 +11,11 @@ use crate::types::{NetEvent, RegionHandle};
 use aurora_llsd::Llsd;
 use aurora_msg::msgs::*;
 use aurora_msg::{IncomingPacket, Msg, field_str, str_field};
+use parking_lot::Mutex;
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::sync::watch;
 use uuid::Uuid;
 
 /// LLTransferChannelType / LLTransferSourceType / LLTSCode values.
@@ -35,6 +39,79 @@ pub(super) struct LandNet {
     covenant: Option<CovenantTransfer>,
     /// AvatarPickerRequest queries waiting for their reply (query id, text).
     picker_queries: Vec<(Uuid, String)>,
+    /// One ordered/coalescing writer per region and parcel. The session's
+    /// command loop calls `send_replace` synchronously, preserving edit order.
+    parcel_writers: Arc<Mutex<HashMap<(RegionHandle, i32), watch::Sender<ParcelHttpUpdate>>>>,
+}
+
+#[derive(Debug, Clone)]
+struct ParcelHttpUpdate {
+    local_id: i32,
+    url: String,
+    body: Vec<u8>,
+}
+
+/// Starts or feeds the persistent writer for one parcel. A watch channel
+/// holds only the newest pending snapshot while a request is in flight, so
+/// intermediate UI edits are coalesced without allowing an older request to
+/// finish after a newer one.
+fn queue_parcel_http_update(
+    writers: &Arc<Mutex<HashMap<(RegionHandle, i32), watch::Sender<ParcelHttpUpdate>>>>,
+    http: reqwest::Client,
+    handle: RegionHandle,
+    update: ParcelHttpUpdate,
+) {
+    let key = (handle, update.local_id);
+    let mut writers_guard = writers.lock();
+    if let Some(sender) = writers_guard.get(&key) {
+        sender.send_replace(update);
+        return;
+    }
+
+    let (sender, receiver) = watch::channel(update);
+    writers_guard.insert(key, sender);
+    drop(writers_guard);
+    tokio::spawn(parcel_http_writer(http, receiver, writers.clone(), key));
+}
+
+async fn parcel_http_writer(
+    http: reqwest::Client,
+    mut updates: watch::Receiver<ParcelHttpUpdate>,
+    writers: Arc<Mutex<HashMap<(RegionHandle, i32), watch::Sender<ParcelHttpUpdate>>>>,
+    key: (RegionHandle, i32),
+) {
+    loop {
+        let update = updates.borrow_and_update().clone();
+        match http
+            .post(&update.url)
+            .header("Content-Type", "application/llsd+xml")
+            .header("Accept", "application/llsd+xml")
+            .body(update.body)
+            .send()
+            .await
+        {
+            Ok(r) if r.status().is_success() => log::info!("parcel {}: properties sent", update.local_id),
+            Ok(r) => log::warn!("parcel {}: properties update HTTP {}", update.local_id, r.status().as_u16()),
+            Err(e) => log::warn!("parcel {}: properties update failed: {}", update.local_id, e.without_url()),
+        }
+
+        // The session and this worker coordinate through the same short-held
+        // map lock. Remove an idle writer atomically with checking for pending
+        // edits, so a later update starts a fresh task instead of leaking one
+        // waiter per parcel until logout.
+        let idle = {
+            let mut writers = writers.lock();
+            if updates.has_changed().unwrap_or(false) {
+                false
+            } else {
+                writers.remove(&key);
+                true
+            }
+        };
+        if idle {
+            return;
+        }
+    }
 }
 
 impl Session<'_> {
@@ -102,6 +179,11 @@ impl Session<'_> {
                 };
                 let transaction = Uuid::new_v4();
                 let (sections, chunks) = land::access_list_chunks(&entries);
+                log::debug!(
+                    "ParcelAccessListUpdate: parcel {local_id}, kind {flags:#x}, {} entries in {} message(s), to {addr}",
+                    entries.len(),
+                    chunks.len()
+                );
                 for (i, chunk) in chunks.iter().enumerate() {
                     let mut m = ParcelAccessListUpdate::default();
                     m.agent_data.agent_id = agent;
@@ -405,7 +487,7 @@ impl Session<'_> {
                             .filter(|t| !t.is_empty())
                             .unwrap_or_else(|| "none/none".into()),
                         Err(e) => {
-                            log::info!("media type of {url}: {e}");
+                            log::info!("media type of {url}: {}", e.without_url());
                             "none/none".into()
                         }
                     };
@@ -431,25 +513,16 @@ impl Session<'_> {
             let http = self.sh.caps_http.clone();
             let body = aurora_llsd::to_xml(&u.to_llsd());
             let local_id = u.local_id;
-            tokio::spawn(async move {
-                match http
-                    .post(&url)
-                    .header("Content-Type", "application/llsd+xml")
-                    .header("Accept", "application/llsd+xml")
-                    .body(body)
-                    .send()
-                    .await
-                {
-                    Ok(r) if r.status().is_success() => log::info!("parcel {local_id}: properties sent"),
-                    Ok(r) => log::warn!("parcel {local_id}: properties update HTTP {}", r.status().as_u16()),
-                    Err(e) => log::warn!("parcel {local_id}: properties update failed: {e}"),
-                }
-            });
+            queue_parcel_http_update(&self.land.parcel_writers, http, handle, ParcelHttpUpdate { local_id, url, body });
             return;
         }
         let Some(addr) = self.land_sim(handle) else {
             return;
         };
+        log::info!(
+            "parcel {}: ParcelPropertiesUpdate capability unavailable, sending properties via UDP",
+            u.local_id
+        );
         let mut m = ParcelPropertiesUpdate::default();
         m.agent_data.agent_id = self.agent_id();
         m.agent_data.session_id = self.session_id();
@@ -473,6 +546,8 @@ impl Session<'_> {
         d.user_location = u.user_location;
         d.user_look_at = u.user_look_at;
         d.landing_type = u.landing_type;
+        // This handler runs on the session's single command loop, so the UDP
+        // fallback is queued in snapshot order as well.
         self.send(addr, &m, true);
     }
 
@@ -555,7 +630,7 @@ impl Session<'_> {
                     None => Err(aurora_i18n::tr!("session-land-unreadable-response").to_owned()),
                 },
                 Ok(r) => Err(format!("HTTP {}", r.status().as_u16())),
-                Err(e) => Err(e.to_string()),
+                Err(e) => Err(e.without_url().to_string()),
             };
             if let Err(e) = &result {
                 log::warn!("parcel {local_id} environment: {e}");
@@ -587,7 +662,7 @@ impl Session<'_> {
                         }
                     }
                     Ok(r) => log::warn!("GetExperienceInfo: HTTP {}", r.status().as_u16()),
-                    Err(e) => log::warn!("GetExperienceInfo failed: {e}"),
+                    Err(e) => log::warn!("GetExperienceInfo failed: {}", e.without_url()),
                 }
             }
         });
@@ -621,7 +696,7 @@ impl Session<'_> {
                     None
                 }
                 Err(e) => {
-                    log::warn!("LandResources failed: {e}");
+                    log::warn!("LandResources failed: {}", e.without_url());
                     None
                 }
             };
@@ -641,7 +716,7 @@ impl Session<'_> {
                             .and_then(|b| aurora_llsd::from_xml(&b).ok())
                             .ok_or_else(|| aurora_i18n::tr!("session-land-unreadable-response").to_owned()),
                         Ok(r) => Err(format!("HTTP {}", r.status().as_u16())),
-                        Err(e) => Err(e.to_string()),
+                        Err(e) => Err(e.without_url().to_string()),
                     }
                 }
             };
@@ -691,7 +766,7 @@ impl Session<'_> {
                     .map(|v| (land::parse_script_summary(&v), land::parse_attachment_scripts(&v)))
                     .ok_or_else(|| aurora_i18n::tr!("session-land-unreadable-response").to_owned()),
                 Ok(r) => Err(format!("HTTP {}", r.status().as_u16())),
-                Err(e) => Err(e.to_string()),
+                Err(e) => Err(e.without_url().to_string()),
             };
             let _ = events.send(NetEvent::Land(LandEvent::AttachmentScripts(result)));
         });
@@ -722,7 +797,7 @@ impl Session<'_> {
                     None
                 }
                 Err(e) => {
-                    log::warn!("FindExperienceByName failed: {e}");
+                    log::warn!("FindExperienceByName failed: {}", e.without_url());
                     None
                 }
             };
@@ -767,7 +842,7 @@ impl Session<'_> {
                     None
                 }
                 Err(e) => {
-                    log::warn!("AvatarPickerSearch failed: {e}");
+                    log::warn!("AvatarPickerSearch failed: {}", e.without_url());
                     None
                 }
             };
@@ -780,6 +855,12 @@ impl Session<'_> {
         let id = pkt.id;
         if id == ParcelAccessListReply::ID {
             let m: ParcelAccessListReply = pkt.decode()?;
+            log::debug!(
+                "ParcelAccessListReply: parcel {}, kind {:#x}, {} entries, from {from}",
+                m.data.local_id,
+                m.data.flags,
+                m.list.iter().filter(|e| !e.id.is_nil()).count()
+            );
             let entries = m
                 .list
                 .iter()
@@ -983,5 +1064,122 @@ async fn post_remote_parcel(http: &reqwest::Client, url: &str, body: &Llsd) -> R
             log::warn!("RemoteParcelRequest failed: {e}");
             Err(land::RemoteParcelError::Failed)
         }
+    }
+}
+
+#[cfg(test)]
+mod parcel_update_writer_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn read_request(stream: &mut tokio::net::TcpStream) -> Vec<u8> {
+        let mut request = Vec::new();
+        let (header_end, body_len) = loop {
+            let mut buf = [0; 2048];
+            let n = stream.read(&mut buf).await.expect("read request");
+            assert_ne!(n, 0, "request ended before its body");
+            request.extend_from_slice(&buf[..n]);
+            if let Some(header_end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                let headers = std::str::from_utf8(&request[..header_end]).expect("valid HTTP headers");
+                let body_len = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().expect("content length"))
+                    })
+                    .expect("content length header");
+                if request.len() >= header_end + 4 + body_len {
+                    break (header_end, body_len);
+                }
+            }
+        };
+        request[header_end + 4..header_end + 4 + body_len].to_vec()
+    }
+
+    async fn respond(stream: &mut tokio::net::TcpStream) {
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await
+            .expect("write response");
+    }
+
+    fn snapshot(name: &str, flags: u32) -> land::ParcelUpdate {
+        land::ParcelUpdate {
+            local_id: 7,
+            name: name.to_owned(),
+            flags,
+            ..Default::default()
+        }
+    }
+
+    fn parsed(body: &[u8]) -> Llsd {
+        aurora_llsd::from_xml(body).expect("parcel update LLSD")
+    }
+
+    #[tokio::test]
+    async fn parcel_http_updates_preserve_order_and_coalesce_to_the_latest_snapshot() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local parcel server");
+        let url = format!("http://{}/parcel", listener.local_addr().expect("local address"));
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let mut bodies = Vec::new();
+            let mut started_tx = Some(started_tx);
+            for index in 0..2 {
+                let (mut stream, _) = listener.accept().await.expect("accept parcel update");
+                bodies.push(read_request(&mut stream).await);
+                if index == 0 {
+                    if let Some(tx) = started_tx.take() {
+                        let _ = tx.send(());
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                }
+                respond(&mut stream).await;
+            }
+            bodies
+        });
+
+        let client = reqwest::Client::new();
+        let writers = Arc::new(Mutex::new(HashMap::new()));
+        let queue = |writers: &Arc<Mutex<HashMap<(RegionHandle, i32), watch::Sender<ParcelHttpUpdate>>>>, update: land::ParcelUpdate| {
+            let body = aurora_llsd::to_xml(&update.to_llsd());
+            queue_parcel_http_update(
+                writers,
+                client.clone(),
+                0x1000,
+                ParcelHttpUpdate {
+                    local_id: update.local_id,
+                    url: url.clone(),
+                    body,
+                },
+            );
+        };
+
+        queue(&writers, snapshot("Name A", 1));
+        started_rx.await.expect("first request reached the server");
+        queue(&writers, snapshot("Name B", 1));
+        queue(&writers, snapshot("Name B", 2));
+
+        let bodies = server.await.expect("server task");
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while !writers.lock().is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("idle parcel writer is removed");
+        assert_eq!(bodies.len(), 2, "one in-flight request plus only the latest pending snapshot");
+        let first = parsed(&bodies[0]);
+        assert_eq!(first["name"].as_str(), "Name A");
+        assert_eq!(
+            u32::from_be_bytes(first["parcel_flags"].as_binary().try_into().expect("four-byte flags")),
+            1
+        );
+        let last = parsed(&bodies[1]);
+        assert_eq!(last["name"].as_str(), "Name B");
+        assert_eq!(
+            u32::from_be_bytes(last["parcel_flags"].as_binary().try_into().expect("four-byte flags")),
+            2
+        );
     }
 }

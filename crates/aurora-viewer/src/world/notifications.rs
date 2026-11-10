@@ -36,36 +36,125 @@ pub mod im {
 }
 
 /// LSL permission bits (llRequestPermissions) with their wording
-/// (SCRIPT_PERMISSIONS of llscriptruntimeperms.h).
-fn permissions() -> &'static Vec<(i32, &'static str)> {
-    static TABLE: aurora_i18n::Localized<Vec<(i32, &'static str)>> = aurora_i18n::Localized::new();
-    TABLE.get(|| {
-        vec![
-            (0x2, aurora_i18n::tr!("world-notifications-take-l-from-your-account")),
-            (0x4, aurora_i18n::tr!("world-notifications-take-control-of-your-keys")),
-            (0x8, aurora_i18n::tr!("world-notifications-remap-your-control-inputs")),
-            (0x10, aurora_i18n::tr!("world-notifications-animate-your-avatar")),
-            (0x20, aurora_i18n::tr!("world-notifications-attach-to-your-avatar")),
-            (0x40, aurora_i18n::tr!("world-notifications-release-ownership")),
-            (0x80, aurora_i18n::tr!("world-notifications-link-and-unlink-objects")),
-            (0x100, aurora_i18n::tr!("world-notifications-add-and-remove-joints")),
-            (0x200, aurora_i18n::tr!("world-notifications-change-its-permissions")),
-            (0x400, aurora_i18n::tr!("world-notifications-follow-your-camera")),
-            (0x800, aurora_i18n::tr!("world-notifications-control-your-camera")),
-            (0x1000, aurora_i18n::tr!("world-notifications-teleport")),
-            // 0x2000 (JoinAnExperience) has no line, like Firestorm's empty string
-            (0x4000, aurora_i18n::tr!("world-notifications-manage-estate-silently")),
-            (0x8000, aurora_i18n::tr!("world-notifications-override-your-animations")),
-            (0x10000, aurora_i18n::tr!("world-notifications-return-objects")),
-            (0x20000, aurora_i18n::tr!("world-notifications-force-your-avatar-to-sit")),
-            (0x40000, aurora_i18n::tr!("world-notifications-change-your-environment-settings")),
-            (0x80000, aurora_i18n::tr!("world-notifications-sell-land-on-your-behalf")),
-        ]
-    })
+/// (SCRIPT_PERMISSIONS of llscriptruntimeperms.h). Built at each question,
+/// not cached: the debit line names the grid's money symbol of the moment.
+fn permissions() -> Vec<(i32, &'static str)> {
+    vec![
+        (0x2, aurora_i18n::tr!("world-notifications-take-l-from-your-account")),
+        (0x4, aurora_i18n::tr!("world-notifications-take-control-of-your-keys")),
+        (0x8, aurora_i18n::tr!("world-notifications-remap-your-control-inputs")),
+        (0x10, aurora_i18n::tr!("world-notifications-animate-your-avatar")),
+        (0x20, aurora_i18n::tr!("world-notifications-attach-to-your-avatar")),
+        (0x40, aurora_i18n::tr!("world-notifications-release-ownership")),
+        (0x80, aurora_i18n::tr!("world-notifications-link-and-unlink-objects")),
+        (0x100, aurora_i18n::tr!("world-notifications-add-and-remove-joints")),
+        (0x200, aurora_i18n::tr!("world-notifications-change-its-permissions")),
+        (0x400, aurora_i18n::tr!("world-notifications-follow-your-camera")),
+        (0x800, aurora_i18n::tr!("world-notifications-control-your-camera")),
+        (0x1000, aurora_i18n::tr!("world-notifications-teleport")),
+        // 0x2000 (JoinAnExperience) has no line, like the Legacy Viewer's empty string
+        (0x4000, aurora_i18n::tr!("world-notifications-manage-estate-silently")),
+        (0x8000, aurora_i18n::tr!("world-notifications-override-your-animations")),
+        (0x10000, aurora_i18n::tr!("world-notifications-return-objects")),
+        (0x20000, aurora_i18n::tr!("world-notifications-force-your-avatar-to-sit")),
+        (0x40000, aurora_i18n::tr!("world-notifications-change-your-environment-settings")),
+        (0x80000, aurora_i18n::tr!("world-notifications-sell-land-on-your-behalf")),
+    ]
 }
 
 pub fn permission_lines(questions: i32) -> Vec<&'static str> {
-    permissions().iter().filter(|(b, _)| questions & b != 0).map(|(_, t)| *t).collect()
+    permissions()
+        .into_iter()
+        .filter(|(b, _)| questions & b != 0)
+        .map(|(_, t)| t)
+        .collect()
+}
+
+/// The caution permissions (`caution` of SCRIPT_PERMISSIONS,
+/// llscriptruntimeperms.h): take L$ (ScriptTakeMoney) and privileged land
+/// access.
+pub const CAUTION_PERMISSIONS: i32 = 0x2 | 0x80000;
+
+/// The text of a caution question (ScriptQuestionCaution, process_script_question):
+/// the warning of each caution permission, the advice, then the other
+/// permissions asked with it (AdditionalPermissionsRequestHeader).
+pub fn caution_body(questions: i32, object_name: &str, owner_name: &str) -> String {
+    let mut text = Vec::new();
+    if questions & 0x2 != 0 {
+        text.push(aurora_i18n::tr!(
+            "world-notifications-caution-debit",
+            object_name = object_name,
+            owner_name = owner_name
+        ));
+    }
+    if questions & 0x80000 != 0 {
+        text.push(aurora_i18n::tr!(
+            "world-notifications-caution-land",
+            object_name = object_name,
+            owner_name = owner_name
+        ));
+    }
+    text.push(aurora_i18n::tr!("world-notifications-caution-advice").to_owned());
+    let others = permission_lines(questions & !CAUTION_PERMISSIONS);
+    if !others.is_empty() {
+        text.push(format!(
+            "{}\n• {}",
+            aurora_i18n::tr!("world-notifications-caution-also"),
+            others.join("\n• ")
+        ));
+    }
+    text.join("\n\n")
+}
+
+/// The nearby chat line of an answered caution question
+/// (notify_cautioned_script_question: ScriptQuestionCautionChatGranted /
+/// Denied), naming the caution permissions only; `place` is the region and
+/// the object's position there, when known and not hidden.
+pub fn caution_chat_line(questions: i32, prompt: &CautionPrompt, place: Option<(String, String)>, granted: bool) -> String {
+    let permissions = permission_lines(questions & CAUTION_PERMISSIONS).join(", ");
+    let (region, position) = place.unwrap_or_else(|| {
+        (
+            aurora_i18n::tr!("world-notifications-caution-unknown-region").to_owned(),
+            aurora_i18n::tr!("world-notifications-caution-unknown-position").to_owned(),
+        )
+    });
+    let (object_name, owner_name) = (prompt.object_name.as_str(), prompt.owner_name.as_str());
+    let (region, position, permissions) = (region.as_str(), position.as_str(), permissions.as_str());
+    if granted {
+        aurora_i18n::tr!(
+            "world-notifications-caution-granted",
+            object_name = object_name,
+            owner_name = owner_name,
+            region = region,
+            position = position,
+            permissions = permissions
+        )
+    } else {
+        aurora_i18n::tr!(
+            "world-notifications-caution-denied",
+            object_name = object_name,
+            owner_name = owner_name,
+            region = region,
+            position = position,
+            permissions = permissions
+        )
+    }
+}
+
+/// The membership fee line of a group invitation (invite_bucket_t).
+pub fn group_fee_line(fee: i32) -> String {
+    aurora_i18n::tr!("world-notifications-group-fee", fee = aurora_i18n::integer(i64::from(fee)))
+}
+
+/// The binary bucket of a group invitation (invite_bucket_t,
+/// process_improved_im in indra/newview/llimprocessing.cpp, originally
+/// LGPL 2.1): the membership fee, a big-endian S32, then the role id.
+/// None when it is not that size.
+pub fn group_invite_fee(bucket: &[u8]) -> Option<i32> {
+    if bucket.len() != 20 {
+        return None;
+    }
+    Some(i32::from_be_bytes([bucket[0], bucket[1], bucket[2], bucket[3]]))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,6 +229,11 @@ pub enum Data {
         /// Received while we were offline (answered by capability when it
         /// came without a session id).
         offline: bool,
+        /// The membership fee (invite_bucket_t, 0: free).
+        fee: i32,
+        /// Accept was pressed on an invitation with a fee: the card now asks
+        /// to confirm the cost (JoinGroupCanAfford, its fee asked once).
+        confirming: bool,
     },
     /// A group notice (IM_GROUP_NOTICE): its group, for the insignia and the
     /// name, and its attachment, offered until saved or declined
@@ -169,6 +263,9 @@ pub enum Data {
         region: aurora_net::RegionHandle,
         /// The question of an experience (ScriptQuestionExperience).
         experience: Option<ExperiencePrompt>,
+        /// A caution permission is asked (ScriptQuestionCaution): the
+        /// warning wording, Deny first, and a nearby chat line once answered.
+        caution: Option<CautionPrompt>,
     },
     Url(String),
     /// A friend's online / offline notice: a toast only, never kept in the
@@ -207,6 +304,13 @@ pub enum Data {
     /// RegionRestartSeconds, show_toast="false"): pinned at the top of "To
     /// do" with the live count while the alert counts (`region_restart.rs`).
     RegionRestart,
+    /// A new version of Aurora, found by a periodic check (`updater.rs`):
+    /// its button opens the update window, `ready` once downloaded. Aurora
+    /// only (the Legacy Viewer checks at launch); its card wears the
+    /// aurora's colours in Aurora's notification center.
+    Update {
+        ready: bool,
+    },
 }
 
 /// What the question of an experience shows besides the permissions.
@@ -217,6 +321,14 @@ pub struct ExperiencePrompt {
     pub name: String,
     /// The source object, blocked by "Block object".
     pub object_name: String,
+}
+
+/// What a caution question (take L$, privileged land access) needs for
+/// the nearby chat line of its answer (notify_cautioned_script_question).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CautionPrompt {
+    pub object_name: String,
+    pub owner_name: String,
 }
 
 /// The attachment of a group notice (LLOfferInfo of an IM_GROUP_NOTICE):
@@ -496,6 +608,53 @@ impl Notifications {
         self.next
     }
 
+    /// send_join_group_response: Accept on an invitation with a fee asks
+    /// again, naming the cost (JoinGroupCanAfford), before anything is sent.
+    /// The question replaces the invitation (a fresh card, the invitation's
+    /// text and links kept, no history entry of its own) and is not asked
+    /// twice. Returns the question's id.
+    pub fn ask_group_fee(&mut self, id: u64) -> Option<u64> {
+        let pos = self.list.iter().position(|n| n.id == id)?;
+        let Data::Group {
+            group,
+            tx,
+            offline,
+            fee,
+            confirming: false,
+        } = self.list[pos].data
+        else {
+            return None;
+        };
+        if fee <= 0 {
+            return None;
+        }
+        let invitation = self.list.remove(pos);
+        self.seen.retain(|(seen, _)| *seen != id);
+        let message = invitation
+            .body
+            .strip_suffix(&group_fee_line(fee))
+            .unwrap_or(&invitation.body)
+            .trim_end();
+        let cost = aurora_i18n::tr!("ui-group-profile-join-cost", cost = aurora_i18n::integer(i64::from(fee)));
+        let body = if message.is_empty() { cost } else { format!("{cost}\n\n{message}") };
+        let question = self.push(
+            Kind::Group,
+            aurora_i18n::tr!("ui-group-profile-join-title"),
+            body,
+            Data::Group {
+                group,
+                tx,
+                offline,
+                fee,
+                confirming: true,
+            },
+        );
+        if let Some(n) = self.list.iter_mut().find(|n| n.id == question) {
+            n.name_links = invitation.name_links;
+        }
+        Some(question)
+    }
+
     /// Names are paired with protocol ids at their source, never guessed
     /// from arbitrary message text or sent to an external browser.
     pub fn link_name(&mut self, id: u64, name: impl Into<String>, target: NameTarget) {
@@ -655,6 +814,9 @@ impl Notifications {
         // information read, an offer left unanswered ignored
         self.seen = self
             .listed()
+            // llDialog and llTextBox are temporary in-world prompts, not
+            // notifications the resident needs to search after answering them
+            .filter(|n| !script_prompt(&n.data))
             .map(|n| {
                 let mut e = n.history_entry(if n.interactive() { Outcome::Ignored } else { Outcome::Read });
                 if let Data::Inventory { object, .. } = n.data
@@ -702,7 +864,11 @@ impl Notifications {
         if matches!(&n.data, Data::Inventory { .. }) && !n.transient && !self.seen.iter().any(|(seen, _)| *seen == id) {
             self.seen.push((id, n.history_entry(outcome)));
         }
-        self.outcomes.insert(id, outcome);
+        // a script prompt never enters `seen`, so take_departures would
+        // never collect its outcome
+        if !script_prompt(&n.data) {
+            self.outcomes.insert(id, outcome);
+        }
         let mut out = Vec::new();
         let mut url = None;
         let accept = matches!(r, Response::Accept);
@@ -728,7 +894,7 @@ impl Notifications {
                         let folder = if keep { folder_for(*asset_type) } else { Uuid::nil() };
                         out.push(inventory_answer(*from, *tx, *task, keep, folder));
                     }
-                    Data::Group { group, tx, offline } => out.push(group_answer(*group, *tx, *offline, false)),
+                    Data::Group { group, tx, offline, .. } => out.push(group_answer(*group, *tx, *offline, false)),
                     Data::GroupNotice { .. } => {
                         if let Some(a) = n.offered_attachment() {
                             out.push(super::group_data::offer_answer(a.from, a.tx, None));
@@ -759,7 +925,7 @@ impl Notifications {
                 let folder = if accept { folder_for(*asset_type) } else { Uuid::nil() };
                 out.push(inventory_answer(*from, *tx, *task, accept, folder));
             }
-            (Data::Group { group, tx, offline }, _) => out.push(group_answer(*group, *tx, *offline, accept)),
+            (Data::Group { group, tx, offline, .. }, _) => out.push(group_answer(*group, *tx, *offline, accept)),
             (
                 Data::Dialog {
                     sender,
@@ -781,12 +947,14 @@ impl Notifications {
                 }
             }
             (Data::TextBox { sender, object, channel }, Response::SendText) => {
+                let mut label = n.text.clone();
+                clamp_text_box_reply(&mut label);
                 out.push(NetCommand::ScriptDialogReply {
                     sender: Some(*sender),
                     object_id: *object,
                     channel: *channel,
                     index: 0,
-                    label: n.text.clone(),
+                    label,
                 });
             }
             (
@@ -835,6 +1003,42 @@ impl Notifications {
             NetCommand::DeclineFriendship { transaction: tx }
         }
     }
+}
+
+/// Longest llTextBox reply, in bytes: the `max_length` of the "message"
+/// editor of panel_notify_textbox.xml (LLTextBase::mMaxTextByteLength, a
+/// UTF-8 byte count), under the 255 bytes of ScriptDialogReply's ButtonLabel.
+pub const TEXT_BOX_MAX_BYTES: usize = 250;
+
+/// Keeps an llTextBox reply as the Legacy Viewer's multi-line editor would
+/// send it (LLToastScriptTextbox::onClickSubmit takes the editor's text):
+/// line ends as `\n`, cut at [`TEXT_BOX_MAX_BYTES`] on a character boundary
+/// (utf8str_truncate). Same as the Legacy Viewer, a pasted Windows `\r\n` is
+/// one line end: its clipboard read removes the CR first
+/// (LLWindowWin32::pasteTextFromClipboard, removeWindowsCR; removeCRLF on
+/// macOS), as egui-winit does, and a lone `\r` becomes `\n`
+/// (LLTextEditor::cleanStringForPaste).
+pub fn clamp_text_box_reply(text: &mut String) {
+    if text.contains('\r') {
+        *text = text.replace("\r\n", "\n").replace('\r', "\n");
+    }
+    text.truncate(text.floor_char_boundary(TEXT_BOX_MAX_BYTES));
+}
+
+/// A paste into the llTextBox reply, cleaned like
+/// LLTextEditor::cleanStringForPaste (indra/llui/lltexteditor.cpp): `\r\n`
+/// and `\r` line ends as `\n`, and a tab as four spaces (SPACES_PER_TAB).
+pub fn clean_text_box_paste(text: &mut String) {
+    if text.contains(['\r', '\t']) {
+        *text = text.replace("\r\n", "\n").replace('\r', "\n").replace('\t', "    ");
+    }
+}
+
+/// A script's llDialog menu or llTextBox prompt: it waits in "To do" until
+/// answered, then leaves no trace in the history (#1745; a `ScriptDialog`,
+/// never in the notification well: indra/newview/skins/default/xui/en/notifications.xml).
+fn script_prompt(data: &Data) -> bool {
+    matches!(data, Data::Dialog { .. } | Data::TextBox { .. })
 }
 
 /// What an answer did, for the history.
@@ -955,6 +1159,111 @@ mod tests {
     }
 
     #[test]
+    fn script_menus_stay_in_todo_but_do_not_enter_history() {
+        let mut n = Notifications::default();
+        n.push(
+            Kind::Script,
+            "Menu",
+            "Choose a seat",
+            Data::Dialog {
+                sender: ([127, 0, 0, 1], 13000).into(),
+                object: Uuid::new_v4(),
+                object_name: "Seat menu".into(),
+                own_object: false,
+                channel: -42,
+                buttons: vec!["Sit".into()],
+            },
+        );
+        assert_eq!(n.listed().count(), 1);
+        assert!(n.take_departures().is_empty());
+        n.list.clear();
+        assert!(n.take_departures().is_empty());
+    }
+
+    #[test]
+    fn answered_script_prompts_leave_no_history_nor_outcome() {
+        let mut n = Notifications::default();
+        let sender: std::net::SocketAddr = ([127, 0, 0, 1], 13000).into();
+        let menu = n.push(
+            Kind::Script,
+            "Menu",
+            "Choose a seat",
+            Data::Dialog {
+                sender,
+                object: Uuid::new_v4(),
+                object_name: "Seat menu".into(),
+                own_object: false,
+                channel: -42,
+                buttons: vec!["Sit".into()],
+            },
+        );
+        let text_box = n.push(
+            Kind::Script,
+            "Prompt",
+            "Name your pet",
+            Data::TextBox {
+                sender,
+                object: Uuid::new_v4(),
+                channel: -43,
+            },
+        );
+        assert_eq!(n.listed().count(), 2);
+        assert!(n.take_departures().is_empty());
+        n.list.iter_mut().find(|x| x.id == text_box).expect("text box").text = "Rex".into();
+        let (cmds, _) = n.respond(text_box, Response::SendText, |_| Uuid::nil(), Uuid::nil());
+        assert!(
+            matches!(&cmds[..], [NetCommand::ScriptDialogReply { channel: -43, label, .. }] if label == "Rex"),
+            "{cmds:?}"
+        );
+        let (cmds, _) = n.respond(menu, Response::Button(0), |_| Uuid::nil(), Uuid::nil());
+        assert_eq!(cmds.len(), 1);
+        assert!(n.list.is_empty());
+        assert!(n.take_departures().is_empty());
+        assert!(n.outcomes.is_empty());
+    }
+
+    /// #2832: an llTextBox reply keeps its lines, with `\n` line ends, and
+    /// the 250 bytes of the Legacy Viewer's editor, cut on a character.
+    #[test]
+    fn text_box_reply_keeps_lines_within_the_legacy_limit() {
+        let clamp = |s: &str| {
+            let mut s = s.to_owned();
+            clamp_text_box_reply(&mut s);
+            s
+        };
+        assert_eq!(clamp("Lady\nof the\nManor"), "Lady\nof the\nManor");
+        assert_eq!(clamp("a\r\nb\rc"), "a\nb\nc");
+        assert_eq!(clamp(&"x".repeat(300)).len(), TEXT_BOX_MAX_BYTES);
+        // 249 bytes then a three-byte character: it does not fit, nor half of it
+        let cut = clamp(&format!("{}日本", "x".repeat(249)));
+        assert_eq!(cut, "x".repeat(249));
+        assert_eq!(clamp(&format!("{}é", "x".repeat(248))).len(), 250);
+        // a paste: tabs as four spaces, Windows and old Mac line ends as one `\n`
+        let mut pasted = String::from("Name:\tAda\r\nTitle:\tLady\rEnd");
+        clean_text_box_paste(&mut pasted);
+        assert_eq!(pasted, "Name:    Ada\nTitle:    Lady\nEnd");
+
+        let mut n = Notifications::default();
+        let id = n.push(
+            Kind::Script,
+            "Prompt",
+            "Your title",
+            Data::TextBox {
+                sender: ([127, 0, 0, 1], 13000).into(),
+                object: Uuid::new_v4(),
+                channel: -7,
+            },
+        );
+        n.list.iter_mut().find(|x| x.id == id).expect("text box").text = format!("Line 1\r\nLine 2\n{}", "x".repeat(400));
+        let (cmds, _) = n.respond(id, Response::SendText, |_| Uuid::nil(), Uuid::nil());
+        assert!(
+            matches!(&cmds[..], [NetCommand::ScriptDialogReply { label, index: 0, .. }]
+                if label.starts_with("Line 1\nLine 2\nx") && label.len() == TEXT_BOX_MAX_BYTES),
+            "{cmds:?}"
+        );
+    }
+
+    #[test]
     fn inventory_accept_puts_folder_in_bucket() {
         let mut n = Notifications::default();
         let (from, tx, folder) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
@@ -1006,7 +1315,20 @@ mod tests {
         // group invitations: by capability only when offline and without a
         // session id (what the offline messages capability gives)
         let group = Uuid::from_u128(0x6200);
-        let invite = |n: &mut Notifications, tx: Uuid, offline: bool| n.push(Kind::Group, "", "", Data::Group { group, tx, offline });
+        let invite = |n: &mut Notifications, tx: Uuid, offline: bool| {
+            n.push(
+                Kind::Group,
+                "",
+                "",
+                Data::Group {
+                    group,
+                    tx,
+                    offline,
+                    fee: 0,
+                    confirming: false,
+                },
+            )
+        };
         let id = invite(&mut n, Uuid::nil(), true);
         let (cmds, _) = n.respond(id, Response::Accept, |_| Uuid::nil(), cards);
         assert!(matches!(&cmds[..], [NetCommand::AnswerOfflineGroupInvite { group: g, accept: true }] if *g == group));
@@ -1131,6 +1453,7 @@ mod tests {
                 questions: 0x10,
                 region: 42,
                 experience: None,
+                caution: None,
             },
         );
         let (cmds, _) = n.respond(id, Response::Decline, |_| Uuid::nil(), Uuid::nil());

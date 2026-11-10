@@ -27,14 +27,60 @@ pub struct Bvh {
     pub frame_time: f32,
 }
 
+/// The most motion values a file may hold. LLBVHLoader sets no limit of its
+/// own: this one only bounds memory, far above any 60 second animation.
+const MAX_MOTION_VALUES: usize = 8 * 1024 * 1024;
+
+fn number(token: &str) -> Result<f32, AssetError> {
+    token
+        .parse::<f32>()
+        .ok()
+        .filter(|v| v.is_finite())
+        .ok_or_else(|| AssetError::invalid("BVH number"))
+}
+
+/// One frame per line, as LLBVHLoader::loadBVHFile reads them: lines past the
+/// declared frames and values past a line's channels are ignored, and every
+/// value of a line read must be a number. A file that does not hold its frames
+/// on separate lines is read as one stream, which must then be exact.
+fn motion_values(text: &str, frames: usize, channels: usize) -> Result<Vec<f32>, AssetError> {
+    let lines: Vec<&str> = text
+        .split(['\r', '\n'])
+        .filter(|line| !line.trim().is_empty())
+        .take(frames)
+        .collect();
+    let mut values = Vec::with_capacity(frames * channels);
+    if lines.len() == frames && lines.iter().all(|line| line.split_whitespace().count() >= channels) {
+        for line in lines {
+            let parsed = line.split_whitespace().map(number).collect::<Result<Vec<_>, _>>()?;
+            values.extend_from_slice(&parsed[..channels]);
+        }
+        return Ok(values);
+    }
+    let mut tokens = text.split_whitespace();
+    for _ in 0..frames * channels {
+        values.push(number(tokens.next().ok_or(AssetError::Truncated("BVH token"))?)?);
+    }
+    if tokens.next().is_some() {
+        return Err(AssetError::invalid("extra BVH motion data"));
+    }
+    Ok(values)
+}
+
 struct Tokens<'a> {
-    tokens: std::str::SplitWhitespace<'a>,
+    rest: &'a str,
     index: usize,
 }
 impl<'a> Tokens<'a> {
     fn next(&mut self) -> Result<&'a str, AssetError> {
         self.index += 1;
-        self.tokens.next().ok_or(AssetError::Truncated("BVH token"))
+        let rest = self.rest.trim_start();
+        if rest.is_empty() {
+            return Err(AssetError::Truncated("BVH token"));
+        }
+        let (token, rest) = rest.split_at(rest.find(char::is_whitespace).unwrap_or(rest.len()));
+        self.rest = rest;
+        Ok(token)
     }
     fn require(&mut self, expected: &str) -> Result<(), AssetError> {
         if self.next()? == expected {
@@ -43,12 +89,37 @@ impl<'a> Tokens<'a> {
             Err(AssetError::invalid(format!("BVH: expected {expected} at token {}", self.index)))
         }
     }
-    fn float(&mut self) -> Result<f32, AssetError> {
-        self.next()?
-            .parse::<f32>()
-            .ok()
-            .filter(|v| v.is_finite())
-            .ok_or_else(|| AssetError::invalid(format!("BVH number at token {}", self.index)))
+    /// The value after a label, with or without a space between them: sscanf's
+    /// "Frames: %d" takes both.
+    fn labelled(&mut self, label: &str) -> Result<&'a str, AssetError> {
+        let token = self.next()?;
+        if token == label {
+            return self.next();
+        }
+        token
+            .strip_prefix(label)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| AssetError::invalid(format!("BVH: expected {label} at token {}", self.index)))
+    }
+    /// LLBVHLoader::loadBVHFile never reads the values of an OFFSET line. The
+    /// hierarchy keywords still stop a section that lost its closing keyword.
+    fn offset(&mut self, end: &str) -> Result<(), AssetError> {
+        self.require("OFFSET")?;
+        loop {
+            let token = self.next()?;
+            if token == end {
+                return Ok(());
+            }
+            if matches!(token, "{" | "}" | "JOINT" | "End" | "CHANNELS" | "MOTION") {
+                return Err(AssetError::invalid(format!("BVH: expected {end} at token {}", self.index)));
+            }
+        }
+    }
+    /// sscanf's "%*s %79s" takes the first word of a joint's name: the rest of
+    /// its line is ignored, up to a brace written on that same line.
+    fn skip_name_tail(&mut self) {
+        let line = &self.rest[..self.rest.find(['\r', '\n']).unwrap_or(self.rest.len())];
+        self.rest = &self.rest[line.find('{').unwrap_or(line.len())..];
     }
     fn count(&mut self, maximum: usize) -> Result<usize, AssetError> {
         self.next()?
@@ -65,12 +136,9 @@ impl<'a> Tokens<'a> {
         if name.len() > 255 {
             return Err(AssetError::invalid("BVH joint name"));
         }
+        self.skip_name_tail();
         self.require("{")?;
-        self.require("OFFSET")?;
-        for _ in 0..3 {
-            self.float()?;
-        }
-        self.require("CHANNELS")?;
+        self.offset("CHANNELS")?;
         let count = self.count(6)?;
         if !matches!(count, 3 | 6) {
             return Err(AssetError::invalid("BVH joint needs 3 or 6 channels"));
@@ -111,11 +179,7 @@ impl<'a> Tokens<'a> {
                 "End" => {
                     self.require("Site")?;
                     self.require("{")?;
-                    self.require("OFFSET")?;
-                    for _ in 0..3 {
-                        self.float()?;
-                    }
-                    self.require("}")?;
+                    self.offset("}")?;
                 }
                 _ => return Err(AssetError::invalid("BVH hierarchy")),
             }
@@ -137,14 +201,15 @@ fn parse_bvh_channels(bytes: &[u8], skeleton: &Skeleton, keep_static: bool) -> R
     if bytes.len() > 64 * 1024 * 1024 {
         return Err(AssetError::TooLarge("BVH file"));
     }
-    let text = std::str::from_utf8(bytes)
-        .map_err(|_| AssetError::invalid("BVH UTF-8"))?
+    // LLBVHLoader reads plain bytes and looks for its keywords inside lines:
+    // neither a byte order mark nor a name in another encoding stops it.
+    let text = String::from_utf8_lossy(bytes);
+    let text = text
+        .strip_prefix('\u{feff}')
+        .unwrap_or(&text)
         .replace('{', " { ")
         .replace('}', " } ");
-    let mut tokens = Tokens {
-        tokens: text.split_whitespace(),
-        index: 0,
-    };
+    let mut tokens = Tokens { rest: &text, index: 0 };
     tokens.require("HIERARCHY")?;
     tokens.require("ROOT")?;
     let mut joints = Vec::new();
@@ -154,28 +219,26 @@ fn parse_bvh_channels(bytes: &[u8], skeleton: &Skeleton, keep_static: bool) -> R
         return Err(AssetError::invalid("BVH root must be pelvis or an alias"));
     }
     tokens.require("MOTION")?;
-    tokens.require("Frames:")?;
-    let frames = tokens.count(16384)?;
+    let frames = tokens
+        .labelled("Frames:")?
+        .parse::<usize>()
+        .ok()
+        .filter(|n| *n <= MAX_MOTION_VALUES)
+        .ok_or_else(|| AssetError::invalid("BVH count"))?;
     if frames == 0 {
         return Err(AssetError::invalid("empty BVH"));
     }
     tokens.require("Frame")?;
-    tokens.require("Time:")?;
-    let frame_time = tokens.float()?;
+    let frame_time = number(tokens.labelled("Time:")?)?;
     let duration = frames.saturating_sub(2).max(1) as f32 * frame_time;
-    if frame_time <= 0.0 || duration > 60.0 {
+    // A frame time of zero is a pose of no duration, which LLBVHLoader allows.
+    if frame_time < 0.0 || duration > 60.0 {
         return Err(AssetError::invalid("BVH duration exceeds 60 seconds or frame time is invalid"));
     }
-    if frames.checked_mul(channels).is_none_or(|n| n > 8 * 1024 * 1024) {
+    if frames.checked_mul(channels).is_none_or(|n| n > MAX_MOTION_VALUES) {
         return Err(AssetError::TooLarge("BVH motion"));
     }
-    let mut motion = Vec::with_capacity(frames * channels);
-    for _ in 0..frames * channels {
-        motion.push(tokens.float()?);
-    }
-    if tokens.tokens.next().is_some() {
-        return Err(AssetError::invalid("extra BVH motion data"));
-    }
+    let motion = motion_values(tokens.rest, frames, channels)?;
     // BVH Y-up inches -> SL Z-up meters, from makeTranslation's frame matrix.
     let basis = Quat::from_mat3(&Mat3::from_cols(Vec3::Y, Vec3::Z, Vec3::X));
     let mut tracks = Vec::new();
@@ -284,6 +347,7 @@ fn parse_bvh_channels(bytes: &[u8], skeleton: &Skeleton, keep_static: bool) -> R
             loop_in: 0.0,
             loop_out: duration,
             looping: false,
+            ends_after: None,
             ease_in: 0.3,
             ease_out: 0.3,
             hand_pose: 1,
@@ -416,5 +480,77 @@ mod tests {
             .is_err()
         );
         assert!(parse_bvh(&String::from_utf8_lossy(BVH).replace("0.1", "NaN").into_bytes(), &skeleton()).is_err());
+    }
+
+    const LINES: &str = "HIERARCHY\r\nROOT hip\r\n{\r\n\tOFFSET 0 0 0\r\n\tCHANNELS 6 Xposition Yposition Zposition Zrotation Xrotation Yrotation\r\n\tEnd Site\r\n\t{\r\n\t\tOFFSET 0 1 0\r\n\t}\r\n}\r\nMOTION\r\nFrames: 4\r\nFrame Time: 0.1\r\n0 0 0 0 0 0\r\n0 0 0 0 0 0\r\n10 0 45 0 0 0\r\n20 0 90 0 0 0\r\n";
+
+    /// An extra joint the skeleton does not know, its name in Latin-1.
+    fn foreign_joint() -> Vec<u8> {
+        let mut bytes = LINES
+            .replace(
+                "\tEnd Site",
+                "\tJOINT caf#\r\n\t{\r\n\t\tOFFSET 0 0 0\r\n\t\tCHANNELS 3 Zrotation Xrotation Yrotation\r\n\t}\r\n\tEnd Site",
+            )
+            .replace("0 0 0 0 0 0\r\n", "0 0 0 0 0 0 0 0 0\r\n")
+            .replace("10 0 45 0 0 0\r\n", "10 0 45 0 0 0 0 0 0\r\n")
+            .replace("20 0 90 0 0 0\r\n", "20 0 90 0 0 0 0 0 0\r\n")
+            .into_bytes();
+        let marker = bytes.iter().position(|b| *b == b'#').expect("marker");
+        bytes[marker] = 0xE9;
+        bytes
+    }
+
+    #[test]
+    fn files_the_legacy_loader_reads_give_the_same_animation() {
+        let expected = parse_bvh(LINES.as_bytes(), &skeleton()).expect("BVH").animation;
+        let cases: [(&str, Vec<u8>); 8] = [
+            ("byte order mark", [b"\xEF\xBB\xBF".as_slice(), LINES.as_bytes()].concat()),
+            ("name in another encoding", foreign_joint()),
+            ("no space after Frames:", LINES.replace("Frames: 4", "Frames:4").into_bytes()),
+            (
+                "no space after Frame Time:",
+                LINES.replace("Frame Time: 0.1", "Frame Time:0.1").into_bytes(),
+            ),
+            (
+                "lines past the frames",
+                format!("{LINES}1 2 3 4 5 6\r\nnot a frame\r\n").into_bytes(),
+            ),
+            (
+                "values past the channels",
+                LINES.replace("10 0 45 0 0 0", "10 0 45 0 0 0 7 7").into_bytes(),
+            ),
+            (
+                "OFFSET that is not a number",
+                LINES.replace("OFFSET 0 0 0", "OFFSET 0 -1.#IND 0").into_bytes(),
+            ),
+            ("joint name with a space", LINES.replace("ROOT hip", "ROOT hip copy").into_bytes()),
+        ];
+        for (name, bytes) in cases {
+            let animation = parse_bvh(&bytes, &skeleton()).unwrap_or_else(|e| panic!("{name}: {e}")).animation;
+            assert_eq!(animation, expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_frame_time_of_zero_is_a_pose_of_no_duration() {
+        let bytes = LINES.replace("Frame Time: 0.1", "Frame Time: 0").into_bytes();
+        let animation = parse_bvh(&bytes, &skeleton()).expect("BVH").animation;
+        assert_eq!(animation.duration, 0.0);
+        let decoded = crate::parse_animation(&encode(&animation).expect("encode")).expect("decode");
+        assert_eq!(decoded.joints[0].pos_keys.len(), 1);
+    }
+
+    #[test]
+    fn broken_files_the_legacy_loader_refuses_stay_refused() {
+        let cases = [
+            LINES.replace("Frame Time: 0.1", "Frame Time: -0.1"),
+            LINES.replace("20 0 90 0 0 0\r\n", "20 0 90 0 0\r\n"),
+            LINES.replace("20 0 90 0 0 0\r\n", "20 0 90 0 0 x\r\n"),
+            LINES.replace("10 0 45 0 0 0", "10 0 45 0 0 0 x"),
+            LINES.replace("\tCHANNELS 6 Xposition Yposition Zposition Zrotation Xrotation Yrotation\r\n", ""),
+        ];
+        for case in cases {
+            assert!(parse_bvh(case.as_bytes(), &skeleton()).is_err(), "{case}");
+        }
     }
 }

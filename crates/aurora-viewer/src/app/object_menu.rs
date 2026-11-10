@@ -36,6 +36,8 @@ pub(super) struct ObjectMenu {
     pub particle_hits: Vec<crate::scene::particles::ParticleHit>,
     /// SurfaceInfo of send_ObjectGrab_message, using the original click ray.
     touch: Option<(ObjKey, aurora_net::TouchSurface)>,
+    /// The original cursor ray, including across asynchronous GPU readback.
+    pub ray: Option<(Vec3, Vec3)>,
 }
 
 enum Confirm {
@@ -153,6 +155,7 @@ impl App {
         m.particle_only = particle_only;
         m.particle_hits.clear();
         m.touch = None;
+        m.ray = ray;
         let Some((origin, dir)) = ray else {
             return;
         };
@@ -205,11 +208,7 @@ impl App {
             f.take_copy = each.iter().all(|e| e.take_copy);
             f.delete = each.iter().any(|e| e.delete);
         }
-        f.link = !edit_linked
-            && roots.len() >= 2
-            && roots
-                .iter()
-                .any(|&r| flags_of(r) & flags::OBJECT_MODIFY != 0 && flags_of(r) & flags::AFFECTS_NAVMESH == 0);
+        f.link = !edit_linked && self.build.link_allowed(w, &roots);
         // EditableSelected: a prim we may modify among those selected
         let prims: Vec<usize> = if kept {
             self.build.highlighted(w).into_iter().map(|(i, _)| i).collect()
@@ -244,8 +243,14 @@ impl App {
         if wearer == Some(w.agent_id) {
             let item = f.attachment_item.map(|id| linked_item(w, id));
             f.favorite = item.and_then(|id| w.inventory.items.get(&id)).map(|it| it.favorite);
+            // enable_detach and LLAttachmentDrop: an RLVa remove lock on the
+            // root greys both, and @rez Drop too (the click is refused the same way)
+            let root = w.objects.get(linkset_root(w, idx)).map(|o| o.key);
+            f.detach = f.attachment_item.is_some_and(|id| w.rlva_can_remove(id, uuid::Uuid::nil()));
             // Attachment.EnableDrop: the item is in our inventory and we may build here
-            f.drop = item.is_some_and(|id| w.inventory.items.contains_key(&id)) && self.agent_can_build();
+            f.drop = item.is_some_and(|id| w.inventory.items.contains_key(&id))
+                && self.agent_can_build()
+                && root.is_some_and(|k| w.rlva_can_drop(k.region, &[k.local_id]));
         }
         f.animesh = wearer
             .is_none()

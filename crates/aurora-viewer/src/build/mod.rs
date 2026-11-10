@@ -24,10 +24,15 @@ pub mod grab;
 pub mod hud_drag;
 pub mod land;
 pub mod layout;
+mod linking;
 pub mod manip;
 mod material_preview;
+use material_preview::MaterialTabKey;
 pub mod materials;
+mod new_defaults;
+mod object_snap;
 pub mod particle_editor;
+pub mod place;
 mod property_query;
 pub mod replace;
 pub mod script_queue;
@@ -38,6 +43,7 @@ pub mod silhouette;
 #[cfg(test)]
 mod take_tests;
 pub mod task_inventory;
+pub mod texture_copy;
 pub mod ui;
 
 use crate::scene::Scene;
@@ -45,7 +51,7 @@ use crate::world::World;
 use crate::world::objects::{LocalAppearance, ObjKey};
 use aurora_net::build::{BuildCmd, ObjectProps, TransformUpdate, derez};
 use aurora_net::{NetCommand, RegionHandle};
-use geom::Cam;
+use geom::{Cam, RectCover, verts_in_rect};
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -65,6 +71,46 @@ const UNLIMITED_PLACEMENT_RAY: f32 = 129.0;
 /// SL prim size limits (llmath/xform.h: DEFAULT_MIN_PRIM_SCALE / MAX).
 pub const MIN_PRIM_SCALE: f32 = 0.01;
 pub const MAX_PRIM_SCALE: f32 = 64.0;
+
+/// The sizes a prim may take on the agent's region: OpenSim regions may set
+/// their own in OpenSimExtras (MinPrimScale, MaxPrimScale, which
+/// LFSimFeatureHandler hands to LLWorld::setRegionMin/MaxPrimScale for
+/// LLManipScale), else Second Life's.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PrimLimits {
+    pub min: f32,
+    pub max: f32,
+}
+
+impl Default for PrimLimits {
+    fn default() -> Self {
+        PrimLimits {
+            min: MIN_PRIM_SCALE,
+            max: MAX_PRIM_SCALE,
+        }
+    }
+}
+
+impl PrimLimits {
+    pub fn from_extras(extras: Option<&aurora_net::OpenSimExtras>) -> Self {
+        let usual = Self::default();
+        let Some(e) = extras else { return usual };
+        let limits = PrimLimits {
+            min: e.min_prim_scale.unwrap_or(usual.min),
+            max: e.max_prim_scale.unwrap_or(usual.max),
+        };
+        // a region contradicting itself keeps the usual limits
+        if limits.min <= limits.max { limits } else { usual }
+    }
+
+    pub fn clamp(self, v: f32) -> f32 {
+        v.clamp(self.min, self.max)
+    }
+
+    pub fn clamp3(self, v: Vec3) -> Vec3 {
+        v.clamp(Vec3::splat(self.min), Vec3::splat(self.max))
+    }
+}
 /// How far from its point of the body an attachment may be typed
 /// (llviewerjointattachment.h).
 pub const MAX_ATTACHMENT_DIST: f32 = 3.5;
@@ -92,6 +138,22 @@ pub struct BuildSettings {
     pub grid_mode: u8,
     /// SnapEnabled.
     pub snap: bool,
+    /// Aurora: the move handles snap the selection against nearby prims, and
+    /// stop it at their faces (`object_snap`). Never
+    /// with `snap` (`snap_mode`); off by default, so moving behaves as the
+    /// Legacy Viewer's until it is chosen.
+    pub object_snap: bool,
+    /// "Place on surface" (`place.rs`; Aurora's own): whether it turns the
+    /// selection ("Auto rotate") or keeps its rotation, and the side it then
+    /// puts against the surface.
+    pub place_rotate: bool,
+    pub place_side: place::Side,
+    /// Its distance off the surface (metres, into it when negative).
+    pub place_offset: f32,
+    /// Aurora: a hologram while the move handles drag the selection (the
+    /// selection itself, or where it began); Preferences › Aurora. Off by
+    /// default: a move looks as the Legacy Viewer's.
+    pub move_hologram: MoveHologram,
     /// RotationStep (degrees) outside the snap ring.
     pub rotation_step: f32,
     /// EditLinkedParts.
@@ -114,6 +176,26 @@ pub struct BuildSettings {
     pub new_prim_size: [f32; 3],
     /// New prim material (FSBuildPrefs_Material, LL_MCODE_WOOD).
     pub new_prim_material: u8,
+    /// New prim colour (FSBuildPrefs_Color, white); its alpha is not used,
+    /// the transparency below is (new_defaults.rs).
+    pub new_prim_color: crate::settings::Rgba,
+    /// New prim transparency in percent (FSBuildPrefs_Alpha, 0).
+    pub new_prim_transparency: f32,
+    /// New prim glow (FSBuildPrefs_Glow, 0).
+    pub new_prim_glow: f32,
+    /// New prim full bright (FSBuildPrefs_FullBright, off).
+    pub new_prim_fullbright: bool,
+    /// New prim shininess, 0 none to 3 high (FSBuildPrefs_Shiny, None).
+    pub new_prim_shiny: u8,
+    /// New prim physical (FSBuildPrefs_Physical, off).
+    pub new_prim_physical: bool,
+    /// New prim temporary (FSBuildPrefs_Temporary, off).
+    pub new_prim_temporary: bool,
+    /// New prim phantom (FSBuildPrefs_Phantom, off).
+    pub new_prim_phantom: bool,
+    /// RenderParcelSelection: the selected parcel's yellow walls (on; Debug
+    /// Settings only, to keep Preferences short).
+    pub parcel_selection_outline: bool,
     /// Land tool: 0..5 brush actions (RadioLandBrushAction), 6 select land.
     pub land_action: u8,
     /// LandBrushSize (m).
@@ -130,6 +212,11 @@ pub struct BuildSettings {
     pub select_owned_only: bool,
     /// SelectMovableOnly: the same for the objects we may move.
     pub select_movable_only: bool,
+    /// RectangleSelectInclusive, the Legacy Viewer's "Select By Surrounding"
+    /// (on by default): the selection rectangle takes only the prims it
+    /// wholly surrounds; off, any prim it touches (`rect_select`). The
+    /// setting's own comment there describes the opposite of what it does.
+    pub select_surrounding: bool,
     /// FSBuildToolDecimalPrecision: decimals of the Object tab numbers.
     pub decimal_precision: u8,
     /// CreateToolCopySelection / CopyCenters / CopyRotates.
@@ -145,12 +232,16 @@ pub struct BuildSettings {
     pub show_parcel_owners: bool,
     /// SyncMaterialSettings: normal / specular maps follow the diffuse UVs.
     pub sync_materials: bool,
+    /// Texture tab: a new selection opens the PBR or Blinn-Phong tab that
+    /// fits its faces, as LLPanelFace::updateUI does (`material_preview.rs`).
+    /// On by default; off keeps the last tab chosen.
+    pub auto_material_tab: bool,
     /// ShowPhysicsShapeInEdit (Features tab eye toggle).
     pub show_physics_shape: bool,
     /// FSCopyObjKeySeparator for "Copy UUID".
     pub copy_key_separator: String,
-    /// LimitSelectDistance. Off by default, unlike the Legacy Viewer: the
-    /// simulator keeps its own limits, so nothing near or far is out of reach.
+    /// LimitSelectDistance, on by default like the Legacy Viewer: a
+    /// rectangle drawn from a skybox stops before the ground's objects.
     pub limit_select_distance: bool,
     /// MaxSelectDistance (m from the avatar).
     pub max_select_distance: f32,
@@ -164,7 +255,43 @@ pub struct BuildSettings {
     pub gizmo_scale: f32,
 }
 
+/// The hologram of a move (`BuildSettings::move_hologram`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MoveHologram {
+    #[default]
+    Off,
+    /// The prims moved are drawn as a hologram until released.
+    Moving,
+    /// A hologram of them stays where the move began.
+    Start,
+}
+
+/// What the move handles snap to: one at a time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapMode {
+    Off,
+    /// The Legacy Viewer's grid (SnapEnabled).
+    Grid,
+    /// Nearby prims (`object_snap`).
+    Objects,
+}
+
 impl BuildSettings {
+    /// The snap in use; the grid when a settings file has both on.
+    pub fn snap_mode(&self) -> SnapMode {
+        if self.snap {
+            SnapMode::Grid
+        } else if self.object_snap {
+            SnapMode::Objects
+        } else {
+            SnapMode::Off
+        }
+    }
+    pub fn set_snap_mode(&mut self, mode: SnapMode) {
+        self.snap = mode == SnapMode::Grid;
+        self.object_snap = mode == SnapMode::Objects;
+    }
     /// `gizmo_scale` within the slider's range; an edited settings file
     /// falls back to the Legacy Viewer's size.
     pub fn gizmo_scale(&self) -> f32 {
@@ -218,6 +345,17 @@ pub fn can_transform(world: &World, idx: usize, linked: bool, mode: EditMode) ->
         return false;
     };
     root.update_flags & OBJECT_MOVE != 0 && (!(linked || mode == EditMode::Stretch) || root.update_flags & OBJECT_MODIFY != 0)
+}
+
+/// A copy of this object can be rezzed: its root has Copy and it is not
+/// worn (getFirstCopyableObject: permCopy and not an attachment).
+pub fn copyable_object(world: &World, idx: usize) -> bool {
+    use crate::ui::context::flags::OBJECT_COPY;
+    select_type(world, idx) == SelectType::World
+        && world
+            .objects
+            .get(root_of(world, idx))
+            .is_some_and(|root| root.update_flags & OBJECT_COPY != 0)
 }
 
 /// SelectOwnedOnly / SelectMovableOnly in LLSelectMgr::canSelectObject
@@ -292,6 +430,37 @@ pub(crate) fn take_folder(inv: &crate::world::inventory::Inventory, folders: imp
     let known = inv.folders.get(&folder).is_some_and(|f| !f.library);
     let trashed = !trash.is_nil() && crate::world::inventory::actions::under(inv, folder, trash);
     (known && !trashed).then_some(folder)
+}
+
+#[cfg(test)]
+mod prim_limit_tests {
+    use super::PrimLimits;
+    use glam::Vec3;
+
+    #[test]
+    fn opensim_regions_widen_or_narrow_the_prim_sizes() {
+        assert_eq!(PrimLimits::from_extras(None), PrimLimits::default());
+        let big = aurora_net::OpenSimExtras {
+            max_prim_scale: Some(256.0),
+            min_prim_scale: Some(0.001),
+            ..Default::default()
+        };
+        let limits = PrimLimits::from_extras(Some(&big));
+        assert_eq!(limits.clamp3(Vec3::new(0.0005, 100.0, 300.0)), Vec3::new(0.001, 100.0, 256.0));
+        // only one side given: the other stays Second Life's
+        let only_max = aurora_net::OpenSimExtras {
+            max_prim_scale: Some(128.0),
+            ..Default::default()
+        };
+        assert_eq!(PrimLimits::from_extras(Some(&only_max)).min, 0.01);
+        // a region contradicting itself keeps the usual limits
+        let broken = aurora_net::OpenSimExtras {
+            min_prim_scale: Some(10.0),
+            max_prim_scale: Some(1.0),
+            ..Default::default()
+        };
+        assert_eq!(PrimLimits::from_extras(Some(&broken)), PrimLimits::default());
+    }
 }
 
 #[cfg(test)]
@@ -448,6 +617,11 @@ impl Default for BuildSettings {
             grid_opacity: 0.7,
             grid_mode: 0,
             snap: true,
+            object_snap: false,
+            place_rotate: false,
+            place_side: place::Side::Bottom,
+            place_offset: 0.0,
+            move_hologram: MoveHologram::Off,
             rotation_step: 1.0,
             edit_linked: false,
             scale_uniform: false,
@@ -459,6 +633,15 @@ impl Default for BuildSettings {
             rez_under_land_group: true,
             new_prim_size: [0.5; 3],
             new_prim_material: 3,
+            new_prim_color: [255; 4],
+            new_prim_transparency: 0.0,
+            new_prim_glow: 0.0,
+            new_prim_fullbright: false,
+            new_prim_shiny: 0,
+            new_prim_physical: false,
+            new_prim_temporary: false,
+            new_prim_phantom: false,
+            parcel_selection_outline: true,
             land_action: 6,
             land_brush_size: 2.0,
             land_brush_force: 1.0,
@@ -466,6 +649,7 @@ impl Default for BuildSettings {
             select_probes: false,
             select_owned_only: false,
             select_movable_only: false,
+            select_surrounding: true,
             decimal_precision: 5,
             copy_selection: false,
             copy_centers: true,
@@ -475,9 +659,10 @@ impl Default for BuildSettings {
             expanded: true,
             show_parcel_owners: false,
             sync_materials: false,
+            auto_material_tab: true,
             show_physics_shape: false,
             copy_key_separator: ",".into(),
-            limit_select_distance: false,
+            limit_select_distance: true,
             max_select_distance: MAX_SELECT_DISTANCE,
             limit_drag_distance: true,
             max_drag_distance: MAX_DRAG_DISTANCE,
@@ -562,11 +747,32 @@ pub struct Bounds {
     pub half: Vec3,
 }
 
+/// The prims of an unlinked whole-object selection. The Legacy Viewer keeps
+/// one LLSelectNode per prim, so after LLSelectMgr::sendDelink every former
+/// child is still selected as its own object; Aurora selects roots only, so
+/// each prim joins the selection once the simulator makes it a root.
+#[derive(Debug)]
+struct PendingUnlink {
+    /// Every prim of the unlink, the former roots included.
+    prims: Vec<ObjKey>,
+    /// Prims still waiting for the update that makes them roots.
+    waiting: Vec<ObjKey>,
+    started: Instant,
+}
+
 pub struct BuildTool {
+    /// The asset ids our inventory lets be exported, for Build › General's
+    /// Export box, with the inventory generation and agent they were read
+    /// for: rebuilt when the inventory changes, never walked each frame.
+    pub(crate) export_assets: Option<(u64, Uuid, HashSet<Uuid>)>,
     wheel_selection: cycle::Wheel,
     /// Last inspected selection/mode; object display choices live in the world.
     material_preview_selection: HashSet<Uuid>,
     material_preview_mode: Option<bool>,
+    /// Selection the Texture tab was last chosen for (`auto_material_tab`).
+    material_tab_for: Option<MaterialTabKey>,
+    /// `keep_texture_tab`: the next selection keeps the tab asked for.
+    keep_material_tab: bool,
     /// The build floater is open (build mode).
     pub open: bool,
     pub tool: Tool,
@@ -602,6 +808,8 @@ pub struct BuildTool {
     pub replacement: replace::Replacement,
     pub grab: grab::Grab,
     pub align: align::Align,
+    /// The "Place on surface" button and its preview.
+    pub place: place::Place,
     /// Everything the floater keeps between frames (tabs, clipboards,
     /// fields being typed, secondary floaters).
     pub ui: ui::FloaterState,
@@ -616,6 +824,12 @@ pub struct BuildTool {
     pub selection_linked: bool,
     /// Ordered link instruction awaiting confirmed simulator parents.
     pending_link: Option<(Vec<Uuid>, Instant)>,
+    /// Mesh-header estimates refreshed from the scene before editor input.
+    link_triangles: HashMap<Uuid, f32>,
+    /// Full property replies received since each root was selected.
+    link_properties: HashSet<Uuid>,
+    /// Unlink awaiting the simulator's new roots.
+    pending_unlink: Option<PendingUnlink>,
     /// ObjectProperties of selected objects.
     pub props: HashMap<Uuid, ObjectProps>,
     pub cam: Cam,
@@ -631,6 +845,9 @@ pub struct BuildTool {
     /// Objects created / duplicated with FLAGS_CREATE_SELECTED: select them
     /// when they arrive (LLViewerObjectList). (Sent at, objects already flagged.)
     pending_create: Option<(Instant, HashSet<Uuid>)>,
+    /// Prims the Create tool asked for whose new objects' look is still to
+    /// be given (new_defaults.rs).
+    new_defaults_pending: u32,
     /// Selection rectangle being dragged (start, current in pixels, extend).
     pub rect: Option<((f32, f32), (f32, f32), bool)>,
     /// Compact section (Rights, Transform, Features, Materials, Contents, Shape).
@@ -643,9 +860,12 @@ pub struct BuildTool {
 impl Default for BuildTool {
     fn default() -> Self {
         BuildTool {
+            export_assets: None,
             wheel_selection: cycle::Wheel::default(),
             material_preview_selection: HashSet::new(),
             material_preview_mode: None,
+            material_tab_for: None,
+            keep_material_tab: false,
             open: false,
             tool: Tool::Edit,
             edit_mode: EditMode::Move,
@@ -665,12 +885,16 @@ impl Default for BuildTool {
             replacement: replace::Replacement::default(),
             grab: grab::Grab::default(),
             align: align::Align::default(),
+            place: place::Place::default(),
             ui: ui::FloaterState::default(),
             caps: HashMap::new(),
             next_tag: 1,
             menu_selection: false,
             selection_linked: false,
             pending_link: None,
+            link_triangles: HashMap::new(),
+            link_properties: HashSet::new(),
+            pending_unlink: None,
             props: HashMap::new(),
             cam: Cam::default(),
             out: Vec::new(),
@@ -680,6 +904,7 @@ impl Default for BuildTool {
             land: land::LandTool::default(),
             silhouettes: silhouette::Cache::default(),
             pending_create: None,
+            new_defaults_pending: 0,
             rect: None,
             tab: 6,
             status: String::new(),
@@ -943,6 +1168,7 @@ impl BuildTool {
         self.cancel_color_picker(world);
         self.commit_color_edit();
         self.open = false;
+        self.place.stop();
         self.manip.cancel();
         self.land.cancel();
         self.grab_up();
@@ -1082,6 +1308,13 @@ impl BuildTool {
             .filter_map(|&i| Self::unit_of(world, i, s.edit_linked))
             .filter(|u| seen.insert(*u))
             .collect();
+        for id in units
+            .iter()
+            .filter_map(|key| world.objects.index_of(key))
+            .filter_map(|i| world.objects.get(root_of(world, i)).map(|o| o.full_id))
+        {
+            self.link_properties.remove(&id);
+        }
         // one ObjectSelect per region and 254 prims (sendListToRegions)
         for (handle, ids) in self.wire_ids(world, &units, self.selection_linked) {
             self.send(BuildCmd::Select { handle, local_ids: ids });
@@ -1093,10 +1326,26 @@ impl BuildTool {
     /// open (LLToolPie::handleRightClickPick -> LLToolSelect::handleObjectSelection
     /// with temp_select). Returns whether something got selected.
     pub fn select_for_menu(&mut self, world: &mut World, s: &BuildSettings, idx: usize) -> bool {
+        self.select_for_menu_with(world, s, idx, false)
+    }
+
+    /// Whether a right click extends the selection: Shift alone or Ctrl
+    /// alone, nothing else held (`pick.mKeyMask == MASK_SHIFT ||
+    /// pick.mKeyMask == MASK_CONTROL` in
+    /// LLToolSelect::handleObjectSelection).
+    pub fn menu_extends(shift: bool, ctrl: bool, alt: bool) -> bool {
+        shift != ctrl && !alt
+    }
+
+    /// As [`Self::select_for_menu`], with the click's modifiers: Shift or
+    /// Ctrl alone adds the object to the selection or takes it out
+    /// (`extend_select` in LLToolSelect::handleObjectSelection, which
+    /// LLToolPie::handleRightClickPick calls with the click's mask).
+    pub fn select_for_menu_with(&mut self, world: &mut World, s: &BuildSettings, idx: usize, extend: bool) -> bool {
         if Self::unit_of(world, idx, s.edit_linked).is_none() {
             return false;
         }
-        self.click_select(world, s, Some(idx), false);
+        self.click_select(world, s, Some(idx), extend);
         if !self.open {
             self.menu_selection = true;
         }
@@ -1116,6 +1365,14 @@ impl BuildTool {
             return;
         }
         self.selection.insert(0, unit);
+        if let Some(id) = world
+            .objects
+            .index_of(&unit)
+            .and_then(|i| world.objects.get(root_of(world, i)))
+            .map(|o| o.full_id)
+        {
+            self.link_properties.remove(&id);
+        }
         for (handle, ids) in self.wire_ids(world, &[unit], self.selection_linked) {
             self.send(BuildCmd::Select { handle, local_ids: ids });
         }
@@ -1156,13 +1413,24 @@ impl BuildTool {
         }
     }
 
+    /// What a menu entry that works on the selection acts on, for a menu
+    /// opened on object `idx`: every selected linkset when `idx` is one of
+    /// them (derenderObject takes each root of the selection), else only
+    /// `idx`'s own linkset.
+    pub fn menu_roots(&self, world: &World, idx: usize) -> Vec<usize> {
+        let roots = self.roots(world);
+        let own = root_of(world, idx);
+        if roots.contains(&own) { roots } else { vec![own] }
+    }
+
     /// Selected roots (whole linksets), latest first.
     pub fn roots(&self, world: &World) -> Vec<usize> {
         let mut out = Vec::new();
+        let mut seen = HashSet::new();
         for key in &self.selection {
             if let Some(idx) = world.objects.index_of(key) {
                 let r = root_of(world, idx);
-                if !out.contains(&r) {
+                if seen.insert(r) {
                     out.push(r);
                 }
             }
@@ -1209,6 +1477,20 @@ impl BuildTool {
         self.select_type(world) != SelectType::World
     }
 
+    /// The selected roots a copy can be made of (LLSelectMgr::canDuplicate).
+    pub fn copyable_roots(&self, world: &World) -> Vec<usize> {
+        if self.attachment_selected(world) {
+            return Vec::new();
+        }
+        self.roots(world).into_iter().filter(|&r| copyable_object(world, r)).collect()
+    }
+
+    /// LLSelectMgr::enableUnlinkObjects: a selected prim we may modify,
+    /// outside attachments.
+    pub fn can_unlink(&self, world: &World) -> bool {
+        !self.attachment_selected(world) && self.highlighted(world).iter().any(|&(i, _)| self.can_modify(world, i))
+    }
+
     fn advance_link(&mut self, world: &mut World, now: Instant) {
         if let Some((members, started)) = &self.pending_link {
             if let Some(root) = members.first()
@@ -1224,9 +1506,43 @@ impl BuildTool {
         }
     }
 
+    /// Prims of an unlink join the selection as the simulator makes them
+    /// roots, after the selected former root (PendingUnlink).
+    fn advance_unlink(&mut self, world: &World, now: Instant) {
+        let Some(mut pending) = self.pending_unlink.take() else {
+            return;
+        };
+        // a selection changed in the meantime is the user's: leave it alone
+        if self.selection_linked || !pending.prims.iter().any(|k| self.is_selected(k)) {
+            return;
+        }
+        let mut joined = Vec::new();
+        pending.waiting.retain(|key| match world.objects.index_of(key) {
+            None => false,
+            Some(i) if root_of(world, i) != i => true,
+            Some(_) => {
+                joined.push(*key);
+                false
+            }
+        });
+        for key in &joined {
+            if !self.is_selected(key) {
+                self.selection.push(*key);
+            }
+        }
+        // ObjectSelect brings the new roots' properties to the edit floater
+        for (handle, ids) in self.wire_ids(world, &joined, false) {
+            self.send(BuildCmd::Select { handle, local_ids: ids });
+        }
+        if !pending.waiting.is_empty() && now.saturating_duration_since(pending.started) < Duration::from_secs(30) {
+            self.pending_unlink = Some(pending);
+        }
+    }
+
     /// Forget objects that are gone; drop a selection left far behind
     /// (LLSelectMgr::deselectAllIfTooFar).
     fn prune(&mut self, world: &World, s: &BuildSettings, now: Instant) {
+        self.advance_unlink(world, now);
         // Parent changes are authoritative only after simulator object updates.
         // Former roots become one whole-object selection after a successful link.
         if !self.selection_linked
@@ -1289,6 +1605,8 @@ impl BuildTool {
     }
 
     /// Delete (to the trash): roots only (LLSelectMgr::selectDelete).
+    /// The active group goes in DeRezObject, like LLSelectMgr::packDeRezHeader
+    /// (indra/newview/llselectmgr.cpp), regardless of the parcel group.
     pub fn delete(&mut self, world: &mut World) {
         if self.attachment_selected(world) {
             return;
@@ -1314,7 +1632,7 @@ impl BuildTool {
                 local_ids: ids,
                 destination: derez::TRASH,
                 destination_id: trash,
-                group_id: Uuid::nil(),
+                group_id: world.groups.active,
             });
         }
         // LLSelectMgr::confirmDelete
@@ -1332,6 +1650,7 @@ impl BuildTool {
 
     /// Take into the folder the objects were rezzed from (handle_take), take
     /// a copy into the Objects folder (handle_take_copy; derez_objects).
+    /// DeRezObject uses the active group (indra/newview/llviewermenu.cpp).
     pub fn take(&mut self, world: &mut World, copy: bool) {
         if self.attachment_selected(world) {
             return;
@@ -1358,7 +1677,7 @@ impl BuildTool {
                 local_ids: ids,
                 destination: dest,
                 destination_id: objects,
-                group_id: Uuid::nil(),
+                group_id: world.groups.active,
             });
         }
         // derez_objects
@@ -1370,7 +1689,8 @@ impl BuildTool {
 
     /// "Take as separate items" / "Take copies as separate items"
     /// (derez_objects_separate): one DeRezObject per root, each its own
-    /// transaction and inventory item.
+    /// transaction and inventory item, with the active group
+    /// (derez_objects, indra/newview/llviewermenu.cpp).
     pub fn take_separate(&mut self, world: &mut World, copy: bool) {
         if self.attachment_selected(world) {
             return;
@@ -1394,7 +1714,7 @@ impl BuildTool {
                     local_ids: vec![local_id],
                     destination,
                     destination_id: objects,
-                    group_id: Uuid::nil(),
+                    group_id: world.groups.active,
                 });
                 world.ui_sounds.push(crate::ui_sound::UiSound::ObjectRezOut);
             }
@@ -1405,12 +1725,14 @@ impl BuildTool {
     }
 
     /// Ctrl+D: copies 0.5 m away, selected (LLSelectMgr::duplicate).
-    pub fn duplicate(&mut self, world: &mut World, offset: Vec3, select_copy: bool) {
-        if self.attachment_selected(world) {
+    /// Group selection follows packDuplicateHeader (indra/newview/llselectmgr.cpp).
+    pub fn duplicate(&mut self, world: &mut World, s: &BuildSettings, offset: Vec3, select_copy: bool) {
+        if self.attachment_selected(world) || self.roots(world).is_empty() {
             return;
         }
-        let roots = self.roots(world);
+        let roots = self.copyable_roots(world);
         if roots.is_empty() {
+            self.status = aurora_i18n::tr!("build-mod-no-copyable-object").into();
             return;
         }
         if select_copy {
@@ -1419,55 +1741,15 @@ impl BuildTool {
         }
         let flags = if select_copy { FLAGS_CREATE_SELECTED } else { 0 };
         for (handle, ids) in self.group_by_region(world, &roots) {
+            world.objects.expect_local_duplicates(handle, &ids, offset, select_copy, None);
             self.send(BuildCmd::Duplicate {
                 handle,
                 local_ids: ids,
                 offset,
                 flags,
-                group_id: Uuid::nil(),
+                group_id: world.group_for_rez(s.rez_under_land_group),
             });
         }
-    }
-
-    /// Ctrl+L: link the selected linksets; the last selected becomes the root.
-    pub fn link(&mut self, world: &mut World) {
-        if self.attachment_selected(world) {
-            return;
-        }
-        let roots = self.roots(world);
-        if roots.len() < 2 {
-            self.status = aurora_i18n::tr!("build-mod-select-at-least-two-objects-to-link").into();
-            return;
-        }
-        let first = world.objects.get(roots[0]).map(|o| (o.key.region, o.owner_id));
-        let same = roots
-            .iter()
-            .all(|&r| world.objects.get(r).map(|o| (o.key.region, o.owner_id)) == first);
-        if !same {
-            self.status = aurora_i18n::tr!("build-mod-objects-to-link-must-have-the-same-owner-and").into();
-            return;
-        }
-        let total: usize = roots.iter().map(|&r| family(world, r).len()).sum();
-        if total > 256 {
-            self.status = aurora_i18n::tr!("build-mod-too-many-prims-in-a-single-object-256", total = format!("{}", total));
-            return;
-        }
-        let Some((handle, _)) = first else { return };
-        let ids: Vec<u32> = roots.iter().filter_map(|&r| world.objects.get(r).map(|o| o.key.local_id)).collect();
-        // New children precede the root's existing children (ObjectLink).
-        // Retain this instruction only after all simulator parents agree,
-        // so reordered UDP packets cannot redefine the newly created links.
-        let mut expected = vec![roots[0]];
-        expected.extend(roots.iter().skip(1).flat_map(|&r| family(world, r)));
-        expected.extend(family(world, roots[0]).into_iter().skip(1));
-        let members = expected
-            .into_iter()
-            .filter_map(|i| world.objects.get(i).map(|o| o.full_id))
-            .collect();
-        self.pending_link = Some((members, Instant::now()));
-        self.send(BuildCmd::Link { handle, local_ids: ids });
-        self.status = aurora_i18n::tr!("build-link-pending").into();
-        self.costs_stale();
     }
 
     /// Ctrl+Shift+L: every selected prim (SEND_INDIVIDUALS).
@@ -1475,12 +1757,29 @@ impl BuildTool {
         if self.attachment_selected(world) {
             return;
         }
-        let prims: Vec<usize> = self.highlighted(world).into_iter().map(|(i, _)| i).collect();
+        let prims: Vec<usize> = self
+            .highlighted(world)
+            .into_iter()
+            .map(|(i, _)| i)
+            .filter(|&i| self.can_modify(world, i))
+            .collect();
         if prims.is_empty() {
             return;
         }
         for (handle, ids) in self.group_by_region(world, &prims) {
             self.send(BuildCmd::Delink { handle, local_ids: ids });
+        }
+        // with "Edit linked" the selection already holds each prim
+        if !self.selection_linked {
+            let keys: Vec<ObjKey> = highlighted_of(world, &self.selection, false)
+                .into_iter()
+                .filter_map(|(i, _)| world.objects.get(i).map(|o| o.key))
+                .collect();
+            self.pending_unlink = Some(PendingUnlink {
+                waiting: keys.iter().copied().filter(|k| !self.is_selected(k)).collect(),
+                prims: keys,
+                started: Instant::now(),
+            });
         }
         self.status = aurora_i18n::tr!("build-mod-object-unlinked").into();
         self.costs_stale();
@@ -1509,6 +1808,15 @@ impl BuildTool {
         }
     }
 
+    /// Inventory drops replace the selection (LLToolDragAndDrop::dropObject).
+    /// Leave Create immediately so its preview cannot cover the rezzed object;
+    /// keep-tool applies only to primitives placed with the Create tool.
+    pub fn edit_inventory_rez(&mut self, world: &World) {
+        self.set_tool(Tool::Edit);
+        self.deselect_all(world);
+        self.expect_created(world);
+    }
+
     /// Remember the objects already flagged "create selected" so that only
     /// new ones get selected when they arrive.
     pub fn expect_created(&mut self, world: &World) {
@@ -1521,7 +1829,7 @@ impl BuildTool {
         self.pending_create = Some((Instant::now(), flagged));
     }
 
-    fn pick_up_created(&mut self, world: &World, s: &BuildSettings) {
+    fn pick_up_created(&mut self, world: &mut World, s: &BuildSettings) {
         let Some((at, known)) = &self.pending_create else {
             return;
         };
@@ -1550,28 +1858,37 @@ impl BuildTool {
         }
         self.selection_linked = s.edit_linked;
         for i in new {
+            self.apply_new_defaults(world, i, s);
             if let Some(unit) = Self::unit_of(world, i, false) {
                 self.add(world, unit);
             }
         }
     }
 
-    /// LLToolSelectRect: objects whose center is inside the dragged
-    /// rectangle (in front of the camera, within the selection distance).
-    fn rect_select(&mut self, world: &mut World, s: &BuildSettings, a: (f32, f32), b: (f32, f32), extend: bool) {
+    /// LLToolSelectRect::handleRectangleSelection (indra/newview/llglsandbox.cpp,
+    /// originally LGPL 2.1): each prim, children included, whose drawn shape
+    /// the dragged rectangle takes (in front of the camera, within the
+    /// selection distance). A prim's box decides when it is wholly inside or
+    /// outside; across an edge its vertices do, all of them with "Select by
+    /// surrounding", one otherwise (LLViewerCamera::areVertsVisible). Outside
+    /// linked editing a prim brings its linkset, as
+    /// LLSelectMgr::updateSelectionSilhouette roots the rect selection.
+    /// Without `scene` (tests) or geometry yet, a prim across the edge is
+    /// taken only without "Select by surrounding".
+    fn rect_select(&mut self, world: &mut World, s: &BuildSettings, scene: Option<&Scene>, a: (f32, f32), b: (f32, f32), extend: bool) {
         if (a.0 - b.0).abs() < 3.0 && (a.1 - b.1).abs() < 3.0 {
             return; // a click, already handled
         }
-        let (x0, x1) = (a.0.min(b.0), a.0.max(b.0));
-        let (y0, y1) = (a.1.min(b.1), a.1.max(b.1));
+        let rect = egui::Rect::from_two_pos(egui::pos2(a.0, a.1), egui::pos2(b.0, b.1));
         let now = Instant::now();
         self.selection_linked = s.edit_linked;
         let mut units = Vec::new();
+        let mut seen = HashSet::new();
         for (idx, o) in world.objects.iter() {
-            if o.is_avatar() || (!s.select_probes && o.extra.reflection_probe.is_some()) || (!s.edit_linked && root_of(world, idx) != idx) {
+            if o.is_avatar() || (!s.select_probes && o.extra.reflection_probe.is_some()) {
                 continue;
             }
-            let Some((p, _, hud)) = crate::scene::Scene::object_transform(world, idx, now, 0) else {
+            let Some((p, rot, hud)) = Scene::object_transform(world, idx, now, 0) else {
                 continue;
             };
             if hud != self.cam.hud.is_some() || (!hud && s.select_limit().is_some_and(|max| p.distance(world.agent.position) > max)) {
@@ -1582,13 +1899,35 @@ impl BuildTool {
             if !hud && select_type(world, idx) != SelectType::World {
                 continue;
             }
-            let Some((x, y)) = self.cam.project_px(p) else { continue };
-            if x >= x0
-                && x <= x1
-                && y >= y0
-                && y <= y1
+            let drawn = scene
+                .and_then(|scene| scene.drawn_geometry(world, idx, now))
+                .filter(|(_, g)| g.pick_faces.iter().flatten().any(|f| !f.positions.is_empty()));
+            let (model, min, max) = match &drawn {
+                Some((model, g)) => (*model, g.min, g.max),
+                None => {
+                    let scale = world.visual_scale_at(idx, now);
+                    (
+                        glam::Mat4::from_scale_rotation_translation(scale, rot, p),
+                        Vec3::splat(-0.5),
+                        Vec3::splat(0.5),
+                    )
+                }
+            };
+            let taken = match self.cam.box_in_rect(model, min, max, rect) {
+                RectCover::Inside => true,
+                RectCover::Outside => false,
+                RectCover::Across => drawn.as_ref().map_or(!s.select_surrounding, |(model, g)| {
+                    let vertices = g.pick_faces.iter().flatten().flat_map(|f| &f.positions);
+                    verts_in_rect(
+                        vertices.map(|v| self.cam.in_rect(model.transform_point3(Vec3::from(*v)), rect)),
+                        s.select_surrounding,
+                    )
+                }),
+            };
+            if taken
                 && passes_select_filters(world, s, idx)
                 && let Some(u) = Self::unit_of(world, idx, s.edit_linked)
+                && seen.insert(u)
             {
                 units.push(u);
             }
@@ -1601,23 +1940,47 @@ impl BuildTool {
         }
     }
 
-    pub fn on_properties(&mut self, props: Vec<ObjectProps>) {
+    /// Shared full/family reply merge. A pinned single-object profile has
+    /// no world selection to trim and only receives its own UUID's replies.
+    pub(crate) fn merge_properties(&mut self, props: Vec<ObjectProps>) {
         for p in props {
             // the family reply has no creator: keep a full one we already have
             if !p.full && self.props.get(&p.object_id).is_some_and(|o| o.full) {
                 continue;
             }
+            if p.full {
+                self.link_properties.insert(p.object_id);
+            }
             self.props.insert(p.object_id, p);
         }
-        if self.props.len() > 4096 {
-            self.props.clear();
+    }
+
+    pub fn on_properties(&mut self, world: &World, props: Vec<ObjectProps>) {
+        // Retain the active selection and this reply when trimming the cache.
+        // Clearing everything used to lose the first property replies of a
+        // large OpenSim selection before the remaining replies could arrive.
+        let trim = self.props.len().saturating_add(props.len()) > 4096;
+        let keep: HashSet<_> = if trim {
+            self.roots(world)
+                .into_iter()
+                .flat_map(|root| linking::members(world, root))
+                .filter_map(|i| world.objects.get(i).map(|o| o.full_id))
+                .chain(props.iter().map(|p| p.object_id))
+                .collect()
+        } else {
+            HashSet::new()
+        };
+        self.merge_properties(props);
+        if trim {
+            self.props.retain(|id, _| keep.contains(id));
+            self.link_properties.retain(|id| self.props.contains_key(id));
         }
     }
 
     // ---- per frame
 
     /// Mouse, drags and land brush, once per frame (before the UI).
-    pub fn update(&mut self, world: &mut World, s: &BuildSettings, cursor: (f32, f32), over_ui: bool, mods: Mods) {
+    pub fn update(&mut self, world: &mut World, s: &BuildSettings, scene: Option<&Scene>, cursor: (f32, f32), over_ui: bool, mods: Mods) {
         let now = Instant::now();
         let dt = self
             .last_frame
@@ -1629,6 +1992,10 @@ impl BuildTool {
         self.advance_bulk_permissions(world, now);
         self.advance_link(world, now);
         self.update_material_preview(world, s);
+        // "Place on surface" lives in the Edit tool of the open tools
+        if !self.open || self.replacement_active() || self.tool != Tool::Edit {
+            self.place.stop();
+        }
         if !self.open || self.replacement_active() {
             self.sync_hud_zoom(world);
             return;
@@ -1647,6 +2014,9 @@ impl BuildTool {
         match self.tool {
             Tool::Edit => {
                 let mode = self.effective_mode(mods);
+                if self.place.active {
+                    self.place_hover(world, s, scene, cursor, over_ui);
+                }
                 if mode == EditMode::Align {
                     self.align_hover(world, cursor, mods.shift);
                 }
@@ -1664,9 +2034,14 @@ impl BuildTool {
                         mods,
                         now,
                         &mut cmds,
+                        scene,
                     );
                     for c in cmds {
                         self.send(c);
+                    }
+                    for idx in self.manip.take_te_dirty() {
+                        self.send_te(world, idx);
+                        self.send_stretch_materials(world, scene, idx, s.scale_stretch_textures);
                     }
                 }
                 if let Some(r) = self.rect.as_mut() {
@@ -1730,6 +2105,10 @@ impl BuildTool {
                 } else if !mods.shift {
                     self.deselect_all(world);
                 }
+                true
+            }
+            Tool::Edit if self.place.active => {
+                self.place_click(world);
                 true
             }
             Tool::Edit => {
@@ -1882,15 +2261,20 @@ impl BuildTool {
         self.last_face = Some(face);
     }
 
-    pub fn mouse_up(&mut self, world: &mut World, s: &BuildSettings) {
+    /// `scene` gives the selection rectangle the drawn vertices of the prims.
+    pub fn mouse_up(&mut self, world: &mut World, s: &BuildSettings, scene: Option<&Scene>) {
         if let Some((a, b, extend)) = self.rect.take() {
-            self.rect_select(world, s, a, b, extend);
+            self.rect_select(world, s, scene, a, b, extend);
         }
         let mut cmds = Vec::new();
         self.manip.release(world, s, self.selection_linked, &mut cmds);
         self.land.mouse_up();
         for c in cmds {
             self.send(c);
+        }
+        for idx in self.manip.take_te_dirty() {
+            self.send_te(world, idx);
+            self.send_stretch_materials(world, scene, idx, s.scale_stretch_textures);
         }
         self.grab_up();
     }
@@ -1978,13 +2362,13 @@ impl BuildTool {
                 sh.raw(),
                 sh.rotation(),
                 0,
-                Vec3::from_array(s.new_prim_size).clamp(Vec3::splat(MIN_PRIM_SCALE), Vec3::splat(MAX_PRIM_SCALE)),
+                world.prim_limits().clamp3(Vec3::from_array(s.new_prim_size)),
                 FLAGS_CREATE_SELECTED,
             )
         };
         let p = aurora_net::build::NewPrim {
             handle,
-            group_id: Uuid::nil(),
+            group_id: world.group_for_rez(s.rez_under_land_group),
             pcode,
             material: s.new_prim_material,
             add_flags: flags,
@@ -1999,10 +2383,12 @@ impl BuildTool {
             state,
         };
         self.deselect_all(world);
+        self.send(BuildCmd::Add(Box::new(p)));
         if !plant {
             self.expect_created(world);
+            // (trees and grass are not created selected: no look of their own)
+            self.expect_new_defaults();
         }
-        self.send(BuildCmd::Add(Box::new(p)));
         // LLToolPlacer::addObject
         world.ui_sounds.push(crate::ui_sound::UiSound::ObjectCreate);
         if !s.keep_tool {
@@ -2015,9 +2401,13 @@ impl BuildTool {
     /// where the ray hits (LLToolPlacer::addDuplicate).
     fn place_copy(&mut self, world: &mut World, s: &BuildSettings, hit: Option<Vec3>, target: Option<usize>, cursor: (f32, f32)) {
         let Some(point) = hit else { return };
-        let roots = self.roots(world);
-        if roots.is_empty() {
+        if self.roots(world).is_empty() {
             self.status = aurora_i18n::tr!("build-mod-select-the-objects-to-copy-first").into();
+            return;
+        }
+        let roots = self.copyable_roots(world);
+        if roots.is_empty() {
+            self.status = aurora_i18n::tr!("build-mod-no-copyable-object").into();
             return;
         }
         // raycastForNewObjPos refuses the duplicate's surface too
@@ -2027,6 +2417,8 @@ impl BuildTool {
         }
         let Some((_, off)) = Self::region_at(world, point) else { return };
         let (ray_start, ray_end, ray_target, bypass) = self.placement_ray(world, s, point, target, cursor, off);
+        // The simulator chooses the surface offset and, optionally, rotation.
+        let radius = bounds_of(world, &self.selection, false, Instant::now()).map_or(1.0, |bounds| bounds.half.length() * 2.0 + 1.0);
         let mut by_region: HashMap<RegionHandle, Vec<u32>> = HashMap::new();
         for r in roots {
             if let Some(o) = world.objects.get(r) {
@@ -2034,10 +2426,13 @@ impl BuildTool {
             }
         }
         for (handle, local_ids) in by_region {
+            world
+                .objects
+                .expect_local_duplicates(handle, &local_ids, Vec3::ZERO, false, Some((point - off, radius, s.copy_rotates)));
             self.send(BuildCmd::DuplicateOnRay {
                 handle,
                 local_ids,
-                group_id: Uuid::nil(),
+                group_id: world.group_for_rez(s.rez_under_land_group),
                 ray_start,
                 ray_end,
                 ray_target,
@@ -2099,6 +2494,15 @@ impl BuildTool {
             && !(mods.shift || mods.ctrl || mods.alt)
     }
 
+    /// The move under way and its hologram's kind, when the preference asks
+    /// for one: in the world only (a HUD has its own space).
+    pub fn move_hologram(&self, world: &World, s: &BuildSettings) -> Option<(MoveHologram, manip::MoveGhost)> {
+        if s.move_hologram == MoveHologram::Off || self.select_type(world) != SelectType::World {
+            return None;
+        }
+        Some((s.move_hologram, self.manip.move_ghost()?))
+    }
+
     fn face_mode(&self) -> bool {
         self.open && self.tool == Tool::Edit && self.edit_mode == EditMode::Face
     }
@@ -2151,6 +2555,9 @@ impl BuildTool {
         match self.tool {
             Tool::Edit => {
                 let mode = self.effective_mode(mods);
+                if self.place.active {
+                    self.place_draw(&mut p);
+                }
                 if mode == EditMode::Align {
                     self.align_draw(&mut p, world);
                 } else if mode != EditMode::Face {
@@ -2234,7 +2641,8 @@ impl BuildTool {
             ),
             None => (new_world_pos - off, new_world_rot.normalize()),
         };
-        let scale = size.map(|v| v.clamp(Vec3::splat(MIN_PRIM_SCALE), Vec3::splat(MAX_PRIM_SCALE)));
+        let limits = world.prim_limits();
+        let scale = size.map(|v| limits.clamp3(v));
         if let Some(o) = world.objects.get_mut(idx) {
             o.position = local_pos;
             o.rotation = local_rot;

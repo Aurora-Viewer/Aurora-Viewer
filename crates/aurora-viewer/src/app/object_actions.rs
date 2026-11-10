@@ -3,6 +3,23 @@
 use super::*;
 use crate::interaction::{self, Action, Contents, Held, Target};
 
+/// A held touch on a surface the GPU alone poses asks for the drawn faces
+/// once per `ASK_EVERY`, `ASK_LEAD` before the next update falls due:
+/// about two frames at 60 Hz, so the answer usually lands as the update
+/// falls due, and the surface sent is at most that old.
+const ASK_LEAD: Duration = Duration::from_millis(34);
+const ASK_EVERY: Duration = Duration::from_millis(100);
+
+/// handle_object_sit uses the clicked prim's LLPickInfo::mObjectOffset,
+/// computed by LLAgentCamera::calcFocusOffset (indra/newview). Keep the
+/// clicked child origin and world axes; neither a root-relative offset nor
+/// an inverse object rotation belongs in AgentRequestSit.
+pub(super) fn object_sit_offset(world: &World, camera: &Camera, idx: usize, point: Vec3, ray: Option<(Vec3, Vec3)>) -> Option<Vec3> {
+    let object = world.objects.get(idx)?;
+    let geometry = crate::camera::focus_object_geom(world, &object.full_id, Instant::now())?;
+    Some(camera.object_pick_offset(&geometry, point, ray))
+}
+
 impl App {
     pub(super) fn activate_object_action(&mut self, target: Target, idx: usize, point: Vec3, ray: Option<(Vec3, Vec3)>) {
         self.activate_object_action_at(target, idx, point, ray, None);
@@ -32,11 +49,11 @@ impl App {
         match target.action {
             Action::Disabled => {}
             Action::Sit => {
-                if let Some((pos, rot, _)) = Scene::object_transform(&self.world, idx, now, 0) {
+                if let Some(offset) = object_sit_offset(&self.world, &self.camera, idx, point, ray) {
                     self.send(NetCommand::RequestSit {
                         handle: target.key.region,
                         target: target.object,
-                        offset: rot.inverse() * (point - pos),
+                        offset,
                     });
                 }
             }
@@ -66,7 +83,7 @@ impl App {
             Action::Play => self.media.toggle_parcel(&self.world, &self.settings.media),
             Action::OpenMedia => {
                 let face = shown
-                    .or_else(|| ray.and_then(|r| self.scene.touch_surface(&self.world, idx, r)))
+                    .or_else(|| ray.and_then(|r| self.scene.left_touch_surface(&self.world, idx, r)))
                     .map_or(-1, |s| s.face);
                 self.interactions.media_url = self.media.click_open_media(&self.world, idx, face, &self.settings.media);
             }
@@ -95,7 +112,7 @@ impl App {
                 // so dragging a child does not make a linked object jump.
                 let offset = rot.inverse() * (pos - clicked) / self.world.hud_scale(idx);
                 let surface = shown
-                    .or_else(|| ray.and_then(|r| self.scene.touch_surface(&self.world, idx, r)))
+                    .or_else(|| ray.and_then(|r| self.scene.left_touch_surface(&self.world, idx, r)))
                     .unwrap_or_default();
                 let physical = self
                     .world
@@ -108,6 +125,11 @@ impl App {
                     position: pos,
                     surface,
                     shown: shown.is_some(),
+                    drawn: None,
+                    // one lead before the press, so the first request
+                    // leaves in time for the first update
+                    asked: now.checked_sub(ASK_LEAD).unwrap_or(now),
+                    latest: (surface, self.cursor_pos),
                     cursor: self.cursor_pos,
                     last: now,
                     physical,
@@ -126,6 +148,14 @@ impl App {
     }
 
     pub(super) fn release_object_hold(&mut self) {
+        // outside the frame (mouse up, menus) the renderer is ours: forget
+        // a drawn-face request still on its way; in the frame,
+        // update_object_hold forgets it before calling this
+        if let Some((ticket, _)) = self.interactions.held.as_mut().and_then(|h| h.drawn.take())
+            && let Some(gfx) = self.gfx.as_mut()
+        {
+            gfx.renderer.forget_drawn(ticket);
+        }
         if let Some(h) = self.interactions.held.take()
             && self
                 .world
@@ -150,10 +180,10 @@ impl App {
                     self.world
                         .objects
                         .index_of(&h.target.key)
-                        .and_then(|idx| self.scene.touch_surface(&self.world, idx, ray))
+                        .and_then(|idx| self.scene.left_touch_surface(&self.world, idx, ray))
                         .unwrap_or_default()
                 })
-                .unwrap_or(h.surface);
+                .unwrap_or(if h.shown { h.latest.0 } else { h.surface });
             self.send(NetCommand::ObjectRelease {
                 handle: h.target.key.region,
                 local_id: h.target.key.local_id,
@@ -162,8 +192,11 @@ impl App {
         }
     }
 
-    pub(super) fn update_object_hold(&mut self, renderer: &Renderer) {
+    pub(super) fn update_object_hold(&mut self, renderer: &mut Renderer) {
         if self.build.open || !self.left_down {
+            if let Some((ticket, _)) = self.interactions.held.as_mut().and_then(|h| h.drawn.take()) {
+                renderer.forget_drawn(ticket);
+            }
             self.release_object_hold();
             return;
         }
@@ -174,18 +207,39 @@ impl App {
             .index_of(&h.target.key)
             .filter(|i| self.world.objects.get(*i).is_some_and(|o| o.full_id == h.target.object))
         else {
+            if let Some((ticket, _)) = h.drawn {
+                renderer.forget_drawn(ticket);
+            }
             self.interactions.held = None;
             return;
         };
+        if h.shown {
+            self.take_shown_answer(renderer, idx);
+            self.send_object_hold(renderer, idx);
+            self.ask_shown_surface(renderer);
+        } else {
+            self.send_object_hold(renderer, idx);
+        }
+    }
+
+    /// One ObjectGrabUpdate, at most every 100 ms and when something
+    /// changed (LLToolGrabBase::handleHoverNonPhysical).
+    fn send_object_hold(&mut self, renderer: &Renderer, idx: usize) {
+        let Some(h) = self.interactions.held.as_ref() else { return };
         if h.last.elapsed() < Duration::from_millis(100) {
             return;
         }
         let surface = if h.shown {
-            h.surface
+            // an answer for where the cursor is now is on its way: wait for
+            // it rather than send an older surface with the new position
+            if h.drawn.is_some() && h.latest.1 != self.cursor_pos {
+                return;
+            }
+            h.latest.0
         } else {
             self.scene
                 .object_cursor_ray(idx, self.cursor_pos, renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1))
-                .and_then(|ray| self.scene.touch_surface(&self.world, idx, ray))
+                .and_then(|ray| self.scene.left_touch_surface(&self.world, idx, ray))
                 .unwrap_or_default()
         };
         if self.cursor_pos == h.cursor && surface == h.surface {
@@ -227,5 +281,146 @@ impl App {
         h.surface = surface;
         h.last = Instant::now();
         self.send(cmd);
+    }
+
+    /// LLToolGrabBase::handleHoverNonPhysical: the touch follows the cursor
+    /// on the held object at each frame (LLPickInfo::getSurfaceInfo
+    /// intersects that object alone), so a script reading
+    /// llDetectedTouchST / UV / Pos sees the touch move, and a still cursor sees the
+    /// object move under it. On a surface the GPU alone poses, that is the
+    /// faces drawn under the cursor, asked at the pace of the updates: once
+    /// per 100 ms, when the next update is nearly due, so the answer (one
+    /// to three frames later) is there when it can be sent. Each request is
+    /// one more pass over the visible geometry.
+    fn ask_shown_surface(&mut self, renderer: &mut Renderer) {
+        let cursor = self.cursor_pos;
+        let Some(h) = self.interactions.held.as_mut() else { return };
+        if h.drawn.is_none() && h.asked.elapsed() >= ASK_EVERY && h.last.elapsed() + ASK_LEAD >= ASK_EVERY {
+            // the press's own pick rule (DrawnMode::Left, which skips fully
+            // transparent texels of world Blend faces): the hover reads the
+            // surface with the press's pick settings (LLToolGrabBase::
+            // handleHoverNonPhysical, `LLPickInfo pick = mGrabPick`)
+            h.drawn = Some((renderer.request_drawn(cursor.0, cursor.1, aurora_render::DrawnMode::Left), cursor));
+            h.asked = Instant::now();
+        }
+    }
+
+    /// The answer to [`Self::ask_shown_surface`]: the held object drawn
+    /// there gives its surface. Something else drawn in front of the held
+    /// object's bounds hides it (a hand, hair, clothing going by): the
+    /// Legacy Viewer still finds the object behind, so the touch keeps its
+    /// last surface. Anything else is off the object (face -1).
+    fn take_shown_answer(&mut self, renderer: &mut Renderer, idx: usize) {
+        let Some(h) = self.interactions.held.as_mut() else { return };
+        let Some((ticket, at)) = h.drawn else { return };
+        let Some(drawn) = renderer.take_drawn(ticket) else { return };
+        h.drawn = None;
+        let on_held = [(drawn.blend, true), (drawn.opaque, false)].into_iter().find_map(|(hit, blend)| {
+            let hit = hit?;
+            let (i, face) = self.scene.record_object(hit.record)?;
+            (i == idx).then_some(crate::scene::drawn::DrawnObject { idx, face, blend, hit })
+        });
+        let surface = match on_held {
+            Some(d) => self.scene.drawn_surface(&self.world, &d).unwrap_or_default(),
+            None => {
+                let nearest = drawn.blend.or(drawn.opaque);
+                let hidden = nearest
+                    .zip(renderer.cursor_ray(at.0, at.1))
+                    .zip(self.scene.gpu.get(idx))
+                    .is_some_and(|((hit, (o, d)), g)| hidden_behind(o, d, hit.point, g.center, g.radius));
+                if hidden { h.latest.0 } else { Default::default() }
+            }
+        };
+        h.latest = (surface, at);
+    }
+}
+
+/// Whether a surface drawn at `point` on the ray (`origin`, unit `dir`)
+/// lies in front of a sphere the ray goes through: what is drawn there
+/// hides the sphere's object rather than missing it.
+fn hidden_behind(origin: Vec3, dir: Vec3, point: Vec3, center: Vec3, radius: f32) -> bool {
+    let along = (center - origin).dot(dir);
+    let off_ray = (center - origin - dir * along).length();
+    radius > 0.0 && off_ray <= radius && (point - origin).dot(dir) < along - radius
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sit_offsets_keep_world_axes_and_the_clicked_child_origin() {
+        use glam::Quat;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let handle = world.main_region.expect("demo region");
+        let origin = Vec3::new(100.0, 120.0, 30.0);
+        for linked in [false, true] {
+            for (turn, degrees) in [0.0_f32, 90.0, 180.0, 237.0].into_iter().enumerate() {
+                let rotation = Quat::from_rotation_z(degrees.to_radians());
+                // Distinct objects avoid interpolating one case's rotation
+                // into the next case while testing a stationary seat.
+                let local_id = 31000 + (u32::from(linked) * 4 + turn as u32) * 2;
+                let mut root = crate::demo::action_avatar(false);
+                root.local_id = local_id;
+                root.full_id = crate::demo::action_id(local_id);
+                root.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+                root.parent_id = 0;
+                root.position = origin;
+                root.rotation = rotation;
+                root.scale = Vec3::new(4.0, 1.0, 0.5);
+                root.volume.sculpt = Some(aurora_prim::params::SculptParams {
+                    texture: uuid::Uuid::from_u128(31000),
+                    sculpt_type: aurora_prim::params::LL_SCULPT_TYPE_MESH,
+                });
+                let mut seat = root.clone();
+                seat.local_id = local_id + 1;
+                seat.full_id = crate::demo::action_id(local_id + 1);
+                if linked {
+                    root.rotation = rotation * Quat::from_rotation_z(-0.4);
+                    root.position = origin - root.rotation * Vec3::new(3.0, -2.0, 1.0);
+                    seat.parent_id = root.local_id;
+                    seat.position = Vec3::new(3.0, -2.0, 1.0);
+                    seat.rotation = Quat::from_rotation_z(0.4);
+                }
+                world.apply(aurora_net::NetEvent::ObjectUpdates {
+                    handle,
+                    objects: vec![root, seat],
+                });
+                let idx = world.objects.index_of_uuid(&crate::demo::action_id(local_id + 1)).expect("seat");
+                let mut camera = Camera::default();
+                camera.position = origin + rotation * Vec3::new(0.0, -7.0, 4.0);
+                camera.target = origin;
+                for side in [-1.0, 1.0] {
+                    let point = origin + rotation * Vec3::new(side, -0.25, 0.25);
+                    let ray = (camera.position, (point - camera.position).normalize());
+                    let offset = object_sit_offset(&world, &camera, idx, point, Some(ray)).expect("offset");
+                    // calcFocusOffset intersects the cursor ray with the
+                    // seat's central XY plane at t=4/3.75; at this distance
+                    // its near-surface bias is zero. No scale division.
+                    let expected = rotation * Vec3::new(side * 16.0 / 15.0, 0.2, 0.0);
+                    assert!(
+                        offset.abs_diff_eq(expected, 1e-4),
+                        "linked={linked}, turn={degrees}, side={side}: {offset:?}"
+                    );
+                    let fallback = object_sit_offset(&world, &camera, idx, point, None).expect("offset without ray");
+                    assert!(fallback.abs_diff_eq(point - origin, 1e-4));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_surface_in_front_of_the_held_object_hides_it() {
+        let (o, d) = (Vec3::ZERO, Vec3::X);
+        let (center, radius) = (Vec3::new(3.0, 0.0, 0.0), 0.2);
+        // a hand going by in front
+        assert!(hidden_behind(o, d, Vec3::new(2.0, 0.0, 0.0), center, radius));
+        // the body behind the attachment: the cursor slid off it
+        assert!(!hidden_behind(o, d, Vec3::new(3.3, 0.0, 0.0), center, radius));
+        // in front, but the ray passes beside the object
+        assert!(!hidden_behind(o, d, Vec3::new(2.0, 0.0, 0.0), Vec3::new(3.0, 0.5, 0.0), radius));
     }
 }

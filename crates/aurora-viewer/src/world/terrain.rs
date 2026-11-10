@@ -64,6 +64,29 @@ impl Heightmap {
         }
     }
 
+    /// Grow to a size learned late, keeping the land received. Returns
+    /// whether it grew: chunk numbers follow the width, so all change.
+    pub fn grow(&mut self, size_x: u32, size_y: u32) -> bool {
+        let (size_x, size_y) = (size_x.max(self.size_x), size_y.max(self.size_y));
+        if (size_x, size_y) == (self.size_x, self.size_y) {
+            return false;
+        }
+        let mut grown = Heightmap::new(size_x, size_y);
+        for y in 0..self.size_y {
+            let from = (y * self.size_x) as usize;
+            let to = (y * size_x) as usize;
+            grown.heights[to..to + self.size_x as usize].copy_from_slice(&self.heights[from..from + self.size_x as usize]);
+        }
+        let patches_y = self.size_y / 16;
+        for y in 0..patches_y {
+            for x in 0..self.patches_x {
+                grown.patch_received[(y * grown.patches_x + x) as usize] = self.patch_received[(y * self.patches_x + x) as usize];
+            }
+        }
+        *self = grown;
+        true
+    }
+
     /// Write a patch; returns the chunk indices that became dirty.
     pub fn apply_patch(&mut self, px: u32, py: u32, size: u32, data: &[f32]) -> Vec<u32> {
         let x0 = px * size;
@@ -110,6 +133,19 @@ impl Heightmap {
         n as f32 / self.patch_received.len().max(1) as f32
     }
 
+    /// A height is usable as a neighbour edge only after its patch arrived.
+    pub fn received_height(&self, x: u32, y: u32) -> Option<f32> {
+        if x >= self.size_x || y >= self.size_y {
+            return None;
+        }
+        let patch = (y / 16) * self.patches_x + x / 16;
+        self.patch_received
+            .get(patch as usize)
+            .copied()
+            .filter(|received| *received)
+            .map(|_| self.height(x as i32, y as i32))
+    }
+
     #[inline]
     pub fn height(&self, x: i32, y: i32) -> f32 {
         let xi = x.clamp(0, self.size_x as i32 - 1) as u32;
@@ -136,6 +172,33 @@ impl Heightmap {
 
     pub fn chunk_count(&self) -> u32 {
         (self.size_x / CHUNK_CELLS) * (self.size_y / CHUNK_CELLS)
+    }
+}
+
+/// Neighbour heights for a region's east and north boundary vertices.
+/// Missing samples keep the region's own clamped edge until the neighbour
+/// sends the patch covering that point.
+#[derive(Debug, Clone, Default)]
+pub struct EdgeHeights {
+    pub east: Vec<Option<f32>>,
+    pub north: Vec<Option<f32>>,
+}
+
+impl EdgeHeights {
+    fn height(&self, hm: &Heightmap, x: i32, y: i32) -> f32 {
+        // the north-east corner is the same global point in `east` and
+        // `north`: either supplies it
+        if x == hm.size_x as i32
+            && let Some(height) = self.east.get(y.max(0) as usize).copied().flatten()
+        {
+            return height;
+        }
+        if y == hm.size_y as i32
+            && let Some(height) = self.north.get(x.max(0) as usize).copied().flatten()
+        {
+            return height;
+        }
+        hm.height(x, y)
     }
 }
 
@@ -198,7 +261,7 @@ impl Composition {
 }
 
 /// Build the mesh of one chunk (positions in region space).
-pub fn build_chunk(hm: &Heightmap, comp: &Composition, chunk: u32) -> (Vec<Vertex>, Vec<SkinVertex>, Vec<u16>) {
+pub fn build_chunk(hm: &Heightmap, comp: &Composition, chunk: u32, edges: &EdgeHeights) -> (Vec<Vertex>, Vec<SkinVertex>, Vec<u16>) {
     let cx_n = hm.size_x / CHUNK_CELLS;
     let cx = chunk % cx_n;
     let cy = chunk / cx_n;
@@ -211,7 +274,7 @@ pub fn build_chunk(hm: &Heightmap, comp: &Composition, chunk: u32) -> (Vec<Verte
         for i in 0..n {
             let x = x0 + i;
             let y = y0 + j;
-            let h = hm.height(x, y);
+            let h = edges.height(hm, x, y);
             let normal = terrain_normal(hm, x, y);
             let c = comp.value(hm, x as f32, y as f32, h);
             // LL stores composition in a float texcoord, independent of the
@@ -311,11 +374,32 @@ mod tests {
             origin_x: 256000.0,
             origin_y: 256000.0,
         };
-        let (v, frames, i) = build_chunk(&hm, &comp, 0);
+        let (v, frames, i) = build_chunk(&hm, &comp, 0, &EdgeHeights::default());
         assert_eq!(frames.len(), v.len());
         assert_eq!(v.len(), 33 * 33);
         assert_eq!(i.len(), 32 * 32 * 6);
         assert!(i.iter().all(|&x| (x as usize) < v.len()));
+    }
+
+    #[test]
+    fn chunk_boundary_uses_neighbour_height_and_keeps_local_fallback() {
+        let hm = Heightmap::new(256, 256);
+        let comp = Composition {
+            start_height: [0.0; 4],
+            height_range: [1.0; 4],
+            origin_x: 0.0,
+            origin_y: 0.0,
+        };
+        let fallback = build_chunk(&hm, &comp, 7, &EdgeHeights::default()).0;
+        let mut edges = EdgeHeights {
+            east: vec![None; 257],
+            ..Default::default()
+        };
+        edges.east[0] = Some(77.0);
+        let joined = build_chunk(&hm, &comp, 7, &edges).0;
+        let boundary_vertex = 32;
+        assert_eq!(fallback[boundary_vertex].pos[2], 0.0);
+        assert_eq!(joined[boundary_vertex].pos[2], 77.0);
     }
 
     #[test]
@@ -333,7 +417,7 @@ mod tests {
             origin_x: 0.0,
             origin_y: 0.0,
         };
-        let (vertices, frames, _) = build_chunk(&hm, &comp, 0);
+        let (vertices, frames, _) = build_chunk(&hm, &comp, 0, &EdgeHeights::default());
         let i = 16 * 33 + 16;
         let (n, t) = aurora_render::unpack_terrain_frame(frames[i]);
         let expected_n = Vec3::new(-0.2, -0.3, 1.0).normalize();
@@ -347,7 +431,7 @@ mod tests {
         assert!(t.distance(inferred) > 0.1, "a terrain tangent cannot be reconstructed from N");
         assert_eq!(vertices[i].uv[0], comp.value(&hm, 16.0, 16.0, hm.height(16, 16)));
         assert_eq!(vertices[i].normal[3], 127);
-        assert_eq!(std::mem::size_of::<SkinVertex>(), 8);
+        assert_eq!(std::mem::size_of::<SkinVertex>(), 12);
     }
 
     #[test]
@@ -397,5 +481,40 @@ mod tests {
         }
         let mean = sum / (n * n) as f64;
         assert!(mean.abs() < 0.05, "mean {mean}");
+    }
+}
+
+#[cfg(test)]
+mod region_size_tests {
+    use super::*;
+
+    #[test]
+    fn a_grown_heightmap_keeps_its_land_where_it_was() {
+        let mut map = Heightmap::new(256, 256);
+        map.apply_patch(2, 3, 16, &[7.0; 256]);
+        assert!(map.grow(1024, 512));
+        assert_eq!((map.size_x, map.size_y, map.patches_x), (1024, 512, 64));
+        assert_eq!(map.heights.len(), 1024 * 512);
+        assert_eq!(map.heights[(3 * 16 * 1024 + 2 * 16) as usize], 7.0);
+        assert_eq!(map.heights[(3 * 16 * 1024 + 2 * 16 + 15) as usize], 7.0);
+        assert!(map.patch_received[(3 * 64 + 2) as usize]);
+        assert_eq!(map.patch_received.iter().filter(|r| **r).count(), 1);
+    }
+
+    #[test]
+    fn land_past_256_m_lands_once_the_map_has_grown() {
+        let mut map = Heightmap::new(256, 256);
+        assert!(map.apply_patch(53, 41, 16, &[9.0; 256]).is_empty(), "dropped at 256 x 256");
+        map.grow(1024, 1024);
+        assert!(!map.apply_patch(53, 41, 16, &[9.0; 256]).is_empty());
+        assert_eq!(map.heights[(41 * 16 * 1024 + 53 * 16) as usize], 9.0);
+    }
+
+    #[test]
+    fn a_heightmap_never_shrinks() {
+        let mut map = Heightmap::new(1024, 1024);
+        assert!(!map.grow(256, 256));
+        assert!(!map.grow(1024, 1024));
+        assert_eq!((map.size_x, map.size_y), (1024, 1024));
     }
 }

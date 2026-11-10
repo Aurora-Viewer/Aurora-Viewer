@@ -21,7 +21,7 @@ mod settings;
 
 pub use focus::FocusObject;
 pub use free::FreeCamera;
-pub use settings::{CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, zoom_lens};
+pub use settings::{CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, SMOOTHING_RANGE, SavedViews, VrView, zoom_lens};
 
 /// Reference for a rolled view, shared with flycam handoff and AgentUpdate.
 /// At a vertical pole the world Z axis cannot define an up direction.
@@ -36,7 +36,7 @@ pub(crate) fn view_reference_up(direction: Vec3) -> Vec3 {
 use crate::agent::AgentState;
 use crate::scene::Scene;
 use crate::world::World;
-use glam::{Mat4, Quat, Vec3, Vec4};
+use glam::{DVec3, Mat4, Quat, Vec3, Vec4};
 use std::f32::consts::{PI, TAU};
 use std::time::Instant;
 use uuid::Uuid;
@@ -50,9 +50,15 @@ const CAMERA_LAG_HALF_LIFE: f32 = 0.25;
 const MIN_CAMERA_LAG: f32 = 0.5;
 const MAX_CAMERA_LAG: f32 = 5.0;
 const CAMERA_COLLIDE_EPSILON: f32 = 0.1;
+/// FLAGS_CAMERA_DECOUPLED (indra/llprimitive/object_flags.h).
+const FLAGS_CAMERA_DECOUPLED: u32 = 1 << 20;
 const MIN_CAMERA_DISTANCE: f32 = 0.1;
 const MAX_CAMERA_DISTANCE_FROM_OBJECT: f32 = 496.0;
 const CAMERA_FUDGE_FROM_OBJECT: f32 = 16.0;
+/// The goal moved this far in one frame: no smoothing. Deliberate difference:
+/// LLAgentCamera::updateCamera compares the goal with the smoothed camera, so
+/// a strong smoothing (`SMOOTHING_RANGE`), left 50 m behind by a drag, jumps
+/// to its goal again and again.
 const MAX_CAMERA_SMOOTH_DISTANCE: f32 = 50.0;
 const HEAD_BUFFER_SIZE: f32 = 0.3;
 const LAND_MIN_ZOOM: f32 = 0.15;
@@ -170,6 +176,8 @@ pub struct FrameInput {
     /// Sitting and optional eye following consume it after skeleton evaluation.
     pub eye_offset: Option<Vec3>,
     pub draw_distance: f32,
+    /// The main region's width (LLWorld::mWidth, which follows the region).
+    pub region_width: f32,
     pub aspect: f32,
 }
 
@@ -191,6 +199,9 @@ struct AvatarFrame {
     render_rotation: Quat,
     /// Rotation of the object we sit on.
     seat: Option<Quat>,
+    /// The vehicle's FLAGS_CAMERA_DECOUPLED (VEHICLE_FLAG_CAMERA_DECOUPLED):
+    /// the mouselook aim stays in the world instead of the seat.
+    camera_decoupled: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -300,13 +311,21 @@ pub struct Camera {
     /// mCameraVirtualPositionAgent: camera target before the FOV push-out.
     virtual_position: Vec3,
     anim: Option<Animation>,
-    smoothing_last_global: Vec3,
-    smoothing_last_agent: Vec3,
+    /// In double precision, as LLAgentCamera's LLVector3d: a strong smoothing
+    /// moves by less than a step of the f32 coordinates in a frame, and would
+    /// stop short of its goal (`SMOOTHING_RANGE`).
+    smoothing_last_global: DVec3,
+    smoothing_last_agent: DVec3,
+    /// Where the camera was asked to be in the last frame, before smoothing:
+    /// what `MAX_CAMERA_SMOOTH_DISTANCE` compares with.
+    smoothing_goal_global: DVec3,
+    smoothing_goal_agent: DVec3,
     smoothing_stop: bool,
     tool: Option<Tool>,
     avatar: AvatarFrame,
     head: Vec3,
     draw_distance: f32,
+    region_width: f32,
     /// DisableCameraConstraints, as of the last frame.
     unconstrained: bool,
     /// Our avatar's id (the alt-camera focus object of unlockView).
@@ -366,8 +385,10 @@ impl Default for Camera {
             ml_zoom: Default::default(),
             virtual_position: Vec3::ZERO,
             anim: None,
-            smoothing_last_global: Vec3::ZERO,
-            smoothing_last_agent: Vec3::ZERO,
+            smoothing_last_global: DVec3::ZERO,
+            smoothing_last_agent: DVec3::ZERO,
+            smoothing_goal_global: DVec3::ZERO,
+            smoothing_goal_agent: DVec3::ZERO,
             smoothing_stop: false,
             tool: None,
             avatar: AvatarFrame {
@@ -378,9 +399,11 @@ impl Default for Camera {
                 render_root: start,
                 render_rotation: Quat::IDENTITY,
                 seat: None,
+                camera_decoupled: false,
             },
             head: start + Vec3::Z * 0.7,
             draw_distance: 128.0,
+            region_width: REGION_WIDTH,
             unconstrained: false,
             own: Uuid::nil(),
             dt: 0.0,
@@ -728,6 +751,15 @@ impl Camera {
         }
     }
 
+    /// LLPickInfo::fetchResults uses calcFocusOffset for both camera focus
+    /// and handle_object_sit's AgentRequestSit. The offset is relative to
+    /// the clicked object's origin but remains in world axes.
+    pub fn object_pick_offset(&self, object: &FocusObject, point: Vec3, ray: Option<(Vec3, Vec3)>) -> Vec3 {
+        let Some(ray) = ray else { return point - object.position };
+        let virtual_camera = self.focus_target + (self.position - self.focus_target) / (1.0 + self.fov_zoom);
+        focus::calc_focus_offset(object, point, ray, self.position, self.forward(), virtual_camera)
+    }
+
     /// Alt+click (LLToolCamera::pickCallback): lock the camera on the
     /// clicked point, inside the clicked object when there is one.
     pub fn alt_focus(
@@ -740,10 +772,7 @@ impl Camera {
     ) {
         self.set_focus_on_avatar(false, true, true, agent, s);
         let focus = match object {
-            Some((_, g)) => {
-                let virtual_camera = self.focus_target + (self.position - self.focus_target) / (1.0 + self.fov_zoom);
-                g.position + focus::calc_focus_offset(&g, point, ray, self.position, self.forward(), virtual_camera)
-            }
+            Some((_, g)) => g.position + self.object_pick_offset(&g, point, Some(ray)),
             None => point,
         };
         self.set_focus_global(Some(focus), object.map(|o| o.0), object.map(|o| o.1), s);
@@ -772,6 +801,20 @@ impl Camera {
         }
     }
 
+    /// Keep the displayed framing when automatic appearance movement is
+    /// switched off mid-turn. Manual camera transitions remain independent.
+    pub fn stop_appearance_view(&mut self) {
+        if !self.focus_on_avatar && self.focus_object.is_none() && self.anim.is_none_or(|animation| animation.orbit) {
+            self.anim = None;
+            self.focus_target = self.target;
+            self.focus_object = None;
+            self.focus_geom = None;
+            self.focus_offset_target = (self.position - self.target) / (1.0 + self.fov_zoom);
+            self.focus_offset = self.focus_offset_target;
+            self.smoothing_stop = true;
+        }
+    }
+
     /// RlvForceHandler<RLV_BHVR_SETCAM_FOCUS>: retain the exact object UUID
     /// for tracking; avatar requests focus on the posed head supplied by Scene.
     pub fn set_script_focus(
@@ -784,6 +827,32 @@ impl Camera {
     ) {
         self.set_focus_on_avatar(false, true, true, agent, s);
         self.set_camera_pos_and_focus(camera, focus, object, s);
+    }
+
+    /// Build › Focus on Selection (H) and Zoom to Selection (Shift+H).
+    /// Port of handle_look_at_selection (indra/newview/llviewermenu.cpp,
+    /// originally LGPL 2.1): focus moves the focus point to the selection's
+    /// centre; zoom also brings the camera to the distance that frames its
+    /// box, never farther than it already is.
+    #[allow(clippy::too_many_arguments)]
+    pub fn look_at_selection(
+        &mut self,
+        center: Vec3,
+        extent: f32,
+        object: Option<(Uuid, FocusObject)>,
+        zoom: bool,
+        aspect: f32,
+        agent: &mut AgentState,
+        s: &CameraSettings,
+    ) {
+        self.set_focus_on_avatar(false, true, true, agent, s);
+        if zoom {
+            let distance = selection_distance(extent, s.fov, aspect).min((self.position - center).length());
+            let dir = (self.position - center).normalize_or(-self.forward());
+            self.set_camera_pos_and_focus(center + dir * distance, center, object, s);
+        } else {
+            self.set_focus_global(Some(center), object.map(|o| o.0), object.map(|o| o.1), s);
+        }
     }
 
     /// Context menu "Zoom" (handle_look_at_selection "zoom"): the focus stays
@@ -858,6 +927,8 @@ impl Camera {
             self.change_to_default(agent, s);
         }
         if reset_camera {
+            // LLAgentCamera::resetView resets the camera roll too.
+            self.roll = 0.0;
             if !steering && self.third_person() {
                 // leaving mouse steering: the pitch fades out
                 self.pitch *= 1.0 - interpolant(0.3, self.dt);
@@ -900,6 +971,17 @@ impl Camera {
 
     pub fn free_mut(&mut self) -> Option<&mut FreeCamera> {
         self.free.as_mut()
+    }
+
+    pub fn start_flycam(&mut self, s: &CameraSettings) {
+        let up = Quat::from_axis_angle(self.forward(), self.roll) * Vec3::Z;
+        self.flycam = Some(crate::joystick::flycam::Flycam::from_view(
+            self.position,
+            self.target,
+            up,
+            self.fov_y,
+        ));
+        self.flycam_lens = Some((s.fov, self.fov_y));
     }
 
     /// On toggle-off the normal camera takes the exact view back, still
@@ -964,8 +1046,6 @@ impl Camera {
             &mut self.target,
             &mut self.focus_target,
             &mut self.virtual_position,
-            &mut self.smoothing_last_global,
-            &mut self.smoothing_last_agent,
             &mut self.head,
             &mut self.avatar.root,
             &mut self.avatar.position,
@@ -973,6 +1053,9 @@ impl Camera {
         ] {
             *p += delta;
         }
+        // (not the ones relative to the avatar: it moves with the frame)
+        self.smoothing_last_global += delta.as_dvec3();
+        self.smoothing_goal_global += delta.as_dvec3();
         if let Some(free) = &mut self.free {
             free.position += delta;
         }
@@ -992,8 +1075,26 @@ impl Camera {
 
     /// Arrival of a teleport (process_agent_movement_complete): the camera
     /// back on the avatar without animation; FSResetCameraOnTP also drops
-    /// the orbit, the pitch and the zoom (resetView of process_teleport_local).
-    pub fn on_teleport_arrival(&mut self, s: &CameraSettings) {
+    /// the orbit, the pitch and the zoom.
+    ///
+    /// `local`: a teleport inside the region (process_teleport_local). There
+    /// the Legacy Viewer calls resetView only when FSResetCameraOnTP is on;
+    /// off, only the avatar turns (slamLookAt, done by the world): a camera
+    /// on a point or an object, the flycam, the free camera and the zoom stay
+    /// where they are, and a camera on the avatar follows it there. A
+    /// teleport to another region always brings the camera back
+    /// (TELEPORT_START_ARRIVAL's resetView in update_tp_display); Aurora
+    /// keeps the orbit, pitch and zoom there when the switch is off.
+    pub fn on_teleport_arrival(&mut self, s: &CameraSettings, local: bool) {
+        if local && !s.reset_on_teleport {
+            // the eye jumps with the avatar instead of gliding across the
+            // region; a flycam or free camera keeps its own view (and the
+            // free camera its glide back when it ends)
+            if self.flycam.is_none() && self.free.is_none() {
+                self.snap();
+            }
+            return;
+        }
         self.clear_flycam();
         // a free camera stays in the region it left
         self.free = None;
@@ -1087,7 +1188,7 @@ impl Camera {
         }
         MAX_CAMERA_DISTANCE_FROM_OBJECT
             .min(self.draw_distance - 1.0)
-            .min(REGION_WIDTH - CAMERA_FUDGE_FROM_OBJECT)
+            .min(self.region_width - CAMERA_FUDGE_FROM_OBJECT)
     }
 
     /// Distance limits of the alt camera for its focus (min, max).
@@ -1218,11 +1319,13 @@ impl Camera {
     fn pan(&mut self, delta: Vec3) {
         self.focus_target += delta;
         self.target = self.focus_target;
-        // panning moves the camera with the focus, not smoothed behind it
-        self.smoothing_stop = true;
+        // panning moves the camera with the focus, not smoothed behind it,
+        // and keeps the lag it has: LLAgentCamera::cameraPanLeft restarts the
+        // smoothing from the goal, a jump with a strong smoothing
         self.zoom_in(1.0);
         self.update_focus_offset();
-        self.smoothing_last_global = self.focus_target + self.focus_offset_target;
+        self.smoothing_last_global += delta.as_dvec3();
+        self.smoothing_goal_global += delta.as_dvec3();
     }
 
     /// Already eased by the edit tool; translate the view in this frame,
@@ -1239,8 +1342,8 @@ impl Camera {
         self.target += delta;
         self.position += delta;
         self.virtual_position += delta;
-        self.smoothing_last_global += delta;
-        self.smoothing_last_agent += delta;
+        self.smoothing_last_global += delta.as_dvec3();
+        self.smoothing_last_agent += delta.as_dvec3();
         self.smoothing_stop = true;
         if let Some(anim) = self.anim.as_mut() {
             anim.start_camera += delta;
@@ -1442,10 +1545,14 @@ impl Camera {
             // A subsequent lens edit takes ownership of the value, including
             // when the user later returns to the pre-flight preference.
             self.flycam_lens = Some((s.fov, s.fov));
+            if let Some(flycam) = &mut self.flycam {
+                flycam.set_fov(s.fov);
+            }
         }
         let dt = f.dt.max(0.0);
         self.dt = dt;
         self.draw_distance = f.draw_distance;
+        self.region_width = f.region_width;
         self.unconstrained = s.disable_constraints;
         self.own = world.agent_id;
         self.avatar = avatar_frame(world, s, f.now);
@@ -1517,8 +1624,10 @@ impl Camera {
             self.lag = Vec3::ZERO;
             self.current_distance = self.target_distance;
             self.current_fov_zoom = self.fov_zoom;
-            self.smoothing_last_global = camera_target;
-            self.smoothing_last_agent = camera_target - self.avatar.position;
+            self.smoothing_last_global = camera_target.as_dvec3();
+            self.smoothing_last_agent = (camera_target - self.avatar.position).as_dvec3();
+            self.smoothing_goal_global = self.smoothing_last_global;
+            self.smoothing_goal_agent = self.smoothing_last_agent;
             self.position = camera_target;
             self.target = focus_target;
             self.fov_y = self.zoomed_fov(s, f.aspect);
@@ -1563,21 +1672,32 @@ impl Camera {
         // depends on `k`, so on the frame time: a camera at rest then moved
         // by one step of its coordinates in about one frame out of four.
         let agent_pos = self.avatar.position;
-        let mut relative = camera - agent_pos;
+        let goal_global = camera.as_dvec3();
+        let goal_agent = (camera - agent_pos).as_dvec3();
+        let (mut global, mut relative) = (goal_global, goal_agent);
         self.smoothing_stop |= f.build_mode;
         if self.third_person() && !self.smoothing_stop {
-            let k = interpolant(s.smoothing * SMOOTHING_HALF_LIFE, dt);
+            let k = f64::from(interpolant(s.smoothing * SMOOTHING_HALF_LIFE, dt));
+            let max = f64::from(MAX_CAMERA_SMOOTH_DISTANCE);
             if self.focus_on_avatar && self.focus_object.is_none() {
-                if (relative - self.smoothing_last_agent).length() < MAX_CAMERA_SMOOTH_DISTANCE {
-                    relative = self.smoothing_last_agent.lerp_monotonic(relative, k);
-                    camera = relative + agent_pos;
+                if (goal_agent - self.smoothing_goal_agent).length() < max {
+                    relative = self.smoothing_last_agent.lerp_monotonic(goal_agent, k);
+                    camera = relative.as_vec3() + agent_pos;
+                    global = camera.as_dvec3();
                 }
-            } else if (camera - self.smoothing_last_global).length() < MAX_CAMERA_SMOOTH_DISTANCE {
-                camera = self.smoothing_last_global.lerp_monotonic(camera, k);
+            } else if (goal_global - self.smoothing_goal_global).length() < max {
+                global = self.smoothing_last_global.lerp_monotonic(goal_global, k);
+                camera = global.as_vec3();
+                // back on the avatar, the smoothing goes on from here
+                // (LLAgentCamera::updateCamera keeps the goal: a jump as
+                // soon as the lag is visible)
+                relative = global - agent_pos.as_dvec3();
             }
         }
-        self.smoothing_last_global = camera;
+        self.smoothing_last_global = global;
         self.smoothing_last_agent = relative;
+        self.smoothing_goal_global = goal_global;
+        self.smoothing_goal_agent = goal_agent;
         self.smoothing_stop = false;
 
         self.current_fov_zoom += (self.fov_zoom - self.current_fov_zoom) * interpolant(FOV_ZOOM_HALF_LIFE, dt);
@@ -1785,17 +1905,33 @@ impl Camera {
         camera - self.lag
     }
 
+    /// The mouselook view direction. LLAgentCamera::calcFocusPositionTargetGlobal
+    /// (indra/newview/llagentcamera.cpp, originally LGPL 2.1): seated, the
+    /// agent frame is the seat's, turned by the seat's render rotation unless
+    /// the vehicle decouples the camera; LLAgent::yaw / pitch turn it about
+    /// the seat's up and left axes. The mouse's heading and pitch are then
+    /// the seat's, so the aim pitches and banks with the vehicle.
+    fn mouselook_aim(&self, agent: &AgentState) -> Vec3 {
+        let p = agent.pitch;
+        match (self.avatar.seat, self.seat) {
+            (Some(seat), Some(s)) if !self.avatar.camera_decoupled => {
+                seat * Quat::from_rotation_z(s.local_yaw) * Quat::from_rotation_y(-p) * Vec3::X
+            }
+            _ => {
+                let y = agent.yaw;
+                Vec3::new(y.cos() * p.cos(), y.sin() * p.cos(), p.sin())
+            }
+        }
+    }
+
     /// LLAgentCamera::calcFocusPositionTargetGlobal.
     fn calc_focus_target(&self, world: &World, s: &CameraSettings, now: Instant, camera_target: Vec3) -> Vec3 {
         let agent = &world.agent;
         match self.mode {
             CameraMode::Follow if self.focus_on_avatar => self.follow.at,
-            CameraMode::Mouselook => {
-                let (y, p) = (agent.yaw, agent.pitch);
-                // Keep the mouse's aim even if terrain or range constraints
-                // move the eye away from its requested position.
-                camera_target + Vec3::new(y.cos() * p.cos(), y.sin() * p.cos(), p.sin())
-            }
+            // Keep the mouse's aim even if terrain or range constraints
+            // move the eye away from its requested position.
+            CameraMode::Mouselook => camera_target + self.mouselook_aim(agent),
             CameraMode::ThirdPerson | CameraMode::Follow if !self.focus_on_avatar => self.focus_target,
             CameraMode::ThirdPerson | CameraMode::Follow => match self.sit_camera_point(world, now, false) {
                 Some(p) => p,
@@ -1856,7 +1992,23 @@ impl Camera {
             return flycam.up();
         }
         let direction = self.forward();
-        glam::Quat::from_axis_angle(direction, self.roll) * view_reference_up(direction)
+        let up = self
+            .seated_mouselook_up()
+            .filter(|up| direction.cross(*up).length_squared() > 1e-6)
+            .unwrap_or_else(|| view_reference_up(direction));
+        glam::Quat::from_axis_angle(direction, self.roll) * up
+    }
+
+    /// LLAgentCamera::updateCamera (indra/newview/llagentcamera.cpp,
+    /// originally LGPL 2.1): seated in mouselook, the camera's up is the
+    /// avatar's +Z, so the view banks and pitches with the vehicle; the
+    /// mode of a running transition is the one it leaves (mLastCameraMode).
+    fn seated_mouselook_up(&self) -> Option<Vec3> {
+        let mode = if self.anim.is_some() { self.last_mode } else { self.mode };
+        if mode != CameraMode::Mouselook {
+            return None;
+        }
+        self.avatar.rotation.map(|rotation| rotation * Vec3::Z)
     }
 
     /// LLAgent::getHeadRotation (indra/newview/llagent.cpp, LGPL 2.1): a
@@ -1916,6 +2068,7 @@ fn avatar_frame(world: &World, s: &CameraSettings, now: Instant) -> AvatarFrame 
         render_root: agent.position,
         render_rotation: Quat::from_rotation_z(agent.yaw),
         seat: None,
+        camera_decoupled: false,
     };
     let id = world.agent_id;
     let Some(idx) = world.objects.index_of_uuid(&id) else {
@@ -1924,13 +2077,18 @@ fn avatar_frame(world: &World, s: &CameraSettings, now: Instant) -> AvatarFrame 
     let Some((position, rotation, _)) = Scene::object_transform_unshifted(world, idx, now) else {
         return fallback;
     };
-    let seat = world
+    let parent = world
         .objects
         .get(idx)
         .filter(|o| o.parent_id != 0)
-        .and_then(|o| world.objects.parent_of(o))
+        .and_then(|o| world.objects.parent_of(o));
+    let seat = parent
         .and_then(|parent| Scene::object_transform(world, parent, now, 0))
         .map(|(_, r, _)| r);
+    // flagCameraDecoupled is read on the avatar's root, the linkset it sits on
+    let camera_decoupled = parent
+        .and_then(|parent| world.objects.get(parent))
+        .is_some_and(|o| o.update_flags & FLAGS_CAMERA_DECOUPLED != 0);
     // LLAgentCamera::getAvatarRootPosition, computed without ever adding
     // hover when disabled. Camera updates run before the pose cache, so a
     // cached rendered root minus the current hover would jump for one frame.
@@ -1947,6 +2105,7 @@ fn avatar_frame(world: &World, s: &CameraSettings, now: Instant) -> AvatarFrame 
         render_root: position + axis * (shape + world.appearance_hover(&id)),
         render_rotation: rotation,
         seat,
+        camera_decoupled,
     }
 }
 
@@ -1966,6 +2125,15 @@ pub fn focus_object_geom(world: &World, id: &Uuid, now: Instant) -> Option<Focus
         avatar: o.is_avatar(),
         mesh: o.volume.is_mesh(),
     })
+}
+
+/// The camera distance that frames a selection whose box diagonal is
+/// `extent` (handle_look_at_selection: PADDING_FACTOR 1.75 over the wider
+/// angle of view, at least 0.1 radian).
+pub fn selection_distance(extent: f32, fov: f32, aspect: f32) -> f32 {
+    const PADDING_FACTOR: f32 = 1.75;
+    let angle = if aspect > 1.0 { fov * aspect } else { fov }.max(0.1);
+    extent * PADDING_FACTOR / angle.atan()
 }
 
 /// The alt-camera focus object of a clicked object: an attachment focuses
@@ -2160,6 +2328,7 @@ mod tests {
             edit_tracking: None,
             eye_offset: None,
             draw_distance: 128.0,
+            region_width: REGION_WIDTH,
             aspect: 1.0,
         }
     }
@@ -2167,6 +2336,42 @@ mod tests {
     fn settle(cam: &mut Camera, w: &mut World, s: &CameraSettings) {
         for _ in 0..300 {
             cam.update(w, s, &frame(1.0 / 60.0));
+        }
+    }
+
+    #[test]
+    fn disabling_appearance_movement_stops_mid_turn_and_keeps_manual_camera_controls() {
+        for smoothing in [0.0, 1.0] {
+            let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+            let settings = CameraSettings {
+                smoothing,
+                ..Default::default()
+            };
+            let mut camera = Camera::default();
+            settle(&mut camera, &mut world, &settings);
+            let focus = world.agent.position + Vec3::Z;
+            camera.set_appearance_view(focus + Vec3::X * 3.0, focus, &mut world.agent, &settings);
+            settle(&mut camera, &mut world, &settings);
+            camera.set_appearance_view(focus - Vec3::X * 3.0, focus, &mut world.agent, &settings);
+            for _ in 0..30 {
+                camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+            }
+            let displayed = (camera.position, camera.target);
+            camera.stop_appearance_view();
+            for _ in 0..180 {
+                camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+                assert!(camera.position.abs_diff_eq(displayed.0, 1e-4), "keep the interrupted eye");
+                assert!(camera.target.abs_diff_eq(displayed.1, 1e-4), "keep the interrupted focus");
+            }
+            camera.orbit_drag(100.0, 25.0, 1.0, &mut world.agent);
+            settle(&mut camera, &mut world, &settings);
+            assert!(camera.position.distance(displayed.0) > 0.1, "manual orbit still works");
+            let target = camera.target + Vec3::Z;
+            camera.set_view(target + Vec3::X * 4.0, target, &mut world.agent, &settings);
+            camera.stop_appearance_view();
+            assert!(camera.anim.is_some(), "a manual focus transition is left running");
+            settle(&mut camera, &mut world, &settings);
+            assert!(camera.target.abs_diff_eq(target, 1e-4));
         }
     }
 
@@ -2366,7 +2571,7 @@ mod tests {
         assert!(cam.free().is_none() && cam.mouselook());
         cam.toggle_mouselook(&mut w.agent, &s);
         cam.start_free(&mut w.agent, &s);
-        cam.on_teleport_arrival(&s);
+        cam.on_teleport_arrival(&s, false);
         assert!(cam.free().is_none());
     }
 
@@ -2493,11 +2698,50 @@ mod tests {
         cam.change_to_mouselook(&mut w.agent, &s, false);
         assert!(cam.flycam.is_none());
         cam.flycam = Some(flight);
-        cam.on_teleport_arrival(&s);
+        cam.on_teleport_arrival(&s, false);
         assert!(cam.flycam.is_none());
         cam.flycam = Some(flight);
         cam.start_free(&mut w.agent, &s);
         assert!(cam.flycam.is_none() && cam.free().is_some());
+    }
+
+    #[test]
+    fn joystick_flycam_accepts_lens_edits_and_uses_them_as_the_absolute_zoom_reference() {
+        let mut s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        cam.start_flycam(&s);
+        let mut tuning = crate::joystick::Settings::default();
+        tuning.mapping[6] = 6;
+        tuning.flycam.gain[6] = 1.0;
+        let flight = cam.flycam.as_mut().expect("flight");
+        flight.step([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.5], &tuning, 0.2);
+        let position = flight.position;
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        assert!((cam.fov_y - (s.fov - 0.1)).abs() < 1e-4);
+        s.fov = 0.9;
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        assert!(
+            (cam.fov_y - 0.9).abs() < 1e-4,
+            "a lens preference edit must reach the active flycam"
+        );
+        assert_eq!(cam.position, position, "a lens edit must keep the flight pose");
+        tuning.direct_zoom = true;
+        for (input, expected) in [(0.2, 1.1), (0.0, 0.9)] {
+            let flight = cam.flycam.as_mut().expect("flight");
+            flight.step([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, input], &tuning, 0.1);
+            cam.update(&mut w, &s, &frame(1.0 / 60.0));
+            assert!((cam.fov_y - expected).abs() < 1e-4, "absolute zoom must use the edited reference");
+        }
+        s.fov = 0.7;
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        cam.flycam.as_mut().expect("flight").step([0.0; 7], &tuning, 0.1);
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        assert!((cam.fov_y - 0.7).abs() < 1e-4, "absolute zoom must retain subsequent lens edits");
+        cam.retain_flycam_view(&mut w.agent, &s);
+        settle(&mut cam, &mut w, &s);
+        assert!((cam.fov_y - 0.7).abs() < 1e-4);
     }
 
     #[test]
@@ -2564,9 +2808,60 @@ mod tests {
         script(&mut w, Uuid::from_u128(123), vec![(12, 1.0), (7, 6.0)]);
         settle(&mut cam, &mut w, &s);
         w.agent.position = Vec3::new(128.0, 128.0, 2100.0);
-        cam.on_teleport_arrival(&s);
+        cam.on_teleport_arrival(&s, false);
         cam.update(&mut w, &s, &frame(1.0 / 60.0));
         assert!(cam.position.distance(w.agent.position) < 10.0);
+        assert!(cam.target.distance(w.agent.position) < 3.0);
+    }
+
+    /// FSResetCameraOnTP off (issue #2828): a teleport inside the region
+    /// (process_teleport_local) leaves the camera where it is; one to
+    /// another region (TELEPORT_START_ARRIVAL's resetView) brings it back.
+    #[test]
+    fn return_after_teleporting_off_keeps_the_camera_inside_the_region() {
+        let off = CameraSettings {
+            reset_on_teleport: false,
+            ..Default::default()
+        };
+        let on = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &off);
+        let focus = Vec3::new(135.0, 130.0, 27.0);
+        cam.alt_focus(focus, None, (cam.position, cam.forward()), &mut w.agent, &off);
+        settle(&mut cam, &mut w, &off);
+        let view = (cam.position, cam.target);
+        // off, inside the region: the alt-camera stays on its point
+        w.agent.position = Vec3::new(40.0, 200.0, 30.0);
+        cam.on_teleport_arrival(&off, true);
+        settle(&mut cam, &mut w, &off);
+        assert!(!cam.focus_on_avatar);
+        assert!(cam.position.distance(view.0) < 0.01, "{:?} moved from {:?}", cam.position, view.0);
+        assert!(cam.target.distance(view.1) < 0.01);
+        // the flycam keeps flying
+        let flight = crate::joystick::flycam::Flycam::from_view(view.0, view.1, Vec3::Z, 0.8);
+        cam.flycam = Some(flight);
+        cam.on_teleport_arrival(&off, true);
+        assert!(cam.flycam.is_some());
+        cam.flycam = None;
+        // off, another region: back on the avatar
+        cam.on_teleport_arrival(&off, false);
+        settle(&mut cam, &mut w, &off);
+        assert!(cam.focus_on_avatar);
+        assert!(cam.target.distance(w.agent.position) < 3.0);
+        // off, a camera on the avatar follows it inside the region
+        w.agent.position = Vec3::new(200.0, 60.0, 28.0);
+        cam.on_teleport_arrival(&off, true);
+        cam.update(&mut w, &off, &frame(1.0 / 60.0));
+        assert!(cam.target.distance(w.agent.position) < 3.0);
+        // on, inside the region: back on the avatar too
+        cam.alt_focus(focus, None, (cam.position, cam.forward()), &mut w.agent, &on);
+        settle(&mut cam, &mut w, &on);
+        assert!(!cam.focus_on_avatar);
+        cam.flycam = Some(flight);
+        cam.on_teleport_arrival(&on, true);
+        settle(&mut cam, &mut w, &on);
+        assert!(cam.focus_on_avatar && cam.flycam.is_none());
         assert!(cam.target.distance(w.agent.position) < 3.0);
     }
 
@@ -2662,6 +2957,108 @@ mod tests {
         assert!((cam.target.distance(seated) - 1.41).abs() < 0.05, "{:?}", cam.target);
     }
 
+    /// LLAgentCamera::updateCamera: seated in mouselook the view's up is the
+    /// avatar's, so it banks and pitches with a vehicle; in third person and
+    /// standing it stays the world's.
+    #[test]
+    fn seated_mouselook_banks_with_the_vehicle() {
+        let mut world = hover_world(true);
+        let settings = CameraSettings::default();
+        let mut camera = Camera::default();
+        settle(&mut camera, &mut world, &settings);
+        let seat = world
+            .objects
+            .iter()
+            .find(|(_, o)| !o.is_avatar() && o.parent_id == 0)
+            .map(|(idx, _)| idx)
+            .unwrap();
+        let banked = Quat::from_rotation_z(0.6) * Quat::from_rotation_x(0.5);
+        world.objects.get_mut(seat).unwrap().rotation = banked;
+        world.objects.settle(seat);
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        assert!(camera.view_up().abs_diff_eq(Vec3::Z, 1e-5), "third person keeps the world's up");
+        camera.change_to_mouselook(&mut world.agent, &settings, false);
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        let index = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let (_, rotation, _) = Scene::object_transform_unshifted(&world, index, Instant::now()).unwrap();
+        let up = rotation * Vec3::Z;
+        assert!(up.angle_between(Vec3::Z) > 0.3, "the seat is banked");
+        assert!(camera.view_up().abs_diff_eq(up, 1e-4), "{:?} vs {up:?}", camera.view_up());
+        // the vehicle turns and banks the other way: the view follows it
+        let turned = Quat::from_rotation_z(-0.9) * Quat::from_rotation_x(-0.4);
+        world.objects.get_mut(seat).unwrap().rotation = turned;
+        world.objects.settle(seat);
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        let (_, rotation, _) = Scene::object_transform_unshifted(&world, index, Instant::now()).unwrap();
+        assert!(camera.view_up().abs_diff_eq(rotation * Vec3::Z, 1e-4));
+        camera.change_to_default(&mut world.agent, &settings);
+        camera.update(&mut world, &settings, &frame(10.0));
+        assert!(camera.view_up().abs_diff_eq(Vec3::Z, 1e-5), "back in third person");
+    }
+
+    /// LLAgentCamera::calcFocusPositionTargetGlobal and LLAgent::yaw / pitch:
+    /// seated in mouselook the aim is in the vehicle's frame, so the mouse
+    /// turns and tilts the view about the vehicle's axes and the aim pitches
+    /// with it; a vehicle that decouples the camera keeps the world's aim.
+    #[test]
+    fn seated_mouselook_aims_in_the_vehicle_frame() {
+        let mut world = hover_world(true);
+        let settings = CameraSettings::default();
+        let mut camera = Camera::default();
+        settle(&mut camera, &mut world, &settings);
+        let seat = world
+            .objects
+            .iter()
+            .find(|(_, o)| !o.is_avatar() && o.parent_id == 0)
+            .map(|(idx, _)| idx)
+            .unwrap();
+        let set_rotation = |world: &mut World, rotation: Quat| {
+            world.objects.get_mut(seat).unwrap().rotation = rotation;
+            world.objects.settle(seat);
+        };
+        let vehicle_up = |world: &World| Scene::object_transform(world, seat, Instant::now(), 0).unwrap().1 * Vec3::Z;
+        // nose up and banked
+        set_rotation(
+            &mut world,
+            Quat::from_rotation_z(0.6) * Quat::from_rotation_y(-0.5) * Quat::from_rotation_x(0.3),
+        );
+        camera.change_to_mouselook(&mut world.agent, &settings, false);
+        world.agent.pitch = 0.0;
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        let up = vehicle_up(&world);
+        assert!(up.angle_between(Vec3::Z) > 0.4, "the vehicle is tilted");
+        assert!(
+            camera.forward().dot(up).abs() < 1e-4,
+            "level in the vehicle: {:?}",
+            camera.forward()
+        );
+        for (dx, dy) in [(80.0, 0.0), (-200.0, 0.0), (0.0, -60.0), (150.0, 90.0)] {
+            camera.look(dx, dy, 1.0, &mut world.agent);
+            camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+            let elevation = camera.forward().dot(up).asin();
+            assert!(
+                (elevation - world.agent.pitch).abs() < 1e-3,
+                "pitch about the vehicle's left axis: {elevation} vs {}",
+                world.agent.pitch
+            );
+        }
+        // the vehicle pitches and banks the other way: the aim goes with it
+        let pitch = world.agent.pitch;
+        set_rotation(
+            &mut world,
+            Quat::from_rotation_z(-0.4) * Quat::from_rotation_y(0.4) * Quat::from_rotation_x(-0.5),
+        );
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        let elevation = camera.forward().dot(vehicle_up(&world)).asin();
+        assert!((elevation - pitch).abs() < 1e-3, "{elevation} vs {pitch}");
+        // VEHICLE_FLAG_CAMERA_DECOUPLED: the world's heading and pitch
+        world.objects.get_mut(seat).unwrap().update_flags |= FLAGS_CAMERA_DECOUPLED;
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        let (yaw, pitch) = (world.agent.yaw, world.agent.pitch);
+        let aim = Vec3::new(yaw.cos() * pitch.cos(), yaw.sin() * pitch.cos(), pitch.sin());
+        assert!(camera.forward().abs_diff_eq(aim, 1e-4), "{:?} vs {aim:?}", camera.forward());
+    }
+
     #[test]
     fn seated_mouselook_tracks_animated_eyes_without_moving_them_when_looking() {
         let mut world = hover_world(true);
@@ -2694,8 +3091,7 @@ mod tests {
                         camera.look(dx, dy, 1.0, &mut world.agent);
                         camera.update(&mut world, &settings, &input);
                         assert!(camera.position.abs_diff_eq(expected, 2e-5), "{:?} vs {expected:?}", camera.position);
-                        let (yaw, pitch) = (world.agent.yaw, world.agent.pitch);
-                        let aim = Vec3::new(yaw.cos() * pitch.cos(), yaw.sin() * pitch.cos(), pitch.sin());
+                        let aim = camera.mouselook_aim(&world.agent);
                         assert!(camera.forward().abs_diff_eq(aim, 2e-5));
                     }
                 }
@@ -2736,8 +3132,7 @@ mod tests {
             camera.look(dx, dy, 1.0, &mut world.agent);
             camera.update(&mut world, &settings, &input);
             assert_eq!(camera.position.z, floor);
-            let (yaw, pitch) = (world.agent.yaw, world.agent.pitch);
-            let aim = Vec3::new(yaw.cos() * pitch.cos(), yaw.sin() * pitch.cos(), pitch.sin());
+            let aim = camera.mouselook_aim(&world.agent);
             assert!(camera.forward().abs_diff_eq(aim, 2e-5), "{:?} vs {aim:?}", camera.forward());
             assert!((camera.target.distance(camera.position) - 1.0).abs() < 2e-5);
         }
@@ -2748,6 +3143,170 @@ mod tests {
     /// of close objects. Coordinates and frame times of the report (alt
     /// camera at 2 106 m, 110 to 180 frames per second); several views,
     /// since only some coordinates were unstable (about four in ten).
+    /// Every frame's step of the camera while `act` drives it, the longest.
+    fn longest_step(cam: &mut Camera, w: &mut World, s: &CameraSettings, frames: u32, mut act: impl FnMut(&mut Camera, &mut World)) -> f32 {
+        let mut longest = 0.0f32;
+        for _ in 0..frames {
+            let before = cam.position;
+            act(cam, w);
+            cam.update(w, s, &frame(1.0 / 60.0));
+            longest = longest.max(cam.position.distance(before));
+        }
+        longest
+    }
+
+    /// A camera at rest behind the avatar, then alt-focused `distance` ahead.
+    fn alt_focused(distance: f32, s: &CameraSettings) -> (Camera, World) {
+        let quick = CameraSettings {
+            smoothing: 0.0,
+            ..s.clone()
+        };
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &quick);
+        let ray = (cam.position, cam.forward());
+        cam.alt_focus(cam.position + cam.forward() * distance, None, ray, &mut w.agent, s);
+        cam.begin_drag(false);
+        (cam, w)
+    }
+
+    fn strongest_smoothing() -> CameraSettings {
+        CameraSettings {
+            smoothing: *SMOOTHING_RANGE.end(),
+            ..Default::default()
+        }
+    }
+
+    /// The lag once reached 50 m: the camera jumped to its goal, fell behind
+    /// again and jumped again, during one drag.
+    #[test]
+    fn a_long_alt_drag_with_the_strongest_smoothing_never_jumps() {
+        let s = strongest_smoothing();
+        for distance in [8.0, 35.0, 60.0] {
+            for (mode, dx, dy) in [
+                (ToolMode::Zoom, 6.0, 0.0),
+                (ToolMode::Zoom, 0.0, 3.0),
+                (ToolMode::Zoom, 0.0, -3.0),
+                (ToolMode::Orbit, 6.0, 0.0),
+                (ToolMode::Pan, 3.0, 0.0),
+            ] {
+                let (mut cam, mut w) = alt_focused(distance, &s);
+                let longest = longest_step(&mut cam, &mut w, &s, 600, |c, w| c.drag(mode, dx, dy, 1280.0, &mut w.agent));
+                assert!(longest < 1.0, "{mode:?} ({dx}, {dy}) at {distance} m: {longest} m in a frame");
+            }
+        }
+    }
+
+    #[test]
+    fn panning_a_lagging_camera_keeps_its_lag() {
+        let s = strongest_smoothing();
+        let (mut cam, mut w) = alt_focused(35.0, &s);
+        longest_step(&mut cam, &mut w, &s, 300, |c, w| {
+            c.drag(ToolMode::Zoom, 6.0, 0.0, 1280.0, &mut w.agent)
+        });
+        let longest = longest_step(&mut cam, &mut w, &s, 60, |c, w| {
+            c.drag(ToolMode::Pan, 3.0, 0.0, 1280.0, &mut w.agent)
+        });
+        assert!(longest < 1.0, "{longest} m in a frame");
+    }
+
+    #[test]
+    fn leaving_an_alt_focus_mid_glide_goes_on_from_where_the_camera_is() {
+        let s = strongest_smoothing();
+        let (mut cam, mut w) = alt_focused(20.0, &s);
+        longest_step(&mut cam, &mut w, &s, 120, |c, w| {
+            c.drag(ToolMode::Zoom, 6.0, 0.0, 1280.0, &mut w.agent)
+        });
+        cam.end_drag();
+        cam.handle_reset_view(&mut w.agent, &s);
+        let longest = longest_step(&mut cam, &mut w, &s, 240, |_, _| {});
+        assert!(longest < 0.5, "{longest} m in a frame");
+    }
+
+    /// What really moves the goal at once is still not smoothed, whatever
+    /// the setting (MAX_CAMERA_SMOOTH_DISTANCE).
+    #[test]
+    fn a_goal_that_jumps_far_in_one_frame_is_not_smoothed() {
+        let s = CameraSettings {
+            zoom_time: 0.0,
+            ..strongest_smoothing()
+        };
+        let (mut cam, mut w) = alt_focused(90.0, &s);
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        let goal = cam.focus_target + cam.focus_offset_target;
+        assert!(
+            cam.position.distance(goal) < 0.01,
+            "{} m from the goal",
+            cam.position.distance(goal)
+        );
+    }
+
+    /// The region's frame moves under a lagging camera: nothing shows.
+    #[test]
+    fn a_border_crossing_shows_nothing_with_the_strongest_smoothing() {
+        let s = strongest_smoothing();
+        let start = Vec3::new(128.0, 128.0, 25.0);
+        let mut w = world_at(start);
+        let mut cam = Camera::default();
+        settle(
+            &mut cam,
+            &mut w,
+            &CameraSettings {
+                smoothing: 0.0,
+                ..s.clone()
+            },
+        );
+        longest_step(&mut cam, &mut w, &s, 60, |c, w| c.orbit_drag(4.0, 0.0, 1.0, &mut w.agent));
+        let delta = Vec3::new(-256.0, 0.0, 0.0);
+        let before = cam.position + delta;
+        cam.shift(delta);
+        w.agent.position += delta;
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        assert!(cam.position.distance(before) < 0.1, "{} m", cam.position.distance(before));
+    }
+
+    /// The strongest smoothing, with an alt camera high up, where a step of
+    /// the coordinates is largest and each frame's step of the smoothing is
+    /// smallest: the camera covers half its way per half-life and gets there,
+    /// at any frame rate.
+    #[test]
+    fn the_strongest_smoothing_keeps_its_half_life_and_arrives_at_any_frame_rate() {
+        let quick = CameraSettings {
+            smoothing: 0.0,
+            zoom_time: 0.0,
+            ..Default::default()
+        };
+        let s = CameraSettings {
+            smoothing: *SMOOTHING_RANGE.end(),
+            ..quick.clone()
+        };
+        let half_life = s.smoothing * SMOOTHING_HALF_LIFE;
+        let avatar = Vec3::new(108.2, 187.6, 2105.8);
+        for fps in [60u32, 144, 1000] {
+            let dt = 1.0 / fps as f32;
+            let mut w = world_at(avatar);
+            let mut cam = Camera::default();
+            settle(&mut cam, &mut w, &quick);
+            let focus = avatar + Vec3::new(3.0, -2.0, 0.5);
+            cam.set_view(focus + Vec3::new(-4.0, 3.0, 1.0), focus, &mut w.agent, &quick);
+            settle(&mut cam, &mut w, &quick);
+            let start = cam.position;
+            let goal = focus + Vec3::new(4.0, -3.0, 1.0);
+            cam.set_view(goal, focus, &mut w.agent, &s);
+            let gap = |c: &Camera| c.position.distance(goal);
+            let first = gap(&cam).max(start.distance(goal));
+            for _ in 0..(half_life * fps as f32) as u32 {
+                cam.update(&mut w, &s, &frame(dt));
+            }
+            let ratio = gap(&cam) / first;
+            assert!((ratio - 0.5).abs() < 0.02, "{fps} fps: {ratio} of the way left after a half-life");
+            for _ in 0..(14.0 * half_life * fps as f32) as u32 {
+                cam.update(&mut w, &s, &frame(dt));
+            }
+            assert!(gap(&cam) < 0.002, "{fps} fps: stopped {} m short", gap(&cam));
+        }
+    }
+
     #[test]
     fn a_camera_at_rest_stays_bit_identical_whatever_the_frame_time() {
         let s = CameraSettings::default();
@@ -2967,9 +3526,11 @@ mod tests {
         cam.orbit_drag(-200.0, 60.0, 1.0, &mut agent);
         cam.zoom_fraction = 0.4;
         cam.fov_zoom = 0.3;
+        cam.roll = 0.4;
         let heading = agent.yaw;
         cam.reset_to_defaults(&mut agent, &s);
         assert_eq!((cam.orbit_yaw, cam.pitch, cam.zoom_fraction, cam.fov_zoom), (0.0, 0.0, 1.0, 0.0));
+        assert_eq!(cam.roll, 0.0, "reset levels the camera");
         assert_eq!(agent.yaw, heading, "the avatar keeps its heading");
         w.agent = agent;
         settle(&mut cam, &mut w, &s);
@@ -3088,8 +3649,7 @@ mod tests {
                 let (root, rotation, _) = Scene::object_transform(&world, index, input.now, 0).unwrap();
                 let expected = root + rotation * eyes;
                 assert!(camera.position.abs_diff_eq(expected, 2e-5));
-                let (yaw, pitch) = (world.agent.yaw, world.agent.pitch);
-                let aim = Vec3::new(yaw.cos() * pitch.cos(), yaw.sin() * pitch.cos(), pitch.sin());
+                let aim = camera.mouselook_aim(&world.agent);
                 assert!(camera.forward().abs_diff_eq(aim, 2e-5));
                 if let Some(previous) = previous {
                     assert!(camera.position.distance(previous) > 0.1);
@@ -3202,7 +3762,7 @@ mod tests {
                     cam.set_focus_on_avatar(true, false, false, &mut w.agent, &s);
                     settle(&mut cam, &mut w, &s);
                 }
-                w.update_bodies(Instant::now(), 1.0 / 60.0, cam.forward(), false, false);
+                w.update_bodies(Instant::now(), 1.0 / 60.0, cam.forward(), false, false, 0.0);
                 let heading = w.agent.yaw;
                 let body = w.bodies[&w.agent_id].rotation;
                 let focus = (cam.focus_point(), cam.focus_object_id());
@@ -3222,7 +3782,7 @@ mod tests {
                         ..frame(1.0 / 60.0)
                     };
                     cam.update(&mut w, &s, &input);
-                    let turn = w.update_bodies(input.now, input.dt, cam.forward(), false, false);
+                    let turn = w.update_bodies(input.now, input.dt, cam.forward(), false, false, 0.0);
                     turning |= turn == if dx < 0.0 { 1 } else { -1 };
                 }
                 assert!(turning, "the drawn body must request the matching turn animation");
@@ -3432,7 +3992,7 @@ mod tests {
                 assert!(pan.cross(Vec3::Y).length() < 1e-6);
                 camera.pan_edit(pan, &mut w.agent, &s);
                 tool.cam = projection(&camera);
-                tool.update(&mut w, &settings, cursor, false, Mods::default());
+                tool.update(&mut w, &settings, None, cursor, false, Mods::default());
                 camera.update(&mut w, &s, &f);
                 tool.cam = projection(&camera);
                 let position = Scene::object_transform(&w, idx, Instant::now(), 0).unwrap().0;
@@ -3452,7 +4012,7 @@ mod tests {
             }
             let held_end = Scene::object_transform(&w, idx, Instant::now(), 0).unwrap().0;
             assert!(held_end.distance(held_start) > 2.0);
-            tool.mouse_up(&mut w, &settings);
+            tool.mouse_up(&mut w, &settings, None);
             assert_eq!(tool.manip.camera_pan(&settings, &tool.cam, (1590.0, start.1), f.dt), Vec3::ZERO);
             let stopped = camera.position;
             for _ in 0..30 {

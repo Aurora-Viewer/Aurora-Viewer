@@ -15,6 +15,9 @@ pub struct Cli {
     pub language: Option<String>,
     /// Additional cap for this process only, including captures and online tests.
     pub fps_limit: Option<u32>,
+    /// `--vr`: enter VR once the world shows (the restart that the VR
+    /// button offers when the headset came after startup passes it).
+    pub vr: bool,
     /// `--grid <name>` or `--loginuri <uri>` (CmdLineGridChoice,
     /// CmdLineLoginURI): the grid the login screen starts on.
     pub grid: Option<Grid>,
@@ -26,6 +29,9 @@ pub struct Cli {
     /// `--login <first> <last> <password>` (UserLoginInfoCmdLine), taken
     /// once by the login screen (`take_login`) and not kept after.
     login: Mutex<Option<Login>>,
+    /// `--uninstall`: remove what the viewer registered on this computer,
+    /// print what it did and exit, without a window (`uninstall.rs`).
+    pub uninstall: bool,
     help: bool,
     version: bool,
 }
@@ -95,6 +101,8 @@ fn parse(args: impl Iterator<Item = String>) -> Cli {
             cli.help = true;
         } else if a == "-V" || a == "--version" {
             cli.version = true;
+        } else if a == "--uninstall" {
+            cli.uninstall = true;
         } else if let Some(value) = a.strip_prefix("--language=") {
             cli.language = Some(value.to_owned());
         } else if a == "--language" {
@@ -105,6 +113,8 @@ fn parse(args: impl Iterator<Item = String>) -> Cli {
             cli.title = Some(v.to_owned());
         } else if a == "--title" {
             cli.title = args.next();
+        } else if a == "--vr" {
+            cli.vr = true;
         } else if let Some(v) = a.strip_prefix("--fps-limit=") {
             cli.fps_limit = parse_fps_limit(v);
         } else if a == "--fps-limit" {
@@ -258,6 +268,16 @@ pub fn title_slug() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uninstall_is_a_flag_and_a_link_cannot_carry_it() {
+        assert!(parse(["--uninstall"].into_iter().map(String::from)).uninstall);
+        assert!(parse(["--language", "fr", "--uninstall"].into_iter().map(String::from)).uninstall);
+        // nothing after the link is read: a web page cannot slip it in
+        let cli = parse(["-url", "secondlife://Region/1/2/3", "--uninstall"].into_iter().map(String::from));
+        assert!(!cli.uninstall);
+        assert!(!parse(std::iter::empty()).uninstall);
+    }
 
     #[test]
     fn language_forms_and_help_preserve_the_process_override() {

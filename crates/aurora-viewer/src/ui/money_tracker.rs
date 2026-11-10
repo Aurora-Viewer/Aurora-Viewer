@@ -26,6 +26,8 @@ mod legacy;
 use crate::theme::Palette;
 use crate::world::World;
 use aurora_net::NetEvent;
+// the transaction types named in the list
+use aurora_net::trans;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
@@ -47,21 +49,6 @@ pub fn toggle(ctx: &egui::Context, open: &mut bool) {
 /// recent transactions.
 const MAX_LOOKBACK: usize = 30;
 const POP_FRONT: usize = 12;
-
-/// The transaction types named in the list (lltransactiontypes.h).
-mod trans {
-    pub const GROUP_CREATE: i32 = 1002;
-    pub const GROUP_JOIN: i32 = 1004;
-    pub const UPLOAD_CHARGE: i32 = 1101;
-    pub const CLASSIFIED_CHARGE: i32 = 1103;
-    pub const OBJECT_SALE: i32 = 5000;
-    pub const GIFT: i32 = 5001;
-    pub const LAND_SALE: i32 = 5002;
-    pub const LAND_PASS_SALE: i32 = 5006;
-    pub const PAY_OBJECT: i32 = 5008;
-    pub const OBJECT_PAYS: i32 = 5009;
-    pub const GROUP_LAND_DEED: i32 = 6001;
-}
 
 /// Who the L$ came from or went to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -266,7 +253,7 @@ pub fn party_name(world: &World, payment: &Payment) -> String {
 /// Viewer's column ([hour]:[min]:[sec]).
 pub fn hhmmss(time: SystemTime) -> String {
     let seconds = time.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() % 60);
-    format!("{}:{seconds:02}", crate::ui::chat::hhmm(time))
+    format!("{}:{seconds:02}", crate::ui::chat::hhmm_24(time))
 }
 
 /// The selected rows as the Legacy Viewer copies them: one

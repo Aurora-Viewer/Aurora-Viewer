@@ -30,8 +30,8 @@ struct Job {
     change: Mutation,
 }
 
-pub(super) fn eligible(inv: &Inventory, id: Uuid, prefs: &InventoryPreferences, agent: Uuid) -> bool {
-    rules::mutable(inv, id, &prefs.protected)
+pub(super) fn eligible(inv: &Inventory, id: Uuid, agent: Uuid) -> bool {
+    rules::mutable(inv, id)
         && !rules::in_type(inv, id, 14)
         && inv
             .items
@@ -104,7 +104,7 @@ fn permissions(item: &InvItem, options: &BulkPerms) -> (u32, u32, u32) {
 impl Job {
     /// Bound traversal work per frame and use the normal lazy-folder requests.
     /// No PATCH leaves until all selected folders are completely loaded.
-    fn advance(&mut self, inv: &mut Inventory, prefs: &InventoryPreferences, agent: Uuid) -> Result<Option<Mutation>, &'static str> {
+    fn advance(&mut self, inv: &mut Inventory, agent: Uuid) -> Result<Option<Mutation>, &'static str> {
         if self.started.elapsed() > Duration::from_secs(120) {
             return Err(aurora_i18n::tr!("inventory-bulk-load-failed"));
         }
@@ -114,7 +114,7 @@ impl Job {
                     self.plan = Some(self.items.drain().collect());
                     break;
                 };
-                if self.seen.contains(&id) || !eligible(inv, id, prefs, agent) {
+                if self.seen.contains(&id) || !eligible(inv, id, agent) {
                     continue;
                 }
                 if let Some(folder) = inv.folders.get(&id) {
@@ -142,7 +142,7 @@ impl Job {
                     self.change.refresh.dedup();
                     return Ok(Some(std::mem::take(&mut self.change)));
                 };
-                if !eligible(inv, id, prefs, agent) {
+                if !eligible(inv, id, agent) {
                     continue;
                 }
                 let Some(item) = inv.items.get(&id) else { continue };
@@ -195,19 +195,11 @@ pub fn demo_menu(frame: u64, st: &mut InventoryUi) {
     }
 }
 
-pub(super) fn show(
-    ctx: &egui::Context,
-    p: &Palette,
-    inv: &mut Inventory,
-    st: &mut InventoryUi,
-    prefs: &InventoryPreferences,
-    agent: Uuid,
-    actions: &mut Vec<InvAction>,
-) {
+pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &mut Inventory, st: &mut InventoryUi, agent: Uuid, actions: &mut Vec<InvAction>) {
     let progress = st.pending.map(|_| st.pending_status(Instant::now()));
     let state = &mut st.bulk_permissions;
     if state.job.is_some() && st.pending.is_none() && !actions.iter().any(|action| matches!(action, InvAction::Edit(_))) {
-        let result = state.job.as_mut().and_then(|job| job.advance(inv, prefs, agent).transpose());
+        let result = state.job.as_mut().and_then(|job| job.advance(inv, agent).transpose());
         if let Some(result) = result {
             state.job = None;
             match result {

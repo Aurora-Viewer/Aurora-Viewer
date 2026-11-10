@@ -1,5 +1,7 @@
 //! Fine, path-following avatar displacement in the lower water-atlas viewport.
 
+use crate::pipeline_cache::CachedPipelines;
+
 pub(crate) struct WakeGpu {
     pipeline: wgpu::RenderPipeline,
     group: wgpu::BindGroup,
@@ -19,7 +21,7 @@ impl WakeGpu {
             dst_factor: wgpu::BlendFactor::One,
             operation: wgpu::BlendOperation::Add,
         };
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
             label: Some("avatar water furrow atlas"),
             layout: None,
             vertex: wgpu::VertexState {

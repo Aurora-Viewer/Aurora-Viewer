@@ -89,7 +89,7 @@ impl App {
                     prefs.fly_assist = false;
                     prefs.swimming = false;
                 }
-                "passage-blocked" | "passage-reached" | "passage-pending" => {
+                "passage-blocked" | "passage-reached" | "passage-pending" | "passage-refused" => {
                     prefs.running = false;
                     prefs.fly_assist = false;
                     prefs.swimming = false;
@@ -103,7 +103,9 @@ impl App {
                 }
                 _ => {}
             }
-            if mode.starts_with("passage-") {
+            if mode == "passage-refused" {
+                self.passage_refused_demo();
+            } else if mode.starts_with("passage-") {
                 // Synthetic outcome only: the offline demo has no Havok.
                 // Exercise the same feedback formatter used for LSL status.
                 self.movement_runtime.passage_feedback.start(123, now);
@@ -129,10 +131,14 @@ impl App {
             if mode == "run-ao" {
                 crate::ao::demo::assets(&mut self.scene);
                 let selected = crate::ao::demo::seed(&mut self.world.inventory, self.world.agent_id);
-                self.settings
-                    .ao
-                    .accounts
-                    .insert(self.world.agent_id, crate::ao::Account { enabled: true, selected });
+                self.settings.ao.accounts.insert(
+                    self.world.agent_id,
+                    crate::ao::Account {
+                        enabled: true,
+                        selected,
+                        ..Default::default()
+                    },
+                );
                 self.panels.ao = true;
             }
             if let Some(style) = match mode.as_str() {
@@ -263,16 +269,8 @@ impl App {
         } else if !near_water || !prefs.swimming {
             self.movement_probe = (None, false, None);
         }
-        let can_fly = self
-            .world
-            .main()
-            .and_then(|r| r.info.as_ref())
-            .is_some_and(|r| r.region_flags & aurora_net::region_flags::BLOCK_FLY == 0)
-            && self
-                .world
-                .parcel
-                .as_ref()
-                .is_none_or(|p| p.flags & aurora_net::parcel_flags::ALLOW_FLY != 0);
+        // LLAgent::canFly: the parcel owner and the fly override count too
+        let can_fly = crate::autopilot::land_allows_flight(&self.world, false, true);
         let mut frame = Frame {
             position,
             velocity: self.world.agent.velocity,
@@ -547,7 +545,12 @@ impl App {
         let destination = self
             .scene
             .movement_exit(&self.world, self.world.agent.position, direction, self.movement_height());
-        if let Some(position) = destination
+        if let Some((position, wall)) = destination
+            && let Err(refusal) = self.passage_rights(wall, position)
+        {
+            self.movement_ui.message = refusal.message();
+            self.open_movement();
+        } else if let Some((position, _)) = destination
             && self.bridge_runtime.available()
             && let Some(motion) = self.movement_runtime.start_passage(position - self.world.agent.position, now)
         {
@@ -584,7 +587,11 @@ impl App {
             self.movement_runtime.state.label()
         };
         let mut open = self.panels.ao;
-        let mut account = self.settings.ao.accounts.get(&self.world.agent_id).cloned().unwrap_or_default();
+        let mut account = crate::ao::Account::default();
+        if let Some(saved) = self.settings.ao.accounts.get(&self.world.agent_id) {
+            account.enabled = saved.enabled;
+            account.selected = saved.selected;
+        }
         let mut actions = self.toolbar_ui.ao_quick.show(
             ctx,
             p,
@@ -617,10 +624,13 @@ impl App {
             self.settings.movements.insert(self.world.agent_id, prefs);
         }
         if actions.iter().any(|a| matches!(a, crate::ui::ao::Action::Preferences)) {
-            self.settings.ao.accounts.insert(self.world.agent_id, account);
+            let saved = self.settings.ao.accounts.entry(self.world.agent_id).or_default();
+            saved.enabled = account.enabled;
+            saved.selected = account.selected;
         }
         for action in actions {
             self.apply_ao_action(action);
         }
+        self.save_ao_choices();
     }
 }

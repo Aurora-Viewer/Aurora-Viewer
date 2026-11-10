@@ -18,6 +18,7 @@ pub fn page(cx: &mut Cx) {
     cx.group(tr!("ui-options-vision"), |cx| {
         cx.borrow(Page::Layout, 0, &["ui_scale"]);
         cx.borrow(Page::Appearance, 0, &["font_scale", "font"]);
+        cx.borrow(Page::Chat, 0, &["chat_font_scale"]);
         cx.toggle(
             tr!("ui-options-high-contrast"),
             tr!("ui-options-high-contrast-help"),
@@ -76,7 +77,11 @@ pub fn page(cx: &mut Cx) {
         // world tooltips name what is under the pointer — useful when focus
         // is hard to track; same rows as World › World tooltips
         cx.borrow(Page::Layout, 1, &["hover_tips.enabled", "hover_tips.delay"]);
-        cx.borrow(Page::Inventory, 0, &["inventory.thumbnail_tooltips"]);
+        cx.borrow(
+            Page::Inventory,
+            0,
+            &["inventory.show_hover_tooltips", "inventory.thumbnail_tooltips"],
+        );
     });
     cx.group(tr!("ui-options-motion"), |cx| {
         cx.toggle(

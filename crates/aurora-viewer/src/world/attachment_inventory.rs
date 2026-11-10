@@ -77,9 +77,10 @@ impl World {
         action: appearance::Action,
         allow_recovery: bool,
     ) -> (Vec<NetCommand>, Option<appearance::Action>) {
-        let (items, multiple) = match action {
-            appearance::Action::Remove(item) => (vec![item], false),
-            appearance::Action::RemoveItems(items) => (items, true),
+        let (items, multiple, wear) = match action {
+            appearance::Action::Remove(item) => (vec![item], false, None),
+            appearance::Action::RemoveItems(items) => (items, true, None),
+            appearance::Action::Force { remove, wear } => (remove, true, Some(wear)),
             other => return (Vec::new(), Some(other)),
         };
         let incomplete = self
@@ -104,7 +105,10 @@ impl World {
                 remaining.push(item);
             }
         }
-        let action = if remaining.is_empty() {
+        // The wears of a forced batch stay in its COF update.
+        let action = if let Some(wear) = wear {
+            (!remaining.is_empty() || !wear.is_empty()).then_some(appearance::Action::Force { remove: remaining, wear })
+        } else if remaining.is_empty() {
             None
         } else if multiple {
             Some(appearance::Action::RemoveItems(remaining))
@@ -281,6 +285,8 @@ mod tests {
         world.agent_id = avatar.full_id;
         world.main_region = Some(1);
         world.movement_complete = true;
+        // later in the session: the login restore is over
+        world.outfit = super::super::outfit::OutfitRestore::finished();
         world.ensure_region(1, (256, 256)).caps = Arc::new(
             ["FetchInventory2", "FetchInventoryDescendents2", "InventoryAPIv3"]
                 .into_iter()
@@ -346,6 +352,58 @@ mod tests {
             removed: Vec::new(),
             created: HashMap::new(),
         }
+    }
+
+    #[test]
+    fn an_interactive_attachment_is_linked_only_after_its_simulator_arrival() {
+        let (mut world, object, item) = fixture();
+        let now = Instant::now();
+        world.apply(NetEvent::ObjectsKilled {
+            handle: 1,
+            local_ids: vec![object.local_id],
+        });
+        world.inventory.add_items(vec![item.clone()]);
+        let action = appearance::Action::Add(item.id);
+        let (mut change, _) = appearance::plan(&world.inventory, action.clone(), &world.outfit_attachment_points()).expect("add");
+        let mut attachments = appearance::attachments_for_action(&world.inventory, world.agent_id, &action);
+        appearance::defer_attachment_links(
+            &world.inventory,
+            &mut change,
+            &world.outfit_attachment_items(),
+            &mut attachments,
+            world.agent_id,
+        );
+        appearance::demo_mutate(&mut world.inventory, world.agent_id, &change).expect("COF readback");
+        let cof = appearance::cof(&world.inventory).expect("COF");
+        assert!(!super::super::outfit::cof_objects(&world.inventory, cof).contains(&item.id));
+        world.apply(NetEvent::Alert {
+            message: "Cannot exceed limit on attached animated objects.".into(),
+        });
+        assert!(
+            world.update_attachment_inventory(now, true).is_empty(),
+            "a refusal is not an arrival"
+        );
+        assert!(!super::super::outfit::cof_objects(&world.inventory, cof).contains(&item.id));
+
+        // A later successful attempt registers through the same arrival
+        // path used by script-attached objects, once, after AIS readback.
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![object],
+        });
+        let commands = world.update_attachment_inventory(now + RETRY_GAP, true);
+        let [NetCommand::EditInventory { request, change }] = &commands[..] else {
+            panic!("register confirmed attachment: {commands:?}")
+        };
+        assert!(matches!(&change.operations[..], [Operation::Links { parent, links }]
+            if *parent == cof && links.len() == 1 && links[0].target == item.id));
+        assert!(
+            !super::super::outfit::cof_objects(&world.inventory, cof).contains(&item.id),
+            "wait for AIS"
+        );
+        world.attachment_inventory_result(*request, Ok(linked_reply(&world, &item)));
+        assert!(super::super::outfit::cof_objects(&world.inventory, cof).contains(&item.id));
+        assert!(world.update_attachment_inventory(now + RETRY_GAP * 2, true).is_empty());
     }
 
     #[test]
@@ -637,6 +695,68 @@ mod tests {
                 [NetCommand::EditInventory { .. }]
             ));
         }
+    }
+
+    /// #2714: an unrequested detach seen before the login restore has read
+    /// the COF leaves the link (LLAppearanceMgr::mAttachmentInvLinkEnabled);
+    /// the same detach later in the session removes it.
+    #[test]
+    fn a_detach_before_the_outfit_is_loaded_keeps_the_link() {
+        for loaded in [false, true] {
+            let (mut world, object, item) = fixture();
+            world.inventory.add_items(vec![item.clone()]);
+            world.inventory.apply(linked_reply(&world, &item).contents);
+            if !loaded {
+                world.outfit = Default::default();
+            }
+            let cof = appearance::cof(&world.inventory).expect("COF");
+            assert!(
+                appearance::folder_links(&world.inventory, cof)
+                    .iter()
+                    .any(|link| link.target == item.id)
+            );
+            world.apply(NetEvent::ObjectsKilled {
+                handle: 1,
+                local_ids: vec![object.local_id],
+            });
+            assert!(world.worn_attachment(&item.id).is_none());
+            let linked = appearance::folder_links(&world.inventory, cof)
+                .iter()
+                .any(|link| link.target == item.id);
+            let edits = world.take_inventory_edits();
+            if loaded {
+                assert!(!linked, "after the login, the detach removes the link");
+                assert!(matches!(&edits[..], [Mutation { operations, .. }]
+                    if matches!(&operations[..], [Operation::Delete { folder: false, .. }])));
+            } else {
+                assert!(linked, "the restore will wear it again");
+                assert!(edits.is_empty(), "nothing sent to the server");
+            }
+            assert!(world.inventory.items.contains_key(&item.id), "keep original");
+        }
+    }
+
+    /// A detach the viewer sent during the login (for the resident or RLVa)
+    /// still removes its link, as removeItemsFromAvatar does in the Legacy
+    /// Viewer whatever mAttachmentInvLinkEnabled says.
+    #[test]
+    fn a_requested_detach_before_the_outfit_is_loaded_removes_the_link() {
+        let (mut world, object, item) = fixture();
+        world.inventory.add_items(vec![item.clone()]);
+        world.inventory.apply(linked_reply(&world, &item).contents);
+        world.outfit = Default::default();
+        world.note_outfit_command(&NetCommand::DetachAttachments(vec![item.id]));
+        world.apply(NetEvent::ObjectsKilled {
+            handle: 1,
+            local_ids: vec![object.local_id],
+        });
+        let cof = appearance::cof(&world.inventory).expect("COF");
+        assert!(
+            appearance::folder_links(&world.inventory, cof)
+                .iter()
+                .all(|link| link.target != item.id)
+        );
+        assert_eq!(world.take_inventory_edits().len(), 1);
     }
 
     #[test]

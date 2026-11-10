@@ -22,17 +22,78 @@ pub fn set_plugins_status(ctx: &egui::Context, state: PackState) {
     ctx.data_mut(|d| d.insert_temp(egui::Id::unique(PLUGINS_STATUS), state));
 }
 
-/// What a page without plugins shows while the pack is on its way; `None`
-/// when no pack is coming.
-fn waiting_for_plugins(ctx: &egui::Context) -> Option<String> {
-    match ctx.data(|d| d.get_temp::<PackState>(egui::Id::unique(PLUGINS_STATUS)))? {
-        PackState::Downloading(p) if p.preparing => Some(aurora_i18n::tr!("media-plugins-installing").to_owned()),
-        PackState::Downloading(p) => Some(aurora_i18n::tr!(
+const PLUGINS_DOWNLOAD: &str = "media_plugins_pack_download";
+
+/// What a place without plugins shows instead of the web or the media.
+enum Waiting {
+    /// The pack is on its way, or its download failed.
+    Text(String),
+    /// Not downloaded (never asked, or "Not now"): a Download button.
+    Offer,
+}
+
+/// `None` when no pack is coming nor can be downloaded.
+fn waiting_for_plugins(ctx: &egui::Context) -> Option<Waiting> {
+    let text = match ctx.data(|d| d.get_temp::<PackState>(egui::Id::unique(PLUGINS_STATUS)))? {
+        PackState::Idle => return Some(Waiting::Offer),
+        PackState::Downloading(p) if p.preparing => aurora_i18n::tr!("media-plugins-installing").to_owned(),
+        PackState::Downloading(p) => aurora_i18n::tr!(
             "media-plugins-page-waiting",
             percent = (p.received * 100 / p.total.max(1)).to_string()
-        )),
-        PackState::Failed(aurora_updater::Failure::Unsupported) | PackState::Idle | PackState::Ready => None,
-        PackState::Failed(_) => Some(aurora_i18n::tr!("media-plugins-page-failed").to_owned()),
+        ),
+        PackState::Failed(aurora_updater::Failure::Unsupported) | PackState::Ready => return None,
+        PackState::Failed(_) => aurora_i18n::tr!("media-plugins-page-failed").to_owned(),
+    };
+    Some(Waiting::Text(text))
+}
+
+/// A Download button was pressed this frame (taken by the app, which
+/// records the answer and starts the download).
+pub fn take_plugins_download(ctx: &egui::Context) -> bool {
+    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(PLUGINS_DOWNLOAD)))
+        .unwrap_or(false)
+}
+
+/// The pack's size in whole megabytes, as the consent card says it.
+pub fn pack_megabytes() -> String {
+    aurora_i18n::integer(aurora_updater::media_pack::PACK.size.div_ceil(1024 * 1024) as i64)
+}
+
+/// "Web pages and media need …" and its Download button, where the web or a
+/// media would show without plugins.
+fn plugins_offer(ui: &mut egui::Ui, pal: &crate::theme::Palette) {
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(aurora_i18n::tr!("media-plugins-page-offer", size = pack_megabytes()))
+                .size(12.0)
+                .color(pal.muted),
+        )
+        .wrap(),
+    );
+    let download = super::widgets::action_button(
+        ui,
+        pal,
+        "download-filled",
+        aurora_i18n::tr!("media-plugins-download"),
+        super::widgets::ActionKind::Flat,
+        Vec2::new(0.0, 26.0),
+    );
+    if download.clicked() {
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(PLUGINS_DOWNLOAD), true));
+    }
+}
+
+/// The line of the media controls (`ui/media.rs`) when no plugins are
+/// found: where the pack stands, or its Download button.
+pub fn plugins_notice(ui: &mut egui::Ui, pal: &crate::theme::Palette) {
+    match waiting_for_plugins(ui.ctx()) {
+        Some(Waiting::Offer) => {
+            ui.horizontal(|ui| plugins_offer(ui, pal));
+        }
+        Some(Waiting::Text(text)) => {
+            ui.label(egui::RichText::new(text).size(11.0).color(pal.muted));
+        }
+        None => {}
     }
 }
 
@@ -63,6 +124,13 @@ pub struct WebView {
     pub location: String,
     /// A page is loading (between NavigateBegin and NavigateComplete).
     pub loading: bool,
+    /// The page's title (LLViewerMediaObserver MEDIA_EVENT_NAME_CHANGED).
+    pub title: String,
+    /// The browser's status line (MEDIA_EVENT_STATUS_TEXT_CHANGED: the link
+    /// under the pointer).
+    pub status: String,
+    /// Load progress, 0 to 100 (MEDIA_EVENT_PROGRESS_UPDATED).
+    pub progress: i32,
 }
 
 impl WebView {
@@ -118,6 +186,13 @@ impl WebView {
         }
     }
 
+    /// LLMediaCtrl::navigateStop.
+    pub fn stop(&mut self) {
+        if let Some(p) = self.plugin.as_mut() {
+            p.browse_stop();
+        }
+    }
+
     pub fn reload(&mut self) {
         if let Some(p) = self.plugin.as_mut() {
             p.browse_reload(false);
@@ -148,17 +223,33 @@ impl WebView {
         if self.plugin.is_none()
             && self.failed.is_none()
             && paths.is_none()
-            && let Some(text) = waiting_for_plugins(ui.ctx())
+            && let Some(waiting) = waiting_for_plugins(ui.ctx())
         {
             // the page starts by itself once the pack is installed
-            ui.painter().text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                text,
-                egui::FontId::proportional(12.0),
-                pal.muted,
-            );
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+            match waiting {
+                Waiting::Text(text) => {
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        text,
+                        egui::FontId::proportional(12.0),
+                        pal.muted,
+                    );
+                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+                }
+                Waiting::Offer => {
+                    // the text and its button, in the middle of the page
+                    let room = rect.shrink(16.0);
+                    let width = room.width().min(360.0);
+                    let block = egui::Rect::from_center_size(room.center(), Vec2::new(width, room.height().min(72.0)));
+                    ui.scope_builder(
+                        egui::UiBuilder::new()
+                            .max_rect(block)
+                            .layout(egui::Layout::top_down(egui::Align::Center)),
+                        |ui| plugins_offer(ui, pal),
+                    );
+                }
+            }
             return resp;
         }
         if self.plugin.is_none() && self.failed.is_none() && !self.url.is_empty() {
@@ -236,6 +327,10 @@ impl WebView {
         }
         p.idle();
         for ev in p.take_events() {
+            if let Some(url) = clicked_url(&ev) {
+                super::context::request(ui.ctx(), clicked_link_action(url));
+                continue;
+            }
             match ev {
                 MediaEvent::NavigateComplete { uri, .. } => {
                     // the first page of a new browser may complete twice
@@ -255,6 +350,9 @@ impl WebView {
                 }
                 MediaEvent::LocationChanged(uri) if !uri.is_empty() => self.location = uri,
                 MediaEvent::CursorChanged(c) => self.cursor = c,
+                MediaEvent::NameChanged(name) => self.title = name,
+                MediaEvent::StatusText(text) => self.status = text,
+                MediaEvent::Progress(percent) => self.progress = percent,
                 MediaEvent::PluginFailed(e) => {
                     log::warn!("web view: browser stopped: {e}");
                     self.failed = Some(e);
@@ -365,5 +463,82 @@ impl WebView {
         }
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
         resp
+    }
+}
+
+/// Links from the browser are actionable only after a user click. CEF sends
+/// custom schemes separately and records whether navigation had a gesture;
+/// a redirect or script navigation must never trigger a SLURL action.
+fn clicked_url(event: &MediaEvent) -> Option<&str> {
+    match event {
+        MediaEvent::ClickLinkNoFollow { url, nav_type } if nav_type == "clicked" && !url.is_empty() => Some(url),
+        _ => None,
+    }
+}
+
+/// Follow the same SLURL and app-link rules as a clicked link in chat.
+fn clicked_link_action(url: &str) -> super::context::CtxAction {
+    use super::context::CtxAction;
+    if let Some(place) = crate::slurl::place_link(url) {
+        let location = place.location;
+        if place.teleport {
+            CtxAction::TeleportToPlace(location.target(), location.pos)
+        } else {
+            CtxAction::ShowPlaceInfo(location.target(), location.pos)
+        }
+    } else if let Some(link) = crate::slapp::parse(url) {
+        CtxAction::AppLink(link)
+    } else {
+        CtxAction::OpenUrl(url.to_owned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_scheme_links_require_a_click_gesture() {
+        assert_eq!(
+            clicked_url(&MediaEvent::ClickLinkNoFollow {
+                url: "secondlife:///app/teleport/Aurora/12/34/56".into(),
+                nav_type: "clicked".into(),
+            }),
+            Some("secondlife:///app/teleport/Aurora/12/34/56")
+        );
+        assert_eq!(
+            clicked_url(&MediaEvent::ClickLinkNoFollow {
+                url: "secondlife:///app/teleport/Aurora/12/34/56".into(),
+                nav_type: "navigated".into(),
+            }),
+            None
+        );
+        assert_eq!(
+            clicked_url(&MediaEvent::ClickLinkNoFollow {
+                url: String::new(),
+                nav_type: "clicked".into(),
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn clicked_teleport_slurl_uses_the_viewers_teleport_flow() {
+        let action = clicked_link_action("secondlife:///app/teleport/Aurora%20Plaza/12/34/56");
+        assert!(matches!(action, super::super::context::CtxAction::TeleportToPlace(region, pos)
+            if region == "Aurora Plaza" && pos == glam::Vec3::new(12.0, 34.0, 56.0)));
+    }
+
+    #[test]
+    fn clicked_map_slurl_opens_place_details() {
+        let action = clicked_link_action("https://maps.secondlife.com/secondlife/Aurora%20Plaza/12/34/56");
+        assert!(matches!(action, super::super::context::CtxAction::ShowPlaceInfo(region, pos)
+            if region == "Aurora Plaza" && pos == glam::Vec3::new(12.0, 34.0, 56.0)));
+    }
+
+    #[test]
+    fn clicked_http_links_keep_the_external_link_policy() {
+        let action = clicked_link_action("https://example.org/");
+        assert!(matches!(action, super::super::context::CtxAction::OpenUrl(url) if url == "https://example.org/"));
     }
 }

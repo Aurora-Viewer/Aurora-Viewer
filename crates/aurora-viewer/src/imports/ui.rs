@@ -15,6 +15,7 @@ mod folder_panel;
 mod folder_preview;
 mod footer;
 mod inspector;
+pub(crate) mod launcher;
 pub(crate) mod local_status;
 mod queue;
 mod source_root;
@@ -77,7 +78,15 @@ fn fold(ui: &mut egui::Ui, p: &Palette, title: &str, default_open: bool, body: i
 
 /// A flat text button of the toolbar, greyed out when `enabled` is false.
 fn tool_button(ui: &mut egui::Ui, p: &Palette, label: &str, enabled: bool) -> egui::Response {
-    ui.add_enabled_ui(enabled, |ui| flat_button(ui, p, label)).inner
+    action_button_if(
+        ui,
+        p,
+        "",
+        label,
+        ActionKind::Flat,
+        Vec2::new(0.0, ui.spacing().interact_size.y),
+        enabled,
+    )
 }
 
 /// Swatch and picker of a glTF factor: linear components with a straight
@@ -105,8 +114,10 @@ pub(crate) fn factor_swatch(ui: &mut egui::Ui, p: &Palette, id_salt: impl egui::
 
 pub enum Action {
     Files,
+    Choose(Choice),
     Folder,
     Start,
+    StartFor(Choice),
     Cancel,
     Preview(Uuid),
     Play(Uuid, bool),
@@ -128,10 +139,12 @@ pub enum Action {
     StageLocalUploads,
     MapFile(Uuid, usize),
     MapInventory(Uuid, usize),
+    MapDrop(Uuid, usize, crate::ui::resource_drop::Target),
     Zoom(Uuid, Option<usize>),
     LargeMap(Uuid, usize),
     Remove(Uuid),
     Resume,
+    ResumeFor(Choice),
 }
 
 fn server_message(message: &str) -> &str {
@@ -230,18 +243,30 @@ fn metadata_controls(ui: &mut egui::Ui, entry: &mut Entry) {
         .spacing(Vec2::new(12.0, 8.0))
         .show(ui, |ui| {
             ui.label(aurora_i18n::tr!("common-name"));
-            ui.add(
-                egui::TextEdit::singleline(&mut entry.name)
-                    .desired_width((ui.available_width() - if mesh { 0.0 } else { 100.0 }).clamp(120.0, 360.0))
-                    .char_limit(63),
+            crate::ui::widgets::restricted_text_field(
+                ui,
+                true,
+                &mut entry.name,
+                crate::ui::widgets::TextPolicy::PrintableNoPipe,
+                |b, ui| {
+                    egui::TextEdit::singleline(b)
+                        .desired_width((ui.available_width() - if mesh { 0.0 } else { 100.0 }).clamp(120.0, 360.0))
+                        .char_limit(63)
+                },
             );
             ui.end_row();
             if !entry.local {
                 ui.label(aurora_i18n::tr!("common-description"));
-                ui.add(
-                    egui::TextEdit::singleline(&mut entry.description)
-                        .desired_width((ui.available_width() - if mesh { 0.0 } else { 100.0 }).clamp(120.0, 360.0))
-                        .char_limit(127),
+                crate::ui::widgets::restricted_text_field(
+                    ui,
+                    true,
+                    &mut entry.description,
+                    crate::ui::widgets::TextPolicy::PrintableNoPipe,
+                    |b, ui| {
+                        egui::TextEdit::singleline(b)
+                            .desired_width((ui.available_width() - if mesh { 0.0 } else { 100.0 }).clamp(120.0, 360.0))
+                            .char_limit(127)
+                    },
                 );
                 ui.end_row();
             }
@@ -313,7 +338,22 @@ pub fn show(
         world.login.as_ref().map(|login| Prices::from_login(&login.raw)).unwrap_or_default()
     };
     let prices = prices.with_fallback(world.upload_cost);
+    launcher::show(ctx, p, imports, &mut actions);
     inspector::show(ctx, p, imports, prefs, world, inventory_prefs, &prices, &mut actions);
+    for choice in windows::TYPES {
+        if imports.window_open(choice) {
+            let mut window_actions = Vec::new();
+            imports.with_window(choice, |imports| {
+                inspector::show(ctx, p, imports, prefs, world, inventory_prefs, &prices, &mut window_actions);
+            });
+            actions.extend(window_actions.into_iter().map(|action| match action {
+                Action::Files => Action::Choose(choice),
+                Action::Resume => Action::ResumeFor(choice),
+                action => action,
+            }));
+        }
+    }
+    launcher::keep_accessible(ctx, imports);
     if prefs.permissions_for(Kind::Mesh) != old_permissions.permissions_for(Kind::Mesh) {
         for entry in &mut imports.entries {
             if let Some(Source::Mesh(draft)) = &mut entry.source {
@@ -323,35 +363,45 @@ pub fn show(
         }
     }
     if imports.confirm {
-        let mut confirm = true;
-        Floater::new(
-            "import_confirmation",
-            aurora_i18n::tr!("import-confirm-title"),
-            egui::pos2(270.0, 240.0),
-            Vec2::new(380.0, 160.0),
-        )
-        .fixed()
-        .show(ctx, p, &mut confirm, |ui| {
-            if let Some(cost) = imports.total(&prices) {
-                ui.label(aurora_i18n::tr!("import-confirm-price", cost = cost));
-            }
-            if imports.folders.active() && !imports.folder_plan_ready(world, inventory_prefs) {
-                ui.label(aurora_i18n::tr!("import-folders-auto-create"));
-            }
-            ui.horizontal(|ui| {
-                let size = Vec2::new(0.0, 26.0);
-                let upload = aurora_i18n::tr!("import-upload");
-                if action_button(ui, p, "file-upload-filled", upload, ActionKind::Primary, size).clicked() {
-                    actions.push(Action::Start);
-                    imports.confirm = false;
+        let choice = imports.confirm_choice.unwrap_or(imports.choice);
+        imports.with_choice(choice, |imports| {
+            let modal = widgets::Modal::new(egui::Id::unique("import_confirmation")).show(ctx, |ui| {
+                ui.set_width(380.0_f32.min(ctx.content_rect().width() - 60.0).max(180.0));
+                widgets::section_header(ui, p, "file-upload-filled", aurora_i18n::tr!("import-confirm-title"));
+                if let Some(cost) = imports.total(&prices) {
+                    ui.label(aurora_i18n::tr!("import-confirm-price", cost = cost));
+                    if imports.has_shared_textures() {
+                        ui.label(aurora_i18n::tr!("import-confirm-shared-textures"));
+                    }
                 }
-                if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
-                    imports.confirm = false;
+                if imports.folders.active() && !imports.folder_plan_ready(world) {
+                    ui.label(aurora_i18n::tr!("import-folders-auto-create"));
                 }
+                ui.horizontal(|ui| {
+                    let size = Vec2::new(0.0, 26.0);
+                    let upload = aurora_i18n::tr!("import-upload");
+                    let start = action_button(ui, p, "file-upload-filled", upload, ActionKind::Primary, size);
+                    #[cfg(test)]
+                    ctx.data_mut(|data| data.insert_temp(egui::Id::unique("import_confirm_upload"), start.rect));
+                    if start.clicked() {
+                        actions.push(if choice == Choice::Bulk {
+                            Action::Start
+                        } else {
+                            Action::StartFor(choice)
+                        });
+                        imports.confirm = false;
+                    }
+                    if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                        imports.confirm = false;
+                    }
+                });
             });
+            if modal.should_close() {
+                imports.confirm = false;
+            }
         });
-        if !confirm {
-            imports.confirm = false;
+        if !imports.confirm {
+            imports.confirm_choice = None;
         }
     }
     zoom::show(ctx, p, imports, &mut actions);
@@ -541,13 +591,14 @@ fn texture(
     }
     if *target != 0 {
         if let Some(model) = model {
-            aurora_render::preview::paint(
+            let response = aurora_render::preview::paint(
                 ui,
-                egui::Id::unique(("texture_preview", id)),
+                ui.scope_id().with(("texture_preview", id)),
                 model.clone(),
                 view,
                 Vec2::new(ui.available_width(), 260.0),
             );
+            widgets::local_texture::paint(ui, p, response.rect);
             preview_camera_controls(ui, p, view);
         } else {
             ui.spinner();
@@ -589,6 +640,7 @@ fn texture(
             egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
             widgets::PICTURE_TINT,
         );
+        widgets::local_texture::paint(ui, p, rect);
     } else {
         ui.spinner();
     }
@@ -777,7 +829,7 @@ fn animation_controls(ui: &mut egui::Ui, p: &Palette, animation: &mut Animation,
         RichText::new(aurora_i18n::tr!(
             "import-animation-frames",
             frames = bvh.frames,
-            rate = format!("{:.2}", 1.0 / bvh.frame_time)
+            rate = format!("{:.2}", if bvh.frame_time > 0.0 { 1.0 / bvh.frame_time } else { 0.0 })
         ))
         .small()
         .color(p.muted),
@@ -857,7 +909,11 @@ fn animation_controls(ui: &mut egui::Ui, p: &Palette, animation: &mut Animation,
                     {
                         *value = percent / 100.0 * animation.duration;
                     }
-                    let mut frame = (*value / bvh.frame_time).round() as usize;
+                    let mut frame = if bvh.frame_time > 0.0 {
+                        (*value / bvh.frame_time).round() as usize
+                    } else {
+                        0
+                    };
                     if ui
                         .add_sized(
                             Vec2::new(52.0, 26.0),

@@ -80,12 +80,13 @@ impl App {
         };
         let title = aurora_i18n::tr!("ui-env-editor-apply-parcel");
         let Some(target) = self.apply_target(false, title) else { return };
+        let mask = crate::world::inventory::actions::held(&self.world.inventory, &item);
         let command = LandCommand::EnvironmentApply {
             local_id: target.local_id(),
             track: None,
             asset: item.asset_id,
             name: item.name,
-            flags: env_apply::apply_flags(Some(item.owner_mask), item.flags),
+            flags: env_apply::apply_flags(Some(mask), item.flags),
             day_length: -1,
             day_offset: -1,
         };
@@ -182,9 +183,30 @@ impl App {
             self.world.eep.capture_personal();
         }
         self.env_ui.beacons = [self.settings.sun_beacon, self.settings.moon_beacon];
+        self.env_ui.night =
+            (self.settings.night_sky == crate::world::night_sky::NightSky::Real).then_some(crate::ui::environment::NightSkyPick {
+                place: self.settings.night_sky_place,
+                latitude: self.settings.night_sky_latitude,
+                longitude: self.settings.night_sky_longitude,
+                real_time: self.settings.night_sky_hour == crate::world::night_sky::StarHour::RealTime,
+                changed: false,
+            });
         let reset = self.env_ui.show_lighting(ctx, p, &mut self.world.eep, &mut open);
         if open {
             self.set_env_beacons(self.env_ui.beacons);
+        }
+        // the night sky's place, live while the latitude is dragged, saved
+        // once the button is released
+        if let Some(night) = self.env_ui.night.take().filter(|n| n.changed) {
+            self.settings.night_sky_place = night.place;
+            self.settings.night_sky_latitude = night.latitude;
+            self.settings.night_sky_longitude = night.longitude;
+            self.settings.sync_night_sky();
+            self.night_sky_unsaved = true;
+        }
+        if self.night_sky_unsaved && !ctx.input(|i| i.pointer.any_down()) {
+            self.night_sky_unsaved = false;
+            self.settings.save();
         }
         self.lighting_was_open = open;
         self.panels.personal_lighting = open;
@@ -324,7 +346,11 @@ impl App {
         let title = self.fixed_title();
         let Some(target) = self.apply_target(region, title) else { return };
         let item = self.env_editor.item.and_then(|id| self.world.inventory.items.get(&id).cloned());
-        let flags = env_apply::apply_flags(item.as_ref().map(|i| i.owner_mask), doc.flags());
+        let flags = env_apply::apply_flags(
+            item.as_ref()
+                .map(|i| crate::world::inventory::actions::held(&self.world.inventory, i)),
+            doc.flags(),
+        );
         doc.set_flags(flags);
         let cmd = match item.filter(|_| !self.env_editor.dirty) {
             Some(it) => {
@@ -373,7 +399,11 @@ impl App {
         let title = aurora_i18n::tr!("ui-day-editor-title");
         let Some(target) = self.apply_target(region, title) else { return };
         let item = self.day_editor.item.and_then(|id| self.world.inventory.items.get(&id).cloned());
-        let flags = env_apply::apply_flags(item.as_ref().map(|i| i.owner_mask), doc.flags());
+        let flags = env_apply::apply_flags(
+            item.as_ref()
+                .map(|i| crate::world::inventory::actions::held(&self.world.inventory, i)),
+            doc.flags(),
+        );
         doc.set_flags(flags);
         let cmd = match item.filter(|_| !self.day_editor.dirty) {
             Some(it) => {
@@ -492,7 +522,12 @@ impl App {
         }
         match day {
             Some(doc) => {
+                // the parcel's or region's day: the rights of its flags and
+                // its frames'; edited and committed back where it is, saved
+                // to the inventory only when they allow it
+                let rights = crate::world::env_edit::Rights::of_source(Some(doc.source_flags()));
                 self.day_editor.start_in(doc, context, timing);
+                self.day_editor.rights = rights;
                 self.show_day_edit();
             }
             None => self.day_editor.wait_default = true,

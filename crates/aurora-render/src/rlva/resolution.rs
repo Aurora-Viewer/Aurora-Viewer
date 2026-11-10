@@ -5,6 +5,8 @@
 //! an RLVa divisor takes precedence over the optional multiplier. User scaling
 //! combines reconstruction and CAS sharpening; RLVa keeps nearest pixels.
 
+use crate::pipeline_cache::CachedPipelines;
+
 pub(crate) fn size(window: (u32, u32), divisor: u32) -> (u32, u32) {
     let (w, h) = (window.0.max(1), window.1.max(1));
     let divisor = divisor.max(1).min(w.min(h).saturating_sub(1).max(1));
@@ -62,7 +64,7 @@ impl Scaled {
             label: Some("RLVa resolution"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/rlva_resolution.wgsl").into()),
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
             label: Some("RLVa resolution"),
             layout: None,
             vertex: wgpu::VertexState {

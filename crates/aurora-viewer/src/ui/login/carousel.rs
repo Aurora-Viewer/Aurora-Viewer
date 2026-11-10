@@ -27,12 +27,14 @@ pub(super) fn select(settings: &mut Settings, form: &mut LoginForm, index: usize
     form.mfa_authorization = None;
     form.mfa_for = None;
     form.agree_tos = false;
+    form.read_critical = false;
     form.stored = None;
     form.stored_for = None;
     form.show_password = false;
     form.focused = false;
     form.error = None;
     form.tos_message = None;
+    form.critical_message = None;
 }
 
 fn snapshot(ctx: &Context, layer: LayerId, rect: Rect, action: Rect) -> derez::Snapshot {
@@ -46,11 +48,13 @@ fn snapshot(ctx: &Context, layer: LayerId, rect: Rect, action: Rect) -> derez::S
 }
 
 /// The card's grid and start menus; `slurl` is the login screen's start
-/// SLURL, shown by every card's start menu.
+/// SLURL, shown by every card's start menu, `favorites` the account's own
+/// favourite landmarks and the one chosen.
 pub(super) fn controls(
     ui: &mut egui::Ui,
     account: &mut Account,
     slurl: &mut Option<crate::slurl::Location>,
+    favorites: &mut super::StartFavorites,
     grids: &[crate::grids::Grid],
 ) -> bool {
     let previous = (account.uri.clone(), account.start_location.clone(), account.start_region.clone());
@@ -78,12 +82,13 @@ pub(super) fn controls(
     }
     ui.horizontal(|ui| {
         ui.add_sized(label_size, egui::Label::new(aurora_i18n::tr!("ui-login-start")));
+        super::demo_open_start_menu(ui, "accounts_start", favorites);
         let combo = egui::ComboBox::from_id_salt("accounts_start")
             .width(ui.available_width())
             .truncate();
-        super::start_menu(ui, combo, &mut account.start_location, slurl);
+        super::start_menu(ui, combo, &mut account.start_location, slurl, favorites);
     });
-    if account.start_location == "region" && slurl.is_none() {
+    if account.start_location == "region" && slurl.is_none() && favorites.chosen().is_none() {
         ui.add(
             egui::TextEdit::singleline(&mut account.start_region)
                 .interactive(ui.is_enabled())
@@ -118,7 +123,7 @@ pub fn show(
         }
         return LoginAction::None;
     }
-    if form.error.is_some() || form.show_mfa || form.tos_message.is_some() {
+    if form.error.is_some() || form.show_mfa || form.tos_message.is_some() || form.critical_message.is_some() {
         form.editing = true;
     }
     let first_account = form.accounts.is_empty();
@@ -139,12 +144,7 @@ pub fn show(
     // answer (success, error, MFA or terms) the identity typed in the Add
     // form is the one sent, challenged and saved, never a saved card's.
     if !form.editing && !form.adding && !form.busy && form.selection_shown_for.as_ref() != Some(&current_key) {
-        let index = if !paginated && form.selection_shown_for.is_none() && form.pending_connect.is_none() && !form.busy {
-            (!visible.is_empty()).then_some(visible.len() / 2)
-        } else {
-            form.accounts.iter().position(|account| account.key() == current_key)
-        };
-        if let Some(index) = index.or_else(|| (!visible.is_empty()).then_some(visible.len() / 2)) {
+        if let Some(index) = selection_to_show(settings, form).or_else(|| (!visible.is_empty()).then_some(visible.len() / 2)) {
             if index != index_of(settings, form).unwrap_or(usize::MAX) {
                 select(settings, form, index);
                 current_key = form.accounts[index].key();
@@ -453,9 +453,12 @@ pub fn show(
                                                         inner_width,
                                                     ));
                                                     ui.add_space(6.0);
-                                                    if controls(ui, &mut account, &mut form.start_slurl, &settings.grids) {
-                                                        edited = Some((index, previous, account.clone()));
+                                                    let mut favorites =
+                                                        super::StartFavorites::of(&form.favorites, &form.start_favorite, &previous);
+                                                    if controls(ui, &mut account, &mut form.start_slurl, &mut favorites, &settings.grids) {
+                                                        edited = Some((index, previous.clone(), account.clone()));
                                                     }
+                                                    favorites.keep(&mut form.start_favorite, previous.clone());
                                                     ui.add_space(8.0);
                                                     ui.label(
                                                         RichText::new(aurora_i18n::tr!("login-accounts-last-place"))
@@ -745,6 +748,19 @@ fn reveal(form: &mut LoginForm, index: usize, per_page: usize) {
     }
 }
 
+/// The card to select: when the cards first show, the account of the last
+/// login (FSPanelLogin::addUsersToCombo selects UserLoginInfo,
+/// indra/newview/fspanellogin.cpp), in every layout, never the last account
+/// added; then, or when that account is gone, the one the fields name.
+fn selection_to_show(settings: &Settings, form: &LoginForm) -> Option<usize> {
+    let first = form.selection_shown_for.is_none() && form.pending_connect.is_none();
+    first
+        .then_some(settings.last_login.as_ref())
+        .flatten()
+        .and_then(|last| form.accounts.iter().position(|account| account.key() == *last))
+        .or_else(|| index_of(settings, form))
+}
+
 fn index_of(settings: &Settings, form: &LoginForm) -> Option<usize> {
     let key = (settings.login_uri(), settings.username.trim().to_lowercase());
     form.accounts.iter().position(|account| account.key() == key)
@@ -955,12 +971,63 @@ mod tests {
                         // Larger text exercises the same overflow as a longer
                         // translation, without changing the process-wide locale.
                         ui.style_mut().text_styles.get_mut(&egui::TextStyle::Button).unwrap().size = 24.0;
-                        controls(ui, &mut account, &mut None, &[]);
+                        controls(ui, &mut account, &mut None, &mut super::super::StartFavorites::none(), &[]);
                         width = ui.min_rect().width();
                     });
                 },
             ));
             assert!(width <= 185.1, "selector widened the card to {width}");
+        }
+    }
+
+    #[test]
+    fn a_chosen_favorite_names_the_start_menu_and_keeps_the_card_width() {
+        let ctx = Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let mut account = Account::from_settings(&Settings::default(), false, None);
+        account.start_location = "region".into();
+        let list = vec![crate::login_favorites::Favorite {
+            item: uuid::Uuid::from_u128(7),
+            asset: uuid::Uuid::from_u128(8),
+            name: "A synthetic favourite with a very long name that never fits".into(),
+            region: "Synthetic region".into(),
+            pos: [1.0, 2.0, 3.0],
+        }];
+        for frame in 0..4 {
+            let mut width = 0.0;
+            let mut favorites = super::super::StartFavorites {
+                list: &list,
+                chosen: Some(list[0].item),
+            };
+            let output = super::super::test_output(ctx.run_ui(
+                egui::RawInput {
+                    time: Some(frame as f64 / 30.0),
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.scope(|ui| {
+                        ui.set_width(185.0);
+                        controls(ui, &mut account, &mut None, &mut favorites, &[]);
+                        width = ui.min_rect().width();
+                    });
+                },
+            ));
+            assert!(width <= 185.1, "the favourite widened the card to {width}");
+            let texts: Vec<String> = output
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect();
+            assert!(
+                texts.iter().any(|t| t.starts_with("A synthetic")),
+                "the menu shows the favourite: {texts:?}"
+            );
+            // a favourite chosen: no region field under the menu
+            assert!(!texts.iter().any(|t| t == aurora_i18n::tr!("ui-login-region-name")));
+            assert_eq!(favorites.chosen, Some(list[0].item));
         }
     }
 
@@ -983,6 +1050,48 @@ mod tests {
     }
 
     #[test]
+    fn the_last_login_is_selected_and_enter_logs_it_in_on_one_page_and_in_the_carousel() {
+        // The fields name the last account added (left by browsing before
+        // quitting); the last login is neither that one nor the middle card.
+        for (count, last) in [(1, 0), (2, 0), (3, 0), (3, 2), (4, 1), (8, 5)] {
+            let ctx = Context::default();
+            let (mut settings, mut form) = fixture(count);
+            settings.username = format!("synthetic-{}", count - 1);
+            settings.last_login = Some(form.accounts[last].key());
+            let mut output = draw_fixture(&ctx, &mut settings, &mut form, 0, vec![]);
+            for frame in 1..8 {
+                output = draw_fixture(&ctx, &mut settings, &mut form, frame, vec![]);
+            }
+            assert_eq!(settings.username, format!("synthetic-{last}"), "{count} cards");
+            if count > 3 {
+                assert_centred(&output, &form, last);
+            }
+            draw_fixture(&ctx, &mut settings, &mut form, 8, vec![key(egui::Key::Enter)]);
+            assert_eq!(form.pending_connect, Some(last), "Enter logs in the last login ({count} cards)");
+            assert_eq!(settings.username, format!("synthetic-{last}"));
+        }
+    }
+
+    #[test]
+    fn a_removed_last_login_falls_back_and_browsing_is_not_pulled_back() {
+        let ctx = Context::default();
+        let (mut settings, mut form) = fixture(3);
+        settings.username = "synthetic-2".into();
+        settings.last_login = Some((settings.login_uri(), "synthetic-removed".into()));
+        for frame in 0..8 {
+            draw_fixture(&ctx, &mut settings, &mut form, frame, vec![]);
+        }
+        assert_eq!(settings.username, "synthetic-2", "the account the fields name");
+        settings.last_login = Some(form.accounts[0].key());
+        draw_fixture(&ctx, &mut settings, &mut form, 8, vec![key(egui::Key::ArrowLeft)]);
+        for frame in 9..12 {
+            draw_fixture(&ctx, &mut settings, &mut form, frame, vec![]);
+        }
+        assert_eq!(settings.username, "synthetic-1", "a browsed card stays selected");
+        assert!(form.pending_connect.is_none());
+    }
+
+    #[test]
     fn three_or_fewer_cards_stay_fixed_for_keys_wheel_and_drag() {
         for count in 1..=3 {
             let ctx = Context::default();
@@ -995,7 +1104,8 @@ mod tests {
                 .map(|index| text_rect(&output, &format!("synthetic-{index}")).unwrap())
                 .collect::<Vec<_>>();
             draw_fixture(&ctx, &mut settings, &mut form, 8, vec![key(egui::Key::ArrowRight)]);
-            assert_eq!(settings.username, format!("synthetic-{}", (count - 1).min(count / 2 + 1)));
+            // from the account the fields name (synthetic-0) to its neighbour
+            assert_eq!(settings.username, format!("synthetic-{}", (count - 1).min(1)));
             let at = form.motion.viewport.left_top() + Vec2::new(120.0, 45.0);
             draw_fixture(
                 &ctx,
@@ -1190,6 +1300,8 @@ mod tests {
     fn hover_lights_the_surface_without_moving_or_selecting_it() {
         let ctx = Context::default();
         let (mut settings, mut form) = fixture(3);
+        // the hovered card (synthetic-0) is not the selected one
+        settings.last_login = Some(form.accounts[1].key());
         let mut before = draw_fixture(&ctx, &mut settings, &mut form, 0, vec![]);
         for frame in 1..8 {
             before = draw_fixture(&ctx, &mut settings, &mut form, frame, vec![]);

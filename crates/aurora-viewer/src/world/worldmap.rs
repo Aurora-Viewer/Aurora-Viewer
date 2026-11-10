@@ -237,6 +237,7 @@ pub struct WorldMap {
     /// MAP_ITEM_AGENT_LOCATIONS by region: (global x, y, count).
     pub agents: HashMap<(u32, u32), Vec<(u32, u32, i32)>>,
     agents_asked: HashMap<(u32, u32), Instant>,
+    named_region_asked: HashMap<String, Instant>,
     pub track: Option<Track>,
     /// The friend `track` follows, if any.
     pub avatar: Option<AvatarTrack>,
@@ -450,6 +451,16 @@ impl WorldMap {
         self.sim_at((x / 256.0) as u32, (y / 256.0) as u32)
     }
 
+    /// A global position in its region's metres: from the region's own
+    /// corner, so a spot in the east half of a 512 m OpenSim region reads
+    /// 300, not 44. A region not on the map yet falls back to the 256 m slot.
+    pub fn local_xy(&self, x: f64, y: f64) -> (f64, f64) {
+        match self.sim_at_global(x, y) {
+            Some(((sx, sy), _)) => (x - f64::from(sx) * 256.0, y - f64::from(sy) * 256.0),
+            None => (x.rem_euclid(256.0), y.rem_euclid(256.0)),
+        }
+    }
+
     pub fn apply_blocks(&mut self, blocks: Vec<MapBlock>) {
         // slots of this reply with no region, named or not: a tracked spot
         // in one of them is invalid (insertRegion)
@@ -607,10 +618,30 @@ impl WorldMap {
         });
     }
 
+    /// Ask for a tracked region by name no more than once a minute.
+    pub fn want_named_region(&mut self, name: &str) {
+        let lower = name.trim().to_lowercase();
+        if lower.is_empty() {
+            return;
+        }
+        let now = Instant::now();
+        if self
+            .named_region_asked
+            .get(&lower)
+            .is_some_and(|t| now.duration_since(*t) < AGENTS_UPDATE)
+        {
+            return;
+        }
+        self.named_region_asked.insert(lower.clone(), now);
+        self.out.push(NetCommand::MapNameRequest { name: lower });
+    }
+
     /// LLFloaterWorldMap::trackAvatar: follow a friend who lets us see them
     /// on the map; the track points at them once the grid answers, and the
     /// open map centres on it.
     pub fn track_avatar(&mut self, id: Uuid, name: &str) {
+        // a place link still asked by name gives way to the friend
+        self.wanted_place = None;
         self.friend_teleport = None;
         self.friend_join = None;
         self.friend_join_flight = None;
@@ -803,14 +834,58 @@ impl WorldMap {
     /// followed any more.
     pub fn set_track(&mut self, t: Track) {
         self.stop_avatar();
+        self.wanted_place = None;
         self.track = Some(t);
     }
 
     /// LLFloaterWorldMap::trackLocation: point at a global position; an
-    /// unknown region is asked first (MAP_SIM_RETURN_NULL_SIMS).
+    /// unknown region is asked first (MAP_SIM_RETURN_NULL_SIMS). A place
+    /// link still asked by name is dropped: its late answer must not replace
+    /// this newer track.
     pub fn track_location(&mut self, x: f64, y: f64, z: f32, teleport: bool) {
         self.stop_avatar();
+        self.wanted_place = None;
         self.place_track(x, y, z, teleport);
+    }
+
+    /// Show a place on the map: tracked, and the map centred on it as soon
+    /// as its region is known. The map's opening puts it back on the agent
+    /// (LLFloaterWorldMap::onOpen), so this is what shows the place, on every
+    /// path of `trackLocation` then `showInstance("world_map", "center")`:
+    /// LLPanelPlaces::onShowOnMapButtonClicked (indra/newview/llpanelplaces.cpp),
+    /// LLLandmarksPanel::doShowOnMap, the favorites bar, search, picks, group
+    /// land, My Land (LLFloaterLandHoldings::buttonCore,
+    /// indra/newview/llfloaterlandholdings.cpp) and the inventory landmark.
+    /// Visible difference: the Legacy Viewer jumps straight to the place
+    /// (`onOpen("center")`, `centerOnTarget(false)`); Aurora opens on the
+    /// agent and slides there (`PAN_TAU_CENTER`), which shows where the
+    /// place is from here.
+    pub fn show_location(&mut self, x: f64, y: f64, z: f32) {
+        self.track_location(x, y, z, false);
+        self.focus_track = true;
+    }
+
+    /// Show a place given by region name (a place link, a SLurl, a
+    /// `secondlife:///app/worldmap` link): LLWorldMapHandler::handle
+    /// (indra/newview/llfloaterworldmap.cpp), `trackURL` then
+    /// `showInstance("world_map", "center")`. The map centres on this place
+    /// once its region answers, never on the previous track kept meanwhile
+    /// (`focus_target`); the Legacy Viewer centres at once on whatever is
+    /// tracked, the previous place included.
+    pub fn show_region(&mut self, name: &str, pos: glam::Vec3) {
+        self.track_region(name, pos);
+        self.focus_track = true;
+    }
+
+    /// Where the open map centres now, if it has to (`focus_track`): the
+    /// tracked spot once its region is known (LLFloaterWorldMap::centerOnTarget
+    /// and its `mWaitingForTracker`). Not while a place link's region is
+    /// still asked by name: `track` is then the previous place.
+    pub fn focus_target(&self) -> Option<(f64, f64)> {
+        if !self.focus_track || self.wanted_place.is_some() {
+            return None;
+        }
+        self.track.as_ref().filter(|t| !t.pending).map(|t| (t.x, t.y))
     }
 
     fn place_track(&mut self, x: f64, y: f64, z: f32, teleport: bool) {
@@ -916,11 +991,13 @@ impl WorldMap {
             .filter(|(_, i)| i.name.to_lowercase().contains(s.as_str()))
             .map(|(k, i)| (*k, i))
             .collect();
-        v.sort_by_key(|a| a.1.name.to_lowercase());
+        v.sort_by_key(|a| crate::natural_order::key(&a.1.name));
         v
     }
 
-    /// LLViewerParcelOverlay::uncompressLandOverlay: store one quarter.
+    /// LLViewerParcelOverlay::uncompressLandOverlay: store one chunk. A chunk
+    /// is 1024 cells whatever the region's size, so 256 m regions have four
+    /// and a 512 m one sixteen.
     pub fn apply_overlay(&mut self, handle: RegionHandle, size: (u32, u32), sequence: i32, data: &[u8]) {
         let (cx, cy) = (size.0 / 4, size.1 / 4);
         let total = (cx * cy) as usize;
@@ -928,13 +1005,18 @@ impl WorldMap {
         if e.2.len() != total {
             *e = (cx, cy, vec![0; total]);
         }
-        let part = total / 4;
-        let start = (sequence.clamp(0, 3) as usize) * part;
-        let n = data.len().min(part);
-        e.2[start..start + n].copy_from_slice(&data[..n]);
+        let start = (sequence.max(0) as usize).saturating_mul(OVERLAY_CHUNK);
+        if start < total {
+            let n = data.len().min(OVERLAY_CHUNK).min(total - start);
+            e.2[start..start + n].copy_from_slice(&data[..n]);
+        }
         self.overlay_generation += 1;
     }
 }
+
+/// Cells of a ParcelOverlay message: (128 m / 4 m) squared, the Legacy
+/// Viewer's chunks being the region's area over 128 x 128 m.
+const OVERLAY_CHUNK: usize = 1024;
 
 /// "Region (x, y, z)" (LLFloaterWorldMap::trackLocation).
 pub fn location_label(region: &str, x: f64, y: f64, z: f32) -> String {
@@ -957,6 +1039,14 @@ pub fn teleport_command(x: f64, y: f64, z: f32) -> NetCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn named_region_tracker_refresh_is_limited_to_once_per_minute() {
+        let mut map = WorldMap::default();
+        map.want_named_region(" Ahern ");
+        map.want_named_region("ahern");
+        assert!(matches!(map.take_commands().as_slice(), [NetCommand::MapNameRequest { name }] if name == "ahern"));
+    }
 
     fn remote_friend() -> (super::super::World, Uuid) {
         let mut w = super::super::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
@@ -1260,6 +1350,56 @@ mod tests {
             assert!(w.map.avatar.is_none());
             assert!(w.take_map_commands().iter().all(|c| !matches!(c, NetCommand::FindAgent(_))));
         }
+    }
+
+    #[test]
+    fn showing_a_place_centres_the_map_and_tracking_alone_does_not() {
+        let mut m = WorldMap::default();
+        m.track_location(256_010.0, 256_266.0, 25.0, false);
+        assert!(!m.focus_track, "a beacon set from the minimap leaves the map where it is");
+        m.show_location(256_010.0, 256_266.0, 25.0);
+        assert!(m.focus_track);
+        assert!(m.track.as_ref().is_some_and(|t| t.pending), "its region is still unknown");
+        assert!(
+            m.out.iter().all(|c| !matches!(c, NetCommand::TeleportTo { .. })),
+            "showing a place never teleports"
+        );
+        m.apply_blocks(vec![yiff()]);
+        assert!(m.focus_track, "still to centre, now that the region is known");
+        assert!(m.track.as_ref().is_some_and(|t| !t.pending));
+    }
+
+    #[test]
+    fn a_place_link_waits_for_its_region_before_centring() {
+        let mut m = WorldMap::default();
+        m.apply_blocks(vec![yiff()]);
+        m.show_location(256_010.0, 256_266.0, 25.0);
+        assert_eq!(m.focus_target(), Some((256_010.0, 256_266.0)));
+        // trackURL of a region not known yet: the previous place stays
+        // tracked meanwhile, the map must not centre on it
+        m.show_region("Elsewhere", glam::Vec3::new(10.0, 20.0, 30.0));
+        assert!(m.track.as_ref().is_some_and(|t| (t.x, t.y) == (256_010.0, 256_266.0)));
+        assert_eq!(m.focus_target(), None);
+        let mut elsewhere = yiff();
+        elsewhere.x += 1;
+        elsewhere.name = "Elsewhere".into();
+        m.apply_blocks(vec![elsewhere]);
+        assert_eq!(m.focus_target(), Some((256_266.0, 256_276.0)));
+    }
+
+    #[test]
+    fn a_newer_track_drops_a_place_link_still_asked_by_name() {
+        let mut m = WorldMap::default();
+        m.apply_blocks(vec![yiff()]);
+        m.show_region("Elsewhere", glam::Vec3::new(10.0, 20.0, 30.0));
+        m.show_location(256_010.0, 256_266.0, 25.0);
+        assert_eq!(m.focus_target(), Some((256_010.0, 256_266.0)));
+        // the late answer to the link does not replace the newer place
+        let mut elsewhere = yiff();
+        elsewhere.x += 1;
+        elsewhere.name = "Elsewhere".into();
+        m.apply_blocks(vec![elsewhere]);
+        assert!(m.track.as_ref().is_some_and(|t| (t.x, t.y) == (256_010.0, 256_266.0)));
     }
 
     #[test]
@@ -1568,5 +1708,50 @@ mod tests {
         assert_eq!(o.2[2048], 7);
         assert_eq!(o.2[3071], 7);
         assert_eq!(o.2[3072], 0);
+    }
+}
+
+#[cfg(test)]
+mod overlay_tests {
+    use super::*;
+
+    #[test]
+    fn every_chunk_of_a_large_region_lands_in_its_place() {
+        let mut map = WorldMap::default();
+        for sequence in 0..16u8 {
+            map.apply_overlay(1, (512, 512), i32::from(sequence), &[sequence + 1; 1024]);
+        }
+        let (cx, cy, cells) = &map.overlays[&1];
+        assert_eq!((*cx, *cy, cells.len()), (128, 128, 16384));
+        assert_eq!((cells[0], cells[1024], cells[15 * 1024], cells[16383]), (1, 2, 16, 16));
+    }
+
+    #[test]
+    fn a_place_in_a_large_region_is_measured_from_its_corner() {
+        let mut map = WorldMap::default();
+        map.apply_blocks(vec![MapBlock {
+            x: 1000,
+            y: 1000,
+            name: "Large".into(),
+            access: 13,
+            region_flags: 0,
+            water_height: 20,
+            agents: 0,
+            map_image_id: uuid::Uuid::nil(),
+            size_x: 768,
+            size_y: 512,
+        }]);
+        // the third 256 m slot east, the second north: 600 m and 300 m in
+        assert_eq!(map.local_xy(256_600.0, 256_300.5), (600.0, 300.5));
+        // a region not on the map yet: its 256 m slot, as before
+        assert_eq!(map.local_xy(512_600.0, 512_300.5), (88.0, 44.5));
+    }
+
+    #[test]
+    fn a_chunk_past_the_region_is_ignored() {
+        let mut map = WorldMap::default();
+        map.apply_overlay(1, (256, 256), 4, &[9; 1024]);
+        map.apply_overlay(1, (256, 256), -1, &[7; 1024]);
+        assert!(map.overlays[&1].2[1024..].iter().all(|cell| *cell == 0));
     }
 }

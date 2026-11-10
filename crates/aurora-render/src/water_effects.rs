@@ -1,6 +1,7 @@
 //! Local visual water only. The simulator remains authoritative for motion.
 //! A world-anchored height/velocity/foam field runs on the GPU; no readback.
 
+use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
 use glam::Vec2;
 
@@ -239,7 +240,6 @@ pub(crate) struct WaterGpu {
 
 impl WaterGpu {
     pub fn new(device: &wgpu::Device, size: u32) -> Self {
-        use wgpu::util::DeviceExt;
         let textures = std::array::from_fn(|index| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("water ripple/foam field"),
@@ -276,11 +276,12 @@ impl WaterGpu {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("water effects"),
-            contents: bytemuck::bytes_of(&Uniform::zeroed()),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let uniform = crate::gpu_alloc::buffer_init(
+            device,
+            "water effects",
+            bytemuck::bytes_of(&Uniform::zeroed()),
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
         let events = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("water interaction events"),
             size: (MAX_WATER_EVENTS * std::mem::size_of::<WaterEvent>()) as u64,
@@ -294,7 +295,7 @@ impl WaterGpu {
                 include_str!("shaders/water_sim.wgsl"),
             )),
         });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
             label: Some("water simulation"),
             layout: None,
             module: &module,
@@ -360,7 +361,7 @@ impl WaterGpu {
             dst_factor: wgpu::BlendFactor::One,
             operation: wgpu::BlendOperation::Add,
         };
-        let caustics_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let caustics_pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
             label: Some("refracted water caustics"),
             layout: None,
             vertex: wgpu::VertexState {
@@ -703,7 +704,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {
                 .into(),
             ),
         });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
             label: None,
             layout: None,
             module: &shader,
@@ -720,7 +721,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {
         });
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: bytes,
+            size: crate::readback::readback_size(bytes),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -760,7 +761,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {
             readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("atlas readback"));
             device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU completion");
             let mapped = readback.get_mapped_range(..).expect("mapped atlas");
-            let samples: &[[f32; 4]] = bytemuck::cast_slice(&mapped);
+            let samples = crate::readback::f32x4s(&mapped);
             assert!(samples.iter().flatten().all(|v| v.is_finite()));
             if enabled && bed == 0.0 && level == 20.0 {
                 let at = |x: f32, y: f32| samples[((y + 16.0) * 8.0) as usize * 256 + ((x + 16.0) * 8.0) as usize];
@@ -811,7 +812,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {
             label: Some("CPU contact / rendered swell agreement"),
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
             label: None,
             layout: None,
             module: &shader,
@@ -839,7 +840,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {
         readback.map_async(wgpu::MapMode::Read, ..24 * 16, |r| r.expect("swell readback"));
         device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU completion");
         let mapped = readback.get_mapped_range(..24 * 16).expect("mapped swell");
-        let samples: &[[f32; 4]] = bytemuck::cast_slice(&mapped);
+        let samples = crate::readback::f32x4s(&mapped);
         for (index, sample) in samples.iter().enumerate() {
             let query = index / 4;
             let quality = (index % 4) as u8;

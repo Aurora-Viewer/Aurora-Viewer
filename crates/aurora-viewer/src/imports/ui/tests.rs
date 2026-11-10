@@ -111,92 +111,98 @@ fn texture_size_switch_updates_both_axes_preview_and_price() {
 #[test]
 fn mesh_inspector_geometry_settles_without_resizing_in_a_short_work_area() {
     let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
-    for (work_width, work_height, ppp) in [
-        (960.0, 520.0, 1.125),
-        (1020.0, 580.0, 1.125),
-        (1040.0, 600.0, 1.0),
-        (901.0, 540.0, 1.125),
-        (1023.5, 580.0, 1.125),
-        (1040.0, 650.0, 1.0),
-        (1040.0, 480.0, 1.125),
-    ] {
-        let screen = Vec2::new(1280.0, 800.0);
-        let ctx = egui::Context::default();
-        let theme = crate::theme::Theme::default();
-        ctx.set_pixels_per_point(ppp);
-        theme.apply(&ctx, 1.0);
-        crate::ui::fonts::apply(&ctx, crate::ui::fonts::DEFAULT);
-        let mut draft = crate::imports::tests::mesh_fixture();
-        draft.prepared = Some(Arc::new(mesh::prepare(&draft).expect("prepared fixture")));
-        let entry = Entry::new("mesh.dae".into(), Ok(Source::Mesh(Box::new(draft))), Default::default());
-        let id = entry.id;
-        let mut imports = Imports {
-            open: true,
-            choice: Choice::Mesh,
-            active: Some(id),
-            entries: vec![entry],
-            ..Default::default()
-        };
-        ctx.data_mut(|d| d.insert_temp(egui::Id::unique(("mesh_section", id)), 1usize));
-        let mut baseline = None;
-        for frame in 0..240 {
-            let mut output = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, screen)),
-                    time: Some(frame as f64 / 60.0),
-                    ..Default::default()
-                },
-                |ui| {
-                    crate::ui::layout::set_work_area(
-                        ui.ctx(),
-                        egui::Rect::from_min_size(egui::pos2(17.333, 40.444), Vec2::new(work_width, work_height)),
-                    );
-                    show(
-                        ui.ctx(),
-                        &theme.palette(),
-                        &mut imports,
-                        &mut Preferences::default(),
-                        &world,
-                        &Default::default(),
-                    );
-                },
-            );
-            output.textures_delta.clear();
-            let size = ctx
-                .data_mut(|d| d.get_persisted::<Vec2>(egui::Id::unique(Choice::Mesh.window_id()).with("expanded_size")))
-                .expect("mesh window size");
-            let positions: Vec<_> = output
-                .shapes
-                .iter()
-                .filter_map(|shape| {
-                    if let egui::Shape::Text(text) = &shape.shape
-                        && [
-                            aurora_i18n::tr!("common-name"),
-                            aurora_i18n::tr!("import-mesh"),
-                            aurora_i18n::tr!("import-mesh-section-physics"),
-                        ]
-                        .contains(&text.galley.text())
-                    {
-                        Some((text.galley.text().to_owned(), text.pos))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            if frame >= 120 {
-                let viewport = ctx
-                    .data(|d| d.get_temp::<(egui::Rect, Vec2)>(egui::Id::unique(("mesh_viewport", id))))
-                    .expect("mesh viewport");
-                assert!(
-                    viewport.1.x <= viewport.0.width().ceil(),
-                    "collision controls fit without horizontal scrolling: {viewport:?}"
+    for window in [Choice::Bulk, Choice::Mesh] {
+        for (work_width, work_height, ppp) in [
+            (960.0, 520.0, 1.125),
+            (1020.0, 580.0, 1.125),
+            (1040.0, 600.0, 1.0),
+            (901.0, 540.0, 1.125),
+            (1023.5, 580.0, 1.125),
+            (1040.0, 650.0, 1.0),
+            (1040.0, 480.0, 1.125),
+        ] {
+            let screen = Vec2::new(1280.0, 800.0);
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            ctx.set_pixels_per_point(ppp);
+            theme.apply(&ctx, 1.0);
+            crate::ui::fonts::apply(&ctx, crate::ui::fonts::DEFAULT);
+            let mut draft = crate::imports::tests::mesh_fixture();
+            draft.prepared = Some(Arc::new(mesh::prepare(&draft).expect("prepared fixture")));
+            let entry = Entry::new("mesh.dae".into(), Ok(Source::Mesh(Box::new(draft))), Default::default());
+            let id = entry.id;
+            let mut imports = Imports {
+                open: true,
+                choice: Choice::Mesh,
+                active: Some(id),
+                entries: vec![entry],
+                ..Default::default()
+            };
+            if window == Choice::Mesh {
+                imports.open = false;
+                imports.open_type_window(&ctx, window);
+            }
+            ctx.data_mut(|d| d.insert_temp(egui::Id::unique(("mesh_section", id)), 1usize));
+            let mut baseline = None;
+            for frame in 0..240 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, screen)),
+                        time: Some(frame as f64 / 60.0),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        crate::ui::layout::set_work_area(
+                            ui.ctx(),
+                            egui::Rect::from_min_size(egui::pos2(17.333, 40.444), Vec2::new(work_width, work_height)),
+                        );
+                        show(
+                            ui.ctx(),
+                            &theme.palette(),
+                            &mut imports,
+                            &mut Preferences::default(),
+                            &world,
+                            &Default::default(),
+                        );
+                    },
                 );
-                let geometry = (size, positions, viewport);
-                let expected = baseline.get_or_insert_with(|| geometry.clone());
-                assert_eq!(
-                    &geometry, expected,
-                    "frame {frame}, work {work_width} × {work_height}, pixels per point {ppp}"
-                );
+                output.textures_delta.clear();
+                let size = ctx
+                    .data_mut(|d| d.get_persisted::<Vec2>(egui::Id::unique(window.window_id()).with("expanded_size")))
+                    .expect("mesh window size");
+                let positions: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| {
+                        if let egui::Shape::Text(text) = &shape.shape
+                            && [
+                                aurora_i18n::tr!("common-name"),
+                                aurora_i18n::tr!("import-mesh"),
+                                aurora_i18n::tr!("import-mesh-section-physics"),
+                            ]
+                            .contains(&text.galley.text())
+                        {
+                            Some((text.galley.text().to_owned(), text.pos))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if frame >= 120 {
+                    let viewport = ctx
+                        .data(|d| d.get_temp::<(egui::Rect, Vec2)>(egui::Id::unique(("mesh_viewport", id))))
+                        .expect("mesh viewport");
+                    assert!(
+                        viewport.1.x <= viewport.0.width().ceil(),
+                        "collision controls fit without horizontal scrolling: {viewport:?}"
+                    );
+                    let geometry = (size, positions, viewport);
+                    let expected = baseline.get_or_insert_with(|| geometry.clone());
+                    assert_eq!(
+                        &geometry, expected,
+                        "frame {frame}, work {work_width} × {work_height}, pixels per point {ppp}"
+                    );
+                }
             }
         }
     }
@@ -827,11 +833,9 @@ fn mixed_batch_exposes_the_mesh_fee_button() {
     let theme = crate::theme::Theme::default();
     theme.apply(&ctx, 1.0);
     let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
-    let entry = Entry::new(
-        "mesh.dae".into(),
-        Ok(Source::Mesh(Box::new(crate::imports::tests::mesh_fixture()))),
-        Default::default(),
-    );
+    let mut draft = crate::imports::tests::mesh_fixture();
+    draft.prepared = Some(Arc::new(mesh::prepare(&draft).expect("ready mesh")));
+    let entry = Entry::new("mesh.dae".into(), Ok(Source::Mesh(Box::new(draft))), Default::default());
     let id = entry.id;
     let mut imports = Imports {
         open: true,
@@ -889,6 +893,55 @@ fn mixed_batch_exposes_the_mesh_fee_button() {
         },
     ]);
     assert!(matches!(actions.as_slice(), [Action::Quote(entry)] if *entry == id));
+}
+
+#[test]
+fn mesh_physics_warning_keeps_analyze_and_repair_visible_in_the_full_window() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let mut draft = crate::imports::tests::invalid_physics_fixture();
+    draft.prepared = Some(Arc::new(mesh::prepare(&draft).expect("validated physics")));
+    let entry = Entry::new("physics.dae".into(), Ok(Source::Mesh(Box::new(draft))), Default::default());
+    let id = entry.id;
+    let mut imports = Imports {
+        open: true,
+        demo_started: true,
+        choice: Choice::Mesh,
+        active: Some(id),
+        entries: vec![entry],
+        ..Default::default()
+    };
+    ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("mesh_section", id)), 1usize));
+    for _ in 0..4 {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1440.0, 900.0))),
+                ..Default::default()
+            },
+            |ui| {
+                show(
+                    ui.ctx(),
+                    &theme.palette(),
+                    &mut imports,
+                    &mut Preferences::default(),
+                    &world,
+                    &Default::default(),
+                );
+            },
+        );
+        output.textures_delta.clear();
+    }
+    for key in ["import_physics_analyze_action", "import_mesh_repair_action"] {
+        let (rect, clip) = ctx
+            .data(|data| data.get_temp::<(egui::Rect, egui::Rect)>(egui::Id::unique(key)))
+            .expect("visible physics action");
+        assert!(
+            rect.height() >= 20.0 && clip.contains_rect(rect),
+            "{key} must remain visible and clickable"
+        );
+    }
 }
 
 #[test]
@@ -1037,6 +1090,7 @@ fn clicking_an_animation_selects_and_restarts_its_preview() {
         loop_in: 0.0,
         loop_out: 2.0,
         looping: false,
+        ends_after: None,
         ease_in: 0.3,
         ease_out: 0.3,
         hand_pose: 0,

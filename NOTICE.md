@@ -1,8 +1,17 @@
 # Notices — Aurora Viewer
 
+Copyright © 2026 the Aurora Viewer contributors (the authors in the project's
+Git history).
+
 Aurora Viewer is free software: you can redistribute it and/or modify it under
 the terms of the **GNU General Public License, version 3 or (at your option) any
-later version** (see [LICENSE](LICENSE)).
+later version** (see [LICENSE](LICENSE)). A modified version must keep these
+notices, including where the viewer shows them in its About window, and say
+that it was modified (sections 4 and 5 of the licence).
+
+The licence covers the code and the assets; it grants no right to the name
+"Aurora Viewer" or to the Aurora logo as trademarks. What a modified version may
+do with them is in [TRADEMARKS.md](TRADEMARKS.md).
 
 Aurora Viewer is not provided, endorsed or supported by Linden Research, Inc.
 ("Linden Lab") or The Phoenix Firestorm Project, Inc. Second Life® is a
@@ -54,7 +63,10 @@ GPL-3.0-or-later as described above.
 | Roboto, Regular and Medium, version 3.011 (googlefonts/roboto-3-classic, hinted) | `crates/aurora-viewer/assets/fonts/` | SIL Open Font License 1.1 ([LICENSE-Roboto.txt](crates/aurora-viewer/assets/fonts/LICENSE-Roboto.txt)) |
 | OpenDyslexic, Regular and Bold, version 0.910.12 — Copyright 2012-2019 Abbie Gonzalez, Reserved Font Name OpenDyslexic (antijingoist/opendyslexic, release `v0.91.12`, unmodified) | `crates/aurora-viewer/assets/fonts/` | SIL Open Font License 1.1 ([LICENSE-OpenDyslexic.txt](crates/aurora-viewer/assets/fonts/LICENSE-OpenDyslexic.txt)) |
 | Noto Color Emoji font, version 2.057 — Copyright 2022 Google Inc. (googlefonts/noto-emoji, tag `v2026-09-24-unicode18_0`, built into the executable) | `assets/emoji/` | SIL Open Font License 1.1 ([LICENSE-OFL.txt](assets/emoji/LICENSE-OFL.txt)) |
+| MIT KEMAR HRTF measurements, diffuse-field equalized set — Copyright 1994 MIT Media Laboratory, by Bill Gardner and Keith Martin (https://sound.media.mit.edu/resources/KEMAR.html: "provided free with no restrictions on use, provided the authors are cited"); turned into minimum-phase filters by `scripts/generate-hrtf.py` (built into the executable; origin, citation and changes in [README.md](assets/hrtf/README.md)) | `assets/hrtf/kemar.bin` | Free use with credit to the authors (their terms, quoted in the README) |
+| Tycho-2 Catalogue — Høg E. et al. 2000 (A&A 355, L27; https://archive.eso.org/ASTROM/TYC-2/data/, CDS I/259); the naked-eye stars and a map of the fainter ones, made by `scripts/generate-star-catalog.py`, with V and B-V for its 50 brightest or colourless stars from the Hipparcos Catalogue (ESA 1997, ESA SP-1200) (built into the executable; origin and changes in [README.md](assets/stars/README.md)) | `assets/stars/stars.bin`, `assets/stars/milky_way.bin` | BSD-2-Clause, agreed by its lead author in 2015 ([LICENSE-TYCHO2.md](assets/stars/LICENSE-TYCHO2.md)) |
 | Aurora wolf logo and silhouette | `assets/branding/` | Part of Aurora Viewer, GPL-3.0-or-later |
+| Four modern native walk/run animations, Copyright Linden Research, Inc., unmodified from the Legacy Viewer's `indra/newview/app_settings/static_assets/` at revision `f9401764e4e98aa3800749044a152cb4dcf75437` (provenance in the directory's README) | `crates/aurora-viewer/assets/animations/locomotion/` (built into the executable) | Originally LGPL 2.1, distributed here under GPL-3.0-or-later as described above |
 | Photo filters of the Second Life viewer `indra/newview/app_settings/filters` (the 30 XML files unchanged, from the Legacy Viewer's sources at commit `8ffe7065`), made by Linden Lab | `crates/aurora-render/src/looks/legacy/` (built into the executable) | Originally LGPL 2.1, distributed here under GPL-3.0-or-later as described above |
 | LSL keyword names, signatures and help from Firestorm `indra/newview/app_settings/keywords_lsl_default.xml` | `crates/aurora-viewer/assets/lsl/keywords.json`, `reference.json` | Originally LGPL 2.1, distributed here under GPL-3.0-or-later as described above |
 | Windlight presets of Firestorm `indra/newview/app_settings/windlight` (`days`, `skies`, `water`; XML files unchanged, commit `c33bfee2`), made by Linden Lab and by Second Life residents for the Phoenix / Firestorm viewers (their names and tags are in the preset names); the files carry no notice of their own and are distributed in the Firestorm sources under its LGPL 2.1 (`LICENSE`, `doc/LICENSE-source.txt`) | `crates/aurora-viewer/assets/windlight/windlight.zip` (built into the executable) | Originally LGPL 2.1, distributed here under GPL-3.0-or-later as described above |
@@ -64,6 +76,7 @@ GPL-3.0-or-later as described above.
 | Colour and dithering code of egui-wgpu's `egui.wgsl` — Copyright © Emil Ernerfeldt and the egui contributors | `crates/aurora-render/src/shaders/labels.wgsl` | MIT OR Apache-2.0, retained alongside this GPL-3.0-or-later adaptation |
 | Screen space shadows of Bend Studio (`bend_sss_gpu.h`, `bend_sss_cpu.h`, as shipped in Days Gone) — Copyright © 2023 Sony Interactive Entertainment, ported to WGSL and Rust | `crates/aurora-render/src/shaders/contact_shadows.wgsl`, `crates/aurora-render/src/contact_shadows.rs` | Apache-2.0, notice retained at the top of `contact_shadows.wgsl` |
 | Ground-truth ambient occlusion of Intel's XeGTAO (`XeGTAO.hlsli`, `vaGTAO.hlsl`, GameTechDev/XeGTAO), with its bent normals — Copyright © 2016-2021 Intel Corporation, ported to WGSL | `crates/aurora-render/src/shaders/gtao.wgsl`, `crates/aurora-render/src/gtao.rs` | MIT, notice retained at the top of `gtao.wgsl` |
+| AMD FidelityFX Super Resolution 3.1, the upscaler (FidelityFX SDK 1.1.4, `sdk/include/FidelityFX/gpu/fsr3upscaler/` and the RCAS of `gpu/fsr1/ffx_fsr1.h`) — Copyright © 2024 Advanced Micro Devices, Inc., ported to WGSL and Rust | `crates/aurora-render/src/shaders/fsr/`, `crates/aurora-render/src/fsr.rs` | MIT ([LICENSE-FidelityFX.txt](crates/aurora-render/src/shaders/fsr/LICENSE-FidelityFX.txt)), retained alongside this GPL-3.0-or-later adaptation |
 | Spherical caps' intersection and cone specular occlusion of Google's Filament (`sphericalCapsIntersection`, `specularAO_Cones`, google/filament) — Copyright © 2018 The Android Open Source Project, rewritten in WGSL | `crates/aurora-render/src/shaders/common.wgsl` (`spherical_caps_intersection`, `cone_specular_occlusion`) | Apache-2.0, retained alongside this GPL-3.0-or-later adaptation |
 
 Fonts keep their own license (the OFL allows bundling them with software under

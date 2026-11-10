@@ -593,32 +593,35 @@ fn full_list(
             .inner_margin(egui::Margin::symmetric(8, 5))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
+                const MOON: f32 = 12.0;
+                // the text wraps before "Turn off"
+                let off_w = ui
+                    .painter()
+                    .layout_no_wrap(
+                        aurora_i18n::tr!("ui-notifications-dnd-off").to_owned(),
+                        egui::FontId::proportional(11.5),
+                        p.ink,
+                    )
+                    .size()
+                    .x;
+                let text_w = (ui.available_width() - MOON - ui.spacing().item_spacing.x - off_w - 12.0).max(40.0);
+                let text = egui::WidgetText::from(
+                    RichText::new(aurora_i18n::tr!("ui-notifications-dnd-banner"))
+                        .size(11.5)
+                        .strong()
+                        .color(p.danger),
+                )
+                .into_galley(ui, Some(egui::TextWrapMode::Wrap), text_w, egui::TextStyle::Body);
+                // one row as tall as the text, the moon, the text and "Turn off"
+                // centred on it: in a zero-height `allocate_ui` egui started the
+                // text on the row's middle line, half a row below the others
+                let row_h = text.size().y.max(ui.spacing().interact_size.y);
+                let row = Vec2::new(ui.available_width(), row_h);
+                ui.allocate_ui_with_layout(row, egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     if let Some(t) = icons.get("moon-filled") {
-                        ui.add(egui::Image::new(t).tint(p.danger).fit_to_exact_size(Vec2::splat(12.0)));
+                        ui.add(egui::Image::new(t).tint(p.danger).fit_to_exact_size(Vec2::splat(MOON)));
                     }
-                    // the text wraps before "Turn off"
-                    let off_w = ui
-                        .painter()
-                        .layout_no_wrap(
-                            aurora_i18n::tr!("ui-notifications-dnd-off").to_owned(),
-                            egui::FontId::proportional(11.5),
-                            p.ink,
-                        )
-                        .size()
-                        .x;
-                    let text_w = (ui.available_width() - off_w - 12.0).max(40.0);
-                    ui.allocate_ui(Vec2::new(text_w, 0.0), |ui| {
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(aurora_i18n::tr!("ui-notifications-dnd-banner"))
-                                    .size(11.5)
-                                    .strong()
-                                    .color(p.danger),
-                            )
-                            .wrap(),
-                        );
-                    });
+                    ui.add(egui::Label::new(text));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let off = ui
                             .add(
@@ -696,11 +699,31 @@ pub(super) fn history_list(
     asks: &mut Vec<Ask>,
     privacy: &crate::world::rlva::privacy::TextFilter,
 ) {
-    ui.add(
-        egui::TextEdit::singleline(query)
-            .hint_text(aurora_i18n::tr!("ui-notifications-search-history"))
-            .desired_width(f32::INFINITY),
-    );
+    // laid out from the right: the button takes the width of its label in
+    // every language ("Effacer l'historique"), the search field the rest; one
+    // row high, or Align::Center would centre it in the panel's height
+    let row = Vec2::new(ui.available_width(), ui.spacing().interact_size.y);
+    ui.allocate_ui_with_layout(row, egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        if ui
+            .add_enabled(
+                !hist.is_empty(),
+                egui::Button::new(
+                    RichText::new(aurora_i18n::tr!("ui-notifications-clear-history"))
+                        .size(11.5)
+                        .color(p.muted),
+                )
+                .frame(false),
+            )
+            .clicked()
+        {
+            hist.clear();
+        }
+        ui.add(
+            egui::TextEdit::singleline(query)
+                .hint_text(aurora_i18n::tr!("ui-notifications-search-history"))
+                .desired_width(ui.available_width()),
+        );
+    });
     ui.add_space(4.0);
     let query = query.trim().to_lowercase();
     let found: Vec<(usize, Entry)> = history::search(hist, "")
@@ -753,6 +776,9 @@ fn center_card(
     wanted_images: &mut std::collections::HashSet<uuid::Uuid>,
     n: &mut Notification,
 ) -> Option<Response> {
+    if super::notifications::close_script_prompt(ui.ctx(), n) {
+        return Some(Response::Dismiss);
+    }
     if matches!(n.data, Data::RegionRestart)
         && let Some(info) = &env.restart
     {
@@ -766,7 +792,10 @@ fn center_card(
             cards::card(ui, p, icons, world, env.images, wanted_images, n, false, true)
         }
     });
-    if !read {
+    // a new version of Aurora: the aurora's edge, read or not
+    if matches!(n.data, Data::Update { .. }) {
+        aurora::paint_edge(ui, p, inner.response.rect);
+    } else if !read {
         let r = inner.response.rect;
         ui.painter().rect_filled(
             Rect::from_min_max(r.left_top(), egui::pos2(r.left() + 2.0, r.bottom())),
@@ -969,11 +998,12 @@ fn history_card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, world: &World, e:
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
                         // keep room for the time
-                        let w = (ui.available_width() - 40.0).max(40.0);
+                        let time = hhmm(e.time);
+                        let w = (ui.available_width() - 12.0 - cards::time_width(ui, &time)).max(40.0);
                         ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
                             cards::text::show(ui, p, &e.title, &e.name_links, 12.5, p.ink, true, true);
                         });
-                        ui.label(RichText::new(hhmm(e.time)).size(10.5).color(p.muted_dim));
+                        ui.label(RichText::new(time).size(10.5).color(p.muted_dim));
                     });
                     if !e.body.is_empty() {
                         super::chat::text_with_links(ui, p, world, &e.body, &e.name_links, 12.0, p.muted);
@@ -1008,6 +1038,7 @@ fn hhmm(secs: u64) -> String {
     super::chat::hhmm(at(secs))
 }
 
+pub mod aurora;
 pub mod presence;
 
 #[cfg(test)]

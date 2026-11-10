@@ -5,6 +5,7 @@
 //! other pages.
 
 use super::super::cx::{Cx, F, field};
+use crate::build::MoveHologram;
 use crate::settings::{ChatStyle, NotificationsStyle, PhotoWindowStyle, Settings, WorldMapStyle};
 use crate::theme::Palette;
 use crate::world::lookat::{Aim, Style};
@@ -18,15 +19,19 @@ pub enum Look {
     Legacy,
 }
 
-/// Every choice of the page set to one look, and Aurora's water with it;
+/// Every choice of the page set to one look (the colored sky ambient
+/// included), and Aurora's water with it;
 /// the avatar plates' own settings and the filing of received items are
-/// left as they are.
+/// left as they are, and so is a gaze on the point under the cursor: the
+/// Aurora look does not choose to show others what the cursor is over.
 pub fn set_all(s: &mut Settings, look: Look) {
     let aurora = look == Look::Aurora;
     s.chat_style = if aurora { ChatStyle::Aurora } else { ChatStyle::Legacy };
     s.classic_name_tags = !aurora;
     s.lookat.style = if aurora { Style::Aurora } else { Style::Legacy };
-    s.lookat.aim = if aurora { Aim::Point } else { Aim::Direction };
+    if !aurora {
+        s.lookat.aim = Aim::Direction;
+    }
     s.notifications_style = if aurora {
         NotificationsStyle::Aurora
     } else {
@@ -57,6 +62,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.predict_own_motion = aurora;
     s.water_effects.enabled = aurora;
     s.synchronize_animations = aurora;
+    s.colored_sky_ambient = aurora;
 }
 
 /// The aurora gradient at `t` (0 at its start, 1 at its end): the brand's
@@ -334,6 +340,13 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-aurora-hover-tips-legacy"),
                     &field!(classic_hover_tips),
                 );
+                // also in Graphics › Sky and environment, the same setting
+                cx.wide().experimental().choice(
+                    tr!("ui-options-colored-sky-ambient"),
+                    tr!("ui-options-colored-sky-ambient-help"),
+                    &field!(colored_sky_ambient),
+                    &[(true, aurora, true), (false, tr!("ui-options-aurora-classic"), false)],
+                );
             });
             cx.group(tr!("common-interface"), |cx| {
                 cx.wide().choice(
@@ -364,6 +377,37 @@ pub fn page(cx: &mut Cx, tab: usize) {
             });
         }
         _ => {
+            cx.group(tr!("ui-options-aurora-building"), |cx| {
+                cx.wide().choice(
+                    tr!("ui-options-aurora-move-hologram"),
+                    tr!("ui-options-aurora-move-hologram-help"),
+                    &field!(build.move_hologram),
+                    &[
+                        (MoveHologram::Off, tr!("ui-options-aurora-move-hologram-off"), false),
+                        (MoveHologram::Moving, tr!("ui-options-aurora-move-hologram-moving"), true),
+                        (MoveHologram::Start, tr!("ui-options-aurora-move-hologram-start"), true),
+                    ],
+                );
+            });
+            cx.group(tr!("ui-options-aurora-bridge"), |cx| {
+                cx.toggle(
+                    tr!("ui-options-aurora-use-bridge"),
+                    tr!("ui-options-aurora-use-bridge-help"),
+                    &field!(use_bridge),
+                );
+                use crate::world::portals::Sources;
+                cx.combo(
+                    tr!("ui-options-aurora-portal-sources"),
+                    tr!("ui-options-aurora-portal-sources-help"),
+                    &field!(portal_sources),
+                    &[
+                        (Sources::Friends, tr!("ui-options-aurora-portal-sources-friends")),
+                        (Sources::FriendsAndGroups, tr!("ui-options-aurora-portal-sources-groups")),
+                        (Sources::Everyone, tr!("ui-options-aurora-portal-sources-everyone")),
+                        (Sources::Nobody, tr!("ui-options-aurora-portal-sources-nobody")),
+                    ],
+                );
+            });
             cx.group(tr!("ui-options-aurora-gaze"), |cx| {
                 cx.wide().choice(
                     tr!("ui-options-aurora-aim"),
@@ -423,6 +467,28 @@ mod tests {
         settings.sort_received_items = true;
         set_all(&mut settings, Look::Legacy);
         assert!(settings.sort_received_items);
+    }
+
+    #[test]
+    fn the_two_buttons_set_the_colored_sky_ambient_too() {
+        let mut s = Settings::default();
+        assert!(!s.colored_sky_ambient, "off by default");
+        set_all(&mut s, Look::Aurora);
+        assert!(s.colored_sky_ambient);
+        set_all(&mut s, Look::Legacy);
+        assert!(!s.colored_sky_ambient);
+    }
+
+    #[test]
+    fn the_aurora_button_keeps_the_gaze_choice() {
+        let mut s = Settings::default();
+        set_all(&mut s, Look::Aurora);
+        assert_eq!(s.lookat.aim, Aim::Direction, "never turned to the point by the button");
+        s.lookat.aim = Aim::Point;
+        set_all(&mut s, Look::Aurora);
+        assert_eq!(s.lookat.aim, Aim::Point, "a chosen point stays");
+        set_all(&mut s, Look::Legacy);
+        assert_eq!(s.lookat.aim, Aim::Direction);
     }
 
     #[test]

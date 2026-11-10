@@ -164,8 +164,13 @@ impl App {
     fn viewer_side(&self, now: Instant, g: &aurora_render::GpuInfo) -> ViewerSide {
         let t = &self.viewer_stats;
         let machine = t.machine.get();
-        // the login's own `id0` (the same cached value, not waited for)
+        // the login's own `id0` (the same cached value, not waited for),
+        // and the adapter address, both as this grid gets them (the real
+        // ones on Linden Lab's grids only, aurora_net::login::device_id_for)
+        let grid = self.settings.login_uri();
         let id0 = crate::machine_id::ready_login_ids().map(|ids| ids.id0).unwrap_or_default();
+        let id0 = aurora_net::login::device_id_for(&grid, &id0);
+        let adapter = aurora_net::login::adapter_for(&grid, crate::machine_id::adapter_mac());
         let avatars = &self.scene.stats.avatars;
         let inventory = &self.world.inventory;
         ViewerSide {
@@ -186,7 +191,7 @@ impl App {
                 cpu: machine.map(|m| m.cpu.clone()).unwrap_or_default(),
                 cpu_sse: machine.map(|m| m.cpu_sse.clone()).unwrap_or_default(),
                 hardware_concurrency: machine.map_or(0, |m| m.hardware_concurrency),
-                mac_address: aurora_net::viewer_stats::mac_address_string(crate::machine_id::adapter_mac()),
+                mac_address: aurora_net::viewer_stats::mac_address_string(adapter),
                 serial_number: id0,
                 gpu: GpuInfo {
                     name: g.name.clone(),
@@ -195,12 +200,22 @@ impl App {
                     api: g.backend.clone(),
                     vram_mb: g.vram_mb.map_or(0, |mb| i32::try_from(mb).unwrap_or(i32::MAX)),
                     max_texture_size: i32::try_from(g.max_texture_size).unwrap_or(i32::MAX),
+                    vulkan: g.vulkan.map(|vk| aurora_net::viewer_stats::VulkanLimits {
+                        instance_version: vk.instance_version,
+                        max_samples: vk.max_samples,
+                        texture_units: vk.texture_units,
+                        sample_mask_words: vk.sample_mask_words,
+                        color_samples: vk.color_samples,
+                        depth_samples: vk.depth_samples,
+                        integer_samples: vk.integer_samples,
+                    }),
                 },
             },
             shader_level: shader_level(self.settings.shadows, self.settings.ssao),
             display_names: self.settings.use_display_names,
             show_usernames: self.settings.show_usernames,
             inventory_usable: !inventory.root.is_nil() && inventory.folders.contains_key(&inventory.root),
+            position_snaps: self.world.agent.position_snaps(),
         }
     }
 

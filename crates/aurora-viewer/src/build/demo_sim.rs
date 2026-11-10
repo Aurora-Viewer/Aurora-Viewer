@@ -30,6 +30,8 @@ pub struct DemoSim {
     /// The inventory folder each object rezzed from inventory came from,
     /// sent back in its ObjectProperties (FolderID) as a simulator does.
     rezzed_from: HashMap<Uuid, Uuid>,
+    /// Groups supplied by creation requests, including an explicitly empty group.
+    rezzed_groups: HashMap<Uuid, Uuid>,
 }
 
 /// An object's position, rotation and scale.
@@ -105,6 +107,7 @@ impl DemoSim {
     }
     fn props_of(&mut self, world: &World, id: Uuid) -> &mut ObjectProps {
         let folder_id = self.rezzed_from.get(&id).copied().unwrap_or_default();
+        let group = self.rezzed_groups.get(&id).copied();
         self.props.entry(id).or_insert_with(|| {
             let name = world
                 .objects
@@ -136,11 +139,13 @@ impl DemoSim {
                 full: true,
                 creator_id: DEMO_CREATOR,
                 owner_id,
-                group_id: if owner_id == crate::demo::DEMO_AGENT {
-                    crate::demo::DEMO_GROUP1
-                } else {
-                    Uuid::nil()
-                },
+                group_id: group.unwrap_or_else(|| {
+                    if owner_id == crate::demo::DEMO_AGENT {
+                        crate::demo::DEMO_GROUP1
+                    } else {
+                        Uuid::nil()
+                    }
+                }),
                 last_owner_id: DEMO_CREATOR,
                 creation_date: 1_700_000_000_000_000,
                 base_mask: PERM_ALL,
@@ -148,7 +153,7 @@ impl DemoSim {
                 group_mask: 0,
                 everyone_mask: 0,
                 next_owner_mask: perm::MOVE | perm::TRANSFER | perm::COPY | perm::MODIFY,
-                sale_type: 0,
+                sale_type: crate::demo::action_sale_type(id),
                 sale_price: 10,
                 category: 0,
                 inventory_serial: 1,
@@ -239,10 +244,15 @@ impl DemoSim {
 
     pub fn reply(&mut self, world: &World, c: &BuildCmd) -> Vec<NetEvent> {
         match c {
-            BuildCmd::Add(p) => vec![NetEvent::ObjectUpdates {
-                handle: p.handle,
-                objects: vec![crate::demo::build_rez(p)],
-            }],
+            BuildCmd::Add(p) => {
+                let object = crate::demo::build_rez(p);
+                self.rezzed_groups.insert(object.full_id, p.group_id);
+                vec![NetEvent::ObjectUpdates {
+                    handle: p.handle,
+                    objects: vec![object],
+                }]
+            }
+
             BuildCmd::DeRez {
                 handle,
                 local_ids,
@@ -502,6 +512,7 @@ impl DemoSim {
             BuildCmd::RezInventory(rez) => {
                 let object = crate::demo::inventory_rez(rez);
                 self.rezzed_from.insert(object.full_id, rez.item.parent);
+                self.rezzed_groups.insert(object.full_id, rez.group);
                 vec![NetEvent::ObjectUpdates {
                     handle: rez.handle,
                     objects: vec![object],
@@ -511,8 +522,8 @@ impl DemoSim {
                 let ids = Self::uuids(world, *handle, local_ids);
                 self.reply_props(world, &ids)
             }
-            BuildCmd::SetName { handle, local_id, name } => {
-                let ids = Self::uuids(world, *handle, &[*local_id]);
+            BuildCmd::SetName { handle, local_ids, name } => {
+                let ids = Self::uuids(world, *handle, local_ids);
                 for id in &ids {
                     self.props_of(world, *id).name = name.clone();
                 }
@@ -520,10 +531,10 @@ impl DemoSim {
             }
             BuildCmd::SetDescription {
                 handle,
-                local_id,
+                local_ids,
                 description,
             } => {
-                let ids = Self::uuids(world, *handle, &[*local_id]);
+                let ids = Self::uuids(world, *handle, local_ids);
                 for id in &ids {
                     self.props_of(world, *id).description = description.clone();
                 }
@@ -711,12 +722,33 @@ impl DemoSim {
                 })
                 .into_iter()
                 .collect(),
-            BuildCmd::ParcelRequest { handle, sequence, .. } => match world.parcel.clone() {
-                Some(p) => vec![NetEvent::SelectedParcel {
-                    handle: *handle,
-                    sequence: *sequence,
-                    parcel: p,
-                }],
+            BuildCmd::ParcelRequest {
+                handle,
+                sequence,
+                west,
+                south,
+                east,
+                north,
+                ..
+            } => match world.parcel.clone() {
+                Some(mut p) => {
+                    // Explicit offline aggregate fixture: no unique owner, and
+                    // an area matching the rectangle must not disable Join.
+                    if *sequence >= aurora_net::build::BUILD_PARCEL_SEQ + 1000
+                        && std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("select-join,"))
+                        && (east - west) * (north - south) > 16.0
+                    {
+                        let p = std::sync::Arc::make_mut(&mut p);
+                        p.request_result = aurora_net::land::PARCEL_RESULT_MULTIPLE;
+                        p.owner_id = Uuid::nil();
+                        p.area = ((east - west) * (north - south)) as i32;
+                    }
+                    vec![NetEvent::SelectedParcel {
+                        handle: *handle,
+                        sequence: *sequence,
+                        parcel: p,
+                    }]
+                }
                 None => Vec::new(),
             },
             BuildCmd::Cap { cap, body, tag, .. } => vec![NetEvent::CapReply {

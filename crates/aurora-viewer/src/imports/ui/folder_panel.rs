@@ -21,6 +21,39 @@ pub(super) fn destination_row(
         ui.label(aurora_i18n::tr!("import-local-free"));
         return;
     }
+    if imports.window_choice() != Choice::Bulk {
+        let before = (prefs.use_default_folders, prefs.batch_folder, prefs.include_source_folder);
+        ui.add_enabled_ui(!busy, |ui| {
+            checkbox(
+                ui,
+                p,
+                &mut prefs.use_default_folders,
+                aurora_i18n::tr!("import-use-default-folders"),
+            );
+            ui.horizontal_wrapped(|ui| {
+                ui.label(aurora_i18n::tr!("import-destination"));
+                let mut folder = if prefs.use_default_folders {
+                    imports
+                        .active
+                        .and_then(|id| imports.entries.iter().find(|entry| entry.id == id))
+                        .map_or(world.inventory.root, |entry| entry.folder)
+                } else {
+                    Imports::batch_folder(world, prefs.batch_folder)
+                };
+                ui.add_enabled_ui(!prefs.use_default_folders, |ui| {
+                    imports.destination.show(ui, p, &world.inventory, &mut folder);
+                });
+                if !prefs.use_default_folders {
+                    prefs.batch_folder = folder;
+                }
+            });
+            ui.add_enabled_ui(!prefs.use_default_folders, |ui| source_root::show(ui, p, imports, prefs));
+        });
+        if before != (prefs.use_default_folders, prefs.batch_folder, prefs.include_source_folder) {
+            imports.sync_destinations(prefs, world, inventory);
+        }
+        return;
+    }
     let layout = prefs
         .folder_layout
         .get_or_insert(if prefs.use_default_folders { Layout::Mirror } else { Layout::Flat });
@@ -39,7 +72,7 @@ pub(super) fn destination_row(
                 if imports.demo_mode == "destination" {
                     imports.destination.demo(ui);
                 }
-                imports.destination.show(ui, p, &world.inventory, &inventory.protected, &mut folder);
+                imports.destination.show(ui, p, &world.inventory, &mut folder);
                 if !prefs.use_default_folders {
                     prefs.batch_folder = folder;
                 }
@@ -75,7 +108,6 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, imports: &mut Imports, world:
     let preview = folder_preview::build(ui.ctx(), imports, world);
     imports.folders.collapsed.retain(|path| preview.nodes.contains_key(path));
     let paths = &preview.nodes;
-    let files = &preview.files;
     let root = imports
         .folders
         .active()
@@ -90,25 +122,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, imports: &mut Imports, world:
         let body_top = columns[0].cursor().top().max(columns[1].cursor().top());
         let room = (height - (body_top - top) - footer_height - columns[0].spacing().item_spacing.y).max(0.0);
         // A flattened tree is virtualized even when every folder is expanded.
-        let mut rows: Vec<(Vec<String>, Option<usize>)> = Vec::new();
-        for index in files.get(&Vec::new()).into_iter().flatten() {
-            rows.push((Vec::new(), Some(*index)));
-        }
-        let mut hidden: Option<&Vec<String>> = None;
-        for path in paths.keys() {
-            if hidden.is_some_and(|parent| path.starts_with(parent) && path.len() > parent.len()) {
-                continue;
-            }
-            hidden = None;
-            rows.push((path.clone(), None));
-            if imports.folders.collapsed.contains(path) {
-                hidden = Some(path);
-                continue;
-            }
-            for index in files.get(path).into_iter().flatten() {
-                rows.push((path.clone(), Some(*index)));
-            }
-        }
+        let rows = preview.ordered_rows(&imports.folders.collapsed);
         let mut toggle = None;
         egui::ScrollArea::both()
             .id_salt("import_plan_tree")
@@ -185,10 +199,12 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, imports: &mut Imports, world:
         if let Some(old) = imports.folders.editing.clone() {
             ui.horizontal(|ui| {
                 ui.label(aurora_i18n::tr!("import-folders-path"));
-                ui.add(
-                    egui::TextEdit::singleline(&mut imports.folders.edited_path)
-                        .desired_width(260.0)
-                        .char_limit(4095),
+                widgets::restricted_text_field(
+                    ui,
+                    true,
+                    &mut imports.folders.edited_path,
+                    widgets::TextPolicy::PrintableNoPipe,
+                    |b, _| egui::TextEdit::singleline(b).desired_width(260.0).char_limit(4095),
                 );
                 let parsed = folders::parse_path(&imports.folders.edited_path);
                 if tool_button(ui, p, aurora_i18n::tr!("common-apply"), parsed.is_some()).clicked()
@@ -267,12 +283,13 @@ fn file_row(
             let field = ui
                 .add_enabled_ui(enabled, |ui| {
                     let text = if root.is_some() { &mut edit.text } else { &mut target };
-                    ui.add_sized(
-                        Vec2::new(path_width, 26.0),
-                        egui::TextEdit::singleline(text)
+                    widgets::restricted_text_field(ui, true, text, widgets::TextPolicy::PrintableNoPipe, |b, _| {
+                        egui::TextEdit::singleline(b)
                             .char_limit(4095)
-                            .hint_text(root.unwrap_or_default()),
-                    )
+                            .hint_text(root.unwrap_or_default())
+                            .desired_width(path_width)
+                            .min_size(Vec2::new(0.0, 26.0))
+                    })
                 })
                 .inner
                 .on_hover_text(format!("{target}\n{}", aurora_i18n::tr!("import-folders-path-help")));

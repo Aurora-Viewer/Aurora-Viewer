@@ -5,6 +5,62 @@ use std::time::Instant;
 pub const FIRST: u32 = 8231;
 pub const CHILD: u32 = 8240;
 
+pub const TEX_MASK_PANEL: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0040);
+
+fn mask_material(cutoff: u8) -> Uuid {
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0100 + u128::from(cutoff))
+}
+
+/// A solid panel with a one-texel transparent border. The former coverage
+/// adjustment lowered its opaque centre below 200/255 in mips 3-5.
+pub fn mask_cutoff_texture() -> (Vec<u8>, u32, u32) {
+    let size = 2048usize;
+    let mut pixels = [96, 160, 224, 255].repeat(size * size);
+    for edge in 0..size {
+        for pixel in [edge, (size - 1) * size + edge, edge * size, edge * size + size - 1] {
+            pixels[pixel * 4 + 3] = 0;
+        }
+    }
+    (pixels, size as u32, size as u32)
+}
+
+pub fn mask_cutoff_materials() -> impl Iterator<Item = (Uuid, crate::scene::legacy_mat::LegacyMaterial)> {
+    [128, 200, 255].into_iter().map(|cutoff| {
+        (
+            mask_material(cutoff),
+            crate::scene::legacy_mat::LegacyMaterial {
+                diffuse_alpha_mode: crate::scene::legacy_mat::alpha_mode::MASK,
+                alpha_cutoff: cutoff,
+                ..Default::default()
+            },
+        )
+    })
+}
+
+/// Three ordinary HUD panels at 100%, with the creator's mask cutoff.
+pub fn mask_cutoff_events() -> Vec<NetEvent> {
+    let objects = [128, 200, 255]
+        .into_iter()
+        .enumerate()
+        .map(|(column, cutoff)| {
+            let mut o = object(31, false);
+            o.local_id = 8420 + column as u32;
+            o.full_id = u(u128::from(o.local_id));
+            o.name_values = format!("AttachItemID STRING RW SV {}", o.full_id);
+            o.position = Vec3::new(0.0, 0.35 - column as f32 * 0.35, 0.0);
+            o.scale = Vec3::new(0.012, 0.22, 0.44);
+            o.text = format!("{} · {cutoff}/255", aurora_i18n::tr!("import-alpha-mask"));
+            o.texture_entry = Some(te([0.0; 4], 0, true, 0.0));
+            let face = &mut Arc::make_mut(o.texture_entry.as_mut().expect("fixture texture")).faces[4];
+            face.color = [1.0; 4];
+            face.texture = TEX_MASK_PANEL;
+            face.material_id = mask_material(cutoff);
+            o
+        })
+        .collect();
+    vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
+}
+
 pub fn object(point: u8, active: bool) -> ObjectUpdate {
     let anchor = match point {
         32 => Vec3::new(0.0, -0.5, 0.5),
@@ -74,6 +130,23 @@ pub fn events() -> Vec<NetEvent> {
     other.owner_id = DEMO_LOUP;
     objects.push(other);
     vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
+}
+
+/// A whole HUD remains movable/rotatable without Modify. A second HUD at
+/// a distant depth exercises the orthographic camera's independent range.
+pub fn no_modify_events() -> Vec<NetEvent> {
+    let mut events = events();
+    for event in &mut events {
+        if let NetEvent::ObjectUpdates { objects, .. } = event {
+            for object in objects {
+                object.update_flags &= !crate::ui::context::flags::OBJECT_MODIFY;
+                if object.local_id == FIRST + 4 {
+                    object.position.x = -512.0;
+                }
+            }
+        }
+    }
+    events
 }
 
 /// AURORA_DEMO_SOUND=hud: a linked HUD prim loops at the listener,

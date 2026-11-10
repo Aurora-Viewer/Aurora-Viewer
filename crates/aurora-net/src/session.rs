@@ -5,6 +5,7 @@
 
 mod abuse_reports;
 mod account;
+mod appearance_queue;
 mod asset_imports;
 mod attach_queue;
 mod build_cmds;
@@ -15,6 +16,7 @@ mod gestures;
 mod inventory_copies;
 mod inventory_moves;
 mod inventory_preview;
+mod inventory_udp;
 mod inventory_updates;
 mod inventory_upload;
 mod object_actions;
@@ -26,7 +28,7 @@ mod task_notecard;
 mod terrain_raw;
 mod wearable_save;
 
-use crate::agent_update::AgentUpdateRule;
+use crate::agent_update::{AgentUpdateRule, FarStep};
 use crate::caps::{self, EqEvent, EqMessage};
 use crate::circuit::{Circuit, Resend};
 use crate::login::{self, LoginError, LoginRequest, LoginResponse};
@@ -76,9 +78,25 @@ use crate::build::BUILD_PARCEL_SEQ;
 /// (llstartup.cpp, circuit_timeout = 100 s, LLCircuitData::checkPeriodTime).
 /// 60 s cut sessions a laggy region or a short network outage would survive.
 const SIM_TIMEOUT: Duration = Duration::from_secs(100);
+/// How long a login waits for AgentMovementComplete before logging out
+/// (STATE_AGENT_WAIT_TIMEOUT, llstartup.cpp). Only the login ends this way: a
+/// teleport or crossing the region does not confirm keeps its session, and the
+/// viewer stops waiting on its own (`NetCommand::ArrivalGivenUp`).
+const LOGIN_ARRIVAL_TIMEOUT: Duration = Duration::from_secs(240);
 /// DEFAULT_FIELD_OF_VIEW (60°): the camera's angle until the viewer gives its own.
 const DEFAULT_FOV: f32 = std::f32::consts::FRAC_PI_3;
 const PING_INTERVAL: Duration = Duration::from_secs(5);
+
+/// The largest region side a grid can announce (Constants.MaximumRegionSize,
+/// OpenSim). The viewer sizes the region's land and parcel grids from it: a
+/// broken or hostile simulator must not make it allocate gigabytes.
+pub(crate) const MAX_REGION_SIDE: u32 = 4096;
+
+/// A region side announced by the grid, held to 256..=[`MAX_REGION_SIDE`].
+pub(crate) fn region_side(n: u32) -> u32 {
+    n.clamp(256, MAX_REGION_SIDE)
+}
+
 /// Diagnostic: the RegionHandshake of a region the agent arrived in should
 /// come along with AgentMovementComplete; without it the simulator never
 /// sends terrain or objects (it waits for RegionHandshakeReply).
@@ -218,6 +236,52 @@ pub(crate) struct Shared {
     pub viewer_stats_posts: Arc<crate::viewer_stats::PostsInFlight>,
 }
 
+/// How long one appearance request may hold the queue.
+const APPEARANCE_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// One POST of the COF version to UpdateAvatarAppearance: whether it
+/// succeeded, and the version the server expects when it says.
+async fn post_appearance_request(http: &reqwest::Client, request: appearance_queue::Request) -> (bool, Option<i32>) {
+    let appearance_queue::Request { cof_version, url } = request;
+    let body = aurora_llsd::to_xml(&aurora_llsd::llsd_map! { "cof_version" => cof_version });
+    let exchange = async {
+        let resp = http
+            .post(&url)
+            .header("Content-Type", "application/llsd+xml")
+            .header("Accept", "application/llsd+xml")
+            .body(body)
+            .send()
+            .await?;
+        let status = resp.status();
+        let bytes = resp.bytes().await.ok();
+        Ok::<_, reqwest::Error>((status, bytes.and_then(|b| aurora_llsd::from_xml(&b).ok())))
+    };
+    match tokio::time::timeout(APPEARANCE_REQUEST_TIMEOUT, exchange).await {
+        Ok(Ok((status, Some(d)))) => {
+            let ok = status.is_success() && d["success"].as_bool();
+            if !ok {
+                log::warn!(
+                    "appearance request for COF {cof_version} failed: HTTP {status} {}",
+                    d["error"].to_string_value()
+                );
+            }
+            (ok, d.has("expected").then(|| d["expected"].as_i32()))
+        }
+        Ok(Ok((status, None))) => {
+            log::warn!("appearance request for COF {cof_version}: HTTP {status}");
+            (false, None)
+        }
+        Ok(Err(e)) => {
+            log::warn!("appearance request failed: {}", e.without_url());
+            (false, None)
+        }
+        Err(_) => {
+            log::warn!("appearance request for COF {cof_version}: no answer");
+            (false, None)
+        }
+    }
+}
+
 struct Session<'a> {
     sh: &'a Shared,
     sock: Arc<UdpSocket>,
@@ -228,6 +292,14 @@ struct Session<'a> {
     caps_tx: CapsSender,
     notecard_copy_tx: mpsc::UnboundedSender<(u32, Result<(), String>)>,
     inventory_move_tx: mpsc::UnboundedSender<inventory_moves::Request>,
+    inventory_udp_tx: mpsc::UnboundedSender<inventory_udp::Request>,
+    /// AgentSetAppearance messages sent this session (their SerialNum).
+    appearance_serial: u32,
+    /// UpdateAvatarAppearance requests: one at a time, the newest version.
+    appearance_queue: Arc<Mutex<appearance_queue::AppearanceQueue>>,
+    /// Our profile as last received (AvatarPropertiesReply), which a grid
+    /// without `AgentProfile` needs whole to save a change.
+    own_profile: Option<crate::profile::OwnProfile>,
     notecard_copies: HashMap<u32, (Uuid, Uuid, bool)>,
     /// When an AgentUpdate leaves (agent_update.rs).
     agent_update: AgentUpdateRule,
@@ -236,7 +308,9 @@ struct Session<'a> {
     one_shot: u32,
     /// "No agent updates" already reported for this CompleteAgentMovement.
     cam_warned: bool,
-    far: f32,
+    /// AgentUpdate's `Far`, from the draw distance of the viewer's controls
+    /// (agent_update.rs).
+    far: FarStep,
     /// FSDisableNeighbourRegionConnections, while the agent stands inside its
     /// region: EnableSimulator for another region is ignored.
     refuse_neighbours: bool,
@@ -250,6 +324,8 @@ struct Session<'a> {
     viewer_stats: crate::viewer_stats::Schedule,
     regions_visited: std::collections::HashSet<u64>,
     cam_requested_at: Option<Instant>,
+    /// The first arrival of this session is still awaited (STATE_AGENT_WAIT).
+    login_arrival: bool,
     /// Last confirmed agent parcel in the main region, including its geometry.
     agent_parcel: Option<Arc<ParcelInfo>>,
     /// Teleport by region name waiting for its MapBlockReply (lowercase name, position).
@@ -270,6 +346,9 @@ struct Session<'a> {
     terrain_raw: terrain_raw::RawXfers,
     /// Decode failures per message name, to rate-limit their warnings.
     decode_failures: HashMap<&'static str, u64>,
+    /// ObjectUpdate blocks `objects::parse_full` did not read, by simulator
+    /// and size: warned once each (issue #2747).
+    rejected_full: std::collections::HashSet<(SocketAddr, usize)>,
     inventory_uploads: inventory_upload::Uploads,
     asset_imports: asset_imports::Imports,
     inventory_previews: inventory_preview::Previews,
@@ -285,13 +364,22 @@ struct Session<'a> {
 fn packets_counted(stats: &NetStats) -> throttle::Counted {
     throttle::Counted {
         received: stats.packets_in.load(Ordering::Relaxed),
-        gaps: stats.seq_gaps.load(Ordering::Relaxed),
-        late: stats.seq_late.load(Ordering::Relaxed),
+        lost: stats.packets_lost.load(Ordering::Relaxed),
     }
 }
 
 fn emit(sh: &Shared, ev: NetEvent) {
     let _ = sh.events.send(ev);
+}
+
+/// A folder made without AIS, known to the viewer before anything goes in
+/// it (createNewCategoryCoro's updateCategory): the server's own updates
+/// for the items then find their folder instead of Lost And Found.
+fn announce_folder(events: &crate::EventSender, folder: crate::inventory::InvFolder) {
+    let _ = events.send(NetEvent::InventoryUpdated {
+        folders: vec![folder],
+        items: Vec::new(),
+    });
 }
 
 /// Items read, items the server says do not exist, and failed reads.
@@ -346,12 +434,17 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         Ok(l) => Arc::new(l),
         Err(e) => {
             let (mfa, tos) = (matches!(e, LoginError::MfaRequired(_)), matches!(e, LoginError::TosRequired(_)));
+            let critical = matches!(e, LoginError::CriticalMessage(_));
             let bad_credentials = matches!(&e, LoginError::Refused { reason, .. } if reason == "key");
             let previous_session = e.previous_session();
             // The grid's own words (LLLoginInstance shows the message as it
             // comes), without the "login refused (presence)" prefix.
             let error = match &e {
                 LoginError::Refused { message, .. } if previous_session && !message.trim().is_empty() => message.trim().to_owned(),
+                // the text to read or accept, as LLFloaterTOS shows it
+                LoginError::TosRequired(message) | LoginError::CriticalMessage(message) if !message.trim().is_empty() => {
+                    message.trim().to_owned()
+                }
                 _ => e.to_string(),
             };
             emit(
@@ -360,6 +453,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     error,
                     mfa_required: mfa,
                     tos_required: tos,
+                    critical_required: critical,
                     bad_credentials,
                     previous_session,
                 },
@@ -388,6 +482,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     error: aurora_i18n::tr!("session-udp-bind-failed", e = format!("{}", e)),
                     mfa_required: false,
                     tos_required: false,
+                    critical_required: false,
                     bad_credentials: false,
                     previous_session: false,
                 },
@@ -403,6 +498,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
     let (caps_tx, mut caps_rx) = mpsc::unbounded_channel();
     let (notecard_copy_tx, mut notecard_copy_rx) = mpsc::unbounded_channel();
     let (inventory_move_tx, mut inventory_move_rx) = mpsc::unbounded_channel();
+    let (inventory_udp_tx, mut inventory_udp_rx) = mpsc::unbounded_channel();
     let (object_cache, mut object_cache_rx) = object_cache::ObjectCaches::new(sh.object_cache_dir.lock().clone());
     let mut s = Session {
         sh,
@@ -416,7 +512,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         control_flags: 0,
         one_shot: 0,
         cam_warned: false,
-        far: 128.0,
+        far: FarStep::new(Instant::now()),
         refuse_neighbours: false,
         fov: DEFAULT_FOV,
         logout_started: None,
@@ -425,6 +521,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         viewer_stats: Default::default(),
         regions_visited: Default::default(),
         cam_requested_at: None,
+        login_arrival: true,
         agent_parcel: None,
         pending_named_tp: None,
         object_cache,
@@ -435,6 +532,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         estate_invoice: Uuid::nil(),
         terrain_raw: Default::default(),
         decode_failures: HashMap::new(),
+        rejected_full: Default::default(),
         inventory_uploads: Default::default(),
         asset_imports: Default::default(),
         inventory_previews: Default::default(),
@@ -444,6 +542,10 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         attach_queue: Default::default(),
         notecard_copy_tx,
         inventory_move_tx,
+        inventory_udp_tx,
+        appearance_serial: 0,
+        appearance_queue: Default::default(),
+        own_profile: None,
         notecard_copies: HashMap::new(),
         inventory_merchant_pending: false,
         next_inventory_callback: 0,
@@ -508,6 +610,10 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
             Some(request) = inventory_move_rx.recv() => {
                 woke = Instant::now();
                 s.inventory_move(request);
+            }
+            Some(request) = inventory_udp_rx.recv() => {
+                woke = Instant::now();
+                s.inventory_udp(request);
             }
             Some(file) = object_cache_rx.recv() => {
                 woke = Instant::now();
@@ -923,9 +1029,14 @@ impl Session<'_> {
                     let extras = &v["OpenSimExtras"];
                     let grid_status_feed = extras["GridStatusRSS"].to_string_value();
                     let grid_status_page = extras["GridStatus"].to_string_value();
+                    let currency_base_uri = extras["currency-base-uri"].to_string_value();
+                    let opensim = crate::types::OpenSimExtras::from_llsd(extras);
+                    let currency_symbol = extras["currency"].to_string_value();
+                    let export_supported = extras["ExportSupported"].as_bool();
                     log::info!("SimulatorFeatures received: avatar hover height {avatar_hover_height}");
                     let _ = events.send(NetEvent::SimulatorFeatures {
                         handle,
+                        animated_object_max_tris: v["AnimatedObjects"]["AnimatedObjectMaxTris"].as_i32().max(0) as u32,
                         voice_server_type,
                         avatar_hover_height,
                         materials_rate,
@@ -933,6 +1044,10 @@ impl Session<'_> {
                         lsl_syntax_id,
                         grid_status_feed,
                         grid_status_page,
+                        currency_base_uri,
+                        opensim,
+                        currency_symbol,
+                        export_supported,
                     });
                 }
                 Err(_) => log::warn!("SimulatorFeatures unavailable after retries"),
@@ -979,7 +1094,7 @@ impl Session<'_> {
                     }
                 }
                 Ok(resp) => log::info!("ExtEnvironment: HTTP {}", resp.status()),
-                Err(e) => log::info!("ExtEnvironment failed: {e}"),
+                Err(e) => log::info!("ExtEnvironment failed: {}", e.without_url()),
             }
         });
     }
@@ -1276,7 +1391,6 @@ impl Session<'_> {
         self.send_queued_attachment(now);
         self.publish_motion();
         self.object_cache.save_when_due(now);
-        self.update_throttle(now);
         let stats = self.sh.stats.clone();
         // Deferred CompleteAgentMovement once UseCircuitCode is acked. At
         // login it waits for the ack itself, as llstartup.cpp STATE_WORLD_WAIT
@@ -1342,7 +1456,7 @@ impl Session<'_> {
                 self.cam_warned = true;
                 log::warn!("no AgentMovementComplete 5 s after CompleteAgentMovement: agent updates (movement) paused");
             }
-            if !self.agent_moved && t.elapsed() > Duration::from_secs(90) {
+            if self.login_arrival && !self.agent_moved && t.elapsed() > LOGIN_ARRIVAL_TIMEOUT {
                 // STATE_AGENT_WAIT's timeout (llstartup.cpp): "Session was
                 // created, don't just hang up on server, send a logout
                 // request", or the grid keeps this session and the next
@@ -1373,6 +1487,9 @@ impl Session<'_> {
                 dead.push(*addr);
             }
         }
+        // Circuit ticks confirm expired holes before this five-second
+        // sample, so a genuine loss is not deferred to the next sample.
+        self.update_throttle(now);
         stats.unacked.store(unacked as u32, Ordering::Relaxed);
         for addr in ping_targets {
             if let Some(sim) = self.sims.get_mut(&addr) {
@@ -1461,7 +1578,6 @@ impl Session<'_> {
     }
 
     fn send_agent_update_if_due(&mut self, mut c: AgentControls, now: Instant) {
-        c.far = self.far;
         c.control_flags = crate::script_controls::mask_left_button(c.control_flags | self.one_shot, c.alt_or_ctrl);
         let flags_changed = c.control_flags != self.agent_update.sent_flags();
         if self.agent_update.should_send(&c, now) {
@@ -1477,7 +1593,9 @@ impl Session<'_> {
             a.camera_at_axis = c.camera_at;
             a.camera_left_axis = c.camera_left;
             a.camera_up_axis = c.camera_up;
-            a.far = c.far;
+            // the draw distance the viewer hands with its controls each
+            // frame (#2810: a value of the session's own stayed at 128 m)
+            a.far = self.far.far(c.far.clamp(32.0, 1024.0), now);
             a.control_flags = c.control_flags;
             a.flags = c.flags;
             self.send_main(&m, false);
@@ -1522,23 +1640,25 @@ impl Session<'_> {
                     self.logout_started = Some(Instant::now());
                 }
             }
+            NetCommand::ArrivalGivenUp => {
+                log::warn!("no AgentMovementComplete in time: agent updates resume, session kept");
+                self.agent_moved = true;
+                self.cam_requested_at = None;
+            }
             NetCommand::Chat {
                 message,
                 channel,
                 chat_type,
             } => {
-                // SL limits chat to 1023 bytes; split longer messages. The
-                // typing notices are empty lines, sent whole
-                // (send_chat_from_viewer: "Don't break null messages").
-                let mut rest = message.as_str();
-                let mut notice = matches!(chat_type, ChatType::StartTyping | ChatType::StopTyping);
-                while !rest.is_empty() || std::mem::take(&mut notice) {
-                    let mut cut = rest.len().min(1000);
-                    while !rest.is_char_boundary(cut) {
-                        cut -= 1;
-                    }
-                    let (part, r) = rest.split_at(cut);
-                    rest = r;
+                // SL limits chat to 1023 bytes; longer lines leave in parts
+                // (message_split). An empty line (a typing notice, a
+                // gesture's bare "/-1234", #2095) is sent once, as
+                // send_chat_from_viewer does: "Don't break null messages".
+                let mut parts = crate::message_split::message_parts(&message);
+                if parts.is_empty() {
+                    parts.push("");
+                }
+                for part in parts {
                     // really_send_chat_from_viewer (fsnearbychathub.cpp): an
                     // avatar cannot speak on a negative channel, the
                     // simulator drops such a ChatFromViewer. The line goes
@@ -1632,7 +1752,6 @@ impl Session<'_> {
                 m.name_data.name = str_field(name.trim());
                 self.send_main(&m, true);
             }
-            NetCommand::SetDrawDistance(d) => self.far = d.clamp(32.0, 1024.0),
             NetCommand::RefuseNeighbourRegions(on) => self.refuse_neighbours = on,
             NetCommand::SetFov(angle) => {
                 if angle.is_finite() && angle > 0.0 && angle != self.fov {
@@ -1743,6 +1862,7 @@ impl Session<'_> {
             }
             NetCommand::ExperienceInfo(ids) => self.request_experiences(ids),
             NetCommand::GroupExperiences(group) => self.request_group_experiences(group),
+            NetCommand::MyExperiences => self.request_my_experiences(),
             NetCommand::ExperiencePermission { experience, change } => self.experience_permission(experience, change),
             NetCommand::Touch { local_id } => {
                 // a click is a grab immediately followed by a release (LLToolGrab)
@@ -1795,8 +1915,12 @@ impl Session<'_> {
                 folder,
                 sale_type,
                 price,
+                group_id,
             } => {
-                // Port of LLSelectMgr::sendBuy / packBuyObjectIDs (llselectmgr.cpp).
+                // Port of LLSelectMgr::sendBuy / packBuyObjectIDs and
+                // packAgentGroupAndCatID (indra/newview/llselectmgr.cpp): the
+                // AgentData carries gAgent.getGroupID(), the active group,
+                // which the simulator gives the bought object (#2793).
                 if (1..=3).contains(&sale_type)
                     && price >= 0
                     && !folder.is_nil()
@@ -1805,6 +1929,7 @@ impl Session<'_> {
                     let mut m = ObjectBuy::default();
                     m.agent_data.agent_id = self.agent_id();
                     m.agent_data.session_id = self.session_id();
+                    m.agent_data.group_id = group_id;
                     m.agent_data.category_id = folder;
                     m.object_data.push(object_buy::ObjectData {
                         object_local_id: local_id,
@@ -1891,7 +2016,7 @@ impl Session<'_> {
                                     }
                                 }
                                 Ok(resp) => log::debug!("AgentProfile {id}: HTTP {}", resp.status()),
-                                Err(e) => log::debug!("AgentProfile {id}: {e}"),
+                                Err(e) => log::debug!("AgentProfile {id}: {}", e.without_url()),
                             }
                         });
                     }
@@ -1901,6 +2026,12 @@ impl Session<'_> {
                         m.agent_data.session_id = self.session_id();
                         m.agent_data.avatar_id = id;
                         self.send_main(&m, true);
+                        // what AgentProfile would have carried
+                        // (LLAvatarPropertiesProcessor::sendAvatarPicksRequest,
+                        // sendAvatarNotesRequest); the groups come with the
+                        // properties
+                        self.send_generic("avatarpicksrequest", &[id.to_string()]);
+                        self.send_generic("avatarnotesrequest", &[id.to_string()]);
                     }
                 }
             }
@@ -2096,7 +2227,12 @@ impl Session<'_> {
                     self.send_main(&packet, true);
                 }
             }
-            NetCommand::SendIm { to, message } => self.send_im(to, &message, 0),
+            NetCommand::SendIm { to, message } => {
+                // longer than one IM: several in a row (LLIMModel::sendMessage)
+                for part in crate::message_split::message_parts(&message) {
+                    self.send_im(to, part, 0);
+                }
+            }
             NetCommand::OfferTeleport { to, message } => {
                 let mut m = StartLure::default();
                 m.agent_data.agent_id = self.agent_id();
@@ -2245,6 +2381,35 @@ impl Session<'_> {
                             created: HashMap::new(),
                         });
                     emit(self.sh, NetEvent::InventoryEdited { request, result });
+                    return;
+                }
+                // Without AIS, once the seed has answered: the capabilities
+                // arrive together, so the fetch service without AIS is no
+                // grid still logging in (AISAPI::isAvailable).
+                if let Some(fetch_cap) = self.fetch_without_ais() {
+                    let http = self.sh.caps_http.clone();
+                    let events = self.sh.events.clone();
+                    let owner = self.agent_id();
+                    let moves = self.inventory_move_tx.clone();
+                    let edits = self.inventory_udp_tx.clone();
+                    let create_cap = self.main_cap("CreateInventoryCategory");
+                    tokio::spawn(async move {
+                        let result = crate::inventory::operations::mutate_udp(
+                            &http,
+                            create_cap.as_deref(),
+                            &fetch_cap,
+                            owner,
+                            change,
+                            |movement| inventory_moves::submit(moves.clone(), movement),
+                            |edit| inventory_udp::submit(edits.clone(), edit),
+                            |progress| {
+                                let _ = events.send(NetEvent::InventoryProgress { request, progress });
+                            },
+                            &|folder| announce_folder(&events, folder),
+                        )
+                        .await;
+                        let _ = events.send(NetEvent::InventoryEdited { request, result });
+                    });
                     return;
                 }
                 let folder_creation = (change.defer_folder_contents || !change.copies.is_empty())
@@ -2399,7 +2564,7 @@ impl Session<'_> {
                                 let reason = r.status().canonical_reason().unwrap_or("").to_owned();
                                 crate::slm::merchant_status(r.status().as_u16(), &reason)
                             }
-                            Err(e) => crate::slm::MerchantStatus::ConnectionFailure(e.to_string()),
+                            Err(e) => crate::slm::MerchantStatus::ConnectionFailure(e.without_url().to_string()),
                         },
                     };
                     let _ = events.send(NetEvent::MerchantStatus(status));
@@ -2679,6 +2844,16 @@ impl Session<'_> {
                 }
             }
             NetCommand::SetInventoryFavorite { item, favorite } => {
+                if self.fetch_without_ais().is_some() {
+                    emit(
+                        self.sh,
+                        NetEvent::InventoryFavoriteUpdated {
+                            item,
+                            result: Err(aurora_i18n::tr!("session-inventory-change-not-supported-on-this-grid").into()),
+                        },
+                    );
+                    return;
+                }
                 let caps = self.main_cap("InventoryAPIv3").zip(self.main_cap("FetchInventory2"));
                 let Some((cap, fetch_cap)) = caps else {
                     emit(
@@ -2699,6 +2874,26 @@ impl Session<'_> {
                 });
             }
             NetCommand::UpdateOutfitCategory { request, change } => {
+                if let Some(fetch_cap) = self.fetch_without_ais() {
+                    let http = self.sh.caps_http.clone();
+                    let events = self.sh.events.clone();
+                    let owner = self.agent_id();
+                    let moves = self.inventory_move_tx.clone();
+                    let edits = self.inventory_udp_tx.clone();
+                    tokio::spawn(async move {
+                        let result = crate::outfits::categories::mutate_udp(
+                            &http,
+                            &fetch_cap,
+                            owner,
+                            change,
+                            |movement| inventory_moves::submit(moves, movement),
+                            |edit| inventory_udp::submit(edits, edit),
+                        )
+                        .await;
+                        let _ = events.send(NetEvent::OutfitUpdated { request, result });
+                    });
+                    return;
+                }
                 let caps = self.main_cap("InventoryAPIv3").zip(self.main_cap("FetchInventoryDescendents2"));
                 let Some((cap, fetch_cap)) = caps else {
                     emit(
@@ -2723,6 +2918,27 @@ impl Session<'_> {
                 });
             }
             NetCommand::UpdateOutfit { request, change } => {
+                if let Some(fetch_cap) = self.fetch_without_ais() {
+                    let http = self.sh.caps_http.clone();
+                    let events = self.sh.events.clone();
+                    let owner = self.agent_id();
+                    let edits = self.inventory_udp_tx.clone();
+                    let create_cap = self.main_cap("CreateInventoryCategory");
+                    tokio::spawn(async move {
+                        let result = crate::outfits::mutate_udp(
+                            &http,
+                            create_cap.as_deref(),
+                            &fetch_cap,
+                            owner,
+                            change,
+                            |edit| inventory_udp::submit(edits.clone(), edit),
+                            &|folder| announce_folder(&events, folder),
+                        )
+                        .await;
+                        let _ = events.send(NetEvent::OutfitUpdated { request, result });
+                    });
+                    return;
+                }
                 let caps = self.main_cap("InventoryAPIv3").zip(self.main_cap("FetchInventoryDescendents2"));
                 let Some((cap, fetch_cap)) = caps else {
                     emit(
@@ -2741,6 +2957,37 @@ impl Session<'_> {
                     let result = crate::outfits::mutate(&http, &cap, &fetch_cap, owner, change).await;
                     let _ = events.send(NetEvent::OutfitUpdated { request, result });
                 });
+            }
+            NetCommand::UploadBake { request, j2c } => {
+                let Some(cap) = self.main_cap("UploadBakedTexture") else {
+                    emit(
+                        self.sh,
+                        NetEvent::BakeUploaded {
+                            request,
+                            result: Err(aurora_i18n::tr!("local-bakes-the-bake-could-not-be-uploaded").into()),
+                        },
+                    );
+                    return;
+                };
+                let http = self.sh.caps_http.clone();
+                let events = self.sh.events.clone();
+                tokio::spawn(async move {
+                    let result = crate::local_bakes::upload(&http, &cap, j2c).await;
+                    if let Err(e) = &result {
+                        log::warn!("local bake: {e}");
+                    }
+                    let _ = events.send(NetEvent::BakeUploaded { request, result });
+                });
+            }
+            NetCommand::SetAppearance(appearance) => {
+                // pre-incremented: the first is 1 (LLAgent::sendAgentSetAppearance)
+                self.appearance_serial = self.appearance_serial.wrapping_add(1);
+                let m = crate::local_bakes::agent_set_appearance(self.agent_id(), self.session_id(), self.appearance_serial, &appearance);
+                self.send_main(&m, true);
+            }
+            NetCommand::QueryCachedBakes { serial, keys } => {
+                let m = crate::local_bakes::agent_cached_texture(self.agent_id(), self.session_id(), serial, &keys);
+                self.send_main(&m, true);
             }
             NetCommand::RequestServerAppearance { cof_version } => self.request_server_appearance(cof_version),
             NetCommand::IncrementCofVersion => self.increment_cof_version(),
@@ -2888,7 +3135,7 @@ impl Session<'_> {
                         NetEvent::DisplayNamesFailed(ids)
                     }
                     Err(e) => {
-                        log::warn!("GetDisplayNames: {e}");
+                        log::warn!("GetDisplayNames: {}", e.without_url());
                         NetEvent::DisplayNamesFailed(ids)
                     }
                 };
@@ -2934,7 +3181,7 @@ impl Session<'_> {
             let failed = match resp {
                 Ok(r) if r.status().is_success() => None,
                 Ok(r) => Some((r.status().as_u16() as i32, r.status().to_string())),
-                Err(e) => Some((0, e.to_string())),
+                Err(e) => Some((0, e.without_url().to_string())),
             };
             if let Some((status, reason)) = failed {
                 log::warn!("SetDisplayName failed: {reason}");
@@ -2948,14 +3195,33 @@ impl Session<'_> {
     }
 
     /// LLPanelProfileTab saveAgentUserInfoCoro: PUT <AgentProfile>/<target>;
-    /// without the capability only the notes have a UDP message
-    /// (AvatarNotesUpdate).
+    /// without the capability (OpenSim), the notes are an AvatarNotesUpdate
+    /// and our own profile an AvatarPropertiesUpdate.
     fn update_profile(&mut self, target: uuid::Uuid, data: Llsd) {
         let cap = self
             .main
             .and_then(|a| self.sims.get(&a))
             .and_then(|s| s.caps.get("AgentProfile").cloned());
         let Some(url) = cap else {
+            let own = (target == self.agent_id()).then_some(self.own_profile.as_ref()).flatten();
+            if !data.has("notes")
+                && let Some(profile) = own.and_then(|own| own.with_change(&data))
+            {
+                let mut m = AvatarPropertiesUpdate::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.properties_data.image_id = profile.sl_image;
+                m.properties_data.fl_image_id = profile.fl_image;
+                m.properties_data.about_text = str_field(&profile.sl_about);
+                m.properties_data.fl_about_text = str_field(&profile.fl_about);
+                m.properties_data.allow_publish = profile.allow_publish;
+                // a profile is never mature (sendAvatarPropertiesUpdate)
+                m.properties_data.mature_publish = false;
+                m.properties_data.profile_url = str_field(&profile.profile_url);
+                self.send_main(&m, true);
+                self.own_profile = Some(profile);
+                return;
+            }
             if data.has("notes") {
                 let mut m = AvatarNotesUpdate::default();
                 m.agent_data.agent_id = self.agent_id();
@@ -2988,7 +3254,7 @@ impl Session<'_> {
             let reason = match resp {
                 Ok(r) if r.status().is_success() => return,
                 Ok(r) => format!("HTTP {}", r.status().as_u16()),
-                Err(e) => e.to_string(),
+                Err(e) => e.without_url().to_string(),
             };
             log::warn!("AgentProfile PUT {target}: {reason}");
             let _ = events.send(NetEvent::ProfileSaveFailed { target, reason });
@@ -3224,6 +3490,29 @@ impl Session<'_> {
         });
     }
 
+    /// LLFloaterExperiences::refreshContents: the lists of every tab, each
+    /// on its own task so that one slow capability does not hold the others.
+    fn request_my_experiences(&self) {
+        use crate::experience::{ExperienceListKind as K, fetch_lists};
+        for caps in [
+            (&[K::Allowed, K::Blocked][..], "GetExperiences"),
+            (&[K::Admin][..], "GetAdminExperiences"),
+            (&[K::Contributor][..], "GetCreatorExperiences"),
+            (&[K::Owned][..], "AgentExperiences"),
+        ] {
+            let (kinds, name) = caps;
+            let cap = self.main_cap(name);
+            let http = self.sh.caps_http.clone();
+            let events = self.sh.events.clone();
+            let kinds = kinds.to_vec();
+            tokio::spawn(async move {
+                for (kind, ids) in fetch_lists(&http, cap.as_deref(), &kinds).await {
+                    let _ = events.send(NetEvent::ExperienceList { kind, ids });
+                }
+            });
+        }
+    }
+
     /// LLExperienceCache::get / set / forgetExperiencePermission.
     fn experience_permission(&self, experience: Uuid, change: crate::experience::ExperiencePermissionChange) {
         let cap = self.main_cap("ExperiencePreferences");
@@ -3351,51 +3640,32 @@ impl Session<'_> {
             );
             return;
         };
+        let request = appearance_queue::Request { cof_version, url };
+        let Some(first) = self.appearance_queue.lock().request(request) else {
+            return;
+        };
+        let queue = self.appearance_queue.clone();
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         tokio::spawn(async move {
-            let body = aurora_llsd::to_xml(&aurora_llsd::llsd_map! { "cof_version" => cof_version });
-            let result = http
-                .post(&url)
-                .header("Content-Type", "application/llsd+xml")
-                .header("Accept", "application/llsd+xml")
-                .body(body)
-                .send()
-                .await;
-            let (success, expected) = match result {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let doc = resp.bytes().await.ok().and_then(|b| aurora_llsd::from_xml(&b).ok());
-                    match doc {
-                        Some(d) => {
-                            let ok = status.is_success() && d["success"].as_bool();
-                            if !ok {
-                                log::warn!(
-                                    "appearance request for COF {cof_version} failed: HTTP {status} {}",
-                                    d["error"].to_string_value()
-                                );
-                            }
-                            (ok, d.has("expected").then(|| d["expected"].as_i32()))
-                        }
-                        None => {
-                            log::warn!("appearance request for COF {cof_version}: HTTP {status}");
-                            (false, None)
-                        }
+            appearance_queue::drain(&queue, first, |request| {
+                let http = http.clone();
+                let events = events.clone();
+                async move {
+                    let cof_version = request.cof_version;
+                    let (success, expected) = post_appearance_request(&http, request).await;
+                    if success {
+                        log::info!("server appearance requested for COF version {cof_version}");
                     }
+                    let _ = events.send(NetEvent::AppearanceRequestResult {
+                        cof_version,
+                        success,
+                        expected,
+                    });
+                    success
                 }
-                Err(e) => {
-                    log::warn!("appearance request failed: {e}");
-                    (false, None)
-                }
-            };
-            if success {
-                log::info!("server appearance requested for COF version {cof_version}");
-            }
-            let _ = events.send(NetEvent::AppearanceRequestResult {
-                cof_version,
-                success,
-                expected,
-            });
+            })
+            .await;
         });
     }
 
@@ -3427,7 +3697,7 @@ impl Session<'_> {
                         }
                     }
                     Ok(resp) => Err(format!("HTTP {}", resp.status().as_u16())),
-                    Err(e) => Err(e.to_string()),
+                    Err(e) => Err(e.without_url().to_string()),
                 };
                 match reply {
                     Ok(v) => {
@@ -3448,6 +3718,30 @@ impl Session<'_> {
             };
             let _ = events.send(NetEvent::CofVersionIncremented(version));
         });
+    }
+
+    /// An ObjectUpdate block `objects::parse_full` did not read (an
+    /// ObjectData size it does not know): the object is dropped, and the
+    /// simulator, which sent it, does not send it again. Warned once per
+    /// simulator and size, then counted (issue #2747: avatars whose worn
+    /// objects never show). The Legacy Viewer also reads the 16, 32 and 48
+    /// byte sizes (LLViewerObject::processUpdateMessage, OUT_FULL); this
+    /// only says whether the grid sends them.
+    fn note_rejected_full(&mut self, from: SocketAddr, b: &aurora_msg::msgs::object_update::ObjectData) {
+        let size = b.object_data.len();
+        self.sh.stats.objects_unread.fetch_add(1, Ordering::Relaxed);
+        if self.rejected_full.insert((from, size)) {
+            log::warn!(
+                "ObjectUpdate block not read: ObjectData of {size} bytes (object {}, local id {}, pcode {}, parent {}, attach state {}) \
+                 from region {}; the next ones of this size from this region are counted, not logged",
+                b.full_id,
+                b.id,
+                b.p_code,
+                b.parent_id,
+                b.state,
+                transition::grid(self.handle_of(from)),
+            );
+        }
     }
 
     fn request_objects(&mut self, addr: SocketAddr, ids: &[u32]) {
@@ -3518,6 +3812,22 @@ impl Session<'_> {
             return;
         }
         match e.message.as_str() {
+            "OpenRegionInfo" => {
+                if let Some(sim) = self.sims.get(&e.sim) {
+                    let value = &b["MaxLinkCount"];
+                    let max_children = (!value.is_undef()).then(|| {
+                        let value = value.as_i32();
+                        if value < 0 { 10000 } else { value as u32 }
+                    });
+                    emit(
+                        self.sh,
+                        NetEvent::RegionLinkLimit {
+                            handle: sim.handle,
+                            max_children,
+                        },
+                    );
+                }
+            }
             "EnableSimulator" => {
                 for info in b["SimulatorInfo"].as_array() {
                     let handle = info["Handle"].as_u64();
@@ -3525,7 +3835,7 @@ impl Session<'_> {
                         continue;
                     };
                     let port = info["Port"].as_i32() as u16;
-                    let size = (info["RegionSizeX"].as_u32().max(256), info["RegionSizeY"].as_u32().max(256));
+                    let size = (region_side(info["RegionSizeX"].as_u32()), region_side(info["RegionSizeY"].as_u32()));
                     let addr = SocketAddr::V4(SocketAddrV4::new(ip, port));
                     // process_enable_simulator (llworld.cpp): no circuit to a
                     // neighbour; the simulator keeps its child agent
@@ -3578,12 +3888,13 @@ impl Session<'_> {
                     info["RegionHandle"].as_u64(),
                     info["TeleportFlags"].as_u64()
                 );
+                self.far.teleported();
                 self.switch_region(
                     info["RegionHandle"].as_u64(),
                     ip_from_llsd(&info["SimIP"]),
                     info["SimPort"].as_i32() as u16,
                     info["SeedCapability"].as_str().to_owned(),
-                    (info["RegionSizeX"].as_u32().max(256), info["RegionSizeY"].as_u32().max(256)),
+                    (region_side(info["RegionSizeX"].as_u32()), region_side(info["RegionSizeY"].as_u32())),
                 );
             }
             "CrossedRegion" => {
@@ -3598,7 +3909,7 @@ impl Session<'_> {
                     ip_from_llsd(&rd["SimIP"]),
                     rd["SimPort"].as_i32() as u16,
                     rd["SeedCapability"].as_str().to_owned(),
-                    (rd["RegionSizeX"].as_u32().max(256), rd["RegionSizeY"].as_u32().max(256)),
+                    (region_side(rd["RegionSizeX"].as_u32()), region_side(rd["RegionSizeY"].as_u32())),
                 );
             }
             "ParcelProperties" => {
@@ -3725,7 +4036,7 @@ impl Session<'_> {
             stats.duplicates.fetch_add(1, Ordering::Relaxed);
             return;
         }
-        sim.circuit.note_sequence(pkt.sequence, stats);
+        sim.circuit.note_sequence(pkt.sequence, pkt.resent(), stats);
         match self.dispatch(from, &pkt) {
             // ack only now (the handler may also have removed the circuit)
             Ok(()) => {
@@ -3813,7 +4124,13 @@ impl Session<'_> {
             if transition::running() && self.main == Some(from) {
                 transition::step_once("first objects", || "first object update of the region (ObjectUpdate)".to_string());
             }
-            let objects: Vec<_> = m.object_data.iter().filter_map(objects::parse_full).collect();
+            let mut objects = Vec::with_capacity(m.object_data.len());
+            for b in &m.object_data {
+                match objects::parse_full(b) {
+                    Some(u) => objects.push(u),
+                    None => self.note_rejected_full(from, b),
+                }
+            }
             self.attach_queue
                 .observe(objects.iter().map(|o| o.name_values.as_str()), Instant::now());
             self.sh.stats.objects_full.fetch_add(objects.len() as u64, Ordering::Relaxed);
@@ -4009,6 +4326,9 @@ impl Session<'_> {
                 self.main == Some(from),
             );
             let owner = format!("{} {}", field_str(&d.first_name), field_str(&d.last_name));
+            // process_script_dialog: the OwnerData block is missing from
+            // older simulators (getNumberOfBlocks("OwnerData")): nil then
+            let owner_id = m.owner_data.first().map_or(Uuid::nil(), |o| o.owner_id);
             emit(
                 self.sh,
                 NetEvent::ScriptDialog {
@@ -4016,6 +4336,7 @@ impl Session<'_> {
                     object_id: d.object_id,
                     object_name: field_str(&d.object_name),
                     owner_name: owner.trim().to_owned(),
+                    owner_id,
                     message: field_str(&d.message),
                     channel: d.chat_channel,
                     buttons: m.buttons.iter().map(|b| field_str(&b.button_label)).collect(),
@@ -4102,6 +4423,43 @@ impl Session<'_> {
                 let m: CameraConstraint = pkt.decode()?;
                 emit(self.sh, NetEvent::CameraConstraint(m.camera_collide_plane.plane));
             }
+        } else if id == AvatarPicksReply::ID {
+            let m: AvatarPicksReply = pkt.decode()?;
+            let picks = m.data.iter().map(|p| (p.pick_id, field_str(&p.pick_name))).collect();
+            emit(
+                self.sh,
+                NetEvent::AvatarPicks {
+                    target: m.agent_data.target_id,
+                    picks,
+                },
+            );
+        } else if id == AvatarNotesReply::ID {
+            let m: AvatarNotesReply = pkt.decode()?;
+            emit(
+                self.sh,
+                NetEvent::AvatarNotes {
+                    target: m.data.target_id,
+                    notes: field_str(&m.data.notes),
+                },
+            );
+        } else if id == AvatarGroupsReply::ID {
+            let m: AvatarGroupsReply = pkt.decode()?;
+            let groups = m
+                .group_data
+                .iter()
+                .map(|g| crate::profile::ProfileGroup {
+                    id: g.group_id,
+                    name: field_str(&g.group_name),
+                    insignia: g.group_insignia_id,
+                })
+                .collect();
+            emit(
+                self.sh,
+                NetEvent::AvatarGroups {
+                    avatar: m.agent_data.avatar_id,
+                    groups,
+                },
+            );
         } else if id == PickInfoReply::ID {
             let m: PickInfoReply = pkt.decode()?;
             let d = &m.data;
@@ -4186,11 +4544,33 @@ impl Session<'_> {
                     rights: m.rights.iter().map(|r| (r.agent_related, r.related_rights)).collect(),
                 },
             );
+        } else if id == AgentCachedTextureResponse::ID {
+            let m: AgentCachedTextureResponse = pkt.decode()?;
+            emit(
+                self.sh,
+                NetEvent::CachedBakes {
+                    serial: m.agent_data.serial_num,
+                    faces: m.wearable_data.iter().map(|w| (w.texture_index, w.texture_id)).collect(),
+                },
+            );
+        } else if id == RebakeAvatarTextures::ID {
+            let m: RebakeAvatarTextures = pkt.decode()?;
+            emit(self.sh, NetEvent::RebakeRequested(m.texture_data.texture_id));
         } else if id == AvatarPropertiesReply::ID {
             let m: AvatarPropertiesReply = pkt.decode()?;
             let pd = &m.properties_data;
             // processAvatarPropertiesReply: no groups, picks nor notes here
             let (caption_index, caption_text) = crate::profile::parse_charter_member(&pd.charter_member);
+            if m.agent_data.avatar_id == self.agent_id() {
+                self.own_profile = Some(crate::profile::OwnProfile {
+                    sl_image: pd.image_id,
+                    fl_image: pd.fl_image_id,
+                    sl_about: field_str(&pd.about_text),
+                    fl_about: field_str(&pd.fl_about_text),
+                    allow_publish: pd.flags & crate::profile::flags::ALLOW_PUBLISH != 0,
+                    profile_url: field_str(&pd.profile_url),
+                });
+            }
             let p = crate::AvatarProfile {
                 id: m.agent_data.avatar_id,
                 sl_image: pd.image_id,
@@ -4280,6 +4660,8 @@ impl Session<'_> {
             self.agent_moved = true;
             self.regions_visited.insert(m.data.region_handle);
             self.cam_requested_at = None;
+            self.far.movement_complete(self.login_arrival, Instant::now());
+            self.login_arrival = false;
             // gLastVersionChannel: the server version the Region / Estate
             // window shows
             emit(
@@ -4378,13 +4760,7 @@ impl Session<'_> {
                     cof_version: m.appearance_data.first().map(|a| a.cof_version).unwrap_or(0),
                     appearance_version: m.appearance_data.first().map(|a| a.appearance_version).unwrap_or(0),
                     hover_height: m.appearance_hover.first().map(|h| h.hover_height.z).unwrap_or(0.0),
-                    attachments: m
-                        .attachment_block
-                        .iter()
-                        .filter(|a| !a.id.is_nil())
-                        .map(|a| a.id)
-                        .collect::<std::collections::HashSet<_>>()
-                        .len() as u32,
+                    attachments: objects::listed_attachments(m.attachment_block.iter().map(|a| (a.id, a.attachment_point))),
                 }),
             );
         } else if id == SimulatorViewerTimeMessage::ID {
@@ -4403,11 +4779,12 @@ impl Session<'_> {
             }
         } else if id == CoarseLocationUpdate::ID {
             let m: CoarseLocationUpdate = pkt.decode()?;
+            let size = self.sims.get(&from).map_or((256, 256), |sim| sim.size);
             let positions = m
                 .location
                 .iter()
                 .zip(m.agent_data.iter())
-                .map(|(l, a)| (a.agent_id, Vec3::new(l.x as f32, l.y as f32, l.z as f32 * 4.0)))
+                .map(|(l, a)| (a.agent_id, coarse_position(l.x, l.y, l.z, size)))
                 .collect();
             emit(
                 self.sh,
@@ -4497,13 +4874,15 @@ impl Session<'_> {
                 self.remove_sim(from);
             }
         } else if id == ParcelOverlay::ID {
-            // LLViewerParcelMgr::processParcelOverlay: one quarter of the
+            // LLViewerParcelMgr::processParcelOverlay: 1024 cells of the
             // region's 4 m grid per message (property lines, for sale)
             let m: ParcelOverlay = pkt.decode()?;
+            let size = self.sims.get(&from).map_or((256, 256), |sim| sim.size);
             emit(
                 self.sh,
                 NetEvent::ParcelOverlay {
                     handle: self.handle_of(from),
+                    size,
                     sequence: m.parcel_data.sequence_id,
                     data: m.parcel_data.data,
                 },
@@ -5013,6 +5392,7 @@ impl Session<'_> {
             // the agent is in this region: keep (or start) sending its updates
             self.agent_moved = true;
             self.cam_requested_at = None;
+            self.login_arrival = false;
             self.agent_update.force();
             emit(
                 self.sh,
@@ -5148,6 +5528,43 @@ fn follow_cam_event(pkt: &IncomingPacket, handle: RegionHandle) -> Result<Option
         }))
     } else {
         Ok(None)
+    }
+}
+
+/// A CoarseLocationUpdate position in metres. Its X and Y are bytes, so a
+/// region past 256 m sends them scaled to fit (SceneGraph.cs, OpenSim), and
+/// the viewer scales them back (LLViewerRegion::updateCoarseLocations, there
+/// with the width on both axes). Z is in steps of 4 m.
+fn coarse_position(x: u8, y: u8, z: u8, size: (u32, u32)) -> Vec3 {
+    Vec3::new(
+        f32::from(x) * size.0 as f32 / 256.0,
+        f32::from(y) * size.1 as f32 / 256.0,
+        f32::from(z) * 4.0,
+    )
+}
+
+#[cfg(test)]
+mod coarse_tests {
+    use super::*;
+
+    #[test]
+    fn coarse_positions_scale_back_with_each_axis_of_the_region() {
+        assert_eq!(coarse_position(100, 200, 10, (256, 256)), Vec3::new(100.0, 200.0, 40.0));
+        assert_eq!(coarse_position(100, 200, 10, (1024, 512)), Vec3::new(400.0, 400.0, 40.0));
+    }
+}
+
+#[cfg(test)]
+mod region_side_tests {
+    use super::*;
+
+    #[test]
+    fn announced_region_sides_are_held_to_the_grid_limits() {
+        assert_eq!(region_side(0), 256);
+        assert_eq!(region_side(256), 256);
+        assert_eq!(region_side(1024), 1024);
+        assert_eq!(region_side(MAX_REGION_SIDE), MAX_REGION_SIDE);
+        assert_eq!(region_side(u32::MAX), MAX_REGION_SIDE);
     }
 }
 
@@ -5435,6 +5852,13 @@ mod reset_skeleton_tests {
 }
 
 impl Session<'_> {
+    /// The fetch service, on a grid that has it and no AIS (OpenSim). `None`
+    /// on a grid with AIS, and until the region's capabilities have come.
+    fn fetch_without_ais(&self) -> Option<String> {
+        self.main_cap("FetchInventoryDescendents2")
+            .filter(|_| self.main_cap("InventoryAPIv3").is_none())
+    }
+
     fn inventory_callback(&mut self, created: bool) -> u32 {
         loop {
             self.next_inventory_callback = self.next_inventory_callback.wrapping_add(1).max(1);
@@ -5852,7 +6276,7 @@ mod event_queue_tests {
         task
     }
 
-    fn shared(events: crate::EventSender) -> Shared {
+    pub(super) fn shared(events: crate::EventSender) -> Shared {
         Shared {
             http: reqwest::Client::new(),
             caps_http: reqwest::Client::new(),
@@ -5868,7 +6292,7 @@ mod event_queue_tests {
     }
 
     /// The agent in `main_addr` (handle 10), `neighbour_addr` (20) beside.
-    fn two_regions(sh: &Shared, sock: Arc<UdpSocket>, main_addr: SocketAddr, neighbour_addr: SocketAddr) -> Session<'_> {
+    pub(super) fn two_regions(sh: &Shared, sock: Arc<UdpSocket>, main_addr: SocketAddr, neighbour_addr: SocketAddr) -> Session<'_> {
         let login = Arc::new(LoginResponse {
             agent_id: Uuid::from_u128(1),
             session_id: Uuid::from_u128(2),
@@ -5894,6 +6318,7 @@ mod event_queue_tests {
         let (caps_tx, _) = mpsc::unbounded_channel();
         let (notecard_copy_tx, _) = mpsc::unbounded_channel();
         let (inventory_move_tx, _) = mpsc::unbounded_channel();
+        let (inventory_udp_tx, _) = mpsc::unbounded_channel();
         Session {
             sh,
             sock,
@@ -5904,12 +6329,16 @@ mod event_queue_tests {
             caps_tx,
             notecard_copy_tx,
             inventory_move_tx,
+            inventory_udp_tx,
+            appearance_serial: 0,
+            appearance_queue: Default::default(),
+            own_profile: None,
             notecard_copies: HashMap::new(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,
             one_shot: 0,
             cam_warned: false,
-            far: 128.0,
+            far: FarStep::new(Instant::now()),
             refuse_neighbours: false,
             fov: DEFAULT_FOV,
             logout_started: None,
@@ -5918,6 +6347,7 @@ mod event_queue_tests {
             viewer_stats: Default::default(),
             regions_visited: Default::default(),
             cam_requested_at: None,
+            login_arrival: false,
             agent_parcel: None,
             pending_named_tp: None,
             object_cache: object_cache::ObjectCaches::new(None).0,
@@ -5928,6 +6358,7 @@ mod event_queue_tests {
             estate_invoice: Uuid::nil(),
             terrain_raw: Default::default(),
             decode_failures: HashMap::new(),
+            rejected_full: Default::default(),
             inventory_uploads: Default::default(),
             asset_imports: Default::default(),
             inventory_previews: Default::default(),
@@ -6155,11 +6586,14 @@ mod event_queue_tests {
         assert!(session.sims[&neighbour_addr].caps_again_task.is_some());
         assert_eq!(session.main_cap("ViewerAsset").as_deref(), Some("http://127.0.0.1:9/ViewerAsset"));
         assert_eq!(session.main_cap("InventoryAPIv3"), None);
+        // the seed has not answered: no reason to think the grid lacks AIS
+        assert_eq!(session.fetch_without_ais(), None);
 
         // the second answer grants more: it takes the place of the first;
         // a smaller or failed one afterwards changes nothing
         session.on_caps(neighbour_addr, &seed, Ok(agent.clone()));
         assert!(session.main_cap("InventoryAPIv3").is_some());
+        assert_eq!(session.fetch_without_ais(), None);
         session.on_caps(neighbour_addr, &seed, Ok(child));
         session.on_caps(neighbour_addr, &seed, Err("status 503".into()));
         assert_eq!(session.sims[&neighbour_addr].caps.len(), 4);
@@ -6175,6 +6609,7 @@ mod event_queue_tests {
         assert!(session.sims[&neighbour_addr].caps.is_empty());
         session.on_caps(neighbour_addr, &new_seed, Ok(agent));
         assert!(session.main_cap("InventoryAPIv3").is_some());
+        assert_eq!(session.fetch_without_ais(), None);
         assert_eq!(caps_events(&received), [(20, 4)]);
     }
 }
@@ -6227,6 +6662,7 @@ mod script_dialog_tests {
         let (caps_tx, _) = mpsc::unbounded_channel();
         let (notecard_copy_tx, _) = mpsc::unbounded_channel();
         let (inventory_move_tx, _) = mpsc::unbounded_channel();
+        let (inventory_udp_tx, _) = mpsc::unbounded_channel();
         Session {
             sh,
             sock,
@@ -6237,12 +6673,16 @@ mod script_dialog_tests {
             caps_tx,
             notecard_copy_tx,
             inventory_move_tx,
+            inventory_udp_tx,
+            appearance_serial: 0,
+            appearance_queue: Default::default(),
+            own_profile: None,
             notecard_copies: HashMap::new(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,
             one_shot: 0,
             cam_warned: false,
-            far: 128.0,
+            far: FarStep::new(Instant::now()),
             refuse_neighbours: false,
             fov: DEFAULT_FOV,
             logout_started: None,
@@ -6251,6 +6691,7 @@ mod script_dialog_tests {
             viewer_stats: Default::default(),
             regions_visited: Default::default(),
             cam_requested_at: None,
+            login_arrival: false,
             agent_parcel: None,
             pending_named_tp: None,
             object_cache: super::object_cache::ObjectCaches::new(None).0,
@@ -6261,6 +6702,7 @@ mod script_dialog_tests {
             estate_invoice: uuid::Uuid::nil(),
             terrain_raw: Default::default(),
             decode_failures: HashMap::new(),
+            rejected_full: Default::default(),
             inventory_uploads: Default::default(),
             asset_imports: Default::default(),
             inventory_previews: Default::default(),
@@ -6271,6 +6713,121 @@ mod script_dialog_tests {
             inventory_merchant_pending: false,
             next_inventory_callback: 0,
         }
+    }
+
+    #[tokio::test]
+    async fn abuse_report_udp_uses_the_complaint_database_type() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main = UdpSocket::bind("127.0.0.1:0").await.expect("simulator");
+        let main_addr = main.local_addr().expect("simulator address");
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = test_shared(events);
+        let mut session = test_session(&sh, sock.clone(), [(main_addr, Sim::new(main_addr, 10))].into(), main_addr);
+        sock.writable().await.expect("socket ready");
+        let report = crate::abuse_report::AbuseReport {
+            category: 45,
+            abuser_id: Uuid::from_u128(42),
+            summary: "Spam".into(),
+            details: "Repeated adverts".into(),
+            ..Default::default()
+        };
+        session.on_command(NetCommand::SendAbuseReport(Box::new(report.clone())));
+        let mut bytes = [0; 1500];
+        let (size, _) = tokio::time::timeout(Duration::from_secs(2), main.recv_from(&mut bytes))
+            .await
+            .expect("report reaches simulator")
+            .expect("datagram");
+        let packet = parse_packet(&bytes[..size]).expect("packet");
+        assert!(packet.reliable());
+        let message: msgs::UserReport = packet.decode().expect("UserReport");
+        // EReportType values are fixed in the server database, not ordinal.
+        assert_eq!(message.report_data.report_type, 3);
+        assert_eq!(message.agent_data.agent_id, Uuid::from_u128(1));
+        assert_eq!(message.agent_data.session_id, Uuid::from_u128(2));
+        assert_eq!(message.report_data.category, 45);
+        assert_eq!(message.report_data.abuser_id, report.abuser_id);
+        assert_eq!(message.report_data.summary, str_field(&report.summary));
+        assert_eq!(message.report_data.details, str_field(&report.details));
+        assert!(received.try_iter().any(|(_, e)| matches!(e, NetEvent::AbuseReportSent(Ok(())))));
+    }
+
+    /// LLSelectMgr::sendBuy packs the AgentData with packAgentGroupAndCatID:
+    /// the active group (nil for none) and the destination folder, one
+    /// reliable ObjectBuy to the object's region (#2793).
+    #[tokio::test]
+    async fn object_buy_carries_the_active_group_and_the_folder() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let sim = UdpSocket::bind("127.0.0.1:0").await.expect("simulator");
+        let sim_addr = sim.local_addr().expect("simulator address");
+        let (events, _) = crossbeam_channel::unbounded();
+        let sh = test_shared(events);
+        let mut session = test_session(&sh, sock.clone(), [(sim_addr, Sim::new(sim_addr, 10))].into(), sim_addr);
+        sock.writable().await.expect("socket ready");
+        let folder = Uuid::from_u128(60);
+        for group_id in [Uuid::from_u128(77), Uuid::nil()] {
+            session.on_command(NetCommand::BuyObject {
+                handle: 10,
+                local_id: 971,
+                folder,
+                sale_type: 2,
+                price: 10,
+                group_id,
+            });
+            let mut bytes = [0; 1500];
+            let (size, _) = tokio::time::timeout(Duration::from_secs(2), sim.recv_from(&mut bytes))
+                .await
+                .expect("purchase reaches the simulator")
+                .expect("datagram");
+            let packet = parse_packet(&bytes[..size]).expect("packet");
+            assert_eq!(packet.id, ObjectBuy::ID);
+            assert!(packet.reliable());
+            let m: ObjectBuy = packet.decode().expect("ObjectBuy");
+            assert_eq!(m.agent_data.agent_id, Uuid::from_u128(1));
+            assert_eq!(m.agent_data.session_id, Uuid::from_u128(2));
+            assert_eq!(m.agent_data.group_id, group_id);
+            assert_eq!(m.agent_data.category_id, folder);
+            assert_eq!(m.object_data.len(), 1);
+            let o = &m.object_data[0];
+            assert_eq!((o.object_local_id, o.sale_type, o.sale_price), (971, 2, 10));
+        }
+    }
+
+    /// #2810: AgentUpdate's Far is the draw distance of the viewer's
+    /// controls (the simulator connects the neighbours within it), not a
+    /// value of the session's own that stayed at 128 m.
+    #[tokio::test]
+    async fn agent_update_asks_for_the_viewers_draw_distance() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main = UdpSocket::bind("127.0.0.1:0").await.expect("simulator");
+        let main_addr = main.local_addr().expect("simulator address");
+        let (events, _received) = crossbeam_channel::unbounded();
+        let sh = test_shared(events);
+        let mut session = test_session(&sh, sock.clone(), [(main_addr, Sim::new(main_addr, 10))].into(), main_addr);
+        session.agent_moved = true;
+        sock.writable().await.expect("socket ready");
+        let far_sent = |session: &mut Session<'_>| {
+            session.agent_update.force();
+            session.on_agent_controls(AgentControls {
+                far: 290.0,
+                ..Default::default()
+            });
+        };
+        async fn next_far(sim: &UdpSocket) -> f32 {
+            let mut datagram = [0; 1500];
+            let (size, _) = tokio::time::timeout(Duration::from_secs(2), sim.recv_from(&mut datagram))
+                .await
+                .expect("an AgentUpdate reaches the region")
+                .expect("datagram");
+            let packet = parse_packet(&datagram[..size]).expect("packet");
+            let update: msgs::AgentUpdate = packet.decode().expect("AgentUpdate");
+            update.agent_data.far
+        }
+        far_sent(&mut session);
+        assert_eq!(next_far(&main).await, 290.0);
+        // a login arrival asks for half of it first (send_agent_update)
+        session.far.movement_complete(true, Instant::now());
+        far_sent(&mut session);
+        assert_eq!(next_far(&main).await, 145.0);
     }
 
     /// The next LogoutRequest the simulator receives, past the other packets
@@ -6345,14 +6902,27 @@ mod script_dialog_tests {
         // account still there, #956): STATE_AGENT_WAIT's time-out logs the
         // new session out before going back to the login screen.
         let mut session = test_session(&sh, sock.clone(), one_sim(), main_addr);
-        session.cam_requested_at = Some(ago(89));
+        session.login_arrival = true;
+        session.cam_requested_at = Some(ago(239));
         session.tick();
         assert!(!session.finished);
-        session.cam_requested_at = Some(ago(91));
+        session.cam_requested_at = Some(ago(241));
         session.tick();
         logout_request_from(&main).await;
         assert!(session.finished);
         assert!(matches!(ended(&received), Some(NetEvent::Disconnected { lost: true, .. })));
+
+        // A teleport or crossing the region does not confirm keeps the session
+        // however long it takes, and giving up on it resumes the agent updates
+        // (send_agent_update only checks the teleport state).
+        let mut session = test_session(&sh, sock.clone(), one_sim(), main_addr);
+        session.cam_requested_at = Some(ago(241));
+        session.tick();
+        assert!(!session.finished);
+        assert!(ended(&received).is_none());
+        session.on_command(NetCommand::ArrivalGivenUp);
+        assert!(session.agent_moved);
+        assert!(session.cam_requested_at.is_none());
     }
 
     /// A `ViewerStats` capability: the body of every POST it receives.
@@ -6486,6 +7056,12 @@ mod script_dialog_tests {
                         button_label: str_field(label),
                     })
                     .collect();
+                // the owner's block on new simulators only: nil without it
+                let owner = (channel > 0).then(|| Uuid::from_u128(0x0E));
+                menu.owner_data = owner
+                    .map(|owner_id| msgs::script_dialog::OwnerData { owner_id })
+                    .into_iter()
+                    .collect();
                 let mut bytes = Vec::new();
                 aurora_msg::build_packet(&menu, 1, true, false, &[], &mut bytes);
                 session
@@ -6494,6 +7070,7 @@ mod script_dialog_tests {
                 let NetEvent::ScriptDialog {
                     sender,
                     object_id,
+                    owner_id,
                     channel: received_channel,
                     buttons,
                     ..
@@ -6503,6 +7080,7 @@ mod script_dialog_tests {
                 };
                 assert_eq!(sender, origin_addr);
                 assert_eq!((object_id, received_channel), (object, channel));
+                assert_eq!(owner_id, owner.unwrap_or_default());
                 for (index, label) in buttons.into_iter().enumerate() {
                     session.on_command(NetCommand::ScriptDialogReply {
                         sender: Some(sender),
@@ -6560,8 +7138,9 @@ mod script_dialog_tests {
         // Chat on a negative channel (a gesture's "/-4242 ping", #952) goes
         // as the agent's own dialog answer, as really_send_chat_from_viewer
         // does; a positive channel stays a ChatFromViewer.
+        // An empty line (a gesture's bare "/-1234", #2095) still goes once.
         let long = "é".repeat(200);
-        for (channel, message) in [(-4242, "ping"), (-1, long.as_str()), (5, "cmd")] {
+        for (channel, message) in [(-4242, "ping"), (-1, long.as_str()), (5, "cmd"), (-1234, ""), (7, "")] {
             session.on_command(NetCommand::Chat {
                 message: message.into(),
                 channel,
@@ -6580,7 +7159,7 @@ mod script_dialog_tests {
                 assert_eq!(reply.data.object_id, Uuid::from_u128(1));
                 assert_eq!((reply.data.chat_channel, reply.data.button_index), (channel, 0));
                 let label = field_str(&reply.data.button_label);
-                assert!(label.len() <= 254 && message.starts_with(&label) && !label.is_empty());
+                assert!(label.len() <= 254 && message.starts_with(&label) && label.is_empty() == message.is_empty());
                 assert_eq!(reply.data.button_label.len(), label.len() + 1, "kept its NUL");
             } else {
                 assert_eq!(packet.id, ChatFromViewer::ID);
@@ -6590,6 +7169,46 @@ mod script_dialog_tests {
                     (channel, message.to_owned())
                 );
             }
+        }
+
+        // A line or an IM longer than 1023 bytes leaves as several messages
+        // cut between words (LLIMModel::sendMessage), never truncated (#1925).
+        let words = "word ".repeat(520);
+        let words = words.trim_end();
+        let friend = Uuid::from_u128(77);
+        let mut large = [0; 4096];
+        for im in [false, true] {
+            session.on_command(if im {
+                NetCommand::SendIm {
+                    to: friend,
+                    message: words.into(),
+                }
+            } else {
+                NetCommand::Chat {
+                    message: words.into(),
+                    channel: 0,
+                    chat_type: ChatType::Normal,
+                }
+            });
+            let mut parts = Vec::new();
+            for _ in 0..3 {
+                let (size, _) = tokio::time::timeout(Duration::from_secs(2), main.recv_from(&mut large))
+                    .await
+                    .expect("message part reaches main")
+                    .expect("message part packet");
+                let packet = parse_packet(&large[..size]).expect("message part datagram");
+                parts.push(if im {
+                    let m: ImprovedInstantMessage = packet.decode().expect("IM part");
+                    assert_eq!((m.message_block.to_agent_id, m.message_block.dialog), (friend, 0));
+                    field_str(&m.message_block.message)
+                } else {
+                    let m: ChatFromViewer = packet.decode().expect("chat part");
+                    field_str(&m.chat_data.message)
+                });
+            }
+            assert!(parts.iter().all(|p| p.len() <= 1023 && p.ends_with("word")), "{im}");
+            assert_eq!(parts.join(" "), words);
+            assert!(main.try_recv_from(&mut large).is_err(), "three parts only");
         }
     }
 }

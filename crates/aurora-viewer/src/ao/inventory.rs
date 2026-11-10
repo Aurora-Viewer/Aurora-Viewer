@@ -295,7 +295,8 @@ impl Catalog {
                 }
             }
         }
-        self.sets.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
+        self.sets
+            .sort_by(|a, b| crate::natural_order::cmp(&a.name, &b.name).then_with(|| a.id.cmp(&b.id)));
         self.missing.sort();
         self.missing.dedup();
     }
@@ -345,6 +346,7 @@ impl Catalog {
 }
 
 pub fn valid_name(name: &str) -> Result<String, String> {
+    crate::text_validation::require(crate::text_validation::Policy::AoName, name)?;
     let name = name.trim();
     if name.is_empty() || name.len() > 63 || name.contains(':') || name.chars().any(char::is_control) {
         return Err(aurora_i18n::tr!("ao-invalid-name").into());
@@ -398,19 +400,26 @@ pub fn editable(inv: &Inventory, change: &Mutation, protected: &HashSet<Uuid>) -
     // can never write into, rename, move or remove any part of its inventory.
     // The Alchemy import source is protected the same way.
     let sources = [child(inv, inv.root, "#Firestorm"), Source::Alchemy.root(inv)];
-    change
-        .operations
-        .iter()
-        .flat_map(|op| match op {
-            Operation::Folder { parent, .. } | Operation::Links { parent, .. } => [Some(*parent), None],
-            Operation::Patch { id, body, .. } => [Some(*id), body.as_map().and_then(|m| m.get("parent_id")).map(|p| p.as_uuid())],
-            Operation::Delete { id, .. } | Operation::Purge(id) => [Some(*id), None],
-        })
-        .flatten()
-        .chain(change.copies.iter().map(|copy| copy.parent))
-        .chain(change.refresh.iter().copied())
-        .filter(|id| inv.folders.contains_key(id) || inv.items.contains_key(id))
-        .all(|id| !sources.iter().flatten().any(|root| actions::under(inv, id, *root)) && actions::mutable(inv, id, protected))
+    // a locked folder holds only itself: never moved nor removed (`movable`)
+    let unlocks = change.operations.iter().any(|op| match op {
+        Operation::Patch { id, body, .. } => protected.contains(id) && body.as_map().is_some_and(|m| m.contains_key("parent_id")),
+        Operation::Delete { id, .. } | Operation::Purge(id) => protected.contains(id),
+        Operation::Folder { .. } | Operation::Links { .. } => false,
+    });
+    !unlocks
+        && change
+            .operations
+            .iter()
+            .flat_map(|op| match op {
+                Operation::Folder { parent, .. } | Operation::Links { parent, .. } => [Some(*parent), None],
+                Operation::Patch { id, body, .. } => [Some(*id), body.as_map().and_then(|m| m.get("parent_id")).map(|p| p.as_uuid())],
+                Operation::Delete { id, .. } | Operation::Purge(id) => [Some(*id), None],
+            })
+            .flatten()
+            .chain(change.copies.iter().map(|copy| copy.parent))
+            .chain(change.refresh.iter().copied())
+            .filter(|id| inv.folders.contains_key(id) || inv.items.contains_key(id))
+            .all(|id| !sources.iter().flatten().any(|root| actions::under(inv, id, *root)) && actions::mutable(inv, id))
 }
 
 /// Build the entire parent-before-child mutation before sending it. AIS
@@ -551,8 +560,17 @@ pub fn add(inv: &Inventory, set: &Set, state: State, item: Uuid, container: Opti
     Ok(finish(change))
 }
 
+/// AOEngine::updateSortOrder: only an entry whose stored order differs from
+/// its position is rewritten, so a plain add is a single request.
+fn in_place(stored: i32, index: usize) -> bool {
+    usize::try_from(stored).ok() == Some(index)
+}
+
 fn normalize_steps(inv: &Inventory, change: &mut Mutation, steps: &[Step]) -> Result<(), String> {
     for (order, step) in steps.iter().enumerate() {
+        if in_place(step.order, order) {
+            continue;
+        }
         let body = if step.group {
             llsd_map! { "name" => format!("{}:OR{order}", step.name) }
         } else {
@@ -567,6 +585,9 @@ fn normalize_steps(inv: &Inventory, change: &mut Mutation, steps: &[Step]) -> Re
 
 fn normalize_members(inv: &Inventory, change: &mut Mutation, members: &[Animation]) -> Result<(), String> {
     for (order, a) in members.iter().enumerate() {
+        if in_place(a.order, order) {
+            continue;
+        }
         let patch = actions::patch(inv, a.link, llsd_map! { "desc" => order.to_string() })?;
         change.operations.extend(patch.operations);
         change.refresh.extend(patch.refresh);

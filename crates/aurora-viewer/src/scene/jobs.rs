@@ -56,6 +56,16 @@ pub struct PreparedGeom {
 }
 
 impl PreparedGeom {
+    /// Every face staged was staged in `pool`: false for data of a GPU
+    /// device lost since (app/gpu_recovery.rs); faces kept in memory are
+    /// always good.
+    pub fn staged_in(&self, pool: Option<&StagingPool>) -> bool {
+        self.faces.iter().flatten().all(|f| match f {
+            FaceUpload::Staged(s) => pool.is_some_and(|pool| s.data.is_from(pool)),
+            FaceUpload::Memory(_) => true,
+        })
+    }
+
     /// `pick`: keep a copy of the triangles for ray picking (not for the
     /// avatar's own body parts).
     pub fn new(faces: Vec<FaceData>, min: Vec3, max: Vec3, pick: bool, pool: Option<&StagingPool>) -> Self {
@@ -130,6 +140,8 @@ pub enum JobResult {
         geom: PreparedGeom,
         /// LLVolume::getSurfaceArea (sculpts; 1 otherwise).
         area: f32,
+        /// The swept grid's area of prims and sculpts (surface_area.rs).
+        grid_area: f32,
     },
     GeometryFailed {
         key: GeomKey,
@@ -149,6 +161,17 @@ pub enum JobResult {
     },
     TextureFailed {
         id: Uuid,
+    },
+    /// A derived normal, fully prepared and staged on the worker. Its slot
+    /// stays stable across progressive updates; epoch rejects old source jobs.
+    LegacyBump {
+        id: Uuid,
+        epoch: u32,
+        revision: super::textures::PreviewRevision,
+        discard: u8,
+        size: Option<(u32, u32)>,
+        staged: Option<aurora_render::StagedTexture>,
+        mips: Vec<(u32, u32, Vec<u8>)>,
     },
     /// The JPEG 2000 data of a texture read from the disk cache (none: not
     /// there).
@@ -226,12 +249,18 @@ fn below_normal_priority() {
 
 impl JobResult {
     /// A geometry built by a job, prepared for the GPU on the job's thread.
-    pub fn geometry(key: GeomKey, (faces, min, max): (Vec<FaceData>, Vec3, Vec3), area: f32, pool: Option<&StagingPool>) -> Self {
+    pub fn geometry(
+        key: GeomKey,
+        (faces, min, max): (Vec<FaceData>, Vec3, Vec3),
+        (area, grid_area): (f32, f32),
+        pool: Option<&StagingPool>,
+    ) -> Self {
         let pick = !matches!(key, GeomKey::AvatarPart(_) | GeomKey::AvatarMorph { .. });
         JobResult::Geometry {
             key,
             geom: PreparedGeom::new(faces, min, max, pick, pool),
             area,
+            grid_area,
         }
     }
 }
@@ -349,6 +378,13 @@ impl Jobs {
     /// One job per item, queued with a single wake-up of the pool: a burst
     /// of small jobs (the cache reads of a few hundred new textures) costs
     /// the main thread one `spawn` instead of one each.
+    ///
+    /// The batch's job queues the items from inside the pool, in order
+    /// (`spawn_fifo`), and returns: no pool thread ever waits for them. A
+    /// parallel loop here did wait (rayon's `join`), and a waiting thread
+    /// runs other queued jobs meanwhile, the next batches' loops among them:
+    /// they nested on its stack without bound, until a login among 116,000
+    /// objects overflowed its 2 MB (#1689).
     pub fn spawn_many<T: Send + 'static>(&self, items: Vec<T>, f: impl Fn(T) -> JobResult + Send + Sync + 'static) {
         if items.is_empty() {
             return;
@@ -356,13 +392,17 @@ impl Jobs {
         let tx = self.tx.clone();
         let n = self.in_flight.clone();
         n.fetch_add(items.len(), Ordering::Relaxed);
+        let f = Arc::new(f);
         self.pool.spawn(move || {
-            use rayon::prelude::*;
-            items.into_par_iter().for_each(|item| {
-                let r = f(item);
-                n.fetch_sub(1, Ordering::Relaxed);
-                let _ = tx.send(r);
-            });
+            for item in items {
+                let (f, tx, n) = (f.clone(), tx.clone(), n.clone());
+                // (on a pool thread: queued in this pool)
+                rayon::spawn_fifo(move || {
+                    let r = f(item);
+                    n.fetch_sub(1, Ordering::Relaxed);
+                    let _ = tx.send(r);
+                });
+            }
         });
     }
 
@@ -575,7 +615,7 @@ pub fn mesh_to_faces(
                                 // LLSkinningUtil::getPerVertexSkinMatrix:
                                 // clamp in the mesh's palette before remapping.
                                 sv.joints[k] = map[(j[k] as usize).min(map.len() - 1)];
-                                sv.weights[k] = (w[k].clamp(0.0, 1.0) * 255.0).round() as u8;
+                                sv.weights[k] = aurora_render::pack_skin_weight(w[k]);
                             }
                             sv
                         })
@@ -622,7 +662,7 @@ mod tests {
             [9, 9, 9, 3],
             "invalid indices clamp to the last mesh joint before mapping"
         );
-        assert_eq!(vertices[1].weights, [128, 64, 64, 0]);
+        assert_eq!(vertices[1].weights, [32768, 16384, 16384, 0]);
         assert_eq!(vertices[2].joints, [9, 7, 3, 9]);
         let (faces, _, _) = mesh_to_faces(&[face], None, Some(&[]));
         assert!(faces[0].as_ref().unwrap().skin.is_none(), "an empty palette cannot skin vertices");
@@ -648,6 +688,44 @@ mod tests {
     fn rgba_expand() {
         assert_eq!(to_rgba(1, &[10, 20], 2), vec![10, 10, 10, 255, 20, 20, 20, 255]);
         assert_eq!(to_rgba(3, &[1, 2, 3], 1), vec![1, 2, 3, 255]);
+    }
+
+    /// #1689: many batches at once (a login among 116,000 objects) must not
+    /// nest on a pool thread's stack. Each item notes how deep its thread's
+    /// stack is; the deepest must stay near the shallowest.
+    #[test]
+    fn batches_of_jobs_do_not_nest_on_a_thread_stack() {
+        use std::collections::HashMap;
+        use std::sync::Mutex;
+        let (jobs, results) = Jobs::new();
+        // per thread: the lowest and highest address of a local seen
+        let seen: Arc<Mutex<HashMap<std::thread::ThreadId, (usize, usize)>>> = Arc::default();
+        let elsewhere = Arc::new(AtomicUsize::new(0));
+        let (batches, items) = (200usize, 64usize);
+        for _ in 0..batches {
+            let seen = seen.clone();
+            let elsewhere = elsewhere.clone();
+            jobs.spawn_many((0..items).collect(), move |_| {
+                // on the background pool, never on the frame's (frame_par.rs)
+                if !std::thread::current().name().is_some_and(|n| n.starts_with("aurora-jobs-")) {
+                    elsewhere.fetch_add(1, Ordering::Relaxed);
+                }
+                let local = 0u8;
+                let at = std::hint::black_box(&local) as *const u8 as usize;
+                std::thread::sleep(std::time::Duration::from_micros(50));
+                let mut seen = seen.lock().expect("lock");
+                let e = seen.entry(std::thread::current().id()).or_insert((at, at));
+                e.0 = e.0.min(at);
+                e.1 = e.1.max(at);
+                JobResult::Done
+            });
+        }
+        for _ in 0..batches * items {
+            results.recv_timeout(std::time::Duration::from_secs(30)).expect("every job reports");
+        }
+        let deepest = seen.lock().expect("lock").values().map(|(lo, hi)| hi - lo).max().unwrap_or(0);
+        assert!(deepest < 64 * 1024, "jobs nested {deepest} bytes deep on one thread's stack");
+        assert_eq!(elsewhere.load(Ordering::Relaxed), 0, "jobs ran outside the background pool");
     }
 
     /// Tells on which thread it is dropped.

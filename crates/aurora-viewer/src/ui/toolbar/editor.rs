@@ -307,7 +307,10 @@ impl ToolbarUi {
                 card.child.spacing_mut().item_spacing.y = 8.0;
                 for bar in Bar::ALL {
                     if (bar == Bar::Bottom || !settings.bar(bar, layout).is_empty())
-                        && let Some(next) = style_row(&mut card.child, p, bar, islands, settings.style(bar))
+                        && let Some(next) = card
+                            .child
+                            .push_id(("toolbar_style", bar), |ui| style_row(ui, p, bar, islands, settings.style(bar)))
+                            .inner
                     {
                         self.pending = Some(Edit::Style(bar, next));
                     }
@@ -445,6 +448,19 @@ fn ghost(ctx: &egui::Context, p: &Palette, button: &ToolButton, pointer: egui::P
 /// bar's labels. Never saved.
 pub fn demo_settings(settings: &mut ToolbarSettings, layout: &Layout) {
     let Some(mode) = demo_mode() else { return };
+    if matches!(mode, "empty-left" | "empty-right") {
+        let bottom = settings.buttons(layout).to_vec();
+        settings.buttons = Some(Vec::new());
+        settings.left.clear();
+        settings.right.clear();
+        if mode == "empty-left" {
+            settings.left = bottom;
+        } else {
+            settings.right = bottom;
+        }
+        settings.locked = false;
+        return;
+    }
     if !matches!(mode, "custom" | "side" | "sidemenu" | "labels" | "right") {
         return;
     }
@@ -484,7 +500,7 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, state: &mut ToolbarUi) -> Ve
     let Some(mode) = demo_mode() else {
         return Vec::new();
     };
-    if mode == "side" {
+    if matches!(mode, "side" | "empty-left" | "empty-right") {
         return Vec::new();
     }
     // the side toolbar's right click, without the window

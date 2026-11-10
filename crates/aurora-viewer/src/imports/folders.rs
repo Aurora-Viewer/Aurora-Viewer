@@ -51,8 +51,8 @@ impl Folders {
         self.todo.clear();
     }
 
-    pub(super) fn resolved(&self, path: &[String], inventory: &Inventory, protected: &HashSet<Uuid>) -> Option<Uuid> {
-        if !rules::destination(inventory, self.destination, protected) {
+    pub(super) fn resolved(&self, path: &[String], inventory: &Inventory) -> Option<Uuid> {
+        if !rules::destination(inventory, self.destination) {
             return None;
         }
         let mut parent = self.destination;
@@ -62,7 +62,7 @@ impl Folders {
         for depth in 1..=path.len() {
             let id = *self.resolved.get(&path[..depth])?;
             let folder = inventory.folders.get(&id)?;
-            if folder.info.parent != parent || folder.info.name != path[depth - 1] || !rules::destination(inventory, id, protected) {
+            if folder.info.parent != parent || folder.info.name != path[depth - 1] || !rules::destination(inventory, id) {
                 return None;
             }
             parent = id;
@@ -174,23 +174,23 @@ impl Imports {
                 }
             }
         }
-        self.sync_folder_plan(world, inventory);
+        self.sync_folder_plan(world);
     }
 
     /// A fee query may use the existing root before confirmation creates children.
-    pub fn folder_plan_valid(&self, world: &crate::world::World, prefs: &crate::ui::inventory::InventoryPreferences) -> bool {
+    pub fn folder_plan_valid(&self, world: &crate::world::World) -> bool {
         if !self.folders.active() || self.choice == Choice::Local {
-            return self.folder_plan_ready(world, prefs);
+            return self.folder_plan_ready(world);
         }
-        rules::destination(&world.inventory, self.folders.destination, &prefs.protected)
+        rules::destination(&world.inventory, self.folders.destination)
             && self
                 .entries
                 .iter()
-                .filter(|entry| !entry.local && entry.selected && matches!(entry.status, Status::Ready))
+                .filter(|entry| self.choice.accepts(entry) && entry.selected && matches!(entry.status, Status::Ready))
                 .all(|entry| entry.upload_path.as_ref().is_some_and(|path| valid_path(path)))
     }
 
-    pub fn sync_folder_plan(&mut self, world: &crate::world::World, prefs: &crate::ui::inventory::InventoryPreferences) {
+    pub fn sync_folder_plan(&mut self, world: &crate::world::World) {
         if self.folders.destination.is_nil() {
             self.folders.destination = world.inventory.root;
         }
@@ -205,7 +205,7 @@ impl Imports {
                 entry
                     .upload_path
                     .as_ref()
-                    .and_then(|path| self.folders.resolved(path, &world.inventory, &prefs.protected))
+                    .and_then(|path| self.folders.resolved(path, &world.inventory))
             } else {
                 None
             };
@@ -228,13 +228,9 @@ impl Imports {
         }
     }
 
-    pub fn folder_plan_ready(&self, world: &crate::world::World, prefs: &crate::ui::inventory::InventoryPreferences) -> bool {
+    pub fn folder_plan_ready(&self, world: &crate::world::World) -> bool {
         if !self.folders.active() && !self.load_preferences.use_default_folders && self.choice != Choice::Local {
-            return rules::destination(
-                &world.inventory,
-                Self::batch_folder(world, self.load_preferences.batch_folder),
-                &prefs.protected,
-            );
+            return rules::destination(&world.inventory, Self::batch_folder(world, self.load_preferences.batch_folder));
         }
         !self.folders.active()
             || self.choice == Choice::Local
@@ -246,18 +242,18 @@ impl Imports {
                     .all(|e| {
                         e.upload_path.as_ref().is_some_and(|path| {
                             valid_path(path)
-                                && self.folders.resolved(path, &world.inventory, &prefs.protected) == Some(e.folder)
-                                && rules::destination(&world.inventory, e.folder, &prefs.protected)
+                                && self.folders.resolved(path, &world.inventory) == Some(e.folder)
+                                && rules::destination(&world.inventory, e.folder)
                         })
                     }))
     }
 
-    pub fn prepare_import_folders(&mut self, world: &crate::world::World, prefs: &crate::ui::inventory::InventoryPreferences) {
+    pub fn prepare_import_folders(&mut self, world: &crate::world::World) {
         if self.busy() || self.pending_files.is_some() || !self.folders.active() {
             return;
         }
-        self.sync_folder_plan(world, prefs);
-        if !rules::destination(&world.inventory, self.folders.destination, &prefs.protected) {
+        self.sync_folder_plan(world);
+        if !rules::destination(&world.inventory, self.folders.destination) {
             self.message = aurora_i18n::tr!("import-invalid-request").into();
             return;
         }
@@ -284,7 +280,7 @@ impl Imports {
             .folders
             .resolved
             .keys()
-            .filter(|path| self.folders.resolved(path, &world.inventory, &prefs.protected).is_none())
+            .filter(|path| self.folders.resolved(path, &world.inventory).is_none())
             .cloned()
             .collect();
         for path in stale {
@@ -295,24 +291,20 @@ impl Imports {
         self.message.clear();
     }
 
-    pub fn next_import_folder(
-        &mut self,
-        world: &crate::world::World,
-        prefs: &crate::ui::inventory::InventoryPreferences,
-    ) -> Option<aurora_net::NetCommand> {
+    pub fn next_import_folder(&mut self, world: &crate::world::World) -> Option<aurora_net::NetCommand> {
         if !self.folders.creating || self.folders.pending.is_some() {
             return None;
         }
         while let Some(path) = self.folders.todo.pop_front() {
-            if self.folders.resolved(&path, &world.inventory, &prefs.protected).is_some() {
+            if self.folders.resolved(&path, &world.inventory).is_some() {
                 continue;
             }
-            let Some(parent) = self.folders.resolved(&path[..path.len() - 1], &world.inventory, &prefs.protected) else {
+            let Some(parent) = self.folders.resolved(&path[..path.len() - 1], &world.inventory) else {
                 self.folders.cancel();
                 self.message = aurora_i18n::tr!("import-invalid-request").into();
                 return None;
             };
-            if !rules::destination(&world.inventory, parent, &prefs.protected) {
+            if !rules::destination(&world.inventory, parent) {
                 self.folders.cancel();
                 self.message = aurora_i18n::tr!("import-invalid-request").into();
                 return None;
@@ -333,7 +325,7 @@ impl Imports {
             return Some(aurora_net::NetCommand::EditInventory { request, change });
         }
         self.folders.creating = false;
-        self.sync_folder_plan(world, prefs);
+        self.sync_folder_plan(world);
         None
     }
 
@@ -420,8 +412,88 @@ pub(super) fn discover(root: &Path, limit: usize) -> Result<Vec<(PathBuf, Vec<St
             }
         }
     }
-    files.sort_by(|a, b| a.0.cmp(&b.0));
+    // Directory enumeration order is not stable, and PathBuf's platform
+    // ordering is a byte/UTF-16 ordering rather than the name order people
+    // expect in Explorer (for example, `texture10` before `texture2`).
+    files.sort_by(|a, b| explorer_path_cmp(&a.1, &a.0, &b.1, &b.0));
     Ok(files)
+}
+
+/// Compare path components by case-insensitive, natural name order. This
+/// gives folder scans a stable Explorer-like order on every platform.
+fn explorer_path_cmp(left_folders: &[String], left_path: &Path, right_folders: &[String], right_path: &Path) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+
+    let left_file = left_path.file_name().unwrap_or_default().to_string_lossy();
+    let right_file = right_path.file_name().unwrap_or_default().to_string_lossy();
+    let count = left_folders.len().max(right_folders.len()) + 1;
+    for index in 0..count {
+        let left_name = left_folders
+            .get(index)
+            .map(String::as_str)
+            .or((index == left_folders.len()).then_some(left_file.as_ref()));
+        let right_name = right_folders
+            .get(index)
+            .map(String::as_str)
+            .or((index == right_folders.len()).then_some(right_file.as_ref()));
+        let (Some(left_name), Some(right_name)) = (left_name, right_name) else {
+            return left_name.is_some().cmp(&right_name.is_some()).reverse();
+        };
+        let left_is_folder = index < left_folders.len();
+        let right_is_folder = index < right_folders.len();
+        if left_name != right_name {
+            // Explorer groups directories before files when sorting by Name.
+            if left_is_folder != right_is_folder {
+                return if left_is_folder { Ordering::Less } else { Ordering::Greater };
+            }
+            let order = explorer_name_cmp(left_name, right_name);
+            if order != Ordering::Equal {
+                return order;
+            }
+        }
+    }
+    left_path.as_os_str().cmp(right_path.as_os_str())
+}
+
+pub(super) fn explorer_name_cmp(left: &str, right: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+
+    let mut a = left.chars().peekable();
+    let mut b = right.chars().peekable();
+    loop {
+        match (a.peek().copied(), b.peek().copied()) {
+            (Some(x), Some(y)) if x.is_ascii_digit() && y.is_ascii_digit() => {
+                let mut a_digits = String::new();
+                let mut b_digits = String::new();
+                while a.peek().is_some_and(char::is_ascii_digit) {
+                    a_digits.push(a.next().unwrap());
+                }
+                while b.peek().is_some_and(char::is_ascii_digit) {
+                    b_digits.push(b.next().unwrap());
+                }
+                let a_significant = a_digits.trim_start_matches('0');
+                let b_significant = b_digits.trim_start_matches('0');
+                let order = a_significant
+                    .len()
+                    .cmp(&b_significant.len())
+                    .then_with(|| a_significant.cmp(b_significant));
+                if order != Ordering::Equal {
+                    return order;
+                }
+            }
+            (Some(x), Some(y)) => {
+                let order = x.to_lowercase().cmp(y.to_lowercase());
+                if order != Ordering::Equal {
+                    return order;
+                }
+                a.next();
+                b.next();
+            }
+            (Some(_), None) => return Ordering::Greater,
+            (None, Some(_)) => return Ordering::Less,
+            (None, None) => return left.cmp(right),
+        }
+    }
 }
 
 #[cfg(test)]

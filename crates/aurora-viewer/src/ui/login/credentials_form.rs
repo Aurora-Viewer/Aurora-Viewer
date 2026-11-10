@@ -46,7 +46,13 @@ pub fn content(
             ui.add_space(10.0);
             let user = if new_account {
                 let mut options = Account::from_settings(settings, form.remember_mfa, None);
-                if super::carousel::controls(ui, &mut options, &mut form.start_slurl, &settings.grids) {
+                // the name typed so far: an account stored here offers its
+                // favourites (FSPanelLogin::onUsernameTextChanged)
+                let key = options.key();
+                let mut favorites = super::StartFavorites::of(&form.favorites, &form.start_favorite, &key);
+                let edited = super::carousel::controls(ui, &mut options, &mut form.start_slurl, &mut favorites, &settings.grids);
+                favorites.keep(&mut form.start_favorite, key);
+                if edited {
                     let changed_grid = options.uri != settings.login_uri();
                     options.apply(settings);
                     if changed_grid {
@@ -60,6 +66,8 @@ pub fn content(
                         form.error = None;
                         form.tos_message = None;
                         form.agree_tos = false;
+                        form.critical_message = None;
+                        form.read_critical = false;
                     }
                 }
                 ui.add_space(8.0);
@@ -80,6 +88,8 @@ pub fn content(
                     form.error = None;
                     form.tos_message = None;
                     form.agree_tos = false;
+                    form.critical_message = None;
+                    form.read_critical = false;
                 }
                 Some(user)
             } else {
@@ -142,12 +152,26 @@ pub fn content(
                 egui::ScrollArea::vertical().max_height(120.0).show(ui, |ui| {
                     ui.label(terms);
                 });
+                if let Some(url) = super::terms_url(terms, &settings.login_uri()) {
+                    super::terms_link(ui, p, &url);
+                }
                 widgets::checkbox(
                     ui,
                     p,
                     &mut form.agree_tos,
                     aurora_i18n::tr!("ui-login-i-accept-the-terms-and-want-to-log-in"),
                 );
+            }
+            // its own step: reading it acknowledges this message only
+            if let Some(message) = &form.critical_message {
+                ui.label(RichText::new(aurora_i18n::tr!("ui-login-critical-message")).strong().color(p.amber));
+                egui::ScrollArea::vertical()
+                    .id_salt("critical_message")
+                    .max_height(120.0)
+                    .show(ui, |ui| {
+                        ui.label(message);
+                    });
+                widgets::checkbox(ui, p, &mut form.read_critical, aurora_i18n::tr!("ui-login-critical-message-read"));
             }
             if let Some(error) = &form.error {
                 ui.label(RichText::new(error).color(p.danger));
@@ -161,6 +185,7 @@ pub fn content(
                 && (!form.password.is_empty() || form.stored.is_some())
                 && (!form.show_mfa || !form.mfa_token.trim().is_empty())
                 && (form.tos_message.is_none() || form.agree_tos)
+                && (form.critical_message.is_none() || form.read_critical)
         })
         .inner
         && !grids_open;
@@ -192,6 +217,7 @@ pub fn content(
         form.reconnect = false;
         form.error = None;
         form.tos_message = None;
+        form.critical_message = None;
         form.show_mfa = false;
     }
     pressed
@@ -228,6 +254,7 @@ pub fn dialog(
         form.reconnect = false;
         form.show_mfa = false;
         form.tos_message = None;
+        form.critical_message = None;
         form.password.clear();
         form.mfa_token.clear();
         if adding

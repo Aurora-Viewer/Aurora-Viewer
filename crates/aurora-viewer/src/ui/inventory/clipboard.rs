@@ -4,6 +4,98 @@
 
 use super::*;
 
+/// LLFolderViewItem::isFadeItem / draw (indra/llui/llfolderviewitem.cpp):
+/// a cut folder fades its descendants too, without disabling their controls.
+#[derive(Default)]
+pub(super) struct CutRows {
+    ids: Vec<Uuid>,
+    roots: HashSet<Uuid>,
+}
+
+pub(super) fn prepare(st: &mut InventoryUi) {
+    if st.cut && st.cut_rows.ids != st.clipboard {
+        st.cut_rows.ids.clone_from(&st.clipboard);
+        st.cut_rows.roots = st.clipboard.iter().copied().collect();
+    }
+}
+
+pub(super) fn opacity(inv: &Inventory, st: &InventoryUi, id: Uuid) -> f32 {
+    // Only visible rows walk their ancestors. Never expand or scan a cut
+    // folder's entire contents on the frame thread.
+    if st.cut && rules::ancestors(inv, id).any(|id| st.cut_rows.roots.contains(&id)) {
+        0.5
+    } else {
+        1.0
+    }
+}
+
+impl InventoryUi {
+    /// Cancel the shared cut in every inventory window. Copy remains reusable.
+    pub fn cancel_cut(&mut self) {
+        if self.cut {
+            self.clipboard.clear();
+            self.cut = false;
+            self.consume_clipboard = false;
+        }
+        for window in &mut self.windows {
+            window.state.cancel_cut();
+        }
+    }
+
+    /// Called before fields consume input, even while Inventory is closed.
+    pub fn clipboard_input(&mut self, events: &[egui::Event]) {
+        for event in events {
+            match event {
+                egui::Event::Key {
+                    key: egui::Key::Escape,
+                    pressed: true,
+                    ..
+                } => self.cancel_cut(),
+                egui::Event::Paste(text) => self.clipboard_changed(Some(text)),
+                _ => {}
+            }
+        }
+    }
+
+    /// The Windows counter also catches asynchronous image copies and other
+    /// applications changing the clipboard without taking keyboard focus.
+    pub fn native_clipboard_changed(&mut self) -> bool {
+        #[cfg(windows)]
+        {
+            // SAFETY: this reads the calling desktop's change counter, with
+            // no pointers, ownership transfer or clipboard lock required.
+            let sequence = unsafe { windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber() };
+            sequence != 0 && self.clipboard_sequence.replace(sequence) != Some(sequence)
+        }
+        #[cfg(not(windows))]
+        false
+    }
+
+    /// Check only on native changes or focus return; never poll clipboard text.
+    pub fn clipboard_changed(&mut self, text: Option<&str>) {
+        if self.cut && !holds_marker(self, text.unwrap_or_default()) {
+            self.cancel_cut();
+        }
+    }
+
+    /// A copy from any other viewer field replaces the cut's native marker.
+    pub fn clipboard_output(&mut self, commands: &[egui::OutputCommand]) {
+        for command in commands.iter().rev() {
+            match command {
+                egui::OutputCommand::CopyText(text) => {
+                    self.clipboard_changed(Some(text));
+                    break;
+                }
+                egui::OutputCommand::CopyImage(_) => {
+                    self.cancel_cut();
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 pub(super) fn focus_id(st: &InventoryUi) -> egui::Id {
     egui::Id::unique(("inventory_clipboard_focus", st.ui_id))
 }
@@ -65,7 +157,7 @@ pub(super) fn copy_allowed(inv: &Inventory, ids: &[Uuid]) -> bool {
                 || inv
                     .items
                     .get(id)
-                    .is_some_and(|it| it.owner_mask & rules::COPY != 0 || !matches!(it.asset_type, 2 | 49))
+                    .is_some_and(|it| rules::held(inv, it) & rules::COPY != 0 || !matches!(it.asset_type, 2 | 49))
         })
 }
 
@@ -78,6 +170,90 @@ pub(super) fn store(ctx: &egui::Context, st: &mut InventoryUi, ids: Vec<Uuid>, c
     }
     st.clipboard = ids;
     st.cut = cut;
+    st.consume_clipboard = false;
+}
+
+/// Ctrl+C / Ctrl+X: `ids` go on the clipboard when they may be copied, or
+/// all moved for a cut; `false` leaves the clipboard as it was.
+pub(crate) fn offer(
+    ctx: &egui::Context,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    ids: Vec<Uuid>,
+    cut: bool,
+    protected: &HashSet<Uuid>,
+) -> bool {
+    let allowed = if cut {
+        !ids.is_empty() && ids.iter().all(|id| rules::relocatable(inv, *id, protected))
+    } else {
+        copy_allowed(inv, &ids)
+    };
+    if allowed {
+        store(ctx, st, ids, cut);
+    }
+    allowed
+}
+
+/// Ctrl+V pastes only while the system clipboard still holds the marker
+/// `store` left: another application or a text field may have replaced it,
+/// and must not paste an old inventory selection.
+pub(crate) fn holds_marker(st: &InventoryUi, text: &str) -> bool {
+    st.clipboard.first().is_some_and(|id| text.trim() == id.to_string())
+}
+
+/// Ctrl+C, Ctrl+X or Ctrl+V in Appearance, on this same clipboard. A paste
+/// with an outfit selected takes items into that outfit, and folders beside
+/// it, in its group (or into the group, when a group is selected).
+pub fn appearance_request(
+    ctx: &egui::Context,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    request: crate::ui::appearance::ClipboardRequest,
+) -> Vec<InvAction> {
+    use crate::ui::appearance::{ClipboardRequest, PasteTo};
+    use crate::world::outfit_folders;
+    let mut actions = Vec::new();
+    match request {
+        ClipboardRequest::Store { ids, cut } => {
+            if !offer(ctx, inv, st, ids, cut, &prefs.protected) {
+                st.message = aurora_i18n::tr!("ui-appearance-clipboard-cannot-take").into();
+            }
+        }
+        ClipboardRequest::Paste { to, text } => {
+            if !holds_marker(st, &text) {
+                return actions;
+            }
+            let folders = st.clipboard.iter().all(|id| inv.folders.contains_key(id));
+            let to = match to {
+                PasteTo::Worn => crate::world::appearance::cof(inv),
+                PasteTo::Outfit(Some(id)) if outfit_folders::container(inv, id) => Some(id),
+                PasteTo::Outfit(Some(id)) if folders => rules::parent(inv, id).filter(|parent| outfit_folders::container(inv, *parent)),
+                PasteTo::Outfit(Some(id)) => Some(id),
+                PasteTo::Outfit(None) if folders => outfit_folders::my_outfits(inv),
+                PasteTo::Outfit(None) => {
+                    st.message = aurora_i18n::tr!("ui-appearance-clipboard-select-an-outfit").into();
+                    None
+                }
+            };
+            if let Some(to) = to {
+                paste(inv, to, false, st, prefs, facts, &mut actions);
+            }
+        }
+    }
+    actions
+}
+
+/// Whether Paste (not as link) into `to` would go through: the outfit rules
+/// for the outfit folders, the inventory's elsewhere.
+pub(super) fn paste_allowed(inv: &Inventory, st: &InventoryUi, to: Uuid, prefs: &InventoryPreferences, facts: &Facts) -> bool {
+    match crate::world::outfit_paste::plan(inv, &st.clipboard, to, st.cut, &prefs.protected) {
+        Ok(crate::world::outfit_paste::Paste::Inventory) => {
+            rules::paste_allowed(inv, &st.clipboard, to, st.cut, false, &prefs.protected, &facts.worn)
+        }
+        plan => plan.is_ok(),
+    }
 }
 
 pub(super) fn paste(
@@ -97,6 +273,33 @@ pub(super) fn paste(
             copy: !cut,
         });
         return;
+    }
+    if !links {
+        match crate::world::outfit_paste::plan(inv, &st.clipboard, to, cut, &prefs.protected) {
+            Ok(crate::world::outfit_paste::Paste::Inventory) => {}
+            Ok(crate::world::outfit_paste::Paste::Edit(change)) => {
+                st.consume_clipboard = cut;
+                st.message.clear();
+                actions.push(InvAction::Edit(change));
+                return;
+            }
+            // dropToOutfit into the Current Outfit wears, and leaves the
+            // clipboard as it was.
+            Ok(crate::world::outfit_paste::Paste::Wear(items)) => {
+                st.message.clear();
+                actions.push(InvAction::Appearance(crate::world::appearance::Action::WearItems {
+                    items,
+                    replace: true,
+                    point: 0,
+                }));
+                return;
+            }
+            Err(reason) => {
+                st.consume_clipboard = false;
+                st.message = reason;
+                return;
+            }
+        }
     }
     match rules::paste(inv, &st.clipboard, to, cut, links, &prefs.protected, &facts.worn) {
         Ok(change) => {
@@ -148,22 +351,12 @@ pub(super) fn shortcuts(
         }
         match event {
             egui::Event::Copy | egui::Event::Cut => {
-                let cut = matches!(event, egui::Event::Cut);
                 let mut ids: Vec<_> = st.selection.iter().copied().collect();
                 ids.sort();
-                let allowed = if cut {
-                    !ids.is_empty() && ids.iter().all(|id| rules::movable(inv, *id, &prefs.protected))
-                } else {
-                    copy_allowed(inv, &ids)
-                };
-                if allowed {
-                    store(ui.ctx(), st, ids, cut);
-                }
+                offer(ui.ctx(), inv, st, ids, matches!(event, egui::Event::Cut), &prefs.protected);
             }
             egui::Event::Paste(text) => {
-                // Another application or text field can replace OS clipboard
-                // text. Its contents must not paste an old inventory selection.
-                if st.clipboard.first().is_none_or(|id| text.trim() != id.to_string()) {
+                if !holds_marker(st, &text) {
                     continue;
                 }
                 let to = st.selected.filter(|id| st.selection.contains(id)).map_or(root, |id| {
@@ -173,7 +366,7 @@ pub(super) fn shortcuts(
                         rules::parent(inv, id).unwrap_or(root)
                     }
                 });
-                if rules::paste_allowed(inv, &st.clipboard, to, st.cut, false, &prefs.protected, &facts.worn) {
+                if paste_allowed(inv, st, to, prefs, facts) {
                     paste(inv, to, false, st, prefs, facts, actions);
                 }
             }
@@ -187,12 +380,14 @@ fn demo_mode() -> Option<&'static str> {
     MODE.get_or_init(|| {
         std::env::var("AURORA_DEMO_INVENTORY").ok().filter(|mode| {
             mode.starts_with("clipboard")
+                || mode.starts_with("aurora-clipboard")
                 || mode.starts_with("search-selection")
                 || mode.starts_with("keyboard")
                 || mode.starts_with("aurora-keyboard")
         })
     })
     .as_deref()
+    .map(|mode| mode.strip_prefix("aurora-").unwrap_or(mode))
 }
 
 pub(super) fn demo_row(response: &egui::Response, st: &InventoryUi, item: Uuid) {
@@ -365,8 +560,8 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
     } else {
         st.ui_id
     };
-    let cut = matches!(mode, "clipboard-cut" | "clipboard-cut-folder");
-    let folder = matches!(mode, "clipboard-folder" | "clipboard-cut-folder");
+    let cut = mode.starts_with("clipboard-cut");
+    let folder = mode == "clipboard-folder" || mode.starts_with("clipboard-cut-folder");
     if folder && frame == 785 {
         st.expand_all = Some(true);
         st.reveal = st.selected;
@@ -434,7 +629,17 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
     if frame == 680 {
         return vec![if cut { egui::Event::Cut } else { egui::Event::Copy }];
     }
-    if (frame == 730 || frame == 760 && mode == "clipboard-copy")
+    if frame == 730 && mode.ends_with("-cancel") {
+        return vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }];
+    }
+    if !mode.ends_with("-hold")
+        && (frame == 730 || frame == 760 && mode == "clipboard-copy")
         && let Some(id) = st.clipboard.first()
     {
         return vec![egui::Event::Paste(id.to_string())];
@@ -524,6 +729,7 @@ mod tests {
             }) {
                 events.insert(0, Event::ModifiersChanged(modifiers));
             }
+            self.st.clipboard_input(&events);
             self.time += 0.3;
             let mut actions = Vec::new();
             self.output = headless_output(self.ctx.run_ui(
@@ -551,6 +757,7 @@ mod tests {
                     );
                 },
             ));
+            self.st.clipboard_output(&self.output.platform_output.commands);
             actions
         }
 
@@ -814,6 +1021,64 @@ mod tests {
     }
 
     #[test]
+    fn delete_after_inventory_rez_targets_the_world_until_the_inventory_is_clicked_again() {
+        use crate::build::{BuildSettings, BuildTool, FLAGS_CREATE_SELECTED, Mods, Tool};
+        use aurora_net::{NetCommand, NetEvent, build::BuildCmd};
+
+        for classic in [false, true] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            h.add_trash();
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            h.select(id(8100), false);
+            let folder = h.world.inventory.items[&id(8100)].parent;
+            assert!(h.ctx.egui_wants_keyboard_input());
+
+            let mut build = BuildTool::default();
+            let mut settings = BuildSettings::default();
+            build.open_build(Tool::Create);
+            h.st.release_world_drag_focus(&h.ctx);
+            build.edit_inventory_rez(&h.world);
+            let (handle, mut object) = crate::demo::events()
+                .into_iter()
+                .find_map(|event| match event {
+                    NetEvent::ObjectUpdates { handle, objects } => objects
+                        .into_iter()
+                        .find(|o| o.pcode == aurora_prim::params::LL_PCODE_VOLUME && o.parent_id == 0)
+                        .map(|o| (handle, o)),
+                    _ => None,
+                })
+                .expect("demo world object");
+            object.owner_id = h.world.agent_id;
+            object.update_flags |= FLAGS_CREATE_SELECTED | crate::ui::context::flags::OBJECT_YOU_OWNER;
+            let local_id = object.local_id;
+            h.world.objects.upsert(handle, object);
+            build.update(&mut h.world, &settings, None, (0.0, 0.0), true, Mods::default());
+
+            assert!(h.frame(vec![delete_key(Default::default())]).is_empty());
+            assert!(h.st.dialog.is_none());
+            crate::build::ui::shortcuts(&h.ctx, &mut build, &mut h.world, &mut settings);
+            assert!(build.out.iter().any(|command| matches!(
+                command,
+                NetCommand::Build(BuildCmd::DeRez { local_ids, destination, .. })
+                    if *local_ids == vec![local_id] && *destination == aurora_net::build::derez::TRASH
+            )));
+            assert_eq!(h.world.inventory.items[&id(8100)].parent, folder);
+
+            let mut release = delete_key(Default::default());
+            if let Event::Key { pressed, .. } = &mut release {
+                *pressed = false;
+            }
+            h.frame(vec![release]);
+            h.select(id(8100), false);
+            assert!(h.frame(vec![delete_key(Default::default())]).is_empty());
+            assert!(matches!(&h.st.dialog, Some(EditDialog::Delete(ids, false)) if *ids == vec![id(8100)]));
+        }
+    }
+
+    #[test]
     fn inventory_keyboard_uses_only_the_focused_folder_window() {
         let mut h = Harness::new();
         h.st.open_folder_window(id(8000));
@@ -843,6 +1108,40 @@ mod tests {
         h.st.windows[0].state.dialog = Some(EditDialog::Delete(vec![first], false));
         h.frame(vec![arrow(true, true)]);
         assert_eq!(h.st.windows[0].state.selection, HashSet::from([first, second]));
+    }
+
+    #[test]
+    fn received_delete_key_in_both_layouts_and_classic_trash_button_submit_confirmed_moves() {
+        for (classic, button) in [(false, false), (true, false), (true, true)] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            let trash = h.add_trash();
+            crate::world::inventory::demo::seed_received(&mut h.world.inventory, h.world.agent_id);
+            let received_item = id(8_300_002);
+            h.st.show_notified(&h.world.inventory, received_item);
+            h.st.expand_all = Some(true);
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            h.select(received_item, false);
+            let actions = if button {
+                h.click(h.trash_button(h.st.ui_id).center(), Default::default())
+            } else {
+                h.frame(vec![delete_key(Default::default())])
+            };
+            assert!(actions.is_empty(), "confirmation must precede the move");
+            assert!(matches!(&h.st.dialog, Some(EditDialog::Delete(ids, false)) if *ids == vec![received_item]));
+            h.frame(Vec::new());
+            let actions = h.click(h.text(aurora_i18n::tr!("common-delete")).center(), Default::default());
+            let [InvAction::Edit(change)] = &actions[..] else {
+                panic!("confirmed Received deletion must submit one mutation (classic={classic}, button={button})")
+            };
+            assert!(change.move_only());
+            assert_eq!(change.operations.len(), 1);
+            rules::demo_mutate(&mut h.world.inventory, h.world.agent_id, change.clone()).expect("delete received item");
+            assert_eq!(h.world.inventory.items[&received_item].parent, trash);
+            assert_eq!(h.world.inventory.folders[&id(8_300_001)].info.parent, id(8_300_000));
+        }
     }
 
     #[test]
@@ -880,7 +1179,7 @@ mod tests {
         let button = h.trash_button(h.st.ui_id);
         let count = h.text(&aurora_i18n::tr!(
             "ui-inventory-objects-loaded",
-            value0 = format!("{}", h.world.inventory.item_count())
+            value0 = aurora_i18n::integer(h.world.inventory.total_count() as i64)
         ));
         assert!(button.left() > count.right());
         assert!(button.left() - count.right() < 18.0, "the count sits beside the trash button");
@@ -894,6 +1193,58 @@ mod tests {
         );
         assert!(h.st.dialog.is_none());
         assert_eq!(h.world.inventory.items[&id(8100)].parent, id(8000));
+    }
+
+    #[test]
+    fn inventory_count_hover_shows_live_items_and_folders_in_both_layouts() {
+        fn collect(shape: &Shape, texts: &mut Vec<String>) {
+            match shape {
+                Shape::Text(text) => texts.push(text.galley.text().to_owned()),
+                Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect(shape, texts)),
+                _ => {}
+            }
+        }
+        for (classic, width) in [(true, 680.0), (false, 680.0), (false, 1180.0)] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            super::super::super::widgets::size_floater(&h.ctx, "inventory", egui::vec2(width, 800.0));
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            assert_eq!(h.world.inventory.item_count(), 14);
+            assert_eq!(h.world.inventory.folders.len(), 5);
+            for folders in [5, 4] {
+                if folders == 4 {
+                    h.world.inventory.remove(&[id(8001)]);
+                }
+                h.frame(Vec::new());
+                let total = aurora_i18n::integer(14 + folders);
+                let label = if classic {
+                    aurora_i18n::tr!("ui-inventory-objects-loaded", value0 = total)
+                } else {
+                    aurora::item_count(&h.world.inventory, aurora::Layout::of_window(&h.ctx, "inventory"))
+                };
+                let position = h.text(&label).center();
+                h.frame(vec![Event::PointerMoved(position)]);
+                for _ in 0..8 {
+                    h.frame(Vec::new());
+                }
+                let details = aurora_i18n::tr!(
+                    "inventory-count-tooltip",
+                    items = aurora_i18n::integer(14),
+                    folders = aurora_i18n::integer(folders)
+                );
+                let tooltip = if classic { format!("{label}\n{details}") } else { details };
+                let mut texts = Vec::new();
+                for shape in &h.output.shapes {
+                    collect(&shape.shape, &mut texts);
+                }
+                assert!(
+                    texts.contains(&tooltip),
+                    "classic={classic}, width={width}, folders={folders}, expected={tooltip:?}, painted={texts:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -919,7 +1270,7 @@ mod tests {
         assert!(h.st.dialog.is_none());
         h.st.pending = None;
         h.prefs.protected.insert(id(8000));
-        h.select(id(8100), false);
+        h.select(id(8000), false); // the locked folder itself; its contents stay ordinary
         h.frame(vec![delete_key(Default::default())]);
         h.click(h.trash_button(h.st.ui_id).center(), Default::default());
         assert!(h.st.dialog.is_none());
@@ -970,6 +1321,167 @@ mod tests {
         );
     }
 
+    fn escape() -> Event {
+        Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    impl Harness {
+        fn row_alpha(&self, item: Uuid) -> u8 {
+            let label = if self.world.inventory.folders.contains_key(&item) {
+                folder_name(&self.world.inventory, item)
+            } else {
+                rules::name(&self.world.inventory, item)
+            };
+            fn find(shape: &Shape, label: &str) -> Option<u8> {
+                match shape {
+                    Shape::Text(text) if text.galley.text().starts_with(label) => {
+                        let alpha = text.override_text_color.map(|color| color.a()).unwrap_or_else(|| {
+                            text.galley
+                                .rows
+                                .iter()
+                                .flat_map(|row| &row.visuals.mesh.vertices)
+                                .map(|vertex| {
+                                    if vertex.color == egui::Color32::PLACEHOLDER {
+                                        text.fallback_color.a()
+                                    } else {
+                                        vertex.color.a()
+                                    }
+                                })
+                                .max()
+                                .unwrap_or_default()
+                        });
+                        Some((f32::from(alpha) * text.opacity_factor).round() as u8)
+                    }
+                    Shape::Vec(shapes) => shapes.iter().find_map(|shape| find(shape, label)),
+                    _ => None,
+                }
+            }
+            self.output
+                .shapes
+                .iter()
+                .find_map(|shape| find(&shape.shape, &label))
+                .expect("painted row")
+        }
+    }
+
+    #[test]
+    fn cut_feedback_fades_rows_until_cancelled_in_every_inventory_layout() {
+        for (classic, width) in [(true, 680.0), (false, 460.0), (false, 740.0), (false, 1100.0)] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            super::super::super::widgets::place_floater(&h.ctx, "inventory", egui::pos2(400.0, 40.0), egui::vec2(width, 950.0));
+            // Switching from the tree to the explorer must reveal the source
+            // folder before sending its row a native shortcut.
+            h.st.show_original(&h.world.inventory, id(8109));
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            h.select(id(8109), false);
+            h.frame(vec![Event::Cut]);
+            h.frame(Vec::new());
+            assert!((127..=128).contains(&h.row_alpha(id(8109))), "{classic}, {width}");
+            assert_eq!(h.row_alpha(id(8100)), 255);
+            // Changing the destination selection must not cancel the source.
+            h.select(id(8001), false);
+            assert!((127..=128).contains(&h.row_alpha(id(8109))));
+            h.frame(vec![Event::Copy]);
+            h.frame(Vec::new());
+            assert_eq!(h.row_alpha(id(8109)), 255, "a new inventory copy replaces the cut");
+            h.select(id(8109), false);
+            h.frame(vec![Event::Cut]);
+            h.frame(vec![escape()]);
+            assert!(!h.st.cut);
+            assert!(h.st.clipboard.is_empty());
+            assert_eq!(h.row_alpha(id(8109)), 255);
+            h.select(id(8109), false);
+            h.frame(vec![Event::Copy]);
+            h.frame(Vec::new());
+            assert_eq!(h.row_alpha(id(8109)), 255, "copy never fades rows");
+            let copied = h.st.clipboard.clone();
+            h.frame(vec![escape()]);
+            assert_eq!(h.st.clipboard, copied, "Escape preserves an ordinary copy");
+        }
+    }
+
+    #[test]
+    fn cut_folder_feedback_reaches_descendants_and_survives_refused_paste() {
+        for classic in [true, false] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            super::super::super::widgets::place_floater(&h.ctx, "inventory", egui::pos2(400.0, 40.0), egui::vec2(460.0, 950.0));
+            let mut child = h.world.inventory.items[&id(8104)].clone();
+            child.id = id(8200);
+            child.parent = id(8001);
+            child.name = "Cut folder child".into();
+            h.world.inventory.add_items(vec![child]);
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            h.select(id(8001), false);
+            h.frame(vec![Event::Cut]);
+            h.frame(Vec::new());
+            assert!((127..=128).contains(&h.row_alpha(id(8001))));
+            assert!((127..=128).contains(&h.row_alpha(id(8200))));
+            assert_eq!(h.row_alpha(id(8104)), 255);
+            // A folder cannot be pasted into itself: keep the pending cut.
+            assert!(h.paste().is_empty());
+            h.frame(Vec::new());
+            assert!(h.st.cut);
+            assert!((127..=128).contains(&h.row_alpha(id(8200))));
+            h.st.clipboard_output(&[egui::OutputCommand::CopyText("a different field".into())]);
+            h.frame(Vec::new());
+            assert_eq!(h.row_alpha(id(8200)), 255);
+        }
+    }
+
+    #[test]
+    fn cut_feedback_tracks_native_clipboard_replacement_and_shared_windows() {
+        let mut h = Harness::new();
+        h.st.open_folder_window(id(8000));
+        let window = h.st.windows[0].id;
+        super::super::super::widgets::place_floater(
+            &h.ctx,
+            &format!("inventory_{window}"),
+            egui::pos2(20.0, 50.0),
+            egui::vec2(600.0, 800.0),
+        );
+        for _ in 0..4 {
+            h.frame(Vec::new());
+        }
+        h.select(id(8109), false);
+        h.frame(vec![Event::Cut]);
+        h.frame(Vec::new());
+        assert!(h.st.windows[0].state.cut);
+        let marker = h.st.clipboard[0].to_string();
+        h.st.clipboard_changed(Some(&marker));
+        assert!(h.st.cut, "returning to the viewer keeps its own marker");
+        h.st.clipboard_changed(None);
+        h.frame(Vec::new());
+        assert!(!h.st.cut);
+        assert!(!h.st.windows[0].state.cut);
+        assert_eq!(h.row_alpha(id(8109)), 255);
+        h.st.windows.clear();
+        h.select(id(8109), false);
+        h.frame(vec![Event::Cut]);
+        assert!(h.frame(vec![Event::Paste("outside text".into())]).is_empty());
+        assert!(!h.st.cut);
+        h.select(id(8109), false);
+        h.frame(vec![Event::Cut]);
+        h.select(id(8001), false);
+        assert!(matches!(&h.paste()[..], [InvAction::Edit(change)] if change.move_only()));
+        assert!(h.st.consume_clipboard);
+        // The successful mutation path consumes the cut in all windows.
+        h.st.cancel_cut();
+        h.frame(Vec::new());
+        assert_eq!(h.row_alpha(id(8109)), 255);
+    }
+
     #[test]
     fn native_copy_events_copy_every_selected_item_and_allow_repeated_paste() {
         let mut h = Harness::new();
@@ -995,6 +1507,44 @@ mod tests {
             assert!(!h.st.consume_clipboard);
         }
         assert_eq!(h.world.inventory.items[&id(8100)].parent, id(8000));
+    }
+
+    /// The inventory refused every paste under My Outfits. It now follows
+    /// the outfit rules: an outfit links what is pasted, the Current Outfit
+    /// wears it and leaves the clipboard as it was.
+    #[test]
+    fn paste_into_an_outfit_links_and_into_the_current_outfit_wears() {
+        use aurora_net::inventory::operations::Operation;
+        let mut inv = Inventory::default();
+        crate::world::appearance::seed_demo(&mut inv, id(1));
+        let (outfit, cof, spare_shirt) = (id(703), id(701), id(722));
+        let prefs = InventoryPreferences::default();
+        let facts = Facts::default();
+        let mut st = InventoryUi {
+            clipboard: vec![spare_shirt],
+            ..Default::default()
+        };
+        assert!(paste_allowed(&inv, &st, outfit, &prefs, &facts));
+        let mut actions = Vec::new();
+        paste(&inv, outfit, false, &mut st, &prefs, &facts, &mut actions);
+        assert!(
+            matches!(&actions[..], [InvAction::Edit(change)]
+                if matches!(&change.operations[..], [Operation::Links { parent, links }] if *parent == outfit && links[0].target == spare_shirt)),
+            "an outfit links what is pasted"
+        );
+        st.cut = true;
+        actions.clear();
+        assert!(paste_allowed(&inv, &st, cof, &prefs, &facts));
+        paste(&inv, cof, false, &mut st, &prefs, &facts, &mut actions);
+        assert!(
+            matches!(&actions[..], [InvAction::Appearance(crate::world::appearance::Action::WearItems { items, replace: true, point: 0 })]
+                if *items == vec![spare_shirt]),
+            "the Current Outfit wears what is pasted"
+        );
+        assert!(!st.consume_clipboard, "wearing keeps what was cut");
+        // Worn already: nothing to paste, the menu entry stays off.
+        st.clipboard = vec![id(710)];
+        assert!(!paste_allowed(&inv, &st, cof, &prefs, &facts));
     }
 
     #[test]
@@ -1052,12 +1602,13 @@ mod tests {
         h.frame(vec![Event::Copy]); // Still available for Paste as link.
         h.select(id(8001), false);
         assert!(h.paste().is_empty(), "no-copy item cannot be duplicated");
-        h.select(id(8100), false);
+        h.select(id(8000), false); // the locked folder itself
         h.prefs.protected.insert(id(8000));
         h.frame(vec![Event::Cut]);
         assert!(!h.st.cut);
         assert_eq!(h.st.clipboard, vec![id(8109)]);
         h.prefs.protected.clear();
+        h.select(id(8100), false);
         h.st.pending = Some(id(99));
         h.frame(vec![Event::Cut]);
         assert_eq!(h.st.clipboard, vec![id(8109)]);

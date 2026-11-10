@@ -66,6 +66,22 @@ impl App {
         }
     }
 
+    /// Projection follows the Legacy Viewer's world view rectangle,
+    /// independently of Aurora's floater movement limits. Mouselook, a
+    /// hidden interface and full-frame photos use the whole window
+    /// (LLViewerWindow::updateWorldViewRect, indra/newview/llviewerwindow.cpp).
+    pub(super) fn hud_area(&self, size: [u32; 2]) -> Option<[f32; 4]> {
+        if self.camera.mouselook()
+            || self.interface.hidden
+            || self.snapshots.capturing.is_some()
+            || self.photo_full_frame()
+            || !matches!(self.screen, Screen::World)
+        {
+            return None;
+        }
+        Some(legacy_hud_view_area(size, self.egui_ctx.pixels_per_point()))
+    }
+
     pub(super) fn keep_scaled_huds_accessible(&mut self, view: HudView) {
         if self.hud_drag.is_some() || self.build.manip.dragging() {
             return;
@@ -94,7 +110,7 @@ impl App {
             let delta = accessible_delta(rect, [view.width, view.height]);
             self.world.hud_scales.clamped(id);
             if delta != [0.0, 0.0] {
-                let px = view.height * view.zoom;
+                let px = view.unit();
                 self.world.hud_scales.set_offset(
                     id,
                     self.world.hud_scales.offset(id) + Vec3::new(0.0, -delta[0] / px, -delta[1] / px),
@@ -242,10 +258,7 @@ impl App {
             && let Some(idx) = child
             && let Some((pos, _, _)) = Scene::object_transform(&self.world, idx, Instant::now(), 0)
         {
-            self.cursor_pos = (
-                view.width * 0.5 - pos.y * view.height * view.zoom,
-                view.height * 0.5 - pos.z * view.height * view.zoom,
-            );
+            self.cursor_pos = view.pixel(pos).into();
             self.demo_hud_drag_key(true);
             if mode == "drag-lock-camera" {
                 self.alt = true;
@@ -293,10 +306,7 @@ impl App {
                 && let Some(view) = self.scene.lists.hud_view
                 && let Some((pos, _, _)) = Scene::object_transform(&self.world, idx, Instant::now(), 0)
             {
-                self.cursor_pos = (
-                    view.width * 0.5 - pos.y * view.height * view.zoom,
-                    view.height * 0.5 - pos.z * view.height * view.zoom,
-                );
+                self.cursor_pos = view.pixel(pos).into();
                 self.open_context_menu();
             }
         }
@@ -338,10 +348,7 @@ impl App {
             if let Some(view) = self.scene.lists.hud_view
                 && let Some((pos, _, _)) = Scene::object_transform(&self.world, root, Instant::now(), 0)
             {
-                self.cursor_pos = (
-                    view.width * 0.5 - pos.y * view.height * view.zoom,
-                    view.height * 0.5 - pos.z * view.height * view.zoom,
-                );
+                self.cursor_pos = view.pixel(pos).into();
                 self.demo_hud_drag_key(true);
                 let position = self.world.objects.get(root).map(|o| o.position);
                 let scale = self.world.hud_scale(root);
@@ -417,10 +424,7 @@ impl App {
             {
                 o.update_flags = 0;
             }
-            self.cursor_pos = (
-                view.width * 0.5 - pos.y * view.height * view.zoom,
-                view.height * 0.5 - pos.z * view.height * view.zoom,
-            );
+            self.cursor_pos = view.pixel(pos).into();
             self.demo_hud_drag_key(true);
             let before = self.camera.position;
             let handled = self.on_hud_scroll(5.0);
@@ -576,6 +580,22 @@ fn hud_metadata_commands(world: &mut World, selected: &[usize], now: Instant) ->
     commands
 }
 
+/// The standard world_view_rect starts below the 19-unit status/menu strip
+/// (indra/newview/skins/default/xui/en/main_view.xml). Match its physical
+/// pixel rounding in LLViewerWindow::updateWorldViewRect. Aurora's floating
+/// bars and floater work area do not change this projection reference.
+fn legacy_hud_view_area(size: [u32; 2], pixels_per_point: f32) -> [f32; 4] {
+    let width = size[0].max(1) as f32;
+    let height = size[1].max(1) as f32;
+    let scale = if pixels_per_point.is_finite() && pixels_per_point > 0.0 {
+        pixels_per_point
+    } else {
+        1.0
+    };
+    let top = (19.0 * scale).round().min(height - 1.0);
+    [0.0, top, width, height]
+}
+
 /// Legacy Viewer's wheel factor with winit's opposite scroll sign; same bounds
 /// as Aurora's World > HUDs view zoom controls (never a per-object resize).
 fn hud_view_zoom(zoom: f32, steps: f32) -> f32 {
@@ -602,6 +622,63 @@ fn accessible_delta(rect: [f32; 4], screen: [f32; 2]) -> [f32; 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hud_projection_uses_the_legacy_viewport_instead_of_the_floater_work_area() {
+        let size = [2560, 1369];
+        let view = HudView::new(size, 1.0, -1.0, 1.0).in_area(legacy_hud_view_area(size, 1.0));
+        assert_eq!(view.area, [0.0, 19.0, 2560.0, 1369.0]);
+        assert_eq!(view.unit(), 1350.0);
+        // The reported HUD's 0.35 x 0.03 base spans 472.5 x 40.5 px,
+        // regardless of Aurora's 1259-pixel floater work-area height.
+        let first = view.pixel(Vec3::new(0.0, 0.175, 0.015));
+        let last = view.pixel(Vec3::new(0.0, -0.175, -0.015));
+        assert!((last[0] - first[0] - 472.5).abs() < 0.001);
+        assert!((last[1] - first[1] - 40.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn hud_projection_places_the_reported_panel_edges_on_adjacent_pixel_rows() {
+        let size = [2560, 1369];
+        // Actual draw-matrix coordinates from the human's J1 report.
+        let base_top = Vec3::new(0.0, 0.0, -0.400_529_9 + 0.015);
+        let panel_bottom = Vec3::new(0.0, 0.0, -0.402_529_9 + 0.069_999_99 * 0.249_996_22 + 0.000_007_1 * 0.5);
+        let gap_rows = |view: HudView| {
+            let base_first = (view.pixel(base_top)[1] - 0.5).ceil() as i32;
+            let panel_end = (view.pixel(panel_bottom)[1] - 0.5).ceil() as i32;
+            base_first - panel_end
+        };
+        let view = HudView::new(size, 1.0, -1.0, 1.0);
+        assert_eq!(gap_rows(view.in_area([8.0, 52.0, 2552.0, 1311.0])), 1);
+        assert_eq!(gap_rows(view.in_area(legacy_hud_view_area(size, 1.0))), 0);
+    }
+
+    #[test]
+    fn hud_projection_preserves_picking_and_anchor_corners_at_display_scales() {
+        for size in [[2560, 1369], [900, 1600], [1, 1]] {
+            for scale in [0.75, 1.0, 1.5, 2.0] {
+                let area = legacy_hud_view_area(size, scale);
+                for zoom in [0.1, 0.5, 1.0] {
+                    let view = HudView::new(size, zoom, -2.0, 3.0).in_area(area);
+                    let [width, height] = view.area_size();
+                    let aspect = width / height;
+                    for point in [Vec3::new(0.0, aspect * 0.5, 0.5), Vec3::new(0.0, -aspect * 0.5, -0.5)] {
+                        let pixel = view.pixel(point);
+                        let (origin, direction) = view.ray(pixel[0], pixel[1]);
+                        assert!((origin.y - point.y).abs() < 0.001 && (origin.z - point.z).abs() < 0.001);
+                        let clip = view.matrix() * (origin + direction).extend(1.0);
+                        assert!((clip.x - (pixel[0] / view.width * 2.0 - 1.0)).abs() < 0.001);
+                        assert!((clip.y - (1.0 - pixel[1] / view.height * 2.0)).abs() < 0.001);
+                    }
+                    if zoom == 1.0 {
+                        assert_eq!(view.screen_bounds(), area);
+                    }
+                }
+            }
+        }
+        assert_eq!(legacy_hud_view_area([2560, 1369], 1.5), [0.0, 29.0, 2560.0, 1369.0]);
+        assert_eq!(legacy_hud_view_area([0, 0], f32::NAN), [0.0, 0.0, 1.0, 1.0]);
+    }
 
     #[test]
     fn hud_metadata_queries_are_batched_retry_and_preserve_the_existing_selection() {
@@ -647,7 +724,7 @@ mod tests {
     fn editing_view_wheel_reveals_offscreen_huds_and_preserves_local_sizes() {
         let view_zoom = hud_view_zoom(1.0, -5.0);
         let view = HudView::new([1600, 900], view_zoom, -1.0, 1.0);
-        let screen_x = view.width * 0.5 - 1.2 * view.height * view.zoom;
+        let screen_x = view.pixel(Vec3::Y * 1.2)[0];
         assert!((0.0..view.width).contains(&screen_x));
         assert!((hud_view_zoom(view_zoom, 5.0) - 1.0).abs() < 1e-5);
         assert_eq!(hud_view_zoom(view_zoom, f32::NAN), view_zoom);

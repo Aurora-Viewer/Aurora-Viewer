@@ -27,6 +27,7 @@
 //! Copyright (C) Linden Research, Inc. and The Phoenix Firestorm Project,
 //! originally LGPL 2.1.
 
+pub mod cef_cache;
 pub mod entry;
 pub mod filter;
 mod interact;
@@ -356,16 +357,20 @@ pub struct MediaSettings {
     /// MediaEnableFilter: media and music ask before a site not in the
     /// account's list (on by default, as there).
     pub filter: bool,
-    /// Aurora's own: media on our own worn items (attachments and HUDs)
-    /// loads without the filter's question; a site the list refuses stays
-    /// refused. On by default: wearing a media earring should not raise a
-    /// question.
+    /// Aurora's own: media on our own worn items (attachments and HUDs),
+    /// whoever made them, loads without the filter's question; a site the
+    /// list refuses stays refused. On by default: wearing a media earring
+    /// or a HUD should not raise a question (the Legacy Viewer never
+    /// filters prim media).
     pub filter_trust_own_worn: bool,
     /// FirstMediaFilter, inverted: the filter's first question was
     /// answered, its explanation is no longer shown.
     pub filter_explained: bool,
     /// Folder with SLPlugin and llplugin\ (empty: automatic).
     pub plugin_dir: String,
+    /// Aurora's own: the answer to the download of the media plugins pack
+    /// (`pack.rs`); asked once, the first time it is needed.
+    pub pack_consent: pack::Consent,
 }
 
 impl Default for MediaSettings {
@@ -382,6 +387,7 @@ impl Default for MediaSettings {
             filter_trust_own_worn: true,
             filter_explained: false,
             plugin_dir: String::new(),
+            pack_consent: pack::Consent::Unasked,
         }
     }
 }
@@ -391,13 +397,18 @@ impl Default for MediaSettings {
 struct ObjMedia {
     idx: usize,
     fetched_version: Option<u32>,
+    /// Object media version of the last GET asked (0 without one): asked
+    /// once per version, like LLVOVolume::processUpdateMessage asks once per
+    /// media change, so a failed GET is not asked again until the next one.
+    asked_version: Option<u32>,
+    /// A texture entry temporarily lost media flags while cached media remains.
+    flags_lost_since: Option<Instant>,
     data: Option<ObjectMediaData>,
     hud: bool,
     on_other_avatar: bool,
     /// Worn by us (an attachment or a HUD), its avatar already known: false
     /// while a parent has not arrived.
     on_own_avatar: bool,
-    owner: Uuid,
     /// Agent of the last media change ("x-mv:<version>/<agent>").
     changed_by: Uuid,
 }
@@ -426,6 +437,8 @@ pub struct MediaManager {
     pack_dir: Option<std::path::PathBuf>,
     pub impls: Vec<MediaImpl>,
     objects: HashMap<Uuid, ObjMedia>,
+    /// Objects recently visible on screen, retained for their next request.
+    recently_shown: HashMap<Uuid, Instant>,
     client: MediaDataClient,
     last_create: Instant,
     pub focus: Option<MediaKey>,
@@ -482,6 +495,7 @@ impl Default for MediaManager {
             pack_dir: None,
             impls: Vec::new(),
             objects: HashMap::new(),
+            recently_shown: HashMap::new(),
             client: MediaDataClient::default(),
             last_create: Instant::now() - CREATE_DELAY,
             focus: None,
@@ -519,11 +533,20 @@ pub fn user_agent() -> String {
     format!("SecondLife (Aurora Viewer {})", aurora_version::version())
 }
 
+/// The shared cache of our CEF browsers, in which the plugin creates
+/// `cef_cache` (emptied at every start, `cef_cache.rs`).
+pub fn browser_cache(cache_dir: &std::path::Path) -> std::path::PathBuf {
+    cache_dir.join("cef")
+}
+
 /// Settings of our CEF browsers (newSourceFromMediaType): cache, log,
 /// language and the viewer's user agent.
 pub fn browser_settings(cache_dir: &std::path::Path, language: &str) -> BrowserSettings {
     BrowserSettings {
-        cache_path: format!("{}\\", cache_dir.join("cef").display()),
+        // the system's own separator, as the plugin appends `cef_cache`
+        // (LLPluginClassMedia::init gets getCacheDir + getDirDelimiter): a
+        // `\` made a folder named `cef\cef_cache` on macOS and Linux
+        cache_path: format!("{}{}", browser_cache(cache_dir).display(), std::path::MAIN_SEPARATOR),
         username: "aurora".into(),
         cef_log_file: cache_dir.join("cef.log").display().to_string(),
         language: language.to_string(),
@@ -531,6 +554,92 @@ pub fn browser_settings(cache_dir: &std::path::Path, language: &str) -> BrowserS
         cookies_enabled: true,
         javascript_enabled: true,
         zoom_factor: 1.0,
+    }
+}
+
+/// The profiles of the earlier builds on Linux and macOS: their cache path
+/// ended with a backslash, so the plugin kept every profile in one folder
+/// named `cef\cef_cache` next to `cef`. Nothing reads it any more; each
+/// profile (`<plugin pid>`) is removed unless its plugin still runs (an
+/// older viewer open at the same time), then the folder once empty.
+#[cfg(unix)]
+pub fn remove_misplaced_cache(cache_dir: &std::path::Path) {
+    let dir = cache_dir.join("cef\\cef_cache");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let running = entry
+            .file_name()
+            .to_str()
+            .and_then(|n| n.parse::<libc::pid_t>().ok())
+            .is_some_and(process_runs);
+        if running {
+            continue;
+        }
+        // a stray file or link is removed itself, never followed
+        let removed = match entry.file_type() {
+            Ok(t) if t.is_dir() => std::fs::remove_dir_all(entry.path()),
+            _ => std::fs::remove_file(entry.path()),
+        };
+        if let Err(e) = removed {
+            log::warn!("media: misplaced browser cache not removed ({e})");
+        }
+    }
+    if std::fs::remove_dir(&dir).is_ok() {
+        log::info!("media: misplaced browser cache removed");
+    }
+}
+
+/// Whether a process of this id exists (signal 0 only checks).
+#[cfg(unix)]
+fn process_runs(pid: libc::pid_t) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    // SAFETY: kill with signal 0 sends nothing; it only reports whether the
+    // process exists and may be signalled.
+    let r = unsafe { libc::kill(pid, 0) };
+    r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn the_plugin_cache_lands_inside_cef() {
+        let dir = std::env::temp_dir().join("aurora-cef-path");
+        let s = browser_settings(&dir, "en");
+        // what MediaPluginCEF builds from it
+        assert_eq!(Path::new(&format!("{}cef_cache", s.cache_path)), dir.join("cef").join("cef_cache"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_misplaced_cache_is_removed_but_a_running_profile_stays() {
+        let root = std::env::temp_dir().join(format!("aurora-misplaced-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let misplaced = root.join("cef\\cef_cache");
+        // a plugin id far above any pid_max, and ours, which runs
+        let gone = misplaced.join("2147483000");
+        let running = misplaced.join(std::process::id().to_string());
+        std::fs::create_dir_all(gone.join("Cache")).unwrap();
+        std::fs::create_dir_all(&running).unwrap();
+        std::fs::write(misplaced.join("stray"), b"").unwrap();
+        remove_misplaced_cache(&root);
+        assert!(!gone.exists() && !misplaced.join("stray").exists() && running.is_dir());
+        std::fs::remove_dir_all(&running).unwrap();
+        remove_misplaced_cache(&root);
+        assert!(!misplaced.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn without_a_misplaced_cache_nothing_happens() {
+        remove_misplaced_cache(Path::new("/nonexistent/aurora"));
     }
 }
 
@@ -554,6 +663,17 @@ fn sanitize(url: &str) -> String {
 }
 
 impl MediaManager {
+    /// After a GPU recovery (app/gpu_recovery.rs): the media slots were the
+    /// lost renderer's. Each one is made again, black, and its next frame
+    /// fills it (`update`: a slot 0 is fresh).
+    pub fn gpu_reset(&mut self) {
+        for m in &mut self.impls {
+            m.texture.slot = 0;
+            m.texture.ready = false;
+        }
+        self.pending_free.clear();
+    }
+
     /// SLPlugin / llplugin (searched once per configured folder and per state
     /// of Aurora's pack).
     pub fn plugins(&mut self, settings: &MediaSettings) -> Option<&PluginPaths> {

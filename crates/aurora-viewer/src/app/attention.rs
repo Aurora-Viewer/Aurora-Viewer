@@ -35,6 +35,9 @@ pub struct State {
     /// Windows says between frames (LLWindowWin32::flashIcon asks
     /// GetForegroundWindow): the focus events can miss a minimize.
     behind: bool,
+    /// The window's own title, then the one last given to the window (the
+    /// unread count before it, `titled`).
+    title: Option<(String, String)>,
 }
 
 /// The titles told lately (GrowlManager::mTitleTimers).
@@ -84,6 +87,26 @@ pub fn notifies(s: &Settings, forced: bool, in_front: bool, dnd: bool) -> bool {
     (s.system_notifications || forced) && !dnd && (s.system_notifications_when_active || !in_front)
 }
 
+/// LLChicletBar's counter: at most 99, then "99+" (max_displayed_count).
+const MAX_TITLE_COUNT: usize = 99;
+/// LLStringUtil::truncate(window_title, 255), in characters here.
+const MAX_TITLE: usize = 255;
+
+/// The window title with the unread IMs before it, "(3) Aurora Viewer…"
+/// (FSShowMessageCountInWindowTitle,
+/// LLIMWellChiclet::updateApplicationWindowTitle, llchiclet.cpp).
+pub fn titled(title: &str, unread: usize, on: bool) -> String {
+    if !on || unread == 0 {
+        return title.to_owned();
+    }
+    let full = if unread > MAX_TITLE_COUNT {
+        format!("({MAX_TITLE_COUNT}+) {title}")
+    } else {
+        format!("({unread}) {title}")
+    };
+    full.chars().take(MAX_TITLE).collect()
+}
+
 /// What a notification opens, without its session (for the log).
 fn kind_of(open: Open) -> &'static str {
     match open {
@@ -122,6 +145,7 @@ impl App {
         }
         if let Some(id) = keyword_sound {
             log::debug!(target: "ui_sound", "UISndFSKeywordSound ({id})");
+            self.scene.sounds.want_kept(id);
             self.scene.sounds.play_ui(self.audio_engine.as_ref(), id);
         }
     }
@@ -178,6 +202,7 @@ impl App {
         if let Some(g) = &self.gfx {
             self.attention.behind = !window_in_front(&g.window);
         }
+        self.unread_title();
         if std::mem::take(&mut self.attention.flash)
             && let Some(g) = &self.gfx
         {
@@ -196,6 +221,35 @@ impl App {
             }
         }
         self.attention_clicks();
+    }
+
+    /// The unread count before the window title, set only when it changes.
+    /// Counted like the Conversations button (IMs, group chats,
+    /// conferences), in world only.
+    fn unread_title(&mut self) {
+        let Some(g) = &self.gfx else {
+            return;
+        };
+        let in_world = matches!(self.screen, super::Screen::World);
+        let on = self.settings.unread_ims_in_window_title || (self.demo && crate::demo::im_announce::forced());
+        let unread = if in_world { self.world.conversations_badge() } else { 0 };
+        let (base, shown) = self
+            .attention
+            .title
+            .get_or_insert_with(|| (crate::cli::window_title(), crate::cli::window_title()));
+        let mut want = titled(base, unread, on);
+        // (the 3D paused behind on a busy card, busy_pause.rs)
+        if self.busy_pause.paused() {
+            want = aurora_i18n::tr!("busy-pause-window-title", title = want.as_str());
+        }
+        // (the render targets waiting for video memory)
+        if self.last_render.video_memory_full {
+            want = aurora_i18n::tr!("video-memory-full-window-title", title = want.as_str());
+        }
+        if *shown != want {
+            g.window.set_title(&want);
+            *shown = want;
+        }
     }
 
     /// A notification clicked: the window comes back (restored, in front)
@@ -224,6 +278,7 @@ impl App {
                     }
                     self.world.social.session_mut(session);
                     self.world.social.focus_im = Some(session);
+                    self.chat_ui.conv_focus_request = true;
                     crate::ui::notifications::open_conversations(&self.egui_ctx, &mut self.panels.chat);
                 }
                 Some(Open::NearbyChat) => {
@@ -380,5 +435,16 @@ mod tests {
         let cut = body_text(&long);
         assert_eq!(cut.chars().count(), MAX_BODY + 1);
         assert!(cut.ends_with('…'));
+    }
+
+    #[test]
+    fn the_title_counts_the_unread_ims_up_to_99_plus() {
+        let t = "Aurora Viewer 0.8 (Dev)";
+        assert_eq!(titled(t, 3, false), t, "off by default");
+        assert_eq!(titled(t, 0, true), t);
+        assert_eq!(titled(t, 3, true), "(3) Aurora Viewer 0.8 (Dev)");
+        assert_eq!(titled(t, 99, true), "(99) Aurora Viewer 0.8 (Dev)");
+        assert_eq!(titled(t, 100, true), "(99+) Aurora Viewer 0.8 (Dev)");
+        assert_eq!(titled(&"é".repeat(300), 1, true).chars().count(), MAX_TITLE);
     }
 }

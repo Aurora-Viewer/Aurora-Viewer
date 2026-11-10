@@ -20,8 +20,18 @@
 //! presented frame N (never the main thread's: it would stall the render
 //! thread's `submit` and `present`). Frame N+1 then reads its input while the GPU
 //! draws frame N, and is ready by the time it is done: the GPU keeps a
-//! frame to draw, and nothing else waits in front of it. When the GPU is not
-//! the limit, frame N−1 is long finished and the wait costs nothing.
+//! frame to draw, and nothing else waits in front of it.
+//!
+//! The wait is only free when the GPU alone sets the pace. With M the main
+//! thread's time on a frame, R the render thread's (its swapchain wait
+//! left out) and G the GPU's, the paced frame period is
+//! `max(M, (M + R + G) / 2)` against `max(M, R, G)` without the wait: the
+//! same when `G ≥ M + R`, up to a third slower when the three are close.
+//! That is a busy region on a fast card, or two viewers sharing one, where
+//! 0.8.4 lost a quarter of its frame rate (#1711). So [`Gate`] keeps the
+//! wait on only while the GPU time covers the other two, and the render
+//! thread skips its own wait on the device with it ([`GpuFrames::active`]):
+//! the frames then overlap as they did before the pacing.
 //!
 //! The Legacy Viewer reads the input, draws and swaps on one thread
 //! (`LLAppViewer::mainLoop`, indra/newview/llappviewer.cpp): only the
@@ -32,6 +42,7 @@
 
 use parking_lot::{Condvar, Mutex};
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 /// Submissions kept: the frames the main thread can still wait for.
@@ -45,6 +56,9 @@ const KEPT: usize = 4;
 /// news, before it reads the input.
 pub(crate) struct GpuFrames<T> {
     pub enabled: bool,
+    /// The GPU sets the pace now ([`Gate`], set by the main thread): both
+    /// threads wait. Off, neither does.
+    active: AtomicBool,
     submitted: Mutex<VecDeque<(u64, T)>>,
     /// Every frame up to this one is finished on the GPU.
     finished: Mutex<Option<u64>>,
@@ -55,10 +69,20 @@ impl<T: Clone> GpuFrames<T> {
     pub fn new(enabled: bool) -> GpuFrames<T> {
         GpuFrames {
             enabled,
+            active: AtomicBool::new(false),
             submitted: Mutex::new(VecDeque::with_capacity(KEPT)),
             finished: Mutex::new(None),
             news: Condvar::new(),
         }
+    }
+
+    /// Pacing on and the GPU the limit: the frames wait for it.
+    pub fn active(&self) -> bool {
+        self.enabled && self.active.load(Ordering::Relaxed)
+    }
+
+    pub fn set_active(&self, on: bool) {
+        self.active.store(on, Ordering::Relaxed);
     }
 
     /// Every frame up to `frame` is finished on the GPU (the newest one
@@ -107,6 +131,63 @@ pub fn wanted(var: Option<&str>) -> bool {
         var.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
         Some("0" | "off" | "false" | "no")
     )
+}
+
+/// AURORA_FRAME_PACING=always: the wait on every frame, whoever sets the
+/// pace (0.8.4, to compare with the [`Gate`]).
+pub fn always(var: Option<&str>) -> bool {
+    var.is_some_and(|v| v.trim().eq_ignore_ascii_case("always"))
+}
+
+/// Whether the GPU sets the pace alone, `G ≥ M + R` (module comment), on
+/// times smoothed over about ten frames. The margins keep a scene close to
+/// the line from switching every frame: on past 5 % above it, off past 5 %
+/// below.
+#[derive(Default)]
+pub(crate) struct Gate {
+    /// Smoothed main, render and GPU times (ms); None before the first.
+    times: Option<[f32; 3]>,
+    on: bool,
+    /// AURORA_FRAME_PACING=always: always on.
+    always: bool,
+}
+
+impl Gate {
+    const SMOOTHING: f32 = 0.1;
+    const ON: f32 = 1.05;
+    const OFF: f32 = 0.95;
+
+    pub fn new(always: bool) -> Gate {
+        Gate { always, ..Gate::default() }
+    }
+
+    /// One frame's times (ms); whether the frames should wait for the GPU.
+    /// No GPU time (no timestamp queries): the GPU is not known to be the
+    /// limit, the frames overlap as without pacing.
+    pub fn update(&mut self, main: f32, render: f32, gpu: Option<f32>) -> bool {
+        if self.always {
+            return true;
+        }
+        let Some(gpu) = gpu else {
+            self.times = None;
+            self.on = false;
+            return false;
+        };
+        let now = [main.max(0.0), render.max(0.0), gpu.max(0.0)];
+        let t = match self.times {
+            Some(mut t) => {
+                for (s, n) in t.iter_mut().zip(now) {
+                    *s += (n - *s) * Self::SMOOTHING;
+                }
+                t
+            }
+            None => now,
+        };
+        self.times = Some(t);
+        let cpu = t[0] + t[1];
+        self.on = if self.on { t[2] >= cpu * Self::OFF } else { t[2] > cpu * Self::ON };
+        self.on
+    }
 }
 
 #[cfg(test)]
@@ -164,11 +245,21 @@ mod tests {
 
     /// Mean input-to-GPU-done latency and frame period, once settled.
     fn run(build: f32, render: f32, gpu: f32, paced: bool) -> (f32, f32) {
+        run_with(build, render, gpu, || paced)
+    }
+
+    /// Same, the wait decided by [`Gate`] each frame.
+    fn run_gated(build: f32, render: f32, gpu: f32) -> (f32, f32) {
+        let mut gate = Gate::default();
+        run_with(build, render, gpu, || gate.update(build, render, Some(gpu)))
+    }
+
+    fn run_with(build: f32, render: f32, gpu: f32, mut paced: impl FnMut() -> bool) -> (f32, f32) {
         let mut p = Pipeline::new(build, render, gpu);
         let frames = 400;
         let (mut latency, mut first, mut last) = (0.0, 0.0, 0.0);
         for i in 0..frames {
-            let (l, handed) = p.frame(paced);
+            let (l, handed) = p.frame(paced());
             if i == frames / 2 {
                 first = handed;
             }
@@ -192,6 +283,54 @@ mod tests {
         // frame drawn, and the one that reads its input meanwhile
         assert!(late > 55.0, "without pacing: {late}");
         assert!(fresh < 33.0, "with pacing: {fresh} (without: {late})");
+    }
+
+    #[test]
+    fn balanced_stages_keep_their_rate_behind_the_gate() {
+        // a busy region on a fast card, two viewers on one card: the three
+        // stages close to each other (#1711)
+        for (build, render, gpu) in [(8.0, 6.0, 7.0), (10.0, 8.0, 8.0), (12.0, 9.0, 11.0), (5.0, 7.0, 8.0)] {
+            let bound = f32::max(build, f32::max(render, gpu));
+            let (_, free) = run(build, render, gpu, false);
+            let (_, always) = run(build, render, gpu, true);
+            let (_, gated) = run_gated(build, render, gpu);
+            assert!((free - bound).abs() < 0.01, "{free} vs {bound}");
+            // the wait on every frame: about (M + R + G) / 2, a fifth slower
+            // and more
+            assert!(always > bound * 1.18, "{always} vs {bound}");
+            assert!((gated - bound).abs() < 0.01, "gated {gated} vs {bound}");
+        }
+    }
+
+    #[test]
+    fn the_gate_keeps_the_fresh_input_when_the_gpu_sets_the_pace() {
+        let (late, _) = run(4.0, 3.0, 16.0, false);
+        let (fresh, period) = run_gated(4.0, 3.0, 16.0);
+        assert!((period - 16.0).abs() < 0.01, "{period}");
+        assert!(fresh < 33.0, "gated: {fresh} (without: {late})");
+    }
+
+    #[test]
+    fn the_gate_follows_the_scene_with_a_margin() {
+        let mut g = Gate::default();
+        // no GPU time: never on
+        assert!(!g.update(4.0, 3.0, None));
+        // the GPU covers the CPU stages: on at once
+        assert!(g.update(4.0, 3.0, 16.0.into()));
+        // just under the line: still on (margin)
+        for _ in 0..100 {
+            assert!(g.update(4.0, 3.0, 6.9.into()));
+        }
+        // the scene gets lighter on the GPU: off within a few frames
+        let off = (0..30).position(|_| !g.update(4.0, 3.0, 4.0.into()));
+        assert!(off.is_some_and(|f| f < 15), "{off:?}");
+        // just over the line: still off (margin)
+        for _ in 0..100 {
+            assert!(!g.update(4.0, 3.0, 7.2.into()));
+        }
+        assert!((0..30).any(|_| g.update(4.0, 3.0, 12.0.into())));
+        // a frame without GPU time turns it off
+        assert!(!g.update(4.0, 3.0, None));
     }
 
     #[test]
@@ -257,6 +396,10 @@ mod tests {
     fn the_switch_only_turns_pacing_off_explicitly() {
         assert!(wanted(None));
         assert!(wanted(Some("1")));
+        assert!(wanted(Some("always")));
+        assert!(always(Some(" Always ")));
+        assert!(!always(None) && !always(Some("1")));
+        assert!(Gate::new(true).update(10.0, 8.0, None));
         assert!(!wanted(Some("0")));
         assert!(!wanted(Some(" Off ")));
         assert!(!wanted(Some("false")));

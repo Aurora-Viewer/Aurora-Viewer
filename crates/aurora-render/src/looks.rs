@@ -32,6 +32,7 @@
 //! the middle of the photo) and a 3D look-up table read from a .cube file
 //! (`cube.rs`).
 
+use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
 
@@ -749,7 +750,7 @@ fn render_pipeline(
     module: &wgpu::ShaderModule,
     format: wgpu::TextureFormat,
 ) -> wgpu::RenderPipeline {
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
         label: Some("photo look"),
         layout: Some(layout),
         vertex: wgpu::VertexState {
@@ -838,7 +839,7 @@ impl Looks {
             immediate_size: 0,
         });
         let compute_pipeline = |entry: &str| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
                 label: Some("photo look histogram"),
                 layout: Some(&hist_pipeline_layout),
                 module: &module,
@@ -970,6 +971,17 @@ impl Looks {
             inter,
             layers,
         });
+    }
+
+    /// The images let go now (refused by a full video memory).
+    pub(crate) fn release(&mut self) {
+        self.targets = None;
+    }
+
+    /// Whether `prepare` would make new images.
+    pub(crate) fn needs_targets(&self, format: wgpu::TextureFormat, size: (u32, u32)) -> bool {
+        let size = (size.0.max(1), size.1.max(1));
+        self.targets.as_ref().is_none_or(|t| t.size != size || t.format != format)
     }
 
     /// A frame without a look: the images are let go after a while.

@@ -78,6 +78,7 @@ pub struct Editor {
     saving: Option<PendingSave>,
     pub can_read: bool,
     pub can_edit: bool,
+    pub can_reset: bool,
     pub mono: bool,
     baseline_mono: bool,
     experience: experiences::State,
@@ -188,6 +189,7 @@ impl Editors {
             e.tools.external = None;
             e.can_read = false;
             e.can_edit = false;
+            e.can_reset = false;
             e.running = None;
             e.close_prompt = false;
             e.close_after_save = false;
@@ -458,6 +460,7 @@ impl Editors {
             saving: None,
             can_read,
             can_edit,
+            can_reset: !target.object.is_nil(),
             mono: true,
             baseline_mono: true,
             experience: experiences::State::default(),
@@ -550,10 +553,12 @@ impl Editors {
                 e.experience.baseline = pending.experience;
                 e.compile_failed = !saved.compiled;
                 e.errors.clone_from(&saved.errors);
-                e.status = if saved.compiled {
+                e.status = if !saved.compiled {
+                    aurora_i18n::tr!("script-compile-failed")
+                } else if saved.checked {
                     aurora_i18n::tr!("script-saved")
                 } else {
-                    aurora_i18n::tr!("script-compile-failed")
+                    aurora_i18n::tr!("script-saved-not-compiled")
                 }
                 .into();
                 if e.close_after_save && saved.compiled && !e.dirty() {
@@ -1563,6 +1568,7 @@ mod tests {
             &Ok(ScriptSaved {
                 asset: Uuid::from_u128(72),
                 compiled: true,
+                checked: true,
                 errors: vec![],
             }),
         );
@@ -1652,6 +1658,7 @@ mod tests {
                 &Ok(ScriptSaved {
                     asset: Uuid::from_u128(99),
                     compiled: true,
+                    checked: true,
                     errors: vec![],
                 }),
             );
@@ -1804,6 +1811,7 @@ mod tests {
             &Ok(ScriptSaved {
                 asset: Uuid::from_u128(3),
                 compiled: true,
+                checked: true,
                 errors: vec![]
             })
         ));
@@ -1830,6 +1838,7 @@ mod tests {
             &Ok(ScriptSaved {
                 asset: Uuid::from_u128(3),
                 compiled: false,
+                checked: true,
                 errors: vec!["(1, 1) Syntax error".into()],
             }),
         );
@@ -1868,6 +1877,7 @@ mod tests {
             &Ok(ScriptSaved {
                 asset: Uuid::from_u128(4),
                 compiled: true,
+                checked: true,
                 errors: vec![],
             }),
         );
@@ -1896,6 +1906,7 @@ mod tests {
             &Ok(ScriptSaved {
                 asset: Uuid::from_u128(3),
                 compiled: true,
+                checked: true,
                 errors: vec![]
             })
         ));

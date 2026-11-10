@@ -13,9 +13,9 @@ pub(super) fn exposes_asset_uuid(kind: i32) -> bool {
     matches!(kind, 0 | 1 | 3 | 5 | 7 | 13 | 20 | 21 | 56 | 57 | 58 | 59)
 }
 
-pub(super) fn copyable_asset_uuid(item: &aurora_net::inventory::InvItem) -> Option<Uuid> {
-    let full_perm = rules::COPY | rules::MODIFY | rules::TRANSFER;
-    (exposes_asset_uuid(item.asset_type) && item.owner_mask & full_perm == full_perm && !item.asset_id.is_nil()).then_some(item.asset_id)
+pub(super) fn copyable_asset_uuid(inv: &Inventory, item: &aurora_net::inventory::InvItem) -> Option<Uuid> {
+    (exposes_asset_uuid(item.asset_type) && rules::held(inv, item) & rules::FULL == rules::FULL && !item.asset_id.is_nil())
+        .then_some(item.asset_id)
 }
 
 fn entry(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, enabled: bool, action: InvAction, actions: &mut Vec<InvAction>) {
@@ -48,6 +48,9 @@ pub(super) fn double_click(
     facts: &Facts,
     actions: &mut Vec<InvAction>,
 ) {
+    if listing_wear(inv, id, st) {
+        return;
+    }
     let original = rules::original(inv, id);
     match original.and_then(|original| inv.items.get(&original)) {
         Some(it) if matches!(it.asset_type, 5 | 6 | 13) => match wear_toggle(it, facts.worn.contains(&it.id), prefs) {
@@ -91,7 +94,25 @@ pub(super) fn wear_toggle(it: &aurora_net::inventory::InvItem, worn: bool, prefs
 
 /// The "Open" entry, and the double-click of what is not worn: objects,
 /// clothing and body parts never come here (`double_click`).
+/// AlertMerchantListingCannotWear (LLInventoryAction::doToSelected,
+/// llinventoryfunctions.cpp): nothing wearable is opened, so worn, from the
+/// listings, active or not. The Legacy Viewer checks it on "open" only, and
+/// a double-click there still wears the item: here neither does.
+fn listing_wear(inv: &Inventory, id: Uuid, st: &mut InventoryUi) -> bool {
+    let wearable = rules::original(inv, id)
+        .and_then(|original| inv.items.get(&original))
+        .is_some_and(|it| matches!(it.asset_type, 5 | 6 | 13));
+    if wearable && crate::world::marketplace::root(inv).is_some_and(|root| rules::under(inv, id, root)) {
+        st.message = aurora_i18n::tr!("marketplace-alert-cannot-wear").into();
+        return true;
+    }
+    false
+}
+
 pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, actions: &mut Vec<InvAction>) {
+    if listing_wear(inv, id, st) {
+        return;
+    }
     if let Some(original) = rules::original(inv, id)
         && inv.items.get(&original).is_some_and(|it| it.asset_type == 21)
     {
@@ -326,6 +347,45 @@ pub(super) fn show(
 mod tests {
     use super::*;
     use egui::{Pos2, epaint::Shape};
+
+    #[test]
+    fn nothing_is_worn_from_the_marketplace_listings() {
+        let mut inv = Inventory {
+            root: Uuid::from_u128(1),
+            ..Default::default()
+        };
+        inv.folders.insert(
+            inv.root,
+            crate::world::inventory::Folder {
+                info: aurora_net::inventory::InvFolder {
+                    id: inv.root,
+                    type_default: 8,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: crate::world::inventory::FetchState::Fetched,
+                library: false,
+            },
+        );
+        crate::world::marketplace::demo::seed(&mut inv, Uuid::from_u128(2));
+        // the hoodie of an inactive version folder, then of the active one
+        for hoodie in [Uuid::from_u128(8_400_101), Uuid::from_u128(8_400_102)] {
+            let mut st = InventoryUi::default();
+            let mut actions = Vec::new();
+            double_click(
+                &inv,
+                hoodie,
+                &mut st,
+                &InventoryPreferences::default(),
+                &Facts::default(),
+                &mut actions,
+            );
+            open(&inv, hoodie, &mut st, &mut actions);
+            assert!(actions.is_empty());
+            assert_eq!(st.message, aurora_i18n::tr!("marketplace-alert-cannot-wear"));
+        }
+    }
     #[test]
     fn resource_previews_preserve_an_unsaved_document() {
         let mut inv = Inventory::default();
@@ -426,16 +486,24 @@ mod tests {
         for kind in -1..=60 {
             item.asset_type = kind;
             let allowed = [0, 1, 3, 5, 7, 13, 20, 21, 56, 57, 58, 59].contains(&kind);
-            assert_eq!(copyable_asset_uuid(&item), allowed.then_some(item.asset_id), "asset type {kind}");
+            assert_eq!(
+                copyable_asset_uuid(&Inventory::default(), &item),
+                allowed.then_some(item.asset_id),
+                "asset type {kind}"
+            );
         }
         item.asset_type = 0;
         for missing in [rules::COPY, rules::MODIFY, rules::TRANSFER] {
             item.owner_mask = full_perm & !missing;
-            assert_eq!(copyable_asset_uuid(&item), None, "missing permission {missing:x}");
+            assert_eq!(
+                copyable_asset_uuid(&Inventory::default(), &item),
+                None,
+                "missing permission {missing:x}"
+            );
         }
         item.owner_mask = full_perm;
         item.asset_id = Uuid::nil();
-        assert_eq!(copyable_asset_uuid(&item), None);
+        assert_eq!(copyable_asset_uuid(&Inventory::default(), &item), None);
     }
 
     #[test]

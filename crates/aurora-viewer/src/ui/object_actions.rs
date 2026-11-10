@@ -12,11 +12,12 @@ mod contents_list;
 #[cfg(test)]
 mod contents_tests;
 
+pub(crate) use contents_list::demo_root as contents_demo_root;
 pub(crate) use contents_list::demo_select_all as contents_demo_select_all;
 pub(crate) use contents_list::shortcuts as contents_shortcuts;
 
 fn money(amount: i32) -> String {
-    format!("L$ {}", super::hud::group_digits(amount.max(0) as u32))
+    format!("{} {}", aurora_i18n::currency(), super::hud::group_digits(amount.max(0) as u32))
 }
 
 fn permission_name(name: &str, mask: u32) -> String {
@@ -170,13 +171,9 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                             .show(ui, |ui| {
                                 for index in 0..4 {
                                     if let Some(&amount) = buttons.get(index).filter(|v| **v > 0) {
-                                        if ui
-                                            .add_enabled_ui(affordable(amount), |ui| {
-                                                flat_button_sized(ui, p, &money(amount), Vec2::new(button_width, 24.0))
-                                            })
-                                            .inner
-                                            .clicked()
-                                        {
+                                        // never greyed: short of L$, Buy L$ opens
+                                        // (give_money)
+                                        if flat_button_sized(ui, p, &money(amount), Vec2::new(button_width, 24.0)).clicked() {
                                             confirm = Some(Some(amount));
                                         }
                                     } else {
@@ -194,7 +191,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                         ui.horizontal(|ui| {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.add(egui::TextEdit::singleline(&mut d.amount).desired_width(110.0).char_limit(10));
-                                ui.label("L$");
+                                ui.label(aurora_i18n::currency());
                             });
                         });
                     }
@@ -225,7 +222,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                 let valid = available
                     && d.props.as_ref().is_some_and(|props| {
                         let price = if buy { Some(props.sale_price) } else { amount };
-                        price.is_some_and(|v| v >= 0 && world.balance.is_some_and(|b| v <= b))
+                        price.is_some_and(|v| v >= 0)
                             && if buy {
                                 (1..=3).contains(&props.sale_type)
                                     && (props.sale_type != 3
@@ -323,9 +320,24 @@ pub fn copy_request(
         None => return Err(aurora_i18n::tr!("ui-object-actions-loading-contents").to_owned()),
     };
     let items: Vec<_> = items.iter().map(|item| task::from_inventory(c.target.object, item)).collect();
-    let transfer = task::contents_transfer(world, c.target.object, &items, task::owned(world, c.target.object, props))?;
+    task_copy_request(c.target.object, items, props, world)
+}
+
+/// The same folder copy for the Open button and the selected-items menus.
+/// Aurora also offers it in the editor, where the Legacy Viewer uses a drag.
+pub fn task_copy_request(
+    object: uuid::Uuid,
+    items: Vec<aurora_net::build::TaskItem>,
+    props: Option<&aurora_net::build::ObjectProps>,
+    world: &World,
+) -> Result<CopyRequest, String> {
+    use crate::build::task_inventory as task;
+    if world.objects.index_of_uuid(&object).is_none() {
+        return Err(aurora_i18n::tr!("ui-object-actions-this-object-is-no-longer-available").to_owned());
+    }
+    let transfer = task::contents_transfer(world, object, &items, task::owned(world, object, props))?;
     Ok(CopyRequest {
-        object: c.target.object,
+        object,
         name: props.map(|props| props.name.clone()).unwrap_or_default(),
         items,
         transfer,

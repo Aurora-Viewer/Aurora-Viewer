@@ -327,6 +327,9 @@ pub enum Action {
     Up,
     Down,
     Fly,
+    /// Fly override (Legacy Viewer menu_viewer.xml "Fly Override",
+    /// FSAlwaysFly, shortcut="control|alt|V").
+    FlyOverride,
     AlwaysRun,
     /// Physical Movelock (Firestorm Ctrl+Alt+P).
     MoveLock,
@@ -337,6 +340,14 @@ pub enum Action {
     SitGround,
     Mouselook,
     ResetCamera,
+    /// View › Reset Camera Angles (handle_reset_camera_angles, Shift+Esc):
+    /// the view reset, and the offsets the Ctrl / Shift wheel moves back to
+    /// the rear view's.
+    ResetCameraAngles,
+    /// Build › Focus on Selection / Zoom to Selection
+    /// (handle_look_at_selection, H and Shift+H).
+    FocusSelection,
+    ZoomSelection,
     /// LLViewerJoystick::toggleFlycam (menu_viewer.xml, Alt+Shift+F).
     Flycam,
     /// The Controls window, on its Camera tab (Firestorm's View › Camera
@@ -366,7 +377,20 @@ pub enum Action {
     /// `use_mac_ctrl="true"`, Floater.ToggleOrBringToFront `fs_nearby_chat`).
     NearbyChat,
     People,
+    /// Communicate › Friends, Groups and Contact Sets
+    /// (SideTray.PanelPeopleTab: Ctrl+Shift+F, Ctrl+Shift+G,
+    /// Ctrl+Alt+Shift+C): People on that tab, closed when it shows.
+    Friends,
+    Groups,
+    ContactSets,
     Inventory,
+    /// Me › New Inventory Window (Inventory.NewWindow, Ctrl+Shift+I): the
+    /// additional inventory window.
+    NewInventoryWindow,
+    /// Me › Outfits (CustomizeAvatar, Ctrl+O): the Appearance window.
+    Appearance,
+    /// Me › Exit (File.Quit, Ctrl+Q).
+    Quit,
     Gestures,
     Minimap,
     WorldMap,
@@ -399,12 +423,25 @@ pub enum Action {
     ShowHuds,
     /// "Show transparency" (Firestorm Ctrl+Alt+T).
     ShowTransparency,
+    /// Build › Options › Show Selection Outlines (RenderHighlightSelections,
+    /// Ctrl+Alt+H).
+    SelectionOutlines,
+    /// World › Sound › Mute / unmute sound (World.ToggleMasterAudio,
+    /// Ctrl+Alt+Shift+M).
+    MuteAll,
+    /// Advanced › Shortcuts › DoubleClick Teleport
+    /// (Advanced.SetDoubleClickAction, Ctrl+Shift+D).
+    DoubleClickTeleport,
     Beacons,
+    /// The contact sets' markers in the world (`Settings::contact_markers`).
+    ContactMarkers,
     PropertyLines,
     LandOwners,
     HideParticles,
     /// Aurora's Dev Toolbox window (Ctrl+Alt+D).
     DevToolbox,
+    /// Advanced.ShowDebugSettings.
+    DebugSettings,
     /// "Force appearance update (rebake)" (Firestorm Ctrl+Alt+R).
     Rebake,
     /// Avatar health's "Stop avatar animations", the scripts keeping their
@@ -490,6 +527,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Up, aurora_i18n::tr!("extra-jump-ascend")),
                     (Action::Down, aurora_i18n::tr!("status-crouch-descend")),
                     (Action::Fly, aurora_i18n::tr!("extra-fly-land")),
+                    (Action::FlyOverride, aurora_i18n::tr!("ui-bars-fly-override")),
                     (Action::AlwaysRun, aurora_i18n::tr!("keybinds-always-run")),
                     (Action::MoveLock, aurora_i18n::tr!("movelock-title")),
                     (Action::MovementEnhancer, aurora_i18n::tr!("movement-title")),
@@ -502,6 +540,9 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                 vec![
                     (Action::Mouselook, aurora_i18n::tr!("common-mouselook")),
                     (Action::ResetCamera, aurora_i18n::tr!("keybinds-return-to-avatar")),
+                    (Action::ResetCameraAngles, aurora_i18n::tr!("keybinds-reset-camera-angles")),
+                    (Action::FocusSelection, aurora_i18n::tr!("keybinds-focus-selection")),
+                    (Action::ZoomSelection, aurora_i18n::tr!("keybinds-zoom-selection")),
                     (Action::Flycam, aurora_i18n::tr!("joystick-flycam")),
                     (Action::CameraControls, aurora_i18n::tr!("controls-camera-title")),
                     (Action::LensZoomIn, aurora_i18n::tr!("keybinds-lens-zoom-in")),
@@ -533,7 +574,12 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::NearbyChat, aurora_i18n::tr!("common-nearby-chat")),
                     (Action::Conversations, aurora_i18n::tr!("common-conversations")),
                     (Action::People, aurora_i18n::tr!("common-people")),
+                    (Action::Friends, aurora_i18n::tr!("common-friends")),
+                    (Action::Groups, aurora_i18n::tr!("common-groups")),
+                    (Action::ContactSets, aurora_i18n::tr!("ui-contacts-contact-sets")),
                     (Action::Inventory, aurora_i18n::tr!("common-inventory")),
+                    (Action::NewInventoryWindow, aurora_i18n::tr!("inventory-additional-window")),
+                    (Action::Appearance, aurora_i18n::tr!("common-appearance")),
                     (Action::TextureLibrary, aurora_i18n::tr!("texture-library-title")),
                     (Action::IkEdit, aurora_i18n::tr!("ik-edit-title")),
                     (Action::Gestures, aurora_i18n::tr!("gesture-title")),
@@ -548,6 +594,10 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::ToggleInterface, aurora_i18n::tr!("keybinds-hide-interface")),
                     (Action::HoverTips, aurora_i18n::tr!("ui-options-hover-tips")),
                     (Action::Import, aurora_i18n::tr!("keybinds-import-files")),
+                    (Action::MuteAll, aurora_i18n::tr!("keybinds-mute-all-sound")),
+                    (Action::ContactMarkers, aurora_i18n::tr!("ui-options-contact-markers")),
+                    (Action::DoubleClickTeleport, aurora_i18n::tr!("keybinds-double-click-teleport")),
+                    (Action::Quit, aurora_i18n::tr!("ui-bars-quit-aurora-viewer")),
                 ],
             ),
             (
@@ -587,7 +637,9 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                 aurora_i18n::tr!("keybinds-debug"),
                 vec![
                     (Action::DevToolbox, aurora_i18n::tr!("dev-toolbox-title")),
+                    (Action::DebugSettings, aurora_i18n::tr!("toolbar-command-debug-settings")),
                     (Action::ShowTransparency, aurora_i18n::tr!("common-show-transparency")),
+                    (Action::SelectionOutlines, aurora_i18n::tr!("keybinds-selection-outlines")),
                     (Action::Beacons, aurora_i18n::tr!("beacons-title")),
                     (Action::PropertyLines, aurora_i18n::tr!("world-property-lines")),
                     (Action::LandOwners, aurora_i18n::tr!("world-land-owners")),
@@ -701,6 +753,7 @@ impl KeyBindings {
             (Action::Up, [k(K::PageUp), k(K::KeyE)]),
             (Action::Down, [k(K::PageDown), k(K::KeyC)]),
             (Action::Fly, [k(K::Home), k(K::KeyF)]),
+            (Action::FlyOverride, [kalt(K::KeyV, true, false), None]),
             (Action::AlwaysRun, [kmod(K::KeyR, true, false), None]),
             (Action::MoveLock, [kalt(K::KeyP, true, false), None]),
             (Action::MovementEnhancer, [kalt(K::KeyM, true, false), None]),
@@ -710,6 +763,11 @@ impl KeyBindings {
             (Action::SitGround, [kalt(K::KeyS, false, true), None]),
             (Action::Mouselook, [k(K::KeyM), None]),
             (Action::ResetCamera, [k(K::Escape), None]),
+            // menu_viewer.xml: Reset Camera Angles, shortcut="shift|Esc"
+            (Action::ResetCameraAngles, [kmod(K::Escape, false, true), None]),
+            // menu_viewer.xml: Focus on / Zoom to Selection, H and shift|H
+            (Action::FocusSelection, [k(K::KeyH), None]),
+            (Action::ZoomSelection, [kmod(K::KeyH, false, true), None]),
             (Action::Flycam, [kalt(K::KeyF, false, true), None]),
             (Action::CameraControls, [kmod(K::KeyC, true, true), None]),
             (Action::LensZoomIn, [kmod(K::Digit0, true, false), kmod(K::Numpad0, true, false)]),
@@ -742,7 +800,15 @@ impl KeyBindings {
             (Action::ToggleMic, [None, None]),
             (Action::Conversations, [kmod(K::KeyT, true, false), None]),
             (Action::People, [kmod(K::KeyA, true, true), None]),
+            // menu_viewer.xml: Friends, Groups, Contact Sets
+            (Action::Friends, [kmod(K::KeyF, true, true), None]),
+            (Action::Groups, [kmod(K::KeyG, true, true), None]),
+            (Action::ContactSets, [kalt(K::KeyC, true, true), None]),
             (Action::Inventory, [kmod(K::KeyI, true, false), None]),
+            // menu_viewer.xml: New Inventory Window, Outfits, Exit
+            (Action::NewInventoryWindow, [kmod(K::KeyI, true, true), None]),
+            (Action::Appearance, [kmod(K::KeyO, true, false), None]),
+            (Action::Quit, [kmod(K::KeyQ, true, false), None]),
             (Action::TextureLibrary, [kmod(K::Space, true, false), None]),
             (Action::IkEdit, [kmod(K::KeyK, true, false), None]),
             (Action::Gestures, [kmod(K::KeyG, true, false), None]),
@@ -783,6 +849,12 @@ impl KeyBindings {
             // menu_viewer.xml: Show Tips, shortcut="control|shift|T"
             (Action::HoverTips, [kmod(K::KeyT, true, true), None]),
             (Action::Import, [kmod(K::KeyU, true, false), None]),
+            // menu_viewer.xml: Mute/unmute sound, DoubleClick Teleport, Show
+            // Selection Outlines
+            (Action::MuteAll, [kalt(K::KeyM, true, true), None]),
+            (Action::ContactMarkers, [None, None]),
+            (Action::DoubleClickTeleport, [kmod(K::KeyD, true, true), None]),
+            (Action::SelectionOutlines, [kalt(K::KeyH, true, false), None]),
             (
                 Action::Beacons,
                 [
@@ -861,6 +933,7 @@ impl KeyBindings {
             ),
             // Aurora's Dev Toolbox (Advanced › Dev Toolbox)
             (Action::DevToolbox, [kalt(K::KeyD, true, false), None]),
+            (Action::DebugSettings, [kalt(K::KeyS, true, true), None]),
             // menu_viewer.xml: Avatar Health
             (Action::StopAnimations, [kalt(K::KeyA, false, true), None]),
             (Action::ResyncAnimations, [kmod(K::KeyS, true, false), None]),
@@ -914,6 +987,28 @@ pub fn text_field_keeps(code: KeyCode, mods: Mods) -> bool {
     }
 }
 
+/// [`text_field_keeps`] for a real key press: a Latin letter is judged by
+/// the character it types, so Ctrl+Q on a QWERTY keyboard reaches Exit while
+/// the physical Q of an AZERTY keyboard (its A) still selects all. Other
+/// keys, and layouts without Latin letters, keep the physical rule.
+pub fn text_field_keeps_key(code: KeyCode, logical: Option<&winit::keyboard::Key>, mods: Mods) -> bool {
+    if let Some(winit::keyboard::Key::Character(text)) = logical
+        && let mut chars = text.chars()
+        && let (Some(letter), None) = (chars.next(), chars.next())
+        && letter.is_ascii_alphabetic()
+    {
+        if !mods.ctrl && !mods.alt {
+            return false;
+        }
+        return match letter.to_ascii_lowercase() {
+            'a' | 'c' | 'x' | 'v' | 'y' => mods.ctrl && !mods.alt && !mods.shift,
+            'z' => mods.ctrl && !mods.alt,
+            _ => false,
+        };
+    }
+    text_field_keeps(code, mods)
+}
+
 /// Keys the chat bar hands to the avatar instead of its text: the arrows,
 /// Page Up / Down (jump, crouch) and Home (fly).
 const CHAT_BAR_MOVE_KEYS: [KeyCode; 7] = [
@@ -954,6 +1049,40 @@ pub fn chat_bar_held_moves(input: &Input, ctrl: bool) -> bool {
         .iter()
         .any(|code| *input == Input::key(*code));
     is_chat_bar_move_input(input) && !(arrow && ctrl)
+}
+
+/// The navigation key a keypad key stands for with NumLock off (keypad 8 is
+/// Up, 7 Home, 9 Page Up…), as the keypad labels show.
+pub fn keypad_navigation(code: KeyCode) -> Option<KeyCode> {
+    use KeyCode as K;
+    Some(match code {
+        K::Numpad0 => K::Insert,
+        K::Numpad1 => K::End,
+        K::Numpad2 => K::ArrowDown,
+        K::Numpad3 => K::PageDown,
+        K::Numpad4 => K::ArrowLeft,
+        K::Numpad6 => K::ArrowRight,
+        K::Numpad7 => K::Home,
+        K::Numpad8 => K::ArrowUp,
+        K::Numpad9 => K::PageUp,
+        K::NumpadDecimal => K::Delete,
+        _ => return None,
+    })
+}
+
+/// The key a press counts as for the shortcuts. With NumLock off the
+/// system turns the keypad into arrows, Home and Page keys, and the Legacy
+/// Viewer binds them as those keys: keypad 8 walks forward, 9 / 3 jump and
+/// crouch, 7 flies (LLKeyboardWin32::translateKey and
+/// inverseTranslateExtendedKey, indra/llwindow/llkeyboardwin32.cpp,
+/// originally LGPL 2.1). winit keeps the keypad's physical code and reports
+/// the navigation key as the logical one; with NumLock on (a digit) or on
+/// macOS (no NumLock) the keypad keeps its own code.
+pub fn binding_code(code: KeyCode, logical: &winit::keyboard::Key) -> KeyCode {
+    match (keypad_navigation(code), logical) {
+        (Some(nav), winit::keyboard::Key::Named(_)) => nav,
+        _ => code,
+    }
 }
 
 /// Current modifier state.
@@ -1574,6 +1703,54 @@ mod tests {
     }
 
     #[test]
+    fn the_legacy_menu_chords_aurora_lacked_run_their_actions() {
+        // menu_viewer.xml accelerators (US QWERTY places)
+        let kb = KeyBindings::us_places([KeyCode::KeyW, KeyCode::KeyS, KeyCode::KeyA, KeyCode::KeyD]);
+        let m = |ctrl, shift, alt| Mods { ctrl, shift, alt };
+        for (code, mods, action) in [
+            (KeyCode::KeyQ, m(true, false, false), Action::Quit),
+            (KeyCode::KeyO, m(true, false, false), Action::Appearance),
+            (KeyCode::KeyF, m(true, true, false), Action::Friends),
+            (KeyCode::KeyG, m(true, true, false), Action::Groups),
+            (KeyCode::KeyC, m(true, true, true), Action::ContactSets),
+            (KeyCode::KeyI, m(true, true, false), Action::NewInventoryWindow),
+            (KeyCode::KeyM, m(true, true, true), Action::MuteAll),
+            (KeyCode::KeyD, m(true, true, false), Action::DoubleClickTeleport),
+            (KeyCode::KeyH, m(true, false, true), Action::SelectionOutlines),
+            (KeyCode::Escape, m(false, true, false), Action::ResetCameraAngles),
+            (KeyCode::KeyH, m(false, false, false), Action::FocusSelection),
+            (KeyCode::KeyH, m(false, true, false), Action::ZoomSelection),
+        ] {
+            assert_eq!(kb.triggered(&Input::key(code), mods), Some(action), "{code:?} {mods:?}");
+            assert_eq!(
+                kb.users(&kb.get(action)[0].clone().expect("bound")),
+                vec![action],
+                "{action:?} alone on its keys"
+            );
+        }
+        // plain Esc still resets the view
+        assert_eq!(
+            kb.triggered(&Input::key(KeyCode::Escape), Mods::default()),
+            Some(Action::ResetCamera)
+        );
+        // a settings file from before them gets them, on the keys of the
+        // active layout (`KeyBindings::default`: Ctrl+Q is KeyA on AZERTY)
+        let mut old = kb.clone();
+        old.map
+            .retain(|(a, _)| !matches!(a, Action::Quit | Action::Friends | Action::ResetCameraAngles));
+        let old = old.sanitized();
+        let defaults = KeyBindings::default();
+        for action in [Action::Quit, Action::Friends, Action::ResetCameraAngles] {
+            assert!(old.get(action)[0].is_some(), "{action:?} bound");
+            assert_eq!(old.get(action), defaults.get(action), "{action:?}");
+        }
+        assert_eq!(
+            old.triggered(&Input::key(KeyCode::Escape), m(false, true, false)),
+            Some(Action::ResetCameraAngles)
+        );
+    }
+
+    #[test]
     fn nearby_chat_is_ctrl_h_and_keeps_the_other_h_chords() {
         let kb = KeyBindings::default();
         let h = Input::key(KeyCode::KeyH);
@@ -1593,7 +1770,14 @@ mod tests {
         assert_eq!(kb.triggered(&h, ctrl), Some(Action::NearbyChat));
         assert_eq!(kb.triggered(&h, alt), Some(Action::TeleportHistory));
         assert_eq!(kb.triggered(&h, alt_shift), Some(Action::ShowHuds));
-        assert_eq!(kb.triggered(&h, Mods::default()), None);
+        // H and Shift+H are Build › Focus on / Zoom to Selection, not a
+        // Nearby Chat without its Ctrl
+        assert_eq!(kb.triggered(&h, Mods::default()), Some(Action::FocusSelection));
+        let shift = Mods {
+            shift: true,
+            ..Default::default()
+        };
+        assert_eq!(kb.triggered(&h, shift), Some(Action::ZoomSelection));
         assert!(!text_field_keeps(KeyCode::KeyH, ctrl), "Nearby Chat runs while a field is focused");
         let binding = kb.get(Action::NearbyChat)[0].clone().expect("default binding");
         assert_eq!(binding.label_on(true), "⌃H");
@@ -1789,6 +1973,31 @@ mod tests {
     }
 
     #[test]
+    fn text_field_editing_chords_follow_the_typed_letter() {
+        use winit::keyboard::Key;
+        let ctrl = Mods {
+            ctrl: true,
+            ..Mods::default()
+        };
+        let letter = |c: &str| Key::Character(c.into());
+        // QWERTY: Ctrl+Q is Exit, not an editing chord
+        assert!(!text_field_keeps_key(KeyCode::KeyQ, Some(&letter("q")), ctrl));
+        // AZERTY: its A key (physical Q) is Select All, its Q key (physical A) is Exit
+        assert!(text_field_keeps_key(KeyCode::KeyQ, Some(&letter("a")), ctrl));
+        assert!(!text_field_keeps_key(KeyCode::KeyA, Some(&letter("q")), ctrl));
+        // Shift reads the same through the capital letter
+        assert!(text_field_keeps_key(KeyCode::KeyV, Some(&letter("V")), ctrl));
+        // no Latin letter: the physical rule stays
+        assert!(text_field_keeps_key(KeyCode::KeyQ, Some(&letter("й")), ctrl));
+        assert!(text_field_keeps_key(KeyCode::KeyQ, None, ctrl));
+        assert!(text_field_keeps_key(
+            KeyCode::ArrowLeft,
+            Some(&Key::Named(winit::keyboard::NamedKey::ArrowLeft)),
+            ctrl
+        ));
+    }
+
+    #[test]
     fn text_edit_keys_stay_with_the_field() {
         // the default window shortcuts work while typing...
         for code in [KeyCode::Digit1, KeyCode::KeyT, KeyCode::KeyI, KeyCode::KeyM, KeyCode::KeyP] {
@@ -1868,6 +2077,41 @@ mod tests {
         assert!(!chat_bar_held_moves(&Input::key(KeyCode::KeyW), false));
     }
 
+    /// NumLock off: the keypad moves and flies like the Legacy Viewer's
+    /// (8 / 2 / 4 / 6 walk and turn, 9 / 3 jump and crouch, 7 flies).
+    /// NumLock on, its digits keep their own bindings (Ctrl+keypad 8).
+    #[test]
+    fn keypad_without_numlock_moves_like_the_navigation_keys() {
+        use winit::keyboard::{Key, NamedKey};
+        let kb = KeyBindings::default();
+        let none = Mods::default();
+        for (code, named, action) in [
+            (KeyCode::Numpad8, NamedKey::ArrowUp, Action::Forward),
+            (KeyCode::Numpad2, NamedKey::ArrowDown, Action::Back),
+            (KeyCode::Numpad4, NamedKey::ArrowLeft, Action::Left),
+            (KeyCode::Numpad6, NamedKey::ArrowRight, Action::Right),
+            (KeyCode::Numpad9, NamedKey::PageUp, Action::Up),
+            (KeyCode::Numpad3, NamedKey::PageDown, Action::Down),
+            (KeyCode::Numpad7, NamedKey::Home, Action::Fly),
+        ] {
+            let input = Input::key(binding_code(code, &Key::Named(named)));
+            if is_held(action) {
+                assert!(kb.held(action, &HashSet::from([input]), none), "{code:?}");
+            } else {
+                assert_eq!(kb.triggered(&input, none), Some(action), "{code:?}");
+            }
+        }
+        let digit = binding_code(KeyCode::Numpad8, &Key::Character("8".into()));
+        assert_eq!(digit, KeyCode::Numpad8);
+        let ctrl = Mods {
+            ctrl: true,
+            ..Mods::default()
+        };
+        assert_eq!(kb.triggered(&Input::key(digit), ctrl), Some(Action::LensZoomOut));
+        assert_eq!(binding_code(KeyCode::KeyW, &Key::Character("w".into())), KeyCode::KeyW);
+        assert_eq!(binding_code(KeyCode::ArrowUp, &Key::Named(NamedKey::ArrowUp)), KeyCode::ArrowUp);
+    }
+
     #[test]
     fn lens_shortcuts_are_added_to_old_settings_and_can_be_rebound() {
         let mut kb = KeyBindings::default();
@@ -1895,7 +2139,8 @@ mod tests {
     /// N / X / J, added to older settings files and rebindable.
     #[test]
     fn environment_shortcuts_pick_the_legacy_times_of_day() {
-        let mut kb = KeyBindings::us_places([KeyCode::KeyW, KeyCode::KeyS, KeyCode::KeyA, KeyCode::KeyD]);
+        let layout = layout::current();
+        let mut kb = KeyBindings::us_places(layout.movement_keys());
         kb.map.retain(|(a, _)| a.time_of_day().is_none());
         let mut kb = kb.sanitized();
         let ctrl_shift = Mods {
@@ -1903,13 +2148,14 @@ mod tests {
             shift: true,
             ..Default::default()
         };
-        for (code, action, time) in [
+        for (us_code, action, time) in [
             (KeyCode::KeyU, Action::EnvSunrise, 1),
             (KeyCode::KeyY, Action::EnvMidday, 2),
             (KeyCode::KeyN, Action::EnvSunset, 3),
             (KeyCode::KeyX, Action::EnvMidnight, 4),
             (KeyCode::KeyJ, Action::EnvShared, 0),
         ] {
+            let code = layout.named_key(us_code);
             assert_eq!(kb.triggered(&Input::key(code), ctrl_shift), Some(action), "{code:?}");
             assert_eq!(kb.users(&kb.get(action)[0].clone().expect("default binding")), [action]);
             assert_eq!(action.time_of_day(), Some(time));
@@ -2008,6 +2254,7 @@ mod tests {
                 [K::Backquote, K::Quote, K::Quote, K::Semicolon],
             ),
             (Action::Fly, (false, false, false), [K::KeyF; 4]),
+            (Action::FlyOverride, (true, false, true), [K::KeyV; 4]),
             (Action::CameraControls, (true, true, false), [K::KeyC; 4]),
             (Action::AlwaysRun, (true, false, false), [K::KeyR; 4]),
             (Action::NearbyChat, (true, false, false), [K::KeyH; 4]),
@@ -2031,12 +2278,18 @@ mod tests {
                 [K::Equal, K::Equal, K::Slash, K::BracketRight],
             ),
             (Action::DevToolbox, (true, false, true), [K::KeyD; 4]),
+            (Action::DebugSettings, (true, true, true), [K::KeyS; 4]),
             (Action::Rebake, (true, false, true), [K::KeyR; 4]),
             (Action::StopAnimations, (false, true, true), [K::KeyA, K::KeyQ, K::KeyQ, K::KeyA]),
             (Action::ResyncAnimations, (true, false, false), [K::KeyS; 4]),
             (Action::RefreshAttachments, (false, true, true), [K::KeyR; 4]),
             (Action::PhotoWindow, (true, true, false), [K::KeyS; 4]),
             (Action::SitGround, (false, true, true), [K::KeyS; 4]),
+            (Action::EnvSunrise, (true, true, false), [K::KeyU; 4]),
+            (Action::EnvMidday, (true, true, false), [K::KeyY, K::KeyY, K::KeyY, K::KeyZ]),
+            (Action::EnvSunset, (true, true, false), [K::KeyN; 4]),
+            (Action::EnvMidnight, (true, true, false), [K::KeyX; 4]),
+            (Action::EnvShared, (true, true, false), [K::KeyJ; 4]),
         ];
         for (i, layout) in [&us, &fr, &be, &de].into_iter().enumerate() {
             let kb = KeyBindings::for_layout(layout);

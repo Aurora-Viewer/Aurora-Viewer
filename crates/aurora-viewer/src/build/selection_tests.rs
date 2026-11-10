@@ -33,7 +33,7 @@ fn hud_edit_zoom_resets_on_world_body_empty_selection_and_close() {
         world.hud_scales.set_offset(hud_id, Vec3::Y * 0.2);
         let position = world.objects.get(hud).unwrap().position;
         tool.click_select(&mut world, &settings, Some(hud), false);
-        tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
         world.hud_zoom = 0.4;
         let next = world
             .objects
@@ -42,16 +42,16 @@ fn hud_edit_zoom_resets_on_world_body_empty_selection_and_close() {
             .unwrap()
             .0;
         tool.click_select(&mut world, &settings, Some(next), false);
-        tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
         assert_eq!(world.hud_zoom, if target == SelectType::Hud { 0.4 } else { 1.0 });
         tool.click_select(&mut world, &settings, Some(hud), false);
-        tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
         world.hud_zoom = 0.3;
         tool.deselect_all(&world);
-        tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
         assert_eq!(world.hud_zoom, 1.0);
         tool.click_select(&mut world, &settings, Some(hud), false);
-        tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
         world.hud_zoom = 0.2;
         tool.close(&mut world, &mut settings);
         assert_eq!(world.hud_zoom, 1.0);
@@ -60,7 +60,7 @@ fn hud_edit_zoom_resets_on_world_body_empty_selection_and_close() {
         assert_eq!(world.objects.get(hud).unwrap().position, position);
         // The explicit World > HUDs zoom remains usable outside HUD editing.
         world.hud_zoom = 0.5;
-        tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
         assert_eq!(world.hud_zoom, 0.5);
     }
 }
@@ -70,13 +70,13 @@ fn removed_hud_selection_restores_view_zoom() {
     let (mut world, mut tool, settings) = seated_fixture(false);
     let hud = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
     tool.click_select(&mut world, &settings, Some(hud), false);
-    tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+    tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
     world.hud_zoom = 0.1;
     world.apply(NetEvent::ObjectsKilled {
         handle: world.objects.get(hud).unwrap().key.region,
         local_ids: vec![world.objects.get(hud).unwrap().key.local_id],
     });
-    tool.update(&mut world, &settings, (0.0, 0.0), true, Mods::default());
+    tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
     assert_eq!(world.hud_zoom, 1.0);
 }
 
@@ -131,7 +131,14 @@ fn transparent_selection_keeps_its_outline_during_a_real_move_drag() {
     let handle = position + Vec3::Z * tool.cam.meters_for_pixels(position, 50.0) * 0.9;
     let cursor = tool.cam.project_px(handle).unwrap();
     assert!(tool.mouse_down(&mut world, &mut settings, None, None, None, cursor, Mods::default()));
-    tool.update(&mut world, &settings, (cursor.0 + 30.0, cursor.1 - 30.0), false, Mods::default());
+    tool.update(
+        &mut world,
+        &settings,
+        None,
+        (cursor.0 + 30.0, cursor.1 - 30.0),
+        false,
+        Mods::default(),
+    );
     assert!(tool.manip.dragging(), "The regression must exercise an active manipulation");
     assert_eq!(tool.outlined(&world, &settings), before);
     settings.show_highlight = false;
@@ -252,7 +259,7 @@ fn reflection_probe_selection_toggle_controls_rectangles_and_resets_at_startup()
     for enabled in [false, true, false] {
         settings.select_probes = enabled;
         tool.deselect_all(&world);
-        tool.rect_select(&mut world, &settings, (0.0, 0.0), (800.0, 800.0), false);
+        tool.rect_select(&mut world, &settings, None, (0.0, 0.0), (800.0, 800.0), false);
         assert_eq!(selected(&tool).contains(&99614), enabled);
         assert!(!tool.selection.is_empty(), "Ordinary objects remain selectable");
     }
@@ -266,6 +273,17 @@ fn reflection_probe_selection_toggle_controls_rectangles_and_resets_at_startup()
         !restored.select_probes,
         "Old saved values must not enable probe selection at startup"
     );
+}
+
+fn receive_link_properties(world: &World, tool: &mut BuildTool) {
+    let mut sim = demo_sim::DemoSim::default();
+    for (handle, local_ids) in tool.group_by_region(world, &tool.roots(world)) {
+        for event in sim.reply(world, &BuildCmd::Select { handle, local_ids }) {
+            if let NetEvent::ObjectProperties(props) = event {
+                tool.on_properties(world, props);
+            }
+        }
+    }
 }
 
 #[test]
@@ -288,6 +306,7 @@ fn confirmed_link_reconciles_selection_colors_and_packet_order() {
         let idx = object(&world, id);
         tool.click_select(&mut world, &settings, Some(idx), extend);
     }
+    receive_link_properties(&world, &mut tool);
     tool.link(&mut world);
     assert_eq!(tool.status, aurora_i18n::tr!("build-link-pending"));
     assert_eq!(tool.highlighted(&world).iter().filter(|(_, root)| *root).count(), 2);
@@ -312,6 +331,86 @@ fn confirmed_link_reconciles_selection_colors_and_packet_order() {
     let root = object(&world, 99871);
     assert_eq!(family(&world, root), vec![root, object(&world, 99870)]);
     assert_eq!(tool.highlighted(&world), highlighted);
+}
+
+/// Three free prims of ours, linked through the demo simulator with
+/// `99882` as root; the tool keeps the linkset selected.
+fn linked_three(world: &mut World, tool: &mut BuildTool, settings: &BuildSettings, sim: &mut demo_sim::DemoSim) -> Vec<u32> {
+    let handle = world.objects.get(object(world, 99610)).unwrap().key.region;
+    let ids = [99880, 99881, 99882];
+    let mut updates = Vec::new();
+    for local_id in ids {
+        let mut update = crate::demo::action_avatar(false);
+        update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        update.local_id = local_id;
+        update.full_id = crate::demo::action_id(local_id);
+        update.parent_id = 0;
+        update.owner_id = world.agent_id;
+        updates.push(update);
+    }
+    world.apply(NetEvent::ObjectUpdates { handle, objects: updates });
+    for (i, id) in ids.iter().enumerate() {
+        let idx = object(world, *id);
+        tool.click_select(world, settings, Some(idx), i > 0);
+    }
+    receive_link_properties(world, tool);
+    tool.link(world);
+    run_sim(world, tool, sim);
+    tool.advance_link(world, Instant::now());
+    tool.prune(world, settings, Instant::now());
+    assert_eq!(selected(tool), [99882]);
+    assert_eq!(family(world, object(world, 99882)).len(), 3);
+    ids.to_vec()
+}
+
+fn run_sim(world: &mut World, tool: &mut BuildTool, sim: &mut demo_sim::DemoSim) {
+    for command in std::mem::take(&mut tool.out) {
+        if let NetCommand::Build(command) = command {
+            for event in sim.reply(world, &command) {
+                world.apply(event);
+            }
+        }
+    }
+}
+
+#[test]
+fn unlink_keeps_every_former_prim_selected() {
+    let (mut world, mut tool, settings) = fixture();
+    let mut sim = demo_sim::DemoSim::default();
+    linked_three(&mut world, &mut tool, &settings, &mut sim);
+    tool.unlink(&mut world);
+    // nothing changes before the simulator answers
+    tool.prune(&world, &settings, Instant::now());
+    assert_eq!(selected(&tool), [99882]);
+    run_sim(&mut world, &mut tool, &mut sim);
+    tool.prune(&world, &settings, Instant::now());
+    // LLSelectMgr::sendDelink: each prim stays selected as its own object,
+    // the former root first
+    let mut ids = selected(&tool);
+    assert_eq!(ids[0], 99882);
+    ids.sort_unstable();
+    assert_eq!(ids, [99880, 99881, 99882]);
+    assert!(tool.highlighted(&world).iter().all(|(_, root)| *root));
+    assert_eq!(tool.highlighted(&world).len(), 3);
+    assert!(tool.pending_unlink.is_none());
+    // and once more: the selection stays as it is
+    tool.prune(&world, &settings, Instant::now());
+    assert_eq!(tool.selection.len(), 3);
+}
+
+#[test]
+fn unlink_leaves_a_selection_changed_before_the_reply_alone() {
+    let (mut world, mut tool, settings) = fixture();
+    let mut sim = demo_sim::DemoSim::default();
+    linked_three(&mut world, &mut tool, &settings, &mut sim);
+    tool.unlink(&mut world);
+    let delink = std::mem::take(&mut tool.out);
+    tool.deselect_all(&world);
+    tool.out = delink;
+    run_sim(&mut world, &mut tool, &mut sim);
+    tool.prune(&world, &settings, Instant::now());
+    assert!(tool.selection.is_empty());
+    assert!(tool.pending_unlink.is_none());
 }
 
 #[test]
@@ -578,14 +677,83 @@ fn new_prim_is_selected_once_without_update_owner_id_and_deleted_without_false_w
         handle,
         objects: vec![update],
     });
-    tool.pick_up_created(&world, &settings);
+    tool.pick_up_created(&mut world, &settings);
     assert_eq!(selected(&tool), [99940]);
     let sends = tool.out.len();
-    tool.pick_up_created(&world, &settings);
+    tool.pick_up_created(&mut world, &settings);
     assert_eq!(tool.out.len(), sends);
     tool.delete(&mut world);
     assert_eq!(tool.status, aurora_i18n::tr!("build-mod-object-s-sent-to-trash", value0 = "1"));
     assert!(tool.selection.is_empty());
+}
+
+/// A prim the Create tool made arriving, ours with `rights`.
+fn arrive_created(world: &mut World, local_id: u32, rights: u32) -> usize {
+    let mut update = crate::demo::action_avatar(false);
+    update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+    update.local_id = local_id;
+    update.full_id = crate::demo::action_id(local_id);
+    update.parent_id = 0;
+    update.update_flags = FLAGS_CREATE_SELECTED | rights;
+    let handle = world.objects.get(object(world, 99610)).unwrap().key.region;
+    world.apply(NetEvent::ObjectUpdates {
+        handle,
+        objects: vec![update],
+    });
+    object(world, local_id)
+}
+
+fn sent_defaults(tool: &BuildTool) -> (usize, usize) {
+    use aurora_net::build::BuildCmd;
+    let count = |f: fn(&BuildCmd) -> bool| tool.out.iter().filter(|c| matches!(c, NetCommand::Build(b) if f(b))).count();
+    (
+        count(|b| matches!(b, BuildCmd::SetTextures { .. })),
+        count(|b| matches!(b, BuildCmd::SetFlags { .. })),
+    )
+}
+
+#[test]
+fn a_created_prim_takes_the_new_objects_look_once_when_ours_with_full_rights() {
+    use crate::ui::context::flags::{OBJECT_COPY, OBJECT_MODIFY, OBJECT_TRANSFER, OBJECT_YOU_OWNER};
+    let full = OBJECT_YOU_OWNER | OBJECT_MODIFY | OBJECT_COPY | OBJECT_TRANSFER;
+    let (mut world, mut tool, mut settings) = fixture();
+    settings.new_prim_color = [255, 0, 0, 255];
+    settings.new_prim_glow = 0.5;
+    settings.new_prim_phantom = true;
+
+    // not asked for by the Create tool (a duplicate, an import): untouched
+    tool.expect_created(&world);
+    arrive_created(&mut world, 99950, full);
+    tool.pick_up_created(&mut world, &settings);
+    assert_eq!(sent_defaults(&tool), (0, 0));
+
+    // asked for, but not ours with every right: untouched, still awaited
+    tool.out.clear();
+    tool.expect_created(&world);
+    tool.expect_new_defaults();
+    arrive_created(&mut world, 99951, OBJECT_YOU_OWNER | OBJECT_MODIFY);
+    tool.pick_up_created(&mut world, &settings);
+    assert_eq!(sent_defaults(&tool), (0, 0));
+
+    // ours with full rights: one look and one flags update, then no more
+    let idx = arrive_created(&mut world, 99952, full);
+    tool.pick_up_created(&mut world, &settings);
+    assert_eq!(sent_defaults(&tool), (1, 1));
+    let face = world.objects.get(idx).unwrap().te.as_deref().unwrap().faces[0];
+    assert_eq!(face.color[..3], [1.0, 0.0, 0.0]);
+    assert_eq!(face.glow, 0.5);
+    arrive_created(&mut world, 99953, full);
+    tool.pick_up_created(&mut world, &settings);
+    assert_eq!(sent_defaults(&tool), (1, 1));
+
+    // an inventory rez clears what the Create tool still awaited
+    tool.out.clear();
+    tool.expect_created(&world);
+    tool.expect_new_defaults();
+    tool.forget_new_defaults();
+    arrive_created(&mut world, 99954, full);
+    tool.pick_up_created(&mut world, &settings);
+    assert_eq!(sent_defaults(&tool), (0, 0));
 }
 
 #[test]
@@ -597,8 +765,211 @@ fn preexisting_create_flags_are_never_selected_after_ownership_arrives() {
     o.update_flags |= FLAGS_CREATE_SELECTED;
     tool.expect_created(&world);
     world.objects.get_mut(idx).unwrap().owner_id = world.agent_id;
-    tool.pick_up_created(&world, &settings);
+    tool.pick_up_created(&mut world, &settings);
     assert!(tool.selection.is_empty());
+}
+
+#[test]
+fn inventory_rez_leaves_create_and_edits_only_the_new_object() {
+    for keep_tool in [false, true] {
+        let (mut world, mut tool, mut settings) = fixture();
+        settings.keep_tool = keep_tool;
+        let old = object(&world, 99610);
+        world.objects.get_mut(old).unwrap().update_flags |= FLAGS_CREATE_SELECTED;
+        tool.click_select(&mut world, &settings, Some(old), false);
+        tool.set_tool(Tool::Create);
+        assert!(tool.creation_preview_enabled(&settings, false, Mods::default()));
+        tool.edit_inventory_rez(&world);
+        assert_eq!(tool.tool, Tool::Edit);
+        assert!(!tool.creation_preview_enabled(&settings, false, Mods::default()));
+        assert!(tool.open && tool.selection.is_empty());
+        // The old flagged object is not mistaken for a delayed rez reply.
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
+        assert!(tool.selection.is_empty());
+
+        let mut update = crate::demo::action_avatar(false);
+        update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        update.local_id = 99940;
+        update.full_id = crate::demo::action_id(99940);
+        update.parent_id = 0;
+        update.owner_id = Uuid::nil();
+        update.update_flags = FLAGS_CREATE_SELECTED | crate::ui::context::flags::OBJECT_YOU_OWNER;
+        let handle = world.objects.get(old).unwrap().key.region;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![update],
+        });
+        tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
+        assert_eq!(tool.tool, Tool::Edit);
+        assert_eq!(selected(&tool), [99940]);
+        assert_eq!(settings.keep_tool, keep_tool);
+        assert!(tool.out.iter().any(|command| matches!(
+            command,
+            NetCommand::Build(BuildCmd::Select { local_ids, .. }) if local_ids == &[99940]
+        )));
+    }
+}
+
+#[test]
+fn primitive_creation_still_honors_keep_tool() {
+    for keep_tool in [false, true] {
+        let (mut world, mut tool, mut settings) = fixture();
+        settings.keep_tool = keep_tool;
+        tool.set_tool(Tool::Create);
+        let point = world.agent.position + Vec3::X * 5.0;
+        tool.place(&mut world, &settings, Some(point), None, (0.0, 0.0));
+        assert_eq!(tool.tool, if keep_tool { Tool::Create } else { Tool::Edit });
+    }
+}
+
+#[test]
+fn creation_rez_group_reaches_prim_plant_and_demo_properties() {
+    let (mut world, mut tool, mut settings) = fixture();
+    for event in crate::demo::demo_reply(&NetCommand::RequestGroups) {
+        world.apply(event);
+    }
+    let land = world.groups.groups[0].id;
+    let active = Uuid::from_u128(8800);
+    let other = Uuid::from_u128(8899);
+    let nil = Uuid::nil();
+    for (active, parcel, under_land, expected) in [
+        (active, Some(land), true, land),
+        (active, Some(land), false, active),
+        (active, Some(other), true, active),
+        (active, Some(nil), true, active),
+        (active, None, true, active),
+        (nil, Some(land), true, land),
+        (nil, Some(land), false, nil),
+        (nil, Some(other), true, nil),
+        (nil, None, true, nil),
+    ] {
+        world.apply(NetEvent::ActiveGroup {
+            id: active,
+            name: "Active group".into(),
+            title: "Builder".into(),
+        });
+        world.parcel = parcel.map(|group_id| {
+            Arc::new(aurora_net::ParcelInfo {
+                group_id,
+                ..Default::default()
+            })
+        });
+        settings.rez_under_land_group = under_land;
+        for shape in [0, shapes::shapes().len(), shapes::shapes().len() + 1] {
+            settings.create_shape = shape;
+            let point = world.agent.position + Vec3::X * 5.0;
+            tool.place(&mut world, &settings, Some(point), None, (0.0, 0.0));
+            let commands = std::mem::take(&mut tool.out);
+            let prims: Vec<_> = commands
+                .iter()
+                .filter_map(|command| match command {
+                    NetCommand::Build(BuildCmd::Add(prim)) => Some(prim),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(prims.len(), 1);
+            let prim = prims[0];
+            assert_eq!(prim.group_id, expected, "shape {shape}, land mode {under_land}");
+            let mut sim = demo_sim::DemoSim::default();
+            let command = BuildCmd::Add(prim.clone());
+            let events = sim.reply(&world, &command);
+            let NetEvent::ObjectUpdates { objects, .. } = &events[0] else {
+                panic!("expected created object");
+            };
+            let id = objects[0].full_id;
+            let local_id = objects[0].local_id;
+            for event in events {
+                world.apply(event);
+            }
+            let replies = sim.reply(
+                &world,
+                &BuildCmd::Select {
+                    handle: prim.handle,
+                    local_ids: vec![local_id],
+                },
+            );
+            let props = replies
+                .iter()
+                .find_map(|event| match event {
+                    NetEvent::ObjectProperties(props) => props.iter().find(|props| props.object_id == id),
+                    _ => None,
+                })
+                .expect("created object properties");
+            assert_eq!(props.group_id, expected, "demo must preserve even an empty group");
+        }
+    }
+}
+
+#[test]
+fn copy_selection_uses_the_current_rez_group_on_land_and_objects() {
+    let (mut world, mut tool, mut settings) = fixture();
+    for event in crate::demo::demo_reply(&NetCommand::RequestGroups) {
+        world.apply(event);
+    }
+    let land = world.groups.groups[0].id;
+    let active = Uuid::from_u128(8800);
+    let nil = Uuid::nil();
+    let source = object(&world, 99610);
+    let source_key = world.objects.get(source).unwrap().key;
+    world.objects.get_mut(source).unwrap().update_flags |= crate::ui::context::flags::OBJECT_COPY;
+    let target = object(&world, 99614);
+    settings.copy_selection = true;
+    settings.copy_centers = true;
+    settings.copy_rotates = false;
+    for (active, parcel, under_land, expected) in [
+        (active, Some(land), true, land),
+        (active, Some(land), false, active),
+        (active, Some(Uuid::from_u128(8899)), true, active),
+        (active, Some(nil), true, active),
+        (active, None, true, active),
+        (nil, Some(land), true, land),
+        (nil, Some(land), false, nil),
+        (nil, None, true, nil),
+    ] {
+        world.apply(NetEvent::ActiveGroup {
+            id: active,
+            name: "Active group".into(),
+            title: "Builder".into(),
+        });
+        world.parcel = parcel.map(|group_id| {
+            Arc::new(aurora_net::ParcelInfo {
+                group_id,
+                ..Default::default()
+            })
+        });
+        settings.rez_under_land_group = under_land;
+        for target in [None, Some(target)] {
+            tool.click_select(&mut world, &settings, Some(source), false);
+            tool.open_build(Tool::Create);
+            tool.out.clear();
+            let point = world.agent.position + Vec3::X * 5.0;
+            assert!(tool.mouse_down(&mut world, &mut settings, Some(point), target, None, (0.0, 0.0), Mods::default()));
+            let copies: Vec<_> = tool
+                .out
+                .iter()
+                .filter_map(|command| match command {
+                    NetCommand::Build(BuildCmd::DuplicateOnRay {
+                        group_id,
+                        local_ids,
+                        bypass_raycast,
+                        ray_target,
+                        copy_centers,
+                        copy_rotates,
+                        ..
+                    }) => {
+                        assert_eq!(local_ids, &[99610]);
+                        assert_eq!(*bypass_raycast, target.is_none());
+                        assert_eq!(*ray_target, target.map_or(nil, |idx| world.objects.get(idx).unwrap().full_id));
+                        assert!(*copy_centers && !*copy_rotates);
+                        Some(*group_id)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(copies, [expected]);
+            assert_eq!(tool.selection, [source_key], "Copy selection retains the original selection");
+        }
+    }
 }
 
 #[test]
@@ -618,7 +989,7 @@ fn primitive_placement_and_deletion_round_trip_through_the_demo_simulator() {
             }
         }
     }
-    tool.pick_up_created(&world, &settings);
+    tool.pick_up_created(&mut world, &settings);
     assert_eq!(tool.selection.len(), 1);
     let key = tool.selection[0];
     assert!(world.objects.get(world.objects.index_of(&key).unwrap()).unwrap().owner_id.is_nil());
@@ -679,7 +1050,8 @@ fn far_selection_stays_unless_the_select_distance_is_limited() {
     assert_eq!(key.len(), 1);
     let home = world.agent.position;
     world.agent.position = home + Vec3::X * (MAX_SELECT_DISTANCE + 50.0);
-    // LimitSelectDistance is off by default: nothing is deselected
+    // LimitSelectDistance off: nothing is deselected
+    settings.limit_select_distance = false;
     tool.prune(&world, &settings, Instant::now());
     assert_eq!(tool.selection, key);
     // on, LLSelectMgr::updateSelectionCenter deselects past MaxSelectDistance
@@ -696,10 +1068,11 @@ fn far_selection_stays_unless_the_select_distance_is_limited() {
 #[test]
 fn distance_limits_follow_their_switches_and_stay_in_range() {
     let mut s = BuildSettings::default();
-    assert_eq!(s.select_limit(), None);
-    assert_eq!(s.drag_limit(), Some(MAX_DRAG_DISTANCE));
-    s.limit_select_distance = true;
     assert_eq!(s.select_limit(), Some(MAX_SELECT_DISTANCE));
+    assert_eq!(s.drag_limit(), Some(MAX_DRAG_DISTANCE));
+    s.limit_select_distance = false;
+    assert_eq!(s.select_limit(), None);
+    s.limit_select_distance = true;
     s.max_select_distance = 5000.0;
     assert_eq!(s.select_limit(), Some(1024.0));
     s.max_select_distance = f32::NAN;
@@ -708,7 +1081,7 @@ fn distance_limits_follow_their_switches_and_stay_in_range() {
     assert_eq!(s.drag_limit(), None);
     // older settings files read the new fields' defaults
     let old: BuildSettings = serde_json::from_str("{}").unwrap();
-    assert!(!old.limit_select_distance && old.limit_drag_distance);
+    assert!(old.limit_select_distance && old.limit_drag_distance);
 }
 
 /// Gives `idx`'s root the update flags `flags`.
@@ -730,7 +1103,7 @@ fn select_only_my_objects_filters_clicks_lists_and_wheel_but_not_the_menu() {
     let click = |tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, idx: usize, shift: bool| {
         let mods = Mods { shift, ..Mods::default() };
         tool.mouse_down(world, s, None, Some(idx), None, (0.0, 0.0), mods);
-        tool.mouse_up(world, s);
+        tool.mouse_up(world, s, None);
     };
     // off by default: anything editable is selected
     assert!(!settings.select_owned_only);
@@ -770,11 +1143,11 @@ fn select_only_my_objects_filters_rectangles() {
         set_root_flags(&mut world, idx, OBJECT_MOVE);
     }
     set_root_flags(&mut world, mine, OBJECT_YOU_OWNER | OBJECT_MOVE);
-    tool.rect_select(&mut world, &settings, (0.0, 0.0), (800.0, 800.0), false);
+    tool.rect_select(&mut world, &settings, None, (0.0, 0.0), (800.0, 800.0), false);
     assert!(tool.selection.len() > 1, "without the filter the rectangle takes several objects");
     tool.deselect_all(&world);
     settings.select_owned_only = true;
-    tool.rect_select(&mut world, &settings, (0.0, 0.0), (800.0, 800.0), false);
+    tool.rect_select(&mut world, &settings, None, (0.0, 0.0), (800.0, 800.0), false);
     let root = world.objects.get(root_of(&world, mine)).unwrap().key;
     assert_eq!(tool.selection, [root]);
 }
@@ -837,4 +1210,419 @@ fn selection_filters_persist_and_sit_under_the_reflection_probes() {
     options.remove("movableOnly");
     let read = layout::Profile::read(&profile.to_string()).unwrap();
     assert!(!read.options.owned_only && !read.options.movable_only);
+}
+
+/// A camera 10 m in front of `target`, on an 800 × 800 viewport.
+fn camera_on(target: Vec3) -> geom::Cam {
+    let eye = target - Vec3::X * 10.0;
+    let view = glam::camera::rh::view::look_at_mat4(eye, target, Vec3::Z);
+    let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.0, 0.1);
+    geom::Cam::new(eye, target, projection * view, 1.0, 800.0, 800.0, 1.0)
+}
+
+#[test]
+fn rectangle_cover_of_a_box_and_its_vertices() {
+    use geom::RectCover;
+    let cam = camera_on(Vec3::ZERO);
+    let model = glam::Mat4::IDENTITY;
+    let (min, max) = (Vec3::splat(-0.5), Vec3::splat(0.5));
+    let rect = |x0: f32, y0: f32, x1: f32, y1: f32| egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1));
+    assert_eq!(cam.box_in_rect(model, min, max, rect(0.0, 0.0, 800.0, 800.0)), RectCover::Inside);
+    assert_eq!(cam.box_in_rect(model, min, max, rect(0.0, 0.0, 100.0, 100.0)), RectCover::Outside);
+    assert_eq!(cam.box_in_rect(model, min, max, rect(0.0, 0.0, 400.0, 400.0)), RectCover::Across);
+    // a rectangle inside the box's footprint touches it without a corner in it
+    assert_eq!(
+        cam.box_in_rect(model, min, max, rect(395.0, 395.0, 405.0, 405.0)),
+        RectCover::Across
+    );
+    let behind = glam::Mat4::from_translation(-Vec3::X * 20.0);
+    assert_eq!(cam.box_in_rect(behind, min, max, rect(0.0, 0.0, 800.0, 800.0)), RectCover::Outside);
+    // areVertsVisible: all of them with Select by surrounding, one without
+    assert!(geom::verts_in_rect([true, true], true));
+    assert!(!geom::verts_in_rect([true, false], true));
+    assert!(geom::verts_in_rect([false, true], false));
+    assert!(!geom::verts_in_rect([false, false], false));
+}
+
+#[test]
+fn select_by_surrounding_takes_only_what_the_rectangle_surrounds() {
+    let (mut world, mut tool, mut settings) = fixture();
+    assert!(settings.select_surrounding, "on by default, as RectangleSelectInclusive");
+    let target = object(&world, 99614);
+    let now = Instant::now();
+    let (position, rot, _) = Scene::object_transform(&world, target, now, 0).unwrap();
+    tool.cam = camera_on(position);
+    world.agent.position = tool.cam.eye;
+    // the prim's footprint on screen
+    let model = glam::Mat4::from_scale_rotation_translation(world.visual_scale_at(target, now), rot, position);
+    let mut footprint = egui::Rect::NOTHING;
+    for i in 0..8 {
+        let corner = Vec3::new([-0.5, 0.5][i & 1], [-0.5, 0.5][(i >> 1) & 1], [-0.5, 0.5][(i >> 2) & 1]);
+        let (x, y) = tool.cam.project_px(model.transform_point3(corner)).unwrap();
+        footprint.extend_with(egui::pos2(x, y));
+    }
+    let around = footprint.expand(2.0);
+    let half = egui::Rect::from_min_max(around.min, footprint.center());
+    for (surround, rect, taken) in [
+        (true, around, true),
+        (true, half, false),
+        (false, around, true),
+        (false, half, true),
+    ] {
+        settings.select_surrounding = surround;
+        tool.deselect_all(&world);
+        tool.rect_select(
+            &mut world,
+            &settings,
+            None,
+            (rect.min.x, rect.min.y),
+            (rect.max.x, rect.max.y),
+            false,
+        );
+        let root = world.objects.get(root_of(&world, target)).unwrap().key;
+        assert_eq!(tool.selection.contains(&root), taken, "surround {surround}, rect {rect:?}");
+    }
+}
+
+#[test]
+fn select_by_surrounding_is_saved_and_on_when_a_profile_lacks_it() {
+    let settings = BuildSettings {
+        select_surrounding: false,
+        ..BuildSettings::default()
+    };
+    let restored: BuildSettings = serde_json::from_value(serde_json::to_value(&settings).unwrap()).unwrap();
+    assert!(!restored.select_surrounding, "persisted, as RectangleSelectInclusive");
+    let restored: BuildSettings = serde_json::from_str("{}").unwrap();
+    assert!(restored.select_surrounding);
+    let tool = BuildTool::default();
+    let mut text = serde_json::to_value(layout::Profile::capture(&tool, &settings)).unwrap();
+    assert_eq!(text["options"]["surrounding"], false);
+    text["options"].as_object_mut().unwrap().remove("surrounding");
+    let profile = layout::Profile::read(&text.to_string()).unwrap();
+    assert!(profile.options.surrounding, "a notecard from before the option keeps the default");
+}
+
+#[test]
+fn scripts_and_derez_send_the_current_active_group_instead_of_the_parcel_group() {
+    let (mut world, mut tool, settings) = fixture();
+    for event in crate::demo::demo_reply(&NetCommand::RequestGroups) {
+        world.apply(event);
+    }
+    let land = world.groups.groups[0].id;
+    world.parcel = Some(Arc::new(aurora_net::ParcelInfo {
+        group_id: land,
+        ..Default::default()
+    }));
+    assert!(settings.rez_under_land_group);
+    let roots = [object(&world, 99610), object(&world, 99614)];
+    let keys: Vec<_> = roots.iter().map(|&idx| world.objects.get(idx).unwrap().key).collect();
+    for active in [Uuid::from_u128(8800), Uuid::from_u128(8801), Uuid::nil()] {
+        world.apply(NetEvent::ActiveGroup {
+            id: active,
+            name: "Active group".into(),
+            title: "Builder".into(),
+        });
+        assert_eq!(
+            world.group_for_rez(true),
+            land,
+            "the parcel group must differ from the message group"
+        );
+        tool.out.clear();
+        tool.new_script(&world, roots[0]);
+        let scripts: Vec<_> = tool
+            .out
+            .iter()
+            .filter_map(|command| match command {
+                NetCommand::Build(BuildCmd::RezScript {
+                    handle,
+                    local_id,
+                    enabled,
+                    group_id,
+                    item,
+                }) => Some((*handle, *local_id, *enabled, *group_id, item)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(scripts.len(), 1);
+        let (handle, local_id, enabled, group, item) = scripts[0];
+        assert_eq!((handle, local_id, enabled, group), (keys[0].region, keys[0].local_id, true, active));
+        assert_eq!(item.parent_id, world.objects.get(roots[0]).unwrap().full_id);
+        assert_eq!(
+            (item.owner_id, item.group_id, item.asset_type),
+            (world.agent_id, Uuid::nil(), contents::AT_LSL_TEXT)
+        );
+        for action in 0..5 {
+            tool.selection = keys.clone();
+            tool.out.clear();
+            let copy = action == 2 || action == 4;
+            let folder = if action == 0 {
+                BuildTool::folder_of_type(&world, 14)
+            } else {
+                tool.take_destination(&world, &roots, copy)
+            };
+            match action {
+                0 => tool.delete(&mut world),
+                1 | 2 => tool.take(&mut world, copy),
+                _ => tool.take_separate(&mut world, copy),
+            }
+            let commands: Vec<_> = tool
+                .out
+                .iter()
+                .filter_map(|command| match command {
+                    NetCommand::Build(BuildCmd::DeRez {
+                        handle,
+                        local_ids,
+                        destination,
+                        destination_id,
+                        group_id,
+                    }) => Some((*handle, local_ids, *destination, *destination_id, *group_id)),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(commands.len(), if action >= 3 { 2 } else { 1 });
+            let mut ids = Vec::new();
+            for (handle, local_ids, destination, destination_id, group) in commands {
+                assert_eq!((handle, group, destination_id), (keys[0].region, active, folder));
+                assert_eq!(
+                    destination,
+                    if action == 0 {
+                        derez::TRASH
+                    } else if copy {
+                        derez::ACQUIRE_TO_AGENT_INVENTORY
+                    } else {
+                        derez::TAKE_INTO_AGENT_INVENTORY
+                    }
+                );
+                if action >= 3 {
+                    assert_eq!(local_ids.len(), 1);
+                }
+                ids.extend(local_ids.iter().copied());
+            }
+            ids.sort_unstable();
+            let mut expected: Vec<_> = keys.iter().map(|key| key.local_id).collect();
+            expected.sort_unstable();
+            assert_eq!(ids, expected);
+            assert_eq!(tool.selection, if copy { keys.clone() } else { Vec::new() });
+        }
+    }
+}
+
+#[test]
+fn duplicate_copies_only_roots_with_copy_and_link_needs_modify() {
+    use crate::ui::context::flags::{OBJECT_COPY, OBJECT_MODIFY, OBJECT_MOVE};
+    let (mut world, mut tool, settings) = fixture();
+    let a = object(&world, 99610);
+    let b = object(&world, 99614);
+    for idx in [a, b] {
+        world.objects.get_mut(idx).unwrap().update_flags = OBJECT_MOVE;
+    }
+    tool.click_select(&mut world, &settings, Some(a), false);
+    tool.click_select(&mut world, &settings, Some(b), true);
+    let duplicates = |tool: &BuildTool| -> Vec<Vec<u32>> {
+        tool.out
+            .iter()
+            .filter_map(|c| match c {
+                NetCommand::Build(BuildCmd::Duplicate { local_ids, .. }) => Some(local_ids.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    tool.out.clear();
+    assert!(tool.copyable_roots(&world).is_empty());
+    tool.duplicate(&mut world, &settings, Vec3::X, false);
+    assert!(duplicates(&tool).is_empty());
+    assert_eq!(tool.status, aurora_i18n::tr!("build-mod-no-copyable-object"));
+    world.objects.get_mut(a).unwrap().update_flags |= OBJECT_COPY;
+    assert!(copyable_object(&world, a) && !copyable_object(&world, b));
+    tool.duplicate(&mut world, &settings, Vec3::X, false);
+    assert_eq!(duplicates(&tool), [vec![99610]], "the no-copy object stays behind");
+    receive_link_properties(&world, &mut tool);
+    // Link and Unlink: one object we may modify
+    assert!(!tool.can_link(&world) && !tool.can_unlink(&world));
+    tool.out.clear();
+    tool.unlink(&mut world);
+    assert!(!tool.out.iter().any(|c| matches!(c, NetCommand::Build(BuildCmd::Delink { .. }))));
+    world.objects.get_mut(b).unwrap().update_flags |= OBJECT_MODIFY;
+    assert!(tool.can_link(&world) && tool.can_unlink(&world));
+}
+
+#[test]
+fn local_duplicates_follow_the_real_build_command_and_copy_permission_gate() {
+    use crate::ui::context::flags::{OBJECT_COPY, OBJECT_MOVE};
+    for allowed in [false, true] {
+        let (mut world, mut tool, settings) = fixture();
+        let handle = world.main_region.unwrap();
+        let mut update = crate::demo::action_avatar(false);
+        update.local_id = 99990;
+        update.full_id = Uuid::new_v4();
+        update.parent_id = 0;
+        update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        update.update_flags = OBJECT_MOVE | if allowed { OBJECT_COPY } else { 0 };
+        let index = world.objects.upsert(handle, update.clone());
+        let local = LocalAppearance::Texture(Uuid::new_v4());
+        world.objects.get_mut(index).unwrap().render.local_appearance.insert(Some(2), local);
+        tool.click_select(&mut world, &settings, Some(index), false);
+        tool.duplicate(&mut world, &settings, Vec3::X, true);
+        update.local_id += 1;
+        update.full_id = Uuid::new_v4();
+        update.position += Vec3::X;
+        update.update_flags |= FLAGS_CREATE_SELECTED;
+        let copy = world.objects.upsert(handle, update);
+        assert_eq!(world.objects.get(copy).unwrap().local_appearance(2), allowed.then_some(local));
+        assert_eq!(world.objects.take_local_duplicate_changes().len(), usize::from(allowed));
+    }
+}
+
+#[test]
+fn right_click_extends_with_shift_or_ctrl_alone() {
+    // pick.mKeyMask == MASK_SHIFT || pick.mKeyMask == MASK_CONTROL
+    for (shift, ctrl, alt, extends) in [
+        (false, false, false, false),
+        (true, false, false, true),
+        (false, true, false, true),
+        (true, true, false, false),
+        (true, false, true, false),
+        (false, true, true, false),
+        (false, false, true, false),
+        (true, true, true, false),
+    ] {
+        assert_eq!(
+            BuildTool::menu_extends(shift, ctrl, alt),
+            extends,
+            "shift {shift} ctrl {ctrl} alt {alt}"
+        );
+    }
+}
+
+#[test]
+fn right_click_in_edit_adds_and_removes_linksets() {
+    let (mut world, mut tool, settings) = fixture();
+    let (a, a2, b, c) = (
+        object(&world, 99610),
+        object(&world, 99611),
+        object(&world, 99612),
+        object(&world, 99614),
+    );
+    assert!(tool.select_for_menu_with(&mut world, &settings, a, false));
+    assert!(tool.select_for_menu_with(&mut world, &settings, b, true));
+    assert!(tool.select_for_menu_with(&mut world, &settings, c, true));
+    assert_eq!(selected(&tool), [99614, 99612, 99610]);
+    // a plain right click on a selected object keeps the selection, and
+    // the menu's entries take every selected linkset (derenderObject)
+    assert!(tool.select_for_menu_with(&mut world, &settings, b, false));
+    assert_eq!(selected(&tool), [99612, 99614, 99610]);
+    assert_eq!(tool.menu_roots(&world, b), [b, c, a]);
+    // a child prim stands for its linkset
+    assert_eq!(tool.menu_roots(&world, a2), [b, c, a]);
+    // extending on a selected linkset takes it out
+    assert!(tool.select_for_menu_with(&mut world, &settings, a2, true));
+    assert_eq!(selected(&tool), [99612, 99614]);
+    assert_eq!(tool.menu_roots(&world, a), [a]);
+    // a plain right click elsewhere starts again from that object
+    assert!(tool.select_for_menu_with(&mut world, &settings, a, false));
+    assert_eq!(selected(&tool), [99610]);
+}
+
+#[test]
+fn right_click_outside_build_selects_one_object_at_a_time() {
+    // LLSelectMgr::deselectUnused drops a menu's selection once the menu
+    // closes, so Shift has nothing to add to outside the build window
+    let (mut world, mut tool, settings) = fixture();
+    tool.open = false;
+    let (a, b) = (object(&world, 99610), object(&world, 99612));
+    assert!(tool.select_for_menu_with(&mut world, &settings, a, false));
+    tool.release_menu_selection(&world);
+    assert!(tool.selection.is_empty());
+    assert!(tool.select_for_menu_with(&mut world, &settings, b, true));
+    assert_eq!(selected(&tool), [99612]);
+    assert_eq!(tool.menu_roots(&world, b), [b]);
+}
+
+#[test]
+fn photo_mode_releases_menu_selection_and_deselects_objects() {
+    let (mut world, mut tool, settings) = fixture();
+    tool.open = false;
+    let a = object(&world, 99610);
+    assert!(tool.select_for_menu_with(&mut world, &settings, a, false));
+    assert_eq!(selected(&tool), [99610]);
+    // Entering photo mode or right-clicking/clicking/escaping in photo mode releases the selection
+    tool.release_menu_selection(&world);
+    assert!(tool.selection.is_empty());
+    // Active selections can be cleared via deselect_all without affecting settings
+    tool.click_select(&mut world, &settings, Some(a), false);
+    assert_eq!(selected(&tool), [99610]);
+    tool.deselect_all(&world);
+    assert!(tool.selection.is_empty());
+}
+
+/// #1956, LLSelectMgr::selectionSetAlphaOnly over LLSelectNode::isTESelected
+/// (indra/newview/llselectmgr.cpp): a linked part selected whole under Edit
+/// linked parts edits all its faces, even after one of them was edited alone
+/// in face mode; a picked face edits that face only.
+#[test]
+fn face_edits_cover_a_whole_linked_part_or_only_the_picked_face() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let root = object(&world, 99610);
+    let child = object(&world, 99611);
+    world.objects.get_mut(root).unwrap().update_flags |= crate::ui::context::flags::OBJECT_MODIFY;
+    let n = tool.num_faces(&world, child);
+    let alphas = |world: &World| -> Vec<f32> {
+        let te = world.objects.get(child).unwrap().te.clone().unwrap();
+        te.faces[..n].iter().map(|f| f.color[3]).collect()
+    };
+    let before = alphas(&world);
+    tool.set_edit_mode(&mut world, &mut settings, EditMode::Face);
+    tool.face_click(&mut world, Some(child), Some(2), false);
+    assert_eq!(tool.sel_te(&world), [(child, 2)]);
+    tool.edit_faces(&mut world, |f, _, _| f.color[3] = 0.0);
+    let mut expected = before.clone();
+    expected[2] = 0.0;
+    assert_eq!(alphas(&world), expected);
+
+    tool.set_edit_mode(&mut world, &mut settings, EditMode::Move);
+    settings.edit_linked = true;
+    tool.click_select(&mut world, &settings, Some(child), false);
+    assert_eq!(tool.sel_faces(&world, child), (0..n as u8).collect::<Vec<_>>());
+    tool.out.clear();
+    tool.edit_faces(&mut world, |f, _, _| f.color[3] = 1.0);
+    assert!(alphas(&world).iter().all(|a| *a == 1.0));
+    assert!(matches!(
+        &tool.out[..],
+        [NetCommand::Build(BuildCmd::SetTextures { local_id: 99611, .. })]
+    ));
+}
+
+/// The hollow face of a hollow sphere is its own texture entry: LLProfile::
+/// generate (indra/llmath/llvolume.cpp) adds the outer face, the hole, then
+/// the two degenerate profile edges of the open half circle, so the inner
+/// face is TE 1 of 4. Picking it edits it alone; the whole prim edits all.
+#[test]
+fn face_edits_on_a_hollow_sphere_keep_the_inner_face_separate() {
+    use aurora_prim::params::{LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF};
+    let (mut world, mut tool, mut settings) = fixture();
+    let idx = object(&world, 99612);
+    let o = world.objects.get_mut(idx).unwrap();
+    o.update_flags |= crate::ui::context::flags::OBJECT_MODIFY;
+    o.volume.profile.curve_type = LL_PCODE_PROFILE_CIRCLE_HALF;
+    o.volume.profile.hollow = 0.5;
+    o.volume.path.curve_type = LL_PCODE_PATH_CIRCLE;
+    let n = tool.num_faces(&world, idx);
+    assert_eq!(n, 4);
+    let colors = |world: &World| -> Vec<[f32; 4]> {
+        let te = world.objects.get(idx).unwrap().te.clone().unwrap();
+        te.faces[..n].iter().map(|f| f.color).collect()
+    };
+    let mut expected = colors(&world);
+    tool.set_edit_mode(&mut world, &mut settings, EditMode::Face);
+    tool.face_click(&mut world, Some(idx), Some(1), false);
+    tool.edit_faces(&mut world, |f, _, _| f.color = [1.0, 0.0, 0.0, 0.0]);
+    expected[1] = [1.0, 0.0, 0.0, 0.0];
+    assert_eq!(colors(&world), expected);
+
+    tool.set_edit_mode(&mut world, &mut settings, EditMode::Move);
+    settings.edit_linked = true;
+    tool.click_select(&mut world, &settings, Some(idx), false);
+    assert_eq!(tool.sel_te(&world), (0..n as u8).map(|f| (idx, f)).collect::<Vec<_>>());
+    tool.edit_faces(&mut world, |f, _, _| f.color = [0.0, 0.0, 1.0, 0.5]);
+    assert_eq!(colors(&world), vec![[0.0, 0.0, 1.0, 0.5]; n]);
 }

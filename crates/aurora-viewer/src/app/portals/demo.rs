@@ -30,6 +30,23 @@ impl App {
             self.panels.people = false;
             self.panels.inventory = mode == "drop-focus";
             self.panels.places = mode.contains("places") || mode.contains("favorites") || mode.contains("history");
+            self.panels.search = mode.contains("search");
+            if self.panels.search {
+                let tab = crate::world::search::Tab::Places;
+                self.search_ui.open_tab(tab);
+                self.search_ui.set_text(tab, "aurora");
+                let requests = if self.settings.classic_search {
+                    self.search_ui.request(tab, &self.settings.search).into_iter().collect()
+                } else {
+                    self.search_ui.aurora_requests(&self.settings.search)
+                };
+                let access = self.world.agent_access();
+                for request in requests {
+                    self.world.search.find(request, access, Instant::now());
+                }
+                ui::widgets::place_floater(&self.egui_ctx, ui::search::WINDOW, egui::pos2(20.0, 85.0), egui::vec2(720.0, 560.0));
+                return true;
+            }
             if self.panels.places {
                 self.places_ui.open_tab(if mode.contains("history") {
                     2
@@ -81,8 +98,7 @@ impl App {
     pub(in crate::app) fn portal_demo_input(&mut self, raw: &mut egui::RawInput) {
         if self.demo
             && let Ok(mode) = std::env::var("AURORA_DEMO_PORTALS")
-            && mode.starts_with("private-")
-            && (mode.contains("-chat-") || mode.contains("-keyboard-"))
+            && (mode.starts_with("private-") && (mode.contains("-chat-") || mode.contains("-keyboard-")) || mode.starts_with("stranger"))
         {
             self.portal_keyboard_demo_input(raw, mode.contains("-chat-"));
             return;
@@ -111,7 +127,25 @@ impl App {
         }
         if self.frame_count == 482 {
             let item = crate::demo::place::landmark_ids(0).0;
-            if mode.contains("history") {
+            if mode.contains("search") {
+                if let Some(row) = self
+                    .world
+                    .search
+                    .list(crate::world::search::Tab::Places)
+                    .and_then(|list| list.rows.first())
+                    && let crate::world::search::Key::Id(id) = row.key
+                {
+                    egui::DragAndDrop::set_payload(
+                        &self.egui_ctx,
+                        ui::places::drag::PlaceDrag {
+                            target: ui::places::drag::Target::Parcel(id),
+                            favorite: None,
+                            name: row.name.clone(),
+                            thumbnail: None,
+                        },
+                    );
+                }
+            } else if mode.contains("history") {
                 if let Some(place) = self.world.tp_storage.items.last() {
                     egui::DragAndDrop::set_payload(
                         &self.egui_ctx,
@@ -169,14 +203,15 @@ impl App {
         }
         if (600..=840).contains(&self.frame_count) && self.frame_count.is_multiple_of(60) {
             log::info!(
-                "portal keyboard demo: frame {}, chat {}, keyboard focus {}, forward {}, position {:?}, authorized {}, journey {}",
+                "portal keyboard demo: frame {}, chat {}, keyboard focus {}, forward {}, position {:?}, authorized {}, journey {}, question {}",
                 self.frame_count,
                 self.chat_ui.has_focus,
                 self.egui_ctx.egui_wants_keyboard_input(),
                 self.input.forward,
                 self.world.agent.position,
                 self.world.portals.entries.iter().any(|entry| entry.allowed(&self.world)),
-                self.portal_journey.is_some()
+                self.portal_journey.is_some(),
+                self.portal_ask.is_some()
             );
         }
     }
@@ -210,7 +245,12 @@ impl App {
         let mut state = crate::world::portals::State::default();
         let now = Instant::now();
         state.sync(&world, None, unix_time());
-        state.create(portal, world.agent.position, now, unix_time());
+        // the peer stands on our plaza: the same land test as ours
+        world.parcel = self.world.parcel.clone();
+        let build = world.build_right_at(world.main_region.unwrap_or(256), Vec3::from(portal.center), None);
+        if let Err(refusal) = state.create(portal, build, world.agent.position, now, unix_time()) {
+            log::warn!("portal peer demo: {refusal:?}");
+        }
         if let Some(group) = state.take_group_refresh() {
             world.group_data.request_members(group);
             for command in world.group_data.take_commands() {

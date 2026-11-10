@@ -221,9 +221,20 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
     } else {
         &o.sit_name
     };
-    ui.item_if("armchair", sit, o.sit, CtxAction::Sit { target: id, offset });
+    // greyed too when RLVa would refuse them (RlvActions::canSit / canStand)
+    ui.item_if(
+        "armchair",
+        sit,
+        o.sit && !f.object_sit_blocked,
+        CtxAction::Sit { target: id, offset },
+    );
     ui.separator();
-    ui.item_if("man-filled", aurora_i18n::tr!("common-stand-up"), o.stand, CtxAction::StandUp);
+    ui.item_if(
+        "man-filled",
+        aurora_i18n::tr!("common-stand-up"),
+        o.stand && !f.stand_blocked,
+        CtxAction::StandUp,
+    );
     ui.separator();
     ui.submenu("box", aurora_i18n::tr!("common-object"), true, |ui| {
         ui.item(
@@ -526,7 +537,7 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
     ui.item_if(
         "paperclip",
         aurora_i18n::tr!("common-detach"),
-        f.object.attachment_item.is_some(),
+        f.object.detach,
         CtxAction::Detach(key),
     );
     save_as_submenu(ui);
@@ -535,8 +546,14 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
     appearance_submenu(ui, f);
     take_off_submenu(ui, f);
     ui.separator();
-    // Self.ToggleSitStand
-    ui.item("armchair", aurora_i18n::tr!("ui-context-sit-stand"), CtxAction::SitStand);
+    // Self.ToggleSitStand, greyed when RLVa would refuse the half that applies
+    let toggle_blocked = if f.seated { f.stand_blocked } else { f.ground_sit_blocked };
+    ui.item_if(
+        "armchair",
+        aurora_i18n::tr!("ui-context-sit-stand"),
+        !toggle_blocked,
+        CtxAction::SitStand,
+    );
     // enable_fly_land: flying already, or not sitting (LLAgent::enableFlying)
     ui.item_if(
         "plane-departure-filled",
@@ -650,14 +667,26 @@ fn avatar_social_items(ui: &mut Builder, f: &Facts, id: Uuid) {
         CtxAction::AddFriend(id),
     );
     contact_set_entries(ui, f, id);
-    ui.item("message-circle-filled", aurora_i18n::tr!("ui-context-send-im"), CtxAction::Im(id));
+    // RLVa @startim: greyed instead of refused after the click
+    // (LLAvatarActions::startIM / startCall refuse both).
+    ui.item_if(
+        "message-circle-filled",
+        aurora_i18n::tr!("ui-context-send-im"),
+        !f.im_blocked,
+        CtxAction::Im(id),
+    );
     // Avatar.GiveCard (enabled like RLV.CanShowName: always here)
     ui.item(
         "id-filled",
         aurora_i18n::tr!("ui-context-give-my-calling-card"),
         CtxAction::GiveCallingCard(id),
     );
-    ui.item_if("phone-filled", aurora_i18n::tr!("common-voice-call"), f.voice, CtxAction::Call(id));
+    ui.item_if(
+        "phone-filled",
+        aurora_i18n::tr!("common-voice-call"),
+        f.voice && !f.im_blocked,
+        CtxAction::Call(id),
+    );
     // Avatar.InviteToGroup (enabled like RLV.CanShowName: always here)
     ui.item(
         "users-plus",
@@ -918,10 +947,21 @@ fn self_menu(ui: &mut Builder, f: &Facts, id: Uuid) {
     );
 }
 
-/// "Sit" (on the ground, Self.SitDown) and "Stand up".
+/// "Sit" (on the ground, Self.SitDown) and "Stand up"; greyed too when RLVa
+/// would refuse them (enable_sitdown_self / enable_standup_self).
 fn sit_stand(ui: &mut Builder, f: &Facts) {
-    ui.item_if("armchair", aurora_i18n::tr!("status-sit"), !f.seated, CtxAction::SitGround);
-    ui.item_if("man-filled", aurora_i18n::tr!("common-stand-up"), f.seated, CtxAction::StandUp);
+    ui.item_if(
+        "armchair",
+        aurora_i18n::tr!("status-sit"),
+        !f.seated && !f.ground_sit_blocked,
+        CtxAction::SitGround,
+    );
+    ui.item_if(
+        "man-filled",
+        aurora_i18n::tr!("common-stand-up"),
+        f.seated && !f.stand_blocked,
+        CtxAction::StandUp,
+    );
 }
 
 fn take_off_submenu(ui: &mut Builder, f: &Facts) {
@@ -1069,11 +1109,16 @@ fn land_menu(ui: &mut Builder, f: &Facts, point: Vec3) {
     ui.item_if(
         "armchair",
         aurora_i18n::tr!("ui-context-sit-here"),
-        !f.seated && !f.flying,
+        !f.seated && !f.flying && !f.ground_sit_blocked,
         CtxAction::SitAt(point),
     );
     if f.seated {
-        ui.item("man-filled", aurora_i18n::tr!("common-stand-up"), CtxAction::StandUp);
+        ui.item_if(
+            "man-filled",
+            aurora_i18n::tr!("common-stand-up"),
+            !f.stand_blocked,
+            CtxAction::StandUp,
+        );
     }
     ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point, None));
     ui.separator();
@@ -1745,6 +1790,10 @@ mod tests {
         f.object.drop = true;
         let drop = row(menu(&f), "ui-context-drop");
         assert!(drop.enabled && matches!(drop.kind, Kind::Action(CtxAction::Drop(k)) if k == key));
+        // enable_detach: greyed while an RLVa remove lock holds it
+        assert!(!row(menu(&f), "common-detach").enabled);
+        f.object.detach = true;
+        assert!(row(menu(&f), "common-detach").enabled);
         // the favorite row, once the item is known: the one that applies
         f.object.attachment_item = Some(item);
         f.object.favorite = Some(false);
@@ -1951,5 +2000,66 @@ mod bridge_query_tests {
             assert!(extended.enabled);
             assert!(matches!(&extended.kind, Kind::Action(CtxAction::ObjectInfo(id)) if *id == object));
         }
+    }
+}
+
+#[cfg(test)]
+mod rlva_sit_tests {
+    use super::*;
+
+    /// Every action row of a menu, submenus included.
+    fn actions(entries: Vec<Entry>) -> Vec<Entry> {
+        entries
+            .into_iter()
+            .flat_map(|e| match e.kind {
+                Kind::Submenu(inner) => actions(inner),
+                _ => vec![e],
+            })
+            .collect()
+    }
+
+    fn enabled(entries: Vec<Entry>, label: &str) -> bool {
+        actions(entries)
+            .into_iter()
+            .find(|e| e.label == label)
+            .unwrap_or_else(|| panic!("no {label} row"))
+            .enabled
+    }
+
+    #[test]
+    fn rlva_greys_the_sit_and_stand_entries_it_would_refuse() {
+        let me = Uuid::from_u128(1);
+        let own = Target::Avatar {
+            id: me,
+            own: true,
+            attachment: None,
+        };
+        let sit = aurora_i18n::tr!("status-sit");
+        let stand = aurora_i18n::tr!("common-stand-up");
+        let toggle = aurora_i18n::tr!("ui-context-sit-stand");
+        // the Sit / stand toggle is on our attachments' menu
+        let worn = Target::Attachment {
+            key: ObjKey { region: 1, local_id: 2 },
+        };
+        // standing: @sit greys Sit and the toggle
+        let mut f = Facts { me, ..Facts::default() };
+        assert!(enabled(world_menu(&own, &f, Vec3::ZERO), sit));
+        f.ground_sit_blocked = true;
+        assert!(!enabled(world_menu(&own, &f, Vec3::ZERO), sit));
+        assert!(!enabled(world_menu(&worn, &f, Vec3::ZERO), toggle));
+        // seated: @unsit greys Stand up and the toggle, @sit no longer matters
+        f.seated = true;
+        assert!(enabled(world_menu(&own, &f, Vec3::ZERO), stand));
+        assert!(enabled(world_menu(&worn, &f, Vec3::ZERO), toggle));
+        f.stand_blocked = true;
+        assert!(!enabled(world_menu(&own, &f, Vec3::ZERO), stand));
+        assert!(!enabled(world_menu(&worn, &f, Vec3::ZERO), toggle));
+        // the land menu: Sit here and Stand up
+        let land = Target::Ground;
+        assert!(!enabled(world_menu(&land, &f, Vec3::ZERO), stand));
+        f.seated = false;
+        assert!(!enabled(world_menu(&land, &f, Vec3::ZERO), aurora_i18n::tr!("ui-context-sit-here")));
+        f.ground_sit_blocked = false;
+        assert!(enabled(world_menu(&land, &f, Vec3::ZERO), aurora_i18n::tr!("ui-context-sit-here")));
     }
 }

@@ -10,6 +10,7 @@
 //! copied the full screen depth and waited every frame. The waiting read
 //! is kept for comparison ([`DepthPick::blocking`]).
 
+use crate::pipeline_cache::CachedPipelines;
 use glam::{Mat4, Vec3, Vec4};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -151,7 +152,7 @@ impl DepthPick {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
             label: Some("depth pick"),
             layout: Some(&pipeline_layout),
             module: &module,
@@ -162,7 +163,11 @@ impl DepthPick {
         let buffer = |label: &str, usage: wgpu::BufferUsages| {
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
-                size: BYTES,
+                size: if usage.contains(wgpu::BufferUsages::MAP_READ) {
+                    crate::readback::readback_size(BYTES)
+                } else {
+                    BYTES
+                },
                 usage,
                 mapped_at_creation: false,
             })
@@ -441,7 +446,7 @@ impl DepthPick {
         }
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("depth pick click readback"),
-            size: BYTES,
+            size: crate::readback::readback_size(BYTES),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });

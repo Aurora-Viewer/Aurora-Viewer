@@ -10,6 +10,7 @@ use super::widgets::{self, ActionKind};
 use crate::settings::{GridChoice, Settings};
 use crate::theme::Palette;
 use egui::{Color32, Frame, Margin, RichText, Sense, Stroke, TextEdit, Vec2};
+mod camera_limits_notice;
 mod carousel;
 mod chrome;
 mod credentials_form;
@@ -20,6 +21,7 @@ mod layout;
 pub(crate) mod manager;
 mod manager_drag;
 pub(crate) mod motion;
+pub mod photo_quality_notice;
 pub mod safe_graphics_notice;
 
 const REMEMBERED_PASSWORD_MASK: &str = "••••••••••••••••";
@@ -55,6 +57,11 @@ pub struct LoginForm {
     pub show_mfa: bool,
     pub tos_message: Option<String>,
     pub agree_tos: bool,
+    /// The login server's critical message (reason "critical"), to read
+    /// before the next attempt; `read_critical` is its own acknowledgement,
+    /// apart from the Terms of Service (LLLoginInstance::handleTOSResponse).
+    pub critical_message: Option<String>,
+    pub read_critical: bool,
     pub error: Option<String>,
     /// The session ended with its region's restart: the login button reads
     /// "Reconnect" (region_restart.rs).
@@ -75,12 +82,25 @@ pub struct LoginForm {
     /// where the next login starts, whatever the account's choice, shown in
     /// the start menus (FSPanelLogin::onUpdateStartSLURL). Not saved.
     pub start_slurl: Option<crate::slurl::Location>,
+    /// Every account's favourite landmarks, written by the sessions
+    /// (`login_favorites.rs`), offered in the start menus.
+    pub favorites: crate::login_favorites::Store,
+    /// The favourite chosen in an account's start menu: where that
+    /// account's next login starts. Not saved, like the Legacy Viewer's
+    /// start combo (only Home and Last are kept as LoginLocation).
+    pub start_favorite: Option<(crate::login_favorites::Key, uuid::Uuid)>,
     /// The graphics driver is out of date (`gpu_driver::check`), and the
     /// user has not dismissed the warning for this driver.
     pub driver_notice: Option<crate::gpu_driver::Notice>,
     /// The safe graphics offered after the GPU stopped answering, or the
     /// way back from them (`app/safe_graphics.rs`).
     pub safe_graphics: Option<safe_graphics_notice::SafeGraphics>,
+    /// "Photo quality" was switched off after the last session crashed with
+    /// it on (`app/snapshot.rs`, `photo_quality_at_start`).
+    pub photo_quality_off: bool,
+    /// The camera's limits went back on with the settings' version 33
+    /// (`Settings::camera_limits_restored`).
+    pub camera_limits_restored: bool,
 }
 
 #[derive(Default)]
@@ -92,6 +112,11 @@ pub enum LoginAction {
     DismissDriverNotice,
     /// A button of the safe graphics card.
     SafeGraphics(safe_graphics_notice::Choice),
+    /// A button of the photo quality card: turned back on (true) or read.
+    PhotoQualityOff(bool),
+    /// A button of the camera limits card: the camera preferences (true) or
+    /// read.
+    CameraLimits(bool),
     #[default]
     None,
     Login,
@@ -111,6 +136,34 @@ pub(crate) fn client_tagline() -> &'static str {
         aurora_i18n::tr!("ui-login-second-life-client-rust-metal")
     } else {
         aurora_i18n::tr!("ui-login-second-life-client-rust-vulkan")
+    }
+}
+
+/// The Terms of Service page of Linden Lab's grids (the `real_url` of
+/// LLFloaterTOS, floater_tos.xml).
+const SECOND_LIFE_TERMS: &str = "https://secondlife.com/app/tos/";
+
+/// The page of the Terms of Service a login asks to accept: the first web
+/// address of the login server's `message` (an OpenSim grid names its page
+/// there, LLFloaterTOS::postBuild), else Linden Lab's page on their grids.
+pub(crate) fn terms_url(message: &str, login_uri: &str) -> Option<String> {
+    let named = message.split_whitespace().find_map(|word| {
+        let word = word.trim_matches(|c: char| matches!(c, '<' | '>' | '(' | ')' | '[' | ']' | '"' | '\'' | ',' | ';' | '.'));
+        let url = reqwest::Url::parse(word).ok()?;
+        matches!(url.scheme(), "http" | "https").then(|| String::from(url))
+    });
+    named.or_else(|| aurora_net::login::is_linden_login(login_uri).then(|| SECOND_LIFE_TERMS.to_owned()))
+}
+
+/// The link to the Terms of Service page, opened in the browser.
+pub(crate) fn terms_link(ui: &mut egui::Ui, p: &Palette, url: &str) {
+    let label = aurora_i18n::tr!("ui-login-terms-of-service-read");
+    let size = Vec2::new(ui.available_width(), 28.0);
+    if widgets::action_button(ui, p, "external-link-filled", label, ActionKind::Flat, size)
+        .on_hover_text(url)
+        .clicked()
+    {
+        ui.ctx().open_url(egui::OpenUrl::new_tab(url));
     }
 }
 
@@ -149,6 +202,10 @@ fn field(
     text: &mut String,
     password: Option<&mut bool>,
 ) -> egui::Response {
+    // Only the username and editable grid match ASCII-restricted combo
+    // editors in panel_login.xml/panel_fs_login.xml. Passwords, MFA, region
+    // locations and the account search retain their independent policies.
+    let restriction = matches!(id, "login_user" | "new_account_user" | "login_grid").then_some(widgets::TextPolicy::Ascii);
     let id = egui::Id::unique(id);
     let focused = ui.memory(|m| m.has_focus(id));
     let stroke = if focused {
@@ -174,8 +231,10 @@ fn field(
                     ui.visuals_mut().weak_text_color = Some(p.ink);
                 }
                 let hidden = remembered || password.as_deref().is_some_and(|show| !*show);
-                let resp = ui.add(
-                    TextEdit::singleline(text)
+                // Interactivity comes from the disabled UI and TextEdit.
+                // Keep this form's explicit ink color while it is disabled.
+                let resp = widgets::text_field_with_policy(ui, true, text, restriction, |b, ui| {
+                    TextEdit::singleline(b)
                         .id(id)
                         .interactive(ui.is_enabled())
                         .frame(
@@ -186,8 +245,8 @@ fn field(
                         .hint_text(RichText::new(hint).color(p.muted_dim))
                         .font(egui::FontId::proportional(14.0))
                         .text_color(p.ink)
-                        .desired_width(w),
-                );
+                        .desired_width(w)
+                });
                 if let Some(show) = password {
                     let (r, eye) = ui.allocate_exact_size(Vec2::splat(18.0), if remembered { Sense::hover() } else { Sense::click() });
                     let col = if !remembered && eye.hovered() { p.ink } else { p.muted };
@@ -215,29 +274,122 @@ fn caption(ui: &mut egui::Ui, p: &Palette, text: &str) {
     ui.add_space(-2.0);
 }
 
-/// The start location menu: last location, home or a region; a place given
-/// from outside (`slurl`) comes first and stays chosen until another entry
-/// is, as the Legacy Viewer's location combo shows the start SLURL
+/// The favourites of one account's start menu and the one chosen (its
+/// item), as FSPanelLogin::addFavoritesToStartLocation adds them after
+/// Last, Home and the typed region.
+pub(super) struct StartFavorites<'a> {
+    pub list: &'a [crate::login_favorites::Favorite],
+    pub chosen: Option<uuid::Uuid>,
+}
+
+impl<'a> StartFavorites<'a> {
+    #[cfg(test)]
+    pub fn none() -> Self {
+        StartFavorites { list: &[], chosen: None }
+    }
+
+    /// The account `key`'s favourites, and its choice in `slot`.
+    pub fn of(
+        store: &'a crate::login_favorites::Store,
+        slot: &Option<(crate::login_favorites::Key, uuid::Uuid)>,
+        key: &crate::login_favorites::Key,
+    ) -> Self {
+        StartFavorites {
+            list: store.favorites(key),
+            chosen: slot.as_ref().filter(|(k, _)| k == key).map(|(_, id)| *id),
+        }
+    }
+
+    /// Keep in `slot` a choice made in the account `key`'s menu; another
+    /// account's choice stays until this one changes.
+    pub fn keep(&self, slot: &mut Option<(crate::login_favorites::Key, uuid::Uuid)>, key: crate::login_favorites::Key) {
+        let before = slot.as_ref().filter(|(k, _)| *k == key).map(|(_, id)| *id);
+        if before != self.chosen {
+            *slot = self.chosen.map(|id| (key, id));
+        }
+    }
+
+    /// The chosen favourite, while the account still has it.
+    pub fn chosen(&self) -> Option<&crate::login_favorites::Favorite> {
+        self.chosen.and_then(|id| self.list.iter().find(|f| f.item == id))
+    }
+}
+
+/// "Region, x, y, z" under a favourite of the start menu.
+fn favorite_place(favorite: &crate::login_favorites::Favorite) -> String {
+    let [x, y, z] = favorite.pos;
+    format!("{} ({}, {}, {})", favorite.region, x.round(), y.round(), z.round())
+}
+
+/// AURORA_DEMO_LOGIN_FAVORITES=open: the first start menu with favourites
+/// (the combo `salt` of `ui`) opens once, after the login screen's first
+/// frames, for captures.
+pub(super) fn demo_open_start_menu(ui: &egui::Ui, salt: &str, favorites: &StartFavorites) {
+    static OPENED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !favorites.list.is_empty()
+        && crate::login_favorites::demo() == Some(crate::login_favorites::Demo::Open)
+        && ui.ctx().cumulative_frame_nr() >= 30
+        && !OPENED.swap(true, std::sync::atomic::Ordering::Relaxed)
+    {
+        egui::Popup::open_id(ui.ctx(), ui.make_persistent_id(egui::IdSalt::new(salt)).with("popup"));
+    }
+}
+
+/// The start location menu: last location, home or a region, then the
+/// account's favourite landmarks; a place given from outside (`slurl`)
+/// comes first and stays chosen until another entry is, as the Legacy
+/// Viewer's location combo shows the start SLURL
 /// (FSPanelLogin::onUpdateStartSLURL).
-pub(super) fn start_menu(ui: &mut egui::Ui, combo: egui::ComboBox, start: &mut String, slurl: &mut Option<crate::slurl::Location>) {
+pub(super) fn start_menu(
+    ui: &mut egui::Ui,
+    combo: egui::ComboBox,
+    start: &mut String,
+    slurl: &mut Option<crate::slurl::Location>,
+    favorites: &mut StartFavorites,
+) {
     let place = slurl.as_ref().map(crate::external_url::place_label);
-    let selected = match (&place, start.as_str()) {
-        (Some(place), _) => place.clone(),
-        (None, "home") => aurora_i18n::tr!("common-home").to_owned(),
-        (None, "region") => aurora_i18n::tr!("ui-login-region").to_owned(),
+    let chosen = favorites.chosen().cloned();
+    let selected = match (&place, &chosen, start.as_str()) {
+        (Some(place), ..) => place.clone(),
+        (None, Some(favorite), _) => favorite.name.clone(),
+        (None, None, "home") => aurora_i18n::tr!("common-home").to_owned(),
+        (None, None, "region") => aurora_i18n::tr!("ui-login-region").to_owned(),
         _ => aurora_i18n::tr!("ui-login-last-location").to_owned(),
+    };
+    // the favourites unfold over up to half the screen before scrolling
+    let combo = if favorites.list.is_empty() {
+        combo
+    } else {
+        combo.height(ui.spacing().combo_height.max(ui.ctx().content_rect().height() * 0.5))
     };
     let shown = combo.selected_text(selected).show_ui(ui, |ui| {
         if let Some(place) = &place {
             let _ = ui.selectable_label(true, place);
         }
+        let usual = place.is_none() && chosen.is_none();
         for (value, text) in [
             ("last", aurora_i18n::tr!("ui-login-last-location")),
             ("home", aurora_i18n::tr!("common-home")),
             ("region", aurora_i18n::tr!("ui-login-region")),
         ] {
-            if ui.selectable_label(place.is_none() && start == value, text).clicked() {
+            if ui.selectable_label(usual && start == value, text).clicked() {
                 *start = value.into();
+                *slurl = None;
+                favorites.chosen = None;
+            }
+        }
+        if !favorites.list.is_empty() {
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new(aurora_i18n::tr!("ui-login-favorites")).size(11.5).weak());
+        }
+        for favorite in favorites.list {
+            let on = place.is_none() && chosen.as_ref().is_some_and(|c| c.item == favorite.item);
+            if ui
+                .selectable_label(on, &favorite.name)
+                .on_hover_text(favorite_place(favorite))
+                .clicked()
+            {
+                favorites.chosen = Some(favorite.item);
                 *slurl = None;
             }
         }
@@ -245,6 +397,10 @@ pub(super) fn start_menu(ui: &mut egui::Ui, combo: egui::ComboBox, start: &mut S
     // a card's narrow menu cuts the place short
     if let Some(place) = place {
         shown.response.on_hover_text(place);
+    } else if let Some(favorite) = &chosen {
+        shown
+            .response
+            .on_hover_text(format!("{}\n{}", favorite.name, favorite_place(favorite)));
     }
 }
 
@@ -631,13 +787,20 @@ pub fn show(
                         }
                         caption(&mut cols[1], p, aurora_i18n::tr!("ui-login-start"));
                         let width = cols[1].available_width();
+                        let key = crate::login_favorites::key(&settings.login_uri(), &settings.username);
+                        let mut favorites = StartFavorites::of(&form.favorites, &form.start_favorite, &key);
+                        demo_open_start_menu(&cols[1], "start", &favorites);
                         start_menu(
                             &mut cols[1],
                             egui::ComboBox::from_id_salt("start").width(width),
                             &mut settings.start_location,
                             &mut form.start_slurl,
+                            &mut favorites,
                         );
+                        favorites.keep(&mut form.start_favorite, key);
                     });
+                    let key = crate::login_favorites::key(&settings.login_uri(), &settings.username);
+                    let favorite_chosen = StartFavorites::of(&form.favorites, &form.start_favorite, &key).chosen().is_some();
                     if settings.grid == GridChoice::Custom {
                         field(
                             ui,
@@ -650,7 +813,7 @@ pub fn show(
                             None,
                         );
                     }
-                    if settings.start_location == "region" && form.start_slurl.is_none() {
+                    if settings.start_location == "region" && form.start_slurl.is_none() && !favorite_chosen {
                         field(
                             ui,
                             p,
@@ -744,8 +907,11 @@ pub fn show(
                     widgets::divider(ui, p);
                     ui.label(RichText::new(aurora_i18n::tr!("ui-login-terms-of-service")).strong().color(p.amber));
                     egui::ScrollArea::vertical().max_height(120.0).show(ui, |ui| {
-                        ui.label(RichText::new(msg).size(12.0).color(p.muted));
+                        ui.label(RichText::new(&msg).size(12.0).color(p.muted));
                     });
+                    if let Some(url) = terms_url(&msg, &settings.login_uri()) {
+                        terms_link(ui, p, &url);
+                    }
                     if ui
                         .add_enabled(
                             form.block_reason.is_none() && !form.busy,
@@ -755,6 +921,30 @@ pub fn show(
                     {
                         form.agree_tos = true;
                         form.tos_message = None;
+                        action = LoginAction::Login;
+                    }
+                }
+                // a step of its own, as the Legacy Viewer's message_critical
+                // floater: reading it acknowledges this message only
+                if let Some(msg) = form.critical_message.clone() {
+                    ui.add_space(8.0);
+                    widgets::divider(ui, p);
+                    ui.label(RichText::new(aurora_i18n::tr!("ui-login-critical-message")).strong().color(p.amber));
+                    egui::ScrollArea::vertical()
+                        .id_salt("critical_message")
+                        .max_height(120.0)
+                        .show(ui, |ui| {
+                            ui.label(RichText::new(msg).size(12.0).color(p.muted));
+                        });
+                    if ui
+                        .add_enabled(
+                            form.block_reason.is_none() && !form.busy,
+                            egui::Button::new(aurora_i18n::tr!("ui-login-critical-message-read")),
+                        )
+                        .clicked()
+                    {
+                        form.read_critical = true;
+                        form.critical_message = None;
                         action = LoginAction::Login;
                     }
                 }
@@ -947,6 +1137,92 @@ mod tests {
             &mut settings,
         );
         assert!(matches!(action, LoginAction::Login));
+    }
+
+    /// The Terms of Service link: the page the server's message names, else
+    /// Linden Lab's on their grids, else none.
+    #[test]
+    fn the_terms_link_is_the_page_the_server_names_or_linden_lab_s() {
+        let grid = "http://grid.example.org:8002/";
+        assert_eq!(
+            terms_url("Please accept the new terms.", aurora_net::login::SL_MAIN_GRID).as_deref(),
+            Some(SECOND_LIFE_TERMS)
+        );
+        assert_eq!(
+            terms_url("Read them (https://grid.example.org/tos.html).", grid).as_deref(),
+            Some("https://grid.example.org/tos.html")
+        );
+        assert_eq!(terms_url("Accept the terms.", grid), None);
+        assert_eq!(terms_url("ftp://grid.example.org/tos", grid), None);
+    }
+
+    /// The critical message is a step of its own: reading it sets
+    /// `read_critical` alone, and both flags start false.
+    #[test]
+    fn separate_step_for_the_login_critical_message() {
+        fn position(shape: &egui::Shape, label: &str) -> Option<egui::Pos2> {
+            match shape {
+                egui::Shape::Text(t) if t.galley.text() == label => Some(t.pos + egui::vec2(3.0, 5.0)),
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| position(s, label)),
+                _ => None,
+            }
+        }
+        let ctx = egui::Context::default();
+        let mut settings = Settings {
+            username: "Demo Resident".into(),
+            ..Default::default()
+        };
+        let mut form = LoginForm {
+            password: "synthetic".into(),
+            critical_message: Some("Synthetic message".into()),
+            ..Default::default()
+        };
+        assert!(!form.agree_tos && !form.read_critical);
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let info = LoginInfo::preview_release("0.3.0");
+        let mut draw = |events, form: &mut LoginForm| {
+            let mut action = LoginAction::None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    action = show(ui, &p, &icons, None, &mut settings, form, &info, None);
+                },
+            );
+            output.textures_delta.clear();
+            (action, output)
+        };
+        draw(vec![], &mut form);
+        let (_, output) = draw(vec![], &mut form);
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|s| position(&s.shape, aurora_i18n::tr!("ui-login-critical-message-read")))
+            .expect("the critical message's button");
+        let mut last = LoginAction::None;
+        for pressed in [true, false] {
+            last = draw(
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ],
+                &mut form,
+            )
+            .0;
+        }
+        assert!(matches!(last, LoginAction::Login));
+        assert!(form.read_critical);
+        assert!(!form.agree_tos);
+        assert!(form.critical_message.is_none());
     }
 
     /// At 1280 × 720 the news, as tall as the login card, stood over the

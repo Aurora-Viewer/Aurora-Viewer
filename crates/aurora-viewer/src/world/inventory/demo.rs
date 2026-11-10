@@ -200,6 +200,23 @@ pub fn seed(inv: &mut Inventory, agent: Uuid) {
         owner_mask: 0x7fffffff,
         ..Default::default()
     }]);
+    // A calling card made by a viewer (create_inventory_callingcard): ours,
+    // naming the wolf by key in its description. Opening it shows his profile,
+    // named Orion Example by the demo's name service.
+    inv.add_items(vec![InvItem {
+        id: Uuid::from_u128(8114),
+        parent: personal,
+        name: aurora_i18n::tr!("demo-orion-example").into(),
+        desc: crate::demo::DEMO_LOUP.to_string(),
+        asset_type: 2,
+        inv_type: 2,
+        creator: agent,
+        owner: agent,
+        created_at: now,
+        base_mask: actions::MOVE | actions::TRANSFER,
+        owner_mask: actions::MOVE | actions::TRANSFER,
+        ..Default::default()
+    }]);
     if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "link-icons" | "aurora-link-icons")) {
         for (kind, &name) in super::super::appearance::wearables().iter().enumerate() {
             inv.add_items(vec![InvItem {
@@ -436,6 +453,18 @@ pub fn seed_received_big(inv: &mut Inventory, agent: Uuid, folders: u128, items:
 }
 
 pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
+    // Clipboard feedback scenarios reuse the same source tree in either layout.
+    let view = view
+        .strip_prefix("aurora-")
+        .filter(|mode| mode.starts_with("clipboard"))
+        .unwrap_or(view);
+    let view = if view.starts_with("clipboard-cut-folder") {
+        "clipboard-cut-folder"
+    } else if view.starts_with("clipboard-cut") {
+        "clipboard-cut"
+    } else {
+        view
+    };
     if let Some(mode) = view.strip_prefix("aurora-menu-") {
         return target(
             match mode {
@@ -716,6 +745,36 @@ pub fn seed_view(inv: &mut Inventory, agent: Uuid, large: bool) {
         }));
     }
     inv.add_items(items);
+    inv.sort_all();
+}
+
+/// Hundreds of empty top folders, as some residents keep: still a long list
+/// once every folder is collapsed.
+pub fn seed_many_folders(inv: &mut Inventory, count: u128) {
+    let root = inv.root;
+    for n in 0..count {
+        let id = Uuid::from_u128(0x00c0_11a9_5e00_0000 + n);
+        inv.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    parent: root,
+                    name: aurora_i18n::tr!("world-inventory-demo-folder", n = format!("{n:03}")),
+                    type_default: -1,
+                    version: 1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        if let Some(folder) = inv.folders.get_mut(&root) {
+            folder.children.push(id);
+        }
+    }
     inv.sort_all();
 }
 

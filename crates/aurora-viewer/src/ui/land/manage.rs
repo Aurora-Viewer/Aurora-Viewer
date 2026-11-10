@@ -409,7 +409,7 @@ fn access(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut 
                     egui::DragValue::new(&mut price)
                         .custom_parser(aurora_i18n::parse_number)
                         .range(0..=500)
-                        .suffix(" L$"),
+                        .suffix(format!(" {}", aurora_i18n::currency())),
                 );
                 let active = r.dragged() || r.has_focus() || r2.dragged() || r2.has_focus();
                 if active {
@@ -802,10 +802,10 @@ fn objects(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut
             ui.label(RichText::new("min").size(12.0).color(p.muted));
             s.clean_time.sync(&parcel.other_clean_time.to_string());
             let r = editable(ui, any, |ui| {
-                ui.add(egui::TextEdit::singleline(&mut s.clean_time.text).desired_width(50.0))
+                widgets::restricted_text_field(ui, true, &mut s.clean_time.text, widgets::TextPolicy::Digits, |b, _| {
+                    egui::TextEdit::singleline(b).desired_width(50.0)
+                })
             });
-            // validateNonNegativeS32
-            s.clean_time.text.retain(|c| c.is_ascii_digit());
             if let Some(t) = s.clean_time.after(&r) {
                 // onCommitClean: only a changed value is sent
                 let minutes: i32 = t.parse().unwrap_or(0);
@@ -982,18 +982,9 @@ fn visibility(
         lock_line(ui, p, &m);
     }
     srow(ui, p, aurora_i18n::tr!("ui-land-manage-name"), "", 340.0, |ui| {
-        s.name.sync(&parcel.name);
-        let r = editable(ui, can_identity, |ui| {
-            ui.add(egui::TextEdit::singleline(&mut s.name.text).desired_width(330.0))
-        });
-        // validateASCIIPrintableNoPipe, on what is typed
-        if r.changed() {
-            let base = s.name.base.clone();
-            s.name.text.retain(|c| ((' '..='~').contains(&c) && c != '|') || base.contains(c));
-        }
-        if let Some(name) = s.name.after(&r) {
-            world.land.update(|u| u.name = name);
-        }
+        let r = editable(ui, can_identity, |ui| super::parcel_name_field(ui, true, &mut s.name, 330.0));
+        let pending = s.name.after(&r);
+        s.apply_name(world, pending);
     });
     line(ui, p);
     srow(ui, p, aurora_i18n::tr!("ui-land-overview-description"), "", 340.0, |ui| {
@@ -1038,6 +1029,7 @@ fn visibility(
                 s.texture_snapshot = true;
                 s.texture.open(aurora_i18n::tr!("ui-land-options-land-picture"), parcel.snapshot_id);
             }
+            s.texture.drop_target_slot(ui, rect, false, can_identity, 1);
         },
     );
 }
@@ -1367,6 +1359,7 @@ fn parcel_media(
                 s.texture_snapshot = false;
                 s.texture.open(aurora_i18n::tr!("ui-land-media-media-texture"), id);
             }
+            s.texture.drop_target_slot(ui, rect, false, can, 0);
         },
     );
     line(ui, p);

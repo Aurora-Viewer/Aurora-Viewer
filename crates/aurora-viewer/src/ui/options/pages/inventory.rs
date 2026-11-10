@@ -7,6 +7,8 @@ use super::super::cx::{Cx, field};
 
 pub fn page(cx: &mut Cx) {
     use aurora_i18n::tr;
+    cx.track(&field!(inventory.filter_defaults));
+    cx.track(&field!(inventory.tab_filter_defaults));
     cx.group(tr!("ui-options-sorting"), |cx| {
         cx.choice(
             tr!("ui-inventory-controls-display-order"),
@@ -29,14 +31,28 @@ pub fn page(cx: &mut Cx) {
         );
         // the order of the Received tab, chosen in its own preferences
         cx.track(&field!(inventory.received_sort));
+        cx.track(&field!(inventory.recent_sort));
     });
     cx.group(tr!("common-display"), |cx| {
         cx.toggle(tr!("ui-inventory-controls-show-library"), "", &field!(inventory.show_library));
+        cx.toggle(
+            tr!("inventory-hover-tooltips"),
+            tr!("inventory-hover-tooltips-help"),
+            &field!(inventory.show_hover_tooltips),
+        );
+        // pictures on hover work with the text tooltips off (#3008)
         cx.toggle(
             tr!("inventory-hover-pictures"),
             tr!("inventory-hover-pictures-help"),
             &field!(inventory.thumbnail_tooltips),
         );
+        cx.toggle(
+            tr!("inventory-folder-colors"),
+            tr!("inventory-folder-colors-help"),
+            &field!(inventory.folder_colors_enabled),
+        );
+        // the colors themselves, given from a folder's menu
+        cx.track(&field!(inventory.folder_colors));
         cx.toggle(tr!("ui-inventory-controls-recent-tab"), "", &field!(inventory.show_recent));
         let off = !cx.s.inventory.show_recent;
         cx.subs(off, |cx| {
@@ -116,5 +132,13 @@ pub fn page(cx: &mut Cx) {
             cx.s.received_items_since = crate::ui::inventory::view::now();
         }
         cx.track(&field!(received_items_since));
+    });
+    cx.group(tr!("import-window-title"), |cx| {
+        cx.choice(
+            tr!("import-entry-point"),
+            tr!("import-entry-point-help"),
+            &field!(imports.icon_bar),
+            &[(false, tr!("import-entry-window"), false), (true, tr!("import-icon-bar"), false)],
+        );
     });
 }

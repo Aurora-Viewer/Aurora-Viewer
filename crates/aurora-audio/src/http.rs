@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
+use rustls_platform_verifier::BuilderVerifierExt;
 use url::{Host, Url};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -40,12 +41,15 @@ pub(crate) enum HttpError {
     Status(u16),
     #[error("too many redirects")]
     Redirects,
+    #[error("radio playlist links must stay on the same HTTP(S) origin")]
+    PlaylistOrigin,
     #[error("stopped")]
     Stopped,
 }
 
 /// Body + interesting headers of a successful response.
 pub(crate) struct HttpResponse {
+    pub url: Url,
     pub content_type: Option<String>,
     pub metaint: Option<usize>,
     pub body: Box<dyn Read + Send + Sync>,
@@ -218,14 +222,16 @@ fn tls_config() -> Result<Arc<rustls::ClientConfig>, HttpError> {
     static CONFIG: OnceLock<Result<Arc<rustls::ClientConfig>, String>> = OnceLock::new();
     CONFIG
         .get_or_init(|| {
-            let mut roots = rustls::RootCertStore::empty();
-            roots.add_parsable_certificates(webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().cloned());
             // Explicit provider: the workspace may enable several rustls
             // crypto backends, which makes the implicit default ambiguous.
             let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
             rustls::ClientConfig::builder_with_provider(provider)
                 .with_safe_default_protocol_versions()
-                .map(|b| Arc::new(b.with_root_certificates(roots).with_no_client_auth()))
+                // Some stations omit their intermediate certificate (#1628).
+                // The Windows/macOS verifier can build the missing chain;
+                // certificate trust and the server name are still checked.
+                .and_then(|b| b.with_platform_verifier())
+                .map(|b| Arc::new(b.with_no_client_auth()))
                 .map_err(|e| e.to_string())
         })
         .clone()
@@ -297,12 +303,17 @@ fn host_header(url: &Url) -> String {
     }
 }
 
+/// Reads the status line and headers, at most [`MAX_HEADER_BYTES`] in all:
+/// each line read stops at what is left of that budget, so a line that
+/// never ends is refused instead of being kept whole in memory.
 fn read_head<R: BufRead>(r: &mut R) -> Result<Head, HttpError> {
     let mut lines = Vec::new();
     let mut total = 0;
     loop {
         let mut line = Vec::new();
-        let n = r.read_until(b'\n', &mut line)?;
+        // one byte over the budget tells a full budget from a longer line
+        let left = (MAX_HEADER_BYTES - total) as u64 + 1;
+        let n = (&mut *r).take(left).read_until(b'\n', &mut line)?;
         if n == 0 {
             return Err(HttpError::Malformed);
         }
@@ -324,10 +335,24 @@ fn read_head<R: BufRead>(r: &mut R) -> Result<Head, HttpError> {
 
 /// Opens `url` for streaming, following redirects. Sends `Icy-MetaData: 1`.
 pub(crate) fn open(url: &str, stop: &Arc<AtomicBool>) -> Result<HttpResponse, HttpError> {
+    open_with_origin(url, stop, None)
+}
+
+/// Discovered playlist links cannot acquire access to another site, including
+/// through a redirect. Ordinary stream redirects retain their existing policy.
+pub(crate) fn open_with_origin(url: &str, stop: &Arc<AtomicBool>, origin: Option<&Url>) -> Result<HttpResponse, HttpError> {
     let mut url = Url::parse(url.trim()).map_err(|e| HttpError::Url(e.to_string()))?;
     for _ in 0..=MAX_REDIRECTS {
         if stop.load(Ordering::Relaxed) {
             return Err(HttpError::Stopped);
+        }
+        if origin.is_some_and(|base| {
+            !matches!(url.scheme(), "http" | "https")
+                || url.origin() != base.origin()
+                || !url.username().is_empty()
+                || url.password().is_some()
+        }) {
+            return Err(HttpError::PlaylistOrigin);
         }
         let mut conn = connect(&url)?;
         let req = format!(
@@ -362,6 +387,7 @@ pub(crate) fn open(url: &str, stop: &Arc<AtomicBool>) -> Result<HttpResponse, Ht
                     Box::new(reader)
                 };
                 return Ok(HttpResponse {
+                    url,
                     content_type,
                     metaint,
                     body,
@@ -381,6 +407,43 @@ pub(crate) fn open(url: &str, stop: &Arc<AtomicBool>) -> Result<HttpResponse, Ht
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn https_rejects_an_untrusted_certificate() {
+        let rcgen::CertifiedKey { cert, signing_key } = rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string()]).unwrap();
+        let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+        let config = rustls::ServerConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![cert.der().clone()],
+                rustls::pki_types::PrivatePkcs8KeyDer::from(signing_key.serialize_der()).into(),
+            )
+            .unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("https://{}/stream", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            sock.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            sock.set_write_timeout(Some(Duration::from_secs(5))).unwrap();
+            let mut tls = rustls::ServerConnection::new(Arc::new(config)).unwrap();
+            let _ = tls.complete_io(&mut sock);
+        });
+        let stop = Arc::new(AtomicBool::new(false));
+        let error = open(&url, &stop).err().expect("a self-signed station must be rejected");
+        server.join().unwrap();
+        let HttpError::Io(error) = error else {
+            panic!("expected a TLS handshake error: {error}");
+        };
+        assert!(
+            matches!(
+                error.get_ref().and_then(|e| e.downcast_ref::<rustls::Error>()),
+                Some(rustls::Error::InvalidCertificate(_))
+            ),
+            "{error:?}"
+        );
+    }
 
     #[test]
     fn status_lines() {
@@ -416,6 +479,58 @@ mod tests {
     #[test]
     fn read_head_from_bytes() {
         let raw = b"HTTP/1.1 200 OK\r\nContent-Type: audio/ogg\r\n\r\nBODY";
+        let mut r = BufReader::new(&raw[..]);
+        let head = read_head(&mut r).unwrap();
+        assert_eq!(head.status, 200);
+        let mut body = String::new();
+        r.read_to_string(&mut body).unwrap();
+        assert_eq!(body, "BODY");
+    }
+
+    /// Endless bytes without a line end, counting what was read.
+    struct Endless {
+        byte: u8,
+        read: usize,
+    }
+
+    impl Read for Endless {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            buf.fill(self.byte);
+            self.read += buf.len();
+            Ok(buf.len())
+        }
+    }
+
+    #[test]
+    fn read_head_stops_a_line_that_never_ends() {
+        let mut r = BufReader::with_capacity(1024, Endless { byte: b'a', read: 0 });
+        assert!(matches!(read_head(&mut r), Err(HttpError::Malformed)));
+        assert!(r.get_ref().read <= MAX_HEADER_BYTES + 1024, "{}", r.get_ref().read);
+
+        // the same once the status line is in
+        let mut raw = b"ICY 200 OK\r\nicy-name: ".to_vec();
+        raw.extend(std::iter::repeat_n(b'x', MAX_HEADER_BYTES));
+        let mut r = BufReader::new(&raw[..]);
+        assert!(matches!(read_head(&mut r), Err(HttpError::Malformed)));
+    }
+
+    #[test]
+    fn read_head_budget_counts_every_line() {
+        let line = format!("x-pad: {}\r\n", "y".repeat(100));
+        let mut raw = b"HTTP/1.1 200 OK\r\n".to_vec();
+        for _ in 0..MAX_HEADER_BYTES / line.len() + 1 {
+            raw.extend(line.as_bytes());
+        }
+        raw.extend(b"\r\n");
+        let mut r = BufReader::new(&raw[..]);
+        assert!(matches!(read_head(&mut r), Err(HttpError::Malformed)));
+
+        // a large head under the budget still reads
+        let mut raw = b"HTTP/1.1 200 OK\r\n".to_vec();
+        for _ in 0..(MAX_HEADER_BYTES - 64) / line.len() {
+            raw.extend(line.as_bytes());
+        }
+        raw.extend(b"\r\nBODY");
         let mut r = BufReader::new(&raw[..]);
         let head = read_head(&mut r).unwrap();
         assert_eq!(head.status, 200);

@@ -447,6 +447,13 @@ impl World {
         self.refresh_hud_scales();
     }
 
+    /// The HUD projection for a window of `size` pixels: the session's
+    /// zoom, laid out in `hud_area`.
+    pub fn hud_view(&self, size: [u32; 2], min_x: f32, max_x: f32) -> aurora_render::HudView {
+        let view = aurora_render::HudView::new(size, self.hud_zoom, min_x, max_x);
+        self.hud_area.map_or(view, |area| view.in_area(area))
+    }
+
     /// Only attachments of the local avatar can carry a local zoom.
     pub fn hud_root(&self, mut idx: usize) -> Option<usize> {
         for _ in 0..16 {

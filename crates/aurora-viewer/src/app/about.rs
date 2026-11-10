@@ -92,7 +92,7 @@ impl App {
                 None => vec![Row::key("about-os", "about-reading")],
             },
         });
-        let aa = ["none", "FXAA", "MSAA 2x", "MSAA 4x", "MSAA 8x", "TAA", "SMAA"]
+        let aa = ["none", "FXAA", "MSAA 2x", "MSAA 4x", "MSAA 8x", "TAA", "SMAA", "FSR 3.1"]
             .get(s.antialiasing as usize)
             .copied()
             .unwrap_or("?");
@@ -106,13 +106,24 @@ impl App {
                 ),
                 Row::text("about-graphics-api", gpu.backend.clone()),
                 Row::text("about-driver", gpu.driver.clone()),
-                match gpu.vram_mb {
-                    Some(mb) => Row::text("about-vram", format!("{mb} MB")),
-                    None => Row::key("about-vram", "about-unknown"),
+                // a discrete card as before ("N MB"); an integrated GPU's two
+                // heaps in the interface's language
+                match (gpu.dedicated_mb, gpu.shared_mb) {
+                    (Some(mb), None) => Row::text("about-vram", format!("{mb} MB")),
+                    (dedicated, Some(shared)) => Row::text(
+                        "about-vram",
+                        aurora_i18n::tr!(
+                            "about-vram-shared",
+                            dedicated = aurora_i18n::number_text(&dedicated.unwrap_or(0).to_string()),
+                            shared = aurora_i18n::number_text(&shared.to_string())
+                        )
+                        .to_string(),
+                    ),
+                    (None, None) => Row::key("about-vram", "about-unknown"),
                 },
                 Row::text(
                     "about-texture-budget",
-                    format!("{} MB", s.texture_budget(gpu.vram_mb, gpu.integrated)),
+                    format!("{} MB", s.texture_budget(gpu.dedicated_mb, gpu.shared_mb, gpu.integrated)),
                 ),
                 Row::text(
                     "about-display",
@@ -143,7 +154,11 @@ impl App {
                 }
             };
             let at = self.world.agent.position;
-            let grid = crate::world::chat_log::grid_name(&s.grid, &s.custom_login_uri, self.demo);
+            // On OpenSim, the grid we are on now: after a Hypergrid teleport
+            // the visited one, by its saved name or its address.
+            let grid = crate::grids::current_label(s, self.world.opensim_extras())
+                .filter(|_| !self.demo)
+                .unwrap_or_else(|| crate::world::chat_log::grid_name(&s.grid, &s.custom_login_uri, self.demo));
             sections.push(Section {
                 icon: "map-pin-filled",
                 title: "about-section-location",

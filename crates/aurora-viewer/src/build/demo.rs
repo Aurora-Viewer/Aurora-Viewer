@@ -2,7 +2,7 @@
 //! `AURORA_DEMO_BUILD="mode,x,y[,part,dx,dy]"`.
 //!
 //! - mode: move | rotate | stretch | face | align | grab | focus | create |
-//!   land | select
+//!   land | select | select-join (a simulated multi-parcel selection)
 //!   cycle | cycle-linked: nested objects, three CTRL + wheel notches
 //!   (deeper, deeper, nearer), centered on `object:99610`.
 //!   linked-click | linked-click-ready: select a whole object, then switch
@@ -11,6 +11,8 @@
 //!   three prims of two objects (ready stops before the face clicks).
 //!   faces-picker | faces-picker-material: select one face and keep its picker open.
 //!   faces-picker-local | faces-picker-material-local: the same, on its Local tab.
+//!   faces-picker-normal-local | faces-picker-specular-local: local legacy maps.
+//!   faces-picker-badges-local | faces-picker-material-badges-local: applied local previews.
 //!   faces-close: close view of one selected face for material readability.
 //!   faces-complex: closed torus and disconnected mesh islands, with holes.
 //!   create-delete | create-ready: create and select a basic prim, then
@@ -22,6 +24,10 @@
 //!   contents-move-many: drop every item into inventory at once (two no-copy
 //!   items share one move warning).
 //!   shared | shared-denied: another resident's object with granted / denied editing.
+//!   place: `place,object:<id>,<target id>[,click][,rotate:<side>]` turns
+//!   "Place on surface" on and holds the cursor over the target's top
+//!   (`click` clicks there; `rotate:back` chooses Auto rotate and that side).
+//!   multi-rename: select multiple roots and apply the same name to all of them.
 //! - x, y: click (physical pixels) at frame 220: selects the object there,
 //!   creates a prim, or presses the land brush (held until the capture)
 //! - part: handle grabbed at frame 250 (move: x y z xy yz xz; rotate: rx ry
@@ -55,10 +61,15 @@ use std::time::Instant;
 pub enum Step {
     Open(Tool, EditMode, u8),
     Select(usize),
+    LinkSetup(bool),
+    Link,
+    SelectMany(Vec<usize>),
+    RenameSelection(String),
     SharedRights(usize, bool),
     Face(usize, u8, bool),
-    /// Materials, Local tab.
-    TexturePicker(bool, bool),
+    /// Target channel, Local tab.
+    TexturePicker(super::ui::PickTarget, bool),
+    BomPicker(Option<usize>),
     CloseView,
     CloseEditor,
     CreateAt(Vec3),
@@ -81,6 +92,10 @@ pub enum Step {
     ReplaceBegin(bool),
     ReplacePick(usize),
     ReplaceApply,
+    /// "Place on surface" on or off.
+    Place(bool),
+    /// Its Auto rotate, with that side.
+    PlaceRotate(super::place::Side),
 }
 
 fn part_of(s: &str) -> Option<Part> {
@@ -166,6 +181,19 @@ pub fn apply_handle_size(s: &mut BuildSettings) {
     }
 }
 
+/// AURORA_DEMO_OBJECT_SNAP=on: Snap › Objects for the build script.
+pub fn apply_object_snap(s: &mut BuildSettings) {
+    if std::env::var("AURORA_DEMO_OBJECT_SNAP").is_ok_and(|v| v.trim() == "on") {
+        s.set_snap_mode(super::SnapMode::Objects);
+    }
+    // AURORA_DEMO_MOVE_HOLOGRAM=moving|start: the hologram of a move
+    match std::env::var("AURORA_DEMO_MOVE_HOLOGRAM").as_deref().map(str::trim) {
+        Ok("moving") => s.move_hologram = super::MoveHologram::Moving,
+        Ok("start") => s.move_hologram = super::MoveHologram::Start,
+        _ => {}
+    }
+}
+
 /// AURORA_DEMO_BUILD_TAB: the floater tab (and texture sub-tab) to show.
 pub fn apply_tab(tool: &mut BuildTool) {
     let Ok(v) = std::env::var("AURORA_DEMO_BUILD_TAB") else { return };
@@ -204,6 +232,10 @@ pub fn apply_tab(tool: &mut BuildTool) {
         "media" => 2,
         _ => tool.ui.tex_tab,
     };
+    // The scenario's tab, not the one its selection would open on.
+    if matches!(sub.trim(), "pbr" | "bp" | "classic" | "bp-normal" | "bp-specular" | "media") {
+        tool.keep_texture_tab();
+    }
     match sub.trim() {
         "bp-normal" => tool.ui.bp_channel = 1,
         "bp-specular" => tool.ui.bp_channel = 2,
@@ -330,7 +362,7 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
         "focus" => (Tool::Focus, EditMode::Move, 6),
         "create" | "create-preview" => (Tool::Create, EditMode::Move, 6),
         "land" => (Tool::Land, EditMode::Move, 1),
-        "select" => (Tool::Land, EditMode::Move, 6),
+        "select" | "select-join" => (Tool::Land, EditMode::Move, 6),
         _ => (Tool::Edit, EditMode::Move, 6),
     };
     let h = if object.is_some() { 2 } else { 3 };
@@ -343,6 +375,46 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
     let Some(frame) = (frame + 215).checked_sub(base) else {
         return Vec::new();
     };
+    if parts[0] == "multi-rename" {
+        let objects: Vec<usize> = parts
+            .iter()
+            .skip(1)
+            .filter_map(|part| part.parse::<u32>().ok())
+            .filter_map(|local_id| {
+                world
+                    .objects
+                    .iter()
+                    .find_map(|(idx, object)| (object.key.local_id == local_id).then_some(idx))
+            })
+            .collect();
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
+            220 if objects.len() >= 2 => vec![Step::SelectMany(objects)],
+            227 => vec![Step::Focus(false)],
+            240 => vec![Step::RenameSelection("Shared edit".into())],
+            260 if !objects.is_empty() => vec![Step::SelectMany(vec![objects[0]])],
+            270 if objects.len() >= 2 => vec![Step::SelectMany(vec![objects[1]])],
+            _ => Vec::new(),
+        };
+    }
+    if matches!(parts[0], "link" | "link-ready" | "link-denied") {
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
+            220 => vec![Step::LinkSetup(parts[0] == "link-denied")],
+            227 => vec![Step::Focus(true)],
+            250 if parts[0] != "link-ready" => vec![Step::Link],
+            _ => Vec::new(),
+        };
+    }
+    if matches!(parts[0], "pbr-bom" | "bp-bom") {
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
+            220 => object.into_iter().map(Step::Select).collect(),
+            227 => vec![Step::Focus(true)],
+            250 => vec![Step::BomPicker((parts[0] == "pbr-bom").then(|| num(h).unwrap_or(0.0) as usize % 4))],
+            _ => Vec::new(),
+        };
+    }
     if parts[0] == "create-preview" {
         return match frame {
             215 => vec![Step::Open(Tool::Create, EditMode::Move, 6)],
@@ -355,6 +427,39 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
                     .map(|(x, y)| vec![Step::Cursor(x, y)])
                     .unwrap_or_default()
             }
+            _ => Vec::new(),
+        };
+    }
+    // place,object:<id>,<target id>[,click][,rotate:<side>]: Place on
+    // surface, the cursor on the top of the target object, clicked with
+    // `click`, Auto rotate onto the side with `rotate:`
+    if parts[0] == "place" {
+        let target = parts
+            .get(2)
+            .and_then(|v| v.parse::<u32>().ok())
+            .and_then(|id| world.objects.iter().find_map(|(i, o)| (o.key.local_id == id).then_some(i)));
+        let top = target.and_then(|i| {
+            let (at, _, _) = crate::scene::Scene::object_transform(world, i, Instant::now(), 0)?;
+            Some(at + Vec3::Z * world.visual_scale(i).z * 0.5)
+        });
+        let click = parts[3.min(parts.len())..].contains(&"click");
+        let rotate = parts[3.min(parts.len())..].iter().find_map(|p| {
+            let name = p.strip_prefix("rotate:")?;
+            super::place::Side::ALL
+                .into_iter()
+                .find(|s| format!("{s:?}").eq_ignore_ascii_case(name))
+        });
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
+            220 => object.into_iter().map(Step::Select).collect(),
+            245 => rotate.map(Step::PlaceRotate).into_iter().collect(),
+            250 => vec![Step::Place(true)],
+            280 if click => vec![Step::Press],
+            282 if click => vec![Step::Release],
+            255.. => top
+                .and_then(|p| tool.cam.project_px(p))
+                .map(|(x, y)| vec![Step::Cursor(x, y)])
+                .unwrap_or_default(),
             _ => Vec::new(),
         };
     }
@@ -461,7 +566,15 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             240 if parts[0] == "faces-complex" => pick(99620, 0, false),
             240 => pick(99620, u8::MAX, false),
             250 if parts[0].starts_with("faces-picker") => vec![Step::TexturePicker(
-                parts[0].starts_with("faces-picker-material"),
+                if parts[0].starts_with("faces-picker-material") {
+                    super::ui::PickTarget::PbrMaterial
+                } else if parts[0].starts_with("faces-picker-normal") {
+                    super::ui::PickTarget::Normal
+                } else if parts[0].starts_with("faces-picker-specular") {
+                    super::ui::PickTarget::Specular
+                } else {
+                    super::ui::PickTarget::Diffuse
+                },
                 parts[0].ends_with("-local"),
             )],
             _ if parts[0] == "faces-close" => Vec::new(),
@@ -565,9 +678,9 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             .unwrap_or_default(),
         260 | 270 if cycle => vec![Step::Wheel(-1.0)],
         280 if cycle => vec![Step::Wheel(1.0)],
-        235 if parts[0] == "select" => vec![Step::Cursor(x + dx, y + dy)],
+        235 if matches!(parts[0], "select" | "select-join") => vec![Step::Cursor(x + dx, y + dy)],
         235 if parts[0].starts_with("invisible-") => vec![Step::CloseView],
-        240 if parts[0] == "select" => vec![Step::Release],
+        240 if matches!(parts[0], "select" | "select-join") => vec![Step::Release],
         250 => match handle.and_then(|h| handle_px(tool, world, s, h)) {
             Some((hx, hy)) => {
                 log::info!("demo build: grabbing {:?} at {hx:.0},{hy:.0}", handle);
@@ -598,4 +711,37 @@ fn x_start(tool: &BuildTool) -> f32 {
 
 fn y_start(tool: &BuildTool) -> f32 {
     tool.manip.drag.as_ref().map(|d| d.start_cursor.1).unwrap_or(0.0)
+}
+
+/// Two synthetic prims with different ObjectUpdate owner availability, as a
+/// rezzed mesh and new cubes can have. Selection properties supply both owners.
+pub fn link_setup(world: &mut World, tool: &mut BuildTool, settings: &BuildSettings, denied: bool) {
+    let Some(handle) = world.main_region else { return };
+    let mut objects = Vec::new();
+    for (local_id, offset, scale) in [
+        (99750, Vec3::new(5.0, 0.0, 1.5), Vec3::ONE),
+        (99751, Vec3::new(6.0, 0.0, 1.5), Vec3::new(0.25, 5.0, 3.0)),
+    ] {
+        let mut update = crate::demo::action_avatar(false);
+        update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        update.local_id = local_id;
+        update.full_id = crate::demo::action_id(local_id);
+        update.parent_id = 0;
+        update.position = world.agent.position + offset;
+        update.scale = scale;
+        update.owner_id = if local_id == 99750 { uuid::Uuid::nil() } else { world.agent_id };
+        update.extra = Default::default();
+        update.update_flags = crate::ui::context::flags::OBJECT_MOVE | crate::ui::context::flags::OBJECT_YOU_OWNER;
+        if !denied || local_id == 99751 {
+            update.update_flags |= crate::ui::context::flags::OBJECT_MODIFY;
+        }
+        objects.push(update);
+    }
+    world.apply(aurora_net::NetEvent::ObjectUpdates { handle, objects });
+    tool.deselect_all(world);
+    for id in [99750, 99751] {
+        if let Some(index) = world.objects.index_of_uuid(&crate::demo::action_id(id)) {
+            tool.click_select(world, settings, Some(index), id == 99751);
+        }
+    }
 }

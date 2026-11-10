@@ -103,6 +103,22 @@ fn entities_and_long_texts_are_bounded() {
     assert!(text.chars().count() <= MAX_TEXT + 1 && text.ends_with('…'));
 }
 
+#[test]
+fn entities_next_to_unicode_text_decode_in_atom_and_rss_feeds() {
+    let html = "<p>&amp;éééé &amp;日本語 &amp;🙂🙂 &bogus;日本語</p>";
+    let mut escaped = String::new();
+    aurora_llsd::xml::escape(html, &mut escaped);
+    for document in [
+        format!("<feed><entry><id>test</id><content type=\"html\">{escaped}</content></entry></feed>"),
+        format!("<feed><entry><id>test</id><content type=\"html\"><![CDATA[{html}]]></content></entry></feed>"),
+        format!("<rss><channel><item><guid>test</guid><description><![CDATA[{html}]]></description></item></channel></rss>"),
+    ] {
+        let entries = parse(document.as_bytes()).expect("valid feed");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].updates[0].text, "&éééé &日本語 &🙂🙂 &bogus;日本語");
+    }
+}
+
 fn entry(id: &str, updated: &str) -> Entry {
     Entry {
         id: id.into(),

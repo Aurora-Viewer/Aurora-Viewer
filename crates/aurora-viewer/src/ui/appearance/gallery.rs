@@ -4,12 +4,12 @@
 use super::{Action, AppearanceUi, model};
 use crate::{
     theme::Palette,
-    ui::{menu, texture_picker::TexturePicker, widgets},
+    ui::{menu, widgets},
     world::{World, inventory::Inventory, names::AvatarNames},
 };
 use aurora_net::outfits::categories::Update;
 use egui::RichText;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 #[derive(Default)]
@@ -17,8 +17,6 @@ pub(super) struct State {
     rename: Option<(Uuid, String)>,
     focus: bool,
     confirm: Option<(Uuid, bool)>,
-    picker: TexturePicker,
-    image_for: Option<Uuid>,
     copy: Option<OutfitCopy>,
 }
 
@@ -175,7 +173,16 @@ pub(super) fn context_menu(
         let inv = &world.inventory;
         let Some(folder) = inv.folders.get(&id) else { return };
         let worn = super::items::worn_items(world);
-        let Some(rules) = menu_rules(inv, &worn, st.pending.is_some(), id) else {
+        // LLAppearanceMgr::getCanReplaceCOF / getCanAddToCOF /
+        // getCanRemoveFromCOF: an RLVa lock on the outfit folder greys them.
+        let locks = world.rlva_wear_locks();
+        let locked = |id: Uuid, mut rules: MenuRules| {
+            rules.replace &= locks.folder_allows(id, true);
+            rules.add &= locks.folder_allows(id, true);
+            rules.remove &= locks.folder_allows(id, false);
+            rules
+        };
+        let Some(rules) = menu_rules(inv, &worn, st.pending.is_some(), id).map(|rules| locked(id, rules)) else {
             return;
         };
         let outfits = st.shown_outfits(inv);
@@ -183,7 +190,7 @@ pub(super) fn context_menu(
         let multiple = selection.len() > 1;
         let all_rules: Option<Vec<_>> = selection
             .iter()
-            .map(|id| menu_rules(inv, &worn, st.pending.is_some(), *id))
+            .map(|id| menu_rules(inv, &worn, st.pending.is_some(), *id).map(|rules| locked(*id, rules)))
             .collect();
         let ready = all_rules.as_ref().is_some_and(|rules| rules.iter().all(|rule| rule.folder))
             && selection.iter().all(|id| model::complete(inv, *id));
@@ -233,14 +240,19 @@ pub(super) fn context_menu(
             return;
         }
         menu::separator(ui, p);
+        // LLOutfitContextMenu's Outfit.Thumbnail
         if menu::item_if(ui, p, "photo-filled", aurora_i18n::tr!("common-image-2"), rules.folder) {
-            st.gallery.picker.open_with_defaults(
-                aurora_i18n::tr!("ui-appearance-gallery-outfit-picture"),
-                folder.info.thumbnail,
-                None,
-                true,
-            );
-            st.gallery.image_for = Some(id);
+            actions.push(Action::OutfitImage(id));
+        }
+        // the quick way to know an outfit again: no window, no preview (#2716)
+        if menu::item_if(
+            ui,
+            p,
+            "camera-filled",
+            aurora_i18n::tr!("ui-inventory-thumbnail-take-snapshot"),
+            rules.folder,
+        ) {
+            actions.push(Action::OutfitSnapshot(id));
         }
         if menu::item_if(
             ui,
@@ -264,7 +276,8 @@ pub(super) fn context_menu(
                 rules.folder,
             )
         {
-            st.open(0, true);
+            // back from editing, the gallery or the list it came from
+            st.open(st.tab, true);
         }
         if menu::item_if(
             ui,
@@ -380,14 +393,7 @@ pub(super) fn context_menu(
     });
 }
 
-pub(super) fn dialogs(
-    ctx: &egui::Context,
-    p: &Palette,
-    world: &mut World,
-    st: &mut AppearanceUi,
-    images: &HashMap<Uuid, egui::TextureHandle>,
-    actions: &mut Vec<Action>,
-) {
+pub(super) fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut AppearanceUi, actions: &mut Vec<Action>) {
     if let Some((id, mut name)) = st.gallery.rename.clone() {
         let mut close = false;
         let response = crate::ui::widgets::Modal::new(egui::Id::unique("outfit_rename")).show(ctx, |ui| {
@@ -398,7 +404,9 @@ pub(super) fn dialogs(
                     .color(p.ink),
             );
             ui.add_space(8.0);
-            let r = ui.add(egui::TextEdit::singleline(&mut name).char_limit(63).desired_width(f32::INFINITY));
+            let r = crate::ui::widgets::restricted_text_field(ui, true, &mut name, crate::ui::widgets::TextPolicy::Ascii, |b, _| {
+                egui::TextEdit::singleline(b).char_limit(63).desired_width(f32::INFINITY)
+            });
             if st.gallery.focus {
                 r.request_focus();
                 if let Some(mut state) = egui::TextEdit::load_state(ctx, r.id) {
@@ -480,15 +488,6 @@ pub(super) fn dialogs(
             st.gallery.confirm = None;
         }
     }
-    if let Some(image) = st.gallery.picker.show_live(ctx, p, world, images)
-        && let Some(id) = st.gallery.image_for
-    {
-        actions.push(Action::Category(id, Update::Thumbnail(image)));
-    }
-    if !st.gallery.picker.open {
-        st.gallery.image_for = None;
-    }
-    st.wanted_images.extend(st.gallery.picker.wanted_images.drain());
 }
 
 #[cfg(test)]
@@ -529,7 +528,7 @@ mod tests {
                     st,
                     &mut open,
                     41_748,
-                    &HashMap::new(),
+                    &std::collections::HashMap::new(),
                 );
             },
         );

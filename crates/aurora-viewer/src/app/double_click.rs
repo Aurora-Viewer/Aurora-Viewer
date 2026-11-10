@@ -1,5 +1,5 @@
 //! The double click on the ground (src/autopilot.rs): walk, run or
-//! teleport to the point clicked, as Firestorm's `walk_to` / `teleport_to`
+//! teleport to the point clicked, as the Legacy Viewer's `walk_to` / `teleport_to`
 //! double-click bindings do (LLToolPie::walkToClickedLocation and
 //! teleportToClickedLocation, indra/newview/lltoolpie.cpp, originally LGPL
 //! 2.1), and the walk itself, frame after frame (LLAgent::autoPilot).
@@ -37,12 +37,71 @@ impl App {
         if self.demo && std::env::var_os("AURORA_DEMO_DOUBLECLICK").is_some() {
             log::info!("demo double click: {action:?} at {point:?}");
         }
+        // LLToolPie::walkToClickedLocation / teleportToClickedLocation: under
+        // RLVa a point that a local teleport may not reach (@tplocal, @sittp,
+        // @unsit while seated) is refused, walking there included
+        let global = self
+            .world
+            .main_origin()
+            .map(|(x, y)| glam::DVec3::new(x as f64, y as f64, 0.0) + point.as_dvec3());
+        if action != DoubleClick::Nothing && global.is_some_and(|g| !self.world.rlva_can_teleport_global(g)) {
+            self.world.system_notice(
+                aurora_i18n::tr!("rlva-blocked-autopilot"),
+                crate::world::notice_topics::Topic::Warning,
+            );
+            return;
+        }
         match action {
             DoubleClick::Nothing => {}
             DoubleClick::Walk => self.walk_to(point, false),
             DoubleClick::Run => self.walk_to(point, true),
             DoubleClick::Teleport => self.teleport_to_point(point),
         }
+    }
+
+    /// The second press of a double click on a prim with a one-click
+    /// `target` (a touch script, a click action): with "Allow double-click
+    /// action on scripted objects" (FSAllowDoubleClickOnScriptedObjects,
+    /// LLToolPie::handleDoubleClick and teleportToClickedLocation), the
+    /// double-click action takes it instead of the prim's own action, except
+    /// on a Sit prim, a HUD or something we wear. The HUDs' presses return
+    /// earlier in `world_press`: that guard only keeps the rule whole. The
+    /// first press of the double click has already had the prim's action.
+    /// True when it took the press.
+    pub(super) fn scripted_double_click(
+        &mut self,
+        double: bool,
+        idx: usize,
+        target: &crate::interaction::Target,
+        point: Vec3,
+        on_avatar: bool,
+    ) -> bool {
+        if !double || !self.settings.double_click_scripted || self.double_click_action() == DoubleClick::Nothing {
+            return false;
+        }
+        let pick = crate::interaction::double_click_pick(&self.world, idx, Some(target));
+        let pick = autopilot::ObjectPick {
+            hud_or_self: pick.hud_or_self || on_avatar,
+            ..pick
+        };
+        if !autopilot::object_takes_double_click(pick, true) || !autopilot::non_zero_global_pick(self.world.main_origin(), point) {
+            return false;
+        }
+        self.double_click_ground(point);
+        true
+    }
+
+    /// A double click that fell through to the ground path (no one-click
+    /// target took it): whether the prim under it, if any, lets the action
+    /// run, by the same rule as `scripted_double_click`. Once we sit, a Sit
+    /// prim has no Sit target left and lands here: the Legacy Viewer still
+    /// sees its click action and does not teleport us off the seat. The
+    /// land, and an object without a click action, always let it through.
+    pub(super) fn ground_double_click_allowed(&self, idx: Option<usize>) -> bool {
+        idx.is_none_or(|idx| {
+            let pick = crate::interaction::double_click_pick(&self.world, idx, None);
+            autopilot::object_takes_double_click(pick, self.settings.double_click_scripted)
+        })
     }
 
     /// walkToClickedLocation: not while flying or manually sitting. Our own
@@ -97,7 +156,10 @@ impl App {
         if !point.is_finite() {
             return;
         }
-        let size = self.world.main().map_or(256.0, |r| r.heightmap.size_x as f32);
+        let size = self
+            .world
+            .main()
+            .map_or((256.0, 256.0), |r| (r.heightmap.size_x as f32, r.heightmap.size_y as f32));
         let (slot, position) = autopilot::teleport_destination(origin, size, point, self.pelvis_to_foot());
         let here = slot == origin;
         let handle = if here { main } else { aurora_net::origin_to_handle(slot.0, slot.1) };

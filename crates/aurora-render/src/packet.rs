@@ -74,7 +74,11 @@ pub(crate) struct SceneGpu {
     pub records: wgpu::Buffer,
     pub palettes: wgpu::Buffer,
     pub skin_binds: wgpu::Buffer,
-    /// Changes when one of the three buffers above was reallocated.
+    /// What the records' model matrices and the palettes were when the last
+    /// frame was drawn (motion vectors; `motion_history.rs` keeps them).
+    pub prev_models: wgpu::Buffer,
+    pub prev_palettes: wgpu::Buffer,
+    /// Changes when one of the five buffers above was reallocated.
     pub records_key: (u64, u64),
     /// Face table (one entry per draw record) and object table of the GPU
     /// culling, with their sizes.
@@ -101,6 +105,9 @@ pub(crate) struct Spent {
 }
 
 pub(crate) struct FramePacket {
+    /// Optional caller-owned output, retained through GPU submission. None
+    /// acquires the desktop swapchain (or the existing snapshot target).
+    pub output: Option<wgpu::Texture>,
     /// Frames handed over before this one.
     pub index: u64,
     pub writes: GpuWrites,
@@ -123,6 +130,8 @@ pub(crate) struct FramePacket {
     /// Count the luminance histogram of this frame shown at that exposure
     /// (the photo viewfinder; answered a few frames later).
     pub histogram: Option<f32>,
+    /// Start the motion history again (`Renderer::cut_motion_history`).
+    pub motion_cut: bool,
     /// When the frame began reading its input (`Renderer::mark_input`):
     /// the time to its presentation is the latency the frame pacing cuts.
     pub input_at: Option<Instant>,

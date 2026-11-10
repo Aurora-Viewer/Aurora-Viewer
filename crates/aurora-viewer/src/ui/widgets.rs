@@ -25,9 +25,18 @@ pub mod demo;
 pub(crate) mod elide_tests;
 pub(crate) mod hero;
 pub(crate) mod keycap;
+pub(crate) mod local_texture;
 mod modal_keys;
 pub(crate) mod pills;
 mod resize;
+mod restricted_text;
+#[cfg(test)]
+mod restricted_text_tests;
+pub use crate::text_validation::Policy as TextPolicy;
+pub use restricted_text::field as restricted_text_field;
+pub use restricted_text::number as restricted_number;
+pub use restricted_text::optional as text_field_with_policy;
+pub use restricted_text::show as restricted_text_edit;
 pub(crate) mod scroll_offset;
 #[cfg(test)]
 pub(crate) mod steady_tests;
@@ -46,8 +55,8 @@ pub use text_field::text_field;
 pub use unread::{CountSize, UnreadCount, unread_count};
 pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
 pub use workspace::{
-    Modal, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark, glyph, navigation, navigation_beside,
-    navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
+    Modal, ModalGround, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark, glyph, navigation,
+    navigation_beside, navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
 };
 pub(crate) use workspace::{
     finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island_shape, organization_drag_preview,
@@ -180,11 +189,41 @@ pub(crate) fn faux_bold_offset(ui: &egui::Ui) -> Option<Vec2> {
     Some(Vec2::new(ppp.round().max(1.0) / ppp, 0.0))
 }
 
+/// A floater's inner margin around its body (neither `flush_body` nor
+/// `framed_header`, not minimized), and the width of its outline.
+const FLOATER_MARGIN: egui::Margin = egui::Margin {
+    left: 10,
+    right: 10,
+    top: 5,
+    bottom: 10,
+};
+const FLOATER_STROKE: f32 = 1.0;
+/// The title row's least height, its title's size, and the room left
+/// between the divider under it and the body.
+const TITLE_ROW_MIN: f32 = 28.0;
+const TITLE_SIZE: f32 = 14.0;
+const UNDER_DIVIDER: f32 = 5.0;
 /// What a floater has above and below its body besides its title: the
 /// margins of its frame and its outline.
-const BODY_CHROME: f32 = 17.0;
+const BODY_CHROME: f32 = FLOATER_MARGIN.top as f32 + FLOATER_MARGIN.bottom as f32 + 2.0 * FLOATER_STROKE;
 /// The least height the scrolled body of a floater keeps.
 const MIN_SCROLLED_BODY: f32 = 80.0;
+
+/// What a floater of the usual layout (title row and divider, no status
+/// row, neither `flush_body` nor `framed_header`) adds around its body:
+/// its margins and outline across; down, those with the title row and the
+/// divider under it. A window whose minimum follows its body adds this.
+pub fn floater_chrome(ctx: &egui::Context) -> Vec2 {
+    let gap = ctx.global_style().spacing.item_spacing.y;
+    let title = ctx
+        .fonts_mut(|f| f.row_height(&egui::FontId::proportional(TITLE_SIZE)))
+        .max(TITLE_ROW_MIN);
+    let m = FLOATER_MARGIN;
+    Vec2::new(
+        m.leftf() + m.rightf() + 2.0 * FLOATER_STROKE,
+        BODY_CHROME + title + gap + DIVIDER_ROOM + gap + UNDER_DIVIDER,
+    )
+}
 
 /// `pos` moved so that a window of `size` placed there stands inside `area`
 /// (its top left corner first, when it is larger).
@@ -271,6 +310,7 @@ pub struct Floater<'a> {
     /// A short muted text right after the title (a count of what the
     /// window holds).
     pub title_note: Option<String>,
+    pub title_note_tooltip: Option<String>,
     /// A state at the right end of the title bar, before its buttons: a
     /// dot of its colour and its text in muted.
     pub title_state: Option<(Color32, String)>,
@@ -329,6 +369,7 @@ impl<'a> Floater<'a> {
             header_status: Vec::new(),
             header_status_action: None,
             title_note: None,
+            title_note_tooltip: None,
             title_state: None,
             default_pos: pos,
             default_size: size,
@@ -380,6 +421,12 @@ impl<'a> Floater<'a> {
     /// A muted text after the title (see `title_note`).
     pub fn title_note(mut self, note: impl Into<String>) -> Self {
         self.title_note = Some(note.into());
+        self
+    }
+
+    /// Details shown when hovering the muted text after the title.
+    pub fn title_note_tooltip(mut self, tooltip: impl Into<String>) -> Self {
+        self.title_note_tooltip = Some(tooltip.into());
         self
     }
 
@@ -471,6 +518,11 @@ impl<'a> Floater<'a> {
     pub fn show<R>(mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
         super::layout::set_partial_outside(ctx, egui::Id::unique(self.id), self.partial_outside);
         if window_hidden(ctx, egui::Id::unique(self.id), *open, self.chat) {
+            // its toolbar button still closes it with the interface hidden,
+            // as it does the windows it toggles itself
+            if close_asked(ctx, self.id) {
+                *open = false;
+            }
             if self.cascade.is_some() {
                 cascade::hidden(ctx, egui::Id::unique(self.id));
             }
@@ -501,7 +553,7 @@ impl<'a> Floater<'a> {
                 p.panel.b(),
                 p.panel_alpha,
             ))
-            .stroke(border_stroke(p, Stroke::new(1.0, p.muted_dim.gamma_multiply(0.6))))
+            .stroke(border_stroke(p, Stroke::new(FLOATER_STROKE, p.muted_dim.gamma_multiply(0.6))))
             .corner_radius(ctx.global_style().visuals.window_corner_radius)
             .shadow(ctx.global_style().visuals.window_shadow)
             .inner_margin(if self.framed_header.is_some() {
@@ -513,17 +565,18 @@ impl<'a> Floater<'a> {
                     top: if minimized && !compact { 4 } else { 5 },
                     bottom: if minimized && !compact { 4 } else { 0 },
                 }
-            } else {
+            } else if minimized && !compact {
                 egui::Margin {
-                    left: 10,
-                    right: 10,
-                    top: if minimized && !compact { 4 } else { 5 },
-                    bottom: if minimized && !compact { 4 } else { 10 },
+                    top: 4,
+                    bottom: 4,
+                    ..FLOATER_MARGIN
                 }
+            } else {
+                FLOATER_MARGIN
             });
         // Ctrl+W closes it as its cross does, when it is the frontmost.
         // Ctrl+Shift+W closes every window.
-        let mut close = super::close_key::take(ctx, egui::Id::unique(self.id));
+        let mut close = super::close_key::take(ctx, egui::Id::unique(self.id)) || close_asked(ctx, self.id);
         super::close_key::shown(ctx, egui::Id::unique(self.id));
         // the toolbar button, a menu entry or a shortcut asked to expand it
         let expand_asked = ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(self.id).with(EXPAND)));
@@ -682,6 +735,7 @@ impl<'a> Floater<'a> {
             }
             // title bar
             let mut buttons_left = f32::INFINITY;
+            let mut note_rect = None;
             let framed_header = self.framed_header;
             if framed_header.is_some() {
                 ui.spacing_mut().item_spacing.y = 0.0;
@@ -691,8 +745,8 @@ impl<'a> Floater<'a> {
                     ui.spacing_mut().interact_size.y = 20.0;
                 }
                 let title_row = ui.horizontal(|ui| {
-                    ui.set_min_height(if framed_header.is_some() { 20.0 } else { 28.0 });
-                    let title = RichText::new(&self.title).size(14.0).strong().color(p.ink);
+                    ui.set_min_height(if framed_header.is_some() { 20.0 } else { TITLE_ROW_MIN });
+                    let title = RichText::new(&self.title).size(TITLE_SIZE).strong().color(p.ink);
                     // a fixed floater is as wide as its title; a resizable one
                     // cuts a long title short before the buttons (LLFloater
                     // titles end with an ellipsis)
@@ -754,7 +808,8 @@ impl<'a> Floater<'a> {
                                 }
                                 ui.add(egui::Label::new(title).truncate());
                                 if let Some(note) = &self.title_note {
-                                    ui.add(egui::Label::new(RichText::new(note).size(12.0).color(p.muted)).truncate());
+                                    let response = ui.add(egui::Label::new(RichText::new(note).size(12.0).color(p.muted)).truncate());
+                                    note_rect = Some(response.rect);
                                 }
                             });
                         }
@@ -822,15 +877,21 @@ impl<'a> Floater<'a> {
             title_rect.max.x = buttons_left;
             // Keep the title buttons outside the double-click target; Window
             // still owns dragging the bar, including when it is minimized.
-            if ui
-                .interact(title_rect, window_id.with("title_double_click"), Sense::click())
-                .double_clicked()
-            {
+            let title_response = ui.interact(title_rect, window_id.with("title_double_click"), Sense::click());
+            if title_response.double_clicked() {
                 toggle_min = true;
+            }
+            // The double-click target owns title-bar hover. Keep its interaction
+            // and restrict the note's tooltip to the note's own rectangle.
+            if let Some(rect) = note_rect
+                && let Some(tooltip) = &self.title_note_tooltip
+                && ui.input(|input| input.pointer.hover_pos().is_some_and(|pos| rect.contains(pos)))
+            {
+                title_response.with_new_rect(rect).on_hover_text(tooltip);
             }
             if compact {
                 divider(ui, p);
-                ui.add_space(5.0);
+                ui.add_space(UNDER_DIVIDER);
                 out = Some(body(ui));
             } else if !minimized {
                 if flush {
@@ -841,7 +902,7 @@ impl<'a> Floater<'a> {
                             .hline(header.rect.x_range(), header.rect.bottom() + 2.0, divider_stroke(p));
                     } else {
                         divider(ui, p);
-                        ui.add_space(5.0);
+                        ui.add_space(UNDER_DIVIDER);
                     }
                 }
                 if scrolls {
@@ -1326,6 +1387,35 @@ pub fn toggle_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
     unminimize_quietly(ctx, id);
 }
 
+/// The toolbar button of a floater the app opens itself (its opening loads
+/// or resets something), as LLFloaterReg::toggleInstance: a minimized one
+/// expands, a shown one closes as its cross would ([`close_floater`]), and
+/// true asks the caller to open a closed one.
+#[must_use]
+pub fn toggle_floater_closing(ctx: &egui::Context, id: &str, open: bool) -> bool {
+    if open && floater_minimized(ctx, id) {
+        expand_floater(ctx, id);
+    } else if open {
+        close_floater(ctx, id);
+    }
+    !open
+}
+
+/// Close the floater `id` as its cross does, so that the window's own close
+/// runs (its questions, its cleanup): on its next frame drawn, this one or
+/// the next. A request for a window not drawn by then is dropped.
+pub fn close_floater(ctx: &egui::Context, id: &str) {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(id).with(CLOSE), frame));
+}
+
+/// The floater `id` was asked to close ([`close_floater`]), once.
+fn close_asked(ctx: &egui::Context, id: &str) -> bool {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|d| d.remove_temp::<u64>(egui::Id::unique(id).with(CLOSE)))
+        .is_some_and(|at| at + 1 >= frame)
+}
+
 /// Open the floater `id` (LLFloaterReg::showInstance): expanded, whether it
 /// was closed or minimized.
 pub fn open_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
@@ -1353,7 +1443,10 @@ fn unminimize_quietly(ctx: &egui::Context, id: &str) {
 }
 
 /// Temporary flag of a floater asked to expand (`expand_floater`).
-const EXPAND: &str = "expand";
+pub(crate) const EXPAND: &str = "expand";
+
+/// Temporary frame of a floater asked to close (`close_floater`).
+const CLOSE: &str = "close";
 
 /// Title bar button with a Tabler icon (drawn by hand if it is missing).
 fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
@@ -1470,12 +1563,14 @@ pub fn border_stroke(p: &Palette, usual: Stroke) -> Stroke {
     }
 }
 
+/// The room a `divider` takes across its line.
+const DIVIDER_ROOM: f32 = 6.0;
+
 /// Thin line between two zones of a window, across the layout (horizontal in
 /// a column, vertical in a row), in the room of egui's separator: a window
 /// keeps its layout. Not for buttons or toolbar items: their spacing and the
 /// pill of the hovered one tell them apart. A menu uses `menu::separator`.
 pub fn divider(ui: &mut egui::Ui, p: &Palette) -> egui::Response {
-    const ROOM: f32 = 6.0;
     let across = !ui.layout().main_dir().is_horizontal();
     let available = if ui.is_sizing_pass() {
         Vec2::ZERO
@@ -1483,9 +1578,9 @@ pub fn divider(ui: &mut egui::Ui, p: &Palette) -> egui::Response {
         ui.available_size_before_wrap()
     };
     let size = if across {
-        Vec2::new(available.x, ROOM)
+        Vec2::new(available.x, DIVIDER_ROOM)
     } else {
-        Vec2::new(ROOM, available.y)
+        Vec2::new(DIVIDER_ROOM, available.y)
     };
     let (rect, resp) = ui.allocate_at_least(size, Sense::hover());
     if ui.is_rect_visible(rect) {
@@ -2269,6 +2364,25 @@ pub fn action_button_if(
     action_button_keyed(ui, p, icon, label, kind, size, enabled, None)
 }
 
+/// An inactive action face with a live spinner and readable work status.
+pub fn busy_button(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Response {
+    const SPINNER: f32 = 14.0;
+    const GAP: f32 = 7.0;
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), control_font(ui, 12.0), p.ink);
+    let content = SPINNER + GAP + galley.size().x;
+    let size = Vec2::new(content + KEYED_PAD, ui.spacing().interact_size.y);
+    let response = action_button_if(ui, p, "", "", ActionKind::Flat, size, false);
+    let left = response.rect.center().x - content / 2.0;
+    egui::Spinner::new().color(p.violet_light).paint_at(
+        ui,
+        egui::Rect::from_center_size(egui::pos2(left + SPINNER / 2.0, response.rect.center().y), Vec2::splat(SPINNER)),
+    );
+    let origin = row_text_origin(ui.painter(), &galley, left + SPINNER + GAP, response.rect.center().y);
+    ui.painter().galley(origin, galley, p.ink);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, false, label));
+    response
+}
+
 const KEYED_ICON: f32 = 15.0;
 const KEYED_GAP: f32 = 7.0;
 /// Room around the content of a button that takes its content's width.
@@ -2897,6 +3011,27 @@ pub fn row_tag_ink(p: &Palette, active: bool) -> Color32 {
     if active { p.teal } else { p.muted }
 }
 
+/// Colors `(ink, fill)` for the active group tag pill.
+pub fn active_tag_colors(p: &Palette) -> (Color32, Color32) {
+    (p.teal, p.teal.gamma_multiply(0.14))
+}
+
+/// Measures a small row tag pill (such as "active" next to a group). Returns `(galley, total_width)`.
+pub fn tag_pill_layout(ui: &egui::Ui, text: &str, ink: Color32) -> (std::sync::Arc<egui::Galley>, f32) {
+    let g = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), egui::FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())), ink);
+    let w = g.size().x + 12.0;
+    (g, w)
+}
+
+/// Paints a small row tag pill (such as "active" next to a group) into `rect`.
+pub fn paint_tag_pill(ui: &egui::Ui, g: std::sync::Arc<egui::Galley>, rect: egui::Rect, ink: Color32, fill: Color32) {
+    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
+    let left = rect.center().x - g.size().x / 2.0;
+    paint_row_text(ui.painter(), g, left, rect.center().y, ink);
+}
+
 /// A small tag after an item's name, the same in every list: teal when
 /// `active` (worn, an active gesture), neutral for a plain fact (a link).
 /// Returns its width.
@@ -2966,6 +3101,9 @@ pub fn picture(
         egui::Stroke::new(1.0, p.raised),
         egui::StrokeKind::Inside,
     );
+    if let Some(texture) = tex {
+        local_texture::image(ui, p, rect, texture.id());
+    }
     resp
 }
 

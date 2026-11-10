@@ -23,8 +23,317 @@ fn vs_sky(@builtin(vertex_index) vi: u32) -> SkyOut {
     return out;
 }
 
+// ------------------------------------------------------------- night sky
+//
+// The stars of stars.rs: a catalogue sorted into the cells of a cube map,
+// each star listed in every cell its point reaches, so that a pixel reads
+// its own cell only. `frame.sky_stars` turns the region's directions into
+// the catalogue's frame.
+
+const STAR_FACE_CELLS: u32 = 24u;   // stars.rs FACE_CELLS
+const STAR_CELL_TABLE: u32 = 3460u; // stars.rs CELL_TABLE
+const STAR_MARGIN: f32 = 0.025;     // stars.rs MARGIN (radians)
+// a cell holds about 6 stars, up to a few dozen in the Milky Way
+const STAR_MAX_PER_CELL: u32 = 96u;
+// the Milky Way's light at its brightest, and the size of its points
+// (sigma, pixels)
+const MW_GLOW: f32 = 0.12;
+const MW_GRAIN_SIGMA: f32 = 0.6;
+// the band's light left as a haze, the rest in points; points per lattice
+// cell at the band's brightest; the floor of the points' mean (see milky_way)
+const MW_HAZE: f32 = 0.45;
+const MW_POINTS: f32 = 2.0;
+const MW_POINT_MEAN_MIN: f32 = 0.6;
+
+struct GpuStar {
+    pos: vec4<f32>,   // unit direction, peak intensity
+    color: vec4<f32>, // linear colour, point size (pixels)
+};
+
+// The Milky Way map (stars.rs MILKY_WAY_*): galactic longitude -180° to
+// 180° across, latitude -MW_REACH to +MW_REACH down.
+const MW_WIDTH: u32 = 2048u;
+const MW_HEIGHT: u32 = 512u;
+const MW_REACH: f32 = 0.785398163; // 45°
+
+struct StarSky {
+    cells: array<u32, 6920>, // 2 * STAR_CELL_TABLE: real sky, then the Legacy Viewer's
+    stars: array<GpuStar>,
+};
+
+@group(0) @binding(24) var<storage, read> star_sky: StarSky;
+// The Milky Way map (stars.rs milky_way_texels), MW_WIDTH x MW_HEIGHT, one
+// packed texel per element (mw_texel)
+@group(0) @binding(25) var milky_way_map: texture_2d<u32>;
+
+// stars.rs cell_of
+fn star_cell(q: vec3<f32>) -> u32 {
+    let a = abs(q);
+    var face: u32;
+    var uv: vec2<f32>;
+    var m: f32;
+    if (a.x >= a.y && a.x >= a.z) {
+        face = select(1u, 0u, q.x >= 0.0);
+        uv = q.yz;
+        m = a.x;
+    } else if (a.y >= a.z) {
+        face = select(3u, 2u, q.y >= 0.0);
+        uv = q.xz;
+        m = a.y;
+    } else {
+        face = select(5u, 4u, q.z >= 0.0);
+        uv = q.xy;
+        m = a.z;
+    }
+    let n = f32(STAR_FACE_CELLS);
+    let c = vec2<u32>(clamp(floor((uv / max(m, 1e-20) * 0.5 + 0.5) * n), vec2<f32>(0.0), vec2<f32>(n - 1.0)));
+    return face * STAR_FACE_CELLS * STAR_FACE_CELLS + c.y * STAR_FACE_CELLS + c.x;
+}
+
+// Pixel size of this pass: `frame.sky_star_pass` when set (the water and
+// mirror reflections draw into smaller targets than `frame.screen`), else
+// `frame.screen`.
+fn sky_pass_pixel() -> vec2<f32> {
+    if (frame.sky_star_pass.x > 0.0) {
+        return frame.sky_star_pass.zw;
+    }
+    return frame.screen.zw;
+}
+
+fn sky_ray(ndc: vec2<f32>) -> vec3<f32> {
+    let w = frame.inv_view_proj_rot * vec4<f32>(ndc, 0.5, 1.0);
+    return normalize(w.xyz / w.w);
+}
+
+// How the region direction changes over one pixel of this pass, across and
+// down, at `ndc`: the pixel's own footprint, so stars keep a round shape of
+// the same size in pixels anywhere in the view and in off-centre photo
+// tiles.
+struct SkyFootprint {
+    across: vec3<f32>,
+    down: vec3<f32>,
+};
+
+fn sky_footprint(ndc: vec2<f32>, dir: vec3<f32>) -> SkyFootprint {
+    let step = 2.0 * sky_pass_pixel();
+    var f: SkyFootprint;
+    f.across = sky_ray(ndc + vec2<f32>(step.x, 0.0)) - dir;
+    f.down = sky_ray(ndc + vec2<f32>(0.0, step.y)) - dir;
+    return f;
+}
+
 fn hash3(p: vec3<f32>) -> f32 {
     return fract(sin(dot(p, vec3<f32>(12.9898, 78.233, 37.719))) * 43758.5453);
+}
+
+// PCG hash of a lattice point (Jarzynski and Olano 2020, pcg3d): integer
+// only, so it stays random far from the origin, unlike a sine hash.
+fn pcg3(v0: vec3<u32>) -> vec3<u32> {
+    var v = v0 * 1664525u + 1013904223u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    v ^= v >> vec3<u32>(16u);
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    return v;
+}
+
+// One texel of the Milky Way map: glow (square root of the light), grain
+// (stars of V 6.5 to 9.5 per texel, x 16) and B-V colour (x 100), 0..255.
+fn mw_texel(x: i32, y: i32) -> vec3<f32> {
+    let xi = (x + i32(MW_WIDTH)) % i32(MW_WIDTH);
+    let yi = clamp(y, 0, i32(MW_HEIGHT) - 1);
+    let t = textureLoad(milky_way_map, vec2<i32>(xi, yi), 0).x;
+    return vec3<f32>(f32(t & 255u), f32((t >> 8u) & 255u), f32((t >> 16u) & 255u));
+}
+
+// The map between texel centres (`uv` in texels, centres on the integers).
+fn mw_bilinear(uv: vec2<f32>) -> vec3<f32> {
+    let i = vec2<i32>(floor(uv));
+    let f = uv - floor(uv);
+    return mix(mix(mw_texel(i.x, i.y), mw_texel(i.x + 1, i.y), f.x), mix(mw_texel(i.x, i.y + 1), mw_texel(i.x + 1, i.y + 1), f.x), f.y);
+}
+
+// The chance that a lattice cell holds a point, from the map's light and its
+// counted stars there.
+fn mw_occupancy(t: vec3<f32>) -> f32 {
+    let glow = (t.x / 255.0) * (t.x / 255.0);
+    return 1.0 - exp(-(glow * MW_POINTS + t.y / 16.0 / 4.0));
+}
+
+// The Milky Way at catalogue direction `q` (J2000 equatorial), linear,
+// from the map of the real stars too faint for the naked eye (stars.rs,
+// Tycho-2): their glow, with its clouds and dark lanes, and their grain,
+// faint points scattered as densely as the counted stars, fixed in the
+// sky. `ax`, `ay`: the pixel's footprint across and down (catalogue
+// frame), `pixel` its angle (radians).
+fn milky_way(q: vec3<f32>, ax: vec3<f32>, ay: vec3<f32>, pixel: f32) -> vec3<f32> {
+    // J2000 equatorial to galactic (IAU 1958, Hipparcos values; the same
+    // rows as scripts/generate-star-catalog.py)
+    let m0 = vec3<f32>(-0.0548756, -0.8734371, -0.4838350);
+    let m1 = vec3<f32>(0.4941094, -0.4448296, 0.7469822);
+    let m2 = vec3<f32>(-0.8676661, -0.1980764, 0.4559838);
+    let g = vec3<f32>(dot(m0, q), dot(m1, q), dot(m2, q));
+    let b = asin(clamp(g.z, -1.0, 1.0));
+    if (abs(b) >= MW_REACH) {
+        return vec3<f32>(0.0);
+    }
+    let l = atan2(g.y, g.x);
+    // texel coordinates, centres on the integers
+    let uv = vec2<f32>((l / 6.28318531 + 0.5) * f32(MW_WIDTH), (b / MW_REACH * 0.5 + 0.5) * f32(MW_HEIGHT)) - 0.5;
+    let t = mw_bilinear(uv);
+    if (t.x + t.y < 0.5) {
+        return vec3<f32>(0.0);
+    }
+    let glow = (t.x / 255.0) * (t.x / 255.0);
+    // dust reddens the light towards the centre; the eye sees little colour
+    let warm = clamp((t.z / 100.0 - 0.45) / 0.9, 0.0, 1.0);
+    let tint = mix(vec3<f32>(0.82, 0.88, 1.0), vec3<f32>(1.0, 0.87, 0.70), warm);
+    let light = tint * glow * MW_GLOW;
+
+    // The band is made of stars: part of its light stays a haze (the stars
+    // too faint to tell apart), the rest is gathered into faint points on a
+    // lattice fixed in the sky, two cells per texel each way, each holding a
+    // star or none, as many as the map's light and its counted stars say at
+    // the cell's centre (so every pixel that sees a point agrees whether it
+    // is there). The points keep the band's mean light; where a pixel covers
+    // more than a cell (wide views, reflection probes) they would shimmer,
+    // and give way to that mean.
+    let cell = MW_REACH * 2.0 / f32(MW_HEIGHT * 2u);
+    let sparkle = 1.0 - smoothstep(0.8 * cell, 1.6 * cell, pixel);
+    if (sparkle <= 0.0) {
+        return light;
+    }
+    // the chance here, for the field's expected mean below
+    let p = mw_occupancy(t);
+    // the pixel's footprint along longitude (east) and latitude (north),
+    // and back: a point's offset in pixels
+    let east = vec3<f32>(-sin(l), cos(l), 0.0);
+    let north = vec3<f32>(-sin(b) * cos(l), -sin(b) * sin(l), cos(b));
+    let gx = vec3<f32>(dot(m0, ax), dot(m1, ax), dot(m2, ax));
+    let gy = vec3<f32>(dot(m0, ay), dot(m1, ay), dot(m2, ay));
+    let j = mat2x2<f32>(vec2<f32>(dot(east, gx), dot(north, gx)), vec2<f32>(dot(east, gy), dot(north, gy)));
+    let det = j[0].x * j[1].y - j[1].x * j[0].y;
+    if (abs(det) < 1e-20) {
+        return light;
+    }
+    let inv = mat2x2<f32>(vec2<f32>(j[1].y, -j[0].y), vec2<f32>(-j[1].x, j[0].x)) * (1.0 / det);
+    let c = uv * 2.0 + 0.5; // cell coordinates
+    // the pixel's cell and its eight neighbours: a point of any other cell
+    // is at least a cell away, where each point has faded to nothing
+    // (`reach`), so none is cut off as the sky turns
+    let base = vec2<i32>(floor(c)) - 1;
+    let reach = cell * max(cos(b), 0.1) / max(pixel, 1e-9);
+    var field = vec3<f32>(0.0);
+    for (var k = 0; k < 9; k++) {
+        let ci = base + vec2<i32>(k % 3, k / 3);
+        let h = pcg3(vec3<u32>(u32((ci.x + i32(MW_WIDTH * 2u)) % i32(MW_WIDTH * 2u)), u32(ci.y + 4), 0x5717u));
+        let r = vec3<f32>(h & vec3<u32>(0xffffu)) / 65535.0;
+        // the cell's centre is at c = ci + 0.5, so uv = ci / 2
+        if (r.z >= mw_occupancy(mw_bilinear(vec2<f32>(ci) * 0.5))) {
+            continue;
+        }
+        let d = (vec2<f32>(ci) + r.xy - c) * vec2<f32>(cell * cos(b), cell);
+        let px = inv * d;
+        let r2 = dot(px, px) / (MW_GRAIN_SIGMA * MW_GRAIN_SIGMA);
+        let fade = 1.0 - smoothstep(0.5 * reach, reach, sqrt(dot(px, px)));
+        if (r2 < 9.0 && fade > 0.0) {
+            // brightness: the faint ones the more numerous (star counts
+            // grow about 2.5 times a magnitude over three magnitudes), mean 1
+            let u = mix(0.0316, 1.0, f32(h.z >> 16u) / 65535.0);
+            let w = 0.518 * pow(u, -0.6);
+            // a little colour of its own, bluer or redder than the band
+            let hue = f32((h.x >> 16u) & 255u) / 255.0 - 0.5;
+            field += w * fade * exp(-0.5 * r2) * (vec3<f32>(1.0) + vec3<f32>(0.12, 0.0, -0.12) * hue);
+        }
+    }
+    // the field's mean over a pixel: occupied cells per pixel times a
+    // point's area (within its fade, about). The points are scaled by it, but
+    // never by less than a floor, so that zooming in shows separate points
+    // rather than ever brighter ones; the light the floor holds back stays as
+    // haze, so the band keeps its mean light at every zoom.
+    let cells = pixel * pixel / (cell * cell * max(cos(b), 0.1));
+    let kept = 0.75 * reach / MW_GRAIN_SIGMA;
+    let area = 6.2831853 * MW_GRAIN_SIGMA * MW_GRAIN_SIGMA * (1.0 - exp(-0.5 * kept * kept));
+    let expected = p * area * cells;
+    let mean = max(expected, MW_POINT_MEAN_MIN);
+    let points = mix(vec3<f32>(1.0), field / mean + vec3<f32>(1.0 - expected / mean), sparkle);
+    return light * (MW_HAZE + (1.0 - MW_HAZE) * points);
+}
+
+// Stars and Milky Way in region direction `d` (unit), linear, before the
+// clouds' cover. `background` is the sky's own linear colour there: in the
+// real sky a bright sky drowns them (twilight shows the brightest first,
+// daylight none), where the Legacy Viewer adds its stars whatever the sky.
+// LLDrawPoolWLSky::renderStarsDeferred passes the sky's star_brightness / 500, which starsF.glsl turns into
+// smoothstep(0, 0.9, ...) * 32 on the star texture's alpha: full brightness
+// from about 100, dimmer only below. The same curve, without the 32 times
+// overdrive.
+fn sky_stars(d: vec3<f32>, background: vec3<f32>, foot: SkyFootprint) -> vec3<f32> {
+    let catalogue = frame.sky_stars[0].w;
+    let gain = min(smoothstep(0.0, 0.9, frame.sky_misc.w / 500.0) * 8.0, 1.0);
+    if (catalogue < 0.0 || gain <= 0.0 || d.z <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+    let q = vec3<f32>(dot(frame.sky_stars[0].xyz, d), dot(frame.sky_stars[1].xyz, d), dot(frame.sky_stars[2].xyz, d));
+    let legacy = catalogue > 0.5;
+    // atmospheric extinction: stars dim and vanish towards the horizon
+    let airmass = 1.0 / (d.z + 0.025);
+    let extinction = select(exp(-0.3 * (airmass - 1.0)), 1.0, legacy);
+    let glow = dot(background, vec3<f32>(0.2126, 0.7152, 0.0722)) / 0.045;
+    let glow2 = glow * glow;
+    let glare = select(1.0 / (1.0 + glow2 * glow2), 1.0, legacy);
+    // daylight, or right on the horizon: nothing would show
+    if (gain * extinction * glare < 0.003) {
+        return vec3<f32>(0.0);
+    }
+    // the pixel's footprint in the catalogue's frame
+    let ax = vec3<f32>(dot(frame.sky_stars[0].xyz, foot.across), dot(frame.sky_stars[1].xyz, foot.across), dot(frame.sky_stars[2].xyz, foot.across));
+    let ay = vec3<f32>(dot(frame.sky_stars[0].xyz, foot.down), dot(frame.sky_stars[1].xyz, foot.down), dot(frame.sky_stars[2].xyz, foot.down));
+    let ax2 = max(dot(ax, ax), 1e-14);
+    let ay2 = max(dot(ay, ay), 1e-14);
+    let pixel = sqrt(max(ax2, ay2));
+    let t = frame.camera_pos.w;
+    let cell = select(0u, STAR_CELL_TABLE, legacy) + star_cell(q);
+    let first = star_sky.cells[cell];
+    let last = min(star_sky.cells[cell + 1u], first + STAR_MAX_PER_CELL);
+    var sum = vec3<f32>(0.0);
+    for (var i = first; i < last; i++) {
+        let s = star_sky.stars[i];
+        // the star's offset from this pixel, in this pass's pixels
+        let off = s.pos.xyz - q;
+        let px = dot(off, ax) / ax2;
+        let py = dot(off, ay) / ay2;
+        // the real stars' size is in pixels; the Legacy Viewer's is an
+        // angle in the sky (stars.rs legacy_sigma), at least 0.75 px wide
+        let sigma = select(s.color.w, max(s.color.w / pixel, 0.75), legacy);
+        let r2 = (px * px + py * py) / (sigma * sigma);
+        // stars are listed in the cells within STAR_MARGIN only: on coarse
+        // targets (reflection probes) the widest points are cut there
+        let reach = STAR_MARGIN / (pixel * sigma);
+        let reach2 = reach * reach;
+        // the bright stars' soft glow, four times wider (the eye's
+        // scattering, as on a photograph of the sky)
+        if (s.pos.w > 0.3 && r2 < min(144.0, reach2)) {
+            sum += s.color.rgb * (s.pos.w - 0.3) * 0.05 * exp(-0.5 * r2 / 16.0);
+        }
+        if (r2 < min(9.0, reach2)) {
+            // scintillation: slow and slight overhead, stronger low down
+            // (the Legacy Viewer's stars flicker, starsF.glsl twinkle)
+            let seed = hash3(floor(s.pos.xyz * 4096.0));
+            let depth = select(mix(0.35, 0.05, clamp(d.z * 2.0, 0.0, 1.0)), 0.4, legacy);
+            let wave = sin(t * (2.3 + 3.1 * seed) + seed * 40.0) * sin(t * (0.9 + 1.3 * seed) + seed * 17.0);
+            sum += s.color.rgb * s.pos.w * exp(-0.5 * r2) * (1.0 + depth * wave);
+        }
+    }
+    // Preferences › "Star brightness" (1 for the Legacy Viewer's stars)
+    var col = sum * max(frame.sky_stars[2].w, 0.0);
+    if (frame.sky_stars[1].w > 0.0) {
+        col += milky_way(q, ax, ay, pixel) * frame.sky_stars[1].w;
+    }
+    return col * gain * extinction * glare;
 }
 
 // Textured (or analytic) disc of a heavenly body; rgb premultiplied, a coverage.
@@ -80,7 +389,23 @@ fn sky_halo(d: f32) -> vec3<f32> {
     return sample_tex_level(slot, vec2<f32>(0.0, 1.0 - v), 0.0).rgb * ice;
 }
 
+// The sky seen along a ray whose own footprint is not known (bent by the
+// water, reflected): the size of the view's middle pixel, laid at right
+// angles to the ray. The middle pixel's own axes would lie along a ray far
+// from the view and draw its stars as dashes.
 fn sky_full(dir: vec3<f32>) -> vec3<f32> {
+    let centre = sky_ray(vec2<f32>(0.0));
+    let middle = sky_footprint(vec2<f32>(0.0), centre);
+    let d = normalize(dir);
+    let side = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(d.z) > 0.9);
+    let u = normalize(cross(side, d));
+    var foot: SkyFootprint;
+    foot.across = u * length(middle.across);
+    foot.down = cross(d, u) * length(middle.down);
+    return sky_full_at(dir, foot);
+}
+
+fn sky_full_at(dir: vec3<f32>, foot: SkyFootprint) -> vec3<f32> {
     let d = normalize(dir);
     let a = atmos_eval(d, false);
     // skyF.glsl: added to the haze color before its x 2, under the clouds
@@ -90,15 +415,8 @@ fn sky_full(dir: vec3<f32>) -> vec3<f32> {
     c = mix(c, clouds.rgb, clouds.a);
     var col = srgb_to_linear(c) * frame.sky_cloud_pd2.w;
     let cover = 1.0 - clouds.a;
-    // stars
-    let sun_up = frame.sky_sun.z;
-    let night = clamp(-sun_up * 4.0, 0.0, 1.0);
-    if (night > 0.0 && d.z > 0.0) {
-        let cell = floor(d * 300.0);
-        let h = hash3(cell);
-        let star = step(0.9975, h) * night * d.z * (frame.sky_misc.w / 250.0);
-        col += vec3<f32>(star * 2.0) * cover;
-    }
+    // stars and Milky Way (above), behind the clouds
+    col += sky_stars(d, col, foot) * cover;
     // moon
     if (frame.tex_slots.z != 0u) {
         let m = body_disc(d, frame.sky_moon.xyz, 0.035 * frame.sky_moon.w, frame.tex_slots.z);
@@ -120,9 +438,23 @@ fn sky_full(dir: vec3<f32>) -> vec3<f32> {
 fn sky_pixel(in: SkyOut) -> vec4<f32> {
     // from the camera, not region positions minus the camera: those rounded
     // differently each frame and the sky shook as it moved (#1059)
-    let w = frame.inv_view_proj_rot * vec4<f32>(in.ndc, 0.5, 1.0);
-    let dir = normalize(w.xyz / w.w);
-    var col = sky_full(dir);
+    let dir = sky_ray(in.ndc);
+    // Under the rim of the dome a probe's capture has no sky: LLVOWLSky::calcPhi
+    // ends the dome at pi/8 from its apex, and LLDrawPoolWLSky::renderDome
+    // lowers it by the dome offset (about 5.4 degrees under the horizon by
+    // default). The Legacy Viewer's captures draw the water there; Aurora's have
+    // no water pass, so this stands in for the open sea around the terrain: the
+    // sky in the mirror, by a Fresnel term. Haze here lit the sides of everything
+    // outdoors; black left a band the Legacy Viewer does not have.
+    if ((frame.light_mode.z & PROBE_CAPTURE_DOME) != 0u) {
+        let rim_up = 0.92387953 - frame.sky_misc.x;
+        let d = normalize(dir);
+        if (d.z < rim_up / sqrt(0.14644661 + rim_up * rim_up)) {
+            let fresnel = 0.02 + 0.98 * pow(1.0 - min(abs(d.z), 1.0), 5.0);
+            return vec4<f32>(sky_color(vec3<f32>(d.x, d.y, abs(d.z))) * fresnel, 1.0);
+        }
+    }
+    var col = sky_full_at(dir, sky_footprint(in.ndc, dir));
     if (camera_underwater()) {
         let wf = water_fog_view(dir * 512.0, frame.water_normal.w);
         col = col * wf.transmission + wf.color;
@@ -195,7 +527,7 @@ fn vs_terrain(in: VsIn) -> TerrainOut {
     let model = eye_model(rec, in);
     let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: TerrainOut;
-    out.clip = frame.eye_view_proj * ep;
+    out.clip = eye_clip(rec, ep);
     // (lighting, shadows and fog keep region coordinates)
     out.world_pos = ep.xyz + frame.eye.xyz;
     out.normal = vertex_normal(rec, in);
@@ -213,10 +545,10 @@ fn vs_terrain_pbr(in: VsIn) -> TerrainPbrOut {
     let model = eye_model(rec, in);
     let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: TerrainPbrOut;
-    out.clip = frame.eye_view_proj * ep;
+    out.clip = eye_clip(rec, ep);
     out.world_pos = ep.xyz + frame.eye.xyz;
     out.normal = vertex_normal(rec, in);
-    let raw = vec4<f32>(terrain_direction(vec4<u32>(round(in.weights * 255.0))), in.normal.w);
+    let raw = vec4<f32>(terrain_tangent(in.weights), in.normal.w);
     out.tangent0 = terrain_transform_tangent(records[rec.tex.x], out.normal, raw);
     out.tangent1 = terrain_transform_tangent(records[rec.tex.y], out.normal, raw);
     out.tangent2 = terrain_transform_tangent(records[rec.tex.z], out.normal, raw);
@@ -606,7 +938,9 @@ fn fs_terrain_depth(in: TerrainPbrOut) {
 @fragment
 fn fs_terrain_depth_normal(in: TerrainPbrOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     terrain_depth_mask(in);
-    return depth_normal(in.normal, front);
+    // the terrain stays put: the camera's motion alone
+    let ep = vec4<f32>(in.world_pos - frame.eye.xyz, 1.0);
+    return depth_normal(in.normal, front, frame.motion_vp * ep, frame.motion_prev_vp * ep, 0.0);
 }
 
 // Picking gives the region metres as the surface coordinates of a hit (the
@@ -834,6 +1168,34 @@ fn water_underside(surface:vec3<f32>,level:f32,incident:vec3<f32>,normal:vec3<f3
     return mix(transmitted,reflected,reflectance)*fog.transmission+fog.color;
 }
 
+// A unit vector, or straight up when `v` has no length: a normal scale of
+// 0 (a valid EEP value) leaves the waves flat, and normalize(0) gives NaN,
+// which turned the whole surface white or black.
+fn water_unit(v: vec3<f32>) -> vec3<f32> {
+    let l = length(v);
+    if (!(l > 1e-6)) { return vec3<f32>(0.0, 0.0, 1.0); }
+    return v / l;
+}
+
+// pbrPunctual (deferredUtil.glsl) for the water: metallic 1, so no diffuse;
+// returns clamp(nl x specContrib, 0, 10), before the light, shadow and haze.
+fn legacy_water_punctual(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32, specular: vec3<f32>) -> vec3<f32> {
+    let perceptual = max(roughness, 8.0 / 255.0);
+    let a = perceptual * perceptual;
+    let reflectance90 = clamp(max(max(specular.r, specular.g), specular.b) * 25.0, 0.0, 1.0);
+    let h = normalize(l + v);
+    let nl = clamp(dot(n, l), 0.001, 1.0);
+    let nv = clamp(abs(dot(n, v)), 0.001, 1.0);
+    let nh = clamp(dot(n, h), 0.0, 1.0);
+    let vh = clamp(dot(v, h), 0.0, 1.0);
+    let f = specular + (vec3<f32>(reflectance90) - specular) * pow(1.0 - vh, 5.0);
+    let a2 = a * a;
+    let g = 2.0 * nl / (nl + sqrt(a2 + (1.0 - a2) * nl * nl)) * (2.0 * nv / (nv + sqrt(a2 + (1.0 - a2) * nv * nv)));
+    let dd = (nh * a2 - nh) * nh + 1.0;
+    let d = a2 / (PI * dd * dd);
+    return clamp(nl * (f * g * d / (4.0 * nl * nv)), vec3<f32>(0.0), vec3<f32>(10.0));
+}
+
 fn water_pixel(in: WaterOut) -> vec4<f32> {
     if(water_excluded(in.world_pos)){discard;}
     if(water_fx_on(1u) || water_fx_on(16u)) {
@@ -876,7 +1238,28 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         let micro=water_micro(in.world_pos.xy,frame.camera_pos.w,water_fx.counts.w,footprint);
         let detail=clamp(length(frame.water_normal.xy)*0.35,0.5,1.5);
         n=normalize(vec3<f32>((n.xy*0.18-micro.xy*detail)*furrow,1.0)+water_fx_normal(in.world_pos.xy,in.level,wake.xy));
-    } else { n=normalize(n+water_fx_normal(in.world_pos.xy,in.level,wake.xy)); }
+    } else { n=water_unit(n+water_fx_normal(in.world_pos.xy,in.level,wake.xy)); }
+    // waterF.glsl: the reflection follows the waves scaled by the EEP normal
+    // scale (wave_ibl), the sun glint the unscaled waves flattened with
+    // distance (enhanced water off). With a normal scale of 0, wave_ibl is
+    // normalize(0), NaN on the GPU, and what follows depends on the driver:
+    // NaN through mix/max, or a probe lookup giving 0. We take the latter:
+    // the water keeps its refraction and fog and loses its reflection,
+    // which is what the reported region shows in the Legacy Viewer (a flat,
+    // dark sea) and what its creator chose. That rule holds with enhanced
+    // water on too: its own normals would otherwise mirror the sky.
+    // legacy_water: no enhanced effect at all (the master switch off gives
+    // no flag; bit 1 alone is only its Waves option)
+    let legacy_water = water_fx.counts.z == 0u;
+    var wave_ibl = wavef * frame.water_normal.xyz;
+    wave_ibl.z *= 2.0;
+    let legacy_reflects = length(wave_ibl) > 1e-6;
+    var legacy_glint_n = n;
+    if (legacy_water) {
+        let vdu = clamp(-view_vec.z * 2.0, 0.0, 1.0);
+        let up_bias = max(dist, 32.0) / 32.0 * (1.0 - vdu);
+        legacy_glint_n = water_unit(water_unit(wavef) + vec3<f32>(0.0, 0.0, up_bias));
+    }
 
     // Below water, transmit the world through the moving Snell window and
     // reflect the submerged scene at grazing angles. The sky itself is unchanged.
@@ -893,7 +1276,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     var df3 = max(vec3<f32>(0.0), vec3<f32>(
         dot(view_vec, wave1), dot(view_vec, (wave2 + wave3) * 0.5), dot(view_vec, wave3)) * fs + vec3<f32>(fo));
     df3 *= df3;
-    let df2 = max(vec2<f32>(0.0), vec2<f32>(df3.x + df3.y + df3.z, dot(view_vec, normalize(wavef)) * fs + fo));
+    let df2 = max(vec2<f32>(0.0), vec2<f32>(df3.x + df3.y + df3.z, dot(view_vec, water_unit(wavef)) * fs + fo));
 
     // refraction of the scene behind the surface
     let dmod = sqrt(dist);
@@ -936,11 +1319,25 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     } else { fb = fb * wf.transmission + wf.color; }
 
     // reflection: planar texture, screen-space rays, or the sky
-    let r = reflect(view_vec, normalize(mix(vec3<f32>(0.0, 0.0, 1.0), n, 0.6)));
-    var radiance = sky_color(vec3<f32>(r.x, r.y, abs(r.z)));
+    var r = reflect(view_vec, normalize(mix(vec3<f32>(0.0, 0.0, 1.0), n, 0.6)));
+    // the direction the sky and the probes are read along: kept above the
+    // horizon for Aurora's softened normal; along wave_ibl's ray as it is,
+    // as doProbeSample reads it. A steep facet then reflects the probe's
+    // lower half, not the sky flipped up, which put a second sun on the
+    // water beside the glint (the Legacy Viewer shows one)
+    var sky_dir = vec3<f32>(r.x, r.y, abs(r.z));
+    if (legacy_water && legacy_reflects) {
+        r = reflect(view_vec, normalize(wave_ibl));
+        sky_dir = r;
+    }
+    var radiance = sky_color(vec3<f32>(sky_dir.x, sky_dir.y, abs(sky_dir.z)));
     if (probes_on()) {
         // without a planar reflection the water reflects its probes
-        let s = sample_probes_water(in.world_pos, in.clip.xy, vec3<f32>(r.x, r.y, abs(r.z)), 0.0);
+        // as blurred as the EEP asks (doProbeSample: lod = (1 - gloss) x
+        // max lod, gloss = 1 - blur_multiplier): a sharp sun disc and haze
+        // at lod 0 whitened the surface
+        let lod = clamp(frame.water_params.w, 0.0, 1.0) * probe_max_lod();
+        let s = sample_probes_water(in.world_pos, in.clip.xy, sky_dir, lod);
         if (s.w > 0.0) {
             radiance = s.rgb;
         }
@@ -953,6 +1350,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         radiance = mix(radiance, hit.rgb, hit.a);
     }
     if (!water_fx_on(512u)) { radiance *= df2.y; }
+    if (!legacy_reflects) { radiance = vec3<f32>(0.0); }
 
     // sun glint (punctual light, roughness = blur multiplier)
     let l = normalize(frame.sun_dir.xyz);
@@ -961,21 +1359,31 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     var rough=clamp(frame.water_params.w,0.02,1.0);
     if(water_fx_on(1u)){rough=clamp(rough*0.65+footprint*0.06,0.035,0.25);}
     rough=mix(rough,0.055,smoothstep(0.004,0.045,-wake.z)*0.65);
-    let nh = max(dot(n, h), 0.0);
-    let nl = max(dot(n, l), 0.0);
-    let spec = d_ggx(nh, rough * rough) * v_smith(max(dot(n, vv), 1e-3), nl, rough * rough) * nl;
+    let gn = select(n, legacy_glint_n, legacy_water);
     let shadow = shadow_factor(in.world_pos, vec3<f32>(0.0, 0.0, 1.0), dist);
-    // a sky with a probe ambiance: waterF.glsl's sunlit_linear (env.rs keeps
-    // it x 3 for the surfaces)
-    let sun_light = select(frame.sun_color.rgb, frame.sun_color.rgb / 3.0, frame.sky_ll.x < 0.5);
-    let punctual = clamp(spec * sun_light * shadow, vec3<f32>(0.0), vec3<f32>(10.0));
+    // waterF.glsl: punctual = clamp(nl x (diffPunc + specPunc), 0, 10) x
+    // sunlit_linear x shadow x atten, metallic 1 (no diffuse), roughness the
+    // blur multiplier, F0 the `specular` uniform (LLDrawPoolWater: the
+    // light's colour normalized, x (1.5 + 6 x its horizontal part squared),
+    // made linear). The sun colour used to multiply the highlight before the
+    // clamp: its faint tail became a second, larger sun beside the reflected
+    // one (the Legacy Viewer shows one).
+    let light_rgb = frame.sky_obj_light.rgb;
+    let light_hue = select(vec3<f32>(0.0), light_rgb / max(length(light_rgb), 1e-6), dot(light_rgb, light_rgb) > 0.0);
+    let spec_color = srgb_to_linear(light_hue * (1.5 + 6.0 * dot(l.xy, l.xy)));
+    let perceptual = select(rough, frame.water_params.w, legacy_water);
+    let atm = ll_atmos(in.world_pos - frame.camera_pos.xyz);
+    // calcAtmosphericVarsLinear: sunlit made linear only on a sky with a
+    // probe ambiance, then x sky_sunlight_scale (1.5)
+    let sunlit_linear = select(srgb_to_linear(atm.sunlit), atm.sunlit, frame.sky_ll.x > 0.5) * 1.5;
+    let punctual = legacy_water_punctual(gn, vv, l, perceptual, spec_color) * sunlit_linear * shadow * atm.atten;
 
     var reflectance = min(1.0,df2.x);
     var glint = punctual;
     if (water_fx_on(512u)) {
+        // (the glint has its own fresnel, F of pbrPunctual)
         let cos_i = clamp(dot(n,vv),0.0,1.0);
         reflectance = 0.02037+0.97963*pow(1.0-cos_i,5.0);
-        glint *= 0.02037+0.97963*pow(1.0-max(dot(vv,h),0.0),5.0);
     }
     var color = mix(fb, radiance, reflectance) + glint;
     color = mix(fb, color, min(1.0, fade * 60.0));
@@ -1023,12 +1431,27 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
         }
         color=mix(color,max(foam_light,vec3<f32>(0.0)),foam*0.9);
     }
+    // waterF.glsl: frag_color = min(vec4(1), max(color, vec4(0))). The
+    // surface never goes past white before the exposure, and a value that is
+    // not a number does not spread through the bloom.
+    color = clamp(select(color, vec3<f32>(0.0), color != color), vec3<f32>(0.0), vec3<f32>(1.0));
     // The upper face is viewed through air. Opaque source water fog was
     // removed above; do not add another fictitious submerged interval here.
     if(camera_underwater()) {
         let fog=water_fog_view(rel,frame.water_normal.w);
         color=color*fog.transmission+fog.color;
-    } else {color=apply_air_fog(color,in.world_pos);}
+    } else {
+        // The Legacy air haze, enhanced water or not: waterF.glsl has none of
+        // its own, but the water writes depth and doAtmospherics runs after
+        // it (renderGeomPostDeferred: "just before post water alpha"), so
+        // hazeF.glsl blends over the surface, on every sky. Aurora's classic
+        // air fog (a mix to a fog colour) made that colour near white under
+        // a hazy, bright classic sky. Through ll_haze, as the objects beside
+        // it (hazeF.glsl's blend uses atten.r, ll_haze the whole atten:
+        // TASKS.md), with calcAtmosphericVars in hazeF's eye space
+        // (ll_atmos_eye): in world space its glow put a second sun on the sea.
+        color = ll_haze(color, ll_atmos_eye(in.world_pos - frame.camera_pos.xyz));
+    }
     return vec4<f32>(color, 1.0);
 }
 

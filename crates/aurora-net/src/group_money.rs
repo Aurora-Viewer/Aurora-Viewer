@@ -25,15 +25,8 @@ const CATEGORY_ANY: i8 = -1;
 pub const INTERVAL_DAYS: i32 = 7;
 pub const MAX_INTERVAL: i32 = 8;
 
-/// Transaction types named in the sales (lltransactiontypes.h).
-pub mod trans {
-    pub const OBJECT_SALE: i32 = 5000;
-    pub const GIFT: i32 = 5001;
-    pub const LAND_PASS_SALE: i32 = 5006;
-    pub const PAY_OBJECT: i32 = 5008;
-    pub const EVENT_FEE: i32 = 9003;
-    pub const EVENT_PRIZE: i32 = 9004;
-}
+/// Transaction types named in the sales.
+pub use crate::trans;
 
 /// One parcel of the group (a QueryData block of PlacesReply).
 #[derive(Debug, Clone, PartialEq)]

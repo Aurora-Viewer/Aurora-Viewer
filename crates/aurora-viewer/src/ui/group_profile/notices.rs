@@ -59,7 +59,7 @@ pub fn attachable(world: &World, id: Uuid) -> Option<Uuid> {
     if item.asset_type == AT_LINK {
         item = inv.items.get(&item.asset_id)?;
     }
-    let perms = item.owner_mask;
+    let perms = crate::world::inventory::actions::held(inv, item);
     if perms & COPY == 0 || perms & TRANSFER == 0 {
         return None;
     }
@@ -429,12 +429,12 @@ fn compose(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, ac
                 job.append(&aurora_i18n::tr!("ui-group-notices-new").to_uppercase(), 0.0, format);
                 ui.label(job);
             });
-            ui.add(
-                egui::TextEdit::singleline(&mut draft.subject)
+            widgets::restricted_text_field(ui, true, &mut draft.subject, widgets::TextPolicy::Ascii, |b, _| {
+                egui::TextEdit::singleline(b)
                     .hint_text(aurora_i18n::tr!("ui-group-notices-subject"))
                     .char_limit(63)
-                    .desired_width(f32::INFINITY),
-            );
+                    .desired_width(f32::INFINITY)
+            });
             let mut message = egui::TextEdit::multiline(&mut draft.message)
                 .hint_text(aurora_i18n::tr!("ui-group-notices-message"))
                 .char_limit(511)

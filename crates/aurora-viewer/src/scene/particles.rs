@@ -328,6 +328,7 @@ impl ParticleManager {
         eye: Vec3,
         max_particles: usize,
         draw_distance: f32,
+        attached: bool,
         filters: &crate::world::particle_filters::ParticleFilters,
         out: &mut Vec<ParticleInstance>,
         parts: &mut Parts,
@@ -410,7 +411,10 @@ impl ParticleManager {
             let blocked = (!s.cloud && filters.hides(s.object, s.owner))
                 || previewed == Some(*id)
                 || world.particles_blocked(&s.owner)
-                || idx.is_some_and(|idx| !world.parcel_object_visible(idx) || !crate::snapshot::isolate::object_visible(world, idx));
+                || idx.is_some_and(|idx| !world.parcel_object_visible(idx) || !crate::snapshot::isolate::object_visible(world, idx))
+                // RenderAttachedParticles off: what avatars wear emits
+                // nothing (LLViewerPartSim::updateSimulation, isAttachment)
+                || (!attached && idx.and_then(|i| world.objects.get(i)).is_some_and(|o| o.is_attachment()));
             if blocked {
                 // Clear existing particles too, even if the emitter has gone
                 // out of view. Local filters must take effect immediately.
@@ -483,7 +487,7 @@ impl ParticleManager {
         self.inst_tmp.clear();
         self.order_tmp.clear();
         for s in self.sources.values() {
-            let slot = if s.texture.is_nil() || !textures.is_loaded(&s.texture) {
+            let slot = if s.texture.is_nil() || !(textures.is_loaded(&s.texture) || textures.is_local(&s.texture)) {
                 0
             } else {
                 s.slot

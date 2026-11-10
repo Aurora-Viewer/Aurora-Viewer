@@ -71,6 +71,7 @@ mod tests {
         w.ensure_region(handle, (256, 256));
         w.apply(NetEvent::SimulatorFeatures {
             handle,
+            animated_object_max_tris: 0,
             voice_server_type: String::new(),
             avatar_hover_height: false,
             materials_rate: None,
@@ -78,6 +79,10 @@ mod tests {
             lsl_syntax_id: id,
             grid_status_feed: String::new(),
             grid_status_page: String::new(),
+            currency_base_uri: String::new(),
+            opensim: Default::default(),
+            currency_symbol: String::new(),
+            export_supported: false,
         });
         w
     }

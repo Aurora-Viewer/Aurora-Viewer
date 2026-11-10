@@ -80,7 +80,7 @@ impl ThumbnailUi {
             return;
         }
         let asset = image(&world.inventory, item);
-        let ready = self.pending.is_none() && !mutation_pending && rules::mutable(&world.inventory, item, &prefs.protected);
+        let ready = self.pending.is_none() && !mutation_pending && rules::mutable(&world.inventory, item);
         let position = ctx.content_rect().center() - egui::vec2(360.0, 200.0);
         let mut open = true;
         let mut caption = String::new();
@@ -133,7 +133,10 @@ impl ThumbnailUi {
                 ) {
                     self.picker_open = true;
                     self.selected = (!asset.is_nil()).then_some(asset);
-                    self.uuid_text = asset.to_string();
+                    // the picker's UUID field, as LLFloaterTexturePicker
+                    // writes it: zeros unless the asset id rule allows it
+                    let shown = crate::world::inventory::asset_ids::AssetIds::of(world).shown(&asset);
+                    self.uuid_text = if shown { asset } else { Uuid::nil() }.to_string();
                     self.filter.clear();
                 }
                 if toolbar_button(
@@ -144,8 +147,11 @@ impl ThumbnailUi {
                     !asset.is_nil(),
                     &mut caption,
                 ) {
-                    ctx.copy_text(asset.to_string());
-                    actions.push(InvAction::ThumbnailCopied(asset));
+                    let clipboard = crate::world::inventory::asset_ids::AssetIds::of(world).shown(&asset);
+                    if clipboard {
+                        ctx.copy_text(asset.to_string());
+                    }
+                    actions.push(InvAction::ThumbnailCopied { asset, clipboard });
                 }
                 if toolbar_button(
                     ui,
@@ -280,7 +286,7 @@ impl ThumbnailUi {
                                 let query = self.filter.trim().to_lowercase();
                                 if query.is_empty() {
                                     let root = world.inventory.root;
-                                    picker_folder(ui, p, icons, &mut world.inventory, &order, root, 0, &mut self.selected);
+                                    picker_folder(ui, p, icons, &mut world.inventory, &order, root, 0, &mut self.selected, prefs);
                                 } else {
                                     let mut items: Vec<_> = world
                                         .inventory
@@ -399,7 +405,17 @@ pub(crate) fn usable(inv: &Inventory, it: &aurora_net::inventory::InvItem) -> bo
     it.asset_type == 0
         && !it.asset_id.is_nil()
         && !rules::in_type(inv, it.id, 14)
-        && (rules::library(inv, it.id) || it.owner_mask & (rules::COPY | rules::TRANSFER) == rules::COPY | rules::TRANSFER)
+        && (rules::library(inv, it.id) || rules::held(inv, it) & (rules::COPY | rules::TRANSFER) == rules::COPY | rules::TRANSFER)
+}
+/// A texture id that may become an item image (pasted, typed or picked):
+/// a built-in or local texture, any id in demo mode, or the asset of a
+/// texture in the inventory that allows copying and transfer (`usable`).
+pub(crate) fn image_source_allowed(inv: &Inventory, asset: &Uuid, local: bool, demo: bool) -> bool {
+    !asset.is_nil()
+        && (crate::world::inventory::asset_ids::built_in(asset)
+            || demo
+            || local
+            || inv.items.values().any(|it| it.asset_id == *asset && usable(inv, it)))
 }
 #[allow(clippy::too_many_arguments)]
 fn picker_folder(
@@ -411,6 +427,7 @@ fn picker_folder(
     id: Uuid,
     depth: usize,
     selected: &mut Option<Uuid>,
+    prefs: &InventoryPreferences,
 ) {
     if depth > 24 {
         return;
@@ -439,7 +456,8 @@ fn picker_folder(
         .show_header(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                icon(ui, icons, folder_icon(folder.info.type_default, folder_open), p);
+                let tint = super::folder_colors::tint(prefs, id);
+                tree::icon(ui, icons, folder_icon(folder.info.type_default, folder_open), p, tint);
                 ui.label(RichText::new(name).color(p.ink));
             });
         })
@@ -447,7 +465,7 @@ fn picker_folder(
             inv.request(id);
             for &item in order.children(id) {
                 if inv.folders.contains_key(&item) {
-                    picker_folder(ui, p, icons, inv, order, item, depth + 1, selected);
+                    picker_folder(ui, p, icons, inv, order, item, depth + 1, selected, prefs);
                 } else if let Some(it) = inv.items.get(&item)
                     && usable(inv, it)
                 {
@@ -486,6 +504,38 @@ fn toolbar_button(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, enabled
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_item_image_comes_from_a_copy_and_transfer_texture_built_in_local_or_demo() {
+        let mut inv = Inventory::default();
+        let root = Uuid::from_u128(1);
+        inv.root = root;
+        let (open, no_transfer, unknown) = (Uuid::from_u128(0x61), Uuid::from_u128(0x62), Uuid::from_u128(0x63));
+        inv.add_items(vec![
+            aurora_net::inventory::InvItem {
+                id: Uuid::from_u128(0x71),
+                parent: root,
+                asset_id: open,
+                asset_type: 0,
+                owner_mask: rules::COPY | rules::TRANSFER,
+                ..Default::default()
+            },
+            aurora_net::inventory::InvItem {
+                id: Uuid::from_u128(0x72),
+                parent: root,
+                asset_id: no_transfer,
+                asset_type: 0,
+                owner_mask: rules::COPY,
+                ..Default::default()
+            },
+        ]);
+        assert!(image_source_allowed(&inv, &open, false, false));
+        assert!(!image_source_allowed(&inv, &no_transfer, false, false), "copy without transfer");
+        assert!(!image_source_allowed(&inv, &unknown, false, false), "not in the inventory");
+        assert!(image_source_allowed(&inv, &unknown, true, false), "a local texture");
+        assert!(image_source_allowed(&inv, &unknown, false, true), "demo mode");
+        assert!(!image_source_allowed(&inv, &Uuid::nil(), false, true));
+    }
 
     #[test]
     fn open_thumbnail_picker_tracks_inventory_order_in_tree_and_search() {

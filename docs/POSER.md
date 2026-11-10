@@ -82,6 +82,10 @@ poser. Poses affect only this viewer, including poses of other residents.
 
 ## Library and files
 
+Save reports the saved file’s full path. Load > Pose library opens the saved
+poses directly; its Open folder button opens their directory in the file manager.
+File pickers start in that same directory.
+
 Save writes a named `*.aurora-pose.json` under the current account's local
 `poses/` directory. It retains rotation, relative translation, scale and
 world-lock flags, without subject IDs, avatar names or world coordinates.
@@ -99,6 +103,17 @@ are All, Rotations only, Unedited joints and Selective rotations. Selective
 loads preserve joints already edited in the current pose. Loading finishes
 on the subject originally chosen, even if the picker changes during I/O.
 World locks are reanchored to the destination subject.
+
+Files and uploads contain what you authored, as in the Legacy Viewer
+(`FSPoserAnimator::getJointExportRotation`, `FSFloaterPoser::savePoseToXml`):
+the pose captured when posing starts is what the changes apply to, and stays
+out of them. **T-pose** clears it, so a pose built from there is saved
+complete; a hand preset or a loaded file does the same for its joints. Reset
+brings the captured pose back, and undo restores this state with the pose.
+A pose document stores complete joints as they are and the others as changes,
+which apply to the destination's own pose (the Legacy Viewer's "Save Diff").
+Files saved before this are read as complete. BVH and uploads write the same
+changes on the rest skeleton: an untouched capture exports a T-pose.
 
 BVH export writes the actual skeleton hierarchy in inches and Y-up, with
 a reference frame and two identical posed frames. The pelvis-unlock setting
@@ -145,6 +160,12 @@ grouped Window (stop on close, confirm a close that loses the pose, DoF
 while posing), Handling (markers, natural
 alignment, trackball sensitivity) and Files (overwrite confirmation, BVH,
 pelvis unlock, priority), with the note on the formats' limits.
+
+The eye next to the gear hides or shows the joint markers and gizmos in one
+click, the same setting as Handling's switch: an open eye while they are
+shown, a struck-through one once hidden. It follows the Legacy Viewer's
+visual manipulators button (`FSFloaterPoser::onToggleVisualManipulators`);
+Aurora keeps the choice at the next opening.
 
 With stop on close, closing the window (its cross, Ctrl+W, the photo
 viewfinder's wand) loses the edited joints of every subject. When some are

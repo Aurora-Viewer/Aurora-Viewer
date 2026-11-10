@@ -72,6 +72,31 @@ a review or that left the queue.
     the latest `main`: what lands on `main` is exactly what was tested.
   A PR that only touches documentation or images passes in a minute (no
   build). A red cross = the agent fixes it.
+- **PR description check**: every PR's description must follow the
+  template (`.github/pull_request_template.md`): the issue line, and text
+  under What it is for, Legacy Viewer origin, What changes and Tests. When
+  one is missing, the PR description workflow posts a comment listing what
+  is missing (the PR panel shows `■ CHANGES ASKED`) and adds the
+  `needs-description` label; both go away as soon as the author edits the
+  description. An **outside contributor's** PR still incomplete 3 days
+  later is closed by the workflow's daily sweep (the author can reopen it
+  once it is complete); the team's PRs are never closed. So nobody reads a
+  PR before its author has said what it does and how it was tested.
+- **Review slots**: an outside contributor has at most **10 PRs in review**
+  at a time. The Review slots workflow gives the others the
+  `waiting-for-slot` label and a comment explaining why (they stay open as
+  they are; the PR panel hides them, like `on-hold`); when one of their PRs
+  in review is merged or closed, the oldest waiting one comes back to review
+  on its own, with a comment. To have a waiting PR reviewed first (its
+  author may ask in a comment), remove its label by hand: it takes a slot
+  and the author's newest other PR in review waits instead. PRs a
+  maintainer has started reviewing, or in the merge queue, keep their slot;
+  the team's PRs never wait. To see the
+  plan without changing anything: Actions › Review slots › Run workflow
+  (dry run ticked), or `./scripts/pr-slots.ps1 -Sweep -DryRun`.
+- **Outside contributors' CI** waits for a maintainer: on their PR, "Approve
+  and run" (look first that it does not change `.github/`). Review it only
+  once that CI is green and the description is complete.
 - **Labels**: each PR has a **type** (`feature`, `fix`, `performance`,
   `maintenance`, `docs`, and `breaking` if it breaks a compatibility), which
   files it in the release notes, and an **area** (`render`, `avatar`,
@@ -262,8 +287,12 @@ even from a prompt with delayed expansion.
 The active choice carries a **›** mark on a violet background; the text
 cursor stays hidden while navigating. Long lists scroll with the selection
 and the menus adapt when the console is resized. Creating a release splits
-the number, the cache and the settings into three screens, with the chosen
-version and a summary before confirmation.
+the number, the minimum version, the cache and the settings into four
+screens, with the chosen version and a summary before confirmation. The
+minimum version makes the update required for the versions below it: they
+can still log in for a grace period, then not before updating. A new
+minimum asks for that period: 12 hours usually, 24, 72 or 6 hours, or none
+for a release that cannot wait.
 
 When it opens, the tool checks the environment: tools, repository behind
 GitHub, outdated Legacy Viewer sources, Rust not up to date, font, GitHub
@@ -295,13 +324,22 @@ hidden Windows consoles and the restart on isolated temporary scripts.
 | Reset the repository | Start again from a fresh clone of the `main` of GitHub: the tool first lists everything that would be lost (uncommitted changes, commits never pushed, stashes, agents' tasks with their changes, ignored files such as a `.env`), refuses if a build or a viewer is running, and does nothing unless you type `RESET`. It then deletes the tasks of `work\` and `RELEASE\`, puts the repository back on `origin/main` (untracked files and builds erased, local branches and stashes deleted), then repairs the environment. Your git identity, your GitHub login and the Legacy Viewer sources are kept |
 
 **Live PRs.** As long as the tools are open, the bottom banner sums up the
-PRs ("PR: 3 open · 1 CI · 1 queued · 1 red"), and a **Windows notification**
+PRs ("PR: 3 to review · 2 waiting · 1 CI · 1 queued · 1 red", then the
+downloads of the latest stable release's Windows zip, "↓ 1 274 v0.8.4"), and a **Windows notification**
 reports a merged PR, a CI that turns red, a PR that left the merge queue, a
 new PR, or `main` breaking. The **PR tracking** panel (or the "Aurora PR"
-shortcut) has three sections: the **merge queue** (position and duration),
-the **open PRs** (CI with its running duration, verdict of the agent's
-review) and the **recently merged** ones (how long ago: "04 min"), with for
-each PR its author and its added and deleted lines (**+120** in green,
+shortcut) shows the same download count in its header, with how many since
+it opened ("(+12)"), and has four sections: the **merge queue** (position and duration),
+the PRs **ready to review / merge** (CI with its running duration, verdict of
+the agent's review), the PRs **waiting on the author** (dimmed, with why:
+`■ DRAFT`, `■ CI FAIL`, or `■ CHANGES ASKED` when a GitHub review requests
+changes or a comment opening with `## Maintainer review` or `## Changes
+requested` came after the last commit; a new commit of the author brings the
+PR back to review, a merge of main into the branch does not) and the **recently merged** ones (how long ago: "04 min"). A PR with
+the `on-hold` label (put on hold at a human's request, AGENTS.md section 9)
+is left out of the panel, the banner and the notifications until the label
+is removed, unless it is in the merge queue. Each section shows, for
+each PR, its author and its added and deleted lines (**+120** in green,
 **-8** in red). Each state is a tag preceded by a square of its colour:
 `■ CI OK` (green), `■ CI FAIL clippy` (red), `■ CI RUN 4:00` (amber),
 `■ QUEUE #1 TESTS`, `■ AUTO-MERGE`, `■ REVIEW OK`, `■ REVIEW WARN` (to
@@ -372,10 +410,13 @@ cargo run -p aurora-viewer
 
 ### Disk space
 
-Builds take space: count 3 to 4 GB per `target` folder (the repository, each
-task in progress, `RELEASE`). It is only cache, which can always be deleted:
-it will be rebuilt when needed. A new task frees by itself the `target` of
-the tasks that are merged or inactive for 7 days.
+Builds take space: count 5 to 20 GB per `target` folder (the repository, each
+task in progress, `RELEASE`), three quarters of it the `incremental` cache
+that only speeds up the next small rebuild of that task. It is only cache,
+which can always be deleted: it will be rebuilt when needed. A new task
+frees by itself the incremental cache of the tasks with no build for 24
+hours, and the whole `target` of the tasks that are merged or inactive for
+2 days.
 
 The **Disk** choice of the tools does the same as:
 
@@ -383,6 +424,7 @@ The **Disk** choice of the tools does the same as:
 ./scripts/clean.ps1                 # shows the space taken, deletes nothing
 ./scripts/clean.ps1 -Apply          # frees the builds of the repository (keeps target\release)
 ./scripts/clean.ps1 -Tasks -Apply   # also frees those of the tasks in progress
+./scripts/clean.ps1 -Incremental -Apply   # frees only the incremental caches of the tasks
 ```
 
 The script only deletes Cargo build folders, and refuses to work during a

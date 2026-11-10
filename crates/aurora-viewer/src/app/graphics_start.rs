@@ -7,6 +7,9 @@
 //! renderer cannot start: `LLUserWarningMsg::show(MBVideoDrvErr)` in
 //! LLViewerWindow's constructor (indra/newview/llviewerwindow.cpp), a native
 //! box asking to update or reinstall the video driver.
+//!
+//! A device lost during the start is no missing card but a crash, which ended
+//! in a Rust panic (#1892): the same box, and a crash report after it.
 
 /// The message box's title and text for that failure.
 pub(super) fn text(error: &str, log: &std::path::Path) -> (String, String) {
@@ -36,10 +39,12 @@ mod tests {
     #[test]
     fn the_message_names_the_error_and_the_log() {
         let log = std::path::Path::new("C:/logs/aurora.log");
-        let (title, body) = super::text("no Vulkan adapter can present to the window", log);
+        let (title, body) = super::text("Vulkan lists no graphics card", log);
         assert!(!title.is_empty());
-        assert!(body.contains("no Vulkan adapter can present to the window"));
+        assert!(body.contains("Vulkan lists no graphics card"));
         assert!(body.contains("aurora.log"));
+        assert!(body.contains("AMD"));
+        assert!(body.contains("NVIDIA"));
         // one paragraph per advice, not a single line
         assert!(body.lines().count() >= 5);
     }

@@ -137,11 +137,10 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
             .color(p.muted),
         );
         s.clean_time.sync(&parcel.other_clean_time.to_string());
-        let r = crate::ui::widgets::text_field(ui, any, &mut s.clean_time.text, |b, _| {
-            egui::TextEdit::singleline(b).desired_width(46.0)
-        });
-        // validateNonNegativeS32
-        s.clean_time.text.retain(|c| c.is_ascii_digit());
+        let r =
+            crate::ui::widgets::restricted_text_field(ui, any, &mut s.clean_time.text, crate::ui::widgets::TextPolicy::Digits, |b, _| {
+                egui::TextEdit::singleline(b).desired_width(46.0)
+            });
         if let Some(t) = s.clean_time.after(&r) {
             // onCommitClean: only a changed value is sent
             let minutes: i32 = t.parse().unwrap_or(0);
@@ -256,7 +255,7 @@ fn owners_list(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World
                     rows.sort_by(|a, b| {
                         let o = match col {
                             0 => a.0.is_group.cmp(&b.0.is_group),
-                            1 => a.1.to_lowercase().cmp(&b.1.to_lowercase()),
+                            1 => crate::natural_order::cmp(&a.1, &b.1),
                             2 => a.0.count.cmp(&b.0.count),
                             _ => a.0.most_recent.cmp(&b.0.most_recent),
                         };

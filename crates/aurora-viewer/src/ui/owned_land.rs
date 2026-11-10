@@ -43,14 +43,13 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, open: &mut bool
             let list = world.group_money.get(&Uuid::nil()).and_then(|g| g.parcels.as_ref());
             if let Some(list) = list {
                 let mut order: Vec<_> = list.iter().collect();
-                order.sort_by_cached_key(|v| v.name.to_lowercase());
+                order.sort_by_cached_key(|v| crate::natural_order::key(&v.name));
                 for parcel in order {
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
                             ui.set_width((ui.available_width() - 72.0).max(120.0));
                             ui.label(egui::RichText::new(&parcel.name).strong());
-                            let x = parcel.global_x.rem_euclid(256.0);
-                            let y = parcel.global_y.rem_euclid(256.0);
+                            let (x, y) = world.map.local_xy(f64::from(parcel.global_x), f64::from(parcel.global_y));
                             ui.label(format!("{} ({x:.0}, {y:.0})", parcel.sim_name));
                             ui.label(aurora_i18n::tr!(
                                 "owned-land-area",
@@ -66,11 +65,8 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, open: &mut bool
                             show_map = true;
                         }
                         if widgets::icon_button(ui, p, "world-filled", aurora_i18n::tr!("common-teleport"), true) {
-                            let pos = glam::Vec3::new(
-                                parcel.global_x.rem_euclid(256.0),
-                                parcel.global_y.rem_euclid(256.0),
-                                parcel.global_z,
-                            );
+                            let (x, y) = world.map.local_xy(f64::from(parcel.global_x), f64::from(parcel.global_y));
+                            let pos = glam::Vec3::new(x as f32, y as f32, parcel.global_z);
                             super::context::request(ctx, super::context::CtxAction::TeleportToPlace(parcel.sim_name.clone(), pos));
                         }
                     });
@@ -100,8 +96,10 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, open: &mut bool
             }
         });
     });
+    // LLFloaterLandHoldings::buttonCore: trackLocation, then the map opens
+    // centred on the parcel ("center")
     if let Some((x, y)) = map_destination {
-        world.map.track_location(x, y, agent_z, false);
+        world.map.show_location(x, y, agent_z);
     }
     if refresh {
         world.group_money.request_owned_land();

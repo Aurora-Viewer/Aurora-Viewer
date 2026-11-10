@@ -11,13 +11,15 @@ pub(crate) enum Target {
     Landmark(Uuid),
     /// Snapshot the actual arrival, independent of history edits or landmarks.
     History(DVec3),
+    /// Directory identity, retained while ParcelInfoReply supplies its arrival.
+    Parcel(Uuid),
 }
 
 impl Target {
     pub(crate) fn item(self) -> Option<Uuid> {
         match self {
             Self::Landmark(item) => Some(item),
-            Self::History(_) => None,
+            Self::History(_) | Self::Parcel(_) => None,
         }
     }
 }
@@ -30,23 +32,24 @@ pub(crate) struct PlaceDrag {
     pub thumbnail: Option<egui::TextureId>,
 }
 
-pub(crate) struct HistoryDrag {
-    pub global: DVec3,
+pub(crate) struct LocationDrag {
+    pub target: Target,
     pub position: egui::Pos2,
     pub released: bool,
     pub shift: bool,
 }
 
-pub(crate) fn history_world_drag(ctx: &egui::Context) -> Option<HistoryDrag> {
-    let Target::History(global) = egui::DragAndDrop::payload::<PlaceDrag>(ctx)?.target else {
+pub(crate) fn location_world_drag(ctx: &egui::Context) -> Option<LocationDrag> {
+    let target = egui::DragAndDrop::payload::<PlaceDrag>(ctx)?.target;
+    if matches!(target, Target::Landmark(_)) {
         return None;
-    };
+    }
     if ctx.is_pointer_over_egui() {
         return None;
     }
     ctx.input(|i| {
-        Some(HistoryDrag {
-            global,
+        Some(LocationDrag {
+            target,
             position: i.pointer.interact_pos()?,
             released: i.pointer.button_released(egui::PointerButton::Primary),
             shift: i.modifiers.shift,

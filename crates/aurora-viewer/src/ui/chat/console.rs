@@ -12,8 +12,9 @@ use std::collections::{HashMap, HashSet};
 
 use egui::Color32;
 
-use super::{BubbleJob, JobLook, Link, bubble_link, bubble_sender_link, color_for, hhmm, line_extras, line_job, thread};
+use super::{BubbleJob, JobLook, Link, bubble_link, bubble_sender_link, hhmm, line_extras, line_job, thread};
 use crate::theme::Palette;
+use crate::ui::fonts::chat_size;
 use crate::world::{ChatKind, ChatLine, World};
 use aurora_net::ChatType;
 
@@ -61,6 +62,50 @@ fn alpha(seconds: f32, line: &ChatLine, now: std::time::SystemTime) -> f32 {
     ((seconds - age) / 3.0).clamp(0.0, 1.0)
 }
 
+/// Newest whole messages within the wrapped-text budget, in reading order,
+/// following LLConsole::draw (indra/llui/llconsole.cpp). Headers of Aurora's
+/// cards are presentation, not message text. Measure only until the budget
+/// is full; the renderer reuses egui's cached text layouts.
+pub(super) fn recent(
+    world: &World,
+    now: std::time::SystemTime,
+    seconds: f32,
+    max_lines: u32,
+    residents: bool,
+    mut rows: impl FnMut(&ChatLine) -> usize,
+) -> Vec<&ChatLine> {
+    let mut remaining = max_lines as usize;
+    let mut recent = Vec::new();
+    for line in world
+        .chat
+        .iter()
+        .rev()
+        .filter(|l| residents || !super::said_by_resident(l))
+        // Bound the look-back even when every recent message has expired.
+        .take(max_lines as usize)
+        .filter(|l| now.duration_since(l.time).map(|d| d.as_secs_f32() < seconds).unwrap_or(false))
+    {
+        let count = rows(line).max(1);
+        if count > remaining {
+            break;
+        }
+        recent.push(line);
+        remaining -= count;
+        if remaining == 0 {
+            break;
+        }
+    }
+    recent.reverse();
+    recent
+}
+
+/// Count the same bidi and emoji layout the line's painter uses, including
+/// explicit newlines, wrapping, link badges and the selected chat font.
+pub(super) fn rows(ctx: &egui::Context, line: &ChatLine, job: BubbleJob) -> usize {
+    let base = super::bidi_base(&job.name, &line.from);
+    ctx.fonts_mut(|f| crate::ui::bidi::layout(f, job.job, base).galley.rows.len())
+}
+
 /// The colour of a head's name: ours in the theme's teal, an object's in
 /// its kind's colour, a resident's in ink (the Conversations thread's).
 fn name_color(p: &Palette, line: &ChatLine, world: &World) -> Color32 {
@@ -87,23 +132,33 @@ pub(super) fn cards(
     wanted_pics: &mut HashSet<uuid::Uuid>,
     bottom: f32,
     seconds: f32,
+    max_lines: u32,
     times: bool,
     compact_automated: bool,
     residents: bool,
 ) {
     let now = std::time::SystemTime::now();
-    let mut recent: Vec<&ChatLine> = world
-        .chat
-        .iter()
-        .rev()
-        .filter(|l| residents || !super::said_by_resident(l))
-        .take(6)
-        .filter(|l| now.duration_since(l.time).map(|d| d.as_secs_f32() < seconds).unwrap_or(false))
-        .collect();
+    let recent = recent(world, now, seconds, max_lines, residents, |line| {
+        let small = super::object_row::compact(line, compact_automated);
+        let (width, size, look) = if small {
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            let time_w = if times {
+                super::object_row::time_galley(&painter, p, line).size().x + 5.0
+            } else {
+                0.0
+            };
+            let size = chat_size(ctx, super::object_row::TEXT);
+            let lead = time_w + if line.kind.is_notice() { super::pic_side(size) + 2.0 } else { 0.0 };
+            (WIDTH - 18.0 - lead, size, JobLook::Compact)
+        } else {
+            let width = WIDTH - 18.0 - if line.kind.is_notice() { 0.0 } else { PICTURE + GAP };
+            (width, chat_size(ctx, TEXT), JobLook::Body)
+        };
+        rows(ctx, line, line_job(ctx, line, p, world, want_names, width, size, false, look))
+    });
     if recent.is_empty() {
         return;
     }
-    recent.reverse();
     let mut links: Vec<(egui::Rect, Link, Color32)> = Vec::new();
     let mut names: Vec<(egui::Rect, &ChatLine)> = Vec::new();
     egui::Area::new(egui::Id::unique("chat_toasts"))
@@ -193,6 +248,12 @@ fn card<'a>(
 ) {
     let first = group[0];
     if first.kind.is_notice() {
+        // its time above it, as a card's head shows it (FSChatHistory::
+        // appendMessage stamps the system's lines too, #1999)
+        let time = hhmm(first.time);
+        if times && !time.is_empty() {
+            ui.label(egui::RichText::new(time).size(chat_size(ui.ctx(), 10.5)).color(p.muted_dim));
+        }
         body(
             ui,
             p,
@@ -218,7 +279,7 @@ fn card<'a>(
             ui.spacing_mut().item_spacing.y = 1.0;
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                let font = egui::FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
+                let font = egui::FontId::new(chat_size(ui.ctx(), 12.5), crate::ui::fonts::semibold(ui.ctx()));
                 let galley = ui
                     .painter()
                     .layout(first.from.clone(), font, name_color(p, first, world), text_w * 0.6);
@@ -232,7 +293,11 @@ fn card<'a>(
                 }
                 tags(ui, p, first);
                 if times {
-                    ui.label(egui::RichText::new(hhmm(first.time)).size(10.5).color(p.muted_dim));
+                    ui.label(
+                        egui::RichText::new(hhmm(first.time))
+                            .size(chat_size(ui.ctx(), 10.5))
+                            .color(p.muted_dim),
+                    );
                 }
             });
             for &line in group {
@@ -261,7 +326,7 @@ fn compact_card<'a>(
     names: &mut Vec<(egui::Rect, &'a ChatLine)>,
 ) {
     use egui::emath::GuiRounding as _;
-    let size = super::object_row::TEXT;
+    let size = chat_size(ui.ctx(), super::object_row::TEXT);
     ui.spacing_mut().item_spacing.y = 1.0;
     for &line in group {
         let fade = alpha(seconds, line, now) / card_alpha.max(0.01);
@@ -280,7 +345,17 @@ fn compact_card<'a>(
             badges,
             sender,
             name,
-        } = line_job(line, p, world, want_names, WIDTH - 18.0 - lead, size, false, JobLook::Compact);
+        } = line_job(
+            ui.ctx(),
+            line,
+            p,
+            world,
+            want_names,
+            WIDTH - 18.0 - lead,
+            size,
+            false,
+            JobLook::Compact,
+        );
         let base = super::bidi_base(&name, &line.from);
         let visual = ui.ctx().fonts_mut(|f| crate::ui::bidi::layout(f, job, base));
         let galley = visual.galley.clone();
@@ -367,13 +442,14 @@ fn body(
     fade: f32,
     links: &mut Vec<(egui::Rect, Link, Color32)>,
 ) {
+    let size = chat_size(ui.ctx(), TEXT);
     let BubbleJob {
         job,
         links: line_links,
         badges,
         name,
         ..
-    } = line_job(line, p, world, want_names, width, TEXT, false, JobLook::Body);
+    } = line_job(ui.ctx(), line, p, world, want_names, width, size, false, JobLook::Body);
     let base = super::bidi_base(&name, &line.from);
     let visual = ui.ctx().fonts_mut(|f| crate::ui::bidi::layout(f, job, base));
     let galley = visual.galley.clone();
@@ -381,10 +457,8 @@ fn body(
     let mut painter = ui.painter().clone();
     painter.multiply_opacity(fade);
     painter.galley(rect.min, galley.clone(), p.ink);
-    let col = crate::ui::colors::keyword_color(line)
-        .unwrap_or_else(|| color_for(line.kind, p))
-        .gamma_multiply(fade);
-    line_extras(ui, p, world, &visual, rect.min, TEXT, fade, badges, line_links, col, links);
+    let col = super::message_color(line, p, world).gamma_multiply(fade);
+    line_extras(ui, p, world, &visual, rect.min, size, fade, badges, line_links, col, links);
 }
 
 #[cfg(test)]
@@ -401,6 +475,120 @@ mod tests {
             source: uuid::Uuid::from_u128(source),
             origin: Origin::Live,
         }
+    }
+
+    /// Count painted text rows rather than messages, with each renderer's
+    /// actual widths, timestamp gutter and chat font scale. Older messages
+    /// leave as whole paragraphs when they no longer fit (LLConsole::draw).
+    #[test]
+    fn console_max_lines_counts_wrapping_in_both_styles() {
+        for (cards, pills) in [(true, false), (false, false), (false, true)] {
+            for (kind, compact) in [
+                (ChatKind::OWN, false),
+                (ChatKind::Object(ChatType::Normal), false),
+                (ChatKind::System, false),
+                (ChatKind::Object(ChatType::Normal), true),
+                (ChatKind::System, true),
+            ] {
+                for scale in [1.0, 1.5] {
+                    let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+                    for text in [
+                        "console-oldest".to_owned(),
+                        format!("console-wrapped {}\nconsole-newline", "a longer chat message that wraps ".repeat(8)),
+                        "console-newest".to_owned(),
+                    ] {
+                        let mut said = line(kind, "Nova", 1);
+                        said.text = text;
+                        world.chat.push_back(said);
+                    }
+                    let ctx = egui::Context::default();
+                    let theme = crate::theme::Theme::default();
+                    theme.apply(&ctx, 1.0);
+                    crate::ui::fonts::set_chat_scale(&ctx, scale, 1.0);
+                    let p = theme.palette();
+                    let draw = |limit| {
+                        let mut out = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 1000.0))),
+                                ..Default::default()
+                            },
+                            |ui| {
+                                super::super::toasts(
+                                    ui.ctx(),
+                                    &p,
+                                    &world,
+                                    &HashMap::new(),
+                                    &mut HashSet::new(),
+                                    &mut HashSet::new(),
+                                    900.0,
+                                    60.0,
+                                    limit,
+                                    true,
+                                    pills,
+                                    cards,
+                                    compact,
+                                    true,
+                                );
+                            },
+                        );
+                        out.textures_delta.clear();
+                        out.shapes
+                            .iter()
+                            .filter_map(|s| match &s.shape {
+                                egui::Shape::Text(t) if t.galley.text().contains("console-") => {
+                                    Some((t.galley.text().to_owned(), t.galley.rows.len()))
+                                }
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                    };
+                    draw(50);
+                    let all = draw(50);
+                    let case = format!("cards={cards}, pills={pills}, kind={kind:?}, compact={compact}, scale={scale}");
+                    assert_eq!(all.len(), 3, "{case}: {all:?}");
+                    let wrapped = all.iter().find(|(text, _)| text.contains("console-wrapped")).unwrap().1;
+                    assert!(wrapped > 2, "{case}: a newline and width wrapping both count");
+                    let limit = wrapped as u32 + 1;
+                    let within = draw(limit);
+                    assert_eq!(within.len(), 2, "{case}: {within:?}");
+                    assert!(within[0].0.contains("console-wrapped"), "{case}: {within:?}");
+                    assert!(within[1].0.contains("console-newest"), "{case}: {within:?}");
+                    assert_eq!(within.iter().map(|(_, rows)| rows).sum::<usize>(), limit as usize, "{case}");
+                    let newest = draw(limit - 1);
+                    assert_eq!(newest.len(), 1, "{case}: {newest:?}");
+                    assert!(newest[0].0.contains("console-newest"), "{case}: {newest:?}");
+                    assert!(draw(0).is_empty(), "{case}: zero hides all text");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn console_max_lines_filters_age_and_residents_before_spending_the_budget() {
+        let now = std::time::SystemTime::now();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut older = line(ChatKind::System, "", 0);
+        older.text = "older".into();
+        let mut expired = line(ChatKind::System, "", 0);
+        expired.time = now - std::time::Duration::from_secs(21);
+        let mut resident = line(ChatKind::OWN, "Nova", 1);
+        resident.time = now;
+        resident.text = "resident".into();
+        let mut newest = line(ChatKind::System, "", 0);
+        newest.time = now;
+        newest.text = "newest".into();
+        older.time = now;
+        world.chat.extend([expired, older, resident, newest]);
+        let selected = recent(&world, now, 20.0, 2, false, |_| 1);
+        assert_eq!(selected.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), ["older", "newest"]);
+        let selected = recent(&world, now, 20.0, 2, true, |_| 1);
+        assert_eq!(selected.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), ["resident", "newest"]);
+        assert!(recent(&world, now, 0.0, 40, true, |_| panic!("expired text must not be measured")).is_empty());
+        assert!(recent(&world, now, 20.0, 0, true, |_| panic!("hidden text must not be measured")).is_empty());
+        assert!(
+            recent(&world, now, 20.0, 1, true, |_| 2).is_empty(),
+            "an oversized newest message is not cut"
+        );
     }
 
     /// Lines of one sender said in a row share a card; another sender, an
@@ -471,6 +659,7 @@ mod tests {
                                 &mut HashSet::new(),
                                 700.0,
                                 1e10,
+                                40,
                                 true,
                                 true,
                                 true,
@@ -551,10 +740,13 @@ mod tests {
     /// name is part of its sentence.
     #[test]
     fn the_body_leaves_the_name_to_the_head_except_an_emotes() {
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
         let p = crate::theme::Theme::default().palette();
         let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         let job = |l: &ChatLine| {
-            line_job(l, &p, &world, &mut HashSet::new(), 400.0, TEXT, true, JobLook::Body)
+            line_job(&ctx, l, &p, &world, &mut HashSet::new(), 400.0, TEXT, true, JobLook::Body)
                 .job
                 .text
         };
@@ -599,6 +791,7 @@ mod tests {
                         &mut HashSet::new(),
                         800.0,
                         20.0,
+                        40,
                         false,
                         false,
                         true,

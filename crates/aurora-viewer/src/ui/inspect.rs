@@ -159,7 +159,7 @@ fn sorted(rows: &[Row], sort: Option<(Column, bool)>) -> Vec<&Row> {
     let Some((column, descending)) = sort else {
         return list;
     };
-    let text = |a: &str, b: &str| a.to_lowercase().cmp(&b.to_lowercase());
+    let text = |a: &str, b: &str| crate::natural_order::cmp(a, b);
     list.sort_by(|a, b| {
         let order = match column {
             Column::Name => text(&a.name, &b.name),

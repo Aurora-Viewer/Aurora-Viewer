@@ -18,6 +18,7 @@ mod ui;
 
 pub use demo::fixture as demo_fixture;
 pub use demo::static_fixture as demo_static_fixture;
+pub(crate) use installer::{Removal as AddonRemoval, remove_everywhere as remove_addon_everywhere};
 
 use parking_lot::Mutex;
 use std::{
@@ -210,6 +211,25 @@ impl Live {
         }
         self.revision = None;
         self.snapshot.replace(snapshot)
+    }
+
+    /// After a GPU recovery (app/gpu_recovery.rs): the images of the snapshot
+    /// shown were staged in the lost device's pool. They are staged again
+    /// from the pixels kept with them into `pool`, and the snapshot is
+    /// installed again at the next frame; nothing is asked of Blender.
+    pub fn gpu_reset(&mut self, pool: Option<&aurora_render::StagingPool>) {
+        self.revision = None;
+        let Some(snapshot) = self.snapshot.as_mut() else {
+            return;
+        };
+        for image in &mut snapshot.images {
+            let pixels = &image.pixels;
+            let levels = aurora_render::build_mips(pixels.width, pixels.height, pixels.data.clone(), 12);
+            let refs: Vec<_> = levels.iter().map(|(w, h, bytes)| (*w, *h, bytes.as_slice())).collect();
+            image.staged = pool
+                .and_then(|pool| aurora_render::StagedTexture::new(pool, &refs))
+                .map(std::sync::Arc::new);
+        }
     }
 
     pub fn visible_snapshot(&self) -> Option<protocol::Prepared> {

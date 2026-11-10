@@ -36,6 +36,7 @@
 //! the same image with the light on or off. `AURORA_SSIL=0|1|alt`
 //! overrides the setting (`alt`: on every other second).
 
+use crate::pipeline_cache::CachedPipelines;
 use crate::types::AoMethod;
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
@@ -62,11 +63,24 @@ const INDIRECT_RADIUS: f32 = 1.5;
 const BENT_BLUR: u32 = 3;
 /// Blur passes of the indirect light beyond the occlusion's.
 const INDIRECT_EXTRA_BLUR: u32 = 4;
-/// The accumulation: the current frame's least weight (the history then
-/// holds about ten frames), and the half width of the neighbourhood the
-/// history is clipped to, in standard deviations.
-const TEMPORAL_MIN_WEIGHT: f32 = 0.1;
+/// The accumulation: the current frame's least weight with the motion
+/// vectors (the history then holds about thirty frames) and without them
+/// (`AURORA_GTAO_NORMALS=depth`: about ten, as before them, since what
+/// moved on its own would trail), the same where the point moves on screen by
+/// a pixel a frame or more (about ten frames: the long history lagged
+/// behind the camera, and the motion hides the grain it quiets), and the
+/// half width of the neighbourhood the history is clipped to, in standard
+/// deviations.
+const TEMPORAL_MIN_WEIGHT: f32 = 0.03;
+const TEMPORAL_DEPTH_MIN_WEIGHT: f32 = 0.1;
+const TEMPORAL_MOVING_WEIGHT: f32 = 0.1;
 const TEMPORAL_CLIP: f32 = 1.25;
+/// Where the point moved on its own (its motion parts from the camera's): the
+/// current frame's least weight (about five frames) and the clip's half width.
+/// Its occlusion can change because it moved (a hem lifting off the ground
+/// keeps the ground's), and GTAO's wide grain leaves the usual clip loose.
+const TEMPORAL_OWN_WEIGHT: f32 = 0.2;
+const TEMPORAL_OWN_CLIP: f32 = 0.6;
 /// Times more slices on a frame that accumulates without a history.
 const NO_HISTORY_SLICES: u32 = 4;
 /// Frames the noise goes through before it repeats (XeGTAO's 64).
@@ -117,6 +131,27 @@ pub(crate) fn quality(level: u8) -> Quality {
             denoise_passes: 1,
         },
     }
+}
+
+/// From this many pixels the occlusion is computed at half the scene's
+/// resolution at every level: a 1440p screen, also in a window short of its
+/// title and task bars (2560 x 1369, 3.5 MP), where High took 0.84 ms of a
+/// 4.4 ms frame at full resolution and 0.27 ms at half, 219 -> 250 fps
+/// (demo crowd of 40, RTX 4090), with the same image at 1:1; 1080p screens
+/// (2.1 MP) and a 2560 x 1080 one (2.8 MP) stay at full resolution. At
+/// 3840 x 2054 ultra took 8.9 ms of a 16.7 ms frame at full resolution and
+/// 2.3 ms at half (RTX 5070, #1489): a half-resolution texel still covers less of the scene than a
+/// 1080p pixel, the accumulation spreads the samples over frames, and the
+/// depth-aware upsample (`upsample` in gtao.wgsl) keeps the occlusion from
+/// crossing silhouettes; the frames showed no difference but along them,
+/// where the bilinear stretch of low quality left a thin line.
+const HALF_RES_PIXELS: u64 = 3_200_000;
+
+/// The quality of `level` for a scene of `width` x `height`.
+pub(crate) fn quality_for(level: u8, width: u32, height: u32) -> Quality {
+    let mut q = quality(level);
+    q.half_res |= u64::from(width) * u64::from(height) >= HALF_RES_PIXELS;
+    q
 }
 
 /// `AURORA_AO`: the method forced for a comparison.
@@ -397,6 +432,13 @@ struct GtaoU {
     temporal: [f32; 4],
     /// A mat3x3 (columns padded to four).
     normal_view: [[f32; 4]; 3],
+    /// Least weight and clip where the point moved on its own.
+    own: [f32; 4],
+    /// A tile of a photo: its part of the photo (left, top, width, height,
+    /// in fractions of it), and 1 in `context.x` when the samples past it
+    /// read the whole photo's depth (`PhotoContext`).
+    photo: [f32; 4],
+    context: [f32; 4],
 }
 
 /// The constants of a frame drawn with `proj` into targets of `size`;
@@ -434,13 +476,22 @@ fn uniforms(
             if normals.is_some() { 1.0 } else { 0.0 },
         ],
         reproj: reproj.to_cols_array_2d(),
-        il: [INDIRECT_THICKNESS, INDIRECT_RADIUS, intensity, 0.0],
-        temporal: [noise, if history { 0.0 } else { 1.0 }, TEMPORAL_MIN_WEIGHT, TEMPORAL_CLIP],
+        il: [INDIRECT_THICKNESS, INDIRECT_RADIUS, intensity, TEMPORAL_MOVING_WEIGHT],
+        temporal: [noise, if history { 0.0 } else { 1.0 }, min_weight(normals.is_some()), TEMPORAL_CLIP],
         normal_view: normals.map_or([[0.0; 4]; 3], |view| {
             let m = normal_view(view);
             [m.x_axis.extend(0.0), m.y_axis.extend(0.0), m.z_axis.extend(0.0)].map(|c| c.to_array())
         }),
+        own: [TEMPORAL_OWN_WEIGHT, TEMPORAL_OWN_CLIP, 0.0, 0.0],
+        photo: [0.0, 0.0, 1.0, 1.0],
+        context: [0.0; 4],
     }
+}
+
+/// The current frame's least weight in the accumulation: the long history
+/// only where the prepass writes the motion (with the mesh normals).
+fn min_weight(motion: bool) -> f32 {
+    if motion { TEMPORAL_MIN_WEIGHT } else { TEMPORAL_DEPTH_MIN_WEIGHT }
 }
 
 /// The rotation from world directions to the view space of the GTAO pass
@@ -482,7 +533,16 @@ pub(crate) struct Gtao {
     main_bitmask: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
     denoise_il: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
     denoise_il_final: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
+    upsample: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
+    upsample_il: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
     buffer: wgpu::Buffer,
+    /// The depth levels of a tiled photo's whole frame (`PhotoContext`),
+    /// bound by the targets made while it is kept; one texel otherwise.
+    context: Option<wgpu::TextureView>,
+    no_context: wgpu::TextureView,
+    /// During a photo frame, the whole photo's size: the targets' half
+    /// resolution follows it, the same in every tile.
+    pub(crate) photo: Option<(u32, u32)>,
 }
 
 /// One turn of the occlusion's blur.
@@ -499,8 +559,10 @@ enum Blur {
 /// The screen-space indirect light's targets and bind groups.
 pub(crate) struct IndirectTargets {
     main: wgpu::BindGroup,
-    /// In order; the last one writes `result`.
+    /// In order; the last one writes `result` (at half resolution the
+    /// half-resolution light, which `upsample` takes to `result`).
     denoise: Vec<(wgpu::BindGroup, bool)>,
+    upsample: Option<wgpu::BindGroup>,
     /// The light (linear rgb, the units of the lit colour), sampled by the
     /// shading.
     pub result: wgpu::TextureView,
@@ -511,6 +573,10 @@ pub(crate) struct Targets {
     quality: Quality,
     size: (u32, u32),
     mips: Vec<(u32, u32)>,
+    /// The view depth and its levels (a photo context is copied from them).
+    depth_mips: wgpu::Texture,
+    /// Made while a photo context was kept: they bind it.
+    context: bool,
     prefilter0: wgpu::BindGroup,
     prefilter: Vec<wgpu::BindGroup>,
     main: wgpu::BindGroup,
@@ -520,6 +586,11 @@ pub(crate) struct Targets {
     /// result, or after the accumulation into history target `i`.
     denoise: Vec<(wgpu::BindGroup, Blur)>,
     denoise_temporal: [Vec<(wgpu::BindGroup, Blur)>; 2],
+    /// At half resolution: the blur's last turn writes a half-resolution
+    /// result, which this takes to `result` at the scene's size.
+    upsample: Option<wgpu::BindGroup>,
+    /// The scene's size (`result`'s).
+    full: (u32, u32),
     history: History,
     /// This frame's history target, when it accumulates (set by `write`).
     accumulate: Option<usize>,
@@ -582,10 +653,11 @@ const RESULT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const META_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 /// The indirect light while it is blurred, and its result.
 const LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// The mesh normals of the depth prepass (octahedral, two halves: the
+/// The mesh normals of the depth prepass (xy, octahedral, halves: the
 /// G-buffer's eight bits per channel would show steps in a smooth
-/// occlusion).
-pub(crate) const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
+/// occlusion), and the motion of each pixel (zw, `screen_motion` in
+/// common.wgsl).
+pub(crate) const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 impl Gtao {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
@@ -603,7 +675,7 @@ impl Gtao {
                 bind_group_layouts: &[Some(&layout)],
                 immediate_size: 0,
             });
-            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
                 layout: Some(&pl),
                 module: &module,
@@ -634,6 +706,7 @@ impl Gtao {
                     storage_entry(5, AO_FORMAT),
                     storage_entry(6, EDGES_FORMAT),
                     texture_entry(11, UNFILTERED),
+                    texture_entry(21, UNFILTERED),
                 ],
             ),
             temporal: make(
@@ -642,6 +715,7 @@ impl Gtao {
                     uniform_entry(),
                     texture_entry(4, UNFILTERED),
                     texture_entry(7, UNFILTERED),
+                    texture_entry(11, UNFILTERED),
                     texture_entry(15, UNFILTERED),
                     texture_entry(16, wgpu::TextureSampleType::Uint),
                     storage_entry(17, AO_FORMAT),
@@ -683,6 +757,7 @@ impl Gtao {
                     texture_entry(11, UNFILTERED),
                     texture_entry(13, UNFILTERED),
                     storage_entry(14, LIGHT_FORMAT),
+                    texture_entry(21, UNFILTERED),
                 ],
             ),
             denoise_il: make(
@@ -703,13 +778,96 @@ impl Gtao {
                     storage_entry(12, LIGHT_FORMAT),
                 ],
             ),
+            upsample: make(
+                "upsample",
+                &[
+                    uniform_entry(),
+                    texture_entry(1, wgpu::TextureSampleType::Depth),
+                    texture_entry(4, UNFILTERED),
+                    texture_entry(7, UNFILTERED),
+                    storage_entry(19, RESULT_FORMAT),
+                ],
+            ),
+            upsample_il: make(
+                "upsample_il",
+                &[
+                    uniform_entry(),
+                    texture_entry(1, wgpu::TextureSampleType::Depth),
+                    texture_entry(4, UNFILTERED),
+                    texture_entry(10, UNFILTERED),
+                    storage_entry(20, LIGHT_FORMAT),
+                ],
+            ),
             buffer: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("gtao params"),
                 size: std::mem::size_of::<GtaoU>() as u64,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
+            context: None,
+            photo: None,
+            no_context: device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some("gtao no photo context"),
+                    size: wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: DEPTH_FORMAT,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                })
+                .create_view(&wgpu::TextureViewDescriptor::default()),
         }
+    }
+
+    /// Keeps the depth levels `t` just computed, the whole photo's drawn
+    /// small before its tiles (`PhotoContext::Record`): the targets made
+    /// from now on bind them. Encoded after `encode`.
+    pub(crate) fn record_context(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, t: &Targets) {
+        let levels = t.mips.len() as u32;
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("gtao photo context"),
+            size: wgpu::Extent3d {
+                width: t.size.0,
+                height: t.size.1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: levels,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        for (level, &(w, h)) in t.mips.iter().enumerate() {
+            let at = |texture| wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: level as u32,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            };
+            encoder.copy_texture_to_texture(
+                at(&t.depth_mips),
+                at(&texture),
+                wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+        self.context = Some(texture.create_view(&wgpu::TextureViewDescriptor::default()));
+    }
+
+    /// Frees a kept photo context; true when there was one (the targets
+    /// that bind it must be made again to let it go).
+    pub(crate) fn drop_context(&mut self) -> bool {
+        self.context.take().is_some()
     }
 
     /// Targets for a window of `width` x `height` reading `depth` (the
@@ -724,10 +882,12 @@ impl Gtao {
         height: u32,
         level: u8,
     ) -> Targets {
-        let q = quality(level);
+        let (qw, qh) = self.photo.unwrap_or((width, height));
+        let q = quality_for(level, qw, qh);
         let (w, h) = target_size(width, height, q);
+        let full = (width.max(1), height.max(1));
         let storage = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
-        let texture = |label: &str, format, mips| {
+        let texture_with = |label: &str, format, mips, usage| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
                 size: wgpu::Extent3d {
@@ -739,12 +899,15 @@ impl Gtao {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format,
-                usage: storage,
+                usage,
                 view_formats: &[],
             })
         };
+        let texture = |label: &str, format, mips| texture_with(label, format, mips, storage);
         let mip_count = mip_count(w, h);
-        let depth_mips = texture("gtao depth", DEPTH_FORMAT, mip_count);
+        // (copied to the photo context by `record_context`)
+        let depth_mips = texture_with("gtao depth", DEPTH_FORMAT, mip_count, storage | wgpu::TextureUsages::COPY_SRC);
+        let context = self.context.as_ref().unwrap_or(&self.no_context);
         let mip_view = |level: u32| {
             depth_mips.create_view(&wgpu::TextureViewDescriptor {
                 label: Some("gtao depth level"),
@@ -769,7 +932,27 @@ impl Gtao {
             view(texture("gtao history depth b", META_FORMAT, 1)),
         ];
         let edges = view(texture("gtao edges", EDGES_FORMAT, 1));
-        let result = view(texture("gtao", RESULT_FORMAT, 1));
+        // the shading samples the result at the scene's size: at half
+        // resolution the blur ends in `low`, taken up by `upsample`
+        let full_texture = |label: &str, format| {
+            view(device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: full.0,
+                    height: full.1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: storage,
+                view_formats: &[],
+            }))
+        };
+        let result = full_texture("gtao", RESULT_FORMAT);
+        let low = q.half_res.then(|| view(texture("gtao half", RESULT_FORMAT, 1)));
+        let blurred = low.as_ref().unwrap_or(&result);
         // drawn by the depth prepass, at the window's size
         let normals = view(device.create_texture(&wgpu::TextureDescriptor {
             label: Some("gtao normals"),
@@ -804,13 +987,17 @@ impl Gtao {
         let prefilter = (1..mip_count)
             .map(|l| group(&self.prefilter.1, &[(2, &mip_view(l - 1)), (3, &mip_view(l))]))
             .collect();
-        let main = group(&self.main.1, &[(4, &all_mips), (5, &ao), (6, &edges), (11, &normals)]);
+        let main = group(
+            &self.main.1,
+            &[(4, &all_mips), (5, &ao), (6, &edges), (11, &normals), (21, context)],
+        );
         let temporal = [0, 1].map(|i| {
             group(
                 &self.temporal.1,
                 &[
                     (4, &all_mips),
                     (7, &ao),
+                    (11, &normals),
                     (15, &hist[1 - i]),
                     (16, &meta[1 - i]),
                     (17, &hist[i]),
@@ -834,7 +1021,7 @@ impl Gtao {
                     let src = if i == 0 { first } else { work[(i + 1) % 2] };
                     let dst = work[i % 2];
                     let bg = match kind {
-                        Blur::Final => group(&self.denoise_final.1, &[(7, src), (8, &edges), (9, &result)]),
+                        Blur::Final => group(&self.denoise_final.1, &[(7, src), (8, &edges), (9, blurred)]),
                         Blur::Both => group(&self.denoise.1, &[(5, dst), (7, src), (8, &edges)]),
                         Blur::Bent => group(&self.denoise_bent.1, &[(5, dst), (7, src), (8, &edges)]),
                     };
@@ -849,10 +1036,12 @@ impl Gtao {
                 view(texture("gtao light a", LIGHT_FORMAT, 1)),
                 view(texture("gtao light b", LIGHT_FORMAT, 1)),
             ];
-            let result = view(texture("gtao light", LIGHT_FORMAT, 1));
+            let result = full_texture("gtao light", LIGHT_FORMAT);
+            let low = q.half_res.then(|| view(texture("gtao light half", LIGHT_FORMAT, 1)));
+            let blurred = low.as_ref().unwrap_or(&result);
             let main = group(
                 &self.main_bitmask.1,
-                &[(4, &all_mips), (11, &normals), (13, scene), (14, &light[0])],
+                &[(4, &all_mips), (11, &normals), (13, scene), (14, &light[0]), (21, context)],
             );
             // four turns more than the occlusion's blur: one bounce from a few
             // samples is grainy, and the light has no sharp detail to keep
@@ -861,25 +1050,40 @@ impl Gtao {
                 .map(|i| {
                     let (src, dst) = (&light[i as usize % 2], &light[(i as usize + 1) % 2]);
                     if i + 1 == il_passes {
-                        (group(&self.denoise_il_final.1, &[(8, &edges), (10, src), (12, &result)]), true)
+                        (group(&self.denoise_il_final.1, &[(8, &edges), (10, src), (12, blurred)]), true)
                     } else {
                         (group(&self.denoise_il.1, &[(8, &edges), (10, src), (14, dst)]), false)
                     }
                 })
                 .collect();
-            IndirectTargets { main, denoise, result }
+            let upsample = low
+                .as_ref()
+                .map(|low| group(&self.upsample_il.1, &[(1, depth), (4, &all_mips), (10, low), (20, &result)]));
+            IndirectTargets {
+                main,
+                denoise,
+                upsample,
+                result,
+            }
         });
+        let upsample = low
+            .as_ref()
+            .map(|low| group(&self.upsample.1, &[(1, depth), (4, &all_mips), (7, low), (19, &result)]));
         let mips = (0..mip_count).map(|l| ((w >> l).max(1), (h >> l).max(1))).collect();
         Targets {
             quality: q,
             size: (w, h),
             mips,
+            depth_mips,
+            context: self.context.is_some(),
             prefilter0,
             prefilter,
             main,
             temporal,
             denoise,
             denoise_temporal,
+            upsample,
+            full,
             history: History::default(),
             accumulate: None,
             result,
@@ -891,7 +1095,9 @@ impl Gtao {
     /// The constants of this frame (before the encoder runs): `proj` its
     /// projection, `reproj` from [`reprojection`], `intensity` the indirect
     /// light's strength, `frame` what it knows of the frames before,
-    /// `normals` the view when the depth prepass draws the mesh normals.
+    /// `normals` the view when the depth prepass draws the mesh normals,
+    /// `photo` a photo tile's part of the photo (`photo_part`), `context`
+    /// when its samples past it read the kept photo context.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn write(
         &self,
@@ -902,15 +1108,21 @@ impl Gtao {
         intensity: f32,
         frame: Frame,
         normals: Option<Mat4>,
+        photo: Option<[f32; 4]>,
+        context: bool,
     ) {
         let next = t.history.next(frame);
         t.accumulate = next.map(|(target, _)| target);
         let temporal = next.map(|(_, history)| (frame.index, history));
-        queue.write_buffer(
-            &self.buffer,
-            0,
-            bytemuck::bytes_of(&uniforms(proj, reproj, intensity, t.size, t.quality, temporal, normals)),
-        );
+        let mut u = uniforms(proj, reproj, intensity, t.size, t.quality, temporal, normals);
+        if let Some(part) = photo {
+            u.photo = part;
+        }
+        // (only with targets that bind a context)
+        if context && t.context {
+            u.context[0] = 1.0;
+        }
+        queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&u));
     }
 
     /// The passes, after the depth prepass; `indirect` with the indirect
@@ -964,6 +1176,17 @@ impl Gtao {
             pass.set_bind_group(0, bg, &[]);
             dispatch(&mut pass, groups(t.size));
         }
+        // half resolution: back to the scene's size, along the depth
+        if let Some(bg) = &t.upsample {
+            pass.set_pipeline(&self.upsample.0);
+            pass.set_bind_group(0, bg, &[]);
+            dispatch(&mut pass, groups(t.full));
+        }
+        if let Some(bg) = il.and_then(|il| il.upsample.as_ref()) {
+            pass.set_pipeline(&self.upsample_il.0);
+            pass.set_bind_group(0, bg, &[]);
+            dispatch(&mut pass, groups(t.full));
+        }
     }
 }
 
@@ -983,6 +1206,27 @@ mod tests {
         assert_eq!((q[3].slices, q[3].steps), (9, 3));
         // anything above ultra is ultra
         assert_eq!(quality(7), q[3]);
+    }
+
+    #[test]
+    fn large_scenes_compute_every_level_at_half_resolution() {
+        for level in 0..4 {
+            // 1080p, its window and a 2560 x 1080 screen: as the level says
+            for (w, h) in [(1920, 1080), (1920, 1009), (2560, 1080)] {
+                assert_eq!(quality_for(level, w, h), quality(level), "{w} x {h}");
+            }
+            // 1440p and its window short of its bars, 4K and a 150 % 4K
+            // window: half, the rest unchanged
+            for (w, h) in [(2560, 1369), (2560, 1440), (3840, 2054), (5760, 3081)] {
+                let q = quality_for(level, w, h);
+                assert!(q.half_res, "level {level} at {w} x {h}");
+                assert_eq!((q.slices, q.steps, q.denoise_passes), {
+                    let l = quality(level);
+                    (l.slices, l.steps, l.denoise_passes)
+                });
+            }
+        }
+        assert_eq!(target_size(3840, 2054, quality_for(3, 3840, 2054)), (1920, 1027));
     }
 
     #[test]
@@ -1071,6 +1315,11 @@ mod tests {
         assert!(glam::Mat3::from_cols(col(0), col(1), col(2)).abs_diff_eq(m, 1e-6));
         let off = uniforms(proj, Mat4::IDENTITY, 1.0, (64, 64), quality(2), None, None);
         assert_eq!(off.misc[3], 0.0);
+        // the long history only where the prepass writes the motion
+        assert_eq!(on.temporal[2], TEMPORAL_MIN_WEIGHT);
+        assert_eq!(off.temporal[2], TEMPORAL_DEPTH_MIN_WEIGHT);
+        // a point that moved on its own keeps a shorter, tighter history
+        assert_eq!(on.own[..2], [TEMPORAL_OWN_WEIGHT, TEMPORAL_OWN_CLIP]);
     }
 
     /// The history targets take turns while frames follow each other; a

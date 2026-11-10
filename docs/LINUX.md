@@ -86,9 +86,11 @@ match it too (Hyprland: `class:^(aurora-viewer)$`; KDE: window class
 
 ## Web pages and video
 
-The first web page or video downloads the media plugins (about 200 MB) by
-itself, once; Preferences › Sound and voice › Media shows the progress. They
-go to `~/.local/share/auroraviewer/media-plugins`.
+The first time a web page or a video needs them, the viewer asks before it
+downloads the media plugins (about 200 MB), once; "Not now" leaves a
+Download button in Preferences › Sound and voice › Media and where the page
+would show, and the same row shows the progress. They go to
+`~/.local/share/auroraviewer/media-plugins`.
 
 - **Video does not play:** check that the GStreamer packages of step 1 are
   installed (`gst-libav` / `gstreamer1.0-libav` for H.264 and AAC).
@@ -140,7 +142,12 @@ your desktop (GNOME, KDE and other GLib desktops read such paths).
 ## Not on Linux yet
 
 - Automatic installation of updates (above).
-- The crash report window.
+- The crash window right after a crash: it opens at the next launch
+  instead, and a native crash (a signal) leaves no trace in it.
+- Preferences › Sound and voice › "Mute when minimised" on Wayland: the
+  compositor does not tell a window that it is minimised, so the sound
+  keeps playing. Under X11 the viewer reads the window manager's hidden
+  state (X11 is not tested yet).
 
 ## Building from source
 
@@ -161,3 +168,11 @@ Rust from [rustup.rs](https://rustup.rs).
 
 See [Reporting bugs](BUG_REPORTING.md), and say that you are on Linux, with
 your distribution and graphics card.
+
+## Experimental VR scene viewing
+
+See the cross-platform [VR setup and limitations](VR.md) guide. Linux uses the
+native Vulkan/OpenXR path; start WiVRn and connect the headset before launching
+Aurora. Quest 3 / WiVRn 26.9 / RTX 3090 is the human-validated configuration.
+The guide covers toolbar entry, Esc restoration, recording, dependencies and
+viewing-only limitations, plus Windows and experimental macOS setup.

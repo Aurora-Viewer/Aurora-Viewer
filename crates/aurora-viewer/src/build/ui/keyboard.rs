@@ -24,7 +24,12 @@ pub enum Shortcut {
     Snap,
     SelectionGrid,
     SnapXy,
-    SelectPart { next: bool, include: bool },
+    /// "Place on surface" on or off.
+    Place,
+    SelectPart {
+        next: bool,
+        include: bool,
+    },
 }
 
 impl Shortcut {
@@ -53,6 +58,7 @@ impl Shortcut {
             (Key::G, false, false) => Self::Snap,
             (Key::G, false, true) => Self::SelectionGrid,
             (Key::X, false, true) => Self::SnapXy,
+            (Key::P, false, false) => Self::Place,
             (Key::Period, true, include) => Self::SelectPart { next: true, include },
             (Key::Comma, true, include) => Self::SelectPart { next: false, include },
             _ => return None,
@@ -136,18 +142,31 @@ impl Shortcut {
             }
             Self::Open(which) => tool.open_build(which),
             Self::GridOptions => tool.ui.grid_options_open = !tool.ui.grid_options_open,
+            // Esc first turns "Place on surface" off
+            Self::Close if tool.place.active => tool.toggle_place(world),
             Self::Close => tool.close(world, settings),
             Self::Delete => tool.delete(world),
-            Self::Duplicate => tool.duplicate(world, Vec3::new(0.5, 0.5, 0.0), true),
-            Self::Link => tool.link(world),
+            Self::Duplicate => tool.duplicate(world, settings, Vec3::new(0.5, 0.5, 0.0), true),
+            Self::Link => {
+                if tool.can_link(world) {
+                    tool.link(world);
+                }
+            }
             Self::Unlink => tool.unlink(world),
             Self::EditLinked => {
                 let on = !settings.edit_linked;
                 tool.set_edit_linked(world, settings, on);
             }
-            Self::Snap => settings.snap = !settings.snap,
+            Self::Snap => settings.set_snap_mode(if settings.snap {
+                crate::build::SnapMode::Off
+            } else {
+                crate::build::SnapMode::Grid
+            }),
             Self::SelectionGrid => tool.use_selection_for_grid(world, settings),
             Self::SnapXy => tool.snap_xy_to_grid(world, settings),
+            // the button only shows with the object snap
+            Self::Place if settings.snap_mode() == crate::build::SnapMode::Objects => tool.toggle_place(world),
+            Self::Place => {}
             Self::SelectPart { next, include } => tool.select_next_part(world, settings, next, include),
         }
     }
@@ -157,6 +176,86 @@ impl Shortcut {
 mod tests {
     use super::*;
     use crate::gestures::keys;
+
+    #[test]
+    fn ctrl_d_uses_the_current_rez_group_preference() {
+        use aurora_net::{NetCommand, NetEvent, build::BuildCmd};
+        use std::sync::Arc;
+        use uuid::Uuid;
+
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events().into_iter().chain(crate::demo::selection_cycle_events()) {
+            world.apply(event);
+        }
+        for event in crate::demo::demo_reply(&NetCommand::RequestGroups) {
+            world.apply(event);
+        }
+        let land = world.groups.groups[0].id;
+        let active = Uuid::from_u128(8800);
+        let nil = Uuid::nil();
+        let source = world.objects.index_of_uuid(&crate::demo::action_id(99610)).unwrap();
+        world.objects.get_mut(source).unwrap().update_flags |= crate::ui::context::flags::OBJECT_COPY;
+        let mut tool = BuildTool::default();
+        tool.open_build(Tool::Edit);
+        let mut settings = BuildSettings::default();
+        let shortcut = Shortcut::from_key(
+            Key::D,
+            Mods {
+                ctrl: true,
+                ..Default::default()
+            },
+            true,
+        )
+        .unwrap();
+        assert_eq!(shortcut, Shortcut::Duplicate);
+        for (active, parcel, under_land, expected) in [
+            (active, Some(land), true, land),
+            (active, Some(land), false, active),
+            (active, Some(Uuid::from_u128(8899)), true, active),
+            (active, Some(nil), true, active),
+            (active, None, true, active),
+            (nil, Some(land), true, land),
+            (nil, Some(land), false, nil),
+            (nil, None, true, nil),
+        ] {
+            world.apply(NetEvent::ActiveGroup {
+                id: active,
+                name: "Active group".into(),
+                title: "Builder".into(),
+            });
+            world.parcel = parcel.map(|group_id| {
+                Arc::new(aurora_net::ParcelInfo {
+                    group_id,
+                    ..Default::default()
+                })
+            });
+            settings.rez_under_land_group = under_land;
+            tool.click_select(&mut world, &settings, Some(source), false);
+            tool.out.clear();
+            shortcut.run(&mut tool, &mut world, &mut settings);
+            let copies: Vec<_> = tool
+                .out
+                .iter()
+                .filter_map(|command| match command {
+                    NetCommand::Build(BuildCmd::Duplicate {
+                        group_id,
+                        local_ids,
+                        offset,
+                        flags,
+                        ..
+                    }) => Some((*group_id, local_ids, *offset, *flags)),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(copies.len(), 1);
+            let (group, ids, offset, flags) = copies[0];
+            assert_eq!(group, expected);
+            assert_eq!(ids, &[99610]);
+            assert_eq!(offset, Vec3::new(0.5, 0.5, 0.0));
+            assert_eq!(flags, crate::build::FLAGS_CREATE_SELECTED);
+            assert!(tool.selection.is_empty(), "the simulator selects the new copy");
+        }
+    }
 
     /// Every gesture shortcut the editor offers that a build shortcut keeps,
     /// as the Legacy Viewer's menus keep them (#915): Undo / Redo only while
@@ -189,6 +288,7 @@ mod tests {
             ctrl("Y"),
             ctrl("Z"),
             "G".into(),
+            "P".into(),
         ]
         .into_iter()
         .chain([format!("{shift}G"), format!("{shift}X"), keys::label(0x86), keys::label(0x88)])
@@ -218,5 +318,39 @@ mod tests {
         let build = Shortcut::take_native_key(&NativeKey::Character("b".into()), KeyCode::KeyB, ctrl, false, true, &mut down);
         assert_eq!(build, Some(Shortcut::ToggleBuild));
         assert!(Shortcut::ToggleBuild.takes_gesture_key(false));
+    }
+
+    /// "Place on surface" goes with the object snap, as its button: P does
+    /// nothing under another snap, and leaving the object snap ends it.
+    #[test]
+    fn place_on_surface_goes_with_the_object_snap() {
+        use std::sync::Arc;
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let eye = glam::Vec3::new(132.0, 126.0, 0.0);
+        for event in crate::demo::events().into_iter().chain(crate::demo::object_snap::events_at(eye)) {
+            world.apply(event);
+        }
+        // the object snap scene's blue cube, ours and unlinked
+        let source = world
+            .objects
+            .iter()
+            .find_map(|(i, o)| (o.key.local_id == 87701).then_some(i))
+            .unwrap();
+        let mut tool = BuildTool::default();
+        tool.open_build(Tool::Edit);
+        let mut settings = BuildSettings::default();
+        tool.click_select(&mut world, &settings, Some(source), false);
+        assert!(tool.can_place(&world));
+        for mode in [crate::build::SnapMode::Off, crate::build::SnapMode::Grid] {
+            settings.set_snap_mode(mode);
+            Shortcut::Place.run(&mut tool, &mut world, &mut settings);
+            assert!(!tool.place.active, "{mode:?}");
+        }
+        settings.set_snap_mode(crate::build::SnapMode::Objects);
+        Shortcut::Place.run(&mut tool, &mut world, &mut settings);
+        assert!(tool.place.active);
+        settings.set_snap_mode(crate::build::SnapMode::Grid);
+        tool.update(&mut world, &settings, None, (0.0, 0.0), false, Default::default());
+        assert!(!tool.place.active, "the grid snap ends it");
     }
 }

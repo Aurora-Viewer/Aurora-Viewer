@@ -72,9 +72,13 @@ struct Frame {
     sky_misc: vec4<f32>,        // dome offset, dome radius, moon brightness, star brightness
     tex_slots: vec4<u32>,       // cloud, sun, moon, water normal map
     sky_ll: vec4<f32>,          // x classic sky (1 = no reflection probe ambiance), y distance multiplier, z 1 = PBR materials' occlusion applied, w 1 = specular occlusion from GTAO's bent normal (in ao_tex.gba)
-    sky_obj_light: vec4<f32>,   // rgb sun / moon color lighting objects (mSunDiffuse, max component <= 1)
+    sky_obj_light: vec4<f32>,   // rgb sun / moon color lighting objects (mSunDiffuse, max component <= 1), w colored sky ambient
     sky_optics: vec4<f32>,      // x moisture level (rainbow), y droplet radius, z ice level (22° halo)
     sky_optics_tex: vec4<u32>,  // x rainbow texture slot, y halo texture slot (0: none)
+    // night sky (stars.rs StarFrame): region directions of the catalogue's
+    // axes; w: catalogue (-1 none), Milky Way strength, 0
+    sky_stars: array<vec4<f32>, 3>,
+    sky_star_pass: vec4<f32>,   // this pass's target: width, height, 1/w, 1/h (0: frame.screen)
     anim_clock: vec4<u32>,      // effects clock (rez, portals): x ms (wrapping), y sub-ms fraction (f32 bits); zw the same for texture animations (held while the world is frozen)
     selection_color: vec4<f32>, // selected-face overlay, from the UI palette
     rez_gradient: array<vec4<f32>, 3>, // rez effect: the brand gradient (linear rgb), edge to trail; [0].w its look
@@ -93,14 +97,23 @@ struct Frame {
     // `light_projectors` (x: lights 0..31, y: lights 32..63)
     projectors: array<ProjectorLight, 64>,
     light_projectors: vec4<u32>,
-    // shadow maps of the two projectors that cast shadows: world to the
+    // shadow maps of the projectors within the configured budget: world to the
     // clip space of each, its light (-1: none), and what it leaves unlit
     // of its shadows (1 - fade)
-    spot_vp: array<mat4x4<f32>, 2>,
-    spot_lights: vec4<i32>,
-    spot_fade: vec4<f32>,
+    spot_vp: array<mat4x4<f32>, 16>,
+    spot_lights: array<vec4<i32>, 4>,
+    spot_fade: array<vec4<f32>, 4>,
     contact: vec4<f32>,         // x: 1 = the contact shadows' mask is read (main view), y: 1 = blended faces opaque enough cast it
     features: vec4<u32>,        // x: FEATURE_* bits, in every pass (main view, reflections, probes)
+    // Motion vectors (main view; zero in the other passes), without the TAA
+    // jitter: this frame's view-projection for positions relative to `eye`,
+    // the last frame's for the same positions, and this frame's clip space
+    // to the last frame's (a point the depth places, where nothing drew).
+    motion_vp: mat4x4<f32>,
+    motion_prev_vp: mat4x4<f32>,
+    motion_reproj: mat4x4<f32>,
+    photo: vec4<f32>,           // the main view of a photo tile: its part of the photo (left, top, width, height); zero otherwise
+    tex_lod: vec4<f32>,         // x: the material textures' mip bias (FSR drawing the world smaller than the window, fsr.rs mip_bias); 0 otherwise
 };
 
 // frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has
@@ -134,6 +147,12 @@ struct DrawRecord {
 const FLAG_FULLBRIGHT: u32 = 1u;
 const FLAG_PORTAL_CLIP: u32 = 16384u;
 const FLAG_PORTAL_EFFECT: u32 = 32768u;
+const FLAG_WORLD_BLEND_PICK: u32 = 2147483648u; // flags.w, above texture animation
+const FLAG_OBJECT_MASK_PICK: u32 = 1073741824u; // flags.w, world/worn objects only
+// flags.w bits 24..26: layer rank of a rigged face (types.rs flags, object.wgsl eye_clip)
+const LAYER_RANK_SHIFT: u32 = 24u;
+const LAYER_RANK_MAX: u32 = 7u;
+const LAYER_DEPTH_STEP: f32 = 9.5367431640625e-7; // 2^-20
 const PORTAL_HALF_WIDTH: f32 = 1.0;
 const PORTAL_HALF_HEIGHT: f32 = 1.5;
 const PORTAL_SURFACE_SCALE: f32 = 1.16;
@@ -147,6 +166,11 @@ const FLAG_SKINNED: u32 = 128u;
 const FLAG_LEGACY_MAT: u32 = 256u;
 const FLAG_EMISSIVE_MASK: u32 = 512u;
 const FLAG_TEX_ANIM: u32 = 1024u;
+// Added to the x of the prepass's encoded normal (in 0..1, object.wgsl
+// depth_normal) where FSR's history cannot follow the surface, a running
+// texture animation: FSR's transparency and composition mask
+// (fsr/reactivity.wgsl); GTAO's oct_decode takes it off.
+const NORMAL_COMPOSITION: f32 = 2.0;
 const FLAG_DOUBLE_SIDED: u32 = 2048u;
 // placed by the GPU: model relative to the anchor matrix palettes[flags.y]
 // (worn objects); skinned: skeleton placed by its own anchor
@@ -175,6 +199,13 @@ const LIVE_MORPH_WEIGHTS: u32 = 256u;
 @group(0) @binding(14) var il_tex: texture_2d<f32>;
 
 // Reflection probes (probes.rs, reflectionProbeF.glsl).
+// The probes of the frame's list at most (probes::MAX_PROBES).
+const MAX_PROBES: u32 = 256u;
+// A set of probes: bit i of word i / 32 for probe i of the list
+// (probes::ProbeSets; the lights' sets hold 64 and are two words).
+struct ProbeMask {
+    w: array<u32, 8>,
+};
 struct Probe {
     center_radius: vec4<f32>,
     // x ambiance scale, y radiance scale, z fade in, w kind (0 auto, 1 sphere, -1 box)
@@ -187,20 +218,17 @@ struct ProbeSet {
     max_lod: f32,
     enabled: u32,
     _pad: u32,
-    // the box probes (x: probes 0..31, y: 32..63), which sample_probes_pair
-    // looks through first
-    boxes: vec4<u32>,
+    // the box probes, which sample_probes_pair looks through first
+    boxes: ProbeMask,
     // the probes that cover each screen column, each screen row and each
-    // slice of depth of the main view (probes::tiles), laid out as the
-    // lights' sets of the frame: two sets per element, each its low then
-    // its high 32 probes
+    // slice of depth of the main view (probes::tiles): one set per element
     tile_grid: vec4<f32>,       // x, y: columns and rows per pixel
     tile_forward: vec4<f32>,    // camera forward axis (fragment depth)
     tile_mode: vec4<u32>,
-    tile_columns: array<vec4<u32>, 16>,
-    tile_rows: array<vec4<u32>, 16>,
-    tile_slices: array<vec4<u32>, 16>,
-    probes: array<Probe, 64>,
+    tile_columns: array<ProbeMask, 32>,
+    tile_rows: array<ProbeMask, 32>,
+    tile_slices: array<ProbeMask, 32>,
+    probes: array<Probe, MAX_PROBES>,
 };
 @group(0) @binding(9) var<storage, read> probe_set: ProbeSet;
 @group(0) @binding(10) var probe_tex: texture_cube_array<f32>;
@@ -216,6 +244,10 @@ struct SkinBind {
     joint: vec4<u32>,
 };
 @group(1) @binding(2) var<storage, read> skin_binds: array<SkinBind>;
+// What the last frame drew with (motion_history.rs): the joint palettes and
+// each record's model matrix.
+@group(1) @binding(3) var<storage, read> prev_palettes: array<mat4x4<f32>>;
+@group(1) @binding(4) var<storage, read> prev_models: array<mat4x4<f32>>;
 
 // Bindless textures pooled in pages (textures.rs): a slot's location packs
 // the page (high 16 bits) and its layer (low 16 bits).
@@ -254,21 +286,6 @@ fn light_set(world_pos: vec3<f32>, frag: vec2<f32>) -> vec2<u32> {
     return light_table_set(frame.light_columns[cell.x >> 1u], cell.x)
         & light_table_set(frame.light_rows[cell.y >> 1u], cell.y)
         & light_table_set(frame.light_slices[cell.z >> 1u], cell.z);
-}
-
-// Next member of a set, lowest first; -1 once it is empty.
-fn next_member(members: ptr<function, vec2<u32>>) -> i32 {
-    let lo = (*members).x;
-    if (lo != 0u) {
-        (*members).x = lo & (lo - 1u);
-        return i32(firstTrailingBit(lo));
-    }
-    let hi = (*members).y;
-    if (hi != 0u) {
-        (*members).y = hi & (hi - 1u);
-        return i32(32u + firstTrailingBit(hi));
-    }
-    return -1;
 }
 
 // The lights a fragment walks: the point lights left in `held` (bit i for
@@ -356,6 +373,13 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
 
 fn sample_tex(idx: u32, uv: vec2<f32>) -> vec4<f32> {
     let loc = tex_loc[idx];
+    return textureSampleBias(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu, frame.tex_lod.x);
+}
+
+// Without the frame's mip bias: the shadow maps have their own size, and
+// their pass binds no frame uniform
+fn sample_tex_unbiased(idx: u32, uv: vec2<f32>) -> vec4<f32> {
+    let loc = tex_loc[idx];
     return textureSample(tex_pages[loc >> 16u], tex_sampler, uv, loc & 0xffffu);
 }
 
@@ -368,15 +392,38 @@ fn in_reflection_pass() -> bool {
     return frame.misc.w > 0.5;
 }
 
-/// Planar reflection passes (water, mirror): a view mirrored by a plane.
+/// Reflection passes with a mirrored view: planar ones (water, mirror) and
+/// the faces of a probe (probes::face_view).
 fn mirrored_pass() -> bool {
     return frame.misc.w > 1.5;
 }
 
-// Probes are sampled in the main view only (captures see the sky instead,
-// a single bounce).
+// frame.light_mode.z, the capture of a probe that lights its surfaces with
+// the probes as LLReflectionMapManager::updateUniforms does: the radiance
+// capture with both, the irradiance capture (PROBE_CAPTURE_AMBIANCE too)
+// with no irradiance and half the radiance. A closed room then sees its own
+// dark surroundings in its captures, not the sky. probes::CaptureLighting.
+const PROBE_CAPTURE_LIT: u32 = 0x20000u;
+const PROBE_CAPTURE_AMBIANCE: u32 = 0x40000u;
+// frame.light_mode.z, any capture of a probe: the sea instead of the sky under
+// the rim of the Legacy Viewer's dome (sky_pixel in env.wgsl).
+// probes::capture_lighting::DOME.
+const PROBE_CAPTURE_DOME: u32 = 0x80000u;
+
+// Probes are sampled in the main view and in the captures of the probes
+// themselves (planar reflections and the sky-only default probe see the sky).
 fn probes_on() -> bool {
-    return probe_set.enabled != 0u && !in_reflection_pass();
+    return probe_set.enabled != 0u && (!in_reflection_pass() || (frame.light_mode.z & PROBE_CAPTURE_LIT) != 0u);
+}
+
+// What the pass multiplies the probes' irradiance by (refParams.x).
+fn probe_pass_ambiance() -> f32 {
+    return select(1.0, 0.0, (frame.light_mode.z & PROBE_CAPTURE_AMBIANCE) != 0u);
+}
+
+// What the pass multiplies the probes' radiance by (refParams.y).
+fn probe_pass_radiance() -> f32 {
+    return select(1.0, 0.5, (frame.light_mode.z & PROBE_CAPTURE_AMBIANCE) != 0u);
 }
 
 fn probe_max_lod() -> f32 {
@@ -423,28 +470,41 @@ const PROBE_TILES_NEAREST: f32 = 0.01;
 // triangle seen edge-on is shaded where the triangle's plane meets the
 // centre of its pixel, which can be behind the camera. The probes that
 // cover that point are those the whole list gives.
-fn probe_tiles(world_pos: vec3<f32>, frag: vec2<f32>) -> vec2<u32> {
-    let forward = probe_set.tile_forward.xyz;
-    let cell = tile_cell(world_pos, frag, probe_set.tile_grid.xy, forward);
-    let held = light_table_set(probe_set.tile_columns[cell.x >> 1u], cell.x)
-        & light_table_set(probe_set.tile_rows[cell.y >> 1u], cell.y)
-        & light_table_set(probe_set.tile_slices[cell.z >> 1u], cell.z);
-    let in_front = dot(world_pos - frame.camera_pos.xyz, forward) >= PROBE_TILES_NEAREST;
-    return select(vec2<u32>(0xffffffffu), held, in_front);
+fn probe_tiles_apply(world_pos: vec3<f32>) -> bool {
+    return dot(world_pos - frame.camera_pos.xyz, probe_set.tile_forward.xyz) >= PROBE_TILES_NEAREST;
+}
+
+fn probe_tile_cell(world_pos: vec3<f32>, frag: vec2<f32>) -> vec3<u32> {
+    return tile_cell(world_pos, frag, probe_set.tile_grid.xy, probe_set.tile_forward.xyz);
+}
+
+// Word `k` of a fragment's probes, with k * 32 < count: the first `count` of
+// the list and, with `tiles`, those of its sets. The words are read one at a
+// time and only the ones the list reaches, with no array of the eight on the
+// function's stack: at the default 32 probes a fragment reads one word of
+// each table. An integrated GPU's object pass went from 20.0 to 17.1 ms with
+// this walk (15.0 ms with the former sets of 64 probes).
+fn probe_word(k: u32, count: u32, tiles: bool, cell: vec3<u32>) -> u32 {
+    let left = count - k * 32u;
+    var held = 0xffffffffu;
+    if (left < 32u) {
+        held = (1u << left) - 1u;
+    }
+    if (tiles) {
+        held &= probe_set.tile_columns[cell.x].w[k] & probe_set.tile_rows[cell.y].w[k] & probe_set.tile_slices[cell.z].w[k];
+    }
+    return held;
 }
 
 // AURORA_PROBE_WALK=check: whether a probe of the list covers `pos` without
 // being in the fragment's sets. That never happens: the image is the one
 // the whole list gives.
 fn probe_tiles_miss(pos: vec3<f32>, frag: vec2<f32>) -> bool {
-    let held = probe_tiles(pos, frag);
-    let count = min(probe_set.count, 64u);
+    let tiles = probe_tiles_apply(pos);
+    let cell = probe_tile_cell(pos, frag);
+    let count = min(probe_set.count, MAX_PROBES);
     for (var i = 1u; i < count; i++) {
-        var bit = held.x >> (i & 31u);
-        if (i >= 32u) {
-            bit = held.y >> (i & 31u);
-        }
-        if ((bit & 1u) != 0u) {
+        if (((probe_word(i >> 5u, count, tiles, cell) >> (i & 31u)) & 1u) != 0u) {
             continue;
         }
         if (probe_set.probes[i].params.w < 0.0) {
@@ -461,11 +521,11 @@ fn probe_tiles_miss(pos: vec3<f32>, frag: vec2<f32>) -> bool {
         }
     }
     // (the default probe is in every set)
-    return count > 0u && (held.x & 1u) == 0u;
+    return count > 0u && (probe_word(0u, count, tiles, cell) & 1u) == 0u;
 }
 
 fn sample_probes_ex(pos: vec3<f32>, dir: vec3<f32>, lod: f32, irradiance: bool, amblit: vec3<f32>, water: bool) -> vec4<f32> {
-    let count = min(probe_set.count, 64u);
+    let count = min(probe_set.count, MAX_PROBES);
     // never let automatic probes encroach on box probes
     var sample_automatic = true;
     for (var i = 1u; i < count; i++) {
@@ -632,7 +692,7 @@ fn probe_mix(col0_in: vec3<f32>, col1_in: vec3<f32>, w0: f32, w1: f32, dw1: f32,
 //
 // In the main view the walk is that of the probes which cover the
 // fragment's screen column, its screen row and its slice of depth at once
-// (`probe_tiles`; `frag` is the fragment's pixel and `pos` where it is in
+// (`probe_word`; `frag` is the fragment's pixel and `pos` where it is in
 // the world), in the list's order: a probe left out does not cover `pos`.
 // The walk of the list, 32 probes by default, was what the probes cost a
 // fragment, far more than the samples of the two or three that cover it.
@@ -651,23 +711,32 @@ fn sample_probes_pair(pos: vec3<f32>, frag: vec2<f32>, a: ProbeLookup, b: ProbeL
         }
         return out;
     }
+    if (walk == PROBE_WALK_CHECK && probe_tiles_miss(pos, frag)) {
+        out.a = vec4<f32>(4.0, 0.0, 4.0, 1.0);
+        out.b = out.a;
+        return out;
+    }
     // the probes of the fragment's sets or, without the sets, the list
-    var held = light_first(min(probe_set.count, 64u));
-    if (walk >= PROBE_WALK_TILES) {
-        if (walk == PROBE_WALK_CHECK && probe_tiles_miss(pos, frag)) {
-            out.a = vec4<f32>(4.0, 0.0, 4.0, 1.0);
-            out.b = out.a;
-            return out;
-        }
-        held &= probe_tiles(pos, frag);
+    let count = min(probe_set.count, MAX_PROBES);
+    let words = (count + 31u) >> 5u;
+    let tiles = walk >= PROBE_WALK_TILES && probe_tiles_apply(pos);
+    var cell = vec3<u32>(0u);
+    if (tiles) {
+        cell = probe_tile_cell(pos, frag);
     }
     // never let automatic probes encroach on box probes
     var sample_automatic = true;
-    var boxes = probe_set.boxes.xy & held;
-    for (var n = next_member(&boxes); n >= 0; n = next_member(&boxes)) {
-        let lp = (probe_set.probes[n].box_inv * vec4<f32>(pos, 1.0)).xyz;
-        if (all(abs(lp) <= vec3<f32>(1.0))) {
-            sample_automatic = false;
+    for (var k = 0u; k < words; k++) {
+        var boxes = probe_set.boxes.w[k];
+        if (boxes != 0u) {
+            boxes &= probe_word(k, count, tiles, cell);
+        }
+        for (; boxes != 0u; boxes &= boxes - 1u) {
+            let n = k * 32u + firstTrailingBit(boxes);
+            let lp = (probe_set.probes[n].box_inv * vec4<f32>(pos, 1.0)).xyz;
+            if (all(abs(lp) <= vec3<f32>(1.0))) {
+                sample_automatic = false;
+            }
         }
     }
     var a0 = vec3<f32>(0.0);
@@ -677,67 +746,69 @@ fn sample_probes_pair(pos: vec3<f32>, frag: vec2<f32>, a: ProbeLookup, b: ProbeL
     var w0 = 0.0;
     var w1 = 0.0;
     var dw1 = 0.0;
-    for (var n = next_member(&held); n >= 0; n = next_member(&held)) {
-        let i = u32(n);
-        let kind = probe_set.probes[i].params.w;
-        let manual = kind != 0.0;
-        if (!manual && (!sample_automatic || (!automatic && i != 0u))) {
-            continue;
-        }
-        let sphere = probe_set.probes[i].center_radius;
-        let c = sphere.xyz;
-        var va: vec3<f32>;
-        var vb: vec3<f32>;
-        var w: f32;
-        var dw = 0.0;
-        if (kind < 0.0) {
-            // box influence volume with parallax correction
-            let box_inv = probe_set.probes[i].box_inv;
-            let lp = (box_inv * vec4<f32>(pos, 1.0)).xyz;
-            if (any(abs(lp) > vec3<f32>(1.0))) {
+    for (var k = 0u; k < words; k++) {
+        for (var held = probe_word(k, count, tiles, cell); held != 0u; held &= held - 1u) {
+            let i = k * 32u + firstTrailingBit(held);
+            let kind = probe_set.probes[i].params.w;
+            let manual = kind != 0.0;
+            if (!manual && (!sample_automatic || (!automatic && i != 0u))) {
                 continue;
             }
-            va = probe_box_exit(box_inv, lp, pos, a) - c;
-            if (want_b) {
-                vb = probe_box_exit(box_inv, lp, pos, b) - c;
-            }
-            w = max(1.0 - max(max(abs(lp.x), abs(lp.y)), abs(lp.z)), 0.001);
-        } else {
-            let r = sphere.w;
-            let delta = pos - c;
-            if (i != 0u && dot(delta, delta) > r * r) {
-                continue;
-            }
-            if (kind >= 1.0) {
-                // parallax for manual sphere probes only
-                va = probe_sphere_exit(c, r, pos, a.dir) - c;
-                vb = probe_sphere_exit(c, r, pos, b.dir) - c;
+            let sphere = probe_set.probes[i].center_radius;
+            let c = sphere.xyz;
+            var va: vec3<f32>;
+            var vb: vec3<f32>;
+            var w: f32;
+            var dw = 0.0;
+            if (kind < 0.0) {
+                // box influence volume with parallax correction
+                let box_inv = probe_set.probes[i].box_inv;
+                let lp = (box_inv * vec4<f32>(pos, 1.0)).xyz;
+                if (any(abs(lp) > vec3<f32>(1.0))) {
+                    continue;
+                }
+                va = probe_box_exit(box_inv, lp, pos, a) - c;
+                if (want_b) {
+                    vb = probe_box_exit(box_inv, lp, pos, b) - c;
+                }
+                w = max(1.0 - max(max(abs(lp.x), abs(lp.y)), abs(lp.z)), 0.001);
             } else {
-                va = a.dir;
-                vb = b.dir;
+                let r = sphere.w;
+                let delta = pos - c;
+                if (i != 0u && dot(delta, delta) > r * r) {
+                    continue;
+                }
+                if (kind >= 1.0) {
+                    // parallax for manual sphere probes only
+                    va = probe_sphere_exit(c, r, pos, a.dir) - c;
+                    vb = probe_sphere_exit(c, r, pos, b.dir) - c;
+                } else {
+                    va = a.dir;
+                    vb = b.dir;
+                }
+                // sphereWeight
+                let r1 = r * 0.5;
+                let d = max(length(delta), 0.001);
+                let atten = 1.0 - max(d - r1, 0.0) / max(r - r1, 0.001);
+                let base = probe_set.probes[i].params.z / d;
+                dw = base * atten * max(r, 1.0) * 4.0;
+                w = base * atten;
             }
-            // sphereWeight
-            let r1 = r * 0.5;
-            let d = max(length(delta), 0.001);
-            let atten = 1.0 - max(d - r1, 0.0) / max(r - r1, 0.001);
-            let base = probe_set.probes[i].params.z / d;
-            dw = base * atten * max(r, 1.0) * 4.0;
-            w = base * atten;
-        }
-        let ca = probe_tap(i, va, a, amblit) * w;
-        var cb = vec3<f32>(0.0);
-        if (want_b) {
-            cb = probe_tap(i, vb, b, amblit) * w;
-        }
-        if (manual) {
-            a1 += ca;
-            b1 += cb;
-            w1 += w;
-            dw1 += dw;
-        } else {
-            a0 += ca;
-            b0 += cb;
-            w0 += w;
+            let ca = probe_tap(i, va, a, amblit) * w;
+            var cb = vec3<f32>(0.0);
+            if (want_b) {
+                cb = probe_tap(i, vb, b, amblit) * w;
+            }
+            if (manual) {
+                a1 += ca;
+                b1 += cb;
+                w1 += w;
+                dw1 += dw;
+            } else {
+                a0 += ca;
+                b0 += cb;
+                w0 += w;
+            }
         }
     }
     out.a = probe_mix(a0, a1, w0, w1, dw1, sample_automatic);
@@ -1226,6 +1297,8 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
     let step = span / f32(taps - 1u);
     let center = 0.5 * f32(taps - 1u);
     let tile = vec2<f32>(f32(cascade % 2u), f32(cascade / 2u));
+    let atlas = vec2<f32>(textureDimensions(shadow_map));
+    let tile_scale = vec2<f32>(0.5, atlas.x / (2.0 * atlas.y));
     // Receiver bias in metres along the light: two texels of the cascade.
     // The depth range of a cascade is its square plus CASCADE_DEPTH_PAD on
     // each side (about 810 m for the finest), so a fixed 0.0005 of it was
@@ -1251,10 +1324,21 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
             // result as the clamp-to-edge of a separate texture, never a
             // texel of the neighbouring tile
             let t = clamp(uv + o, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
-            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (t + tile) * 0.5, ndc.z - receiver_bias);
+            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (t + tile) * tile_scale, ndc.z - receiver_bias);
         }
     }
     return sum / f32(taps * taps);
+}
+
+// The motion of a pixel on the screen from its clip positions, this frame's
+// and the last frame's: in uv units (y down), what to take from its uv to
+// find where the last frame drew it. None for a point that was behind the
+// camera.
+fn screen_motion(cur: vec4<f32>, prev: vec4<f32>) -> vec2<f32> {
+    if (prev.w <= 1e-6 || cur.w <= 1e-6) {
+        return vec2<f32>(0.0);
+    }
+    return (cur.xy / cur.w - prev.xy / prev.w) * vec2<f32>(0.5, -0.5);
 }
 
 // The view shown instead of the image (frame.light_mode.z, Preferences ›
@@ -1626,10 +1710,10 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
         // occlusion only), in one walk of the probes
         let s = sample_probes_pair(world_pos, frag, ProbeLookup(n, 0.0, true), ProbeLookup(r, roughness * probe_max_lod(), false), !legacy, true, hemi);
         if (s.a.w > 0.0) {
-            amb = s.a.rgb;
+            amb = s.a.rgb * probe_pass_ambiance();
         }
         if (s.b.w > 0.0) {
-            env = s.b.rgb;
+            env = s.b.rgb * probe_pass_radiance();
             occl = spec_ao;
         }
     }
@@ -1792,8 +1876,7 @@ fn ssr_trace(origin: vec3<f32>, dir: vec3<f32>, steps: i32) -> vec4<f32> {
                         lo = mid;
                     }
                 }
-                let edge = min(min(huv.x, 1.0 - huv.x), min(huv.y, 1.0 - huv.y));
-                let conf = clamp(edge * 10.0, 0.0, 1.0) * (1.0 - f32(i) / f32(steps));
+                let conf = ssr_edge_fade(huv) * (1.0 - f32(i) / f32(steps));
                 let col = textureSampleLevel(scene_tex, lin_clamp, huv, 0.0).rgb;
                 return vec4<f32>(col, conf);
             }
@@ -1802,6 +1885,44 @@ fn ssr_trace(origin: vec3<f32>, dir: vec3<f32>, steps: i32) -> vec4<f32> {
         t = t * 1.18 + 0.1;
     }
     return vec4<f32>(0.0);
+}
+
+// Pixels of a photo tile's inner edges over which a reflection's hit fades:
+// past them the ray finds nothing, the scene beyond is not drawn. Within
+// the guard band (at least 128 pixels, `snapshot::TILE_GUARD`), so the
+// pixels the tile keeps read their hits whole.
+const SSR_TILE_FADE: f32 = 64.0;
+
+// How much of a reflection's hit at `uv` is kept: it fades over the last
+// tenth of the image towards its edges. A photo tile fades at the photo's
+// edges, as the photo in one pass does, and at its inner edges only over
+// `SSR_TILE_FADE`: fading over a tenth of the tile took the reflections
+// out along every seam.
+fn ssr_edge_fade(uv: vec2<f32>) -> f32 {
+    if (frame.photo.z <= 0.0) {
+        let edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+        return clamp(edge * 10.0, 0.0, 1.0);
+    }
+    let p = frame.photo.xy + uv * frame.photo.zw;
+    let edge = min(min(p.x, 1.0 - p.x), min(p.y, 1.0 - p.y));
+    // in this tile's pixels from each side; a side on the photo's edge
+    // fades with the photo
+    let px = uv * frame.screen.xy;
+    let to_end = frame.screen.xy - px;
+    var inner = 1.0;
+    if (frame.photo.x > 1e-6) {
+        inner = min(inner, px.x / SSR_TILE_FADE);
+    }
+    if (frame.photo.y > 1e-6) {
+        inner = min(inner, px.y / SSR_TILE_FADE);
+    }
+    if (frame.photo.x + frame.photo.z < 1.0 - 1e-6) {
+        inner = min(inner, to_end.x / SSR_TILE_FADE);
+    }
+    if (frame.photo.y + frame.photo.w < 1.0 - 1e-6) {
+        inner = min(inner, to_end.y / SSR_TILE_FADE);
+    }
+    return clamp(edge * 10.0, 0.0, 1.0) * clamp(inner, 0.0, 1.0);
 }
 
 // calcLegacyDistanceAttenuation (deferredUtil.glsl): `d` is the distance
@@ -1868,14 +1989,15 @@ fn projector_specular(slot: u32, tc: vec2<f32>, blur: f32) -> vec4<f32> {
 
 // Light left by the shadow map of projector `i` (1: lit, or no map), as
 // spotLightF.glsl with sampleSpotShadow / pcfSpotShadow (shadowUtil.glsl):
-// the two projectors that weigh most on screen have a map, in the halves of
-// the top row of the shadow atlas's fourth tile. Like Firestorm's, these
-// shadows stop with the sun's (the last tenth of its shadow distance).
+// the configured budget extends the Legacy Viewer's two-map limit without
+// reducing each map's resolution (projector_shadows.rs). These shadows stop
+// with the sun's (the last tenth of its shadow distance).
 fn projector_shadow(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
-    if (frame.params.z < 0.5 || (i != frame.spot_lights.x && i != frame.spot_lights.y)) {
+    let slot = frame.projectors[i].tex.y;
+    if (frame.params.z < 0.5 || slot == 0u) {
         return 1.0;
     }
-    let k = select(0u, 1u, i == frame.spot_lights.y);
+    let k = slot - 1u;
     let far = frame.cascade_splits.z;
     let depth = distance(world_pos, frame.camera_pos.xyz);
     if (depth >= far) {
@@ -1893,18 +2015,26 @@ fn projector_shadow(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
     }
     // a map is a quarter of the atlas wide: its texel in map coordinates
     let texel = 4.0 / f32(textureDimensions(shadow_map).x);
-    let origin = vec2<f32>(0.5 + 0.25 * f32(k), 0.5);
+    let dims = vec2<f32>(textureDimensions(shadow_map));
+    let size = dims.x * 0.5;
+    let half = size * 0.5;
+    var origin: vec2<f32>;
+    if (k < 4u) {
+        origin = vec2<f32>(size + f32(k % 2u) * half, size + f32(k / 2u) * half);
+    } else {
+        origin = vec2<f32>(f32((k - 4u) % 4u) * half, 2.0 * size + f32((k - 4u) / 4u) * half);
+    }
     var sum = 0.0;
     // pcfSpotShadow's five taps
     let taps = array<vec2<f32>, 5>(
         vec2<f32>(0.0, 0.0), vec2<f32>(2.0, 1.5), vec2<f32>(1.0, -1.5), vec2<f32>(-1.0, 1.5), vec2<f32>(-2.0, -1.5));
     for (var t = 0; t < 5; t++) {
         let at = clamp(uv + taps[t] * texel, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
-        sum += textureSampleCompareLevel(shadow_map, shadow_sampler, origin + at * 0.25, ndc.z - 0.0002);
+        sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (origin + at * half) / dims, ndc.z - 0.0002);
     }
     var s = sum * 0.2;
     // the map fades in and out as its projector takes or loses it
-    s = clamp(s + select(frame.spot_fade.x, frame.spot_fade.y, k == 1u), 0.0, 1.0);
+    s = clamp(s + frame.spot_fade[k / 4u][k % 4u], 0.0, 1.0);
     return mix(1.0, s, clamp((far - depth) / (far * 0.1), 0.0, 1.0));
 }
 
@@ -2076,18 +2206,50 @@ struct LLAtmos {
 
 // calcAtmosphericVars: `rel` = point minus camera (world, z up).
 fn ll_atmos(rel_in: vec3<f32>) -> LLAtmos {
+    return ll_atmos_core(rel_in, vec3<f32>(0.0, 0.0, 1.0), frame.sky_light.xyz, frame.sun_dir.xyz);
+}
+
+// calcAtmosphericVars as hazeF.glsl runs it over a surface: the point in
+// eye space (rebuilt from the depth), `lightnorm` in world GL axes
+// (LLEnvironment::toLightNorm: x north, y up, z east) and `light_dir` in eye
+// space. The haze glow's first factor thus mixes eye and world axes: its
+// hotspot is not along the sun for rays down to the water, where the
+// world-space ll_atmos put a second sun on the sea (the Legacy Viewer shows
+// none). `rel_world` = point minus camera (world, z up).
+fn ll_atmos_eye(rel_world: vec3<f32>) -> LLAtmos {
+    let forward = normalize((frame.inv_view_proj_rot * vec4<f32>(0.0, 0.0, 0.5, 1.0)).xyz);
+    let up = normalize(frame.cam_up.xyz - forward * dot(frame.cam_up.xyz, forward));
+    let right = cross(forward, up);
+    let ln = frame.sky_light.xyz;
+    return ll_atmos_core(
+        ll_eye_axes(rel_world, right, up, forward),
+        vec3<f32>(0.0, 1.0, 0.0),
+        vec3<f32>(ln.y, ln.z, ln.x),
+        ll_eye_axes(frame.sun_dir.xyz, right, up, forward),
+    );
+}
+
+// A world vector in eye axes (x right, y up, z backward).
+fn ll_eye_axes(v: vec3<f32>, right: vec3<f32>, up: vec3<f32>, forward: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(dot(v, right), dot(v, up), -dot(v, forward));
+}
+
+// The body of calcAtmosphericVars: `rel_in` the point in the frame of
+// `up_axis` (the altitude limit and the direction's nudge), `glow_norm` and
+// `glow_light` the two vectors of the haze glow.
+fn ll_atmos_core(rel_in: vec3<f32>, up_axis: vec3<f32>, glow_norm: vec3<f32>, glow_light: vec3<f32>) -> LLAtmos {
     var rel_pos = rel_in;
     let max_y = frame.sky_glow.w;
-    if (abs(rel_pos.z) > max_y) {
-        rel_pos *= max_y / abs(rel_pos.z);
+    let rel_up = dot(rel_pos, up_axis);
+    if (abs(rel_up) > max_y) {
+        rel_pos *= max_y / abs(rel_up);
     }
-    let rel_pos_norm = normalize(rel_pos + vec3<f32>(0.0, 0.0, 1e-6));
+    let rel_pos_norm = normalize(rel_pos + up_axis * 1e-6);
     let rel_pos_len = length(rel_pos);
     let blue_density = frame.sky_blue_density.rgb;
     let haze_density = frame.sky_blue_density.w;
     let density_multiplier = frame.sky_ambient.w;
     let lightnorm = frame.sky_light.xyz;
-    let light_dir = frame.sun_dir.xyz;
     // sunlight_color / moonlight_color as LLPipeline::bindDeferredShader sets
     // them: normalized, and the moon without skyV's 0.7
     var sunlight = frame.sky_obj_light.rgb;
@@ -2099,8 +2261,8 @@ fn ll_atmos(rel_in: vec3<f32>) -> LLAtmos {
     sunlight *= exp(-light_atten * (1.0 / max(1e-6, lightnorm.z)));
     let density_dist = rel_pos_len * density_multiplier;
     let atten = exp(-combined * density_dist * frame.sky_ll.y);
-    var haze_glow = dot(rel_pos_norm, lightnorm);
-    haze_glow *= max(0.0, dot(light_dir, rel_pos_norm));
+    var haze_glow = dot(rel_pos_norm, glow_norm);
+    haze_glow *= max(0.0, dot(glow_light, rel_pos_norm));
     haze_glow = max(1.0 - haze_glow, 0.001) * frame.sky_glow.x;
     haze_glow = clamp(pow(haze_glow, frame.sky_glow.z), -100000.0, 100000.0) + 0.25;
     haze_glow *= frame.sky_light.w;
@@ -2112,9 +2274,22 @@ fn ll_atmos(rel_in: vec3<f32>) -> LLAtmos {
     var o: LLAtmos;
     o.sunlit = sunlight;
     o.amblit = pow(max(tmp_ambient, vec3<f32>(0.0)), vec3<f32>(0.9)) * 0.57;
+    if (colored_sky_ambient()) {
+        o.amblit = max(tmp_ambient, vec3<f32>(0.0)) * 0.7;
+    }
     o.additive = min(additive * (vec3<f32>(1.0) - atten), vec3<f32>(10.0));
     o.atten = atten;
     return o;
+}
+
+// The experimental colored sky ambient: the first PBR release lit with the
+// sky's ambient colour x RenderSkyAmbientScale 0.7, neither softened (pow
+// 0.9, x 0.57) nor turned grey in linear mode (atmosphericsFuncs.glsl
+// calcAtmosphericVarsLinear, settings.xml, tag
+// Second_Life_Release#843866d-DRTVWR-559). It had no classic branch: a
+// classic sky keeps its colour either way and only takes the 0.7 curve.
+fn colored_sky_ambient() -> bool {
+    return frame.sky_obj_light.w > 0.5;
 }
 
 // ambientLighting: a touch of light opposite the sun.
@@ -2165,7 +2340,8 @@ fn ll_classic_sun_ambient(base: vec3<f32>, n: vec3<f32>, shadow: f32, frag: vec2
     }
     // linear mode: grey sky ambient, linear sunlight, plain lambert
     let amb_lin = srgb_to_linear(a.amblit * ll_ambient_lighting(n));
-    let irr = ll_ssao(vec3<f32>(dot(amb_lin, vec3<f32>(0.2126, 0.7152, 0.0722))), frag);
+    let amb_grey = vec3<f32>(dot(amb_lin, vec3<f32>(0.2126, 0.7152, 0.0722)));
+    let irr = ll_ssao(select(amb_grey, amb_lin, colored_sky_ambient()), frag);
     return (irr + min(nl_sun, shadow) * srgb_to_linear(a.sunlit) + screen_indirect(frag)) * base;
 }
 

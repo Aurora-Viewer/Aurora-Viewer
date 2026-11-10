@@ -5,6 +5,7 @@
 //! Port of indra/llplugin/llpluginclassmedia.cpp (Copyright (C) Linden
 //! Research, Inc., originally LGPL 2.1).
 
+use crate::file_picker::FilePicker;
 use crate::message::PluginMessage;
 use crate::process::{PluginPaths, PluginProcess};
 use aurora_llsd::Llsd;
@@ -213,6 +214,7 @@ impl Default for BrowserSettings {
 
 pub struct MediaPlugin {
     process: PluginProcess,
+    file_picker: Option<FilePicker>,
     queue: VecDeque<PluginMessage>,
     texture_params_received: bool,
     depth: i32,
@@ -243,6 +245,10 @@ pub struct MediaPlugin {
     priority: Priority,
     low_priority_size_limit: i32,
     requested_volume: f32,
+    /// Linux: a web page's sound, which the plugin does not set
+    /// (stream_volume.rs).
+    #[cfg(target_os = "linux")]
+    stream_volume: Option<crate::stream_volume::StreamVolume>,
     status: MediaStatus,
     events: Vec<MediaEvent>,
     failed: bool,
@@ -274,6 +280,35 @@ impl MediaPlugin {
         browser: &BrowserSettings,
         target: &str,
     ) -> std::io::Result<MediaPlugin> {
+        Self::launch_with(paths, plugin, width, height, browser, target, false)
+    }
+
+    /// [`MediaPlugin::launch`] for media on a face or a parcel, whose sound
+    /// follows the viewer's volume. On Linux, only these web pages get their
+    /// own stream name and tag (stream_volume.rs): the sound server keeps a
+    /// volume per stream name, so a web window sharing that name would start
+    /// at the last volume set on a world page (muted, for example), with
+    /// nothing to set it back.
+    pub fn launch_in_world(
+        paths: &PluginPaths,
+        plugin: &str,
+        width: i32,
+        height: i32,
+        browser: &BrowserSettings,
+        target: &str,
+    ) -> std::io::Result<MediaPlugin> {
+        Self::launch_with(paths, plugin, width, height, browser, target, true)
+    }
+
+    fn launch_with(
+        paths: &PluginPaths,
+        plugin: &str,
+        width: i32,
+        height: i32,
+        browser: &BrowserSettings,
+        target: &str,
+        in_world: bool,
+    ) -> std::io::Result<MediaPlugin> {
         let file = paths.plugin_file(plugin);
         if !file.is_file() {
             return Err(std::io::Error::new(
@@ -281,9 +316,18 @@ impl MediaPlugin {
                 format!("{} not found", file.display()),
             ));
         }
-        let process = PluginProcess::launch(&paths.launcher, &paths.plugin_dir, &file)?;
+        #[cfg(target_os = "linux")]
+        let stream_volume = (in_world && plugin == "media_plugin_cef").then(crate::stream_volume::StreamVolume::new);
+        #[cfg(not(target_os = "linux"))]
+        let _ = in_world;
+        #[cfg(target_os = "linux")]
+        let env: Vec<(String, String)> = stream_volume.iter().map(crate::stream_volume::StreamVolume::env).collect();
+        #[cfg(not(target_os = "linux"))]
+        let env: Vec<(String, String)> = Vec::new();
+        let process = PluginProcess::launch(&paths.launcher, &paths.plugin_dir, &file, &env)?;
         let mut m = MediaPlugin {
             process,
+            file_picker: None,
             queue: VecDeque::new(),
             texture_params_received: false,
             depth: 0,
@@ -314,6 +358,8 @@ impl MediaPlugin {
             priority: Priority::Normal,
             low_priority_size_limit: LOW_PRIORITY_TEXTURE_SIZE_DEFAULT,
             requested_volume: 0.0,
+            #[cfg(target_os = "linux")]
+            stream_volume,
             status: MediaStatus::None,
             events: Vec::new(),
             failed: false,
@@ -421,6 +467,10 @@ impl MediaPlugin {
         }
         for m in self.process.take_messages() {
             self.receive(m);
+        }
+        if let Some(response) = self.file_picker.as_ref().and_then(FilePicker::poll) {
+            self.file_picker = None;
+            self.process.send(&response);
         }
         if self.media_width == -1 || !self.texture_params_received || !self.process.is_running() {
             // can't process a size change at this time
@@ -754,6 +804,10 @@ impl MediaPlugin {
 
     /// Volume 0..1 (sent only when it changes).
     pub fn set_volume(&mut self, volume: f32) {
+        #[cfg(target_os = "linux")]
+        if let Some(stream) = self.stream_volume.as_mut() {
+            stream.set(volume);
+        }
         if volume_changed(self.requested_volume, volume) {
             self.requested_volume = volume;
             self.send(PluginMessage::new(CLASS_MEDIA_TIME, "set_volume").with("volume", volume as f64));
@@ -873,11 +927,15 @@ impl MediaPlugin {
             }
             "tooltip_text" => self.hover_text = m.string("tooltip"),
             "pick_file" => {
-                // blocking request: answer with nothing picked
-                let r = PluginMessage::new(CLASS_MEDIA, "pick_file_response")
-                    .with("file_list", Llsd::new_array())
-                    .with("blocking_response", true);
-                self.process.send(&r);
+                if self.file_picker.is_none() {
+                    match FilePicker::open(m.boolean("multiple_files")) {
+                        Ok(picker) => self.file_picker = Some(picker),
+                        Err(e) => {
+                            log::warn!("media: cannot open file picker: {e}");
+                            self.process.send(&crate::file_picker::response(Vec::new()));
+                        }
+                    }
+                }
             }
             "auth_request" => {
                 let r = PluginMessage::new(CLASS_MEDIA, "auth_response")
@@ -888,6 +946,11 @@ impl MediaPlugin {
                 self.process.send(&r);
             }
             "debug_message" => self.events.push(MediaEvent::DebugMessage(m.string("message_text"))),
+            "file_download" => {
+                // Downloads are not implemented. Release CEF's blocking
+                // callback without choosing a save destination.
+                self.process.send(&crate::file_picker::response(Vec::new()));
+            }
             _ => {}
         }
     }

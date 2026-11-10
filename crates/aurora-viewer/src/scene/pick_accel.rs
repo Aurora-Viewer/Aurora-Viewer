@@ -14,10 +14,10 @@
 //! nearest hit), a few dozen triangles tested instead of all. It is built
 //! by a background job the first time the hover search tests a large face
 //! of a mesh or a sculpt ([`PickAccel::get_or_ask`]): until it is there,
-//! every triangle is tested as before. Clicks and the full search of
-//! AURORA_HOVER_CHECK keep testing every triangle.
+//! every triangle is tested as before. Indexed left-click queries reuse
+//! ready hierarchies; AURORA_HOVER_CHECK independently tests every triangle.
 
-use crate::media::pick::ray_triangle;
+use crate::media::pick::{TriangleHit, ray_triangle};
 use glam::Vec3;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -143,8 +143,24 @@ impl Accel {
 
     /// The distance of the nearest triangle the ray `o + t d` (object
     /// space) meets nearer than `best`, or `best`: what testing every
-    /// triangle of `indices` in turn gives (`pick::ray_faces`, two-sided).
-    pub fn nearest(&self, positions: &[[f32; 3]], indices: &[u16], o: Vec3, d: Vec3, mut best: f32) -> f32 {
+    /// triangle of `indices` in turn gives, with the same back-face policy.
+    pub fn nearest(&self, positions: &[[f32; 3]], indices: &[u16], o: Vec3, d: Vec3, two_sided: bool, best: f32) -> f32 {
+        self.nearest_filtered(positions, indices, o, d, two_sided, best, |_, _| true)
+    }
+
+    /// Reject texture holes without pruning the triangles behind them,
+    /// including folds of the same face. Used by the left-click hover.
+    #[allow(clippy::too_many_arguments)]
+    pub fn nearest_filtered(
+        &self,
+        positions: &[[f32; 3]],
+        indices: &[u16],
+        o: Vec3,
+        d: Vec3,
+        two_sided: bool,
+        mut best: f32,
+        accepts: impl Fn([u16; 3], &TriangleHit) -> bool,
+    ) -> f32 {
         // The triangle test accepts a ray that passes a hair outside a
         // triangle, by rounding: up to about 1e-6 of the distances it
         // handles. The boxes are widened by a hundred times that, so that a
@@ -192,15 +208,73 @@ impl Accel {
                 let (Some(p0), Some(p1), Some(p2)) = (p(t[0]), p(t[1]), p(t[2])) else {
                     continue;
                 };
-                if let Some(hit) = ray_triangle(o, d, p0, p1, p2, true)
+                if let Some(hit) = ray_triangle(o, d, p0, p1, p2, two_sided)
                     && hit.t > 0.0
                     && hit.t < best
+                    && accepts([t[0], t[1], t[2]], &hit)
                 {
                     best = hit.t;
                 }
             }
         }
         best
+    }
+
+    /// Where the segment `o + t d`, `t0 < t < t1` (object space), crosses
+    /// triangles, into `out` (`t`, in no order): what testing every
+    /// triangle of `indices` in turn finds (sound occlusion,
+    /// scene/sound_occlusion.rs).
+    pub fn crossings(&self, positions: &[[f32; 3]], indices: &[u16], o: Vec3, d: Vec3, (t0, t1): (f32, f32), out: &mut Vec<f32>) {
+        // (the padding of `nearest`)
+        let pad = 1e-4 * (o.abs().max_element() + self.extent);
+        let inv = d.recip();
+        let mut stack = [0u32; 64];
+        let mut top = 1;
+        while top > 0 {
+            top -= 1;
+            let Some(node) = self.nodes.get(stack[top] as usize) else {
+                continue;
+            };
+            let (mut near, mut far) = (t0, t1);
+            let mut miss = false;
+            for axis in 0..3 {
+                let (lo, hi) = (node.min[axis] - pad, node.max[axis] + pad);
+                if d[axis] == 0.0 {
+                    miss |= o[axis] < lo || o[axis] > hi;
+                } else {
+                    let (a, b) = ((lo - o[axis]) * inv[axis], (hi - o[axis]) * inv[axis]);
+                    near = near.max(a.min(b));
+                    far = far.min(a.max(b));
+                }
+            }
+            if miss || far < near {
+                continue;
+            }
+            if node.count == INNER {
+                if top + 2 <= stack.len() {
+                    stack[top] = node.first;
+                    stack[top + 1] = node.first + 1;
+                    top += 2;
+                }
+                continue;
+            }
+            let leaf = self.order.get(node.first as usize..(node.first + node.count) as usize);
+            for &number in leaf.unwrap_or_default() {
+                let Some(t) = indices.get(number as usize * 3..number as usize * 3 + 3) else {
+                    continue;
+                };
+                let p = |i: u16| positions.get(i as usize).map(|p| Vec3::from_array(*p));
+                let (Some(p0), Some(p1), Some(p2)) = (p(t[0]), p(t[1]), p(t[2])) else {
+                    continue;
+                };
+                if let Some(hit) = ray_triangle(o, d, p0, p1, p2, true)
+                    && hit.t > t0
+                    && hit.t < t1
+                {
+                    out.push(hit.t);
+                }
+            }
+        }
     }
 }
 
@@ -226,12 +300,19 @@ impl PickAccel {
     pub fn build(&self, positions: &[[f32; 3]], indices: &[u16]) {
         let _ = self.built.set(Accel::build(positions, indices));
     }
+
+    /// The hierarchy, built here if it is not there yet: for a caller that
+    /// already runs in a background job (sound occlusion).
+    pub fn get_or_build(&self, positions: &[[f32; 3]], indices: &[u16]) -> &Accel {
+        self.asked.store(true, Ordering::Relaxed);
+        self.built.get_or_init(|| Accel::build(positions, indices))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::media::pick::{FaceTris, ray_faces};
+    use crate::media::pick::{FaceTris, ray_faces_with_sidedness};
     use glam::Mat4;
 
     struct Rng(u64);
@@ -248,14 +329,14 @@ mod tests {
     }
 
     /// Every triangle in turn, as the full search does.
-    fn brute(positions: &[[f32; 3]], indices: &[u16], o: Vec3, d: Vec3) -> Option<f32> {
+    fn brute(positions: &[[f32; 3]], indices: &[u16], o: Vec3, d: Vec3, two_sided: bool) -> Option<f32> {
         let face = FaceTris {
             face: 0,
             positions,
             uvs: &[],
             indices,
         };
-        ray_faces(std::iter::once(face), Mat4::IDENTITY, o, d).map(|h| h.t)
+        ray_faces_with_sidedness(std::iter::once(face), Mat4::IDENTITY, o, d, |_| two_sided).map(|h| h.t)
     }
 
     fn check(positions: &[[f32; 3]], indices: &[u16], rng: &mut Rng, rays: usize, far: f32) -> usize {
@@ -269,22 +350,47 @@ mod tests {
             if rng.unit() < 0.1 {
                 d = Vec3::AXES[(rng.unit() * 2.99) as usize] * if rng.unit() < 0.5 { 1.0 } else { -1.0 };
             }
-            let expected = brute(positions, indices, o, d);
-            let got = accel.nearest(positions, indices, o, d, f32::INFINITY);
-            assert_eq!(
-                (got < f32::INFINITY).then_some(got).map(f32::to_bits),
-                expected.map(f32::to_bits),
-                "ray {o} {d}: {got} for {expected:?}"
-            );
-            // a hit not nearer than the best so far is left out, as the
-            // test of every triangle does from one face to the next
-            if let Some(t) = expected {
-                hits += 1;
-                assert_eq!(accel.nearest(positions, indices, o, d, t), t);
-                assert_eq!(accel.nearest(positions, indices, o, d, t * 0.5), t * 0.5);
+            for two_sided in [false, true] {
+                let expected = brute(positions, indices, o, d, two_sided);
+                let got = accel.nearest(positions, indices, o, d, two_sided, f32::INFINITY);
+                assert_eq!(
+                    (got < f32::INFINITY).then_some(got).map(f32::to_bits),
+                    expected.map(f32::to_bits),
+                    "ray {o} {d}, two_sided={two_sided}: {got} for {expected:?}"
+                );
+                // A hit beyond the current nearest distance cannot replace it.
+                if let Some(t) = expected {
+                    hits += 1;
+                    assert_eq!(accel.nearest(positions, indices, o, d, two_sided, t), t);
+                    assert_eq!(accel.nearest(positions, indices, o, d, two_sided, t * 0.5), t * 0.5);
+                }
             }
         }
         hits
+    }
+
+    #[test]
+    fn rejected_front_triangles_do_not_prune_a_folded_faces_rear_surface() {
+        let positions = [
+            [-1.0, -1.0, 1.0],
+            [1.0, -1.0, 1.0],
+            [0.0, 1.0, 1.0],
+            [-1.0, -1.0, 2.0],
+            [1.0, -1.0, 2.0],
+            [0.0, 1.0, 2.0],
+        ];
+        // Enough duplicate triangles to put the layers in different leaves.
+        let indices: Vec<u16> = (0..20).flat_map(|_| [0, 1, 2, 3, 4, 5]).collect();
+        let accel = Accel::build(&positions, &indices);
+        let t = accel.nearest_filtered(&positions, &indices, Vec3::ZERO, Vec3::Z, true, f32::INFINITY, |tri, hit| {
+            assert!(hit.u >= 0.0 && hit.v >= 0.0);
+            tri[0] >= 3
+        });
+        assert_eq!(t, 2.0);
+        assert_eq!(
+            accel.nearest_filtered(&positions, &indices, Vec3::ZERO, Vec3::Z, true, 1.5, |tri, _| tri[0] >= 3),
+            1.5
+        );
     }
 
     #[test]
@@ -335,20 +441,69 @@ mod tests {
         let accel = Accel::build(&positions, &indices);
         for i in 0..=N {
             let o = Vec3::new(i as f32 / N as f32 - 0.5, 0.1, 3.0);
-            let got = accel.nearest(&positions, &indices, o, -Vec3::Z, f32::INFINITY);
-            assert_eq!(Some(got).filter(|t| *t < f32::INFINITY), brute(&positions, &indices, o, -Vec3::Z));
+            for two_sided in [false, true] {
+                let got = accel.nearest(&positions, &indices, o, -Vec3::Z, two_sided, f32::INFINITY);
+                assert_eq!(
+                    Some(got).filter(|t| *t < f32::INFINITY),
+                    brute(&positions, &indices, o, -Vec3::Z, two_sided)
+                );
+            }
         }
+    }
+
+    #[test]
+    fn crossings_count_what_every_triangle_counts() {
+        let mut rng = Rng(23);
+        let positions: Vec<[f32; 3]> = (0..2000).map(|_| rng.point(1.0).to_array()).collect();
+        let indices: Vec<u16> = (0..9000).map(|_| (rng.unit() * 1999.0) as u16).collect();
+        let accel = Accel::build(&positions, &indices);
+        let mut crossed = 0;
+        for _ in 0..800 {
+            let (from, to) = (rng.point(3.0), rng.point(3.0));
+            let d = to - from;
+            let range = (0.05, 0.95);
+            let mut expected: Vec<f32> = indices
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .filter_map(|t| {
+                    let p = |i: u16| Vec3::from_array(positions[i as usize]);
+                    ray_triangle(from, d, p(t[0]), p(t[1]), p(t[2]), true)
+                        .map(|h| h.t)
+                        .filter(|t| *t > range.0 && *t < range.1)
+                })
+                .collect();
+            let mut got = Vec::new();
+            accel.crossings(&positions, &indices, from, d, range, &mut got);
+            expected.sort_by(f32::total_cmp);
+            got.sort_by(f32::total_cmp);
+            assert_eq!(got, expected, "{from} → {to}");
+            crossed += expected.len();
+        }
+        assert!(crossed > 1000, "{crossed} crossings");
+        // built on demand by the caller's own job, and kept
+        let face = PickAccel::default();
+        let built = face.get_or_build(&positions, &indices) as *const Accel;
+        assert!(std::ptr::eq(face.get_or_ask(|| panic!("already built")).unwrap(), built));
     }
 
     #[test]
     fn empty_and_small_faces() {
         let accel = Accel::build(&[], &[]);
-        assert_eq!(accel.nearest(&[], &[], Vec3::ZERO, Vec3::X, 5.0), 5.0);
+        assert_eq!(accel.nearest(&[], &[], Vec3::ZERO, Vec3::X, false, 5.0), 5.0);
         let positions = [[1.0, -1.0, -1.0], [1.0, 1.0, -1.0], [1.0, 0.0, 1.0]];
         let accel = Accel::build(&positions, &[0, 1, 2]);
-        assert_eq!(accel.nearest(&positions, &[0, 1, 2], Vec3::ZERO, Vec3::X, f32::INFINITY), 1.0);
+        assert_eq!(accel.nearest(&positions, &[0, 1, 2], Vec3::ZERO, Vec3::X, true, f32::INFINITY), 1.0);
         assert_eq!(
-            accel.nearest(&positions, &[0, 1, 2], Vec3::ZERO, -Vec3::X, f32::INFINITY),
+            accel.nearest(&positions, &[0, 1, 2], Vec3::ZERO, Vec3::X, false, f32::INFINITY),
+            f32::INFINITY
+        );
+        assert_eq!(
+            accel.nearest(&positions, &[0, 1, 2], Vec3::X * 2.0, -Vec3::X, false, f32::INFINITY),
+            1.0
+        );
+        assert_eq!(
+            accel.nearest(&positions, &[0, 1, 2], Vec3::ZERO, -Vec3::X, true, f32::INFINITY),
             f32::INFINITY
         );
     }

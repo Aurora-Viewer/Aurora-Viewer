@@ -125,7 +125,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         .iter()
         .filter(|i| filter.is_empty() || searchable_name(i).to_uppercase().contains(&filter))
         .collect();
-    list.sort_by_key(|i| i.name.to_lowercase());
+    list.sort_by_key(|i| crate::natural_order::key(&i.name));
     tool.ui
         .contents_selection
         .sync(object_id, list.iter().map(|it| it.item_id).collect(), ui.layer_id());
@@ -160,18 +160,40 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 } else {
                     "folder-open-filled"
                 };
-                ui.horizontal(|ui| {
+                let loading = inv.loading && inv.items.is_empty();
+                let row = ui.horizontal(|ui| {
                     if let Some(t) = crate::ui::icons::global(open_icon) {
                         ui.add(egui::Image::new(&t).fit_to_exact_size(Vec2::splat(16.0)).tint(p.violet_light));
                     }
-                    let title = if inv.loading && inv.items.is_empty() {
+                    let title = if loading {
                         aurora_i18n::tr!("build-ui-contents-loading-contents").to_owned()
                     } else {
                         root_label(items.len())
                     };
-                    ui.label(RichText::new(title).size(13.0).color(p.ink))
-                        .on_hover_text(aurora_i18n::tr!("common-object-contents"));
+                    ui.add(egui::Label::new(RichText::new(title).size(13.0).color(p.ink)).selectable(false));
                 });
+                // The root folder carries the whole contents to an inventory
+                // folder (LLTaskCategoryBridge::startDrag).
+                let root = ui
+                    .interact(
+                        row.response.rect,
+                        egui::Id::unique(("task_contents_root", object_id)),
+                        egui::Sense::click_and_drag(),
+                    )
+                    .on_hover_ui(|ui| {
+                        ui.label(aurora_i18n::tr!("common-object-contents"));
+                        ui.label(aurora_i18n::tr!("contents-root-drag-tip"));
+                    });
+                if !loading {
+                    crate::ui::inventory::task_drop::root_source(
+                        ui,
+                        &root,
+                        world,
+                        object_id,
+                        &items,
+                        crate::build::task_inventory::owned(world, object_id, tool.props.get(&object_id)),
+                    );
+                }
                 ui.indent("task_contents_items", |ui| {
                     for item in list {
                         item_row(ui, p, tool, world, idx, object_id, item, editable);
@@ -354,11 +376,9 @@ fn item_row(
             } else {
                 aurora_i18n::tr!("build-ui-contents-copy-to-inventory")
             };
-            let take_tip = aurora_i18n::tr!("build-ui-contents-like-dragging-the-item-to-inventory");
+            let take_tip = aurora_i18n::tr!("contents-copy-selection-tip");
             if menu::item_tip(ui, p, "briefcase-filled", take, can_take, take_tip) {
-                for it in &taken {
-                    tool.copy_item_to_inventory(world, idx, it, uuid::Uuid::nil());
-                }
+                tool.copy_contents_to_inventory(world, idx, &taken);
             }
             if item.asset_type == AT_LSL_TEXT {
                 menu::separator(ui, p);

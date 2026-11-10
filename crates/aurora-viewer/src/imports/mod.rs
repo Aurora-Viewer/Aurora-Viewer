@@ -21,6 +21,7 @@ mod stage;
 #[cfg(test)]
 mod tests;
 pub mod ui;
+pub mod windows;
 
 use aurora_assets::{Animation, DecodedImage, PbrMaterial, import_sound::Sound, import_texture};
 use aurora_net::inventory::upload::{Error, Kind, Permissions, Prices, Receipt, Request};
@@ -63,7 +64,7 @@ impl Choice {
                             | (Choice::Mesh, Kind::Mesh)
                     )
             }
-            None => true,
+            None => self == Self::Bulk || entry.load_choice == Some(self),
         }
     }
     pub fn label(self) -> &'static str {
@@ -78,9 +79,17 @@ impl Choice {
         }
     }
 
-    /// Every source type uses the same remembered upload window.
+    /// The full uploader and each quick-import type retain independent geometry.
     pub fn window_id(self) -> &'static str {
-        ui::WINDOW
+        match self {
+            Self::Texture => "import_textures",
+            Self::Sound => "import_sounds",
+            Self::Animation => "import_animations",
+            Self::Material => "import_materials",
+            Self::Mesh => "import_meshes",
+            Self::Local => "import_local",
+            Self::Bulk => ui::WINDOW,
+        }
     }
 }
 
@@ -101,6 +110,7 @@ fn texture_needs_size_limit(image: &DecodedImage) -> bool {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preferences {
+    pub icon_bar: bool,
     pub max_width: u32,
     pub max_height: u32,
     pub limit_texture_size: bool,
@@ -140,6 +150,7 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
+            icon_bar: false,
             max_width: 1024,
             max_height: 1024,
             limit_texture_size: false,
@@ -306,6 +317,7 @@ impl Source {
 }
 
 pub struct Entry {
+    pub load_choice: Option<Choice>,
     pub id: Uuid,
     pub path: PathBuf,
     pub from_live: bool,
@@ -388,7 +400,8 @@ impl Entry {
         };
         Self {
             id: Uuid::new_v4(),
-            name: path.file_stem().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
+            load_choice: None,
+            name: crate::text_validation::generated_name(&path.file_stem().unwrap_or_default().to_string_lossy(), 63),
             path,
             from_live: false,
             description: String::new(),
@@ -453,7 +466,7 @@ pub(super) enum Worker {
         Uuid,
         Uuid,
         u64,
-        Result<(Arc<mesh::Prepared>, aurora_net::inventory::mesh_upload::Request), String>,
+        Result<(Arc<mesh::Prepared>, Option<aurora_net::inventory::mesh_upload::Request>), String>,
     ),
     MeshFile(
         Uuid,
@@ -491,6 +504,9 @@ struct Step {
 
 pub struct Imports {
     pub open: bool,
+    pub launcher_open: bool,
+    pub windows: [windows::Window; 6],
+    window_scope: Option<Choice>,
     pub tab: ui::Tab,
     pub preview_zoom: Option<(Uuid, Option<usize>)>,
     pub mesh_permission_account: Uuid,
@@ -502,8 +518,10 @@ pub struct Imports {
     pub active: Option<Uuid>,
     pub message: String,
     pub confirm: bool,
+    pub confirm_choice: Option<Choice>,
     pub scale_bulk_1k: bool,
     pub pending_files: Option<Uuid>,
+    pending_file_choice: Option<Choice>,
     /// The pending files come from the texture picker's Local tab.
     pub picker_files: bool,
     pub(super) tx: Sender<Worker>,
@@ -547,6 +565,9 @@ impl Default for Imports {
         let (tx, rx) = crossbeam_channel::unbounded();
         Self {
             open: false,
+            launcher_open: false,
+            windows: std::array::from_fn(|_| Default::default()),
+            window_scope: None,
             tab: Default::default(),
             preview_zoom: None,
             mesh_permission_account: Uuid::nil(),
@@ -558,8 +579,10 @@ impl Default for Imports {
             active: None,
             message: String::new(),
             confirm: false,
+            confirm_choice: None,
             scale_bulk_1k: false,
             pending_files: None,
+            pending_file_choice: None,
             picker_files: false,
             tx,
             rx,
@@ -599,6 +622,13 @@ impl Default for Imports {
         }
     }
 }
+/// The largest side of a material's maps: the Legacy Viewer material
+/// editor encodes each map with LLViewerTextureList::convertToUploadFile at
+/// its default, MAX_IMAGE_SIZE_DEFAULT (2048; llmaterialeditor.cpp). Given
+/// to every material row, when added and when a saved local preview is
+/// restored.
+pub(super) const MATERIAL_MAP_MAX: u32 = 2048;
+
 impl Imports {
     /// Stage a locally authored, already validated native file in the ordinary
     /// inspector. Upload/payment still follows the existing explicit action.
@@ -624,7 +654,16 @@ impl Imports {
         self.entries.push(entry);
         self.open(Choice::Animation);
     }
-    /// The shortcut and menu share the same queue window, without a file dialog.
+    /// The shortcut and menu use the same saved entry point.
+    pub fn toggle_import(&mut self, ctx: &egui::Context, prefs: &Preferences) {
+        if prefs.icon_bar {
+            crate::ui::widgets::toggle_floater(ctx, ui::launcher::WINDOW, &mut self.launcher_open);
+        } else {
+            self.toggle_window(ctx);
+        }
+    }
+
+    /// Open the queue without requesting a native file picker.
     pub fn toggle_window(&mut self, ctx: &egui::Context) {
         if self.open {
             crate::ui::widgets::toggle_floater(ctx, ui::WINDOW, &mut self.open);
@@ -660,7 +699,7 @@ impl Imports {
     }
 
     pub fn window_choice(&self) -> Choice {
-        Choice::Bulk
+        self.window_scope.unwrap_or(Choice::Bulk)
     }
 
     /// External editors may request a type; all paid assets share one queue.
@@ -700,7 +739,8 @@ impl Imports {
             .iter()
             .enumerate()
             .filter_map(|(i, e)| {
-                (e.local == local && Self::type_index(Self::type_choice(e)).is_none_or(|i| self.type_filters[i])).then_some(i)
+                (e.local == local && self.choice.accepts(e) && Self::type_index(Self::type_choice(e)).is_none_or(|i| self.type_filters[i]))
+                    .then_some(i)
             })
             .collect()
     }
@@ -719,10 +759,12 @@ impl Imports {
         }
         options
     }
+    // LLInventoryModel::findUserDefinedCategoryUUIDForType (llinventorymodel.cpp):
+    // a user lock keeps the folder in place; it does not redirect uploads (#1981).
     fn default_folder(world: &crate::world::World, prefs: &crate::ui::inventory::InventoryPreferences, kind: Kind) -> Uuid {
         use crate::world::inventory::actions;
         let folder = prefs.upload_folders[kind.folder_slot()];
-        if actions::destination(&world.inventory, folder, &prefs.protected) {
+        if actions::destination(&world.inventory, folder) {
             return folder;
         }
         actions::system(&world.inventory, kind.asset_type()).unwrap_or(world.inventory.root)
@@ -771,6 +813,23 @@ impl Imports {
         }
         Some(total)
     }
+    pub fn has_shared_textures(&self) -> bool {
+        let mut images = HashSet::new();
+        self.entries
+            .iter()
+            .filter(|entry| self.choice.accepts(entry) && entry.selected && matches!(entry.status, Status::Ready))
+            .any(|entry| {
+                let Some(Source::Material { images: textures, .. }) = &entry.source else {
+                    return false;
+                };
+                let options = self.options(entry);
+                textures.iter().flatten().filter(|image| image.asset.is_none()).any(|image| {
+                    let key = image.upload_key(options);
+                    !images.insert(key) || self.uploaded.contains_key(&key)
+                })
+            })
+    }
+
     pub fn start(
         &mut self,
         world: &crate::world::World,
@@ -781,7 +840,7 @@ impl Imports {
         if self.busy() {
             return;
         }
-        if !self.folder_plan_ready(world, prefs) {
+        if !self.folder_plan_ready(world) {
             self.message = aurora_i18n::tr!("import-invalid-request").into();
             return;
         }
@@ -803,7 +862,9 @@ impl Imports {
                     || entry.description.len() > 127
                     || entry.name.contains('\0')
                     || entry.description.contains('\0')
-                    || !crate::world::inventory::actions::destination(&world.inventory, entry.folder, &prefs.protected)
+                    || !crate::text_validation::Policy::PrintableNoPipe.accepts(&entry.name)
+                    || !crate::text_validation::Policy::PrintableNoPipe.accepts(&entry.description)
+                    || !crate::world::inventory::actions::destination(&world.inventory, entry.folder)
             })
         {
             self.message = aurora_i18n::tr!("import-invalid-request").into();
@@ -990,8 +1051,8 @@ impl Imports {
         prefs: &crate::ui::inventory::InventoryPreferences,
     ) -> Vec<aurora_net::NetCommand> {
         let mut commands = Vec::new();
-        self.sync_folder_plan(world, prefs);
-        if let Some(command) = self.next_import_folder(world, prefs) {
+        self.sync_folder_plan(world);
+        if let Some(command) = self.next_import_folder(world) {
             commands.push(command);
         }
         // Retire only acknowledged uploads. Local previews and drafts that
@@ -1008,8 +1069,12 @@ impl Imports {
             match worker {
                 Worker::Loaded(request, mut entries) if self.pending_files == Some(request) => {
                     self.pending_files = None;
+                    let loaded_choice = self.pending_file_choice.take();
                     let batch_folder = Self::batch_folder(world, self.load_preferences.batch_folder);
                     for entry in &mut entries {
+                        if entry.source.is_none() {
+                            entry.load_choice = loaded_choice;
+                        }
                         // Capture the latest choice on admission, not when the
                         // asynchronous file dialog/load started. Existing rows
                         // keep their independent choices.
@@ -1021,6 +1086,9 @@ impl Imports {
                             };
                             entry.options.max_width = maximum;
                             entry.options.max_height = maximum;
+                        } else if matches!(&entry.source, Some(Source::Material { .. })) {
+                            entry.options.max_width = MATERIAL_MAP_MAX;
+                            entry.options.max_height = MATERIAL_MAP_MAX;
                         }
                         if let Some(source) = &entry.source {
                             entry.folder = if self.folders.active() || self.load_preferences.use_default_folders {
@@ -1042,7 +1110,10 @@ impl Imports {
                         .then(|| entries.iter().find(|e| matches!(e.status, Status::Error(_))).map(|e| e.id))
                         .flatten();
                     self.entries.extend(entries);
-                    self.sync_folder_plan(world, prefs);
+                    if let Some(choice) = loaded_choice {
+                        self.reconcile_window(choice);
+                    }
+                    self.sync_folder_plan(world);
                     if let Some(id) = failed {
                         self.open(Choice::Local);
                         self.active = Some(id);
@@ -1244,7 +1315,11 @@ impl Imports {
                                 draft.inspector.prepared(&prepared);
                                 draft.prepared = Some(prepared);
                                 entry.model = None;
-                                commands.push(aurora_net::NetCommand::QuoteMesh { request, upload });
+                                if let Some(upload) = upload {
+                                    commands.push(aurora_net::NetCommand::QuoteMesh { request, upload });
+                                } else {
+                                    draft.pending = None;
+                                }
                             }
                             Err(error) => {
                                 draft.pending = None;

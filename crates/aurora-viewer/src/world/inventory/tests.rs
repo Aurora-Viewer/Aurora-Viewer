@@ -72,6 +72,41 @@ fn multiple_inventory_favorites_keep_independent_flags_and_batch_originals() {
 }
 
 #[test]
+fn viewer_made_calling_cards_take_their_resident_from_the_description() {
+    let mut inv = fixture();
+    let me = id(2);
+    let friend = Uuid::parse_str("8f3b2c1a-0d4e-4b5f-9a6c-7e8d9f0a1b2c").expect("key");
+    let card = |n: u128, desc: &str, creator: Uuid| InvItem {
+        id: id(n),
+        parent: id(8000),
+        asset_type: 2,
+        desc: desc.into(),
+        creator,
+        owner: me,
+        ..Default::default()
+    };
+    // A card made by a viewer: created by us, the resident's key as description.
+    inv.add_items(vec![card(9100, &friend.to_string(), me)]);
+    assert_eq!(inv.items[&id(9100)].creator, friend);
+    // A friendship card made by the server keeps its creator.
+    inv.add_items(vec![card(9101, "", friend)]);
+    assert_eq!(inv.items[&id(9101)].creator, friend);
+    // Text that is not a key, and a key in another kind of item, change nothing.
+    inv.add_items(vec![card(9102, "my best friend", me)]);
+    assert_eq!(inv.items[&id(9102)].creator, me);
+    let mut note = card(9103, &friend.to_string(), me);
+    note.asset_type = 7;
+    inv.add_items(vec![note]);
+    assert_eq!(inv.items[&id(9103)].creator, me);
+    // The simulator resends the card as created by us: still the friend's,
+    // and the record is not seen as changed.
+    let version = inv.folders[&id(8000)].info.version;
+    inv.server_updated(Vec::new(), vec![card(9100, &friend.to_string(), me)]);
+    assert_eq!(inv.items[&id(9100)].creator, friend);
+    assert_eq!(inv.folders[&id(8000)].info.version, version);
+}
+
+#[test]
 fn partial_inventory_updates_preserve_favorites_until_an_authoritative_removal() {
     let mut inv = fixture();
     inv.items.insert(
@@ -306,9 +341,134 @@ fn protected_system_worn_and_unknown_elements_cannot_be_deleted() {
     let trash = system(&inv, 14).expect("trash");
     assert!(!movable(&inv, id(99999), &HashSet::new()));
     assert!(move_selection(&inv, &[inv.root], trash, &HashSet::new(), &HashSet::new()).is_err());
-    assert!(move_selection(&inv, &[id(8100)], trash, &HashSet::from([id(8000)]), &HashSet::new()).is_err());
+    assert!(move_selection(&inv, &[id(8000)], trash, &HashSet::from([id(8000)]), &HashSet::new()).is_err());
     assert!(move_selection(&inv, &[id(8000)], trash, &HashSet::new(), &HashSet::from([id(8100)])).is_err());
-    assert!(!destination(&inv, id(701), &HashSet::new()));
+    assert!(!destination(&inv, id(701)));
+}
+
+#[test]
+fn protected_folder_cannot_move_but_its_contents_can_move_in_and_out() {
+    let inv = fixture();
+    let locked = id(8000);
+    let protected = HashSet::from([locked]);
+    let trash = system(&inv, 14).expect("trash");
+
+    let (sub, item) = (id(8001), id(8100));
+    let none = HashSet::new();
+
+    // the folder itself (LLFolderBridge::isProtected): held in place and out
+    // of the Trash, but renamed and filled like any folder
+    assert!(!movable(&inv, locked, &protected));
+    assert!(!relocatable(&inv, locked, &protected));
+    assert!(!removable(&inv, locked, &protected));
+    assert!(renameable(&inv, locked));
+    assert!(destination(&inv, locked));
+    assert!(move_selection(&inv, &[locked], inv.root, &protected, &none).is_err());
+    assert!(move_selection(&inv, &[locked], trash, &protected, &none).is_err());
+
+    // its contents, a subfolder's included, are ordinary entries: they move
+    // out, in and to the Trash
+    for entry in [item, sub] {
+        assert!(relocatable(&inv, entry, &protected), "{entry}");
+        assert!(removable(&inv, entry, &protected), "{entry}");
+        for to in [inv.root, trash] {
+            assert!(move_selection(&inv, &[entry], to, &protected, &none).is_ok(), "{entry} to {to}");
+        }
+    }
+    assert!(renameable(&inv, sub));
+    assert!(move_selection(&inv, &[item], locked, &protected, &none).is_ok());
+    assert!(move_selection(&inv, &[item], sub, &protected, &none).is_ok());
+}
+
+#[test]
+fn a_folder_holding_a_locked_folder_goes_to_the_trash_with_it() {
+    let inv = fixture();
+    let (outer, locked) = (id(8000), id(8001));
+    let protected = HashSet::from([locked]);
+    let none = HashSet::new();
+    let trash = system(&inv, 14).expect("trash");
+    // get_is_category_and_children_removable only refuses system folders below
+    assert!(removable(&inv, outer, &protected));
+    assert!(move_selection(&inv, &[outer], trash, &protected, &none).is_ok());
+    assert!(move_selection(&inv, &[outer], inv.root, &protected, &none).is_ok());
+}
+
+#[test]
+fn cut_and_paste_move_a_locked_folders_contents_out_and_in() {
+    use aurora_net::inventory::operations::Operation;
+    let mut inv = fixture();
+    let (locked, sub, inside) = (id(8000), id(8001), id(8100));
+    let protected = HashSet::from([locked]);
+    let none = HashSet::new();
+    let outside = id(8900);
+    inv.add_items(vec![InvItem {
+        id: outside,
+        parent: inv.root,
+        asset_type: 6,
+        owner_mask: COPY | MODIFY | TRANSFER,
+        ..Default::default()
+    }]);
+    let moves = |ops: &[Operation], what: Uuid, to: Uuid| matches!(ops, [Operation::Patch { id, body, .. }] if *id == what && body["parent_id"].as_uuid() == to);
+
+    // Cut in the locked folder, Paste elsewhere
+    assert!(paste_allowed(&inv, &[inside], inv.root, true, false, &protected, &none));
+    let change = paste(&inv, &[inside], inv.root, true, false, &protected, &none).expect("cut out");
+    assert!(moves(&change.operations, inside, inv.root));
+
+    // Cut elsewhere, Paste into the locked folder and into its subfolder
+    for to in [locked, sub] {
+        assert!(paste_allowed(&inv, &[outside], to, true, false, &protected, &none), "{to}");
+        let change = paste(&inv, &[outside], to, true, false, &protected, &none).expect("cut in");
+        assert!(moves(&change.operations, outside, to), "{to}");
+        // a copy may come in too
+        assert!(paste_allowed(&inv, &[outside], to, false, false, &protected, &none), "{to}");
+    }
+
+    // the locked folder itself still cannot be cut away
+    assert!(!paste_allowed(&inv, &[locked], inv.root, true, false, &protected, &none));
+    assert!(paste(&inv, &[locked], inv.root, true, false, &protected, &none).is_err());
+}
+
+#[test]
+fn root_support_folders_stay_in_place_but_can_still_be_deleted() {
+    let mut inv = fixture();
+    let trash = system(&inv, 14).expect("trash");
+    let none = HashSet::new();
+    let folder = |id: Uuid, parent: Uuid, name: &str| InvFolder {
+        id,
+        parent,
+        name: name.into(),
+        type_default: -1,
+        ..Default::default()
+    };
+    inv.created_folders(vec![
+        folder(id(9100), inv.root, "#RLV"),
+        folder(id(9101), id(8001), "#RLV"),
+        folder(id(9102), inv.root, "#Firestorm"),
+        folder(id(9103), inv.root, "#rlv"),
+        InvFolder {
+            type_default: 48,
+            ..folder(id(9104), inv.root, "My Outfits")
+        },
+        folder(id(9105), inv.root, "Outfit"),
+    ]);
+    assert!(move_selection(&inv, &[id(9105)], id(9104), &none, &none).is_ok());
+    for pinned_id in [id(9100), id(9102)] {
+        assert!(pinned(&inv, pinned_id));
+        assert!(!relocatable(&inv, pinned_id, &none));
+        assert!(move_selection(&inv, &[pinned_id], id(8001), &none, &none).is_err());
+        assert!(move_selection(&inv, &[pinned_id], id(9104), &none, &none).is_err());
+        assert!(ungroup(&inv, pinned_id, &none, &none).is_err());
+        assert!(!paste_allowed(&inv, &[pinned_id], id(8001), true, false, &none, &none));
+        assert!(
+            move_selection(&inv, &[pinned_id], trash, &none, &none).is_ok(),
+            "delete stays allowed"
+        );
+        assert!(renameable(&inv, pinned_id));
+    }
+    // A misplaced #RLV goes back to the root; names match exactly, as RLVa's.
+    assert!(move_selection(&inv, &[id(9101)], inv.root, &none, &none).is_ok());
+    assert!(relocatable(&inv, id(9103), &none));
 }
 
 #[test]
@@ -484,18 +644,18 @@ fn marketplace_requires_transfer_and_stages_no_copy_objects_in_stock_folders() {
 #[test]
 fn offers_are_bounded_and_include_the_folder_as_the_first_tuple() {
     let mut inv = fixture();
-    assert!(offer(&inv, id(8110), &HashSet::new(), &HashSet::new()).is_err());
+    assert!(offer(&inv, id(8110), &HashSet::new()).is_err());
     inv.remove(&[id(8110), id(8113)]);
-    let bucket = offer(&inv, id(8000), &HashSet::new(), &HashSet::new()).expect("offer folder");
+    let bucket = offer(&inv, id(8000), &HashSet::new()).expect("offer folder");
     assert_eq!(bucket[0], 8);
     assert_eq!(&bucket[1..17], id(8000).as_bytes());
     assert_eq!(bucket.len() % 17, 0);
     assert!(offer_has_no_copy(&inv, &bucket));
     assert!(!offer_has_no_copy(
         &inv,
-        &offer(&inv, id(8100), &HashSet::new(), &HashSet::new()).expect("copyable item")
+        &offer(&inv, id(8100), &HashSet::new()).expect("copyable item")
     ));
-    assert!(offer(&inv, id(8100), &HashSet::new(), &HashSet::from([id(8100)])).is_err());
+    assert!(offer(&inv, id(8100), &HashSet::from([id(8100)])).is_err());
 }
 
 #[test]
@@ -527,5 +687,191 @@ fn names_are_trimmed_bounded_and_cannot_inject_legacy_asset_headers() {
     assert_eq!(clean_name("  Chemise  ").expect("name"), "Chemise");
     assert!(clean_name("Chemise\ntype 0").is_err());
     assert!(clean_name("A|B").is_err());
-    assert_eq!(clean_name(&"é".repeat(90)).expect("bounded name").chars().count(), 63);
+    assert_eq!(clean_name(&"a".repeat(90)).expect("bounded name").len(), 63);
+    for name in ["Café", "桜", "龙", "Name 桜龙"] {
+        assert_eq!(clean_name(name).expect("received name"), name);
+    }
+}
+
+#[test]
+fn a_link_can_be_pasted_into_an_outfit_folder_but_a_copy_cannot() {
+    let mut inv = fixture();
+    let original = id(8109);
+    inv.created_folders(vec![
+        InvFolder {
+            id: id(9700),
+            parent: inv.root,
+            name: "My Outfits".into(),
+            type_default: 48,
+            ..Default::default()
+        },
+        InvFolder {
+            id: id(9701),
+            parent: id(9700),
+            name: "Outfit".into(),
+            type_default: 47,
+            ..Default::default()
+        },
+    ]);
+    let none = HashSet::new();
+    for outfit in [id(9700), id(9701)] {
+        assert!(paste_allowed(&inv, &[original], outfit, false, true, &none, &none), "{outfit}");
+        assert!(!paste_allowed(&inv, &[original], outfit, false, false, &none, &none), "{outfit}");
+    }
+    assert!(paste(&inv, &[original], id(9701), false, true, &none, &none).is_ok());
+    assert!(paste(&inv, &[original], id(9701), false, false, &none, &none).is_err());
+
+    // can_move_to_outfit: only what can be worn is linked into an outfit;
+    // a notecard, a texture, a coalesced object and a folder are skipped
+    let item = |n: u128, inv_type: i32, asset_type: i32, flags: u32| InvItem {
+        id: id(n),
+        parent: inv.root,
+        inv_type,
+        asset_type,
+        flags,
+        ..Default::default()
+    };
+    inv.add_items(vec![
+        item(9710, 18, 13, 0),
+        item(9711, 7, 7, 0),
+        item(9712, 0, 0, 0),
+        item(9713, 6, 6, crate::ui::inventory::OBJECT_HAS_MULTIPLE_ITEMS),
+    ]);
+    let folder = id(9720);
+    inv.created_folders(vec![InvFolder {
+        id: folder,
+        parent: inv.root,
+        name: "Loose".into(),
+        type_default: -1,
+        ..Default::default()
+    }]);
+    for refused in [id(9711), id(9712), id(9713), folder] {
+        assert!(!paste_allowed(&inv, &[refused], id(9701), false, true, &none, &none), "{refused}");
+        assert!(paste(&inv, &[refused], id(9701), false, true, &none, &none).is_err(), "{refused}");
+        // elsewhere the link is still allowed
+        assert!(paste_allowed(&inv, &[refused], id(8000), false, true, &none, &none), "{refused}");
+    }
+    let mixed = [id(9710), id(9711), folder];
+    assert!(paste_allowed(&inv, &mixed, id(9701), false, true, &none, &none));
+    let change = paste(&inv, &mixed, id(9701), false, true, &none, &none).expect("the wearable is linked");
+    assert_eq!(change.operations.len(), 1, "only the wearable");
+}
+
+#[test]
+fn an_asset_uuid_shows_for_full_permissions_or_a_built_in_texture() {
+    let mut inv = Inventory::default();
+    let asset = id(9801);
+    assert!(!asset_uuid_shown(&inv, asset), "not in the inventory");
+    assert!(asset_uuid_shown(&inv, aurora_prim::te::BLANK_TEXTURE));
+    assert!(asset_uuid_shown(&inv, aurora_prim::te::TRANSPARENT_TEXTURE));
+    for missing in [COPY, MODIFY, TRANSFER] {
+        inv.items.insert(
+            id(9802),
+            InvItem {
+                id: id(9802),
+                asset_id: asset,
+                owner_mask: FULL & !missing,
+                ..Default::default()
+            },
+        );
+        assert!(!asset_uuid_shown(&inv, asset), "missing permission {missing:x}");
+    }
+    inv.items.insert(
+        id(9803),
+        InvItem {
+            id: id(9803),
+            asset_id: asset,
+            owner_mask: FULL,
+            ..Default::default()
+        },
+    );
+    assert!(asset_uuid_shown(&inv, asset), "a second item gives full permissions");
+}
+
+#[test]
+fn the_agent_holds_the_owner_mask_of_its_items_and_the_everyone_mask_of_others() {
+    let (agent, library) = (id(9901), id(9902));
+    let item = |owner, group_owned| InvItem {
+        owner,
+        group_owned,
+        owner_mask: FULL,
+        everyone_mask: COPY,
+        ..Default::default()
+    };
+    assert_eq!(agent_mask(&item(agent, false), agent), FULL, "its own item");
+    assert_eq!(agent_mask(&item(library, false), agent), COPY, "a Library item");
+    assert_eq!(agent_mask(&item(agent, true), agent), COPY, "group owned");
+    assert_eq!(agent_mask(&item(Uuid::nil(), false), agent), FULL, "built here, no owner yet");
+    assert_eq!(agent_mask(&item(library, false), Uuid::nil()), FULL, "before the login");
+    let inv = Inventory {
+        owner: agent,
+        ..Default::default()
+    };
+    assert_eq!(held(&inv, &item(agent, false)), FULL);
+    assert_eq!(held(&inv, &item(library, false)), COPY);
+}
+
+#[test]
+fn the_agent_holds_the_everyone_mask_of_contents_in_someone_elses_object() {
+    let (agent, friend) = (id(9921), id(9922));
+    let item = |owner_id, group_owned| aurora_net::build::TaskItem {
+        owner_id,
+        group_owned,
+        owner_mask: FULL,
+        everyone_mask: COPY,
+        ..Default::default()
+    };
+    assert_eq!(task_agent_mask(&item(agent, false), agent), FULL, "its own object's contents");
+    assert_eq!(task_agent_mask(&item(friend, false), agent), COPY, "an object it may only modify");
+    assert_eq!(task_agent_mask(&item(agent, true), agent), COPY, "group owned");
+}
+
+#[test]
+fn a_library_item_shows_its_asset_uuid_by_what_it_allows_everyone() {
+    let (agent, library, asset) = (id(9911), id(9912), id(9913));
+    let mut inv = Inventory {
+        owner: agent,
+        ..Default::default()
+    };
+    let mut lib_item = InvItem {
+        id: id(9914),
+        owner: library,
+        asset_id: asset,
+        owner_mask: FULL,
+        everyone_mask: COPY,
+        ..Default::default()
+    };
+    inv.items.insert(lib_item.id, lib_item.clone());
+    assert!(!asset_uuid_shown(&inv, asset), "full for the Library's account only");
+    lib_item.everyone_mask = FULL;
+    inv.items.insert(lib_item.id, lib_item);
+    assert!(asset_uuid_shown(&inv, asset), "full for everyone");
+}
+
+#[test]
+fn next_owner_rights_need_the_owners_transfer() {
+    let item = |owner_mask: u32, asset_type: i32, inv_type: i32| InvItem {
+        owner_mask,
+        asset_type,
+        inv_type,
+        ..Default::default()
+    };
+    let full = COPY | MODIFY | TRANSFER;
+    assert!(next_owner_editable(&item(full, 6, 6)));
+    assert!(!next_owner_editable(&item(COPY | MODIFY, 6, 6)), "no transfer for the owner");
+    // LLInventoryType::cannotRestrictPermissions
+    assert!(!next_owner_editable(&item(full, 2, 2)), "calling card");
+    assert!(!next_owner_editable(&item(full, 3, 3)), "landmark");
+}
+
+#[test]
+fn a_no_copy_object_is_not_restored_to_its_last_position_in_second_life() {
+    let object = |owner_mask: u32| InvItem {
+        owner_mask,
+        asset_type: 6,
+        ..Default::default()
+    };
+    assert!(restorable(&object(COPY | MODIFY | TRANSFER), false));
+    assert!(!restorable(&object(MODIFY | TRANSFER), false));
+    assert!(restorable(&object(MODIFY | TRANSFER), true), "OpenSim keeps it");
 }
