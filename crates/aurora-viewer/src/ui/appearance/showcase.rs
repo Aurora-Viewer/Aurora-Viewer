@@ -793,7 +793,7 @@ fn preview_panel(
                 )
                 .clicked()
                 {
-                    st.open(0, true);
+                    st.open(st.tab, true);
                 }
             } else if action_button_if(
                 ui,

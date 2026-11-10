@@ -310,7 +310,8 @@ fn menu_body(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
             rules.folder,
         )
     {
-        st.open(0, true);
+        // back from editing, the gallery or the list it came from
+        st.open(st.tab, true);
     }
     if menu::item_if(
         ui,
