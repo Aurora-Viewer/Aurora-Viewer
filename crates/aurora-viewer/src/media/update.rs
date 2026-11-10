@@ -191,6 +191,7 @@ impl MediaManager {
             }
         }
         self.expire_visibility(now);
+        self.note_shown(now);
         for &idx in &changes {
             self.visit(world, idx, hud, now);
         }
@@ -210,6 +211,19 @@ impl MediaManager {
     fn expire_visibility(&mut self, now: Instant) {
         self.recently_shown
             .retain(|_, at| now.saturating_duration_since(*at) < RECENTLY_SHOWN);
+    }
+
+    /// Stamps every prim whose media is showing now, in one pass over the
+    /// media implementations: `visit` then only looks its object up, instead
+    /// of searching every implementation for each media object.
+    fn note_shown(&mut self, now: Instant) {
+        for m in &self.impls {
+            if let MediaKey::Prim { object, .. } = m.key
+                && m.interest > 0.0
+            {
+                self.recently_shown.insert(object, now);
+            }
+        }
     }
 
     /// One slot of the store: what it held is forgotten if the object is
@@ -284,14 +298,8 @@ impl MediaManager {
             forget_slot(&mut self.slot_ids, idx, &o.full_id);
             return;
         }
-        let showing = self
-            .impls
-            .iter()
-            .any(|m| matches!(m.key, MediaKey::Prim { object, .. } if object == o.full_id) && m.interest > 0.0);
-        if showing {
-            self.recently_shown.insert(o.full_id, now);
-        }
-        let shown = showing || self.recently_shown.contains_key(&o.full_id);
+        // stamped by `note_shown` before the visits
+        let shown = self.recently_shown.contains_key(&o.full_id);
         let avatar = attachment_avatar(world, idx);
         let on_other_avatar = avatar.is_some_and(|a| a != world.agent_id);
         let on_own_avatar = !world.agent_id.is_nil() && avatar == Some(world.agent_id);
@@ -1410,6 +1418,7 @@ mod tests {
         );
         media.interest = 10.0;
         m.impls.push(media);
+        m.note_shown(shown_at);
         m.visit(&w, idx, &|_| false, shown_at);
         assert_eq!(m.client.queued_priority(&screen), Some(entry::SHOWN));
         m.impls[0].interest = 0.0;
@@ -1418,6 +1427,7 @@ mod tests {
         // request even though its version was already asked.
         let expired = shown_at + RECENTLY_SHOWN + Duration::from_millis(1);
         m.expire_visibility(expired);
+        m.note_shown(expired);
         m.visit(&w, idx, &|_| false, expired);
         assert_eq!(m.client.queued_priority(&screen), Some(entry::WORLD));
 

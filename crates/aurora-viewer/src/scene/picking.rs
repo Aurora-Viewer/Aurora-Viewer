@@ -898,11 +898,17 @@ impl Scene {
             if mode == FacePick::LeftBlend && !self.blend_face_mode(world, o, g, face, mode == FacePick::LeftBlend) {
                 return None;
             }
-            let hidden = o.te.as_ref().is_some_and(|te| te.face(face).color[3] < 0.004);
+            let hud_click = g.hud && mode == FacePick::HudClick;
+            // LLVOVolume::lineSegmentIntersect skips exactly alpha 0: a HUD
+            // press keeps a face at 1/255, like the media hit test.
+            let hidden = o.te.as_ref().is_some_and(|te| {
+                let alpha = te.face(face).color[3];
+                if hud_click { alpha <= 0.0 } else { alpha < 0.004 }
+            });
             if only_hidden && !hidden && !Self::face_undrawn(g, face) {
                 return None;
             }
-            let hud_clicker = g.hud && mode == FacePick::HudClick && crate::interaction::special_hover_cursor(o);
+            let hud_clicker = hud_click && crate::interaction::special_hover_cursor(o);
             if !include_hidden && super::plants::plant_face(o).is_none() && hidden && !(g.hud && mode == FacePick::Surface) && !hud_clicker
             {
                 return None;
@@ -3034,6 +3040,73 @@ pub(crate) mod tests {
         assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, back);
         world.objects.get_mut(front).unwrap().render.blinn_phong_preview = false;
         assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, front);
+    }
+
+    /// Ordinary HUD hover (no media focus) and HUD presses pick the same
+    /// target: a plain face at exactly alpha 0 lets the object behind it
+    /// take both, a face at 1/255 keeps both, and a transparent prim with a
+    /// special hover cursor (LLViewerObject::specialHoverCursor) stays the
+    /// target, as in LLVOVolume::lineSegmentIntersect.
+    #[test]
+    fn hud_hover_and_press_share_the_transparent_panel_policy() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let parent = world.objects.get(own).unwrap().key.local_id;
+        for (idx, x) in [(front, 3.0), (back, 7.0)] {
+            let o = world.objects.get_mut(idx).unwrap();
+            o.parent_id = parent;
+            o.state = 31u8.rotate_left(4);
+            o.position = Vec3::new(x, 0.0, 0.0);
+            o.click_action = crate::interaction::code::NONE;
+            o.update_flags = 0;
+            let g = &mut scene.gpu[idx];
+            g.hud = true;
+            g.owner_avatar = Some(own);
+            g.center = o.position;
+            g.radius = 1.0;
+        }
+        scene.index_objects();
+        scene.build_huds(&world, [1280, 720], true);
+        let cursor = (640.0, 360.0);
+        let set_alpha = |world: &mut World, scene: &mut Scene, alpha: f32| {
+            Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].color[3] = alpha;
+            let draw = &mut scene.gpu[front].faces[0];
+            draw.te_alpha = alpha;
+            draw.pass = if alpha < 0.004 { Pass::Hidden } else { Pass::Blend };
+        };
+        let targets = |world: &World, scene: &mut Scene| {
+            let press = scene.hud_click_pick(world, cursor).map(|(idx, _, _)| idx);
+            let hover = scene.hover_hud(world, cursor);
+            assert_eq!(hover, press, "hover and press disagree");
+            press
+        };
+
+        set_alpha(&mut world, &mut scene, 0.0);
+        assert_eq!(targets(&world, &mut scene), Some(back), "plain alpha-zero panel");
+        // Beacon and poser checks still see the panel itself.
+        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
+
+        // A scripted button behind the invisible panel takes hover and press.
+        world.objects.get_mut(back).unwrap().update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        assert_eq!(targets(&world, &mut scene), Some(back), "scripted button behind");
+        world.objects.get_mut(back).unwrap().update_flags = 0;
+
+        // 1/255 is a valid nonzero alpha: the face stays the target.
+        set_alpha(&mut world, &mut scene, 1.0 / 255.0);
+        assert_eq!(targets(&world, &mut scene), Some(front), "alpha 1/255");
+
+        // Special hover cursors keep a transparent front face.
+        set_alpha(&mut world, &mut scene, 0.0);
+        for (click_action, flags) in [
+            (crate::interaction::code::SIT, 0),
+            (crate::interaction::code::NONE, crate::ui::context::flags::HANDLE_TOUCH),
+            (crate::interaction::code::NONE, 1), // FLAGS_USE_PHYSICS
+        ] {
+            let o = world.objects.get_mut(front).unwrap();
+            o.click_action = click_action;
+            o.update_flags = flags;
+            assert_eq!(targets(&world, &mut scene), Some(front), "special cursor {click_action}/{flags:#x}");
+        }
     }
 
     #[test]
