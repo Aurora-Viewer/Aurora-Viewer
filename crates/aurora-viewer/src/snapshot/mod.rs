@@ -15,6 +15,7 @@ pub mod isolate;
 pub mod knobs;
 pub mod light;
 pub mod looks;
+pub mod lut_packs;
 pub mod luts;
 pub mod profile;
 pub mod quality;

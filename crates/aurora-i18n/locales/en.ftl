@@ -6836,7 +6836,7 @@ photo-knob-darken = Darkening
 photo-knob-subject-zone = Subject zone
 photo-looks-legacy = Legacy
 photo-looks-aurora = Aurora
-photo-looks-luts = My LUTs
+photo-looks-luts = LUTs
 photo-looks-search = Search the filters
 photo-looks-no-result = No filter has that name
 photo-looks-film = Film
@@ -6844,14 +6844,21 @@ photo-looks-color = Colour
 photo-looks-lens = Lens
 photo-looks-creative = Creative
 photo-looks-depth = Depth
-photo-lut-import = Import a .cube file…
+photo-lut-import = Import .cube files…
 photo-lut-folder = Open the folder
 photo-lut-remove = Delete this LUT
 photo-lut-empty = No LUT yet. Import the looks of Lightroom, DaVinci Resolve or Photoshop as .cube files.
 photo-lut-hint = 3D LUTs for photos and video (.cube), up to 128 points per side.
-photo-lut-dialog = Import a LUT
+photo-lut-dialog = Import LUTs
 photo-lut-files = 3D LUT
 photo-lut-imported = { $name } imported
+photo-lut-imported-many = { $count ->
+    [one] { $count } LUT imported
+   *[other] { $count } LUTs imported
+    }
+photo-lut-pack = By { $creator }
+photo-lut-pack-tip = LUTs made by { $creator } and shared with every Aurora user
+photo-lut-mine = My LUTs
 photo-lut-failed = LUT not read: { $error }
 photo-look-a-fine-grain = Fine grain
 photo-look-a-fine-grain-tip = A light film grain, most visible in the middle tones
