@@ -114,6 +114,7 @@ struct Frame {
     motion_reproj: mat4x4<f32>,
     photo: vec4<f32>,           // the main view of a photo tile: its part of the photo (left, top, width, height); zero otherwise
     tex_lod: vec4<f32>,         // x: the material textures' mip bias (FSR drawing the world smaller than the window, fsr.rs mip_bias); 0 otherwise
+    soft: vec4<f32>,            // x: 1 = the soft shadows' mask is read (main view), y: share of the light the sun's shadows let through (1 - intensity), z: projectors' light size in metres (0: the 5-tap filter), main view only
 };
 
 // frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has
@@ -236,6 +237,9 @@ struct ProbeSet {
 @group(0) @binding(12) var probe_irr_tex: texture_cube_array<f32>;
 // the sun's contact shadows (contact_shadows.wgsl): 0 lit, 1 in shadow
 @group(0) @binding(13) var contact_tex: texture_2d<f32>;
+// the sun's soft shadows (soft_shadows.wgsl): per pixel, the light let
+// through (12 bits) and the distance of the surface it was made for (20)
+@group(0) @binding(26) var soft_tex: texture_2d<u32>;
 
 @group(1) @binding(0) var<storage, read> records: array<DrawRecord>;
 @group(1) @binding(1) var<storage, read> palettes: array<mat4x4<f32>>;
@@ -1401,14 +1405,49 @@ fn contact_shadow(frag: vec2<f32>) -> f32 {
     return 1.0 - textureLoad(contact_tex, p, 0).r;
 }
 
-// The sun's shadow of an opaque surface of the main view: the shadow map,
-// and the contact shadows where they are on.
+// The sun's soft shadow at a pixel of the main view (soft_shadows.wgsl): the
+// light the mask lets through, or -1 where it does not hold for the surface
+// being shaded: it was made for the surface of the depth prepass at that
+// pixel, so it is read where the two are at the same distance from the
+// camera only (a blended face in front of it, an MSAA sample of another
+// surface, a reflection or a probe, which have `soft.x == 0`).
+fn soft_shadow(world_pos: vec3<f32>, frag: vec2<f32>) -> f32 {
+    if (frame.soft.x < 0.5) {
+        return -1.0;
+    }
+    let p = vec2<i32>(frag);
+    let size = vec2<i32>(textureDimensions(soft_tex));
+    if (any(p < vec2<i32>(0)) || any(p >= size)) {
+        return -1.0;
+    }
+    // the light in the low 12 bits, the surface's distance in the high 20
+    // (4 mm steps; all ones: the sky), as soft_shadows.wgsl `store` writes
+    let texel = textureLoad(soft_tex, p, 0).x;
+    let stored = texel >> 12u;
+    let d = distance(world_pos, frame.camera_pos.xyz);
+    if (stored == 0xfffffu || abs(f32(stored) / 256.0 - d) > max(0.01 * d, 0.02)) {
+        return -1.0;
+    }
+    return f32(texel & 4095u) / 4095.0;
+}
+
+// The sun's shadow of an opaque surface of the main view: the shadow map
+// (its soft mask where that holds), and the contact shadows where they are
+// on, then the shadow intensity (Preferences, or the photo's).
 fn sun_shadow(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32, frag: vec2<f32>) -> f32 {
-    let s = shadow_factor(world_pos, n, vertex_depth);
+    var s = soft_shadow(world_pos, frag);
+    if (s < 0.0) {
+        s = shadow_factor(world_pos, n, vertex_depth);
+    }
     if (frame.params.z < 0.5) {
         return s;
     }
-    return min(s, contact_shadow(frag));
+    s = min(s, contact_shadow(frag));
+    // the light a shadow lets through, 0 at full intensity: untouched then
+    if (frame.soft.y > 0.0) {
+        s = s + (1.0 - s) * frame.soft.y;
+    }
+    return s;
 }
 
 fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32) -> f32 {
@@ -1987,6 +2026,109 @@ fn projector_specular(slot: u32, tc: vec2<f32>, blur: f32) -> vec4<f32> {
     return ret;
 }
 
+// Points of a disk of radius 1, spread evenly (soft_shadows.wgsl DISK).
+const SOFT_DISK: array<vec2<f32>, 32> = array(
+    vec2<f32>(0.176776695, 0.000000000), vec2<f32>(-0.176776695, 0.000000000),
+    vec2<f32>(-0.225772188, 0.206825818), vec2<f32>(0.225772188, -0.206825818),
+    vec2<f32>(0.034558052, -0.393771179), vec2<f32>(-0.034558052, 0.393771179),
+    vec2<f32>(0.284571220, 0.371172764), vec2<f32>(-0.284571220, -0.371172764),
+    vec2<f32>(-0.522223187, -0.092373929), vec2<f32>(0.522223187, 0.092373929),
+    vec2<f32>(0.494695392, -0.314684715), vec2<f32>(-0.494695392, 0.314684715),
+    vec2<f32>(-0.165465927, 0.615525001), vec2<f32>(0.165465927, -0.615525001),
+    vec2<f32>(-0.315561468, -0.607594404), vec2<f32>(0.315561468, 0.607594404),
+    vec2<f32>(0.684642162, 0.250030219), vec2<f32>(-0.684642162, -0.250030219),
+    vec2<f32>(-0.712256086, 0.294008958), vec2<f32>(0.712256086, -0.294008958),
+    vec2<f32>(0.343354499, -0.733728620), vec2<f32>(-0.343354499, 0.733728620),
+    vec2<f32>(0.253730241, 0.808931990), vec2<f32>(-0.253730241, -0.808931990),
+    vec2<f32>(-0.764745892, -0.443185876), vec2<f32>(0.764745892, 0.443185876),
+    vec2<f32>(0.897133984, -0.197232390), vec2<f32>(-0.897133984, 0.197232390),
+    vec2<f32>(-0.547506905, 0.778772232), vec2<f32>(0.547506905, -0.778772232),
+    vec2<f32>(-0.126486773, -0.976089697), vec2<f32>(0.126486773, 0.976089697)
+);
+
+// Soft shadow of projector map `k` on the point `q` (1 lit, 0 shadowed),
+// main view only (frame.soft.z, the light's radius in metres): percentage-
+// closer soft shadows with the map of a perspective projector. A search
+// of the map around the point finds the casters and their mean distance
+// from the projector, the light's size gives the penumbra by similar
+// triangles, and a filter of that width takes the light. -1 when the search
+// finds no caster: the caller's 5 taps then keep the look of before.
+// `uv`, `receiver`: the point in the map and its depth; `z`: its distance
+// along the projector's axis; `origin`, `half`, `dims`, `texel`: the map in
+// the atlas, in pixels (projector_shadow).
+//
+// The stored depth is a + b / z (a, b from the matrix), so a caster's
+// distance is b / (stored - a): gaps and penumbrae are in metres, never an
+// average of stored depths. The depth of the receiver's plane across the
+// map (from two steps along it) keeps a slanted face from shadowing itself
+// over the wide filter.
+fn projector_soft(k: u32, q: vec3<f32>, n: vec3<f32>, uv: vec2<f32>, receiver: f32, z: f32,
+    origin: vec2<f32>, half: f32, dims: vec2<f32>, texel: f32) -> f32 {
+    let m = frame.spot_vp[k];
+    let row_x = vec3<f32>(m[0].x, m[1].x, m[2].x);
+    let row_y = vec3<f32>(m[0].y, m[1].y, m[2].y);
+    let row_z = vec3<f32>(m[0].z, m[1].z, m[2].z);
+    let row_w = vec3<f32>(m[0].w, m[1].w, m[2].w);
+    let a = dot(row_z, row_w) / max(dot(row_w, row_w), 1e-12);
+    let b = m[3].z - a * m[3].w;
+    // map units across one metre at one metre from the apex, each way
+    let per_metre = 0.5 * vec2<f32>(length(row_x), length(row_y));
+    // the receiver's plane: depth change per map unit, from two steps of 5 cm
+    let tangent = normalize(cross(n, select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(n.z) > 0.9)));
+    let bitangent = cross(n, tangent);
+    var step_uv = array<vec2<f32>, 2>(vec2<f32>(0.0), vec2<f32>(0.0));
+    var step_z = vec2<f32>(0.0);
+    for (var i = 0u; i < 2u; i++) {
+        let lp = m * vec4<f32>(q + select(bitangent, tangent, i == 0u) * 0.05, 1.0);
+        let ndc = lp.xyz / max(lp.w, 1e-6);
+        step_uv[i] = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5) - uv;
+        step_z[i] = ndc.z - receiver;
+    }
+    let det = step_uv[0].x * step_uv[1].y - step_uv[0].y * step_uv[1].x;
+    var gradient = vec2<f32>(0.0);
+    if (abs(det) > 1e-9 * texel) {
+        gradient = vec2<f32>(
+            step_uv[1].y * step_z.x - step_uv[0].y * step_z.y,
+            step_uv[0].x * step_z.y - step_uv[1].x * step_z.x) / det;
+    }
+    let light = frame.soft.z;
+    // the widest half width of the filter at the receiver: 12.5 light radii
+    // (the sun's 25 cm at a softness of 1, soft_shadows.rs)
+    let cap = 12.5 * light;
+    let search = min(per_metre * cap / z, vec2<f32>(0.1));
+    var ratio = 0.0;
+    var blockers = 0.0;
+    for (var i = 0u; i < 13u; i++) {
+        var o = vec2<f32>(0.0);
+        if (i > 0u) {
+            o = SOFT_DISK[((i - 1u) * 32u) / 12u] * search;
+        }
+        let local = clamp(uv + o, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
+        let at = vec2<i32>(floor(origin + local * half));
+        let stored = textureLoad(shadow_map, at, 0);
+        let centre = (vec2<f32>(at) + 0.5 - origin) / half;
+        if (stored < 1.0 && stored < receiver + dot(gradient, centre - uv) - 0.0002) {
+            let caster = b / (stored - a);
+            if (caster > 0.0 && caster < z) {
+                ratio += (z - caster) / caster;
+                blockers += 1.0;
+            }
+        }
+    }
+    if (blockers == 0.0) {
+        return -1.0;
+    }
+    let width = min(light * ratio / blockers, cap);
+    let radius = max(per_metre * width / z, vec2<f32>(1.5 * texel));
+    var sum = 0.0;
+    for (var i = 0u; i < 32u; i++) {
+        let local = clamp(uv + SOFT_DISK[i] * radius, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
+        sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (origin + local * half) / dims,
+            receiver + dot(gradient, local - uv) - 0.0002);
+    }
+    return sum / 32.0;
+}
+
 // Light left by the shadow map of projector `i` (1: lit, or no map), as
 // spotLightF.glsl with sampleSpotShadow / pcfSpotShadow (shadowUtil.glsl):
 // the configured budget extends the Legacy Viewer's two-map limit without
@@ -2024,15 +2166,21 @@ fn projector_shadow(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
     } else {
         origin = vec2<f32>(f32((k - 4u) % 4u) * half, 2.0 * size + f32((k - 4u) / 4u) * half);
     }
-    var sum = 0.0;
-    // pcfSpotShadow's five taps
-    let taps = array<vec2<f32>, 5>(
-        vec2<f32>(0.0, 0.0), vec2<f32>(2.0, 1.5), vec2<f32>(1.0, -1.5), vec2<f32>(-1.0, 1.5), vec2<f32>(-2.0, -1.5));
-    for (var t = 0; t < 5; t++) {
-        let at = clamp(uv + taps[t] * texel, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
-        sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (origin + at * half) / dims, ndc.z - 0.0002);
+    var s = -1.0;
+    if (frame.soft.z > 0.0 && !in_reflection_pass()) {
+        s = projector_soft(k, world_pos + n * 0.04, n, uv, ndc.z, lp.w, origin, half, dims, texel);
     }
-    var s = sum * 0.2;
+    if (s < 0.0) {
+        var sum = 0.0;
+        // pcfSpotShadow's five taps
+        let taps = array<vec2<f32>, 5>(
+            vec2<f32>(0.0, 0.0), vec2<f32>(2.0, 1.5), vec2<f32>(1.0, -1.5), vec2<f32>(-1.0, 1.5), vec2<f32>(-2.0, -1.5));
+        for (var t = 0; t < 5; t++) {
+            let at = clamp(uv + taps[t] * texel, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
+            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (origin + at * half) / dims, ndc.z - 0.0002);
+        }
+        s = sum * 0.2;
+    }
     // the map fades in and out as its projector takes or loses it
     s = clamp(s + frame.spot_fade[k / 4u][k % 4u], 0.0, 1.0);
     return mix(1.0, s, clamp((far - depth) / (far * 0.1), 0.0, 1.0));

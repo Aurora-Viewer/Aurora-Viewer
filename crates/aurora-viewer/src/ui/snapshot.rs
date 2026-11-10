@@ -154,11 +154,22 @@ pub struct View<'a> {
     /// HDR and Emissive is on: without it no exposure applies, the row is
     /// greyed.
     pub hdr: bool,
+    /// Preferences' shadow softness and intensity, under the photo's own.
+    pub shadows: ShadowView,
     pub env: EnvView<'a>,
     /// The key that brings the free camera back (Escape by default).
     pub back_key: Option<crate::keybinds::Binding>,
     /// The photo quality is lowered to stay within the video memory.
     pub quality_reduced: bool,
+}
+
+/// What the Light section shows of the sun's shadows: Preferences' values,
+/// and whether the soft shadows are on (the softness acts only then).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShadowView {
+    pub softness: f32,
+    pub intensity: f32,
+    pub soft: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -318,7 +329,7 @@ impl SnapshotUi {
     pub fn light_only(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Vec<Action>) {
         ui.spacing_mut().item_spacing.y = 6.0;
         let before = self.light;
-        light_rows(ui, p, &mut self.light, view.exposure, view.hdr, &view.env, out);
+        light_rows(ui, p, &mut self.light, view.exposure, view.hdr, view.shadows, &view.env, out);
         if self.light != before && !out.contains(&Action::Changed) {
             out.push(Action::Changed);
         }
@@ -1084,10 +1095,11 @@ fn light_rows(
     l: &mut crate::snapshot::light::PhotoLight,
     exposure: f32,
     hdr: bool,
+    shadows: ShadowView,
     env: &EnvView,
     out: &mut Vec<Action>,
 ) {
-    use crate::snapshot::light::EXPOSURE;
+    use crate::snapshot::light::{EXPOSURE, SHADOW_INTENSITY, SHADOW_SOFTNESS};
     ui.add_enabled_ui(!env.locked, |ui| env_rows(ui, p, l, env))
         .response
         .on_disabled_hover_text(aurora_i18n::tr!("rlva-blocked"));
@@ -1121,6 +1133,31 @@ fn light_rows(
         .response
         .on_disabled_hover_text(aurora_i18n::tr!("ui-options-needs-hdr-emissive"));
     });
+    // (the softness acts with the soft shadows only: greyed otherwise)
+    row(ui, p, aurora_i18n::tr!("photo-light-shadow-softness"), None, |ui| {
+        ui.add_enabled_ui(shadows.soft, |ui| {
+            shadow_slider(
+                ui,
+                p,
+                &mut l.shadow_softness,
+                shadows.softness,
+                SHADOW_SOFTNESS,
+                aurora_i18n::tr!("photo-light-shadow-reset"),
+            )
+        })
+        .response
+        .on_disabled_hover_text(aurora_i18n::tr!("ui-options-shadow-softness-needs-soft"));
+    });
+    row(ui, p, aurora_i18n::tr!("photo-light-shadow-intensity"), None, |ui| {
+        shadow_slider(
+            ui,
+            p,
+            &mut l.shadow_intensity,
+            shadows.intensity,
+            SHADOW_INTENSITY,
+            aurora_i18n::tr!("photo-light-shadow-reset"),
+        );
+    });
     row(
         ui,
         p,
@@ -1152,6 +1189,26 @@ fn light_rows(
         }
         if widgets::flat_button(ui, p, aurora_i18n::tr!("common-personal-lighting")).clicked() {
             out.push(Action::PersonalLighting);
+        }
+    });
+}
+
+/// A slider of the Light section for a value that is the photo's own once
+/// moved (`own`), Preferences' (`base`) until then, with the restore button
+/// of the exposure row.
+fn shadow_slider(ui: &mut egui::Ui, p: &Palette, own: &mut Option<f32>, base: f32, range: std::ops::RangeInclusive<f32>, reset: &str) {
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.spacing_mut().slider_width = (ui.available_width() - 130.0).max(40.0);
+        let mut value = own.unwrap_or(base);
+        let slider = egui::Slider::new(&mut value, range)
+            .fixed_decimals(2)
+            .clamping(egui::SliderClamping::Edits)
+            .custom_parser(aurora_i18n::parse_number);
+        if ui.add(slider).changed() {
+            *own = Some(value);
+        }
+        if widgets::icon_button(ui, p, "restore", reset, own.is_some()) {
+            *own = None;
         }
     });
 }
@@ -1771,11 +1828,25 @@ mod tests {
         };
         for _ in 0..2 {
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                light_rows(ui, &p, &mut light, 1.234, true, &env, &mut Vec::new())
+                light_rows(
+                    ui,
+                    &p,
+                    &mut light,
+                    1.234,
+                    true,
+                    ShadowView {
+                        softness: 1.0,
+                        intensity: 1.0,
+                        soft: true,
+                    },
+                    &env,
+                    &mut Vec::new(),
+                )
             });
             output.textures_delta.clear();
         }
         assert_eq!(light.exposure, None);
+        assert_eq!((light.shadow_softness, light.shadow_intensity), (None, None));
         assert!(light.env.is_empty(), "showing the Light section picked {:?}", light.env);
     }
 }

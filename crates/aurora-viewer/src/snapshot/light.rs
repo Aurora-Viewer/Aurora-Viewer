@@ -3,7 +3,8 @@
 //! Pause Clouds, Enable Attached Lights, Exposure, and the sun of "Personal
 //! lighting"): a time of day, a sky, a water, a day cycle, the sun's
 //! azimuth and elevation, an exposure, the clouds held still and the lights
-//! worn by avatars (face lights) off, for the photo only, while the photo
+//! worn by avatars (face lights) off, the softness and the darkness of the
+//! sun's shadows, for the photo only, while the photo
 //! window is open. Firestorm changes the environment, the cloud scroll and
 //! RenderAttachedLights until they are changed back; here nothing is saved
 //! and closing the window gives back the user's own (`app::snapshot`; the
@@ -20,6 +21,11 @@ pub struct PhotoLight {
     pub env: PhotoChoice,
     /// The exposure for the photo; None: Preferences' one.
     pub exposure: Option<f32>,
+    /// The softness of the sun's shadows for the photo (soft shadows on);
+    /// None: Preferences' one.
+    pub shadow_softness: Option<f32>,
+    /// How dark the sun's shadows are for the photo; None: Preferences' one.
+    pub shadow_intensity: Option<f32>,
     /// The clouds stop moving (LLEnvironment::pauseCloudScroll).
     pub clouds_paused: bool,
     /// The lights worn by avatars light the scene
@@ -32,6 +38,8 @@ impl Default for PhotoLight {
         Self {
             env: PhotoChoice::default(),
             exposure: None,
+            shadow_softness: None,
+            shadow_intensity: None,
             clouds_paused: false,
             attached_lights: true,
         }
@@ -40,3 +48,6 @@ impl Default for PhotoLight {
 
 /// The range of the exposure (`Settings::exposure`).
 pub const EXPOSURE: std::ops::RangeInclusive<f32> = 0.25..=4.0;
+/// The ranges of the shadow softness and intensity (`Settings`).
+pub const SHADOW_SOFTNESS: std::ops::RangeInclusive<f32> = 0.0..=crate::settings::SHADOW_SOFTNESS_MAX;
+pub const SHADOW_INTENSITY: std::ops::RangeInclusive<f32> = 0.0..=1.0;

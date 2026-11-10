@@ -599,8 +599,18 @@ pub struct Effects {
     pub bloom: bool,
     pub bloom_strength: f32,
     pub contact_shadows: bool,
+    /// Soft sun shadows, experimental: off in every level. A backup or a
+    /// saved preset written before them holds none: off, the default size.
+    #[serde(default)]
+    pub soft_shadows: bool,
+    #[serde(default = "shadow_softness")]
+    pub shadow_softness: f32,
     pub screen_indirect_light: bool,
     pub screen_indirect_intensity: f32,
+}
+
+fn shadow_softness() -> f32 {
+    crate::settings::SHADOW_SOFTNESS
 }
 
 impl Effects {
@@ -609,6 +619,8 @@ impl Effects {
         bloom: false,
         bloom_strength: crate::settings::BLOOM_STRENGTH,
         contact_shadows: false,
+        soft_shadows: false,
+        shadow_softness: crate::settings::SHADOW_SOFTNESS,
         screen_indirect_light: false,
         screen_indirect_intensity: crate::settings::SCREEN_INDIRECT_INTENSITY,
     };
@@ -714,6 +726,13 @@ impl Values {
                 Effects::OFF.bloom_strength
             },
             contact_shadows: self.shadow_quality > 0 && e.contact_shadows,
+            soft_shadows: self.shadow_quality > 0 && e.soft_shadows,
+            // a size only while the effect is on
+            shadow_softness: if self.shadow_quality > 0 && e.soft_shadows {
+                round(e.shadow_softness, 0.05)
+            } else {
+                Effects::OFF.shadow_softness
+            },
             screen_indirect_light: indirect,
             screen_indirect_intensity: if indirect {
                 round(e.screen_indirect_intensity, 0.1)
@@ -771,6 +790,8 @@ impl Values {
                 bloom: s.bloom,
                 bloom_strength: s.bloom_strength,
                 contact_shadows: s.contact_shadows,
+                soft_shadows: s.soft_shadows,
+                shadow_softness: s.shadow_softness,
                 screen_indirect_light: s.screen_indirect_light,
                 screen_indirect_intensity: s.screen_indirect_intensity,
             },
@@ -809,6 +830,8 @@ impl Values {
         s.bloom = self.effects.bloom;
         s.bloom_strength = self.effects.bloom_strength;
         s.contact_shadows = self.effects.contact_shadows;
+        s.soft_shadows = self.effects.soft_shadows;
+        s.shadow_softness = self.effects.shadow_softness;
         s.screen_indirect_light = self.effects.screen_indirect_light;
         s.screen_indirect_intensity = self.effects.screen_indirect_intensity;
     }

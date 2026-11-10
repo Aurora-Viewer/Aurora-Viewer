@@ -1326,6 +1326,25 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Some(v) = std::env::var("AURORA_SHADOWS").ok().and_then(|v| v.parse().ok()) {
         settings.shadow_quality = v;
     }
+    if let Some(v) = std::env::var("AURORA_SHADOW_SOFTNESS")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite())
+    {
+        settings.shadow_softness = v.clamp(0.0, crate::settings::SHADOW_SOFTNESS_MAX);
+    }
+    if let Some(v) = std::env::var("AURORA_SHADOW_INTENSITY")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite())
+    {
+        settings.shadow_intensity = v.clamp(0.0, 1.0);
+    }
+    // the soft shadows scenario shows them on, at the Preferences' softness
+    if crate::demo::soft_shadows::enabled() {
+        settings.soft_shadows = true;
+        settings.shadow_quality = settings.shadow_quality.max(3);
+    }
     if let Ok(v) = std::env::var("AURORA_PROJECTOR_SHADOWS") {
         settings.projector_shadows = v != "0";
     }
@@ -10776,6 +10795,8 @@ impl App {
             water_height: self.world.main_water_height(),
             shadows: self.settings.shadow_quality > 0 && matches!(self.screen, Screen::World),
             shadow_distance: self.settings.shadow_params().1,
+            shadow_softness: self.photo_shadows().0,
+            shadow_intensity: self.photo_shadows().1,
             lights,
             spot_shadows,
             clear_color: Vec4::new(env.fog_color.x, env.fog_color.y, env.fog_color.z, 1.0),

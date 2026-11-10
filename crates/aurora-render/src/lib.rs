@@ -56,6 +56,7 @@ mod rlva;
 mod selection;
 pub mod shadow_cull;
 mod shadow_merge;
+mod soft_shadows;
 #[cfg(test)]
 mod specular_aa;
 pub mod stars;
@@ -111,12 +112,14 @@ pub use bloom::tile_reach as bloom_tile_reach;
 pub use contact_shadows::tile_reach as contact_tile_reach;
 pub use dof::tile_reach as dof_tile_reach;
 pub use drawn_pick::{Drawn, DrawnFace, DrawnMode};
+// What a tile of a photo draws around what it keeps for the soft shadows.
 pub use gpu_cull::set_whole_chunk_uploads;
 pub use histogram::HISTOGRAM_BINS;
 pub use hud::HudView;
 pub use label_depth::{world_label_at, world_line_at};
 pub use main_thread::{GpuInfo, Renderer, VulkanLimits};
 pub use renderer::{CASCADES, RenderError};
+pub use soft_shadows::tile_reach as soft_shadow_tile_reach;
 pub use textures::{MASK_CUTOFF, MipLevel, alpha_coverage, build_mips, build_mips_alpha_weighted, preserve_alpha_coverage};
 pub use types::*;
 pub use ui_blur::blurred_backdrop;

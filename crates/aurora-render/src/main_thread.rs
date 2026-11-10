@@ -1526,6 +1526,7 @@ impl Renderer {
                 gpu_depth: self.last_stats.gpu_depth,
                 gpu_ssao: self.last_stats.gpu_ssao,
                 gpu_contact: self.last_stats.gpu_contact,
+                gpu_soft: self.last_stats.gpu_soft,
                 gpu_bloom: self.last_stats.gpu_bloom,
                 gpu_effects: self.last_stats.gpu_effects,
                 occluded: self.last_stats.occluded,

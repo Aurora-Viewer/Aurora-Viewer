@@ -1084,6 +1084,11 @@ pub struct RenderSettings {
     /// Screen-space contact shadows of the sun or the moon (contact_shadows.rs),
     /// with the sun shadows only.
     pub contact_shadows: bool,
+    /// Soft sun shadows (soft_shadows.rs, experimental): the penumbra of the
+    /// sun's shadows widens with the distance of the caster, from a
+    /// screen-space mask drawn once per frame. Off: the shadows are exactly
+    /// the ones of before (nothing is created or drawn).
+    pub soft_shadows: bool,
     /// Geometric specular anti-aliasing of the objects' highlights
     /// (common.wgsl `specular_aa_roughness`, AURORA_SPECULAR_AA).
     pub specular_aa: bool,
@@ -1121,6 +1126,7 @@ impl Default for RenderSettings {
             screen_indirect: false,
             screen_indirect_intensity: 1.0,
             contact_shadows: false,
+            soft_shadows: false,
             specular_aa: true,
             water_reflection_scale: 0.25,
             mirror_scale: 0.25,
@@ -1394,6 +1400,13 @@ pub struct FrameParams {
     pub shadows: bool,
     /// Distance covered by the shadow cascades.
     pub shadow_distance: f32,
+    /// With soft shadows: the size of the light, 1 = the real sun's (0.53
+    /// degrees across), 0 = the fixed penumbra of before (the Preferences'
+    /// value, or the photo's own).
+    pub shadow_softness: f32,
+    /// How dark the sun's shadows are, 1 = as before, 0 = no shadow (the
+    /// Preferences' value, or the photo's own).
+    pub shadow_intensity: f32,
     pub lights: Vec<PointLight>,
     /// The projectors of `lights` that cast shadows (drawn with `shadows`).
     pub spot_shadows: [Option<SpotShadow>; crate::projector_shadows::MAX_PROJECTOR_SHADOWS],
@@ -1643,6 +1656,9 @@ pub struct RenderStats {
     /// GPU time of the contact shadows alone (ms), part of
     /// [`GpuElement::Effects`].
     pub gpu_contact: Option<f32>,
+    /// GPU time of the soft sun shadows alone (ms), part of
+    /// [`GpuElement::Effects`] (0 while off).
+    pub gpu_soft: Option<f32>,
     /// GPU time of the bloom levels alone (ms), part of
     /// [`GpuElement::Post`] (0 while off).
     pub gpu_bloom: Option<f32>,
