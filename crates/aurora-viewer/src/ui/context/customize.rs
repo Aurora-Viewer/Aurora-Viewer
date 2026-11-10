@@ -259,6 +259,7 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::SitStand => "SitStand",
         CtxAction::Freeze(..) => "Freeze",
         CtxAction::Eject(..) => "Eject",
+        CtxAction::ModerationParcel(..) => "ModerationParcel",
         CtxAction::EstateKick(..) => "EstateKick",
         CtxAction::EstateTeleportHome(..) => "EstateTeleportHome",
         CtxAction::EstateBan(..) => "EstateBan",

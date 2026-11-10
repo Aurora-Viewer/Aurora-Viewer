@@ -13140,8 +13140,9 @@ ui-context-estate-teleport-home-question = { $name }をホームに送ります�
 ui-context-estate-ban-question = { $name }をこの不動産からバンしますか、それともすべての不動産からバンしますか？
 ui-context-estate-ban-this = この不動産
 ui-context-estate-ban-all-owned = 所有するすべての不動産
+ui-context-estate-ban-all-owned-by = { $owner }が所有するすべての不動産
 ui-context-estate-ban-all-managed = 管理するすべての不動産
-ui-context-estate-kick-detail = ホームに送られ、不動産のどのリージョンからも出されます。バンされていなければ戻ってこられます。
+ui-context-estate-kick-detail = 不動産から退出させます。バンされていなければ戻ってこられます。
 ui-context-estate-teleport-home-detail = ホームにテレポートされ、すぐに戻ってこられます。
 ui-context-estate-ban-detail = 今後は入れなくなります。バンリストはリージョン / 不動産 › アクセスにあります。
 

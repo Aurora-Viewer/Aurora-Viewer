@@ -13167,8 +13167,9 @@ ui-context-estate-teleport-home-question = Renvoyer { $name } chez lui ?
 ui-context-estate-ban-question = Bannir { $name } de ce domaine, ou de tous vos domaines ?
 ui-context-estate-ban-this = Ce domaine
 ui-context-estate-ban-all-owned = Tous vos domaines
+ui-context-estate-ban-all-owned-by = Tous les domaines de { $owner }
 ui-context-estate-ban-all-managed = Tous les domaines que vous gérez
-ui-context-estate-kick-detail = Cette personne est renvoyée chez elle, hors de toutes les régions du domaine. Elle peut revenir si elle n'est pas bannie.
+ui-context-estate-kick-detail = Cette personne est retirée du domaine. Elle peut revenir si elle n'est pas bannie.
 ui-context-estate-teleport-home-detail = Cette personne est téléportée à son domicile et peut revenir aussitôt.
 ui-context-estate-ban-detail = Cette personne ne pourra plus entrer. La liste des bannis est dans Région / Domaine › Accès.
 

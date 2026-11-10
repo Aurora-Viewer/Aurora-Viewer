@@ -10,7 +10,7 @@
 //! (notifications.xml).
 use super::*;
 use crate::ui::widgets::ActionKind;
-use crate::world::land_moderation::{self, Rights};
+use crate::world::land_moderation::Rights;
 use aurora_net::estate::{EstateCommand, estate_access as ea};
 use aurora_net::land::LandCommand;
 use uuid::Uuid;
@@ -50,46 +50,38 @@ pub(super) enum Ask {
         name: String,
         ban: bool,
     },
-    /// `owner`: the estate is ours (else we manage it), for the ban's
-    /// "all estates".
+    /// An estate's kick, teleport home or ban.
     Estate {
         act: EstateAct,
         target: Uuid,
         name: String,
+        /// "All estates" covers every estate of the region's owner
+        /// (APPLY_TO_ALL_ESTATES): we own the region, or a god.
         owner: bool,
+        /// A god's label names that owner ("All estates owned by [OWNER]").
+        owner_name: Option<String>,
     },
 }
 
 impl App {
-    /// Avatar.EnableFreezeEject for `id`, this frame.
+    /// Avatar.EnableFreezeEject for `id`, this frame: the rule every menu
+    /// reads (World::resident_rights).
     pub(super) fn moderation_rights(&self, id: Uuid) -> Rights {
-        let w = &self.world;
-        let Some((handle, local)) = w.resident_place(id) else {
-            return Rights::default();
-        };
-        let hovered = self
-            .hover_tips
-            .parcels
-            .at(handle, local, aurora_net::handle_to_origin(handle))
-            .map(|p| p.as_ref());
-        w.moderation_place(handle, local, hovered)
-            .map_or_else(Rights::default, |place| land_moderation::rights(&place, &w.moderation_agent()))
+        self.world.resident_rights(id)
     }
 
-    /// A menu opened on `id`: the group land under them is asked for when
-    /// the viewer does not know it (selectParcelAt), and the entries appear
-    /// once it comes.
+    /// A menu opened on `id` (the world's, a list's or the minimap's): the
+    /// group land under them is asked for when the viewer does not know it
+    /// (selectParcelAt), and the entries appear once it comes.
     pub(super) fn moderation_menu_opened(&mut self, id: Uuid) {
+        if !self.world.resident_needs_parcel(id) {
+            return;
+        }
         let Some((handle, local)) = self.world.resident_place(id) else {
             return;
         };
         let origin = aurora_net::handle_to_origin(handle);
-        let hovered = self.hover_tips.parcels.at(handle, local, origin).map(|p| p.as_ref());
-        let unknown = self
-            .world
-            .moderation_place(handle, local, hovered)
-            .is_some_and(|place| land_moderation::needs_parcel(&place));
-        if unknown && let Some(cmd) = self.hover_tips.parcels.request(handle, local, origin, Instant::now()) {
+        if let Some(cmd) = self.hover_tips.parcels.request(handle, local, origin, Instant::now()) {
             self.send(cmd);
         }
     }
@@ -101,13 +93,31 @@ impl App {
             log::warn!("estate moderation: not allowed to {act:?} {target}");
             return;
         }
-        let owner = self
-            .world
-            .resident_place(target)
-            .and_then(|(handle, _)| self.world.regions.get(&handle)?.info.as_ref())
-            .is_some_and(|info| info.owner == self.world.agent_id);
+        let Some((owner, owner_name)) = self.estate_scope(target) else {
+            return;
+        };
         let name = self.resident_full_name(target);
-        self.moderation_ask = Some(Ask::Estate { act, target, name, owner });
+        self.moderation_ask = Some(Ask::Estate {
+            act,
+            target,
+            name,
+            owner,
+            owner_name,
+        });
+    }
+
+    /// What the ban's "All estates" covers for `target`'s region, as
+    /// LLAvatarActions::estateBanMultiple / callbackEstateBan decide it: a
+    /// god, or the region's owner, bans from every estate of that owner
+    /// (APPLY_TO_ALL_ESTATES), a god's label naming the owner
+    /// (RegionInfoAllEstatesOwnedBy); an estate manager from the estates
+    /// they manage (APPLY_TO_MANAGED_ESTATES).
+    fn estate_scope(&self, target: Uuid) -> Option<(bool, Option<String>)> {
+        let (handle, _) = self.world.resident_place(target)?;
+        let info = self.world.regions.get(&handle)?.info.as_ref()?;
+        let god = self.world.god_level > 0;
+        let ours = info.owner == self.world.agent_id;
+        Some((god || ours, god.then(|| self.resident_full_name(info.owner))))
     }
 
     /// The complete name, anonymous under RLVa's shownames.
@@ -173,7 +183,13 @@ impl App {
                     &choices,
                 )
             }
-            Ask::Estate { act, name, owner, .. } => estate_question(ctx, p, *act, name, *owner),
+            Ask::Estate {
+                act,
+                name,
+                owner,
+                owner_name,
+                ..
+            } => estate_question(ctx, p, *act, name, *owner, owner_name.as_deref()),
         };
         let Some(choice) = answer else {
             return;
@@ -193,6 +209,16 @@ impl App {
             return;
         };
         if let Ask::Estate { act, owner, .. } = ask {
+            // the question was for the estate they stood in: one they moved
+            // to since is checked again before anything is sent
+            if !self.world.resident_rights(target).estate {
+                log::warn!("estate moderation: {target} moved where we may not {act:?} them");
+                return;
+            }
+            if act == EstateAct::Ban && second && self.estate_scope(target).map(|(all, _)| all) != Some(owner) {
+                log::warn!("estate moderation: {target} changed estate, the ban on all estates is not sent");
+                return;
+            }
             self.send_estate_act(handle, target, act, second, owner);
             return;
         }
@@ -293,7 +319,14 @@ impl App {
 
 /// EstateKickUser / EstateTeleportHomeUser (OK, Cancel) and EstateBanUser
 /// (This estate, All estates, Cancel).
-fn estate_question(ctx: &egui::Context, p: &crate::theme::Palette, act: EstateAct, name: &str, owner: bool) -> Option<Option<usize>> {
+fn estate_question(
+    ctx: &egui::Context,
+    p: &crate::theme::Palette,
+    act: EstateAct,
+    name: &str,
+    owner: bool,
+    owner_name: Option<&str>,
+) -> Option<Option<usize>> {
     match act {
         EstateAct::Kick => {
             let question = aurora_i18n::tr!("ui-context-estate-kick-question", name = name);
@@ -323,10 +356,12 @@ fn estate_question(ctx: &egui::Context, p: &crate::theme::Palette, act: EstateAc
         }
         EstateAct::Ban => {
             let question = aurora_i18n::tr!("ui-context-estate-ban-question", name = name);
-            let all = if owner {
-                aurora_i18n::tr!("ui-context-estate-ban-all-owned")
+            let all: String = if let Some(owner_name) = owner_name {
+                aurora_i18n::tr!("ui-context-estate-ban-all-owned-by", owner = owner_name).to_string()
+            } else if owner {
+                aurora_i18n::tr!("ui-context-estate-ban-all-owned").to_string()
             } else {
-                aurora_i18n::tr!("ui-context-estate-ban-all-managed")
+                aurora_i18n::tr!("ui-context-estate-ban-all-managed").to_string()
             };
             ui::context::choose(
                 ctx,
@@ -336,7 +371,7 @@ fn estate_question(ctx: &egui::Context, p: &crate::theme::Palette, act: EstateAc
                 &[question.as_str(), aurora_i18n::tr!("ui-context-estate-ban-detail")],
                 &[
                     ("ban", aurora_i18n::tr!("ui-context-estate-ban-this"), ActionKind::Danger),
-                    ("ban", all, ActionKind::Danger),
+                    ("ban", all.as_str(), ActionKind::Danger),
                 ],
             )
         }

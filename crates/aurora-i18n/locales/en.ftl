@@ -13171,8 +13171,9 @@ ui-context-estate-teleport-home-question = Send { $name } home?
 ui-context-estate-ban-question = Ban { $name } from this estate, or from all your estates?
 ui-context-estate-ban-this = This estate
 ui-context-estate-ban-all-owned = All your estates
+ui-context-estate-ban-all-owned-by = All estates owned by { $owner }
 ui-context-estate-ban-all-managed = All estates you manage
-ui-context-estate-kick-detail = They are sent home, out of every region of the estate. They can come back unless they are banned.
+ui-context-estate-kick-detail = They are removed from the estate. They can come back unless they are banned.
 ui-context-estate-teleport-home-detail = They are teleported to their home location and can come back right away.
 ui-context-estate-ban-detail = They will no longer be allowed in. The ban list is in Region / Estate › Access.
 

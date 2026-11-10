@@ -298,6 +298,10 @@ pub enum CtxAction {
     /// Avatar.Freeze / Avatar.Eject: asked first (LLAvatarActions::
     /// landFreeze / landEject).
     Freeze(Uuid),
+    /// A list's menu is open on a resident standing on group land the
+    /// viewer does not know: its parcel is asked for (selectParcelAt), and
+    /// Freeze / Eject appear once it comes when the group allows them.
+    ModerationParcel(Uuid),
     Eject(Uuid),
     /// Avatar.Kick / Avatar.TeleportHome / Avatar.EstateBan of the estate's
     /// owner and managers: asked first (LLAvatarActions::estateKick,
@@ -937,6 +941,9 @@ fn avatar_menu_reporting(
             // Avatar.VisibleKickTeleportHome); gathered in the same
             // "Moderation" submenu as the world menu's
             let rights = world.resident_rights(id);
+            if world.resident_needs_parcel(id) {
+                act(CtxAction::ModerationParcel(id));
+            }
             if rights.allowed || rights.estate {
                 menu::submenu(
                     ui,
