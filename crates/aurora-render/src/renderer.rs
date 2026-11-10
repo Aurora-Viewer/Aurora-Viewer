@@ -40,6 +40,9 @@ use std::time::{Duration, Instant};
 
 pub const CASCADES: usize = 3;
 const MAX_LIGHTS: usize = 64;
+/// Index in `FrameU::features` of the face-select pattern's texture slot
+/// (common.wgsl FEATURE_FACE_SELECT_SLOT).
+const FEATURE_FACE_SELECT_SLOT: usize = 1;
 /// Tries at setting up the XR session for one VR request, and the wait
 /// between them (`render_xr`).
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -5754,7 +5757,7 @@ impl Backend {
         let mut u = FrameU::zeroed();
         u.selection_color = f.selection_color;
         // (object.wgsl fs_selection_pattern; 0: its procedural stand-in)
-        u.features[1] = f.face_select_texture;
+        u.features[FEATURE_FACE_SELECT_SLOT] = f.face_select_texture;
         u.rez_gradient = f.rez_gradient;
         u.view_proj = vp.to_cols_array_2d();
         u.inv_view_proj = vp.inverse().to_cols_array_2d();
@@ -9260,7 +9263,7 @@ impl Backend {
             draw(&mut pass, &self.pipelines.selection_mask, rg.select_faces);
             drop(pass);
             if rg.select_pattern.1 > 0 {
-                let mut pass = crate::selection::begin_pattern(&mut encoder, scene_target, &self.targets.depth_ss);
+                let mut pass = crate::selection::begin_pattern(&mut encoder, scene_target, post_depth);
                 bind_mesh(&mut pass, &self.groups.b);
                 draw(&mut pass, &self.pipelines.selection_pattern, rg.select_pattern);
                 drop(pass);

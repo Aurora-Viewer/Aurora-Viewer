@@ -2016,6 +2016,7 @@ pub(crate) mod tests {
 
     /// LimitSelectDistance on, at the Legacy Viewer's default distance.
     const LIMIT: Option<f32> = Some(crate::build::MAX_SELECT_DISTANCE);
+
     /// Default <-> Planar on a box: identical on the default 0.5 m prim,
     /// different on a larger one (the report of #2505's grid test).
     #[test]
@@ -2025,6 +2026,9 @@ pub(crate) mod tests {
         let worst = |scale: f32| {
             mesh.faces
                 .iter()
+                // the four side faces of the box (faces 1 to 4: the top and
+                // bottom caps differ); the WGSL copy of the planar mapping
+                // is checked by the demo only
                 .take(5)
                 .skip(1)
                 .flat_map(|f| f.positions.iter().zip(&f.normals).zip(&f.uvs))

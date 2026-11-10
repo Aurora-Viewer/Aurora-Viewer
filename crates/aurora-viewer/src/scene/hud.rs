@@ -127,11 +127,7 @@ impl Scene {
                         _ => {}
                     }
                 }
-                if self
-                    .selection_faces
-                    .get(&idx)
-                    .is_some_and(|mask| mask & 1u64.checked_shl(face.te_index.into()).unwrap_or(0) != 0)
-                {
+                if super::face_pattern::has_face(&self.selection_faces, idx, face.te_index) {
                     self.lists.hud_select_faces.push(face.cmd);
                 }
                 if super::face_pattern::has_face(&self.pattern_faces, idx, face.te_index) {

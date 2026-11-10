@@ -1762,7 +1762,7 @@ fn fs_selection_mask(in: VsOut) -> @location(0) vec4<f32> {
 // the Texture tab's values. The whole face is drawn, holes of an alpha
 // mask and invisible faces included, as LL draws the face's triangles.
 //
-// The asset is fetched from the grid; frame.features.y is its slot once
+// The asset is fetched from the grid; frame.features[FEATURE_FACE_SELECT_SLOT] is its slot once
 // loaded, 0 while it loads and offline. Meanwhile `face_select_standin`
 // draws the pattern LL describes for it ("white squares with the rounded
 // cross at the center", llface.cpp): per texture repeat, a white square
@@ -1806,7 +1806,7 @@ fn face_select_color(loaded: bool, texel: vec4<f32>, standin: f32) -> vec4<f32> 
 @fragment
 fn fs_selection_pattern(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     // (sampled and differentiated before any discard)
-    let slot = frame.features.y;
+    let slot = frame.features[FEATURE_FACE_SELECT_SLOT];
     let texel = sample_tex(slot, in.uv);
     let px = max(length(dpdx(in.uv)), length(dpdy(in.uv)));
     let standin = face_select_standin(in.uv, px);

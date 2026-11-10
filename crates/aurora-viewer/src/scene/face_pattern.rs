@@ -27,19 +27,12 @@ pub fn has_face(faces: &HashMap<usize, u64>, idx: usize, te: u8) -> bool {
         .is_some_and(|mask| mask & 1u64.checked_shl(te.into()).unwrap_or(0) != 0)
 }
 
-/// The faces that show the pattern: the build tool's own face selection,
-/// none while a local appearance is shown in its place (its faces are not
-/// a TE-mode selection).
-pub fn pattern_faces(build_faces: HashMap<usize, u64>, revealing_local: bool) -> HashMap<usize, u64> {
-    if revealing_local { HashMap::new() } else { build_faces }
-}
-
 /// The pattern's texture: acquired the first time Select face mode is used,
 /// then held, like the Legacy Viewer's `mFaceSelectImagep`, so that it is
 /// ready at the next face picked.
 #[derive(Default)]
 pub struct Texture {
-    slot: Option<u32>,
+    held: bool,
 }
 
 impl Texture {
@@ -49,13 +42,16 @@ impl Texture {
         if !wanted {
             return 0;
         }
-        let slot = *self
-            .slot
-            .get_or_insert_with(|| textures.acquire(renderer, IMG_FACE_SELECT, TexSource::Asset));
+        if !self.held {
+            // one reference, kept; its slot is read afresh each frame (a
+            // texture met with the table full gets its slot later)
+            textures.acquire(renderer, IMG_FACE_SELECT, TexSource::Asset);
+            self.held = true;
+        }
         // never lowered by memory pressure, at full resolution
         textures.note_usage_fixed(&IMG_FACE_SELECT, f32::MAX);
         if textures.is_loaded(&IMG_FACE_SELECT) || textures.is_local(&IMG_FACE_SELECT) {
-            slot
+            textures.slot_of(&IMG_FACE_SELECT).unwrap_or(0)
         } else {
             0
         }
@@ -64,16 +60,20 @@ impl Texture {
     /// The GPU is lost: the texture is released with the rest, and acquired
     /// again on the new renderer when the mode is next used.
     pub fn forget(&mut self, textures: &mut TextureStreamer) {
-        if self.slot.take().is_some() {
+        if std::mem::take(&mut self.held) {
             textures.release(&IMG_FACE_SELECT);
         }
     }
 }
 
 impl Scene {
-    /// The faces showing the face-select pattern (`pattern_faces`).
-    pub fn set_face_pattern(&mut self, faces: HashMap<usize, u64>) {
-        self.pattern_faces = faces;
+    /// The faces showing the face-select pattern: the faces picked in
+    /// Select face mode, whether or not "Show highlight" draws the halo
+    /// (LLPipeline::renderHighlights, TE mode only).
+    pub fn set_face_pattern(&mut self, faces: &HashMap<usize, u64>) {
+        if self.pattern_faces != *faces {
+            self.pattern_faces.clone_from(faces);
+        }
     }
 
     /// The pattern texture's slot for this frame (`Texture::slot`).
@@ -98,14 +98,6 @@ mod tests {
         // past the mask: never a face, never a panic
         assert!(!has_face(&faces, 3, 64));
         assert!(!has_face(&faces, 3, 255));
-    }
-
-    #[test]
-    fn only_the_build_face_selection_shows_the_pattern() {
-        let build = HashMap::from([(1usize, 0b11u64)]);
-        assert_eq!(pattern_faces(build.clone(), false), build);
-        assert!(pattern_faces(build, true).is_empty(), "a local appearance shown is not TE mode");
-        assert!(pattern_faces(HashMap::new(), false).is_empty());
     }
 
     #[test]

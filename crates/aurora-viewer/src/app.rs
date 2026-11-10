@@ -10019,7 +10019,11 @@ impl App {
                 self.build.face_selection(&self.world, &self.settings.build)
             };
             // (TE mode's faces also show the face-select pattern)
-            let pattern = crate::scene::face_pattern::pattern_faces(build_faces.clone(), revealing);
+            let pattern = if revealing {
+                Default::default()
+            } else {
+                self.build.face_picks(&self.world)
+            };
             let mut selected_faces = if revealing {
                 self.imports.appearance_status(&self.world.objects).faces
             } else {
@@ -10037,7 +10041,7 @@ impl App {
                 *selected_faces.entry(idx).or_default() |= mask;
             }
             self.scene.set_face_selection(&mut self.world, selected_faces);
-            self.scene.set_face_pattern(pattern);
+            self.scene.set_face_pattern(&pattern);
             if std::mem::take(&mut self.build.ui.reveal_faces) {
                 self.scene.reveal_selected_faces();
             }
