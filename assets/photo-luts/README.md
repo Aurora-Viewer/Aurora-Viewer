@@ -7,11 +7,11 @@ and credited under its creator's name in the tab.
 
 ## Czar Fenris
 
-`czar-fenris.bin`: 19 looks by **Czar Fenris**, made in Adobe Premiere Pro
+`czar-fenris.bin`: 20 looks by **Czar Fenris**, made in Adobe Premiere Pro
 and DaVinci Resolve (Beach Vibes, Black and White, Cowboy Country,
 Desserted, Destaurated, Film look, Good Skin, Influencer, Movie, Natural
-Light, Neutral Skin, Noir, Phone Filter, Rave, Soft Skin, Thunderstorm,
-Vintage Magazine, Vintage Vodka, Winter Fog).
+Light, Neutral Skin, Noir, Old Newspaper, Phone Filter, Rave, Soft Skin,
+Thunderstorm, Vintage Magazine, Vintage Vodka, Winter Fog).
 
 Czar Fenris agreed on 2026-11-10 that the viewer includes them and shares
 them freely with its users, credited under the avatar name Czar Fenris.
@@ -28,7 +28,7 @@ look is unchanged).
 From the creator's folder of .cube files:
 
 ```powershell
-python scripts/generate-photo-luts.py "<folder>" assets/photo-luts/czar-fenris.bin --prefix "Czar - " --skip "Old Newspaper"
+python scripts/generate-photo-luts.py "<folder>" assets/photo-luts/czar-fenris.bin --prefix "Czar - "
 ```
 
 A new pack: generate its file here, add it to `FILES` in `lut_packs.rs`,
