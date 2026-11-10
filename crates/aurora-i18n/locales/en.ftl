@@ -1124,6 +1124,10 @@ ui-options-traffic-indicator = Show the traffic indicator
 ui-options-traffic-indicator-help = A small curve of the network traffic in the system island, coloured by the losses, like the Legacy Viewer's indicator. A click opens Performance › Network.
 ui-options-show-balance = Show the L$ balance
 ui-options-show-balance-help = Your L$ balance in the top bar. Hide it while streaming or sharing your screen. Also in the right-click menu of the balance and of your picture in the top bar.
+ui-options-balance-received = Show L$ received under the balance
+ui-options-balance-received-hint = What you receive or buy shows in green under your balance for a few seconds, then joins it. Also in the balance's right-click menu.
+ui-options-balance-spent = Show L$ spent under the balance
+ui-options-balance-spent-hint = What you spend shows in red under your balance for a few seconds, then leaves it. Also in the balance's right-click menu.
 favorites-access-menu = Place button
 favorites-access-row = Row below the top bar
 favorites-access-dock = Dock button
@@ -2393,6 +2397,14 @@ ui-options-payment-sent-opens-conversation-hint = L$ you give a resident with Pa
 ui-options-payment-opens-never = Never
 ui-options-payment-opens-friends = Friends only
 ui-options-payment-opens-anyone = Anyone
+ui-options-notify-direct-payment = Notify me of direct payments
+ui-options-notify-direct-payment-hint = A resident paying you directly shows a notification, unless it shows as a card in your conversation.
+ui-options-notify-money-received = Notify me of sales
+ui-options-notify-money-received-hint = A sale, an object paid, a parcel or a group's money shows a notification with who paid, how much and what for.
+ui-options-notify-above = Only above an amount
+ui-options-notify-above-hint = Smaller amounts show no notification.
+ui-options-notify-threshold = Amount
+ui-options-notify-threshold-hint = Only payments above this amount show a notification.
 ui-options-conversations-own-windows = Open conversations in their own window
 ui-options-conversations-own-windows-hint = A conversation opened from a name, a notification or a call opens in its own window instead of the Conversations window. The nearby chat stays there.
 ui-options-send-typing = Say when I am typing
@@ -3832,6 +3844,8 @@ ui-bars-clock-format = Clock hours
 ui-bars-show-latency = Latency
 ui-bars-show-fps = Frames per second
 ui-bars-show-balance = Show the L$ balance
+ui-bars-balance-received = L$ received
+ui-bars-balance-spent = L$ spent
 ui-bars-show-media = Sounds and media
 ui-bars-network-graph = Network graph
 ui-bars-hide-interface = Hide the interface
@@ -4611,6 +4625,9 @@ ui-chat-section-groups = Groups
 ui-chat-section-conferences = Conferences
 ui-chat-section-start-with = Start a conversation
 ui-chat-new-conversation = New conversation
+ui-chat-column-collapse = Collapse the conversation list
+ui-chat-column-expand = Expand the conversation list
+ui-chat-column-no-room = The window is too narrow to open the conversation list
 ui-chat-start-private = Private message
 ui-chat-start-group = Group chat
 ui-chat-start-conference = Conference
@@ -5439,6 +5456,21 @@ outfit-json-empty = This backup contains no outfit items. Import is unavailable.
 outfit-json-missing-changed = Some outfit items are unavailable. Import again to review the missing items and choose whether to import a partial outfit.
 outfit-json-create-wear = Create and wear
 outfit-json-import-partial = Import partial outfit
+appearance-xml-import-button = Import XML
+appearance-xml-import-hint = Set the sliders from an appearance XML file, such as one made by a shape website or exported by another viewer. Only this item's settings are read; save to keep them.
+appearance-xml-import = Import an appearance XML
+appearance-xml-file-type = Appearance XML (*.xml)
+appearance-xml-not-avatar = This file is not an avatar appearance file.
+appearance-xml-failed = The appearance file could not be imported.
+appearance-xml-none = This file has no setting for this item.
+appearance-xml-imported = { $count ->
+    [one] 1 setting imported. Save to keep it.
+   *[other] { $count } settings imported. Save to keep them.
+    }
+appearance-xml-partial = { $count ->
+    [one] 1 setting imported, { $errors } could not be read. Save to keep it.
+   *[other] { $count } settings imported, { $errors } could not be read. Save to keep them.
+    }
 common-unmute = Unmute
 ui-options-restore-default-shortcuts = Restore default shortcuts
 ui-options-restore-the-local-environment-selected-sky-water-and-day = Restore the local environment (selected sky, water and day cycle) at the next login
@@ -7332,6 +7364,12 @@ world-payments-paid-you = { $name }{ " paid you L$" }{ $amount }
 world-payments-paid-you-message = { $name }{ " paid you L$" }{ $amount }{ ": " }{ $message }
 world-payments-you-paid = { "You paid " }{ $name }{ " L$" }{ $amount }
 world-payments-you-paid-message = { "You paid " }{ $name }{ " L$" }{ $amount }{ ": " }{ $message }
+world-payments-paid-you-reason = { $name }{ " paid you L$" }{ $amount }{ " " }{ $reason }
+world-payments-for-item = for { $item }
+world-payments-for-land = for a parcel of land
+world-payments-for-land-pass = for a land access pass
+world-payments-for-land-deed = for deeding land
+world-payments-received-title = L$ received
 world-inventory-offers-received = { $name }{ " has given you this " }{ $kind }{ ": " }{ $item }
 world-inventory-offers-kept = Kept { $item }
 world-inventory-offers-item-sent = { "Inventory item " }{ $item }{ " offered" }
@@ -8930,7 +8968,8 @@ radar-age-alert = { $days ->
     [one] triggered the age alert. Age: { $days } day
    *[other] triggered the age alert. Age: { $days } days
     }
-radar-too-far-to-zoom = This avatar is too far for the camera to reach it.
+radar-zoom-beyond-draw-distance = { $name } is { $distance } m away, beyond your draw distance ({ $draw } m).
+radar-zoom-unplaced = { $name } is not loaded yet and their height is unknown: the camera does not know where to look.
 people-view-sort-options = View/sort options
 people-filter-by-name = Filter by name…
 people-edit-contact-hold = Hold the left mouse button to edit contact settings.
@@ -13491,6 +13530,9 @@ ui-options-build-flesh = Flesh
 ui-options-build-physical = Physical
 ui-options-build-temporary = Temporary
 ui-options-build-new-faces = Look of new objects
+ui-options-build-editing = Editing
+ui-options-build-auto-material-tab = Open the material tab that fits the selection
+ui-options-build-auto-material-tab-hint = Selecting an object opens the PBR tab when one of its faces shows a PBR material, Blinn-Phong otherwise. Off: the last tab chosen stays.
 
 
 

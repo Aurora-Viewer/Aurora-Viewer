@@ -1162,7 +1162,7 @@ when unfocused") is ignored during a screenshot.
   trigger plain G (snap / guide). Releasing a key first pressed without
   AltGr must always release it, even if AltGr was held in the meantime.
 
-- **`AURORA_DEMO_CAMERA=alt,x,y|altgr,x,y|pan,x,y|zoom,x,y|crouch-alt,x,y|crouch-pan,x,y|crouch-zoom,x,y|close,x,y[,n]|drift,x,y[,n]|zoom-resident|tag|ml|ml-alt|ml-zoom|ml-zoom-alt|wheel|wheel-chat|fly|sit|sit-ml|sit-ml-reclined|scripted|scripted-sit`**:
+- **`AURORA_DEMO_CAMERA=alt,x,y|altgr,x,y|pan,x,y|zoom,x,y|crouch-alt,x,y|crouch-pan,x,y|crouch-zoom,x,y|close,x,y[,n]|drift,x,y[,n]|zoom-resident|zoom-unloaded|tag|ml|ml-alt|ml-zoom|ml-zoom-alt|wheel|wheel-chat|fly|sit|sit-ml|sit-ml-reclined|scripted|scripted-sit`**:
   scenario logged under `demo camera` — Alt+click at (x, y) then drag and
   return while walking; `altgr`: the same orbit with AltGr alone held, as
   winit reports it (neither Ctrl nor Alt), so its `demo camera` lines match
@@ -1205,6 +1205,11 @@ when unfocused") is ignored during a screenshot.
   The resident then slides 1.5 m south (660–760) and 1.2 m west (761–860).
   Capture at 655, 760 and 900: the same view of the resident each time, the
   scene moving behind them; `target` in the log moves with them.
+  `zoom-unloaded`, with `AURORA_DEMO_PEOPLE=rows`, runs the same Zoom at
+  frame 600 on the first far resident, only a coarse location yet: the
+  camera looks at that point. Its avatar arrives at frame 700 and the camera
+  turns to face it: in the log, `target` at f760 is 0.6 m above the f700
+  one and the camera has moved round to the avatar's front.
   `sit-ml` and `sit-ml-reclined` use that seat upright or tilted by 1.1 radians,
   delayed 400 frames past the loading fade. First person runs from 760 to 1060;
   mouse motion looks up at 880–900, down at 950–970 and sideways at 1020–1040.
@@ -1742,7 +1747,10 @@ and tiled PBR texture with its UV/tint override in PBR; the other slab retains
 its PBR rendering. In the native viewer, click BP, PBR and
 Media repeatedly, select another object/linked part/face, then leave Materials
 or close/fold the editor. Each object must retain its last mode after
-deselection, independently of the next object. Use
+deselection, independently of the next object. A new selection opens on
+PBR when one of its faces shows a PBR material and on BP when none does
+(#1945; off in Preferences › Build › Editing); the scenario's own tab is
+kept for its first selection. Use
 `AURORA_DEMO_BUILD=material-deselect,object:151` for an automatic native capture
 after closing/deselection: BP must remain plain and PBR must remain tiled.
 Reselect an object and choose PBR to restore its material, including every
@@ -5282,7 +5290,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_BUY_PASS=sell\|none\|own` | The ground menu's "Buy access" on the plaza parcel |
 | `AURORA_DEMO_PAY=<mode>` | Demo balance and the Pay window of a resident or a group |
 | `AURORA_DEMO_MONEY_TRACKER=<mode>` | The money tracker on a session of payments, in either look |
-| `AURORA_DEMO_PAYMENT=card\|legacy\|sent\|sent-open\|sent-friend\|friend\|anyone\|off` | A direct payment as a card in the conversation with the other resident |
+| `AURORA_DEMO_PAYMENT=card\|legacy\|sent\|sent-open\|sent-friend\|friend\|anyone\|off\|sale\|balance\|earning` | L$ received: a direct payment as a card in the conversation with the other resident, the toasts and the balance's rows |
 | `AURORA_DEMO_LOGIN=<mode>` | Offline login screen and account carousel |
 | `AURORA_DEMO_LOGIN_SUBMIT=<frame>[,<frame>…]` | Press Log in of the open login form at those frames |
 | `AURORA_DEMO_LOGIN_LAST=<n>` | Which demo account was logged in last, so the cards select it |
@@ -5377,12 +5385,13 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_LINE_MENU=1` | Open a visible message's context menu in Aurora or Compact (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_CONTENTS_DROP=world\|panel[:ctrl][:drop]` | A selection of four inventory entries carried over an object or onto its Contents tab, with or without Ctrl |
-| `AURORA_DEMO_GIVE=profile\|avatar[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
+| `AURORA_DEMO_GIVE=profile\|avatar\|texture[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
 | `AURORA_DEMO_OUTFIT_RESTORE=warm\|cold` | The outfit's attachments restored at login against a region that puts part of it back by itself |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
+| `AURORA_DEMO_SHAPE_XML=<file>` | With `AURORA_DEMO_SHAPE`: imports an appearance XML into the shape draft |
 | `AURORA_DEMO_WEARABLE=<type>[:mode]` | Skin, hair, eyes and system clothing editors |
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
@@ -5578,11 +5587,25 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   Friends only; our L$250 to a friend opens theirs on its card, our L$20
   to a stranger shows nowhere (#2638). `friend`: no conversation open;
   a friend's L$250 to us opens theirs on its card ("For the boat ride"),
-  a stranger's L$20 shows nowhere ("Open the conversation when a
+  a stranger's L$20 is a notification ("Open the conversation when a
   resident pays you" on Friends only, the default). `anyone`: the same
   on Anyone, both conversations open. `off`: the same on Never: no
-  conversation opens. Capture after frame 400, with `--language fr`
-  and `--language en`.
+  conversation opens, both are notifications. `sale` (#2675): no
+  conversation; notifications for a sale ("for Steel helmet"), an object
+  paid with its name ("for Tip jar") and without, and a stranger's L$20,
+  no card. `balance`: no toast; 6 seconds after the start, three payments
+  0.9 s apart rise under the balance (12,480 L$), green, stacked
+  downwards, then a purchase of L$300 in red. They leave one at a time;
+  each one that lands flashes the number, green or red, and it ticks up
+  or down; `AURORA_DEMO_BARS=legacy`, or Reduce motion, to see the other
+  looks. Right-click on the balance: "L$ received" and "L$ spent" hide
+  their own rows. `earning`: from 12,480 L$, every 10 seconds for as long
+  as the viewer runs, a sale, an object paid or a direct payment of 20 to
+  300 L$, a purchase of as much, or ten times as much L$ bought, with the
+  saved switches and limits, which can be changed meanwhile (by default a
+  direct payment has its toast or its card, the others their row alone;
+  `sale` turns every toast on for its run, `balance` off). Capture after
+  frame 400, with `--language fr` and `--language en`.
 - **`AURORA_DEMO_DEBUG_SETTINGS`**: opens Debug Settings at the first frame.
   `1`: past the warning, nothing typed. `warning`: on the warning, with its
   "Do not show this warning again". Any other value is typed in the search and
@@ -6815,7 +6838,7 @@ failure. Grid validation and any paid upload are performed by the human.
   onto an object you own with and without Ctrl, onto someone else's (a
   no-transfer item refuses the whole drop), and onto the Contents tab.
 
-- **`AURORA_DEMO_GIVE=profile|avatar[:over|:drop]`**: with `AURORA_DEMO_INVENTORY=1`, seven of
+- **`AURORA_DEMO_GIVE=profile|avatar|texture[:over|:drop]`**: with `AURORA_DEMO_INVENTORY=1`, seven of
   its entries are carried from frame 700, without a press. `profile`, with
   `AURORA_DEMO_PROFILE=wolf` (or any other resident), leaves the pointer
   beside the profile window: the whole window fades behind the gift and
@@ -6829,6 +6852,10 @@ failure. Grid validation and any paid upload are performed by the human.
   a readable avatar capture use `AURORA_DEMO_CROWD=12`,
   `AURORA_DEMO_POS=129,134` and `AURORA_DEMO_CAMERA=close,1110,420,20`;
   capture at frame 715 (`over`) or 760 (`drop`) with `AURORA_FPS_LIMIT=60`.
+  `texture` does the same as `avatar` with the demo texture alone, the
+  cargo of a texture row: the copy cursor and the outline, never the
+  texture library's refusal, and `texture:drop` opens the confirmation for
+  that one texture.
   The demo crowd is drawn as a grid: compare with a capture without the
   variable to see the outline. Manually: drag an item, a folder or a
   selection onto another resident's profile (any tab, both styles), onto
@@ -7607,6 +7634,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   is hidden as by default); `compact` for the Compact style (one row
   per message, time, name and tags); `medium` (700 px), `narrow` (460
   px: the column becomes a rail of pictures) or a width in points;
+  `collapsed` (the column kept as a rail at any width by its button, in
+  the column's head, at the top of the rail; from
+  the scenario only: the settings keep nothing until the button is used),
+  `opened` (with a width of 560 to 599 points, such as `580`: the column
+  opened by its button in a narrow window; narrower, the button is greyed
+  out);
   `call-incoming` (Tess calls: the banner and the pulsing entry),
   `call` (the group's call: the stage, speaking ring, Tess muted by a
   moderator, the speaker in the column), `call-mini` (the stage reduced to
@@ -8819,6 +8852,13 @@ server appearance. `--language fr|en`, `AURORA_WINDOW_SIZE` and captures after f
 900 cover both locales, compact and wide layouts, and asynchronously loaded hints.
 On the grid, also check a rigged body, real baked textures and persistence after
 relogin; only the human connects and performs these checks.
+`AURORA_DEMO_SHAPE_XML=<file>` (with any `AURORA_DEMO_SHAPE` mode) reads that
+appearance XML into the draft as the Import XML button does, without its
+dialog: the avatar and the sliders take the file's shape at once, the footer
+says how many settings were imported, and Save keeps them. A file that is not
+a `linden_genepool` 1.0 shows the "not an avatar appearance file" message;
+`readonly` refuses the import. The button itself (the same in the physics and
+layer editors) opens the native file dialog.
 Opening the editor stands our avatar up (a seated avatar leaves its seat, as
 in the Legacy Viewer), and while the editor is open our avatar plays the
 customise animation (not the physics layer editor, which keeps the camera,

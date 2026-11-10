@@ -1127,6 +1127,10 @@ ui-options-traffic-indicator = Afficher l'indicateur de trafic
 ui-options-traffic-indicator-help = Une petite courbe du trafic réseau dans l'îlot système, en couleur selon les pertes, comme l'indicateur du Legacy Viewer. Un clic ouvre Performances › Réseau.
 ui-options-show-balance = Afficher le solde L$
 ui-options-show-balance-help = Votre solde L$ dans la barre du haut. Masquez-le pendant un stream ou un partage d'écran. Aussi dans le menu du clic droit du solde et de votre photo dans la barre du haut.
+ui-options-balance-received = Afficher les L$ reçus sous le solde
+ui-options-balance-received-hint = Ce que vous recevez ou achetez s'affiche en vert sous votre solde pendant quelques secondes, puis s'y ajoute. Aussi dans le menu du clic droit du solde.
+ui-options-balance-spent = Afficher les L$ dépensés sous le solde
+ui-options-balance-spent-hint = Ce que vous dépensez s'affiche en rouge sous votre solde pendant quelques secondes, puis en est retiré. Aussi dans le menu du clic droit du solde.
 favorites-access-menu = Bouton du lieu
 favorites-access-row = Rangée sous la barre supérieure
 favorites-access-dock = Bouton du dock
@@ -2396,6 +2400,14 @@ ui-options-payment-sent-opens-conversation-hint = Les L$ que vous donnez à un r
 ui-options-payment-opens-never = Jamais
 ui-options-payment-opens-friends = Amis seulement
 ui-options-payment-opens-anyone = Tout le monde
+ui-options-notify-direct-payment = Me prévenir des paiements directs
+ui-options-notify-direct-payment-hint = Un résident qui vous paie directement affiche une notification, sauf si le paiement s'affiche sous forme de carte dans votre conversation.
+ui-options-notify-money-received = Me prévenir des ventes
+ui-options-notify-money-received-hint = Une vente, un objet payé, une parcelle ou l'argent d'un groupe affiche une notification indiquant qui a payé, combien et pour quoi.
+ui-options-notify-above = Seulement au-delà d'un montant
+ui-options-notify-above-hint = Les montants inférieurs n'affichent pas de notification.
+ui-options-notify-threshold = Montant
+ui-options-notify-threshold-hint = Seuls les paiements au-delà de ce montant affichent une notification.
 ui-options-conversations-own-windows = Ouvrir les conversations dans leur propre fenêtre
 ui-options-conversations-own-windows-hint = Une conversation ouverte depuis un nom, une notification ou un appel s'ouvre dans sa propre fenêtre au lieu de la fenêtre Conversations. Le chat local y reste.
 ui-options-send-typing = Signaler quand j'écris
@@ -3835,6 +3847,8 @@ ui-bars-clock-format = Heures de l'horloge
 ui-bars-show-latency = Latence
 ui-bars-show-fps = Images par seconde
 ui-bars-show-balance = Afficher le solde L$
+ui-bars-balance-received = L$ reçus
+ui-bars-balance-spent = L$ dépensés
 ui-bars-show-media = Sons et médias
 ui-bars-network-graph = Graphe réseau
 ui-bars-hide-interface = Masquer l'interface
@@ -4614,6 +4628,9 @@ ui-chat-section-groups = Groupes
 ui-chat-section-conferences = Conférences
 ui-chat-section-start-with = Démarrer une conversation
 ui-chat-new-conversation = Nouvelle conversation
+ui-chat-column-collapse = Réduire la liste des conversations
+ui-chat-column-expand = Développer la liste des conversations
+ui-chat-column-no-room = La fenêtre est trop étroite pour ouvrir la liste des conversations
 ui-chat-start-private = Message privé
 ui-chat-start-group = Chat de groupe
 ui-chat-start-conference = Conférence
@@ -5444,6 +5461,21 @@ outfit-json-empty = Cette sauvegarde ne contient aucun élément de tenue. L'imp
 outfit-json-missing-changed = Certains éléments de la tenue sont indisponibles. Relancez l'importation pour les examiner et choisir une importation partielle.
 outfit-json-create-wear = Créer et porter
 outfit-json-import-partial = Importer la tenue partielle
+appearance-xml-import-button = Importer XML
+appearance-xml-import-hint = Règle les curseurs depuis un fichier XML d’apparence, par exemple créé par un site de silhouettes ou exporté par un autre viewer. Seuls les réglages de cet élément sont lus ; enregistrez pour les garder.
+appearance-xml-import = Importer un XML d’apparence
+appearance-xml-file-type = XML d’apparence (*.xml)
+appearance-xml-not-avatar = Ce fichier n’est pas un fichier d’apparence d’avatar.
+appearance-xml-failed = Impossible d’importer le fichier d’apparence.
+appearance-xml-none = Ce fichier ne contient aucun réglage pour cet élément.
+appearance-xml-imported = { $count ->
+    [one] 1 réglage importé. Enregistrez pour le garder.
+   *[other] { $count } réglages importés. Enregistrez pour les garder.
+    }
+appearance-xml-partial = { $count ->
+    [one] 1 réglage importé, { $errors } illisible(s). Enregistrez pour le garder.
+   *[other] { $count } réglages importés, { $errors } illisible(s). Enregistrez pour les garder.
+    }
 common-unmute = Rétablir le son
 ui-options-restore-default-shortcuts = Rétablir les raccourcis par défaut
 ui-options-restore-the-local-environment-selected-sky-water-and-day = Rétablit l'environnement local (ciel, eau, cycle du jour choisis) à la prochaine connexion
@@ -7337,6 +7369,12 @@ world-payments-paid-you = { $name }{ " vous a payé " }{ $amount }{ " L$" }
 world-payments-paid-you-message = { $name }{ " vous a payé " }{ $amount }{ " L$ : " }{ $message }
 world-payments-you-paid = { "Vous avez payé " }{ $amount }{ " L$ à " }{ $name }
 world-payments-you-paid-message = { "Vous avez payé " }{ $amount }{ " L$ à " }{ $name }{ " : " }{ $message }
+world-payments-paid-you-reason = { $name }{ " vous a payé " }{ $amount }{ " L$ " }{ $reason }
+world-payments-for-item = pour { $item }
+world-payments-for-land = pour une parcelle
+world-payments-for-land-pass = pour un pass d'accès au terrain
+world-payments-for-land-deed = pour la cession d'un terrain
+world-payments-received-title = L$ reçus
 world-inventory-offers-received = { $name }{ " vous a donné cet élément (" }{ $kind }{ ") : " }{ $item }
 world-inventory-offers-kept = Élément gardé : { $item }
 world-inventory-offers-item-sent = { "Objet de l’inventaire " }{ $item }{ " offert" }
@@ -8923,7 +8961,8 @@ radar-age-alert = { $days ->
     [one] a déclenché l'alerte d'âge. Âge : { $days } jour
    *[other] a déclenché l'alerte d'âge. Âge : { $days } jours
     }
-radar-too-far-to-zoom = Cet avatar est trop loin pour que la caméra aille jusqu'à lui.
+radar-zoom-beyond-draw-distance = { $name } est à { $distance } m, au-delà de votre distance d'affichage ({ $draw } m).
+radar-zoom-unplaced = { $name } n'est pas encore chargé et sa hauteur est inconnue : la caméra ne sait pas où regarder.
 people-view-sort-options = Options d'affichage et de tri
 people-filter-by-name = Filtrer par nom…
 people-edit-contact-hold = Maintenez le clic gauche pour modifier les paramètres du contact.
@@ -13487,6 +13526,9 @@ ui-options-build-flesh = Chair
 ui-options-build-physical = Physique
 ui-options-build-temporary = Temporaire
 ui-options-build-new-faces = Aspect des nouveaux objets
+ui-options-build-editing = Modification
+ui-options-build-auto-material-tab = Ouvrir l’onglet matériau adapté à la sélection
+ui-options-build-auto-material-tab-hint = Sélectionner un objet ouvre l’onglet PBR si l’une de ses faces affiche un matériau PBR, sinon Blinn-Phong. Désactivé : le dernier onglet choisi reste.
 
 
 

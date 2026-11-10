@@ -632,6 +632,18 @@ pub struct App {
     /// AURORA_DEMO_LOOKAT=targets: the crosshairs shown, every avatar
     /// looking somewhere.
     demo_look_at_targets: bool,
+    /// The L$ gained and spent, under the balance.
+    balance_gains: ui::balance_gains::BalanceGains,
+    /// Which of them show: the settings', or the demo's.
+    balance_rows: ui::balance_gains::Shown,
+    /// `AURORA_DEMO_PAYMENT=balance`: the payments still to come.
+    demo_gains: std::collections::VecDeque<(Instant, NetEvent)>,
+    /// `AURORA_DEMO_PAYMENT=earning`: when the next payment comes.
+    demo_earning: Option<Instant>,
+    /// `AURORA_DEMO_PAYMENT`: the toasts (direct, others) for this run,
+    /// with both rows under the balance, whatever is saved (the demo's
+    /// settings are saved like the user's).
+    demo_money_notices: Option<(bool, bool)>,
     look_focus: Option<Vec3>,
     look_cursor: (f32, f32),
     look_root_at: Vec3,
@@ -750,6 +762,10 @@ pub struct App {
     /// Avatars around us, swept once a second on `radar_clock`.
     radar: crate::world::radar::Radar,
     radar_clock: Instant,
+    /// A zoom on a resident not drawn yet: the camera looks at its radar
+    /// position (the point) and follows the resident once drawn, unless the
+    /// camera was moved away meanwhile.
+    zoom_awaited: Option<(uuid::Uuid, glam::Vec3)>,
     contacts_ui: ui::contacts::ContactsUi,
     /// Mini-map and world map state, map server tiles.
     minimap_ui: ui::minimap::MiniMap,
@@ -1621,6 +1637,11 @@ impl App {
             demo_look_at: false,
             demo_look_ahead: false,
             demo_look_at_targets: false,
+            balance_gains: Default::default(),
+            balance_rows: ui::balance_gains::Shown::BOTH,
+            demo_gains: Default::default(),
+            demo_earning: None,
+            demo_money_notices: None,
             look_focus: None,
             look_cursor: (0.0, 0.0),
             look_root_at: Vec3::X,
@@ -1694,6 +1715,7 @@ impl App {
             contacts_people_ui: Default::default(),
             radar: Default::default(),
             radar_clock: Instant::now(),
+            zoom_awaited: None,
             contacts_ui: Default::default(),
             minimap_ui: Default::default(),
             display_name_ui: Default::default(),
@@ -3059,6 +3081,9 @@ impl App {
         self.gesture_state = Default::default();
         self.buy_currency_ui = Default::default();
         self.money_tracker_ui = Default::default();
+        // the next session's first balance is its starting point, not a
+        // change from the last account's (a relog showed a false gain or loss)
+        self.balance_gains = Default::default();
         // the next session signs in with its own cookie (the browser stops)
         self.marketplace_ui = Default::default();
         self.web_browser_ui = Default::default();
@@ -4319,6 +4344,17 @@ impl App {
                     match nearest {
                         Some(id) => self.on_ctx_action(ui::context::CtxAction::ZoomAvatar(id)),
                         None => log::warn!("demo camera: no standing resident to zoom on"),
+                    }
+                }
+                Step::ZoomUnloadedResident => match crate::demo::people::drawn_late() {
+                    Some((id, _)) => self.on_ctx_action(ui::context::CtxAction::ZoomAvatar(id)),
+                    None => log::warn!("demo camera: zoom-unloaded needs AURORA_DEMO_PEOPLE=rows"),
+                },
+                Step::DrawUnloadedResident => {
+                    for ev in crate::demo::people::drawn_late().map(|(_, events)| events).unwrap_or_default() {
+                        if let Some(e) = self.world.apply(ev) {
+                            self.on_app_event(e);
+                        }
                     }
                 }
                 Step::MoveResident(x, y) => {
@@ -9020,6 +9056,21 @@ impl App {
         self.world.inventory_offers.show_accepted = self.settings.show_accepted_in_inventory;
         self.world.payments.open_received = self.settings.payment_received_opens;
         self.world.payments.open_sent = self.settings.payment_sent_opens;
+        let ((direct, toast), rows) = match self.demo_money_notices {
+            Some(toasts) => (toasts, ui::balance_gains::Shown::BOTH),
+            None => (
+                (self.settings.notify_direct_payment, self.settings.notify_money_received),
+                ui::balance_gains::Shown {
+                    received: self.settings.balance_shows_received,
+                    spent: self.settings.balance_shows_spent,
+                },
+            ),
+        };
+        self.world.payments.notify_direct = direct;
+        self.world.payments.notify_received = toast;
+        self.balance_rows = rows;
+        self.world.payments.direct_above = self.settings.notify_direct_above.then_some(self.settings.notify_direct_threshold);
+        self.world.payments.received_above = self.settings.notify_money_above.then_some(self.settings.notify_money_threshold);
         self.world.received_items.enabled_since = self.settings.received_items_since;
         if self.demo
             && self.frame_count == 700
@@ -9388,6 +9439,7 @@ impl App {
             if !self.camera.mouselook() && self.camera.mouselook_zoom_held() {
                 self.end_mouselook_zoom();
             }
+            self.follow_awaited_zoom();
             let frame = crate::camera::FrameInput {
                 dt,
                 aspect: self.camera_aspect(),
@@ -11298,6 +11350,7 @@ impl App {
             self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));
         }
         crate::theme::apply_motion(&self.egui_ctx, self.settings.reduce_motion);
+        self.demo_gains_tick(Instant::now());
         if actions.settings_changed || std::mem::take(&mut self.snapshots.settings_changed) {
             aurora_i18n::select(&self.settings.language, crate::cli::get().language.as_deref());
             crate::crash::update(&self.skin.theme, &self.settings);
@@ -12945,6 +12998,7 @@ impl App {
                             }
                         }
                         self.build.ui.tex_tab = usize::from(channel.is_some());
+                        self.build.keep_texture_tab();
                         self.build.tab = 3;
                         self.build.ui.picker.open_with_defaults(
                             aurora_i18n::tr!("build-ui-texture-choose-texture"),
@@ -12969,6 +13023,7 @@ impl App {
                             );
                             self.build.ui.pick_target = Some(crate::build::ui::PickTarget::PbrMaterial);
                             self.build.ui.tex_tab = 1;
+                            self.build.keep_texture_tab();
                         } else {
                             self.build.ui.picker.open_with_defaults(
                                 aurora_i18n::tr!("build-ui-texture-choose-texture"),
@@ -13916,6 +13971,11 @@ impl App {
             BarAction::PlaceBar { stretch, rights_text } => {
                 self.settings.place_bar_stretch = stretch;
                 self.settings.place_bar_rights_text = rights_text;
+                self.settings.save();
+            }
+            BarAction::BalanceRows(rows) => {
+                self.settings.balance_shows_received = rows.received;
+                self.settings.balance_shows_spent = rows.spent;
                 self.settings.save();
             }
             BarAction::ShowBugButton(shown) => {
@@ -15596,6 +15656,19 @@ impl App {
                     self.settings.reduce_motion,
                 );
                 self.toolbar_ui.show_name_tags = self.settings.show_name_tags;
+                let show_balance = if self.demo {
+                    ui::bars::demo::get().show_balance.unwrap_or(self.settings.show_balance)
+                } else {
+                    self.settings.show_balance
+                };
+                let now = Instant::now();
+                let rows = if show_balance { self.balance_rows } else { Default::default() };
+                let still = self.settings.reduce_motion;
+                let balance = self.balance_gains.update(self.world.balance, rows, still, now);
+                // full rate only while a row or the number moves
+                if let Some(after) = self.balance_gains.repaint_after(still, now) {
+                    self.egui_ctx.request_repaint_after(after);
+                }
                 let status = ui::bars::StatusInfo {
                     location_hidden: self.world.rlva.has("showloc"),
                     show_bug_report: if self.demo {
@@ -15625,11 +15698,14 @@ impl App {
                     flying: self.world.agent.flying,
                     seated: self.world.agent.is_sitting(),
                     ping_ms: self.net.stats.ping_ms.load(std::sync::atomic::Ordering::Relaxed),
-                    balance: self.world.balance,
-                    show_balance: if self.demo {
-                        ui::bars::demo::get().show_balance.unwrap_or(self.settings.show_balance)
-                    } else {
-                        self.settings.show_balance
+                    balance_ink: ui::balance_gains::ink(&self.palette, balance.flash),
+                    balance: balance.balance,
+                    show_balance,
+                    balance_gains: balance.rows,
+                    // the saved switches, which the menu turns
+                    balance_rows: ui::balance_gains::Shown {
+                        received: self.settings.balance_shows_received,
+                        spent: self.settings.balance_shows_spent,
                     },
                     voice: (self.voice.light, self.voice.status.clone()),
                     slurl: if self.world.rlva.has("showloc") {
@@ -16372,6 +16448,7 @@ impl App {
                 self.chat_ui.send_typing = self.settings.send_typing_state;
                 self.chat_ui.typing_chevron = self.settings.typing_chevron;
                 self.chat_ui.flash_unread = self.settings.flash_unread_conversations;
+                self.chat_ui.follow_column_setting(self.settings.chat_column_collapsed);
                 self.chat_ui.own_windows = self.settings.conversations_own_windows
                     || (self.demo && crate::demo::popout_scenario() == Some(crate::demo::Popout::Option));
                 // AURORA_DEMO_CONV_POPOUT: at frame 640, the friend's IM and
@@ -16564,6 +16641,15 @@ impl App {
                 }
                 for c in conversation_actions {
                     match c {
+                        ui::chat::ConvAction::ColumnCollapsed(collapsed) => {
+                            // (demo mode: this session only, never the file)
+                            if self
+                                .chat_ui
+                                .column_collapsed_by_button(&mut self.settings.chat_column_collapsed, collapsed, self.demo)
+                            {
+                                self.settings.save();
+                            }
+                        }
                         ui::chat::ConvAction::Local(out) => a.chat = Some(out),
                         ui::chat::ConvAction::Im { to, text } => a.ims.push((to, text)),
                         ui::chat::ConvAction::OfferTeleport(id) => a.offer_tp.push(id),
@@ -16767,8 +16853,18 @@ impl App {
                         }
                         ui::people::PeopleAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::people::PeopleAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
-                        ui::people::PeopleAction::TooFarToZoom => {
-                            self.world.system_message(aurora_i18n::tr!("radar-too-far-to-zoom"));
+                        ui::people::PeopleAction::ZoomRefused { name, why } => {
+                            let meters = |d: f32| aurora_i18n::number(f64::from(d), 0);
+                            let text = match why {
+                                ui::people::ZoomRefusal::BeyondDrawDistance { range, draw_distance } => aurora_i18n::tr!(
+                                    "radar-zoom-beyond-draw-distance",
+                                    name = name,
+                                    distance = meters(range),
+                                    draw = meters(draw_distance)
+                                ),
+                                ui::people::ZoomRefusal::Unplaced => aurora_i18n::tr!("radar-zoom-unplaced", name = name),
+                            };
+                            self.world.system_message(text);
                         }
                         ui::people::PeopleAction::GroupChat(id) => {
                             self.world.ui_sounds.push(UiSound::StartIm);
@@ -17559,7 +17655,7 @@ impl App {
                     wanted_images: &mut self.place_images,
                     want_groups: &mut self.place_groups,
                 };
-                let window_acts = self.place_ui.show(&ctx, &mut c);
+                let window_acts = self.place_ui.show(&ctx, &mut c, !self.settings.classic_places);
                 let mut open = self.panels.places;
                 // Aurora's look orders the favourites as the bar does
                 let places_env = (!classic_places).then(|| ui::places::aurora::Env {
@@ -18978,6 +19074,8 @@ impl ApplicationHandler for App {
                     self.chat_ui.demo_new_menu = scene.new_menu;
                     self.chat_ui.demo_volume_menu = scene.volume_menu;
                     self.chat_ui.demo_channel = scene.channel;
+                    self.chat_ui.demo_column = Some(scene.collapsed);
+                    self.chat_ui.column.opened = scene.opened;
                     // the window alone, to compare with the mockups
                     self.panels.people = false;
                     self.panels.inventory = false;

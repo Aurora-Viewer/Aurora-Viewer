@@ -813,6 +813,9 @@ fn preference_shapes(
 ) -> Vec<egui::Shape> {
     let p = crate::theme::Theme::default().palette();
     let d = Settings::default();
+    // the Spelling tab's status line must not follow the checker that
+    // other tests load at the same time
+    crate::spelling::tests::pin_status(crate::spelling::Status::Ready);
     frames.shapes(events, |ui| {
         ui.set_width(view.2);
         ui.spacing_mut().item_spacing.y = 0.0;

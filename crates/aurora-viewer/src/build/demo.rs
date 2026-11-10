@@ -232,6 +232,10 @@ pub fn apply_tab(tool: &mut BuildTool) {
         "media" => 2,
         _ => tool.ui.tex_tab,
     };
+    // The scenario's tab, not the one its selection would open on.
+    if matches!(sub.trim(), "pbr" | "bp" | "classic" | "bp-normal" | "bp-specular" | "media") {
+        tool.keep_texture_tab();
+    }
     match sub.trim() {
         "bp-normal" => tool.ui.bp_channel = 1,
         "bp-specular" => tool.ui.bp_channel = 2,
