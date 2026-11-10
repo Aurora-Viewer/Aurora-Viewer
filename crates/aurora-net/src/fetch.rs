@@ -127,6 +127,24 @@ pub struct FetchResult {
     /// host and attempts. It never contains the URL path or query (asset
     /// URLs are capabilities, which are secrets).
     pub data: Result<Vec<u8>, String>,
+    /// The request was cancelled while it still waited for a slot: it was
+    /// never sent (`Fetcher::cancel`), and `data` holds no failure of the
+    /// asset.
+    pub cancelled: bool,
+}
+
+impl FetchResult {
+    /// The answer to a request cancelled before it was sent.
+    fn cancelled(key: u64) -> FetchResult {
+        FetchResult {
+            key,
+            status: 0,
+            complete: false,
+            offset: 0,
+            data: Err("cancelled before it was sent".to_owned()),
+            cancelled: true,
+        }
+    }
 }
 
 /// Retry policy of llcorehttp (HttpPolicy::retryOp).
@@ -350,8 +368,9 @@ impl Ord for Node {
 /// wait (Firestorm scores its pending mesh requests again before sending
 /// the best ones, `LLMeshRepository::notifyLoadedMeshes`, and its texture
 /// fetch follows each texture's current priority), and a cancelled one
-/// leaves. Once sent, a request runs to its end: like Firestorm, nothing
-/// in flight is cancelled, its caller simply ignores the result.
+/// leaves, answered at once so that its caller knows it will not come.
+/// Once sent, a request runs to its end and its result comes back: like
+/// the Legacy Viewer, nothing in flight is cancelled.
 #[derive(Default)]
 struct FetchQueue {
     heap: BinaryHeap<Node>,
@@ -436,16 +455,21 @@ impl FetchQueue {
         self.waiting.remove(&n.key).map(|(r, _)| r)
     }
 
-    fn apply(&mut self, msg: Msg) {
+    /// A message of the callers; the answer to a cancel that took a
+    /// request out of the queue, to send back.
+    fn apply(&mut self, msg: Msg) -> Option<FetchResult> {
         match msg {
             Msg::Request(r) => self.push(r),
             Msg::Priority(k, p) => {
                 self.reprioritise(k, p);
             }
             Msg::Cancel(k) => {
-                self.cancel(k);
+                if self.cancel(k) {
+                    return Some(FetchResult::cancelled(k));
+                }
             }
         }
+        None
     }
 }
 
@@ -501,9 +525,10 @@ impl Fetcher {
         let _ = self.tx.send(Msg::Priority(key, priority));
     }
 
-    /// Drop a request still waiting for a slot. One already sent runs to
-    /// its end and its result is still delivered: the caller forgets the
-    /// key to ignore it.
+    /// Drop a request still waiting for a slot: it is answered at once,
+    /// with `FetchResult::cancelled` set. One already sent runs to its end
+    /// and its result is delivered as usual. Either way one result comes
+    /// back for the key; a caller that forgets the key ignores it.
     pub fn cancel(&self, key: u64) {
         let _ = self.tx.send(Msg::Cancel(key));
     }
@@ -545,7 +570,9 @@ async fn dispatcher(
                     Err(mpsc::error::TryRecvError::Disconnected) => return,
                 }
             };
-            queue.apply(msg);
+            if let Some(r) = queue.apply(msg) {
+                let _ = res_tx.send(r);
+            }
         }
         stats.http_queued.store(queue.len() as u32, Ordering::Relaxed);
         probe::http_queue(queue.len());
@@ -563,7 +590,11 @@ async fn dispatcher(
                 biased;
                 _ = ended.notified() => {}
                 m = rx.recv() => match m {
-                    Some(m) => queue.apply(m),
+                    Some(m) => {
+                        if let Some(r) = queue.apply(m) {
+                            let _ = res_tx.send(r);
+                        }
+                    }
                     None => return,
                 },
                 _ = tokio::time::sleep(Duration::from_millis(100)) => {}
@@ -581,7 +612,11 @@ async fn dispatcher(
             },
             m = rx.recv() => {
                 match m {
-                    Some(m) => queue.apply(m),
+                    Some(m) => {
+                        if let Some(r) = queue.apply(m) {
+                            let _ = res_tx.send(r);
+                        }
+                    }
                     None => return,
                 }
                 continue;
@@ -666,6 +701,7 @@ async fn attempt(http: &reqwest::Client, req: &FetchRequest, attempts: u32, pace
         complete: true,
         offset: 0,
         data: Err(why),
+        cancelled: false,
     };
     let sent = Instant::now();
     let resp = match rb.send().await {
@@ -716,6 +752,7 @@ async fn attempt(http: &reqwest::Client, req: &FetchRequest, attempts: u32, pace
                     complete: true,
                     offset: req.range.map_or(0, |r| r.start),
                     data: Ok(Vec::new()),
+                    cancelled: false,
                 });
             }
             return Attempt::Done(fail(
@@ -768,6 +805,7 @@ async fn attempt(http: &reqwest::Client, req: &FetchRequest, attempts: u32, pace
                 complete,
                 offset,
                 data: Ok(body.to_vec()),
+                cancelled: false,
             })
         }
         Err(e) => {
@@ -814,6 +852,7 @@ async fn do_fetch(
                         complete: true,
                         offset: 0,
                         data: Err(format!("{why}, {} attempt(s)", retry + 1)),
+                        cancelled: false,
                     };
                 }
                 log::debug!("asset fetch {}: {why}, retry {}", req.key, retry + 1);
@@ -890,6 +929,11 @@ mod tests {
         assert!(q.reprioritise(1, 100.0));
         assert!(q.cancel(3));
         assert!(!q.cancel(3));
+        // a cancel is answered only when it took a request out of the queue
+        let answer = q.apply(Msg::Cancel(4)).expect("cancelled while waiting");
+        assert!(answer.cancelled && answer.key == 4 && answer.data.is_err());
+        assert!(q.apply(Msg::Cancel(4)).is_none());
+        q.push(request(4, 4.0, Lane::Bulk));
         // the same key again replaces the waiting request
         q.push(request(2, 50.0, Lane::Bulk));
         assert_eq!(q.len(), 3);

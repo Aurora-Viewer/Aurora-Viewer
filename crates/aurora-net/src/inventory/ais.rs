@@ -50,6 +50,7 @@ fn category(record: &Llsd) -> Result<InvFolder, &'static str> {
     let mut folder = folder_from_llsd(record).ok_or("invalid AIS category")?;
     folder.favorite_known = true;
     folder.favorite = favorite(record)?;
+    folder.thumbnail_known = true;
     Ok(folder)
 }
 

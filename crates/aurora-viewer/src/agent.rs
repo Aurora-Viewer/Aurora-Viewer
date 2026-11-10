@@ -33,6 +33,10 @@ pub struct MoveInput {
     pub up: bool,
     pub down: bool,
     pub run: bool,
+    /// Stop moving held (Space): the simulator brakes the avatar, on the
+    /// ground and in the air (stop_moving -> AGENT_CONTROL_STOP,
+    /// indra/newview/llviewerinput.cpp).
+    pub stop: bool,
     /// First moments of a key press: small "nudge" steps (LLAgent::moveAtNudge).
     pub nudge_fb: bool,
     pub nudge_lr: bool,
@@ -621,7 +625,10 @@ impl AgentState {
         } else {
             1.0
         };
-        let mut horiz = dir.normalize_or_zero() * speed * nudge;
+        // Stop moving: a stand-in for the simulator's brake, slow enough to
+        // see in the demo (not its measured deceleration)
+        let brake = if input.stop { 0.25 } else { 1.0 };
+        let mut horiz = dir.normalize_or_zero() * speed * nudge * brake;
         let pitched_flight = if use_mouselook_pitch { horiz.z } else { 0.0 };
         horiz = horiz.with_z(0.0);
         let floor = ground.map(|g| g + STAND);
@@ -629,13 +636,14 @@ impl AgentState {
         let mut vz = self.server_vel.z;
         let grounded = floor.is_some_and(|f| pos.z <= f + 0.05);
         if self.flying {
-            vz = if input.up {
+            let climb = if input.up {
                 4.0
             } else if input.down {
                 -4.0
             } else {
                 0.0
-            } + pitched_flight;
+            };
+            vz = climb * brake + pitched_flight;
         } else if grounded {
             vz = if input.up { 5.0 } else { 0.0 };
         } else {
@@ -813,6 +821,11 @@ impl AgentState {
         if mouselook {
             f |= control::MOUSELOOK;
         }
+        // sent with the movement keys, not instead of them: the simulator
+        // brakes whatever they ask
+        if input.stop {
+            f |= control::STOP;
+        }
         f
     }
 
@@ -913,6 +926,26 @@ mod tests {
         assert_eq!(AgentState::quickjump_flags(walking, false), walking);
         assert_eq!(AgentState::quickjump_flags(walking, true), walking | control::FINISH_ANIM);
         assert_eq!(AgentState::quickjump_flags(0, true), control::FINISH_ANIM);
+    }
+
+    /// Stop moving adds STOP to whatever the other keys send, walking or
+    /// flying (stop_moving only sets AGENT_CONTROL_STOP).
+    #[test]
+    fn stop_moving_adds_the_brake_to_the_keys() {
+        let mut agent = AgentState::default();
+        let idle = MoveInput::default();
+        assert_eq!(agent.control_flags(&idle, false) & control::STOP, 0);
+        let braking = MoveInput {
+            stop: true,
+            forward: true,
+            ..Default::default()
+        };
+        let flags = agent.control_flags(&braking, false);
+        assert_ne!(flags & control::STOP, 0);
+        assert_ne!(flags & control::AT_POS, 0, "the keys still go out");
+        agent.flying = true;
+        let flags = agent.control_flags(&braking, false);
+        assert_eq!(flags & (control::STOP | control::FLY), control::STOP | control::FLY);
     }
 
     /// With automatic takeoff off the agent never flies from a held Up, and

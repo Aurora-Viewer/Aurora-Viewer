@@ -965,7 +965,7 @@ fn build_mesh_lod(
                 .as_ref()
                 .filter(|s| !s.joint_names.is_empty())
                 .map(|s| (0..s.joint_names.len()).map(|i| i.min(255) as u8).collect());
-            JobResult::geometry(key, mesh_to_faces(&faces, xform, map.as_deref()), 1.0, pool)
+            JobResult::geometry(key, mesh_to_faces(&faces, xform, map.as_deref()), (1.0, 0.0), pool)
         }
         Err(e) => {
             log::debug!("mesh {id} lod {lod}: {e}");
@@ -1371,6 +1371,7 @@ mod tests {
             complete: true,
             offset: 0,
             data: Err(format!("HTTP {status}")),
+            cancelled: false,
         }
     }
 
@@ -1424,6 +1425,7 @@ mod tests {
             complete: false,
             offset: offset as u64,
             data: Ok(data.to_vec()),
+            cancelled: false,
         }
     }
 
@@ -1801,6 +1803,7 @@ mod tests {
                 complete: true,
                 offset: 0,
                 data: Ok(vec![1, 2, 3]),
+                cancelled: false,
             },
             &jobs,
         );
@@ -1868,6 +1871,7 @@ mod tests {
                 complete: true,
                 offset: 0,
                 data: Ok(asset),
+                cancelled: false,
             },
             &jobs,
         );
