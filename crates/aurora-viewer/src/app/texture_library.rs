@@ -557,7 +557,7 @@ impl App {
                 );
             }
             if self.frame_count == 700 {
-                self.texture_library.demo_preview_controls(&mode);
+                self.texture_library.demo_preview_controls(&mode, &mut self.world);
             }
         }
         let preferences = self.settings.texture_library.clone();
@@ -659,6 +659,11 @@ impl App {
         }
     }
     fn resource_material_save(&mut self, id: Uuid, material: aurora_assets::PbrMaterial, name: Option<String>) {
+        if library::material_has_local_maps(&material, &self.world) {
+            self.texture_library
+                .material_message(id, aurora_i18n::tr!("resource-preview-local-maps").into());
+            return;
+        }
         let Some(item) = self.world.inventory.items.get(&id).cloned() else {
             return;
         };

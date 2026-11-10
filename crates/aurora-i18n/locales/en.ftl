@@ -11623,6 +11623,7 @@ resource-preview-no-fee = No upload fee
 resource-preview-read-only = This material is read only. Modify permission is required to edit it.
 resource-preview-map-rights = A replacement texture requires copy and transfer permission.
 resource-preview-map-protected = Protected texture
+resource-preview-local-maps = Local textures are previews. Upload them and select their inventory copies before saving the material.
 resource-preview-upload-map = Upload a local texture. Review its fee in Import; this map is replaced after the upload completes.
 texture-library-side = Show on the side
 texture-library-bottom = Show at the bottom

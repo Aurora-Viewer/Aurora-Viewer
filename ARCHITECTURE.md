@@ -87,6 +87,12 @@ its virtual list to the selected row on opening or following a new face (#2362).
 
 `ui/widgets/local_texture.rs` shares local asset/image identity and the Local previews eye badge across texture controls. Swatches keep their original click and drag response; the mark is painted inside their lower-right corner, including pending images.
 
+`ui/texture_library/material_editor.rs` accepts local textures in all four map
+pickers, using the shared local texture store and revisioned preview cache.
+Local IDs are confined to the draft: save controls and the application command
+require uploaded maps. Removing a local file restores matching draft maps and
+retires any picker snapshot that could restore the removed ID.
+
 `world/objects/local_appearance.rs` combines local surface, normal, specular, PBR map and projector bindings per face. The render state, appearance registry and removal path retain every channel independently; scene records read these bindings without changing simulator texture entries or material overrides.
 
 `world/objects/local_duplicates.rs` retains local face/channel bindings while

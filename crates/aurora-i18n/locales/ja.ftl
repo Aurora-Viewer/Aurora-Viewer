@@ -11592,6 +11592,7 @@ resource-preview-no-fee = アップロード費用無し
 resource-preview-read-only = このマテリアルは読み取り専用です。編集するには修正の権限が必要です。
 resource-preview-map-rights = 置き換えるテクスチャにはコピーと譲渡の権限が必要です。
 resource-preview-map-protected = 保護されたテクスチャ
+resource-preview-local-maps = ローカルのテクスチャはプレビューです。マテリアルを保存する前にアップロードし、インベントリのコピーを選択してください。
 resource-preview-upload-map = ローカルのテクスチャをアップロードします。費用はインポートで確認してください。このマップはアップロードの完了後に置き換えられます。
 texture-library-side = 横に表示
 texture-library-bottom = 下に表示

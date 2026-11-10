@@ -156,7 +156,12 @@ impl LibraryUi {
             editor.message = message;
         }
     }
-    pub(crate) fn demo_preview_controls(&mut self, mode: &str) {
+    pub(crate) fn forget_local_asset(&mut self, id: Uuid) {
+        for editor in self.windows.iter_mut().filter_map(|window| window.editor.as_mut()) {
+            editor.forget_local_asset(id);
+        }
+    }
+    pub(crate) fn demo_preview_controls(&mut self, mode: &str, world: &mut World) {
         for window in &mut self.windows {
             window.texture.display.keep_ratio = !mode.ends_with("stretch");
             if let Some(editor) = &mut window.editor {
@@ -171,6 +176,9 @@ impl LibraryUi {
                 draft.metallic_factor = 0.35;
                 draft.roughness_factor = 0.6;
                 draft.double_sided = true;
+                if matches!(mode, "preview-controls-local" | "preview-controls-local-picker") {
+                    editor.demo_local_map(world, mode.ends_with("-picker"));
+                }
             }
         }
     }
@@ -495,7 +503,10 @@ impl LibraryUi {
                     ui.label(aurora_i18n::tr!("ui-inventory-dialogs-this-document-has-unsaved-changes"));
                     ui.horizontal(|ui| {
                         if widgets::default_button(ui.add_enabled(
-                            material_editor::can_edit(world, &item) && editor.dirty() && editor.saving.is_none(),
+                            material_editor::can_edit(world, &item)
+                                && editor.dirty()
+                                && editor.saving.is_none()
+                                && !material_has_local_maps(&editor.draft, world),
                             egui::Button::new(aurora_i18n::tr!("common-save")),
                         ))
                         .clicked()

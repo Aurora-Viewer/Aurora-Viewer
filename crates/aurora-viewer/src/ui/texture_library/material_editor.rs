@@ -15,6 +15,7 @@ pub(super) struct Editor {
     pub message: String,
     picker: super::super::texture_picker::TexturePicker,
     map_slot: Option<usize>,
+    map_before: Option<Uuid>,
     save_as: Option<String>,
     pub confirm_close: bool,
     pub close_after_save: bool,
@@ -36,6 +37,7 @@ impl Editor {
             message: String::new(),
             picker: Default::default(),
             map_slot: None,
+            map_before: None,
             save_as: None,
             confirm_close: false,
             close_after_save: false,
@@ -46,6 +48,16 @@ impl Editor {
     }
     pub fn dirty(&self) -> bool {
         self.original != self.draft
+    }
+    pub(super) fn demo_local_map(&mut self, world: &mut World, picker: bool) {
+        if let Some(asset) = self.draft.base_color_texture {
+            world.local_assets.insert(asset, ("Local stone.png".into(), false));
+            self.map_names[0].1 = u64::MAX;
+            if picker {
+                self.open_map(0, Some(asset));
+                self.picker.show_local_tab();
+            }
+        }
     }
     pub fn begin_save(&mut self, request: Uuid) {
         self.saving = Some(request);
@@ -208,10 +220,13 @@ impl Editor {
     }
     fn footer(&mut self, ui: &mut egui::Ui, p: &Palette, item: &aurora_net::inventory::InvItem, world: &World, actions: &mut Vec<Action>) {
         let editable = can_edit(world, item);
+        let local = material_has_local_maps(&self.draft, world);
         if self.saving.is_some() {
             ui.label(aurora_i18n::tr!("resource-preview-saving"));
         } else if !self.message.is_empty() {
             ui.label(&self.message);
+        } else if local {
+            ui.label(RichText::new(aurora_i18n::tr!("resource-preview-local-maps")).small().color(p.warn));
         } else if self.dirty() {
             ui.label(RichText::new(aurora_i18n::tr!("resource-preview-unsaved")).small().color(p.warn));
         } else {
@@ -225,7 +240,10 @@ impl Editor {
                     egui::TextEdit::singleline(b).desired_width((ui.available_width() - 130.0).max(0.0))
                 });
                 submit = ui
-                    .add_enabled(!name.trim().is_empty(), egui::Button::new(aurora_i18n::tr!("common-save")))
+                    .add_enabled(
+                        !local && !name.trim().is_empty(),
+                        egui::Button::new(aurora_i18n::tr!("common-save")),
+                    )
                     .clicked();
                 cancel = ui.button(aurora_i18n::tr!("common-cancel")).clicked();
             });
@@ -241,7 +259,7 @@ impl Editor {
         }
         ui.horizontal_wrapped(|ui| {
             let save = ui.add_enabled(
-                editable && self.dirty() && self.saving.is_none(),
+                editable && self.dirty() && self.saving.is_none() && !local,
                 egui::Button::new(aurora_i18n::tr!("common-save")),
             );
             ui.ctx()
@@ -255,7 +273,7 @@ impl Editor {
             }
             if ui
                 .add_enabled(
-                    rules::held(&world.inventory, item) & rules::COPY != 0 && self.saving.is_none(),
+                    rules::held(&world.inventory, item) & rules::COPY != 0 && self.saving.is_none() && !local,
                     egui::Button::new(aurora_i18n::tr!("common-save-as")),
                 )
                 .clicked()
@@ -297,6 +315,7 @@ impl Editor {
         let width = (ui.available_width() - side - ui.spacing().item_spacing.x).max(0.0);
         ui.horizontal_top(|ui| {
             let response = widgets::picture(ui, p, texture, Vec2::splat(side), "photo-filled", "");
+            widgets::local_texture::asset(ui, p, response.rect, map);
             self.drop_map(ui, p, response.rect, world, value, slot);
             ui.ctx().data_mut(|data| {
                 data.insert_temp(
@@ -334,26 +353,31 @@ impl Editor {
                     let cached = &mut self.map_names[slot];
                     let god = world.god_level > 0;
                     if cached.0 != map || cached.1 != world.inventory.generation || cached.4 != god {
-                        let copy_uuid = map.is_some_and(|id| rules::asset_uuid_shown_to(&world.inventory, id, god));
+                        let local = map.and_then(|id| world.local_assets.get(&id)).filter(|(_, material)| !material);
+                        let copy_uuid = local.is_some() || map.is_some_and(|id| rules::asset_uuid_shown_to(&world.inventory, id, god));
                         *cached = (
                             map,
                             world.inventory.generation,
-                            map.map(|id| {
-                                world
-                                    .inventory
-                                    .items
-                                    .values()
-                                    .find(|it| it.asset_id == id)
-                                    .map(|it| it.name.clone())
-                                    .unwrap_or_else(|| {
-                                        if copy_uuid {
-                                            id.to_string()
-                                        } else {
-                                            aurora_i18n::tr!("resource-preview-map-protected").into()
-                                        }
+                            local
+                                .map(|(name, _)| name.clone())
+                                .or_else(|| {
+                                    map.map(|id| {
+                                        world
+                                            .inventory
+                                            .items
+                                            .values()
+                                            .find(|it| it.asset_id == id)
+                                            .map(|it| it.name.clone())
+                                            .unwrap_or_else(|| {
+                                                if copy_uuid {
+                                                    id.to_string()
+                                                } else {
+                                                    aurora_i18n::tr!("resource-preview-map-protected").into()
+                                                }
+                                            })
                                     })
-                            })
-                            .unwrap_or_else(|| aurora_i18n::tr!("import-no-map").into()),
+                                })
+                                .unwrap_or_else(|| aurora_i18n::tr!("import-no-map").into()),
                             copy_uuid,
                             god,
                         );
@@ -443,7 +467,26 @@ impl Editor {
     }
     fn open_map(&mut self, slot: usize, map: Option<Uuid>) {
         self.picker.open_with_defaults(map_label(slot), map.unwrap_or_default(), None, true);
+        // LLMaterialEditor::onCommitTexture accepts local bitmaps in every map.
+        self.picker.allow_local = true;
+        self.picker.required_permissions = rules::COPY | rules::TRANSFER;
         self.map_slot = Some(slot);
+        self.map_before = map;
+    }
+    pub(super) fn forget_local_asset(&mut self, id: Uuid) {
+        let maps = crate::imports::maps::ids(&self.draft);
+        // A removed file must not return through the picker's Cancel snapshot.
+        if self.map_before == Some(id) || self.map_slot.is_some_and(|slot| maps[slot] == Some(id)) {
+            self.picker.open = false;
+            self.map_slot = None;
+            self.map_before = None;
+        }
+        self.picker.forget_local_asset(id);
+        for (slot, map) in maps.into_iter().enumerate() {
+            if map == Some(id) {
+                *map_mut(Arc::make_mut(&mut self.draft), slot) = crate::imports::maps::ids(&self.original)[slot];
+            }
+        }
     }
     pub fn show_picker(
         &mut self,
@@ -460,6 +503,7 @@ impl Editor {
                 || asset.is_nil()
                 || crate::scene::avatar::bake_slot_for(&asset).is_some()
                 || [aurora_prim::te::BLANK_TEXTURE, aurora_prim::te::TRANSPARENT_TEXTURE].contains(&asset)
+                || world.local_assets.get(&asset).is_some_and(|(_, material)| !material)
                 || world
                     .inventory
                     .items
@@ -469,12 +513,14 @@ impl Editor {
                 let mut value = (*self.draft).clone();
                 *map_mut(&mut value, slot) = (!asset.is_nil()).then_some(asset);
                 self.draft = Arc::new(value);
+                self.message.clear();
             } else {
                 self.message = aurora_i18n::tr!("resource-preview-map-rights").into();
             }
         }
         if !self.picker.open {
             self.map_slot = None;
+            self.map_before = None;
         }
         std::mem::take(&mut self.picker.wanted_images)
     }
@@ -607,6 +653,89 @@ mod tests {
         assert!(!editor.map_names[0].2.contains(&asset.to_string()));
     }
 
+    #[test]
+    fn local_material_maps_preview_confirm_cancel_and_remove_in_every_slot() {
+        let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+        for slot in 0..4 {
+            let mut ui = crate::ui::texture_picker::tests::PickerUi::new();
+            let mut world = World::new(avatars.clone());
+            let local = Uuid::from_u128(90);
+            let original = Uuid::from_u128(91);
+            world.local_assets.insert(local, ("Local map.png".into(), false));
+            world.local_assets.insert(Uuid::from_u128(92), ("Local material".into(), true));
+            let mut source = PbrMaterial::default();
+            *map_mut(&mut source, slot) = Some(original);
+            let mut editor = Editor::new(Uuid::from_u128(1), Arc::new(source));
+            for cancel in [true, false] {
+                editor.open_map(slot, Some(original));
+                ui.settle(|ctx, p| {
+                    editor.show_picker(ctx, p, &mut world, &HashMap::new());
+                });
+                ui.click(aurora_i18n::tr!("picker-local-tab"), |ctx, p| {
+                    editor.show_picker(ctx, p, &mut world, &HashMap::new());
+                });
+                ui.settle(|ctx, p| {
+                    editor.show_picker(ctx, p, &mut world, &HashMap::new());
+                });
+                ui.click("Local map.png", |ctx, p| {
+                    editor.show_picker(ctx, p, &mut world, &HashMap::new());
+                });
+                assert_eq!(crate::imports::maps::ids(&editor.draft)[slot], Some(local));
+                assert!(material_has_local_maps(&editor.draft, &world));
+                assert!(editor.message.is_empty());
+                ui.click(
+                    if cancel {
+                        aurora_i18n::tr!("common-cancel")
+                    } else {
+                        aurora_i18n::tr!("common-ok")
+                    },
+                    |ctx, p| {
+                        editor.show_picker(ctx, p, &mut world, &HashMap::new());
+                    },
+                );
+                assert_eq!(
+                    crate::imports::maps::ids(&editor.draft)[slot],
+                    Some(if cancel { original } else { local })
+                );
+                assert_eq!(material_has_local_maps(&editor.draft, &world), !cancel);
+            }
+            editor.open_map(slot, Some(local));
+            editor.forget_local_asset(local);
+            world.local_assets.remove(&local);
+            assert_eq!(crate::imports::maps::ids(&editor.draft)[slot], Some(original));
+            assert!(!editor.picker.open);
+            assert!(!editor.dirty());
+        }
+    }
+
+    #[test]
+    fn local_material_maps_block_both_save_buttons_until_replaced() {
+        let mut ui = crate::ui::texture_picker::tests::PickerUi::new();
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let local = Uuid::from_u128(90);
+        world.local_assets.insert(local, ("Local map.png".into(), false));
+        let item = aurora_net::inventory::InvItem {
+            owner: world.agent_id,
+            owner_mask: rules::FULL,
+            ..Default::default()
+        };
+        let mut editor = Editor::new(Uuid::from_u128(1), Arc::new(PbrMaterial::default()));
+        editor.set_map(0, local);
+        let mut actions = Vec::new();
+        let draw = |editor: &mut Editor, actions: &mut Vec<Action>, ctx: &egui::Context, p: &Palette| {
+            egui::Window::new("Material").show(ctx, |ui| editor.footer(ui, p, &item, &world, actions));
+        };
+        ui.settle(|ctx, p| draw(&mut editor, &mut actions, ctx, p));
+        for label in [aurora_i18n::tr!("common-save"), aurora_i18n::tr!("common-save-as")] {
+            ui.click(label, |ctx, p| draw(&mut editor, &mut actions, ctx, p));
+            assert!(actions.is_empty());
+            assert!(editor.save_as.is_none());
+        }
+        editor.set_map(0, aurora_prim::te::BLANK_TEXTURE);
+        ui.settle(|ctx, p| draw(&mut editor, &mut actions, ctx, p));
+        ui.click(aurora_i18n::tr!("common-save"), |ctx, p| draw(&mut editor, &mut actions, ctx, p));
+        assert!(matches!(actions.as_slice(), [Action::SaveMaterial { name: None, .. }]));
+    }
     #[test]
     fn pbr_bom_choices_preview_cancel_and_save_the_magic_uuid_in_every_map() {
         for slot in 0..4 {
