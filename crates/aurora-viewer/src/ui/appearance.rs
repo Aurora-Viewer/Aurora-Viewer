@@ -20,6 +20,7 @@ mod layers;
 #[cfg(test)]
 mod perf_tests;
 mod selection;
+mod showcase;
 pub use clipboard::{PasteTo, Request as ClipboardRequest};
 
 #[derive(Default)]
@@ -32,6 +33,9 @@ pub struct AppearanceUi {
     pub(crate) json: json::State,
     pub tab: usize,
     pub fill_previews: bool,
+    /// The gallery tab as Aurora's showcase (`showcase.rs`) rather than the
+    /// Legacy Viewer's tiles: the app sets it from Preferences › Aurora.
+    pub showcase: bool,
     pub editing: bool,
     edit_tab: usize,
     search: String,
@@ -78,6 +82,7 @@ pub struct AppearanceUi {
     pub message: String,
     requested_items: HashSet<Uuid>,
     gallery: gallery::State,
+    showcase_state: showcase::State,
     folders: folders::State,
     /// The groups of My Outfits closed in the list and the gallery, and a
     /// count of their changes for `shown`.
@@ -154,6 +159,9 @@ struct Shown {
     reverse: bool,
     closed: u64,
     order: crate::world::outfit_folders::Order,
+    /// The showcase lists the outfits of closed groups too: it has no
+    /// group headers to open them by.
+    showcase: bool,
     entries: Vec<crate::world::outfit_folders::Entry>,
     outfits: Vec<Uuid>,
     /// The outfits matching the filter, those of closed groups included.
@@ -444,12 +452,14 @@ impl AppearanceUi {
         use crate::world::outfit_folders::{Order, tree};
         // the gallery shows a group's section before its subgroups'
         let order = if self.tab == 0 { Order::Gallery } else { Order::List };
+        let showcase = self.showcase && self.tab == 0;
         let fresh = self.shown.as_ref().is_some_and(|shown| {
             shown.generation == inv.generation
                 && shown.search == self.search
                 && shown.reverse == self.reverse_sort
                 && shown.closed == self.closed_version
                 && shown.order == order
+                && shown.showcase == showcase
         });
         if !fresh {
             let needle = self.search.trim().to_lowercase();
@@ -461,7 +471,8 @@ impl AppearanceUi {
                 if hidden_below.is_some_and(|depth| entry.depth > depth) {
                     continue;
                 }
-                hidden_below = (entry.group && needle.is_empty() && self.closed_groups.contains(&entry.id)).then_some(entry.depth);
+                hidden_below =
+                    (entry.group && !showcase && needle.is_empty() && self.closed_groups.contains(&entry.id)).then_some(entry.depth);
                 entries.push(entry);
             }
             let outfits: Vec<_> = entries.iter().filter(|e| !e.group).map(|e| e.id).collect();
@@ -472,6 +483,7 @@ impl AppearanceUi {
                 reverse: self.reverse_sort,
                 closed: self.closed_version,
                 order,
+                showcase,
                 entries,
                 outfits,
                 total,
@@ -1618,6 +1630,9 @@ pub fn show(
     if *open {
         st.read_pictures(world);
     }
+    if *open && st.showcase && !st.editing && st.tab == 0 {
+        showcase::widen_once(ctx);
+    }
     if *open && !st.editing && st.tab == 2 {
         let temporary = world.temp_attachments();
         world.request_temp_attachment_names(&temporary, std::time::Instant::now());
@@ -1656,7 +1671,10 @@ pub fn show(
         }
         let shape = crate::shape_editor::worn_shape(world);
         widgets::surface(ui, p, |ui| {
-            ui.set_min_width(ui.available_width());
+            // Fill the card without raising its min width: `set_min_width`
+            // on `available_width()` ratcheted the Appearance floater so it
+            // could grow but never shrink again (#3035).
+            ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 // locate and edit outfit while browsing outfits, edit shape when one is worn
                 let buttons = if st.editing { 0.0 } else { 2.0 } + if shape.is_some() { 1.0 } else { 0.0 };
@@ -1768,41 +1786,47 @@ pub fn show(
         let reserved = ui.ctx().data(|d| d.get_temp::<f32>(below_id)).unwrap_or(estimate);
         let list_top = ui.cursor().top();
         let height = (ui.available_height() - reserved).max(100.0);
-        egui::Frame::new()
-            .fill(p.field.gamma_multiply(0.65))
-            .corner_radius(ui.visuals().window_corner_radius)
-            .inner_margin(8)
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                let list_width = ui.available_width();
-                clipboard::list_focus(ui, egui::Rect::from_min_size(ui.cursor().min, Vec2::new(list_width, height)));
-                egui::ScrollArea::vertical()
-                    .id_salt("appearance_list")
-                    .max_height(height)
-                    .min_scrolled_height(height)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.add_enabled_ui(st.pending.is_none(), |ui| {
-                            if st.editing && st.adding {
-                                add_list(ui, p, world, st, &mut actions);
-                            } else if st.editing {
-                                worn_list(ui, p, world, st, &mut actions, true);
-                            } else {
-                                match st.tab {
-                                    0 => gallery(ui, p, world, st, &entries, &outfits, base, &mut actions, images, list_width),
-                                    1 => outfit_list(ui, p, world, st, &entries, &outfits, base, &mut actions),
-                                    _ => {
-                                        ui.label(RichText::new(aurora_i18n::tr!("ui-appearance-items-to-wear")).color(p.muted));
-                                        worn_list(ui, p, world, st, &mut actions, false);
+        let showcase = st.showcase && !st.editing && st.tab == 0;
+        if showcase {
+            // the framed list's height: its own and its margins
+            showcase::show(ui, p, world, st, &entries, &outfits, base, &mut actions, images, height + 16.0);
+        } else {
+            egui::Frame::new()
+                .fill(p.field.gamma_multiply(0.65))
+                .corner_radius(ui.visuals().window_corner_radius)
+                .inner_margin(8)
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    let list_width = ui.available_width();
+                    clipboard::list_focus(ui, egui::Rect::from_min_size(ui.cursor().min, Vec2::new(list_width, height)));
+                    egui::ScrollArea::vertical()
+                        .id_salt("appearance_list")
+                        .max_height(height)
+                        .min_scrolled_height(height)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.add_enabled_ui(st.pending.is_none(), |ui| {
+                                if st.editing && st.adding {
+                                    add_list(ui, p, world, st, &mut actions);
+                                } else if st.editing {
+                                    worn_list(ui, p, world, st, &mut actions, true);
+                                } else {
+                                    match st.tab {
+                                        0 => gallery(ui, p, world, st, &entries, &outfits, base, &mut actions, images, list_width),
+                                        1 => outfit_list(ui, p, world, st, &entries, &outfits, base, &mut actions),
+                                        _ => {
+                                            ui.label(RichText::new(aurora_i18n::tr!("ui-appearance-items-to-wear")).color(p.muted));
+                                            worn_list(ui, p, world, st, &mut actions, false);
+                                        }
                                     }
                                 }
-                            }
-                            if !st.editing && st.tab < 2 && entries.is_empty() {
-                                ui.label(RichText::new(aurora_i18n::tr!("ui-appearance-no-outfits-to-display")).color(p.muted));
-                            }
+                                if !st.editing && st.tab < 2 && entries.is_empty() {
+                                    ui.label(RichText::new(aurora_i18n::tr!("ui-appearance-no-outfits-to-display")).color(p.muted));
+                                }
+                            });
                         });
-                    });
-            });
+                });
+        }
         st.clipboard_shortcuts(ui, &world.inventory, &outfits);
         if !st.editing && st.tab == 2 {
             temporary_attachments(ui, p, world, st);
@@ -1838,7 +1862,8 @@ pub fn show(
                 }
             });
         }
-        if !st.editing && st.tab < 2 {
+        // the showcase's preview stands for the selection's card
+        if !st.editing && st.tab < 2 && !(showcase && showcase::previews(ui.available_width())) {
             widgets::surface(ui, p, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
@@ -2132,6 +2157,18 @@ pub fn demo_previews(ctx: &egui::Context, inv: &mut crate::world::inventory::Inv
             ctx.load_texture(format!("demo-outfit-{folder}"), image, egui::TextureOptions::LINEAR),
         );
     }
+}
+
+/// `AURORA_DEMO_APPEARANCE=showcase`: two favorites, and the Cop outfit
+/// picked for the preview.
+pub fn demo_showcase(inv: &mut crate::world::inventory::Inventory, st: &mut AppearanceUi) {
+    for id in [703, 744] {
+        if let Some(folder) = inv.folders.get_mut(&Uuid::from_u128(id)) {
+            folder.info.favorite = true;
+        }
+    }
+    inv.generation += 1;
+    st.outfit_selection.single(Uuid::from_u128(703));
 }
 
 #[cfg(test)]
@@ -2629,7 +2666,7 @@ mod tests {
             .expect(label)
     }
 
-    fn draw_output(
+    pub(super) fn draw_output(
         ctx: &egui::Context,
         world: &mut World,
         st: &mut AppearanceUi,

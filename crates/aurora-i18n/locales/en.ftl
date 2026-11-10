@@ -3417,6 +3417,24 @@ common-join = Join
 build-ui-floaters-join-the-selected-parcels-into-one = Join the selected parcels into one?
 ui-options-microphone-gain = Microphone gain
 ui-appearance-outfit-gallery = Outfit gallery
+ui-appearance-showcase-all = All outfits
+ui-appearance-showcase-no-picture = No picture
+ui-appearance-showcase-folders = Folders
+ui-appearance-showcase-missing = { $count ->
+    [one] { $count } outfit has no picture yet.
+   *[other] { $count } outfits have no picture yet.
+    }
+ui-appearance-showcase-show-them = Show them
+ui-appearance-showcase-dismiss = Hide this message
+ui-appearance-showcase-pick = Pick an outfit to see it here.
+ui-appearance-showcase-no-picture-yet = No picture yet
+ui-appearance-showcase-no-picture-hint = Take a photo of what you see now, or choose an image from your inventory.
+ui-appearance-showcase-body = Body parts
+ui-appearance-showcase-clothing = Clothing and layers
+ui-appearance-showcase-attachments = Attachments
+ui-appearance-showcase-other = Other
+ui-appearance-showcase-wear-item = Wear this item
+ui-appearance-showcase-more = More actions
 world-appearance-gloves = Gloves
 ui-options-keep-the-current-culling-view-move-the-camera-to = Keep the current culling view: move the camera to see what is not drawn
 ui-notifications-keep = Keep
@@ -9186,6 +9204,10 @@ ui-options-aurora-search-help = One field, type chips and the details beside the
 ui-options-aurora-search-classic = Tabs (Legacy)
 ui-options-aurora-region-estate-help = An overview, settings grouped by what you want to do and the interventions together, or the Legacy Viewer's 8 tabs.
 ui-options-aurora-inventory-help = One window that widens from the tree into an explorer with its details, or the Legacy Viewer's single tree.
+ui-options-aurora-outfit-gallery = Outfit gallery
+ui-options-aurora-outfit-gallery-help = Appearance's gallery as a showcase, with your folders, large pictures and a preview of the outfit you pick, or the Legacy Viewer's grid of small tiles.
+ui-options-aurora-outfit-gallery-aurora = Showcase
+ui-options-aurora-outfit-gallery-classic = Tiles (Legacy)
 ui-options-aurora-build = Build tools
 ui-options-aurora-build-help = Aurora's adjustable workspace, or the Legacy Viewer's tool strip and General, Object, Features, Texture and Content tabs.
 build-legacy-object = Object
