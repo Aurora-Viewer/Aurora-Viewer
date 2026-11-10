@@ -4728,6 +4728,27 @@ impl App {
                 self.settings.world_overlays.hide_particles = !self.settings.world_overlays.hide_particles;
                 self.settings.save();
             }
+            Action::RenderTrees
+            | Action::RenderAvatars
+            | Action::RenderTerrain
+            | Action::RenderSky
+            | Action::RenderWater
+            | Action::RenderObjects
+            | Action::RenderGrass
+            | Action::RenderClouds => {
+                let h = &mut self.settings.debug.hidden_types;
+                let off = match action {
+                    Action::RenderTrees => &mut h.trees,
+                    Action::RenderAvatars => &mut h.avatars,
+                    Action::RenderTerrain => &mut h.terrain,
+                    Action::RenderSky => &mut h.sky,
+                    Action::RenderWater => &mut h.water,
+                    Action::RenderObjects => &mut h.objects,
+                    Action::RenderGrass => &mut h.grass,
+                    _ => &mut h.clouds,
+                };
+                *off = !*off;
+            }
             Action::ShowTransparency => {
                 let d = &mut self.settings.debug;
                 d.show_alpha = !d.show_alpha;
@@ -15740,6 +15761,10 @@ impl App {
                     world_overlays: self.settings.world_overlays,
                     show_transparency: self.settings.debug.show_alpha,
                     hidden_types: self.settings.debug.hidden_types,
+                    render_type_keys: ui::bars::RENDER_TYPE_ACTIONS.map(|a| {
+                        a.and_then(|a| self.settings.keybinds.get(a)[0].as_ref().map(|b| b.label()))
+                            .unwrap_or_default()
+                    }),
                     conversation_thumbnails: self.chat_ui.thumbnails.top_count(),
                     region: if self.world.rlva.has("showloc") {
                         aurora_i18n::tr!("rlva-hidden-region")
