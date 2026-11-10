@@ -1209,6 +1209,8 @@ mod tests {
             hover_tips: Default::default(),
             world_overlays: Default::default(),
             show_transparency: false,
+            hidden_types: Default::default(),
+            render_type_keys: Default::default(),
             conversation_thumbnails: 0,
         }
     }

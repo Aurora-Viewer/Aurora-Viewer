@@ -441,6 +441,16 @@ pub enum Action {
     PropertyLines,
     LandOwners,
     HideParticles,
+    /// Advanced › Rendering types, one kind each (menu_viewer.xml: Develop ›
+    /// Rendering Types, Ctrl+Alt+Shift+3 Tree … - Clouds).
+    RenderTrees,
+    RenderAvatars,
+    RenderTerrain,
+    RenderSky,
+    RenderWater,
+    RenderObjects,
+    RenderGrass,
+    RenderClouds,
     /// Aurora's Dev Toolbox window (Ctrl+Alt+D).
     DevToolbox,
     /// Advanced.ShowDebugSettings.
@@ -649,6 +659,14 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::PropertyLines, aurora_i18n::tr!("world-property-lines")),
                     (Action::LandOwners, aurora_i18n::tr!("world-land-owners")),
                     (Action::HideParticles, aurora_i18n::tr!("world-hide-particles")),
+                    (Action::RenderTrees, aurora_i18n::tr!("keybinds-render-trees")),
+                    (Action::RenderAvatars, aurora_i18n::tr!("keybinds-render-avatars")),
+                    (Action::RenderTerrain, aurora_i18n::tr!("keybinds-render-terrain")),
+                    (Action::RenderSky, aurora_i18n::tr!("keybinds-render-sky")),
+                    (Action::RenderWater, aurora_i18n::tr!("keybinds-render-water")),
+                    (Action::RenderObjects, aurora_i18n::tr!("keybinds-render-objects")),
+                    (Action::RenderGrass, aurora_i18n::tr!("keybinds-render-grass")),
+                    (Action::RenderClouds, aurora_i18n::tr!("keybinds-render-clouds")),
                 ],
             ),
         ]
@@ -909,6 +927,18 @@ impl KeyBindings {
                     None,
                 ],
             ),
+            // menu_viewer.xml: Develop › Rendering Types, control|alt|shift
+            // and 3 Tree, 4 Avatars, 5 Surface Patch, 6 Sky, 7 Water, 9
+            // Volume, 0 Grass, - Clouds (the digits keep their place, the
+            // minus follows the layout)
+            (Action::RenderTrees, [kalt(K::Digit3, true, true), None]),
+            (Action::RenderAvatars, [kalt(K::Digit4, true, true), None]),
+            (Action::RenderTerrain, [kalt(K::Digit5, true, true), None]),
+            (Action::RenderSky, [kalt(K::Digit6, true, true), None]),
+            (Action::RenderWater, [kalt(K::Digit7, true, true), None]),
+            (Action::RenderObjects, [kalt(K::Digit9, true, true), None]),
+            (Action::RenderGrass, [kalt(K::Digit0, true, true), None]),
+            (Action::RenderClouds, [kalt(K::Minus, true, true), None]),
             // menu_viewer.xml: Show HUD Attachments, shortcut="alt|shift|H"
             (Action::ShowHuds, [kalt(K::KeyH, false, true), None]),
             // Aurora's direct HUD gesture must leave Alt to Firestorm's camera (#266).
@@ -2311,6 +2341,9 @@ mod tests {
                 (true, true, true),
                 [K::Equal, K::Equal, K::Slash, K::BracketRight],
             ),
+            (Action::RenderTrees, (true, true, true), [K::Digit3; 4]),
+            (Action::RenderObjects, (true, true, true), [K::Digit9; 4]),
+            (Action::RenderGrass, (true, true, true), [K::Digit0; 4]),
             (Action::DevToolbox, (true, false, true), [K::KeyD; 4]),
             (Action::DebugSettings, (true, true, true), [K::KeyS; 4]),
             (Action::Rebake, (true, false, true), [K::KeyR; 4]),
