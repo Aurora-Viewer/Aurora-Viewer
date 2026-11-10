@@ -350,6 +350,7 @@ pub(super) fn shortcuts(
     if st.dialog.is_some() {
         return;
     }
+    super::keyboard::open_shortcut(ui, inv, st, prefs, facts, actions);
     // egui-winit consumes the physical C/X/V presses and emits these native
     // clipboard events instead. Testing key_pressed(C) would miss real input.
     let mut events = Vec::new();
@@ -406,6 +407,7 @@ fn demo_mode() -> Option<&'static str> {
                 || mode.starts_with("search-selection")
                 || mode.starts_with("keyboard")
                 || mode.starts_with("aurora-keyboard")
+                || mode.starts_with("enter")
         })
     })
     .as_deref()
@@ -449,6 +451,34 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
     let Some(mode) = demo_mode().filter(|mode| *mode != "clipboard") else {
         return Vec::new();
     };
+    if mode.starts_with("enter") {
+        // Enter puts the demo object on, then takes it off once it is worn
+        // (LLObjectBridge::openItem, as a double-click does).
+        let pos = ctx.data(|data| data.get_temp::<egui::Pos2>(egui::Id::unique(("clipboard_demo_row", st.ui_id, Uuid::from_u128(8100)))));
+        if matches!(frame, 650 | 651) {
+            return pos.map_or_else(Vec::new, |pos| {
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed: frame == 650,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]
+            });
+        }
+        if matches!(frame, 680 | 720) {
+            return vec![egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }];
+        }
+        return Vec::new();
+    }
     if mode.starts_with("keyboard") || mode.starts_with("aurora-keyboard") {
         if matches!(frame, 650 | 651)
             && let Some(pos) =
@@ -948,6 +978,29 @@ mod tests {
             repeat: true,
             modifiers: if shift { egui::Modifiers::SHIFT } else { egui::Modifiers::NONE },
         }
+    }
+
+    fn enter_key() -> Event {
+        Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn enter_on_the_selected_inventory_object_opens_it_like_a_double_click() {
+        use crate::world::appearance::Action as Wear;
+        let mut h = Harness::new();
+        h.select(id(8100), false);
+        let actions = h.frame(vec![enter_key()]);
+        assert!(
+            matches!(&actions[..], [InvAction::Appearance(Wear::WearItem { item, replace: true, point: 0 })] if *item == id(8100)),
+            "Enter puts the object on, got {} actions",
+            actions.len()
+        );
     }
 
     #[test]
