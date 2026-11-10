@@ -138,13 +138,16 @@ Accepted targets keep a reminder with Withdraw even when Poser is closed.
 Privacy > Who can ask to pose my avatar defaults to **Friends**; Everyone
 and Nobody are also available. Friendship permits a request, never posing
 without acceptance. Muted or blocked requesters do not get a modal. No
-answer after 60 seconds expires the request; refusal and timeout impose a
-10-minute cooldown. Responses require the matching request ID and peer.
+answer after 60 seconds expires the request, followed by a 2-minute wait;
+an explicit refusal keeps its 10-minute wait. The subject menu shows the
+remaining time. Ending an accepted session allows a fresh request immediately;
+a fresh acceptance is still required, and the old request ID stays invalid.
+Responses require the matching request ID and peer.
 Withdrawal, disappearance, region changes, teleport and logout invalidate
 the relevant access. The requester immediately drops an invalid pose and
 receives a notice.
 
-The bridge is version **1.34**, which triggers the existing reprovisioning
+The bridge is version **1.41**, which triggers the existing reprovisioning
 flow. The new service lives in `query.lsl`, separately from the movement
 controller. HTTPS commands use the existing validated query endpoint and
 token. Attachment-to-attachment traffic uses `llRegionSayTo`, request IDs

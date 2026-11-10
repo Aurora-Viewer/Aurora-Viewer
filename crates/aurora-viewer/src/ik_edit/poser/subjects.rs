@@ -275,12 +275,15 @@ impl Editor {
                             }
                         }
                         Status::Refused | Status::NoAnswer => {
-                            let key = if status == Status::Refused {
-                                "poser-consent-refused"
+                            let left = world.poser_consent.retry_after(peer, std::time::Instant::now());
+                            let seconds = left.as_secs() + u64::from(left.subsec_nanos() != 0);
+                            let time = format!("{}:{:02}", seconds / 60, seconds % 60);
+                            let text = if status == Status::Refused {
+                                aurora_i18n::tr!("poser-consent-refused", time = time)
                             } else {
-                                "poser-consent-no-answer"
+                                aurora_i18n::tr!("poser-consent-no-answer", time = time)
                             };
-                            ui.label(egui::RichText::new(aurora_i18n::text(key)).size(11.0).color(p.muted));
+                            ui.label(egui::RichText::new(text).size(11.0).color(p.muted));
                         }
                     }
                 });

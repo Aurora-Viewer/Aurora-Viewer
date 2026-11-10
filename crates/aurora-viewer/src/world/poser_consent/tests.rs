@@ -54,20 +54,204 @@ fn outgoing_consent_requires_matching_nonce_and_expires_on_withdraw_departure_or
     assert!(state.accepted.is_empty() && state.granted_to.is_empty());
 }
 #[test]
-fn request_timeouts_and_refusals_enforce_one_pending_request_and_ten_minute_cooldown() {
+fn poser_cooldown_timeout_allows_a_fresh_request_after_two_minutes() {
     let (world, peer, mut state) = fixture();
     let now = Instant::now();
     assert!(state.request(&world, peer, now));
-    assert!(!state.request(&world, peer, now));
+    assert!(!state.request(&world, peer, now), "one pending request per resident");
     state.sync(&world, now + TIMEOUT);
     assert!(matches!(state.status(peer), Status::NoAnswer));
-    assert!(!state.request(&world, peer, now + TIMEOUT));
-    state.sync(&world, now + TIMEOUT + COOLDOWN);
-    assert!(state.request(&world, peer, now + TIMEOUT + COOLDOWN));
+    let ready = now + TIMEOUT + Duration::from_secs(120);
+    state.sync(&world, ready - Duration::from_millis(1));
+    assert!(!state.request(&world, peer, ready - Duration::from_millis(1)));
+    state.sync(&world, ready);
+    assert!(state.request(&world, peer, ready));
+}
+#[test]
+fn poser_cooldown_explicit_refusal_still_waits_ten_minutes() {
+    let (world, peer, mut state) = fixture();
+    let now = Instant::now();
+    assert!(state.request(&world, peer, now));
     let id = state.outgoing[&peer].id;
-    state.receive(&world, &wire(id, PoseKind::Refuse, peer), now + TIMEOUT + COOLDOWN);
+    let refused = now + Duration::from_secs(5);
+    state.receive(&world, &wire(id, PoseKind::Refuse, peer), refused);
     assert!(matches!(state.status(peer), Status::Refused));
-    assert!(!state.request(&world, peer, now + TIMEOUT + COOLDOWN));
+    let ready = refused + Duration::from_secs(600);
+    state.sync(&world, ready - Duration::from_millis(1));
+    assert!(!state.request(&world, peer, ready - Duration::from_millis(1)));
+    state.sync(&world, ready);
+    assert!(state.request(&world, peer, ready));
+}
+#[test]
+fn poser_cooldown_normally_ended_sessions_allow_fresh_nonces_immediately() {
+    for requester_ends in [false, true] {
+        let (world, peer, mut state) = fixture();
+        let now = Instant::now();
+        assert!(state.request(&world, peer, now));
+        let id = state.outgoing[&peer].id;
+        state.receive(&world, &wire(id, PoseKind::Accept, peer), now);
+        assert!(state.can_pose(&world, peer));
+        if requester_ends {
+            state.cancel(peer);
+        } else {
+            state.receive(&world, &wire(id, PoseKind::Withdraw, peer), now);
+        }
+        assert!(!state.can_pose(&world, peer));
+        assert!(state.request(&world, peer, now));
+        assert_ne!(state.outgoing[&peer].id, id);
+        state.receive(&world, &wire(id, PoseKind::Accept, peer), now);
+        assert!(!state.can_pose(&world, peer), "the ended session cannot grant fresh consent");
+    }
+}
+#[test]
+fn poser_cooldown_receiver_timeout_waits_two_minutes_without_sending_a_refusal() {
+    let (world, peer, mut state) = fixture();
+    state.preferences.policy = Policy::Everyone;
+    let now = Instant::now();
+    state.receive(&world, &wire(Uuid::new_v4(), PoseKind::Request, peer), now);
+    state.sync(&world, now + TIMEOUT);
+    assert!(state.incoming.is_empty());
+    assert!(state.out.iter().all(|(_, kind, _)| *kind != PoseKind::Refuse));
+    // a few seconds under the requester's 2:00, the relay's slack
+    let ready = now + TIMEOUT + Duration::from_secs(120) - RELAY_SLACK;
+    state.sync(&world, ready - Duration::from_millis(1));
+    state.receive(
+        &world,
+        &wire(Uuid::new_v4(), PoseKind::Request, peer),
+        ready - Duration::from_millis(1),
+    );
+    assert!(state.incoming.is_empty());
+    state.sync(&world, ready);
+    state.receive(&world, &wire(Uuid::new_v4(), PoseKind::Request, peer), ready);
+    assert_eq!(state.incoming.len(), 1);
+}
+#[test]
+fn poser_cooldown_timeout_cancel_before_sync_preserves_the_receiver_wait() {
+    let (world, peer, mut state) = fixture();
+    state.preferences.policy = Policy::Everyone;
+    let now = Instant::now();
+    let id = Uuid::new_v4();
+    state.receive(&world, &wire(id, PoseKind::Request, peer), now);
+    state.receive(&world, &wire(id, PoseKind::Cancel, peer), now + TIMEOUT);
+    assert!(state.incoming.is_empty());
+    let ready = now + TIMEOUT + Duration::from_secs(120) - RELAY_SLACK;
+    state.sync(&world, ready - Duration::from_millis(1));
+    state.receive(
+        &world,
+        &wire(Uuid::new_v4(), PoseKind::Request, peer),
+        ready - Duration::from_millis(1),
+    );
+    assert!(state.incoming.is_empty());
+    state.sync(&world, ready);
+    state.receive(&world, &wire(Uuid::new_v4(), PoseKind::Request, peer), ready);
+    assert_eq!(state.incoming.len(), 1);
+}
+#[test]
+fn poser_cooldown_timeout_cancel_relayed_just_under_a_minute_still_waits() {
+    let (world, peer, mut state) = fixture();
+    state.preferences.policy = Policy::Everyone;
+    let now = Instant::now();
+    let id = Uuid::new_v4();
+    state.receive(&world, &wire(id, PoseKind::Request, peer), now);
+    // the requester's own 60 s ran out; its Cancel reached us 2 s "early"
+    let cancel = now + TIMEOUT - Duration::from_secs(2);
+    state.receive(&world, &wire(id, PoseKind::Cancel, peer), cancel);
+    assert!(state.incoming.is_empty());
+    state.sync(&world, cancel + Duration::from_secs(60));
+    state.receive(
+        &world,
+        &wire(Uuid::new_v4(), PoseKind::Request, peer),
+        cancel + Duration::from_secs(60),
+    );
+    assert!(state.incoming.is_empty(), "the no-answer wait applies");
+    // and ends no later than the requester's 2:00 countdown
+    let ready = cancel + Duration::from_secs(120);
+    state.sync(&world, ready);
+    state.receive(&world, &wire(Uuid::new_v4(), PoseKind::Request, peer), ready);
+    assert_eq!(state.incoming.len(), 1);
+}
+#[test]
+fn poser_cooldown_early_cancel_by_the_requester_leaves_no_wait() {
+    let (world, peer, mut state) = fixture();
+    state.preferences.policy = Policy::Everyone;
+    let now = Instant::now();
+    let id = Uuid::new_v4();
+    state.receive(&world, &wire(id, PoseKind::Request, peer), now);
+    let cancel = now + Duration::from_secs(10);
+    state.receive(&world, &wire(id, PoseKind::Cancel, peer), cancel);
+    state.sync(&world, cancel + Duration::from_secs(1));
+    state.receive(
+        &world,
+        &wire(Uuid::new_v4(), PoseKind::Request, peer),
+        cancel + Duration::from_secs(1),
+    );
+    assert_eq!(state.incoming.len(), 1);
+}
+#[test]
+fn poser_cooldown_receiver_explicit_refusal_still_waits_ten_minutes() {
+    let (world, peer, mut state) = fixture();
+    state.preferences.policy = Policy::Everyone;
+    let now = Instant::now();
+    state.receive(&world, &wire(Uuid::new_v4(), PoseKind::Request, peer), now);
+    let refused = now + Duration::from_secs(5);
+    state.answer(state.incoming[0], false, false, refused);
+    assert!(state.out.iter().any(|(_, kind, _)| *kind == PoseKind::Refuse));
+    let ready = refused + Duration::from_secs(600);
+    state.sync(&world, ready - Duration::from_millis(1));
+    state.receive(
+        &world,
+        &wire(Uuid::new_v4(), PoseKind::Request, peer),
+        ready - Duration::from_millis(1),
+    );
+    assert!(state.incoming.is_empty());
+    state.sync(&world, ready);
+    state.receive(&world, &wire(Uuid::new_v4(), PoseKind::Request, peer), ready);
+    assert_eq!(state.incoming.len(), 1);
+}
+#[test]
+fn poser_cooldown_ended_receiver_keeps_old_nonces_invalid_but_accepts_new_requests() {
+    for requester_ends in [false, true] {
+        let (world, peer, mut state) = fixture();
+        state.preferences.policy = Policy::Everyone;
+        let now = Instant::now();
+        let id = Uuid::new_v4();
+        state.receive(&world, &wire(id, PoseKind::Request, peer), now);
+        state.answer(state.incoming[0], true, false, now);
+        if requester_ends {
+            state.receive(&world, &wire(id, PoseKind::Cancel, peer), now);
+        } else {
+            state.withdraw(peer);
+        }
+        state.receive(&world, &wire(id, PoseKind::Request, peer), now);
+        assert!(state.incoming.is_empty());
+        state.receive(&world, &wire(Uuid::new_v4(), PoseKind::Request, peer), now);
+        assert_eq!(state.incoming.len(), 1);
+        assert!(state.granted_to.is_empty(), "a fresh request needs fresh acceptance");
+    }
+}
+#[test]
+fn poser_cooldown_keeps_the_64_request_limit_and_one_pending_request_per_peer() {
+    let (world, peer, mut state) = fixture();
+    state.preferences.policy = Policy::Everyone;
+    let now = Instant::now();
+    state.receive(&world, &wire(Uuid::new_v4(), PoseKind::Request, peer), now);
+    state.receive(&world, &wire(Uuid::new_v4(), PoseKind::Request, peer), now);
+    assert_eq!(state.incoming.len(), 1);
+    state.incoming.clear();
+    for n in 1..=64 {
+        let r = Request {
+            id: Uuid::new_v4(),
+            peer: Uuid::from_u128(n),
+            at: now,
+        };
+        state.incoming.push_back(r);
+        state.outgoing.insert(r.peer, r);
+    }
+    state.receive(&world, &wire(Uuid::new_v4(), PoseKind::Request, peer), now);
+    assert_eq!(state.incoming.len(), 64);
+    assert!(!state.outgoing.contains_key(&peer));
+    assert!(!state.request(&world, peer, now));
+    assert_eq!(state.outgoing.len(), 64);
 }
 #[test]
 fn incoming_privacy_defaults_to_friends_and_acceptance_is_never_implicit() {
@@ -92,7 +276,11 @@ fn incoming_privacy_defaults_to_friends_and_acceptance_is_never_implicit() {
     state.answer(request, false, true, now);
     assert!(state.preferences.blocked.contains(&peer));
     assert!(state.dirty);
-    state.receive(&world, &wire(Uuid::new_v4(), PoseKind::Request, peer), now + COOLDOWN);
+    state.receive(
+        &world,
+        &wire(Uuid::new_v4(), PoseKind::Request, peer),
+        now + Duration::from_secs(600),
+    );
     assert!(state.incoming.is_empty());
     state.preferences.policy = Policy::Nobody;
     assert!(state.commands(None).is_empty());
@@ -208,4 +396,46 @@ fn reordered_withdraw_and_cancel_cannot_reactivate_a_finished_request() {
     assert!(state.request(&world, peer, now));
     state.cancel(peer);
     assert!(state.out.iter().all(|(_, kind, _)| *kind != PoseKind::Request));
+}
+
+#[test]
+fn poser_cooldown_delayed_sync_does_not_restart_the_wait_after_the_deadline() {
+    let (world, peer, mut state) = fixture();
+    let now = Instant::now();
+    assert!(state.request(&world, peer, now));
+    let later = now + TIMEOUT + Duration::from_secs(121);
+    state.sync(&world, later);
+    assert!(state.request(&world, peer, later));
+
+    let (world, peer, mut receiver) = fixture();
+    receiver.preferences.policy = Policy::Everyone;
+    receiver.receive(&world, &wire(Uuid::new_v4(), PoseKind::Request, peer), now);
+    receiver.sync(&world, later);
+    receiver.receive(&world, &wire(Uuid::new_v4(), PoseKind::Request, peer), later);
+    assert_eq!(receiver.incoming.len(), 1);
+}
+
+#[test]
+fn poser_cooldown_countdown_reports_the_actual_time_left_for_each_reason() {
+    for timeout in [false, true] {
+        let (world, peer, mut state) = fixture();
+        let now = Instant::now();
+        assert!(state.request(&world, peer, now));
+        let (start, duration) = if timeout {
+            let start = now + TIMEOUT;
+            state.sync(&world, start);
+            (start, Duration::from_secs(120))
+        } else {
+            let id = state.outgoing[&peer].id;
+            state.receive(&world, &wire(id, PoseKind::Refuse, peer), now);
+            (now, Duration::from_secs(600))
+        };
+        assert_eq!(state.retry_after(peer, start), duration);
+        assert_eq!(
+            state.retry_after(peer, start + Duration::from_secs(45)),
+            duration - Duration::from_secs(45)
+        );
+        assert_eq!(state.retry_after(peer, start + duration), Duration::ZERO);
+        assert_eq!(state.retry_after(peer, start + duration + Duration::from_secs(1)), Duration::ZERO);
+    }
 }

@@ -83,6 +83,12 @@ query(key request, string kind, string targets) {
             || llListFindList(["request", "accept", "refuse", "cancel", "withdraw"], [action]) < 0) {
             llHTTPResponse(request, 400, "invalid"); return;
         }
+        // Accepted sessions may end and be asked again immediately. Refusals
+        // keep the request throttle; the viewer owns the longer reason-based wait.
+        if (action == "accept" || action == "withdraw") {
+            integer at = llListFindList(gPosePeers, [target]);
+            if (at >= 0) gPosePeers = llDeleteSubList(gPosePeers, at, at + 1);
+        }
         // Explicit commands only: no advertisement, discovery or viewer probe.
         llRegionSayTo(target, POSE_CHANNEL, "pose1|" + (string)nonce + "|" + action + "|" + (string)target);
         llHTTPResponse(request, 200, "[]");
