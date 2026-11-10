@@ -674,23 +674,25 @@ impl Editor {
             );
             return;
         };
-        let name = &rig.canonical_names[bone];
-        let title = if bones::side_of(name).is_some() {
-            aurora_i18n::tr!("poser-joint-side", joint = bones::label(name), side = self.side_word()).to_string()
-        } else {
-            bones::label(name)
-        };
+        let title = self.joint_title(rig, bone);
         // the disclosure on the left, as an Apple list: the chevron and the
         // name are one target that opens the sliders under the row
         let font = egui::FontId::new(13.0, crate::ui::fonts::semibold(ui.ctx()));
+        // the joint's values as a stat line (X 12° · Y -4° · Z 0°) against
+        // the right edge; the name takes all the room they leave, never
+        // less than a third of the row (the values clip first)
+        let values = self
+            .joint_value(rig, frame, bone)
+            .map(|value| ui.painter().layout_job(readout(p, self.poser.transform, value)));
+        let values_w = values.as_ref().map_or(0.0, |g| g.size().x + 10.0);
+        let edited = self.poser_edited(bone);
+        let name_left = row.left() + 26.0 + if edited { 11.0 } else { 0.0 };
         let title_w = ui
             .painter()
             .layout_no_wrap(title.clone(), font.clone(), p.ink)
             .size()
             .x
-            .min(row.width() * 0.45);
-        let edited = self.poser_edited(bone);
-        let name_left = row.left() + 26.0 + if edited { 11.0 } else { 0.0 };
+            .min((row.right() - 10.0 - values_w - name_left).max(row.width() * 0.35));
         let target = egui::Rect::from_min_max(row.min, egui::pos2(name_left + title_w + 8.0, row.max.y));
         let disclosure = ui.interact(target, ui.scope_id().with("poser-joint-disclosure"), Sense::click());
         let hover = ui.ctx().animate_bool(disclosure.id.with("hover"), disclosure.hovered());
@@ -723,28 +725,16 @@ impl Editor {
             self.poser.joint_open = !self.poser.joint_open;
         }
         let left = name_left;
-        // the joint's values as a stat line: X 12° · Y -4° · Z 0°
-        if let Some(value) = self.joint_value(rig, frame, bone) {
-            let job = readout(p, self.poser.transform, value);
-            let galley = ui.painter().layout_job(job);
-            let readout_left = (row.right() - 40.0 - galley.size().x).max(left + title_w + 10.0);
+        if let Some(galley) = values {
+            let readout_left = (row.right() - 10.0 - galley.size().x).max(left + title_w + 10.0);
             let at = widgets::row_text_origin(ui.painter(), &galley, readout_left, row.center().y);
             ui.painter()
                 .with_clip_rect(egui::Rect::from_min_max(
                     egui::pos2(left + title_w + 10.0, row.top()),
-                    egui::pos2(row.right() - 36.0, row.bottom()),
+                    egui::pos2(row.right() - 6.0, row.bottom()),
                 ))
                 .galley(at, galley, p.ink);
         }
-        let mut reset_ui = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(egui::Rect::from_center_size(
-                    egui::pos2(row.right() - 17.0, row.center().y),
-                    egui::Vec2::splat(22.0),
-                ))
-                .layout(egui::Layout::left_to_right(egui::Align::Center)),
-        );
-        self.reset_button(&mut reset_ui, p, rig, frame);
         if !self.poser.joint_open {
             return;
         }
@@ -813,15 +803,20 @@ impl Editor {
             });
     }
 
-    /// The view on the left (markers Always or On hover, depth of field, the
-    /// other avatars' hints), Start / Stop in the middle, the files on the
-    /// right (Save as a small form, Load the pose library, the upload).
+    /// Three clusters, one kind of control each, as Apple's toolbars group
+    /// theirs: the view on the left (switches: markers Always or On hover,
+    /// depth of field, the other avatars' hints), going back in the middle
+    /// (actions: undo, redo, reset), the files on the right (Save as a small
+    /// form, Load the pose library, the upload). Under them Start / Stop
+    /// alone across the window, the one main action, as a sheet's bottom
+    /// button (Apple) or Lock In (Valorant).
     fn compact_tools(&mut self, ui: &mut egui::Ui, p: &Palette, rig: &Rig, frame: &Frame) {
         let free = !self.poser.storage.busy;
         ui.horizontal(|ui| {
-            // the two clusters at the edges, Start / Stop centred between
+            // the clusters at the edges and in the middle, an even gap between
             ui.spacing_mut().item_spacing.x = 0.0;
             let cluster_w = 3.0 * BUTTON + 2.0 * 2.0 + 2.0 * INSET;
+            let gap = ((ui.available_width() - 3.0 * cluster_w) * 0.5).max(0.0);
             // the view: joints, depth of field, switching avatar
             cluster(ui, p, 3, |ui| {
                 let hover = self.poser.markers && self.poser.markers_hover;
@@ -846,32 +841,55 @@ impl Editor {
                     self.poser.avatar_hints = !hints;
                 }
             });
-            ui.add_space(ROW_GAP);
-            let width = ui.available_width() - cluster_w - ROW_GAP;
-            if let Some(session) = self.poser.sessions.get_mut(&self.poser.subject) {
-                let (icon, key, kind) = if session.enabled {
-                    ("player-stop-filled", "poser-stop-short", widgets::ActionKind::Flat)
-                } else {
-                    ("player-play-filled", "poser-start-short", widgets::ActionKind::Primary)
-                };
-                let tip = aurora_i18n::text(if session.enabled { "poser-stop" } else { "poser-start" });
-                if widgets::action_button(
-                    ui,
-                    p,
-                    icon,
-                    aurora_i18n::text(key),
-                    kind,
-                    egui::vec2(width.max(0.0), BUTTON + 2.0 * INSET),
-                )
-                .on_hover_text(tip)
-                .clicked()
-                {
-                    session.enabled = !session.enabled;
+            ui.add_space(gap);
+            // going back: the history, then the reset (Photos' Revert next
+            // to its undo); Shift turns the reset to the whole pose, the way
+            // the Option key turns a menu item on the Mac
+            cluster(ui, p, 3, |ui| {
+                let (can_undo, can_redo) = self
+                    .poser
+                    .sessions
+                    .get(&self.poser.subject)
+                    .map_or((false, false), |s| (!s.undo.is_empty(), !s.redo.is_empty()));
+                let mut history = None;
+                if square(ui, p, "arrow-back-up", (aurora_i18n::text("poser-undo"), ""), false, can_undo).clicked() {
+                    history = Some(false);
                 }
-            } else {
-                ui.add_space(width.max(0.0));
-            }
-            ui.add_space(ROW_GAP);
+                if square(ui, p, "arrow-forward-up", (aurora_i18n::text("poser-redo"), ""), false, can_redo).clicked() {
+                    history = Some(true);
+                }
+                if let Some(redo) = history
+                    && let Some(session) = self.poser.sessions.get_mut(&self.poser.subject)
+                {
+                    session.history(redo);
+                    self.refresh = true;
+                }
+                let whole = ui.input(|i| i.modifiers.shift);
+                let title = if whole {
+                    aurora_i18n::text("poser-tip-reset-pose").to_owned()
+                } else if let Some(bone) = self.selected {
+                    aurora_i18n::tr!("poser-tip-reset-joint", joint = self.joint_title(rig, bone)).to_string()
+                } else {
+                    aurora_i18n::text("poser-tip-reset").to_owned()
+                };
+                let detail = aurora_i18n::text(if whole {
+                    "poser-tip-reset-pose-detail"
+                } else {
+                    "poser-tip-reset-detail"
+                });
+                if square(ui, p, "restore", (&title, detail), false, self.reset_available(whole)).clicked() {
+                    self.pose_operation(
+                        rig,
+                        frame,
+                        if whole {
+                            controls::Operation::ResetAll
+                        } else {
+                            controls::Operation::ResetJoint
+                        },
+                    );
+                }
+            });
+            ui.add_space(gap);
             // the files
             cluster(ui, p, 3, |ui| {
                 let tag = (aurora_i18n::text("poser-tip-save"), aurora_i18n::text("poser-tip-save-detail"));
@@ -886,6 +904,53 @@ impl Editor {
                 }
             });
         });
+        if let Some(session) = self.poser.sessions.get_mut(&self.poser.subject) {
+            let (icon, key, kind) = if session.enabled {
+                ("player-stop-filled", "poser-stop-short", widgets::ActionKind::Flat)
+            } else {
+                ("player-play-filled", "poser-start-short", widgets::ActionKind::Primary)
+            };
+            let tip = aurora_i18n::text(if session.enabled { "poser-stop" } else { "poser-start" });
+            let width = ui.available_width();
+            if widgets::action_button(ui, p, icon, aurora_i18n::text(key), kind, egui::vec2(width, BUTTON + 2.0 * INSET))
+                .on_hover_text(tip)
+                .clicked()
+            {
+                session.enabled = !session.enabled;
+            }
+        }
+    }
+
+    /// The selected joint's name as the window shows it: its label, and
+    /// its side when it has one.
+    fn joint_title(&self, rig: &Rig, bone: usize) -> String {
+        let name = &rig.canonical_names[bone];
+        if bones::side_of(name).is_some() {
+            aurora_i18n::tr!("poser-joint-side", joint = bones::label(name), side = self.side_word()).to_string()
+        } else {
+            bones::label(name)
+        }
+    }
+
+    /// Whether the reset would change anything, so that it greys out when
+    /// it would not (Apple's rule for unavailable actions): the whole pose
+    /// when `whole` (Shift) has any joint edited or locked; otherwise the
+    /// selected joint, or in Mirror its counterpart too, as `ResetJoint`
+    /// resets both (FSPoserAnimator::resetJoint,
+    /// indra/newview/fsposeranimator.cpp).
+    pub(super) fn reset_available(&self, whole: bool) -> bool {
+        let Some(session) = self.poser.sessions.get(&self.poser.subject) else {
+            return false;
+        };
+        let changed = |b: usize| session.edited(b) || session.pose.locks.contains_key(&b);
+        if whole {
+            return !session.pose.locks.is_empty() || (0..session.pose.rotations.len()).any(|b| session.edited(b));
+        }
+        let mirrored = self
+            .selected
+            .filter(|_| self.poser.side == Side::Mirror)
+            .and_then(|b| self.mirrors.counterpart(b));
+        self.selected.into_iter().chain(mirrored).any(changed)
     }
 
     /// Save's form: the name, the export options, and Save.

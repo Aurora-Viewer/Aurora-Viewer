@@ -1795,3 +1795,32 @@ fn a_y_angle_past_ninety_degrees_stays_as_set() {
     let after = editor.joint_value(&rig, &frame, elbow).unwrap();
     assert!(after.y.abs() <= 90.0 + 1e-3, "read back from the rotation: {after:?}");
 }
+
+#[test]
+fn compact_reset_greys_out_when_it_would_change_nothing() {
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let left = rig.names["mElbowLeft"];
+    let right = rig.names["mElbowRight"];
+    let frame = Frame::new(&world).unwrap();
+    editor.select(left, &rig, &frame);
+    editor.poser.side = Side::Left;
+    assert!(!editor.reset_available(false), "an untouched joint has nothing to reset");
+    assert!(!editor.reset_available(true), "nor an untouched pose");
+    // only the counterpart bent: one side has nothing, Mirror resets it too
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    Arc::make_mut(&mut session.pose).rotations[right] = Quat::from_rotation_z(0.6) * session.base.rotations[right];
+    assert!(!editor.reset_available(false));
+    editor.poser.side = Side::Mirror;
+    assert!(
+        editor.reset_available(false),
+        "Mirror resets both sides (FSPoserAnimator::resetJoint)"
+    );
+    assert!(editor.reset_available(true), "Shift: the whole pose has an edit");
+    // a lock alone is something the reset removes
+    editor.poser.side = Side::Left;
+    editor.pose_operation(&rig, &frame, controls::Operation::ResetAll);
+    assert!(!editor.reset_available(true));
+    editor.pose_operation(&rig, &frame, controls::Operation::WorldLock);
+    assert!(editor.reset_available(false) && editor.reset_available(true));
+}

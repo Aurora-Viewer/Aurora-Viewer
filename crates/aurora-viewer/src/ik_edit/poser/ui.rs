@@ -43,11 +43,8 @@ impl Editor {
             .sum();
         let mut open = self.open;
         if self.compact_mode() {
-            let actions = vec![
-                ("arrows-maximize", aurora_i18n::text("poser-full-mode"), &mut switch),
-                ("arrow-forward-up", aurora_i18n::text("poser-redo"), &mut redo),
-                ("arrow-back-up", aurora_i18n::text("poser-undo"), &mut undo),
-            ];
+            // undo and redo sit in the window's last row, with the reset
+            let actions = vec![("arrows-maximize", aurora_i18n::text("poser-full-mode"), &mut switch)];
             self.compact_window(ctx, p, world, frame, &mut open, actions);
         } else {
             // The settings' "Show joint markers and gizmos" switch, one click
