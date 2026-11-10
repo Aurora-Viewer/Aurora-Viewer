@@ -218,8 +218,8 @@ pub struct FloaterState {
     pub planar_align: bool,
     pub bulk_perms_open: bool,
     pub bulk: contents_permissions::BulkState,
-    /// Contents item whose properties are shown.
-    pub item_properties: Option<item_properties::TaskProperties>,
+    /// Contents items whose properties windows are open, oldest first.
+    pub item_properties: Vec<item_properties::TaskProperties>,
     /// CantSelectReflectionProbe shown once.
     pub probe_warned: bool,
     /// Images the swatches want loaded (drained by the app).
