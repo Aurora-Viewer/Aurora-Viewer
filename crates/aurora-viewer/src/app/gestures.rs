@@ -261,9 +261,9 @@ impl App {
         for step in &definition.steps {
             match step {
                 Step::Animation { asset, flags, .. } if flags & ANIM_STOP == 0 && !asset.is_nil() => {
-                    self.scene.anims.get(asset);
+                    self.scene.anims.preload_gesture(asset, &self.net.fetcher);
                 }
-                Step::Sound { asset, .. } if !asset.is_nil() => self.scene.sounds.want(*asset),
+                Step::Sound { asset, .. } if !asset.is_nil() => self.scene.sounds.preload_gesture(*asset, &self.net.fetcher),
                 _ => {}
             }
         }
@@ -549,6 +549,10 @@ impl App {
                 chat_type: ChatType::Normal,
             });
         }
+        if self.demo && matches!(self.frame_count, 650 | 1010) && std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "once") {
+            log::info!("demo gesture one-shot: play at frame {}", self.frame_count);
+            self.gesture_play(Uuid::from_u128(DEMO_ONCE), None);
+        }
         self.tick_gestures();
     }
 
@@ -789,6 +793,14 @@ impl App {
                 self.gesture_loaded(*item, *asset, definition);
                 true
             }
+            NetCommand::AgentAnimation { anim, start: false } if *anim == DEMO_ONCE_ANIM => {
+                // Offline simulator echo of requestStopMotion, retaining every
+                // unrelated signal. The real grid supplies AvatarAnimation.
+                if let Some(motions) = self.world.animations.get_mut(&self.world.agent_id) {
+                    motions.retain(|motion| motion.id != *anim);
+                }
+                true
+            }
             NetCommand::SetGestureActive { .. } | NetCommand::GestureSound { .. } => true,
             _ => false,
         }
@@ -891,6 +903,12 @@ impl App {
         }
         self.gesture_request(item, false, false, Some(true), false);
         let replay = std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "replay");
+        if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "once") {
+            let mut animation = crate::demo::loop_animation();
+            animation.looping = false;
+            let bound = crate::scene::anim::BoundAnim::bind(animation, &self.scene.avatar_lib.rig);
+            self.scene.anims.insert(DEMO_ONCE_ANIM, std::sync::Arc::new(bound));
+        }
         let (sound, clip) = crate::demo::chime();
         self.scene.sounds.insert(sound, clip);
         if let Some(mut sound_item) = self.world.inventory.items.get(&Uuid::from_u128(8105)).cloned() {
@@ -950,6 +968,34 @@ impl App {
                     ..Default::default()
                 };
                 self.seed_demo_gesture(&template, id, name, definition, active);
+            }
+            if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "once") {
+                self.seed_demo_gesture(
+                    &template,
+                    DEMO_ONCE,
+                    aurora_i18n::tr!("gesture-demo-animation-name"),
+                    Gesture {
+                        trigger: "/once".into(),
+                        key: 0xa6,
+                        steps: vec![
+                            Step::Animation {
+                                name: aurora_i18n::tr!("gesture-demo-animation-name").into(),
+                                asset: DEMO_ONCE_ANIM,
+                                flags: 0,
+                            },
+                            Step::Wait {
+                                seconds: 0.0,
+                                flags: aurora_assets::gesture::WAIT_ANIMATIONS,
+                            },
+                            Step::Chat {
+                                text: aurora_i18n::tr!("gesture-demo-finished").into(),
+                                flags: 0,
+                            },
+                        ],
+                        ..Default::default()
+                    },
+                    true,
+                );
             }
             if replay {
                 for (id, name, definition) in demo_replay_gestures(sound) {
@@ -1068,6 +1114,8 @@ fn demo_channel_replace_gesture() -> Gesture {
     }
 }
 
+const DEMO_ONCE: u128 = 951009;
+const DEMO_ONCE_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_2931);
 const DEMO_CLAP_KEY: u8 = 0xa7;
 const DEMO_CTRL_B: u128 = 951005;
 

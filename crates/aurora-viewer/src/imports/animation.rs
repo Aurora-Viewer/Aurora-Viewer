@@ -97,6 +97,7 @@ pub fn metadata(animation: &Animation) -> Animation {
         loop_in: animation.loop_in,
         loop_out: animation.loop_out,
         looping: animation.looping,
+        ends_after: None,
         ease_in: animation.ease_in,
         ease_out: animation.ease_out,
         hand_pose: animation.hand_pose,

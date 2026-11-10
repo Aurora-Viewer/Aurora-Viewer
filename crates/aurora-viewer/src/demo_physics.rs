@@ -118,6 +118,7 @@ pub fn animation(mode: Mode) -> Animation {
         loop_in: 0.0,
         loop_out: 2.0,
         looping: true,
+        ends_after: None,
         ease_in: 0.2,
         ease_out: 0.2,
         hand_pose: 0,
@@ -179,7 +180,7 @@ pub fn events(shapes: &crate::scene::shape::ShapeParams, mode: Mode) -> Vec<NetE
                 cof_version: 1,
                 appearance_version: 1,
                 hover_height: 0.0,
-                attachments: 0,
+                attachments: Vec::new(),
             })
         })
         .collect();

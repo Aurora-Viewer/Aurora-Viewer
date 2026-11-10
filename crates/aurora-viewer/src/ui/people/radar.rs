@@ -293,6 +293,55 @@ pub(super) struct Row {
     pub left_behind: bool,
 }
 
+/// Whether a double click sends the camera to an avatar of the list
+/// (FSRadar::zoomAvatar, LLAvatarActions::canZoomIn). A drawn avatar is
+/// followed at once. One known only by its radar position is reached there
+/// and followed once it is drawn (the app waits for it), as the Legacy Viewer
+/// zooms on the radar entry's global position. Unlike the Legacy Viewer on
+/// Second Life, an avatar beyond the draw distance is refused, as it does on
+/// OpenSim (RenderFarClip): the camera would look at a place nothing is drawn
+/// in. Without a height there is no point to look at.
+pub(super) fn zoom_on(loaded: bool, range: Option<f32>, draw_distance: f32) -> Result<(), super::ZoomRefusal> {
+    use super::ZoomRefusal;
+    if loaded {
+        return Ok(());
+    }
+    match range {
+        None => Err(ZoomRefusal::Unplaced),
+        Some(range) if range > draw_distance => Err(ZoomRefusal::BeyondDrawDistance { range, draw_distance }),
+        Some(_) => Ok(()),
+    }
+}
+
+/// Seconds during which more double clicks on the same refused row say
+/// nothing more.
+const ZOOM_REFUSAL_QUIET: f64 = 10.0;
+
+/// The double click of a row, in either look: the camera goes to the avatar,
+/// or the chat says once why it cannot.
+pub(super) fn zoom_from_list(ui: &egui::Ui, st: &mut PeopleUi, row: &Row, draw_distance: f32, actions: &mut Vec<PeopleAction>) {
+    match zoom_on(row.loaded, row.range, draw_distance) {
+        Ok(()) => {
+            st.zoom_refused = None;
+            context::request(ui.ctx(), CtxAction::ZoomAvatar(row.id));
+        }
+        Err(why) => {
+            let now = ui.input(|i| i.time);
+            if st
+                .zoom_refused
+                .is_some_and(|(id, at)| id == row.id && now - at < ZOOM_REFUSAL_QUIET)
+            {
+                return;
+            }
+            st.zoom_refused = Some((row.id, now));
+            actions.push(PeopleAction::ZoomRefused {
+                name: row.name.clone(),
+                why,
+            });
+        }
+    }
+}
+
 /// Age in days of a profile, when it tells it (also for the age alert).
 pub fn age_days(profile: &aurora_net::AvatarProfile, unix_now: f64) -> Option<i64> {
     if profile.hide_age == Some(true) {
@@ -871,9 +920,10 @@ pub fn tab(
         let radius = ui.visuals().window_corner_radius;
         for row in &list {
             // dragged onto a conversation, the resident joins it
-            let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::click_and_drag());
+            let (rect, resp) = super::rows::allocate(ui, row.id, Vec2::new(ui.available_width(), 22.0));
             resp.dnd_set_drag_payload(crate::ui::call_invite::PersonDrag(row.id));
             if !ui.is_rect_visible(rect) {
+                super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
                 continue;
             }
             let selected = st.radar_selected.contains(&row.id);
@@ -903,25 +953,13 @@ pub fn tab(
                 st.radar_selected = vec![row.id];
                 st.radar_anchor = Some(row.id);
             }
-            // double click: the camera goes to the avatar and follows it, when it is drawn
+            // double click: the camera goes to the avatar and follows it
             // (LLAvatarActions::zoomIn)
             if resp.double_clicked() {
-                if row.loaded {
-                    context::request(ui.ctx(), CtxAction::ZoomAvatar(row.id));
-                } else {
-                    actions.push(PeopleAction::TooFarToZoom);
-                }
+                zoom_from_list(ui, st, row, data.draw_distance, actions);
             }
             // menu_fs_radar.xml, menu_fs_radar_multiselect.xml for several
-            let several = st.radar_selected.len() > 1 && st.radar_selected.contains(&row.id);
-            let chosen = st.radar_selected.clone();
-            menu::context_menu(&resp, p, |ui| {
-                if several {
-                    context::avatars_menu(ui, p, world, &chosen);
-                } else {
-                    context::avatar_list_menu(ui, p, world, row.id, AvatarList::Nearby);
-                }
-            });
+            super::rows::list_menu(&resp, p, world, &st.radar_selected, row.id, AvatarList::Nearby);
             if let Some(tip) = tip {
                 resp.on_hover_text(tip);
             }
@@ -933,6 +971,25 @@ pub fn tab(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_double_click_reaches_an_avatar_not_drawn_yet_within_the_draw_distance() {
+        use super::super::ZoomRefusal;
+        // drawn: always followed
+        assert_eq!(zoom_on(true, Some(300.0), 160.0), Ok(()));
+        assert_eq!(zoom_on(true, None, 160.0), Ok(()));
+        // the Discord case: 120 m, draw distance 160 m, not drawn yet
+        assert_eq!(zoom_on(false, Some(120.0), 160.0), Ok(()));
+        assert_eq!(zoom_on(false, Some(160.0), 160.0), Ok(()));
+        assert_eq!(
+            zoom_on(false, Some(300.0), 160.0),
+            Err(ZoomRefusal::BeyondDrawDistance {
+                range: 300.0,
+                draw_distance: 160.0
+            })
+        );
+        assert_eq!(zoom_on(false, None, 160.0), Err(ZoomRefusal::Unplaced));
+    }
 
     fn name_filter_world() -> (World, Radar) {
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
