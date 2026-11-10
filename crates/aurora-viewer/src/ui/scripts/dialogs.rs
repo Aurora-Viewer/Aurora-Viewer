@@ -441,7 +441,7 @@ impl Help {
                         .iter()
                         .filter(|e| self.filter.is_empty() || e.name.to_lowercase().contains(&self.filter.to_lowercase()))
                     {
-                        if ui.selectable_label(entry.name == self.keyword, &entry.name).clicked() {
+                        if crate::ui::widgets::search_list_item(ui, entry.name == self.keyword, &entry.name).clicked() {
                             selected = Some(entry.name.clone());
                         }
                     }

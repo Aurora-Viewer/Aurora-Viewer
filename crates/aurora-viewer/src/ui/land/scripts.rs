@@ -313,7 +313,11 @@ fn parcel_tab(ui: &mut egui::Ui, p: &Palette, st: &mut ScriptsUi, v: &View, worl
     let list_h = (ui.available_height() - 40.0).max(0.0);
     let old_spacing = ui.spacing().item_spacing.y;
     ui.spacing_mut().item_spacing.y = 1.0;
-    egui::ScrollArea::vertical()
+    let selected_row = table
+        .visible
+        .iter()
+        .position(|index| st.selected.contains(&table.rows[*index].object.id));
+    widgets::search_scroll_to_row(ui, egui::ScrollArea::vertical(), selected_row, 24.0)
         .id_salt("land_scripts_parcel")
         .max_height(list_h)
         .min_scrolled_height(list_h)

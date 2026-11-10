@@ -821,6 +821,7 @@ impl PlacesUi {
                 None => place.thumbnail,
             };
             let out = place_row(ui, p, c, place, selected, snapshot, self.aurora.source == Source::Favorites, wide);
+            widgets::reveal_search_selection(ui, &out.resp, selected);
             let target = match key {
                 Key::Visit(_) => place.global.map(super::drag::Target::History),
                 Key::Landmark(_) => place.item.map(super::drag::Target::Landmark),

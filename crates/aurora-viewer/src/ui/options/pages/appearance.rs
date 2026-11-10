@@ -6,7 +6,7 @@
 use super::super::cx::{Cx, F, Nothing, field, fields};
 use super::super::{COMBO_W, swatch, toggle};
 
-use crate::ui::fonts;
+use crate::ui::{fonts, widgets};
 use egui::RichText;
 
 /// Size of the system font list's rows, under its search field (about
@@ -223,7 +223,8 @@ fn font(cx: &mut Cx) {
                     // the size a row's button gives its text
                     let size = egui::TextStyle::Button.resolve(ui.style()).size * fonts::scale(ui.ctx());
                     let mut previews = fonts::preview::Previews::begin(ui.ctx(), size, width - 2.0 * pad);
-                    let list_area = egui::ScrollArea::vertical()
+                    let selected_row = shown.iter().position(|f| s.font == format!("system:{}", f.path.display()));
+                    let list_area = widgets::search_scroll_to_row(ui, egui::ScrollArea::vertical(), selected_row, row_h)
                         .auto_shrink([false, true])
                         .max_height(FONT_LIST_H)
                         .show_rows(ui, row_h, shown.len(), |ui, rows| {

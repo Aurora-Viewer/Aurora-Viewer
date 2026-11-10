@@ -176,6 +176,7 @@ impl AvatarPicker {
                             let sel = self.selected.contains(id);
                             // the whole row is selected, like LLScrollListCtrl
                             let (rect, r) = ui.allocate_exact_size(Vec2::new(w, 20.0), egui::Sense::click());
+                            widgets::reveal_search_selection(ui, &r, self.selected.last() == Some(id));
                             if sel {
                                 ui.painter().rect_filled(rect, 0.0, p.violet.gamma_multiply(0.35));
                             } else if r.hovered() {

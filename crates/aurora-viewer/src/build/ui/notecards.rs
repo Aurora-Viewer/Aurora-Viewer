@@ -115,7 +115,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
                         common::small(ui, p, aurora_i18n::tr!("build-layout-no-notecards"));
                     }
                     for (id, name) in items {
-                        if ui.selectable_label(tool.ui.notecards.selected == Some(id), name).clicked() {
+                        if widgets::search_list_item(ui, tool.ui.notecards.selected == Some(id), name).clicked() {
                             tool.ui.notecards.selected = Some(id);
                         }
                     }

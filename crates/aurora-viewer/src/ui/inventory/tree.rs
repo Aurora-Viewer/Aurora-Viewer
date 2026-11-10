@@ -56,7 +56,9 @@ pub fn label(
     sense: egui::Sense,
     bold_name: Option<std::sync::Arc<egui::Galley>>,
 ) -> egui::Response {
-    super::super::widgets::inventory_item_label(ui, label, selected, sense, bold_name)
+    let response = super::super::widgets::inventory_item_label(ui, label, selected, sense, bold_name);
+    super::super::widgets::reveal_search_selection(ui, &response, selected);
+    response
 }
 
 /// A name in the row font, for `label`.

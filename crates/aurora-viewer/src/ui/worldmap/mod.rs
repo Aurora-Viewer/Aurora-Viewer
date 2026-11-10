@@ -978,7 +978,7 @@ impl WorldMapUi {
                                 } else {
                                     format!("{name}  ·  {}", access_label(*access))
                                 };
-                                ui.selectable_label(sel, RichText::new(text).size(12.5).color(p.ink)).clicked()
+                                widgets::search_list_item(ui, sel, RichText::new(text).size(12.5).color(p.ink)).clicked()
                             })
                             .inner;
                         if clicked {

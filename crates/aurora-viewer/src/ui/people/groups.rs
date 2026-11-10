@@ -190,6 +190,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, g: &GroupMembership) {
     let p = c.p;
     let world = c.world;
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), RICH_H), Sense::click());
+    widgets::reveal_search_selection(ui, &resp, st.sheet == Some(g.id) && st.sheet_group);
     if !ui.is_rect_visible(rect) {
         return;
     }

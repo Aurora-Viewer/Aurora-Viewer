@@ -185,7 +185,12 @@ pub fn show(
             let empty = state.rows.is_empty();
             let (mut list, foot) = widgets::above_footer(ui);
             let rows = &state.rows;
-            egui::ScrollArea::vertical()
+            let target = state
+                .anchor
+                .filter(|id| state.selected.contains(id))
+                .or_else(|| state.selected.first().copied());
+            let selected_row = rows.iter().position(|id| Some(*id) == target);
+            widgets::search_scroll_to_row(&list, egui::ScrollArea::vertical(), selected_row, 24.0)
                 .max_height(list.available_height())
                 .auto_shrink([false, false])
                 .show_rows(&mut list, 24.0, rows.len(), |ui, range| {

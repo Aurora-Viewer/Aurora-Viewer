@@ -317,7 +317,7 @@ impl Editor {
         for (bone, name) in world.avatar_lib.rig.canonical_names.iter().enumerate() {
             if self.visibility.visible(name)
                 && name.to_ascii_lowercase().contains(&filter)
-                && ui.selectable_label(self.selected == Some(bone), name).clicked()
+                && widgets::search_list_item(ui, self.selected == Some(bone), name).clicked()
             {
                 if self.links.bone_pick {
                     self.picked_bone(

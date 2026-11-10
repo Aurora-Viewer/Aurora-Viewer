@@ -536,7 +536,7 @@ impl Editor {
                 .desired_width(f32::INFINITY)
         });
         let filter = self.poser.storage.filter.clone();
-        let scroll_to = std::mem::take(&mut self.poser.storage.scroll_to_selected);
+        let scroll_to = std::mem::take(&mut self.poser.storage.scroll_to_selected) || widgets::search_cleared(ui);
         let height = (ui.available_height() - 40.0).max(30.0);
         let mut load = None;
         egui::ScrollArea::vertical()
@@ -571,7 +571,7 @@ impl Editor {
                         p.muted,
                     );
                     if selected && scroll_to {
-                        response.scroll_to_me(Some(egui::Align::Center));
+                        response.scroll_to_me_animation(Some(egui::Align::Center), egui::style::ScrollAnimation::none());
                     }
                     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, &entry.name));
                     if response.clicked() {

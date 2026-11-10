@@ -256,6 +256,7 @@ impl ExperiencesUi {
                             });
                         });
                     hover_tint(ui, p, frame.response.rect, selected);
+                    widgets::reveal_search_selection(ui, &frame.response, selected);
                     let click = ui.interact(
                         frame.response.rect,
                         ui.make_persistent_id(("xp_log_row", index)),

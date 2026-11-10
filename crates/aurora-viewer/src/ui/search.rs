@@ -931,6 +931,7 @@ fn results(ui: &mut egui::Ui, c: &mut Ctx, list: &List, actions: &mut Vec<Search
             }
             for row in &rows {
                 let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::click());
+                widgets::reveal_search_selection(ui, &resp, list.selected == Some(row.key));
                 if !ui.is_rect_visible(rect) {
                     continue;
                 }

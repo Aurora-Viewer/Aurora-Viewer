@@ -94,6 +94,7 @@ pub fn sender(from: &str) -> &str {
 /// the attachment, the date. Shared with the Home tab.
 pub fn row(ui: &mut egui::Ui, p: &Palette, n: &NoticeSummary, unread: bool, selected: bool, icon: bool, now: i64) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 44.0), Sense::click());
+    widgets::reveal_search_selection(ui, &resp, selected);
     let radius = ui.visuals().widgets.inactive.corner_radius;
     if selected {
         ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.18));

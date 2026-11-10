@@ -39,6 +39,17 @@ a font or environment popup keeps that popup open; a disabled field cannot
 be cleared. Searches submitted with Enter or a Search button keep that rule.
 The shared editor regression also covers custom ids, bare field faces,
 Unicode queries, typing after clearing and keyboard deletion.
+Choose a filtered result, then clear the entire query with the cross,
+Ctrl+A/Delete and Ctrl+A/Backspace. The same row remains selected and comes
+into view in the full list; its ancestor folders reopen when needed. Check
+long lists, the resource library's grid and strip, and nested inventory
+pickers. Duplicate assets must keep the exact inventory item that was
+chosen. Fields whose choices immediately perform an action and close the
+picker have no persistent selection to restore. Clearing an explicit server
+search does not submit a new request. Shared headless regressions cover
+ordinary, virtual, grid, horizontal and nested collapsible lists, plus selected
+messages in both Conversations styles; the thumbnail picker regression
+also covers nested folders and duplicate assets with all three clear actions.
 
 **To add a variable**: one short line in the table of its topic (the name
 alone in the first column, one sentence in the second); if it takes more

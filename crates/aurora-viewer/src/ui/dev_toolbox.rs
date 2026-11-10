@@ -433,6 +433,7 @@ fn tool_button(
     let resp = ui.interact(rect, ui.scope_id().with(("dev_toolbox_tool", gi, rank)), sense);
     let on = tool.kind == Kind::Toggle && view.on.contains(id);
     let selected = shows_result(id) && st.selected == id;
+    widgets::reveal_search_selection(ui, &resp, selected);
     let radius = ui.visuals().widgets.inactive.corner_radius;
     let face = if on {
         p.violet

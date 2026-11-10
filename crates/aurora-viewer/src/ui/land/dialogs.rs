@@ -675,6 +675,7 @@ fn sell_form(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World, 
 /// A selectable row of a picker's list.
 pub(crate) fn pick_row(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, selected: bool) -> egui::Response {
     let (rect, r) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), egui::Sense::click());
+    super::super::widgets::reveal_search_selection(ui, &r, selected);
     let radius = ui.visuals().widgets.inactive.corner_radius;
     if selected {
         ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.28));

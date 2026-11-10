@@ -103,7 +103,7 @@ impl Editor {
                     ui.push_id(entry.id, |ui| {
                         ui.horizontal(|ui| {
                             let name_width = (ui.available_width() - 5.0 * (26.0 + ui.spacing().item_spacing.x)).max(40.0);
-                            if ui
+                            let response = ui
                                 .add_enabled_ui(enabled, |ui| {
                                     ui.add_sized(
                                         egui::vec2(name_width, 30.0),
@@ -111,9 +111,9 @@ impl Editor {
                                     )
                                 })
                                 .inner
-                                .on_hover_text(&entry.name)
-                                .clicked()
-                            {
+                                .on_hover_text(&entry.name);
+                            widgets::reveal_search_selection(ui, &response, selected);
+                            if response.clicked() {
                                 self.select_library_project(entry.id);
                             }
                             for (icon, key, kind) in [

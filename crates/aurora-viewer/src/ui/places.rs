@@ -573,6 +573,12 @@ impl PlacesUi {
         self.want_fetch(&world.inventory, root, !self.filter.is_empty(), 0);
         // Favorites keep their own order (EXT-1758): by name here
         let by_date = by_date && self.tab == TAB_LANDMARKS;
+        if widgets::search_cleared(ui)
+            && let Some(Sel::Folder(id) | Sel::Item(id)) = self.selected
+        {
+            self.open_folders
+                .extend(crate::world::inventory::actions::ancestors(&world.inventory, id).skip(1));
+        }
         let rows = landmark_rows(
             &world.inventory,
             root,
@@ -1216,6 +1222,7 @@ fn list_row(
         Sense::click()
     };
     let (rect, response) = ui.allocate_exact_size(Vec2::new(w, 20.0), sense);
+    widgets::reveal_search_selection(ui, &response, selected);
     let painter = ui.painter();
     if selected {
         painter.rect_filled(rect, ui.visuals().window_corner_radius, p.violet.gamma_multiply(0.28));

@@ -882,6 +882,7 @@ fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) ->
         egui::Sense::click()
     };
     let resp = ui.interact(rect, id, sense);
+    crate::ui::widgets::reveal_search_selection(ui, &resp, e.current);
     let over = resp.hovered() || (e.close.is_some() && ui.rect_contains_pointer(rect));
     let radius = ui.visuals().window_corner_radius;
     // the entry's face, opaque: the status dot is cut in it, and a

@@ -180,6 +180,7 @@ impl GroupTitlesUi {
         for (row, regions) in shown {
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::click());
             let key = (row.target.group, row.target.role);
+            widgets::reveal_search_selection(ui, &resp, self.selected == Some(key));
             if resp.clicked() || resp.secondary_clicked() {
                 self.selected = Some(key);
             }

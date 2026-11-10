@@ -151,11 +151,10 @@ impl Picker {
                     if opening {
                         search.request_focus();
                     }
-                    if widgets::icon_button(ui, p, "x", aurora_i18n::tr!("common-clear"), !self.query.is_empty()) {
-                        self.query.clear();
-                        search.request_focus();
-                    }
                 });
+                if widgets::search_cleared(ui) {
+                    self.reveal(*selected);
+                }
                 self.filter();
                 let searching = !self.query.trim().is_empty();
                 let mut toggle = None;
@@ -164,6 +163,8 @@ impl Picker {
                     let width = ui.available_width();
                     let row_height = ui.spacing().interact_size.y;
                     let mut scroll = tree::scroll(ui, 240.0);
+                    let selected_row = self.visible.iter().position(|&index| self.rows[index].id == *selected);
+                    scroll = widgets::search_scroll_to_row(ui, scroll, selected_row, row_height);
                     if opening {
                         let index = self.visible.iter().position(|&index| self.rows[index].id == *selected).unwrap_or(0);
                         scroll = scroll.vertical_scroll_offset((index as f32 * row_height - 100.0).max(0.0));

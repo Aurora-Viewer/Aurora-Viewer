@@ -716,7 +716,7 @@ pub fn settings_list(
                     }
                     for c in matches {
                         let on = shown == Shown::Item(c.asset);
-                        if ui.selectable_label(on, RichText::new(&c.name).size(12.0)).clicked() {
+                        if widgets::search_list_item(ui, on, RichText::new(&c.name).size(12.0)).clicked() {
                             if !on {
                                 picked = Some(c.asset);
                             }

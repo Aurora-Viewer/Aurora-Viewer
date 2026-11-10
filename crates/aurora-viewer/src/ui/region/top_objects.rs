@@ -438,7 +438,8 @@ fn table(ui: &mut egui::Ui, p: &Palette, s: &mut TopState, rows: &[&TopObject], 
         x += w;
     }
     let height = ui.available_height();
-    egui::ScrollArea::vertical()
+    let selected_row = rows.iter().position(|o| s.selected.contains(&o.task_id));
+    widgets::search_scroll_to_row(ui, egui::ScrollArea::vertical(), selected_row, 26.0)
         .id_salt("region_top_objects_list")
         .max_height(height)
         .min_scrolled_height(height)

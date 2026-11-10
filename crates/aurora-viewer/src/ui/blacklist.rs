@@ -325,6 +325,14 @@ impl BlacklistUi {
                         let radius = ui.visuals().window_corner_radius;
                         for (id, entry) in &shown {
                             let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::click());
+                            widgets::reveal_search_selection(
+                                ui,
+                                &resp,
+                                self.anchor
+                                    .filter(|id| self.selected.contains(id))
+                                    .or_else(|| self.selected.iter().next().copied())
+                                    == Some(*id),
+                            );
                             if !ui.is_rect_visible(rect) {
                                 continue;
                             }

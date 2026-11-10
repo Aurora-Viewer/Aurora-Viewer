@@ -297,13 +297,72 @@ pub fn search_text_edit_with_margin(
     mut margin: egui::Margin,
     configure: impl for<'a> FnOnce(egui::TextEdit<'a>) -> egui::TextEdit<'a>,
 ) -> egui::Response {
+    let was_filled = !text.is_empty();
     // LLSearchEditor (indra/llui/llsearcheditor.cpp) reserves the clear
     // button's room. Keep it reserved while empty too, so typing cannot
     // hide the end of a query for one frame or move the surrounding layout.
     margin.right += CLEAR_WIDTH;
     let mut response = ui.add(configure(egui::TextEdit::singleline(text)).margin(margin));
     clear_filter(ui, p, text, &mut response);
+    note_search_clear(ui, &response, was_filled && text.is_empty());
     response
+}
+
+fn note_search_clear(ui: &egui::Ui, response: &egui::Response, emptied: bool) {
+    if emptied && response.changed() {
+        let key = egui::Id::unique("search_selection_reveal").with(ui.layer_id());
+        let frame = ui.ctx().cumulative_frame_nr();
+        ui.ctx().data_mut(|data| data.insert_temp(key, frame));
+        ui.ctx().request_repaint();
+    }
+}
+
+/// Clearing a search keeps its list's selection in view. The next frame is
+/// included for lists whose projection was computed before their search bar.
+/// Extends LLFloaterTexturePicker::onFilterEdit / LLFolderView::scrollToShowSelection
+/// (Legacy Viewer, indra/newview/lltexturectrl.cpp and indra/llui/llfolderview.cpp)
+/// to the other filtered lists. Window/popup layers isolate unrelated filters.
+pub fn search_cleared(ui: &egui::Ui) -> bool {
+    let key = egui::Id::unique("search_selection_reveal").with(ui.layer_id());
+    ui.ctx()
+        .data(|data| data.get_temp::<u64>(key))
+        .is_some_and(|frame| ui.ctx().cumulative_frame_nr().saturating_sub(frame) <= 1)
+}
+
+/// For ordinary lists, reveal a selected row without moving keyboard focus.
+pub fn reveal_search_selection(ui: &egui::Ui, response: &egui::Response, selected: bool) {
+    if selected && search_cleared(ui) {
+        response.scroll_to_me_animation(Some(egui::Align::Center), egui::style::ScrollAnimation::none());
+    }
+}
+
+pub fn search_list_item(ui: &mut egui::Ui, selected: bool, text: impl Into<egui::WidgetText>) -> egui::Response {
+    let response = ui.selectable_label(selected, text);
+    reveal_search_selection(ui, &response, selected);
+    response
+}
+
+/// A virtual row must be brought into the viewport before it can be drawn.
+pub fn search_scroll_to_row(ui: &egui::Ui, scroll: egui::ScrollArea, row: Option<usize>, height: f32) -> egui::ScrollArea {
+    if search_cleared(ui)
+        && let Some(row) = row
+    {
+        scroll
+            .animated(false)
+            .vertical_scroll_offset(row as f32 * (height + ui.spacing().item_spacing.y))
+    } else {
+        scroll
+    }
+}
+
+pub fn search_scroll_to_column(ui: &egui::Ui, scroll: egui::ScrollArea, column: Option<usize>, width: f32) -> egui::ScrollArea {
+    if search_cleared(ui)
+        && let Some(column) = column
+    {
+        scroll.animated(false).horizontal_scroll_offset(column as f32 * width)
+    } else {
+        scroll
+    }
 }
 
 /// The face of a field of the redrawn windows and menus: the search box's,
@@ -321,7 +380,8 @@ pub fn icon_field(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &mut String,
 }
 
 fn icon_field_inner(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &mut String, hint: &str, width: f32, clear: bool) -> egui::Response {
-    field_frame(ui, p)
+    let was_filled = !text.is_empty();
+    let response = field_frame(ui, p)
         .show(ui, |ui| {
             ui.set_width(width - 18.0);
             // left to right even in a row laid out from the right
@@ -345,7 +405,9 @@ fn icon_field_inner(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &mut Strin
             })
             .inner
         })
-        .inner
+        .inner;
+    note_search_clear(ui, &response, clear && was_filled && text.is_empty());
+    response
 }
 
 const CLEAR_WIDTH: i8 = 20;
@@ -372,6 +434,218 @@ fn clear_filter(ui: &mut egui::Ui, p: &Palette, text: &mut String, response: &mu
 #[cfg(test)]
 mod search_tests {
     use super::*;
+
+    struct ListFrame {
+        field: egui::Response,
+        selected_rect: Option<Rect>,
+        clip: Rect,
+        cleared: bool,
+    }
+
+    fn list_frame(
+        ctx: &egui::Context,
+        kind: usize,
+        query: &mut String,
+        selected: &mut Option<usize>,
+        events: Vec<egui::Event>,
+    ) -> ListFrame {
+        let p = crate::theme::Theme::default().palette();
+        let mut result = None;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 240.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                let before: Vec<_> = (0..150).filter(|i| format!("Item {i:03}").contains(query.as_str())).collect();
+                let field = search_text_edit(ui, &p, query, |edit| edit.id(egui::Id::unique("list_search")).desired_width(240.0));
+                let rows: Vec<_> = if kind >= 4 {
+                    before
+                } else {
+                    (0..150).filter(|i| format!("Item {i:03}").contains(query.as_str())).collect()
+                };
+                let hierarchy = kind == 8;
+                let unfiltered = query.is_empty();
+                let kind = kind % 4;
+                let index = rows.iter().position(|i| Some(*i) == *selected);
+                let mut selected_rect = None;
+                let mut clip = Rect::NOTHING;
+                let mut row = |ui: &mut egui::Ui, i: usize| {
+                    let (_, response) = ui.allocate_exact_size(Vec2::new(48.0, 24.0), Sense::click());
+                    if response.clicked() {
+                        *selected = Some(i);
+                    }
+                    if *selected == Some(i) || rows.len() == 1 {
+                        selected_rect = Some(response.rect);
+                    }
+                    clip = ui.clip_rect();
+                    if kind == 0 {
+                        reveal_search_selection(ui, &response, *selected == Some(i));
+                    }
+                };
+                match if hierarchy { 4 } else { kind } {
+                    0 => {
+                        egui::ScrollArea::vertical().max_height(120.0).show(ui, |ui| {
+                            for &i in &rows {
+                                row(ui, i);
+                            }
+                        });
+                    }
+                    1 => {
+                        search_scroll_to_row(ui, egui::ScrollArea::vertical(), index, 24.0)
+                            .max_height(120.0)
+                            .show_rows(ui, 24.0, rows.len(), |ui, range| {
+                                for &i in &rows[range] {
+                                    row(ui, i);
+                                }
+                            });
+                    }
+                    2 => {
+                        search_scroll_to_row(ui, egui::ScrollArea::vertical(), index.map(|i| i / 2), 24.0)
+                            .max_height(120.0)
+                            .show_rows(ui, 24.0, rows.len().div_ceil(2), |ui, range| {
+                                for index in range {
+                                    ui.horizontal(|ui| {
+                                        for &i in rows.iter().skip(index * 2).take(2) {
+                                            row(ui, i);
+                                        }
+                                    });
+                                }
+                            });
+                    }
+                    4 => {
+                        let open = search_cleared(ui).then_some(true);
+                        egui::ScrollArea::vertical().max_height(120.0).show(ui, |ui| {
+                            if unfiltered {
+                                super::super::collapsing_forced(ui, &p, "parent", "Parent", false, open, |ui| {
+                                    super::super::collapsing_forced(ui, &p, "child", "Child", false, open, |ui| {
+                                        for &i in &rows {
+                                            row(ui, i);
+                                        }
+                                    });
+                                });
+                            } else {
+                                for &i in &rows {
+                                    row(ui, i);
+                                }
+                            }
+                        });
+                    }
+                    _ => {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        search_scroll_to_column(ui, egui::ScrollArea::horizontal(), index, 48.0).show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                for &i in &rows {
+                                    row(ui, i);
+                                }
+                            });
+                        });
+                    }
+                }
+                result = Some(ListFrame {
+                    field,
+                    selected_rect,
+                    clip,
+                    cleared: search_cleared(ui),
+                });
+            },
+        );
+        output.textures_delta.clear();
+        result.expect("list drawn")
+    }
+
+    #[test]
+    fn clearing_search_reveals_the_chosen_row_in_lists_virtual_rows_grids_and_shelves() {
+        for kind in 0..9 {
+            for method in 0..3 {
+                let ctx = egui::Context::default();
+                crate::theme::Theme::default().apply(&ctx, 1.0);
+                let mut query = "099".to_owned();
+                let mut selected = None;
+                let mut frame = list_frame(&ctx, kind, &mut query, &mut selected, Vec::new());
+                for _ in 0..3 {
+                    frame = list_frame(&ctx, kind, &mut query, &mut selected, Vec::new());
+                }
+                let pos = frame.selected_rect.expect("filtered candidate").center();
+                for pressed in [true, false] {
+                    list_frame(&ctx, kind, &mut query, &mut selected, click(pos, pressed));
+                }
+                assert_eq!(selected, Some(99));
+                let pos = if method == 0 {
+                    ctx.read_response(frame.field.id.with("clear")).expect("clear action").rect.center()
+                } else {
+                    frame.field.rect.center()
+                };
+                for pressed in [true, false] {
+                    frame = list_frame(&ctx, kind, &mut query, &mut selected, click(pos, pressed));
+                }
+                if method != 0 {
+                    let modifiers = egui::Modifiers {
+                        ctrl: true,
+                        command: true,
+                        ..Default::default()
+                    };
+                    frame = list_frame(
+                        &ctx,
+                        kind,
+                        &mut query,
+                        &mut selected,
+                        vec![
+                            egui::Event::Key {
+                                key: egui::Key::A,
+                                physical_key: None,
+                                pressed: true,
+                                repeat: false,
+                                modifiers,
+                            },
+                            egui::Event::Key {
+                                key: if method == 1 { egui::Key::Delete } else { egui::Key::Backspace },
+                                physical_key: None,
+                                pressed: true,
+                                repeat: false,
+                                modifiers: egui::Modifiers::NONE,
+                            },
+                        ],
+                    );
+                }
+                assert!(query.is_empty(), "kind={kind}, method={method}");
+                assert!(frame.cleared);
+                for _ in 0..4 {
+                    frame = list_frame(&ctx, kind, &mut query, &mut selected, Vec::new());
+                }
+                assert_eq!(selected, Some(99), "clearing keeps the same row");
+                let rect = frame.selected_rect.expect("the selected virtual row must be laid out");
+                assert!(
+                    frame.clip.contains(rect.center()),
+                    "kind={kind}, method={method}: {rect:?} outside {:?}",
+                    frame.clip
+                );
+                assert!(frame.field.has_focus(), "revealing must leave focus on the search field");
+                assert!(!frame.cleared, "the reveal expires so manual scrolling remains possible");
+            }
+        }
+    }
+
+    #[test]
+    fn clearing_one_window_does_not_reveal_another_windows_selection() {
+        let ctx = egui::Context::default();
+        for frame in 0..4 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |_| {
+                for window in 0..2 {
+                    egui::Window::new(format!("List {window}")).show(&ctx, |ui| {
+                        if frame == 0 && window == 0 {
+                            let mut response = ui.label("Cleared search");
+                            response.mark_changed();
+                            note_search_clear(ui, &response, true);
+                        }
+                        assert_eq!(search_cleared(ui), window == 0 && frame <= 1);
+                    });
+                }
+            });
+            output.textures_delta.clear();
+        }
+    }
 
     fn frame(ctx: &egui::Context, kind: usize, text: &mut String, events: Vec<egui::Event>, enabled: bool) -> egui::Response {
         let p = crate::theme::Theme::default().palette();

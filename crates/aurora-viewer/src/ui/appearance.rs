@@ -882,7 +882,8 @@ fn gallery(
         for pair in run.chunks(columns) {
             if let Some(pitch) = pitch {
                 let height = pitch + st.rows.gallery.get(&pair[0]).copied().unwrap_or(0.0);
-                let located = st.locate.is_some_and(|id| pair.contains(&id));
+                let located = st.locate.is_some_and(|id| pair.contains(&id))
+                    || (widgets::search_cleared(ui) && st.outfit_selection.focus.is_some_and(|id| pair.contains(&id)));
                 if !located && !in_sight(ui.cursor().top(), height, view) {
                     skip_row(ui, height);
                     continue;
@@ -900,6 +901,7 @@ fn gallery(
                         let (rect, response) = ui.allocate_exact_size(Vec2::new(width, width * 0.88), egui::Sense::click());
                         st.select_outfit(&response, *id, outfits);
                         let selected = st.outfit_selection.contains(*id);
+                        widgets::reveal_search_selection(ui, &response, st.outfit_selection.focus == Some(*id));
                         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
                         ui.painter().rect_stroke(
                             rect,
@@ -1165,6 +1167,11 @@ fn outfit_list(
                                     st.item_selected(*id, it.id) && st.outfit_selection.focus == Some(*id),
                                     worn.get(&it.id).map(String::as_str),
                                 );
+                                widgets::reveal_search_selection(
+                                    ui,
+                                    &response,
+                                    st.item_scope == Some(*id) && st.item_selection.focus == Some(it.id),
+                                );
                                 if response.clicked() || response.secondary_clicked() {
                                     st.outfit_selection.single(*id);
                                 }
@@ -1191,6 +1198,11 @@ fn outfit_list(
                 });
                 ui.spacing_mut().interact_size.y = interact;
                 st.select_outfit(&response.header, *id, outfits);
+                widgets::reveal_search_selection(
+                    ui,
+                    &response.header,
+                    st.outfit_selection.focus == Some(*id) && !(st.item_scope == Some(*id) && st.item_selection.focus.is_some()),
+                );
                 st.reveal_located(ui, *id, response.header.rect, egui::Align::Min);
                 let flash = st.flash(ui, *id);
                 if st.outfit_selection.contains(*id) || flash > 0.0 {
@@ -1214,7 +1226,9 @@ fn outfit_list(
                     worn_tag(ui, p, left + galley.size().x, rect.center().y);
                 }
                 if reveal && response.body.is_some() {
-                    response.header.scroll_to_me(Some(egui::Align::Min));
+                    if !widgets::search_cleared(ui) || st.item_scope != Some(*id) || st.item_selection.focus.is_none() {
+                        response.header.scroll_to_me(Some(egui::Align::Min));
+                    }
                     st.reveal_outfit = None;
                 }
                 response.body.is_some()
@@ -1329,6 +1343,15 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
                     egui::Sense::click()
                 },
                 draggable.then(|| aurora_i18n::tr!("ui-appearance-drag-layer-hint")),
+            );
+            widgets::reveal_search_selection(
+                ui,
+                &resp,
+                if edit {
+                    st.selected_item == Some(it.id)
+                } else {
+                    st.item_scope == Some(WORN_SCOPE) && st.item_selection.focus == Some(it.id)
+                },
             );
             if draggable {
                 st.layers.row(it.id, it.flags & 0xff, &resp);
@@ -1545,6 +1568,7 @@ fn add_list(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Appearan
     items.sort_by_key(|it| crate::natural_order::key(&it.name));
     for it in items {
         let response = row(ui, p, it, "", st.selected_item == Some(it.id), None);
+        widgets::reveal_search_selection(ui, &response, st.selected_item == Some(it.id));
         row_gap(ui);
         if response.clicked() {
             st.selected_item = Some(it.id);
@@ -1575,7 +1599,12 @@ fn add_folder(
         return;
     };
     let (name, children, items) = (f.info.name.clone(), f.children.clone(), f.items.clone());
-    widgets::collapsing(ui, p, ("add_outfit_folder", id), name, depth == 0, |ui| {
+    let reveal = (widgets::search_cleared(ui)
+        && st
+            .selected_item
+            .is_some_and(|item| crate::world::inventory::actions::under(inv, item, id)))
+    .then_some(true);
+    widgets::collapsing_forced(ui, p, ("add_outfit_folder", id), name, depth == 0, reveal, |ui| {
         inv.request(id);
         for child in children {
             add_folder(ui, p, inv, locks, child, st, actions, depth + 1);
@@ -1599,6 +1628,7 @@ fn add_folder(
                 continue;
             }
             let response = row(ui, p, it, "", st.selected_item == Some(it.id), None);
+            widgets::reveal_search_selection(ui, &response, st.selected_item == Some(it.id));
             row_gap(ui);
             if response.clicked() {
                 st.selected_item = Some(it.id);
@@ -1646,6 +1676,14 @@ pub fn show(
             .unwrap_or_else(|| aurora_i18n::tr!("common-current-outfit").into());
         let dirty = model::dirty(inv);
         let count = world.worn_attachment_items().len();
+        if widgets::search_cleared(ui)
+            && let Some(id) = st.outfit_selection.focus
+        {
+            st.open_groups_of(inv, id);
+            if !st.editing && st.tab == 1 {
+                st.reveal_outfit = Some(id);
+            }
+        }
         if let Some(id) = st.reveal_outfit {
             st.open_groups_of(inv, id);
         }

@@ -544,7 +544,9 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
     let today = today();
     let count = st.members.rows.len();
     let mut open_profile = None;
-    egui::ScrollArea::vertical()
+    let target = st.members.selected.or_else(|| st.members.checked.first().copied());
+    let selected_row = st.members.rows.iter().position(|(id, _)| Some(*id) == target);
+    widgets::search_scroll_to_row(ui, egui::ScrollArea::vertical(), selected_row, ROW_H)
         .id_salt("group_members_rows")
         .max_height(list_h)
         .auto_shrink([false, false])

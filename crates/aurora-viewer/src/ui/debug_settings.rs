@@ -226,7 +226,8 @@ impl DebugSettingsUi {
         let mut chosen = None;
         // what a selectable row takes, for the scroll bar to be true
         let row_h = ui.spacing().interact_size.y;
-        egui::ScrollArea::vertical()
+        let selected_row = shown.iter().position(|i| Some(&self.entries[*i].key) == self.selected.as_ref());
+        widgets::search_scroll_to_row(ui, egui::ScrollArea::vertical(), selected_row, row_h)
             .id_salt("debug_settings_list")
             .auto_shrink([false, false])
             .show_rows(ui, row_h, shown.len(), |ui, rows| {
