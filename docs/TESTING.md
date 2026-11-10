@@ -28,6 +28,18 @@ single crate resolves the features of its dependencies on its own, so Cargo
 builds a second copy of them (`cargo test -p aurora-render` alone: 67 s of
 dependencies, then again for the next `--workspace` build).
 
+**Search/filter clear buttons**: type a query in People, Conversations and
+Contacts, Places, the resource library, inventory destination/thumbnail
+pickers, construction Contents, Appearance, Poser/IK, scripts, group lists,
+land/region lists and the toolbar editor. Check both interface styles where
+available. A cross appears inside every filled field; clicking it clears the
+query, refreshes local results and keeps keyboard focus for the next query.
+The field and its surrounding controls keep their size. A clear click inside
+a font or environment popup keeps that popup open; a disabled field cannot
+be cleared. Searches submitted with Enter or a Search button keep that rule.
+The shared editor regression also covers custom ids, bare field faces,
+Unicode queries, typing after clearing and keyboard deletion.
+
 **To add a variable**: one short line in the table of its topic (the name
 alone in the first column, one sentence in the second); if it takes more
 than one sentence, or if there are several modes, a "Details" paragraph

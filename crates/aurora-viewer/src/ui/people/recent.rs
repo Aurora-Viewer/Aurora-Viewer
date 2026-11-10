@@ -40,7 +40,7 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
         Vec2::new(w, rows::TOOLBAR_H),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            widgets::search_box(ui, p, &mut st.filter, aurora_i18n::tr!("people-filter-short"), w);
+            widgets::clearable_search_box(ui, p, &mut st.filter, aurora_i18n::tr!("people-filter-short"), w);
         },
     );
     ui.add_space(7.0);

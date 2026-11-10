@@ -1,5 +1,12 @@
 # Aurora Viewer architecture
 
+Search and filter inputs use `ui/widgets/pills.rs::search_text_edit` or the
+shared `search_field`/`clearable_search_box` wrappers. The in-field clear
+action reserves text padding, preserves editor ids, marks the response
+changed and returns focus to the editor. Bare custom fields provide their
+existing margins through `search_text_edit_with_margin`; callers retain
+their own filtering, debounce and explicit search-submission behavior.
+
 Land-tool Join eligibility and command validation live in `build/land.rs`, shared
 by the parcel panel in both editor layouts and the confirmation callback. A drag
 uses `SnapSelection=false`; area equality and an aggregate reply's owner do not

@@ -1502,6 +1502,7 @@ fn temporary_menu(response: &egui::Response, p: &Palette, t: &crate::world::temp
 fn add_list(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut AppearanceUi, actions: &mut Vec<Action>) {
     widgets::search_field(
         ui,
+        p,
         &mut st.add_search,
         aurora_i18n::tr!("ui-appearance-filter-wearable-items"),
         ui.available_width(),
@@ -1725,12 +1726,12 @@ pub fn show(
         if !st.editing {
             ui.horizontal(|ui| {
                 let width = (ui.available_width() - 28.0 - ui.spacing().item_spacing.x).max(100.0);
-                ui.add_sized(
-                    Vec2::new(width, 28.0),
-                    egui::TextEdit::singleline(&mut st.search)
-                        .hint_text(aurora_i18n::tr!("ui-appearance-filter-outfits"))
-                        .align(egui::Align2::LEFT_CENTER),
-                );
+                widgets::search_text_edit(ui, p, &mut st.search, |edit| {
+                    edit.hint_text(aurora_i18n::tr!("ui-appearance-filter-outfits"))
+                        .align(egui::Align2::LEFT_CENTER)
+                        .desired_width(width)
+                        .min_size(Vec2::new(width, 28.0))
+                });
                 icon_menu(
                     ui,
                     p,

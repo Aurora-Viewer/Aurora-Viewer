@@ -80,11 +80,9 @@ impl Editor {
             });
         }
         ui.add_space(ui.spacing().item_spacing.y);
-        ui.add(
-            egui::TextEdit::singleline(&mut self.project.library.filter)
-                .hint_text(aurora_i18n::tr!("ik-library-search"))
-                .desired_width(f32::INFINITY),
-        );
+        crate::ui::widgets::search_text_edit(ui, p, &mut self.project.library.filter, |edit| {
+            edit.hint_text(aurora_i18n::tr!("ik-library-search")).desired_width(f32::INFINITY)
+        });
         let filter = self.project.library.filter.to_lowercase();
         let entries: Vec<_> = self
             .project

@@ -152,7 +152,7 @@ fn head(ui: &mut egui::Ui, p: &Palette, cols: &[(Column, &str, f32, bool)], sort
 fn search(ui: &mut egui::Ui, p: &Palette, table: &mut Table, hint: &str) {
     ui.add_space(5.0);
     ui.horizontal(|ui| {
-        widgets::search_box(ui, p, &mut table.filter, hint, ui.available_width());
+        widgets::clearable_search_box(ui, p, &mut table.filter, hint, ui.available_width());
     });
     table.prepare();
     ui.label(

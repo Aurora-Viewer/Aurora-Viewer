@@ -277,6 +277,35 @@ pub fn filter_field(ui: &mut egui::Ui, p: &Palette, text: &mut String, id: egui:
     response
 }
 
+/// A configurable search/filter field with the shared in-field clear action.
+/// Keep the editor's id, keyboard handling and caller's change notifications.
+pub fn search_text_edit(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    text: &mut String,
+    configure: impl for<'a> FnOnce(egui::TextEdit<'a>) -> egui::TextEdit<'a>,
+) -> egui::Response {
+    let margin = egui::Margin::symmetric(4, 2) + super::field_text_margin(ui.ctx(), &egui::TextStyle::Body.resolve(ui.style()));
+    search_text_edit_with_margin(ui, p, text, margin, configure)
+}
+
+/// The same editor on an existing custom field face, retaining its padding.
+pub fn search_text_edit_with_margin(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    text: &mut String,
+    mut margin: egui::Margin,
+    configure: impl for<'a> FnOnce(egui::TextEdit<'a>) -> egui::TextEdit<'a>,
+) -> egui::Response {
+    // LLSearchEditor (indra/llui/llsearcheditor.cpp) reserves the clear
+    // button's room. Keep it reserved while empty too, so typing cannot
+    // hide the end of a query for one frame or move the surrounding layout.
+    margin.right += CLEAR_WIDTH;
+    let mut response = ui.add(configure(egui::TextEdit::singleline(text)).margin(margin));
+    clear_filter(ui, p, text, &mut response);
+    response
+}
+
 /// The face of a field of the redrawn windows and menus: the search box's,
 /// the SLURL of the place menu.
 pub fn field_frame(ui: &egui::Ui, p: &Palette) -> egui::Frame {
@@ -337,5 +366,138 @@ fn clear_filter(ui: &mut egui::Ui, p: &Palette, text: &mut String, response: &mu
         text.clear();
         response.mark_changed();
         response.request_focus();
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    fn frame(ctx: &egui::Context, kind: usize, text: &mut String, events: Vec<egui::Event>, enabled: bool) -> egui::Response {
+        let p = crate::theme::Theme::default().palette();
+        let mut field = None;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 150.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                field = Some(
+                    ui.add_enabled_ui(enabled, |ui| {
+                        ui.horizontal(|ui| match kind {
+                            0 => super::super::search_field(ui, &p, text, "Search", 240.0),
+                            1 => search_text_edit(ui, &p, text, |edit| {
+                                edit.id(egui::Id::unique("custom_search")).char_limit(128).desired_width(240.0)
+                            }),
+                            2 => {
+                                let font = egui::FontId::proportional(12.0);
+                                let margin = super::super::field_text_margin(ui.ctx(), &font);
+                                search_text_edit_with_margin(ui, &p, text, margin, |edit| {
+                                    edit.font(font).frame(egui::Frame::NONE).desired_width(240.0)
+                                })
+                            }
+                            _ => clearable_search_box(ui, &p, text, "Search", 240.0),
+                        })
+                        .inner
+                    })
+                    .inner,
+                );
+            },
+        );
+        output.textures_delta.clear();
+        field.expect("the search field was drawn")
+    }
+
+    fn click(pos: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    }
+
+    #[test]
+    fn search_clear_preserves_id_focus_layout_and_changed_notifications() {
+        for kind in 0..4 {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let mut text = "A long query with spaces and 日本語".repeat(4);
+            let mut field = frame(&ctx, kind, &mut text, vec![], true);
+            for _ in 0..3 {
+                field = frame(&ctx, kind, &mut text, vec![], true);
+            }
+            let id = field.id;
+            let rect = field.rect;
+            assert!(rect.width() < 270.0 && rect.height() < 40.0, "kind={kind}: {rect:?}");
+            let clear = ctx.read_response(id.with("clear")).expect("a filled field has a clear action");
+            assert!(rect.contains_rect(clear.rect));
+            frame(&ctx, kind, &mut text, click(clear.rect.center(), true), true);
+            field = frame(&ctx, kind, &mut text, click(clear.rect.center(), false), true);
+            assert!(text.is_empty(), "kind={kind}");
+            assert!(field.changed(), "the caller must refresh its filtered results");
+            assert_eq!(field.id, id, "clearing must keep custom editor ids");
+            assert!(field.has_focus(), "the next keystroke returns to the search");
+            field = frame(&ctx, kind, &mut text, vec![egui::Event::Text("next".into())], true);
+            assert_eq!(text, "next");
+            assert!(field.changed());
+            let modifiers = egui::Modifiers {
+                ctrl: true,
+                command: true,
+                ..Default::default()
+            };
+            field = frame(
+                &ctx,
+                kind,
+                &mut text,
+                vec![
+                    egui::Event::Key {
+                        key: egui::Key::A,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                    },
+                    egui::Event::Key {
+                        key: egui::Key::Backspace,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                true,
+            );
+            assert!(text.is_empty());
+            assert!(field.changed());
+            for _ in 0..3 {
+                field = frame(&ctx, kind, &mut text, vec![], true);
+            }
+            assert!(ctx.read_response(id.with("clear")).is_none(), "empty searches have no clear action");
+            assert_eq!(field.rect.size(), rect.size(), "the field must not resize when cleared");
+        }
+    }
+
+    #[test]
+    fn disabled_search_clear_cannot_change_the_query() {
+        for kind in 0..4 {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let mut text = "unchanged".into();
+            let mut field = frame(&ctx, kind, &mut text, vec![], false);
+            for _ in 0..3 {
+                field = frame(&ctx, kind, &mut text, vec![], false);
+            }
+            let clear = ctx.read_response(field.id.with("clear")).expect("clear action");
+            assert!(!clear.enabled());
+            frame(&ctx, kind, &mut text, click(clear.rect.center(), true), false);
+            field = frame(&ctx, kind, &mut text, click(clear.rect.center(), false), false);
+            assert_eq!(text, "unchanged");
+            assert!(!field.changed());
+        }
     }
 }

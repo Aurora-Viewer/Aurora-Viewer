@@ -49,7 +49,7 @@ pub use copy_on_click::copy_on_click;
 pub(crate) use modal_keys::{default_button, enter_pressed};
 pub use pills::{
     clearable_search_box, dot_pill, dot_pill_width, filter_field, filter_pill, filter_pill_at, filter_pill_width, pill_tab, pill_tab_wide,
-    search_box,
+    search_box, search_text_edit, search_text_edit_with_margin,
 };
 pub use text_field::text_field;
 pub use unread::{CountSize, UnreadCount, unread_count};
@@ -2048,8 +2048,8 @@ pub fn status_dot(ui: &mut egui::Ui, color: Color32) {
     ui.painter().circle_filled(rect.center(), 3.5, color);
 }
 
-pub fn search_field(ui: &mut egui::Ui, text: &mut String, hint: &str, width: f32) -> egui::Response {
-    ui.add(egui::TextEdit::singleline(text).hint_text(hint).desired_width(width))
+pub fn search_field(ui: &mut egui::Ui, p: &Palette, text: &mut String, hint: &str, width: f32) -> egui::Response {
+    search_text_edit(ui, p, text, |edit| edit.hint_text(hint).desired_width(width))
 }
 
 /// Small flat button with a Tabler icon (copy / paste / flip...).

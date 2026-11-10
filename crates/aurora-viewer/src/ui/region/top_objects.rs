@@ -236,7 +236,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View,
                     !waiting,
                 );
                 let w = ui.available_width().max(140.0);
-                let r = widgets::search_box(ui, p, &mut s.top.text, aurora_i18n::tr!("region-top-filter-hint"), w);
+                let r = widgets::clearable_search_box(ui, p, &mut s.top.text, aurora_i18n::tr!("region-top-filter-hint"), w);
                 let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 if filter.clicked() || enter && !waiting {
                     refresh(&mut s.top, v, world, true);

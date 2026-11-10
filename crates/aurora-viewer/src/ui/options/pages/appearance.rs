@@ -205,7 +205,7 @@ fn font(cx: &mut Cx) {
                         // each opening starts on the whole list
                         st.font_filter.clear();
                     }
-                    system_font_search(ui, &mut st.font_filter, opening);
+                    system_font_search(ui, &p, &mut st.font_filter, opening);
                     let filter = st.font_filter.to_lowercase();
                     let shown: Vec<&fonts::SystemFont> = list
                         .iter()
@@ -434,9 +434,9 @@ fn system_font_combo(salt: egui::Id, shown: String) -> egui::ComboBox<'static> {
 
 /// The list's search field, focused as the list opens so typing filters
 /// at once.
-fn system_font_search(ui: &mut egui::Ui, filter: &mut String, opening: bool) -> egui::Response {
+fn system_font_search(ui: &mut egui::Ui, p: &crate::theme::Palette, filter: &mut String, opening: bool) -> egui::Response {
     // the list's own width, never what the popup offers (#2510)
-    let search = crate::ui::widgets::search_field(ui, filter, aurora_i18n::tr!("ui-options-search-fonts"), FONT_LIST_W);
+    let search = crate::ui::widgets::search_field(ui, p, filter, aurora_i18n::tr!("ui-options-search-fonts"), FONT_LIST_W);
     if opening {
         search.request_focus();
     }
@@ -450,6 +450,7 @@ mod tests {
     /// One frame of the System fonts list, open, with a search field and a
     /// font row; returns their rectangles and whether the list is open.
     fn frame(ctx: &egui::Context, events: Vec<egui::Event>, filter: &mut String) -> (egui::Rect, egui::Rect, bool) {
+        let palette = crate::theme::Theme::default().palette();
         let mut rects = (egui::Rect::NOTHING, egui::Rect::NOTHING);
         let mut popup = egui::Id::NULL;
         let input = egui::RawInput {
@@ -461,7 +462,7 @@ mod tests {
             let salt = ui.scope_id().with("system-font");
             popup = system_font_popup(ui, salt);
             system_font_combo(salt, "Font".into()).show_ui(ui, |ui| {
-                rects.0 = system_font_search(ui, filter, false).rect;
+                rects.0 = system_font_search(ui, &palette, filter, false).rect;
                 let row = ui.button("Some font");
                 rects.1 = row.rect;
                 if row.clicked() {

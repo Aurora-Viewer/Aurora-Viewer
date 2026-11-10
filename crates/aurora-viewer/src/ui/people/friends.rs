@@ -243,7 +243,7 @@ fn toolbar(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi) {
             c.contacts.pick_new_friend();
         }
         let w = ui.available_width();
-        widgets::search_box(ui, c.p, &mut st.filter, aurora_i18n::tr!("people-friends-filter"), w);
+        widgets::clearable_search_box(ui, c.p, &mut st.filter, aurora_i18n::tr!("people-friends-filter"), w);
     });
 }
 

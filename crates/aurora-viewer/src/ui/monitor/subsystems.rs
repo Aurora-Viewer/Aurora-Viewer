@@ -268,7 +268,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot
         ) {
             m.per_core = unit == 1;
         }
-        widgets::search_field(ui, &mut m.filter, tr!("monitor-filter"), 150.0);
+        widgets::search_field(ui, p, &mut m.filter, tr!("monitor-filter"), 150.0);
     });
 
     let per_core = m.per_core;

@@ -336,7 +336,13 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
         ui.spacing_mut().item_spacing.x = 5.0;
         // room for the pills, Invite and Export
         let w = (ui.available_width() - 350.0).max(120.0);
-        widgets::search_field(ui, &mut st.members.filter, aurora_i18n::tr!("ui-group-profile-filter-members"), w);
+        widgets::search_field(
+            ui,
+            p,
+            &mut st.members.filter,
+            aurora_i18n::tr!("ui-group-profile-filter-members"),
+            w,
+        );
         if pill(ui, p, aurora_i18n::tr!("common-all"), st.members.show == Show::All).clicked() {
             st.members.show = Show::All;
         }
@@ -1000,6 +1006,7 @@ pub fn classic_list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: 
     let p = c.p;
     widgets::search_field(
         ui,
+        p,
         &mut st.members.filter,
         aurora_i18n::tr!("ui-group-profile-filter-members"),
         ui.available_width(),

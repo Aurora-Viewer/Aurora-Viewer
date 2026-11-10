@@ -797,7 +797,7 @@ fn friends_tab(
         let list_w = (ui.available_width() - BUTTONS_W - 8.0).max(120.0);
         ui.vertical(|ui| {
             ui.set_width(list_w);
-            widgets::search_field(ui, &mut st.friend_filter, aurora_i18n::tr!("ui-contacts-filter-friends"), list_w);
+            widgets::search_field(ui, p, &mut st.friend_filter, aurora_i18n::tr!("ui-contacts-filter-friends"), list_w);
             ui.add_space(3.0);
             friend_table(ui, p, world, st, settings, &rows, &order, list_w, actions);
         });
@@ -1307,7 +1307,7 @@ fn groups_tab(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Contac
         let list_w = (ui.available_width() - BUTTONS_W - 8.0).max(120.0);
         ui.vertical(|ui| {
             ui.set_width(list_w);
-            widgets::search_field(ui, &mut st.group_filter, aurora_i18n::tr!("ui-contacts-filter-groups"), list_w);
+            widgets::search_field(ui, p, &mut st.group_filter, aurora_i18n::tr!("ui-contacts-filter-groups"), list_w);
             ui.add_space(3.0);
             let list_h = (fill_height(ui, DEFAULT_TAB_H - 30.0) - footer_or_default(st.groups_footer)).max(60.0);
             let list = group_list(ui, p, world, st, pics, &groups, &filter, list_w, list_h, actions);
@@ -1703,7 +1703,7 @@ fn sets_tab(
                 }
             });
             ui.add_space(3.0);
-            widgets::search_field(ui, &mut st.set_filter, aurora_i18n::tr!("ui-contacts-filter-people"), list_w);
+            widgets::search_field(ui, p, &mut st.set_filter, aurora_i18n::tr!("ui-contacts-filter-people"), list_w);
             ui.add_space(3.0);
             let list_h = (fill_height(ui, DEFAULT_TAB_H - 60.0) - footer_or_default(st.sets_footer)).max(60.0);
             let list = egui::Frame::new().fill(p.field.gamma_multiply(0.6)).show(ui, |ui| {

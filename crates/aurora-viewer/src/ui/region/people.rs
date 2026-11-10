@@ -524,7 +524,7 @@ fn list_card(
         ui.spacing_mut().item_spacing.x = 6.0;
         let buttons = if copy { 3.0 } else { 2.0 };
         let width = ui.available_width() - buttons * 32.0;
-        widgets::search_box(ui, p, &mut s.people.filter[i], aurora_i18n::tr!("common-search"), width);
+        widgets::clearable_search_box(ui, p, &mut s.people.filter[i], aurora_i18n::tr!("common-search"), width);
         if copy && widgets::icon_button(ui, p, "copy-filled", aurora_i18n::tr!("region-people-copy"), can && !all.is_empty()) {
             // copyListToClipboard: the names, one a line
             let text = all.iter().map(|r| r.name.as_str()).collect::<Vec<_>>().join("\n");

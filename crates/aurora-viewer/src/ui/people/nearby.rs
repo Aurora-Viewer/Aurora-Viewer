@@ -429,7 +429,7 @@ fn toolbar(ui: &mut egui::Ui, p: &Palette, data: &mut RadarData, st: &mut People
         });
         density(ui, p, &mut data.settings.compact);
         let w = ui.available_width();
-        widgets::search_box(ui, p, &mut st.filter, aurora_i18n::tr!("people-filter-by-name"), w);
+        widgets::clearable_search_box(ui, p, &mut st.filter, aurora_i18n::tr!("people-filter-by-name"), w);
     });
 }
 

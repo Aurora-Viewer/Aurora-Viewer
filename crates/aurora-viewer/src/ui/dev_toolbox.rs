@@ -253,7 +253,7 @@ fn header_row(ui: &mut egui::Ui, p: &Palette, st: &mut DevToolboxUi, view: &View
             if widgets::action_button(ui, p, icon, label, kind, Vec2::new(0.0, 26.0)).clicked() {
                 st.edit = !st.edit;
             }
-            widgets::search_box(ui, p, &mut st.query, tr!("dev-toolbox-search"), 250.0);
+            widgets::clearable_search_box(ui, p, &mut st.query, tr!("dev-toolbox-search"), 250.0);
         });
     });
 }

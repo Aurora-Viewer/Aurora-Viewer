@@ -154,7 +154,7 @@ impl DebugSettingsUi {
             // with its content, so content that fills its room and a little
             // more would widen the window at every frame.
             let width = ui.available_width();
-            widgets::search_field(ui, &mut self.filter, tr!("debug-settings-search"), width);
+            widgets::search_field(ui, p, &mut self.filter, tr!("debug-settings-search"), width);
             changed |= widgets::checkbox(ui, p, &mut settings.debug_settings_changed_only, tr!("debug-settings-changed-only")).changed();
             ui.add_space(6.0);
             let shown = self.shown(settings.debug_settings_changed_only);

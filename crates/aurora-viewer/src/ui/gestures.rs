@@ -346,11 +346,12 @@ pub fn show(
                     ) {
                         out.push(Action::Active(state.selected.iter().copied().collect(), activate));
                     }
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.filter)
-                            .hint_text(aurora_i18n::tr!("gesture-filter"))
-                            .desired_width(ui.available_width() - 30.0),
-                    );
+                    {
+                        let width = ui.available_width();
+                        crate::ui::widgets::search_text_edit(ui, p, &mut state.filter, |edit| {
+                            edit.hint_text(aurora_i18n::tr!("gesture-filter")).desired_width(width - 30.0)
+                        })
+                    };
                     if widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("common-delete"), !state.selected.is_empty()) {
                         out.push(Action::Delete(state.selected.iter().copied().collect()));
                     }

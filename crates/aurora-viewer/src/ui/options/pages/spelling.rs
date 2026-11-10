@@ -447,11 +447,9 @@ fn keywords(ui: &mut egui::Ui, p: &Palette, st: &mut SpellingPage) {
     };
     let mut edited: Option<List> = None;
     ui.vertical(|ui| {
-        ui.add(
-            egui::TextEdit::singleline(&mut st.filter)
-                .desired_width(260.0)
-                .hint_text(tr!("ui-options-auto-replace-filter-hint")),
-        );
+        crate::ui::widgets::search_text_edit(ui, p, &mut st.filter, |edit| {
+            edit.desired_width(260.0).hint_text(tr!("ui-options-auto-replace-filter-hint"))
+        });
         let filter = st.filter.trim().to_lowercase();
         let shown: Vec<(&String, &String)> = list
             .replacements

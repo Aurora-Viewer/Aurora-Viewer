@@ -105,7 +105,7 @@ pub(super) fn tab(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi) {
             }
         });
         let w = ui.available_width();
-        widgets::search_box(ui, p, &mut st.filter, aurora_i18n::tr!("people-filter-short"), w);
+        widgets::clearable_search_box(ui, p, &mut st.filter, aurora_i18n::tr!("people-filter-short"), w);
     });
     ui.add_space(7.0);
     let filter = st.filter.trim().to_lowercase();

@@ -147,7 +147,7 @@ impl Picker {
                     self.reveal(*selected);
                 }
                 ui.horizontal(|ui| {
-                    let search = widgets::search_field(ui, &mut self.query, aurora_i18n::tr!("inventory-move-filter"), 310.0);
+                    let search = widgets::search_field(ui, p, &mut self.query, aurora_i18n::tr!("inventory-move-filter"), 310.0);
                     if opening {
                         search.request_focus();
                     }

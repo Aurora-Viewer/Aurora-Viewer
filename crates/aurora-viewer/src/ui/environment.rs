@@ -665,16 +665,18 @@ pub fn settings_list(
                 // the first name starting with the letters typed
                 // (LLScrollListCtrl::handleUnicodeCharHere). `search_field`
                 // with ↑ ↓ left to the list, so ↓ reaches the names.
-                let search = ui.add(
-                    egui::TextEdit::singleline(&mut query)
-                        .hint_text(aurora_i18n::tr!("ui-environment-search-by-name"))
-                        .desired_width(ui.available_width())
-                        .event_filter(egui::EventFilter {
-                            horizontal_arrows: true,
-                            vertical_arrows: false,
-                            ..Default::default()
-                        }),
-                );
+                let search = {
+                    let width = ui.available_width();
+                    crate::ui::widgets::search_text_edit(ui, p, &mut query, |edit| {
+                        edit.hint_text(aurora_i18n::tr!("ui-environment-search-by-name"))
+                            .desired_width(width)
+                            .event_filter(egui::EventFilter {
+                                horizontal_arrows: true,
+                                vertical_arrows: false,
+                                ..Default::default()
+                            })
+                    })
+                };
                 if opening {
                     search.request_focus();
                 }

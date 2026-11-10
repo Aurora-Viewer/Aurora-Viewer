@@ -302,7 +302,7 @@ impl BlacklistUi {
             const BUTTONS: f32 = 26.0;
             let w = ui.available_width();
             ui.allocate_ui_with_layout(Vec2::new(w, 30.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                widgets::search_box(ui, p, &mut self.filter, aurora_i18n::tr!("blacklist-filter"), w);
+                widgets::clearable_search_box(ui, p, &mut self.filter, aurora_i18n::tr!("blacklist-filter"), w);
             });
             ui.add_space(6.0);
             let shown = rows(list.entries(), &self.filter, self.sort, ids);
