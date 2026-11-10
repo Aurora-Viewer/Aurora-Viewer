@@ -591,7 +591,9 @@ impl App {
         if let Some(saved) = self.settings.ao.accounts.get(&self.world.agent_id) {
             account.enabled = saved.enabled;
             account.selected = saved.selected;
+            account.mini_open = saved.mini_open;
         }
+        let prior_mini_open = account.mini_open;
         let mut actions = self.toolbar_ui.ao_quick.show(
             ctx,
             p,
@@ -603,6 +605,18 @@ impl App {
             &mut open,
             self.ao_ui.busy(),
         );
+        let mini_actions = crate::ui::ao::mini::show(
+            ctx,
+            p,
+            &self.ao_catalog,
+            &self.world.inventory,
+            &mut self.ao_runtime,
+            &mut account,
+            &mut prefs,
+            &mut open,
+            self.ao_ui.busy(),
+        );
+        actions.extend(mini_actions);
         actions.extend(crate::ui::ao::show(
             ctx,
             p,
@@ -618,6 +632,7 @@ impl App {
             status,
         ));
         self.panels.ao = open;
+        self.panels.ao_mini = account.mini_open;
         self.toolbar_ui.movement_active = prefs.swimming;
         self.toolbar_ui.water_walk_active = prefs.water_walk;
         if actions.iter().any(|a| matches!(a, crate::ui::ao::Action::MovementPreferences)) {
@@ -627,6 +642,12 @@ impl App {
             let saved = self.settings.ao.accounts.entry(self.world.agent_id).or_default();
             saved.enabled = account.enabled;
             saved.selected = account.selected;
+        }
+        if prior_mini_open != account.mini_open {
+            self.settings.ao.accounts.entry(self.world.agent_id).or_default().mini_open = account.mini_open;
+            if !self.demo {
+                self.settings.save();
+            }
         }
         for action in actions {
             self.apply_ao_action(action);

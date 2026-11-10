@@ -12,6 +12,7 @@ mod category;
 mod combinations;
 mod editor;
 mod migration;
+pub mod mini;
 pub mod prototype;
 pub mod quick;
 #[cfg(test)]
@@ -137,7 +138,7 @@ fn push(out: &mut Vec<Action>, state: &mut AoUi, result: Result<Mutation, String
     }
 }
 
-fn toggle(ui: &mut egui::Ui, p: &Palette, key: &'static str, value: &mut bool) -> bool {
+pub(super) fn toggle(ui: &mut egui::Ui, p: &Palette, key: &'static str, value: &mut bool) -> bool {
     ui.horizontal(|ui| {
         let changed = widgets::switch(ui, p, value).changed();
         let label = ui.add(egui::Label::new(aurora_i18n::text(key)).sense(egui::Sense::click()));
@@ -151,7 +152,7 @@ fn toggle(ui: &mut egui::Ui, p: &Palette, key: &'static str, value: &mut bool) -
     .inner
 }
 
-fn enabled(ui: &mut egui::Ui, p: &Palette, runtime: &mut Runtime, account: &mut Account) -> bool {
+pub(super) fn enabled(ui: &mut egui::Ui, p: &Palette, runtime: &mut Runtime, account: &mut Account) -> bool {
     let changed = toggle(ui, p, "ao-enabled", &mut account.enabled);
     if changed && account.enabled {
         runtime.stands = true;

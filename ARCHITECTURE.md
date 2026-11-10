@@ -4364,7 +4364,11 @@ popup behavior. Its set selector and enable switch edit the same account as
 the manager; swim/water-walk and run/flight boosts edit existing movement
 preferences and retain the selected set's swimming-readiness gate. Child set
 menus keep the parent open; Escape/outside clicks dismiss it, and the manager
-button opens the existing floater. `ui/ao/category.rs` partitions every state
+button opens the existing floater. The popup and persistent `ui/ao/mini.rs`
+window share the state-step controls and show the current state and animation;
+the shared controls include the set's sit override. The mini window can be
+pinned from the popup, toggled from the toolbar, and is remembered per account.
+`ui/ao/category.rs` partitions every state
 into General, Ground, Jumping, Flying and Swimming, in that order. General
 contains Standing, Sitting, Sitting on ground, Standing up, Typing and Always,
 with the sitting states immediately after Standing. Ground groups walking/running,
