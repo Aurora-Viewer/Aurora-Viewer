@@ -1187,7 +1187,14 @@ pub(super) fn execute(
             });
             submit(plan);
         }
-        Command::Delete(ids, purge) => st.dialog = Some(EditDialog::Delete(ids, purge)),
+        Command::Delete(ids, purge) => {
+            if purge {
+                // Permanent delete always asks (PurgeSelectedItems has no ignore).
+                st.dialog = Some(EditDialog::Delete(ids, true));
+            } else {
+                super::delete::confirm_or_run(inv, st, prefs, facts, actions, ids);
+            }
+        }
         Command::Share(ids) => {
             st.share_items = ids;
             // LLAvatarActions::shareWithAvatars: allow_multiple true

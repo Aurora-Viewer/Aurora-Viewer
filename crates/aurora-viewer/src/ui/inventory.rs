@@ -180,6 +180,9 @@ pub enum InvAction {
         items: Vec<Uuid>,
         png: bool,
     },
+    /// Preferences › Confirmations / Inventory: stop asking before a Trash
+    /// move (`DeleteItems` ignore box). Purge still always asks (#2344).
+    StopConfirmingDelete,
     WearLibrary {
         item: Uuid,
         replace: bool,
@@ -535,6 +538,8 @@ pub struct InventoryUi {
     pub selection: HashSet<Uuid>,
     anchor: Option<Uuid>,
     keyboard_selection: bool,
+    /// "Do not show again" on the Delete confirmation (Trash moves only).
+    delete_dont_ask: bool,
     /// Last actual scroll offset and viewport height of this window's list.
     list_viewport: Option<(f32, f32)>,
     list_focus_frame: Option<u64>,
@@ -1379,6 +1384,9 @@ use tree::spacing as tree_spacing;
 fn prepare_result_tree(st: &mut InventoryUi, inv: &Inventory, root: Uuid) {
     if let Some(open) = st.expand_all.take() {
         st.result_tree.set_all(&st.view, root, st.tab, open);
+        if !open {
+            st.scroll_restore = Some(rows::top_after_collapse(st));
+        }
     }
     if let Some(id) = st.reveal {
         st.result_tree.reveal(inv, id, st.tab);
@@ -1455,7 +1463,7 @@ fn status(
                 .color(p.muted),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            delete::button(ui, p, inv, st, prefs, facts);
+            delete::button(ui, p, inv, st, prefs, facts, actions);
             if st.busy() {
                 ui.add(egui::Spinner::new().size(14.0).color(p.violet));
             }
@@ -2186,7 +2194,7 @@ pub fn show(
         }
     }
     let inv = &mut world.inventory;
-    context_catalog::process_deferred(inv, st, prefs, &facts);
+    context_catalog::process_deferred(inv, st, prefs, &facts, &mut actions);
     bulk_permissions::show(ctx, p, inv, st, world.agent_id, &mut actions);
     st.visible.clear();
     fetch_whole_inventory(inv, st);
@@ -2382,7 +2390,7 @@ pub fn show(
         }
         controls::dialogs(ctx, p, &mut w.state, prefs);
         folder_colors::show(ctx, p, &world.inventory, &mut w.state, prefs);
-        context_catalog::process_deferred(&mut world.inventory, &mut w.state, prefs, &facts);
+        context_catalog::process_deferred(&mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
         dialogs::show(ctx, p, icons, &world.inventory, &mut w.state, prefs, &facts, images, &mut actions);
         move_to::show(ctx, p, icons, &mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
         dialogs::preview(
@@ -2755,6 +2763,69 @@ mod tests {
         frame(&ctx, &palette, &icons, &mut inv, &mut st, &mut prefs, &facts);
         assert_eq!(st.selected, Some(accepted));
         assert!(st.visible.contains(&accepted), "the revealed item is selected and drawn");
+    }
+
+    #[test]
+    fn collapse_goes_back_to_the_top_folders() {
+        let ctx = egui::Context::default();
+        let mut inv = view_inventory(true);
+        let root = inv.root;
+        crate::world::inventory::demo::seed_many_folders(&mut inv, 300);
+        let facts = Facts {
+            agent: Uuid::from_u128(2),
+            ..Default::default()
+        };
+        let mut st = InventoryUi {
+            expand_all: Some(true),
+            ..Default::default()
+        };
+        let mut prefs = InventoryPreferences::default();
+        let palette = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let mut frame = |inv: &mut Inventory, st: &mut InventoryUi| {
+            let mut out = None;
+            headless_output(ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(500.0, 340.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    out = Some(list(
+                        ui,
+                        &palette,
+                        &icons,
+                        inv,
+                        st,
+                        &mut prefs,
+                        &facts,
+                        &mut vec![],
+                        260.0,
+                        root,
+                        false,
+                        true,
+                    ));
+                },
+            ));
+            out.expect("inventory list drawn")
+        };
+
+        let open = frame(&mut inv, &mut st);
+        crate::ui::widgets::scroll_offset::set(&ctx, open.id, egui::vec2(0.0, open.content_size.y));
+        let bottom = frame(&mut inv, &mut st);
+        assert!(bottom.state.unclamped_offset().y > 1_000.0, "scrolled down the open tree");
+
+        st.expand_all = Some(false);
+        let collapsed = frame(&mut inv, &mut st);
+        assert!(collapsed.content_size.y > 2_000.0, "the closed top folders still make a long list");
+        assert!(collapsed.state.unclamped_offset().y < 1.0, "Collapse shows the top folders");
+        let settled = frame(&mut inv, &mut st);
+        assert!(settled.state.unclamped_offset().y < 1.0, "and stays there");
+
+        // The search results' tree does the same.
+        st.scroll_hold = Some(ScrollHold { offset: 900.0, until: 0.0 });
+        st.expand_all = Some(false);
+        prepare_result_tree(&mut st, &inv, root);
+        assert_eq!((st.scroll_restore, st.scroll_hold), (Some(0.0), None));
     }
 
     #[test]
