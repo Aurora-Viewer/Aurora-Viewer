@@ -4,11 +4,13 @@
 //! those RLVa locks greyed, the auto portrait's choices, and what is going
 //! to happen (others see the outfits change; the starting outfit comes
 //! back). Running: "Photo i of n…", the progress, each outfit's state, and
-//! Stop (the starting outfit back) and Pause.
+//! Stop (the starting outfit back) and Pause. The paid HD pictures
+//! (`hd_total_ui`): the total for the outfits ticked, against the balance,
+//! confirmed once at Start; their count and cost at the end.
 
 use super::super::{icons, widgets};
 use super::portrait;
-use crate::snapshot::portrait::PortraitSettings;
+use crate::snapshot::portrait::{HdOffer, PortraitSettings};
 use crate::theme::Palette;
 use crate::ui::fonts;
 use egui::{Rect, RichText, Sense, Vec2};
@@ -26,6 +28,31 @@ pub enum Action {
     /// Stop: the starting outfit back on.
     Stop,
     Close,
+    /// The HD pictures' total confirmed: the batch starts.
+    ConfirmHd,
+    /// Back to the choices, nothing paid.
+    CancelHd,
+}
+
+/// The batch's paid HD pictures.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HdTotal<'a> {
+    /// The total for the outfits ticked, and whether the balance pays it
+    /// (None before it is known: not shown).
+    pub offer: Option<HdOffer>,
+    /// The price of one picture.
+    pub each: Option<i32>,
+    pub count: usize,
+    pub balance: Option<i32>,
+    /// Start asked to confirm this total.
+    pub confirm: Option<i32>,
+    /// The batch sends them (confirmed at its start).
+    pub used: bool,
+    pub saved: usize,
+    pub paid: i32,
+    pub pending: usize,
+    pub failed: usize,
+    pub error: Option<&'a str>,
 }
 
 /// Why Start is not offered.
@@ -112,6 +139,7 @@ pub struct Row<'a> {
 pub struct View<'a> {
     pub phase: Phase,
     pub rows: Vec<Row<'a>>,
+    pub hd: HdTotal<'a>,
 }
 
 const ROW: f32 = 48.0;
@@ -174,9 +202,13 @@ fn body(ui: &mut egui::Ui, p: &Palette, settings: &mut PortraitSettings, view: &
                 portrait::choices_ui(ui, p, settings);
             },
         );
+        hd_total_ui(ui, p, settings, &view.hd);
         if view.rows.is_empty() {
             portrait::note(ui, p, "info-circle-filled", aurora_i18n::tr!("ui-appearance-batch-none"));
         }
+    }
+    if matches!(view.phase, Phase::Running { .. } | Phase::Restoring | Phase::Finished { .. }) && view.hd.used {
+        hd_result_ui(ui, p, &view.hd);
     }
     egui::ScrollArea::vertical()
         .id_salt("outfit_batch_rows")
@@ -187,6 +219,69 @@ fn body(ui: &mut egui::Ui, p: &Palette, settings: &mut PortraitSettings, view: &
                 row_ui(ui, p, i, row, actions);
             }
         });
+}
+
+/// Before the start: the HD pictures' box with the total for the outfits
+/// ticked (count × price), greyed with the reason when the balance cannot
+/// pay the total or the price is not known.
+fn hd_total_ui(ui: &mut egui::Ui, p: &Palette, s: &mut PortraitSettings, hd: &HdTotal) {
+    let Some(offer) = hd.offer else {
+        return;
+    };
+    let label = match (offer, hd.each) {
+        (HdOffer::Ready(total) | HdOffer::Short(total), Some(each)) => {
+            aurora_i18n::tr!("ui-appearance-batch-hd", total = total, count = hd.count, each = each).to_string()
+        }
+        _ => aurora_i18n::tr!("ui-appearance-portrait-hd-no-price").to_string(),
+    };
+    let ready = matches!(offer, HdOffer::Ready(_)) && hd.confirm.is_none();
+    let on = portrait::hd_box(
+        ui,
+        p,
+        s,
+        aurora_i18n::tr!("ui-appearance-batch-hd-title"),
+        label,
+        ready,
+        matches!(offer, HdOffer::Ready(_)),
+    );
+    let balance = hd
+        .balance
+        .map(|b| aurora_i18n::tr!("ui-appearance-batch-hd-balance", balance = b).to_string());
+    match offer {
+        HdOffer::Short(total) => {
+            let text = aurora_i18n::tr!("ui-appearance-batch-hd-short", total = total, balance = hd.balance.unwrap_or(0));
+            portrait::note(ui, p, "alert-triangle-filled", &text);
+        }
+        HdOffer::Unknown => portrait::note(
+            ui,
+            p,
+            "alert-triangle-filled",
+            aurora_i18n::tr!("ui-appearance-portrait-hd-unknown"),
+        ),
+        HdOffer::Ready(_) if on => {
+            let mut text = aurora_i18n::tr!("ui-appearance-batch-hd-about").to_string();
+            if let Some(balance) = &balance {
+                text = format!("{text} {balance}");
+            }
+            portrait::note(ui, p, "info-circle-filled", &text);
+        }
+        HdOffer::Ready(_) => portrait::note(ui, p, "info-circle-filled", aurora_i18n::tr!("ui-appearance-portrait-hd-about")),
+    }
+}
+
+/// Once started: the HD pictures saved and their cost, those still on
+/// their way, those not sent.
+fn hd_result_ui(ui: &mut egui::Ui, p: &Palette, hd: &HdTotal) {
+    let saved = aurora_i18n::tr!("ui-appearance-batch-hd-saved", saved = hd.saved, paid = hd.paid);
+    portrait::note(ui, p, "photo-filled", &saved);
+    if hd.pending > 0 {
+        let text = aurora_i18n::tr!("ui-appearance-batch-hd-pending", pending = hd.pending);
+        portrait::note(ui, p, "info-circle-filled", &text);
+    }
+    if hd.failed > 0 {
+        let text = aurora_i18n::tr!("ui-appearance-batch-hd-failed", failed = hd.failed, error = hd.error.unwrap_or(""));
+        portrait::note(ui, p, "alert-triangle-filled", &text);
+    }
 }
 
 /// One outfit: its tick before the start, its picture, its name and its
@@ -329,6 +424,26 @@ fn footer_ui(ui: &mut egui::Ui, p: &Palette, view: &View, actions: &mut Vec<Acti
             ui.add(egui::Label::new(job).wrap());
         });
     }
+    // the HD pictures' total to confirm before Start pays it
+    if let (Phase::Setup(_), Some(total)) = (view.phase, view.hd.confirm) {
+        let text = aurora_i18n::tr!(
+            "ui-appearance-batch-hd-confirm",
+            count = view.hd.count,
+            total = total,
+            each = view.hd.each.unwrap_or(0)
+        );
+        let balance = view
+            .hd
+            .balance
+            .map(|b| aurora_i18n::tr!("ui-appearance-batch-hd-balance", balance = b).to_string());
+        let pay = aurora_i18n::tr!("ui-appearance-batch-hd-pay", total = total).to_string();
+        match portrait::pay_or_back(ui, p, &text, balance.as_deref(), &pay, false) {
+            Some(true) => actions.push(Action::ConfirmHd),
+            Some(false) => actions.push(Action::CancelHd),
+            None => {}
+        }
+        return;
+    }
     if let Phase::Setup(Some(blocked)) = view.phase {
         let text = match blocked {
             Blocked::Unsaved => aurora_i18n::tr!("ui-appearance-batch-unsaved"),
@@ -456,10 +571,59 @@ mod tests {
                 },
                 PortraitSettings::default,
                 |settings, ctx, p| {
-                    let view = View { phase, rows: rows(state) };
+                    let view = View {
+                        phase,
+                        rows: rows(state),
+                        hd: hd(),
+                    };
                     window(ctx, p, settings, &view, &mut true);
                 },
             );
         }
+    }
+
+    fn hd() -> HdTotal<'static> {
+        HdTotal {
+            offer: Some(HdOffer::Short(70)),
+            each: Some(10),
+            count: 7,
+            balance: Some(65),
+            used: true,
+            saved: 3,
+            paid: 30,
+            pending: 1,
+            failed: 1,
+            error: Some("The server refused the HD picture."),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_window_keeps_its_size_with_the_hd_total_to_confirm() {
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            WINDOW,
+            &[egui::vec2(520.0, 560.0), egui::vec2(420.0, 420.0)],
+            aurora_i18n::tr!("ui-appearance-portrait-hd-back"),
+            || PortraitSettings {
+                hd: true,
+                ..Default::default()
+            },
+            |settings, ctx, p| {
+                let view = View {
+                    phase: Phase::Setup(None),
+                    rows: rows(RowState::Choose {
+                        chosen: true,
+                        had_picture: false,
+                    }),
+                    hd: HdTotal {
+                        offer: Some(HdOffer::Ready(70)),
+                        confirm: Some(70),
+                        balance: Some(500),
+                        ..hd()
+                    },
+                };
+                window(ctx, p, settings, &view, &mut true);
+            },
+        );
     }
 }
