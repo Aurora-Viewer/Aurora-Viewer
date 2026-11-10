@@ -421,7 +421,7 @@ impl Editor {
         let Some(corner) = self.poser.options_anchor.filter(|_| self.poser.options_open) else {
             return;
         };
-        let id = egui::Id::new("poser-compact-options");
+        let id = egui::Id::unique("poser-compact-options");
         let width = ctx.read_response(id).map_or(240.0, |r| r.rect.width());
         let mut open = true;
         menu::popup_at(ctx, id, egui::pos2(corner.x - width, corner.y), &mut open, p, |ui| {

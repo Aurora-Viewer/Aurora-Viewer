@@ -339,8 +339,8 @@ pub(super) fn trace<F: Field>(shapes: &[F]) -> Shape {
             for k in 1..inside.len().saturating_sub(1) {
                 shape.triangles.push([inside[0], inside[k], inside[k + 1]]);
             }
-            for pair in crossings.chunks_exact(2) {
-                shape.edge.push([pair[0], pair[1]]);
+            for &[a, b] in crossings.as_chunks::<2>().0 {
+                shape.edge.push([a, b]);
             }
         }
     }

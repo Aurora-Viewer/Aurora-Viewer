@@ -11496,7 +11496,7 @@ impl App {
         if self.ik_editor.posing() {
             self.ik_editor.set_poser_pictures(&self.avatar_pics);
             // a few times a second: worn meshes change seldom
-            if self.frame_count % 10 == 0 {
+            if self.frame_count.is_multiple_of(10) {
                 let mut joints = self.scene.rigged_joints(&self.world, self.ik_editor.poser_subject());
                 // AURORA_DEMO_POSER=compact-wings / compact-tail: as if a worn
                 // mesh used the wings and the tail, or the tail alone (the demo
