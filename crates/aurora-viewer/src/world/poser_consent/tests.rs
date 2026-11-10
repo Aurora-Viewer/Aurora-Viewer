@@ -209,3 +209,20 @@ fn reordered_withdraw_and_cancel_cannot_reactivate_a_finished_request() {
     state.cancel(peer);
     assert!(state.out.iter().all(|(_, kind, _)| *kind != PoseKind::Request));
 }
+#[test]
+fn the_reply_demo_asks_nothing_and_accepts_what_the_user_asked_two_seconds_later() {
+    let (world, peer, mut state) = fixture();
+    for frame in [450, 480, 560] {
+        state.demo(&world, peer, "consent-reply", frame);
+    }
+    assert!(state.outgoing.is_empty() && state.incoming.is_empty(), "nothing by itself");
+    assert!(state.request(&world, peer, Instant::now()));
+    state.demo(&world, peer, "consent-reply", 600);
+    assert!(!state.can_pose(&world, peer), "not at once: Waiting shows first");
+    if let Some(r) = state.outgoing.get_mut(&peer) {
+        r.at -= Duration::from_secs(3);
+    }
+    state.demo(&world, peer, "consent-reply", 700);
+    assert!(state.can_pose(&world, peer), "two seconds later, accepted");
+    assert!(state.outgoing.is_empty());
+}

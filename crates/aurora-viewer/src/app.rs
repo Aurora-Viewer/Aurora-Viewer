@@ -15471,7 +15471,7 @@ impl App {
                     // request shows its answer at once (it would time out
                     // behind the photo mode), and the reminder that someone
                     // may pose us stays in sight
-                    self.poser_consent_ui(&ctx, &p);
+                    self.poser_consent_ui(&ctx, &p, true);
                     // Personal Lighting, opened from the light panel, stays
                     // over it too: the photo's light refined without leaving
                     if self.panels.personal_lighting {
@@ -15638,7 +15638,7 @@ impl App {
                 let favorites = self.favorites_view(favorites_shown, here);
                 let location_landmarks = self.world.landmarks.named(&self.world.inventory);
                 let (classic_bars, islands) = self.bars_look();
-                self.poser_consent_ui(&ctx, &p);
+                self.poser_consent_ui(&ctx, &p, false);
                 let own_name = self.world.own_name();
                 // AURORA_DEMO_BARS: the long parcel name of the mockup (the
                 // islands only: Firestorm's bars stay as they were)
@@ -21113,6 +21113,14 @@ impl ApplicationHandler for App {
                     // (arrows, Delete, Escape): none moves the avatar, the
                     // camera or the viewfinder meanwhile
                     if self.snapshots.reel.quick.is_open() {
+                        self.down.remove(&Input::key(code));
+                        return;
+                    }
+                    // a dialog over the photo mode (a pose request, the
+                    // upload's confirmation) reads its keys through egui:
+                    // Enter answers it and must not also take a photo, and
+                    // the viewfinder's letters and digits wait behind it
+                    if self.viewfinder_on() && self.egui_ctx.memory(|m| m.top_modal_layer()).is_some() {
                         self.down.remove(&Input::key(code));
                         return;
                     }
