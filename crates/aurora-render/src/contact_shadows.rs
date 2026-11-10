@@ -409,7 +409,11 @@ impl Variant {
     /// cards pay it. The other AMD cards' GPU losses happened with the
     /// contact shadows off, so they keep Bend's.
     pub(crate) fn for_card(vendor: u32, name: &str) -> Self {
-        if vendor == AMD && is_rdna4(name) { Variant::NoShared } else { Variant::Bend }
+        if vendor == AMD && is_rdna4(name) {
+            Variant::NoShared
+        } else {
+            Variant::Bend
+        }
     }
 }
 
@@ -1163,7 +1167,10 @@ mod tests {
         assert_eq!(Variant::choose(Some("bend"), AMD, rx), Variant::Bend);
         assert_eq!(Variant::choose(Some("skip"), AMD, rx), Variant::Skip);
         assert_eq!(Variant::choose(None, 0x10DE, "NVIDIA GeForce RTX 4090"), Variant::Bend);
-        assert_eq!(Variant::choose(Some("no-shared"), 0x10DE, "NVIDIA GeForce RTX 4090"), Variant::NoShared);
+        assert_eq!(
+            Variant::choose(Some("no-shared"), 0x10DE, "NVIDIA GeForce RTX 4090"),
+            Variant::NoShared
+        );
     }
 
     #[test]
