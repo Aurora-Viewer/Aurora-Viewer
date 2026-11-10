@@ -38,8 +38,10 @@ fn editable(tool: &BuildTool, world: &World, object: Uuid, item: &TaskItem) -> b
         && !matches!(item.asset_type, 2 | 24 | 25)
 }
 
-/// One window per open item, like the Legacy Viewer's per-item "properties"
-/// instances (LLInventoryAction::doToSelected, indra/newview/llinventoryfunctions.cpp).
+/// One window per open item. The Legacy Viewer opens one per item too
+/// (LLInventoryAction::doToSelected, indra/newview/llinventoryfunctions.cpp),
+/// hosted as tabs of one LLMultiItemProperties window; Aurora has no tab host
+/// for them and cascades separate windows, as the inventory's PropertiesMany does.
 pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut World, images: &HashMap<Uuid, egui::TextureHandle>) {
     let windows = std::mem::take(&mut tool.ui.item_properties);
     let mut kept = Vec::with_capacity(windows.len());
