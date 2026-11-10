@@ -111,7 +111,12 @@ impl Preview {
             *painted = Some((rect, color, Arc::new(self.mesh(rect, color))));
         }
         if let Some((_, _, mesh)) = painted.as_ref() {
-            ui.painter().add(egui::Shape::Mesh(mesh.clone()));
+            aurora_render::preview::paint_antialiased_mesh(
+                ui,
+                ui.scope_id().with(("primitive-thumbnail", self as *const Self as usize)),
+                rect,
+                mesh.clone(),
+            );
         }
     }
 
