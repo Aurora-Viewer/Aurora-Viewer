@@ -73,6 +73,15 @@ fn permissions(mask: u32, library: bool, god_level: u8) -> (bool, bool) {
     (god_level > 0 || copy && (modify || library), copy && modify && !library)
 }
 
+/// Read and edit rights on a script inside an object: as [`permissions`]
+/// for a resident; any god reads and edits it, whatever its level
+/// (LLLiveLSLEditor::loadAsset loads it for isGodlike(), and onLoadComplete
+/// turns editing on without asking LLAgent::allowOperation again). Only an
+/// inventory script keeps GOD_MAINTENANCE for editing (LLPreviewLSL).
+fn task_permissions(mask: u32, god_level: u8) -> (bool, bool) {
+    if god_level > 0 { (true, true) } else { permissions(mask, false, 0) }
+}
+
 /// What an `#include` may take of an inventory script, from least to most.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum IncludeUse {
@@ -486,7 +495,7 @@ impl App {
             let member = !it.group_id.is_nil() && self.world.groups.is_member(&it.group_id);
             let mask = rules::task_script_mask(it, self.world.agent_id, member);
             let modify = !task_script_refused(&self.build, &self.world, target.object);
-            let (can_read, can_edit) = permissions(mask, false, self.world.god_level);
+            let (can_read, can_edit) = task_permissions(mask, self.world.god_level);
             Some(ScriptInfo {
                 name: it.name.clone(),
                 handle: object.key.region,
@@ -856,6 +865,13 @@ mod tests {
             (true, false),
             "the library stays read only"
         );
+        // a script inside an object: any god reads and edits it
+        // (LLLiveLSLEditor), a resident needs copy and modify
+        for level in [1, 200, 225, rules::GOD_MAINTENANCE] {
+            assert_eq!(task_permissions(0, level), (true, true), "level {level}");
+        }
+        assert_eq!(task_permissions(perm::COPY, 0), (false, false));
+        assert_eq!(task_permissions(perm::COPY | perm::MODIFY, 0), (true, true));
     }
 
     #[test]
