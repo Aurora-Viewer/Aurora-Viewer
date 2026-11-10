@@ -331,6 +331,26 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_shift_w_closes_registered_extra_surface_without_reply_path() {
+        let mut frames = Frames::new();
+        let id = Id::NULL.with(("script_prompt", 41_u64));
+        let mut closed = false;
+        let all = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
+        frames.run(Vec::new(), |ui| {
+            let ctx = ui.ctx().clone();
+            begin(&ctx);
+            shown_extra(&ctx, id);
+        });
+        frames.run(vec![key(egui::Key::W, all)], |ui| {
+            let ctx = ui.ctx().clone();
+            begin(&ctx);
+            shown_extra(&ctx, id);
+            closed |= take(&ctx, id);
+        });
+        assert!(closed);
+    }
+
+    #[test]
     fn other_keys_close_nothing() {
         for (event, w) in [
             (key(egui::Key::W, egui::Modifiers::ALT), true),

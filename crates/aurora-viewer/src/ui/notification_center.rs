@@ -776,6 +776,9 @@ fn center_card(
     wanted_images: &mut std::collections::HashSet<uuid::Uuid>,
     n: &mut Notification,
 ) -> Option<Response> {
+    if super::notifications::close_script_prompt(ui.ctx(), n) {
+        return Some(Response::Dismiss);
+    }
     if matches!(n.data, Data::RegionRestart)
         && let Some(info) = &env.restart
     {
@@ -789,7 +792,10 @@ fn center_card(
             cards::card(ui, p, icons, world, env.images, wanted_images, n, false, true)
         }
     });
-    if !read {
+    // a new version of Aurora: the aurora's edge, read or not
+    if matches!(n.data, Data::Update { .. }) {
+        aurora::paint_edge(ui, p, inner.response.rect);
+    } else if !read {
         let r = inner.response.rect;
         ui.painter().rect_filled(
             Rect::from_min_max(r.left_top(), egui::pos2(r.left() + 2.0, r.bottom())),
@@ -1032,6 +1038,7 @@ fn hhmm(secs: u64) -> String {
     super::chat::hhmm(at(secs))
 }
 
+pub mod aurora;
 pub mod presence;
 
 #[cfg(test)]
