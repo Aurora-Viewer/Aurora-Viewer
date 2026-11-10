@@ -5836,6 +5836,11 @@ impl Scene {
         }
     }
 
+    /// The cached rest skeleton of `owner`, as last built by `skeleton_of`.
+    pub(crate) fn skeleton_base(&self, owner: &Uuid) -> Option<Arc<anim::SkeletonBase>> {
+        self.skeletons.get(owner).map(|skeleton| skeleton.base.clone())
+    }
+
     /// Rest skeleton of an avatar (or animesh) and the vertical offset of
     /// its pelvis from the object position:
     /// - the shape (visual parameters of its last appearance),

@@ -1,5 +1,6 @@
 //! Complete local pose channels, including collision volumes and per-joint scale.
 use super::*;
+use crate::scene::anim::SkeletonBase;
 use std::collections::HashMap;
 
 #[derive(Clone)]
@@ -80,6 +81,11 @@ pub(super) fn bounded_scale(scale: Vec3) -> Vec3 {
 
 #[derive(Clone)]
 pub(super) struct Session {
+    /// Shape and worn-mesh rest from which the local pose channels are based.
+    pub rest: Arc<SkeletonBase>,
+    /// Editor-only creation paths bind to Scene's authoritative rest on the
+    /// next animation tick, before rendering the pose.
+    pub rest_initialized: bool,
     pub base: Arc<Pose>,
     pub pose: Arc<Pose>,
     pub enabled: bool,
@@ -89,13 +95,42 @@ pub(super) struct Session {
 impl Session {
     pub fn new(pose: Pose) -> Self {
         let pose = Arc::new(pose);
+        let rest = Arc::new(SkeletonBase {
+            local_pos: pose.positions.clone(),
+            scale: pose.scales.clone(),
+        });
         Self {
+            rest,
+            rest_initialized: false,
             base: pose.clone(),
             pose,
             enabled: true,
             undo: Vec::new(),
             redo: Vec::new(),
         }
+    }
+    pub fn rebase(&mut self, rest: Arc<SkeletonBase>) {
+        if !self.rest_initialized {
+            self.rest = rest;
+            self.rest_initialized = true;
+            return;
+        }
+        if Arc::ptr_eq(&self.rest, &rest) {
+            return;
+        }
+        if *self.rest == *rest {
+            self.rest = rest;
+            return;
+        }
+        let old = &self.rest;
+        for pose in [&mut self.base, &mut self.pose]
+            .into_iter()
+            .chain(self.undo.iter_mut())
+            .chain(self.redo.iter_mut())
+        {
+            rebase_pose(Arc::make_mut(pose), old, &rest);
+        }
+        self.rest = rest;
     }
     pub fn checkpoint(&mut self) {
         if self.undo.len() == 64 {
@@ -138,6 +173,28 @@ impl Session {
             origin: rig.local_rot.clone(),
         };
         pose.valid(rig).then_some(pose)
+    }
+}
+
+fn rebase_pose(pose: &mut Pose, old: &SkeletonBase, new: &SkeletonBase) {
+    let count = pose.positions.len().min(old.local_pos.len()).min(new.local_pos.len());
+    for bone in 0..count {
+        pose.positions[bone] += new.local_pos[bone] - old.local_pos[bone];
+    }
+    let count = pose.scales.len().min(old.scale.len()).min(new.scale.len());
+    for bone in 0..count {
+        let raw = new.scale[bone] * (pose.scales[bone] / old.scale[bone]);
+        let sign = pose.scales[bone].signum() * old.scale[bone].signum() * new.scale[bone].signum();
+        let rebased = sign * raw.abs().clamp(Vec3::splat(1e-5), Vec3::splat(100.0));
+        // A shape slider can flatten a rest axis to zero (#1249): the ratio
+        // is then meaningless, so that axis takes the new rest scale, held
+        // in the same bounds. A rest still flat after a later shape change
+        // would otherwise give the pose a zero axis, which `scale_valid`
+        // refuses: the whole pose, and every undo step rebased with it,
+        // would be dropped.
+        let fallback = new.scale[bone].signum() * new.scale[bone].abs().clamp(Vec3::splat(1e-5), Vec3::splat(100.0));
+        let usable = old.scale[bone].abs().cmpge(Vec3::splat(1e-5));
+        pose.scales[bone] = Vec3::select(usable, rebased, fallback);
     }
 }
 /// A joint's rotation mirrored on its counterpart, in that joint's own rest
