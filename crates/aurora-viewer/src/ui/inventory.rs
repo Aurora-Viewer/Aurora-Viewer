@@ -180,6 +180,9 @@ pub enum InvAction {
         items: Vec<Uuid>,
         png: bool,
     },
+    /// Preferences › Confirmations / Inventory: stop asking before a Trash
+    /// move (`DeleteItems` ignore box). Purge still always asks (#2344).
+    StopConfirmingDelete,
     WearLibrary {
         item: Uuid,
         replace: bool,
@@ -534,6 +537,8 @@ pub struct InventoryUi {
     pub selection: HashSet<Uuid>,
     anchor: Option<Uuid>,
     keyboard_selection: bool,
+    /// "Do not show again" on the Delete confirmation (Trash moves only).
+    delete_dont_ask: bool,
     /// Last actual scroll offset and viewport height of this window's list.
     list_viewport: Option<(f32, f32)>,
     list_focus_frame: Option<u64>,
@@ -1457,7 +1462,7 @@ fn status(
                 .color(p.muted),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            delete::button(ui, p, inv, st, prefs, facts);
+            delete::button(ui, p, inv, st, prefs, facts, actions);
             if st.busy() {
                 ui.add(egui::Spinner::new().size(14.0).color(p.violet));
             }
@@ -2186,7 +2191,7 @@ pub fn show(
         }
     }
     let inv = &mut world.inventory;
-    context_catalog::process_deferred(inv, st, prefs, &facts);
+    context_catalog::process_deferred(inv, st, prefs, &facts, &mut actions);
     bulk_permissions::show(ctx, p, inv, st, world.agent_id, &mut actions);
     st.visible.clear();
     fetch_whole_inventory(inv, st);
@@ -2382,7 +2387,7 @@ pub fn show(
         }
         controls::dialogs(ctx, p, &mut w.state, prefs);
         folder_colors::show(ctx, p, &world.inventory, &mut w.state, prefs);
-        context_catalog::process_deferred(&mut world.inventory, &mut w.state, prefs, &facts);
+        context_catalog::process_deferred(&mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
         dialogs::show(ctx, p, icons, &world.inventory, &mut w.state, prefs, &facts, images, &mut actions);
         move_to::show(ctx, p, icons, &mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
         dialogs::preview(

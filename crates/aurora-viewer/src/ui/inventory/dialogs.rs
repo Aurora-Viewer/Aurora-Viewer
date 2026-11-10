@@ -203,6 +203,18 @@ pub(super) fn show(
                 } else {
                     aurora_i18n::tr!("ui-inventory-dialogs-items-will-be-moved-to-trash")
                 });
+                // DeleteItems ignore box; PurgeSelectedItems has none (#2344).
+                if !*purge {
+                    ui.add_space(8.0);
+                    super::super::widgets::checkbox(
+                        ui,
+                        p,
+                        &mut st.delete_dont_ask,
+                        RichText::new(aurora_i18n::tr!("ui-context-do-not-show-again"))
+                            .size(12.5)
+                            .color(p.muted),
+                    );
+                }
                 if confirmation_buttons(
                     ui,
                     p,
@@ -214,36 +226,12 @@ pub(super) fn show(
                     },
                     &mut done,
                 ) {
-                    let plan = if *purge {
-                        let ids = rules::roots(inv, ids);
-                        let refresh = ids.iter().filter_map(|id| rules::parent(inv, *id)).collect();
-                        let operations = ids
-                            .iter()
-                            .map(|id| Operation::Delete {
-                                id: *id,
-                                folder: inv.folders.contains_key(id),
-                            })
-                            .collect();
-                        let holds_worn = rules::worn_ancestors(inv, &facts.worn);
-                        if ids.iter().all(|id| {
-                            rules::removable(inv, *id, &prefs.protected) && rules::in_type(inv, *id, 14) && !holds_worn.contains(id)
-                        }) {
-                            Ok(Mutation {
-                                operations,
-                                refresh,
-                                removed: ids,
-                                ..Default::default()
-                            })
-                        } else {
-                            Err(aurora_i18n::tr!("ui-inventory-dialogs-the-selection-can-no-longer-be-purged").into())
-                        }
-                    } else {
-                        rules::system(inv, 14)
-                            .ok_or_else(|| aurora_i18n::tr!("common-trash-folder-not-found").to_owned())
-                            .and_then(|to| rules::move_selection(inv, ids, to, &prefs.protected, &facts.worn))
-                    };
-                    match plan {
+                    let silence = !*purge && st.delete_dont_ask;
+                    match super::delete::plan(inv, ids, *purge, prefs, facts) {
                         Ok(change) => {
+                            if silence {
+                                actions.push(InvAction::StopConfirmingDelete);
+                            }
                             actions.push(InvAction::Edit(change));
                             done = true;
                         }
@@ -311,6 +299,8 @@ pub(super) fn show(
     });
     if open && !done {
         st.dialog = Some(dialog);
+    } else if matches!(dialog, EditDialog::Delete(..)) {
+        st.delete_dont_ask = false;
     }
 }
 
@@ -2031,6 +2021,52 @@ mod tests {
     }
 
     #[test]
+    fn escape_discards_the_unconfirmed_delete_ignore_choice() {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let mut st = InventoryUi {
+            dialog: Some(EditDialog::Delete(vec![Uuid::from_u128(8100)], false)),
+            delete_dont_ask: true,
+            ..Default::default()
+        };
+        let mut actions = Vec::new();
+        let _ = headless_output(ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0))),
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Default::default(),
+                }],
+                ..Default::default()
+            },
+            |_ui| {
+                show(
+                    &ctx,
+                    &p,
+                    &Icons::default(),
+                    &inv,
+                    &mut st,
+                    &InventoryPreferences::default(),
+                    &Facts::default(),
+                    &Default::default(),
+                    &mut actions,
+                );
+            },
+        ));
+        assert!(st.dialog.is_none(), "Escape closes the delete confirmation");
+        assert!(actions.is_empty(), "cancelling changes neither inventory nor the preference");
+        assert!(
+            !st.delete_dont_ask,
+            "an unconfirmed ignore choice must not leak into the next dialog"
+        );
+    }
+
+    #[test]
     fn deletion_confirmation_places_both_buttons_in_one_footer_row() {
         let ctx = egui::Context::default();
         let p = crate::theme::Theme::default().palette();
@@ -2089,12 +2125,15 @@ mod tests {
         };
         let cancel = text(aurora_i18n::tr!("common-cancel"));
         let delete = text(aurora_i18n::tr!("common-delete"));
+        let message = text(aurora_i18n::tr!("ui-inventory-dialogs-items-will-be-moved-to-trash"));
+        let dont_ask = text(aurora_i18n::tr!("ui-context-do-not-show-again"));
         assert!((cancel.y - delete.y).abs() < 1.0);
         assert!(cancel.x < delete.x);
-        assert!(delete.y > text(aurora_i18n::tr!("ui-inventory-dialogs-items-will-be-moved-to-trash")).y);
+        assert!(dont_ask.y > message.y);
+        assert!(delete.y > dont_ask.y);
         assert!(
-            delete.y - text(aurora_i18n::tr!("ui-inventory-dialogs-items-will-be-moved-to-trash")).y < 65.0,
-            "footer must stay close to the message"
+            delete.y - message.y < 100.0,
+            "footer must stay close to the message (with the do-not-ask row between)"
         );
         assert!(
             !output

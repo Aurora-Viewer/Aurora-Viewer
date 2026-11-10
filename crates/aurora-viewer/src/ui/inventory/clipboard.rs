@@ -327,7 +327,7 @@ pub(super) fn shortcuts(
         return;
     }
     if !actions.iter().any(|action| matches!(action, InvAction::Edit(_))) {
-        super::delete::shortcut(ui, inv, st, prefs, facts);
+        super::delete::shortcut(ui, inv, st, prefs, facts, actions);
     }
     if st.dialog.is_some() {
         return;
