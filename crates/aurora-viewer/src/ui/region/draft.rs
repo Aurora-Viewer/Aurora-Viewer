@@ -58,7 +58,11 @@ impl Access {
     pub fn restrictions(self, before: Access) -> u64 {
         let limits = ef::DENY_AGEUNVERIFIED | ef::DENY_ANONYMOUS | ef::DENY_BOTS;
         if !self.has(ef::EXTERNALLY_VISIBLE) {
-            return if before.has(ef::EXTERNALLY_VISIBLE) { ef::EXTERNALLY_VISIBLE } else { 0 };
+            return if before.has(ef::EXTERNALLY_VISIBLE) {
+                ef::EXTERNALLY_VISIBLE
+            } else {
+                0
+            };
         }
         self.0 & !before.0 & limits
     }
