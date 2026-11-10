@@ -2137,6 +2137,11 @@ results must follow those options, including in the Aurora Library tab.
 The inventory image picker, AO animation/notecard pickers, Move to, Replace
 links, environment settings and covenant notecard selectors share this order.
 Local names compare without case and with numeric runs (2 before 10).
+Type a search, click a result, then clear the field with its cross or with
+Ctrl+A followed by Delete or Backspace: the exact selected row must remain
+selected and scroll into view, opening its parent folders if needed. Check
+textures and materials in Inventory, Local and Aurora Library; unrelated
+folders keep their previous open/closed state.
 Both scenarios include resources numbered 2 and 10 with distinct dates:
 name order puts 2 first, date order puts 10 first.
 `faces-picker-material,object:99620` opens the same picker for a PBR
