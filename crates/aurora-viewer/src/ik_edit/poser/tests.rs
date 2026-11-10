@@ -1633,12 +1633,10 @@ fn the_other_tab_shows_only_the_bones_a_mesh_uses_or_the_pose_moved() {
     let hind = rig.names["mHindLimb1Left"];
     editor.poser.group = OTHER_GROUP;
     editor.refresh_other_bones(&rig);
-    // nothing worn: every body's bones only (the Legacy Viewer's MISC
-    // spine, groin and skull), not the wings, the tail nor the hind limbs
-    for joint in ["mSpine1", "mSpine2", "mSpine3", "mSpine4", "mGroin", "mSkull"] {
-        assert!(editor.poser_bone_visible(joint), "{joint} is always listed");
-    }
-    assert!(editor.poser.other_used.iter().all(|name| !optional_bone(name)));
+    assert!(editor.poser.other_used.is_empty(), "nothing worn: the tab is empty");
+    // the spine's collapsed pairs too (the human's choice, 2026-11-10: their
+    // markers sit upside down and moving them tears the body apart)
+    assert!(!editor.poser_bone_visible("mSpine1") && !editor.poser_bone_visible("mSpine4"));
     // a worn tail
     editor.poser.rigged = [tail].into();
     editor.refresh_other_bones(&rig);
@@ -1659,7 +1657,7 @@ fn the_other_tab_shows_only_the_bones_a_mesh_uses_or_the_pose_moved() {
 }
 
 #[test]
-fn the_other_tab_opens_on_a_spine_bone_with_nothing_worn() {
+fn an_empty_other_tab_stays_open_instead_of_going_back_to_body() {
     use crate::ui::widgets::elide_tests::Frames;
     let (world, mut editor) = selected_fixture();
     let rig = &world.avatar_lib.rig;
@@ -1669,14 +1667,12 @@ fn the_other_tab_opens_on_a_spine_bone_with_nothing_worn() {
     let p = crate::theme::Theme::default().palette();
     editor.refresh_other_bones(rig);
     editor.select_pose_group(OTHER_GROUP, rig, &frame);
-    let listed =
-        |b: Option<usize>| b.is_some_and(|b| group(&rig.canonical_names[b]) == OTHER_GROUP && !optional_bone(&rig.canonical_names[b]));
-    assert!(listed(editor.selected), "nothing worn: a spine bone, never a wing or the tail");
+    assert_eq!(editor.selected, None, "nothing worn: no Other joint to select");
     for _ in 0..3 {
         frames.run(Vec::new(), |ui| editor.show(ui.ctx(), &p, &world, &proj));
     }
     assert_eq!(editor.poser.group, OTHER_GROUP, "the tab stays open");
-    assert!(listed(editor.selected), "the spine stays selected, the pelvis is not picked again");
+    assert_eq!(editor.selected, None, "the pelvis is not picked again");
 }
 
 #[test]

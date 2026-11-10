@@ -92,10 +92,11 @@ posed, or who accepted, poses that one at once (with Ctrl held, their
 skeleton shows under the pointer). A plain click on them stays the
 world's: a photo's focus, a HUD drawn over them.
 
-**The Other tab** (both windows) lists the spine, the groin and the skull
-always, and the wings, the tail and the hind limbs only when a worn rigged
-mesh uses them or the pose moved them (Aurora's own: the Legacy Viewer
-lists them all, dozens a body without wings or tail cannot move).
+**The Other tab** (both windows) lists only the bones a worn rigged mesh
+uses or the pose moved (Aurora's own: the Legacy Viewer lists them all). On
+a body that does not use them, the spine's bones are collapsed pairs whose
+markers sit upside down over the torso and whose moves tear the body apart,
+and the wings, the tail and the hind limbs rest unseen.
 
 Reset on the selected joint, with Mirror chosen, also resets its
 counterpart, as the Legacy Viewer's mirror does (`FSPoserAnimator::resetJoint`).

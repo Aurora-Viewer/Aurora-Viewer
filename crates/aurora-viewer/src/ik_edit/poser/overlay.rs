@@ -143,9 +143,9 @@ impl Editor {
                 .is_some_and(|l| l.order > egui::Order::Background && l.order != egui::Order::Tooltip)
         });
         let depth = pointer.map(|at| {
-            // the body, and the wings, tail and hind limbs only when listed
-            // (a mesh uses them, or the pose moved them): unused, they rest
-            // beside it in empty space
+            // the body, and the wings, tail and hind limbs only when used (a
+            // mesh, or the pose moved them): unused, they rest beside it in
+            // empty space
             let body: Vec<usize> = (0..rig.len())
                 .filter(|j| {
                     let name = &rig.canonical_names[*j];
