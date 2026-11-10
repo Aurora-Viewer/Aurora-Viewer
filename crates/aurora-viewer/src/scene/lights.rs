@@ -7,8 +7,9 @@
 //! mTargetShadowSpotLight), extended to an adjustable budget in Aurora.
 //!
 //! The Legacy Viewer keeps the 256 nearest lights within the draw distance
-//! (RenderLocalLightCount) and draws those in the camera's frustum. The
-//! shaders here hold 64 (one bit each in the light sets of `light_tiles`):
+//! (RenderLocalLightCount) and draws those in the camera's frustum. Aurora
+//! drops the draw-distance limit for lighting: only the shadows of
+//! projectors stay within it. The shaders here hold 64 (one bit each in the light sets of `light_tiles`):
 //! the lights whose sphere reaches the frustum come first, nearest first,
 //! then the others while room is left. Nearest by distance alone, the worn
 //! lights of a crowd around and behind the camera filled the list and the
@@ -39,8 +40,9 @@ pub struct LightView {
     pub forward: Vec3,
     /// The main view's frustum: the lights that reach it come first.
     pub frustum: CullView,
-    /// The draw distance: lights whose sphere starts beyond it are left out
-    /// (calcNearbyLights' max_dist, RenderFarClip).
+    /// The draw distance (calcNearbyLights' max_dist, RenderFarClip): only
+    /// projectors whose sphere starts within it cast shadows; every light
+    /// enters the list, whatever its distance.
     pub range: f32,
     /// Seconds since the previous frame.
     pub dt: f32,
@@ -242,10 +244,10 @@ impl Scene {
             if filtered && !light_visible(worn(world, o), world.agent_id, self.attached_lights, view.others_attached_lights) {
                 continue;
             }
+            // no draw-distance cutoff here (beyond the Legacy Viewer's
+            // calcNearbyLights): far lights stay in the list while room is
+            // left, only shadow-casting projectors keep the limit (below)
             let dist = light_dist(center, l.radius, eye);
-            if dist >= view.range {
-                continue;
-            }
             // deferred SL lights reach 1.5x their radius with half the
             // falloff (pipeline.cpp: getLightRadius() * 1.5,
             // getLightFalloff(DEFERRED_LIGHT_FALLOFF = 0.5))
@@ -301,6 +303,7 @@ impl Scene {
         if view.projector_shadows {
             let mut ranked: Vec<(f32, usize)> = lights
                 .iter()
+                .filter(|c| c.dist < view.range)
                 .filter_map(|Candidate { idx, light: l, .. }| {
                     let p = l.projector?;
                     let ahead = view.forward.dot(l.position - eye) > -l.radius;
