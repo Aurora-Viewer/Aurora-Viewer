@@ -8,6 +8,7 @@ mod material;
 mod preview;
 #[cfg(test)]
 pub(crate) mod tests;
+pub mod xml_import;
 use crate::{
     scene::{Scene, jobs::Jobs},
     world::World,
@@ -112,6 +113,8 @@ pub struct State {
     model_tx: mpsc::Sender<(u64, u64, Vec<Hint>)>,
     model_rx: mpsc::Receiver<(u64, u64, Vec<Hint>)>,
     model_requested: Instant,
+    /// Import of an appearance XML into the draft.
+    pub xml: xml_import::Import,
 }
 impl Default for State {
     fn default() -> Self {
@@ -156,6 +159,7 @@ impl Default for State {
             model_tx,
             model_rx,
             model_requested: Instant::now() - Duration::from_secs(1),
+            xml: xml_import::Import::default(),
         }
     }
 }
