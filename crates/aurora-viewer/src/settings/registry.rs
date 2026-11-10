@@ -233,6 +233,7 @@ impl Settings {
         self.debug = current.debug;
         self.hover_height_account = current.hover_height_account;
         self.photo_held = current.photo_held.clone();
+        self.draw_stepping = current.draw_stepping;
         self.newer_file = current.newer_file.clone();
         self.new_profile = current.new_profile;
         self.camera_limits_restored = current.camera_limits_restored;

@@ -213,7 +213,7 @@ pub(super) fn context_menu(
             p,
             "external-link-filled",
             aurora_i18n::tr!("ui-appearance-items-show-original"),
-            single,
+            single && !world.rlva.has("showinv"),
         ) {
             actions.push(Action::ShowOriginal(it.id));
         }
@@ -450,7 +450,14 @@ pub(super) fn profile(ctx: &egui::Context, p: &Palette, world: &World, st: &mut 
             }
         ));
         ui.add_space(8.0);
-        if widgets::flat_button(ui, p, aurora_i18n::tr!("ui-appearance-items-show-original")).clicked() {
+        // show_item_original (llinventoryfunctions.cpp) also refuses @showinv here.
+        if ui
+            .add_enabled_ui(!world.rlva.has("showinv"), |ui| {
+                widgets::flat_button(ui, p, aurora_i18n::tr!("ui-appearance-items-show-original"))
+            })
+            .inner
+            .clicked()
+        {
             actions.push(Action::ShowOriginal(item.id));
         }
     });

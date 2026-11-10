@@ -35,7 +35,7 @@ fn categories() -> &'static Vec<(&'static str, &'static str, emojis::Group)> {
                 emojis::Group::Activities,
             ),
             (aurora_i18n::tr!("common-objects"), "bulb-filled", emojis::Group::Objects),
-            (aurora_i18n::tr!("ui-emoji-symbols"), "star-filled", emojis::Group::Symbols),
+            (aurora_i18n::tr!("ui-emoji-symbols"), "at", emojis::Group::Symbols),
         ]
     })
 }
@@ -49,6 +49,7 @@ fn single_char(s: &str) -> Option<char> {
 }
 
 pub mod codes;
+pub mod recent;
 
 /// Replace `:shortcode:` (GitHub / gemoji names, e.g. `:hearts:`, `:smile:`)
 /// by the emoji, by the rules of the chat fields ([`codes::expand`]: not
@@ -82,7 +83,13 @@ pub struct Emoji {
 pub struct Picked {
     pub chosen: Option<char>,
     pub escape: bool,
+    /// The emoji whose menu added it to the favourites, or removed it: the
+    /// caller changes the list.
+    pub favorite: Option<char>,
 }
+
+/// The favourites' tab, after the categories.
+pub const FAVORITES_TAB: usize = 8;
 
 /// The picker's search field.
 const SEARCH_ID: &str = "emoji_picker_search";
@@ -212,6 +219,13 @@ impl Emoji {
     /// Is this character drawn as a color emoji?
     pub fn has(&self, c: char) -> bool {
         (c as u32) >= 0x2190 && self.face.as_ref().is_some_and(|f| f.glyph_index(c).is_some())
+    }
+
+    /// Can the picker and the recent row draw it? Wider than [`Emoji::has`],
+    /// whose lower bound keeps text like ™ out of the messages: the Symbols
+    /// tab offers it as a picture.
+    fn in_font(&self, c: char) -> bool {
+        self.face.as_ref().is_some_and(|f| f.glyph_index(c).is_some())
     }
 
     /// Texture of an emoji (decoded on first use).
@@ -453,11 +467,65 @@ impl Emoji {
         out
     }
 
+    /// A clickable emoji in the rect of `resp`, the picker's and the recent
+    /// row's: the pill under the pointer, the picture, a small star on a
+    /// `favorite`, its shortcode. Also whether its right-click menu asked to
+    /// add it to the favourites or remove it; `None` while favourites are
+    /// turned off: no star and no menu.
+    fn cell(&mut self, ui: &egui::Ui, p: &Palette, c: char, favorite: Option<bool>, resp: egui::Response) -> (egui::Response, bool) {
+        let rect = resp.rect;
+        if resp.hovered() {
+            ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
+        }
+        if let Some(t) = self.texture(ui.ctx(), c) {
+            // keep the image's proportions: the 2D font's bitmaps are wider
+            // than tall (136 × 128)
+            let slot = rect.shrink(3.0);
+            let size = t.size_vec2();
+            let ir = egui::Rect::from_center_size(slot.center(), size * (slot.width() / size.x).min(slot.height() / size.y));
+            ui.painter().image(
+                t.id(),
+                ir,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                crate::ui::widgets::PICTURE_TINT,
+            );
+        }
+        if favorite == Some(true)
+            && let Some(t) = super::icons::global("star-filled")
+        {
+            let star = egui::Rect::from_min_size(rect.right_bottom() - egui::Vec2::splat(10.0), egui::Vec2::splat(9.0));
+            ui.painter().image(
+                t.id(),
+                star,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                p.amber,
+            );
+        }
+        let mut toggle = false;
+        if let Some(favorite) = favorite {
+            super::menu::context_menu(&resp, p, |ui| {
+                toggle = super::menu::check(ui, p, "star-filled", aurora_i18n::tr!("ui-emoji-favorite"), favorite, true);
+            });
+        }
+        // tooltip: shortcode to type it in chat
+        let s = c.to_string();
+        let info = emojis::get(&s).or_else(|| emojis::get(&format!("{s}\u{FE0F}")));
+        let resp = match info {
+            Some(e) => match e.shortcode() {
+                Some(code) => resp.on_hover_text(format!(":{code}:  {}", e.name())),
+                None => resp.on_hover_text(e.name()),
+            },
+            None => resp,
+        };
+        (resp, toggle)
+    }
+
     /// Emoji picker grid. Opened, its search takes the keyboard (typing
     /// filters at once) and keeps it while nothing else has it; Escape is
     /// taken here, before the search field or anything after the picker sees
     /// it, and returned for the caller to close the picker.
-    pub fn picker(&mut self, ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons) -> Picked {
+    /// `favorites` is `None` while they are turned off: no star tab, no menu.
+    pub fn picker(&mut self, ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, favorites: Option<&[char]>) -> Picked {
         let pass = ui.ctx().cumulative_pass_nr();
         let opened = self.shown_pass.is_none_or(|last| last + 1 < pass);
         self.shown_pass = Some(pass);
@@ -469,11 +537,20 @@ impl Emoji {
                     .size(12.0)
                     .color(p.muted),
             );
-            return Picked { chosen: None, escape };
+            return Picked {
+                escape,
+                ..Picked::default()
+            };
         }
         let mut chosen = None;
+        let mut favorite = None;
+        if favorites.is_none() && self.tab == FAVORITES_TAB {
+            self.tab = 0;
+        }
         ui.horizontal(|ui| {
-            for (i, (label, icon, _)) in categories().iter().enumerate() {
+            let favorites_tab = favorites.map(|_| (aurora_i18n::tr!("ui-emoji-favorites"), "star-filled"));
+            let tabs = categories().iter().map(|(label, icon, _)| (*label, *icon)).chain(favorites_tab);
+            for (i, (label, icon)) in tabs.enumerate() {
                 let sel = self.tab == i;
                 let (rect, resp) = ui.allocate_exact_size(egui::vec2(26.0, 24.0), egui::Sense::click());
                 if sel {
@@ -491,7 +568,7 @@ impl Emoji {
                         if sel { p.ink } else { p.muted },
                     );
                 }
-                if resp.on_hover_text(*label).clicked() {
+                if resp.on_hover_text(label).clicked() {
                     self.tab = i;
                 }
             }
@@ -509,7 +586,10 @@ impl Emoji {
         }
         crate::ui::widgets::divider(ui, p);
         let q = self.query.trim().trim_matches(':').to_lowercase();
-        let list: Vec<char> = if q.is_empty() {
+        let on_favorites = q.is_empty() && self.tab == FAVORITES_TAB;
+        let list: Vec<char> = if on_favorites {
+            favorites.unwrap_or_default().iter().copied().filter(|c| self.in_font(*c)).collect()
+        } else if q.is_empty() {
             self.lists.get(self.tab).cloned().unwrap_or_default()
         } else {
             // search every category: English Unicode name and gemoji shortcodes
@@ -527,48 +607,33 @@ impl Emoji {
         let rows = list.len().div_ceil(cols);
         egui::ScrollArea::vertical()
             .max_height(220.0)
-            .auto_shrink([false, true])
+            // a short list of favourites leaves the tabs under the pointer
+            .auto_shrink([false, !on_favorites])
             .show_rows(ui, cell, rows, |ui, range| {
+                if on_favorites && list.is_empty() {
+                    ui.label(
+                        egui::RichText::new(aurora_i18n::tr!("ui-emoji-no-favorites"))
+                            .size(12.0)
+                            .color(p.muted),
+                    );
+                }
                 for r in range {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 2.0;
                         for c in list.iter().skip(r * cols).take(cols) {
-                            let (rect, resp) = ui.allocate_exact_size(egui::vec2(cell, cell), egui::Sense::click());
-                            if resp.hovered() {
-                                ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
-                            }
-                            if let Some(t) = self.texture(ui.ctx(), *c) {
-                                // keep the image's proportions: the 2D font's
-                                // bitmaps are wider than tall (136 × 128)
-                                let slot = rect.shrink(3.0);
-                                let size = t.size_vec2();
-                                let ir =
-                                    egui::Rect::from_center_size(slot.center(), size * (slot.width() / size.x).min(slot.height() / size.y));
-                                ui.painter().image(
-                                    t.id(),
-                                    ir,
-                                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                                    crate::ui::widgets::PICTURE_TINT,
-                                );
-                            }
-                            // tooltip: shortcode to type it in chat
-                            let s = c.to_string();
-                            let info = emojis::get(&s).or_else(|| emojis::get(&format!("{s}\u{FE0F}")));
-                            let resp = match info {
-                                Some(e) => match e.shortcode() {
-                                    Some(code) => resp.on_hover_text(format!(":{code}:  {}", e.name())),
-                                    None => resp.on_hover_text(e.name()),
-                                },
-                                None => resp,
-                            };
+                            let (_, resp) = ui.allocate_exact_size(egui::vec2(cell, cell), egui::Sense::click());
+                            let (resp, toggle) = self.cell(ui, p, *c, favorites.map(|f| f.contains(c)), resp);
                             if resp.clicked() {
                                 chosen = Some(*c);
+                            }
+                            if toggle {
+                                favorite = Some(*c);
                             }
                         }
                     });
                 }
             });
-        Picked { chosen, escape }
+        Picked { chosen, escape, favorite }
     }
 }
 
@@ -576,6 +641,22 @@ impl Emoji {
 mod tests {
     use super::*;
     use crate::ui::widgets::elide_tests::Frames;
+
+    #[test]
+    fn the_favorites_tab_follows_the_categories() {
+        assert_eq!(categories().len(), FAVORITES_TAB);
+    }
+
+    /// The Symbols tab offers them, so they can become favourites: they must
+    /// stay reachable, or a favourite could never be removed.
+    #[test]
+    fn symbols_under_the_message_bound_stay_in_the_favorites() {
+        let emoji = Emoji::load();
+        for c in ['©', '®', '™', '‼', '⁉', 'ℹ'] {
+            assert!(!emoji.has(c), "{c} is text in a message");
+            assert!(emoji.in_font(c), "{c} is a picture in the picker");
+        }
+    }
 
     fn escape() -> egui::Event {
         egui::Event::Key {
@@ -620,7 +701,7 @@ mod tests {
             frames.run(events, |ui| {
                 ui.add(egui::TextEdit::singleline(&mut text).id(field));
                 if open {
-                    picked = emoji.picker(ui, &p, &icons);
+                    picked = emoji.picker(ui, &p, &icons, None);
                 }
                 seen_after = ui.input(|i| i.key_pressed(egui::Key::Escape));
             });

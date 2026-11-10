@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 pub mod appearance;
 pub mod importing;
-pub use appearance::{Appearance, PlateSize, Visuals};
+pub use appearance::{Appearance, Marker, MarkerScope, MarkerShape, PlateSize, Visuals};
 #[cfg(test)]
 mod appearance_tests;
 
@@ -74,6 +74,8 @@ pub struct ContactSets {
     sets: BTreeMap<String, ContactSet>,
     pub stack_icons: bool,
     appearances: std::collections::HashMap<Uuid, std::sync::Arc<Appearance>>,
+    /// Some resident has a marker (`has_markers`), kept with `appearances`.
+    markers: bool,
     /// The sets with `separate_chats`, highest priority first, and the one
     /// of them each member's conversation goes to (an index in it).
     chat_sections: Vec<String>,
