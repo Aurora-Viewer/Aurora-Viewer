@@ -5,7 +5,7 @@
 
 use super::super::COMBO_W;
 use super::super::cx::{Cx, Nothing, field, fields};
-use crate::camera::{CameraPreset, CameraSettings, DEFAULT_FOV, FOV_RANGE, SMOOTHING_RANGE};
+use crate::camera::{CameraPreset, CameraSettings, DEFAULT_FOV, FOV_RANGE, NEAR_CLIP_RANGE, SMOOTHING_RANGE};
 use egui::RichText;
 
 /// Three fields x / y / z (x forward, y left, z up).
@@ -140,6 +140,28 @@ pub fn page(cx: &mut Cx, tab: usize) {
                             return true;
                         }
                         ch
+                    },
+                );
+                // Aurora addition (camera/settings.rs, `near_clip`); the far
+                // clip is the Draw Distance (Graphics)
+                cx.keywords("near clip plane znear clipping").row(
+                    tr!("ui-options-camera-near-clip"),
+                    tr!("ui-options-camera-near-clip-hint"),
+                    &field!(camera.near_clip),
+                    |ui, s| {
+                        ui.spacing_mut().slider_width = super::super::SLIDER_W;
+                        // logarithmic: the default 0.1 m sits mid-way between
+                        // the 1 cm of a close-up and the 1 m end
+                        ui.add(crate::ui::widgets::restricted_number(
+                            egui::Slider::new(&mut s.camera.near_clip, NEAR_CLIP_RANGE)
+                                .logarithmic(true)
+                                .max_decimals(2)
+                                .suffix(" m")
+                                .custom_parser(aurora_i18n::parse_number)
+                                .trailing_fill(true),
+                            crate::ui::widgets::TextPolicy::Decimal,
+                        ))
+                        .changed()
                     },
                 );
                 cx.slider(

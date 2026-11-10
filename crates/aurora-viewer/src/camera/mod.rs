@@ -21,7 +21,9 @@ mod settings;
 
 pub use focus::FocusObject;
 pub use free::FreeCamera;
-pub use settings::{CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, SMOOTHING_RANGE, SavedViews, VrView, zoom_lens};
+pub use settings::{
+    CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, NEAR_CLIP_RANGE, SMOOTHING_RANGE, SavedViews, VrView, zoom_lens,
+};
 
 /// Reference for a rolled view, shared with flycam handoff and AgentUpdate.
 /// At a vertical pole the world Z axis cannot define an up direction.
@@ -358,7 +360,7 @@ impl Default for Camera {
             position: Vec3::new(120.0, 128.0, 30.0),
             target: Vec3::new(128.0, 128.0, 28.0),
             fov_y: DEFAULT_FOV,
-            near: 0.1,
+            near: settings::DEFAULT_NEAR_CLIP,
             orbit_yaw: 0.0,
             pitch: 0.0,
             focus_on_avatar: true,
@@ -1551,6 +1553,9 @@ impl Camera {
         }
         let dt = f.dt.max(0.0);
         self.dt = dt;
+        // every view of this camera (flycam and free camera included) keeps
+        // the preference's near plane; the projections read it (`proj`)
+        self.near = s.near_clip;
         self.draw_distance = f.draw_distance;
         self.region_width = f.region_width;
         self.unconstrained = s.disable_constraints;
@@ -2336,6 +2341,27 @@ mod tests {
     fn settle(cam: &mut Camera, w: &mut World, s: &CameraSettings) {
         for _ in 0..300 {
             cam.update(w, s, &frame(1.0 / 60.0));
+        }
+    }
+
+    #[test]
+    fn the_near_clip_setting_reaches_the_projection_of_every_view() {
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut camera = Camera::default();
+        assert_eq!(camera.near, settings::DEFAULT_NEAR_CLIP);
+        for near_clip in [0.01, 0.1, 0.5, 1.0] {
+            let settings = CameraSettings {
+                near_clip,
+                ..Default::default()
+            };
+            camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+            assert_eq!(camera.near, near_clip);
+            // a point on the near plane has depth 1 (reverse-Z), whatever
+            // the window or photo proportions
+            for proj in [camera.proj(1.6), camera.photo_proj(2.0, 1.6)] {
+                let on_plane = proj * Vec4::new(0.0, 0.0, -near_clip, 1.0);
+                assert!((on_plane.z / on_plane.w - 1.0).abs() < 1e-5, "{near_clip}");
+            }
         }
     }
 
