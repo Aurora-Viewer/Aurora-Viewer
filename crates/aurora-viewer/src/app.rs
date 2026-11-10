@@ -21141,7 +21141,7 @@ impl ApplicationHandler for App {
                         && !lens_shortcut
                         && !build_shortcut.is_some_and(|s| s.takes_gesture_key(history_open))
                         && (!ke.repeat || gesture_key.is_some_and(crate::gestures::Manager::repeat_triggers))
-                        && !typing
+                        && self.chat_ui.allows_gesture_key(&self.egui_ctx, gesture_key)
                         && self.in_world()
                         && !mods.alt
                         && !self.web_has_focus()

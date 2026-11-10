@@ -808,6 +808,14 @@ impl App {
 
     pub(super) fn gesture_demo_input(&mut self, raw: &mut egui::RawInput) {
         let mode = std::env::var("AURORA_DEMO_GESTURES").unwrap_or_default();
+        if mode == "chat-keys" {
+            raw.focused = true;
+            if self.frame_count == 540 {
+                self.chat_ui.input = aurora_i18n::tr!("gesture-demo-replacement").into();
+                self.chat_ui.focus_request = true;
+            }
+            return;
+        }
         if matches!(mode.as_str(), "communicate" | "communicate-open") {
             raw.focused = true;
             let mouse = match self.frame_count {
@@ -916,6 +924,27 @@ impl App {
             self.world.inventory.add_items(vec![sound_item]);
         }
         if let Some(template) = self.world.inventory.items.get(&item).cloned() {
+            if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "chat-keys") {
+                for mask in [0, 1, 4, 5] {
+                    let shortcut = crate::gestures::keys::shortcut(0xa6, mask);
+                    let name = format!("{} ({shortcut})", template.name);
+                    self.seed_demo_gesture(
+                        &template,
+                        951200 + u128::from(mask),
+                        &name,
+                        Gesture {
+                            key: 0xa6,
+                            mask,
+                            steps: vec![Step::Chat {
+                                text: format!("{shortcut}: {}", aurora_i18n::tr!("gesture-demo-chat")),
+                                flags: 0,
+                            }],
+                            ..Default::default()
+                        },
+                        true,
+                    );
+                }
+            }
             for (id, name, trigger, key, steps, active) in [
                 (
                     951001,
@@ -1033,7 +1062,8 @@ impl App {
             }
         }
         // the list of the chat bar is shown alone
-        self.panels.gestures = !std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v.starts_with("communicate") || v == "list");
+        self.panels.gestures =
+            !std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v.starts_with("communicate") || v == "list" || v == "chat-keys");
         if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| matches!(v.as_str(), "editor" | "numpad")) {
             self.gesture_action(Action::Open(item));
         }
