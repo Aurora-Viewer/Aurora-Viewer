@@ -221,11 +221,16 @@ impl Interface {
         self.hidden && !self.immersive
     }
 
-    /// The avatars' name tags (and the chat bubbles under them) are drawn:
-    /// none while the interface is hidden; in immersive mode, as its button
-    /// says (`immersive_tags`).
-    pub fn name_tags(&self, immersive_tags: bool) -> bool {
-        if self.immersive { immersive_tags } else { !self.hidden }
+    /// What the avatars' name tags (and the chat bubbles under them) show:
+    /// nothing while the interface is hidden; otherwise as immersive mode's
+    /// button (`immersive_tags`) or World › Hide name tags (`show_name_tags`)
+    /// say (`hud::avatar_tags`).
+    pub fn name_tags(&self, immersive_tags: bool, show_name_tags: bool) -> super::hud::AvatarTags {
+        if self.clears_view() {
+            super::hud::AvatarTags::Hidden
+        } else {
+            super::hud::avatar_tags(self.immersive, immersive_tags, show_name_tags)
+        }
     }
 
     /// Seconds left to the hint at `now` (the islands' look), while shown;
@@ -457,16 +462,26 @@ mod tests {
     /// Viewer; immersive mode keeps its chat and follows its tag button.
     #[test]
     fn hidden_clears_the_view_and_immersive_keeps_its_choices() {
+        use super::super::hud::AvatarTags;
         let mut ui = Interface::default();
         assert!(!ui.clears_view());
-        assert!(ui.name_tags(false), "shown: the tags whatever immersive's choice");
+        assert_eq!(
+            ui.name_tags(false, true),
+            AvatarTags::Shown,
+            "shown: the tags whatever immersive's choice"
+        );
+        assert_eq!(
+            ui.name_tags(false, false),
+            AvatarTags::Bubbles,
+            "World › Hide name tags keeps the bubbles"
+        );
         ui.hidden = true;
         assert!(ui.clears_view());
-        assert!(!ui.name_tags(true));
+        assert_eq!(ui.name_tags(true, true), AvatarTags::Hidden, "hidden: no tag, no bubble");
         ui.immersive = true;
         assert!(!ui.clears_view());
-        assert!(ui.name_tags(true));
-        assert!(!ui.name_tags(false));
+        assert_eq!(ui.name_tags(true, false), AvatarTags::Shown);
+        assert_eq!(ui.name_tags(false, true), AvatarTags::Hidden);
     }
 
     const BOTH: Shown = Shown { top: true, bottom: true };

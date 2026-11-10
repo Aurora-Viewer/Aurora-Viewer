@@ -147,6 +147,8 @@ const BEFORE: &[&str] = &[
     "confirm_payments",
     "payment_confirm_threshold",
     "name_tag_distance",
+    "contact_markers",
+    "contact_marker_anchor",
     "show_own_name_tag",
     "show_friend_name_tags",
     "show_other_name_tags",
@@ -191,6 +193,7 @@ const BEFORE: &[&str] = &[
     "chat_timestamps_nearby",
     "chat_timestamps_im",
     "show_chat_channel",
+    "show_recent_emojis",
     "compact_automated_chat",
     "compact_im_system_lines",
     "chat_keep_focus",
@@ -810,6 +813,9 @@ fn preference_shapes(
 ) -> Vec<egui::Shape> {
     let p = crate::theme::Theme::default().palette();
     let d = Settings::default();
+    // the Spelling tab's status line must not follow the checker that
+    // other tests load at the same time
+    crate::spelling::tests::pin_status(crate::spelling::Status::Ready);
     frames.shapes(events, |ui| {
         ui.set_width(view.2);
         ui.spacing_mut().item_spacing.y = 0.0;

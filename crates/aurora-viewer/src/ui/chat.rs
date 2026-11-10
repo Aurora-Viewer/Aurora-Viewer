@@ -161,15 +161,31 @@ pub struct ChatUi {
     /// `AURORA_DEMO_CONV=aurora:local:volume`: open the menu of the nearby
     /// chat's volume once it is drawn.
     pub demo_volume_menu: bool,
+    /// The emojis used last, the row under the fields.
+    pub recent_emojis: super::emoji::recent::Recent,
     /// `AURORA_DEMO_CONV=aurora:local:channel`: the channel selector shown
     /// without changing the preferences.
     pub demo_channel: bool,
-    /// The workspace's layout last frame (None before the first): the
-    /// column as a rail, room for the members' panel. A threshold crossed
-    /// back needs a margin past it (`workspace::rail_now`), so a window
-    /// resized around one does not flip at every point.
-    layout_rail: Option<bool>,
+    /// What the button in the column's head asked; `collapsed` is
+    /// given every frame by the app, from the settings.
+    pub column: workspace::ColumnChoice,
+    /// Demo mode: the column's state of this session, which stands in for
+    /// the preferences (`AURORA_DEMO_CONV=aurora:collapsed` starts it
+    /// collapsed; the button changes it, never the settings file).
+    pub demo_column: Option<bool>,
+    /// The workspace's layout last frame (None before the first): a window
+    /// narrow enough for the rail, room for the members' panel. A threshold
+    /// crossed back needs a margin past it (`workspace::narrow_now`), so a
+    /// window resized around one does not flip at every point.
+    layout_narrow: Option<bool>,
     layout_members_room: Option<bool>,
+    /// During a call, how much taller the column needs to be to keep two
+    /// whole entries above the call's panel (negative: to spare), as last
+    /// frame laid them out (`sidebar::show`); the window's least height
+    /// follows it. None without a call, and taken by each frame that reads
+    /// it: a column not drawn since (another style, a closed window) leaves
+    /// none behind.
+    column_short: Option<f32>,
     /// The workspace's width last frame, and whether this frame's change of
     /// it comes from a drag of the window's edge: the layout then follows
     /// the edge at once, without easing (`workspace::ease`).
@@ -289,6 +305,34 @@ pub(crate) fn line_style(style: crate::settings::ChatStyle, group: Option<bool>)
 }
 
 impl ChatUi {
+    /// The column's saved state, given every frame by the app
+    /// (`Settings::chat_column_collapsed`), or the demo session's own.
+    pub fn follow_column_setting(&mut self, saved: bool) {
+        self.column.collapsed = self.demo_column.unwrap_or(saved);
+    }
+
+    /// The column's button changed `ColumnChoice::collapsed`
+    /// (`ConvAction::ColumnCollapsed`): the setting keeps it, or in demo mode
+    /// the session alone. True when the settings are to be saved.
+    pub fn column_collapsed_by_button(&mut self, saved: &mut bool, collapsed: bool, demo: bool) -> bool {
+        if demo {
+            self.demo_column = Some(collapsed);
+            return false;
+        }
+        *saved = collapsed;
+        true
+    }
+
+    /// The column's search as the list and Alt+arrows apply it: none on the
+    /// rail, which has no field to show it. The text stays, for the column.
+    pub(super) fn side_search(&self) -> &str {
+        if self.column.rail(self.layout_narrow.unwrap_or(false)) {
+            ""
+        } else {
+            self.side_filter.trim()
+        }
+    }
+
     /// Recreate only the account-independent nearby window. IMs, messages,
     /// drafts and focus never cross sessions. Its stable floater id lets the
     /// existing layout restore position, size and minimized state.
@@ -544,7 +588,7 @@ impl ChatUi {
     /// several for a conference; a search typed in the column carries over.
     fn start_picker(&mut self, start: Start) {
         self.start = start;
-        let query = self.side_filter.trim().to_owned();
+        let query = self.side_search().to_owned();
         self.picker.open("conversations_start", start == Start::Conference);
         if !query.is_empty() {
             self.picker.set_query(&query);
@@ -1246,6 +1290,8 @@ fn line_job(
 }
 
 pub enum ConvAction {
+    /// The column's button changed `ColumnChoice::collapsed`: to keep.
+    ColumnCollapsed(bool),
     Local(OutgoingChat),
     Im {
         to: uuid::Uuid,
@@ -2970,8 +3016,19 @@ pub fn show(
     // workspace's rail, head, 60 points of messages and field; the Legacy
     // style's tabs and field): smaller, it grew back to its content during
     // a resize and the messages, laid out for the smaller size first,
-    // hopped for a frame
-    let least = egui::vec2(if style.workspace() { 300.0 } else { 0.0 }, 240.0);
+    // hopped for a frame. During a call the workspace's column also keeps
+    // two whole entries above the call's panel (`ChatUi::column_short`).
+    let mut least = egui::vec2(if style.workspace() { 300.0 } else { 0.0 }, 240.0);
+    // the column grows 1:1 with the window: its shortfall is how much the
+    // least height must be above the window's own (the window's rect read
+    // only then: nothing more per frame without a call)
+    let short = st.column_short.take().filter(|_| style.workspace() && world.calls.active.is_some());
+    if let Some(column) = short.and_then(|short| {
+        ctx.memory(|m| m.area_rect(egui::Id::unique("conversations")))
+            .map(|now| now.height() + short)
+    }) {
+        least.y = least.y.max(column);
+    }
     floater.min_size = floater.min_size.max(least);
     let image_bounds = floater.show(ctx, p, open, |ui| {
         let bounds = ui.available_rect_before_wrap().intersect(ui.clip_rect());
@@ -3279,7 +3336,7 @@ fn classic_pane(
             });
         ui.add_space(4.0);
     }
-    let input_h = input::height(ui.ctx(), egui::Id::unique(("conv_input", st.selected)), INPUT_H);
+    let input_h = input::height(ui.ctx(), egui::Id::unique(("conv_input", st.selected)), INPUT_H) + st.recent_emojis.height();
     // Ctrl+F opens the find field of the conversation shown (in
     // the head's row), when the keyboard is in this window, or
     // nowhere with the pointer over it
@@ -3333,6 +3390,13 @@ fn classic_pane(
     let mut emoji_btn = None;
     let mut send_clicked = false;
     let mut draft = std::mem::take(st.draft_mut(st.selected));
+    // the recent emojis, over the field (under it with the Legacy chat style)
+    let over = if st.recent_emojis.above {
+        let w = ui.available_width();
+        st.recent_emojis.strip(ui, p, emoji, w, conv_input, &mut draft)
+    } else {
+        None
+    };
     let resp = ui
         .horizontal(|ui| {
             // the edges of the lines above, half the theme's spacing between
@@ -3378,12 +3442,18 @@ fn classic_pane(
                 .on_hover_text(aurora_i18n::tr!("ui-chat-compose-shortcuts"))
         })
         .inner;
+    if !st.recent_emojis.above {
+        let w = ui.available_width();
+        st.recent_emojis.strip(ui, p, emoji, w, conv_input, &mut draft);
+    }
+    // the row over the field is not part of the strip
+    let field_top = over.map_or(resp.rect.top(), |row| row.top());
     // the strip between the lines and the field: egui reaches
     // both from it (interact_radius), it keeps the normal cursor
     // unless a drag goes through it
     if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
         && pos.y > strip_top
-        && pos.y < resp.rect.top()
+        && pos.y < field_top
         && ui.min_rect().x_range().contains(pos.x)
         && !ui.input(|i| i.pointer.any_down())
     {
@@ -3401,7 +3471,10 @@ fn classic_pane(
             .show(ui.ctx(), |ui| {
                 super::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
                     ui.set_width(300.0);
-                    let picked = emoji.picker(ui, p, icons);
+                    let picked = emoji.picker(ui, p, icons, st.recent_emojis.favorites());
+                    if let Some(c) = picked.favorite {
+                        st.recent_emojis.toggle_favorite(c);
+                    }
                     if let Some(c) = picked.chosen {
                         draft.push(c);
                         close = !ui.input(|i| i.modifiers.shift);

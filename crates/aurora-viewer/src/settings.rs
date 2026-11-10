@@ -12,6 +12,16 @@ pub mod registry;
 mod saver;
 pub mod stream_list;
 
+/// Where a contact-set marker stands on an avatar (`ui/contact_markers.rs`).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum MarkerAnchor {
+    /// Above the name plate, or the head without one.
+    #[default]
+    AboveName,
+    /// On the avatar's chest.
+    Body,
+}
+
 /// How the Conversations window looks (Preferences › Aurora): Aurora's
 /// workspace (the default: a column of conversations, messages grouped by
 /// author with their picture, `ui/chat/aurora.rs`), its compact variant (one
@@ -709,6 +719,29 @@ pub struct Settings {
     /// The former switch, read once: on was any resident we paid.
     #[serde(rename = "payment_sent_opens_conversation", skip_serializing)]
     pub(crate) former_payment_sent_opens_conversation: Option<bool>,
+    /// Preferences › Chat › Notifications: sales, objects paid, a group's
+    /// money and other L$ that are not a resident's direct payment show a
+    /// toast (#2675). Off by default, where the Legacy Viewer's
+    /// NotifyMoneyChange and NotifyMoneyReceived are on: the row under the
+    /// balance says it without covering the world, and a busy seller would
+    /// get one toast per sale.
+    pub notify_money_received: bool,
+    /// Preferences › Chat › Notifications: a resident's direct payment with
+    /// no card shows a toast (NotifyMoneyChange and NotifyMoneyReceived, on
+    /// by default, #2675).
+    pub notify_direct_payment: bool,
+    /// A direct payment's toast only above `notify_direct_threshold` L$.
+    pub notify_direct_above: bool,
+    pub notify_direct_threshold: i32,
+    /// A sale's toast only above `notify_money_threshold` L$.
+    pub notify_money_above: bool,
+    pub notify_money_threshold: i32,
+    /// Preferences › Layout › Bars and the balance's right click: L$
+    /// received (or bought) show under the balance, in green, before they
+    /// join it (`ui/balance_gains.rs`, Aurora's own, on by default).
+    pub balance_shows_received: bool,
+    /// The same for L$ spent, in red.
+    pub balance_shows_spent: bool,
     /// Mini-map and world map options (Firestorm MiniMap* / Map* settings).
     pub maps: MapSettings,
     /// "Search": last tab, rating boxes and land limits.
@@ -758,6 +791,16 @@ pub struct Settings {
     /// off by default; Preferences > Chat). "/n" before the text works
     /// without it.
     pub show_chat_channel: bool,
+    /// The emojis used last as a row under the chat fields (Preferences >
+    /// Chat, on; it takes no room before a first emoji is sent).
+    pub show_recent_emojis: bool,
+    /// The same row with the Legacy chat style: off, as the Legacy Viewer's
+    /// row starts closed behind its arrow (the human's choice, 2026-11-09).
+    pub show_recent_emojis_legacy: bool,
+    /// Favourite emojis, kept by a right-click on an emoji: first in the
+    /// recent row and a star tab in the picker. Off (the human's choice,
+    /// 2026-11-09; an Aurora addition); Preferences > Chat.
+    pub favorite_emojis: bool,
     /// Our own objects' script errors in the nearby chat, with a red
     /// warning sign, instead of opening the Script debug window, which
     /// still keeps them (ShowScriptErrorsLocation 0; on, the human's choice
@@ -982,6 +1025,9 @@ pub struct Settings {
     pub show_other_name_tags: bool,
     /// LLVOAvatar::idleUpdateNameTag: fade after a continuous visible interval.
     pub temporary_name_tags: bool,
+    /// The contact sets' markers in the world (each set says where it wants one).
+    pub contact_markers: bool,
+    pub contact_marker_anchor: MarkerAnchor,
     pub name_tag_show_seconds: f32,
     /// Avatar name tags drawn as before the name plates (`ui::nameplate`):
     /// lines of text on a flat tag, in the tag colors of the preferences.
@@ -1037,6 +1083,8 @@ pub struct Settings {
     /// Firestorm's ConfirmHideUI ("Confirm before hiding UI"): with
     /// Firestorm's bars, hiding the interface asks first.
     pub confirm_hide_interface: bool,
+    /// Normal-mode visibility, applied before the individual avatar tag preferences.
+    pub show_name_tags: bool,
     /// The avatars' name tags in immersive mode (#859): off by default, its
     /// button beside the one that leaves it.
     pub immersive_name_tags: bool,
@@ -1151,6 +1199,9 @@ pub struct Settings {
     /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
     /// legacy lines).
     pub chat_style: ChatStyle,
+    /// The column of the conversations' workspace stays a rail at any
+    /// window width (its button; off, the column follows the window).
+    pub chat_column_collapsed: bool,
     /// Pictures and videos under the links of the Conversations window
     /// (Preferences › Chat; `link_preview.rs`).
     pub link_previews: crate::link_preview::Settings,
@@ -1956,6 +2007,14 @@ impl Default for Settings {
             former_payment_opens_conversation: None,
             payment_sent_opens: crate::world::payments::Opens::Never,
             former_payment_sent_opens_conversation: None,
+            notify_money_received: false,
+            notify_direct_payment: true,
+            notify_direct_above: false,
+            notify_direct_threshold: 200,
+            notify_money_above: false,
+            notify_money_threshold: 200,
+            balance_shows_received: true,
+            balance_shows_spent: true,
             maps: MapSettings::default(),
             search: Default::default(),
             show_people: true,
@@ -1987,6 +2046,9 @@ impl Default for Settings {
             chat_timestamps_im: true,
             former_chat_timestamps: None,
             show_chat_channel: false,
+            show_recent_emojis: true,
+            show_recent_emojis_legacy: false,
+            favorite_emojis: false,
             script_errors_in_chat: true,
             script_errors_to_channel: false,
             script_errors_channel: 1,
@@ -2066,6 +2128,8 @@ impl Default for Settings {
             show_friend_name_tags: true,
             show_other_name_tags: true,
             temporary_name_tags: false,
+            contact_markers: true,
+            contact_marker_anchor: MarkerAnchor::AboveName,
             name_tag_show_seconds: 10.0,
             classic_name_tags: false,
             classic_profiles: false,
@@ -2079,6 +2143,7 @@ impl Default for Settings {
             favorites_row_folded: false,
             system_island: SystemIsland::default(),
             confirm_hide_interface: true,
+            show_name_tags: true,
             immersive_name_tags: false,
             immersive_huds: true,
             show_net_stats: false,
@@ -2123,6 +2188,7 @@ impl Default for Settings {
             plate_shift_click: PlateClick::Nothing,
             plate_ctrl_click: PlateClick::Nothing,
             chat_style: ChatStyle::Aurora,
+            chat_column_collapsed: false,
             link_previews: Default::default(),
             gifs: Default::default(),
             notifications_style: NotificationsStyle::Aurora,
@@ -3875,6 +3941,24 @@ mod tests {
         let saved = serde_json::to_vec(&original).expect("serialize synthetic settings");
         let loaded: Settings = serde_json::from_slice(&saved).expect("reload synthetic settings");
         assert!(!loaded.sanitized().confirm_teleports);
+    }
+
+    #[test]
+    fn recent_emojis_are_shown_by_default_and_survive_reload() {
+        assert!(Settings::default().show_recent_emojis);
+        assert!(!Settings::default().show_recent_emojis_legacy, "off with the Legacy chat style");
+        let old: Settings = serde_json::from_str("{}").expect("synthetic old settings");
+        assert!(old.show_recent_emojis);
+        assert!(!old.show_recent_emojis_legacy);
+        assert!(!Settings::default().favorite_emojis, "favourites off by default");
+        assert!(!old.favorite_emojis);
+        let original = Settings {
+            show_recent_emojis: false,
+            ..Settings::default()
+        };
+        let saved = serde_json::to_vec(&original).expect("serialize synthetic preference");
+        let loaded: Settings = serde_json::from_slice(&saved).expect("reload synthetic preference");
+        assert!(!loaded.sanitized().show_recent_emojis);
     }
 
     #[test]
