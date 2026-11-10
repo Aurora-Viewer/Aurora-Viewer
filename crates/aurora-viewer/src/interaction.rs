@@ -78,6 +78,17 @@ pub fn final_action(world: &World, idx: usize) -> Option<u8> {
     })
 }
 
+/// LLViewerObject::specialHoverCursor (indra/newview/llviewerobject.cpp):
+/// physics, a touch script or a click action on this prim itself (its root
+/// does not count). Its faces at alpha 0 stay pickable without
+/// `pick_transparent` (LLVOVolume::lineSegmentIntersect).
+pub fn special_hover_cursor(o: &crate::world::objects::Object) -> bool {
+    o.update_flags & (USE_PHYSICS | crate::ui::context::flags::HANDLE_TOUCH) != 0 || o.click_action != 0
+}
+
+/// FLAGS_USE_PHYSICS (llprimitive.h).
+const USE_PHYSICS: u32 = 1 << 0;
+
 fn use_action(world: &World, idx: usize) -> bool {
     let Some((r, attached)) = root(world, idx) else { return false };
     !attached

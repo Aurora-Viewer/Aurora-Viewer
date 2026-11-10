@@ -74,6 +74,9 @@ const fn id(n: u128) -> Uuid {
     Uuid::from_u128(0xA0E0_7A65_0000_0000_0000_0000_0000_0000 | n)
 }
 
+/// AURORA_DEMO_CONTACT_MARKERS: who joins its contact sets.
+pub const MARKER_RESIDENTS: [Uuid; 3] = [NOVA, ORION, VEGA];
+
 const NOVA: Uuid = id(1);
 const TESS: Uuid = id(2);
 /// A friend of the demo buddy list.
