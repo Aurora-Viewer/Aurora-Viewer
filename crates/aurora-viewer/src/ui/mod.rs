@@ -10,6 +10,7 @@ pub mod aurora_bg;
 pub mod avatar_picker;
 pub mod avatar_render_settings;
 pub mod backdrop;
+pub mod balance_gains;
 pub mod bars;
 pub mod bidi;
 pub mod blacklist;
@@ -28,11 +29,13 @@ pub mod click_away_focus;
 pub mod close_key;
 pub mod color_picker;
 pub mod colors;
+pub mod contact_markers;
 pub mod contacts;
 pub mod context;
 pub mod controls;
 pub mod crosshair;
 pub mod debug_overlay;
+pub mod debug_settings;
 pub mod dev_toolbox;
 pub mod display_name;
 pub mod emoji;
@@ -105,6 +108,7 @@ pub mod quick_prefs;
 pub mod region;
 pub mod region_message_prompt;
 pub mod region_restart;
+pub mod region_tracker;
 pub mod remote_object;
 pub mod report_abuse;
 pub(crate) mod resource_drop;
@@ -148,6 +152,7 @@ pub struct Panels {
     pub chat: bool,
     pub perf: bool,
     /// The Dev Toolbox (Advanced › Dev Toolbox, Ctrl+Alt+D).
+    pub debug_settings: bool,
     pub dev_toolbox: bool,
     /// Advanced › Region console (SimConsoleAsync, estate managers).
     pub sim_console: bool,
@@ -160,6 +165,7 @@ pub struct Panels {
     pub minimap: bool,
     /// World map (Ctrl+M).
     pub world_map: bool,
+    pub region_tracker: bool,
     pub beacons: bool,
     pub owned_land: bool,
     pub settings: bool,
@@ -233,6 +239,7 @@ impl Panels {
         Panels {
             chat: settings.show_chat,
             perf: settings.show_perf,
+            debug_settings: false,
             dev_toolbox: false,
             sim_console: false,
             group_titles: false,
@@ -240,6 +247,7 @@ impl Panels {
             people: settings.show_people,
             minimap: settings.show_minimap,
             world_map: false,
+            region_tracker: false,
             beacons: false,
             owned_land: false,
             settings: false,

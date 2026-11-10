@@ -20,11 +20,10 @@ fn demo_lens() -> Option<(f32, f32, bool)> {
 }
 
 impl App {
-    /// The largest blur, in pixels, of a photo `height` pixels high taken
-    /// now from a window `window_height` pixels high: None when no depth of
-    /// field may be drawn (the lens `dof_frame` gives, without its
-    /// conditions of the moment).
-    pub(super) fn photo_dof_max_coc(&self, height: u32, window_height: u32) -> Option<f32> {
+    /// The largest blur, in pixels, of a photo of `size` taken now from a
+    /// `window` (pixels): None when no depth of field may be drawn (the lens
+    /// `dof_frame` gives, without its conditions of the moment).
+    pub(super) fn photo_dof_max_coc(&self, size: (u32, u32), window: (u32, u32)) -> Option<f32> {
         let s = if self.demo && demo_lens().is_some() {
             dof::Settings {
                 enabled: true,
@@ -35,21 +34,15 @@ impl App {
         } else {
             self.settings.dof.clone()
         };
-        s.enabled.then(|| dof::lens(&s, 1.0, 1.0, height, window_height, false).max_coc)
+        let aspect = size.0 as f32 / size.1.max(1) as f32;
+        let view = dof::View::photo(self.camera.fov_y, window, aspect, size.1);
+        s.enabled.then(|| dof::lens(&s, 1.0, view, false).max_coc)
     }
 
     /// The lens of this frame, None when the effect is off (or in edit mode
-    /// without RenderDepthOfFieldInEditMode). `fov_y` is the vertical field
-    /// of view of the image, `height` its height (a photo's), `window_height`
-    /// the window's.
-    pub(super) fn dof_frame(
-        &mut self,
-        renderer: &mut Renderer,
-        dt: f32,
-        fov_y: f32,
-        height: u32,
-        window_height: u32,
-    ) -> Option<DepthOfField> {
+    /// without RenderDepthOfFieldInEditMode), for the image `view` (the
+    /// window's, or a photo's).
+    pub(super) fn dof_frame(&mut self, renderer: &mut Renderer, dt: f32, view: dof::View) -> Option<DepthOfField> {
         let demo = self.demo.then(demo_lens).flatten();
         if let Some((n, d, debug)) = demo {
             let s = dof::Settings {
@@ -74,7 +67,7 @@ impl App {
                     others.join(", ")
                 );
             }
-            return Some(dof::lens(&s, d, fov_y, height, window_height, debug));
+            return Some(dof::lens(&s, d, view, debug));
         }
         // the photo window's lens while it is open, off included (its All
         // sharp is sharp, not the Preferences' blur), else the Preferences'
@@ -97,7 +90,7 @@ impl App {
             let d = self.snapshots.vf.af.distance();
             self.dof_focus.set(d);
             let (near, far) = self.snapshots.vf.zone.map_or((d, d), |z| z.at(d));
-            let mut lens = dof::lens(&s, near, fov_y, height, window_height, false);
+            let mut lens = dof::lens(&s, near, view, false);
             lens.focus_far = far;
             return Some(lens);
         }
@@ -132,7 +125,7 @@ impl App {
         let target = manual.unwrap_or_else(|| point.map_or(f32::NAN, |p| dof::distance_along(eye, at, p)));
         let transition = s.transition;
         let focus = self.dof_focus.update(target, dt, transition);
-        let mut lens = dof::lens(&s, focus, fov_y, height, window_height, false);
+        let mut lens = dof::lens(&s, focus, view, false);
         // focus peaking in manual focus, on the view only (never a photo)
         if viewfinder && photo.focus == crate::dof::PhotoFocus::Manual && self.snapshots.capturing.is_none() {
             lens.peaking = crate::ui::viewfinder::peaking_color(&self.palette, self.settings.snapshot.viewfinder.peaking).map(|c| {
