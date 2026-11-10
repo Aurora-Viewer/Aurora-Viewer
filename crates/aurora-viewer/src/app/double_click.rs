@@ -295,6 +295,8 @@ impl App {
             || i.strafe_right
             || i.up
             || i.down
+            // stop_moving also cancels the autopilot (llviewerinput.cpp)
+            || i.stop
             || i.joystick_yaw.abs() > 0.001
             || i.joystick_pitch.abs() > 0.001;
         let agent = &self.world.agent;

@@ -3335,7 +3335,7 @@ impl Backend {
         let gtao = crate::gtao::Gtao::new(&device);
         lost_at_start(&lost, &surface)?;
         let water_effects = crate::water_effects::WaterGpu::new(&device, 1);
-        let contact = crate::contact_shadows::ContactShadows::new(&device);
+        let contact = crate::contact_shadows::ContactShadows::new(&device, &adapter.get_info());
         lost_at_start(&lost, &surface)?;
         let glow = Glow::new(&device, &post_layout);
         let smaa = Smaa::new(&device, &queue, [&post_layout, &bloom.post_layout], format);
@@ -6401,6 +6401,12 @@ impl Backend {
             .as_ref()
             .and_then(|t| t.fsr.as_ref())
             .map_or(world_size, |(fsr, _)| fsr.display_size());
+        // the user's render scale, upscaled smoothly to the window (RLVa's
+        // divisor keeps nearest pixels, a photo renders at full size)
+        let spatial_upscale = post_size != (self.config.width, self.config.height)
+            && self.settings.render_scale_percent < 100
+            && self.rlva_resolution_divisor <= 1
+            && snapshot.is_none();
 
         // egui textures first, so they are never lost on a skipped frame
         if let Some(ui) = &mut egui_frame {
@@ -7060,6 +7066,10 @@ impl Backend {
         // gammaCorrect, which only encodes and clamps (legacyGamma kept on
         // skies without a probe ambiance, as no_post below)
         let hdr = self.settings.hdr;
+        // FSR sharpens with its own RCAS: CAS on top of it turns FSR's
+        // faint sub-pixel pattern into a visible checkerboard
+        let cas = hdr && !matches!(self.settings.aa, AntiAliasing::Fsr(_));
+        let (post_sharpen, upscale_sharpen) = crate::rlva::resolution::sharpening(f.sharpen, cas, spatial_upscale);
         let post = PostU {
             exposure: if hdr { f.exposure } else { 1.0 },
             // SMAA works on a gamma-encoded 8-bit image
@@ -7078,13 +7088,7 @@ impl Backend {
                 }
             },
             fxaa: if self.settings.aa == AntiAliasing::Fxaa { 1.0 } else { 0.0 },
-            // FSR sharpens with its own RCAS: CAS on top of it turns FSR's
-            // faint sub-pixel pattern into a visible checkerboard
-            sharpen: if hdr && !matches!(self.settings.aa, AntiAliasing::Fsr(_)) {
-                f.sharpen.clamp(0.0, 1.0)
-            } else {
-                0.0
-            },
+            sharpen: post_sharpen,
             glow: if glow_on { 1.0 } else { 0.0 },
             debug_glow: {
                 static DEBUG_GLOW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -8481,7 +8485,7 @@ impl Backend {
                 multiview_mask: None,
             });
             bind_mesh(&mut pass, &self.groups.a);
-            if !f.cutout {
+            if !f.cutout && !f.hide_sky {
                 pass.set_pipeline(&self.pipelines.sky);
                 pass.draw(0..3, 0..1);
             }
@@ -9147,7 +9151,7 @@ impl Backend {
 
         let draw_huds = lists.hud_view.is_some() && self.hud_depth.is_some() && snapshot.is_none_or(|s| s.huds);
         if post_size != (self.config.width, self.config.height) {
-            let smooth = self.settings.render_scale_percent < 100 && self.rlva_resolution_divisor <= 1 && snapshot.is_none();
+            let smooth = spatial_upscale;
             if self
                 .rlva_scaled
                 .as_ref()
@@ -9314,7 +9318,7 @@ impl Backend {
             calls.set(calls.get() + passes as u32);
         }
         if let Some(scaled) = &self.rlva_scaled {
-            scaled.encode(&mut encoder, &surface_view);
+            scaled.encode(&self.queue, &mut encoder, &surface_view, upscale_sharpen);
             calls.set(calls.get() + 1);
         }
 

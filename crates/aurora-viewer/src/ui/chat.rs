@@ -48,6 +48,8 @@ mod action_marker_tests;
 #[cfg(test)]
 mod buttons_tests;
 #[cfg(test)]
+mod chat_lines_tests;
+#[cfg(test)]
 mod contact_visual_tests;
 #[cfg(test)]
 mod volume_tests;
@@ -2388,6 +2390,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                 return;
             };
             let width = (ui.available_width() * 2.0).round() / 2.0;
+            let clearing_filter = view.is_filtered() && filter.is_empty();
             let changed = view.sync(
                 &view::Source {
                     lines,
@@ -2412,6 +2415,15 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             }
             let mark = (!needle.is_empty()).then_some(Mark { needle: &needle, wash });
             let selection = &mut st.selection.1;
+            if clearing_filter
+                && !selection.is_empty()
+                && let Some(head) = selection.head
+            {
+                let selected_row = view.lines().position(|index| clock.first + index as u64 == head.seq);
+                if let Some(row) = selected_row {
+                    view.scroll_to(row);
+                }
+            }
             let content = view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
                 let Some(line) = lines.get(row.line) else {
                     return;
@@ -3693,6 +3705,93 @@ fn said_by_resident(line: &crate::world::ChatLine) -> bool {
     matches!(line.kind, ChatKind::Local(_) | ChatKind::Own(_))
 }
 
+/// Where the nearby chat lines were laid out from in their area, anchored
+/// by its bottom: `held` before them, `settle` after keeps their bottom on
+/// that anchor in the frame where their height changes.
+///
+/// An area anchored by its bottom places its content with the height it
+/// had the frame before (egui's `AreaState::size`): the frame a line's fade
+/// ends and it leaves, the others were laid out its height too high, and
+/// the frame one arrives, too low; the next frame put them back. That is
+/// the flicker of #2544. The Legacy Viewer stacks its lines from the
+/// bottom in the frame it draws them (`LLConsole::draw`, `y_pos` from the
+/// bottom, indra/llui/llconsole.cpp), so they never move but to make room.
+/// Here the lines are laid out as before, then everything they painted
+/// (text, cards, glass) is moved to where egui will put them the next
+/// frame; in a frame where the height does not change, nothing moves.
+///
+/// Rather than `ctx.request_discard` (a second pass of the whole interface
+/// when a line comes or goes, which egui drops when another discard has
+/// already taken its last pass), the shapes of this one area are moved.
+struct Held {
+    /// The bottom of the room the area is anchored in, plus the anchor's
+    /// offset: what egui places the area's top from.
+    room: f32,
+    lift: f32,
+    /// The first shape the lines painted on the area's layer.
+    start: usize,
+}
+
+impl Held {
+    /// Before the lines, at the start of the area's `ui`; `lift` is the
+    /// vertical offset of the area's anchor. The clip reaches a screen
+    /// lower: in the frame a line arrives, the lines are laid out below the
+    /// bar before they are moved up, and egui paints nothing of a card or a
+    /// label laid out wholly outside the clip.
+    fn new(ui: &mut egui::Ui, lift: f32) -> Self {
+        let clip = ui.clip_rect();
+        ui.set_clip_rect(clip.with_max_y(clip.bottom() + ui.ctx().content_rect().height()));
+        let layer = ui.layer_id();
+        Self {
+            room: ui.ctx().content_rect().bottom(),
+            lift,
+            start: ui.ctx().graphics(|g| g.get(layer).map_or(0, |l| l.next_idx().0)),
+        }
+    }
+
+    /// After the lines: moves what they painted to the top egui gives the
+    /// area at their new height (`Area::begin`: `Align2::LEFT_BOTTOM` in
+    /// the room, the offset, then `round_area_position`), the same to the
+    /// pixel as the frames after, and returns the move, for the click areas
+    /// laid over them.
+    fn settle(self, ui: &egui::Ui) -> egui::Vec2 {
+        use egui::emath::GuiRounding as _;
+        let top = (self.room - ui.min_rect().height() + self.lift)
+            .round_to_pixels(ui.pixels_per_point())
+            .round_ui();
+        let shift = egui::vec2(0.0, top - ui.max_rect().top());
+        if shift.y != 0.0 {
+            let moved = egui::emath::TSTransform::from_translation(shift);
+            let layer = ui.layer_id();
+            ui.ctx().graphics_mut(|g| {
+                let list = g.entry(layer);
+                for i in self.start..list.next_idx().0 {
+                    // the shapes alone: the clip stays the area's, the
+                    // screen's (moved too, it could cut off a line that just
+                    // arrived)
+                    list.mutate_shape(egui::layers::ShapeIdx(i), |s| s.shape.transform(moved));
+                }
+            });
+        }
+        shift
+    }
+
+    /// After the area: the rect it keeps moves with what it painted, for
+    /// what avoids the lines later in the frame (the friends' online
+    /// toasts, `notification_center::chat_lines`).
+    fn publish(ctx: &egui::Context, shift: egui::Vec2) {
+        if shift.y == 0.0 {
+            return;
+        }
+        // the area of the lines, one for both looks
+        let layer = egui::LayerId::new(egui::Order::Background, egui::Id::unique("chat_toasts"));
+        if let Some(mut state) = egui::AreaState::load(ctx, layer.id) {
+            state.set_left_top_pos(state.left_top_pos() + shift);
+            ctx.memory_mut(|m| m.areas_mut().set_state(layer, state));
+        }
+    }
+}
+
 /// Recent chat lines floating above the chat bar (fade out after 20 s);
 /// names of linked avatars and pictures of the senders are asked through
 /// `want_names` / `wanted_pics`. `cards`: Aurora's cards grouped by sender
@@ -3757,14 +3856,16 @@ pub fn toasts(
     }
     let mut links: Vec<(egui::Rect, Link, Color32)> = Vec::new();
     let mut names: Vec<(egui::Rect, &crate::world::ChatLine)> = Vec::new();
+    let mut shift = egui::Vec2::ZERO;
+    let lift = -(ctx.content_rect().bottom() - bottom) - 6.0;
     egui::Area::new(egui::Id::unique("chat_toasts"))
-        .anchor(
-            egui::Align2::LEFT_BOTTOM,
-            egui::vec2(8.0, -(ctx.content_rect().bottom() - bottom) - 6.0),
-        )
+        .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(8.0, lift))
         .interactable(false)
         .order(egui::Order::Background)
         .show(ctx, |ui| {
+            // a line that leaves or arrives moves the others in this frame
+            // only (#2544)
+            let held = Held::new(ui, lift);
             ui.set_max_width(560.0);
             // the islands' pills: the mockup's 12 px text, 9 × 4 margins and
             // 4 px between two lines
@@ -3844,12 +3945,14 @@ pub fn toasts(
                 }
                 ui.add_space(gap);
             }
+            shift = held.settle(ui);
         });
+    Held::publish(ctx, shift);
     for (k, (rect, link, col)) in links.iter().enumerate() {
-        bubble_link(ctx, p, world, k, *rect, link, *col);
+        bubble_link(ctx, p, world, k, rect.translate(shift), link, *col);
     }
     for (k, (rect, line)) in names.into_iter().enumerate() {
-        bubble_sender_link(ctx, p, world, k, rect, line);
+        bubble_sender_link(ctx, p, world, k, rect.translate(shift), line);
     }
 }
 
