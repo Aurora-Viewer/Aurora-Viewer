@@ -106,6 +106,7 @@ impl Preset {
                 ssr: false,
                 reflection_probes: 0,
                 probe_count: 8,
+                local_lights: 8,
                 antialiasing: 0,
                 anisotropy: 1,
                 sharpen: 0.0,
@@ -136,6 +137,7 @@ impl Preset {
                 ssr: false,
                 reflection_probes: 0,
                 probe_count: 32,
+                local_lights: 256,
                 antialiasing: 0,
                 anisotropy: 1,
                 sharpen: 0.0,
@@ -166,6 +168,7 @@ impl Preset {
                 ssr: false,
                 reflection_probes: 1,
                 probe_count: 64,
+                local_lights: 256,
                 antialiasing: 1,
                 anisotropy: 8,
                 sharpen: 0.0,
@@ -198,6 +201,7 @@ impl Preset {
                 ssr: false,
                 reflection_probes: 2,
                 probe_count: 128,
+                local_lights: 256,
                 antialiasing: 6,
                 anisotropy: 8,
                 sharpen: 0.4,
@@ -236,6 +240,7 @@ impl Preset {
                 ssr: false,
                 reflection_probes: 3,
                 probe_count: 256,
+                local_lights: 256,
                 antialiasing: 6,
                 anisotropy: 16,
                 sharpen: 0.4,
@@ -525,6 +530,7 @@ pub(crate) fn upgrade_physics_detail(s: &mut Settings) {
             hdr_emissive: level.hdr_emissive,
             max_texture_resolution: level.max_texture_resolution,
             tree_lod_factor: level.tree_lod_factor,
+            local_lights: level.local_lights,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
@@ -546,6 +552,7 @@ pub(crate) fn upgrade_hdr_emissive(s: &mut Settings) {
             hdr_emissive: level.hdr_emissive,
             max_texture_resolution: level.max_texture_resolution,
             tree_lod_factor: level.tree_lod_factor,
+            local_lights: level.local_lights,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
@@ -565,6 +572,7 @@ pub(crate) fn upgrade_max_texture_resolution(s: &mut Settings) {
         let current = Values {
             max_texture_resolution: level.max_texture_resolution,
             tree_lod_factor: level.tree_lod_factor,
+            local_lights: level.local_lights,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
@@ -583,12 +591,27 @@ pub(crate) fn upgrade_tree_detail(s: &mut Settings) {
         let level = preset.values();
         let current = Values {
             tree_lod_factor: level.tree_lod_factor,
+            local_lights: level.local_lights,
             ..Values::read(s)
         };
         if current.as_shown() == level.as_shown() {
             s.tree_lod_factor = level.tree_lod_factor;
             return;
         }
+    }
+}
+
+/// Settings files written before the levels set the number of local lights
+/// (version 37), all at 256: a profile exactly on Potato apart from it takes
+/// the level's 8 (the Legacy Viewer's Low); any other keeps 256.
+pub(crate) fn upgrade_local_lights(s: &mut Settings) {
+    let level = Preset::Potato.values();
+    let current = Values {
+        local_lights: level.local_lights,
+        ..Values::read(s)
+    };
+    if current.as_shown() == level.as_shown() {
+        s.local_lights = level.local_lights;
     }
 }
 
@@ -652,6 +675,11 @@ pub struct Values {
     pub ssr: bool,
     pub reflection_probes: u8,
     pub probe_count: u32,
+    /// RenderLocalLightCount: 8 in Low, 256 above (the featuretable's 256 to
+    /// 8192, held to the shaders' 256; a backup or a saved preset written
+    /// before it holds none: 256).
+    #[serde(default = "local_lights")]
+    pub local_lights: u16,
     pub antialiasing: u8,
     pub anisotropy: u16,
     pub sharpen: f32,
@@ -675,6 +703,10 @@ pub struct Values {
 
 fn default_projector_shadow_limit() -> u8 {
     2
+}
+
+fn local_lights() -> u16 {
+    256
 }
 
 fn tree_lod_factor() -> f32 {
@@ -760,6 +792,7 @@ impl Values {
             ssr: s.ssr,
             reflection_probes: s.reflection_probes,
             probe_count: s.probe_count,
+            local_lights: s.local_lights,
             antialiasing: s.antialiasing,
             anisotropy: s.anisotropy,
             sharpen: s.sharpen,
@@ -798,6 +831,7 @@ impl Values {
         s.ssr = self.ssr;
         s.reflection_probes = self.reflection_probes;
         s.probe_count = self.probe_count;
+        s.local_lights = self.local_lights.min(aurora_render::light_tiles::LIGHTS as u16);
         s.antialiasing = self.antialiasing;
         s.anisotropy = self.anisotropy;
         s.sharpen = self.sharpen;
@@ -987,6 +1021,32 @@ mod tests {
         assert!(read.hdr_emissive);
     }
 
+    /// RenderLocalLightCount 8 in the Legacy Viewer's Low (featuretable.txt),
+    /// 256 and more above: 256 here, the shaders' list.
+    #[test]
+    fn potato_draws_eight_local_lights_like_the_legacy_viewer() {
+        assert_eq!(Preset::Potato.values().local_lights, 8);
+        for p in [Preset::Low, Preset::Medium, Preset::High, Preset::Deluxe] {
+            assert_eq!(p.values().local_lights, 256, "{p:?}");
+        }
+        // an older file exactly on Potato (256 then) takes the level's
+        let mut s = Settings::default();
+        Preset::Potato.apply(&mut s);
+        s.local_lights = 256;
+        upgrade_local_lights(&mut s);
+        assert_eq!(Preset::matching(&s), Some(Preset::Potato));
+        // a custom profile keeps 256
+        s.local_lights = 256;
+        s.draw_distance = 300.0;
+        upgrade_local_lights(&mut s);
+        assert_eq!(s.local_lights, 256);
+        // a backup written before it holds none: 256
+        let mut json = serde_json::to_value(Preset::Potato.values()).expect("values serialize");
+        json.as_object_mut().expect("an object").remove("local_lights");
+        let read: Values = serde_json::from_value(json).expect("backup without the field");
+        assert_eq!(read.local_lights, 256);
+    }
+
     /// RenderMaxTextureResolution 512 in the Legacy Viewer's Low, 1024 in
     /// LowMid (featuretable.txt), 2048 above.
     #[test]
@@ -1053,6 +1113,7 @@ mod tests {
             assert!(a.ssao <= b.ssao);
             assert!(a.reflection_probes <= b.reflection_probes);
             assert!(a.probe_count <= b.probe_count);
+            assert!(a.local_lights <= b.local_lights);
             assert!(a.anisotropy <= b.anisotropy);
             assert!(a.avatar_physics_detail <= b.avatar_physics_detail);
             assert!(a.max_texture_resolution <= b.max_texture_resolution);

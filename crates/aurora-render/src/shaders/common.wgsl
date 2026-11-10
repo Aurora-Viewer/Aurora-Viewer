@@ -6,7 +6,15 @@ enable wgpu_binding_array;
 // viewer shaders (skyV.glsl, cloudsV/F.glsl, waterFogF.glsl), Copyright (C)
 // Linden Research, Inc., LGPL 2.1.
 
-const MAX_LIGHTS: u32 = 64u;
+const MAX_LIGHTS: u32 = 256u;
+// Words of a light set (light_tiles::WORDS): bit i % 32 of word i / 32 for
+// light i of `frame.lights`.
+const LIGHT_WORDS: u32 = 8u;
+// A light set in the frame's uniforms (light_tiles::Mask): its eight words
+// as two vec4, the stride a uniform array allows.
+struct LightMask {
+    w: array<vec4<u32>, 2>,
+};
 const CASCADES: u32 = 3u;
 const PI: f32 = 3.14159265359;
 
@@ -83,20 +91,20 @@ struct Frame {
     selection_color: vec4<f32>, // selected-face overlay, from the UI palette
     rez_gradient: array<vec4<f32>, 3>, // rez effect: the brand gradient (linear rgb), edge to trail; [0].w its look
     cascade_vp: array<mat4x4<f32>, 3>,
-    lights: array<Light, 64>,
+    lights: array<Light, MAX_LIGHTS>,
     // which of `lights` a fragment walks (light_tiles.rs, LightSets)
     light_grid: vec4<f32>,      // x, y: columns and rows per pixel
     light_forward: vec4<f32>,   // camera forward axis (fragment depth)
     light_mode: vec4<u32>,      // x: 1 = the list narrowed by the sets below, y: 1 = checked, z: the view shown instead of the image (debug_view: 1 shadows, 2 ambient occlusion), w: how the probes are walked (PROBE_WALK_*)
     // lights that cover each screen column, each screen row and each slice
-    // of depth: two sets per element, each its low then its high 32 lights
-    light_columns: array<vec4<u32>, 16>,
-    light_rows: array<vec4<u32>, 16>,
-    light_slices: array<vec4<u32>, 16>,
+    // of depth: one set per element
+    light_columns: array<LightMask, 32>,
+    light_rows: array<LightMask, 32>,
+    light_slices: array<LightMask, 32>,
     // projector of light i, for the lights whose bit is set in
-    // `light_projectors` (x: lights 0..31, y: lights 32..63)
-    projectors: array<ProjectorLight, 64>,
-    light_projectors: vec4<u32>,
+    // `light_projectors`
+    projectors: array<ProjectorLight, MAX_LIGHTS>,
+    light_projectors: LightMask,
     // shadow maps of the projectors within the configured budget: world to the
     // clip space of each, its light (-1: none), and what it leaves unlit
     // of its shadows (1 - fade)
@@ -258,15 +266,10 @@ struct SkinBind {
 // Local lights of a fragment (light_tiles.rs). In the main view, the lights
 // that cover its screen column, its screen row and its slice of depth at
 // once (bit i for `frame.lights[i]`); in the others (reflections, probe
-// faces, impostor pictures), the whole list.
+// faces, impostor pictures), the first 64 of the list (PASS_LIGHTS).
 const LIGHT_TILES: u32 = 32u;
 const LIGHT_SLICE_NEAR: f32 = 0.25;
 const LIGHT_SLICES_PER_OCTAVE: f32 = 3.0;
-
-// Set `i` of a table that holds two sets per element.
-fn light_table_set(pair: vec4<u32>, i: u32) -> vec2<u32> {
-    return select(pair.xy, pair.zw, (i & 1u) == 1u);
-}
 
 // Column, row and slice of depth of a fragment of the main view, in tables
 // of `grid.xy` columns and rows per pixel, for a camera looking along
@@ -281,29 +284,37 @@ fn tile_cell(world_pos: vec3<f32>, frag: vec2<f32>, grid: vec2<f32>, forward: ve
 }
 
 // The lights of the main view's sets for a fragment.
-fn light_set(world_pos: vec3<f32>, frag: vec2<f32>) -> vec2<u32> {
+fn light_set(world_pos: vec3<f32>, frag: vec2<f32>) -> array<u32, LIGHT_WORDS> {
     let cell = tile_cell(world_pos, frag, frame.light_grid.xy, frame.light_forward.xyz);
-    return light_table_set(frame.light_columns[cell.x >> 1u], cell.x)
-        & light_table_set(frame.light_rows[cell.y >> 1u], cell.y)
-        & light_table_set(frame.light_slices[cell.z >> 1u], cell.z);
+    let c = frame.light_columns[cell.x];
+    let r = frame.light_rows[cell.y];
+    let s = frame.light_slices[cell.z];
+    let lo = c.w[0] & r.w[0] & s.w[0];
+    let hi = c.w[1] & r.w[1] & s.w[1];
+    return array<u32, LIGHT_WORDS>(lo.x, lo.y, lo.z, lo.w, hi.x, hi.y, hi.z, hi.w);
 }
 
-// The lights a fragment walks: the point lights left in `held` (bit i for
-// `frame.lights[i]`), and its projectors. The two are walked apart, each
-// with its own loop, and the point lights' is written out in each lighting
-// function: sharing one loop and one `LightAt` with the projectors cost
-// 0.09 ms of GPU time a frame with 64 point lights and no projector.
+// The lights a fragment walks: the point lights left in `held` (bit i % 32
+// of word i / 32 for `frame.lights[i]`), and its projectors. The two are
+// walked apart, each with its own loop, and the point lights' is written
+// out in each lighting function: sharing one loop and one `LightAt` with
+// the projectors cost 0.09 ms of GPU time a frame with 64 point lights and
+// no projector. `word`: the first word that may still hold a light.
 struct LightWalk {
-    held: vec2<u32>,
-    projectors: vec2<u32>,
+    held: array<u32, LIGHT_WORDS>,
+    projectors: array<u32, LIGHT_WORDS>,
+    word: u32,
 };
 
 // Bits of the first `n` lights of the frame's list.
-fn light_first(n: u32) -> vec2<u32> {
-    let part = (1u << (n & 31u)) - 1u;
-    let lo = select(part, 0xffffffffu, n >= 32u);
-    let hi = select(select(part, 0xffffffffu, n >= 64u), 0u, n <= 32u);
-    return vec2<u32>(lo, hi);
+fn light_first(n: u32) -> array<u32, LIGHT_WORDS> {
+    var m: array<u32, LIGHT_WORDS>;
+    for (var k = 0u; k < LIGHT_WORDS; k++) {
+        let base = k * 32u;
+        let part = select(0u, (1u << ((n - base) & 31u)) - 1u, n > base);
+        m[k] = select(part, 0xffffffffu, n >= base + 32u);
+    }
+    return m;
 }
 
 fn light_walk(world_pos: vec3<f32>, frag: vec2<f32>) -> LightWalk {
@@ -312,10 +323,14 @@ fn light_walk(world_pos: vec3<f32>, frag: vec2<f32>) -> LightWalk {
     if (frame.light_mode.x != 0u) {
         held = light_set(world_pos, frag);
     }
-    let projectors = frame.light_projectors.xy;
+    let p = frame.light_projectors.w;
+    var projectors = array<u32, LIGHT_WORDS>(p[0].x, p[0].y, p[0].z, p[0].w, p[1].x, p[1].y, p[1].z, p[1].w);
     var walk: LightWalk;
-    walk.held = held & ~projectors;
-    walk.projectors = held & projectors;
+    for (var k = 0u; k < LIGHT_WORDS; k++) {
+        walk.held[k] = held[k] & ~projectors[k];
+        walk.projectors[k] = held[k] & projectors[k];
+    }
+    walk.word = 0u;
     return walk;
 }
 
@@ -323,23 +338,22 @@ fn light_walk(world_pos: vec3<f32>, frag: vec2<f32>) -> LightWalk {
 fn projector_walk(walk: LightWalk) -> LightWalk {
     var w: LightWalk;
     w.held = walk.projectors;
-    w.projectors = vec2<u32>(0u);
+    w.word = 0u;
     return w;
 }
 
 // Next light of the walk, in the order of the frame's list (the lights
 // are summed in that order); -1 at its end.
 fn next_light(walk: ptr<function, LightWalk>) -> i32 {
-    let lo = (*walk).held.x;
-    if (lo != 0u) {
-        (*walk).held.x = lo & (lo - 1u);
-        return i32(firstTrailingBit(lo));
+    for (var k = (*walk).word; k < LIGHT_WORDS; k++) {
+        let b = (*walk).held[k];
+        if (b != 0u) {
+            (*walk).held[k] = b & (b - 1u);
+            (*walk).word = k;
+            return i32(k * 32u + firstTrailingBit(b));
+        }
     }
-    let hi = (*walk).held.y;
-    if (hi != 0u) {
-        (*walk).held.y = hi & (hi - 1u);
-        return i32(32u + firstTrailingBit(hi));
-    }
+    (*walk).word = LIGHT_WORDS;
     return -1;
 }
 
@@ -350,14 +364,11 @@ fn light_tiles_checked(col: vec3<f32>, world_pos: vec3<f32>, frag: vec2<f32>) ->
     if (frame.light_mode.y == 0u) {
         return col;
     }
-    let held = light_set(world_pos, frag);
+    var held = light_set(world_pos, frag);
     let count = u32(frame.params.w);
     for (var i = 0u; i < count; i++) {
         let lt = frame.lights[i];
-        var bit = held.x >> (i & 31u);
-        if (i >= 32u) {
-            bit = held.y >> (i & 31u);
-        }
+        let bit = held[i >> 5u] >> (i & 31u);
         if (distance(lt.pos_radius.xyz, world_pos) < lt.pos_radius.w && (bit & 1u) == 0u) {
             return vec3<f32>(1.0, 0.0, 1.0);
         }

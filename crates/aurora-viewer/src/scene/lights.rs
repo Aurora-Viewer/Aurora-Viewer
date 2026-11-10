@@ -7,8 +7,10 @@
 //! mTargetShadowSpotLight), extended to an adjustable budget in Aurora.
 //!
 //! The Legacy Viewer keeps the 256 nearest lights within the draw distance
-//! (RenderLocalLightCount) and draws those in the camera's frustum. The
-//! shaders here hold 64 (one bit each in the light sets of `light_tiles`):
+//! (RenderLocalLightCount) and draws those in the camera's frustum. Aurora
+//! drops the draw-distance limit for lighting: only the shadows of
+//! projectors stay within it. The shaders here hold 256, as many (one bit
+//! each in the light sets of `light_tiles`):
 //! the lights whose sphere reaches the frustum come first, nearest first,
 //! then the others while room is left. Nearest by distance alone, the worn
 //! lights of a crowd around and behind the camera filled the list and the
@@ -23,7 +25,7 @@ use std::time::Instant;
 use uuid::Uuid;
 
 /// Size of the frame's light list (`MAX_LIGHTS` of the shaders).
-const MAX_LIGHTS: usize = 64;
+const MAX_LIGHTS: usize = aurora_render::light_tiles::LIGHTS;
 /// Pixels asked of a projected texture: LL keeps it at full size while its
 /// light is drawn; the beam of a light spreads it over whole walls.
 const PROJECTED_PIXELS: f32 = 512.0;
@@ -39,8 +41,9 @@ pub struct LightView {
     pub forward: Vec3,
     /// The main view's frustum: the lights that reach it come first.
     pub frustum: CullView,
-    /// The draw distance: lights whose sphere starts beyond it are left out
-    /// (calcNearbyLights' max_dist, RenderFarClip).
+    /// The draw distance (calcNearbyLights' max_dist, RenderFarClip): only
+    /// projectors whose sphere starts within it cast shadows; every light
+    /// enters the list, whatever its distance.
     pub range: f32,
     /// Seconds since the previous frame.
     pub dt: f32,
@@ -49,6 +52,8 @@ pub struct LightView {
     pub projector_shadow_limit: u8,
     /// Keep lights worn by other residents (Preferences › Graphics).
     pub others_attached_lights: bool,
+    /// Lights kept at most (Preferences › Graphics, RenderLocalLightCount).
+    pub max_lights: usize,
 }
 
 /// A light that may enter the frame's list.
@@ -81,10 +86,10 @@ fn gives_light(color: [f32; 4], radius: f32) -> bool {
 
 /// Keep the frame's lights: those that reach the view first, then the
 /// nearest (equal distances in object order, the order they came in).
-fn select(lights: &mut Vec<Candidate>) {
+fn select(lights: &mut Vec<Candidate>, max: usize) {
     // (unstable: a stable sort allocates a buffer as long as the list)
     lights.sort_unstable_by(|a, b| b.in_view.cmp(&a.in_view).then(a.dist.total_cmp(&b.dist)).then(a.idx.cmp(&b.idx)));
-    lights.truncate(MAX_LIGHTS);
+    lights.truncate(max.min(MAX_LIGHTS));
 }
 
 /// The light list's working buffers, kept between frames for their room.
@@ -242,10 +247,10 @@ impl Scene {
             if filtered && !light_visible(worn(world, o), world.agent_id, self.attached_lights, view.others_attached_lights) {
                 continue;
             }
+            // no draw-distance cutoff here (beyond the Legacy Viewer's
+            // calcNearbyLights): far lights stay in the list while room is
+            // left, only shadow-casting projectors keep the limit (below)
             let dist = light_dist(center, l.radius, eye);
-            if dist >= view.range {
-                continue;
-            }
             // deferred SL lights reach 1.5x their radius with half the
             // falloff (pipeline.cpp: getLightRadius() * 1.5,
             // getLightFalloff(DEFERRED_LIGHT_FALLOFF = 0.5))
@@ -280,7 +285,7 @@ impl Scene {
                 texture,
             });
         }
-        select(&mut lights);
+        select(&mut lights, view.max_lights);
         for c in &mut lights {
             if let (Some(id), Some(p)) = (c.texture, c.light.projector.as_mut()) {
                 p.texture = self.projected_texture(renderer, c.idx, id);
@@ -301,6 +306,7 @@ impl Scene {
         if view.projector_shadows {
             let mut ranked: Vec<(f32, usize)> = lights
                 .iter()
+                .filter(|c| c.dist < view.range)
                 .filter_map(|Candidate { idx, light: l, .. }| {
                     let p = l.projector?;
                     let ahead = view.forward.dot(l.position - eye) > -l.radius;
@@ -539,6 +545,7 @@ mod tests {
             projector_shadows: true,
             projector_shadow_limit: 2,
             others_attached_lights: true,
+            max_lights: MAX_LIGHTS,
         }
     }
 
@@ -566,22 +573,22 @@ mod tests {
             let view = camera(Vec3::new(128.0, 128.0, 25.0), forward);
             let side = forward.cross(Vec3::Z).normalize_or(Vec3::Y);
             let mut lights = Vec::new();
-            // 80 small worn lights within 4 m behind the camera
-            for i in 0..80 {
+            // 300 small worn lights within 4 m behind the camera
+            for i in 0..300 {
                 let p = view.eye - forward * (3.0 + (i % 8) as f32 * 0.1) + side * ((i / 8) as f32 * 0.3 - 1.5);
                 lights.push(candidate(&view, i, p, 0.5));
             }
             // 10 lights 5 to 20 m in front of it
             for i in 0..10 {
                 let p = view.eye + forward * (5.0 + i as f32 * 1.5) + side * (i as f32 - 5.0) * 0.5;
-                lights.push(candidate(&view, 100 + i, p, 3.0));
+                lights.push(candidate(&view, 1000 + i, p, 3.0));
             }
-            select(&mut lights);
+            select(&mut lights, MAX_LIGHTS);
             assert_eq!(lights.len(), MAX_LIGHTS);
             let kept: Vec<usize> = lights.iter().map(|c| c.idx).collect();
-            assert_eq!(kept[..10], (100..110).collect::<Vec<_>>(), "looking along {forward}");
+            assert_eq!(kept[..10], (1000..1010).collect::<Vec<_>>(), "looking along {forward}");
             // the room left goes to the nearest of the others
-            assert!(lights[10..].iter().all(|c| !c.in_view && c.idx < 100));
+            assert!(lights[10..].iter().all(|c| !c.in_view && c.idx < 1000));
             assert!(lights[10..].windows(2).all(|w| w[0].dist <= w[1].dist));
         }
     }

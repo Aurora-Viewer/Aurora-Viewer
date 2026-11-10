@@ -597,6 +597,16 @@ fn light(cx: &mut Cx) {
             tr!("ui-options-others-attached-lights-help"),
             &field!(others_attached_lights),
         );
+        cx.row(
+            tr!("ui-options-local-light-count"),
+            tr!("ui-options-local-light-count-help"),
+            &field!(local_lights),
+            |ui, s| {
+                let max = aurora_render::light_tiles::LIGHTS as u16;
+                ui.add(egui::Slider::new(&mut s.local_lights, 0..=max).trailing_fill(true))
+                    .changed()
+            },
+        );
     });
     cx.group(tr!("ui-options-shadows"), |cx| {
         let p = cx.p;

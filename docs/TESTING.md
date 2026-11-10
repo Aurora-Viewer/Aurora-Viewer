@@ -4945,13 +4945,13 @@ both open states and the selection count. Capture at frame 620.
   head height, spaced 1.6 m apart on the crowd's plaza and beyond,
   with a 3 m radius (4.5 m once extended like Firestorm's deferred
   lights): the "face lights" of a crowd and the lamps of a club. The
-  renderer takes 64 (`lights=` in `perf summary`): those that reach the
+  renderer takes 256 (`lights=` in `perf summary`): those that reach the
   view first, nearest first, then the nearest of the others. With
   `AURORA_DEMO_POS="129,134"` they are in front of the camera, 9 m away and
   more; with `"140,134"`, the camera is in the middle of them. Used to measure
   `AURORA_LIGHT_TILES`. With 150 and `"147,144"` (at night,
   `AURORA_DEMO_TOD=4`), the camera stands in the grid and about 100 of them
-  reach the view: the list holds 64 of those (#1032: the 64 nearest all
+  reach the view: the list holds all of them (it held 64 of those, #1032: the 64 nearest all
   around the camera held only 50, and the pools of light halfway across
   the ground went out).
 - **Probe selection (#446):** combine `AURORA_DEMO_PROBES=1` with
@@ -10921,7 +10921,7 @@ What the inventory must show with these scenarios:
   thread, `aurora-render/src/light_tiles.rs`), in the order of the list:
   same image, the lights that reach the fragment are added up as before and
   in the same order.
-  - `0`: each fragment walks the whole list (up to 64 lights), as before,
+  - `0`: each fragment walks the whole list (up to 256 lights), as before,
     to compare.
   - `alt` (with `AURORA_PROFILE=1`): the old walk during one `perf summary`
     line out of three, the new one during the other two, in the same
@@ -10933,7 +10933,8 @@ What the inventory must show with these scenarios:
   - `check`: the shaders paint in magenta any fragment that a light of the
     list reaches without being in its sets. There must be none, wherever
     one looks (expensive: each fragment walks the whole list again).
-  - Reflections, probe faces and impostor photos keep the whole list.
+  - Reflections, probe faces and impostor photos walk the first 64 lights
+    of the list, whole for each fragment.
   - In demo: `AURORA_DEMO_LIGHTS=64` with `AURORA_DEMO_CROWD=40`.
 - **`AURORA_BLEND_EARLY_DISCARD=0|alt`**: by default, a fragment of a
   transparent face whose alpha is below 0.004 is discarded before lighting
