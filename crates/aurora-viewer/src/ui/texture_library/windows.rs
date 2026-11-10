@@ -176,7 +176,10 @@ impl LibraryUi {
                 draft.metallic_factor = 0.35;
                 draft.roughness_factor = 0.6;
                 draft.double_sided = true;
-                if matches!(mode, "preview-controls-local" | "preview-controls-local-picker") {
+                if matches!(
+                    mode,
+                    "preview-controls-local" | "preview-controls-local-picker" | "preview-controls-local-apply"
+                ) {
                     editor.demo_local_map(world, mode.ends_with("-picker"));
                 }
             }
@@ -207,6 +210,14 @@ impl LibraryUi {
         self.windows
             .iter()
             .any(|window| window.editor.as_ref().is_some_and(|editor| editor.saving == Some(request)))
+    }
+    pub(crate) fn demo_material_draft(&self, item: Uuid) -> Option<aurora_assets::PbrMaterial> {
+        self.windows
+            .iter()
+            .find(|window| window.id == item)?
+            .editor
+            .as_ref()
+            .map(|editor| (*editor.draft).clone())
     }
     pub(crate) fn begin_material_save(&mut self, item: Uuid, request: Uuid) -> bool {
         let Some(editor) = self.windows.iter_mut().find(|w| w.id == item).and_then(|w| w.editor.as_mut()) else {
@@ -503,10 +514,7 @@ impl LibraryUi {
                     ui.label(aurora_i18n::tr!("ui-inventory-dialogs-this-document-has-unsaved-changes"));
                     ui.horizontal(|ui| {
                         if widgets::default_button(ui.add_enabled(
-                            material_editor::can_edit(world, &item)
-                                && editor.dirty()
-                                && editor.saving.is_none()
-                                && !material_has_local_maps(&editor.draft, world),
+                            material_editor::can_edit(world, &item) && editor.dirty() && editor.saving.is_none(),
                             egui::Button::new(aurora_i18n::tr!("common-save")),
                         ))
                         .clicked()

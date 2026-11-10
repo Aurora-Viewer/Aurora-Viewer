@@ -240,10 +240,7 @@ impl Editor {
                     egui::TextEdit::singleline(b).desired_width((ui.available_width() - 130.0).max(0.0))
                 });
                 submit = ui
-                    .add_enabled(
-                        !local && !name.trim().is_empty(),
-                        egui::Button::new(aurora_i18n::tr!("common-save")),
-                    )
+                    .add_enabled(!name.trim().is_empty(), egui::Button::new(aurora_i18n::tr!("common-save")))
                     .clicked();
                 cancel = ui.button(aurora_i18n::tr!("common-cancel")).clicked();
             });
@@ -259,7 +256,7 @@ impl Editor {
         }
         ui.horizontal_wrapped(|ui| {
             let save = ui.add_enabled(
-                editable && self.dirty() && self.saving.is_none() && !local,
+                editable && self.dirty() && self.saving.is_none(),
                 egui::Button::new(aurora_i18n::tr!("common-save")),
             );
             ui.ctx()
@@ -273,7 +270,7 @@ impl Editor {
             }
             if ui
                 .add_enabled(
-                    rules::held(&world.inventory, item) & rules::COPY != 0 && self.saving.is_none() && !local,
+                    rules::held(&world.inventory, item) & rules::COPY != 0 && self.saving.is_none(),
                     egui::Button::new(aurora_i18n::tr!("common-save-as")),
                 )
                 .clicked()
@@ -484,7 +481,7 @@ impl Editor {
         self.picker.forget_local_asset(id);
         for (slot, map) in maps.into_iter().enumerate() {
             if map == Some(id) {
-                *map_mut(Arc::make_mut(&mut self.draft), slot) = crate::imports::maps::ids(&self.original)[slot];
+                *map_mut(Arc::make_mut(&mut self.draft), slot) = crate::imports::maps::ids(&self.original)[slot].filter(|old| *old != id);
             }
         }
     }
@@ -709,7 +706,7 @@ mod tests {
     }
 
     #[test]
-    fn local_material_maps_block_both_save_buttons_until_replaced() {
+    fn local_material_maps_save_roundtrip_reopen_and_save_as_without_uploading() {
         let mut ui = crate::ui::texture_picker::tests::PickerUi::new();
         let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         let local = Uuid::from_u128(90);
@@ -717,24 +714,60 @@ mod tests {
         let item = aurora_net::inventory::InvItem {
             owner: world.agent_id,
             owner_mask: rules::FULL,
+            name: "Local material".into(),
             ..Default::default()
         };
         let mut editor = Editor::new(Uuid::from_u128(1), Arc::new(PbrMaterial::default()));
-        editor.set_map(0, local);
+        let maps = std::array::from_fn::<_, 4, _>(|slot| Some(Uuid::from_u128(90 + slot as u128)));
+        for (slot, map) in maps.into_iter().enumerate() {
+            world
+                .local_assets
+                .insert(map.expect("map"), (format!("Local map {slot}.png"), false));
+            editor.set_map(slot, map.expect("local map"));
+        }
         let mut actions = Vec::new();
         let draw = |editor: &mut Editor, actions: &mut Vec<Action>, ctx: &egui::Context, p: &Palette| {
             egui::Window::new("Material").show(ctx, |ui| editor.footer(ui, p, &item, &world, actions));
         };
         ui.settle(|ctx, p| draw(&mut editor, &mut actions, ctx, p));
-        for label in [aurora_i18n::tr!("common-save"), aurora_i18n::tr!("common-save-as")] {
-            ui.click(label, |ctx, p| draw(&mut editor, &mut actions, ctx, p));
-            assert!(actions.is_empty());
-            assert!(editor.save_as.is_none());
-        }
-        editor.set_map(0, aurora_prim::te::BLANK_TEXTURE);
-        ui.settle(|ctx, p| draw(&mut editor, &mut actions, ctx, p));
         ui.click(aurora_i18n::tr!("common-save"), |ctx, p| draw(&mut editor, &mut actions, ctx, p));
-        assert!(matches!(actions.as_slice(), [Action::SaveMaterial { name: None, .. }]));
+        let [Action::SaveMaterial { material, name: None, .. }] = actions.as_slice() else {
+            panic!("Save submits the material with its local maps")
+        };
+        let saved = aurora_assets::parse_material_asset(&material.encode_asset().expect("encode")).expect("decode");
+        assert_eq!(crate::imports::maps::ids(&saved), maps);
+        editor.begin_save(Uuid::from_u128(200));
+        let asset = Uuid::from_u128(201);
+        editor.finish_save(&Ok(aurora_net::inventory::InvItem {
+            asset_id: asset,
+            ..item.clone()
+        }));
+        assert!(!editor.dirty());
+        let mut materials = crate::scene::meshes::MaterialStreamer::new(std::env::temp_dir());
+        materials.insert(asset, saved);
+        let reopened = Editor::new(asset, materials.get(&asset).expect("saved material"));
+        assert_eq!(crate::imports::maps::ids(&reopened.draft), maps);
+        actions.clear();
+        ui.settle(|ctx, p| draw(&mut editor, &mut actions, ctx, p));
+        ui.click(aurora_i18n::tr!("common-save-as"), |ctx, p| draw(&mut editor, &mut actions, ctx, p));
+        assert_eq!(editor.save_as.as_deref(), Some("Local material"));
+        assert!(world.local_asset_requests.is_empty(), "saving never uploads texture pixels");
+    }
+
+    #[test]
+    fn removing_a_saved_local_map_does_not_restore_it_from_the_original_snapshot() {
+        let local = Uuid::from_u128(90);
+        let mut editor = Editor::new(
+            Uuid::from_u128(1),
+            Arc::new(PbrMaterial {
+                base_color_texture: Some(local),
+                ..Default::default()
+            }),
+        );
+        editor.open_map(0, Some(local));
+        editor.forget_local_asset(local);
+        assert_eq!(editor.draft.base_color_texture, None);
+        assert!(!editor.picker.open);
     }
     #[test]
     fn pbr_bom_choices_preview_cancel_and_save_the_magic_uuid_in_every_map() {

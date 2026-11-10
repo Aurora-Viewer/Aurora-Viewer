@@ -89,9 +89,12 @@ its virtual list to the selected row on opening or following a new face (#2362).
 
 `ui/texture_library/material_editor.rs` accepts local textures in all four map
 pickers, using the shared local texture store and revisioned preview cache.
-Local IDs are confined to the draft: save controls and the application command
-require uploaded maps. Removing a local file restores matching draft maps and
-retires any picker snapshot that could restore the removed ID.
+Like LLMaterialEditor::getEncodedAsset / finishInventoryUpload, Save and Save As
+retain local map IDs in the material asset without uploading their pixels.
+The persistent local registry restores the same IDs, so saved materials applied
+to objects resolve the local images too. Local slot arrivals/removal reuse
+TextureStreamer's reslotted queue to rebuild affected material users; pixel-only
+reloads retain their GPU slots. Removing a file also retires picker snapshots.
 
 `world/objects/local_appearance.rs` combines local surface, normal, specular, PBR map and projector bindings per face. The render state, appearance registry and removal path retain every channel independently; scene records read these bindings without changing simulator texture entries or material overrides.
 

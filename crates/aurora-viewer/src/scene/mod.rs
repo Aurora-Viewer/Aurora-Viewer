@@ -3152,11 +3152,11 @@ impl Scene {
         }
     }
 
-    /// Textures that went without a slot (a full texture table) and have one
-    /// now (`TextureStreamer::take_reslotted`): the objects and avatars
-    /// whose faces draw them still hold the white texture, and are built
-    /// again. One pass over the objects, only in a frame that follows such
-    /// a round (a few times a second at most, and only after a full table).
+    /// Textures given a slot after a full table, or rebound to/from local
+    /// files (`TextureStreamer::take_reslotted`): the objects and avatars
+    /// whose faces still hold the previous slot are built again. One pass
+    /// over the objects only after a slot transition, never for pixel-only
+    /// local reloads.
     fn rebuild_reslotted(&mut self, world: &mut World) {
         let mut ids = std::mem::take(&mut self.reslotted_tmp);
         self.textures.take_reslotted(&mut ids);
@@ -6215,6 +6215,49 @@ mod layer_rank_tests {
 mod tests {
     use super::*;
     use aurora_net::NetEvent;
+
+    #[test]
+    fn saved_material_local_maps_rebuild_the_object_after_local_slot_restoration() {
+        let avatars = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(avatars.clone());
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let objects: Vec<_> = world
+            .objects
+            .iter()
+            .filter(|(_, o)| !o.is_avatar())
+            .take(2)
+            .map(|(idx, _)| idx)
+            .collect();
+        let id = Uuid::from_u128(900);
+        let asset = Uuid::from_u128(901);
+        let material = aurora_assets::PbrMaterial {
+            base_color_texture: Some(id),
+            ..Default::default()
+        };
+        let bytes = material.encode_asset().expect("saved material");
+        let loaded = aurora_assets::parse_material_asset(&bytes).expect("reopened material");
+        let mut scene = Scene::new(std::env::temp_dir(), avatars);
+        scene.materials.insert(asset, loaded);
+        scene.gpu.resize_with(world.objects.slots.len(), Default::default);
+        scene.gpu[objects[0]].tex_ids = vec![scene.materials.get(&asset).expect("material").base_color_texture.expect("local ID")];
+        scene.gpu[objects[1]].tex_ids = vec![Uuid::from_u128(902)];
+        for &idx in &objects {
+            let object = world.objects.get_mut_untracked(idx).expect("object");
+            object.material_dirty = false;
+            object.render.needs_records = false;
+        }
+        scene.textures.register_local_image(id, 20, AlphaKind::Opaque, false);
+        scene.textures.register_local_image(id, 30, AlphaKind::Opaque, false);
+        scene.rebuild_reslotted(&mut world);
+        assert!(world.objects.get(objects[0]).expect("material user").render.needs_records);
+        assert!(!world.objects.get(objects[1]).expect("unrelated object").render.needs_records);
+        assert_eq!(
+            scene.materials.get(&asset).expect("material unchanged").base_color_texture,
+            Some(id)
+        );
+    }
 
     #[test]
     fn texture_animation_moves_its_face_or_every_face_for_all_sides() {

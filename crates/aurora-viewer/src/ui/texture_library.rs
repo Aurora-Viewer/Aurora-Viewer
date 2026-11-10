@@ -35,8 +35,7 @@ pub const ICON: &str = "stack-2-filled";
 pub const VERTICAL: &str = "texture_library_vertical";
 pub const HORIZONTAL: &str = "texture_library_horizontal";
 
-/// Local map IDs only resolve in this viewer. Stricter than
-/// LLMaterialEditor::saveIfNeeded: require uploaded maps before saving an asset.
+/// Saved local map IDs resolve through this viewer's persistent local registry.
 pub(crate) fn material_has_local_maps(material: &aurora_assets::PbrMaterial, world: &World) -> bool {
     crate::imports::maps::ids(material)
         .into_iter()
