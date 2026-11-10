@@ -553,7 +553,11 @@ impl App {
                     ctx,
                     &library::preview_window_id(item),
                     egui::pos2(24.0 + index as f32 * 660.0, 60.0),
-                    egui::vec2(620.0, 720.0),
+                    if mode.ends_with("-narrow") {
+                        egui::vec2(280.0, 520.0)
+                    } else {
+                        egui::vec2(620.0, 720.0)
+                    },
                 );
             }
             if self.frame_count == 700 {

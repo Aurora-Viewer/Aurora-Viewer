@@ -99,27 +99,12 @@ impl Editor {
         path: &str,
         actions: &mut Vec<Action>,
     ) {
-        // Allocate the chosen window size once. Scroll contents and wrapped
-        // footer rows must not feed a larger minimum back into the floater.
-        let (bounds, _) = ui.allocate_exact_size(ui.available_size().max(Vec2::ZERO), egui::Sense::hover());
-        let mut footer = ui.new_child(
-            egui::UiBuilder::new()
-                .id_salt("material_footer")
-                .max_rect(bounds)
-                .layout(egui::Layout::bottom_up(egui::Align::Min)),
-        );
-        footer.set_clip_rect(bounds.intersect(ui.clip_rect()));
+        // Measure the complete wrapped footer before sizing the scroll area.
+        // Draw it first so its clicks commit text fields in this frame.
         let first_action = actions.len();
-        self.footer(&mut footer, p, item, world, actions);
-        let body = egui::Rect::from_min_max(
-            bounds.min,
-            egui::pos2(
-                bounds.right(),
-                (footer.min_rect().top() - ui.spacing().item_spacing.y).max(bounds.top()),
-            ),
-        );
-        let mut content = ui.new_child(egui::UiBuilder::new().id_salt("material_content").max_rect(body));
-        content.set_clip_rect(body.intersect(ui.clip_rect()));
+        let (mut content, footer) = widgets::above_footer(ui);
+        let body = content.max_rect();
+        footer.show(ui, |ui| self.footer(ui, p, item, world, actions));
         let editable = can_edit(world, item);
         let mut value = (*self.draft).clone();
         let output = egui::ScrollArea::vertical()
@@ -220,40 +205,18 @@ impl Editor {
     }
     fn footer(&mut self, ui: &mut egui::Ui, p: &Palette, item: &aurora_net::inventory::InvItem, world: &World, actions: &mut Vec<Action>) {
         let editable = can_edit(world, item);
-        let local = material_has_local_maps(&self.draft, world);
-        if self.saving.is_some() {
-            ui.label(aurora_i18n::tr!("resource-preview-saving"));
+        let save_as_open = self.save_as.is_some();
+        let status = if self.saving.is_some() {
+            RichText::new(aurora_i18n::tr!("resource-preview-saving"))
         } else if !self.message.is_empty() {
-            ui.label(&self.message);
-        } else if local {
-            ui.label(RichText::new(aurora_i18n::tr!("resource-preview-local-maps")).small().color(p.warn));
+            RichText::new(&self.message)
+        } else if material_has_local_maps(&self.draft, world) {
+            RichText::new(aurora_i18n::tr!("resource-preview-local-maps")).small().color(p.warn)
         } else if self.dirty() {
-            ui.label(RichText::new(aurora_i18n::tr!("resource-preview-unsaved")).small().color(p.warn));
+            RichText::new(aurora_i18n::tr!("resource-preview-unsaved")).small().color(p.warn)
         } else {
-            ui.label(RichText::new(aurora_i18n::tr!("resource-preview-no-fee")).small().color(p.muted));
-        }
-        if let Some(name) = &mut self.save_as {
-            let mut submit = false;
-            let mut cancel = false;
-            ui.horizontal_wrapped(|ui| {
-                widgets::restricted_text_field(ui, true, name, widgets::TextPolicy::Ascii, |b, ui| {
-                    egui::TextEdit::singleline(b).desired_width((ui.available_width() - 130.0).max(0.0))
-                });
-                submit = ui
-                    .add_enabled(!name.trim().is_empty(), egui::Button::new(aurora_i18n::tr!("common-save")))
-                    .clicked();
-                cancel = ui.button(aurora_i18n::tr!("common-cancel")).clicked();
-            });
-            if submit {
-                actions.push(Action::SaveMaterial {
-                    item: item.id,
-                    material: (*self.draft).clone(),
-                    name: self.save_as.take(),
-                });
-            } else if cancel {
-                self.save_as = None;
-            }
-        }
+            RichText::new(aurora_i18n::tr!("resource-preview-no-fee")).small().color(p.muted)
+        };
         ui.horizontal_wrapped(|ui| {
             let save = ui.add_enabled(
                 editable && self.dirty() && self.saving.is_none(),
@@ -289,6 +252,29 @@ impl Editor {
                 self.picker.open = false;
             }
         });
+        if save_as_open && let Some(name) = &mut self.save_as {
+            let mut submit = false;
+            let mut cancel = false;
+            ui.horizontal_wrapped(|ui| {
+                widgets::restricted_text_field(ui, true, name, widgets::TextPolicy::Ascii, |b, ui| {
+                    egui::TextEdit::singleline(b).desired_width((ui.available_width() - 130.0).max(0.0))
+                });
+                submit = ui
+                    .add_enabled(!name.trim().is_empty(), egui::Button::new(aurora_i18n::tr!("common-save")))
+                    .clicked();
+                cancel = ui.button(aurora_i18n::tr!("common-cancel")).clicked();
+            });
+            if submit {
+                actions.push(Action::SaveMaterial {
+                    item: item.id,
+                    material: (*self.draft).clone(),
+                    name: self.save_as.take(),
+                });
+            } else if cancel {
+                self.save_as = None;
+            }
+        }
+        ui.add(egui::Label::new(status).wrap());
     }
     fn map_row(
         &mut self,

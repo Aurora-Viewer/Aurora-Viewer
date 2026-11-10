@@ -178,7 +178,10 @@ impl LibraryUi {
                 draft.double_sided = true;
                 if matches!(
                     mode,
-                    "preview-controls-local" | "preview-controls-local-picker" | "preview-controls-local-apply"
+                    "preview-controls-local"
+                        | "preview-controls-local-picker"
+                        | "preview-controls-local-apply"
+                        | "preview-controls-local-narrow"
                 ) {
                     editor.demo_local_map(world, mode.ends_with("-picker"));
                 }

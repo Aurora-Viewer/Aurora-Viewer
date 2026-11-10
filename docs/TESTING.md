@@ -5236,6 +5236,9 @@ the map. These modes are offline; inventory save/copy acknowledgements are simul
 `preview-controls-local` marks the synthetic base-colour map as a local file:
 check its file name, eye badge and the local-texture explanation. Save / Save As
 remain enabled with the ordinary material permissions.
+`preview-controls-local-narrow` uses a 280 x 520 editor: Cancel wraps to the
+next button row and the full local-texture note stays underneath. Repeat with
+`AURORA_TEXT_SIZE=2` to check the enlarged text.
 `preview-controls-local-picker` also opens its picker on Local with the file
 selected. With `AURORA_DEMO_ACTIONS=sit` to seed the editable cube and
 `AURORA_WINDOW_SIZE=2560,1440` to keep it visible beside the editor,
