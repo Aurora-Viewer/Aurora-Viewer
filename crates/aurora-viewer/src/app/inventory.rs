@@ -903,6 +903,14 @@ impl App {
                 self.outfit_snapshot(id);
                 return;
             }
+            crate::world::appearance::Action::OutfitPortrait(id) => {
+                self.open_outfit_portrait(id, super::outfit_portrait::Kind::Studio);
+                return;
+            }
+            crate::world::appearance::Action::OutfitPhotoMode(id) => {
+                self.open_outfit_portrait(id, super::outfit_portrait::Kind::Viewfinder);
+                return;
+            }
             _ => {}
         }
         if self.appearance_ui.pending.is_some() {

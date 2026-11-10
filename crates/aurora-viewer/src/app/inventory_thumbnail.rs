@@ -223,6 +223,22 @@ impl App {
         self.inventory_images.photo = Some((request, false));
     }
 
+    /// The outfit's auto portrait, confirmed (`app::outfit_portrait`): its
+    /// pixels go the gallery snapshot's way, reduced to the free square
+    /// thumbnail. False when another is still on its way.
+    pub(super) fn outfit_photo_pixels(&mut self, outfit: Uuid, (w, h): (u32, u32), pixels: Vec<u8>) -> bool {
+        if self.inventory_images.outfit.is_some() {
+            self.appearance_ui.message = aurora_i18n::tr!("app-inventory-thumbnail-a-snapshot-is-already-in-progress").into();
+            return false;
+        }
+        let request = Uuid::new_v4();
+        self.appearance_ui.message.clear();
+        self.inventory_images.outfit = Some(request);
+        self.inventory_images.requests.insert(request, outfit);
+        self.prepare_inventory_photo(request, w, h, pixels);
+        true
+    }
+
     /// Every frame: the outfit's picture starts once no photo is being
     /// drawn; a job that ended without its pixels says so.
     pub(super) fn poll_outfit_photo(&mut self, renderer: &aurora_render::Renderer) {

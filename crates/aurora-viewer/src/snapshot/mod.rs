@@ -16,6 +16,7 @@ pub mod knobs;
 pub mod light;
 pub mod looks;
 pub mod luts;
+pub mod portrait;
 pub mod profile;
 pub mod quality;
 pub mod reel;

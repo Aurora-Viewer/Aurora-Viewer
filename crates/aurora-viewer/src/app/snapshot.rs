@@ -51,10 +51,31 @@ pub(super) enum Purpose {
     Postcard,
     /// An outfit's picture, for the image request (#2716).
     Outfit(Uuid),
+    /// The outfit's auto portrait or its square photo mode
+    /// (`app::outfit_portrait`): the window's small preview, or the photo
+    /// shown for confirmation.
+    Portrait {
+        preview: bool,
+    },
+}
+
+impl Purpose {
+    /// A preview, drawn again and again: not logged, not "busy".
+    fn quiet(&self) -> bool {
+        matches!(self, Purpose::Preview | Purpose::Portrait { preview: true })
+    }
+
+    /// An outfit's picture: square, never the interface, the HUDs or the
+    /// photo quality.
+    fn outfit(&self) -> bool {
+        matches!(self, Purpose::Outfit(_) | Purpose::Portrait { .. })
+    }
 }
 
 /// The side of an outfit's picture as it is drawn, reduced to 256 afterwards.
-const OUTFIT_PHOTO_SIDE: u32 = 512;
+pub(super) const OUTFIT_PHOTO_SIDE: u32 = 512;
+/// The side of the auto portrait's live preview.
+const PORTRAIT_PREVIEW_SIDE: u32 = 256;
 
 /// A photo on its way to the inventory or the profile feed.
 enum Upload {
@@ -751,7 +772,7 @@ impl App {
             return;
         };
         let render_ms = job.started.elapsed().as_millis();
-        if job.purpose != Purpose::Preview {
+        if !job.purpose.quiet() {
             log::info!(
                 "photo: {} x {} drawn in {} part(s), {render_ms} ms",
                 job.size.0,
@@ -786,12 +807,17 @@ impl App {
                 self.inventory_images.photo = None;
                 self.prepare_inventory_photo(request, job.size.0, job.size.1, job.pixels);
             }
+            Purpose::Portrait { preview } => self.outfit_portrait_drawn(preview, job.size, job.pixels, job.cutout),
         }
     }
 
     /// The size of the photo for the chosen destination: the disk's
     /// settings, or the inventory's size before it becomes a texture.
     pub(super) fn photo_size(&self, window: (u32, u32)) -> (u32, u32) {
+        // the outfit's photo mode: its square
+        if self.outfit_photo_mode() {
+            return (OUTFIT_PHOTO_SIDE, OUTFIT_PHOTO_SIDE);
+        }
         self.photo_size_for(self.snapshots.ui.destination, window)
     }
 
@@ -1080,16 +1106,21 @@ impl App {
     /// Start a photo of the destination's size.
     pub(super) fn photo_job(&mut self, purpose: Purpose, renderer: &Renderer) {
         let window = renderer.size();
-        let outfit = matches!(purpose, Purpose::Outfit(_));
+        let outfit = purpose.outfit();
         let full = if outfit {
             (OUTFIT_PHOTO_SIDE, OUTFIT_PHOTO_SIDE)
         } else {
             self.photo_size(window)
         };
         let s = &self.settings.snapshot;
-        let size = if purpose == Purpose::Preview {
+        let size = if purpose.quiet() {
             let (w, h) = full;
-            let scale = (PREVIEW_SIDE as f32 / w.max(h) as f32).min(1.0);
+            let side = if purpose == Purpose::Preview {
+                PREVIEW_SIDE
+            } else {
+                PORTRAIT_PREVIEW_SIDE
+            };
+            let scale = (side as f32 / w.max(h) as f32).min(1.0);
             (
                 ((w as f32 * scale).round() as u32).max(16),
                 ((h as f32 * scale).round() as u32).max(16),
@@ -1098,7 +1129,7 @@ impl App {
             full
         };
         // the photo quality draws a photo (not its preview) at twice its size
-        let supersample = if purpose != Purpose::Preview && !outfit && self.settings.photo_held.is_some() {
+        let supersample = if !purpose.quiet() && !outfit && self.settings.photo_held.is_some() {
             snapshot::quality::supersample(size)
         } else {
             1
@@ -1107,12 +1138,12 @@ impl App {
         // the choosing in the scene stops: its outlines are not in the
         // photo, which shows what is chosen (the scene follows before the
         // photo's frame is drawn)
-        if purpose != Purpose::Preview {
+        if !purpose.quiet() {
             self.world.photo_isolation.set_picking(false);
         }
         self.snapshots.gpu_cost.new_photo();
         let tiles = self.photo_tiles(renderer, size);
-        if purpose != Purpose::Preview {
+        if !purpose.quiet() {
             log::info!(
                 "photo: {} x {} planned in {} part(s), at most {} Mpx a pass (memory and GPU time; {} bytes a pixel, {})",
                 size.0,
@@ -1132,6 +1163,9 @@ impl App {
         let interface = !outfit && s.interface && snapshot::same_proportions(full, window);
         // (with the ambient occlusion on: GTAO may be forced over its method)
         let context = ContextPass::plan(size, tiles.len(), self.settings.ssao > 0);
+        // (the outfit's photo mode keeps the viewfinder's looks: the
+        // square shows them)
+        let looks = !outfit || (matches!(purpose, Purpose::Portrait { .. }) && self.outfit_photo_mode());
         self.snapshots.job = Some(Job {
             purpose,
             size,
@@ -1153,7 +1187,7 @@ impl App {
             context,
             paused: Default::default(),
         });
-        if outfit {
+        if !looks {
             return;
         }
         let stack = self.settings.snapshot.looks.clone();
@@ -1301,7 +1335,7 @@ impl App {
     /// A photo is being taken, saved or uploaded.
     pub(super) fn photo_busy(&self) -> bool {
         let s = &self.snapshots;
-        s.saving.is_some() || s.upload.is_some() || s.detail_wait.is_some() || s.job.as_ref().is_some_and(|j| j.purpose != Purpose::Preview)
+        s.saving.is_some() || s.upload.is_some() || s.detail_wait.is_some() || s.job.as_ref().is_some_and(|j| !j.purpose.quiet())
     }
 
     /// Upload prices: the account's benefits (texture_upload_cost, by area
@@ -1736,6 +1770,8 @@ impl App {
     pub(super) fn photo_action(&mut self, action: Action, renderer: &Renderer) {
         match action {
             Action::Refresh => self.snapshots.preview_wanted = true,
+            // the outfit's photo mode: its own photo, shown for confirmation
+            Action::Take if self.outfit_photo_mode() => self.outfit_portrait_shoot(),
             Action::Take => {
                 self.snapshots.quiet = false;
                 // the photo quality waits for the textures in view to load
@@ -2070,7 +2106,7 @@ LUT_3D_SIZE {n}
                 Upload::Postcard { encoded: true, .. } => (0.85, aurora_i18n::tr!("photo-email-sending").to_owned()),
             })
         } else {
-            s.job.as_ref().filter(|j| j.purpose != Purpose::Preview).map(|j| {
+            s.job.as_ref().filter(|j| !j.purpose.quiet()).map(|j| {
                 let f = 0.5 * j.next as f32 / j.tiles.len().max(1) as f32;
                 let what = if j.tiles.len() > 1 {
                     aurora_i18n::tr!("photo-rendering-tiles", tile = j.next + 1, count = j.tiles.len()).to_owned()
@@ -2086,6 +2122,11 @@ LUT_3D_SIZE {n}
     /// (AURORA_DEMO_SNAPSHOT=classic the Legacy floater, viewfinder… the
     /// viewfinder, any other scenario the panel).
     pub(super) fn photo_style(&self) -> crate::settings::PhotoWindowStyle {
+        // the outfit's photo mode is the viewfinder's square, whatever the
+        // window chosen
+        if self.outfit_photo_mode() {
+            return crate::settings::PhotoWindowStyle::Aurora;
+        }
         self.snapshots
             .demo
             .as_ref()
@@ -2217,6 +2258,7 @@ LUT_3D_SIZE {n}
             if !self.snapshots.reel.quick.is_open() {
                 self.viewfinder_ui(ctx, p, projector, renderer, &view);
             }
+            self.outfit_photo_mode_ui(ctx, p);
             drop(view);
             self.env_ui = env_ui;
         } else if self.snapshots.ui.full_frame && self.panels.snapshot {
@@ -2253,7 +2295,7 @@ LUT_3D_SIZE {n}
                     Upload::Postcard { encoded: true, .. } => (0.85, aurora_i18n::tr!("photo-email-sending").to_owned()),
                 })
             } else {
-                s.job.as_ref().filter(|j| j.purpose != Purpose::Preview).map(|j| {
+                s.job.as_ref().filter(|j| !j.purpose.quiet()).map(|j| {
                     let f = 0.5 * j.next as f32 / j.tiles.len().max(1) as f32;
                     let what = if j.tiles.len() > 1 {
                         aurora_i18n::tr!("photo-rendering-tiles", tile = j.next + 1, count = j.tiles.len()).to_owned()
@@ -2506,6 +2548,12 @@ LUT_3D_SIZE {n}
     fn photo_light(&mut self) {
         if !self.panels.snapshot {
             self.snapshots.ui.light = snapshot::light::PhotoLight::default();
+            // the outfit's auto portrait in its studio light
+            if let Some(studio) = self.outfit_portrait_light() {
+                self.world.eep.set_photo(studio);
+                self.scene.attached_lights = self.snapshots.ui.light.attached_lights;
+                return;
+            }
             // (the user's own fades back in)
             self.world.eep.close_photo();
         }
