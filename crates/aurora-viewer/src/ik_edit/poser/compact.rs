@@ -378,6 +378,10 @@ impl Editor {
         }
         floater.actions = actions;
         let mut anchor = None;
+        // a bone inside the body chosen in the full window's list is posed
+        // there alone (`refresh_other_bones`): not here, where it would have
+        // no marker nor handle
+        self.drop_inner_selection(&world.avatar_lib.rig);
         floater.show(ctx, p, open, |ui| {
             anchor = Some(egui::pos2(ui.max_rect().right(), ui.cursor().top()));
             ui.set_width(BODY_W);
@@ -406,6 +410,15 @@ impl Editor {
             }
         });
         self.poser.options_anchor = anchor;
+    }
+
+    /// Unselect a bone inside the body (`inner_bone`), as a click beside
+    /// does: the compact window poses only what it shows.
+    pub(super) fn drop_inner_selection(&mut self, rig: &Rig) {
+        if self.selected.is_some_and(|b| inner_bone(&rig.canonical_names[b])) {
+            self.selected = None;
+            self.poser.unselected = true;
+        }
     }
 
     /// The gear's popover: only the options the compact window does not
@@ -728,7 +741,13 @@ impl Editor {
         ui.painter().rect_filled(row, row_corners, p.field.gamma_multiply(0.55));
         let Some(bone) = self.selected else {
             let hint = if self.poser.group == OTHER_GROUP && self.poser.other_used.is_empty() {
-                aurora_i18n::text("poser-other-none")
+                // a mesh may use the bones inside the body: they are the
+                // full window's (`refresh_other_bones`)
+                aurora_i18n::text(if self.poser.other_inner_used.is_empty() {
+                    "poser-other-none"
+                } else {
+                    "poser-other-inner"
+                })
             } else {
                 aurora_i18n::text("poser-pick-joint")
             };

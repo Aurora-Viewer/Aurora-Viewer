@@ -12155,6 +12155,7 @@ poser-values = Values
 poser-part-wings = Wings
 poser-part-tail = Tail
 poser-other-none = No worn mesh uses these bones.
+poser-other-inner = The bones inside the body (spine, groin, skull) are in the full window ⤢.
 poser-more-people = { $count ->
     [one] { $count } more person
    *[other] { $count } more people

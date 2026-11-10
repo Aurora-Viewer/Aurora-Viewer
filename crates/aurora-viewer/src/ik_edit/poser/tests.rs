@@ -1985,3 +1985,84 @@ fn the_reset_greys_out_once_posing_is_stopped() {
         "stopped: the reset would change nothing (pose_operation leaves a stopped pose)"
     );
 }
+
+#[test]
+fn from_the_other_tab_ctrl_over_the_chest_offers_the_body_past_the_hidden_spine() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (world, mut editor) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = Frame::new(&world).unwrap();
+    let proj = projector(frame.joints[rig.pelvis].w_axis.truncate());
+    let p = crate::theme::Theme::default().palette();
+    // the Other tab, nothing worn: the spine is hidden, but mSpine3 sits on
+    // mChest and would count as the tab's own, nearer than the body's
+    editor.poser.group = OTHER_GROUP;
+    editor.refresh_other_bones(rig);
+    assert!(!editor.poser_bone_visible("mSpine3"));
+    let chest = proj.project(frame.joints[rig.names["mChest"]].w_axis.truncate()).unwrap().0;
+    let mut frames = Frames::new();
+    let mut hint = world_hints::Hint::None;
+    frames.run(
+        vec![
+            egui::Event::ModifiersChanged(egui::Modifiers::CTRL),
+            egui::Event::PointerMoved(chest),
+        ],
+        |ui| {
+            hint = editor.world_hint(ui.ctx(), &p, &world, &proj, &frame, true);
+        },
+    );
+    assert!(
+        matches!(hint, world_hints::Hint::Group(j) if group(&rig.canonical_names[j]) == 0),
+        "the Body is offered: {hint:?}"
+    );
+}
+
+#[test]
+fn the_handles_give_way_to_ctrl_only_over_a_part_or_avatar_it_shows() {
+    let (_world, mut editor) = fixture();
+    editor.poser.active = true;
+    // Ctrl with nothing to pick under the pointer: the handles keep it (its
+    // temporary rotation, a handle's click in the photo mode)
+    editor.poser.ctrl_hint = false;
+    assert!(!editor.poser_ctrl_picks(egui::Modifiers::CTRL));
+    // a part or an avatar shown under the pointer last frame: they give way
+    editor.poser.ctrl_hint = true;
+    assert!(editor.poser_ctrl_picks(egui::Modifiers::CTRL));
+    assert!(editor.poser_ctrl_picks(egui::Modifiers::COMMAND));
+    // no Ctrl: the handles, always
+    assert!(!editor.poser_ctrl_picks(egui::Modifiers::NONE));
+}
+
+#[test]
+fn a_bone_inside_the_body_is_listed_in_the_full_window_and_dropped_by_the_compact_one() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (world, mut editor) = selected_fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = editor.editor_frame(&world).unwrap();
+    let proj = projector(frame.joints[rig.pelvis].w_axis.truncate());
+    let p = crate::theme::Theme::default().palette();
+    let skull = rig.names["mSkull"];
+    // hair rigged to the skull: in the full window's Other list
+    editor.poser.rigged = [skull].into();
+    editor.poser.window_override = Some(false);
+    editor.refresh_other_bones(rig);
+    editor.select_pose_group(OTHER_GROUP, rig, &frame);
+    assert!(editor.poser.other_inner_used.contains("mSkull") && !editor.poser_bone_visible("mSkull"));
+    let mut frames = Frames::new();
+    crate::ui::widgets::place_floater(&frames.ctx, "poser", egui::pos2(30.0, 30.0), egui::vec2(880.0, 760.0));
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        texts = frames.run(Vec::new(), |ui| editor.show(ui.ctx(), &p, &world, &proj));
+    }
+    assert!(
+        texts.iter().any(|t| t.source == bones::label("mSkull")),
+        "the full window lists the skull"
+    );
+    // chosen there, then the compact window: dropped, as a click beside
+    editor.selected = Some(skull);
+    editor.poser.window_override = Some(true);
+    for _ in 0..2 {
+        frames.run(Vec::new(), |ui| editor.show(ui.ctx(), &p, &world, &proj));
+    }
+    assert_eq!(editor.selected, None, "no bone inside the body in the compact window");
+}

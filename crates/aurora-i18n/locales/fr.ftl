@@ -12151,6 +12151,7 @@ poser-values = Valeurs
 poser-part-wings = Ailes
 poser-part-tail = Queue
 poser-other-none = Aucun maillage porté n'utilise ces os.
+poser-other-inner = Les os à l'intérieur du corps (colonne, aine, crâne) sont dans la grande fenêtre ⤢.
 poser-more-people = { $count ->
     [one] { $count } autre personne
    *[other] { $count } autres personnes

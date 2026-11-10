@@ -12124,6 +12124,7 @@ poser-values = 値
 poser-part-wings = 翼
 poser-part-tail = 尻尾
 poser-other-none = 装着中のメッシュはこれらのボーンを使っていません。
+poser-other-inner = 体の内側のボーン（背骨・股・頭蓋骨）は大きいウィンドウ⤢にあります。
 poser-more-people = ほか{ $count }人
 
 ik-edit-title = ＩＫ編集

@@ -132,6 +132,14 @@ pub(super) struct State {
     /// A joint, shaft or gizmo handle was under the pointer, or dragged, in
     /// the last frame: the next press is the poser's, not a HUD's.
     pointer_owned: bool,
+    /// This frame, the selected joint's handles were under the pointer (no
+    /// drag), and a marker or shaft was: what `world_hint` may look under
+    /// with Ctrl (the handles, never a marker).
+    gizmo_hover: bool,
+    marker_hover: bool,
+    /// Last frame, Ctrl showed another part or avatar under the pointer:
+    /// the handles let it through this frame (`poser_ctrl_picks`).
+    ctrl_hint: bool,
     /// The joints edited over every subject, counted as the window shows:
     /// what a close that stops the pose would lose.
     edited_total: usize,
@@ -292,11 +300,13 @@ impl Editor {
         self.poser.other_used = outer;
         self.poser.other_inner_used = inner;
     }
-    /// Ctrl held in the poser with the parts or the avatars on: it picks
-    /// something else in the world, so the selected joint's handles let the
-    /// pointer through (they keep a drag already begun).
+    /// Ctrl held in the poser over another part or avatar it shows (the
+    /// last frame's hint, `ctrl_hint`): the Ctrl + click picks it, so the
+    /// selected joint's handles let the pointer through. Elsewhere they keep
+    /// Ctrl (its temporary rotation, a handle's click in the photo mode),
+    /// and a drag already begun keeps them.
     pub(in crate::ik_edit) fn poser_ctrl_picks(&self, modifiers: egui::Modifiers) -> bool {
-        self.poser.active && (modifiers.ctrl || modifiers.command) && (self.poser.part_hints || self.poser.avatar_hints)
+        self.poser.active && (modifiers.ctrl || modifiers.command) && self.poser.ctrl_hint
     }
     /// The subject posed now (you, an animesh or a resident).
     pub fn poser_subject(&self) -> Uuid {

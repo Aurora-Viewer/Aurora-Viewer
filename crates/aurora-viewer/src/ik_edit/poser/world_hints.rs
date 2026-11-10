@@ -137,10 +137,14 @@ impl Editor {
             return Hint::None;
         };
         let over_ui = ctx.layer_id_at(pointer).is_some_and(|l| l.order > egui::Order::Background);
+        // with Ctrl, it looks under the selected joint's handles (they give
+        // way next frame if a part or avatar is there), never under a marker
+        let ctrl_held = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
+        let under_handles = ctrl_held && self.poser.gizmo_hover && !self.poser.marker_hover;
         if !markers_on
             || !(self.poser.part_hints || self.poser.avatar_hints)
             || over_ui
-            || self.poser.pointer_owned
+            || (self.poser.pointer_owned && !under_handles)
             || self.drag.is_some()
             || self.gizmo.dragging()
             || self.poser.scale_gizmo.dragging()
@@ -165,7 +169,11 @@ impl Editor {
         let groups: Vec<usize> = rig.canonical_names.iter().map(|n| group(n)).collect();
         let keys: Vec<usize> = rig.canonical_names.iter().map(|n| part_key(n)).collect();
         let offer: Vec<bool> = (0..rig.len()).map(|j| offerable(keys[j], self.poser.rigged.contains(&j))).collect();
+        // the open tab's joints count as its own only when shown: the hidden
+        // spine sits exactly on the torso and the chest, and would hold the
+        // body back from the Other tab
         let joints: Vec<(usize, egui::Pos2)> = (0..rig.len())
+            .filter(|j| groups[*j] != self.poser.group || self.poser_bone_visible(&rig.canonical_names[*j]))
             .filter_map(|j| proj.project(frame.joints[j].w_axis.truncate()).map(|(at, _)| (j, at)))
             .collect();
         // only while Ctrl is held: without it the part neither shows nor

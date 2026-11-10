@@ -45,6 +45,8 @@ impl Editor {
     }
     pub(in crate::ik_edit) fn show_poser(&mut self, ctx: &egui::Context, p: &Palette, world: &World, proj: &Projector) {
         self.poser.pointer_owned = false;
+        self.poser.gizmo_hover = false;
+        self.poser.marker_hover = false;
         if !ctx.input(|i| i.pointer.primary_down()) {
             self.drag = None;
             if !ctx.input(|i| i.pointer.primary_released()) {
@@ -76,6 +78,8 @@ impl Editor {
             // avatar hides the subject's own markers, and its preview must
             // stay for the click that poses it
             let hint = self.world_hint(ctx, p, world, proj, &frame, self.poser.markers);
+            // the handles give way to it next frame (`poser_ctrl_picks`)
+            self.poser.ctrl_hint = hint != world_hints::Hint::None;
             // markers on, even hidden "On hover" away from the avatar: a
             // click on the ground still unselects
             self.click_beside(ctx, world, hint, self.poser.markers);
@@ -194,6 +198,7 @@ impl Editor {
             self.poser.scale_gizmo.cancel();
             self.show_gizmo(ctx, p, proj, frame, rig)
         };
+        self.poser.gizmo_hover = gizmo_owns;
         if ctx.input(|i| i.modifiers.alt) {
             return;
         }
@@ -245,6 +250,7 @@ impl Editor {
                 })
                 .inner;
             self.poser.pointer_owned |= response.contains_pointer();
+            self.poser.marker_hover |= response.contains_pointer();
             if response.clicked() || response.drag_started() {
                 self.select_pose_bone(joint, rig, frame);
             }
@@ -276,6 +282,7 @@ impl Editor {
         let Source::Bone(bone) = segment.source else { return };
         // From the geometry: the shaft's area only exists once hovered.
         self.poser.pointer_owned = true;
+        self.poser.marker_hover = true;
         let (_, t) = crate::build::geom::seg_distance(pointer, segment.a.0, segment.b.0);
         let at = segment.a.0.lerp(segment.b.0, t);
         let response = egui::Area::new(egui::Id::unique(("poser-segment", bone)))
