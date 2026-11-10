@@ -766,14 +766,31 @@ pub(super) fn card(
     out
 }
 
-/// Script prompts are windows for Close All in both notification styles.
-/// Dismissing one uses the existing ignore-without-reply response.
-pub(super) fn close_script_prompt(ctx: &egui::Context, n: &Notification) -> bool {
-    if !matches!(n.data, Data::Dialog { .. } | Data::TextBox { .. }) {
+/// The windows a scripted object opens that the Legacy Viewer closes with
+/// Close Window: its `LLScriptFloater` types -- `ScriptDialog` (llDialog
+/// and llTextBox), `LoadWebPage` (llLoadURL), `ObjectGiveItem` and
+/// `OwnObjectGiveItem` (llGiveInventory). A permission question
+/// (`ScriptQuestion`) is a toast there, not a floater, and stays out.
+fn script_window(n: &Notification) -> bool {
+    matches!(
+        n.data,
+        Data::Dialog { .. } | Data::TextBox { .. } | Data::Url(_) | Data::Inventory { task: true, .. }
+    )
+}
+
+/// Script windows are windows for Close Window while they show as toasts and
+/// for Close All wherever they show. Dismissing one uses the existing
+/// close/ignore response.
+pub(super) fn close_script_prompt(ctx: &egui::Context, n: &Notification, window: bool) -> bool {
+    if !script_window(n) {
         return false;
     }
     let id = egui::Id::NULL.with(("script_prompt", n.id));
-    super::close_key::shown_extra(ctx, id);
+    if window {
+        super::close_key::shown_prompt(ctx, id, n.id);
+    } else {
+        super::close_key::shown_extra(ctx, id);
+    }
     super::close_key::take(ctx, id)
 }
 
@@ -1032,7 +1049,7 @@ pub fn show(
                                 ui.spacing_mut().item_spacing.y = 4.0;
                                 // newest first
                                 for n in list.list.iter_mut().rev().filter(|n| !n.transient) {
-                                    if close_script_prompt(ctx, n) {
+                                    if close_script_prompt(ctx, n, false) {
                                         answers.push((n.id, Response::Dismiss));
                                         continue;
                                     }
@@ -1069,7 +1086,7 @@ pub fn show(
                 let (ids, behind) = shown_toasts(list, nui, dnd);
                 for id in ids.into_iter().rev() {
                     if let Some(n) = list.list.iter_mut().find(|n| n.id == id) {
-                        if close_script_prompt(ctx, n) {
+                        if close_script_prompt(ctx, n, true) {
                             answers.push((id, Response::Dismiss));
                             nui.toasts.retain(|(t, _)| *t != id);
                             continue;
@@ -1121,6 +1138,64 @@ fn script_rows(count: usize) -> impl Iterator<Item = std::ops::Range<usize>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Close Window reaches the Legacy Viewer's script floaters, and only
+    /// those: an object's inventory offer and a URL too, but not a resident's
+    /// offer nor a permission question (toasts there).
+    #[test]
+    fn script_windows_match_the_legacy_viewers_script_floaters() {
+        let note = |data| Notification {
+            id: 1,
+            time: std::time::SystemTime::UNIX_EPOCH,
+            kind: Kind::Script,
+            title: String::new(),
+            body: String::new(),
+            name_links: Vec::new(),
+            read: false,
+            data,
+            text: String::new(),
+            transient: false,
+            quiet: false,
+            maturity: 0,
+        };
+        let sender = ([127, 0, 0, 1], 1).into();
+        let offer = |task, object| Data::Inventory {
+            from: Uuid::nil(),
+            tx: Uuid::nil(),
+            asset_type: 6,
+            object,
+            task,
+            task_offer: None,
+        };
+        for data in [
+            Data::Dialog {
+                sender,
+                object: Uuid::nil(),
+                object_name: String::new(),
+                own_object: false,
+                channel: 0,
+                buttons: Vec::new(),
+            },
+            Data::TextBox {
+                sender,
+                object: Uuid::nil(),
+                channel: 0,
+            },
+            Data::Url("https://example.invalid".into()),
+            offer(true, Uuid::nil()),
+        ] {
+            assert!(script_window(&note(data)));
+        }
+        assert!(!script_window(&note(offer(false, Uuid::from_u128(7)))));
+        assert!(!script_window(&note(Data::Permissions {
+            task: Uuid::nil(),
+            item: Uuid::nil(),
+            questions: 0,
+            region: Default::default(),
+            experience: None,
+            caution: None,
+        })));
+    }
 
     #[test]
     fn bell_right_click_turns_do_not_disturb_over_and_keeps_the_rest() {
