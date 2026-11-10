@@ -401,6 +401,8 @@ struct ObjMedia {
     /// once per version, like LLVOVolume::processUpdateMessage asks once per
     /// media change, so a failed GET is not asked again until the next one.
     asked_version: Option<u32>,
+    /// A texture entry temporarily lost media flags while cached media remains.
+    flags_lost_since: Option<Instant>,
     data: Option<ObjectMediaData>,
     hud: bool,
     on_other_avatar: bool,
@@ -435,6 +437,8 @@ pub struct MediaManager {
     pack_dir: Option<std::path::PathBuf>,
     pub impls: Vec<MediaImpl>,
     objects: HashMap<Uuid, ObjMedia>,
+    /// Objects recently visible on screen, retained for their next request.
+    recently_shown: HashMap<Uuid, Instant>,
     client: MediaDataClient,
     last_create: Instant,
     pub focus: Option<MediaKey>,
@@ -491,6 +495,7 @@ impl Default for MediaManager {
             pack_dir: None,
             impls: Vec::new(),
             objects: HashMap::new(),
+            recently_shown: HashMap::new(),
             client: MediaDataClient::default(),
             last_create: Instant::now() - CREATE_DELAY,
             focus: None,

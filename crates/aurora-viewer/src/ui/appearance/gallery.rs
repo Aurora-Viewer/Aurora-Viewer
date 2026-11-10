@@ -276,7 +276,8 @@ pub(super) fn context_menu(
                 rules.folder,
             )
         {
-            st.open(0, true);
+            // back from editing, the gallery or the list it came from
+            st.open(st.tab, true);
         }
         if menu::item_if(
             ui,
