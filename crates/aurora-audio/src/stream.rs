@@ -15,9 +15,9 @@ use parking_lot::Mutex;
 use symphonia::core::io::ReadOnlySource;
 
 use crate::decode::{DecodeStream, hint_for_content_type, hint_for_path};
-use crate::http;
 use crate::icy::{IcyReader, TitleSlot};
 use crate::mixer::{Channel, Command, ENGINE_SAMPLE_RATE, PcmSource};
+use crate::playlist;
 use crate::resample::{Resampler, to_stereo};
 
 /// State of the parcel music stream.
@@ -263,12 +263,12 @@ fn stream_thread(url: String, stop: Arc<AtomicBool>, status: StatusHandle, cmd_t
 }
 
 fn play_once(url: &str, stop: &Arc<AtomicBool>, status: &StatusHandle, cmd_tx: &Sender<Command>) -> Result<EndReason, String> {
-    let resp = http::open(url, stop).map_err(|e| e.to_string())?;
+    let resp = playlist::open(url, stop)?;
     let hint = resp
         .content_type
         .as_deref()
         .and_then(hint_for_content_type)
-        .or_else(|| url::Url::parse(url).ok().and_then(|u| hint_for_path(u.path())));
+        .or_else(|| hint_for_path(resp.url.path()));
     let title: TitleSlot = Arc::new(Mutex::new(None));
     let reader: Box<dyn std::io::Read + Send + Sync> = match resp.metaint {
         Some(mi) => Box::new(IcyReader::new(resp.body, mi, title.clone())),
@@ -366,6 +366,7 @@ fn should_log_starvation(starved: &AtomicBool, last_log: &mut Option<Instant>, n
 mod tests {
     use super::*;
     use crate::decode::tests::mp3_silence;
+    use crate::http;
     use std::io::{Read, Write};
     use std::net::TcpListener;
 
