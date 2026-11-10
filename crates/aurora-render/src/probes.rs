@@ -75,7 +75,7 @@ struct ProbeHeader {
 /// The probe sets of a view, as `ProbeSet` in common.wgsl holds them: laid
 /// out as the lights' (`light_tiles::LightSets`), but each set is
 /// [`WORDS`] words (bit `i` of word `i / 32`: probe `i` of the frame's
-/// list), one per column, row and slice. The lights' sets hold 64.
+/// list), one per column, row and slice, as the lights' sets.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub struct ProbeSets {

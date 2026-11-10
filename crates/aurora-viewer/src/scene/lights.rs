@@ -9,7 +9,8 @@
 //! The Legacy Viewer keeps the 256 nearest lights within the draw distance
 //! (RenderLocalLightCount) and draws those in the camera's frustum. Aurora
 //! drops the draw-distance limit for lighting: only the shadows of
-//! projectors stay within it. The shaders here hold 64 (one bit each in the light sets of `light_tiles`):
+//! projectors stay within it. The shaders here hold 256, as many (one bit
+//! each in the light sets of `light_tiles`):
 //! the lights whose sphere reaches the frustum come first, nearest first,
 //! then the others while room is left. Nearest by distance alone, the worn
 //! lights of a crowd around and behind the camera filled the list and the
@@ -24,7 +25,7 @@ use std::time::Instant;
 use uuid::Uuid;
 
 /// Size of the frame's light list (`MAX_LIGHTS` of the shaders).
-const MAX_LIGHTS: usize = 64;
+const MAX_LIGHTS: usize = aurora_render::light_tiles::LIGHTS;
 /// Pixels asked of a projected texture: LL keeps it at full size while its
 /// light is drawn; the beam of a light spreads it over whole walls.
 const PROJECTED_PIXELS: f32 = 512.0;
@@ -569,22 +570,22 @@ mod tests {
             let view = camera(Vec3::new(128.0, 128.0, 25.0), forward);
             let side = forward.cross(Vec3::Z).normalize_or(Vec3::Y);
             let mut lights = Vec::new();
-            // 80 small worn lights within 4 m behind the camera
-            for i in 0..80 {
+            // 300 small worn lights within 4 m behind the camera
+            for i in 0..300 {
                 let p = view.eye - forward * (3.0 + (i % 8) as f32 * 0.1) + side * ((i / 8) as f32 * 0.3 - 1.5);
                 lights.push(candidate(&view, i, p, 0.5));
             }
             // 10 lights 5 to 20 m in front of it
             for i in 0..10 {
                 let p = view.eye + forward * (5.0 + i as f32 * 1.5) + side * (i as f32 - 5.0) * 0.5;
-                lights.push(candidate(&view, 100 + i, p, 3.0));
+                lights.push(candidate(&view, 1000 + i, p, 3.0));
             }
             select(&mut lights);
             assert_eq!(lights.len(), MAX_LIGHTS);
             let kept: Vec<usize> = lights.iter().map(|c| c.idx).collect();
-            assert_eq!(kept[..10], (100..110).collect::<Vec<_>>(), "looking along {forward}");
+            assert_eq!(kept[..10], (1000..1010).collect::<Vec<_>>(), "looking along {forward}");
             // the room left goes to the nearest of the others
-            assert!(lights[10..].iter().all(|c| !c.in_view && c.idx < 100));
+            assert!(lights[10..].iter().all(|c| !c.in_view && c.idx < 1000));
             assert!(lights[10..].windows(2).all(|w| w[0].dist <= w[1].dist));
         }
     }

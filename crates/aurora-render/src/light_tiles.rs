@@ -1,6 +1,6 @@
 //! Local lights by screen tile and depth.
 //!
-//! Every lit fragment used to walk the frame's whole light list (up to 64
+//! Every lit fragment used to walk the frame's whole light list (up to 256
 //! lights: the face lights of a crowd fill it) to find the two or three
 //! whose sphere holds it. The main view is cut in `TILES` columns, `TILES`
 //! rows and `SLICES` slices of depth; a light, seen from the camera, covers
@@ -33,7 +33,11 @@ pub const SLICES: usize = 32;
 pub const SLICE_NEAR: f32 = 0.25;
 pub const SLICES_PER_OCTAVE: f32 = 3.0;
 /// Lights a set can hold: the frame's light list (`MAX_LIGHTS`).
-pub const LIGHTS: usize = 64;
+pub const LIGHTS: usize = 256;
+/// Words of a light set: bit `i % 32` of word `i / 32` for light `i`.
+pub const WORDS: usize = LIGHTS / 32;
+/// A set of lights of the frame's list.
+pub type Mask = [u32; WORDS];
 /// Pixels added around a light's rectangle: a fragment is lit at the centre
 /// of its pixel, and the column and row of a pixel are found in single
 /// precision.
@@ -71,9 +75,9 @@ impl LightCulling {
 }
 
 /// The light sets of a view, as the frame uniforms hold them (`Frame` in
-/// common.wgsl). A set is two words, the low then the high 32 lights (bit
-/// `i`: light `i` of the frame's list); the columns, rows and slices hold
-/// two sets per element.
+/// common.wgsl). A set is [`WORDS`] words (bit `i % 32` of word `i / 32`:
+/// light `i` of the frame's list), one per column, row and slice, laid out
+/// as the probes' sets (`probes::ProbeSets`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub struct LightSets {
@@ -86,9 +90,9 @@ pub struct LightSets {
     /// light after the other, as before); y: 1 to check them
     /// ([`LightCulling::Check`]).
     pub mode: [u32; 4],
-    pub columns: [[u32; 4]; TILES / 2],
-    pub rows: [[u32; 4]; TILES / 2],
-    pub slices: [[u32; 4]; SLICES / 2],
+    pub columns: [Mask; TILES],
+    pub rows: [Mask; TILES],
+    pub slices: [Mask; SLICES],
 }
 
 impl LightSets {
@@ -101,36 +105,27 @@ impl LightSets {
     /// extent says.
     #[cfg(test)]
     fn hold_everywhere(&mut self, i: usize) {
-        let (word, bit) = (i / 32 % 2, 1u32 << (i % 32));
-        for pair in self.columns.iter_mut().chain(&mut self.rows).chain(&mut self.slices) {
-            pair[word] |= bit;
-            pair[2 + word] |= bit;
+        let (word, bit) = (i / 32, 1u32 << (i % 32));
+        for set in self.columns.iter_mut().chain(&mut self.rows).chain(&mut self.slices) {
+            set[word] |= bit;
         }
     }
 
     /// The members a fragment at pixel (`x`, `y`) and `depth` walks, as the
     /// shaders find them (`light_set`, `probe_word` in common.wgsl).
     #[cfg(test)]
-    pub(crate) fn at(&self, x: f32, y: f32, depth: f32) -> u64 {
+    pub(crate) fn at(&self, x: f32, y: f32, depth: f32) -> Mask {
         if self.mode[0] == 0 {
-            return u64::MAX;
+            return [u32::MAX; WORDS];
         }
-        let set = |table: &[[u32; 4]], i: usize| {
-            let pair = table[i / 2];
-            let (lo, hi) = if i.is_multiple_of(2) {
-                (pair[0], pair[1])
-            } else {
-                (pair[2], pair[3])
-            };
-            lo as u64 | (hi as u64) << 32
-        };
         let tile = |px: f32, per_px: f32| ((px * per_px) as usize).min(TILES - 1);
-        set(&self.columns, tile(x, self.grid[0])) & set(&self.rows, tile(y, self.grid[1])) & set(&self.slices, slice_of(depth))
+        let (c, r, s) = (
+            self.columns[tile(x, self.grid[0])],
+            self.rows[tile(y, self.grid[1])],
+            self.slices[slice_of(depth)],
+        );
+        std::array::from_fn(|w| c[w] & r[w] & s[w])
     }
-}
-
-fn words(set: u64) -> [u32; 2] {
-    [set as u32, (set >> 32) as u32]
 }
 
 /// The slice of a depth, as `light_walk` finds it in the shaders.
@@ -237,30 +232,25 @@ pub(crate) fn reach(view: Mat4, proj: Mat4, eye: Vec3, forward: Vec3, size: [f32
 pub fn bin(view: Mat4, proj: Mat4, eye: Vec3, size: [u32; 2], lights: &[PointLight]) -> LightSets {
     let size = [size[0].max(1) as f32, size[1].max(1) as f32];
     let forward = view_forward(view);
-    let (mut columns, mut rows, mut slices) = ([0u64; TILES], [0u64; TILES], [0u64; SLICES]);
+    let mut out = LightSets::whole();
     for (i, light) in lights.iter().take(LIGHTS).enumerate() {
         let Some(reach) = reach(view, proj, eye, forward, size, light.position, light.radius) else {
             continue;
         };
-        for (sets, [from, to]) in [(&mut columns[..], reach.x), (&mut rows[..], reach.y), (&mut slices[..], reach.z)] {
+        let (word, bit) = (i / 32, 1u32 << (i % 32));
+        for (sets, [from, to]) in [
+            (&mut out.columns[..], reach.x),
+            (&mut out.rows[..], reach.y),
+            (&mut out.slices[..], reach.z),
+        ] {
             for set in &mut sets[from..=to] {
-                *set |= 1 << i;
+                set[word] |= bit;
             }
         }
     }
-    let pack = |sets: &[u64]| -> [[u32; 4]; TILES / 2] {
-        std::array::from_fn(|i| {
-            let ([a, b], [c, d]) = (words(sets[2 * i]), words(sets[2 * i + 1]));
-            [a, b, c, d]
-        })
-    };
-    let mut out = LightSets::whole();
     out.mode[0] = 1;
     out.grid = [TILES as f32 / size[0], TILES as f32 / size[1], 0.0, 0.0];
     out.forward = forward.extend(0.0).to_array();
-    out.columns = pack(&columns);
-    out.rows = pack(&rows);
-    out.slices = pack(&slices);
     out
 }
 
@@ -268,9 +258,6 @@ pub fn bin(view: Mat4, proj: Mat4, eye: Vec3, size: [u32; 2], lights: &[PointLig
 pub(crate) fn view_forward(view: Mat4) -> Vec3 {
     view.inverse().transform_vector3(Vec3::NEG_Z).normalize_or(Vec3::X)
 }
-
-// (the three tables share `pack`)
-const _: () = assert!(TILES == SLICES && TILES.is_multiple_of(2));
 
 #[cfg(test)]
 mod tests {
@@ -295,19 +282,22 @@ mod tests {
         }
     }
 
-    fn set(table: &[[u32; 4]], i: usize) -> u64 {
-        let pair = table[i / 2];
-        let (lo, hi) = if i.is_multiple_of(2) {
-            (pair[0], pair[1])
-        } else {
-            (pair[2], pair[3])
-        };
-        lo as u64 | (hi as u64) << 32
+    /// The set of the lights `members`.
+    fn mask(members: &[usize]) -> Mask {
+        let mut m = [0; WORDS];
+        for &i in members {
+            m[i / 32] |= 1 << (i % 32);
+        }
+        m
+    }
+
+    fn holds(m: &Mask, i: usize) -> bool {
+        m[i / 32] & 1 << (i % 32) != 0
     }
 
     /// The lights of a fragment at pixel (`x`, `y`) and `depth`, as
     /// `light_walk` finds them in the shaders.
-    fn set_at(sets: &LightSets, x: f32, y: f32, depth: f32) -> u64 {
+    fn set_at(sets: &LightSets, x: f32, y: f32, depth: f32) -> Mask {
         sets.at(x, y, depth)
     }
 
@@ -316,11 +306,12 @@ mod tests {
         let (view, proj) = camera();
         // a light behind the camera reaches nothing of the view
         let mut sets = bin(view, proj, Vec3::ZERO, SIZE, &vec![light(Vec3::new(-10.0, 0.0, 0.0), 2.0); 40]);
-        assert_eq!(set_at(&sets, 300.0, 200.0, 12.0), 0);
+        assert_eq!(set_at(&sets, 300.0, 200.0, 12.0), mask(&[]));
         sets.hold_everywhere(0);
         sets.hold_everywhere(39);
+        sets.hold_everywhere(255);
         for (x, y, depth) in [(0.5, 0.5, 0.01), (300.0, 200.0, 12.0), (1279.5, 719.5, 5000.0)] {
-            assert_eq!(set_at(&sets, x, y, depth), 1 | 1 << 39, "pixel {x},{y}, depth {depth}");
+            assert_eq!(set_at(&sets, x, y, depth), mask(&[0, 39, 255]), "pixel {x},{y}, depth {depth}");
         }
     }
 
@@ -329,7 +320,7 @@ mod tests {
             seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
             (seed >> 8) as f32 / (1 << 24) as f32
         };
-        (0..LIGHTS)
+        (0..64)
             .map(|_| {
                 let p = Vec3::new(rnd() * 60.0 - 15.0, rnd() * 40.0 - 20.0, rnd() * 20.0 - 10.0);
                 light(p, 0.2 + rnd() * rnd() * 12.0)
@@ -363,11 +354,11 @@ mod tests {
                         let p = eye + dir * (depth / dir.dot(forward));
                         let found = set_at(&sets, fx, fy, forward.dot(p - eye));
                         fragments += 1;
-                        walked += found.count_ones();
+                        walked += found.iter().map(|w| w.count_ones()).sum::<u32>();
                         for (i, l) in lights.iter().enumerate() {
                             if p.distance(l.position) < l.radius {
                                 reached += 1;
-                                assert!(found & (1 << i) != 0, "light {i} ({l:?}) missing at pixel {x},{y}, depth {depth}");
+                                assert!(holds(&found, i), "light {i} ({l:?}) missing at pixel {x},{y}, depth {depth}");
                             }
                         }
                         depth *= 1.07;
@@ -386,12 +377,12 @@ mod tests {
         // 20 m ahead, 1 m of radius: a small disc at the centre of the screen
         let sets = bin(view, proj, Vec3::ZERO, SIZE, &[light(Vec3::new(20.0, 0.0, 0.0), 1.0)]);
         let centre = (SIZE[0] as f32 / 2.0, SIZE[1] as f32 / 2.0);
-        assert_eq!(set_at(&sets, centre.0, centre.1, 20.0), 1);
-        assert_eq!(set_at(&sets, centre.0, centre.1, 10.0), 0);
-        assert_eq!(set_at(&sets, centre.0, centre.1, 40.0), 0);
-        assert_eq!(set_at(&sets, 10.0, 10.0, 20.0), 0);
-        assert_eq!(set_at(&sets, SIZE[0] as f32 - 10.0, centre.1, 20.0), 0);
-        let held = |table: &[[u32; 4]]| (0..TILES).filter(|&i| set(table, i) != 0).count();
+        assert_eq!(set_at(&sets, centre.0, centre.1, 20.0), mask(&[0]));
+        assert_eq!(set_at(&sets, centre.0, centre.1, 10.0), mask(&[]));
+        assert_eq!(set_at(&sets, centre.0, centre.1, 40.0), mask(&[]));
+        assert_eq!(set_at(&sets, 10.0, 10.0, 20.0), mask(&[]));
+        assert_eq!(set_at(&sets, SIZE[0] as f32 - 10.0, centre.1, 20.0), mask(&[]));
+        let held = |table: &[Mask]| table.iter().filter(|m| m.iter().any(|&w| w != 0)).count();
         assert!((2..=6).contains(&held(&sets.columns)), "{} columns", held(&sets.columns));
         assert!((2..=6).contains(&held(&sets.rows)), "{} rows", held(&sets.rows));
         assert!((1..=2).contains(&held(&sets.slices)), "{} slices", held(&sets.slices));
@@ -419,18 +410,18 @@ mod tests {
         );
         let (w, h) = (SIZE[0] as f32, SIZE[1] as f32);
         for (x, y) in [(w / 2.0, 3.0), (w - 1.0, h - 1.0), (w - 1.0, 1.0)] {
-            assert_eq!(set_at(&sets, x, y, 0.2), 0b0001, "pixel {x},{y}");
-            assert_eq!(set_at(&sets, x, y, 5.0), 0b0001, "pixel {x},{y}");
-            assert_eq!(set_at(&sets, x, y, 12.0), 0, "pixel {x},{y}");
+            assert_eq!(set_at(&sets, x, y, 0.2), mask(&[0]), "pixel {x},{y}");
+            assert_eq!(set_at(&sets, x, y, 5.0), mask(&[0]), "pixel {x},{y}");
+            assert_eq!(set_at(&sets, x, y, 12.0), mask(&[]), "pixel {x},{y}");
         }
-        assert_eq!(set_at(&sets, 1.0, h / 2.0, 1.0), 0b0011);
+        assert_eq!(set_at(&sets, 1.0, h / 2.0, 1.0), mask(&[0, 1]));
     }
 
     #[test]
     fn the_whole_list_for_the_other_views() {
         // nothing narrows it: any fragment walks the whole list
         assert_eq!(LightSets::whole().mode[0], 0);
-        assert_eq!(set_at(&LightSets::whole(), 500.0, 300.0, 7.0), u64::MAX);
+        assert_eq!(set_at(&LightSets::whole(), 500.0, 300.0, 7.0), [u32::MAX; WORDS]);
     }
 
     /// A list longer than the sets can hold is cut like the frame's.
@@ -439,7 +430,7 @@ mod tests {
         let (view, proj) = camera();
         let lights = vec![light(Vec3::new(20.0, 0.0, 0.0), 1.0); LIGHTS + 5];
         let sets = bin(view, proj, Vec3::ZERO, SIZE, &lights);
-        assert_eq!(set_at(&sets, SIZE[0] as f32 / 2.0, SIZE[1] as f32 / 2.0, 20.0), u64::MAX);
+        assert_eq!(set_at(&sets, SIZE[0] as f32 / 2.0, SIZE[1] as f32 / 2.0, 20.0), [u32::MAX; WORDS]);
     }
 
     /// The slices of the shaders: `LIGHT_SLICE_NEAR`, `LIGHT_SLICES_PER_OCTAVE`.

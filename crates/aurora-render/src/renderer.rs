@@ -39,7 +39,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 pub const CASCADES: usize = 3;
-const MAX_LIGHTS: usize = 64;
+const MAX_LIGHTS: usize = light_tiles::LIGHTS;
+/// Lights walked in the other passes (reflections, probe faces, impostor
+/// pictures): the head of the list, the lights that reach the view, nearest
+/// first. They walk it whole for each fragment, with no sets: 256 there cost
+/// 4.7 ms of GPU time a frame in a lit street (2026-11-10, against 64).
+const PASS_LIGHTS: usize = 64;
 /// Tries at setting up the XR session for one VR request, and the wait
 /// between them (`render_xr`).
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -140,8 +145,8 @@ struct FrameU {
     light_sets: LightSets,
     /// Projector of light `i`, for the lights of `light_projectors`.
     projectors: [ProjectorU; MAX_LIGHTS],
-    /// Bit `i` (low word, then high word): light `i` is a projector.
-    light_projectors: [u32; 4],
+    /// Bit `i % 32` of word `i / 32`: light `i` is a projector.
+    light_projectors: light_tiles::Mask,
     /// World to the clip space of each projector shadow map.
     spot_vp: [[[f32; 4]; 4]; SPOT_SHADOWS],
     /// Light of each projector shadow map (-1: none).
@@ -5806,7 +5811,12 @@ impl Backend {
         u.ground_color = f.ground_color.extend(1.0).to_array();
         u.fog = f.fog_color.extend(f.fog_density).to_array();
         let n_lights = f.lights.len().min(MAX_LIGHTS);
-        u.params = [f.exposure, f.water_height, if f.shadows { 1.0 } else { 0.0 }, n_lights as f32];
+        u.params = [
+            f.exposure,
+            f.water_height,
+            if f.shadows { 1.0 } else { 0.0 },
+            n_lights.min(PASS_LIGHTS) as f32,
+        ];
         let pixel_splits = self.shadow_path & crate::shadow_cull::path::PIXEL_SPLITS != 0;
         // the whole list for every fragment; the main view narrows it (render)
         u.light_sets = LightSets::whole();
@@ -6680,6 +6690,8 @@ impl Backend {
         // first frame that reads it again starts the history again
         self.motion_cut |= self.motion_now && !self.motion_kept;
         let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
+        // the main view walks the whole list (its sets narrow it per fragment)
+        main.params[3] = fu.lights.len().min(MAX_LIGHTS) as f32;
         main.cam_up[3] = camera_water_level;
         if f.photo_tile != Mat4::IDENTITY {
             main.photo = photo_part(f.photo_tile);
@@ -10237,6 +10249,8 @@ mod tests {
     #[test]
     fn frame_uniform_layout_is_16_byte_aligned() {
         assert_eq!(std::mem::size_of::<FrameU>() % 16, 0);
+        // wgpu's default max_uniform_buffer_binding_size: 256 lights fit
+        assert!(std::mem::size_of::<FrameU>() <= 64 << 10, "{} bytes", std::mem::size_of::<FrameU>());
     }
 
     /// The scene pass tests its vertices against the depth the prepasses
