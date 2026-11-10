@@ -216,6 +216,8 @@ pub fn seed(world: &mut crate::world::World) {
                 minimap: true,
                 icon: Some(0),
                 size: PlateSize::Reduced,
+                marker: crate::world::contact_sets::MarkerScope::Region,
+                marker_fade: Some(10),
                 ..Default::default()
             },
         );
@@ -651,6 +653,38 @@ fn place(k: usize, range: f32) -> Vec3 {
     me
 }
 
+/// The k-th resident's avatar object, standing at `pos`.
+fn avatar(k: usize, r: &Resident, pos: Vec3) -> aurora_net::objects::ObjectUpdate {
+    let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
+    let mut a = prim(
+        120_000 + k as u32,
+        pos,
+        Quat::from_rotation_z(k as f32 * 0.9),
+        Vec3::new(0.45, 0.6, 1.9),
+        boxp,
+        te([1.0; 4], 0, false, 0.0),
+        ExtraParams::default(),
+        "",
+    );
+    a.pcode = LL_PCODE_LEGACY_AVATAR;
+    a.full_id = r.id;
+    a.name_values = format!("FirstName STRING RW SV {}\nLastName STRING RW SV {}", r.first, r.last);
+    a
+}
+
+/// The first far resident (coarse location only, with a height), and the
+/// update that draws it where its coarse location put it, as when the
+/// simulator finally sends a far avatar (AURORA_DEMO_CAMERA=zoom-unloaded).
+pub fn drawn_late() -> Option<(Uuid, Vec<NetEvent>)> {
+    let (k, r) = residents().iter().enumerate().find(|(_, r)| !r.drawn && r.range.is_some())?;
+    let pos = place(k, r.range?);
+    let events = vec![NetEvent::ObjectUpdates {
+        handle: HANDLE,
+        objects: vec![avatar(k, r, pos)],
+    }];
+    Some((r.id, events))
+}
+
 /// The residents: the drawn ones, then where everyone stands for the region
 /// (its coarse locations, which also give their status dots). The wolf of
 /// the plaza keeps his place, 4.7 m away.
@@ -658,7 +692,6 @@ pub fn events() -> Vec<NetEvent> {
     if mode().is_none() {
         return Vec::new();
     }
-    let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
     let mut objects = Vec::new();
     let mut coarse = Vec::new();
     for (k, r) in residents().iter().enumerate() {
@@ -667,20 +700,7 @@ pub fn events() -> Vec<NetEvent> {
         if !r.drawn || r.id == DEMO_LOUP {
             continue;
         }
-        let mut a = prim(
-            120_000 + k as u32,
-            pos,
-            Quat::from_rotation_z(k as f32 * 0.9),
-            Vec3::new(0.45, 0.6, 1.9),
-            boxp,
-            te([1.0; 4], 0, false, 0.0),
-            ExtraParams::default(),
-            "",
-        );
-        a.pcode = LL_PCODE_LEGACY_AVATAR;
-        a.full_id = r.id;
-        a.name_values = format!("FirstName STRING RW SV {}\nLastName STRING RW SV {}", r.first, r.last);
-        objects.push(a);
+        objects.push(avatar(k, r, pos));
     }
     vec![
         NetEvent::ObjectUpdates { handle: HANDLE, objects },

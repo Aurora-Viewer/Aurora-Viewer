@@ -1,0 +1,97 @@
+name: Review slots
+
+# An outside contributor has at most 10 pull requests in review at a time
+# (HUMANS.md "Review slots", AGENTS.md section 9). The others get the
+# waiting-for-slot label and a comment (a label, not a draft: this token may
+# not turn someone else's PR into a draft), and come back on their own,
+# oldest first, when one of the author's PRs in review is merged, closed or
+# turned into a draft. A maintainer who removes the label by hand gives that
+# PR a slot: the author's newest other PR waits instead. The team's PRs
+# never wait. The daily sweep catches what an event missed.
+#
+# pull_request_target, so that it runs at once on an outside contributor's
+# PR with a token that may label and comment. It runs main's script and
+# never checks out nor runs the PR's code: the script reads the PRs through
+# the API. Changes made with this token start no workflow, so its own label
+# changes never come back here as events. Pull requests that change the
+# slots run their fixture tests (pull_request).
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, converted_to_draft, closed, unlabeled]
+  schedule:
+    - cron: '41 6 * * *'
+  workflow_dispatch:
+    inputs:
+      author:
+        description: Author login (empty for the sweep of every outside author)
+        required: false
+        type: string
+      dry_run:
+        description: Only print what would change
+        required: false
+        type: boolean
+        default: true
+  pull_request:
+    paths:
+      - .github/workflows/pr-slots.yml
+      - scripts/pr-slots.ps1
+      - scripts/test-pr-slots.ps1
+      - scripts/tools/pr-slots.ps1
+
+permissions:
+  contents: read
+
+# one run at a time per author: their PRs are balanced together
+concurrency:
+  group: pr-slots-${{ github.event_name }}-${{ github.event.pull_request.user.login || inputs.author || 'sweep' }}
+  cancel-in-progress: false
+
+jobs:
+  balance:
+    # an unlabeled event counts only for this label (removed by a maintainer)
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.event_name != 'pull_request_target' ||
+        (github.event.pull_request.user.type != 'Bot' &&
+          (github.event.action != 'unlabeled' || github.event.label.name == 'waiting-for-slot')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      # main's scripts, not the PR's
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Balance
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AUTHOR: ${{ github.event.pull_request.user.login || inputs.author }}
+          PR: ${{ github.event.pull_request.number }}
+          ACTION: ${{ github.event.action }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          $dry = @{}
+          if ($env:DRY_RUN -eq 'true') { $dry.DryRun = $true }
+          if (-not $env:AUTHOR) { ./scripts/pr-slots.ps1 -Sweep @dry; exit $LASTEXITCODE }
+          $preferred = 0
+          if ($env:ACTION -eq 'unlabeled') { $preferred = [int]$env:PR }
+          $pr = 0
+          if ($env:PR) { $pr = [int]$env:PR }
+          ./scripts/pr-slots.ps1 -Author $env:AUTHOR -Pr $pr -Preferred $preferred @dry
+
+  test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fixture tests
+        shell: pwsh
+        run: ./scripts/test-pr-slots.ps1
