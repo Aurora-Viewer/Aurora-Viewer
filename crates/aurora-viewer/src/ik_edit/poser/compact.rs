@@ -962,6 +962,11 @@ impl Editor {
             cluster(ui, p, 3, |ui| {
                 let tag = (aurora_i18n::text("poser-tip-save"), aurora_i18n::text("poser-tip-save-detail"));
                 let save = square(ui, p, "device-floppy-filled", tag, false, free);
+                // AURORA_DEMO_POSER=compact-save: the form opens by itself
+                let demo = egui::Id::unique("poser-save-open");
+                if ui.ctx().data_mut(|d| d.remove_temp::<bool>(demo)).unwrap_or(false) {
+                    egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&save));
+                }
                 self.save_form(&save, p, rig, frame);
                 let tag = (aurora_i18n::text("poser-tip-load"), aurora_i18n::text("poser-tip-load-detail"));
                 let load = square(ui, p, "folder-open-filled", tag, false, free);
@@ -1021,7 +1026,7 @@ impl Editor {
         self.selected.into_iter().chain(mirrored).any(changed)
     }
 
-    /// Save's form: the name, the export options, and Save.
+    /// Save's form: the name, the export options, Save, and Save as….
     fn save_form(&mut self, anchor: &egui::Response, p: &Palette, rig: &Rig, frame: &Frame) {
         menu::dropdown(anchor, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
             ui.set_width(260.0);
@@ -1089,6 +1094,12 @@ impl Editor {
                     ui.close();
                 }
             });
+            // the full window's Save as…, the file chosen in the system
+            // dialog: the same action, the same icon and the same rule
+            let ready = !self.poser.storage.busy && !self.poser.name.trim().is_empty();
+            if menu::item_if(ui, p, "device-floppy-filled", aurora_i18n::text("poser-save-as"), ready) {
+                self.save_pose(rig, frame, true);
+            }
             ui.add_space(4.0);
         });
     }

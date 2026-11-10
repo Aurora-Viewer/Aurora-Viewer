@@ -39,6 +39,10 @@ impl App {
             self.poser_crowd_demo();
         }
         self.ik_editor.demo_tick(&self.world, self.frame_count, &format!("poser-{mode}"));
+        // compact-save: Save's form opens (`poser::compact`)
+        if mode == "compact-save" && self.frame_count == 490 {
+            self.egui_ctx.data_mut(|d| d.insert_temp(egui::Id::unique("poser-save-open"), true));
+        }
         if self.frame_count == 420 {
             self.panels.chat = false;
             self.panels.people = false;

@@ -481,6 +481,10 @@ impl Editor {
             self.poser.options_open = mode == "poser-compact-options";
             self.pose_layers(world);
         }
+        // compact-save: a name typed for Save's form (opened by the app)
+        if mode == "poser-compact-save" && frame == 480 {
+            self.poser.name = "Demo pose".into();
+        }
         // compact-face: no joint selected, so that no gizmo covers the face
         if mode == "poser-compact-face" && frame == 500 {
             self.selected = None;
