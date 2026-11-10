@@ -162,7 +162,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, jiggle: bool, click_combo: bool, sti
     };
     let icons = crate::ui::icons::Icons::default();
     let env = paint::Env::new(ui.painter(), p, &icons, now);
-    let (rect, surface) = paint::plate(&env, &tag, &state, &mut paint::Cache::default());
+    let (rect, surface, _) = paint::plate(&env, &tag, &state, &mut paint::Cache::default());
     play.rect = rect;
     if click_combo && play.combo.busy(now) {
         combo::paint(&env, surface, &play.combo, play.clicks, 1.0, still);

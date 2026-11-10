@@ -12,7 +12,7 @@ pub fn page(cx: &mut Cx) {
         cx.keywords("RLVa RLV RestrainedLove")
             .toggle(tr!("rlva-enable"), tr!("rlva-enable-hint"), &field!(rlva_enabled));
         cx.note(tr!("rlva-session-hint"));
-        cx.keywords("RLVa RLV console locks modifiers").row_with(
+        cx.keywords("RLVa RLV console locks exceptions modifiers").row_with(
             tr!("rlva-tools-title"),
             tr!("rlva-tools-hint"),
             &Nothing,

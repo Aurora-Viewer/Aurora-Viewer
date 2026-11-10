@@ -242,14 +242,17 @@ impl Object {
     pub fn visual_scale_at(&self, now: Instant) -> Vec3 {
         self.render.local_scale.unwrap_or_else(|| self.damped_scale_at(now))
     }
-    /// Ordinary flexible volumes use a simulated path; sculpt/mesh assets
-    /// retain their own geometry even if they carry stale flexible parameters.
+    /// Whether the volume has the flexible path, as LLVOVolume::isFlexible
+    /// (indra/newview/llvovolume.cpp) and isFlexibleFast classify it. This is
+    /// also the build-tool and ARC classification, including sculpt paths.
+    pub fn has_flexible_path(&self) -> bool {
+        self.pcode == aurora_prim::params::LL_PCODE_VOLUME && self.volume.path.curve_type == aurora_prim::params::LL_PCODE_PATH_FLEXIBLE
+    }
+
+    /// Whether Aurora simulates this object as a flexi. Meshes and sculpts
+    /// keep their own geometry even when their volume path is flexible.
     pub fn is_flexible(&self) -> bool {
-        self.pcode == aurora_prim::params::LL_PCODE_VOLUME
-            && self.volume.path.curve_type == aurora_prim::params::LL_PCODE_PATH_FLEXIBLE
-            && self.extra.flexible.is_some()
-            && !self.volume.is_sculpt()
-            && !self.visual_volume().is_mesh()
+        self.has_flexible_path() && !self.volume.is_sculpt() && !self.visual_volume().is_mesh()
     }
 
     pub fn from_update(region: RegionHandle, u: ObjectUpdate) -> Object {
@@ -320,7 +323,20 @@ impl Object {
         })
     }
 
-    pub fn apply_full(&mut self, u: ObjectUpdate) {
+    pub fn apply_full(&mut self, mut u: ObjectUpdate) {
+        // Like LLViewerObject::processUpdateMessage
+        // (indra/newview/llviewerobject.cpp), retain an existing flexi
+        // parameter entry when a later full update omits it while the path
+        // remains flexible. A genuinely changed path or identity does not
+        // carry the old entry forward.
+        if (u.full_id.is_nil() || u.full_id == self.full_id)
+            && self.has_flexible_path()
+            && u.pcode == aurora_prim::params::LL_PCODE_VOLUME
+            && u.volume.path.curve_type == aurora_prim::params::LL_PCODE_PATH_FLEXIBLE
+            && u.extra.flexible.is_none()
+        {
+            u.extra.flexible = self.extra.flexible;
+        }
         if !u.full_id.is_nil() && self.full_id != u.full_id {
             self.render.local_volume = None;
             self.render.local_scale = None;
@@ -376,7 +392,12 @@ impl Object {
             self.te = u.texture_entry;
         }
         self.extra = u.extra;
-        self.name_values = u.name_values;
+        // Follow LLViewerObject::processUpdateMessage:
+        // if (nv_size > 0) setNameValueList(...) (indra/newview/llviewerobject.cpp).
+        // Empty NameValues in an update do not clear existing NameValues.
+        if !u.name_values.is_empty() {
+            self.name_values = u.name_values;
+        }
         self.text = u.text;
         self.text_color = u.text_color;
         if self.set_tex_anim(u.texture_anim, Instant::now()) {
@@ -476,6 +497,20 @@ impl Object {
             }
         }
         None
+    }
+
+    /// Update the avatar's worn group title in its `name_values`
+    /// (e.g. after receiving `NetEvent::ActiveGroup`).
+    pub fn set_group_title(&mut self, title: Option<&str>) {
+        let mut lines: Vec<&str> = self.name_values.lines().filter(|l| !l.starts_with("Title ")).collect();
+        let new_line = title.filter(|t| !t.trim().is_empty()).map(|t| format!("Title STRING RW SV {t}"));
+        if let Some(ref l) = new_line {
+            lines.push(l);
+        }
+        self.name_values = lines.join("\n");
+        if !self.name_values.is_empty() {
+            self.name_values.push('\n');
+        }
     }
 
     /// Local position and rotation drawn at `now`, `motion_time` being the
@@ -1677,7 +1712,7 @@ impl ObjectStore {
 
     /// A prim of a linkset worn on a HUD point (31–38). The simulator only
     /// sends the HUDs of our own avatar.
-    fn worn_on_hud(&self, mut idx: usize) -> bool {
+    pub fn worn_on_hud(&self, mut idx: usize) -> bool {
         for _ in 0..16 {
             let Some(o) = self.get(idx) else {
                 return false;
@@ -1712,6 +1747,40 @@ mod tests {
     }
 
     const SMOOTH_ON: u8 = TextureAnim::ON | TextureAnim::SMOOTH | TextureAnim::LOOP;
+
+    #[test]
+    fn full_update_with_empty_name_values_keeps_previous() {
+        let mut full = update(1, AVATAR, "");
+        full.name_values = "FirstName STRING RW SV Test\nTitle STRING RW SV Initial".into();
+        let mut avatar = Object::from_update(1, full);
+        assert_eq!(avatar.group_title().as_deref(), Some("Initial"));
+
+        // Follow LLViewerObject::processUpdateMessage: an update with empty name_values preserves existing values.
+        let mut update_empty_nv = update(1, AVATAR, "");
+        update_empty_nv.name_values.clear();
+        avatar.apply_full(update_empty_nv);
+        assert_eq!(avatar.group_title().as_deref(), Some("Initial"));
+        assert!(avatar.name_values.contains("FirstName STRING RW SV Test"));
+    }
+
+    #[test]
+    fn group_title_name_value_update_and_clear() {
+        let mut full = update(1, AVATAR, "");
+        full.name_values = "FirstName STRING RW SV Test\nLastName STRING RW SV Resident\nTitle STRING RW SV Initial".into();
+        let mut avatar = Object::from_update(1, full);
+        assert_eq!(avatar.group_title().as_deref(), Some("Initial"));
+
+        // Update to a new title
+        avatar.set_group_title(Some("New Title"));
+        assert_eq!(avatar.group_title().as_deref(), Some("New Title"));
+
+        // Clear title (none)
+        avatar.set_group_title(None);
+        assert_eq!(avatar.group_title(), None);
+        assert!(avatar.name_values.contains("FirstName STRING RW SV Test"));
+        assert!(avatar.name_values.contains("LastName STRING RW SV Resident"));
+        assert!(!avatar.name_values.contains("Title"));
+    }
 
     #[test]
     fn avatar_contact_plane_survives_absent_blocks_and_accepts_explicit_clears() {
@@ -1765,6 +1834,73 @@ mod tests {
             particles: Default::default(),
             sound: Default::default(),
         }
+    }
+
+    #[test]
+    fn flexible_path_simulates_without_optional_flexible_parameters() {
+        use aurora_prim::params::{LL_PCODE_PATH_FLEXIBLE, LL_PCODE_VOLUME};
+
+        let mut flexible = update(1, LL_PCODE_VOLUME, "");
+        flexible.volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+        let flexible = Object::from_update(1, flexible);
+        assert!(flexible.has_flexible_path());
+        assert!(flexible.is_flexible());
+
+        let mut rigid = update(2, LL_PCODE_VOLUME, "");
+        rigid.volume.path.curve_type = aurora_prim::params::LL_PCODE_PATH_LINE;
+        let rigid = Object::from_update(1, rigid);
+        assert!(!rigid.has_flexible_path());
+        assert!(!rigid.is_flexible());
+
+        let mut sculpt = update(3, LL_PCODE_VOLUME, "");
+        sculpt.volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+        sculpt.volume.sculpt = Some(aurora_prim::params::SculptParams::default());
+        let sculpt = Object::from_update(1, sculpt);
+        assert!(sculpt.has_flexible_path());
+        assert!(!sculpt.is_flexible());
+
+        let mut mesh = update(4, LL_PCODE_VOLUME, "");
+        mesh.volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+        mesh.volume.sculpt = Some(aurora_prim::params::SculptParams {
+            texture: Uuid::nil(),
+            sculpt_type: aurora_prim::params::LL_SCULPT_TYPE_MESH,
+        });
+        let mesh = Object::from_update(1, mesh);
+        assert!(mesh.has_flexible_path());
+        assert!(!mesh.is_flexible());
+    }
+
+    #[test]
+    fn full_update_without_flex_params_keeps_existing_values_only_while_path_stays_flexible() {
+        use aurora_prim::params::{LL_PCODE_PATH_FLEXIBLE, LL_PCODE_VOLUME};
+
+        let mut initial = update(1, LL_PCODE_VOLUME, "");
+        initial.volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+        initial.extra.flexible = Some(crate::build::edits::FLEX_DEFAULT);
+        let mut object = Object::from_update(1, initial);
+        let saved = object.extra.flexible;
+
+        let mut omitted = update(1, LL_PCODE_VOLUME, "");
+        omitted.volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+        object.apply_full(omitted);
+        assert_eq!(object.extra.flexible, saved);
+
+        let mut explicit = update(1, LL_PCODE_VOLUME, "");
+        explicit.volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+        let mut changed = crate::build::edits::FLEX_DEFAULT;
+        changed.tension += 0.5;
+        explicit.extra.flexible = Some(changed);
+        object.apply_full(explicit);
+        assert_eq!(
+            object.extra.flexible,
+            Some(changed),
+            "an explicit update replaces the retained values"
+        );
+
+        let mut rigid = update(1, LL_PCODE_VOLUME, "");
+        rigid.volume.path.curve_type = aurora_prim::params::LL_PCODE_PATH_LINE;
+        object.apply_full(rigid);
+        assert_eq!(object.extra.flexible, None);
     }
 
     #[test]
