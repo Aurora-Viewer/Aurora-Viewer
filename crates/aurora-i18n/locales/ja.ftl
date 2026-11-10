@@ -13547,13 +13547,13 @@ panorama-leave-full = 拡大表示を終了
 panorama-help = ドラッグで見回し、ホイールでズーム、ダブルクリックでリセット。クリックしてから、矢印キーで見回し、+ / - でズームします。
 
 # Texture preview: look into a 2:1 texture as a panorama
-resource-preview-360 = 360°
+resource-preview-360 = ３６０°
 
 # Photo window: the 360° format
-photo-format-360 = 360°
-photo-not-in-360 = 360°画像では使えません。
+photo-format-360 = ３６０°
+photo-not-in-360 = ３６０°画像では使えません。
 photo-360-inventory-size = パノラマ：{ $width } × { $height }（最大のテクスチャ）
 photo-360-output = パノラマ：{ $width } × { $height }
-photo-360-format = JPEG · 360°
+photo-360-format = JPEG · ３６０°
 photo-360-placeholder = シャッターを押すと、ここにパノラマが表示されます。
-photo-looks-not-in-360 = 360°画像には適用されません。色調フィルターのみ適用されます。
+photo-looks-not-in-360 = ３６０°画像には適用されません。色調フィルターのみ適用されます。

@@ -127,6 +127,15 @@ impl PanoView {
     /// The viewer in `size` points, with its buttons over its corner.
     /// Handles the mouse and, while it has the focus, the keys.
     pub fn show(&mut self, ui: &mut egui::Ui, p: &Palette, id: egui::Id, image: &Arc<Image>, size: Vec2) -> egui::Response {
+        if self.full {
+            // enlarged: the room stays, the picture is the enlarged one's
+            // (one viewer steps and draws, not two)
+            return ui.allocate_exact_size(size, egui::Sense::hover()).1;
+        }
+        self.show_viewer(ui, p, id, image, size)
+    }
+
+    fn show_viewer(&mut self, ui: &mut egui::Ui, p: &Palette, id: egui::Id, image: &Arc<Image>, size: Vec2) -> egui::Response {
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
         self.interact(ui, &response);
         if ui.is_rect_visible(rect) {
@@ -170,7 +179,8 @@ impl PanoView {
                     },
                 )
             });
-            if ui.input(|i| i.key_pressed(Key::Escape)) {
+            // (Escape leaves the focus, and nothing else acts on it)
+            if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape)) {
                 response.surrender_focus();
             }
             ui.input(|i| Keys {
@@ -235,7 +245,7 @@ impl PanoView {
             .fixed_pos(screen.min)
             .constrain(false)
             .show(ctx, |ui| {
-                let response = self.show(ui, p, id.with("full-view"), image, screen.size());
+                let response = self.show_viewer(ui, p, id.with("full-view"), image, screen.size());
                 // (the enlarged viewer takes the keys at once)
                 if !response.has_focus() && response.ctx.memory(|m| m.focused().is_none()) {
                     response.request_focus();

@@ -13493,7 +13493,7 @@ picker-pipette-no-material = No copyable material found in your inventory.
 
 local-texture-preview-hint = Local texture — preview from a file on this computer.
 
-# The 360° snapshot window (LLFloater360Capture, floater_360capture.xml)
+# 360° snapshots: a format of the photo window (LLFloater360Capture, app/capture_360.rs)
 capture-360-quality-preview = Preview (fast)
 capture-360-quality-medium = Medium
 capture-360-quality-high = High

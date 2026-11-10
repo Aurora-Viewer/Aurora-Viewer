@@ -10,8 +10,10 @@
 //! direction, which is continuous where the longitude wraps from +PI to -PI:
 //! the implicit derivatives of the texture coordinate would jump there and
 //! pick the smallest level for a one-pixel seam (`shaders/panorama.wgsl`).
-//! Mips and the target are Rgba8Unorm, filtered as the flat preview's
-//! images are (the values egui shows are the image's own).
+//! Mips and the target are Rgba8Unorm and filtered in gamma space, on
+//! purpose: the values egui shows are the image's own, as the flat preview's
+//! images are (an sRGB view would average in linear light and shift the
+//! picture's tones).
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Vec2, Vec3};
@@ -240,7 +242,7 @@ impl Source {
             return None;
         }
         let levels = mip_count(w, h);
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let desc = wgpu::TextureDescriptor {
             label: Some("panorama"),
             size: wgpu::Extent3d {
                 width: w,
@@ -253,7 +255,13 @@ impl Source {
             format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
-        });
+        };
+        // (up to 180 MB with its mips: refused, the viewer stays black)
+        let bytes = u64::from(w) * u64::from(h) * 4 * 4 / 3;
+        let Ok((texture, _)) = crate::gpu_alloc::try_texture(device, &desc, &Default::default(), bytes, false) else {
+            log::warn!("panorama: the {w} x {h} image was refused by the card");
+            return None;
+        };
         queue.write_texture(
             texture.as_image_copy(),
             &image.rgba,
@@ -392,8 +400,9 @@ struct Target {
     color: wgpu::TextureView,
     texture: egui::TextureId,
     uniform: wgpu::Buffer,
-    /// What was drawn: the image (its address) and the view.
-    last: Option<(usize, PanoParams)>,
+    /// What was drawn: the image (a weak reference, which keeps its address
+    /// from being taken by another image) and the view.
+    last: Option<(Weak<Image>, PanoParams)>,
 }
 
 /// The viewers' targets and the images on the GPU, owned by `preview::Cache`.
@@ -402,6 +411,9 @@ pub(crate) struct Cache {
     pipelines: Option<Pipelines>,
     targets: HashMap<egui::Id, Target>,
     sources: HashMap<usize, (Weak<Image>, Option<Source>)>,
+    /// The images drawn this frame: the others are let go (a closed window's
+    /// panorama is not kept on the GPU).
+    used: HashSet<usize>,
 }
 
 impl Cache {
@@ -458,6 +470,15 @@ impl Cache {
             );
         }
         let key = Arc::as_ptr(&region.image) as *const () as usize;
+        self.used.insert(key);
+        // (an entry whose image is gone is made again, whatever the address)
+        if self
+            .sources
+            .get(&key)
+            .is_some_and(|(owner, _)| owner.upgrade().is_none_or(|a| !Arc::ptr_eq(&a, &region.image)))
+        {
+            self.sources.remove(&key);
+        }
         let source = self.sources.entry(key).or_insert_with(|| {
             (
                 Arc::downgrade(&region.image),
@@ -465,8 +486,12 @@ impl Cache {
             )
         });
         let target = self.targets.get_mut(&region.id).expect("panorama target initialized");
-        if target.last != Some((key, region.params)) {
-            target.last = Some((key, region.params));
+        let drawn = target
+            .last
+            .as_ref()
+            .is_some_and(|(image, params)| *params == region.params && image.upgrade().is_some_and(|a| Arc::ptr_eq(&a, &region.image)));
+        if !drawn {
+            target.last = Some((Arc::downgrade(&region.image), region.params));
             draw(
                 device,
                 queue,
@@ -500,7 +525,9 @@ impl Cache {
                 false
             }
         });
-        self.sources.retain(|_, (owner, _)| owner.strong_count() > 0);
+        let used = std::mem::take(&mut self.used);
+        self.sources
+            .retain(|key, (owner, _)| owner.strong_count() > 0 && used.contains(key));
     }
 }
 

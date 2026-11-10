@@ -17,6 +17,15 @@ pub(super) struct PreviewWindow {
     pano_view: Option<crate::ui::panorama::PanoView>,
 }
 
+/// Whether a texture can be looked into as a panorama, and whether it is:
+/// 2:1 and wide enough (`capture_360::is_equirect`); on when the user chose it,
+/// or, with no choice made, when the item's name is an Aurora 360° upload's.
+pub(super) fn panorama_state(dimensions: Option<(u32, u32)>, name: &str, choice: Option<bool>) -> (bool, bool) {
+    let eligible = dimensions.is_some_and(crate::snapshot::capture_360::is_equirect);
+    let on = eligible && choice.unwrap_or_else(|| crate::snapshot::capture_360::is_marked(name));
+    (eligible, on)
+}
+
 pub(super) struct BatchExport {
     item: Uuid,
     asset: Uuid,
@@ -387,9 +396,7 @@ impl LibraryUi {
                 let before = window.texture.display;
                 // a 2:1 texture can be looked into as a panorama; an Aurora
                 // 360° upload (by its name) opens that way
-                let eligible = dimensions.is_some_and(crate::snapshot::capture_360::is_equirect);
-                let marked = crate::snapshot::capture_360::is_marked(&item.name);
-                let mut pano_on = eligible && window.pano.unwrap_or(marked);
+                let (eligible, mut pano_on) = panorama_state(dimensions, &item.name, window.pano);
                 let was_on = pano_on;
                 texture_view::toolbar(
                     ui,

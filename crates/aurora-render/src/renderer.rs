@@ -6031,6 +6031,13 @@ impl Backend {
         self.config.height = s.height;
         self.gtao.photo = Some(s.photo);
         self.cube_step = s.cube.map(usize::from);
+        if self.cube_step == Some(0)
+            && let Some(cube) = &mut self.cube
+        {
+            // (a face lost before it was drawn must not pass for the last
+            // capture's)
+            cube.reset();
+        }
         self.cube_keep = s
             .cube
             .is_some_and(|step| usize::from(step) + 1 < crate::equirect::CAPTURE_CAMERAS.len());
@@ -6449,12 +6456,15 @@ impl Backend {
         // ends the hold (the capture was given up, or it is over)
         let cube_face = matches!(&wanted, Some(Capture::Snapshot(s)) if s.width > 0 && s.height > 0 && s.cube.is_some());
         if self.cube_hold && !cube_face {
+            // the capture was given up between its faces: no projection will
+            // come for these
             self.release_snapshot();
+            self.cube = None;
         }
         // the window and the settings as the main thread had them for this frame
-        if self.cube_hold {
-            self.set_vsync(surface.vsync);
-        } else {
+        // (the window's size and the swapchain are as they were: the faces
+        // draw at their own size until the hold ends)
+        if !self.cube_hold {
             self.apply_surface(surface);
         }
         if self.rlva_resolution_divisor != params.rlva_resolution_divisor {
@@ -9676,7 +9686,7 @@ impl Backend {
             // layer of the cube, never read back
             let (size, format) = (self.config.width, surface_tex.texture().format());
             if self.cube.as_ref().is_none_or(|cube| !cube.fits(size, format)) {
-                self.cube = Some(crate::equirect::CubeTarget::new(&self.device, size, format));
+                self.cube = crate::equirect::CubeTarget::new(&self.device, size, format);
             }
             if let Some(cube) = &mut self.cube {
                 cube.add_face(&mut encoder, surface_tex.texture(), step);

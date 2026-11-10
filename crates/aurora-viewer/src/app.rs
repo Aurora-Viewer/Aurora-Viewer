@@ -9744,8 +9744,8 @@ impl App {
         // the photo window in 360°: every direction counts as in view for the
         // textures, so that the faces behind the camera are as sharp as the
         // one it looks at (within the same texture budget)
-        let texture_aspect = if self.panels.snapshot && self.snapshots.ui.pano && self.in_world() {
-            1000.0
+        let texture_aspect = if self.pano_open() && self.in_world() {
+            capture_360::OMNI_TEXTURE_ASPECT
         } else {
             aspect
         };
@@ -14001,11 +14001,13 @@ impl App {
             BarAction::PhotoToDisk => self.photo_to_disk(),
             BarAction::PhotoRoll => self.photo_reel_show_newest(),
             BarAction::Photo360 => {
-                if self.panels.snapshot && self.snapshots.ui.pano {
+                if self.pano_open() {
                     self.panels.snapshot = false;
                 } else {
                     self.panels.snapshot = true;
-                    self.snapshots.ui.set_pano(true);
+                    if self.snapshots.ui.set_pano(true) {
+                        self.photo_release_freeze();
+                    }
                 }
             }
             BarAction::LandmarkStar(star) => self.landmark_star(star),

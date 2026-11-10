@@ -390,9 +390,11 @@ fn dot(ui: &mut egui::Ui, p: &Palette) {
     shadow_text(ui.painter(), p, r.center(), Align2::CENTER_CENTER, "·", regular(13.0), p.ink);
 }
 
-fn next_destination(d: Destination) -> Destination {
+fn next_destination(d: Destination, pano: bool) -> Destination {
     match d {
         Destination::Disk => Destination::Inventory,
+        // (a panorama goes to the disk or the inventory only)
+        Destination::Inventory if pano => Destination::Disk,
         Destination::Inventory => Destination::Profile,
         // a postcard needs its e-mail, written in the panel
         Destination::Profile | Destination::Email => Destination::Disk,
@@ -409,7 +411,16 @@ fn next_time(time: Option<u8>) -> Option<u8> {
 
 /// The next size of the destination: the disk's resolutions (the typed
 /// one stays in the drawer), the inventory's textures, the profile's.
-fn next_size(s: &mut Settings, destination: Destination) {
+fn next_size(s: &mut Settings, destination: Destination, pano: bool) {
+    if pano {
+        // a panorama's disk size is its quality; the inventory's is fixed
+        if destination == Destination::Disk {
+            let all = crate::snapshot::capture_360::Quality::ALL;
+            let i = all.iter().position(|q| *q == s.capture_360.quality).unwrap_or(0);
+            s.capture_360.quality = all[(i + 1) % all.len()];
+        }
+        return;
+    }
     match destination {
         Destination::Disk => {
             let all: Vec<Resolution> = Resolution::ALL.into_iter().filter(|r| *r != Resolution::Custom).collect();
@@ -523,7 +534,8 @@ impl Viewfinder {
 
         // the photo's proportions: the rest darkened, a fine frame, the guide
         let ratio = f.photo.0 as f32 / f.photo.1.max(1) as f32;
-        let frame = panel::fit(screen, ratio);
+        // (a 360° picture has no frame: the whole view is taken)
+        let frame = if panel.pano { screen } else { panel::fit(screen, ratio) };
         for r in panel::outside(screen, frame) {
             back.rect_filled(r, 0.0, p.navy.gamma_multiply(0.66));
         }
@@ -769,13 +781,17 @@ impl Viewfinder {
                     )
                     .clicked()
                     {
-                        panel.destination = next_destination(panel.destination);
+                        panel.destination = next_destination(panel.destination, panel.pano);
                         out.push(Out::Panel(Action::Changed));
                     }
                     ui.spacing_mut().item_spacing.x = 8.0;
                     let font = bold(ctx, 13.0);
                     // the file's format: the disk's choice (the profile feed takes a PNG)
                     match panel.destination {
+                        Destination::Disk if panel.pano => {
+                            text_button(ui, p, aurora_i18n::tr!("photo-360-format"), font.clone(), p.ink, "");
+                            dot(ui, p);
+                        }
                         Destination::Disk => {
                             if text_button(ui, p, s.format.label(), font.clone(), p.ink, aurora_i18n::tr!("photo-vf-file-tip")).clicked() {
                                 let i = FileFormat::ALL.iter().position(|x| *x == s.format).unwrap_or(0);
@@ -808,7 +824,7 @@ impl Viewfinder {
                         None => text_button(ui, p, &pixels, font.clone(), p.ink, aurora_i18n::tr!("photo-vf-size-tip")).clicked(),
                     };
                     if clicked {
-                        next_size(s, panel.destination);
+                        next_size(s, panel.destination, panel.pano);
                     }
                     dot(ui, p);
                     let format = if panel.pano {
@@ -2270,8 +2286,17 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
     let window = f.window;
     v.push((
         aurora_i18n::tr!("photo-section-format"),
-        aspect_label(s.aspect).to_owned(),
-        Box::new(move |s, _| {
+        if panel.pano {
+            aurora_i18n::tr!("photo-format-360").to_owned()
+        } else {
+            aspect_label(s.aspect).to_owned()
+        },
+        Box::new(move |s, panel| {
+            if panel.pano {
+                // (as the window's chips: the next click leaves the 360° format)
+                panel.set_pano(false);
+                return Some(Out::Panel(Action::Changed));
+            }
             let i = Aspect::ALL.iter().position(|a| *a == s.aspect).unwrap_or(0);
             s.set_aspect(Aspect::ALL[(i + 1) % Aspect::ALL.len()], window);
             None
@@ -2279,6 +2304,10 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
     ));
     // the size: the disk's resolution, or the destination's own sizes
     let size_value = match panel.destination {
+        _ if panel.pano => {
+            let (w, h) = panel.pano_output(s);
+            format!("{w} × {h}")
+        }
         Destination::Disk => match s.resolution {
             Resolution::Window => aurora_i18n::tr!("photo-resolution-window").to_owned(),
             Resolution::Custom => aurora_i18n::tr!("photo-resolution-custom").to_owned(),
@@ -2297,7 +2326,7 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
         aurora_i18n::tr!("photo-section-resolution"),
         size_value,
         Box::new(|s, panel| {
-            next_size(s, panel.destination);
+            next_size(s, panel.destination, panel.pano);
             None
         }),
     ));
@@ -2305,16 +2334,22 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
         aurora_i18n::tr!("photo-section-destination"),
         destination_label(panel.destination).to_owned(),
         Box::new(|_, panel| {
-            panel.destination = next_destination(panel.destination);
+            panel.destination = next_destination(panel.destination, panel.pano);
             Some(Out::Panel(Action::Changed))
         }),
     ));
     v.push((
         aurora_i18n::tr!("photo-file-format"),
-        s.format.label().to_owned(),
-        Box::new(|s, _| {
-            let i = FileFormat::ALL.iter().position(|x| *x == s.format).unwrap_or(0);
-            s.format = FileFormat::ALL[(i + 1) % FileFormat::ALL.len()];
+        if panel.pano {
+            aurora_i18n::tr!("photo-360-format").to_owned()
+        } else {
+            s.format.label().to_owned()
+        },
+        Box::new(|s, panel| {
+            if !panel.pano {
+                let i = FileFormat::ALL.iter().position(|x| *x == s.format).unwrap_or(0);
+                s.format = FileFormat::ALL[(i + 1) % FileFormat::ALL.len()];
+            }
             None
         }),
     ));

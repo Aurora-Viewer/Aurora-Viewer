@@ -874,3 +874,20 @@ fn texture_preview_gates_need_full_permissions_in_both_views() {
         assert_eq!((gates.copy_uuid, gates.save_as), (allowed, allowed), "{name}");
     }
 }
+
+/// An Aurora 360° upload opens as a panorama; any other 2:1 texture offers
+/// the switch, off; the user's choice wins; nothing else is eligible.
+#[test]
+fn only_wide_two_to_one_textures_offer_the_panorama_and_the_marker_turns_it_on() {
+    use super::windows::panorama_state;
+    assert_eq!(panorama_state(Some((2048, 1024)), "360 Snapshot : Aurora", None), (true, true));
+    assert_eq!(panorama_state(Some((2048, 1024)), "Wide sky", None), (true, false));
+    assert_eq!(panorama_state(Some((2048, 1024)), "Wide sky", Some(true)), (true, true));
+    assert_eq!(
+        panorama_state(Some((2048, 1024)), "360 Snapshot : Aurora", Some(false)),
+        (true, false)
+    );
+    assert_eq!(panorama_state(Some((1024, 1024)), "360 Snapshot : Aurora", None), (false, false));
+    assert_eq!(panorama_state(Some((128, 64)), "360 Snapshot : x", Some(true)), (false, false));
+    assert_eq!(panorama_state(None, "360 Snapshot : x", None), (false, false), "size not known yet");
+}

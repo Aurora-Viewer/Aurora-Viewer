@@ -77,14 +77,18 @@ impl SnapshotUi {
     }
 
     /// The 360° format on or off. Turning it on leaves the profile and the
-    /// postcard (they take no panorama) for the disk; turning it off gives
-    /// the destination back.
-    pub fn set_pano(&mut self, on: bool) {
+    /// postcard (they take no panorama) for the disk, and lets the frozen
+    /// photo go (it has no panorama): true when it was held, for the caller
+    /// to release it (`Action::Freeze(false)`). Turning it off gives the
+    /// destination back.
+    pub fn set_pano(&mut self, on: bool) -> bool {
         if on == self.pano {
-            return;
+            return false;
         }
         self.pano = on;
+        let mut released = false;
         if on {
+            released = std::mem::take(&mut self.freeze);
             if matches!(self.destination, Destination::Profile | Destination::Email) {
                 self.pano_restore = Some(self.destination);
                 self.destination = Destination::Disk;
@@ -92,6 +96,7 @@ impl SnapshotUi {
         } else if let Some(destination) = self.pano_restore.take() {
             self.destination = destination;
         }
+        released
     }
 }
 
@@ -660,10 +665,7 @@ impl SnapshotUi {
                 }
             }
             if chip(ui, p, aurora_i18n::tr!("photo-format-360"), None, self.pano, true).clicked() {
-                self.set_pano(!self.pano);
-                if self.pano && self.freeze {
-                    // (the held photo has no panorama)
-                    self.freeze = false;
+                if self.set_pano(!self.pano) {
                     out.push(Action::Freeze(false));
                 }
                 out.push(Action::Changed);
@@ -794,16 +796,16 @@ impl SnapshotUi {
                 widgets::switch(ui, p, &mut s.huds);
             });
         });
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("photo-quality"),
-            Some(aurora_i18n::tr!("photo-quality-hint")),
-            |ui| {
-                widgets::switch(ui, p, &mut s.quality);
-            },
-        );
         ui.add_enabled_ui(!pano, |ui| {
+            row(
+                ui,
+                p,
+                aurora_i18n::tr!("photo-quality"),
+                Some(aurora_i18n::tr!("photo-quality-hint")),
+                |ui| {
+                    widgets::switch(ui, p, &mut s.quality);
+                },
+            );
             row(
                 ui,
                 p,
@@ -1874,6 +1876,96 @@ fn shutter(ui: &mut egui::Ui, p: &Palette) -> egui::Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The 360° format leaves the profile and the postcard (no panorama) for
+    /// the disk, gives the destination back, and lets a held photo go.
+    #[test]
+    fn the_360_format_takes_the_disk_and_gives_the_destination_back() {
+        for destination in [Destination::Profile, Destination::Email] {
+            let mut ui = SnapshotUi {
+                destination,
+                ..Default::default()
+            };
+            assert!(!ui.set_pano(true));
+            assert_eq!(ui.destination, Destination::Disk);
+            assert!(!ui.set_pano(true), "already on: nothing changes");
+            ui.set_pano(false);
+            assert_eq!(ui.destination, destination);
+        }
+        // the inventory is kept, and a frozen photo is released (true)
+        let mut ui = SnapshotUi {
+            destination: Destination::Inventory,
+            freeze: true,
+            ..Default::default()
+        };
+        assert!(ui.set_pano(true));
+        assert!(!ui.freeze);
+        assert_eq!(ui.destination, Destination::Inventory);
+        ui.set_pano(false);
+        assert_eq!(ui.destination, Destination::Inventory);
+    }
+
+    fn test_view<'a>(catalog: &'a crate::world::env_select::SettingsCatalog) -> View<'a> {
+        View {
+            window: (1280, 720),
+            photo: (1280, 720),
+            tiles: 1,
+            preview: None,
+            busy: None,
+            message: None,
+            last_saved: None,
+            gallery: &[],
+            reel: None,
+            folder: PathBuf::new(),
+            inventory: None,
+            item_saved: false,
+            profile: None,
+            profile_posted: false,
+            email: None,
+            exposure: 0.0,
+            hdr: true,
+            env: EnvView {
+                catalog,
+                own: crate::world::eep_env::LocalView::SHARED,
+                sun: (0.0, 45.0),
+                locked: false,
+                loading: false,
+            },
+            back_key: None,
+            quality_reduced: false,
+            pano: None,
+        }
+    }
+
+    /// The photo window in its 360° format keeps its size at every scale, in
+    /// both styles, with its shutter inside it.
+    #[test]
+    fn the_360_photo_window_keeps_its_size_in_both_styles() {
+        for (id, classic, size) in [
+            (WINDOW, false, Vec2::new(WIDTH, 640.0)),
+            (
+                CLASSIC_WINDOW,
+                true,
+                Vec2::new(WIDTH + CLASSIC_PREVIEW + 8.0, CLASSIC_PREVIEW + 160.0),
+            ),
+        ] {
+            widgets::steady_tests::assert_window_steady(
+                id,
+                &[size],
+                aurora_i18n::tr!("photo-take"),
+                || {
+                    let mut ui = SnapshotUi::default();
+                    ui.set_pano(true);
+                    (ui, Settings::default(), crate::camera::DEFAULT_FOV)
+                },
+                |(ui, settings, fov), ctx, p| {
+                    let catalog = crate::world::env_select::SettingsCatalog::default();
+                    let view = test_view(&catalog);
+                    ui.show(ctx, p, &mut true, settings, fov, crate::camera::DEFAULT_FOV, &view, classic);
+                },
+            );
+        }
+    }
 
     #[test]
     fn a_sun_value_differs_past_its_shown_degree_and_azimuths_wrap() {

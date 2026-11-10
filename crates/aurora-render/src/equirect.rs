@@ -82,8 +82,11 @@ pub fn pixel_direction(x: f32, y: f32, width: u32, height: u32) -> Vec3 {
 }
 
 /// The panorama wanted from the six faces a capture drew into the cube
-/// (`Backend::cube`): its size.
+/// (`Backend::cube`): its size, and the number of the capture it is for, which
+/// comes back with the answer (a capture given up has its answer thrown away,
+/// whenever, or whether, it arrives).
 pub struct EquirectJob {
+    pub id: u64,
     pub width: u32,
     pub height: u32,
 }
@@ -100,8 +103,9 @@ pub(crate) struct CubeTarget {
 }
 
 impl CubeTarget {
-    pub(crate) fn new(device: &wgpu::Device, face_size: u32, format: wgpu::TextureFormat) -> Self {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+    /// None when the card refuses the six faces (100 MB at the largest).
+    pub(crate) fn new(device: &wgpu::Device, face_size: u32, format: wgpu::TextureFormat) -> Option<Self> {
+        let desc = wgpu::TextureDescriptor {
             label: Some("equirect cube"),
             size: wgpu::Extent3d {
                 width: face_size,
@@ -116,13 +120,26 @@ impl CubeTarget {
             // (the faces hold the encoded values a readback would give:
             // read as is, whatever the swapchain's sRGB)
             view_formats: &[format.remove_srgb_suffix()],
-        });
-        CubeTarget {
+        };
+        let bytes = u64::from(face_size) * u64::from(face_size) * 24;
+        let (texture, _) = match crate::gpu_alloc::try_texture(device, &desc, &Default::default(), bytes, false) {
+            Ok(made) => made,
+            Err(e) => {
+                log::warn!("360 capture: the cube of {face_size} px faces was refused: {e}");
+                return None;
+            }
+        };
+        Some(CubeTarget {
             texture,
             face_size,
             format,
             filled: 0,
-        }
+        })
+    }
+
+    /// A capture starts: no layer is drawn yet.
+    pub(crate) fn reset(&mut self) {
+        self.filled = 0;
     }
 
     pub(crate) fn fits(&self, face_size: u32, format: wgpu::TextureFormat) -> bool {
@@ -170,8 +187,8 @@ fn layer_bit(layer: usize) -> u8 {
 
 /// The panoramas being read back, in the order they were asked: each is
 /// mapped by the GPU (`state`), then copied out of its buffer on a worker
-/// thread (the render thread never copies 128 MB), then answered, one a
-/// call at most.
+/// thread (the render thread never copies 128 MB), then answered with the
+/// number of its capture, one a call at most.
 #[derive(Default)]
 pub(crate) struct Readbacks {
     items: std::collections::VecDeque<Entry>,
@@ -180,7 +197,12 @@ pub(crate) struct Readbacks {
 /// The panorama read back: width, height, RGBA8.
 pub(crate) type Pixels = (u32, u32, Vec<u8>);
 
+/// The answer to a job: its capture's number, and the panorama (None when it
+/// could not be made). Public through `Renderer::equirect`.
+pub type Answer = (u64, Option<Pixels>);
+
 struct Entry {
+    id: u64,
     state: Arc<AtomicU8>,
     copy: Option<Box<dyn FnOnce() -> Option<Pixels> + Send>>,
     running: Option<mpsc::Receiver<Option<Pixels>>>,
@@ -193,8 +215,9 @@ pub(crate) const FAILED: u8 = 2;
 impl Readbacks {
     /// A readback begun: `state` turns `MAPPED` or `FAILED` when the GPU is
     /// done; `copy` then reads the pixels out.
-    pub(crate) fn push(&mut self, state: Arc<AtomicU8>, copy: impl FnOnce() -> Option<Pixels> + Send + 'static) {
+    pub(crate) fn push(&mut self, id: u64, state: Arc<AtomicU8>, copy: impl FnOnce() -> Option<Pixels> + Send + 'static) {
         self.items.push_back(Entry {
+            id,
             state,
             copy: Some(Box::new(copy)),
             running: None,
@@ -202,8 +225,9 @@ impl Readbacks {
     }
 
     /// A panorama that could not even be asked for.
-    pub(crate) fn push_failed(&mut self) {
+    pub(crate) fn push_failed(&mut self, id: u64) {
         self.items.push_back(Entry {
+            id,
             state: Arc::new(AtomicU8::new(FAILED)),
             copy: None,
             running: None,
@@ -212,18 +236,19 @@ impl Readbacks {
 
     /// The oldest panorama's answer when it is ready: Some(None) when it
     /// failed.
-    pub(crate) fn poll(&mut self) -> Option<Option<Pixels>> {
+    pub(crate) fn poll(&mut self) -> Option<Answer> {
         let front = self.items.front_mut()?;
+        let id = front.id;
         if let Some(rx) = &front.running {
             return match rx.try_recv() {
                 Ok(pixels) => {
                     self.items.pop_front();
-                    Some(pixels)
+                    Some((id, pixels))
                 }
                 Err(mpsc::TryRecvError::Empty) => None,
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.items.pop_front();
-                    Some(None)
+                    Some((id, None))
                 }
             };
         }
@@ -231,7 +256,7 @@ impl Readbacks {
             MAPPED => {
                 let Some(copy) = front.copy.take() else {
                     self.items.pop_front();
-                    return Some(None);
+                    return Some((id, None));
                 };
                 let (tx, rx) = mpsc::channel();
                 match std::thread::Builder::new().name("aurora-360-readback".into()).spawn(move || {
@@ -241,14 +266,14 @@ impl Readbacks {
                     Err(e) => {
                         log::warn!("360 capture: cannot start the readback thread: {e}");
                         self.items.pop_front();
-                        return Some(None);
+                        return Some((id, None));
                     }
                 }
                 None
             }
             FAILED => {
                 self.items.pop_front();
-                Some(None)
+                Some((id, None))
             }
             _ => None,
         }
@@ -357,19 +382,20 @@ impl Equirect {
         job: EquirectJob,
         readbacks: &mut Readbacks,
     ) {
-        let EquirectJob { width, height } = job;
+        let EquirectJob { id, width, height } = job;
         let limit = device.limits().max_texture_dimension_2d;
         let Some(cube) = cube.filter(|c| c.complete()) else {
             log::warn!("360 capture: the faces are not all drawn");
-            readbacks.push_failed();
+            readbacks.push_failed(id);
             return;
         };
         if width == 0 || height == 0 || width > limit || height > limit {
             log::warn!("360 capture: {width} x {height} is beyond the card ({limit})");
-            readbacks.push_failed();
+            readbacks.push_failed(id);
             return;
         }
-        let out = device.create_texture(&wgpu::TextureDescriptor {
+        // (up to 128 MB each: refused, the capture fails instead of the device)
+        let out_desc = wgpu::TextureDescriptor {
             label: Some("equirect out"),
             size: wgpu::Extent3d {
                 width,
@@ -382,7 +408,13 @@ impl Equirect {
             format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
-        });
+        };
+        let out_bytes = u64::from(width) * u64::from(height) * 4;
+        let Ok((out, out_view)) = crate::gpu_alloc::try_texture(device, &out_desc, &Default::default(), out_bytes, false) else {
+            log::warn!("360 capture: the {width} x {height} panorama was refused by the card");
+            readbacks.push_failed(id);
+            return;
+        };
         let params = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("equirect params"),
             size: std::mem::size_of::<Params>() as u64,
@@ -416,7 +448,7 @@ impl Equirect {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&out.create_view(&Default::default())),
+                    resource: wgpu::BindingResource::TextureView(&out_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
@@ -426,12 +458,19 @@ impl Equirect {
         });
         // rows padded to the copy alignment
         let row = (width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let readback = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("equirect readback"),
-            size: crate::readback::readback_size(u64::from(row) * u64::from(height)),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
+        let Ok(readback) = crate::gpu_alloc::try_buffer(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("equirect readback"),
+                size: crate::readback::readback_size(u64::from(row) * u64::from(height)),
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            },
+        ) else {
+            log::warn!("360 capture: the readback buffer of the panorama was refused by the card");
+            readbacks.push_failed(id);
+            return;
+        };
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("equirect") });
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -470,7 +509,7 @@ impl Equirect {
         readback.map_async(wgpu::MapMode::Read, .., move |result| {
             done.store(if result.is_ok() { MAPPED } else { FAILED }, Ordering::Release);
         });
-        readbacks.push(state, move || {
+        readbacks.push(id, state, move || {
             let pixels = {
                 let view = readback.get_mapped_range(..).ok()?;
                 let mut out = Vec::with_capacity(width as usize * height as usize * 4);
@@ -585,7 +624,7 @@ mod tests {
         Arc::new(AtomicU8::new(value))
     }
 
-    fn wait_for(readbacks: &mut Readbacks) -> Option<Pixels> {
+    fn wait_for(readbacks: &mut Readbacks) -> Answer {
         for _ in 0..2000 {
             if let Some(answer) = readbacks.poll() {
                 return answer;
@@ -604,15 +643,15 @@ mod tests {
         let first = ready(MAPPING);
         let copies = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let counted = copies.clone();
-        readbacks.push(first.clone(), move || {
+        readbacks.push(7, first.clone(), move || {
             counted.fetch_add(1, Ordering::SeqCst);
             Some((2, 1, vec![1; 8]))
         });
-        readbacks.push(ready(MAPPED), || Some((1, 1, vec![2; 4])));
+        readbacks.push(8, ready(MAPPED), || Some((1, 1, vec![2; 4])));
         assert!(readbacks.poll().is_none(), "the first is still mapping and holds the second");
         first.store(MAPPED, Ordering::Release);
-        assert_eq!(wait_for(&mut readbacks), Some((2, 1, vec![1; 8])));
-        assert_eq!(wait_for(&mut readbacks), Some((1, 1, vec![2; 4])));
+        assert_eq!(wait_for(&mut readbacks), (7, Some((2, 1, vec![1; 8]))));
+        assert_eq!(wait_for(&mut readbacks), (8, Some((1, 1, vec![2; 4]))));
         assert_eq!(copies.load(Ordering::SeqCst), 1, "mapped once, copied once");
         assert!(readbacks.poll().is_none());
     }
@@ -620,19 +659,19 @@ mod tests {
     #[test]
     fn a_failed_readback_is_answered_as_failed_and_does_not_hold_the_next() {
         let mut readbacks = Readbacks::default();
-        readbacks.push_failed();
-        readbacks.push(ready(FAILED), || unreachable!("a failed map is never read"));
-        readbacks.push(ready(MAPPED), || Some((1, 1, vec![9; 4])));
-        assert_eq!(readbacks.poll(), Some(None));
-        assert_eq!(readbacks.poll(), Some(None));
-        assert_eq!(wait_for(&mut readbacks), Some((1, 1, vec![9; 4])));
+        readbacks.push_failed(1);
+        readbacks.push(2, ready(FAILED), || unreachable!("a failed map is never read"));
+        readbacks.push(3, ready(MAPPED), || Some((1, 1, vec![9; 4])));
+        assert_eq!(readbacks.poll(), Some((1, None)));
+        assert_eq!(readbacks.poll(), Some((2, None)));
+        assert_eq!(wait_for(&mut readbacks), (3, Some((1, 1, vec![9; 4]))));
     }
 
     #[test]
     fn a_copy_that_fails_answers_none() {
         let mut readbacks = Readbacks::default();
-        readbacks.push(ready(MAPPED), || None);
-        assert_eq!(wait_for(&mut readbacks), None);
+        readbacks.push(4, ready(MAPPED), || None);
+        assert_eq!(wait_for(&mut readbacks), (4, None));
         assert!(readbacks.poll().is_none(), "answered once");
     }
 

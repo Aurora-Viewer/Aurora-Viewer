@@ -290,7 +290,7 @@ pub struct Renderer {
     pub equirect_request: Option<Box<crate::EquirectJob>>,
     /// The answer to the last panorama asked (width, height, RGBA8), or
     /// None when it could not be made.
-    pub equirect: Option<Option<(u32, u32, Vec<u8>)>>,
+    pub equirect: Option<crate::EquirectAnswer>,
     /// The photo asked left with a frame the GPU had not finished within
     /// `CAPTURE_WAIT`: its answer comes with a later frame, which does not
     /// draw it again (a second answer would be taken for the next part).

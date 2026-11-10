@@ -112,7 +112,7 @@ pub use bloom::tile_reach as bloom_tile_reach;
 pub use contact_shadows::tile_reach as contact_tile_reach;
 pub use dof::tile_reach as dof_tile_reach;
 pub use drawn_pick::{Drawn, DrawnFace, DrawnMode};
-pub use equirect::{CAPTURE_CAMERAS, CaptureCamera, EquirectJob, pixel_direction};
+pub use equirect::{Answer as EquirectAnswer, CAPTURE_CAMERAS, CaptureCamera, EquirectJob, pixel_direction};
 pub use gpu_cull::set_whole_chunk_uploads;
 pub use histogram::HISTOGRAM_BINS;
 pub use hud::HudView;

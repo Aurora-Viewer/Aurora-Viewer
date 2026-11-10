@@ -1798,6 +1798,7 @@ impl App {
                 // quality::DETAIL_WAIT), and for its MSAA, whose pipelines
                 // compile on a worker (#1746)
                 if self.settings.photo_held.is_some()
+                    && !self.snapshots.ui.pano
                     && !std::mem::take(&mut self.snapshots.detail_ready)
                     && (self.scene.textures.pending_in_view() > 0 || !renderer.settings_applied() || self.photo_quality_climbing())
                 {
@@ -1871,7 +1872,7 @@ impl App {
                 let me = self.world.agent_id;
                 self.profile_ui.open(&mut self.world, me);
             }
-            Action::SaveAs if self.snapshots.ui.pano => self.capture_360_ask_path(),
+            Action::SaveAs if self.snapshots.ui.pano => self.capture_360_ask_path(renderer),
             Action::SaveAs | Action::ChooseFolder => {
                 if self.snapshots.dialog.is_some() {
                     return;
@@ -2391,6 +2392,9 @@ LUT_3D_SIZE {n}
             self.snapshots.reel.quick.close();
         }
         if !self.panels.snapshot {
+            // (a closed window leaves the 360° format, and its panorama is let go)
+            self.snapshots.ui.set_pano(false);
+            self.capture_360.release_shown();
             self.snapshots.quality_ask = false;
             self.snapshots.ui.full_frame = false;
             if self.snapshots.held.take().is_some() {
@@ -2398,6 +2402,15 @@ LUT_3D_SIZE {n}
                 self.snapshots.reel.held = None;
             }
         }
+    }
+
+    /// The frozen photo let go, as "Freeze frame" switched off does.
+    pub(super) fn photo_release_freeze(&mut self) {
+        self.snapshots.ui.freeze = false;
+        self.snapshots.held = None;
+        self.snapshots.held_view = None;
+        self.snapshots.reel.held = None;
+        self.snapshots.preview_wanted = true;
     }
 
     /// The held photo over the world (drawn first, under the windows).

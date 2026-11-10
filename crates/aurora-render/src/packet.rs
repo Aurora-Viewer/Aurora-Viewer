@@ -160,7 +160,7 @@ pub(crate) struct FrameResult {
     pub snapshot: bool,
     /// The oldest panorama asked whose readback is over (width, height,
     /// RGBA8); Some(None) when it could not be made.
-    pub equirect: Option<Option<(u32, u32, Vec<u8>)>>,
+    pub equirect: Option<crate::equirect::Answer>,
     /// The luminance histogram counted lately (`FramePacket::histogram`).
     pub histogram: Option<Box<[u32; crate::HISTOGRAM_BINS]>>,
     pub spent: Spent,
