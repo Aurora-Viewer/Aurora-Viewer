@@ -395,13 +395,14 @@ impl MiniMap {
             return actions;
         }
         let id = egui::Id::unique("minimap");
-        // File › Close All Windows. Ctrl+W does not pick it: no title bar,
-        // so it is not in the frontmost floater list.
+        // File › Close Window and Close All Windows: the map hides its title
+        // bar, but it is a window like the others (LLFloaterMap "mini_map",
+        // floater_map.xml).
         if super::close_key::take(ctx, id) {
             *open = false;
             return actions;
         }
-        super::close_key::shown_extra(ctx, id);
+        super::close_key::shown(ctx, id);
         super::sound_cues::floater_shown(ctx, id);
         // floater_map.xml: no header nor border, DkGray background at
         // FSMiniMapOpacity (0.66); dragged anywhere, resized by its corner
