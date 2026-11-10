@@ -662,8 +662,7 @@ impl App {
                     self.inventory_ui.begin_rename(&self.world.inventory, *id);
                 }
                 if self.inventory_ui.consume_clipboard {
-                    self.inventory_ui.clipboard.clear();
-                    self.inventory_ui.cut = false;
+                    self.inventory_ui.cancel_cut();
                 }
                 self.inventory_ui.message.clear();
             }
@@ -889,6 +888,17 @@ impl App {
         if let crate::world::appearance::Action::Folders(change) = action {
             self.apply_inventory_action(crate::ui::inventory::InvAction::Edit(change));
             return;
+        }
+        match action {
+            crate::world::appearance::Action::OutfitImage(id) => {
+                self.inventory_ui.thumbnail.open(id);
+                return;
+            }
+            crate::world::appearance::Action::OutfitSnapshot(id) => {
+                self.outfit_snapshot(id);
+                return;
+            }
+            _ => {}
         }
         if self.appearance_ui.pending.is_some() {
             return;

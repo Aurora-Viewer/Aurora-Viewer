@@ -145,6 +145,58 @@ pub fn target(world: &World, idx: usize, props: &HashMap<Uuid, ObjectProps>) -> 
     })
 }
 
+/// Whether `idx` is a prim worn by our own avatar (or a child of one).
+pub fn own_attachment(world: &World, idx: usize) -> bool {
+    let mut current = idx;
+    for _ in 0..64 {
+        let Some(o) = world.objects.get(current) else {
+            return false;
+        };
+        let Some(parent) = world.objects.parent_of(o) else {
+            return false;
+        };
+        match world.objects.get(parent) {
+            Some(p) if p.is_avatar() => return p.full_id == world.agent_id,
+            Some(_) => current = parent,
+            None => return false,
+        }
+    }
+    false
+}
+
+/// teleportToClickedLocation's `has_click_action` (lltoolpie.cpp): a click
+/// action or a touch script on the prim or its root, unless Disabled. Ignore
+/// counts as none: the Legacy Viewer's pick goes through such a prim.
+fn has_click_action(world: &World, idx: usize) -> bool {
+    let Some(code) = final_action(world, idx) else { return false };
+    let root = root(world, idx).and_then(|(r, _)| world.objects.get(r));
+    let flags = world.objects.get(idx).map_or(0, |o| o.update_flags) | root.map_or(0, |r| r.update_flags);
+    let touch = flags & crate::ui::context::flags::HANDLE_TOUCH != 0;
+    (code != code::NONE || touch) && !matches!(code, code::DISABLED | code::IGNORE)
+}
+
+/// The prim `idx` that the second press of a double click landed on, for
+/// `autopilot::object_takes_double_click`. `target` is its one-click
+/// target; None when the press fell through to the ground path, for
+/// example on a Sit prim we already sit on (`target` gives no Sit then, but
+/// the Legacy Viewer still sees its click action and refuses).
+pub fn double_click_pick(world: &World, idx: usize, target: Option<&Target>) -> crate::autopilot::ObjectPick {
+    let Some(o) = world.objects.get(idx) else {
+        return Default::default();
+    };
+    crate::autopilot::ObjectPick {
+        // `objp->getClickAction() != CLICK_ACTION_SIT`; a press that would
+        // sit (a Sit inherited from the root) is kept too, slightly stricter
+        sit: o.click_action == code::SIT || target.is_some_and(|t| t.action == Action::Sit),
+        // Grab: a physical prim with neither a click action nor a script
+        click_action: target.map_or_else(
+            || has_click_action(world, idx),
+            |t| !matches!(t.action, Action::Disabled | Action::Grab),
+        ),
+        hud_or_self: o.full_id == world.agent_id || world.objects.worn_on_hud(idx) || own_attachment(world, idx),
+    }
+}
+
 /// Target of a right-click menu entry (Pay, Buy, Open), whatever
 /// the click action: Pay keeps the clicked prim when it or its root takes
 /// money (enable_pay_object, LLFloaterPay::payViaObject); Buy and Open use the root.
@@ -426,6 +478,9 @@ impl Interactions {
                 folder,
                 sale_type: p.sale_type,
                 price,
+                // packAgentGroupAndCatID reads gAgent.getGroupID() when the
+                // purchase is sent: the active group now, nil for none
+                group_id: world.groups.active,
             }
         } else {
             let (default, buttons) = d.prices.as_ref()?;
@@ -485,6 +540,44 @@ mod tests {
         w.objects.get_mut(root_idx).unwrap().parent_id = 9000;
         assert!(target(&w, child_idx, &props).is_none());
     }
+    #[test]
+    fn a_double_click_takes_a_scripted_prim_but_not_one_we_wear_nor_our_seat() {
+        use crate::autopilot::object_takes_double_click;
+        let mut w = world();
+        let props = HashMap::new();
+        let idx = w.objects.index_of_uuid(&crate::demo::action_id(971)).unwrap();
+        let o = w.objects.get_mut(idx).unwrap();
+        o.click_action = code::NONE;
+        o.update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        let pick = |w: &World| double_click_pick(w, idx, target(w, idx, &props).as_ref());
+        // a touch script in world: the setting decides
+        assert_eq!(target(&w, idx, &props).unwrap().action, Action::Touch);
+        assert!(object_takes_double_click(pick(&w), true));
+        assert!(!object_takes_double_click(pick(&w), false));
+        // the same prim worn by us keeps its touch ("Don't teleport to self")
+        let me = w.objects.index_of_uuid(&w.agent_id).unwrap();
+        let me = w.objects.get(me).unwrap().key.local_id;
+        w.objects.get_mut(idx).unwrap().parent_id = me;
+        assert!(own_attachment(&w, idx));
+        assert_eq!(target(&w, idx, &props).unwrap().action, Action::Touch);
+        assert!(pick(&w).hud_or_self);
+        assert!(!object_takes_double_click(pick(&w), true));
+        // a Sit prim: no Sit target once we sit on it, still refused
+        let o = w.objects.get_mut(idx).unwrap();
+        o.parent_id = 0;
+        o.click_action = code::SIT;
+        o.update_flags = 0;
+        assert_eq!(target(&w, idx, &props).unwrap().action, Action::Sit);
+        assert!(!object_takes_double_click(pick(&w), true));
+        w.agent.seated = true;
+        assert!(target(&w, idx, &props).is_none());
+        assert!(!object_takes_double_click(pick(&w), true));
+        assert!(!object_takes_double_click(pick(&w), false));
+        // a prim without any click action: the ground path goes on
+        w.objects.get_mut(idx).unwrap().click_action = code::NONE;
+        assert!(object_takes_double_click(pick(&w), false));
+    }
+
     #[test]
     fn world_click_other_residents_attachment_needs_touch_but_no_edit_rights() {
         let mut w = world();
@@ -872,6 +965,42 @@ mod tests {
             };
             assert!(
                 matches!(state.confirm(&w, None), Some(NetCommand::BuyObject { local_id: 971, price: 10, sale_type: ty, folder, .. }) if ty == sale_type && folder == expected_folder)
+            );
+        }
+    }
+
+    /// packAgentGroupAndCatID sends gAgent.getGroupID() when the purchase is
+    /// confirmed: the bought object takes the active group of that moment,
+    /// one chosen while the dialog was open included, and none without one
+    /// (#2793).
+    #[test]
+    fn a_purchase_carries_the_active_group_at_confirmation() {
+        let mut w = world();
+        let idx = w.objects.index_of_uuid(&crate::demo::action_id(974)).unwrap();
+        let land_group = Uuid::from_u128(0x2793);
+        for (active, expected) in [(Some(land_group), land_group), (None, Uuid::nil())] {
+            w.apply(aurora_net::NetEvent::ActiveGroup {
+                id: Uuid::from_u128(5),
+                name: "Before".into(),
+                title: String::new(),
+            });
+            let mut state = Interactions::default();
+            let t = target(&w, idx, &state.props).unwrap();
+            state.open(t);
+            state.on_properties(&[ObjectProps {
+                object_id: t.root,
+                sale_type: 2,
+                sale_price: 10,
+                ..Default::default()
+            }]);
+            w.apply(aurora_net::NetEvent::ActiveGroup {
+                id: active.unwrap_or_default(),
+                name: active.map(|_| "Land group".to_owned()).unwrap_or_default(),
+                title: String::new(),
+            });
+            assert!(
+                matches!(state.confirm(&w, None), Some(NetCommand::BuyObject { group_id, .. }) if group_id == expected),
+                "active group {active:?}"
             );
         }
     }
