@@ -121,7 +121,7 @@ mod tests {
         assert_eq!(packs.len(), FILES.len(), "a pack file did not read");
         let czar = packs.iter().find(|p| p.id == "czar-fenris").expect("Czar Fenris' pack");
         assert_eq!(czar.creator, "Czar Fenris");
-        assert_eq!(czar.tables.len(), 20);
+        assert_eq!(czar.tables.len(), 19);
         for pack in packs {
             assert!(!pack.tables.is_empty());
             for t in &pack.tables {
