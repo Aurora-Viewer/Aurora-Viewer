@@ -1,7 +1,7 @@
 //! An avatar's shape on screen, from its skeleton: each bone a tapered
 //! capsule (thick for the torso, thin for a finger), their union the body.
 //! It tints a part of the body (`world_hints`) as one smooth see-through
-//! shape, without the darker overlaps of capsules painted one by one, and
+//! shape (the face an oval around the head, `face`), without the darker overlaps of capsules painted one by one, and
 //! tells where the pointer reveals the markers in "On hover"
 //! (`overlay::markers_reveal`).
 //!
@@ -36,9 +36,134 @@ impl Capsule {
     }
 }
 
-/// How far inside the union of `capsules` `p` is (negative outside).
-pub(super) fn depth(capsules: &[Capsule], p: egui::Pos2) -> f32 {
-    capsules.iter().map(|c| c.depth(p)).fold(f32::NEG_INFINITY, f32::max)
+/// A shape the outline is traced from: how far inside it a point is
+/// (negative outside, zero on its edge), and the box that holds it.
+pub(super) trait Field {
+    fn depth(&self, p: egui::Pos2) -> f32;
+    fn bounds(&self) -> egui::Rect;
+}
+
+impl Field for Capsule {
+    fn depth(&self, p: egui::Pos2) -> f32 {
+        Capsule::depth(self, p)
+    }
+    fn bounds(&self) -> egui::Rect {
+        egui::Rect::from_two_pos(self.a, self.b).expand(self.ra.max(self.rb))
+    }
+}
+
+/// An ellipse on screen: the outline of an ellipsoid around the head (the
+/// face), as `xᵀ M⁻¹ x = 1` around its centre.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Ellipse {
+    centre: egui::Pos2,
+    /// `M`, symmetric: [xx, xy, yy].
+    matrix: [f32; 3],
+    /// `M⁻¹`, the same way.
+    inverse: [f32; 3],
+    /// `M`'s diagonal roots: the half width and half height of its box.
+    half: egui::Vec2,
+    /// Its smallest half axis, which scales the depth to points.
+    least: f32,
+}
+
+impl Ellipse {
+    /// The outline of an ellipsoid whose half axes, put on screen, are
+    /// `axes` around `centre`: `M = Σ v vᵀ` (exact for a parallel
+    /// projection, close enough under perspective for a head). None when
+    /// it is seen edge on.
+    pub(super) fn of_axes(centre: egui::Pos2, axes: [egui::Vec2; 3]) -> Option<Self> {
+        let (xx, xy, yy) = axes
+            .iter()
+            .fold((0.0, 0.0, 0.0), |(xx, xy, yy), v| (xx + v.x * v.x, xy + v.x * v.y, yy + v.y * v.y));
+        let det = xx * yy - xy * xy;
+        if det <= 1e-3 {
+            return None;
+        }
+        let trace = xx + yy;
+        let least = ((trace - (trace * trace - 4.0 * det).max(0.0).sqrt()) * 0.5).max(0.0).sqrt();
+        Some(Self {
+            centre,
+            matrix: [xx, xy, yy],
+            inverse: [yy / det, -xy / det, xx / det],
+            half: egui::vec2(xx.sqrt(), yy.sqrt()),
+            least,
+        })
+    }
+}
+
+impl Ellipse {
+    /// `n` points around its edge, for one smooth closed outline: `c + A
+    /// (cos t, sin t)` with `A Aᵀ = M` (its Cholesky factor).
+    pub(super) fn outline(&self, n: usize) -> Vec<egui::Pos2> {
+        let [xx, xy, yy] = self.matrix;
+        let a = xx.sqrt();
+        let b = if a > 0.0 { xy / a } else { 0.0 };
+        let d = (yy - b * b).max(0.0).sqrt();
+        (0..n)
+            .map(|k| {
+                let (sin, cos) = (k as f32 / n as f32 * std::f32::consts::TAU).sin_cos();
+                self.centre + egui::vec2(a * cos, b * cos + d * sin)
+            })
+            .collect()
+    }
+}
+
+impl Field for Ellipse {
+    fn depth(&self, p: egui::Pos2) -> f32 {
+        let d = p - self.centre;
+        let [xx, xy, yy] = self.inverse;
+        let q = (d.x * d.x * xx + 2.0 * d.x * d.y * xy + d.y * d.y * yy).max(0.0).sqrt();
+        (1.0 - q) * self.least
+    }
+    fn bounds(&self) -> egui::Rect {
+        egui::Rect::from_center_size(self.centre, self.half * 2.0)
+    }
+}
+
+/// How far inside the union of `shapes` `p` is (negative outside).
+pub(super) fn depth<F: Field>(shapes: &[F], p: egui::Pos2) -> f32 {
+    shapes.iter().map(|c| c.depth(p)).fold(f32::NEG_INFINITY, f32::max)
+}
+
+/// The face as a face: an oval around the head rather than its joints'
+/// cloud, whose dots read as a mess. The ellipsoid follows the head's own
+/// axes (`head`, its joint's matrix: X forward, Y left, Z up) and spans the
+/// face joints' extent on each, with a little skin past them; the ears
+/// stand out to the sides and the tongue and teeth lie inside, so they do
+/// not size it.
+pub(super) fn face(
+    names: &[String],
+    world: &[glam::Vec3],
+    joints: &[usize],
+    head: glam::Mat4,
+    project: impl Fn(glam::Vec3) -> Option<egui::Pos2>,
+) -> Option<Ellipse> {
+    let skin = |j: &&usize| !["Ear", "Tongue", "Teeth"].iter().any(|part| names[**j].contains(part));
+    let sizing: Vec<usize> = joints.iter().filter(skin).copied().collect();
+    let sizing = if sizing.is_empty() { joints.to_vec() } else { sizing };
+    let axes = [head.x_axis, head.y_axis, head.z_axis].map(|a| a.truncate().normalize_or_zero());
+    // forward, sideways, up: the brow and the chin need more than the cheeks
+    let margin = [0.012, 0.014, 0.022];
+    let mut centre = glam::Vec3::ZERO;
+    let mut half = [glam::Vec3::ZERO; 3];
+    for (k, axis) in axes.iter().enumerate() {
+        let (lo, hi) = sizing
+            .iter()
+            .map(|j| world[*j].dot(*axis))
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), v| (lo.min(v), hi.max(v)));
+        if !lo.is_finite() {
+            return None;
+        }
+        centre += *axis * (lo + hi) * 0.5;
+        half[k] = *axis * ((hi - lo) * 0.5 + margin[k]);
+    }
+    let at = project(centre)?;
+    let mut on_screen = [egui::Vec2::ZERO; 3];
+    for (k, h) in half.iter().enumerate() {
+        on_screen[k] = project(centre + *h)? - at;
+    }
+    Ellipse::of_axes(at, on_screen)
 }
 
 /// A joint's flesh around the bone, in metres, by its name: the torso
@@ -159,14 +284,10 @@ pub(super) struct Shape {
 /// enough for the frame.
 const CELLS: f32 = 110.0;
 
-/// Trace the union of `capsules` (marching squares).
-pub(super) fn trace(capsules: &[Capsule]) -> Shape {
+/// Trace the union of `shapes` (marching squares).
+pub(super) fn trace<F: Field>(shapes: &[F]) -> Shape {
     let mut shape = Shape::default();
-    let Some(bounds) = capsules
-        .iter()
-        .map(|c| egui::Rect::from_two_pos(c.a, c.b).expand(c.ra.max(c.rb)))
-        .reduce(|a, b| a.union(b))
-    else {
+    let Some(bounds) = shapes.iter().map(Field::bounds).reduce(|a, b| a.union(b)) else {
         return shape;
     };
     let bounds = bounds.expand(1.0);
@@ -176,12 +297,12 @@ pub(super) fn trace(capsules: &[Capsule]) -> Shape {
         (bounds.height() / cell).ceil() as usize + 1,
     );
     let at = |x: usize, y: usize| bounds.min + egui::vec2(x as f32 * cell, y as f32 * cell);
-    // each capsule fills only the points near it (two cells past its edge,
+    // each shape fills only the points near it (two cells past its edge,
     // so that a cell the edge crosses has its true values); the rest stay
     // a little outside, which is all their sign needs
     let mut values = vec![-2.0 * cell; nx * ny];
-    for c in capsules {
-        let near = egui::Rect::from_two_pos(c.a, c.b).expand(c.ra.max(c.rb) + 2.0 * cell);
+    for c in shapes {
+        let near = c.bounds().expand(2.0 * cell);
         let x0 = ((near.left() - bounds.left()) / cell).floor().max(0.0) as usize;
         let y0 = ((near.top() - bounds.top()) / cell).floor().max(0.0) as usize;
         let x1 = (((near.right() - bounds.left()) / cell).ceil().max(0.0) as usize).min(nx - 1);

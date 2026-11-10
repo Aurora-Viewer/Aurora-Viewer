@@ -481,6 +481,10 @@ impl Editor {
             self.poser.options_open = mode == "poser-compact-options";
             self.pose_layers(world);
         }
+        // compact-face: no joint selected, so that no gizmo covers the face
+        if mode == "poser-compact-face" && frame == 500 {
+            self.selected = None;
+        }
         // the head edited at 450, then the window's cross: the confirmation
         if mode == "poser-close" && frame == 700 {
             self.ask_close();

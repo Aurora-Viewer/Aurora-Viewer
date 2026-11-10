@@ -501,7 +501,11 @@ impl App {
         if !self.viewfinder_on() || self.camera.mouselook() || self.alt || self.object_view {
             return false;
         }
-        if self.ctrl && !self.shift {
+        let poser_owns = self.ik_editor.open && self.ik_editor.poser_owns_pointer();
+        // not over the part a poser's Ctrl + click opens (nor a handle):
+        // passed to the world as a plain click, the press would act on the
+        // avatar under it and move the camera; the poser check below keeps it
+        if self.ctrl && !self.shift && !poser_owns {
             // The viewfinder's interaction shortcut acts like an ordinary
             // left click (LLToolPie::handleMouseDown, indra/newview/lltoolpie.cpp).
             // Object actions and HUDs reject Ctrl, so consume it before the
@@ -526,9 +530,7 @@ impl App {
         // clicks, so a HUD's poses and the poser stay usable while framing.
         // The world's press path then decides between the two, as outside
         // the viewfinder.
-        if (self.ik_editor.open && self.ik_editor.poser_owns_pointer())
-            || (self.huds_shown() && self.scene.hud_pick(&self.world, self.cursor_pos, false).is_some())
-        {
+        if poser_owns || (self.huds_shown() && self.scene.hud_pick(&self.world, self.cursor_pos, false).is_some()) {
             return false;
         }
         let Some(mut gfx) = self.gfx.take() else {

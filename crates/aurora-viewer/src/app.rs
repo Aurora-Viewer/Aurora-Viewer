@@ -11012,6 +11012,19 @@ impl App {
                 }
             }
         }
+        // AURORA_DEMO_POSER=compact-face: Ctrl held over the face while
+        // posing the Body, for its oval tint (`poser::world_hints`)
+        if self.demo
+            && self.frame_count >= 560
+            && std::env::var("AURORA_DEMO_POSER").is_ok_and(|mode| mode == "compact-face")
+            && let Some(pos) = self
+                .ik_editor
+                .poser_focus(&self.world, "mFaceNoseBase")
+                .and_then(|point| self.build.cam.project(point))
+        {
+            raw.events.push(egui::Event::ModifiersChanged(egui::Modifiers::CTRL));
+            raw.events.push(egui::Event::PointerMoved(pos));
+        }
         if self.demo && ui::widgets::demo::rez_mode().is_some() {
             let mode = ui::widgets::demo::rez_mode().unwrap_or("1");
             let point = if matches!(mode, "object" | "contents" | "build-object") {

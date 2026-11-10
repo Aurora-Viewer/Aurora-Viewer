@@ -1601,7 +1601,7 @@ fn the_tint_is_the_union_of_the_bones_capsules_painted_once() {
         (area - expected).abs() / expected < 0.2,
         "area {area} near {expected}: painted once"
     );
-    assert!(trace(&[]).triangles.is_empty());
+    assert!(trace::<Capsule>(&[]).triangles.is_empty());
 }
 
 #[test]
@@ -1823,4 +1823,91 @@ fn compact_reset_greys_out_when_it_would_change_nothing() {
     assert!(!editor.reset_available(true));
     editor.pose_operation(&rig, &frame, controls::Operation::WorldLock);
     assert!(editor.reset_available(false) && editor.reset_available(true));
+}
+
+#[test]
+fn an_ellipse_is_inside_to_its_edge_and_a_tilted_one_follows_its_axes() {
+    use silhouette::{Ellipse, Field};
+    let c = egui::pos2(100.0, 100.0);
+    let round = Ellipse::of_axes(c, [egui::vec2(20.0, 0.0), egui::vec2(0.0, 20.0), egui::Vec2::ZERO]).unwrap();
+    assert!((round.depth(c) - 20.0).abs() < 1e-3, "its centre is a radius deep");
+    assert!(round.depth(c + egui::vec2(19.5, 0.0)) > 0.0);
+    assert!(round.depth(c + egui::vec2(20.5, 0.0)) < 0.0);
+    // tall and thin: inside up the long axis, outside as far to the side
+    let tall = Ellipse::of_axes(c, [egui::vec2(10.0, 0.0), egui::vec2(0.0, 30.0), egui::Vec2::ZERO]).unwrap();
+    assert!(tall.depth(c + egui::vec2(0.0, 25.0)) > 0.0);
+    assert!(tall.depth(c + egui::vec2(25.0, 0.0)) < 0.0);
+    assert_eq!(tall.bounds(), egui::Rect::from_center_size(c, egui::vec2(20.0, 60.0)));
+    // seen edge on, there is no outline
+    assert!(Ellipse::of_axes(c, [egui::vec2(10.0, 0.0), egui::vec2(20.0, 0.0), egui::Vec2::ZERO]).is_none());
+}
+
+#[test]
+fn the_face_tint_is_an_oval_over_the_face_and_not_the_neck() {
+    use silhouette::Field;
+    let (world, _) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = Frame::new(&world).unwrap();
+    let head = frame.joints[rig.names["mHead"]];
+    let proj = projector(head.w_axis.truncate());
+    let at: Vec<glam::Vec3> = frame.joints.iter().map(|m| m.w_axis.truncate()).collect();
+    let project = |w: glam::Vec3| proj.project(w).map(|(p, _)| p);
+    let keys: Vec<usize> = rig.canonical_names.iter().map(|n| world_hints::part_key(n)).collect();
+    let face = world_hints::part(&rig.parent, &keys, rig.names["mFaceLipUpperCenter"]);
+    let oval = silhouette::face(&rig.canonical_names, &at, &face, head, project).expect("the face faces the camera");
+    for joint in [
+        "mFaceLipUpperCenter",
+        "mFaceEyeAltLeft",
+        "mFaceEyeAltRight",
+        "mFaceNoseBase",
+        "mFaceForeheadCenter",
+    ] {
+        let point = project(at[rig.names[joint]]).unwrap();
+        assert!(oval.depth(point) > 0.0, "{joint} is inside the oval");
+    }
+    for joint in ["mNeck", "mChest"] {
+        let point = project(at[rig.names[joint]]).unwrap();
+        assert!(oval.depth(point) < 0.0, "{joint} is not");
+    }
+    // one smooth closed outline on its edge, not a cloud of dots
+    let outline = oval.outline(64);
+    assert_eq!(outline.len(), 64);
+    assert!(outline.iter().all(|p| oval.depth(*p).abs() < 0.05), "the outline lies on the edge");
+}
+
+#[test]
+fn another_part_shows_and_takes_the_click_only_while_ctrl_is_held() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (world, mut editor) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = Frame::new(&world).unwrap();
+    let proj = projector(frame.joints[rig.pelvis].w_axis.truncate());
+    let p = crate::theme::Theme::default().palette();
+    editor.poser.group = 0;
+    // a fingertip while posing the Body: the Hands part
+    let finger = proj
+        .project(frame.joints[rig.names["mHandMiddle3Left"]].w_axis.truncate())
+        .unwrap()
+        .0;
+    let mut frames = Frames::new();
+    let hint = |frames: &mut Frames, editor: &mut Editor, keys: egui::Modifiers| -> world_hints::Hint {
+        let mut out = world_hints::Hint::None;
+        let events = vec![egui::Event::ModifiersChanged(keys), egui::Event::PointerMoved(finger)];
+        frames.run(events, |ui| {
+            out = editor.world_hint(ui.ctx(), &p, &world, &proj, &frame, true);
+        });
+        out
+    };
+    assert_eq!(
+        hint(&mut frames, &mut editor, egui::Modifiers::NONE),
+        world_hints::Hint::None,
+        "no Ctrl: no tint, the click stays the world's"
+    );
+    assert!(
+        matches!(
+            hint(&mut frames, &mut editor, egui::Modifiers::CTRL),
+            world_hints::Hint::Group(j) if group(&rig.canonical_names[j]) == 2
+        ),
+        "Ctrl: the hand is offered"
+    );
 }

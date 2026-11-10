@@ -1,10 +1,10 @@
 //! What the pointer offers in the world besides the joints and the gizmo,
 //! in both poser windows (Aurora's own: the Legacy Viewer's poser changes
 //! joint group and subject from its window only):
-//! - over a part of the subject that another joint group governs (a hand
-//!   while posing the Body), that part is tinted in the accent with "Ctrl +
-//!   click: Hands" by the cursor; Ctrl + click selects its nearest joint,
-//!   which opens its group;
+//! - with Ctrl held over a part of the subject that another joint group
+//!   governs (a hand while posing the Body), that part is tinted in the
+//!   accent (the face as an oval) with "Ctrl + click: Hands" by the cursor;
+//!   the click selects its nearest joint, which opens its group;
 //! - over another avatar posed, or who accepted, their skeleton shows
 //!   faintly with "Click to pose …"; a click poses them
 //!   (`overlay::click_beside`).
@@ -168,29 +168,44 @@ impl Editor {
         let joints: Vec<(usize, egui::Pos2)> = (0..rig.len())
             .filter_map(|j| proj.project(frame.joints[j].w_axis.truncate()).map(|(at, _)| (j, at)))
             .collect();
-        if let Some(joint) = offered_joint(&joints, &groups, &offer, self.poser.group, pointer).filter(|_| self.poser.part_hints) {
+        // only while Ctrl is held: without it the part neither shows nor
+        // takes the click, so a plain click on the face still focuses the
+        // photo (a modifier's affordance shows with the modifier, as the
+        // Mac's Cmd + hover link)
+        let ctrl = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
+        if let Some(joint) = offered_joint(&joints, &groups, &offer, self.poser.group, pointer).filter(|_| self.poser.part_hints && ctrl) {
             let members = part(&rig.parent, &keys, joint);
             let world_at: Vec<glam::Vec3> = frame.joints.iter().map(|m| m.w_axis.truncate()).collect();
-            let capsules = silhouette::capsules(
-                &rig.parent,
-                &rig.canonical_names,
-                &world_at,
-                &members,
-                silhouette::links_of(keys[joint]),
-                |at| proj.project(at).map(|(p, _)| p),
-            );
-            if silhouette::depth(&capsules, pointer) > 0.0 {
-                let ctrl = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
-                // the part's own shape, see-through in the accent; brighter
-                // while Ctrl is held
-                let fill = p.violet.gamma_multiply(if ctrl { 0.32 } else { 0.2 });
-                let shape = silhouette::trace(&capsules);
-                silhouette::paint(&painter, &shape, fill, Stroke::new(1.5, p.violet_light.gamma_multiply(0.7)));
-                if ctrl {
-                    for at in joints.iter().filter(|(j, _)| members.contains(j)).map(|(_, at)| at) {
-                        painter.circle_filled(*at, 2.5, p.violet_light);
-                    }
+            let project = |at| proj.project(at).map(|(p, _)| p);
+            // the part's own shape, see-through in the accent: the face an
+            // oval around the head (one smooth outline), the others their
+            // bones' union
+            let fill = p.violet.gamma_multiply(0.32);
+            let stroke = Stroke::new(1.5, p.violet_light.gamma_multiply(0.7));
+            let inside = if keys[joint] == 1 {
+                let head = frame.joints[rig.names.get("mHead").copied().unwrap_or(rig.pelvis)];
+                let oval = silhouette::face(&rig.canonical_names, &world_at, &members, head, project)
+                    .filter(|oval| silhouette::depth(&[*oval], pointer) > 0.0);
+                if let Some(oval) = oval {
+                    painter.add(egui::Shape::convex_polygon(oval.outline(64), fill, stroke));
                 }
+                oval.is_some()
+            } else {
+                let capsules = silhouette::capsules(
+                    &rig.parent,
+                    &rig.canonical_names,
+                    &world_at,
+                    &members,
+                    silhouette::links_of(keys[joint]),
+                    project,
+                );
+                let inside = silhouette::depth(&capsules, pointer) > 0.0;
+                if inside {
+                    silhouette::paint(&painter, &silhouette::trace(&capsules), fill, stroke);
+                }
+                inside
+            };
+            if inside {
                 tip(aurora_i18n::tr!("poser-ctrl-click-group", group = part_label(keys[joint])).to_string());
                 return Hint::Group(joint);
             }
