@@ -88,10 +88,10 @@ impl Editor {
     }
     /// A click in the world that no joint, shaft or gizmo took
     /// (`world_hints`): Ctrl + click on a part another group governs selects
-    /// its joint and opens that group; a click on another avatar posed, or
-    /// who accepted, poses that one at once; anywhere else it unselects the
-    /// joint. Aurora's own: the Legacy Viewer's poser keeps its joint until
-    /// another is chosen in its list.
+    /// its joint and opens that group; Ctrl + click on another avatar posed,
+    /// or who accepted, poses that one at once; anywhere else, unless a worn
+    /// HUD took the click, it unselects the joint. Aurora's own: the Legacy
+    /// Viewer's poser keeps its joint until another is chosen in its list.
     fn click_beside(&mut self, ctx: &egui::Context, world: &World, hint: world_hints::Hint, markers_on: bool) {
         let (clicked, ctrl) = ctx.input(|i| {
             (
@@ -103,7 +103,9 @@ impl Editor {
             return;
         };
         let over_ui = ctx.layer_id_at(pointer).is_some_and(|l| l.order > egui::Order::Background);
-        if !clicked || over_ui || self.poser.pointer_owned || self.drag.is_some() || self.gizmo.dragging() {
+        // a click a worn HUD took (`press_on_hud`, read once) is the HUD's
+        let on_hud = clicked && std::mem::take(&mut self.press_on_hud);
+        if !clicked || on_hud || over_ui || self.poser.pointer_owned || self.drag.is_some() || self.gizmo.dragging() {
             return;
         }
         let rig = &world.avatar_lib.rig;
@@ -113,7 +115,7 @@ impl Editor {
                     self.select_pose_bone(joint, rig, &frame);
                 }
             }
-            world_hints::Hint::Avatar(id) => self.pick_subject(world, id),
+            world_hints::Hint::Avatar(id) if ctrl => self.pick_subject(world, id),
             _ if markers_on && self.selected.is_some() => {
                 self.selected = None;
                 self.poser.unselected = true;

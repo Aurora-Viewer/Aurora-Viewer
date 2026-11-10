@@ -51,6 +51,9 @@ pub struct Editor {
     /// The poser's window shows over the photo viewfinder, whose controls
     /// sit above the windows: it goes up with them (#1389).
     pub over_viewfinder: bool,
+    /// The last world press went to a worn HUD (the app's press path): the
+    /// poser's click beside the joints leaves the selection as it is.
+    pub press_on_hud: bool,
     pub picking: bool,
     pub target: Option<Uuid>,
     pub target_name: String,

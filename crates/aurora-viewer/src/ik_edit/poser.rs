@@ -212,6 +212,11 @@ pub(super) fn group(name: &str) -> usize {
 }
 /// The tab of the Other bones (wings, tail, hind limbs, groin, skull).
 pub(super) const OTHER_GROUP: usize = 3;
+/// An Other bone only some bodies use: the wings, the tail and the hind
+/// limbs. The spine, the groin and the skull are every body's.
+pub(super) fn optional_bone(name: &str) -> bool {
+    ["Wing", "Tail", "HindLimb"].iter().any(|part| name.contains(part))
+}
 pub(super) const FULL_WINDOW: &str = "poser";
 pub(super) const COMPACT_WINDOW: &str = "poser-compact";
 pub(super) fn window_id(compact: bool) -> &'static str {
@@ -253,18 +258,22 @@ impl Editor {
     /// Whether the poser shows the joint `name`: its group is the open tab,
     /// and an Other bone only when it is used (`State::other_used`).
     pub(in crate::ik_edit) fn poser_bone_visible(&self, name: &str) -> bool {
+        // the open tab's joints; of the Other bones, the listed ones
+        // (`refresh_other_bones`)
         let shown = group(name);
         shown == self.poser.group && (shown != OTHER_GROUP || self.poser.other_used.contains(name))
     }
-    /// The Other bones used this frame: weighted by a rigged mesh of the
-    /// subject, or moved by its pose (a loaded pose that bends a wing keeps
-    /// it reachable to reset). Aurora's own: the Legacy Viewer lists every
-    /// Other bone.
+    /// The Other bones listed this frame: the spine, the groin and the skull
+    /// always (every body bends with them), the wings, the tail and the hind
+    /// limbs when a rigged mesh of the subject is weighted to them or its
+    /// pose moved them (a loaded pose that bends a wing keeps it reachable
+    /// to reset). Aurora's own: the Legacy Viewer lists every Other bone,
+    /// which on a body without wings or tail shows dozens it cannot move.
     pub(super) fn refresh_other_bones(&mut self, rig: &Rig) {
         let session = self.poser.sessions.get(&self.poser.subject);
         self.poser.other_used = (0..rig.len())
             .filter(|b| group(&rig.canonical_names[*b]) == OTHER_GROUP)
-            .filter(|b| self.poser.rigged.contains(b) || session.is_some_and(|s| s.edited(*b)))
+            .filter(|b| !optional_bone(&rig.canonical_names[*b]) || self.poser.rigged.contains(b) || session.is_some_and(|s| s.edited(*b)))
             .map(|b| rig.canonical_names[b].clone())
             .collect();
     }

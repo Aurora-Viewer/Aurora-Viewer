@@ -1633,7 +1633,12 @@ fn the_other_tab_shows_only_the_bones_a_mesh_uses_or_the_pose_moved() {
     let hind = rig.names["mHindLimb1Left"];
     editor.poser.group = OTHER_GROUP;
     editor.refresh_other_bones(&rig);
-    assert!(editor.poser.other_used.is_empty(), "nothing worn: the tab is empty");
+    // nothing worn: every body's bones only (the Legacy Viewer's MISC
+    // spine, groin and skull), not the wings, the tail nor the hind limbs
+    for joint in ["mSpine1", "mSpine2", "mSpine3", "mSpine4", "mGroin", "mSkull"] {
+        assert!(editor.poser_bone_visible(joint), "{joint} is always listed");
+    }
+    assert!(editor.poser.other_used.iter().all(|name| !optional_bone(name)));
     // a worn tail
     editor.poser.rigged = [tail].into();
     editor.refresh_other_bones(&rig);
@@ -1654,7 +1659,7 @@ fn the_other_tab_shows_only_the_bones_a_mesh_uses_or_the_pose_moved() {
 }
 
 #[test]
-fn an_empty_other_tab_stays_open_instead_of_going_back_to_body() {
+fn the_other_tab_opens_on_a_spine_bone_with_nothing_worn() {
     use crate::ui::widgets::elide_tests::Frames;
     let (world, mut editor) = selected_fixture();
     let rig = &world.avatar_lib.rig;
@@ -1664,12 +1669,14 @@ fn an_empty_other_tab_stays_open_instead_of_going_back_to_body() {
     let p = crate::theme::Theme::default().palette();
     editor.refresh_other_bones(rig);
     editor.select_pose_group(OTHER_GROUP, rig, &frame);
-    assert_eq!(editor.selected, None, "nothing worn: no Other joint to select");
+    let listed =
+        |b: Option<usize>| b.is_some_and(|b| group(&rig.canonical_names[b]) == OTHER_GROUP && !optional_bone(&rig.canonical_names[b]));
+    assert!(listed(editor.selected), "nothing worn: a spine bone, never a wing or the tail");
     for _ in 0..3 {
         frames.run(Vec::new(), |ui| editor.show(ui.ctx(), &p, &world, &proj));
     }
     assert_eq!(editor.poser.group, OTHER_GROUP, "the tab stays open");
-    assert_eq!(editor.selected, None, "the pelvis is not picked again");
+    assert!(listed(editor.selected), "the spine stays selected, the pelvis is not picked again");
 }
 
 #[test]
@@ -1729,7 +1736,7 @@ fn the_body_is_one_part_from_the_head_to_the_feet() {
 }
 
 #[test]
-fn on_hover_a_click_on_an_avatar_who_accepted_poses_them() {
+fn a_ctrl_click_on_an_avatar_who_accepted_poses_them_and_a_plain_click_does_not() {
     use crate::ui::widgets::elide_tests::Frames;
     let (mut world, mut editor) = selected_fixture();
     let peer = demo::poser::PEER;
@@ -1750,22 +1757,34 @@ fn on_hover_a_click_on_an_avatar_who_accepted_poses_them() {
     crate::ui::widgets::minimize_floater(&frames.ctx, "poser-compact");
     let p = crate::theme::Theme::default().palette();
     editor.poser.markers_hover = true;
-    // a second over them: our own markers fade out, their preview stays
-    for _ in 0..60 {
-        frames.run(vec![egui::Event::PointerMoved(on_peer)], |ui| {
-            editor.show(ui.ctx(), &p, &world, &proj)
-        });
+    let me = editor.poser.subject;
+    for (keys, expected, why) in [
+        (
+            egui::Modifiers::NONE,
+            me,
+            "a plain click stays the world's (a photo's focus, a HUD)",
+        ),
+        (egui::Modifiers::CTRL, peer, "Ctrl + click poses them"),
+    ] {
+        // a second over them: our own markers fade out, their preview
+        // (with Ctrl) stays
+        for _ in 0..60 {
+            frames.run(
+                vec![egui::Event::ModifiersChanged(keys), egui::Event::PointerMoved(on_peer)],
+                |ui| editor.show(ui.ctx(), &p, &world, &proj),
+            );
+        }
+        let button = |pressed| egui::Event::PointerButton {
+            pos: on_peer,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: keys,
+        };
+        for events in [vec![button(true)], vec![button(false)], vec![], vec![]] {
+            frames.run(events, |ui| editor.show(ui.ctx(), &p, &world, &proj));
+        }
+        assert_eq!(editor.poser.subject, expected, "{why}");
     }
-    let button = |pressed| egui::Event::PointerButton {
-        pos: on_peer,
-        button: egui::PointerButton::Primary,
-        pressed,
-        modifiers: egui::Modifiers::NONE,
-    };
-    for events in [vec![button(true)], vec![button(false)], vec![], vec![]] {
-        frames.run(events, |ui| editor.show(ui.ctx(), &p, &world, &proj));
-    }
-    assert_eq!(editor.poser.subject, peer, "the click poses them");
 }
 
 #[test]
@@ -1910,4 +1929,42 @@ fn another_part_shows_and_takes_the_click_only_while_ctrl_is_held() {
         ),
         "Ctrl: the hand is offered"
     );
+}
+
+#[test]
+fn a_click_a_worn_hud_took_keeps_the_joint_and_the_next_one_on_the_ground_unselects() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (world, mut editor) = selected_fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = editor.editor_frame(&world).unwrap();
+    let proj = projector(frame.joints[rig.pelvis].w_axis.truncate());
+    let mut frames = Frames::new();
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser");
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser-compact");
+    let p = crate::theme::Theme::default().palette();
+    let ground = egui::pos2(790.0, 890.0);
+    let button = |pressed| egui::Event::PointerButton {
+        pos: ground,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let mut click = |editor: &mut Editor| {
+        for events in [
+            vec![egui::Event::PointerMoved(ground)],
+            vec![button(true)],
+            vec![button(false)],
+            vec![],
+        ] {
+            frames.run(events, |ui| editor.show(ui.ctx(), &p, &world, &proj));
+        }
+    };
+    assert!(editor.selected.is_some());
+    // the app's press path gave this press to a HUD button
+    editor.press_on_hud = true;
+    click(&mut editor);
+    assert!(editor.selected.is_some(), "the HUD's click leaves the joint selected");
+    assert!(!editor.press_on_hud, "read once");
+    click(&mut editor);
+    assert_eq!(editor.selected, None, "a click on the ground still unselects");
 }

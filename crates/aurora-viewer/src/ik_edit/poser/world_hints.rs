@@ -5,9 +5,9 @@
 //!   governs (a hand while posing the Body), that part is tinted in the
 //!   accent (the face as an oval) with "Ctrl + click: Hands" by the cursor;
 //!   the click selects its nearest joint, which opens its group;
-//! - over another avatar posed, or who accepted, their skeleton shows
-//!   faintly with "Click to pose …"; a click poses them
-//!   (`overlay::click_beside`).
+//! - with Ctrl held over another avatar posed, or who accepted, their
+//!   skeleton shows faintly with "Ctrl + click to pose …"; the click poses
+//!   them (`overlay::click_beside`).
 //!
 //! Physics is never offered: its volumes lie over the body. Of the Other
 //! bones, only the wings and the tail are, each its own part, and only when
@@ -210,8 +210,9 @@ impl Editor {
                 return Hint::Group(joint);
             }
         }
-        // another avatar to pose
-        if !self.poser.avatar_hints {
+        // another avatar to pose, with Ctrl as the parts: a plain click on
+        // them stays the world's (a photo's focus, a HUD drawn over them)
+        if !self.poser.avatar_hints || !ctrl {
             return Hint::None;
         }
         let others: Vec<(Uuid, egui::Rect, f32, Frame)> = self
