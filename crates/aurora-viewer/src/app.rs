@@ -15605,9 +15605,13 @@ impl App {
                     self.settings.contact_marker_anchor,
                     self.settings.contact_markers && !held && (!self.interface.immersive || self.settings.immersive_name_tags),
                 );
-                // RenderTrackerBeacon (LLTracker::render3D, renderBeacon)
-                if !self.camera.mouselook() && !held && self.settings.tracker_beacon {
-                    self.beacon_hit = ui::minimap::draw_beacon(&ctx, &p, &self.world, projector, beacon_hovered);
+                // RenderTrackerBeacon (LLTracker::render3D, renderBeacon): drawn
+                // in every camera mode, mouselook included. There the pointer
+                // is captured, so the beacon is neither hovered nor clicked.
+                if !held && self.settings.tracker_beacon {
+                    let mouselook = self.camera.mouselook();
+                    let hit = ui::minimap::draw_beacon(&ctx, &p, &self.world, projector, beacon_hovered && !mouselook);
+                    self.beacon_hit = hit.filter(|_| !mouselook);
                 } else {
                     self.beacon_hit = None;
                 }
