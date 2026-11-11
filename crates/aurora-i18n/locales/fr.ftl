@@ -5945,6 +5945,7 @@ ui-bars-edit-particles = Modifier les particules
 ui-bars-media-streams-backup = Sauvegarde des flux média
 ui-bars-import-stream-list = Importer la liste des flux…
 ui-bars-export-stream-list = Exporter la liste des flux…
+ui-bars-release-keys = Libérer les touches
 stream-list-file-type = Liste des flux
 stream-list-exported = Liste des flux exportée dans { $file }.
 stream-list-imported = { $count ->

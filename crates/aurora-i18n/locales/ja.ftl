@@ -5915,6 +5915,7 @@ ui-bars-edit-particles = パーティクルの編集
 ui-bars-media-streams-backup = メディアストリームのバックアップ
 ui-bars-import-stream-list = ストリームのリストをインポート…
 ui-bars-export-stream-list = ストリームのリストをエクスポート…
+ui-bars-release-keys = キーの制御を解除
 stream-list-file-type = ストリームのリスト
 stream-list-exported = ストリームのリストを{ $file }にエクスポートしました。
 stream-list-imported = { $count ->

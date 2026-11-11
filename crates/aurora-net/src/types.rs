@@ -1577,6 +1577,11 @@ pub enum NetCommand {
         target: Uuid,
         permissions: u32,
     },
+    /// Make the region release every control the scripts took
+    /// (llTakeControls): Advanced › Release Keys
+    /// (LLAgent::forceReleaseControls). The region answers with
+    /// ScriptControlChange releases.
+    ForceScriptControlRelease,
     /// Accept / decline a session invitation or fetch its history (ChatSessionRequest).
     ChatSession {
         method: crate::social::SessionMethod,

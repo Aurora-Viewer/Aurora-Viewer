@@ -3041,6 +3041,7 @@ impl Session<'_> {
             | NetCommand::AgentAnimationChanges { .. }
             | NetCommand::AnimationStateReset
             | NetCommand::RevokePermissions { .. }
+            | NetCommand::ForceScriptControlRelease
             | NetCommand::ObjectGrab { .. }
             | NetCommand::ObjectGrabUpdate { .. }
             | NetCommand::ObjectRelease { .. }

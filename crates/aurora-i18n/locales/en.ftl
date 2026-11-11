@@ -5937,6 +5937,7 @@ ui-bars-edit-particles = Edit particles
 ui-bars-media-streams-backup = Media streams backup
 ui-bars-import-stream-list = Import the stream list…
 ui-bars-export-stream-list = Export the stream list…
+ui-bars-release-keys = Release keys
 stream-list-file-type = Stream list
 stream-list-exported = Stream list exported to { $file }.
 stream-list-imported = { $count ->
