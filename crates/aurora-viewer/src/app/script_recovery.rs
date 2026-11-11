@@ -241,7 +241,11 @@ impl App {
     pub(super) fn demo_script_recovery_steps(&mut self) {
         let Some(mode) = demo_mode() else { return };
         match (mode.as_str(), self.frame_count) {
-            ("recover", 400) => self.script_recovery_answer(recovery::Answer::Recover),
+            ("recover", 400) => {
+                // the demo inventory, with its Lost and Found
+                crate::world::inventory::demo::seed_lost_folder(&mut self.world.inventory);
+                self.script_recovery_answer(recovery::Answer::Recover);
+            }
             ("edit", 280) => {
                 crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
                 self.open_script(aurora_net::scripts::ScriptTarget {
