@@ -203,6 +203,9 @@ pub fn bottom(
         let slot = geo.button - 4.0;
         let editor = crate::ui::chat::input::height(&ctx, crate::ui::chat::bar_input_id(), slot);
         geo.chat.min.y -= editor - slot;
+        if emoji.is_some() {
+            geo.chat.min.y -= chat.recent_emojis.height();
+        }
     }
     chat.bar_hovered = false;
     let docked = chat.bar_mode.hides() && buttons.iter().any(|b| b.command == "conversations");
@@ -312,12 +315,18 @@ fn chat_island(
     // the field and the button, centred in the islands' common height
     let slot = geo.button - 4.0;
     let inset = (geo.height - slot) / 2.0;
-    let top = island.bottom() - inset - slot;
+    // the recent emojis over the field, or at the island's foot with the
+    // Legacy chat style
+    let recent = if emoji.is_some() { chat.recent_emojis.height() } else { 0.0 };
+    let above = chat.recent_emojis.above;
+    let (over, under) = if above { (recent, 0.0) } else { (0.0, recent) };
+    let bottom = island.bottom() - under;
+    let top = bottom - inset - slot;
     let button = Rect::from_min_size(Pos2::new(island.right() - PAD - slot, top), Vec2::splat(slot));
     let field_right = if with_button { button.left() - GAP } else { island.right() - PAD };
     let field = Rect::from_min_max(
-        Pos2::new(island.left() + PAD, island.top() + inset),
-        Pos2::new(field_right, island.bottom() - inset),
+        Pos2::new(island.left() + PAD, island.top() + inset + over),
+        Pos2::new(field_right, bottom - inset),
     );
     let radius = ui.visuals().window_corner_radius;
     ui.painter().rect_filled(field, radius, p.field);
@@ -361,6 +370,25 @@ fn chat_island(
             .desired_width(text.width())
             .align(egui::Align2::LEFT_CENTER)
     });
+    if recent > 0.0
+        && let Some(emoji) = emoji.as_deref_mut()
+    {
+        let row = if above {
+            Rect::from_min_max(
+                Pos2::new(field.left(), island.top() + inset),
+                Pos2::new(field.right(), island.top() + inset + recent - 2.0),
+            )
+        } else {
+            Rect::from_min_max(
+                Pos2::new(field.left(), island.bottom() - inset - (recent - 2.0)),
+                Pos2::new(field.right(), island.bottom() - inset),
+            )
+        };
+        let id = crate::ui::chat::bar_input_id();
+        if let Some(c) = chat.recent_emojis.row(ui, p, emoji, row, id) {
+            crate::ui::emoji::recent::insert(ui.ctx(), id, &mut chat.input, c);
+        }
+    }
     if chat.bar_emoji_open {
         emoji_picker(ui, p, icons, chat, emoji, smile, Pos2::new(field.right(), island.top() - 6.0));
     }
@@ -411,6 +439,7 @@ fn emoji_picker(
     };
     let mut close = false;
     let mut escape = false;
+    let mut starred = false;
     let shown = egui::Area::new(Id::unique("chat_island_emoji_picker"))
         .fade_in(false)
         .order(egui::Order::Foreground)
@@ -419,7 +448,11 @@ fn emoji_picker(
         .show(ui.ctx(), |ui| {
             crate::ui::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
                 ui.set_width(300.0);
-                let picked = emoji.picker(ui, p, icons);
+                let picked = emoji.picker(ui, p, icons, chat.recent_emojis.favorites());
+                if let Some(c) = picked.favorite {
+                    chat.recent_emojis.toggle_favorite(c);
+                    starred = true;
+                }
                 if let Some(c) = picked.chosen {
                     chat.input.push(c);
                     close = !ui.input(|i| i.modifiers.shift);
@@ -427,7 +460,8 @@ fn emoji_picker(
                 escape = picked.escape;
             });
         });
-    let away = shown.response.clicked_elsewhere() && !ui.rect_contains_pointer(button.expand(4.0));
+    // the emoji's menu can hang outside the picker: its click stays in it
+    let away = shown.response.clicked_elsewhere() && !starred && !ui.rect_contains_pointer(button.expand(4.0));
     if escape {
         // the field gets the keyboard back, its caret where it was
         chat.bar_emoji_open = false;

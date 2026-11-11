@@ -8,7 +8,7 @@
 //! Each conversation keeps its draft, and its field takes the keyboard as
 //! in the other styles (#422, #425).
 
-use super::{ChatUi, ConvAction, OutgoingChat, parse_channel, sidebar, suggest, typing};
+use super::{ChatUi, ConvAction, OutgoingChat, SendKey, ooc, parse_channel, send_enter, sidebar, suggest, typing};
 use crate::theme::Palette;
 use crate::ui::menu;
 use crate::world::World;
@@ -20,10 +20,11 @@ const TYPING_H: f32 = 18.0;
 pub(super) const BOX_H: f32 = 42.0;
 const BUTTON: f32 = 28.0;
 
-/// What the field takes under the messages: typing line, box and margin.
-pub(super) fn height(ctx: &egui::Context, conversation: Option<uuid::Uuid>) -> f32 {
+/// What the field takes under the messages: typing line, box, the recent
+/// emojis and margin.
+pub(super) fn height(ctx: &egui::Context, conversation: Option<uuid::Uuid>, recent: f32) -> f32 {
     let field = egui::Id::unique(("conv_input", conversation));
-    TYPING_H + BOX_H.max(super::input::height(ctx, field, BUTTON) + 8.0) + 12.0
+    TYPING_H + BOX_H.max(super::input::height(ctx, field, BUTTON) + 8.0) + recent + 12.0
 }
 
 /// The volume of what we say in the nearby chat.
@@ -120,6 +121,10 @@ pub(super) fn show(
             let mut send_clicked = false;
             let local = st.selected.is_none();
             let roomy = width > 520.0;
+            // ---- the recent emojis, over the box
+            if st.recent_emojis.above {
+                st.recent_emojis.strip(ui, p, emoji, width - 28.0, conv_input, &mut draft);
+            }
             let field = egui::Frame::new()
                 .fill(p.raised)
                 .corner_radius(ui.visuals().window_corner_radius)
@@ -193,6 +198,10 @@ pub(super) fn show(
                     .inner
                 });
             let resp = field.inner;
+            // ---- or under it, with the Legacy chat style
+            if !st.recent_emojis.above {
+                st.recent_emojis.strip(ui, p, emoji, width - 28.0, conv_input, &mut draft);
+            }
             if st.emoji_open && super::popout::claim_picker(ui.ctx()) {
                 let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
                 let mut close = false;
@@ -205,7 +214,10 @@ pub(super) fn show(
                     .show(ui.ctx(), |ui| {
                         crate::ui::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
                             ui.set_width(300.0);
-                            let picked = emoji.picker(ui, p, icons);
+                            let picked = emoji.picker(ui, p, icons, st.recent_emojis.favorites());
+                            if let Some(c) = picked.favorite {
+                                st.recent_emojis.toggle_favorite(c);
+                            }
                             if let Some(c) = picked.chosen {
                                 draft.push(c);
                                 close = !ui.input(|i| i.modifiers.shift);
@@ -234,12 +246,18 @@ pub(super) fn show(
                 st.used_conversation(st.selected);
             }
             let mut sent = false;
-            if send_clicked
-                || (!focusing
-                    && (resp.has_focus() || resp.lost_focus())
-                    && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt))
-            {
-                let text = st.suggest.expand(st.selected, draft.trim());
+            let send = if send_clicked {
+                Some(SendKey::Normal)
+            } else if !focusing && (resp.has_focus() || resp.lost_focus()) {
+                ui.input(send_enter)
+            } else {
+                None
+            };
+            if let Some(send) = send {
+                let mut text = st.suggest.expand(st.selected, draft.trim());
+                if send == SendKey::Ooc {
+                    text = ooc(&text);
+                }
                 if !text.is_empty() {
                     sent = true;
                     st.input_history.entry(st.selected).or_default().record(conv_input, &draft);
@@ -250,15 +268,7 @@ pub(super) fn show(
                             actions.push(ConvAction::Local(OutgoingChat {
                                 message,
                                 channel,
-                                chat_type: ui.input(|i| {
-                                    if i.modifiers.ctrl {
-                                        ChatType::Shout
-                                    } else if i.modifiers.shift {
-                                        ChatType::Whisper
-                                    } else {
-                                        volume
-                                    }
-                                }),
+                                chat_type: send.chat_type(volume),
                             }));
                         }
                         Some(to) => actions.push(ConvAction::Im { to, text }),

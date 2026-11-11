@@ -408,6 +408,7 @@ mod tests {
             estate_invoice: uuid::Uuid::nil(),
             terrain_raw: Default::default(),
             decode_failures: HashMap::new(),
+            rejected_full: Default::default(),
             inventory_uploads: Default::default(),
             inventory_previews: Default::default(),
             script_transfers: Default::default(),

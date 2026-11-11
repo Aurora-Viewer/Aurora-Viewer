@@ -145,6 +145,8 @@ fn release(server: &Server, size: usize) -> Release {
         notes: "Changes".into(),
         url: format!("{}/release", server.base),
         required: false,
+        minimum: None,
+        grace: aurora_updater::feed::DEFAULT_GRACE,
         maintenance: Default::default(),
         archive: Some(Asset {
             name: "package.zip".into(),
@@ -579,6 +581,35 @@ fn release_filter_ignores_assets_drafts_prereleases_and_retrieves_minimum_versio
     assert_eq!(result.version, "0.3.0");
     assert_eq!(result.notes, "Real notes");
     assert!(result.required);
+    assert_eq!(result.minimum.as_deref(), Some("0.2.1"));
+    assert_eq!(result.grace, aurora_updater::feed::DEFAULT_GRACE);
+}
+
+#[test]
+fn the_policy_sets_the_grace_period_below_a_new_minimum() {
+    let check = |grace: &str| {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("loopback");
+        let base = format!("http://{}", listener.local_addr().expect("address"));
+        let list = serde_json::json!([
+            {"tag_name":"v0.3.0","html_url":format!("{base}/release"),"assets":[{"name":"aurora-update-policy.json","size":100,"browser_download_url":format!("{base}/policy")}]}
+        ])
+        .to_string();
+        let policy = format!("{{\"schema\":1,\"version\":\"0.3.0\",\"minimum_supported_version\":\"0.3.0\"{grace}}}");
+        let server = serve(listener, vec![list, policy]);
+        let result = run(Source::local(&format!("{base}/releases"))
+            .expect("feed")
+            .check("0.2.0", Channel::Stable));
+        server.join().expect("server");
+        result.map(|r| r.map(|r| (r.required, r.grace)))
+    };
+    let hours = |h: u64| std::time::Duration::from_secs(h * 3600);
+    // a release that cannot wait blocks at once
+    assert_eq!(check(",\"grace_hours\":0").expect("check"), Some((true, hours(0))));
+    assert_eq!(check(",\"grace_hours\":24").expect("check"), Some((true, hours(24))));
+    // a policy written before grace periods existed gets the default one
+    assert_eq!(check("").expect("check"), Some((true, aurora_updater::feed::DEFAULT_GRACE)));
+    // more than three days is refused, like any invalid policy
+    assert!(check(",\"grace_hours\":100").is_err());
 }
 
 /// One answer per request, in order, on a loopback feed.

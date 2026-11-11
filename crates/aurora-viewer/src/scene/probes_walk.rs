@@ -26,6 +26,7 @@ fn face() -> crate::scene::FaceDraw {
         base_slot: 0,
         tex_id: uuid::Uuid::nil(),
         aux_tex: [uuid::Uuid::nil(); 3],
+        bump_height_source: uuid::Uuid::nil(),
         te_alpha: 1.0,
         pbr_alpha: None,
         legacy_alpha: None,

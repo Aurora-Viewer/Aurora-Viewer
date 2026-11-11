@@ -13,6 +13,7 @@ mod currency;
 mod estate;
 mod experience_events;
 mod gestures;
+mod god;
 mod inventory_copies;
 mod inventory_moves;
 mod inventory_preview;
@@ -346,6 +347,9 @@ struct Session<'a> {
     terrain_raw: terrain_raw::RawXfers,
     /// Decode failures per message name, to rate-limit their warnings.
     decode_failures: HashMap<&'static str, u64>,
+    /// ObjectUpdate blocks `objects::parse_full` did not read, by simulator
+    /// and size: warned once each (issue #2747).
+    rejected_full: std::collections::HashSet<(SocketAddr, usize)>,
     inventory_uploads: inventory_upload::Uploads,
     asset_imports: asset_imports::Imports,
     inventory_previews: inventory_preview::Previews,
@@ -361,8 +365,7 @@ struct Session<'a> {
 fn packets_counted(stats: &NetStats) -> throttle::Counted {
     throttle::Counted {
         received: stats.packets_in.load(Ordering::Relaxed),
-        gaps: stats.seq_gaps.load(Ordering::Relaxed),
-        late: stats.seq_late.load(Ordering::Relaxed),
+        lost: stats.packets_lost.load(Ordering::Relaxed),
     }
 }
 
@@ -530,6 +533,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         estate_invoice: Uuid::nil(),
         terrain_raw: Default::default(),
         decode_failures: HashMap::new(),
+        rejected_full: Default::default(),
         inventory_uploads: Default::default(),
         asset_imports: Default::default(),
         inventory_previews: Default::default(),
@@ -1388,7 +1392,6 @@ impl Session<'_> {
         self.send_queued_attachment(now);
         self.publish_motion();
         self.object_cache.save_when_due(now);
-        self.update_throttle(now);
         let stats = self.sh.stats.clone();
         // Deferred CompleteAgentMovement once UseCircuitCode is acked. At
         // login it waits for the ack itself, as llstartup.cpp STATE_WORLD_WAIT
@@ -1485,6 +1488,9 @@ impl Session<'_> {
                 dead.push(*addr);
             }
         }
+        // Circuit ticks confirm expired holes before this five-second
+        // sample, so a genuine loss is not deferred to the next sample.
+        self.update_throttle(now);
         stats.unacked.store(unacked as u32, Ordering::Relaxed);
         for addr in ping_targets {
             if let Some(sim) = self.sims.get_mut(&addr) {
@@ -2127,6 +2133,8 @@ impl Session<'_> {
             }
             NetCommand::Land(l) => self.on_land_command(l),
             NetCommand::Estate(e) => self.on_estate_command(e),
+            NetCommand::RequestGodlikePowers { godlike } => self.request_godlike(godlike),
+            NetCommand::God(c) => self.on_god_command(c),
             NetCommand::ParcelInfoRequest(id) => {
                 let mut m = ParcelInfoRequest::default();
                 m.agent_data.agent_id = self.agent_id();
@@ -3715,6 +3723,30 @@ impl Session<'_> {
         });
     }
 
+    /// An ObjectUpdate block `objects::parse_full` did not read (an
+    /// ObjectData size it does not know): the object is dropped, and the
+    /// simulator, which sent it, does not send it again. Warned once per
+    /// simulator and size, then counted (issue #2747: avatars whose worn
+    /// objects never show). The Legacy Viewer also reads the 16, 32 and 48
+    /// byte sizes (LLViewerObject::processUpdateMessage, OUT_FULL); this
+    /// only says whether the grid sends them.
+    fn note_rejected_full(&mut self, from: SocketAddr, b: &aurora_msg::msgs::object_update::ObjectData) {
+        let size = b.object_data.len();
+        self.sh.stats.objects_unread.fetch_add(1, Ordering::Relaxed);
+        if self.rejected_full.insert((from, size)) {
+            log::warn!(
+                "ObjectUpdate block not read: ObjectData of {size} bytes (object {}, local id {}, pcode {}, parent {}, attach state {}) \
+                 from region {}; the next ones of this size from this region are counted, not logged",
+                b.full_id,
+                b.id,
+                b.p_code,
+                b.parent_id,
+                b.state,
+                transition::grid(self.handle_of(from)),
+            );
+        }
+    }
+
     fn request_objects(&mut self, addr: SocketAddr, ids: &[u32]) {
         crate::probe::objects(crate::probe::ObjectKind::Requested, ids.len());
         for chunk in ids.chunks(255) {
@@ -4007,7 +4039,7 @@ impl Session<'_> {
             stats.duplicates.fetch_add(1, Ordering::Relaxed);
             return;
         }
-        sim.circuit.note_sequence(pkt.sequence, stats);
+        sim.circuit.note_sequence(pkt.sequence, pkt.resent(), stats);
         match self.dispatch(from, &pkt) {
             // ack only now (the handler may also have removed the circuit)
             Ok(()) => {
@@ -4063,6 +4095,7 @@ impl Session<'_> {
             || self.dispatch_search(from, pkt)?
             || self.dispatch_groups(pkt)?
             || self.dispatch_build(pkt)?
+            || self.dispatch_god(pkt)?
         {
             return Ok(());
         }
@@ -4095,7 +4128,13 @@ impl Session<'_> {
             if transition::running() && self.main == Some(from) {
                 transition::step_once("first objects", || "first object update of the region (ObjectUpdate)".to_string());
             }
-            let objects: Vec<_> = m.object_data.iter().filter_map(objects::parse_full).collect();
+            let mut objects = Vec::with_capacity(m.object_data.len());
+            for b in &m.object_data {
+                match objects::parse_full(b) {
+                    Some(u) => objects.push(u),
+                    None => self.note_rejected_full(from, b),
+                }
+            }
             self.attach_queue
                 .observe(objects.iter().map(|o| o.name_values.as_str()), Instant::now());
             self.sh.stats.objects_full.fetch_add(objects.len() as u64, Ordering::Relaxed);
@@ -4725,13 +4764,7 @@ impl Session<'_> {
                     cof_version: m.appearance_data.first().map(|a| a.cof_version).unwrap_or(0),
                     appearance_version: m.appearance_data.first().map(|a| a.appearance_version).unwrap_or(0),
                     hover_height: m.appearance_hover.first().map(|h| h.hover_height.z).unwrap_or(0.0),
-                    attachments: m
-                        .attachment_block
-                        .iter()
-                        .filter(|a| !a.id.is_nil())
-                        .map(|a| a.id)
-                        .collect::<std::collections::HashSet<_>>()
-                        .len() as u32,
+                    attachments: objects::listed_attachments(m.attachment_block.iter().map(|a| (a.id, a.attachment_point))),
                 }),
             );
         } else if id == SimulatorViewerTimeMessage::ID {
@@ -6329,6 +6362,7 @@ mod event_queue_tests {
             estate_invoice: Uuid::nil(),
             terrain_raw: Default::default(),
             decode_failures: HashMap::new(),
+            rejected_full: Default::default(),
             inventory_uploads: Default::default(),
             asset_imports: Default::default(),
             inventory_previews: Default::default(),
@@ -6588,7 +6622,7 @@ mod event_queue_tests {
 mod script_dialog_tests {
     use super::*;
 
-    fn test_shared(events: crossbeam_channel::Sender<(Instant, NetEvent)>) -> Shared {
+    pub(in crate::session) fn test_shared(events: crossbeam_channel::Sender<(Instant, NetEvent)>) -> Shared {
         Shared {
             http: reqwest::Client::new(),
             caps_http: reqwest::Client::new(),
@@ -6603,7 +6637,7 @@ mod script_dialog_tests {
         }
     }
 
-    fn test_login(main_port: u16) -> Arc<LoginResponse> {
+    pub(in crate::session) fn test_login(main_port: u16) -> Arc<LoginResponse> {
         Arc::new(LoginResponse {
             agent_id: Uuid::from_u128(1),
             session_id: Uuid::from_u128(2),
@@ -6627,7 +6661,12 @@ mod script_dialog_tests {
         })
     }
 
-    fn test_session<'a>(sh: &'a Shared, sock: Arc<UdpSocket>, sims: HashMap<SocketAddr, Sim>, main: SocketAddr) -> Session<'a> {
+    pub(in crate::session) fn test_session<'a>(
+        sh: &'a Shared,
+        sock: Arc<UdpSocket>,
+        sims: HashMap<SocketAddr, Sim>,
+        main: SocketAddr,
+    ) -> Session<'a> {
         let (eq_tx, _) = mpsc::unbounded_channel();
         let (caps_tx, _) = mpsc::unbounded_channel();
         let (notecard_copy_tx, _) = mpsc::unbounded_channel();
@@ -6672,6 +6711,7 @@ mod script_dialog_tests {
             estate_invoice: uuid::Uuid::nil(),
             terrain_raw: Default::default(),
             decode_failures: HashMap::new(),
+            rejected_full: Default::default(),
             inventory_uploads: Default::default(),
             asset_imports: Default::default(),
             inventory_previews: Default::default(),
@@ -7179,5 +7219,24 @@ mod script_dialog_tests {
             assert_eq!(parts.join(" "), words);
             assert!(main.try_recv_from(&mut large).is_err(), "three parts only");
         }
+    }
+
+    /// The next packets the region receives, decoded as `M`, past the
+    /// others (pings, agent updates) until `n` of them arrived.
+    pub(in crate::session) async fn received<M: Msg>(sim: &UdpSocket, n: usize) -> Vec<M> {
+        let mut datagram = [0; 1500];
+        let mut out = Vec::new();
+        while out.len() < n {
+            let (size, _) = tokio::time::timeout(Duration::from_secs(2), sim.recv_from(&mut datagram))
+                .await
+                .expect("the packet reaches the region")
+                .expect("packet");
+            let packet = parse_packet(&datagram[..size]).expect("datagram");
+            if packet.id == M::ID {
+                assert!(packet.reliable());
+                out.push(packet.decode().expect("message"));
+            }
+        }
+        out
     }
 }

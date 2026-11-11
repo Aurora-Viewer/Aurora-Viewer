@@ -147,6 +147,8 @@ const BEFORE: &[&str] = &[
     "confirm_payments",
     "payment_confirm_threshold",
     "name_tag_distance",
+    "contact_markers",
+    "contact_marker_anchor",
     "show_own_name_tag",
     "show_friend_name_tags",
     "show_other_name_tags",
@@ -163,6 +165,7 @@ const BEFORE: &[&str] = &[
     "tag_complexity_own",
     "hover_tips.enabled",
     "hover_tips.form",
+    "hover_tips.avatars",
     "hover_tips.all_objects",
     "hover_tips.land",
     "hover_tips.group_titles",
@@ -175,6 +178,7 @@ const BEFORE: &[&str] = &[
     "inventory.recent_hours",
     "inventory.show_worn",
     "inventory.show_favorites",
+    "inventory.favorites_show_parent_folders",
     "inventory.search_trash",
     "inventory.search_library",
     "inventory.search_outfits",
@@ -183,6 +187,7 @@ const BEFORE: &[&str] = &[
     "inventory.double_click_add_clothes",
     "inventory.warn_task_move",
     "inventory.warn_scripted_task_move",
+    "inventory.confirm_delete",
     // Fonts
     "font",
     "font_scale",
@@ -190,6 +195,7 @@ const BEFORE: &[&str] = &[
     "chat_timestamps_nearby",
     "chat_timestamps_im",
     "show_chat_channel",
+    "show_recent_emojis",
     "compact_automated_chat",
     "compact_im_system_lines",
     "chat_keep_focus",
@@ -201,6 +207,7 @@ const BEFORE: &[&str] = &[
     "chat_mention_autocomplete",
     "chat_bar",
     "chat_toast_seconds",
+    "chat_console_max_lines",
     "chat_bubbles",
     "chat_bubbles_hide_console",
     "typing_bubbles",
@@ -251,6 +258,7 @@ const BEFORE: &[&str] = &[
     "letter_keys_move",
     "walk_backwards_without_turning",
     "double_click",
+    "double_click_scripted",
     "lookat.head_yaw",
     "lookat.head_pitch",
     "crouch_toggle",
@@ -389,8 +397,9 @@ fn a_setting_has_one_page() {
     for (page, path) in &paths {
         // the push-to-talk keys: Sound and voice and Shortcuts, as before;
         // the colored sky ambient: Graphics, and Aurora with the other
-        // differences from the Legacy Viewer
-        if path == "keybinds" || path == "colored_sky_ambient" {
+        // differences from the Legacy Viewer;
+        // inventory delete confirm: Confirmations and Inventory (#2344)
+        if path == "keybinds" || path == "colored_sky_ambient" || path == "inventory.confirm_delete" {
             continue;
         }
         let elsewhere: Vec<_> = paths
@@ -809,6 +818,9 @@ fn preference_shapes(
 ) -> Vec<egui::Shape> {
     let p = crate::theme::Theme::default().palette();
     let d = Settings::default();
+    // the Spelling tab's status line must not follow the checker that
+    // other tests load at the same time
+    crate::spelling::tests::pin_status(crate::spelling::Status::Ready);
     frames.shapes(events, |ui| {
         ui.set_width(view.2);
         ui.spacing_mut().item_spacing.y = 0.0;
@@ -1417,6 +1429,55 @@ fn preferences_keep_their_height_when_text_size_changes() {
 }
 
 #[test]
+fn system_font_popup_width_stays_fixed_across_ui_scales() {
+    let theme = crate::theme::Theme::default();
+    let mut widths = Vec::new();
+    for font_scale in [1.0, 1.25, 1.5] {
+        for pixels_per_point in [1.0, 1.25, 1.5] {
+            let mut frames = Frames::new();
+            let ctx = frames.ctx.clone();
+            let p = theme.palette();
+            theme.apply(&ctx, font_scale);
+            ctx.set_pixels_per_point(pixels_per_point);
+            let mut settings = Settings::default();
+            let mut state = OptionsUi {
+                page: Page::Appearance,
+                demo_font_list: Some(false),
+                system_fonts: Some(
+                    (0..40)
+                        .map(|n| crate::ui::fonts::SystemFont {
+                            name: format!("System font {n:02} with a very long sample name"),
+                            path: std::path::PathBuf::from(format!("/font/{n}")),
+                        })
+                        .collect(),
+                ),
+                ..Default::default()
+            };
+            let mut open = true;
+            for _ in 0..120 {
+                frames.run(Vec::new(), |ui| {
+                    show(ui.ctx(), &p, &Icons::default(), &mut settings, &mut state, &mut open);
+                });
+                let id = ctx.data(|data| data.get_temp::<egui::Id>(egui::Id::unique("font-list-popup-test-id")));
+                let popup = ctx.memory(|m| id.and_then(|id| m.area_rect(id))).expect("font popup area");
+                widths.push((font_scale, pixels_per_point, popup.width()));
+            }
+        }
+    }
+    for group in widths.as_chunks::<120>().0 {
+        let first = group[2].2;
+        assert!(
+            group[3..].iter().all(|(_, _, width)| (width - first).abs() < 0.5),
+            "popup grew at font scale {:?}, pixels per point {:?}: {:?} -> {:?}",
+            group[0].0,
+            group[0].1,
+            group[2].2,
+            group[119].2
+        );
+    }
+}
+
+#[test]
 fn the_content_ratings_follow_the_account() {
     use aurora_net::search::{AgentAccess, SIM_ACCESS_ADULT, SIM_ACCESS_MATURE, SIM_ACCESS_PG};
     let ratings = |max| {
@@ -1664,4 +1725,245 @@ fn a_borrowed_row_edits_the_setting_of_its_page() {
     reset_page_settings(Page::Accessibility, &mut s);
     assert!(!s.reduce_motion);
     assert_eq!(s.font_scale, 1.2, "the text size is reset with Appearance");
+}
+
+#[test]
+fn show_friends_only_switches_from_controls_once_logged_in() {
+    // the rows of a search for the row's own label on Controls, in the
+    // interface's language (the tests may run in French): the shapes painted
+    fn frame(frames: &mut Frames, st: &mut OptionsUi, r: &mut OptionsResult, events: Vec<egui::Event>) -> Vec<egui::Shape> {
+        let p = crate::theme::Theme::default().palette();
+        let (mut s, d) = (Settings::default(), Settings::default());
+        let query = aurora_i18n::tr!("toolbar-command-friends-only");
+        frames.shapes(events, |ui| {
+            ui.set_width(700.0);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let mut cx = Cx::new(ui, p, &mut s, &d, st, r, Mode::Search, query);
+            run_page(&mut cx, Page::Controls, Some(0));
+        })
+    }
+    // the switch at the right of the row's label
+    fn switch(shapes: &[egui::Shape]) -> egui::Pos2 {
+        let label = shapes
+            .iter()
+            .find_map(|shape| match shape {
+                egui::Shape::Text(t) if t.galley.text() == aurora_i18n::tr!("toolbar-command-friends-only") => {
+                    Some(egui::Rect::from_min_size(t.pos, t.galley.size()))
+                }
+                _ => None,
+            })
+            .expect("the row of Show Friends Only");
+        shapes
+            .iter()
+            .filter_map(|shape| match shape {
+                egui::Shape::Rect(r)
+                    if r.rect.size() == crate::ui::widgets::SWITCH_SIZE
+                        && r.rect.left() > label.right()
+                        && (r.rect.center().y - label.center().y).abs() < 2.0 =>
+                {
+                    Some(r.rect)
+                }
+                _ => None,
+            })
+            .min_by(|a, b| a.left().total_cmp(&b.left()))
+            .expect("its switch")
+            .center()
+    }
+    // logged in it flips the world's state; logged out it is greyed
+    for (state, asked) in [(Some(false), Some(true)), (Some(true), Some(false)), (None, None)] {
+        let mut frames = Frames::new();
+        let mut st = OptionsUi {
+            friends_only: state,
+            friends_only_keep: state.map(|_| false),
+            ..Default::default()
+        };
+        let mut r = OptionsResult::default();
+        let mut shapes = Vec::new();
+        for _ in 0..3 {
+            shapes = frame(&mut frames, &mut st, &mut r, Vec::new());
+        }
+        for events in click(switch(&shapes)) {
+            frame(&mut frames, &mut st, &mut r, events);
+        }
+        assert_eq!(r.friends_only, asked, "logged in: {}", state.is_some());
+        assert_eq!(r.friends_only_keep, None, "the keep row is left alone");
+    }
+}
+
+/// #2136: the System fonts search filters the list, the list grows back when
+/// the search is cleared or the list reopened, and a click in the room a
+/// filtered list left closes it. `screen_h` short enough opens it above its
+/// button.
+fn font_search(screen_h: f32) {
+    let theme = crate::theme::Theme::default();
+    let p = theme.palette();
+    let ctx = egui::Context::default();
+    crate::ui::fonts::apply(&ctx, crate::ui::fonts::INTER);
+    theme.apply(&ctx, 1.0);
+    let names = ["Alpha", "Beta", "Gamma", "Delta"];
+    let mut settings = Settings::default();
+    let mut state = OptionsUi {
+        page: Page::Appearance,
+        system_fonts: Some(
+            names
+                .iter()
+                .map(|n| crate::ui::fonts::SystemFont {
+                    name: (*n).into(),
+                    path: format!("/nonexistent/{n}.ttf").into(),
+                })
+                .collect(),
+        ),
+        ..Default::default()
+    };
+    let mut open = true;
+    let mut frame = 0;
+    let mut draw = |events: Vec<egui::Event>, state: &mut OptionsUi, settings: &mut Settings| -> Vec<(String, egui::Rect)> {
+        frame += 1;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, screen_h))),
+                time: Some(frame as f64 / 60.0),
+                events,
+                focused: true,
+                ..Default::default()
+            },
+            |_| {
+                show(&ctx, &p, &Icons::default(), settings, state, &mut open);
+            },
+        );
+        output.textures_delta.clear();
+        output
+            .shapes
+            .iter()
+            .filter_map(|c| match &c.shape {
+                egui::Shape::Text(t) => Some((t.galley.text().to_owned(), t.visual_bounding_rect())),
+                _ => None,
+            })
+            .collect()
+    };
+    let shown = |texts: &[(String, egui::Rect)]| -> Vec<String> {
+        names
+            .iter()
+            .filter(|n| texts.iter().any(|(t, _)| t == *n))
+            .map(|n| (*n).to_owned())
+            .collect()
+    };
+    // the list's popup, the top area once open
+    let popup = || {
+        ctx.memory(|m| m.areas().top_layer_id(egui::Order::Foreground).and_then(|l| m.area_rect(l.id)))
+            .expect("the list's popup")
+    };
+    let height = || popup().height();
+    let all: Vec<String> = names.iter().map(|n| (*n).to_owned()).collect();
+    let mut texts = vec![];
+    for _ in 0..12 {
+        texts = draw(vec![], &mut state, &mut settings);
+    }
+    let click = |at: egui::Pos2| {
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        vec![
+            vec![egui::Event::PointerMoved(at)],
+            vec![button(true)],
+            vec![button(false)],
+            vec![],
+            vec![],
+        ]
+    };
+    let key = |key| egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let erase = || {
+        vec![
+            vec![key(egui::Key::Backspace)],
+            vec![key(egui::Key::Backspace)],
+            vec![],
+            vec![],
+            vec![],
+        ]
+    };
+    let typed = || vec![vec![egui::Event::Text("Be".into())], vec![], vec![]];
+    let none = aurora_i18n::tr!("ui-options-no-system-font");
+    let button = texts.iter().find(|(t, _)| t == none).expect("the System fonts list").1;
+    let combo = button.center();
+    // every row drawn inside the popup, against its button: below, or
+    // above near the screen's bottom (egui picks the side by the list's size)
+    let in_place = |texts: &[(String, egui::Rect)]| {
+        let rect = popup();
+        let beside = (rect.top() - button.bottom()).max(button.top() - rect.bottom());
+        (0.0..24.0).contains(&beside)
+            && texts
+                .iter()
+                .filter(|(t, _)| names.contains(&t.as_str()))
+                .all(|(_, r)| rect.expand(0.5).contains_rect(*r))
+    };
+    for events in click(combo) {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    assert_eq!(shown(&texts), all, "opened");
+    let whole = height();
+    let above = popup().bottom() <= button.top();
+    assert_eq!(above, screen_h < 500.0, "the list opens on the expected side");
+    assert!(in_place(&texts));
+    for events in typed() {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    assert_eq!(shown(&texts), ["Beta"], "typed in the focused search field");
+    assert!(height() < whole - 1.0, "the list shrinks to its matches");
+    assert!(in_place(&texts));
+    for events in erase() {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    assert_eq!(shown(&texts), all, "a cleared search shows the whole list again");
+    assert!((height() - whole).abs() < 0.5, "and its whole height");
+    assert!(in_place(&texts), "its rows where they can be clicked");
+    for events in typed() {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    // the room the whole list took, which the filtered list left
+    let rect = popup();
+    let room = if rect.bottom() <= button.top() {
+        egui::pos2(rect.left() + 20.0, rect.bottom() - whole + 10.0)
+    } else {
+        egui::pos2(rect.left() + 20.0, (rect.top() + whole - 10.0).min(screen_h - 5.0))
+    };
+    assert!(!rect.contains(room));
+    for events in click(room) {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    assert!(shown(&texts).is_empty(), "a click outside the filtered list closes it");
+    for events in click(combo) {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    for events in typed() {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    for events in [vec![key(egui::Key::Escape)], vec![], vec![]] {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    assert!(shown(&texts).is_empty(), "Escape closes the list");
+    for events in click(combo) {
+        texts = draw(events, &mut state, &mut settings);
+    }
+    assert_eq!(shown(&texts), all, "the list reopens on the whole list");
+    assert!((height() - whole).abs() < 0.5);
+    assert!(state.font_filter.is_empty());
+}
+
+#[test]
+fn the_system_font_search_filters_and_resets() {
+    font_search(1000.0);
+}
+
+#[test]
+fn the_system_font_search_resets_above_its_button() {
+    font_search(420.0);
 }

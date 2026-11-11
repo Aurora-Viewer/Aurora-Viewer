@@ -67,8 +67,10 @@ pub mod object_flags {
     /// Attachment point marked invisible in first person by avatar_lad.xml.
     pub const FIRST_PERSON_HIDDEN: u32 = 64;
     /// Left out of the photo by its isolation (the viewer's
-    /// `snapshot::isolate`): not drawn, casting no shadow, in no reflection.
-    pub const PHOTO_HIDDEN: u32 = 128;
+    /// `snapshot::isolate`) or by a hidden rendering type
+    /// (`scene::render_types`): not drawn, casting no shadow, in no
+    /// reflection.
+    pub const HIDDEN: u32 = 128;
 }
 
 /// `CullObject::state` of an avatar entry, set every frame by the scene.
@@ -471,7 +473,7 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
         return (0, false);
     }
     let o = objects[f.object as usize];
-    if o.flags & object_flags::ACTIVE == 0 || o.flags & (object_flags::HUD | object_flags::PHOTO_HIDDEN) != 0 {
+    if o.flags & object_flags::ACTIVE == 0 || o.flags & (object_flags::HUD | object_flags::HIDDEN) != 0 {
         return (0, false);
     }
     let is_avatar = o.flags & object_flags::AVATAR != 0;
@@ -1080,7 +1082,7 @@ impl GpuCull {
             .map(|_| {
                 let b = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("cull readback"),
-                    size: (COUNTS * 4) as u64,
+                    size: crate::readback::readback_size((COUNTS * 4) as u64),
                     usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
@@ -1318,7 +1320,7 @@ impl GpuCull {
         for (buf, ready, pending) in self.readback.iter_mut() {
             if *pending && ready.load(Ordering::Acquire) {
                 if let Ok(view) = buf.get_mapped_range(..) {
-                    let n: &[u32] = bytemuck::cast_slice(&view[..COUNTS * 4]);
+                    let n = crate::readback::u32_array::<COUNTS>(&view[..COUNTS * 4]);
                     let mut c = CullCounts::default();
                     c.bins.copy_from_slice(&n[..BINS]);
                     c.visible_objects = n[COUNT_VISIBLE];
@@ -1576,7 +1578,7 @@ mod tests {
             ("OBJ_HUD", object_flags::HUD),
             ("OBJ_NO_PROBE", object_flags::NO_PROBE),
             ("OBJ_POSED", object_flags::POSED),
-            ("OBJ_PHOTO_HIDDEN", object_flags::PHOTO_HIDDEN),
+            ("OBJ_HIDDEN", object_flags::HIDDEN),
             ("SKELETON_ANCHOR", SKELETON_ANCHOR),
             ("AV_FULL", avatar_state::FULL),
             ("AV_TOO_COMPLEX", avatar_state::TOO_COMPLEX),
@@ -2343,7 +2345,7 @@ mod tests {
         let read = |label| {
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
-                size,
+                size: crate::readback::readback_size(size),
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             })
@@ -2357,9 +2359,9 @@ mod tests {
         counts_read.map_async(wgpu::MapMode::Read, .., |_| {});
         let _ = device.poll(wgpu::PollType::wait_indefinitely());
         let args = args_read.get_mapped_range(..).expect("args mapped");
-        let args: &[u32] = bytemuck::cast_slice(&args);
+        let args = crate::readback::u32s(&args[..size as usize]);
         let counts = counts_read.get_mapped_range(..).expect("counts mapped");
-        let counts: &[u32] = bytemuck::cast_slice(&counts[..COUNTS * 4]);
+        let counts = crate::readback::u32s(&counts[..COUNTS * 4]);
         let mut expect: Vec<Vec<u32>> = vec![Vec::new(); BINS];
         let (mut visible, mut tris) = (0, 0);
         for i in 0..n_faces {

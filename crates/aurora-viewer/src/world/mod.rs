@@ -16,6 +16,7 @@ pub mod bridge;
 pub mod calls;
 pub mod chat_log;
 pub mod collisions;
+pub mod contact_markers;
 pub mod contact_sets;
 pub mod derender;
 pub mod dialog_names;
@@ -87,6 +88,7 @@ pub mod region_alerts;
 pub mod region_messages;
 pub mod region_restart;
 pub mod region_titles;
+pub mod region_tracker;
 pub mod rig_graph;
 pub mod rig_targets;
 pub mod rlva;
@@ -108,6 +110,7 @@ pub mod user_info;
 pub mod voice_moderation;
 pub mod windlight_presets;
 pub mod worldmap;
+pub mod worn_listed;
 
 #[cfg(test)]
 mod automated_chat_tests;
@@ -117,6 +120,8 @@ mod dialog_name_tests;
 mod fee_permission_tests;
 #[cfg(test)]
 mod flash_tests;
+#[cfg(test)]
+mod god_mode_tests;
 #[cfg(test)]
 mod group_notice_tests;
 #[cfg(test)]
@@ -417,6 +422,11 @@ pub struct World {
     /// them or they are in reach again (parked.rs).
     parked: HashMap<RegionHandle, parked::Parked>,
     appearances: HashMap<Uuid, (AvatarAppearance, u64)>,
+    /// The worn objects each avatar's last AvatarAppearance listed, kept
+    /// even when the message itself is dropped (stale, no parameters): the
+    /// Legacy Viewer fills mSimAttachments in parseAppearanceMessage, before
+    /// those checks. Read by the Dev Toolbox's J2 only (world/worn_listed.rs).
+    listed_worn: HashMap<Uuid, Vec<(Uuid, u8)>>,
     appearance_counter: u64,
     /// Bakes the scene swapped in, by avatar (`refresh_bakes`).
     bake_refreshes: HashMap<Uuid, u64>,
@@ -454,20 +464,10 @@ pub struct World {
     pub object_im_filter: object_im_filter::Settings,
     pub anti_spam: anti_spam::Registry,
     pub teleporting: bool,
-    /// Teleports completed this session (their AgentMovementComplete): the
-    /// AO ends a sit the teleport ended (`ao::runtime::Frame::teleports`).
-    pub teleport_arrivals: u64,
     /// Since when a teleport to another region waits for that region's
     /// lists of our animations (`OWN_ANIMATIONS_WAIT` at most): the AO does
-    /// not act on the list of the region left (`awaiting_own_animations`),
-    /// and the seat's animations are checked in each list that comes.
+    /// not act on the list of the region left (`awaiting_own_animations`).
     own_animations_awaited: Option<Instant>,
-    /// That region's first list arrived: the AO acts again.
-    own_animations_listed: bool,
-    /// The seat's animations `get_off_for_teleport` stopped, with the seat
-    /// prim that played each: stopped again if the region we arrive in
-    /// still lists them from that seat.
-    teleport_seat_motions: Vec<(Uuid, Uuid)>,
     /// Only a teleport to another region needs a loading screen. Unknown
     /// destinations wait for TeleportFinish to identify the destination.
     pub tp_show_progress: bool,
@@ -504,6 +504,9 @@ pub struct World {
     /// A parcel owner or an estate manager froze us (ViewerFrozenMessage):
     /// shown on the navigation bar while it lasts.
     pub frozen: bool,
+    /// The god level the region gave us (GrantGodlikePowers, Advanced ›
+    /// Request Admin Status): 0 none; shown on the navigation bar.
+    pub god_level: u8,
     /// What the simulator killed while the photo mode held the world still
     /// (`freeze_motion`): each object's key and id, removed on thaw.
     held_kills: Vec<(ObjKey, Uuid)>,
@@ -668,6 +671,9 @@ pub struct World {
     pub landmarks: landmarks::Landmarks,
     /// World map regions, items, tracking and parcel overlays.
     pub map: worldmap::WorldMap,
+    /// Regions watched by the per-account Region Tracker window.
+    pub region_tracker: region_tracker::RegionTracker,
+    region_tracker_path: Option<std::path::PathBuf>,
     /// Place details windows of place links (their parcel requests).
     pub place_details: place_details::PlaceDetails,
     /// Parcel snapshots of the favourites and the Places rows without a
@@ -744,6 +750,39 @@ fn saved_prefix(timestamp: u32) -> String {
 const MAX_REGION_SIZE: u32 = 4096;
 
 impl World {
+    pub fn add_tracked_region(&mut self, name: &str, label: &str) {
+        if self.region_tracker.add(name, label) {
+            self.save_tracked_regions();
+        }
+    }
+
+    pub fn remove_tracked_region(&mut self, name: &str) {
+        self.region_tracker.remove(name);
+        self.save_tracked_regions();
+    }
+
+    fn save_tracked_regions(&self) {
+        if let Some(path) = &self.region_tracker_path
+            && let Err(error) = self.region_tracker.save(path)
+        {
+            log::warn!("region tracker: could not save {}: {error}", path.display());
+        }
+    }
+
+    /// ALFloaterRegionTracker::refresh, while its window is open: every
+    /// region asked by name (sendNamedRegionRequest, for its online / down
+    /// state) and a known one's avatars (LLSimInfo::updateAgentCount), each
+    /// at most once a minute.
+    pub fn refresh_tracked_regions(&mut self) {
+        let names: Vec<_> = self.region_tracker.regions().iter().map(|r| r.name.clone()).collect();
+        for name in names {
+            self.map.want_named_region(&name);
+            if let Some(key) = self.map.region_by_name(&name) {
+                self.map.want_agents(key);
+            }
+        }
+    }
+
     pub fn water_visual_dz(&self, id: &Uuid) -> f32 {
         if *id == self.agent_id && !self.teleporting && self.movement_complete && !self.agent.is_sitting() {
             self.water_float.offset()
@@ -810,6 +849,7 @@ impl World {
             region_left: None,
             parked: HashMap::new(),
             appearances: HashMap::new(),
+            listed_worn: HashMap::new(),
             avatar_poses: HashMap::new(),
             avatar_models: HashMap::new(),
             avatar_shape_dz: HashMap::new(),
@@ -835,10 +875,7 @@ impl World {
             tp_progress: 0.0,
             tp_status: String::new(),
             tp_failed: false,
-            teleport_arrivals: 0,
             own_animations_awaited: None,
-            own_animations_listed: false,
-            teleport_seat_motions: Vec::new(),
             outfit: Default::default(),
             diag_reported: HashSet::new(),
             events_this_frame: 0,
@@ -853,6 +890,7 @@ impl World {
             environment_answers: Vec::new(),
             health: 100.0,
             frozen: false,
+            god_level: 0,
             held_kills: Vec::new(),
             social: social::Social::default(),
             contact_sets: Default::default(),
@@ -918,6 +956,8 @@ impl World {
             left_behind_since: None,
             landmarks: Default::default(),
             map: worldmap::WorldMap::default(),
+            region_tracker: Default::default(),
+            region_tracker_path: None,
             place_details: Default::default(),
             place_snapshots: Default::default(),
             search: Default::default(),
@@ -1209,7 +1249,6 @@ impl World {
         if show_progress {
             self.ui_sounds.push(UiSound::TeleportOut);
         }
-        self.teleport_seat_motions.clear();
         self.get_off_for_teleport();
         // teleportCore: gObjectList.resetDerenderList()
         self.clear_temporary_derenders();
@@ -1219,27 +1258,13 @@ impl World {
     /// our animations (at most `OWN_ANIMATIONS_WAIT`): the list still held
     /// is the region left's. The AO's sit and stand follow the stock states
     /// of the arrival's list, as the Legacy AO's overrides do
-    /// (AOEngine::override from LLVOAvatar::processAnimationStateChanges);
-    /// ours also stops stock states itself, so it waits for that list
-    /// before sending anything: its stops then reach a region that has the
-    /// animations, and a stale stock sit cannot select the sit again.
+    /// (AOEngine::override from LLVOAvatar::processAnimationStateChanges).
+    /// The AO waits for that list before sending anything: its stops then
+    /// reach a region that has the animations, and a stale stock sit cannot
+    /// start its sit again.
     pub fn awaiting_own_animations(&self, now: Instant) -> bool {
-        !self.own_animations_listed && self.own_animations_window(now)
-    }
-
-    fn own_animations_window(&self, now: Instant) -> bool {
         self.own_animations_awaited
             .is_some_and(|since| now.saturating_duration_since(since) < OWN_ANIMATIONS_WAIT)
-    }
-
-    /// The wait after a teleport ends with its window: the seat's motions
-    /// are not stopped in a later list (a new seat may play the same one).
-    fn end_own_animations_wait_if_expired(&mut self, now: Instant) {
-        if self.own_animations_awaited.is_some() && !self.own_animations_window(now) {
-            self.own_animations_awaited = None;
-            self.own_animations_listed = false;
-            self.teleport_seat_motions.clear();
-        }
     }
 
     /// Offset of a region's origin relative to the render origin (main region).
@@ -1268,6 +1293,11 @@ impl World {
                 &l.raw["agent_region_access"].to_string_value(),
             )
         });
+        // a god may set and enter any rating (LLAgentAccess::canSetMaturity,
+        // canAccessAdult: isGodlike() first)
+        if self.god_level > 0 {
+            access.max = aurora_net::search::SIM_ACCESS_ADULT;
+        }
         if let Some(preferred) = self.maturity.preferred {
             access.preferred = preferred.min(access.max);
         }
@@ -2030,6 +2060,22 @@ impl World {
         self.system_notice(text, notice_topics::Topic::Info);
     }
 
+    /// set_god_level (llviewermenu.cpp): the level the region granted, said
+    /// as the EnteringGodMode / LeavingGodMode notifications say it.
+    pub fn set_god_level(&mut self, level: u8) {
+        let old = std::mem::replace(&mut self.god_level, level);
+        if old == level {
+            return;
+        }
+        let text = if level > 0 {
+            aurora_i18n::tr!("god-mode-entering", level = i64::from(level))
+        } else {
+            aurora_i18n::tr!("god-mode-leaving", level = i64::from(old))
+        };
+        log::info!("admin status: god level {old} -> {level}");
+        self.system_notice(text, notice_topics::Topic::Region);
+    }
+
     /// A notice of the viewer in the nearby chat, about `topic` (the icon
     /// of its compact row, #741).
     pub fn system_notice(&mut self, text: impl Into<String>, topic: notice_topics::Topic) {
@@ -2303,7 +2349,7 @@ impl World {
     /// Worn objects the simulator listed in the avatar's last appearance
     /// (LLVOAvatar::mSimAttachments); 0 when it listed none.
     pub fn announced_attachments(&self, avatar: &Uuid) -> usize {
-        self.appearances.get(avatar).map(|(a, _)| a.attachments as usize).unwrap_or(0)
+        self.appearances.get(avatar).map_or(0, |(a, _)| a.attachments.len())
     }
 
     /// Inventory items attached to our avatar (AttachItemID name-values).
@@ -2558,6 +2604,8 @@ impl World {
                 self.agent.set_look_at(l.look_at);
                 self.social = social::Social::from_login(&l.raw);
                 let account = crate::settings::account_dir(&l.agent_id);
+                self.region_tracker_path = Some(account.join(region_tracker::FILE));
+                self.region_tracker = region_tracker::RegionTracker::load(&account.join(region_tracker::FILE));
                 self.contact_sets = contact_sets::ContactSets::load(account.join(contact_sets::CONTACT_SETS_FILE));
                 self.groups.load_favorites(account.join(groups::FAVORITE_GROUPS_FILE));
                 self.group_data.load_read(account.join(group_data::NOTICES_READ_FILE));
@@ -2600,7 +2648,6 @@ impl World {
                     self.movement_complete = false;
                     if self.teleporting {
                         self.own_animations_awaited = Some(Instant::now());
-                        self.own_animations_listed = false;
                     }
                     // LLViewerParcelMgr::onTeleportFinished: the new region's
                     // parcel is awaited; the one left must not lend its rules
@@ -2614,6 +2661,10 @@ impl World {
                 // back in a region left moments ago: its objects first, its
                 // simulator only sends what changed since
                 self.unpark_region(handle);
+                None
+            }
+            NetEvent::GodLevel(level) => {
+                self.set_god_level(level);
                 None
             }
             NetEvent::RegionHandshake(info) => {
@@ -2802,7 +2853,6 @@ impl World {
                 }
                 self.arrived_once = true;
                 if self.teleporting {
-                    self.teleport_arrivals += 1;
                     self.friends_only_teleport_arrival();
                 }
                 self.teleporting = false;
@@ -3056,6 +3106,7 @@ impl World {
             }
             NetEvent::Appearance(a) => {
                 let id = a.avatar_id;
+                self.listed_worn.insert(id, a.attachments.clone());
                 let own = id == self.agent_id;
                 let received = if own {
                     self.appearance_cof_version(&id).max(self.outfit.stepped_cof_version())
@@ -3528,33 +3579,19 @@ impl World {
                     let before = self.animations.get(&avatar).map(Vec::as_slice).unwrap_or_default();
                     let started: Vec<_> = anims.iter().map(|a| a.0).filter(|id| !before.iter().any(|p| p.id == *id)).collect();
                     let stopped: Vec<_> = before.iter().map(|p| p.id).filter(|id| !anims.iter().any(|a| a.0 == *id)).collect();
-                    log::info!("own animations: {} playing, started {started:?}, stopped {stopped:?}", anims.len());
-                    self.end_own_animations_wait_if_expired(now);
-                    if self.own_animations_awaited.is_some() {
-                        self.own_animations_listed = true;
-                        // The region we arrive in can still list a seat
-                        // animation that teleportCore stopped in the region
-                        // left just before the request: stop it there too,
-                        // once, when that list names no other source for it
-                        // (a HUD here playing the same animation keeps it).
-                        // Deliberate difference: the Legacy Viewer sends no
-                        // second stop, but its AO leaves the stock sit to the
-                        // simulator and ours holds it (#2700, TASKS.md).
-                        let seats: HashSet<Uuid> = self.teleport_seat_motions.iter().map(|(_, seat)| *seat).collect();
-                        let mut motions = std::mem::take(&mut self.teleport_seat_motions);
-                        motions.retain(|(id, _)| {
-                            let from_seat = anims
-                                .iter()
-                                .zip(sources.iter().map(Some).chain(std::iter::repeat(None)))
-                                .any(|((a, _), source)| a == id && source.is_none_or(|s| s.is_nil() || seats.contains(s)));
-                            if from_seat && !self.animation_stops.contains(id) {
-                                log::info!("teleport: the arrival region still plays seat animation {id}: stop it again");
-                                self.animation_stops.push(*id);
-                            }
-                            !from_seat
-                        });
-                        self.teleport_seat_motions = motions;
-                    }
+                    // a new sequence id on a still-listed animation is a
+                    // restart (LLVOAvatar::processAnimationStateChanges), which
+                    // neither list above shows (#2869)
+                    let restarted: Vec<_> = anims
+                        .iter()
+                        .filter(|(id, seq)| before.iter().any(|p| p.id == *id && p.sequence != *seq))
+                        .map(|a| a.0)
+                        .collect();
+                    log::info!(
+                        "own animations: {} playing, started {started:?}, stopped {stopped:?}, restarted {restarted:?}",
+                        anims.len()
+                    );
+                    self.own_animations_awaited = None;
                     self.agent.ground_sit = anims.iter().any(|(id, _)| *id == body::ANIM_SIT_GROUND_CONSTRAINED);
                     // Firestorm process_avatar_animation / processAnimationStateChanges:
                     // source blocks correspond by index, and previous source entries
@@ -5512,7 +5549,7 @@ impl World {
     /// Turn the drawn bodies of the standing avatars toward where they face
     /// or travel (LLVOAvatar::updateRootPositionAndRotation). Returns our
     /// own avatar's turn (+1 left, -1 right, 0) for the control flags.
-    pub fn update_bodies(&mut self, now: Instant, dt: f32, cam_at: Vec3, mouselook: bool, step_back: bool) -> i8 {
+    pub fn update_bodies(&mut self, now: Instant, dt: f32, cam_at: Vec3, mouselook: bool, step_back: bool, turn_speed: f32) -> i8 {
         let mut own_turn = 0;
         let mut seen = std::collections::HashSet::new();
         for (_, o) in self.objects.avatars() {
@@ -5542,6 +5579,7 @@ impl World {
                     mouselook_at: mouselook.then_some(cam_at),
                     flying: a.flying,
                     step_back: walking,
+                    turn_speed,
                 }
             } else {
                 body::Input {
@@ -5551,6 +5589,7 @@ impl World {
                     mouselook_at: None,
                     flying: false,
                     step_back: walking,
+                    turn_speed,
                 }
             };
             let no_rotate = self
@@ -5785,17 +5824,6 @@ impl World {
             root = parent;
         }
         self.release_linkset_camera(root, false);
-        // what the seat plays on us, before get_off stops it
-        if let Some(seat_key) = self.objects.get(i).and_then(|o| o.parent_key()) {
-            self.teleport_seat_motions = self
-                .seat_linkset_sources(seat_key)
-                .into_iter()
-                .flat_map(|seat| {
-                    let motions = self.animation_sources.get(&seat).into_iter().flatten();
-                    motions.map(move |id| (*id, seat)).collect::<Vec<_>>()
-                })
-                .collect();
-        }
         self.get_off(i, Instant::now());
         let pos = self
             .objects
@@ -5804,7 +5832,11 @@ impl World {
         if let Some(pos) = pos {
             self.agent.get_off(pos);
         }
-        log::info!("teleport: our avatar gets off its seat (teleportCore)");
+        // the arrival's "own animations" line says if a region lists one again
+        log::info!(
+            "teleport: our avatar gets off its seat (teleportCore), stops {:?}",
+            self.animation_stops
+        );
     }
 
     /// Port of LLVOAvatar::getOffObject / LLVOAvatarSelf::stopMotionFromSource
@@ -6033,7 +6065,7 @@ mod appearance_tests {
             cof_version,
             appearance_version: 1,
             hover_height: 0.0,
-            attachments: 0,
+            attachments: Vec::new(),
         }
     }
 
@@ -6734,33 +6766,6 @@ mod motion_tests {
         assert_eq!((o.parent_id, o.position), (0, Vec3::new(40.0, 50.0, 30.0)));
         assert!(!world.agent.is_sitting());
         assert_eq!(world.agent.position, Vec3::new(40.0, 50.0, 30.0));
-        assert_eq!(world.teleport_arrivals, 1, "the AO learns the teleport ended (#2700)");
-    }
-
-    /// Only a completed teleport counts for the AO (`ao::runtime::Frame::teleports`):
-    /// not the login, a failed teleport nor a walk into the neighbour region.
-    #[test]
-    fn only_completed_teleports_count_as_arrivals() {
-        let (mut world, handle) = teleport_fixture();
-        let arrive = |world: &mut World| {
-            world.apply(NetEvent::AgentMovementComplete {
-                handle,
-                position: Vec3::new(40.0, 50.0, 30.0),
-                look_at: Vec3::X,
-            });
-        };
-        arrive(&mut world);
-        assert_eq!(world.teleport_arrivals, 0, "a crossing or the login");
-        world.begin_teleport(false);
-        world.apply(NetEvent::TeleportFailed {
-            reason: "Offline test".into(),
-        });
-        assert_eq!(world.teleport_arrivals, 0, "a failed teleport arrives nowhere");
-        world.begin_teleport(false);
-        arrive(&mut world);
-        assert_eq!(world.teleport_arrivals, 1);
-        arrive(&mut world);
-        assert_eq!(world.teleport_arrivals, 1, "a repeated confirmation is no new teleport");
     }
 
     #[test]
@@ -6780,10 +6785,11 @@ mod motion_tests {
     }
 
     /// #2700: after a teleport to another region the AO waits for that
-    /// region's first list of our animations, and a seat motion teleportCore
-    /// stopped in the region left is stopped again if that list still has it.
+    /// region's first list of our animations. A seat motion teleportCore
+    /// stopped in the region left is not stopped a second time: the Legacy
+    /// Viewer sends no such stop.
     #[test]
-    fn a_teleport_to_another_region_waits_for_its_animations_and_stops_the_seat_motion_again() {
+    fn a_teleport_to_another_region_waits_for_its_animations() {
         let (mut world, _) = teleport_from_seat(true);
         let motion = world.animation_stops[0];
         world.animation_stops.clear();
@@ -6805,82 +6811,8 @@ mod motion_tests {
             anims: vec![(motion, 1), (other, 1)],
             sources: Vec::new(),
         });
-        assert!(!world.awaiting_own_animations(Instant::now()));
-        assert_eq!(world.animation_stops, vec![motion], "only the seat's motion, once");
-        world.animation_stops.clear();
-        world.apply(NetEvent::AvatarAnimations {
-            avatar: world.agent_id,
-            anims: vec![(motion, 1), (other, 1)],
-            sources: Vec::new(),
-        });
-        assert!(world.animation_stops.is_empty());
-    }
-
-    /// Review of PR #2829: the second stop of a seat motion only stops it
-    /// when the arrival region plays it from that seat (or names no source):
-    /// a HUD there playing the same animation keeps it. Every list of the
-    /// wait is checked, not only the first; the AO acts again from the first.
-    #[test]
-    fn the_seat_motion_is_stopped_again_only_from_the_seat_during_the_wait() {
-        let (mut world, seat) = teleport_from_seat(true);
-        let motion = world.animation_stops[0];
-        world.animation_stops.clear();
-        let destination = aurora_net::origin_to_handle(512 * 256, 512 * 256);
-        world.apply(NetEvent::MainRegionChanged { handle: destination });
-        world.apply(NetEvent::AgentMovementComplete {
-            handle: destination,
-            position: Vec3::new(40.0, 50.0, 30.0),
-            look_at: Vec3::X,
-        });
-        let hud = world.agent_id;
-        world.apply(NetEvent::AvatarAnimations {
-            avatar: world.agent_id,
-            anims: vec![(motion, 1)],
-            sources: vec![hud],
-        });
-        assert!(world.animation_stops.is_empty(), "played from another source: kept");
-        assert!(!world.awaiting_own_animations(Instant::now()), "the AO acts from the first list");
-        world.apply(NetEvent::AvatarAnimations {
-            avatar: world.agent_id,
-            anims: vec![(motion, 2)],
-            sources: vec![seat],
-        });
-        assert_eq!(world.animation_stops, vec![motion], "a later list of the wait, from the seat");
-        world.animation_stops.clear();
-        world.apply(NetEvent::AvatarAnimations {
-            avatar: world.agent_id,
-            anims: vec![(motion, 2)],
-            sources: vec![seat],
-        });
-        assert!(world.animation_stops.is_empty(), "once only");
-    }
-
-    /// Review of PR #2829: once the wait has expired with no list, its state
-    /// goes with it: a later seat playing the same animation keeps it.
-    #[test]
-    fn the_wait_after_a_teleport_ends_with_its_window() {
-        let (mut world, _) = teleport_from_seat(true);
-        let motion = world.animation_stops[0];
-        world.animation_stops.clear();
-        let destination = aurora_net::origin_to_handle(512 * 256, 512 * 256);
-        world.apply(NetEvent::MainRegionChanged { handle: destination });
-        world.apply(NetEvent::AgentMovementComplete {
-            handle: destination,
-            position: Vec3::new(40.0, 50.0, 30.0),
-            look_at: Vec3::X,
-        });
-        let expired = Instant::now()
-            .checked_sub(OWN_ANIMATIONS_WAIT)
-            .expect("the clock has run this long");
-        world.own_animations_awaited = Some(expired);
-        assert!(!world.awaiting_own_animations(Instant::now()));
-        world.apply(NetEvent::AvatarAnimations {
-            avatar: world.agent_id,
-            anims: vec![(motion, 1)],
-            sources: Vec::new(),
-        });
-        assert!(world.animation_stops.is_empty(), "no stop after the window");
-        assert!(world.own_animations_awaited.is_none() && world.teleport_seat_motions.is_empty());
+        assert!(!world.awaiting_own_animations(Instant::now()), "the first list ends the wait");
+        assert!(world.animation_stops.is_empty(), "no second stop");
     }
 
     /// Neither a teleport within the region nor a walk into the next one

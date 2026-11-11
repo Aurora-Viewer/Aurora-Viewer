@@ -2,10 +2,12 @@
 //! rotation rings (LLManipRotate) and stretch handles (LLManipScale), with
 //! their grid snapping, snap rulers and the position readout.
 //!
-//! Sizes follow LL: handles keep a constant size on screen (50 px arrows,
-//! 100 px rotation sphere). Aurora uses thicker strokes and 14 px stretch
-//! boxes for readability, and scales the whole manipulator, pick areas
-//! included, by the "Manipulator size" setting (`gizmo_scale`). Objects follow the mouse locally;
+//! Handles keep a constant size on screen, in interface points: like
+//! LLUI::getScaleFactor(), the display scale grows them. Aurora uses longer
+//! 80 pt move arrows and separated plane handles for easier picking, a 100 pt
+//! rotation sphere, thicker strokes and 14 pt stretch boxes. The "Manipulator
+//! size" setting (`gizmo_scale`) scales the whole manipulator, pick areas
+//! included. Objects follow the mouse locally;
 //! MultipleObjectUpdate goes out on release (stretching also every
 //! 0.1 s like LLManipScale::sendUpdates).
 
@@ -23,22 +25,23 @@ use glam::{EulerRot, Quat, Vec3};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-/// LLManipTranslate constants.
-const ARROW_PX: f32 = 50.0;
+/// Aurora: 80 pt move arrows instead of LLManipTranslate's 50 pt, with
+/// proportionally larger heads. Stretch boxes keep their existing size.
+const ARROW_PX: f32 = 80.0;
 const SELECTED_ARROW_SCALE: f32 = 1.3;
 const HOTSPOT_START: f32 = 0.2;
 const HOTSPOT_END: f32 = 1.2;
-/// Aurora: the plane handles are squares between the two axes of their
-/// plane, next to the pivot (center and half side, in arrow lengths; the hit
-/// test takes them a little larger). LL puts two triangles at 1.8 arrow
-/// lengths, away from the handles they belong to.
-pub(super) const PLANE_OFFSET: f32 = 0.52;
-const PLANE_HALF: f32 = 0.15;
-const PLANE_PICK_SCALE: f32 = 1.3;
+/// Aurora: paired axis-colored triangles, nominally beyond the arrows
+/// (center and half side, in arrow lengths). Screen-space clearance also
+/// keeps them outside the arrows at oblique angles. The Legacy Viewer's
+/// LLManipTranslate::renderTranslationHandles uses 1.8 arrow lengths.
+const PLANE_OFFSET: f32 = 1.50;
+const PLANE_HALF: f32 = 0.14;
+const PLANE_GAP_PX: f32 = 12.0;
 /// Arrow head: height and radius, in arrow lengths.
 const ARROW_HEAD: (f32, f32) = (0.26, 0.12);
-/// Aurora: thicker than LLManipTranslate's 2 px shafts, with the same
-/// axis length and picking tolerance; shared by the rotation rings.
+/// Aurora: thicker than LLManipTranslate's 2 px shafts, with its picking
+/// tolerance; shared by the rotation rings.
 const STROKE_PX: (f32, f32) = (4.0, 6.0);
 const MIN_PLANE_MANIP_DOT: f32 = 0.25;
 const SNAP_GUIDE_SCREEN_SIZE: f32 = 0.7;
@@ -51,7 +54,7 @@ const RING_PX: f32 = 100.0;
 const SNAP_ANGLE: f32 = 5.625;
 /// LLManipScale: pick radius, box size, streaming interval.
 const SCALE_PICK_PX: f32 = 14.0;
-const SCALE_BOX_FACTOR: f32 = 0.28;
+const SCALE_BOX_PX: f32 = 14.0;
 const SCALE_UPDATE_DELAY: f32 = 0.1;
 const SNAP_GUIDE_SCREEN_OFFSET: f32 = 0.05;
 /// Tick label spacing in pixels (LLManip::sTickLabelSpacing).
@@ -93,6 +96,116 @@ fn plane_quad(piv: Vec3, g: Quat, len: f32, signs: Vec3, i: usize, scale: f32) -
         piv + g * q
     };
     [at(-1.0, -1.0), at(1.0, -1.0), at(1.0, 1.0), at(-1.0, 1.0)]
+}
+
+/// The complete arrow envelope, including the maximum hover enlargement
+/// and the picking tolerance. Using the hover size keeps the plane anchors
+/// still when an arrow grows under the cursor.
+fn translate_arrow_bounds(cam: &Cam, f: &Frame, len: f32) -> Option<egui::Rect> {
+    let mut bounds = egui::Rect::NOTHING;
+    let mut include = |p| {
+        bounds.extend_with(cam.project(p)?);
+        Some(())
+    };
+    include(f.pivot)?;
+    for i in 0..3 {
+        let axis = f.grid.rotation * unit(i);
+        let height = len * ARROW_HEAD.0 * SELECTED_ARROW_SCALE;
+        let radius = len * ARROW_HEAD.1 * SELECTED_ARROW_SCALE;
+        let base = f.pivot + axis * (len - height * 0.5);
+        include(f.pivot + axis * len * HOTSPOT_END)?;
+        include(f.pivot + axis * (len + height * 0.5))?;
+        let u = axis.any_orthonormal_vector() * radius;
+        let v = axis.cross(u);
+        // A square enclosing the cone's base circle, including all sixteen
+        // vertices painted by Painter3d::cone.
+        for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+            include(base + u * x + v * y)?;
+        }
+    }
+    Some(bounds.expand(10.0 * f.size))
+}
+
+/// Shared painted/picked plane quads, in interface points. A 3D offset
+/// alone cannot prevent a projected overlap with another axis. Push the
+/// whole quad outside the arrows' screen envelope, retaining its planar
+/// orientation and a gap even around its highlighted outline.
+pub(super) fn plane_handles(cam: &Cam, f: &Frame) -> [Option<[Pos2; 4]>; 3] {
+    let len = arrow_length(cam, f, f.pivot);
+    let (Some(bounds), Some(pivot)) = (translate_arrow_bounds(cam, f, len), cam.project(f.pivot)) else {
+        return [None; 3];
+    };
+    let protected = bounds.expand((PLANE_GAP_PX + 2.0) * f.size);
+    let g = f.grid.rotation;
+    let signs = (g.inverse() * cam.at).signum();
+    let rel = (g.inverse() * cam.direction_to(f.pivot)).abs();
+    std::array::from_fn(|i| {
+        if rel[i] <= MIN_PLANE_MANIP_DOT {
+            return None;
+        }
+        let [Some(a), Some(b), Some(c), Some(d)] = plane_quad(f.pivot, g, len, signs, i, 1.0).map(|p| cam.project(p)) else {
+            return None;
+        };
+        let mut q = [a, b, c, d];
+        let rect = egui::Rect::from_points(&q);
+        if rect.intersects(protected) {
+            let outward = a.lerp(c, 0.5) - pivot;
+            if outward.length_sq() < 1e-6 {
+                return None;
+            }
+            let direction = outward.normalized();
+            let exit = |d: f32, low: f32, high: f32, min: f32, max: f32| {
+                if d > 1e-6 {
+                    (max - low) / d
+                } else if d < -1e-6 {
+                    (min - high) / d
+                } else {
+                    f32::INFINITY
+                }
+            };
+            let distance = exit(direction.x, rect.left(), rect.right(), protected.left(), protected.right()).min(exit(
+                direction.y,
+                rect.top(),
+                rect.bottom(),
+                protected.top(),
+                protected.bottom(),
+            ));
+            let offset = direction * (distance + f.size);
+            q = q.map(|p| p + offset);
+        }
+        Some(q)
+    })
+}
+
+/// A displaced screen anchor must not cast its own world ray: on an
+/// oblique plane it can sit beyond that plane's horizon. Measure the drag
+/// from the pivot's initial projection instead, without moving on press.
+fn plane_cursor_offset(camera: &Cam, pivot: Vec3, start_cursor: (f32, f32)) -> (f32, f32) {
+    camera
+        .project_px(pivot)
+        .map(|p| (start_cursor.0 - p.0, start_cursor.1 - p.1))
+        .unwrap_or_default()
+}
+
+fn paint_plane_handle(painter: &egui::Painter, pal: &crate::theme::Palette, q: [Pos2; 4], i: usize, highlighted: bool, size: f32) {
+    let colors = [axis_color(pal, (i + 1) % 3), axis_color(pal, (i + 2) % 3)];
+    let mut mesh = egui::Mesh::default();
+    for (triangle, color) in [[q[0], q[1], q[2]], [q[0], q[2], q[3]]].into_iter().zip(colors) {
+        let start = mesh.vertices.len() as u32;
+        for point in triangle {
+            mesh.colored_vertex(point, fade(color, if highlighted { 0.85 } else { 0.65 }));
+        }
+        mesh.add_triangle(start, start + 1, start + 2);
+    }
+    painter.add(egui::Shape::mesh(mesh));
+    for j in 0..4 {
+        let color = if highlighted { pal.violet_light } else { colors[j / 2] };
+        painter.line_segment(
+            [q[j], q[(j + 1) % 4]],
+            Stroke::new((if highlighted { 3.5 } else { 2.5 }) * size, color),
+        );
+    }
+    painter.line_segment([q[0], q[2]], Stroke::new(size, fade(pal.navy, 0.65)));
 }
 
 /// Is `m` inside the convex screen quad `q` (either winding)?
@@ -197,7 +310,6 @@ pub struct Manip {
     pub hover: Option<Part>,
     pub drag: Option<Drag>,
     arrow_scale: [f32; 3],
-    plane_scale: [f32; 3],
     ring_scale: [f32; 5],
     last: Option<Instant>,
     te_dirty: Vec<usize>,
@@ -330,18 +442,9 @@ impl Manip {
             } else {
                 1.0
             };
-            let p = if active == Some(Part::Plane(i)) {
-                SELECTED_ARROW_SCALE
-            } else {
-                1.0
-            };
             self.arrow_scale[i] += (a - self.arrow_scale[i]) * k;
-            self.plane_scale[i] += (p - self.plane_scale[i]) * k;
             if self.arrow_scale[i] == 0.0 {
                 self.arrow_scale[i] = 1.0;
-            }
-            if self.plane_scale[i] == 0.0 {
-                self.plane_scale[i] = 1.0;
             }
         }
         for i in 0..5 {
@@ -527,7 +630,9 @@ impl Manip {
             Part::Roll => {}
             Part::Corner(_) | Part::Face(_, _) => {}
         }
-        if matches!(part, Part::Arrow(_) | Part::Plane(_)) {
+        // Plane drags start at the pivot, with a screen grab offset. Their
+        // displaced two-color anchor need not project onto the world plane.
+        if matches!(part, Part::Arrow(_)) {
             match ray_plane(o, dir, f.pivot, d.normal) {
                 Some(h) => d.start_hit = h,
                 None => return false,
@@ -637,8 +742,8 @@ impl Manip {
     }
 
     /// Aurora look of LLManipTranslate::renderTranslationHandles: pale axes
-    /// with one positive arrow per axis, square plane handles in the
-    /// color of their normal, and the accent of the theme under the cursor.
+    /// with one positive arrow per axis and two-color plane handles outside
+    /// their envelope. Hover keeps both axis colors and accents the outline.
     fn draw_translate(&self, p: &mut Painter3d, s: &BuildSettings, f: &Frame, drag: Option<&Drag>) {
         let cam = p.cam;
         let pal = p.pal;
@@ -661,24 +766,15 @@ impl Manip {
             }
             draw_object_snap(p, &d.snap_guides);
         }
-        // plane handles
-        let at_g = g.inverse() * cam.at;
-        let signs = Vec3::new(at_g.x.signum(), at_g.y.signum(), at_g.z.signum());
-        let rel = (g.inverse() * cam.direction_to(piv)).abs();
-        for i in 0..3 {
-            if !(active.is_none() || active == Some(Part::Plane(i))) || rel[i] <= MIN_PLANE_MANIP_DOT {
+        // Plane anchors use the same screen geometry for painting and picking.
+        p.flush();
+        for (i, q) in plane_handles(cam, f).into_iter().enumerate() {
+            if !(active.is_none() || active == Some(Part::Plane(i))) {
                 continue;
             }
+            let Some(q) = q else { continue };
             let hl = self.hover == Some(Part::Plane(i)) || active == Some(Part::Plane(i));
-            let q = plane_quad(piv, g, len, signs, i, self.plane_scale[i].max(1.0));
-            let color = if hl { pal.violet_light } else { axis_color(&pal, i) };
-            let fill = fade(color, if hl { 0.5 } else { 0.3 });
-            p.tri_plain(q[0], q[1], q[2], fill);
-            p.tri_plain(q[0], q[2], q[3], fill);
-            p.flush();
-            for j in 0..4 {
-                p.line(q[j], q[(j + 1) % 4], color, (if hl { 3.5 } else { 2.5 }) * k);
-            }
+            paint_plane_handle(&p.painter, &pal, q, i, hl, k);
         }
         // Only positive ends have handles; guidelines show the full axes.
         let mut arrows: [(f32, usize); 3] = std::array::from_fn(|i| (cam.depth(piv + g * unit(i) * len), i));
@@ -774,7 +870,9 @@ impl Manip {
         if d.in_snap {
             let (a, b) = (center - sa * so, center + sa * so);
             p.guide_line(a, b, white, opacity);
-            let cone = cam.meters_for_pixels(center, ARROW_PX) / 4.0 * SNAP_ARROW_SCALE;
+            // LLManipTranslate's mConeSize: a quarter of the arrow, display
+            // scale and manipulator size included.
+            let cone = arrow_length(cam, f, center) / 4.0 * SNAP_ARROW_SCALE;
             p.tri(a - sa * cone, a + axis * cone, a - axis * cone, cam.at, fade(white, opacity));
             p.tri(b + sa * cone, b + axis * cone, b - axis * cone, cam.at, fade(white, opacity));
             p.flush();
@@ -975,7 +1073,7 @@ impl Manip {
                 _ => continue,
             };
             // Slightly larger than LL's 10 px boxes; resting corners fit the pick radius.
-            let size = ARROW_PX * SCALE_BOX_FACTOR * f.size * if hl { 1.2 } else { 1.0 };
+            let size = SCALE_BOX_PX * f.size * if hl { 1.2 } else { 1.0 };
             p.square(pos, size, fill, outline);
         }
     }
@@ -1009,15 +1107,16 @@ fn snap_offset_axis(arrow: usize, at_abs: Vec3) -> usize {
     }
 }
 
-/// Arrow length (m) at `at`: LLManipTranslate's 50 px times the manipulator size.
+/// Arrow length (m) at `at`: Aurora's 80 pt times the display scale and
+/// the manipulator size, using LLManipTranslate's screen-size rule.
 pub(super) fn arrow_length(cam: &Cam, f: &Frame, at: Vec3) -> f32 {
-    cam.meters_for_pixels(at, ARROW_PX * f.size)
+    cam.meters_for_points(at, ARROW_PX * f.size)
 }
 
 /// Rotation sphere radius (m) at `c`: LLManipRotate's 100 px times the
-/// manipulator size.
+/// display scale and the manipulator size.
 pub(super) fn ring_radius(cam: &Cam, f: &Frame, c: Vec3) -> f32 {
-    let px = RING_PX * f.size;
+    let px = RING_PX * f.size * cam.ppp;
     if cam.hud.is_some() {
         return cam.meters_for_pixels(c, px);
     }
@@ -1102,22 +1201,8 @@ fn pick_translate(cam: &Cam, f: &Frame, m: Pos2) -> Option<Part> {
     let piv = f.pivot;
     let g = f.grid.rotation;
     let len = arrow_length(cam, f, piv);
-    let at_g = g.inverse() * cam.at;
-    let signs = Vec3::new(at_g.x.signum(), at_g.y.signum(), at_g.z.signum());
-    let rel = (g.inverse() * cam.direction_to(piv)).abs();
-    // The square of a plane is small and exact: it wins over the wide hot
-    // spot of an arrow that passes behind it.
-    for i in 0..3 {
-        if rel[i] <= MIN_PLANE_MANIP_DOT {
-            continue;
-        }
-        let q = plane_quad(piv, g, len, signs, i, PLANE_PICK_SCALE);
-        if let [Some(a), Some(b), Some(c), Some(d)] = q.map(|v| cam.project(v))
-            && in_quad(m, [a, b, c, d])
-        {
-            return Some(Part::Plane(i));
-        }
-    }
+    // Prefer the axis when a plane projects over its shaft or head. The
+    // larger move arrows must remain safe to grab from an oblique view.
     // (depth of the end, part, start, end)
     let mut segs: [(f32, Part, Vec3, Vec3); 3] = std::array::from_fn(|i| {
         let a = g * unit(i);
@@ -1132,6 +1217,13 @@ fn pick_translate(cam: &Cam, f: &Frame, m: Pos2) -> Option<Part> {
         let (dist, t) = seg_distance(m, a, b);
         if dist < 10.0 * f.size && t > 0.0 && t < 1.0 {
             return Some(part);
+        }
+    }
+    for (i, q) in plane_handles(cam, f).into_iter().enumerate() {
+        if let Some(q) = q
+            && in_quad(m, q)
+        {
+            return Some(Part::Plane(i));
         }
     }
     None
@@ -1505,6 +1597,7 @@ fn drag_update(
                     by_region.entry(m.key.region).or_default().push(m.key.local_id);
                 }
                 for (handle, ids) in by_region {
+                    world.objects.expect_local_duplicates(handle, &ids, Vec3::ZERO, false, None);
                     out.push(BuildCmd::Duplicate {
                         handle,
                         local_ids: ids,
@@ -1517,19 +1610,27 @@ fn drag_update(
         }
     }
     // Test the real mouse movement for slop before constraining the ray.
+    let plane_offset = if matches!(d.part, Part::Plane(_)) {
+        plane_cursor_offset(&d.camera, d.pivot, d.start_cursor)
+    } else {
+        (0.0, 0.0)
+    };
     let cursor = if d.mode == EditMode::Move && !s.follow_edit_object && cam.hud.is_none() {
         // The grab offset in pixels changes when an oblique axis approaches
         // the camera. Bound the pivot rather than just the mouse ray.
-        let offset = cam
-            .project_px(d.start_hit + d.delta)
-            .zip(cam.project_px(d.pivot + d.delta))
-            .map(|(grab, pivot)| (grab.0 - pivot.0, grab.1 - pivot.1))
-            .unwrap_or_default();
+        let offset = if matches!(d.part, Part::Plane(_)) {
+            plane_offset
+        } else {
+            cam.project_px(d.start_hit + d.delta)
+                .zip(cam.project_px(d.pivot + d.delta))
+                .map(|(grab, pivot)| (grab.0 - pivot.0, grab.1 - pivot.1))
+                .unwrap_or_default()
+        };
         super::edge_pan::drag_cursor(cam, cursor, d.start_cursor, offset)
     } else {
         cursor
     };
-    let (o, dir) = cam.ray(cursor.0, cursor.1);
+    let (o, dir) = cam.ray(cursor.0 - plane_offset.0, cursor.1 - plane_offset.1);
     // Stop the edge camera if the translation solver rejects this ray.
     d.edge_pan_blocked = true;
     match d.part {
@@ -2046,6 +2147,8 @@ mod tests {
         }
         let idx = world.objects.index_of_uuid(&crate::demo::action_id(99622)).unwrap();
         let key = world.objects.get(idx).unwrap().key;
+        let local = crate::world::objects::LocalAppearance::Texture(Uuid::new_v4());
+        world.objects.get_mut(idx).unwrap().render.local_appearance.insert(Some(1), local);
         let land = world.groups.groups[0].id;
         let active = Uuid::from_u128(8800);
         let nil = Uuid::nil();
@@ -2138,6 +2241,20 @@ mod tests {
                 );
                 let after = world.objects.get(idx).unwrap().position;
                 assert!(after.distance(before) > 1e-4, "the original still moves along the arrow");
+                let source = world.objects.get(idx).unwrap();
+                let mut copy = crate::demo::action_avatar(false);
+                copy.local_id = 99980 + axis as u32;
+                copy.full_id = Uuid::new_v4();
+                copy.parent_id = 0;
+                copy.pcode = source.pcode;
+                copy.position = before;
+                copy.rotation = source.rotation;
+                copy.scale = source.scale;
+                copy.volume = source.volume;
+                copy.texture_entry = source.te.clone();
+                copy.extra = source.extra.clone();
+                let copy = world.objects.upsert(key.region, copy);
+                assert_eq!(world.objects.get(copy).unwrap().local_appearance(1), Some(local));
                 manip.update(
                     &mut world,
                     &settings,
@@ -2423,19 +2540,174 @@ mod tests {
     #[test]
     fn plane_handles_are_picked_on_their_square_and_leave_the_arrows() {
         let (piv, cam, f) = translate_view(1.0);
-        let len = cam.meters_for_pixels(piv, ARROW_PX);
-        let at = cam.at;
-        let signs = Vec3::new(at.x.signum(), at.y.signum(), at.z.signum());
-        for i in 0..3 {
-            // the middle of each square, between the two axes of its plane
-            let q = plane_quad(piv, Quat::IDENTITY, len, signs, i, 1.0);
-            let middle = cam.project((q[0] + q[2]) * 0.5).unwrap();
+        let len = arrow_length(&cam, &f, piv);
+        for (i, q) in plane_handles(&cam, &f).into_iter().enumerate() {
+            let q = q.unwrap();
+            let middle = q[0].lerp(q[2], 0.5);
             assert_eq!(pick_translate(&cam, &f, middle), Some(Part::Plane(i)));
             let on_arrow = cam.project(piv + unit(i) * len * 0.9).unwrap();
             assert_eq!(pick_translate(&cam, &f, on_arrow), Some(Part::Arrow(i)));
             // The negative guideline must not retain an invisible arrow handle.
             let on_guide = cam.project(piv - unit(i) * len * 0.9).unwrap();
             assert_ne!(pick_translate(&cam, &f, on_guide), Some(Part::Arrow(i)));
+        }
+    }
+
+    #[test]
+    fn plane_handles_have_no_invisible_pick_margin() {
+        for size in [0.5, 1.0, 2.0] {
+            let (_, cam, f) = translate_view(size);
+            for (i, q) in plane_handles(&cam, &f).into_iter().enumerate() {
+                let q = q.unwrap();
+                let center = q[0].lerp(q[2], 0.5);
+                // Outside the visible square, but inside the old 30% halo.
+                for corner in q {
+                    let outside = center + (corner - center) * 1.15;
+                    assert_ne!(pick_translate(&cam, &f, outside), Some(Part::Plane(i)));
+                }
+            }
+        }
+    }
+
+    fn assert_plane_anchors_outside_arrows(cam: &Cam, f: &Frame) {
+        let len = arrow_length(cam, f, f.pivot);
+        let protected = translate_arrow_bounds(cam, f, len).unwrap().expand(PLANE_GAP_PX * f.size);
+        let handles = plane_handles(cam, f);
+        assert!(handles.iter().any(Option::is_some));
+        for (i, q) in handles.into_iter().enumerate() {
+            let Some(q) = q else { continue };
+            assert!(
+                !egui::Rect::from_points(&q).expand(2.0 * f.size).intersects(protected),
+                "{i}: {q:?}"
+            );
+            // Both colored triangles are usable, including their shared diagonal.
+            for point in [
+                q[0] + ((q[1] - q[0]) + (q[2] - q[0])) / 3.0,
+                q[0] + ((q[2] - q[0]) + (q[3] - q[0])) / 3.0,
+                q[0].lerp(q[2], 0.5),
+            ] {
+                assert_eq!(pick_translate(cam, f, point), Some(Part::Plane(i)), "{i}: {point:?}");
+            }
+        }
+        // Sample actual arrow clicks and their tolerance, independently of
+        // the envelope calculation: none may ever grab a plane.
+        for i in 0..3 {
+            for along in [0.2, 0.5, 0.9, 1.13, 1.2] {
+                let at = cam.project(f.pivot + f.grid.rotation * unit(i) * len * along).unwrap();
+                for offset in [egui::Vec2::ZERO, egui::vec2(9.0, 0.0), egui::vec2(0.0, -9.0)] {
+                    assert!(!matches!(pick_translate(cam, f, at + offset * f.size), Some(Part::Plane(_))));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn plane_anchors_stay_outside_the_arrow_frame_in_world_local_and_hud_views() {
+        for size in [0.5, 1.0, 3.0] {
+            for ppp in [1.0, 2.0] {
+                for rotation in [Quat::IDENTITY, Quat::from_euler(EulerRot::XYZ, 0.4, 0.7, -0.2)] {
+                    let (piv, _, mut f) = translate_view(size);
+                    f.grid.rotation = rotation;
+                    for direction in [
+                        Vec3::new(6.0, -8.0, 5.0),
+                        Vec3::new(4.0, -8.0, 8.0),
+                        Vec3::new(-7.0, 4.0, -3.0),
+                        Vec3::new(0.0, 0.0, 10.0),
+                        Vec3::new(10.0, 0.0, 0.0),
+                        Vec3::new(4.0, 8.0, 0.1),
+                    ] {
+                        for distance in [1.0, 3.0] {
+                            let eye = piv + rotation * direction * distance;
+                            let up = (rotation * direction).normalize().any_orthonormal_vector();
+                            let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 16.0 / 9.0, 0.01);
+                            let cam = Cam::new(
+                                eye,
+                                piv,
+                                projection * glam::camera::rh::view::look_at_mat4(eye, piv, up),
+                                1.0,
+                                1280.0 * ppp,
+                                720.0 * ppp,
+                                ppp,
+                            );
+                            assert_plane_anchors_outside_arrows(&cam, &f);
+                        }
+                    }
+                }
+                for zoom in [0.5, 1.0, 2.0] {
+                    let cam = Cam::for_hud(
+                        aurora_render::HudView::new([(1280.0 * ppp) as u32, (720.0 * ppp) as u32], zoom, -1.0, 1.0),
+                        ppp,
+                    );
+                    let (_, _, mut f) = translate_view(size);
+                    f.pivot = Vec3::ZERO;
+                    assert_plane_anchors_outside_arrows(&cam, &f);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn plane_triangles_keep_both_axis_colors_even_when_highlighted() {
+        let (_, cam, f) = translate_view(1.0);
+        let pal = crate::theme::Theme::default().palette();
+        for (i, axes) in [(0, [1, 2]), (1, [2, 0]), (2, [0, 1])] {
+            for highlighted in [false, true] {
+                let ctx = egui::Context::default();
+                let q = plane_handles(&cam, &f)[i].unwrap();
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1280.0, 720.0))),
+                        ..Default::default()
+                    },
+                    |ui| paint_plane_handle(&ui.ctx().layer_painter(egui::LayerId::background()), &pal, q, i, highlighted, 1.0),
+                );
+                output.textures_delta.clear();
+                let mesh = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Mesh(mesh) if mesh.vertices.len() == 6 => Some(mesh),
+                        _ => None,
+                    })
+                    .expect("two plane triangles");
+                assert_eq!(mesh.indices.len(), 6);
+                for (triangle, axis) in mesh.vertices.as_chunks::<3>().0.iter().zip(axes) {
+                    let color = fade(axis_color(&pal, axis), if highlighted { 0.85 } else { 0.65 });
+                    assert!(triangle.iter().all(|vertex| vertex.color == color));
+                }
+                assert_eq!(mesh.vertices[0].pos, mesh.vertices[3].pos);
+                assert_eq!(mesh.vertices[2].pos, mesh.vertices[4].pos);
+            }
+        }
+    }
+
+    #[test]
+    fn move_arrows_win_when_a_plane_projects_over_the_shaft() {
+        for size in [0.5, 1.0, 2.0] {
+            for ppp in [1.0, 2.0] {
+                for rotation in [Quat::IDENTITY, Quat::from_rotation_z(0.7)] {
+                    let (piv, _, mut f) = translate_view(size);
+                    f.grid.rotation = rotation;
+                    let eye = piv + rotation * Vec3::new(4.0, -8.0, 8.0);
+                    let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 16.0 / 9.0, 0.01);
+                    let cam = Cam::new(
+                        eye,
+                        piv,
+                        projection * glam::camera::rh::view::look_at_mat4(eye, piv, Vec3::Z),
+                        1.0,
+                        1280.0 * ppp,
+                        720.0 * ppp,
+                        ppp,
+                    );
+                    let len = arrow_length(&cam, &f, piv);
+                    let signs = (rotation.inverse() * cam.at).signum();
+                    let q = plane_quad(piv, rotation, len, signs, 0, 1.0);
+                    let middle = cam.project((q[0] + q[2]) * 0.5).unwrap();
+                    assert!(in_quad(middle, q.map(|p| cam.project(p).unwrap())));
+                    // The YZ square lies directly over the positive X shaft.
+                    assert_eq!(pick_translate(&cam, &f, middle), Some(Part::Arrow(0)));
+                }
+            }
         }
     }
 
@@ -2464,6 +2736,39 @@ mod tests {
             let beyond = cam.project(piv + unit(i) * len * 1.6).unwrap();
             assert_eq!(pick_translate(&small, &f1, beyond), None);
             assert_eq!(pick_translate(&cam, &f2, beyond), Some(Part::Arrow(i)));
+        }
+    }
+
+    /// LLUI::getScaleFactor in LLManipTranslate / Rotate: a window at 200 %
+    /// display scale has twice the pixels, and the handles cover twice as
+    /// many, the same size in interface points as at 100 %.
+    #[test]
+    fn handles_keep_their_size_in_points_at_any_display_scale() {
+        let (piv, at_100, f) = translate_view(1.0);
+        let at_200 = Cam::new(
+            at_100.eye,
+            piv,
+            at_100.view_proj,
+            at_100.fov_y,
+            at_100.width * 2.0,
+            at_100.height * 2.0,
+            2.0,
+        );
+        let points = |cam: &Cam, length: f32| {
+            let tip = cam.project(piv + Vec3::Z * length).unwrap();
+            cam.project(piv).unwrap().distance(tip)
+        };
+        let (arrow, ring) = (
+            points(&at_100, arrow_length(&at_100, &f, piv)),
+            points(&at_100, ring_radius(&at_100, &f, piv)),
+        );
+        assert!((points(&at_200, arrow_length(&at_200, &f, piv)) - arrow).abs() < 0.5, "{arrow}");
+        assert!((points(&at_200, ring_radius(&at_200, &f, piv)) - ring).abs() < 0.5, "{ring}");
+        // the arrow is picked on the same spot, in points, at both scales
+        for i in 0..3 {
+            let near_tip = at_100.project(piv + unit(i) * arrow_length(&at_100, &f, piv) * 0.9).unwrap();
+            assert_eq!(pick_translate(&at_100, &f, near_tip), Some(Part::Arrow(i)));
+            assert_eq!(pick_translate(&at_200, &f, near_tip), Some(Part::Arrow(i)));
         }
     }
 
@@ -2533,7 +2838,9 @@ mod tests {
         assert!((new_pos - new_rot * Vec3::Z * (new_scale.z * 0.5)).abs_diff_eq(anchor, 1e-5));
 
         // Disabling flexibility restores the ordinary centered edit pivot.
-        world.objects.get_mut(idx).unwrap().extra.flexible = None;
+        let object = world.objects.get_mut(idx).unwrap();
+        object.extra.flexible = None;
+        object.volume.path.curve_type = aurora_prim::params::LL_PCODE_PATH_LINE;
         assert!(
             frame(&world, &settings, &[key], true, now, None)
                 .unwrap()
