@@ -69,6 +69,25 @@ pub(super) fn frame(ui: &egui::Ui, p: &Palette) -> (Rect, Rect) {
     )
 }
 
+/// Side of the collapse button of Conversations › Contacts
+/// (`friends::sheet_toggle`): the toolbar's height.
+const TOGGLE: f32 = super::rows::TOOLBAR_H;
+
+/// Where a sheet that cannot be closed (the one Conversations › Contacts
+/// keeps beside its list) has its collapse button: at the right of its head,
+/// level with its top, so that it covers the centre of the expand button
+/// at the end of the list's toolbar once the sheet is collapsed, and the
+/// other way round: it stays under the pointer that used it.
+pub(super) fn toggle_ui(ui: &mut egui::Ui, sheet: Rect) -> egui::Ui {
+    let rect = Rect::from_min_size(Pos2::new(sheet.right() - PAD_X - TOGGLE, sheet.top() + PAD_Y), Vec2::splat(TOGGLE));
+    ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt("people-sheet-toggle")
+            .max_rect(rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    )
+}
+
 /// Height of a sheet's head (picture, names, cross), and the gap under it.
 const HEAD_H: f32 = 44.0;
 const HEAD_GAP: f32 = 10.0;
@@ -179,7 +198,8 @@ fn head(ui: &mut egui::Ui, p: &Palette, world: &World, data: &RadarData, id: Uui
         super::radar::icon(ui, "x", cross, 14.0, if resp.hovered() { p.ink } else { p.muted });
         (cross.left() - 8.0, resp.on_hover_text(aurora_i18n::tr!("common-close")).clicked())
     } else {
-        (rect.right(), false)
+        // the collapse button of Conversations › Contacts (`toggle_ui`)
+        (rect.right() - TOGGLE - 8.0, false)
     };
     let left = disc.right() + 10.0;
     let width = (right - left).max(20.0);

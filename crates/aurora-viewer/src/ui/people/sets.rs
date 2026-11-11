@@ -428,6 +428,7 @@ mod tests {
                     actions: &mut actions,
                     embedded_contacts: false,
                     contact_sheet_on_click: false,
+                    contact_sheet_room: false,
                 };
                 row(ui, &mut c, &data, &mut st, "First", id, "Example Person", &[id]);
             });
@@ -472,6 +473,7 @@ mod import_tests {
                 actions: &mut actions,
                 embedded_contacts: false,
                 contact_sheet_on_click: false,
+                contact_sheet_room: false,
             };
             set_pills(ui, &mut c, contact_sets::ALL_SETS);
         };

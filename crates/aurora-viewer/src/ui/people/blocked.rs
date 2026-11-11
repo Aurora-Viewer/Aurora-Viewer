@@ -339,6 +339,7 @@ mod tests {
                         actions: &mut actions,
                         embedded_contacts: false,
                         contact_sheet_on_click: false,
+                        contact_sheet_room: false,
                     };
                     tab(&mut child, &mut c, &mut st);
                 });

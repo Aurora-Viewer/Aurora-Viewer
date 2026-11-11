@@ -19386,9 +19386,10 @@ impl ApplicationHandler for App {
                 self.group_profile_ui.create.demo(DemoStart { draft, then });
                 self.panels.perf = false;
             }
-            // AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden: the
-            // Contacts tab of Conversations (or its torn-off window, or the
-            // resident picker of "Add...")
+            // AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|collapsed:
+            // the Contacts tab of Conversations (or its torn-off window, or the
+            // resident picker of "Add...", or its friends with the contact
+            // sheet collapsed)
             if let Ok(v) = std::env::var("AURORA_DEMO_CONTACTS") {
                 self.panels.chat = true;
                 self.panels.perf = false;
@@ -19405,6 +19406,7 @@ impl ApplicationHandler for App {
                 if matches!(v.as_str(), "add" | "ajout") {
                     self.contacts_ui.pick_new_friend();
                 }
+                self.settings.friends_list.sheet_collapsed = v == "collapsed";
                 if let Ok(filter) = std::env::var("AURORA_DEMO_CONTACTS_FILTER") {
                     self.contacts_ui.filter_groups(&filter);
                 }

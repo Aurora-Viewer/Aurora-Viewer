@@ -635,6 +635,7 @@ mod tests {
                     actions: &mut actions,
                     embedded_contacts: false,
                     contact_sheet_on_click: false,
+                    contact_sheet_room: false,
                 };
                 group_sheet(ui, &mut c, &data, &mut st, group);
             });

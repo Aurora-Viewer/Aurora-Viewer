@@ -157,6 +157,9 @@ pub(super) struct Ctx<'a> {
     pub embedded_contacts: bool,
     /// A row click can open the sheet when the inline pane fits both sides.
     pub contact_sheet_on_click: bool,
+    /// The embedded Contacts pane is wide enough for the list and the sheet
+    /// side by side, whether or not the sheet is collapsed.
+    pub contact_sheet_room: bool,
 }
 
 /// A tab's list side: (ui, context, radar, state, beside a sheet).
@@ -181,6 +184,9 @@ fn split(ui: &mut egui::Ui, c: &mut Ctx, data: &RadarData, st: &mut PeopleUi, sa
             }
         } else if persistent_sheet {
             sheet::empty(&mut child, c.p);
+        }
+        if persistent_sheet {
+            friends::sheet_toggle(&mut sheet::toggle_ui(ui, rect), c);
         }
     }
 }
@@ -209,6 +215,9 @@ pub struct FriendsSettings {
     pub pictures: bool,
     /// FriendsListShowPermissions: the rights each friend gave us.
     pub permissions: bool,
+    /// Conversations › Contacts keeps its contact sheet collapsed: the list
+    /// takes the whole pane, as in a pane too narrow for both.
+    pub sheet_collapsed: bool,
 }
 
 impl Default for FriendsSettings {
@@ -220,6 +229,7 @@ impl Default for FriendsSettings {
             sort: SORT_STATUS,
             pictures: true,
             permissions: true,
+            sheet_collapsed: false,
         }
     }
 }
@@ -448,6 +458,7 @@ pub fn people_window(
                 actions: &mut actions,
                 embedded_contacts: false,
                 contact_sheet_on_click: false,
+                contact_sheet_room: false,
             };
             match panels.people_tab {
                 TAB_NEARBY => {
@@ -523,7 +534,8 @@ pub struct FriendsPane<'a, 'r> {
 
 /// The friends tab drawn in `ui` (Conversations › Contacts). No window
 /// widens for a sheet there: it shows beside the list when the pane has
-/// room, alone otherwise.
+/// room and the sheet is not collapsed (`FriendsSettings::sheet_collapsed`),
+/// alone otherwise.
 pub fn friends_pane(ui: &mut egui::Ui, p: &Palette, world: &World, pane: FriendsPane, contacts: &mut ContactsUi) -> Vec<PeopleAction> {
     let FriendsPane {
         st,
@@ -533,7 +545,8 @@ pub fn friends_pane(ui: &mut egui::Ui, p: &Palette, world: &World, pane: Friends
     } = pane;
     st.tab_shown(TAB_FRIENDS);
     st.sheet_grow = false;
-    let wide = nearby::sheet_fits(ui.available_width());
+    let room = nearby::sheet_fits(ui.available_width());
+    let wide = room && !settings.sheet_collapsed;
     if st.inline_friends_wide && !wide {
         nearby::close_sheet(st);
     }
@@ -548,6 +561,7 @@ pub fn friends_pane(ui: &mut egui::Ui, p: &Palette, world: &World, pane: Friends
         actions: &mut actions,
         embedded_contacts: true,
         contact_sheet_on_click: wide,
+        contact_sheet_room: room,
     };
     friends::tab(ui, &mut c, data, st);
     for ask in std::mem::take(&mut st.asks) {
