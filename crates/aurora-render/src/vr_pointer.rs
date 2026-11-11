@@ -21,6 +21,8 @@ pub(crate) struct Vertex {
 
 /// Uniform slot stride: one view-projection per eye at a dynamic offset.
 const SLOT: u64 = 256;
+/// The overlay's depth format.
+const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// Beam radius at the hand, metres.
 const BEAM_RADIUS: f32 = 0.0025;
 
@@ -30,6 +32,10 @@ pub(crate) struct Overlay {
     group: wgpu::BindGroup,
     vertices: Option<wgpu::Buffer>,
     scratch: Vec<Vertex>,
+    /// The overlay's own depth, cleared for each eye: the model's nearest
+    /// surface shows (without it, its back and inner faces were painted
+    /// over its front in their list order).
+    depth: Option<(wgpu::Texture, wgpu::TextureView)>,
 }
 
 impl Overlay {
@@ -94,7 +100,14 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) color: vec4<f3
                 cull_mode: None,
                 ..Default::default()
             },
-            depth_stencil: None,
+            // reverse Z, as the eyes' projection: nearer is greater
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::GreaterEqual),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
             multisample: Default::default(),
             multiview_mask: None,
             cache: None,
@@ -123,6 +136,7 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) color: vec4<f3
             group,
             vertices: None,
             scratch: Vec::new(),
+            depth: None,
         }
     }
 
@@ -155,6 +169,22 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) color: vec4<f3
         for (i, (_, view_proj)) in eyes.iter().enumerate() {
             queue.write_buffer(&self.uniforms, SLOT * i as u64, bytemuck::bytes_of(&view_proj.to_cols_array()));
         }
+        let size = eyes[0].0.size();
+        if self.depth.as_ref().is_none_or(|(t, _)| t.size() != size) {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("VR controllers depth"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: DEPTH,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&Default::default());
+            self.depth = Some((texture, view));
+        }
+        let Some((_, depth)) = &self.depth else { return };
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("VR controllers"),
         });
@@ -171,6 +201,14 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) color: vec4<f3
                         store: wgpu::StoreOp::Store,
                     },
                 })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0.0),
+                        store: wgpu::StoreOp::Discard,
+                    }),
+                    stencil_ops: None,
+                }),
                 ..Default::default()
             });
             pass.set_pipeline(&self.pipeline);
@@ -191,12 +229,7 @@ pub(crate) fn build(input: &VrInputState, pointer: VrPointer, out: &mut Vec<Vert
         }
         let pointing = pointer.hand == Some(side);
         if pointer.controllers {
-            controller(hand, side, pointing, out);
-            if side == VrSide::Left
-                && let Some(on) = pointer.mic
-            {
-                mic_light(hand, on, out);
-            }
+            controller(hand, side, pointer.mic, out);
         }
         if pointing && pointer.length > 0.0 {
             beam(hand, pointer, out);
@@ -350,8 +383,9 @@ fn parse_model(bytes: &[u8]) -> Option<Model> {
 /// One controller: the model at the hand's aim pose, mirrored for the left
 /// hand, its thumbstick tilted with the stick and its trigger pulled in: a
 /// light grey shell, a dark face plate, stick and buttons, the pressed
-/// parts lit in the hand's colour (as is the pointing hand's plate, faintly).
-fn controller(hand: VrControllerState, side: VrSide, pointing: bool, out: &mut Vec<Vertex>) {
+/// parts lit in the hand's colour, the left menu button green while the
+/// microphone sends.
+fn controller(hand: VrControllerState, side: VrSide, mic: Option<bool>, out: &mut Vec<Vertex>) {
     let m = model();
     let q = hand.orientation.normalize();
     let accent = match side {
@@ -367,12 +401,15 @@ fn controller(hand: VrControllerState, side: VrSide, pointing: bool, out: &mut V
     let dark = Vec3::splat(0.07);
     let light = Vec3::splat(0.62);
     let colors = |p: u32| match p {
-        part::FACE => dark.lerp(accent, if pointing { 0.12 } else { 0.0 }),
+        part::FACE => dark,
         part::TRIGGER => lit(hand.trigger, light * 0.92),
         part::GRIP => lit(hand.grip, light * 0.92),
         part::STICK => lit(hand.thumbstick_click as u8 as f32, dark),
         part::PRIMARY => lit(hand.primary as u8 as f32, dark * 1.4),
         part::SECONDARY => lit(hand.secondary as u8 as f32, dark * 1.4),
+        // the left menu button is the microphone's light: green while
+        // sending (Virtual Desktop keeps the button itself)
+        part::MENU if mic == Some(true) => Vec3::new(0.25, 1.0, 0.4),
         part::MENU => lit(hand.menu as u8 as f32, dark * 1.4),
         // the shell (and a part a newer model has that this one does not know)
         _ => light,
@@ -406,26 +443,6 @@ fn controller(hand: VrControllerState, side: VrSide, pointing: bool, out: &mut V
         };
         if i % 3 == 2 {
             out.extend_from_slice(&tri);
-        }
-    }
-}
-
-/// The microphone's light on top of the left controller: bright green while
-/// sending, a dim grey dot otherwise.
-fn mic_light(hand: VrControllerState, on: bool, out: &mut Vec<Vertex>) {
-    let q = hand.orientation.normalize();
-    let (right, up, forward) = (q * Vec3::X, q * Vec3::Y, q * Vec3::NEG_Z);
-    let color = if on { Vec3::new(0.25, 1.0, 0.4) } else { Vec3::splat(0.3) };
-    let size = if on { 0.009 } else { 0.006 };
-    // (unshaded: a light, not a surface)
-    let lit = color.extend(1.0);
-    let center = hand.position - forward * 0.05 + up * 0.002;
-    let axes = [right * size, up * size, forward * size];
-    for (a, b, c) in [(0, 1, 2), (1, 2, 0), (2, 0, 1)] {
-        for sign in [1.0f32, -1.0] {
-            let face = center + axes[a] * sign;
-            let (u, v) = (axes[b], axes[c] * sign);
-            push_quad(out, [face - u - v, face + u - v, face + u + v, face - u + v], [lit; 4]);
         }
     }
 }

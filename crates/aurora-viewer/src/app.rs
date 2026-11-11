@@ -15862,7 +15862,9 @@ impl App {
         let mouselook = matches!(self.screen, Screen::World) && self.camera.mouselook();
         if self
             .interface
-            .follow_mouselook(&ctx, mouselook, self.settings.camera.show_interface_in_mouselook)
+            // (the VR interface panel shows the whole interface, though VR is
+            // mouselook underneath)
+            .follow_mouselook(&ctx, mouselook, self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some())
             .is_some()
         {
             self.chat_ui.let_keyboard_go();
@@ -16387,7 +16389,7 @@ impl App {
                 let chrome = self.interface.bars(&ui::interface::Frame {
                     classic: classic_bars,
                     mouselook: self.camera.mouselook(),
-                    show_in_mouselook: self.settings.camera.show_interface_in_mouselook,
+                    show_in_mouselook: self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some(),
                     chat_active: self.chat_ui.in_use(),
                     // AURORA_DEMO_BARS=peek: the pointer at the top edge
                     pointer: if demo_hidden == Some(true) {
@@ -16602,7 +16604,7 @@ impl App {
                     &ui::interface::Frame {
                         classic: classic_bars,
                         mouselook: self.camera.mouselook(),
-                        show_in_mouselook: self.settings.camera.show_interface_in_mouselook,
+                        show_in_mouselook: self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some(),
                         chat_active: false,
                         // AURORA_DEMO_BARS=peekleft: the pointer at the left edge
                         pointer: if self.demo && ui::bars::demo::get().peek_left {

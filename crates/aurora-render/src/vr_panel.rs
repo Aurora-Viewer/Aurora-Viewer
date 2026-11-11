@@ -220,12 +220,12 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> 
                         depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
-                            // premultiplied: a dark blue-grey at 88%
+                            // a dark blue-grey, opaque: the world must not show through the text
                             load: wgpu::LoadOp::Clear(wgpu::Color {
                                 r: 0.035,
                                 g: 0.04,
                                 b: 0.06,
-                                a: 0.88,
+                                a: 1.0,
                             }),
                             store: wgpu::StoreOp::Store,
                         },
