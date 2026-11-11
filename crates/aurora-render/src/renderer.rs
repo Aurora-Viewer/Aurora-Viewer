@@ -6673,12 +6673,9 @@ impl Backend {
         self.part_pick_px = f
             .part_pick
             .filter(|_| !lists.part_faces.is_empty() && snapshot.is_none())
-            .map(|[x, y]| {
-                let at = [
-                    (u64::from(x) * u64::from(post_size.0) / u64::from(window_w)) as u32,
-                    (u64::from(y) * u64::from(post_size.1) / u64::from(window_h)) as u32,
-                ];
-                (at, [x, y])
+            .map(|px| {
+                let at = crate::part_pick::target_pixel(px, [window_w, window_h], [post_size.0, post_size.1]);
+                (at, px)
             });
         // its target under the video memory guard, freed once idle
         let pick_size = [post_size.0, post_size.1];

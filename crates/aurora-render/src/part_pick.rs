@@ -37,6 +37,13 @@ struct Slot {
     tag: [u32; 2],
 }
 
+/// A window pixel on a target drawn at another size (a lower render scale,
+/// RLVa's divisor): the texel that shows it.
+pub fn target_pixel([x, y]: [u32; 2], window: [u32; 2], target: [u32; 2]) -> [u32; 2] {
+    let scale = |v: u32, from: u32, to: u32| (u64::from(v) * u64::from(to) / u64::from(from.max(1))) as u32;
+    [scale(x, window[0], target[0]), scale(y, window[1], target[1])]
+}
+
 pub struct PartPick {
     texture: Option<(wgpu::Texture, wgpu::TextureView, [u32; 2])>,
     slots: Vec<Slot>,
@@ -209,5 +216,23 @@ impl PartPick {
     /// read at: 0 when nothing of the subject is there, joint + 1 otherwise.
     pub fn take_answer(&mut self) -> Option<(u32, [u32; 2])> {
         self.answer.take()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::target_pixel;
+
+    #[test]
+    fn a_window_pixel_lands_on_the_texel_that_shows_it_at_any_render_scale() {
+        // full scale: the same pixel
+        assert_eq!(target_pixel([1000, 500], [1920, 1080], [1920, 1080]), [1000, 500]);
+        // half scale: the chest at (1000, 500) is the target's (500, 250), not
+        // outside a 960 x 540 target
+        assert_eq!(target_pixel([1000, 500], [1920, 1080], [960, 540]), [500, 250]);
+        // the far corner stays inside
+        assert_eq!(target_pixel([1919, 1079], [1920, 1080], [960, 540]), [959, 539]);
+        // a zero-sized window gives no division by zero
+        assert_eq!(target_pixel([3, 4], [0, 0], [10, 10]), [30, 40]);
     }
 }

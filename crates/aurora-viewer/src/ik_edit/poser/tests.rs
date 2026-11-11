@@ -2467,3 +2467,85 @@ fn the_mesh_pick_offers_the_part_its_joint_follows() {
     // a wing nobody wears: not offered
     assert_eq!(picked("mWing1Left", 0), None);
 }
+
+#[test]
+fn a_mesh_pick_stands_only_for_its_subject_near_where_it_was_read() {
+    let (me, other) = (Uuid::from_u128(1), Uuid::from_u128(2));
+    let stored = Some((me, 13, [400.0, 300.0]));
+    let at = |x: f32, y: f32| egui::pos2(x, y);
+    assert_eq!(
+        world_hints::fresh_pick(stored, me, at(402.0, 301.0)),
+        Some(13),
+        "a frame or two late, still there"
+    );
+    assert_eq!(
+        world_hints::fresh_pick(stored, me, at(440.0, 300.0)),
+        None,
+        "the pointer moved on: the bones decide"
+    );
+    assert_eq!(
+        world_hints::fresh_pick(stored, other, at(400.0, 300.0)),
+        None,
+        "another subject since"
+    );
+    assert_eq!(world_hints::fresh_pick(None, me, at(400.0, 300.0)), None);
+}
+
+#[test]
+fn closing_the_window_clears_the_part_and_the_pick() {
+    let (world, mut editor) = fixture();
+    editor.poser.active = true;
+    editor.open = true;
+    editor.poser.part_overlay = Some((world.agent_id, [1; 8]));
+    editor.poser.pick_wanted = true;
+    editor.poser.mesh_pick = Some((world.agent_id, 13, [1.0, 1.0]));
+    assert!(editor.poser_part_overlay().is_some() && editor.poser_pick_subject().is_some());
+    // "stop posing when closed" off: the pose goes on, the part does not
+    editor.poser.stop_on_close = false;
+    editor.close_poser();
+    assert!(editor.poser.active, "the pose goes on");
+    assert_eq!(editor.poser_part_overlay(), None);
+    assert_eq!(editor.poser_pick_subject(), None);
+    assert_eq!(editor.poser.mesh_pick, None);
+}
+
+#[test]
+fn an_avatar_not_drawn_as_meshes_keeps_the_bone_outline() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (world, mut editor) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = Frame::new(&world).unwrap();
+    let proj = projector(frame.joints[rig.pelvis].w_axis.truncate());
+    let p = crate::theme::Theme::default().palette();
+    editor.poser.active = true;
+    editor.open = true;
+    editor.poser.group = 2;
+    // the chest while posing the Hands: the Body
+    let chest = proj.project(frame.joints[rig.names["mChest"]].w_axis.truncate()).unwrap().0;
+    let mut frames = Frames::new();
+    let mut hint_with = |drawn: Option<bool>, editor: &mut Editor| {
+        editor.set_poser_meshes_drawn(drawn);
+        editor.poser.part_overlay = None;
+        let mut hint = world_hints::Hint::None;
+        frames.run(
+            vec![
+                egui::Event::ModifiersChanged(egui::Modifiers::CTRL),
+                egui::Event::PointerMoved(chest),
+            ],
+            |ui| {
+                hint = editor.world_hint(ui.ctx(), &p, &world, &proj, &frame, true);
+            },
+        );
+        hint
+    };
+    // drawn as meshes: the renderer gets the part, the identity slot (the
+    // system body's root vertices) with the body
+    assert!(matches!(hint_with(Some(true), &mut editor), world_hints::Hint::Group(_)));
+    let (_, mask) = editor.poser_part_overlay().expect("the renderer draws the body");
+    let root = rig.len();
+    assert!(mask[root >> 5] & (1 << (root & 31)) != 0, "the identity slot is the body's");
+    // an impostor, a jelly doll, first person: no meshes drawn, the bones'
+    // outline instead (the renderer gets nothing)
+    assert!(matches!(hint_with(Some(false), &mut editor), world_hints::Hint::Group(_)));
+    assert_eq!(editor.poser_part_overlay(), None, "the bone outline, painted by the poser");
+}
