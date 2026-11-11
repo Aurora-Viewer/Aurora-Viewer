@@ -77,6 +77,16 @@ impl Graphics {
         // runtimes can keep using the Oculus Touch fallback without this
         // extension, so only request it where the runtime advertises it.
         extensions.meta_touch_controller_plus = available.meta_touch_controller_plus;
+        // Controller models from the runtime (Meta's render models, or
+        // Microsoft's controller models) where it has them: enabled now,
+        // drawn once a runtime is seen to offer them. Logged so a headset's
+        // support is known from its log.
+        extensions.fb_render_model = available.fb_render_model;
+        log::info!(
+            "OpenXR controller models: XR_FB_render_model {}, XR_MSFT_controller_model {}",
+            if available.fb_render_model { "offered" } else { "not offered" },
+            if available.msft_controller_model { "offered" } else { "not offered" },
+        );
         let xr = entry.create_instance(
             &xr::ApplicationInfo {
                 application_name: "Aurora Vulkan interoperability",
