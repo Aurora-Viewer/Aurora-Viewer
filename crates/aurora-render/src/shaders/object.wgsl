@@ -2054,9 +2054,14 @@ fn vs_particle(in: PartIn) -> PartOut {
     return out;
 }
 
-@fragment
-fn fs_particle(in: PartOut) -> @location(0) vec4<f32> {
-    // slot 0 is white: the default particle is a soft round dot
+// Alpha under which a fragment is dropped: 1/255 (MINIMUM_ALPHA of the
+// Legacy Viewer) for the particles under the water, whose colour and depth
+// then agree.
+override PART_MIN_ALPHA: f32 = 0.002;
+
+// The particle's texel: slot 0 is white, the default particle a soft round
+// dot.
+fn particle_texel(in: PartOut) -> vec4<f32> {
     let ts = sample_tex(in.texture, in.uv);
     var tex = vec4<f32>(srgb_to_linear(ts.rgb), ts.a);
     if (in.texture == 0u) {
@@ -2064,6 +2069,15 @@ fn fs_particle(in: PartOut) -> @location(0) vec4<f32> {
         let a = clamp(1.0 - d, 0.0, 1.0);
         tex = vec4<f32>(1.0, 1.0, 1.0, a * a);
     }
+    return tex;
+}
+
+@fragment
+fn fs_particle(in: PartOut) -> @location(0) vec4<f32> {
+    // the water's side of the particle (the interleaved draws, as the
+    // blended faces)
+    water_clip(in.world_pos);
+    let tex = particle_texel(in);
     var col = tex.rgb * in.color.rgb;
     var alpha = tex.a * in.color.a;
     if ((in.flags & PART_EMISSIVE) == 0u) {
@@ -2080,7 +2094,7 @@ fn fs_particle(in: PartOut) -> @location(0) vec4<f32> {
         alpha *= clamp(gap / max(frame.cam_right.w, 0.01), 0.0, 1.0);
     }
     col = apply_fog(col, in.world_pos);
-    if (alpha < 0.002) {
+    if (alpha < PART_MIN_ALPHA) {
         discard;
     }
     if ((in.flags & PART_ADDITIVE) != 0u) {
@@ -2088,6 +2102,18 @@ fn fs_particle(in: PartOut) -> @location(0) vec4<f32> {
         return vec4<f32>(col * alpha, 0.0);
     }
     return vec4<f32>(col * alpha, alpha);
+}
+
+// Depth of the particles under the water from 1/255 of alpha, into the
+// single-sampled depth the water samples for its refraction and fog (with
+// MSAA the colour pass wrote another): without the soft fade, which would
+// read that depth while it is written.
+@fragment
+fn fs_particle_depth(in: PartOut) {
+    water_clip(in.world_pos);
+    if (particle_texel(in).a * in.color.a < PART_MIN_ALPHA) {
+        discard;
+    }
 }
 
 // ------------------------------------------------------------- impostors
