@@ -89,6 +89,11 @@ impl LineClock {
         self.revision = tick();
     }
 
+    /// A line's text changed in place: the views search the lines again.
+    pub fn edited(&mut self) {
+        self.revision = tick();
+    }
+
     pub fn popped_front(&mut self) {
         self.first += 1;
         self.revision = tick();
@@ -974,6 +979,55 @@ mod tests {
         w.social.names.insert(Uuid::from_u128(3), "Bob Roe".into());
         assert_eq!(w.transcript_of(Some(Uuid::from_u128(3))).1, None);
         clean(&w, &root);
+    }
+
+    /// A sale to us writes its line to the payer's transcript, as the
+    /// PaymentReceived notice's `log_to_im` does; a muted payer and a group
+    /// write nothing there.
+    #[test]
+    fn a_sale_writes_its_line_to_the_payer_s_transcript_but_not_a_muted_one_or_a_group() {
+        let agent = Uuid::from_u128(1);
+        let jane = Uuid::from_u128(2);
+        let sale = |id: u128, source_group: bool| aurora_net::NetEvent::MoneyTransaction {
+            id: Uuid::from_u128(id),
+            success: true,
+            kind: 5000, // TRANS_OBJECT_SALE
+            source: jane,
+            source_group,
+            dest: agent,
+            dest_group: false,
+            amount: 100,
+            item: "Steel helmet".into(),
+            // the server's sentence: without one, nothing is displayed
+            description: "jane Resident paid you L$100.".into(),
+        };
+        let lines = |w: &World| w.chat_log.file_of("jane").map(|_| file_texts(w, "jane")).unwrap_or_default();
+        for case in ["sale", "muted", "group"] {
+            let root = temp();
+            let mut w = world(&root, agent);
+            w.payments.notify_direct = true;
+            w.payments.notify_received = true;
+            w.social.names.insert(jane, "jane Resident".into());
+            if case == "muted" {
+                w.mutes.reset(agent);
+                w.block(jane, "jane Resident", crate::world::mutes::MuteType::Agent)
+                    .expect("blocked");
+            }
+            w.payment(&sale(70, case == "group"));
+            settle(&mut w);
+            settle(&mut w);
+            let written = lines(&w);
+            if case == "sale" {
+                assert_eq!(written.len(), 1, "{case}: {written:?}");
+                assert!(
+                    written[0].1.contains("100") && written[0].1.contains("Steel helmet"),
+                    "{case}: {written:?}"
+                );
+            } else {
+                assert!(written.is_empty(), "{case}: {written:?}");
+            }
+            clean(&w, &root);
+        }
     }
 
     #[test]

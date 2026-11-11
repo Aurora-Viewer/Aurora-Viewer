@@ -140,6 +140,13 @@ fn terrain_direction(bytes: vec4<u32>) -> vec3<f32> {
     return normalize(n);
 }
 
+// The terrain tangent: two snorm16 values in the first two unorm16 weights
+// (types.rs pack_terrain_frame).
+fn terrain_tangent(weights: vec4<f32>) -> vec3<f32> {
+    let w = vec2<u32>(round(weights.xy * 65535.0));
+    return terrain_direction(vec4<u32>(w.x & 0xffu, w.x >> 8u, w.y & 0xffu, w.y >> 8u));
+}
+
 fn vertex_normal(rec: DrawRecord, in: VsIn) -> vec3<f32> {
     if ((rec.flags.x & FLAG_TERRAIN) != 0u) { return terrain_direction(in.joints); }
     return in.normal.xyz + lip_delta(rec, in)[1];
@@ -275,6 +282,19 @@ fn skinned_model(rec: DrawRecord, in: VsIn) -> mat4x4<f32> {
 // changes).
 fn eye_model(rec: DrawRecord, in: VsIn) -> mat4x4<f32> {
     return placed_model(rec, in, frame.eye.xyz);
+}
+
+// Clip position of an eye view (`ep` relative to the eye) with the face's
+// layer rank (DrawRecord::set_layer_rank): a higher rank comes a few depth
+// steps nearer, about 2^-20 of the distance each (some micrometres), so a
+// worn layer lying exactly on the body wins on every face whatever the order
+// of the draw records. Rank 0 leaves the depth untouched. Every pass that
+// tests depth against another goes through it (prepasses and scene pass).
+fn eye_clip(rec: DrawRecord, ep: vec4<f32>) -> vec4<f32> {
+    let clip = frame.eye_view_proj * ep;
+    let rank = (rec.flags.w >> LAYER_RANK_SHIFT) & LAYER_RANK_MAX;
+    // reverse Z: a greater depth is nearer
+    return vec4<f32>(clip.xy, clip.z * (1.0 + f32(rank) * LAYER_DEPTH_STEP), clip.w);
 }
 
 struct VsOut {
@@ -544,7 +564,7 @@ fn vs_main(in: VsIn) -> VsOut {
     // (lighting, shadows and fog keep region coordinates)
     let wp = vec4<f32>(ep.xyz + frame.eye.xyz, ep.w);
     var out: VsOut;
-    out.clip = frame.eye_view_proj * ep;
+    out.clip = eye_clip(rec, ep);
     out.world_pos = wp.xyz;
     out.normal = cofactor(model) * vertex_normal(rec, in);
     var st = face_st(in, rec);
@@ -653,7 +673,7 @@ fn vs_depth(in: VsIn) -> DepthOut {
     let model = eye_model(rec, in);
     let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: DepthOut;
-    out.clip = frame.eye_view_proj * ep;
+    out.clip = eye_clip(rec, ep);
     out.world_pos = ep.xyz + frame.eye.xyz;
     out.record = in.instance;
     return out;
@@ -702,7 +722,7 @@ fn vs_depth_normal(in: VsIn) -> DepthNormalOut {
     let model = eye_model(rec, in);
     let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: DepthNormalOut;
-    out.clip = frame.eye_view_proj * ep;
+    out.clip = eye_clip(rec, ep);
     out.normal = cofactor(model) * vertex_normal(rec, in);
     let motion = motion_clips(rec, in, ep);
     out.motion_cur = motion[0];
@@ -729,7 +749,7 @@ fn vs_depth_mask_normal(in: VsIn) -> DepthMaskOut {
     let model = eye_model(rec, in);
     let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: DepthMaskOut;
-    out.clip = frame.eye_view_proj * ep;
+    out.clip = eye_clip(rec, ep);
     out.world_pos = ep.xyz + frame.eye.xyz;
     out.normal = cofactor(model) * vertex_normal(rec, in);
     out.uv = diffuse_uv(face_st(in, rec), rec, frame.anim_clock.zw);
@@ -981,6 +1001,16 @@ fn ll_spec(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, gloss: f32) -> f32 {
     return lit * fres * ll_light_func(nh, gloss) * gt / (nh * nl);
 }
 
+// The "glare" of a blended legacy material (class3/deferred/materialF.glsl,
+// DIFFUSE_ALPHA_MODE_BLEND): the brightness of its sharp environment
+// reflection times the environment intensity, plus its local light
+// highlights. The face's alpha is max(texture alpha, glare) (shade_material),
+// so a transparent layer with a specular map shows its reflections only:
+// the "wet" and "shine" layers worn over mesh bodies (#1420). The sun's
+// highlight does not count, as there. Reset by shade_material, written by
+// legacy_light and legacy_local_spec.
+var<private> legacy_glare: f32 = 0.0;
+
 // Legacy material lighting applied to the sun + sky result `col`, as
 // softenLightF.glsl: sun highlight, applyGlossEnv and applyLegacyEnv. The
 // local light highlights are separate (legacy_local_spec), as LL adds them
@@ -1010,12 +1040,12 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
         );
         let g = both.a;
         if (g.w > 0.0) {
-            gloss_sky = g.rgb;
+            gloss_sky = g.rgb * probe_pass_radiance();
         }
         if (env > 0.0) {
             let e = both.b;
             if (e.w > 0.0) {
-                env_sky = e.rgb;
+                env_sky = e.rgb * probe_pass_radiance();
             }
         }
     }
@@ -1052,8 +1082,33 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
         var fresnel = 1.0 - dot(v, n);
         fresnel = min(fresnel * fresnel + env, 1.0);
         col = mix(col, env_sky * env * fresnel * 0.5, env);
+        legacy_glare += clamp(max(max(env_sky.r, env_sky.g), env_sky.b), 0.0, 1.0) * env;
     }
     return col;
+}
+
+// Whether an empty texel of a blended face may still glare: a legacy
+// material with an environment, or a glossy one with a local light or a
+// projector over it (the sun's highlight never glares). A glossy hair far
+// from any local light keeps leaving before the lighting (fs_blend).
+fn legacy_may_glare(rec: DrawRecord, m: Material, world_pos: vec3<f32>, frag: vec2<f32>) -> bool {
+    if ((rec.flags.x & FLAG_LEGACY_MAT) == 0u) {
+        return false;
+    }
+    if (m.legacy_env > 0.0) {
+        return true;
+    }
+    if (m.legacy_spec.a <= 0.0) {
+        return false;
+    }
+    let lights = light_walk(world_pos, frag);
+    return any((lights.held | lights.projectors) != vec2<u32>(0u));
+}
+
+// calcPointLightOrSpotLight's glare (materialF.glsl) from the highlight of
+// one local light, as written there: the red first, then the brightest.
+fn add_light_glare(sc: vec3<f32>) {
+    legacy_glare = max(legacy_glare, sc.r) + max(max(sc.r, sc.g), sc.b);
 }
 
 // Local light highlights of legacy materials (multiPointLightF). Our light
@@ -1077,7 +1132,9 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
             if (dist < radius) {
                 let atten = ll_light_atten(dist / radius, lt.color_falloff.w);
                 let s = ll_spec(n, v, to_l / max(dist, 1e-4), spec.a) * atten;
-                col += clamp(s * lt.color_falloff.rgb / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+                let sc = clamp(s * lt.color_falloff.rgb / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+                col += sc;
+                add_light_glare(sc);
             }
         }
     }
@@ -1088,7 +1145,9 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
         }
         if (spec.a > 0.0) {
             let s = ll_spec(n, v, at.l, spec.a) * at.atten;
-            col += clamp(s * at.color / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+            let sc = clamp(s * at.color / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+            col += sc;
+            add_light_glare(sc);
         }
         if (env > 0.0) {
             // the view reflected to the plane the projector emits from
@@ -1385,6 +1444,7 @@ fn shade(in: VsOut, front: bool) -> Shaded {
 // may be discarded between `eval_material` and this (fs_blend).
 fn shade_material(in: VsOut, m: Material) -> Shaded {
     let rec = records[in.record];
+    legacy_glare = 0.0;
     surface_occlusion = m.occlusion;
     // a blended face opaque enough (fs_depth_contact) is in the occlusion's
     // depth when BLEND_SCREEN_DEPTH; a more transparent one would get what
@@ -1454,7 +1514,14 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     }
     var s: Shaded;
     col = debug_view(col, in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy);
-    s.color = vec4<f32>(finite_hdr(light_tiles_checked(col, in.world_pos, in.clip.xy)), m.color.a);
+    // materialF.glsl (blend): al = max(diffuse alpha, glare) x vertex alpha,
+    // the vertex alpha being the face color's (a fullbright face takes the
+    // other branch and has no glare, as emissive_brightness 1 there)
+    var alpha = m.color.a;
+    if ((rec.flags.x & (FLAG_LEGACY_MAT | FLAG_ALPHA_BLEND)) == (FLAG_LEGACY_MAT | FLAG_ALPHA_BLEND)) {
+        alpha = max(alpha, min(legacy_glare, 1.0) * rec.base_color.a);
+    }
+    s.color = vec4<f32>(finite_hdr(light_tiles_checked(col, in.world_pos, in.clip.xy)), alpha);
     s.n = m.n;
     s.roughness = m.roughness;
     s.metallic = m.metallic;
@@ -1547,7 +1614,7 @@ fn fs_mask_g(in: VsOut, @builtin(front_facing) front: bool) -> GOut {
 @fragment
 fn fs_reflect(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let rec = records[in.record];
-    // A mirrored view (water, mirror) flips the winding: the side facing
+    // A mirrored view (water, mirror, the faces of a probe) flips the winding: the side facing
     // its camera is the one rasterized as a back face. Single-sided faces
     // show that side only, as in the Legacy Viewer's culled reflection and
     // hero probe passes: a mirror's own surface, a few centimetres in front
@@ -1606,7 +1673,9 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
         }
     }
     let m = eval_material(in, front);
-    if (BLEND_EARLY_DISCARD && m.color.a < 0.004) {
+    // a legacy material's empty texels may still glare (materialF.glsl has
+    // no early test): lit first, their alpha is known after shade_material
+    if (BLEND_EARLY_DISCARD && m.color.a < 0.004 && !legacy_may_glare(records[in.record], m, in.world_pos, in.clip.xy)) {
         discard;
     }
     // Blended and alpha-tested: the hair, eyelashes and skirt of a system
@@ -1765,7 +1834,7 @@ fn vs_pick(in: VsIn) -> PickOut {
     let model = eye_model(rec, in);
     let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: PickOut;
-    out.clip = frame.eye_view_proj * ep;
+    out.clip = eye_clip(rec, ep);
     let st = face_st(in, rec);
     out.st = st;
     out.uv = diffuse_uv(st, rec, frame.anim_clock.zw);

@@ -48,6 +48,7 @@ fn apply_fog(c:vec3<f32>,p:vec3<f32>)->vec3<f32> {{return c;}}
 fn portal_clip(r:DrawRecord,p:vec3<f32>) {{}}
 fn sample_tex(t:u32,uv:vec2<f32>)->vec4<f32> {{return vec4<f32>(1.0);}}
 fn eval_material(v:VsOut,front:bool)->Material {{return Material(records[v.record].base_color);}}
+fn legacy_may_glare(r:DrawRecord,m:Material,p:vec3<f32>,f:vec2<f32>)->bool {{return false;}}
 fn shade_material(v:VsOut,m:Material)->Material {{return m;}}
 fn rez_alpha(r:DrawRecord,v:VsOut)->f32 {{return 1.0;}}
 fn depth_normal(n:vec3<f32>,front:bool,cur:vec4<f32>,prev:vec4<f32>,c:f32)->vec4<f32> {{return vec4<f32>(1.0);}}
@@ -117,7 +118,7 @@ fn normal_composition(r:DrawRecord)->f32 {{return 0.0;}}
     );
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("sidedness readback"),
-        size: 384 * 256,
+        size: crate::readback::readback_size(384 * 256),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
@@ -304,7 +305,7 @@ fn sample_tex(t:u32,uv:vec2<f32>)->vec4<f32> {{return vec4<f32>(1.0,1.0,1.0,f32(
     );
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("pick threshold readback"),
-        size: 32 * 256,
+        size: crate::readback::readback_size(32 * 256),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
