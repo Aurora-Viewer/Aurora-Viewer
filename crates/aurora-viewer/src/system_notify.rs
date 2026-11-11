@@ -9,6 +9,11 @@
 //! AppUserModelID known to Windows for its notifications to show: it is
 //! written under `HKCU\Software\Classes\AppUserModelId` (its name and
 //! icon), only once the user turns the notifications on.
+//!
+//! Each notification says what kind it is and which conversation it
+//! belongs to, so the desktop can group them: the freedesktop `category`
+//! hint and an `x-aurora-thread` hint on Linux, the toast's `Group` on
+//! Windows.
 
 use crossbeam_channel::{Receiver, Sender};
 
@@ -16,9 +21,63 @@ use crossbeam_channel::{Receiver, Sender};
 #[derive(Debug, Clone, PartialEq)]
 pub struct Toast {
     pub id: u64,
+    pub kind: Kind,
+    /// The conversation it belongs to (`thread_key`).
+    pub thread: String,
     pub title: String,
     pub body: String,
 }
+
+/// What a notification is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// A resident's instant message.
+    Message,
+    /// A line that mentions the agent (a group chat, a conference, nearby
+    /// chat).
+    Mention,
+    /// An object's instant message.
+    ObjectIm,
+    /// A line that holds one of the keywords.
+    Keyword,
+    /// A script dialog or text box.
+    ScriptDialog,
+    /// An offer or a notice that came as a message (a teleport, a
+    /// friendship, items, a group notice…).
+    Offer,
+    /// A message of the grid's system, shown in nearby chat.
+    System,
+    /// A friend came online.
+    Online,
+    /// A friend went offline.
+    Offline,
+    /// Anything else (a simulator alert, the region restart, a payment…).
+    Notice,
+}
+
+/// The freedesktop category of a kind (Desktop Notifications
+/// Specification, *Categories*): the standard name where one exists, else
+/// the `x-vendor.class` form the specification asks for.
+/// DesktopNotifierLinux::showNotification passes the Growl type's own name
+/// there ("Friend logged off", growl_notifications.xml), which no desktop
+/// knows.
+pub fn category(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Message => "im.received",
+        Kind::Online => "presence.online",
+        Kind::Offline => "presence.offline",
+        Kind::Mention => "x-aurora.mention",
+        Kind::ObjectIm => "x-aurora.object-im",
+        Kind::Keyword => "x-aurora.keyword",
+        Kind::ScriptDialog => "x-aurora.script-dialog",
+        Kind::Offer => "x-aurora.offer",
+        Kind::System => "x-aurora.system",
+        Kind::Notice => "x-aurora.notice",
+    }
+}
+
+/// The thread every friend's online and offline notice shares.
+pub const PRESENCE_THREAD: &str = "presence";
 
 /// The worker thread: notifications go in, clicks come out.
 pub struct Notifier {
@@ -61,6 +120,15 @@ pub fn toast_xml(title: &str, body: &str) -> String {
     format!(
         "<toast launch=\"aurora\"><visual><binding template=\"ToastGeneric\">{texts}</binding></visual><audio silent=\"true\"/></toast>"
     )
+}
+
+/// A Windows toast's Tag and Group: its id, its thread, each cut to the
+/// 64 characters Windows takes (a session's id has 36).
+#[cfg(any(windows, test))]
+fn toast_tag_group(toast: &Toast) -> (String, String) {
+    const MAX: usize = 64;
+    let cut = |s: &str| s.chars().take(MAX).collect::<String>();
+    (toast.id.to_string(), cut(&toast.thread))
 }
 
 #[cfg(any(windows, test))]
@@ -217,7 +285,7 @@ mod freedesktop {
             // a server that clicks without a label still needs the pair
             let open = aurora_i18n::tr!("system-notification-open");
             let action_list: Vec<&str> = if actions { vec!["default", open] } else { Vec::new() };
-            let hints = hints();
+            let hints = hints(&toast);
             // expire_timeout -1: the server's own delay, as on Windows
             let args = (
                 APP_NAME,
@@ -244,12 +312,15 @@ mod freedesktop {
     }
 
     /// Aurora plays its own sounds; the urgency is the Legacy Viewer's
-    /// (NOTIFY_URGENCY_NORMAL).
-    fn hints() -> HashMap<&'static str, Value<'static>> {
+    /// (NOTIFY_URGENCY_NORMAL). The kind and the thread let the desktop
+    /// group the notices; none replaces another (`replaces_id` 0).
+    fn hints(toast: &Toast) -> HashMap<&'static str, Value<'_>> {
         HashMap::from([
             ("desktop-entry", Value::from(DESKTOP_ENTRY)),
             ("suppress-sound", Value::from(true)),
             ("urgency", Value::from(1u8)),
+            ("category", Value::from(super::category(toast.kind))),
+            ("x-aurora-thread", Value::from(toast.thread.as_str())),
         ])
     }
 
@@ -353,6 +424,11 @@ mod win {
         let xml = XmlDocument::new()?;
         xml.LoadXml(&HSTRING::from(toast_xml(&toast.title, &toast.body)))?;
         let t = ToastNotification::CreateToastNotification(&xml)?;
+        // the Group gathers a conversation's notices; the Tag, unique,
+        // keeps each one (a same Tag and Group replaces)
+        let (tag, group) = super::toast_tag_group(toast);
+        t.SetTag(&HSTRING::from(tag))?;
+        t.SetGroup(&HSTRING::from(group))?;
         let (id, clicks) = (toast.id, clicks.clone());
         t.Activated(&TypedEventHandler::new(move |_: Ref<ToastNotification>, _: Ref<IInspectable>| {
             let _ = clicks.send(id);
@@ -468,6 +544,43 @@ mod tests {
         );
         // a title alone has a single line
         assert!(!toast_xml("Jane is online.", "").contains("<text></text>"));
+    }
+
+    #[test]
+    fn each_kind_has_its_freedesktop_category() {
+        // the specification's own names where it has one
+        assert_eq!(category(Kind::Message), "im.received");
+        assert_eq!(category(Kind::Online), "presence.online");
+        assert_eq!(category(Kind::Offline), "presence.offline");
+        // the rest in the x-vendor form, each its own
+        let others = [
+            Kind::Mention,
+            Kind::ObjectIm,
+            Kind::Keyword,
+            Kind::ScriptDialog,
+            Kind::Offer,
+            Kind::System,
+            Kind::Notice,
+        ];
+        let names: std::collections::HashSet<_> = others.iter().map(|k| category(*k)).collect();
+        assert_eq!(names.len(), others.len());
+        assert!(names.iter().all(|n| n.starts_with("x-aurora.") && !n.contains(' ')));
+    }
+
+    #[test]
+    fn the_windows_tag_is_the_id_and_the_group_the_thread() {
+        let toast = |thread: &str| Toast {
+            id: 42,
+            kind: Kind::Message,
+            thread: thread.into(),
+            title: "Jane".into(),
+            body: String::new(),
+        };
+        let session = "6f1e3b0a-1c1d-4a3e-9b1a-2b3c4d5e6f70";
+        assert_eq!(toast_tag_group(&toast(session)), ("42".into(), session.into()));
+        // never past Windows' 64 characters
+        let (_, group) = toast_tag_group(&toast(&"x".repeat(80)));
+        assert_eq!(group.chars().count(), 64);
     }
 
     #[test]
