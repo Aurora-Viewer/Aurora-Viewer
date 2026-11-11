@@ -1741,6 +1741,7 @@ impl BuildTool {
         }
         let flags = if select_copy { FLAGS_CREATE_SELECTED } else { 0 };
         for (handle, ids) in self.group_by_region(world, &roots) {
+            world.objects.expect_local_duplicates(handle, &ids, offset, select_copy, None);
             self.send(BuildCmd::Duplicate {
                 handle,
                 local_ids: ids,
@@ -2416,6 +2417,8 @@ impl BuildTool {
         }
         let Some((_, off)) = Self::region_at(world, point) else { return };
         let (ray_start, ray_end, ray_target, bypass) = self.placement_ray(world, s, point, target, cursor, off);
+        // The simulator chooses the surface offset and, optionally, rotation.
+        let radius = bounds_of(world, &self.selection, false, Instant::now()).map_or(1.0, |bounds| bounds.half.length() * 2.0 + 1.0);
         let mut by_region: HashMap<RegionHandle, Vec<u32>> = HashMap::new();
         for r in roots {
             if let Some(o) = world.objects.get(r) {
@@ -2423,6 +2426,9 @@ impl BuildTool {
             }
         }
         for (handle, local_ids) in by_region {
+            world
+                .objects
+                .expect_local_duplicates(handle, &local_ids, Vec3::ZERO, false, Some((point - off, radius, s.copy_rotates)));
             self.send(BuildCmd::DuplicateOnRay {
                 handle,
                 local_ids,

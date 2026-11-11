@@ -190,6 +190,9 @@ pub enum BarAction {
     HoverTips(HoverTipsMenu),
     WorldOverlays(crate::world::beacons::Overlays),
     ShowTransparency,
+    /// Advanced › Rendering types: what is not drawn, and whether the
+    /// particles are hidden (their own switch, World › Show more).
+    RenderTypes(crate::scene::render_types::Hidden, bool),
     OwnedLand,
 }
 
@@ -325,6 +328,10 @@ pub struct StatusInfo<'a> {
     pub hover_tips: HoverTipsMenu,
     pub world_overlays: crate::world::beacons::Overlays,
     pub show_transparency: bool,
+    /// Advanced › Rendering types (not saved), and the keys of each row's
+    /// shortcut, in the order of `RENDER_TYPE_ACTIONS`.
+    pub hidden_types: crate::scene::render_types::Hidden,
+    pub render_type_keys: [String; 10],
     /// The conversations' thumbnails at the top right (#1134): how many,
     /// 0 for none (`thumbnails::reserve_top`).
     pub conversation_thumbnails: usize,
@@ -577,6 +584,82 @@ fn flip(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: &mut bool, 
         *on = !*on;
     }
     clicked
+}
+
+/// The shortcut of each row of Advanced › Rendering types, in its order
+/// (Animesh has none, as in the Legacy Viewer).
+pub const RENDER_TYPE_ACTIONS: [Option<crate::keybinds::Action>; 10] = {
+    use crate::keybinds::Action as A;
+    [
+        Some(A::RenderTerrain),
+        Some(A::RenderWater),
+        Some(A::RenderSky),
+        Some(A::RenderClouds),
+        Some(A::RenderObjects),
+        Some(A::RenderAvatars),
+        None,
+        Some(A::RenderTrees),
+        Some(A::RenderGrass),
+        Some(A::HideParticles),
+    ]
+};
+
+/// The icons of Advanced › Rendering types: its submenu, its rows in the
+/// order of `RENDER_TYPE_ACTIONS`, then Show all.
+pub const RENDER_TYPE_ICONS: [&str; 12] = [
+    "stack-2-filled",
+    "mountain-filled",
+    "droplet-filled",
+    "sun-filled",
+    "cloud-filled",
+    "box",
+    "user-filled",
+    "run",
+    "tree",
+    "seedling-filled",
+    "sparkles-filled",
+    "eye-filled",
+];
+
+/// Advanced › Rendering types: a tick on what is drawn, as the Legacy
+/// Viewer's Develop › Rendering Types (render_type_from_string,
+/// indra/newview/llviewermenu.cpp); the menu stays open, to turn several
+/// off in a row. The Legacy Viewer's material passes (Simple, Alpha,
+/// Bump…) are not listed: Aurora does not split its draws that way.
+fn render_types_menu(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, action: &mut BarAction) {
+    use aurora_i18n::tr;
+    let mut h = st.hidden_types;
+    let mut particles = st.world_overlays.hide_particles;
+    let mut changed = false;
+    let rows = [
+        (tr!("render-types-terrain"), &mut h.terrain),
+        (tr!("render-types-water"), &mut h.water),
+        (tr!("render-types-sky"), &mut h.sky),
+        (tr!("render-types-clouds"), &mut h.clouds),
+        (tr!("render-types-objects"), &mut h.objects),
+        (tr!("render-types-avatars"), &mut h.avatars),
+        (tr!("render-types-animesh"), &mut h.animesh),
+        (tr!("render-types-trees"), &mut h.trees),
+        (tr!("render-types-grass"), &mut h.grass),
+        (tr!("render-types-particles"), &mut particles),
+    ];
+    let icons = &RENDER_TYPE_ICONS[1..];
+    for (((label, off), keys), icon) in rows.into_iter().zip(&st.render_type_keys).zip(icons) {
+        let mut drawn = !*off;
+        if menu::toggle_keys(ui, p, icon, label, &mut drawn, keys) {
+            *off = !drawn;
+            changed = true;
+        }
+    }
+    let any_hidden = h != Default::default() || particles;
+    if menu::item_if(ui, p, RENDER_TYPE_ICONS[11], tr!("render-types-show-all"), any_hidden) {
+        h = Default::default();
+        particles = false;
+        changed = true;
+    }
+    if changed {
+        *action = BarAction::RenderTypes(h, particles);
+    }
 }
 
 /// Check row of a menu for the floater `id`, ticked while it is open: it
@@ -1282,6 +1365,10 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 crate::ui::debug_settings::WINDOW,
                 &mut panels.debug_settings,
             );
+            // Develop › Rendering Types (LLAdvancedToggleRenderType)
+            menu::submenu(ui, p, RENDER_TYPE_ICONS[0], aurora_i18n::tr!("render-types-menu"), true, |ui| {
+                render_types_menu(ui, p, st, action);
+            });
             // Develop › Consoles › Region Debug Console, for those the
             // region gives the console to
             if st.region_console {
