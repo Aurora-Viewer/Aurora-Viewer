@@ -862,10 +862,7 @@ mod tests {
         assert!(settings.sheet_collapsed, "the click collapses the sheet");
         assert_eq!(st.sheet, None, "the list takes the whole pane");
         let expand = expand.expect("the toolbar has the expand button");
-        assert!(
-            expand.contains(button.center()) && button.contains(expand.center()),
-            "the button stays under the pointer: {button:?} then {expand:?}"
-        );
+        assert_eq!(expand, button, "the button does not move when it is used");
         for events in click(button.center()) {
             frame(640.0, events, &mut settings, &mut st);
         }

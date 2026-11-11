@@ -74,12 +74,13 @@ pub(super) fn frame(ui: &egui::Ui, p: &Palette) -> (Rect, Rect) {
 const TOGGLE: f32 = super::rows::TOOLBAR_H;
 
 /// Where a sheet that cannot be closed (the one Conversations › Contacts
-/// keeps beside its list) has its collapse button: at the right of its head,
-/// level with its top, so that it covers the centre of the expand button
-/// at the end of the list's toolbar once the sheet is collapsed, and the
-/// other way round: it stays under the pointer that used it.
+/// keeps beside its list) has its collapse button: in its top right corner,
+/// out of the head's padding, on the very spot of the expand button that
+/// ends the list's toolbar once the sheet is collapsed (the toolbar's row,
+/// flush with the pane's right edge): the button does not move under the
+/// pointer that used it.
 pub(super) fn toggle_ui(ui: &mut egui::Ui, sheet: Rect) -> egui::Ui {
-    let rect = Rect::from_min_size(Pos2::new(sheet.right() - PAD_X - TOGGLE, sheet.top() + PAD_Y), Vec2::splat(TOGGLE));
+    let rect = Rect::from_min_size(Pos2::new(sheet.right() - TOGGLE, sheet.top()), Vec2::splat(TOGGLE));
     ui.new_child(
         egui::UiBuilder::new()
             .id_salt("people-sheet-toggle")
@@ -199,7 +200,7 @@ fn head(ui: &mut egui::Ui, p: &Palette, world: &World, data: &RadarData, id: Uui
         (cross.left() - 8.0, resp.on_hover_text(aurora_i18n::tr!("common-close")).clicked())
     } else {
         // the collapse button of Conversations › Contacts (`toggle_ui`)
-        (rect.right() - TOGGLE - 8.0, false)
+        (rect.right() - (TOGGLE - PAD_X) - 8.0, false)
     };
     let left = disc.right() + 10.0;
     let width = (right - left).max(20.0);
