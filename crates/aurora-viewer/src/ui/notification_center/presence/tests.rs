@@ -172,6 +172,9 @@ fn status(classic: bool) -> StatusInfo<'static> {
         can_go_home: true,
         release_notes: false,
         region_console: false,
+        god_level: 0,
+        admin_objects: false,
+        admin_requests: true,
         motd: false,
         grid_help: None,
         classic_bars: classic,
@@ -200,6 +203,8 @@ fn status(classic: bool) -> StatusInfo<'static> {
         hover_tips: Default::default(),
         world_overlays: Default::default(),
         show_transparency: false,
+        hidden_types: Default::default(),
+        render_type_keys: Default::default(),
         conversation_thumbnails: 0,
     }
 }
