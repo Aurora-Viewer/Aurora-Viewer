@@ -704,17 +704,10 @@ fn nearby_snap(screen: Rect, parent: Rect, window: Rect) -> Option<DockSide> {
 fn number(ui: &mut egui::Ui, value: &mut f32, max: f32, speed: f32, decimals: usize) -> egui::Response {
     let modifiers = ui.input(|i| i.modifiers);
     let increment = speed;
-    let speed = speed
-        * 0.25
-        * if modifiers.alt {
-            10.0
-        } else if modifiers.ctrl {
-            0.1
-        } else if modifiers.shift {
-            0.01
-        } else {
-            1.0
-        };
+    // Same Alt / Ctrl / Shift scale as LLSpinCtrl::onUpBtn, on the drag
+    // speed and on the arrows this field shares with the build spinners.
+    let scale = widgets::spin_key_scale(modifiers);
+    let speed = speed * 0.25 * scale;
     let (mut response, step) = ui
         .horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
@@ -731,7 +724,7 @@ fn number(ui: &mut egui::Ui, value: &mut f32, max: f32, speed: f32, decimals: us
         })
         .inner;
     if step != 0 {
-        *value = (*value + increment * step as f32).clamp(0.0, max);
+        *value = (*value + increment * scale * step as f32).clamp(0.0, max);
         response.mark_changed();
     }
     response
