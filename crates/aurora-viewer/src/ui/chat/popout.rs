@@ -52,7 +52,7 @@ pub(super) struct View {
     show_profile: bool,
     members_open: bool,
     stage_mini: bool,
-    layout_rail: Option<bool>,
+    layout_narrow: Option<bool>,
     layout_members_room: Option<bool>,
     layout_width: Option<f32>,
     layout_dragged: bool,
@@ -71,7 +71,7 @@ impl View {
         std::mem::swap(&mut self.show_profile, &mut st.show_profile);
         std::mem::swap(&mut self.members_open, &mut st.members_open);
         std::mem::swap(&mut self.stage_mini, &mut st.stage_mini);
-        std::mem::swap(&mut self.layout_rail, &mut st.layout_rail);
+        std::mem::swap(&mut self.layout_narrow, &mut st.layout_narrow);
         std::mem::swap(&mut self.layout_members_room, &mut st.layout_members_room);
         std::mem::swap(&mut self.layout_width, &mut st.layout_width);
         std::mem::swap(&mut self.layout_dragged, &mut st.layout_dragged);
