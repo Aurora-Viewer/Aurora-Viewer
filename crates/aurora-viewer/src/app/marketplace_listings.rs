@@ -60,8 +60,8 @@ impl App {
                     self.inventory_ui.consume_clipboard = cut;
                     self.submit_inventory_change(change);
                 }
-                Action::OpenMarketplace(url) => self.marketplace_ui.open(Some(url)),
-                Action::OpenExternal(url) => self.egui_ctx.open_url(egui::OpenUrl::new_tab(url)),
+                Action::OpenMarketplace(url) => self.open_web_link(url, Some(crate::link_trust::BrowserEntryPoint::MarketplaceWindow)),
+                Action::OpenExternal(url) => self.on_ctx_action(ui::context::CtxAction::OpenUrlExternal(url)),
                 Action::Notify { text, url } => self.marketplace_alert(text, url),
                 Action::CreateRoot => self.open_marketplace_listings(),
             }
@@ -210,8 +210,8 @@ impl App {
                     self.inventory_ui.consume_clipboard = cut;
                     self.submit_inventory_change(change);
                 }
-                Action::OpenMarketplace(url) => self.marketplace_ui.open(Some(url)),
-                Action::OpenExternal(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
+                Action::OpenMarketplace(url) => self.open_web_link(url, Some(crate::link_trust::BrowserEntryPoint::MarketplaceWindow)),
+                Action::OpenExternal(url) => self.on_ctx_action(ui::context::CtxAction::OpenUrlExternal(url)),
                 Action::Notify { text, url } => self.marketplace_alert(text, url),
             }
         }

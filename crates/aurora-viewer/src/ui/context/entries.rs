@@ -1068,6 +1068,12 @@ fn appearance_submenu(ui: &mut Builder, f: &Facts) {
             f.worn_shape.is_some(),
             CtxAction::EditWorn(f.worn_shape.unwrap_or_default()),
         );
+        ui.item_if(
+            "file-export",
+            aurora_i18n::tr!("ui-context-export-shape-xml"),
+            f.worn_shape.is_some() && f.shape_xml_export,
+            CtxAction::ExportShapeXml(f.worn_shape.unwrap_or_default()),
+        );
         ui.item(
             "pencil-filled",
             aurora_i18n::tr!("ui-context-edit-outfit"),
@@ -1693,6 +1699,41 @@ mod tests {
             assert!(matches!(entry.kind, Kind::Action(CtxAction::EditWorn(id)) if id == item));
             assert!(!find(&Facts::default()).enabled);
         }
+    }
+
+    #[test]
+    fn the_worn_shape_exports_to_xml_only_when_the_rule_allows_it() {
+        let item = Uuid::from_u128(43);
+        let target = Target::Avatar {
+            id: Uuid::nil(),
+            own: true,
+            attachment: None,
+        };
+        let find = |facts: &Facts| {
+            world_menu(&target, facts, Vec3::ZERO)
+                .into_iter()
+                .find_map(|entry| {
+                    let Kind::Submenu(entries) = entry.kind else { return None };
+                    entries
+                        .into_iter()
+                        .find(|entry| entry.label == aurora_i18n::tr!("ui-context-export-shape-xml"))
+                })
+                .expect("export action")
+        };
+        let allowed = Facts {
+            worn_shape: Some(item),
+            shape_xml_export: true,
+            ..Default::default()
+        };
+        let entry = find(&allowed);
+        assert!(entry.enabled);
+        assert!(matches!(entry.kind, Kind::Action(CtxAction::ExportShapeXml(id)) if id == item));
+        let refused = Facts {
+            shape_xml_export: false,
+            ..allowed
+        };
+        assert!(!find(&refused).enabled, "no modify rights");
+        assert!(!find(&Facts::default()).enabled, "no worn shape");
     }
 
     #[test]
