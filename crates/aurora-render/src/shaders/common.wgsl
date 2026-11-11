@@ -2067,8 +2067,8 @@ const SOFT_DISK: array<vec2<f32>, 32> = array(
 // closer soft shadows with the map of a perspective projector. A search
 // of the map around the point finds the casters and their mean distance
 // from the projector, the light's size gives the penumbra by similar
-// triangles, and a filter of that width takes the light. -1 when the search
-// finds no caster: the caller's 5 taps then keep the look of before.
+// triangles, and a filter of 12 taps of that width takes the light; 1 when
+// the search finds no caster.
 // `uv`, `receiver`: the point in the map and its depth; `z`: its distance
 // along the projector's axis; `origin`, `half`, `dims`, `texel`: the map in
 // the atlas, in pixels (projector_shadow).
@@ -2114,10 +2114,10 @@ fn projector_soft(k: u32, q: vec3<f32>, n: vec3<f32>, uv: vec2<f32>, receiver: f
     let search = min(per_metre * cap / z, vec2<f32>(0.1));
     var ratio = 0.0;
     var blockers = 0.0;
-    for (var i = 0u; i < 13u; i++) {
+    for (var i = 0u; i < 9u; i++) {
         var o = vec2<f32>(0.0);
         if (i > 0u) {
-            o = SOFT_DISK[((i - 1u) * 32u) / 12u] * search;
+            o = SOFT_DISK[((i - 1u) * 32u) / 8u] * search;
         }
         let local = clamp(uv + o, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
         let at = vec2<i32>(floor(origin + local * half));
@@ -2131,18 +2131,19 @@ fn projector_soft(k: u32, q: vec3<f32>, n: vec3<f32>, uv: vec2<f32>, receiver: f
             }
         }
     }
+    // no caster within the search: lit
     if (blockers == 0.0) {
-        return -1.0;
+        return 1.0;
     }
     let width = min(light * ratio / blockers, cap);
     let radius = max(per_metre * width / z, vec2<f32>(1.5 * texel));
     var sum = 0.0;
-    for (var i = 0u; i < 32u; i++) {
-        let local = clamp(uv + SOFT_DISK[i] * radius, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
+    for (var i = 0u; i < 12u; i++) {
+        let local = clamp(uv + SOFT_DISK[(i * 32u) / 12u] * radius, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
         sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (origin + local * half) / dims,
             receiver + dot(gradient, local - uv) - 0.0002);
     }
-    return sum / 32.0;
+    return sum / 12.0;
 }
 
 // Light left by the shadow map of projector `i` (1: lit, or no map), as

@@ -880,7 +880,10 @@ mod tests {
             s.shadow_softness = softness;
             s.shadow_intensity = intensity;
             let s = s.sanitized();
-            assert!((0.0..=crate::settings::SHADOW_SOFTNESS_MAX).contains(&s.shadow_softness), "{softness}");
+            assert!(
+                (0.0..=crate::settings::SHADOW_SOFTNESS_MAX).contains(&s.shadow_softness),
+                "{softness}"
+            );
             assert!((0.0..=1.0).contains(&s.shadow_intensity), "{intensity}");
         }
     }
