@@ -33,7 +33,7 @@ if ($ReportFile) {
     $report = Read-CrashReport ([IO.File]::ReadAllText($ReportFile))
     if (-not $report) { throw "$ReportFile is not a crash report." }
     $frames = Get-SymbolizedFrames $report $SymbolFile
-    $signature = Get-CrashSignature $report $frames
+    $signature = Get-ReportSignature $report $frames
     $name = $null
     if ($SymbolFile) { $name = Split-Path $SymbolFile -Leaf }
     Show-Triage $report $frames $signature (Format-TriageSection $frames $name $signature)
@@ -76,7 +76,7 @@ if ($tag -and $own -and $own.Id) {
 }
 
 $frames = Get-SymbolizedFrames $report $symbolFile
-$signature = Get-CrashSignature $report $frames
+$signature = Get-ReportSignature $report $frames
 $section = Format-TriageSection $frames $symbolsName $signature
 Show-Triage $report $frames $signature $section
 

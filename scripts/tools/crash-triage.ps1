@@ -20,7 +20,7 @@ function Read-CrashReport([string]$Body) {
     if ($start -ge 0) { $Body = $Body.Substring(0, $start) }
     $report = [ordered]@{
         Version = $null; Kind = $null; Location = $null; System = $null; Gpu = $null; Frames = @(); Modules = @{}
-        # The rows that group a GPU loss or an unexpected shutdown (Get-CrashSignature).
+        # The rows that group a GPU loss or an unexpected shutdown (Get-ReportSignature).
         GpuWork = $null; EndOfSession = $null; ExitCode = $null; Window = $null; Risk = $null
     }
     $section = ''
@@ -321,11 +321,8 @@ function Get-WindowKind($Report) {
 }
 
 <#
-    The crash's signature: its kind and its first three meaningful frames,
-    by function name (stable across versions while the code stays). Without
-    symbols, the module offsets of this exact build. A GPU loss or an
-    unexpected shutdown: the family of the card, how it ended and the
-    system instead (Get-GroupKeys).
+    The keys of a GPU loss or an unexpected shutdown: the family of the
+    card, how it ended and the system.
 #>
 function Get-GroupKeys($Report) {
     if ($Report.Kind -eq 'Unexpected shutdown') {
@@ -334,13 +331,12 @@ function Get-GroupKeys($Report) {
     @('GPU device lost', (Get-GpuFamily $Report.Gpu), (Get-GpuLossKind $Report), (Get-OsFamily $Report.System))
 }
 
+<#
+    The crash's signature: its kind and its first three meaningful frames,
+    by function name (stable across versions while the code stays). Without
+    symbols, the module offsets of this exact build.
+#>
 function Get-CrashSignature($Report, $Frames) {
-    if ($GroupedKinds -contains $Report.Kind) {
-        $keys = @(Get-GroupKeys $Report)
-        $sha = [Security.Cryptography.SHA256]::Create()
-        $hash = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes("grouped|$($keys -join '|')"))
-        return @{ Id = (-join ($hash[0..7] | ForEach-Object { $_.ToString('x2') })); Frames = $keys; Grouped = $true }
-    }
     $kind = 'panic'
     if ($Report.Kind -like 'Native exception*') { $kind = $Report.Kind.Substring('Native exception '.Length) }
     elseif ($Report.Kind -eq 'Freeze') { $kind = 'freeze' }
@@ -367,6 +363,20 @@ function Get-CrashSignature($Report, $Frames) {
     $sha = [Security.Cryptography.SHA256]::Create()
     $hash = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text))
     @{ Id = (-join ($hash[0..7] | ForEach-Object { $_.ToString('x2') })); Frames = $keys }
+}
+
+<#
+    The signature of a report: by its rows for a GPU loss or an unexpected
+    shutdown (Get-GroupKeys), by its stack otherwise (Get-CrashSignature).
+#>
+function Get-ReportSignature($Report, $Frames) {
+    if ($GroupedKinds -contains $Report.Kind) {
+        $keys = @(Get-GroupKeys $Report)
+        $sha = [Security.Cryptography.SHA256]::Create()
+        $hash = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes("grouped|$($keys -join '|')"))
+        return @{ Id = (-join ($hash[0..7] | ForEach-Object { $_.ToString('x2') })); Frames = $keys; Grouped = $true }
+    }
+    Get-CrashSignature $Report $Frames
 }
 
 function Get-TriageTitle($Report, $Signature) {

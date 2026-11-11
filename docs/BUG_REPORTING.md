@@ -203,25 +203,27 @@ inlined functions included, to functions and source lines. It then:
   keeps its signature across versions and offsets. Without symbols
   (development build, release older than the symbols), the signature is the
   build's debug id and its first offsets;
-- groups a GPU loss (`GPU device lost`, `GPU device lost at startup`) or an
-  `Unexpected shutdown` differently, since its stack shows the driver or the
-  last state seen, not the cause. The signature is then the card family
-  from the GPU row (`NVIDIA RTX 30`, `AMD RX 9000`, `AMD integrated`,
-  `Intel Arc`, `Apple M2`, with ` laptop` for a laptop chip) and the system
-  (Windows, macOS, Linux). A GPU loss adds the work the card had in hand
-  (`hang`, `fault`, `at startup`, from the "GPU work at the loss" row). An
-  unexpected shutdown adds how it ended (system restarted, viewer and
-  watcher stopped together, ended from outside, or the exit code) and the
-  window (never shown, not answering, answering). The version, the driver
-  and the model inside the family stay out, so the reports of one group
-  land on one issue;
 - when an open issue already has the same signature, comments there with
-  the new occurrence (version, system, GPU, risk factors) and closes the
-  new issue as its duplicate; otherwise renames the issue
-  `Crash: <kind> in <function>` (for a grouped kind,
-  `Crash: GPU device lost, NVIDIA RTX 30, hang (Windows)`) and sets the
-  Bug type;
+  the new occurrence (version, system, GPU) and closes the new issue as its
+  duplicate; otherwise renames the issue `Crash: <kind> in <function>` and
+  sets the Bug type;
 - adds the `crash-triaged` label to the issue it signed.
+
+A GPU loss (`GPU device lost`, `GPU device lost at startup`) or an
+`Unexpected shutdown` is signed differently, since its stack shows the
+driver or the last state seen, not the cause. Its signature is the card
+family from the GPU row (`NVIDIA RTX 30`, `AMD RX 9000`, `AMD integrated`,
+`Intel Arc`, `Apple M2`, with ` laptop` for a laptop chip) and the system
+(Windows, macOS, Linux). A GPU loss adds the work the card had in hand
+(`hang`, `fault`, `at startup`, from the "GPU work at the loss" row). An
+unexpected shutdown adds how it ended (system restarted, viewer and
+watcher stopped together, ended from outside, or the exit code) and the
+window (never shown, not answering, answering). The version, the driver
+and the model inside the family stay out, so the reports of one group
+land on one issue, renamed for example
+`Crash: GPU device lost, NVIDIA RTX 30, hang (Windows)`. The comment of
+each duplicate on it also gives its risk factors (the settings that were
+on), so what tells the reports of a group apart stays visible.
 
 The signature lives in a hidden comment, the last line of the triage
 section. An open issue is a reference only when it carries the
