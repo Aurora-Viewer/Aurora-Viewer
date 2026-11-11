@@ -6879,8 +6879,12 @@ failure. Grid validation and any paid upload are performed by the human.
   order (the default chat window shows the last four).
   What to see: no square in the labels, the floating text,
   the chat and its list; all the characters of a line sitting on the same
-  baseline. Compare with `AURORA_FONT_FALLBACK=0` (squares everywhere
-  except Cyrillic, Greek, emojis and a few symbols). Visible limits: flags,
+  baseline. One name is small capitals (`ᴄᴅᴇꜰᴊᴋᴏᴘꜱᴜᴠᴡᴢ` and `ᴥ`); the
+  symbols line includes `♱ ♰ ✞`; the other-scripts line includes Kannada,
+  Oriya and the other Indic letters, plus `𓆩 ꕤ ᥫ 𐙚 𖤐 ꨄ`. Compare with
+  `AURORA_FONT_FALLBACK=0` (squares for everything the embedded Noto Sans
+  also lacks: Georgian, CJK, Arabic, the rare scripts; the small capitals
+  stay, because that Noto face is now always in the family). Visible limits: flags,
   skin tones and ZWJ sequences not composed; emojis
   monochrome outside the chat. On a system without the expected fonts
   (see `ui/fonts/fallback.rs`, verified on Windows 11), the squares
