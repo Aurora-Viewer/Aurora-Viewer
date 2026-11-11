@@ -67,7 +67,7 @@ impl Throttle {
 /// messages; LLScriptFloaterManager: FSFlashOnScriptDialog).
 pub fn flashes(cause: Cause, s: &Settings) -> bool {
     match cause {
-        Cause::Message | Cause::Mention => s.flash_on_message,
+        Cause::Message | Cause::Offer | Cause::Mention => s.flash_on_message,
         Cause::ObjectIm => s.flash_on_message && s.flash_on_object_im,
         Cause::ScriptDialog => s.flash_on_script_dialog,
         // FSKeywords::notify plays its sound and tells Growl, no flash
@@ -120,14 +120,16 @@ fn kind_of(open: Open) -> &'static str {
 
 /// What the system is told a notification is, from why it came and what
 /// it opens: a message in a conversation is an IM, one in nearby chat the
-/// grid's system, one under the bell an offer.
+/// grid's system, one under the bell a notice (an alert, a group notice, an
+/// answer to an offer).
 pub fn toast_kind(cause: Cause, open: Open) -> Kind {
     match cause {
         Cause::Message => match open {
             Open::Conversation(_) => Kind::Message,
             Open::NearbyChat => Kind::System,
-            Open::Notifications | Open::Window => Kind::Offer,
+            Open::Notifications | Open::Window => Kind::Notice,
         },
+        Cause::Offer => Kind::Offer,
         Cause::ObjectIm => Kind::ObjectIm,
         Cause::ScriptDialog => Kind::ScriptDialog,
         Cause::Mention => Kind::Mention,
@@ -433,10 +435,11 @@ mod tests {
     fn the_flash_follows_its_settings() {
         let mut s = Settings::default();
         assert!(flashes(Cause::Message, &s) && flashes(Cause::Mention, &s) && flashes(Cause::ObjectIm, &s));
+        assert!(flashes(Cause::Offer, &s));
         assert!(!flashes(Cause::ScriptDialog, &s) && !flashes(Cause::Notice, &s) && !flashes(Cause::Keyword, &s));
         assert!(!flashes(Cause::Presence(true), &s) && !flashes(Cause::Presence(false), &s));
         s.flash_on_message = false;
-        assert!(!flashes(Cause::ObjectIm, &s) && !flashes(Cause::Mention, &s));
+        assert!(!flashes(Cause::ObjectIm, &s) && !flashes(Cause::Mention, &s) && !flashes(Cause::Offer, &s));
         s.flash_on_script_dialog = true;
         assert!(flashes(Cause::ScriptDialog, &s));
     }
@@ -446,7 +449,8 @@ mod tests {
         let session = Open::Conversation(uuid::Uuid::from_u128(7));
         assert_eq!(toast_kind(Cause::Message, session), Kind::Message);
         assert_eq!(toast_kind(Cause::Message, Open::NearbyChat), Kind::System);
-        assert_eq!(toast_kind(Cause::Message, Open::Notifications), Kind::Offer);
+        assert_eq!(toast_kind(Cause::Message, Open::Notifications), Kind::Notice);
+        assert_eq!(toast_kind(Cause::Offer, Open::Notifications), Kind::Offer);
         assert_eq!(toast_kind(Cause::Mention, session), Kind::Mention);
         assert_eq!(toast_kind(Cause::Mention, Open::NearbyChat), Kind::Mention);
         assert_eq!(toast_kind(Cause::ObjectIm, Open::NearbyChat), Kind::ObjectIm);

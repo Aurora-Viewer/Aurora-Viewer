@@ -6690,7 +6690,8 @@ failure. Grid validation and any paid upload are performed by the human.
   `system notification shown (<what a click opens>, <category>)`, never
   the text; the category (`im.received`, `x-aurora.mention`…) and the
   `x-aurora-thread` hint go with it on Linux, the toast's `Group` on
-  Windows (the conversation's id, else `nearby-chat`, `notifications`).
+  Windows (the conversation's id, `presence` for a friend online or
+  offline, else `nearby-chat`, `notifications` or `window`).
   `front` keeps the window in front: nothing flashes and nothing is shown.
   `capture` brings the window back at frame 1150 with the bell's list open:
   capture with `AURORA_FPS_LIMIT=60` at frame 1300. The first notification
