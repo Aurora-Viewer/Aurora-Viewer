@@ -3936,7 +3936,11 @@ impl Backend {
             depth_compare: wgpu::CompareFunction::Greater,
             // (the camera's side of the water with the interleave, as the
             // blended faces after the water; none without, as before)
-            constants: if crate::particle_interleave() { &[("WATER_CLIP", 1.0)] } else { &[] },
+            constants: if crate::particle_interleave() {
+                &[("WATER_CLIP", 1.0)]
+            } else {
+                &[]
+            },
             ..base("particles", "vs_particle", "fs_particle")
         });
         // POOL_ALPHA_PRE_WATER for the particles: the far side of the
@@ -7709,14 +7713,15 @@ impl Backend {
         };
         // particles `range` of the buffer (instances, vertex buffer 0), with
         // `frame_bg`, then the pass's frame group back (the meshes follow)
-        let draw_particles_under = |pass: &mut wgpu::RenderPass, pipe: &wgpu::RenderPipeline, range: std::ops::Range<u32>, frame_bg: &wgpu::BindGroup| {
-            calls.set(calls.get() + 1);
-            pass.set_bind_group(0, frame_bg, &[]);
-            pass.set_pipeline(pipe);
-            pass.set_vertex_buffer(0, self.particle_buffer.slice(..));
-            pass.draw(0..6, range);
-            pass.set_bind_group(0, &self.groups.a, &[]);
-        };
+        let draw_particles_under =
+            |pass: &mut wgpu::RenderPass, pipe: &wgpu::RenderPipeline, range: std::ops::Range<u32>, frame_bg: &wgpu::BindGroup| {
+                calls.set(calls.get() + 1);
+                pass.set_bind_group(0, frame_bg, &[]);
+                pass.set_pipeline(pipe);
+                pass.set_vertex_buffer(0, self.particle_buffer.slice(..));
+                pass.draw(0..6, range);
+                pass.set_bind_group(0, &self.groups.a, &[]);
+            };
         let draw_from = |pass: &mut wgpu::RenderPass, pipe: &wgpu::RenderPipeline, buf: &wgpu::Buffer, r: (u64, u32)| {
             if r.1 > 0 {
                 calls.set(calls.get() + 1);
