@@ -20813,7 +20813,10 @@ impl ApplicationHandler for App {
             // on a prim east of the start position, playing at once
             if let Some(v) = std::env::var_os("AURORA_DEMO_MEDIA") {
                 let v = v.to_string_lossy().into_owned();
-                let url = if v == "1" || v.is_empty() {
+                // Mini controls: the same page, with the address hidden
+                // (LLMediaEntry::MINI, LLPanelPrimMediaControls::updateShape).
+                let mini = v == "mini";
+                let url = if v == "1" || v.is_empty() || mini {
                     crate::demo::demo_media_page().to_string()
                 } else {
                     v
@@ -20822,7 +20825,7 @@ impl ApplicationHandler for App {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
                 }
-                self.media.demo_entry(object, face, &url);
+                self.media.demo_face(object, face, &url, mini);
             }
             // AURORA_DEMO_WORN: an object worn on our avatar's back
             if std::env::var_os("AURORA_DEMO_WORN").is_some() {
