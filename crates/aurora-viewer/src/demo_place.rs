@@ -19,7 +19,7 @@ pub const LANDMARKS_FOLDER: u128 = 12;
 pub const FAVORITES_FOLDER: u128 = 20;
 /// A sub-folder of the landmarks.
 pub const SHOPS_FOLDER: u128 = 30;
-/// Nested under Shopping so the Places rail shows a collapse chevron in demo.
+/// Nested under Shopping so the Places rail shows a disclosure caret in demo.
 pub const SHOPS_OUTLETS_FOLDER: u128 = 31;
 /// Two more of `AURORA_DEMO_MAP=landmarks`.
 pub const CLUBS_FOLDER: u128 = 32;
@@ -531,7 +531,7 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
         v
     } else if n == SHOPS_FOLDER {
         // Nested child so the rail can show expand/collapse without AURORA_DEMO_MAP=landmarks.
-        vec![sub(SHOPS_OUTLETS_FOLDER, aurora_i18n::tr!("demo-map-markets"))]
+        vec![sub(SHOPS_OUTLETS_FOLDER, aurora_i18n::tr!("demo-map-outlets"))]
     } else {
         Vec::new()
     };

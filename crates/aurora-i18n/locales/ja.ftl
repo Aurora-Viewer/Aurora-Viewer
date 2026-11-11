@@ -1635,6 +1635,7 @@ demo-place-wolf-s-workshop = ウルフのワークショップ
 demo-map-clubs = クラブ
 demo-map-walks = 散歩道
 demo-map-markets = マーケット
+demo-map-outlets = アウトレット
 demo-map-beaches = ビーチ
 demo-map-club = クラブ{ $n }
 demo-map-beach = ビーチ{ $n }
