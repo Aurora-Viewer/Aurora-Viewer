@@ -1575,6 +1575,8 @@ chat renderer and region badges.
 
 Attachment frames follow `LLViewerJointAttachment` and `LLXformMatrix`: a bone scales its attachment joint's local offset, while rigid object sizes and linked child offsets retain their own scales. `scene/avatar.rs::AttachPoint::frame` shares that rule between CPU/GPU anchors and automatic hover; appearance hints use the same absolute bone frame. `scene/joint_overrides.rs` selects joint positions and nonzero pelvis fixups by greatest mesh asset UUID, independently of object arrival/traversal order. Scale locks from every qualifying mesh remain independent of the winning position. The pelvis is converted from root-relative Legacy coordinates to Aurora's feet-origin skeleton, without canceling its local translation in the root height correction. Animation position tracks still set absolute local positions, including the pelvis. Ground control avatars receive their own pelvis fixup; worn control avatars cannot deform the wearer.
 
+`scene/draw_limits.rs` holds the Legacy Viewer's drawing limits. An animesh's position and scale fixups (LLControlAvatar::getNewConstraintFixups) are worked out at each frame from its animated box (`anim_box.rs`) into `World::animesh_fixups` and applied by `anchors::skeleton_model`, so the rigged draws, the culling and the GPU picking follow them. An attachment root's offset is clamped to 3.5 m where its transform is composed (`Scene::object_transform`, `anchors::anchored_or_moving`); the object keeps the offset the simulator sent.
+
 Rigged mesh compatibility uses `scene/anim.rs::Rig::skin_joint` to resolve
 skin names and aliases, falling back to the pelvis for unknown names as
 `LLSkinningUtil::initJointNums` does. World skin bindings, appearance hints

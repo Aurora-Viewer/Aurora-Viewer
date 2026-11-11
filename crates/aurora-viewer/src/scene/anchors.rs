@@ -58,6 +58,7 @@
 use super::anim::{ANCHOR_BASE, ANCHORS, PALETTE_JOINTS};
 use super::animesh::JointBounds;
 use super::avatar::AvatarLibrary;
+use super::draw_limits::Fixup;
 use super::meshes::MeshStreamer;
 use super::sync_sets::{IndexSet, MAX_DEPTH};
 use super::{GeomKey, Scene, hover};
@@ -161,7 +162,15 @@ pub struct Posed {
 /// (`pos`, `rot`): the matrix rigged meshes are drawn with, and the first
 /// anchor of the owner's palette. `scale`: HUD zoom of a rigged HUD.
 pub fn skeleton_model(world: &World, meshes: &MeshStreamer, owner_idx: usize, pos: Vec3, mut rot: Quat, scale: f32) -> Mat4 {
-    let mut pos = pos;
+    let (mut pos, mut scale) = (pos, scale);
+    // an animesh pulled back toward its object or shrunk (draw_limits.rs)
+    if let Some(root) = world.objects.get(owner_idx)
+        && !root.is_avatar()
+        && let Some(fixup) = world.animesh_fixups.get(&root.full_id)
+    {
+        pos += fixup.offset;
+        scale *= fixup.scale;
+    }
     // LLControlAvatar::matchVolumeTransform: ground animesh also follow
     // their root mesh's unscaled bind rotation.
     if let Some(root) = world.objects.get(owner_idx)
@@ -299,10 +308,16 @@ pub fn anchored_or_moving(
                 rot,
             ));
         }
-        pos = cur.position + cur.rotation * pos;
-        rot = (cur.rotation * rot).normalize();
         let pidx = world.objects.parent_of(cur)?;
         let parent = world.objects.get(pidx)?;
+        // an attachment root, at most 3.5 m from its point (draw_limits.rs)
+        let local = if parent.is_avatar() {
+            super::draw_limits::attachment_offset(cur.position)
+        } else {
+            cur.position
+        };
+        pos = local + cur.rotation * pos;
+        rot = (cur.rotation * rot).normalize();
         if parent.is_avatar() {
             if cur.state == 0 {
                 return None;
@@ -367,9 +382,10 @@ struct Wearer {
     /// or its extent changed: every centre is brought up to date.
     refresh: bool,
     /// Where its anchors were last written from: place, rotation, first
-    /// anchor matrix and anchors in use. A wearer that kept its pose and
-    /// its place (an impostor standing, impostors.rs) has the same anchors.
-    written: Option<(Vec3, Quat, usize, u64)>,
+    /// anchor matrix, anchors in use and an animesh's fixups
+    /// (draw_limits.rs). A wearer that kept its pose and its place (an
+    /// impostor standing, impostors.rs) has the same anchors.
+    written: Option<(Vec3, Quat, usize, u64, Fixup)>,
 }
 
 /// The wearer of a run of anchored objects, in `update_anchors`.
@@ -692,7 +708,8 @@ impl Scene {
             let extent = skeleton_extent(wearer);
             w.refresh |= extent != w.extent;
             w.extent = extent;
-            let written = Some((pp, pr, base, w.used));
+            let fixup = world.animesh_fixups.get(&w.id).copied().unwrap_or_default();
+            let written = Some((pp, pr, base, w.used, fixup));
             // not posed in this frame and not moved: its anchors are those
             // already written (computed anyway to check them)
             let kept = !w.refresh && !every_centre && w.written == written && posed.binary_search(&(slot as usize)).is_err();
@@ -1333,5 +1350,87 @@ mod tests {
         assert!(on_root >= spinners, "{on_root} movers");
         assert!(below >= spinners, "{below} objects below a mover");
         assert!(worn >= 3, "{worn} worn objects from a mover");
+    }
+
+    /// An attachment root sent 5 m from its point is drawn 3.5 m from it,
+    /// with what is linked below it, by the CPU's transform and the GPU's
+    /// anchor alike (LLViewerJointAttachment::clampObjectPosition); the
+    /// offset the simulator sent is kept.
+    #[test]
+    fn an_attachment_root_is_drawn_at_most_three_and_a_half_metres_from_its_point() {
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        for ev in crate::demo::events().into_iter().chain(crate::demo::worn::events()) {
+            world.apply(ev);
+        }
+        let wearer = world.objects.index_of_uuid(&crate::demo::DEMO_AGENT).expect("wearer");
+        let local = |id| {
+            world
+                .objects
+                .iter()
+                .find(|(_, o)| o.key.local_id == id)
+                .map(|(i, _)| i)
+                .expect("worn prim")
+        };
+        let (root, child) = (local(crate::demo::worn::ROOT), local(crate::demo::worn::CHILD));
+        let now = Instant::now();
+        let (wp, wr, _) = Scene::object_transform(&world, wearer, now, 0).expect("wearer");
+        let point = world.objects.get(root).expect("root").attachment_point();
+        let frame = attach_frame(&world, world.objects.get(wearer).expect("wearer"), point);
+        let anchor = Mat4::from_rotation_translation(wr * frame.rot, wp + wr * frame.pos);
+        for (sent, drawn) in [
+            (Vec3::new(4.0, 3.0, 0.0), Vec3::new(2.8, 2.1, 0.0)),
+            (Vec3::new(0.0, 0.0, -1.5), Vec3::new(0.0, 0.0, -1.5)),
+        ] {
+            world.objects.get_mut(root).expect("root").position = sent;
+            let r = world.objects.get(root).expect("root");
+            let root_local = Mat4::from_rotation_translation(r.rotation, drawn);
+            for idx in [root, child] {
+                let o = world.objects.get(idx).expect("prim");
+                let own = Mat4::from_scale_rotation_translation(o.scale, o.rotation, o.position);
+                let expected = anchor
+                    * if idx == root {
+                        Mat4::from_scale_rotation_translation(o.scale, o.rotation, drawn)
+                    } else {
+                        root_local * own
+                    };
+                let (pos, rot, _) = Scene::object_transform(&world, idx, now, 0).expect("placed");
+                let direct = Mat4::from_scale_rotation_translation(o.scale, rot, pos);
+                assert!(direct.abs_diff_eq(expected, 1e-4), "prim {idx} sent at {sent}");
+                let (a, lp, lr) = anchored(&world, o, |_, slot| Some(slot as u32)).expect("anchored");
+                assert!(a.slot >= 1);
+                let composed = anchor * Mat4::from_scale_rotation_translation(o.scale, lr, lp);
+                assert!(composed.abs_diff_eq(expected, 1e-4), "anchored prim {idx} sent at {sent}");
+            }
+            assert_eq!(world.objects.get(root).expect("root").position, sent);
+        }
+    }
+
+    /// An animesh's fixups move its skeleton in the world and scale it
+    /// about its pelvis; without one it is placed as before.
+    #[test]
+    fn an_animesh_fixup_moves_and_scales_its_skeleton() {
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        for ev in crate::demo::events().into_iter().chain(crate::demo::worn::events()) {
+            world.apply(ev);
+        }
+        let scene = Scene::new(std::path::PathBuf::new(), lib.clone());
+        let (root, id) = world
+            .objects
+            .iter()
+            .find(|(_, o)| o.key.local_id == crate::demo::worn::ROOT)
+            .map(|(i, o)| (i, o.full_id))
+            .expect("worn root");
+        let (pos, rot) = (Vec3::new(10.0, 20.0, 30.0), Quat::from_rotation_z(0.7));
+        let plain = Mat4::from_rotation_translation(rot, pos) * Mat4::from_translation(-lib.pelvis);
+        assert!(skeleton_model(&world, &scene.meshes, root, pos, rot, 1.0).abs_diff_eq(plain, 1e-5));
+        let offset = Vec3::new(-4.5, 1.0, 0.0);
+        world.animesh_fixups.insert(id, Fixup { offset, scale: 0.5 });
+        let fixed = skeleton_model(&world, &scene.meshes, root, pos, rot, 1.0);
+        let expected = Mat4::from_scale_rotation_translation(Vec3::splat(0.5), rot, pos + offset) * Mat4::from_translation(-lib.pelvis);
+        assert!(fixed.abs_diff_eq(expected, 1e-5));
+        // the pelvis stays where it was moved to, the rest comes closer
+        assert!(fixed.transform_point3(lib.pelvis).abs_diff_eq(pos + offset, 1e-5));
     }
 }

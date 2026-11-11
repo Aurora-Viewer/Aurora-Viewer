@@ -6662,6 +6662,19 @@ pub fn animesh_points() -> bool {
     std::env::var("AURORA_DEMO_ANIMESH").is_ok_and(|v| v == "points")
 }
 
+/// AURORA_DEMO_ANIMESH=far: the ground animesh's animation carries its
+/// pelvis 8 m forward (drawn 3 m from its object, draw_limits.rs), and the
+/// worn animesh sits 5 m from its attachment point (drawn at 3.5 m).
+pub fn animesh_far() -> bool {
+    std::env::var("AURORA_DEMO_ANIMESH").is_ok_and(|v| v == "far")
+}
+
+/// AURORA_DEMO_ANIMESH=far: the animation the ground animesh plays too.
+pub const ANIMESH_FAR_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0106);
+
+/// The worn animesh's offset from its point with AURORA_DEMO_ANIMESH=far.
+pub const ANIMESH_FAR_WORN: Vec3 = Vec3::new(4.0, 3.0, 0.0);
+
 /// AURORA_DEMO_ANIMESH=churn: the ground animesh changes its mesh asset every
 /// `ANIMESH_CHURN_FRAMES` frames, as rigged meshes come and go on a grid.
 pub fn animesh_churn() -> bool {
@@ -6694,7 +6707,11 @@ pub fn animesh_events() -> Vec<NetEvent> {
         .map(|o| NetEvent::AvatarAnimations {
             sources: Vec::new(),
             avatar: o.full_id,
-            anims: vec![(ANIMESH_ANIM, 1)],
+            anims: if animesh_far() && o.local_id == 9200 {
+                vec![(ANIMESH_ANIM, 1), (ANIMESH_FAR_ANIM, 2)]
+            } else {
+                vec![(ANIMESH_ANIM, 1)]
+            },
         })
         .collect();
     // Signals deliberately arrive before their objects, as on a grid.
@@ -6814,6 +6831,9 @@ pub(crate) fn animesh_objects(ground_mesh: Uuid) -> Vec<ObjectUpdate> {
         }
         if parent == 9001 {
             o.state = 0x60;
+            if animesh_far() {
+                o.position = ANIMESH_FAR_WORN;
+            }
         } // Right hand.
         objects.push(o);
     }
@@ -8371,6 +8391,28 @@ pub fn point_animation() -> aurora_assets::Animation {
             .map(|(time, position)| PosKey { time, position })
             .collect(),
     });
+    a
+}
+
+/// AURORA_DEMO_ANIMESH=far: the pelvis held 8 m forward, as an animation
+/// with a large root motion.
+pub fn far_animation() -> aurora_assets::Animation {
+    use aurora_assets::anim::{JointMotion, PosKey};
+    let mut a = idle_animation();
+    a.duration = 2.0;
+    a.loop_out = 2.0;
+    a.joints = vec![JointMotion {
+        joint_name: "mPelvis".into(),
+        priority: 4,
+        rot_keys: Vec::new(),
+        pos_keys: [0.0, 2.0]
+            .into_iter()
+            .map(|time| PosKey {
+                time,
+                position: Vec3::new(8.0, 0.0, 0.0),
+            })
+            .collect(),
+    }];
     a
 }
 
