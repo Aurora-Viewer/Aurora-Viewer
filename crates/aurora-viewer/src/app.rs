@@ -698,7 +698,7 @@ pub struct App {
     suitcase_passed: bool,
     /// External web link waiting for the warning's answer, with the state of
     /// its "Do not warn me again" box and, for a dangerous link, the reason.
-    url_confirm: Option<(String, bool, Option<&'static str>)>,
+    url_confirm: Option<(String, bool, Option<&'static str>, crate::link_trust::BrowserEntryPoint)>,
     /// The media filter's question on screen.
     media_filter_prompt: ui::media_filter::PromptUi,
     script_dialogs_were: usize,
@@ -3301,7 +3301,7 @@ impl App {
         if let NetEvent::ServerReleaseNotes(page) = ev {
             // LLFloaterAbout::handleServerReleaseNotes, then LLWeb::loadURL
             match page {
-                Ok(url) => self.egui_ctx.open_url(egui::OpenUrl::new_tab(url)),
+                Ok(url) => self.open_web_link(url, None),
                 Err(_) => {
                     self.world.notifications.push(
                         crate::world::notifications::Kind::Alert,
@@ -14097,7 +14097,14 @@ impl App {
                 self.world.set_friends_only(on);
             }
             BarAction::BuyCurrency => self.open_buy_currency(),
-            BarAction::Marketplace => self.marketplace_ui.open(None),
+            // FSLoadSLMarketplace (llviewermenu.cpp): the system browser when
+            // every link goes there, else the Marketplace window
+            BarAction::Marketplace => match self.marketplace_home() {
+                Some(home) if self.settings.browser_behavior == crate::settings::BrowserBehavior::SystemForAll => {
+                    self.open_web_link(home, Some(crate::link_trust::BrowserEntryPoint::MarketplaceLink));
+                }
+                _ => self.marketplace_ui.open(None),
+            },
             BarAction::MarketplaceListings => self.open_marketplace_listings(),
             BarAction::ToggleMarketplaceListings => {
                 let window = ui::marketplace_listings::WINDOW;
@@ -17370,17 +17377,17 @@ impl App {
                     self.answer_suitcase(ask, yes);
                 }
                 self.portal_crossing_question(&ctx, &p);
-                if let Some((url, dont_warn, danger)) = self.url_confirm.as_mut()
+                if let Some((url, dont_warn, danger, entry)) = self.url_confirm.as_mut()
                     && let Some(yes) = ui::context::external_link_confirm(&ctx, &p, url, dont_warn, *danger)
                 {
-                    let (url, dont_warn) = (url.clone(), *dont_warn);
+                    let (url, dont_warn, entry) = (url.clone(), *dont_warn, *entry);
                     self.url_confirm = None;
                     if yes {
                         if dont_warn {
                             self.settings.warn_external_links = false;
                             self.settings.save();
                         }
-                        ctx.open_url(egui::OpenUrl::new_tab(url));
+                        self.route_web_link(url, entry);
                     }
                 }
                 ui::media::show(
@@ -17588,7 +17595,7 @@ impl App {
                     }
                     // only web links (llLoadURL / goto URL), opened after the user's click
                     if let Some(u) = url.filter(|u| u.starts_with("https://") || u.starts_with("http://")) {
-                        ctx.open_url(egui::OpenUrl::new_tab(u));
+                        self.open_web_link(u, None);
                     }
                 }
                 self.world.record_notification_history();

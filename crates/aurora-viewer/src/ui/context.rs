@@ -508,6 +508,9 @@ pub enum CtxAction {
     /// Web link clicked in a text: opened at once when trusted, else after
     /// the external link warning.
     OpenUrl(String),
+    /// An "Open in browser" button (LLWeb::loadURLExternal): the system
+    /// browser whatever the browser choice, after the same link checks.
+    OpenUrlExternal(String),
     /// A `secondlife:///app/...` command clicked in a text (`slapp.rs`).
     AppLink(crate::slapp::AppLink),
     TeleportToPlace(String, glam::Vec3),

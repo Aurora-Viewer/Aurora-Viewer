@@ -66,6 +66,16 @@ pub enum ChatThumbnails {
     TopRight,
 }
 
+/// Where web pages open, like `PreferredBrowserBehavior` and
+/// `LLWeb::useExternalBrowser` in the Legacy Viewer.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum BrowserBehavior {
+    SystemForAll,
+    #[default]
+    BuiltInForSecondLife,
+    BuiltInForAll,
+}
+
 /// Where the islands show the favourites (Preferences › Interface,
 /// "Favourites access"): a button of the place island and its menu (the
 /// default), a row of pills under the islands, or a button of the dock and
@@ -463,6 +473,8 @@ pub struct Settings {
     /// The Legacy Viewer's FSBrowserHomePage: the page the built-in web browser (toolbar
     /// button) opens on (Preferences › Network and cache).
     pub browser_home_page: String,
+    /// PreferredBrowserBehavior (Preferences › Network and cache).
+    pub browser_behavior: BrowserBehavior,
     /// Alpha feedback shortcut; Help and login remain available.
     pub show_bug_report: bool,
     /// ShowHUDAttachments, enabled by default in Firestorm.
@@ -1941,6 +1953,7 @@ impl Default for Settings {
             language: "default".into(),
             language_is_public: true,
             browser_home_page: crate::ui::web_browser::DEFAULT_HOME.into(),
+            browser_behavior: BrowserBehavior::default(),
             show_bug_report: true,
             show_huds: true,
             sun_beacon: false,
@@ -3829,6 +3842,35 @@ mod tests {
             assert_eq!(saved.plate_click, original.plate_click);
             assert_eq!(saved.plate_shift_click, original.plate_shift_click);
             assert_eq!(saved.plate_ctrl_click, original.plate_ctrl_click);
+        }
+    }
+
+    #[test]
+    fn browser_behavior_round_trips_and_old_settings_keep_aurora_routing() {
+        let old: Settings = serde_json::from_str(r#"{"browser_home_page":"https://example.net/"}"#).expect("old settings");
+        assert_eq!(old.browser_behavior, BrowserBehavior::BuiltInForSecondLife);
+        // an ordinary link still opens in the system browser, as before the choice existed
+        assert!(crate::link_trust::should_use_system_browser(
+            "https://example.org/chat",
+            old.browser_behavior,
+            crate::link_trust::BrowserEntryPoint::Link
+        ));
+        let old_saved = serde_json::to_string(&old).expect("save old settings");
+        let old_reloaded: Settings = serde_json::from_str(&old_saved).expect("reload old settings");
+        assert_eq!(old_reloaded.browser_behavior, BrowserBehavior::BuiltInForSecondLife);
+
+        for behavior in [
+            BrowserBehavior::SystemForAll,
+            BrowserBehavior::BuiltInForSecondLife,
+            BrowserBehavior::BuiltInForAll,
+        ] {
+            let original = Settings {
+                browser_behavior: behavior,
+                ..Settings::default()
+            };
+            let json = serde_json::to_string(&original).expect("save browser choice");
+            let reloaded: Settings = serde_json::from_str(&json).expect("reload browser choice");
+            assert_eq!(reloaded.browser_behavior, behavior);
         }
     }
 
