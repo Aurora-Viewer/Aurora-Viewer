@@ -1319,6 +1319,11 @@ impl Renderer {
     pub fn set_vr_wrist(&self, wrist: Option<crate::VrPanel>) {
         self.vr.set_wrist(wrist);
     }
+    /// The right-click pie in VR: its part of the interface image, floating
+    /// at the object it is about (None: no menu).
+    pub fn set_vr_menu(&self, menu: Option<crate::VrPanel>) {
+        self.vr.set_menu(menu);
+    }
     /// The VR camera while it is out (None: put away).
     pub fn set_vr_camera(&self, camera: Option<crate::VrCameraView>) {
         self.vr.set_camera(camera);

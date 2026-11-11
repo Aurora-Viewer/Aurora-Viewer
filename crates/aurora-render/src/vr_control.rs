@@ -42,6 +42,8 @@ pub(crate) struct Control {
     wrist: RwLock<Option<crate::VrPanel>>,
     /// The VR camera, while it is out.
     camera: RwLock<Option<crate::VrCameraView>>,
+    /// The right-click pie floating at the object it is about.
+    menu: RwLock<Option<crate::VrPanel>>,
 }
 impl Control {
     pub fn new(available: bool) -> Self {
@@ -60,6 +62,7 @@ impl Control {
             tip: RwLock::new(None),
             wrist: RwLock::new(None),
             camera: RwLock::new(None),
+            menu: RwLock::new(None),
         }
     }
     pub fn set_display(&self, display: crate::VrDisplay) {
@@ -206,6 +209,13 @@ impl Control {
     pub fn camera(&self) -> Option<crate::VrCameraView> {
         *self.camera.read()
     }
+    pub fn set_menu(&self, menu: Option<crate::VrPanel>) {
+        *self.menu.write() = menu.filter(|p| p.center.is_finite() && p.right.is_finite() && p.up.is_finite());
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    pub fn menu(&self) -> Option<crate::VrPanel> {
+        *self.menu.read()
+    }
     pub fn set_wrist(&self, wrist: Option<crate::VrPanel>) {
         *self.wrist.write() = wrist.filter(|p| p.center.is_finite() && p.right.is_finite() && p.up.is_finite());
     }
@@ -231,6 +241,7 @@ impl Control {
         *self.tip.write() = None;
         *self.wrist.write() = None;
         *self.camera.write() = None;
+        *self.menu.write() = None;
         self.state
             .store(if failed { VrState::Failed } else { VrState::Off } as u8, Ordering::Release);
     }

@@ -6154,6 +6154,7 @@ impl Backend {
         let panel = self.vr.panel();
         let tip = self.vr.tip();
         let wrist = self.vr.wrist();
+        let menu = self.vr.menu();
         let mirror_ui = packet.ui.take().map(|mut ui| {
             for (id, deltas) in &ui.textures_delta.set {
                 for delta in deltas.iter() {
@@ -6164,7 +6165,7 @@ impl Backend {
                 self.egui.free_texture(id);
             }
             ui.textures_delta.clear();
-            if panel.is_none() && tip.is_none() && wrist.is_none() {
+            if panel.is_none() && tip.is_none() && wrist.is_none() && menu.is_none() {
                 ui.retain_vr_hint();
             }
             ui.tessellate()
@@ -6334,12 +6335,12 @@ impl Backend {
             .picture
             .apply(&self.device, &self.queue, [&eyes.textures[0], &eyes.textures[1]], self.vr.display());
         let eye_views = [0, 1].map(|i| eyes.cameras[i].projection * eyes.cameras[i].view);
-        if (panel.is_some() || tip.is_some() || wrist.is_some())
+        if (panel.is_some() || tip.is_some() || wrist.is_some() || menu.is_some())
             && let Some(ui) = &mirror_ui
         {
             let huds = world.backends[0].xr_hud_image();
             world.panel.paint(&self.device, &self.queue, &mut self.egui, ui, mirror_size, huds);
-            for shown in [panel, tip, wrist].into_iter().flatten() {
+            for shown in [panel, tip, wrist, menu].into_iter().flatten() {
                 world.panel.draw(
                     &self.device,
                     &self.queue,

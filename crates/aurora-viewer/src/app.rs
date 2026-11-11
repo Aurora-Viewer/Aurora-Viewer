@@ -446,6 +446,10 @@ pub struct App {
     vr_trigger_down: bool,
     /// The pointing hand's grip held (sit on what the beam is on, or stand up).
     vr_grip_down: bool,
+    /// The right-click pie open in VR, floating at this point of the world,
+    /// and its panel this frame (for the beam).
+    vr_pie: Option<Vec3>,
+    vr_menu_panel: Option<aurora_render::VrPanel>,
     /// The VR view behind the avatar (third person) instead of at its eyes,
     /// switched on the VR toolbar.
     vr_third_person: bool,
@@ -1654,6 +1658,8 @@ impl App {
             vr_avatar_position: None,
             vr_trigger_down: false,
             vr_grip_down: false,
+            vr_pie: None,
+            vr_menu_panel: None,
             vr_third_person: false,
             vr_dialog_seen: 0,
             vr_photo_camera: None,
@@ -8656,16 +8662,15 @@ impl App {
         // the right thumbstick tapped: the right-click menu (the pie) of the
         // object or the ground the beam is on, on the interface panel,
         // opened for it when closed
-        if menu_tap && let Some(point) = point {
+        // (tapped again with the pie open: it closes)
+        if menu_tap && self.vr_pie.take().is_some() {
+            self.context_menu = None;
+        } else if menu_tap && let Some(point) = point {
             let picked = self.scene.left_interaction_at_ray(&self.world, point, ray, true);
             self.object_menu_pick(picked, Some(ray), Vec::new(), false);
             let screen = self.egui_ctx.content_rect();
             self.open_menu_for(picked, point, screen.center());
-            if self.vr_panel.is_none() {
-                let aspect = screen.height() / screen.width().max(1.0);
-                self.vr_panel = Some(vr_ui::place_panel(input.head_position, input.head_forward, aspect));
-                renderer.set_vr_panel(self.vr_panel);
-            }
+            self.vr_pie = Some(point);
             if settings.haptics {
                 renderer.vr_haptic(side, 0.35, 0.04);
             }
@@ -8734,7 +8739,11 @@ impl App {
         self.vr_hover = hover;
         // with the build tools open, the trigger takes an object we may
         // edit and carries it with the hand (turning with it) until let go
-        if self.vr_grab.is_some() {
+        if pressed && self.vr_pie.is_some() {
+            // the trigger off the pie closes it, and clicks nothing
+            self.vr_pie = None;
+            self.context_menu = None;
+        } else if self.vr_grab.is_some() {
             self.vr_grab_carry(&controller, !down);
         } else if pressed
             && self.build.open
@@ -16150,7 +16159,7 @@ impl App {
             .interface
             // (the VR interface panel shows the whole interface, though VR is
             // mouselook underneath)
-            .follow_mouselook(&ctx, mouselook, self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some())
+            .follow_mouselook(&ctx, mouselook, self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some() || self.vr_pie.is_some())
             .is_some()
         {
             self.chat_ui.let_keyboard_go();
@@ -16675,7 +16684,7 @@ impl App {
                 let chrome = self.interface.bars(&ui::interface::Frame {
                     classic: classic_bars,
                     mouselook: self.camera.mouselook(),
-                    show_in_mouselook: self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some(),
+                    show_in_mouselook: self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some() || self.vr_pie.is_some(),
                     chat_active: self.chat_ui.in_use(),
                     // AURORA_DEMO_BARS=peek: the pointer at the top edge
                     pointer: if demo_hidden == Some(true) {
@@ -16890,7 +16899,7 @@ impl App {
                     &ui::interface::Frame {
                         classic: classic_bars,
                         mouselook: self.camera.mouselook(),
-                        show_in_mouselook: self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some(),
+                        show_in_mouselook: self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some() || self.vr_pie.is_some(),
                         chat_active: false,
                         // AURORA_DEMO_BARS=peekleft: the pointer at the left edge
                         pointer: if self.demo && ui::bars::demo::get().peek_left {
@@ -17919,6 +17928,8 @@ impl App {
                 } else {
                     self.settings.use_pie_menu
                 };
+                // in VR the menu of the right thumbstick is always the pie
+                let use_pie = use_pie || self.vr_pie.is_some();
                 if ui::context::show(
                     &ctx,
                     &p,

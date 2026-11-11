@@ -26,6 +26,11 @@ const WRIST_ABOVE: f32 = 0.08;
 /// The panel glides back in front once the head is this far from it
 /// (cosine: 60 degrees), this much of the way each frame.
 const PANEL_AWAY: f32 = 0.5;
+/// The pie's radius in the interface (points, as `ui::context::pie`), with
+/// room for its labels, and its size in the world per metre away.
+const PIE_RADIUS: f32 = 180.0;
+const PIE_MARGIN: f32 = 24.0;
+const PIE_METRES_PER_POINT: f32 = 0.0009;
 const PANEL_GLIDE: f32 = 0.12;
 
 const ROWS: [&str; 4] = ["1234567890", "qwertyuiop", "asdfghjkl'", "zxcvbnm,.?"];
@@ -108,8 +113,36 @@ impl App {
             self.vr_dialog_seen = self.world.notifications.last_id();
             renderer.set_vr_panel(None);
             renderer.set_vr_wrist(None);
+            renderer.set_vr_menu(None);
+            self.vr_pie = None;
+            self.vr_menu_panel = None;
             return;
         }
+        // the right-click pie, floating at its object while it is open
+        if self.context_menu.is_none() {
+            self.vr_pie = None;
+        }
+        self.vr_menu_panel = self.vr_pie.and_then(|point| {
+            let screen = self.egui_ctx.content_rect();
+            let radius = PIE_RADIUS.min((screen.width().min(screen.height()) * 0.5 - 8.0).max(0.0)) + PIE_MARGIN;
+            let part = egui::Rect::from_center_size(screen.center(), egui::vec2(radius * 2.0, radius * 2.0)).intersect(screen);
+            if part.width() < 1.0 {
+                return None;
+            }
+            let to_head = input.head_position - point;
+            let distance = to_head.length().clamp(0.6, 12.0);
+            let forward = (-to_head).with_z(0.0).normalize_or(Vec3::X);
+            let half = egui::vec2(part.width(), part.height()) * 0.5 * PIE_METRES_PER_POINT * distance;
+            // in front of the object, towards the head
+            let toward = to_head.normalize_or_zero() * (0.2 * distance).min(0.8);
+            Some(aurora_render::VrPanel {
+                center: point + toward,
+                right: forward.cross(Vec3::Z).normalize_or(Vec3::Y) * half.x,
+                up: Vec3::Z * half.y,
+                uv: image_part(part, screen),
+            })
+        });
+        renderer.set_vr_menu(self.vr_menu_panel);
         // a script's menu or text box just came: the panel opens on it
         let seen = self.vr_dialog_seen;
         if self.world.notifications.list.iter().any(|n| {
@@ -202,7 +235,7 @@ impl App {
     /// it is on (0..1).
     pub(super) fn vr_ui_hit(&self, ray: (Vec3, Vec3)) -> Option<(f32, f32, f32)> {
         let mut nearest: Option<(f32, f32, f32)> = None;
-        for panel in [self.vr_panel, self.vr_wrist_panel].into_iter().flatten() {
+        for panel in [self.vr_menu_panel, self.vr_panel, self.vr_wrist_panel].into_iter().flatten() {
             if let Some((t, u, v)) = panel.hit(ray.0, ray.1)
                 && nearest.is_none_or(|(near, _, _)| t < near)
             {
