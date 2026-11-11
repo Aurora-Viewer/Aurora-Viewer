@@ -711,7 +711,14 @@ fn ownership_permissions(
         ui.add_space(12.0);
         let next_ok = can_sell && owner.0 & perm::TRANSFER != 0;
         let (v, t) = bit(next, perm::MODIFY);
-        if let Some(n) = check(ui, p, v, t, aurora_i18n::tr!("common-edit"), next_ok && base.0 & perm::MODIFY != 0) {
+        if let Some(n) = check(
+            ui,
+            p,
+            v,
+            t,
+            aurora_i18n::tr!("common-modify"),
+            next_ok && base.0 & perm::MODIFY != 0,
+        ) {
             tool.set_perm(world, perm_field::NEXT_OWNER, n, perm::MODIFY);
         }
         let (v, t) = bit(next, perm::COPY);
