@@ -41,6 +41,7 @@ pub(crate) mod scroll_offset;
 #[cfg(test)]
 pub(crate) mod steady_tests;
 mod text_field;
+mod tracks;
 mod unread;
 mod volume;
 mod workspace;
@@ -53,6 +54,10 @@ pub use pills::{
     search_text_edit_with_margin,
 };
 pub use text_field::text_field;
+pub use tracks::{
+    TRACK_INSET, TrackFace, TrackLit, button_track, help_tag, icon_track, labelled_choice, paint_tile_button, track_button,
+    wide_button_track,
+};
 pub use unread::{CountSize, UnreadCount, unread_count};
 pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
 pub use workspace::{
@@ -1798,6 +1803,25 @@ pub fn switch_labeled(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: impl
     ui.horizontal(|ui| {
         let mut resp = switch(ui, p, on);
         let text = ui.add(egui::Label::new(label).sense(Sense::click()));
+        if text.clicked() {
+            *on = !*on;
+            resp.mark_changed();
+        }
+        resp.union(text)
+    })
+    .inner
+}
+
+/// [`switch_labeled`] in a narrow column: the label wraps onto more lines
+/// instead of running past the column's edge (a long translation, a larger
+/// font), the switch beside its first line. It wraps within what is shown:
+/// a wider row above can stretch the column past its clip.
+pub fn switch_labeled_wrapped(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: impl Into<egui::WidgetText>) -> egui::Response {
+    let room = ui.available_width().min(ui.clip_rect().right() - ui.cursor().left()).max(0.0);
+    ui.horizontal_top(|ui| {
+        ui.set_max_width(room);
+        let mut resp = switch(ui, p, on);
+        let text = ui.add(egui::Label::new(label).wrap().sense(Sense::click()));
         if text.clicked() {
             *on = !*on;
             resp.mark_changed();

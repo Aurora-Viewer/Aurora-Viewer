@@ -786,6 +786,32 @@ pub fn sends_local_line(channel: i32, message: &str) -> bool {
     channel != 0 || !message.is_empty()
 }
 
+/// ANIM_AGENT_TALK, ANIM_AGENT_SHOUT and ANIM_AGENT_WHISPER
+/// (indra/llcharacter/llanimationstates.cpp).
+pub const ANIM_AGENT_TALK: uuid::Uuid = uuid::Uuid::from_u128(0x5c682a95_6da4_a463_0bf6_0f5b7be129d1);
+pub const ANIM_AGENT_SHOUT: uuid::Uuid = uuid::Uuid::from_u128(0x6bd01860_4ebd_127a_bb3d_d1427e8e0c42);
+pub const ANIM_AGENT_WHISPER: uuid::Uuid = uuid::Uuid::from_u128(0x7693f268_06c7_ea71_fa21_2b30d6533f8f);
+
+/// The animation our avatar plays as it says a local line (PlayChatAnim),
+/// as FSNearbyChat::sendChatFromViewer (indra/newview/fsnearbychathub.cpp)
+/// picks it: talk, shout or whisper by the line's volume, after RLVa's
+/// (`Rlva::chat_animation_volume`); nothing on another channel ("Don't
+/// animate for chats people can't hear"). Emotes and OOC lines animate as
+/// any other line; a chat bar command, a gesture's own chat step and a
+/// line a gesture trigger emptied never come this far. Only a start is
+/// sent: the animations do not loop and end by themselves.
+pub fn chat_animation(channel: i32, chat_type: ChatType) -> Option<uuid::Uuid> {
+    if channel != 0 {
+        return None;
+    }
+    match chat_type {
+        ChatType::Whisper => Some(ANIM_AGENT_WHISPER),
+        ChatType::Normal => Some(ANIM_AGENT_TALK),
+        ChatType::Shout => Some(ANIM_AGENT_SHOUT),
+        _ => None,
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SendKey {
     Normal,
@@ -5621,6 +5647,28 @@ mod tests {
         let (channel, message, gesture) = prepare_local_line(&mut manager, "/wave", false);
         assert_eq!((channel, message.as_str(), gesture), (0, "", Some(id)));
         assert!(!sends_local_line(channel, &message));
+    }
+
+    /// FSNearbyChat::sendChatFromViewer: talk, shout or whisper by the
+    /// volume, on channel 0 only; the typing notices never animate.
+    #[test]
+    fn a_local_line_plays_the_animation_of_its_volume_on_channel_zero_only() {
+        assert_eq!(chat_animation(0, ChatType::Normal), Some(ANIM_AGENT_TALK));
+        assert_eq!(chat_animation(0, ChatType::Shout), Some(ANIM_AGENT_SHOUT));
+        assert_eq!(chat_animation(0, ChatType::Whisper), Some(ANIM_AGENT_WHISPER));
+        for channel in [5, -1, i32::MAX] {
+            for kind in [ChatType::Normal, ChatType::Shout, ChatType::Whisper] {
+                assert_eq!(chat_animation(channel, kind), None, "{channel} {kind:?}");
+            }
+        }
+        for kind in [ChatType::StartTyping, ChatType::StopTyping, ChatType::OwnerSay] {
+            assert_eq!(chat_animation(0, kind), None, "{kind:?}");
+        }
+        // the ids of llanimationstates.cpp, as the built-in gestures name them
+        assert_eq!(ANIM_AGENT_TALK.to_string(), "5c682a95-6da4-a463-0bf6-0f5b7be129d1");
+        assert_eq!(ANIM_AGENT_SHOUT.to_string(), "6bd01860-4ebd-127a-bb3d-d1427e8e0c42");
+        assert_eq!(ANIM_AGENT_WHISPER.to_string(), "7693f268-06c7-ea71-fa21-2b30d6533f8f");
+        assert!(crate::settings::Settings::default().play_chat_anim, "PlayChatAnim is on by default");
     }
 
     /// A gesture's replacement may itself open with a channel: the Legacy

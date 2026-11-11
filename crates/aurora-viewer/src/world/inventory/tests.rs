@@ -813,6 +813,30 @@ fn the_agent_holds_the_owner_mask_of_its_items_and_the_everyone_mask_of_others()
 }
 
 #[test]
+fn an_appearance_xml_export_needs_modify_rights_on_the_wearable() {
+    let (agent, other, library) = (id(9911), id(9912), id(9913));
+    let item = |owner, group_owned, owner_mask, everyone_mask| InvItem {
+        owner,
+        group_owned,
+        owner_mask,
+        everyone_mask,
+        ..Default::default()
+    };
+    let cases = [
+        ("its own item, full permissions", item(agent, false, FULL, 0), true),
+        ("no copy", item(agent, false, MODIFY | TRANSFER, 0), true),
+        ("no transfer", item(agent, false, COPY | MODIFY, 0), true),
+        ("no modify", item(agent, false, COPY | TRANSFER, 0), false),
+        ("group owned", item(agent, true, FULL, COPY), false),
+        ("someone else's", item(other, false, FULL, COPY), false),
+        ("a Library item", item(library, false, FULL, COPY | TRANSFER), false),
+    ];
+    for (what, item, allowed) in cases {
+        assert_eq!(appearance_xml_export_allowed(&item, agent), allowed, "{what}");
+    }
+}
+
+#[test]
 fn the_agent_holds_the_everyone_mask_of_contents_in_someone_elses_object() {
     let (agent, friend) = (id(9921), id(9922));
     let item = |owner_id, group_owned| aurora_net::build::TaskItem {
