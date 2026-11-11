@@ -133,6 +133,16 @@ fn far_first_key(distance_sq: f32, index: usize) -> u64 {
     ((!d.to_bits() as u64) << 32) | index as u64
 }
 
+/// The key of the particle at `pos`, the `index`th of the frame, by what
+/// `sort` measures: its signed view depth (the blended faces' space), or the
+/// radial distance of the order before the interleave.
+fn sort_key(sort: &SortBasis, pos: Vec3, index: usize) -> u64 {
+    match sort.forward {
+        Some(_) => far_first_signed(sort.depth(pos), index),
+        None => far_first_key(pos.distance_squared(sort.eye), index),
+    }
+}
+
 impl ParticleManager {
     pub fn on_properties(&mut self, props: &[aurora_net::build::ObjectProps]) {
         for props in props {
@@ -311,8 +321,9 @@ impl ParticleManager {
     }
 
     /// Apply object updates, simulate and build the sorted instance list.
-    /// `eye` is the camera (the draw distance); `sort` what the back to front
+    /// `eye` is the camera (the draw distance), `sort` what the back to front
     /// order measures (`particle_order`).
+    ///
     /// `frozen`: the photo mode holds the world still (issue #1154). The
     /// objects' particles get no time and no source emits, a script's new
     /// system included (LLFloater360Capture::freezeWorld calls
@@ -521,11 +532,7 @@ impl ParticleManager {
                     axis: axis.to_array(),
                     glow: p.glow,
                 };
-                let index = self.inst_tmp.len();
-                self.order_tmp.push(match sort.forward {
-                    Some(_) => far_first_signed(sort.depth(pos), index),
-                    None => far_first_key(pos.distance_squared(sort.eye), index),
-                });
+                self.order_tmp.push(sort_key(&sort, pos, self.inst_tmp.len()));
                 self.inst_tmp.push(inst);
             }
         }
@@ -990,5 +997,32 @@ mod tests {
         // equal distances keep the order they were built in; a distance that
         // is not a number counts as none
         assert_eq!(order, [5, 1, 0, 3, 6, 2, 4]);
+    }
+
+    #[test]
+    fn view_depth_orders_by_signed_depth_and_radial_by_distance() {
+        let at = [
+            Vec3::new(5.0, 0.0, 0.0),
+            Vec3::new(-3.0, 100.0, 0.0),
+            Vec3::new(10.0, 0.0, 0.0),
+            Vec3::new(-8.0, 0.0, 0.0),
+        ];
+        let order = |sort: SortBasis| {
+            let mut keys: Vec<u64> = at.iter().enumerate().map(|(i, p)| sort_key(&sort, *p, i)).collect();
+            keys.sort_unstable();
+            keys.iter().map(|k| (k & 0xFFFF_FFFF) as usize).collect::<Vec<_>>()
+        };
+        // along +X from the origin: 10, 5, then behind the eye (-3, -8)
+        let view = SortBasis {
+            eye: Vec3::ZERO,
+            forward: Some(Vec3::X),
+        };
+        assert_eq!(order(view), [2, 0, 1, 3]);
+        // radially: the one 100 m to the side is the farthest
+        let radial = SortBasis {
+            eye: Vec3::ZERO,
+            forward: None,
+        };
+        assert_eq!(order(radial), [1, 2, 3, 0]);
     }
 }

@@ -632,6 +632,9 @@ pub struct DrawLists {
     pub particles_under: Vec<ParticleInstance>,
     /// `particle_runs` of `particles_under` against `blend_under_water`.
     pub particle_under_runs: Vec<ParticleRun>,
+    /// How many particles are in both `particles` and `particles_under`
+    /// (crossing the water surface): counted once in the statistics.
+    pub particle_crossing: u32,
     /// Non-blended faces with glow (LL PASS_GLOW): drawn again to
     /// accumulate the glow amount in the scene alpha, before the blended
     /// faces (which dim the glow behind them).
@@ -772,6 +775,7 @@ impl DrawLists {
         self.particle_runs.clone_from(&src.particle_runs);
         self.particles_under.clone_from(&src.particles_under);
         self.particle_under_runs.clone_from(&src.particle_under_runs);
+        self.particle_crossing = src.particle_crossing;
         self.water_events.clone_from(&src.water_events);
         self.water_contacts.clone_from(&src.water_contacts);
         self.water_ground.clone_from(&src.water_ground);
@@ -824,6 +828,7 @@ impl DrawLists {
         self.particle_runs.clear();
         self.particles_under.clear();
         self.particle_under_runs.clear();
+        self.particle_crossing = 0;
         self.water_events.clear();
         self.water_contacts.clear();
         self.water_ground = Default::default();
@@ -894,6 +899,64 @@ pub struct ParticleInstance {
 pub struct ParticleRun {
     pub before: u32,
     pub end: u32,
+}
+
+/// One step of drawing the blended faces with the particles between them
+/// (`walk_runs`): the faces `from..to` of the list, or the particles
+/// `from..to` of the list the runs belong to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunStep {
+    Faces { from: u32, to: u32 },
+    Particles { from: u32, to: u32 },
+}
+
+/// The steps that draw the faces `first_face..end_face` and the particles
+/// `0..n_particles` in the order of `runs`: every index is clamped to what
+/// is really there (faces uploaded, particles uploaded), a run before the
+/// first face or past the last one is moved onto it, and what the runs leave
+/// out comes last (the faces, then the particles). Empty steps are not
+/// produced. A run whose particles were all drawn already makes none.
+pub fn walk_runs(runs: &[ParticleRun], first_face: u32, end_face: u32, n_particles: u32, mut step: impl FnMut(RunStep)) {
+    let mut face_from = first_face.min(end_face);
+    let mut part_from = 0u32;
+    for run in runs {
+        let before = run.before.clamp(face_from, end_face);
+        let end = run.end.min(n_particles).max(part_from);
+        if before > face_from {
+            step(RunStep::Faces {
+                from: face_from,
+                to: before,
+            });
+            face_from = before;
+        }
+        if end > part_from {
+            step(RunStep::Particles { from: part_from, to: end });
+            part_from = end;
+        }
+    }
+    if end_face > face_from {
+        step(RunStep::Faces {
+            from: face_from,
+            to: end_face,
+        });
+    }
+    if n_particles > part_from {
+        step(RunStep::Particles {
+            from: part_from,
+            to: n_particles,
+        });
+    }
+}
+
+/// How many particle draws `walk_runs` makes.
+pub fn drawn_runs(runs: &[ParticleRun], first_face: u32, end_face: u32, n_particles: u32) -> u32 {
+    let mut n = 0;
+    walk_runs(runs, first_face, end_face, n_particles, |step| {
+        if matches!(step, RunStep::Particles { .. }) {
+            n += 1;
+        }
+    });
+    n
 }
 
 /// `AURORA_PARTICLE_INTERLEAVE=0` draws the particles as before this
@@ -2268,5 +2331,55 @@ mod tests {
         for src in [object, include_str!("shaders/env.wgsl")] {
             assert!(!src.contains("out.clip = frame.eye_view_proj * ep;"));
         }
+    }
+
+    fn steps(runs: &[ParticleRun], first: u32, end: u32, n: u32) -> Vec<RunStep> {
+        let mut v = Vec::new();
+        walk_runs(runs, first, end, n, |s| v.push(s));
+        v
+    }
+
+    #[test]
+    fn walk_runs_alternates_faces_and_particles_in_order() {
+        use RunStep::*;
+        let runs = [ParticleRun { before: 3, end: 2 }, ParticleRun { before: 5, end: 4 }];
+        assert_eq!(
+            steps(&runs, 2, 8, 6),
+            [
+                Faces { from: 2, to: 3 },
+                Particles { from: 0, to: 2 },
+                Faces { from: 3, to: 5 },
+                Particles { from: 2, to: 4 },
+                Faces { from: 5, to: 8 },
+                Particles { from: 4, to: 6 },
+            ]
+        );
+        assert_eq!(drawn_runs(&runs, 2, 8, 6), 3);
+    }
+
+    #[test]
+    fn walk_runs_without_runs_draws_the_faces_then_all_the_particles() {
+        use RunStep::*;
+        assert_eq!(steps(&[], 0, 4, 3), [Faces { from: 0, to: 4 }, Particles { from: 0, to: 3 }]);
+        assert!(steps(&[], 0, 0, 0).is_empty());
+    }
+
+    #[test]
+    fn walk_runs_clamps_to_what_was_uploaded() {
+        use RunStep::*;
+        // a run before the first face, one past the last, and ends beyond
+        // the uploaded particles or going back
+        let runs = [
+            ParticleRun { before: 0, end: 2 },
+            ParticleRun { before: 99, end: 50 },
+            ParticleRun { before: 100, end: 1 },
+        ];
+        assert_eq!(
+            steps(&runs, 3, 6, 4),
+            [Particles { from: 0, to: 2 }, Faces { from: 3, to: 6 }, Particles { from: 2, to: 4 },]
+        );
+        // fewer faces drawn than the run's `before` expects: nothing out of range
+        assert_eq!(steps(&runs, 3, 3, 4), [Particles { from: 0, to: 2 }, Particles { from: 2, to: 4 }]);
+        assert_eq!(drawn_runs(&runs, 3, 6, 0), 0);
     }
 }

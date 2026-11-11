@@ -828,8 +828,9 @@ struct Targets {
     blend_layers: Option<(wgpu::Texture, wgpu::TextureView)>,
     /// Without MSAA, where the scene depth is the attachment the particles
     /// under the water write: its copy, made before that pass, for their
-    /// soft fade (`FrameGroups::under`). With MSAA `depth_ss` is not
-    /// attached there and serves.
+    /// soft fade (`FrameGroups::under`). Made on first use, when such
+    /// particles are drawn; with MSAA `depth_ss` is not attached there and
+    /// serves.
     depth_copy: Option<(wgpu::Texture, wgpu::TextureView)>,
     /// Single-sample depth from the prepass.
     depth_ss_tex: wgpu::Texture,
@@ -936,9 +937,9 @@ struct Pipelines {
     /// The particles on the far side of the water surface, drawn before the
     /// water with the blended faces under it, writing depth
     /// (`DrawLists::particles_under`).
-    particles_under: wgpu::RenderPipeline,
+    particles_under: Option<wgpu::RenderPipeline>,
     /// Their depth alone, into the single-sampled scene depth (MSAA).
-    particles_under_depth_ss: wgpu::RenderPipeline,
+    particles_under_depth_ss: Option<wgpu::RenderPipeline>,
     water_particles: wgpu::RenderPipeline,
     water_particles_under: wgpu::RenderPipeline,
     glow: wgpu::RenderPipeline,
@@ -1562,7 +1563,7 @@ struct FrameGroups {
     /// The particles under the water, drawn writing the scene depth: pass A
     /// with a readable depth, for their soft fade (a copy, or the
     /// single-sampled one under MSAA).
-    under: wgpu::BindGroup,
+    under: Option<wgpu::BindGroup>,
     /// Own uniforms: [0] water reflection, [1] mirror, [2] probe,
     /// [3]/[4] impostor pictures, [5] HUD, [6] drawn pick, [7] water exterior,
     /// [8] probe irradiance capture.
@@ -2125,9 +2126,14 @@ fn begin_scene_b_on<'a>(
     })
 }
 
+/// The vertex buffer slot of the particles (after the meshes' two).
+const PARTICLE_SLOT: u32 = 2;
+
 fn make_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wgpu::PipelineLayout, d: PipeDesc) -> wgpu::RenderPipeline {
     let mesh_bufs = [Some(vertex_layout()), Some(skin_layout())];
-    let part_bufs = [Some(particle_layout())];
+    // (slot 2: the particle buffer is bound once for the whole pass, the
+    // meshes keep slots 0 and 1 where they are)
+    let part_bufs = [None, None, Some(particle_layout())];
     let sprite_bufs = [Some(sprite_layout())];
     let mut targets = Vec::new();
     if let Some(f) = d.format {
@@ -3946,27 +3952,32 @@ impl Backend {
         // POOL_ALPHA_PRE_WATER for the particles: the far side of the
         // surface, writing depth from 1/255 of alpha (as `blend_under`), the
         // soft fade kept on a copy of the scene depth (frame group `under`)
-        let particles_under = pipe(PipeDesc {
-            vb: Vb::Particle,
-            cull: None,
-            blend: Some(suppress),
-            write_mask: wgpu::ColorWrites::ALL,
-            depth_write: true,
-            depth_compare: wgpu::CompareFunction::Greater,
-            constants: &[("WATER_CLIP", 2.0), ("PART_MIN_ALPHA", 0.004)],
-            ..base("particles under water", "vs_particle", "fs_particle")
+        // (not made without the interleave, and the depth one only with MSAA)
+        let particles_under = crate::particle_interleave().then(|| {
+            pipe(PipeDesc {
+                vb: Vb::Particle,
+                cull: None,
+                blend: Some(suppress),
+                write_mask: wgpu::ColorWrites::ALL,
+                depth_write: true,
+                depth_compare: wgpu::CompareFunction::Greater,
+                constants: &[("WATER_CLIP", 2.0), ("PART_MIN_ALPHA", 0.004)],
+                ..base("particles under water", "vs_particle", "fs_particle")
+            })
         });
-        let particles_under_depth_ss = pipe(PipeDesc {
-            vb: Vb::Particle,
-            cull: None,
-            fs: Some("fs_particle_depth"),
-            blend: None,
-            samples: 1,
-            format: None,
-            depth_write: true,
-            depth_compare: wgpu::CompareFunction::Greater,
-            constants: &[("WATER_CLIP", 2.0), ("PART_MIN_ALPHA", 0.004)],
-            ..base("particles under water depth", "vs_particle", "fs_particle_depth")
+        let particles_under_depth_ss = (crate::particle_interleave() && samples > 1).then(|| {
+            pipe(PipeDesc {
+                vb: Vb::Particle,
+                cull: None,
+                fs: Some("fs_particle_depth"),
+                blend: None,
+                samples: 1,
+                format: None,
+                depth_write: true,
+                depth_compare: wgpu::CompareFunction::Greater,
+                constants: &[("WATER_CLIP", 2.0), ("PART_MIN_ALPHA", 0.004)],
+                ..base("particles under water depth", "vs_particle", "fs_particle_depth")
+            })
         });
         let water_particles = pipe(PipeDesc {
             vb: Vb::None,
@@ -4651,17 +4662,6 @@ impl Backend {
             1,
             sampled | wgpu::TextureUsages::COPY_SRC,
         );
-        let depth_copy = depth_msaa.is_none().then(|| {
-            make_view(
-                device,
-                "particle depth copy",
-                w,
-                h,
-                DEPTH_FORMAT,
-                1,
-                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            )
-        });
         let (scene_copy_tex, scene_copy) = make_view(
             device,
             "scene copy",
@@ -4757,7 +4757,7 @@ impl Backend {
             depth_msaa,
             depth_msaa_tex,
             blend_layers: None,
-            depth_copy,
+            depth_copy: None,
             depth_ss,
             water_interface,
             water_mask,
@@ -4974,19 +4974,23 @@ impl Backend {
                 false,
                 true,
             ),
-            under: mk(
-                "frame under water",
-                frame_buffer,
-                ao,
-                water,
-                mirror,
-                &dummies.black,
-                t.depth_copy.as_ref().map_or(&t.depth_ss, |(_, view)| view),
-                contact,
-                il,
-                false,
-                true,
-            ),
+            // (only with the interleave, and once there is a depth to read:
+            // with MSAA `depth_ss`, without it its copy, made on first use)
+            under: (crate::particle_interleave() && (t.depth_msaa.is_some() || t.depth_copy.is_some())).then(|| {
+                mk(
+                    "frame under water",
+                    frame_buffer,
+                    ao,
+                    water,
+                    mirror,
+                    &dummies.black,
+                    t.depth_copy.as_ref().map_or(&t.depth_ss, |(_, view)| view),
+                    contact,
+                    il,
+                    false,
+                    true,
+                )
+            }),
             b: mk(
                 "frame b",
                 frame_buffer,
@@ -5295,6 +5299,7 @@ impl Backend {
     /// when next needed.
     fn drop_first_use_targets(&mut self) {
         self.targets.blend_layers = None;
+        self.targets.depth_copy = None;
         self.rlva_spheres = None;
         self.rlva_scaled = None;
         self.selection = None;
@@ -7266,6 +7271,28 @@ impl Backend {
         } else {
             (0, 0)
         };
+        // The copy of the scene depth that the particles under the water
+        // read for their soft fade, where the pass writes the depth itself
+        // (without MSAA): made when first needed, as `blend_layers`.
+        if n_part_under > 0 && self.targets.depth_msaa.is_none() && self.targets.depth_copy.is_none() {
+            let size = self.targets.depth_ss_tex.size();
+            let (copy, refused) = crate::gpu_alloc::scoped(&self.device, || {
+                make_view(
+                    &self.device,
+                    "particle depth copy",
+                    size.width,
+                    size.height,
+                    DEPTH_FORMAT,
+                    1,
+                    wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                )
+            });
+            // refused: drawn without the soft fade for now
+            if !first_use(&mut self.oom, "particle depth copy", false, refused && !self.lost.get()) {
+                self.targets.depth_copy = Some(copy);
+                self.rebuild_bind_groups_checked("frame groups with the particle depth copy");
+            }
+        }
 
         // ---- shadow caster culling per cascade (CPU lists: the terrain,
         // and every caster without the GPU lists). Each cascade keeps the
@@ -7577,9 +7604,19 @@ impl Backend {
             BlendDiscard::Late => false,
             BlendDiscard::Alternate => !f.blend_late_discard,
         };
-        stats.particles = n_particles + n_part_under;
+        // (a particle crossing the water is in both lists: counted once)
+        let part_distinct = (n_particles + n_part_under).saturating_sub(lists.particle_crossing.min(n_part_under));
+        stats.particles = part_distinct;
         stats.particle_runs = if crate::particle_interleave() {
-            (lists.particle_runs.len() + lists.particle_under_runs.len()) as u32
+            // what is drawn after the clamps: the runs of the main pass
+            // (the last faces uploaded), and those of the pass under the water
+            let (_, n_blend) = rg.blend;
+            let under = if self.pipelines.particles_under.is_some() {
+                drawn_runs(&lists.particle_under_runs, 0, rg.blend_under.1, n_part_under)
+            } else {
+                0
+            };
+            drawn_runs(&lists.particle_runs, (lists.blend_depth as u32).min(n_blend), n_blend, n_particles) + under
         } else {
             0
         };
@@ -7602,7 +7639,7 @@ impl Backend {
         }
 
         let mut water_settings = self.settings.water_effects;
-        water_settings.particle_budget = water_settings.particle_budget.saturating_sub(n_particles + n_part_under);
+        water_settings.particle_budget = water_settings.particle_budget.saturating_sub(part_distinct);
         if self.water_effects.prepare(
             &self.device,
             &self.queue,
@@ -7711,14 +7748,13 @@ impl Backend {
         let draw_under = |pass: &mut wgpu::RenderPass, pipes: &SidedPipelines, r| {
             draw_sided_list(pass, pipes, r, 0, &lists.blend_under_double_sided);
         };
-        // particles `range` of the buffer (instances, vertex buffer 0), with
-        // `frame_bg`, then the pass's frame group back (the meshes follow)
+        // particles `range` of the buffer (their slot is bound for the pass),
+        // with `frame_bg`, then the pass's frame group back (meshes follow)
         let draw_particles_under =
             |pass: &mut wgpu::RenderPass, pipe: &wgpu::RenderPipeline, range: std::ops::Range<u32>, frame_bg: &wgpu::BindGroup| {
                 calls.set(calls.get() + 1);
                 pass.set_bind_group(0, frame_bg, &[]);
                 pass.set_pipeline(pipe);
-                pass.set_vertex_buffer(0, self.particle_buffer.slice(..));
                 pass.draw(0..6, range);
                 pass.set_bind_group(0, &self.groups.a, &[]);
             };
@@ -8679,46 +8715,28 @@ impl Backend {
                 let mut pass = begin_scene_b(&mut encoder, &self.targets, "blend under water", false, true);
                 bind_mesh(&mut pass, &self.groups.a);
                 let sided = |pass: &mut wgpu::RenderPass, from: u32, to: u32| {
-                    if to > from {
-                        draw_sided_list(
-                            pass,
-                            &self.pipelines.blend_under,
-                            (under0 + u64::from(from) * under_stride, to - from),
-                            from,
-                            &lists.blend_under_double_sided,
-                        );
-                    }
+                    draw_sided_list(
+                        pass,
+                        &self.pipelines.blend_under,
+                        (under0 + u64::from(from) * under_stride, to - from),
+                        from,
+                        &lists.blend_under_double_sided,
+                    );
                 };
-                // runs of particles `from..` before faces
-                let mut face_from = 0u32;
-                let mut part_from = n_particles;
-                let part_end = n_particles + n_part_under;
-                let mut dirty = false;
-                for run in &lists.particle_under_runs {
-                    let before = run.before.clamp(face_from, n_under);
-                    let end = (n_particles + run.end).min(part_end).max(part_from);
-                    if before > face_from {
-                        if dirty {
-                            pass.set_vertex_buffer(0, scene.vertices.slice(..));
-                            dirty = false;
+                // the particles are in one buffer: their slot is bound once
+                // (the colour pipeline is made with the interleave: no
+                // particles under the water without it)
+                if let Some(pipe) = self.pipelines.particles_under.as_ref().filter(|_| n_part_under > 0) {
+                    pass.set_vertex_buffer(PARTICLE_SLOT, self.particle_buffer.slice(..));
+                    let group = self.groups.under.as_ref().unwrap_or(&self.groups.a);
+                    walk_runs(&lists.particle_under_runs, 0, n_under, n_part_under, |step| match step {
+                        RunStep::Faces { from, to } => sided(&mut pass, from, to),
+                        RunStep::Particles { from, to } => {
+                            draw_particles_under(&mut pass, pipe, n_particles + from..n_particles + to, group)
                         }
-                        sided(&mut pass, face_from, before);
-                        face_from = before;
-                    }
-                    if end > part_from {
-                        draw_particles_under(&mut pass, &self.pipelines.particles_under, part_from..end, &self.groups.under);
-                        part_from = end;
-                        dirty = true;
-                    }
-                }
-                if n_under > face_from {
-                    if dirty {
-                        pass.set_vertex_buffer(0, scene.vertices.slice(..));
-                    }
-                    sided(&mut pass, face_from, n_under);
-                }
-                if part_end > part_from {
-                    draw_particles_under(&mut pass, &self.pipelines.particles_under, part_from..part_end, &self.groups.under);
+                    });
+                } else {
+                    sided(&mut pass, 0, n_under);
                 }
             }
             if self.targets.color_msaa.is_some() {
@@ -8758,14 +8776,10 @@ impl Backend {
                 });
                 bind_mesh(&mut pass, &self.groups.a);
                 draw_under(&mut pass, &self.pipelines.blend_under_depth_ss, rg.blend_under);
-                if n_part_under > 0 {
+                if let Some(pipe) = self.pipelines.particles_under_depth_ss.as_ref().filter(|_| n_part_under > 0) {
                     // (their order does not matter: the nearest depth stays)
-                    draw_particles_under(
-                        &mut pass,
-                        &self.pipelines.particles_under_depth_ss,
-                        n_particles..n_particles + n_part_under,
-                        &self.groups.a,
-                    );
+                    pass.set_vertex_buffer(PARTICLE_SLOT, self.particle_buffer.slice(..));
+                    draw_particles_under(&mut pass, pipe, n_particles..n_particles + n_part_under, &self.groups.a);
                 }
             }
         }
@@ -8883,10 +8897,9 @@ impl Backend {
                 }
             }
         };
-        // particles `range`: they rebind vertex buffer 0
+        // particles `range` (their slot is bound by `rest`)
         let draw_particles = |pass: &mut wgpu::RenderPass, range: std::ops::Range<u32>| {
             pass.set_pipeline(&self.pipelines.particles);
-            pass.set_vertex_buffer(0, self.particle_buffer.slice(..));
             pass.draw(0..6, range);
         };
         let interleave = crate::particle_interleave();
@@ -8895,9 +8908,11 @@ impl Backend {
             // The local hologram leaves world depth and the SSR G-buffer
             // untouched; transparent world faces still cover it normally.
             draw(pass, &self.pipelines.creation_preview, rg.creation_preview);
+            if n_particles > 0 {
+                pass.set_vertex_buffer(PARTICLE_SLOT, self.particle_buffer.slice(..));
+            }
             if !interleave {
                 blended(pass, blend_pipe, n_depth, bn);
-                // (before the particles, which rebind vertex buffer 0)
                 overlays(pass);
                 pass_mark(pass, MARK_BLEND_END);
                 if water_particles > 0 {
@@ -8912,47 +8927,19 @@ impl Backend {
             // Back to front, the particles between the faces they lie
             // between (`DrawLists::particle_runs`); every index is clamped to
             // what was uploaded and what is drawn here.
-            let mut face_from = n_depth;
-            let mut part_from = 0u32;
-            let mut dirty = false;
-            for run in &lists.particle_runs {
-                let before = run.before.clamp(face_from, bn);
-                let end = run.end.min(n_particles).max(part_from);
-                if before > face_from {
-                    if dirty {
-                        pass.set_vertex_buffer(0, scene.vertices.slice(..));
-                        dirty = false;
-                    }
-                    blended(pass, blend_pipe, face_from, before);
-                    face_from = before;
-                }
-                if end > part_from {
-                    draw_particles(pass, part_from..end);
-                    part_from = end;
-                    dirty = true;
-                }
-            }
-            if bn > face_from {
-                if dirty {
-                    pass.set_vertex_buffer(0, scene.vertices.slice(..));
-                    dirty = false;
-                }
-                blended(pass, blend_pipe, face_from, bn);
-            }
-            if n_particles > part_from {
-                draw_particles(pass, part_from..n_particles);
-                dirty = true;
-            }
+            walk_runs(&lists.particle_runs, n_depth, bn, n_particles, |step| match step {
+                RunStep::Faces { from, to } => blended(pass, blend_pipe, from, to),
+                RunStep::Particles { from, to } => draw_particles(pass, from..to),
+            });
             if water_particles > 0 {
                 pass.set_pipeline(&self.pipelines.water_particles);
                 pass.draw(0..crate::water_effects::WATER_PARTICLE_VERTICES, 0..water_particles);
             }
             // The overlays come after every blended face and particle, as in
             // the Legacy Viewer (renderDebugAlpha ends the alpha pass;
-            // renderHighlights and renderDebug follow the pools).
-            if dirty {
-                pass.set_vertex_buffer(0, scene.vertices.slice(..));
-            }
+            // renderHighlights and renderDebug follow the pools). The end of
+            // the blended part of the GPU timing is after them too: with the
+            // interleave `g_transparent` holds the particles, `g_post` less.
             overlays(pass);
             pass_mark(pass, MARK_BLEND_END);
         };

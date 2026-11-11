@@ -2054,9 +2054,10 @@ fn vs_particle(in: PartIn) -> PartOut {
     return out;
 }
 
-// Alpha under which a fragment is dropped: 1/255 (MINIMUM_ALPHA of the
-// Legacy Viewer) for the particles under the water, whose colour and depth
-// then agree.
+// Alpha under which a fragment is dropped: about 1/255 (0.004, the Legacy
+// Viewer's MINIMUM_ALPHA) for the particles under the water, whose colour
+// and depth then agree, except where the soft fade drops a fragment the
+// depth pass (below) keeps.
 override PART_MIN_ALPHA: f32 = 0.002;
 
 // The particle's texel: slot 0 is white, the default particle a soft round
@@ -2104,10 +2105,11 @@ fn fs_particle(in: PartOut) -> @location(0) vec4<f32> {
     return vec4<f32>(col * alpha, alpha);
 }
 
-// Depth of the particles under the water from 1/255 of alpha, into the
-// single-sampled depth the water samples for its refraction and fog (with
-// MSAA the colour pass wrote another): without the soft fade, which would
-// read that depth while it is written.
+// Depth of the particles under the water from about 1/255 of alpha, into
+// the single-sampled depth the water samples for its refraction and fog
+// (with MSAA the colour pass wrote another): without the soft fade, which
+// would read that depth while it is written. A fragment the fade drops in
+// the colour pass can still write its depth here.
 @fragment
 fn fs_particle_depth(in: PartOut) {
     water_clip(in.world_pos);

@@ -319,6 +319,25 @@ sides of single- and double-sided transparent faces.
 colour and depth fragment cuts, with unclipped, above-water and below-water
 specializations, to keep sidedness and water clipping consistent.
 
+The particles are drawn between those blended faces (`DrawLists::particle_runs`,
+made by `scene/particle_order.rs` from the sorted lists `Scene::blend_sorted`
+and `blend_under_sorted`): the renderer cuts the blended draws at each
+`ParticleRun` (`aurora_render::walk_runs`, with every index clamped to what was
+uploaded) and draws that stretch of the one particle buffer, bound once in its
+own vertex slot, between them; the overlays come after all of it. The particles
+reaching below the water while the camera is above it (`particles_under`, a
+crossing one in both lists) are drawn in the "blend under water" pass with the
+blended faces under the surface, clipped to their side and writing depth; their
+soft fade reads a copy of the scene depth made on first use
+(`Targets::depth_copy`, bound by `FrameGroups::under`; with MSAA the
+single-sampled depth serves). The runs come from the particles' view depths
+against the faces', and, when those leave many switches, from where the faces
+are on a coarse screen grid (`particle_order::Overlap`): a particle only has to
+keep its order with the faces it can overlap. At most 256 switches are drawn
+(the runs with the smallest depth gaps merge past that).
+`AURORA_PARTICLE_INTERLEAVE=0` keeps the former single draw after the faces and
+the overlays, and makes none of the pipelines and targets above.
+
 Texture imports and material maps share the PNG channel normalization in
 `aurora-assets/src/import_texture.rs`: expand luminance to RGB, retain alpha
 and reduce 16-bit samples to their high byte, following

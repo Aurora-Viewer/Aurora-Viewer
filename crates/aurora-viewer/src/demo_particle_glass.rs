@@ -8,6 +8,11 @@
 //!   particles are tinted by the glass, in front they are clear; the arc
 //!   through the pane is cut exactly at it; the glowing pane keeps its glow
 //!   over the particles behind it.
+//! - `sparse`: what a busy place looks like more than `dense` does: 60 thin
+//!   panes spread over 8 to 68 m ahead and 22 m across, and 6 emitters in
+//!   it, each far from most of the panes on the screen. By depth alone the
+//!   plumes are cut by every pane in their depth band; by where the panes are,
+//!   by few.
 //! - `dense`: 300 thin panes along the view, 8 to 80 m ahead, each beside
 //!   the line of sight, and 36 emitters spread over the same depths, for the
 //!   cost of the runs at the cap (`AURORA_PROFILE`; 256 runs are drawn at
@@ -27,12 +32,14 @@ const FIRST_ID: u32 = 87_000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Glass,
+    Sparse,
     Dense,
 }
 
 fn mode() -> Option<Mode> {
     match std::env::var("AURORA_DEMO_PARTICLE_GLASS").ok()?.trim() {
         "1" => Some(Mode::Glass),
+        "sparse" => Some(Mode::Sparse),
         "dense" => Some(Mode::Dense),
         _ => None,
     }
@@ -97,11 +104,23 @@ pub fn events() -> Vec<NetEvent> {
                 objects.push(emitter(id, at(along, side, 0.3)));
             }
         }
+        Mode::Sparse => {
+            for k in 0..60u32 {
+                let along = 8.0 + k as f32;
+                // spread over 22 m across, the order of the sides scrambled
+                let side = ((k * 7) % 13) as f32 * 1.8 - 10.8;
+                objects.push(pane(FIRST_ID + k, at(along, side, 1.9), upright, 3.0, 0.3, 0.0));
+            }
+            let spots = [(14.0, -9.0), (24.0, 6.0), (34.0, -3.0), (44.0, 9.0), (54.0, -7.0), (64.0, 2.0)];
+            for (id, (along, side)) in (FIRST_ID + 300..).zip(spots) {
+                objects.push(emitter(id, at(along, side, 0.3)));
+            }
+        }
         Mode::Dense => {
             for k in 0..300u32 {
                 // 8 to 80 m, alternating sides of the line of sight
                 let along = 8.0 + k as f32 * 0.24;
-                let side = if k % 2 == 0 { -1.6 } else { 1.6 } + ((k * 7) % 5) as f32 * 0.3;
+                let side = if k % 2 == 0 { -1.6 } else { 1.6 } + (((k * 7) % 5) as f32 - 2.0) * 0.3;
                 objects.push(pane(FIRST_ID + k, at(along, side, 1.9), upright, 3.0, 0.3, 0.0));
             }
             for k in 0..36u32 {

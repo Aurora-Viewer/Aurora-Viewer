@@ -303,6 +303,9 @@ pub fn update(
         }
     }
     if mode.contains("alpha") && mode.contains("particles") {
+        // (the scenario is sent again every few frames: a particle system
+        // block set each time would restart the fountains, so only the first
+        // sending carries it)
         static SENT: AtomicBool = AtomicBool::new(false);
         // Particles with those boxes (the order of particles among the
         // blended faces, and the particles under the water drawn before it):

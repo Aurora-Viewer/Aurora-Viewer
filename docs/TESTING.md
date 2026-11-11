@@ -4489,7 +4489,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_OVERDRAW=<n>` | Overdraw test: n rows of opaque walls |
 | `AURORA_DEMO_ALPHA_MASK_AB=<shape>:<layers>:<mode>[:touch]` | Static layered alpha faces for the offline Mask/Blend A/B (#1696) |
 | `AURORA_DEMO_ALPHA_SORT=<mode>` | Original three-face DAE/PNG fixture in the world or worn as a HUD |
-| `AURORA_ALPHA_FACE_SORT=0\|1` | World/HUD nonrigged alpha face-depth sorting, on by default; 0 retains object-centre sorting for A/B |
+| `AURORA_ALPHA_FACE_SORT=0\|1` | World/HUD nonrigged alpha face-depth sorting, on by default; 0 retains object-centre sorting for A/B (the particles then sort by radial distance too, to merge with the faces) |
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
 | `AURORA_DEMO_REZ_EFFECT=1\|loop\|styles\|cold` | The rez effect: objects and an avatar appearing, dressing and leaving in front of the camera; `styles`: its three looks side by side; `cold`: a cold arrival with slow textures |
 | `AURORA_REZ_EFFECT=0\|1` | The rez effect off or on, whatever the setting (Preferences › Aurora) |
@@ -4512,8 +4512,9 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_COPLANAR_DECAL=1`, `mask` or `blend` | Two dirt strips blended over a grass face of the same static mesh, 9 m along the start view (#3059) |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
 | `AURORA_DEMO_PLANTS=1`, `far` or `dense` | Linden trees and grass: every species near or far along the start view, or a forest |
-| `AURORA_DEMO_PARTICLE_GLASS=1` or `dense` | Fountains behind, in front of and through two glass panes (the right one glowing), or 300 thin panes and 36 emitters (the cap of 256 particle runs) |
-| `AURORA_PARTICLE_INTERLEAVE=0` | Particles as before the interleave: all after the blended faces and the overlays, radial sort, not clipped at the water (A/B) |
+| `AURORA_DEMO_PARTICLE_GLASS=1`, `sparse` or `dense` | Fountains behind, in front of and through two glass panes (the right one glowing); 60 spread-out panes and 6 emitters; or 300 thin panes and 36 emitters (the cap of 256 particle runs) |
+| `AURORA_PARTICLE_OVERLAP=0` | With the interleave, the particle runs from the depths alone, not from where the faces are on the screen (A/B; read at launch) |
+| `AURORA_PARTICLE_INTERLEAVE=0` | Particles as before the interleave: all after the blended faces and the overlays, radial sort, not clipped at the water, none of its pipelines or targets made (A/B; read at launch, not live) |
 | `AURORA_DEMO_BLEND_SHADOWS=1` or `dense` | Alpha-blended panels in the sun (greenhouse pane, face and texture alpha), or 400 greenhouse panes |
 | `AURORA_DEMO_FEET=opaque` or `blend` | A shoe on each foot of our avatar and of the crowd, and two blocks on the ground (contact shadows) |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
@@ -4804,10 +4805,17 @@ both open states and the selection count. Capture at frame 620.
   glass and those in front clear, the arc through the left pane cut exactly
   at it, the glowing pane keeping its glow over the particles behind it;
   with `AURORA_PARTICLE_INTERLEAVE=0` all the particles are over the glass.
+  `sparse`: 60 panes spread over 8 to 68 m ahead and 22 m across, and 6
+  fountains among them, each far on the screen from most of the panes: a
+  plume is cut by the panes it overlaps, not by all those at its depths.
   `dense`: 300 thin panes 8 to 80 m ahead and 36 fountains over the same
-  depths, more than 256 runs, for the cost of the cap: read `p_part_order`,
-  `part_runs`, `r_*`, `g_transparent` and `g_post` with `AURORA_PROFILE=1`,
-  alternating `AURORA_PARTICLE_INTERLEAVE=0` and `1`. Under the water,
+  depths, more than 256 runs by depth alone, for the cost of the cap: read
+  `p_part_order`, `part_runs`, `r_*`, `g_transparent` and `g_post` with
+  `AURORA_PROFILE=1`, alternating `AURORA_PARTICLE_INTERLEAVE=0` and `1`
+  (the variable is read at launch). With the interleave the particles are
+  drawn inside the blended part of the GPU timing and the overlays after
+  them: `g_transparent` then holds the particles and `g_post` less, so
+  compare their sum. Under the water,
   `AURORA_DEMO_WATER=shore:alpha:particles` (also `medium:shore:alpha:particles`)
   adds a fountain behind and one in front of each of the three blended boxes
   of `:alpha`: the particles under the surface are refracted and fogged like
@@ -12295,6 +12303,7 @@ rendered Gerstner spectrum at all qualities and several depths.
 | Variable | Purpose |
 |---|---|
 | `AURORA_DEMO_WATER=medium` | Offline coast, moving hull, pillars, wading and submerged avatars |
+| `AURORA_DEMO_WATER=<place>:alpha:particles` | The `:alpha` boxes with a fountain behind and one in front of each (particles above, across and under the surface) |
 | `AURORA_DEMO_WATER=off:exclusion` | Invisible water exclusion above/below the surface; use `medium` for enhanced water |
 | `AURORA_DEMO_WATER_ACTIONS=dive` | Local native water animation and jump/entry preview |
 | `AURORA_DEMO_WATER_ANIMS=<folder>` | Read-only folder containing the twelve native water clips |
