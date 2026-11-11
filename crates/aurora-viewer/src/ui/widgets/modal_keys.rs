@@ -83,8 +83,8 @@ fn is_text_field(ctx: &Context, id: Id) -> bool {
 }
 
 /// A plain default button is the Enter target until a widget inside the
-/// modal takes the keyboard. Keep that hint separate from keyboard focus:
-/// taking focus here would change Tab order and the opening-Enter guard.
+/// modal takes the keyboard. Fieldless confirmations also use this rule to
+/// focus that button, matching LLToastAlertPanel's default-option focus.
 pub(super) fn show_default_hint(ui: &egui::Ui) -> bool {
     ui.is_enabled()
         && ui.ctx().data(|d| {
@@ -455,6 +455,37 @@ mod tests {
         assert!(answer.cancel.expect("cancel").clicked(), "egui clicks the focused button");
         assert!(!answer.main);
         assert!(!pass(&ctx, &mut d, vec![]).main);
+    }
+
+    #[test]
+    fn a_confirmation_default_does_not_take_focus_from_a_modal_above_it() {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let field = Id::unique("upper_modal_text");
+        let mut text = String::new();
+        for frame in 0..7 {
+            let _ = crate::ui::login::test_output(ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                    events: if frame == 6 { vec![Event::Text("kept".into())] } else { Vec::new() },
+                    ..Default::default()
+                },
+                |ui| {
+                    Modal::new(Id::unique("lower_confirmation")).show(ui.ctx(), |ui| {
+                        widgets::default_button_sized(ui, &p, "Delete", egui::vec2(120.0, 28.0));
+                    });
+                    if frame >= 3 {
+                        Modal::new(Id::unique("upper_modal")).show(ui.ctx(), |ui| {
+                            ui.add(egui::TextEdit::singleline(&mut text).id(field));
+                        });
+                    }
+                },
+            ));
+            if frame >= 4 {
+                assert!(ctx.memory(|m| m.has_focus(field)), "the upper modal retains its keyboard");
+            }
+        }
+        assert_eq!(text, "kept", "typing stays in the upper modal");
     }
 
     #[test]
