@@ -10433,7 +10433,7 @@ impl App {
             // the poser's subject drawn as meshes or not (an impostor, a
             // jelly doll, first person): its part falls back to the bones
             self.ik_editor
-                .set_poser_meshes_drawn(self.scene.poser_part.map(|_| !self.scene.lists.part_faces.is_empty()));
+                .set_poser_meshes_drawn(self.scene.poser_part.map(|_| self.scene.poser_part_skinned));
             let preview = if (self.focused || self.demo && self.capture.is_some())
                 && !covered
                 && !self.camera.mouselook()

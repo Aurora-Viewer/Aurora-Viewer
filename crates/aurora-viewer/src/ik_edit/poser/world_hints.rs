@@ -324,7 +324,7 @@ impl Editor {
         )
         .is_some_and(|area| area.contains(pointer));
         self.poser.pick_wanted = ctrl && self.poser.part_hints && avatar && over_subject;
-        let meshes = avatar && self.poser.meshes_drawn != Some(false);
+        let meshes = avatar && self.poser_meshes_drawn();
         // the mesh pick, once one came back: on the subject's surface, the
         // part of its joint; off it, none. Until then, the bones.
         let pointer_px = pointer * ctx.pixels_per_point();

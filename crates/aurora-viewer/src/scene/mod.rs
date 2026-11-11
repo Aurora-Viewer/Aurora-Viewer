@@ -878,9 +878,12 @@ pub struct Scene {
     /// attachment, outlined while choosing (`snapshot::isolate`).
     pub photo_marks: std::collections::HashSet<usize>,
     /// The avatar whose part the poser shows (its object index): its body
-    /// and rigged meshes go to `part_faces`, the part kept on them by the
-    /// frame's `part_joints`.
+    /// and what it wears go to `part_faces`, the part kept on its skinned
+    /// faces by the frame's `part_joints`.
     pub poser_part: Option<usize>,
+    /// Whether the last lists drew any of that avatar's skinned faces (its
+    /// body or a rigged mesh): without, the poser keeps the bone outline.
+    pub poser_part_skinned: bool,
     /// The avatar an inventory drag would give to, and what it wears,
     /// outlined like the photo's (`mark_give_target`, #991).
     give_marks: (Option<usize>, std::collections::HashSet<usize>),
@@ -1577,6 +1580,7 @@ impl Scene {
             held_at: None,
             photo_marks: Default::default(),
             poser_part: None,
+            poser_part_skinned: false,
             give_marks: Default::default(),
             rlva_silhouettes: Default::default(),
             sets: SyncSets::default(),
@@ -4869,6 +4873,7 @@ impl Scene {
             select_child: Vec<DrawCmd>,
             select_faces: Vec<DrawCmd>,
             part_faces: Vec<DrawCmd>,
+            part_skinned: usize,
             debug_blue: Vec<DrawCmd>,
             debug_green: Vec<DrawCmd>,
             debug_yellow: Vec<DrawCmd>,
@@ -4894,6 +4899,7 @@ impl Scene {
             select_child: Vec::new(),
             select_faces: Vec::new(),
             part_faces: Vec::new(),
+            part_skinned: 0,
             debug_blue: Vec::new(),
             debug_green: Vec::new(),
             debug_yellow: Vec::new(),
@@ -5061,6 +5067,7 @@ impl Scene {
                     // so the halo does not cross it)
                     if poser_part.is_some() && avatar == poser_part && pass != Pass::Hidden {
                         l.part_faces.push(cmd);
+                        l.part_skinned += usize::from(g.rigged || g.is_avatar);
                     }
                 }
                 if pass == Pass::Hidden {
@@ -5165,6 +5172,7 @@ impl Scene {
             a.select_child.append(&mut b.select_child);
             a.select_faces.append(&mut b.select_faces);
             a.part_faces.append(&mut b.part_faces);
+            a.part_skinned += b.part_skinned;
             a.casters.append(&mut b.casters);
             a.refl.append(&mut b.refl);
             a.probe.append(&mut b.probe);
@@ -5227,6 +5235,7 @@ impl Scene {
         self.lists.glow = result.glow;
         self.lists.select_faces = result.select_faces;
         self.lists.part_faces = result.part_faces;
+        self.poser_part_skinned = result.part_skinned > 0;
         self.lists.glow_alpha = result.glow_alpha;
         for (slot, cmd, blend) in result.impostor {
             if let Some(c) = plan.captures.get_mut(slot) {

@@ -2549,3 +2549,27 @@ fn an_avatar_not_drawn_as_meshes_keeps_the_bone_outline() {
     assert!(matches!(hint_with(Some(false), &mut editor), world_hints::Hint::Group(_)));
     assert_eq!(editor.poser_part_overlay(), None, "the bone outline, painted by the poser");
 }
+
+#[test]
+fn the_drawn_state_and_the_pick_follow_the_subject() {
+    let (world, mut editor) = fixture();
+    let other = Uuid::from_u128(77);
+    editor.poser.subject = world.agent_id;
+    // not drawn as meshes: kept while the scene is not asked, so the outline
+    // does not flicker; another subject starts unknown (taken as drawn)
+    editor.set_poser_meshes_drawn(Some(false));
+    editor.set_poser_meshes_drawn(None);
+    assert!(!editor.poser_meshes_drawn());
+    editor.poser.subject = other;
+    assert!(editor.poser_meshes_drawn());
+    // the pick: after a switch, the answers still in flight (drawn from the
+    // former subject) are dropped, then the new subject's are kept
+    editor.poser.pick_wanted = true;
+    editor.set_poser_mesh_pick(None);
+    for _ in 0..3 {
+        editor.set_poser_mesh_pick(Some((13, [10, 10])));
+        assert_eq!(editor.poser.mesh_pick, None, "the former subject's answer");
+    }
+    editor.set_poser_mesh_pick(Some((21, [10, 10])));
+    assert_eq!(editor.poser.mesh_pick, Some((other, 21, [10.0, 10.0])));
+}

@@ -184,7 +184,12 @@ pub(super) struct State {
     /// listed them (`set_poser_meshes_drawn`): an impostored, jelly-dolled or
     /// first-person subject has none, and keeps the bone outline. None:
     /// not known yet (taken as drawn).
-    meshes_drawn: Option<bool>,
+    meshes_drawn: Option<(Uuid, bool)>,
+    /// The subject the pick answers were last taken for, and how many
+    /// answers still in flight to drop after a switch (they were drawn from
+    /// the subject before).
+    pick_for: Uuid,
+    pick_drop: u8,
     /// The joints edited over every subject, counted as the window shows:
     /// what a close that stops the pose would lose.
     edited_total: usize,
@@ -366,16 +371,39 @@ impl Editor {
     /// The renderer's part pick (`Renderer::take_part_pick`): the newest
     /// answer is kept while Ctrl is held, forgotten once it is let go.
     pub fn set_poser_mesh_pick(&mut self, answer: Option<(u32, [u32; 2])>) {
+        // a switch of subject: the answers still in flight (at most one per
+        // readback slot) are the former subject's
+        if self.poser.pick_for != self.poser.subject {
+            self.poser.pick_for = self.poser.subject;
+            self.poser.mesh_pick = None;
+            self.poser.pick_drop = 3;
+        }
         if !self.poser.pick_wanted {
             self.poser.mesh_pick = None;
         } else if let Some((joint, [x, y])) = answer {
-            self.poser.mesh_pick = Some((self.poser.subject, joint, [x as f32, y as f32]));
+            if self.poser.pick_drop > 0 {
+                self.poser.pick_drop -= 1;
+            } else {
+                self.poser.mesh_pick = Some((self.poser.subject, joint, [x as f32, y as f32]));
+            }
         }
     }
     /// Whether the scene listed any of the subject's meshes for the part
     /// (None: it was not asked to).
     pub fn set_poser_meshes_drawn(&mut self, drawn: Option<bool>) {
-        self.poser.meshes_drawn = drawn;
+        // kept while the scene is not asked (no Ctrl): the last known answer
+        // for that subject, so its outline does not flicker at an edge
+        if let Some(drawn) = drawn {
+            self.poser.meshes_drawn = Some((self.poser.subject, drawn));
+        }
+    }
+    /// Whether the subject's meshes are drawn, as last known (unknown:
+    /// taken as drawn).
+    pub(super) fn poser_meshes_drawn(&self) -> bool {
+        self.poser
+            .meshes_drawn
+            .filter(|(s, _)| *s == self.poser.subject)
+            .is_none_or(|(_, d)| d)
     }
     /// The subject posed now (you, an animesh or a resident).
     pub fn poser_subject(&self) -> Uuid {
