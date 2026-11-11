@@ -414,9 +414,16 @@ fn demo_mode() -> Option<&'static str> {
 
 pub(super) fn demo_row(response: &egui::Response, st: &InventoryUi, item: Uuid) {
     if demo_mode().is_some() || super::delete::demo_enabled() || crate::demo::texture_library::inventory_drag_enabled() {
+        // The row's center can hit an inline action in the explorer. Delete
+        // fixtures select on the label side, like the native-input tests.
+        let point = if super::delete::demo_enabled() {
+            response.rect.left_center() + egui::vec2(response.rect.width().min(60.0) * 0.5, 0.0)
+        } else {
+            response.rect.center()
+        };
         response
             .ctx
-            .data_mut(|data| data.insert_temp(egui::Id::unique(("clipboard_demo_row", st.ui_id, item)), response.rect.center()));
+            .data_mut(|data| data.insert_temp(egui::Id::unique(("clipboard_demo_row", st.ui_id, item)), point));
     }
 }
 
