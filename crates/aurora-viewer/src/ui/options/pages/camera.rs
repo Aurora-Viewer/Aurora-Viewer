@@ -242,6 +242,13 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-camera-vr-comfort-vignette-help"),
                     &field!(camera.vr.comfort_vignette),
                 );
+                cx.slider(
+                    tr!("ui-options-camera-vr-vignette-strength"),
+                    tr!("ui-options-camera-vr-vignette-strength-help"),
+                    &field!(camera.vr.vignette_strength),
+                    0.1..=1.0,
+                    "",
+                );
                 cx.unfolded().choice(
                     tr!("ui-options-camera-vr-dominant-hand"),
                     tr!("ui-options-camera-vr-dominant-hand-help"),
@@ -282,6 +289,40 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     -1.0..=1.0,
                     " m",
                 );
+                for (label, help, field, range) in [
+                    (
+                        tr!("ui-options-camera-vr-exposure"),
+                        tr!("ui-options-camera-vr-exposure-help"),
+                        field!(camera.vr.exposure),
+                        -4.0..=4.0,
+                    ),
+                    (
+                        tr!("ui-options-camera-vr-brightness"),
+                        tr!("ui-options-camera-vr-brightness-help"),
+                        field!(camera.vr.brightness),
+                        -1.0..=1.0,
+                    ),
+                    (
+                        tr!("ui-options-camera-vr-contrast"),
+                        tr!("ui-options-camera-vr-contrast-help"),
+                        field!(camera.vr.contrast),
+                        0.0..=2.0,
+                    ),
+                    (
+                        tr!("ui-options-camera-vr-saturation"),
+                        tr!("ui-options-camera-vr-saturation-help"),
+                        field!(camera.vr.saturation),
+                        0.0..=2.0,
+                    ),
+                    (
+                        tr!("ui-options-camera-vr-gamma"),
+                        tr!("ui-options-camera-vr-gamma-help"),
+                        field!(camera.vr.gamma),
+                        0.5..=2.5,
+                    ),
+                ] {
+                    cx.slider(label, help, &field, range, "");
+                }
             });
         }
         1 => {

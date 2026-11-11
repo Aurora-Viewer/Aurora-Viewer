@@ -13670,6 +13670,18 @@ ui-options-camera-vr-forward-offset = Vue devant les yeux
 ui-options-camera-vr-forward-offset-help = Place votre vue à cette distance devant les yeux de votre avatar, pour ne pas voir l'intérieur de sa tête ou de son corps. Elle tourne avec votre avatar.
 ui-options-camera-vr-height-offset = Hauteur de la vue
 ui-options-camera-vr-height-offset-help = Monte ou baisse votre vue, par exemple quand vous jouez assis. Maintenez le stick droit enfoncé pour recentrer.
+ui-options-camera-vr-vignette-strength = Intensité du vignettage
+ui-options-camera-vr-vignette-strength-help = À quel point les bords s'assombrissent quand vous vous déplacez ou tournez. Désactivez le vignettage de confort ci-dessus pour le supprimer.
+ui-options-camera-vr-exposure = Exposition
+ui-options-camera-vr-exposure-help = Éclaircit ou assombrit l'image du casque, en IL.
+ui-options-camera-vr-brightness = Luminosité
+ui-options-camera-vr-brightness-help = Monte ou baisse tous les tons de l'image du casque.
+ui-options-camera-vr-contrast = Contraste
+ui-options-camera-vr-contrast-help = Étire ou resserre l'image du casque autour du gris moyen.
+ui-options-camera-vr-saturation = Saturation
+ui-options-camera-vr-saturation-help = 0 noir et blanc, 1 inchangé, 2 couleurs doublées.
+ui-options-camera-vr-gamma = Gamma
+ui-options-camera-vr-gamma-help = Au-dessus de 1, les ombres s’éclaircissent ; en dessous, elles se creusent.
 
 app-vr-leave = Appuyez sur { $key } pour revenir au mode bureau
 

@@ -13671,6 +13671,18 @@ ui-options-camera-vr-forward-offset = View ahead of the eyes
 ui-options-camera-vr-forward-offset-help = Moves your view this far in front of your avatar's eyes, so you don't see the inside of its head or body. It turns with your avatar.
 ui-options-camera-vr-height-offset = View height
 ui-options-camera-vr-height-offset-help = Raises or lowers your view, for example when you play seated. Hold the right thumbstick down to recentre.
+ui-options-camera-vr-vignette-strength = Vignette strength
+ui-options-camera-vr-vignette-strength-help = How far the edges darken while you move or turn. Turn off the comfort vignette above to remove it.
+ui-options-camera-vr-exposure = Exposure
+ui-options-camera-vr-exposure-help = Brightens or darkens the headset picture, in stops.
+ui-options-camera-vr-brightness = Brightness
+ui-options-camera-vr-brightness-help = Lifts or lowers every tone of the headset picture.
+ui-options-camera-vr-contrast = Contrast
+ui-options-camera-vr-contrast-help = Spreads or narrows the headset picture around mid grey.
+ui-options-camera-vr-saturation = Saturation
+ui-options-camera-vr-saturation-help = 0 is black and white, 1 unchanged, 2 doubled colour.
+ui-options-camera-vr-gamma = Gamma
+ui-options-camera-vr-gamma-help = Above 1 opens up the shadows, below 1 deepens them.
 
 app-vr-leave = Press { $key } to return to desktop mode
 

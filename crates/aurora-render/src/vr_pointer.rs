@@ -197,6 +197,35 @@ pub(crate) fn build(input: &VrInputState, pointer: VrPointer, out: &mut Vec<Vert
             beam(hand, pointer, out);
         }
     }
+    if let Some(b) = pointer.outline {
+        outline(b, out);
+    }
+}
+
+/// The twelve edges of the pointed object's box, as thin glowing bars.
+fn outline(b: crate::VrBox, out: &mut Vec<Vertex>) {
+    let half = b.half.abs();
+    if !b.center.is_finite() || !half.is_finite() || !b.rotation.is_finite() || half.max_element() > 32.0 {
+        return;
+    }
+    let q = b.rotation.normalize();
+    let axes = [q * Vec3::X * half.x, q * Vec3::Y * half.y, q * Vec3::Z * half.z];
+    let thickness = (half.max_element() * 0.01).clamp(0.003, 0.02);
+    let color = Vec3::new(0.35, 0.85, 1.0);
+    let alpha = 0.75;
+    let premul = (color * alpha).extend(alpha);
+    for a in 0..3 {
+        let (b1, b2) = (axes[(a + 1) % 3], axes[(a + 2) % 3]);
+        let (n1, n2) = (b1.normalize_or_zero() * thickness, b2.normalize_or_zero() * thickness);
+        for (s1, s2) in [(1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)] {
+            let mid = b.center + b1 * s1 + b2 * s2;
+            let (from, to) = (mid - axes[a], mid + axes[a]);
+            // a cross of two quads: visible from any side, to both eyes
+            for n in [n1, n2] {
+                push_quad(out, [from - n, to - n, to + n, from + n], [premul; 4]);
+            }
+        }
+    }
 }
 
 /// Simple shading from a fixed overhead light, so the boxes read as solid.
@@ -341,6 +370,7 @@ mod tests {
             length: 4.0,
             hit: true,
             actionable: true,
+            outline: None,
         };
         let mut out = Vec::new();
         build(&input, pointer, &mut out);
@@ -380,5 +410,34 @@ mod tests {
             &mut with_beam,
         );
         assert_eq!(with_beam.len(), only.len() + 6 * 6);
+    }
+
+    #[test]
+    fn outline_has_twelve_edges_and_skips_huge_boxes() {
+        let mut out = Vec::new();
+        let b = crate::VrBox {
+            center: Vec3::ONE,
+            rotation: Quat::IDENTITY,
+            half: Vec3::splat(0.5),
+        };
+        build(
+            &VrInputState::default(),
+            VrPointer {
+                outline: Some(b),
+                ..Default::default()
+            },
+            &mut out,
+        );
+        assert_eq!(out.len(), 12 * 2 * 6);
+        out.clear();
+        build(
+            &VrInputState::default(),
+            VrPointer {
+                outline: Some(crate::VrBox { half: Vec3::splat(100.0), ..b }),
+                ..Default::default()
+            },
+            &mut out,
+        );
+        assert!(out.is_empty());
     }
 }

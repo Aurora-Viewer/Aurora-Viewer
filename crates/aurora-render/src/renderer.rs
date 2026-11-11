@@ -1819,6 +1819,7 @@ struct XrWorld {
     backends: [Backend; 2],
     mirror: crate::vr_mirror::Mirror,
     pointer: crate::vr_pointer::Overlay,
+    picture: crate::vr_display::Adjust,
     session: crate::xr_frame::Session,
     runtime: openxr::Instance,
 }
@@ -6079,6 +6080,7 @@ impl Backend {
                     backends: [left, right],
                     mirror: crate::vr_mirror::Mirror::new(&self.device, &self.config, &self.present_modes),
                     pointer: crate::vr_pointer::Overlay::new(&self.device, self.config.format),
+                    picture: crate::vr_display::Adjust::new(&self.device, self.config.format),
                     session,
                     runtime: runtime.clone(),
                 })
@@ -6189,8 +6191,12 @@ impl Backend {
         let mirror_size = desktop_size;
         let mut first = world.backends[0].render_view(packet);
         let _second = world.backends[1].render_view(other);
-        // the controllers and the pointer beam, over both eyes, at the poses
+        // the VR picture preferences and the comfort vignette, then the
+        // controllers and the pointer beam over both eyes, at the poses
         // `begin` just published for this frame
+        world
+            .picture
+            .apply(&self.device, &self.queue, [&eyes.textures[0], &eyes.textures[1]], self.vr.display());
         world.pointer.draw(
             &self.device,
             &self.queue,

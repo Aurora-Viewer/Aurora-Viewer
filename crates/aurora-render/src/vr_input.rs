@@ -84,6 +84,16 @@ pub struct VrPointer {
     pub hit: bool,
     /// That surface's object has a click action (the beam is tinted).
     pub actionable: bool,
+    /// The box of the clickable object pointed at, outlined.
+    pub outline: Option<VrBox>,
+}
+
+/// An oriented box in world space.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VrBox {
+    pub center: Vec3,
+    pub rotation: Quat,
+    pub half: Vec3,
 }
 
 /// Picture adjustments and comfort darkening applied to the eyes after the

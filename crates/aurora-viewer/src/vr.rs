@@ -87,6 +87,14 @@ impl Hold {
     }
 }
 
+/// The comfort vignette eased toward `target`: closing in about 0.1 s,
+/// opening in about 0.25 s.
+pub fn ease_vignette(current: f32, target: f32, dt: f32) -> f32 {
+    let rate = if target > current { 10.0 } else { 4.0 };
+    let t = (dt.max(0.0) * rate).min(1.0);
+    (current + (target - current) * t).clamp(0.0, 1.0)
+}
+
 /// Trigger hysteresis: pressed past 0.7, released only under 0.35.
 pub fn trigger_held(was_held: bool, value: f32) -> bool {
     if was_held { value > 0.35 } else { value >= 0.7 }
@@ -160,6 +168,14 @@ mod tests {
         // a pitched facing still moves the view level
         let north = view_offset(Vec3::new(0.0, 0.5, 0.8), 0.1, 0.0);
         assert!(north.distance(Vec3::new(0.0, 0.1, 0.0)) < 1e-6);
+    }
+
+    #[test]
+    fn vignette_closes_faster_than_it_opens_and_stays_in_range() {
+        let closing = ease_vignette(0.0, 1.0, 0.05);
+        let opening = 1.0 - ease_vignette(1.0, 0.0, 0.05);
+        assert!(closing > opening && closing <= 1.0);
+        assert_eq!(ease_vignette(0.3, 0.0, 10.0), 0.0);
     }
 
     #[test]

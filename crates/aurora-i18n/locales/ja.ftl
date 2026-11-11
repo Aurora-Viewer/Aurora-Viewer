@@ -13629,6 +13629,18 @@ ui-options-camera-vr-forward-offset = 目の前方の視点
 ui-options-camera-vr-forward-offset-help = アバターの目よりこの距離だけ前に視点を置き、頭や体の内側が見えないようにします。アバターと一緒に回転します。
 ui-options-camera-vr-height-offset = 視点の高さ
 ui-options-camera-vr-height-offset-help = 座ってプレイするときなどに視点を上げ下げします。右スティックを押し込んだままにすると再センタリングします。
+ui-options-camera-vr-vignette-strength = ビネットの強さ
+ui-options-camera-vr-vignette-strength-help = 移動や回転中に視界の端がどれだけ暗くなるか。なくすには上の快適ビネットをオフにします。
+ui-options-camera-vr-exposure = 露出
+ui-options-camera-vr-exposure-help = ヘッドセットの映像を段数単位で明るく、または暗くします。
+ui-options-camera-vr-brightness = 明るさ
+ui-options-camera-vr-brightness-help = ヘッドセットの映像の全階調を上げ下げします。
+ui-options-camera-vr-contrast = コントラスト
+ui-options-camera-vr-contrast-help = 中間グレーを中心に映像のコントラストを広げたり狭めたりします。
+ui-options-camera-vr-saturation = 彩度
+ui-options-camera-vr-saturation-help = 0で白黒、1で変化なし、2で色が2倍になります。
+ui-options-camera-vr-gamma = ガンマ
+ui-options-camera-vr-gamma-help = 1より大きいと暗部が明るく、小さいと暗部が深くなります。
 
 app-vr-leave = { $key } キーでデスクトップモードに戻ります
 

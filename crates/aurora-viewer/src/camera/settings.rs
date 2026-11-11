@@ -295,6 +295,8 @@ pub struct VrSettings {
     pub height_offset: f32,
     /// Controller vibration on pointing at and clicking objects.
     pub haptics: bool,
+    /// How far in the comfort vignette closes while moving, 0.1..1.
+    pub vignette_strength: f32,
     pub exposure: f32,
     pub brightness: f32,
     pub contrast: f32,
@@ -341,6 +343,7 @@ impl Default for VrSettings {
             forward_offset: 0.1,
             height_offset: 0.0,
             haptics: true,
+            vignette_strength: 0.6,
             exposure: 0.0,
             brightness: 0.0,
             contrast: 1.0,
@@ -539,6 +542,7 @@ impl CameraSettings {
         self.vr.pointer_distance = fix(self.vr.pointer_distance, 0.5, 64.0, d.vr.pointer_distance);
         self.vr.forward_offset = fix(self.vr.forward_offset, 0.0, 0.5, d.vr.forward_offset);
         self.vr.height_offset = fix(self.vr.height_offset, -1.0, 1.0, d.vr.height_offset);
+        self.vr.vignette_strength = fix(self.vr.vignette_strength, 0.1, 1.0, d.vr.vignette_strength);
         self.vr.exposure = fix(self.vr.exposure, -4.0, 4.0, d.vr.exposure);
         self.vr.brightness = fix(self.vr.brightness, -1.0, 1.0, d.vr.brightness);
         self.vr.contrast = fix(self.vr.contrast, 0.0, 2.0, d.vr.contrast);

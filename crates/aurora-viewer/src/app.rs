@@ -447,6 +447,8 @@ pub struct App {
     vr_recenter: crate::vr::Hold,
     /// The object the VR pointer is on, for the vibration as it arrives.
     vr_hover: Option<usize>,
+    /// The comfort vignette's current strength, eased toward its target.
+    vr_vignette: f32,
     input: MoveInput,
     joystick: joystick::State,
     /// Keys and bindable mouse buttons held down.
@@ -1575,6 +1577,7 @@ impl App {
             vr_trigger_down: false,
             vr_recenter: Default::default(),
             vr_hover: None,
+            vr_vignette: 0.0,
             input: MoveInput::default(),
             joystick: Default::default(),
             down: HashSet::new(),
@@ -8155,6 +8158,31 @@ impl App {
                 }
             }
         }
+        // the picture preferences and the comfort vignette (off unless
+        // chosen in Preferences): it closes in quickly while moving or
+        // turning and opens again a little more slowly
+        let right_stick = crate::vr::dead_zone(vr.right.thumbstick, settings.thumbstick_dead_zone);
+        let moving = keys != glam::Vec2::ZERO
+            || key_turn != 0.0
+            || (vr.left.active && left_stick != glam::Vec2::ZERO && settings.locomotion != crate::camera::VrLocomotion::None)
+            || (vr.right.active && right_stick.x != 0.0);
+        let target = if settings.comfort_vignette && moving {
+            settings.vignette_strength
+        } else {
+            0.0
+        };
+        self.vr_vignette = crate::vr::ease_vignette(self.vr_vignette, target, dt);
+        if !settings.comfort_vignette {
+            self.vr_vignette = 0.0;
+        }
+        renderer.set_vr_display(aurora_render::VrDisplay {
+            exposure: settings.exposure,
+            brightness: settings.brightness,
+            contrast: settings.contrast,
+            saturation: settings.saturation,
+            gamma: settings.gamma,
+            vignette: self.vr_vignette,
+        });
     }
 
     /// Carry the headset anchor with the avatar's eyes, including vertical
@@ -8216,12 +8244,20 @@ impl App {
         let actionable = target
             .as_ref()
             .is_some_and(|(t, _, _)| t.action != crate::interaction::Action::Disabled);
+        // the clickable prim pointed at is outlined (the desktop has the
+        // cursor's shape for this; VR has no cursor)
+        let outline = target.as_ref().filter(|_| actionable).and_then(|(_, index, _)| {
+            let (center, rotation, _) = crate::scene::Scene::object_transform(&self.world, *index, Instant::now(), 0)?;
+            let half = self.world.objects.get(*index)?.scale * 0.5;
+            Some(aurora_render::VrBox { center, rotation, half })
+        });
         renderer.set_vr_pointer(aurora_render::VrPointer {
             controllers: true,
             hand: Some(side),
             length: point.map_or(far, |p| (p - ray.0).dot(ray.1).max(0.0)),
             hit: point.is_some(),
             actionable,
+            outline,
         });
         // pressed past 0.7, released under 0.35: a trigger resting near one
         // threshold must not click again and again
