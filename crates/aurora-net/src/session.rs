@@ -1719,6 +1719,15 @@ impl Session<'_> {
                     &self.sh.stats,
                 );
             }
+            NetCommand::TeleportCancel => {
+                // LLAgent::teleportCancel: reliable, to the region we leave
+                log::info!("Sending TeleportCancel");
+                let mut m = TeleportCancel::default();
+                m.info.agent_id = self.agent_id();
+                m.info.session_id = self.session_id();
+                self.send_main(&m, true);
+                transition::end(Some(transition::Kind::Teleport), "cancelled (TeleportCancel sent)", &self.sh.stats);
+            }
             NetCommand::CancelRegionRestart => {
                 // LLPanelRegionInfo::sendEstateOwnerMessage("restart", {"-1"}),
                 // to the agent's region, with the invoice of the Region /
@@ -3041,6 +3050,7 @@ impl Session<'_> {
             | NetCommand::AgentAnimationChanges { .. }
             | NetCommand::AnimationStateReset
             | NetCommand::RevokePermissions { .. }
+            | NetCommand::ForceScriptControlRelease
             | NetCommand::ObjectGrab { .. }
             | NetCommand::ObjectGrabUpdate { .. }
             | NetCommand::ObjectRelease { .. }
@@ -5236,6 +5246,7 @@ impl Session<'_> {
                 },
             );
         } else if id == TeleportStart::ID {
+            let m: TeleportStart = pkt.decode()?;
             if transition::current() == Some(transition::Kind::Teleport) {
                 transition::step(|| "TeleportStart".to_string());
             } else {
@@ -5245,7 +5256,12 @@ impl Session<'_> {
                     &self.sh.stats,
                 );
             }
-            emit(self.sh, NetEvent::TeleportStarted);
+            emit(
+                self.sh,
+                NetEvent::TeleportStarted {
+                    flags: m.info.teleport_flags,
+                },
+            );
         } else if id == TeleportProgress::ID {
             let m: TeleportProgress = pkt.decode()?;
             transition::step(|| format!("TeleportProgress '{}'", field_str(&m.info.message)));
@@ -5253,6 +5269,7 @@ impl Session<'_> {
                 self.sh,
                 NetEvent::TeleportProgress {
                     message: field_str(&m.info.message),
+                    flags: m.info.teleport_flags,
                 },
             );
         } else if id == TeleportFailed::ID {
