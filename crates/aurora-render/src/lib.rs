@@ -58,6 +58,7 @@ pub mod shadow_cull;
 mod shadow_merge;
 #[cfg(test)]
 mod specular_aa;
+pub mod spirv_fix;
 pub mod stars;
 pub mod start_progress;
 pub mod stereo_view;
