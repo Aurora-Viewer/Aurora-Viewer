@@ -123,6 +123,7 @@ mod pointing;
 mod quick_prefs;
 mod region_restart;
 mod region_window;
+mod release_keys;
 mod relogin;
 mod report_abuse;
 mod reset_skeleton;
@@ -5611,6 +5612,7 @@ impl App {
         w.quiet_automated_chat = self.settings.compact_automated_chat || (self.demo && crate::demo::object_chat::on());
         // FSAnnounceIncomingIM (AURORA_DEMO_IM_ANNOUNCE=1: on for the run)
         w.announce_incoming_im = self.settings.announce_incoming_im || (self.demo && crate::demo::im_announce::forced());
+        w.set_script_dialog_limit(self.settings.script_dialog_limit);
         w.notifications.toasts = crate::world::notifications::ToastPrefs {
             presence: self.settings.toast_friends_online,
             presence_in_chat: self.settings.friends_online_in_chat,
@@ -6931,6 +6933,7 @@ impl App {
         self.demo_script_steps();
         self.world_click_demo_steps();
         self.object_menu_demo_steps();
+        self.release_keys_demo_steps();
         if self.frame_count == 400
             && let Ok(mode) = std::env::var("AURORA_DEMO_BEACONS")
         {
@@ -7552,6 +7555,35 @@ impl App {
         for anim in std::mem::take(&mut self.world.animation_stops) {
             self.send(NetCommand::AgentAnimation { anim, start: false });
         }
+    }
+
+    /// The teleport screen's Cancel (LLProgressView::onCancelButtonClicked,
+    /// LLAgent::teleportCancel): TeleportCancel when the request had left,
+    /// the screen closes and the resident stays where they are.
+    fn cancel_teleport(&mut self) {
+        let Some(outcome) = self.world.cancel_teleport(self.settings.always_show_tp_cancel) else {
+            return;
+        };
+        if self.demo_tp_start.take().is_some() {
+            // the offline demo has no simulator to tell
+            self.demo_tp_dest = None;
+            self.demo_tp_region = None;
+            aurora_net::transition::end(Some(aurora_net::transition::Kind::Teleport), "cancelled (demo)", &self.net.stats);
+        } else if outcome == crate::world::teleport_cancel::Cancelled::Sent {
+            self.send(NetCommand::TeleportCancel);
+        }
+        // the progress view hides at once (setVisible(false)): no arrival
+        // to wait for, the screen fades out on the world we stayed in
+        if let Some(o) = self.tp_overlay.as_mut() {
+            o.end.get_or_insert(Instant::now());
+        }
+        self.was_teleporting = false;
+        self.tp_dest = None;
+        log::info!(
+            "teleport cancel: teleporting {}, position {:.1?}",
+            self.world.teleporting,
+            self.world.agent.position
+        );
     }
 
     fn show_teleport_progress(&mut self) {
@@ -10515,6 +10547,13 @@ impl App {
             // offline demo teleport: the real steps, landing where we were
             let e = t0.elapsed().as_secs_f32();
             let w = &mut self.world;
+            // TeleportStart / TeleportProgress offer Cancel, TeleportFinish
+            // (the step "connecting to the region") takes it away
+            if e >= 2.4 {
+                w.tp_cancel.on_finish();
+            } else if e >= 0.35 {
+                w.tp_cancel.on_simulator_flags(crate::demo::tp_cancel_flags());
+            }
             if e >= 3.2 && !crate::demo::tp_no_arrival() {
                 self.demo_tp_start = None;
                 w.tp_progress = 0.6;
@@ -10555,6 +10594,10 @@ impl App {
             } else if e >= 0.35 {
                 w.tp_progress = w.tp_progress.max(0.10);
                 w.tp_status = aurora_i18n::tr!("common-teleport-accepted").into();
+            }
+            // AURORA_DEMO_TP_CANCEL=1: Cancel pressed during the transfer
+            if crate::demo::tp_cancel_pressed() && (1.5..2.4).contains(&e) {
+                self.cancel_teleport();
             }
         }
         // TeleportLocal can also resolve an initially unknown destination.
@@ -14274,6 +14317,7 @@ impl App {
                 self.settings.save();
                 log::info!("quiet snapshots: {}", !self.settings.snapshot.sound);
             }
+            BarAction::ReleaseKeys => self.release_keys(),
             BarAction::ToggleWaterWalk => self.toggle_water_walk(),
             BarAction::ToggleSwimming => self.toggle_swimming(),
             BarAction::MoveLockOptions => self.movelock_ui.open = true,
@@ -16029,6 +16073,7 @@ impl App {
                     show_name_tags: self.settings.show_name_tags,
                     fly_override: self.world.fly_override,
                     quiet_snapshots: !self.settings.snapshot.sound,
+                    release_keys: release_keys::enabled(&self.world),
                     parcel_landmark,
                     can_set_home: self.world.can_set_home(),
                     can_go_home: self.world.rlva_can_teleport_home(),
@@ -18279,6 +18324,7 @@ impl App {
                 }
                 t = self.ui_parts.lap(Part::UiOptions, t);
                 // teleport screen (and the login loading screen fading out)
+                let mut tp_cancel_pressed = false;
                 if let Some(o) = self.tp_overlay.as_mut() {
                     // quick fade in, fade out at the end
                     let fade_in = if o.loading_end {
@@ -18321,7 +18367,13 @@ impl App {
                         let facts = ui::loading::PlaceFacts::gather(&mut self.world, &mut self.map_tiles, &name, point, arrived);
                         ui::loading::BannerText { name, stage, facts }
                     });
-                    ui::loading::teleport_overlay(
+                    // Cancel until TeleportFinish, when the simulator allows it
+                    let cancel = !o.loading_end
+                        && o.arrived.is_none()
+                        && o.end.is_none()
+                        && self.world.teleporting
+                        && self.world.tp_cancel.offered(self.settings.always_show_tp_cancel);
+                    tp_cancel_pressed = ui::loading::teleport_overlay(
                         &ctx,
                         &p,
                         self.logo.as_ref(),
@@ -18332,10 +18384,14 @@ impl App {
                         Some(o.shown),
                         alpha,
                         &text.facts.place(),
+                        cancel,
                     );
                     if o.end.is_some() {
                         o.leaving = Some(text);
                     }
+                }
+                if tp_cancel_pressed {
+                    self.cancel_teleport();
                 }
             }
         }

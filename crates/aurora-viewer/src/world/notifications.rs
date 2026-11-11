@@ -727,6 +727,17 @@ impl Notifications {
             .retain(|n| !matches!(n.data, Data::Message { session, .. } if read(&session)));
     }
 
+    /// Close the script dialogs and text boxes that `closes` picks by their
+    /// object and channel, with no answer sent (LLNotificationsUtil::cancel,
+    /// for `script_dialog_limit.rs`). They leave no history entry, as any
+    /// script prompt.
+    pub fn close_script_prompts(&mut self, closes: impl Fn(Uuid, i32) -> bool) {
+        self.list.retain(|n| match n.data {
+            Data::Dialog { object, channel, .. } | Data::TextBox { object, channel, .. } => !closes(object, channel),
+            _ => true,
+        });
+    }
+
     /// The listed entries (the toast-only ones left out).
     pub fn listed(&self) -> impl Iterator<Item = &Notification> {
         self.list.iter().filter(|n| !n.transient)

@@ -699,7 +699,8 @@ fn threshold(ui: &mut egui::Ui, on: bool, amount: &mut i32) -> bool {
 /// The Legacy Viewer's Chat › Notifications (EnableIMChatPopups,
 /// EnableGroupChatPopups, ChatOnlineNotification), Notifications › People
 /// / Objects & Scripts (FSFlashOnMessage, FSFlashOnObjectIM,
-/// FSFlashOnScriptDialog) and World (FSEnableGrowl, FSGrowlWhenActive).
+/// FSFlashOnScriptDialog) and World (FSEnableGrowl, FSGrowlWhenActive),
+/// and User Interface › 2D Overlay (ScriptDialogLimitations).
 fn notifications(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-toasts"), |cx| {
@@ -809,6 +810,18 @@ fn notifications(cx: &mut Cx) {
             |ui, s| ui.add_enabled_ui(any, |ui| toggle(ui, &p, &mut s.ims_in_notification_center)).inner,
         );
         cx.slider(tr!("ui-options-toast-duration"), "", &field!(im_toast_seconds), 3.0..=60.0, " s");
+    });
+    // ScriptDialogLimitations, the Legacy Viewer's User Interface › 2D
+    // Overlay › "Script Dialogs per Object" (panel_preferences_UI.xml)
+    cx.group(tr!("ui-options-script-dialogs"), |cx| {
+        use crate::world::script_dialog_limit::Limit;
+        let choices = Limit::ALL.map(|limit| (limit, limit.label()));
+        cx.combo(
+            tr!("ui-options-script-dialog-limit"),
+            tr!("ui-options-script-dialog-limit-hint"),
+            &field!(script_dialog_limit),
+            &choices,
+        );
     });
     cx.group(tr!("ui-options-attention"), |cx| {
         cx.toggle(
