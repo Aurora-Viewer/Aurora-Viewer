@@ -126,8 +126,11 @@ pub fn search_field(
         return (field, false);
     }
     let rect = egui::Rect::from_center_size(field.rect.right_center() - Vec2::new(14.0, 0.0), Vec2::splat(20.0));
+    // Not a Tab stop, like the clear button of LLSearchEditor (`tab_stop(false)`,
+    // indra/llui/llsearcheditor.cpp): Tab leaves the field for the next control.
+    // `Sense::click()` would make it focusable.
     let clear = ui
-        .interact(rect, field.id.with("clear"), egui::Sense::click())
+        .interact(rect, field.id.with("clear"), egui::Sense::CLICK)
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(clear_tip);
     clear.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), clear_tip));
@@ -171,4 +174,56 @@ pub fn drop_outline(ui: &egui::Ui, p: &Palette, rect: egui::Rect, allowed: bool)
 /// The footer line of a tree window: small text, a message colour.
 pub fn status_text(ui: &mut egui::Ui, text: &str, color: egui::Color32) -> egui::Response {
     ui.add(egui::Label::new(egui::RichText::new(text).size(11.0).color(color)).truncate())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame(ctx: &egui::Context, text: &mut String, events: Vec<egui::Event>) -> egui::Response {
+        let p = crate::theme::Theme::default().palette();
+        let mut field = None;
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 240.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                field = Some(search_field(ui, &p, text, "Filter", 240.0, !text.is_empty(), "Clear").0);
+                let _ = ui.button("Next");
+            },
+        );
+        field.expect("the field is drawn every frame")
+    }
+
+    #[test]
+    fn tab_skips_the_filter_clear_action() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let mut text = String::from("query");
+        let mut field = frame(&ctx, &mut text, vec![]);
+        for _ in 0..3 {
+            field = frame(&ctx, &mut text, vec![]);
+        }
+        let clear = field.id.with("clear");
+        assert!(ctx.read_response(clear).is_some(), "a filled field has a clear action");
+        ctx.memory_mut(|m| m.request_focus(field.id));
+        frame(&ctx, &mut text, vec![]);
+        assert_eq!(ctx.memory(|m| m.focused()), Some(field.id), "the field holds the focus before Tab");
+        let tab = egui::Event::Key {
+            key: egui::Key::Tab,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(&ctx, &mut text, vec![tab]);
+        for _ in 0..2 {
+            frame(&ctx, &mut text, vec![]);
+        }
+        let focused = ctx.memory(|m| m.focused());
+        assert_ne!(focused, Some(clear), "Tab must not stop on the cross");
+        assert_ne!(focused, Some(field.id), "Tab leaves the field");
+    }
 }
