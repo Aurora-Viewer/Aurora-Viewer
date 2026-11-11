@@ -332,6 +332,7 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::RefreshTextures(..) => "RefreshTextures",
         CtxAction::RefreshAvatarTextures(..) => "RefreshAvatarTextures",
         CtxAction::Rebake => "Rebake",
+        CtxAction::ReloadAvatar(..) => "ReloadAvatar",
         CtxAction::Take(..) => "Take",
         CtxAction::TakeCopy(..) => "TakeCopy",
         CtxAction::Delete(..) => "Delete",

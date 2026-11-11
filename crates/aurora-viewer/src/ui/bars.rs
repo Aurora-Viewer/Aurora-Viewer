@@ -93,6 +93,8 @@ pub enum BarAction {
     /// Show Friends Only switched (RFO, FSRenderFriendsOnly).
     ToggleFriendsOnly,
     ToggleNameTags,
+    /// The toolbar's HUDs button: Show HUDs switched.
+    ToggleHuds,
     ToggleMoveLock,
     /// Me › Quickjump (Self.toggleIgnorePreJump, FSIgnoreFinishAnimation).
     ToggleQuickjump,
@@ -2347,6 +2349,9 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         // TogglePerAccountControl FSRenderFriendsOnly
         "RFO" => return BarAction::ToggleFriendsOnly,
         "name_tags" => return BarAction::ToggleNameTags,
+        // View › Show User Interface and World › HUDs › Show HUDs as buttons
+        "hide_interface" => return BarAction::ToggleInterface,
+        "huds" => return BarAction::ToggleHuds,
         "preferences" => toggle("options", &mut panels.settings),
         // Firestorm's Move and View buttons open the controls
         "move" => {
@@ -3153,6 +3158,10 @@ pub(crate) fn toolbar_row(
             toolbar.chat_bar_active
         } else if b.command == "name_tags" {
             !toolbar.show_name_tags
+        } else if b.command == "huds" {
+            !toolbar.show_huds
+        } else if b.command == "hide_interface" {
+            toolbar.interface_hidden
         } else if b.command == "RFO" {
             toolbar.friends_only_active
         } else if b.command == "vr_view" {
@@ -3185,6 +3194,20 @@ pub(crate) fn toolbar_row(
                 aurora_i18n::tr!("ui-bars-immersive-hide-tags")
             }
             .to_owned()
+        } else if b.command == "huds" {
+            if active {
+                aurora_i18n::tr!("ui-bars-immersive-show-huds")
+            } else {
+                aurora_i18n::tr!("ui-bars-immersive-hide-huds")
+            }
+            .to_owned()
+        } else if b.command == "hide_interface" {
+            if active {
+                aurora_i18n::tr!("ui-bars-show-interface")
+            } else {
+                aurora_i18n::tr!("ui-bars-hide-interface")
+            }
+            .to_owned()
         } else if !super::toolbar::ready(&b.command) {
             format!("{}\n{}", super::toolbar::label(b), menu::not_yet())
         } else if !usable {
@@ -3206,7 +3229,12 @@ pub(crate) fn toolbar_row(
             p,
             icons,
             &b.command,
-            if b.command == "name_tags" && active { "label-off" } else { &b.icon },
+            match (b.command.as_str(), active) {
+                ("name_tags", true) => "label-off",
+                ("huds", true) => "device-desktop-off",
+                ("hide_interface", true) => "eye-filled",
+                _ => &b.icon,
+            },
             super::toolbar::label(b),
             &tip,
             active,
@@ -4028,6 +4056,13 @@ mod tests {
         // World › Hide name tags' button
         assert!(super::super::toolbar::ready("name_tags"));
         assert!(matches!(run_command(&ctx, "name_tags", &mut panels), BarAction::ToggleNameTags));
+        // Show User Interface and Show HUDs' buttons
+        assert!(super::super::toolbar::ready("hide_interface") && super::super::toolbar::ready("huds"));
+        assert!(matches!(
+            run_command(&ctx, "hide_interface", &mut panels),
+            BarAction::ToggleInterface
+        ));
+        assert!(matches!(run_command(&ctx, "huds", &mut panels), BarAction::ToggleHuds));
     }
 
     #[test]

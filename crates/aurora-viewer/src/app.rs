@@ -43,6 +43,7 @@ mod sound_explorer;
 // mod bug_report;
 mod alt_graph;
 mod avatar_health;
+mod avatar_reload;
 mod blender_live;
 mod blender_shape;
 mod buy_currency;
@@ -1104,6 +1105,8 @@ pub struct App {
     local_bakes: crate::local_bakes::LocalBakes,
     /// Me › Avatar health and the customise animation.
     avatar_health: avatar_health::AvatarHealth,
+    /// "Reload avatar": when each avatar was last reloaded.
+    avatar_reloads: avatar_reload::Reloads,
     last_social_poll: Instant,
     /// Last keyboard / mouse button input (automatic away, AFKTimeout), and
     /// whether the current away status was set by that timer.
@@ -1972,6 +1975,7 @@ impl App {
             wearable_ui: Default::default(),
             local_bakes: Default::default(),
             avatar_health: Default::default(),
+            avatar_reloads: Default::default(),
             last_social_poll: Instant::now(),
             last_input: Instant::now(),
             auto_away: false,
@@ -3200,6 +3204,7 @@ impl App {
         self.wearable_ui = Default::default();
         self.local_bakes.end_session(&mut self.scene);
         self.reset_avatar_health();
+        self.avatar_reloads = Default::default();
         self.interactions = Default::default();
         self.screen = Screen::Login;
         self.login_form.busy = false;
@@ -10668,6 +10673,7 @@ impl App {
                 hour: self.settings.night_sky_hour,
             },
             self.settings.night_sky_gain,
+            self.settings.night_sky_milky_way,
             env.sky.sun_dir,
             // the sky's moment: a photo's held instant for all its parts
             // (snapshot::Hold, Freeze World), the demo's fixed one in the
@@ -12421,6 +12427,7 @@ impl App {
         }
         self.demo_worn_steps();
         self.demo_derender_steps();
+        self.demo_reload_avatar_steps();
         self.demo_friends_only_steps();
         self.demo_social_menu_steps();
         self.demo_land_moderation();
@@ -13964,6 +13971,7 @@ impl App {
                 self.settings.save();
             }
             BarAction::ShowHuds(visible) => self.set_show_huds(visible),
+            BarAction::ToggleHuds => self.set_show_huds(!self.settings.show_huds),
             BarAction::HudZoom(zoom) => self.world.hud_zoom = zoom.clamp(0.1, 1.0),
             BarAction::None => {}
             BarAction::IkEdit => {
@@ -15859,6 +15867,8 @@ impl App {
                     self.settings.reduce_motion,
                 );
                 self.toolbar_ui.show_name_tags = self.settings.show_name_tags;
+                self.toolbar_ui.show_huds = self.settings.show_huds;
+                self.toolbar_ui.interface_hidden = self.interface.hidden;
                 let show_balance = if self.demo {
                     ui::bars::demo::get().show_balance.unwrap_or(self.settings.show_balance)
                 } else {
@@ -18843,11 +18853,14 @@ impl ApplicationHandler for App {
                 self.settings.night_sky = mode;
                 self.panels.time_of_day = 4;
             }
-            if let Some((latitude, gain)) = crate::demo::night_sky::place() {
+            if let Some((latitude, gain, milky_way)) = crate::demo::night_sky::place() {
                 self.settings.night_sky_place = crate::world::night_sky::SkyPlace::Custom;
                 self.settings.night_sky_latitude = latitude;
                 if let Some(gain) = gain {
                     self.settings.night_sky_gain = gain;
+                }
+                if let Some(milky_way) = milky_way {
+                    self.settings.night_sky_milky_way = milky_way;
                 }
                 self.settings.sync_night_sky();
             }

@@ -110,8 +110,8 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, media: &mut MediaMa
     let Some(m) = media.find_mut(&key) else {
         return;
     };
-    // Without MEDIA_PERM_CONTROL the Legacy Viewer hides the whole chrome;
-    // clicks still reach the page.
+    // LLPanelPrimMediaControls: without MEDIA_PERM_CONTROL the Legacy Viewer
+    // hides the whole chrome; clicks still reach the page.
     let prim = matches!(key, MediaKey::Prim { .. });
     let mini = prim && m.entry.as_ref().is_some_and(MediaEntry::mini_controls);
     let shows = chrome(prim, m.may_control, mini, m.is_time_media());
