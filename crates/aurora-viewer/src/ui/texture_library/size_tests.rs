@@ -11,6 +11,7 @@ struct Fixture {
     prefs: Preferences,
     screen: Vec2,
     time: f64,
+    labels: HashMap<String, egui::Rect>,
 }
 impl Fixture {
     fn new(avatars: Arc<crate::scene::avatar::AvatarLibrary>, prefs: Preferences) -> Self {
@@ -46,6 +47,7 @@ impl Fixture {
             prefs,
             screen: Vec2::new(1600.0, 1200.0),
             time: 0.0,
+            labels: HashMap::new(),
         }
     }
     fn frame(&mut self, events: Vec<egui::Event>) {
@@ -70,6 +72,13 @@ impl Fixture {
             },
         );
         output.textures_delta.clear();
+        self.labels.clear();
+        for shape in output.shapes {
+            if let egui::Shape::Text(text) = shape.shape {
+                self.labels
+                    .insert(text.galley.text().to_owned(), text.galley.rect.translate(text.pos.to_vec2()));
+            }
+        }
     }
     fn settle(&mut self) {
         for _ in 0..8 {
@@ -250,6 +259,37 @@ fn texture_preview_grows_past_320_pixels_and_keeps_each_windows_display_options(
     f.open(111);
     assert!(!f.resources.windows[1].texture.display.actual_size);
     assert!(f.resources.windows[0].texture.display.actual_size);
+}
+
+#[test]
+fn material_footer_message_stays_below_wrapped_buttons_at_narrow_widths() {
+    let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+    let mut f = Fixture::new(avatars, Preferences::default());
+    let item = Uuid::from_u128(113);
+    let local = Uuid::from_u128(125);
+    f.world.local_assets.insert(local, ("Local texture.png".into(), false));
+    f.open(113);
+    Arc::make_mut(&mut f.resources.windows[0].editor.as_mut().expect("editor").draft).base_color_texture = Some(local);
+    for scale in [1.0, 1.5, 2.0] {
+        crate::theme::Theme::default().apply(&f.ctx, scale);
+        for width in [260.0, 300.0, 620.0] {
+            widgets::place_floater(&f.ctx, &preview_window_id(item), egui::pos2(20.0, 60.0), egui::vec2(width, 600.0));
+            f.settle();
+            let status = f.labels[aurora_i18n::tr!("resource-preview-local-maps")];
+            let buttons_bottom = ["common-save", "common-save-as", "common-cancel"]
+                .into_iter()
+                .map(|key| f.labels[aurora_i18n::text(key)].bottom())
+                .fold(f32::NEG_INFINITY, f32::max);
+            assert!(
+                status.top() >= buttons_bottom,
+                "message overlaps a button at width {width}, scale {scale}"
+            );
+            assert!(f.rect(113).contains_rect(status), "message clipped at width {width}, scale {scale}");
+            let size = f.rect(113).size();
+            f.settle();
+            same_size(f.rect(113).size(), size);
+        }
+    }
 }
 
 #[test]

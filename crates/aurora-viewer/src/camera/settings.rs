@@ -205,7 +205,8 @@ pub struct CameraSettings {
     pub fov: f32,
     /// ZoomTime: seconds of a transition between camera modes.
     pub zoom_time: f32,
-    /// CameraPositionSmoothing ("Smoothing"), × 0.02 s half-life.
+    /// CameraPositionSmoothing ("Smoothing"), × 0.02 s half-life. Limits:
+    /// `SMOOTHING_RANGE`.
     pub smoothing: f32,
     /// DynamicCameraStrength: lag behind the avatar in the air (0 = none, 30 = avatar velocity).
     pub dynamic_strength: f32,
@@ -383,6 +384,11 @@ impl CameraSettings {
 pub const DEFAULT_FOV: f32 = std::f32::consts::FRAC_PI_3;
 /// LLViewerCamera min / max view angles of the "Viewing angle" slider.
 pub const FOV_RANGE: std::ops::RangeInclusive<f32> = 0.17..=2.97;
+/// CameraPositionSmoothing: the limits of Phototools' "Cam. Smoothing" slider
+/// (floater_phototools_camera.xml, floater_phototools.xml), up to a half-life
+/// of 6 s, and not the 9 of panel_preferences_move.xml: both sliders drive the
+/// same setting, and Aurora has one.
+pub const SMOOTHING_RANGE: std::ops::RangeInclusive<f32> = 0.0..=300.0;
 
 impl CameraSettings {
     pub fn camera_offset(&self) -> Vec3 {
@@ -436,7 +442,7 @@ impl CameraSettings {
         self.fov = fix(self.fov, 5.0f32.to_radians(), 175.0f32.to_radians(), d.fov);
         self.mouselook_zoom_fov = super::mouselook_zoom::sanitize(self.mouselook_zoom_fov);
         self.zoom_time = fix(self.zoom_time, 0.0, 4.0, d.zoom_time);
-        self.smoothing = fix(self.smoothing, 0.0, 9.0, d.smoothing);
+        self.smoothing = fix(self.smoothing, *SMOOTHING_RANGE.start(), *SMOOTHING_RANGE.end(), d.smoothing);
         self.dynamic_strength = fix(self.dynamic_strength, 0.0, 30.0, d.dynamic_strength);
         self
     }
@@ -516,6 +522,29 @@ mod saved_view_tests {
         assert_eq!(CameraPreset::from_preset_name("Front"), None);
         assert_eq!(CameraPreset::from_preset_name("My front"), None);
         assert_eq!(CameraPreset::from_preset_name(CameraPreset::Custom.label()), None);
+    }
+}
+
+#[cfg(test)]
+mod smoothing_range_tests {
+    use super::*;
+
+    #[test]
+    fn a_saved_smoothing_keeps_the_whole_range_and_only_the_range() {
+        let saved = |smoothing| {
+            CameraSettings {
+                smoothing,
+                ..Default::default()
+            }
+            .sanitized()
+            .smoothing
+        };
+        assert_eq!(saved(300.0), 300.0);
+        assert_eq!(saved(301.0), 300.0);
+        assert_eq!(saved(-1.0), 0.0);
+        assert_eq!(saved(f32::NAN), CameraSettings::default().smoothing);
+        // the default stays the Legacy Viewer's
+        assert_eq!(CameraSettings::default().smoothing, 1.0);
     }
 }
 

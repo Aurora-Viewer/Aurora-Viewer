@@ -112,7 +112,9 @@ impl App {
 
     /// The notice over the paused world.
     pub(super) fn busy_pause_notice(&self, ctx: &egui::Context, p: &crate::theme::Palette) {
-        if !self.busy_pause.paused() {
+        // (video memory full: no world behind to pause, and its own notice
+        // takes the same place; the title still says both)
+        if !self.busy_pause.paused() || self.last_render.video_memory_full {
             return;
         }
         // The paused world, blurred and darkened (the modals' blur, ui_blur.rs:
@@ -139,6 +141,27 @@ impl App {
                     } else {
                         aurora_i18n::tr!("busy-pause-notice")
                     };
+                    ui.label(egui::RichText::new(text).color(p.amber));
+                });
+            });
+    }
+
+    /// Video memory is full and the render targets could not be made
+    /// (`RenderStats::video_memory_full`): what the black world behind the
+    /// interface means, until they can be. Not in the Legacy Viewer.
+    pub(super) fn video_memory_notice(&self, ctx: &egui::Context, p: &crate::theme::Palette) {
+        if !self.last_render.video_memory_full {
+            return;
+        }
+        let room = crate::ui::layout::work_area(ctx);
+        egui::Area::new(egui::Id::unique("video-memory-notice"))
+            .order(egui::Order::Background)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .fixed_pos(room.center())
+            .interactable(false)
+            .show(ctx, |ui| {
+                crate::ui::widgets::overlay(ui, p, egui::Margin::symmetric(16, 10), |ui| {
+                    let text = aurora_i18n::tr!("video-memory-full-notice");
                     ui.label(egui::RichText::new(text).color(p.amber));
                 });
             });

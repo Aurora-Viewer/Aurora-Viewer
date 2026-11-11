@@ -1,6 +1,6 @@
 //! The result tree combines real inventory ancestry with virtual destination paths.
 use super::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 pub(super) struct Node {
     pub name: String,
@@ -10,6 +10,60 @@ pub(super) struct Node {
 pub(super) struct Preview {
     pub nodes: BTreeMap<Vec<String>, Node>,
     pub files: BTreeMap<Vec<String>, Vec<usize>>,
+}
+
+impl Preview {
+    pub(super) fn ordered_rows(&self, collapsed: &BTreeSet<Vec<String>>) -> Vec<(Vec<String>, Option<usize>)> {
+        fn append(preview: &Preview, parent: &[String], collapsed: &BTreeSet<Vec<String>>, rows: &mut Vec<(Vec<String>, Option<usize>)>) {
+            let mut children: Vec<_> = preview
+                .nodes
+                .range(parent.to_vec()..)
+                .take_while(|(path, _)| path.starts_with(parent))
+                .filter(|(path, _)| path.len() == parent.len() + 1)
+                .map(|(path, _)| path)
+                .collect();
+            children.sort_by(|left, right| {
+                let left_virtual = left.last().is_some_and(|key| key.starts_with("p:"));
+                let right_virtual = right.last().is_some_and(|key| key.starts_with("p:"));
+                left_virtual.cmp(&right_virtual).then_with(|| {
+                    if left_virtual {
+                        crate::imports::folders::explorer_name_cmp(&preview.nodes[*left].name, &preview.nodes[*right].name)
+                            .then_with(|| preview.nodes[*left].name.cmp(&preview.nodes[*right].name))
+                            .then_with(|| left.cmp(right))
+                    } else {
+                        left.cmp(right)
+                    }
+                })
+            });
+            for path in children {
+                let path = path.clone();
+                rows.push((path.clone(), None));
+                if collapsed.contains(&path) {
+                    continue;
+                }
+                append(preview, &path, collapsed, rows);
+                rows.extend(
+                    preview
+                        .files
+                        .get(&path)
+                        .into_iter()
+                        .flatten()
+                        .map(|index| (path.clone(), Some(*index))),
+                );
+            }
+        }
+
+        let mut rows = Vec::new();
+        append(self, &[], collapsed, &mut rows);
+        rows.extend(
+            self.files
+                .get(&Vec::new())
+                .into_iter()
+                .flatten()
+                .map(|index| (Vec::new(), Some(*index))),
+        );
+        rows
+    }
 }
 
 pub(super) fn build(ctx: &egui::Context, imports: &Imports, world: &crate::world::World) -> Preview {
@@ -67,6 +121,70 @@ pub(super) fn build(ctx: &egui::Context, imports: &Imports, world: &crate::world
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_keeps_inventory_sort_and_naturally_sorts_virtual_folders_before_files() {
+        let mut preview = Preview::default();
+        let textures = vec!["i:00000000000000000001:textures".into()];
+        let objects = vec!["i:00000000000000000002:objects".into()];
+        let missing = vec!["missing:target".into()];
+        let set10 = [textures.clone(), vec!["p:Set10".into()]].concat();
+        let set2 = [textures.clone(), vec!["p:Set2".into()]].concat();
+        let nested = [set2.clone(), vec!["p:Nested".into()]].concat();
+        for (path, name) in [
+            (textures.clone(), "Textures"),
+            (objects.clone(), "Objects"),
+            (missing.clone(), "Missing"),
+            (set10.clone(), "Set10"),
+            (set2.clone(), "Set2"),
+            (nested.clone(), "Nested"),
+        ] {
+            preview.nodes.insert(
+                path,
+                Node {
+                    name: name.into(),
+                    edit: None,
+                },
+            );
+        }
+        preview.files.insert(Vec::new(), vec![99]);
+        preview.files.insert(textures.clone(), vec![3]);
+        preview.files.insert(set10.clone(), vec![10]);
+        preview.files.insert(set2.clone(), vec![2]);
+        preview.files.insert(nested.clone(), vec![1]);
+
+        let rows = preview.ordered_rows(&BTreeSet::new());
+        let ordered: Vec<_> = rows
+            .iter()
+            .map(|(path, file)| {
+                file.map_or_else(
+                    || {
+                        (1..=path.len())
+                            .map(|depth| preview.nodes[&path[..depth]].name.as_str())
+                            .collect::<Vec<_>>()
+                            .join("/")
+                    },
+                    |index| format!("file{index}"),
+                )
+            })
+            .collect();
+        assert_eq!(
+            ordered,
+            [
+                "Textures",
+                "Textures/Set2",
+                "Textures/Set2/Nested",
+                "file1",
+                "file2",
+                "Textures/Set10",
+                "file10",
+                "file3",
+                "Objects",
+                "Missing",
+                "file99"
+            ]
+        );
+    }
 
     #[test]
     fn preview_follows_real_uuid_ancestry_and_shared_routing_instead_of_the_source_tree() {

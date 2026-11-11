@@ -532,13 +532,17 @@ impl EnvironmentUi {
     }
 }
 
-/// Personal Lighting's night sky rows: the same place and latitude as
+/// Personal Lighting's night sky rows: the same place, latitude and
+/// longitude as
 /// Preferences › Graphics › Environment (world/night_sky.rs), so a photo's
 /// stars can be set from the photo window's light panel.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NightSkyPick {
     pub place: crate::world::night_sky::SkyPlace,
     pub latitude: f32,
+    pub longitude: f32,
+    /// The longitude counts (the star hour is the real time).
+    pub real_time: bool,
     /// Changed this frame.
     pub changed: bool,
 }
@@ -569,6 +573,9 @@ fn night_sky_rows(ui: &mut egui::Ui, p: &Palette, night: &mut NightSkyPick) {
     if let Some(latitude) = night.place.latitude() {
         night.latitude = latitude;
     }
+    if let Some(longitude) = night.place.longitude() {
+        night.longitude = longitude;
+    }
     // a preset's latitude is shown, greyed; Custom sets its own
     let custom = night.place == SkyPlace::Custom;
     ui.add_enabled_ui(custom, |ui| {
@@ -579,6 +586,18 @@ fn night_sky_rows(ui: &mut egui::Ui, p: &Palette, night: &mut NightSkyPick) {
             &mut night.latitude,
             -90.0..=90.0,
         )
+        .changed();
+    });
+    // the longitude counts with the real time only (Preferences, "Star hour")
+    ui.add_enabled_ui(custom && night.real_time, |ui| {
+        night.changed |= slider(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-night-sky-longitude"),
+            &mut night.longitude,
+            -180.0..=180.0,
+        )
+        .on_hover_text(aurora_i18n::tr!("ui-options-night-sky-longitude-help"))
         .changed();
     });
 }
@@ -733,16 +752,18 @@ pub fn settings_list(
                 // the first name starting with the letters typed
                 // (LLScrollListCtrl::handleUnicodeCharHere). `search_field`
                 // with ↑ ↓ left to the list, so ↓ reaches the names.
-                let search = ui.add(
-                    egui::TextEdit::singleline(&mut query)
-                        .hint_text(aurora_i18n::tr!("ui-environment-search-by-name"))
-                        .desired_width(ui.available_width())
-                        .event_filter(egui::EventFilter {
-                            horizontal_arrows: true,
-                            vertical_arrows: false,
-                            ..Default::default()
-                        }),
-                );
+                let search = {
+                    let width = ui.available_width();
+                    crate::ui::widgets::search_text_edit(ui, p, &mut query, |edit| {
+                        edit.hint_text(aurora_i18n::tr!("ui-environment-search-by-name"))
+                            .desired_width(width)
+                            .event_filter(egui::EventFilter {
+                                horizontal_arrows: true,
+                                vertical_arrows: false,
+                                ..Default::default()
+                            })
+                    })
+                };
                 if opening {
                     search.request_focus();
                 }
@@ -782,7 +803,7 @@ pub fn settings_list(
                     }
                     for c in matches {
                         let on = shown == Shown::Item(c.asset);
-                        if ui.selectable_label(on, RichText::new(&c.name).size(12.0)).clicked() {
+                        if widgets::search_list_item(ui, on, RichText::new(&c.name).size(12.0)).clicked() {
                             if !on {
                                 picked = Some(c.asset);
                             }

@@ -1521,6 +1521,7 @@ impl Renderer {
             // capture): the last readbacks stay, the timings are not
             // counted twice
             stats = RenderStats {
+                video_memory_full: self.last_stats.video_memory_full,
                 gpu_ms: self.last_stats.gpu_ms,
                 gpu_pixels: self.last_stats.gpu_pixels,
                 gpu_elements: self.last_stats.gpu_elements,
@@ -2075,7 +2076,7 @@ const WGPU_POOL_MIN_SETS: u32 = 64;
 /// line is all that says which call ended the session (#2482). The other
 /// errors already carry these lines; this is their layout, which the crash
 /// report reads (aurora-viewer crash/summary.rs).
-fn error_text(error: &wgpu::Error) -> String {
+pub(crate) fn error_text(error: &wgpu::Error) -> String {
     use std::fmt::Write as _;
     let mut text = error.to_string();
     if matches!(error, wgpu::Error::OutOfMemory { .. }) {

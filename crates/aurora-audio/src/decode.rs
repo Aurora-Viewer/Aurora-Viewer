@@ -206,6 +206,23 @@ pub(crate) const MAX_CLIP_SOURCE_SAMPLES: usize = 3 * 30 * 44_100 * 2;
 /// resampled to the engine rate.
 pub(crate) const MAX_CLIP_SECONDS: usize = 180;
 
+/// Port of LLVorbisDecodeState::finishDecode (indra/llaudio/llaudiodecodemgr.cpp):
+/// fade the clip's edges to suppress Vorbis ringing and hard start/loop steps.
+/// The reference uses 128 mono samples at 44.1 kHz (about 2.9 ms), capped at
+/// a quarter of the clip. Here both stereo channels share a frame envelope
+/// after resampling, including the fade to zero at the last frame.
+fn fade_clip_edges(samples: &mut [f32]) {
+    let frames = samples.len() / 2;
+    let fade = (128 * ENGINE_SAMPLE_RATE as usize / 44_100).min(frames / 4);
+    for i in 0..fade {
+        let gain = i as f32 / fade as f32;
+        for side in 0..2 {
+            samples[2 * i + side] *= gain;
+            samples[2 * (frames - 1 - i) + side] *= gain;
+        }
+    }
+}
+
 impl SoundClip {
     /// Decodes an in-memory file (Ogg Vorbis — the Second Life sound asset
     /// format —, WAV, MP3 or ADTS AAC). A sound longer than the Legacy
@@ -256,6 +273,7 @@ impl SoundClip {
         if out.is_empty() {
             return Err(AudioError::Decode("no audio decoded".into()));
         }
+        fade_clip_edges(&mut out);
         Ok(SoundClip { samples: out.into() })
     }
 
@@ -415,6 +433,71 @@ pub(crate) mod tests {
         assert_eq!(clip.samples[1000], clip.samples[1001]);
         let peak = clip.samples.iter().fold(0.0f32, |m, v| m.max(v.abs()));
         assert!((0.25..0.35).contains(&peak), "{peak}");
+    }
+
+    #[test]
+    fn decoded_clip_edges_do_not_step_from_silence_or_at_a_loop_seam() {
+        // A clip whose encoded waveform starts and ends away from zero:
+        // silence -> clip, clip -> silence and loop wraps must not pop.
+        for rate in [22_050, 44_100, 48_000] {
+            for channels in [1, 2] {
+                let pcm: Vec<i16> = (0..rate / 10)
+                    .flat_map(|_| [16_384, -8_192].into_iter().take(channels as usize))
+                    .collect();
+                let clip = SoundClip::decode(&wav_bytes(rate, channels, &pcm)).unwrap();
+                let frames = clip.samples.as_chunks::<2>().0;
+                assert_eq!(frames[0], [0.0, 0.0], "start at {rate} Hz, {channels} channels");
+                assert_eq!(frames[frames.len() - 1], [0.0, 0.0], "end at {rate} Hz, {channels} channels");
+                for side in 0..2 {
+                    let jump = frames.windows(2).map(|w| (w[1][side] - w[0][side]).abs()).fold(0.0f32, f32::max);
+                    assert!(jump < 0.01, "step {jump} at {rate} Hz, {channels} channels");
+                }
+                // The main part of a click keeps its level and stereo balance.
+                let middle = frames[frames.len() / 2];
+                assert_eq!(middle, if channels == 1 { [0.5, 0.5] } else { [0.5, -0.25] });
+            }
+        }
+    }
+
+    #[test]
+    fn decoded_short_clips_keep_their_middle_and_raw_pcm_keeps_its_edges() {
+        for frames in [1, 2, 3, 4, 8, 32, 128] {
+            let clip = SoundClip::decode(&wav_bytes(48_000, 1, &vec![16_384; frames])).unwrap();
+            assert_eq!(clip.samples.len(), frames * 2);
+            assert_eq!(clip.samples[frames / 2 * 2], 0.5);
+            assert!(clip.samples.iter().all(|s| s.is_finite() && (0.0..=0.5).contains(s)));
+            if frames >= 4 {
+                assert_eq!(clip.samples[0], 0.0);
+                assert_eq!(clip.samples[frames * 2 - 1], 0.0);
+            }
+        }
+        // Locally synthesized sounds already shape their envelopes.
+        let clip = SoundClip::from_pcm(&[0.5; 1_000], 1, 48_000);
+        assert!(clip.samples.iter().all(|&s| s == 0.5));
+    }
+
+    #[test]
+    fn decoded_vorbis_clip_has_no_start_stop_or_loop_step() {
+        // Own synthetic cosine, deliberately cut away from zero. Vorbis
+        // ringing leaves a large first sample, just as a hard-cut click can.
+        let clip = SoundClip::decode(include_bytes!("../tests/data/abrupt-tone.ogg")).unwrap();
+        let frames = clip.samples.as_chunks::<2>().0;
+        let first = frames[0][0];
+        let last = frames[frames.len() - 1][0];
+        assert_eq!(first, 0.0, "start impulse: {first}");
+        assert_eq!(last, 0.0, "stop impulse: {last}");
+        assert_eq!(first - last, 0.0, "loop impulse");
+        assert!(frames.iter().all(|f| f[0] == f[1]));
+        let peak = frames.iter().map(|f| f[0].abs()).fold(0.0f32, f32::max);
+        assert!((0.5..0.7).contains(&peak), "body peak: {peak}");
+        // A 440 Hz tone has a natural per-sample step below 0.04 at
+        // 48 kHz; the short fades must not introduce a sharper transition.
+        let step = frames.windows(2).map(|w| (w[1][0] - w[0][0]).abs()).fold(0.0f32, f32::max);
+        assert!(step < 0.05, "internal step: {step}");
+        // Stream packets (radio/voice paths) must not get a per-packet
+        // envelope: those sources already manage playback transitions.
+        let mut stream = DecodeStream::open(Box::new(Cursor::new(include_bytes!("../tests/data/abrupt-tone.ogg"))), None).unwrap();
+        assert!(stream.next_chunk().unwrap().unwrap().samples[0].abs() > 0.5);
     }
 
     #[test]
