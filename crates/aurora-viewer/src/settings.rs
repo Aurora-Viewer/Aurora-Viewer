@@ -1311,6 +1311,11 @@ pub struct Settings {
     /// Always fly after a teleport (the Legacy Viewer's FSFlyAfterTeleport,
     /// off); a region that blocks flying still lands the avatar.
     pub fly_after_teleport: bool,
+    /// The teleport screen offers Cancel even when the simulator says the
+    /// teleport cannot be cancelled (the Legacy Viewer's FSAlwaysShowTPCancel,
+    /// off). RLVa can still take it away; the simulator ignores the cancel of
+    /// a teleport it will not cancel.
+    pub always_show_tp_cancel: bool,
     /// The crouch key stays down until pressed again (FSCrouchToggle, off).
     pub crouch_toggle: bool,
     /// Quickjump: jump and land without waiting for the pre-jump and landing
@@ -2278,6 +2283,7 @@ impl Default for Settings {
             automatic_fly: true,
             automatic_land: true,
             fly_after_teleport: false,
+            always_show_tp_cancel: false,
             crouch_toggle: false,
             quickjump: false,
             fly_override_warned: false,
