@@ -115,6 +115,7 @@ impl Harness {
             settings: &mut radar_settings,
             voice: &voice,
             draw_distance: 64.0,
+            second_life: true,
             now: 0.0,
             pics: &pics,
         };
@@ -285,6 +286,66 @@ fn a_double_click_selects_one_word_of_a_line() {
     h.settle();
     let (start, end) = h.st.selection.1.bounds().expect("a word is selected");
     assert_eq!((start.seq, start.at, end.at), (end.seq, 6, 10), "\"from\" of \"hello from Jane\"");
+}
+
+#[test]
+fn clearing_the_message_filter_keeps_the_selected_text_and_its_message_in_view() {
+    for style in [ChatStyle::Aurora, ChatStyle::Legacy] {
+        for method in 0..3 {
+            let mut h = Harness::new(style);
+            for i in 0..150 {
+                let text = if i == 75 {
+                    "Needle".into()
+                } else {
+                    format!("Other message {i:03}")
+                };
+                h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, &text));
+            }
+            h.st.selected = Some(JANE);
+            h.st.searches.entry(Some(JANE)).or_default().filter = Some("Needle".into());
+            let texts = h.settle();
+            let at = last(&texts, "Needle").center();
+            for _ in 0..2 {
+                h.click(at);
+            }
+            let bounds = h.st.selection.1.bounds().expect("the message's word is selected");
+            let field = super::super::find::filter_id(Some(JANE));
+            let at = h.rect(if method == 0 { field.with("clear") } else { field }).center();
+            h.click(at);
+            if method != 0 {
+                let modifiers = egui::Modifiers {
+                    ctrl: true,
+                    command: true,
+                    ..Default::default()
+                };
+                h.frame(vec![
+                    egui::Event::Key {
+                        key: egui::Key::A,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                    },
+                    egui::Event::Key {
+                        key: if method == 1 { egui::Key::Delete } else { egui::Key::Backspace },
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]);
+            }
+            assert_eq!(h.st.searches[&Some(JANE)].filter.as_deref(), Some(""));
+            for _ in 0..3 {
+                h.settle();
+            }
+            assert_eq!(h.st.selection.1.bounds(), Some(bounds), "{style:?}, method={method}");
+            let texts = h.settle();
+            let rect = last(&texts, "Needle");
+            assert!(rect.top() > 0.0 && rect.bottom() < 900.0, "{style:?}, method={method}: {rect:?}");
+            assert!(h.frames.ctx.memory(|m| m.has_focus(field)));
+        }
+    }
 }
 
 /// A drag on the head (not the title bar) leaves the window in place.
@@ -2017,6 +2078,7 @@ fn the_contacts_tab_shows_peoples_friends() {
         settings: &mut radar_settings,
         voice: &voice,
         draw_distance: 64.0,
+        second_life: true,
         now: 0.0,
         pics: &pics,
     };

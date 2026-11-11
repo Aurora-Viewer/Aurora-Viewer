@@ -196,34 +196,6 @@ fn obb(p: &Painter3d, pos: Vec3, rot: Quat, half: Vec3, c: Color32) {
     }
 }
 
-thread_local! {
-    static PREVIEWS: std::cell::RefCell<HashMap<u64, Arc<Vec<(Vec3, Vec3)>>>> = std::cell::RefCell::new(HashMap::new());
-}
-
-/// Outline segments of a shape for the Create palette icons.
-pub fn preview_edges(params: &aurora_prim::VolumeParams) -> Arc<Vec<(Vec3, Vec3)>> {
-    let key = params.cache_key();
-    PREVIEWS.with(|m| {
-        m.borrow_mut()
-            .entry(key)
-            .or_insert_with(|| {
-                let t = topology(params);
-                // borders, plus the outline seen from the icon's viewpoint
-                let view = Vec3::new(0.6, -0.9, 0.7) * 10.0;
-                let facing: Vec<bool> = t.tris.iter().map(|(v, n)| n.dot(view - *v) > 0.0).collect();
-                let mut out: Vec<(Vec3, Vec3)> = t.border.iter().map(|e| (e.a, e.b)).collect();
-                out.extend(
-                    t.inner
-                        .iter()
-                        .filter(|e| facing[e.tris.0 as usize] != facing[e.tris.1 as usize])
-                        .map(|e| (e.a, e.b)),
-                );
-                Arc::new(out)
-            })
-            .clone()
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
