@@ -164,7 +164,7 @@ fn picture(
             let kind = inv.folders.get(&id).map_or(-1, |f| f.info.type_default);
             (
                 tree::folder_icon(kind, false),
-                folder_colors::tint(prefs, id).unwrap_or(p.muted_dim),
+                folder_colors::tint(prefs, inv, id).unwrap_or(p.muted_dim),
             )
         },
         |it| inventory_item_icon(inv, it, p),

@@ -496,7 +496,7 @@ fn picker_folder(
         .show_header(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                let tint = super::folder_colors::tint(prefs, id);
+                let tint = super::folder_colors::tint(prefs, inv, id);
                 tree::icon(ui, icons, folder_icon(folder.info.type_default, folder_open), p, tint);
                 ui.label(RichText::new(name).color(p.ink));
             });

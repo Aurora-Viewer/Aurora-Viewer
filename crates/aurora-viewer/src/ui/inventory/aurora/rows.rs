@@ -489,7 +489,7 @@ pub(in super::super) fn folder(
         Pos2::new(caret_center.x + CARET / 2.0 + 4.0 + ICON / 2.0, rect.center().y)
     };
     let name_left = icon_center.x + ICON / 2.0 + 8.0;
-    let tint = folder_colors::tint(prefs, id).unwrap_or(if selected { p.violet_pale } else { p.muted });
+    let tint = folder_colors::tint(prefs, inv, id).unwrap_or(if selected { p.violet_pale } else { p.muted });
     let icon = folder_icon(folder.info.type_default, *open && !frame.explorer);
     let name_rect = Rect::from_x_y_ranges(name_left..=cols.name_end, rect.y_range().shrink(2.0));
     let mut field = ui.new_child(egui::UiBuilder::new().max_rect(name_rect).id_salt(("inventory_rename_row", id)));

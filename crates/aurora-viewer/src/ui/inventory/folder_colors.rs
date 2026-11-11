@@ -28,12 +28,60 @@ const SWATCH: f32 = 22.0;
 const PER_ROW: usize = 6;
 
 /// The tint of a folder's icon, when the user colored it (and the colors are
-/// turned on).
-pub fn tint(prefs: &InventoryPreferences, id: Uuid) -> Option<Color32> {
+/// turned on). With "Subfolder takes color from parent folder", a folder
+/// without a color of its own takes the one of its nearest colored parent.
+pub fn tint(prefs: &InventoryPreferences, inv: &Inventory, id: Uuid) -> Option<Color32> {
     if !prefs.folder_colors_enabled {
         return None;
     }
-    prefs.folder_colors.get(&id).map(|&[r, g, b]| Color32::from_rgb(r, g, b))
+    color_of(prefs, inv, id).map(|[r, g, b]| Color32::from_rgb(r, g, b))
+}
+
+/// A folder's own color, or (inheriting) its nearest colored parent's.
+fn color_of(prefs: &InventoryPreferences, inv: &Inventory, id: Uuid) -> Option<[u8; 3]> {
+    if let Some(&color) = prefs.folder_colors.get(&id) {
+        return Some(color);
+    }
+    if !prefs.folder_colors_inherit {
+        return None;
+    }
+    let mut at = inv.folders.get(&id)?.info.parent;
+    // bounded: a broken parent chain cannot loop
+    for _ in 0..64 {
+        if let Some(&color) = prefs.folder_colors.get(&at) {
+            return Some(color);
+        }
+        at = inv.folders.get(&at)?.info.parent;
+    }
+    None
+}
+
+/// The folders a color goes to: every folder of the inventory ("Apply to
+/// ALL folders", the Library's excluded), or the chosen ones with all their
+/// subfolders ("Apply to all subfolders"), or the chosen ones.
+fn targets(inv: &Inventory, ids: &[Uuid], subfolders: bool, all: bool) -> Vec<Uuid> {
+    if all {
+        let mut every: Vec<Uuid> = inv.folders.iter().filter(|(_, f)| !f.library).map(|(id, _)| *id).collect();
+        every.sort_unstable();
+        return every;
+    }
+    if !subfolders {
+        return ids.to_vec();
+    }
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut stack: Vec<Uuid> = ids.to_vec();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        out.push(id);
+        if let Some(folder) = inv.folders.get(&id) {
+            stack.extend(folder.children.iter().copied());
+        }
+    }
+    out.sort_unstable();
+    out
 }
 
 /// Gives every folder of `ids` this color, or its default one with `None`.
@@ -67,6 +115,13 @@ pub(super) struct Picker {
     /// its id, so egui reopens it at its old depth, under an inventory
     /// clicked since (the expanded window covers it).
     raise: bool,
+    /// "Apply to all subfolders": a color also goes to every folder inside.
+    subfolders: bool,
+    /// "Apply to ALL folders": a color goes to every folder, once confirmed.
+    all: bool,
+    /// A color (or `None`, the default) waiting for "Apply to ALL folders"
+    /// to be confirmed.
+    confirm: Option<Option<[u8; 3]>>,
 }
 
 impl Picker {
@@ -76,6 +131,19 @@ impl Picker {
             ids,
             custom: [r, g, b, 255],
             raise: true,
+            subfolders: false,
+            all: false,
+            confirm: None,
+        }
+    }
+
+    /// A color chosen in the palette (`None`: "Restore default"), given to
+    /// the folders the ticks say; for all folders, once confirmed.
+    fn apply(&mut self, inv: &Inventory, prefs: &mut InventoryPreferences, color: Option<[u8; 3]>) {
+        if self.all {
+            self.confirm = Some(color);
+        } else {
+            set(prefs, &targets(inv, &self.ids, self.subfolders, false), color);
         }
     }
 
@@ -115,6 +183,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut I
     };
     let window_id = format!("inventory_folder_color_{ui_id}");
     let size = Vec2::new(220.0, 150.0);
+    let every = inv.folders.values().filter(|f| !f.library).count();
     let mut open = true;
     Floater::new(
         &window_id,
@@ -131,7 +200,15 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut I
             Some(name) => ui.label(RichText::new(name).strong().color(p.ink)),
             None => ui.label(RichText::new(aurora_i18n::tr!("inventory-folder-color-none")).color(p.muted)),
         };
-        ui.add_enabled_ui(target.is_some(), |ui| palette(ui, p, ui_id, picker, prefs, current));
+        // "Apply to ALL folders" needs no selection
+        ui.add_enabled_ui(target.is_some() || picker.all, |ui| {
+            palette(ui, p, ui_id, inv, picker, prefs, current)
+        });
+        ui.add_space(2.0);
+        ui.add_enabled_ui(!picker.all, |ui| {
+            crate::ui::widgets::checkbox(ui, p, &mut picker.subfolders, aurora_i18n::tr!("inventory-folder-color-subfolders"));
+        });
+        crate::ui::widgets::checkbox(ui, p, &mut picker.all, aurora_i18n::tr!("inventory-folder-color-all"));
         ui.label(
             RichText::new(aurora_i18n::tr!("inventory-folder-color-private"))
                 .size(11.0)
@@ -141,18 +218,27 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut I
     if std::mem::take(&mut picker.raise) {
         crate::ui::widgets::bring_floater_front(ctx, &window_id);
     }
+    confirm_all(ctx, p, inv, picker, prefs, every, &window_id);
     if !open || !prefs.folder_colors_enabled {
         st.folder_color = None;
     }
 }
 
 /// The swatches, the custom color and "Restore default" of the picker's folders.
-fn palette(ui: &mut egui::Ui, p: &Palette, ui_id: Uuid, picker: &mut Picker, prefs: &mut InventoryPreferences, current: Option<[u8; 3]>) {
+fn palette(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    ui_id: Uuid,
+    inv: &Inventory,
+    picker: &mut Picker,
+    prefs: &mut InventoryPreferences,
+    current: Option<[u8; 3]>,
+) {
     for row in PRESETS.chunks(PER_ROW) {
         ui.horizontal(|ui| {
             for &color in row {
                 if swatch(ui, p, color, current == Some(color)).clicked() {
-                    set(prefs, &picker.ids, Some(color));
+                    picker.apply(inv, prefs, Some(color));
                     let [r, g, b] = color;
                     picker.custom = [r, g, b, 255];
                 }
@@ -163,16 +249,71 @@ fn palette(ui: &mut egui::Ui, p: &Palette, ui_id: Uuid, picker: &mut Picker, pre
     ui.horizontal(|ui| {
         if color_button(ui, p, ("inventory_folder_color_custom", ui_id), &mut picker.custom, false).changed() {
             let [r, g, b, _] = picker.custom;
-            set(prefs, &picker.ids, Some([r, g, b]));
+            picker.apply(inv, prefs, Some([r, g, b]));
         }
         ui.label(RichText::new(aurora_i18n::tr!("inventory-folder-color-custom")).color(p.ink));
     });
-    let colored = picker.ids.iter().any(|id| prefs.folder_colors.contains_key(id));
+    let targets = targets(inv, &picker.ids, picker.subfolders, picker.all);
+    let colored = targets.iter().any(|id| prefs.folder_colors.contains_key(id));
     if ui
         .add_enabled(colored, egui::Button::new(aurora_i18n::tr!("inventory-folder-color-restore")))
         .clicked()
     {
-        set(prefs, &picker.ids, None);
+        picker.apply(inv, prefs, None);
+    }
+}
+
+/// "Apply to ALL folders": a color (or the default) waits for this answer,
+/// as the Legacy Viewer's confirmations do: Enter applies, Escape cancels.
+fn confirm_all(
+    ctx: &egui::Context,
+    p: &Palette,
+    inv: &Inventory,
+    picker: &mut Picker,
+    prefs: &mut InventoryPreferences,
+    every: usize,
+    window_id: &str,
+) {
+    let Some(color) = picker.confirm else {
+        return;
+    };
+    let mut answer = None;
+    crate::ui::widgets::Modal::new(egui::Id::unique((window_id, "all"))).show(ctx, |ui| {
+        ui.set_width(340.0);
+        ui.label(
+            RichText::new(aurora_i18n::tr!("inventory-folder-color-all-title"))
+                .strong()
+                .color(p.ink),
+        );
+        ui.add_space(6.0);
+        let question = match color {
+            Some(_) => aurora_i18n::tr!("inventory-folder-color-all-question", count = every),
+            None => aurora_i18n::tr!("inventory-folder-color-all-restore-question", count = every),
+        };
+        ui.label(RichText::new(question).color(p.ink));
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let label = aurora_i18n::tr!("inventory-folder-color-all-apply");
+                if crate::ui::widgets::default_button_sized(ui, p, label, Vec2::new(120.0, 28.0)).clicked() {
+                    answer = Some(true);
+                }
+                if crate::ui::widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), Vec2::new(96.0, 28.0)).clicked() {
+                    answer = Some(false);
+                }
+            });
+        });
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            answer = Some(false);
+        }
+    });
+    match answer {
+        Some(true) => {
+            set(prefs, &targets(inv, &[], false, true), color);
+            picker.confirm = None;
+        }
+        Some(false) => picker.confirm = None,
+        None => {}
     }
 }
 
@@ -283,11 +424,80 @@ mod tests {
     fn only_colored_folders_change_and_turning_colors_off_restores_every_icon() {
         let mut prefs = InventoryPreferences::default();
         let id = Uuid::from_u128(1);
+        let inv = Inventory::default();
         set(&mut prefs, &[id], Some([10, 20, 30]));
-        assert_eq!(tint(&prefs, id), Some(Color32::from_rgb(10, 20, 30)));
-        assert_eq!(tint(&prefs, Uuid::from_u128(2)), None);
+        assert_eq!(tint(&prefs, &inv, id), Some(Color32::from_rgb(10, 20, 30)));
+        assert_eq!(tint(&prefs, &inv, Uuid::from_u128(2)), None);
         prefs.folder_colors_enabled = false;
-        assert_eq!(tint(&prefs, id), None);
+        assert_eq!(tint(&prefs, &inv, id), None);
+    }
+
+    /// A small tree: root 1 > a 2 > b 3 > c 4, and root > d 5; library 9.
+    fn tree() -> Inventory {
+        let mut inv = Inventory::default();
+        for (id, parent, library) in [
+            (1u128, 0u128, false),
+            (2, 1, false),
+            (3, 2, false),
+            (4, 3, false),
+            (5, 1, false),
+            (9, 0, true),
+        ] {
+            let (id, parent) = (Uuid::from_u128(id), Uuid::from_u128(parent));
+            inv.folders.insert(
+                id,
+                crate::world::inventory::Folder {
+                    info: aurora_net::inventory::InvFolder {
+                        id,
+                        parent,
+                        ..Default::default()
+                    },
+                    children: Vec::new(),
+                    items: Vec::new(),
+                    state: crate::world::inventory::FetchState::Fetched,
+                    library,
+                },
+            );
+            if let Some(parent) = inv.folders.get_mut(&parent) {
+                parent.children.push(id);
+            }
+        }
+        inv
+    }
+
+    #[test]
+    fn subfolders_and_all_folders_take_the_color() {
+        let inv = tree();
+        let u = Uuid::from_u128;
+        let mut picker = Picker::new(&InventoryPreferences::default(), vec![u(2)]);
+        let mut prefs = InventoryPreferences::default();
+        picker.subfolders = true;
+        picker.apply(&inv, &mut prefs, Some(PRESETS[1]));
+        assert_eq!(prefs.folder_colors.keys().copied().collect::<Vec<_>>(), vec![u(2), u(3), u(4)]);
+        // all folders: nothing until confirmed, then every folder but the Library's
+        picker.all = true;
+        picker.apply(&inv, &mut prefs, Some(PRESETS[2]));
+        assert_eq!(picker.confirm, Some(Some(PRESETS[2])));
+        assert_eq!(prefs.folder_colors.get(&u(1)), None);
+        set(&mut prefs, &targets(&inv, &[], false, true), Some(PRESETS[2]));
+        assert_eq!(prefs.folder_colors.len(), 5);
+        assert_eq!(prefs.folder_colors.get(&u(9)), None);
+    }
+
+    #[test]
+    fn subfolders_take_the_parents_color_only_with_the_option() {
+        let inv = tree();
+        let u = Uuid::from_u128;
+        let mut prefs = InventoryPreferences::default();
+        set(&mut prefs, &[u(2)], Some([1, 2, 3]));
+        set(&mut prefs, &[u(3)], Some([4, 5, 6]));
+        assert_eq!(tint(&prefs, &inv, u(4)), None);
+        prefs.folder_colors_inherit = true;
+        // the nearest colored parent, never a sibling's
+        assert_eq!(tint(&prefs, &inv, u(4)), Some(Color32::from_rgb(4, 5, 6)));
+        assert_eq!(tint(&prefs, &inv, u(5)), None);
+        set(&mut prefs, &[u(3)], None);
+        assert_eq!(tint(&prefs, &inv, u(4)), Some(Color32::from_rgb(1, 2, 3)));
     }
 
     /// The palette keeps its size, its privacy note inside, with a folder
