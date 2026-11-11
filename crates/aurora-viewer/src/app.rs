@@ -444,6 +444,8 @@ pub struct App {
     /// The avatar position already carried into the VR anchor.
     vr_avatar_position: Option<Vec3>,
     vr_trigger_down: bool,
+    /// The pointing hand's grip held (sit on what the beam is on, or stand up).
+    vr_grip_down: bool,
     /// The right thumbstick held in, for recentring.
     vr_recenter: crate::vr::Hold,
     /// The object the VR pointer is on, for the vibration as it arrives.
@@ -1606,6 +1608,7 @@ impl App {
             vr_world_since: None,
             vr_avatar_position: None,
             vr_trigger_down: false,
+            vr_grip_down: false,
             vr_recenter: Default::default(),
             vr_hover: None,
             vr_vignette: 0.0,
@@ -8410,6 +8413,7 @@ impl App {
         let controller = input.hand(side);
         if !active || !settings.controller_pointer || !controller.active {
             self.vr_trigger_down = false;
+            self.vr_grip_down = false;
             // (a press held on the panel is let go)
             self.vr_panel_pointer((Vec3::ZERO, Vec3::Z), (false, true), 0.0);
             self.vr_look = None;
@@ -8425,6 +8429,15 @@ impl App {
         let far = settings.pointer_distance;
         let direction = (controller.orientation * Vec3::NEG_Z).normalize_or(Vec3::Y);
         let ray = (controller.position, direction);
+        // the grip, squeezed: stand up while sitting (the menu's Stand Up),
+        // else sit on what the beam is on, below
+        let grip_down = crate::vr::trigger_held(self.vr_grip_down, controller.grip);
+        let grip = grip_down && !self.vr_grip_down;
+        self.vr_grip_down = grip_down;
+        let sitting = self.world.agent.is_sitting();
+        if grip && sitting {
+            self.send(NetCommand::OneShotControl(control::STAND_UP));
+        }
         // the panel, when the beam meets it, takes the trigger (a left
         // click) and the right thumbstick (scrolling) instead of the world
         let down = crate::vr::trigger_held(self.vr_trigger_down, controller.trigger);
@@ -8461,6 +8474,12 @@ impl App {
         let actionable = target
             .as_ref()
             .is_some_and(|(t, _, _)| t.action != crate::interaction::Action::Disabled);
+        if grip && !sitting && let Some(point) = point {
+            self.vr_sit(point, ray);
+            if settings.haptics {
+                renderer.vr_haptic(side, 0.5, 0.04);
+            }
+        }
         // the hover tip of what the beam is on, as a label beside it
         self.vr_look = point
             .filter(|_| settings.tooltips)
@@ -8500,6 +8519,25 @@ impl App {
                 renderer.vr_haptic(side, 0.5, 0.04);
             }
             self.activate_object_action(target, index, point, Some(ray));
+        }
+    }
+
+    /// The grip's sit: on the object the beam is on, at the point it meets
+    /// (the menu's Sit Here, whatever the object's click action), or on the
+    /// ground there (Sit Here on land). RLVa's sit restrictions apply to the
+    /// request as to the menu's.
+    fn vr_sit(&mut self, point: Vec3, ray: (Vec3, Vec3)) {
+        let object = self
+            .scene
+            .left_interaction_at_ray(&self.world, point, ray, true)
+            .and_then(|idx| self.world.objects.get(idx).map(|o| (idx, o.full_id, o.key.region)));
+        match object {
+            Some((idx, target, handle)) => {
+                if let Some(offset) = object_actions::object_sit_offset(&self.world, &self.camera, idx, point, Some(ray)) {
+                    self.send(NetCommand::RequestSit { handle, target, offset });
+                }
+            }
+            None => self.sit_at(point),
         }
     }
 
