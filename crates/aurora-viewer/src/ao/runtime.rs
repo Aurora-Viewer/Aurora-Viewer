@@ -114,6 +114,17 @@ impl Default for Runtime {
     }
 }
 
+/// Folds this frame's animation changes into the ones held back while
+/// `World::awaiting_own_animations`: the last change of each animation wins,
+/// stops before starts as `Runtime::update_with_easing` orders them.
+pub fn hold_changes(held: &mut Vec<(Uuid, bool)>, changes: Vec<(Uuid, bool)>) {
+    for (id, start) in changes {
+        held.retain(|(other, _)| *other != id);
+        held.push((id, start));
+    }
+    held.sort_by_key(|(_, start)| *start);
+}
+
 impl Runtime {
     pub fn with_choices(choices: HashMap<Uuid, Uuid>) -> Self {
         Self {
@@ -403,9 +414,7 @@ impl Runtime {
             self.suppressed.clear();
             self.restoring = None;
         }
-        self.restoring = self
-            .restoring
-            .filter(|(state, _, _)| !frame.on_object || (*state == State::Sitting && !frame.seat_animations));
+        self.restoring = self.restoring.filter(|_| !frame.on_object);
         let mut primary = frame
             .raw
             .iter()
@@ -435,7 +444,7 @@ impl Runtime {
             // that selected the AO. A new stock signal still takes precedence.
             primary = self
                 .raw_hold
-                .filter(|(state, signal)| self.suppressed.contains_key(&signal.id) && (!frame.on_object || *state == State::Sitting))
+                .filter(|(_, signal)| self.suppressed.contains_key(&signal.id) && !frame.on_object)
                 .or_else(|| {
                     self.restoring
                         .filter(|(_, _, sent)| now.saturating_duration_since(*sent) < Duration::from_secs(2))
@@ -737,12 +746,19 @@ impl Runtime {
         // rather than depending on upload priorities. Ordinary movement
         // defaults stay active region-side, matching the Legacy Viewer. Keep
         // jump/landing control motions intact (requestStopMotion finish flags).
+        // The stock sit stays to the simulator too, as with the Legacy AO:
+        // LLVOAvatar::startMotion (indra/newview/llvoavatar.cpp) only starts
+        // the override (AOEngine::override, aoengine.cpp), and the
+        // simulator's stop of the stock sit, at a stand-up or a teleport,
+        // ends it. Stopped by us, its echo looked like the sit ending, and the
+        // AO had to hold the sit itself, which a teleport left stuck (#2700).
         let steady = |state| {
             !matches!(
                 state,
                 State::Jumping
                     | State::PreJumping
                     | State::Typing
+                    | State::Sitting
                     | State::GroundSit
                     | State::Landing
                     | State::SoftLanding
@@ -779,7 +795,7 @@ impl Runtime {
                     commands.push((signal.id, true));
                     self.restoring = None;
                 }
-            } else if self.suppressed.contains_key(&signal.id) && !(state == State::Sitting && frame.on_object && frame.seat_animations) {
+            } else if self.suppressed.contains_key(&signal.id) {
                 commands.push((signal.id, true));
                 self.restoring = Some((state, signal, now));
             }

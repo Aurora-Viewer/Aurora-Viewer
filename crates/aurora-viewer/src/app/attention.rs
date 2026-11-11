@@ -242,6 +242,10 @@ impl App {
         if self.busy_pause.paused() {
             want = aurora_i18n::tr!("busy-pause-window-title", title = want.as_str());
         }
+        // (the render targets waiting for video memory)
+        if self.last_render.video_memory_full {
+            want = aurora_i18n::tr!("video-memory-full-window-title", title = want.as_str());
+        }
         if *shown != want {
             g.window.set_title(&want);
             *shown = want;

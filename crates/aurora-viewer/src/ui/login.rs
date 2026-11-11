@@ -62,6 +62,14 @@ pub struct LoginForm {
     /// apart from the Terms of Service (LLLoginInstance::handleTOSResponse).
     pub critical_message: Option<String>,
     pub read_critical: bool,
+    /// The other server the login server sends the login on to
+    /// (`NetEvent::LoginFailed::next_server`), until the next attempt;
+    /// `accept_next_server` is its own checkbox.
+    pub next_server: Option<String>,
+    pub accept_next_server: bool,
+    /// The other servers agreed to for this account and grid, named in
+    /// every attempt (`LoginRequest::accepted_next_servers`).
+    pub accepted_next_servers: Vec<String>,
     pub error: Option<String>,
     /// The session ended with its region's restart: the login button reads
     /// "Reconnect" (region_restart.rs).
@@ -101,6 +109,15 @@ pub struct LoginForm {
     /// The camera's limits went back on with the settings' version 33
     /// (`Settings::camera_limits_restored`).
     pub camera_limits_restored: bool,
+}
+
+impl LoginForm {
+    /// Another account or grid: no other login server is agreed to any more.
+    pub fn forget_next_server(&mut self) {
+        self.next_server = None;
+        self.accept_next_server = false;
+        self.accepted_next_servers.clear();
+    }
 }
 
 #[derive(Default)]
@@ -948,6 +965,28 @@ pub fn show(
                         action = LoginAction::Login;
                     }
                 }
+                // the login would go on to another server: the user decides
+                if let Some(server) = form.next_server.clone() {
+                    ui.add_space(8.0);
+                    widgets::divider(ui, p);
+                    ui.label(RichText::new(aurora_i18n::tr!("ui-login-next-server")).strong());
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!("ui-login-next-server-body", server = server.as_str()))
+                            .size(12.0)
+                            .color(p.muted),
+                    );
+                    if ui
+                        .add_enabled(
+                            form.block_reason.is_none() && !form.busy,
+                            egui::Button::new(aurora_i18n::tr!("ui-login-next-server-accept")),
+                        )
+                        .clicked()
+                    {
+                        form.accepted_next_servers.push(server);
+                        form.next_server = None;
+                        action = LoginAction::Login;
+                    }
+                }
                 if let Some((msg, frac)) = progress {
                     ui.add_space(10.0);
                     widgets::progress(ui, p, "login_progress", frac, ui.available_width(), "", None);
@@ -1223,6 +1262,81 @@ mod tests {
         assert!(form.read_critical);
         assert!(!form.agree_tos);
         assert!(form.critical_message.is_none());
+    }
+
+    /// Another login server is a step of its own: agreeing names that
+    /// server in the next attempt, and nothing else.
+    #[test]
+    fn another_login_server_is_agreed_to_in_its_own_step() {
+        fn position(shape: &egui::Shape, label: &str) -> Option<egui::Pos2> {
+            match shape {
+                egui::Shape::Text(t) if t.galley.text() == label => Some(t.pos + egui::vec2(3.0, 5.0)),
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| position(s, label)),
+                _ => None,
+            }
+        }
+        let ctx = egui::Context::default();
+        let mut settings = Settings {
+            username: "Demo Resident".into(),
+            ..Default::default()
+        };
+        let mut form = LoginForm {
+            password: "synthetic".into(),
+            next_server: Some("login.other-grid.example".into()),
+            ..Default::default()
+        };
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let info = LoginInfo::preview_release("0.3.0");
+        let mut draw = |events, form: &mut LoginForm| {
+            let mut action = LoginAction::None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    action = show(ui, &p, &icons, None, &mut settings, form, &info, None);
+                },
+            );
+            output.textures_delta.clear();
+            (action, output)
+        };
+        draw(vec![], &mut form);
+        let (_, output) = draw(vec![], &mut form);
+        let body = aurora_i18n::tr!("ui-login-next-server-body", server = "login.other-grid.example");
+        assert!(
+            output.shapes.iter().any(|s| position(&s.shape, &body).is_some()),
+            "the server is named"
+        );
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|s| position(&s.shape, aurora_i18n::tr!("ui-login-next-server-accept")))
+            .expect("the other server's button");
+        let mut last = LoginAction::None;
+        for pressed in [true, false] {
+            last = draw(
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ],
+                &mut form,
+            )
+            .0;
+        }
+        assert!(matches!(last, LoginAction::Login));
+        assert_eq!(form.accepted_next_servers, ["login.other-grid.example"]);
+        assert!(form.next_server.is_none());
+        assert!(!form.agree_tos && !form.read_critical);
+        form.forget_next_server();
+        assert!(form.accepted_next_servers.is_empty());
     }
 
     /// At 1280 × 720 the news, as tall as the login card, stood over the
