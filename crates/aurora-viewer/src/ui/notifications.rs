@@ -87,6 +87,8 @@ fn toast_seconds(n: &Notification, message_seconds: f64) -> f64 {
     match n.data {
         Data::Presence { .. } => TOAST_TIP,
         Data::Message { .. } => message_seconds,
+        // ShowMyComplexityChanges (the notice's expiry)
+        Data::Complexity { seconds } => f64::from(seconds),
         _ if n.interactive() => TOAST_OFFER,
         _ => TOAST_INFO,
     }
@@ -282,8 +284,9 @@ pub(super) fn person_card(
                         ui.label(RichText::new(time).size(10.5).color(p.muted_dim));
                     });
                 });
-                if !n.body.is_empty() {
-                    let text = message_excerpt(world, &n.body);
+                let shown = world.notification_body(n);
+                if !shown.is_empty() {
+                    let text = message_excerpt(world, &shown);
                     name_hover = name_hover.or(text::person_body(ui, p, env.emoji, &text, &n.name_links));
                 }
             });
@@ -449,18 +452,19 @@ pub(super) fn card(
                     ui.label(RichText::new(time).size(10.5).color(p.muted_dim));
                 });
             });
-            if !n.body.is_empty() {
+            let shown = world.notification_body(n);
+            if !shown.is_empty() {
                 ui.add_space(2.0);
                 // selectable: Firestorm shows the body in a read-only
                 // LLTextEditor (lltoastnotifypanel.cpp, "text_editor_box")
                 if script {
                     egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                        super::chat::text_with_links(ui, p, world, &n.body, &n.name_links, 12.0, p.ink);
+                        super::chat::text_with_links(ui, p, world, &shown, &n.name_links, 12.0, p.ink);
                     });
                 } else {
                     ui.horizontal(|ui| {
                         ui.add_space(indent);
-                        super::chat::text_with_links(ui, p, world, &n.body, &n.name_links, 12.0, p.muted);
+                        super::chat::text_with_links(ui, p, world, &shown, &n.name_links, 12.0, p.muted);
                     });
                 }
             }
@@ -468,7 +472,12 @@ pub(super) fn card(
             match &n.data {
                 // drawn by `person_card`; the restart's live card by
                 // `region_restart::bell_card`, its text alone here
-                Data::None | Data::Presence { .. } | Data::Message { .. } | Data::RegionRestart | Data::RegionMessage { .. } => {}
+                Data::None
+                | Data::Presence { .. }
+                | Data::Message { .. }
+                | Data::RegionRestart
+                | Data::RegionMessage { .. }
+                | Data::Complexity { .. } => {}
                 // the attachment as in the group's Notices tab, saved from
                 // here (LLToastGroupNotifyPanel::onClickAttachment)
                 Data::GroupNotice { attachment: Some(a), .. } => {

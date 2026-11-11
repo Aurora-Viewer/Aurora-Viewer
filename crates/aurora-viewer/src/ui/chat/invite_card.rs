@@ -41,21 +41,29 @@ struct Texts {
 fn texts(env: &LineEnv, line: &ChatLine, v: &Invite) -> Texts {
     let name = env.world.person_name(&v.from).unwrap_or_else(|| line.from.clone());
     match &v.kind {
-        InviteKind::Offer { place, .. } => Texts {
-            title: aurora_i18n::tr!("world-mod-offers-you-a-teleport", from = name),
-            place: place.as_ref().and_then(|p| Some(crate::slurl::make(p.region.as_deref()?, p.pos))),
-            message: without_own_place(&v.message, place.as_ref()).to_owned(),
-            question: rating_note(v.rating),
-            buttons: (
-                if matches!(v.rating, Rating::Exceeded(_)) {
-                    aurora_i18n::tr!("ui-chat-invite-change-and-continue")
+        InviteKind::Offer { place, .. } => {
+            let hidden = env.world.rlva.has("showloc");
+            let (_, url) = crate::world::teleport_invites::destination_presentation(hidden, place.as_ref());
+            Texts {
+                title: aurora_i18n::tr!("world-mod-offers-you-a-teleport", from = name),
+                place: url,
+                message: if hidden {
+                    aurora_i18n::tr!("rlva-hidden-generic").into()
                 } else {
-                    aurora_i18n::tr!("common-teleport-3")
-                }
-                .into(),
-                aurora_i18n::tr!("ui-notifications-decline").into(),
-            ),
-        },
+                    without_own_place(&v.message, place.as_ref()).to_owned()
+                },
+                question: rating_note(v.rating),
+                buttons: (
+                    if matches!(v.rating, Rating::Exceeded(_)) {
+                        aurora_i18n::tr!("ui-chat-invite-change-and-continue")
+                    } else {
+                        aurora_i18n::tr!("common-teleport-3")
+                    }
+                    .into(),
+                    aurora_i18n::tr!("ui-notifications-decline").into(),
+                ),
+            }
+        }
         InviteKind::Request => Texts {
             title: aurora_i18n::tr!("world-teleport-invites-requests-a-teleport", from = name),
             place: None,
@@ -69,8 +77,9 @@ fn texts(env: &LineEnv, line: &ChatLine, v: &Invite) -> Texts {
 /// The sender's message without its last line when that line is the SLURL
 /// of the invitation's own place (send_lures adds where the sender stands):
 /// the card already shows the place at its head. A SLURL of another place
-/// stays; the transcript keeps the whole message. The lure destination can
-/// differ from send_lures' SLURL by a few metres (#899), beyond rounding.
+/// stays; the transcript keeps the whole message (censored on arrival under
+/// @showloc). The lure destination can differ from send_lures' SLURL by a
+/// few metres (#899), beyond rounding.
 fn without_own_place<'a>(message: &'a str, place: Option<&Place>) -> &'a str {
     let Some((place, region)) = place.and_then(|p| Some((p, p.region.as_deref()?))) else {
         return message;

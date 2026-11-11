@@ -6,7 +6,9 @@
 //! opens the list once the burst has folded in, `history` shows its
 //! History tab after answering a few cards. `group-notice` (and
 //! `legacy-group-notice`) sends two group notices, one with its group's
-//! insignia and an attachment; `group-notice-saved` saves that attachment.
+//! insignia and an attachment; `group-notice-saved` saves that attachment,
+//! `group-notice-chat` closes both cards and shows the Aurora Builders
+//! chat, where its notice left a line.
 //! `purchase` delivers a Marketplace purchase: the grid's notice in the
 //! nearby chat; `purchase-open` then clicks its Received Items link.
 //! `fees` sends a group invitation with a membership fee and a question
@@ -114,6 +116,10 @@ fn group_notice(agent: Uuid, group: Uuid, from: (Uuid, &str), subject: &str, bod
 /// Frame at which `group-notice-saved` saves the attachment.
 pub const SAVE_AT: u64 = 850;
 
+/// Frame at which `group-notice-chat` closes the cards and shows the
+/// Aurora Builders chat, with its notice's line.
+pub const CHAT_AT: u64 = 760;
+
 /// Frame at which `fees-answered` and `fees-short` answer the cards.
 pub const FEES_ANSWER_AT: u64 = 850;
 
@@ -155,7 +161,7 @@ pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
     use super::{DEMO_NOVA, DEMO_TESS};
     // two group notices at frame 700: Aurora Builders (no insignia) without
     // an attachment, Northern Wolves (an insignia) with one
-    if mode().is_some_and(|m| m.ends_with("group-notice") || m == "group-notice-saved") {
+    if mode().is_some_and(|m| m.ends_with("group-notice") || m == "group-notice-saved" || m == "group-notice-chat") {
         return if frame == 700 {
             vec![
                 group_notice(
