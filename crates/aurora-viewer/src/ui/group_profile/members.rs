@@ -165,10 +165,10 @@ pub fn rows(v: &View, names: &dyn Fn(&Uuid) -> String, filter: &str, show: Show,
         .filter(|(m, name)| filter.is_empty() || name.to_lowercase().contains(&filter) || m.title.to_lowercase().contains(&filter))
         .collect();
     rows.sort_by(|(a, an), (b, bn)| {
-        let by_name = an.to_lowercase().cmp(&bn.to_lowercase());
+        let by_name = crate::natural_order::cmp(an, bn);
         let order = match sort {
             Sort::Name => by_name,
-            Sort::Title => a.title.to_lowercase().cmp(&b.title.to_lowercase()).then(by_name),
+            Sort::Title => crate::natural_order::cmp(&a.title, &b.title).then(by_name),
             // most recent first
             Sort::Status => b.last_seen.rank().cmp(&a.last_seen.rank()).then(by_name),
             Sort::Donation => b.contribution.cmp(&a.contribution).then(by_name),
@@ -336,7 +336,13 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
         ui.spacing_mut().item_spacing.x = 5.0;
         // room for the pills, Invite and Export
         let w = (ui.available_width() - 350.0).max(120.0);
-        widgets::search_field(ui, &mut st.members.filter, aurora_i18n::tr!("ui-group-profile-filter-members"), w);
+        widgets::search_field(
+            ui,
+            p,
+            &mut st.members.filter,
+            aurora_i18n::tr!("ui-group-profile-filter-members"),
+            w,
+        );
         if pill(ui, p, aurora_i18n::tr!("common-all"), st.members.show == Show::All).clicked() {
             st.members.show = Show::All;
         }
@@ -384,7 +390,7 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
         }
         crate::ui::menu::dropdown(&by_role, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
             let mut roles: Vec<_> = v.data.map(|d| d.roles.values().collect()).unwrap_or_default();
-            roles.sort_by_cached_key(|r| (!r.id.is_nil(), role_name(&r.name).to_lowercase()));
+            roles.sort_by_cached_key(|r| (!r.id.is_nil(), crate::natural_order::key(&role_name(&r.name))));
             if roles.is_empty() {
                 crate::ui::menu::info(ui, p, "loader-2", aurora_i18n::tr!("common-loading-2"));
             }
@@ -538,7 +544,9 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
     let today = today();
     let count = st.members.rows.len();
     let mut open_profile = None;
-    egui::ScrollArea::vertical()
+    let target = st.members.selected.or_else(|| st.members.checked.first().copied());
+    let selected_row = st.members.rows.iter().position(|(id, _)| Some(*id) == target);
+    widgets::search_scroll_to_row(ui, egui::ScrollArea::vertical(), selected_row, ROW_H)
         .id_salt("group_members_rows")
         .max_height(list_h)
         .auto_shrink([false, false])
@@ -1000,6 +1008,7 @@ pub fn classic_list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: 
     let p = c.p;
     widgets::search_field(
         ui,
+        p,
         &mut st.members.filter,
         aurora_i18n::tr!("ui-group-profile-filter-members"),
         ui.available_width(),

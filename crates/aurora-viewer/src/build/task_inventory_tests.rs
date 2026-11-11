@@ -193,10 +193,12 @@ fn contents_menu_queues_the_same_reviewable_request_without_sending_a_transfer()
     let (world, object, item) = fixture();
     let idx = world.objects.index_of_uuid(&object).unwrap();
     let mut tool = BuildTool::default();
-    tool.copy_item_to_inventory(&world, idx, &item, world.inventory.root);
+    tool.copy_contents_to_inventory(&world, idx, std::slice::from_ref(&item));
     assert!(tool.out.is_empty());
-    assert!(matches!(&tool.ui.requests[..], [super::super::ui::Request::TransferTask(req)]
-        if req.object == object && req.item.item_id == item.item_id && req.approved.is_none()));
+    assert!(
+        matches!(&tool.ui.requests[..], [super::super::ui::Request::CopyContents { object: source, items }]
+        if *source == object && items == &[item])
+    );
 }
 
 #[test]

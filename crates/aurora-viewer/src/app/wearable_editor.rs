@@ -25,9 +25,6 @@ impl App {
             return;
         }
         if let Some(command) = self.wearable_ui.open_item(&mut self.world, item) {
-            if self.shape_camera.is_none() {
-                self.shape_camera = Some(self.camera.clone());
-            }
             self.panels.appearance = false;
             if self.demo {
                 let Some(info) = self.world.inventory.items.get(&item) else {
@@ -49,6 +46,10 @@ impl App {
     }
 
     fn focus_wearable_category(&mut self) {
+        self.sync_appearance_camera();
+        if !self.settings.appearance_camera_movement {
+            return;
+        }
         if !self.world.avatar_poses.contains_key(&self.world.agent_id) {
             self.wearable_ui.camera_pending = true;
             return;
@@ -67,8 +68,16 @@ impl App {
         self.wearable_local_demo();
         self.wearable_ui.update(&mut self.world);
         let group = self.wearable_ui.group.clone();
-        for action in ui::wearable::show(ctx, p, &mut self.world, &mut self.wearable_ui, &self.ui_images) {
+        for action in ui::wearable::show(
+            ctx,
+            p,
+            &mut self.world,
+            &mut self.wearable_ui,
+            &self.ui_images,
+            (&self.settings).into(),
+        ) {
             match action {
+                ui::wearable::Action::Appearance(action) => self.appearance_editor_action(action),
                 ui::wearable::Action::Save(name) => {
                     if let Some(command) = self.wearable_ui.save(&self.world, name) {
                         if self.demo {

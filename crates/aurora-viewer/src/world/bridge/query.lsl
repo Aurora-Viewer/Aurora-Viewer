@@ -1,15 +1,15 @@
-// Aurora LSL Bridge query and posing-consent services v1.40: the Legacy Viewer's getZOffsets
+// Aurora LSL Bridge query and posing-consent services v1.41: the Legacy Viewer's getZOffsets
 // and getScriptInfo equivalents (fsradar.cpp, fs_resources/EBEDD1D2-*.lsltxt,
 // originally LGPL 2.1). A separate script beside the movement controller:
 // Mono gives each script its own 64 KB, and a query can never halt Movelock.
 // It has its own HTTP-in URL and token, and never touches physics.
 string FOLDER = "__FOLDER__";
-string VERSION = "1.40";
+string VERSION = "1.41";
 string gURL;
 key gToken;
 key gURLRequest;
 key gOwner;
-integer DISCOVERY_CHANNEL = -184735219;
+integer DISCOVERY_CHANNEL;
 integer gListener;
 integer gPoseListener;
 integer gPortalListener;
@@ -41,7 +41,8 @@ initialize() {
     gNextHello = 0.0;
     gOwner = llGetOwner();
     llListenRemove(gListener);
-    // Same owner-filtered, root-addressed probe as the movement controller.
+    // Same owner-filtered, root-addressed probe and channel as the movement controller.
+    DISCOVERY_CHANNEL = -0x10000000 - (integer)("0x" + llGetSubString((string)llGetKey(), 0, 6));
     gListener = llListen(DISCOVERY_CHANNEL, "", gOwner, "auroraHello|" + (string)llGetKey());
     llListenRemove(gPoseListener);
     gPoseListener = llListen(POSE_CHANNEL, "", NULL_KEY, "");

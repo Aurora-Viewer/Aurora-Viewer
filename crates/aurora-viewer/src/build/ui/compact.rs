@@ -328,7 +328,7 @@ pub(super) fn action_row(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, w
         p,
         "link",
         aurora_i18n::tr!("build-compact-link"),
-        !tool.attachment_selected(world) && !s.edit_linked && tool.roots(world).len() >= 2,
+        !s.edit_linked && tool.can_link(world),
     )
     .clicked()
     {
@@ -339,7 +339,7 @@ pub(super) fn action_row(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, w
         p,
         "unlink",
         aurora_i18n::tr!("build-compact-unlink"),
-        !tool.attachment_selected(world) && selected,
+        selected && tool.can_unlink(world),
     )
     .clicked()
     {
@@ -350,7 +350,7 @@ pub(super) fn action_row(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, w
         p,
         "copy-filled",
         aurora_i18n::tr!("build-compact-duplicate"),
-        selected && !tool.attachment_selected(world),
+        selected && !tool.copyable_roots(world).is_empty(),
     )
     .on_hover_text(crate::keybinds::chord_label("KeyD", true, false, false))
     .clicked()

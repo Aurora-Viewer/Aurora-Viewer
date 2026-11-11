@@ -335,9 +335,11 @@ pub struct AvatarAppearance {
     /// the block.
     pub appearance_version: u8,
     pub hover_height: f32,
-    /// Worn objects the simulator lists (AttachmentBlock entries with an
-    /// id, each once: LLVOAvatar::mSimAttachments).
-    pub attachments: u32,
+    /// Worn objects the simulator lists: object id and attachment point of
+    /// the AttachmentBlock entries with an id, each id once
+    /// (LLVOAvatar::mSimAttachments). The Dev Toolbox's J2 compares them
+    /// with the objects that came (issue #2747).
+    pub attachments: Vec<(Uuid, u8)>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -427,6 +429,14 @@ impl OpenSimExtras {
 
 #[derive(Debug, Clone)]
 pub enum NetEvent {
+    /// GrantGodlikePowers: the god level the region gives us (0: none,
+    /// 200 and more: an administrator of the grid or of the region).
+    GodLevel(u8),
+    /// OpenRegionInfo's MaxLinkCount, in children (LLWorld::setMaxLinkedPrims).
+    RegionLinkLimit {
+        handle: RegionHandle,
+        max_children: Option<u32>,
+    },
     /// The mute list (LLMuteList): downloaded file, or keep the cached copy.
     MuteList(crate::social::MuteListSource),
     /// Groups the agent belongs to (AgentGroupDataUpdate; added or updated).
@@ -515,10 +525,14 @@ pub enum NetEvent {
     /// `bad_credentials`: refused for the user name / password (reason "key").
     /// `previous_session`: the grid is still logging out a previous session
     /// of this account (reason "presence", LoginError::previous_session).
+    /// `tos_required` / `critical_required`: the Terms of Service to accept
+    /// (reason "tos") or a message to read (reason "critical"), each with
+    /// its own flag in the next request; `error` is then the server's text.
     LoginFailed {
         error: String,
         mfa_required: bool,
         tos_required: bool,
+        critical_required: bool,
         bad_credentials: bool,
         previous_session: bool,
     },
@@ -603,6 +617,8 @@ pub enum NetEvent {
     /// and getMaxMaterialsPerTransaction; `None` = not given by the region).
     SimulatorFeatures {
         handle: RegionHandle,
+        /// AnimatedObjects / AnimatedObjectMaxTris (LLViewerObject::getAnimatedObjectMaxTris).
+        animated_object_max_tris: u32,
         voice_server_type: String,
         avatar_hover_height: bool,
         /// "RenderMaterialsCapability": requests per second.
@@ -844,6 +860,9 @@ pub enum NetEvent {
         object_id: Uuid,
         object_name: String,
         owner_name: String,
+        /// The owner's id (the OwnerData block; nil from simulators that
+        /// do not send it).
+        owner_id: Uuid,
         message: String,
         channel: i32,
         buttons: Vec<String>,
@@ -1636,8 +1655,6 @@ pub enum NetCommand {
         position: Vec3,
         look_at: Vec3,
     },
-    /// Change the draw distance used in AgentUpdate (`Far`).
-    SetDrawDistance(f32),
     /// No connection to the neighbouring regions while true
     /// (FSDisableNeighbourRegionConnections): the viewer sends false while
     /// the agent is outside its region, so that a crossing still connects.
@@ -1768,7 +1785,8 @@ pub enum NetCommand {
         local_id: u32,
         object: Uuid,
     },
-    /// Sit on an object (AgentRequestSit; `offset` in the object frame).
+    /// Sit on an object (AgentRequestSit; `offset` from the clicked object's
+    /// render position, along world axes: handle_object_sit / LLPickInfo).
     RequestSit {
         handle: RegionHandle,
         target: Uuid,
@@ -1797,12 +1815,15 @@ pub enum NetCommand {
         object: Uuid,
     },
     /// Sent only after the user confirms the displayed price (ObjectBuy).
+    /// `group_id` is the agent's active group at that moment (nil for
+    /// none): the simulator sets it as the bought object's group.
     BuyObject {
         handle: RegionHandle,
         local_id: u32,
         folder: Uuid,
         sale_type: u8,
         price: i32,
+        group_id: Uuid,
     },
     /// Payment to the clicked prim, not directly to its owner.
     PayObject {
@@ -1965,6 +1986,13 @@ pub enum NetCommand {
     Land(crate::land::LandCommand),
     /// Region / Estate window (estate.rs).
     Estate(crate::estate::EstateCommand),
+    /// Request / Leave Admin Status (RequestGodlikePowers): `godlike` asks
+    /// the region for its god level, false gives it back.
+    RequestGodlikePowers {
+        godlike: bool,
+    },
+    /// Advanced › Admin (god.rs), with the god level the region granted.
+    God(crate::god::GodCommand),
     /// GrantUserRights: rights we give a friend (1 online, 2 map, 4 modify).
     GrantUserRights {
         friend: Uuid,
@@ -2361,6 +2389,8 @@ pub struct AgentControls {
     pub camera_at: Vec3,
     pub camera_left: Vec3,
     pub camera_up: Vec3,
+    /// The draw distance (RenderFarClip): AgentUpdate's `Far` follows it by
+    /// the steps of `agent_update::FarStep`.
     pub far: f32,
     /// The render state (LLAgent::getRenderState): `AGENT_STATE_TYPING`
     /// while we type in the nearby chat.

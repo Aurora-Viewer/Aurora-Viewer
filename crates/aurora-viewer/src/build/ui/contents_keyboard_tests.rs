@@ -193,6 +193,50 @@ fn contents_ctrl_shift_and_context_selection_follow_the_visible_order() {
 }
 
 #[test]
+fn contents_context_copy_keeps_selected_mixed_types_in_one_request_in_both_layouts() {
+    for legacy in [false, true] {
+        for selected in [1, 2] {
+            let (mut inspector, object, ids) = fixture();
+            inspector.settings.legacy_window = legacy;
+            let items = &mut inspector.tool.contents.objects.get_mut(&object).unwrap().items;
+            items[0].asset_type = 7;
+            items[0].inv_type = 7;
+            items[2].asset_type = 6;
+            items[2].inv_type = 6;
+            resize_inspector(&mut inspector, vec2(400.0, 820.0));
+            inspector.tool.ui.requests.clear();
+            click(&mut inspector, 0, egui::Modifiers::NONE);
+            if selected == 2 {
+                click(&mut inspector, 2, egui::Modifiers::CTRL);
+            }
+            click_text(&mut inspector, "Entry 000", egui::Modifiers::NONE, egui::PointerButton::Secondary);
+            click_text(
+                &mut inspector,
+                aurora_i18n::tr!("build-ui-contents-copy-to-inventory"),
+                egui::Modifiers::NONE,
+                egui::PointerButton::Primary,
+            );
+            let expected = if selected == 1 { vec![ids[0]] } else { vec![ids[0], ids[2]] };
+            assert!(
+                matches!(&inspector.tool.ui.requests[..],
+                    [crate::build::ui::Request::CopyContents { object: source, items }]
+                    if *source == object && items.iter().map(|item| item.item_id).collect::<Vec<_>>() == expected
+                ),
+                "legacy={legacy}, selected={selected}: one folder request, with only the selection"
+            );
+            assert!(
+                !inspector
+                    .tool
+                    .out
+                    .iter()
+                    .any(|cmd| matches!(cmd, NetCommand::Build(BuildCmd::MoveTaskInventory { .. }))),
+                "the menu must wait for the common folder and move confirmation"
+            );
+        }
+    }
+}
+
+#[test]
 fn legacy_contents_delete_targets_items_in_every_tool_mode_with_visible_tabs() {
     for mode in [Tool::Edit, Tool::Focus, Tool::Grab, Tool::Create] {
         let (mut inspector, _, ids) = fixture();

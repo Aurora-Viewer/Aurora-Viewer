@@ -1,9 +1,11 @@
 //! The photo reel: the session's last photos, newest first, whatever their
 //! destination, to look at again, send elsewhere or delete (Aurora's own:
 //! the Legacy Viewer only shows the last photo). Each photo keeps its full
-//! pixels in a file: the one it was saved to on disk, or the reel's own
-//! copy in a folder of the session (`Folder`), emptied when the session
-//! ends. The thumbnails and the pictures on screen belong to the app.
+//! pixels in the reel's own copy, whatever its destination, in a folder of
+//! the session under its account (`Folder`), deleted when the session ends:
+//! a photo saved to disk is written to the chosen folder as well, and that
+//! file is the user's. The thumbnails and the pictures on screen belong to
+//! the app.
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -35,7 +37,9 @@ pub struct Photo {
     pub cutout: bool,
     /// The full photo; None while the reel's copy is being written.
     pub file: Option<PathBuf>,
-    /// `file` is the reel's own copy, gone with the photo or the session.
+    /// `file` is, or will be, the reel's own copy, gone with the photo or
+    /// the session. Not when the copy could not be written: `file` is then
+    /// the file saved to disk, if any.
     pub own_copy: bool,
     /// Where it went, in order; empty when its sending failed (kept to be
     /// sent again).
@@ -137,23 +141,30 @@ impl Reel {
         }
     }
 
-    /// The photo went somewhere more. Saved to disk, the file becomes its
-    /// source: the reel's own copy comes back, to delete.
-    pub fn sent(&mut self, id: u64, place: Place) -> Option<PathBuf> {
-        let photo = self.get_mut(id)?;
-        let mut freed = None;
-        if let Place::Disk(path) = &place {
-            if photo.own_copy {
-                freed = photo.file.replace(path.clone());
-                photo.own_copy = false;
-            } else if photo.file.is_none() {
-                photo.file = Some(path.clone());
-            }
+    /// The reel's copy of a photo could not be written: its file on disk
+    /// takes its place, when there is one.
+    pub fn copy_failed(&mut self, id: u64) {
+        if let Some(photo) = self.get_mut(id) {
+            photo.own_copy = false;
+            photo.file = photo.on_disk().map(Path::to_path_buf);
+        }
+    }
+
+    /// The photo went somewhere more. Its copy stays its source: only a
+    /// photo left without one reads the file saved to disk.
+    pub fn sent(&mut self, id: u64, place: Place) {
+        let Some(photo) = self.get_mut(id) else {
+            return;
+        };
+        if let Place::Disk(path) = &place
+            && !photo.own_copy
+            && photo.file.is_none()
+        {
+            photo.file = Some(path.clone());
         }
         if !photo.places.contains(&place) {
             photo.places.push(place);
         }
-        freed
     }
 
     pub fn remove(&mut self, id: u64) -> Option<Photo> {
@@ -227,29 +238,43 @@ pub fn fit_inside(size: (u32, u32), target: (u32, u32)) -> (u32, u32) {
     (((w * scale).round() as u32).max(1), ((h * scale).round() as u32).max(1))
 }
 
-/// The session's folder of copies, under `root`. Each viewer running holds
-/// a lock on its own: a folder whose lock can be taken was left by one
-/// that ended without emptying it (a crash), and is deleted.
+/// The folder of an account's sessions in the cache folder `cache`: photos
+/// can weigh hundreds of MB, which the settings folder (roaming on Windows)
+/// is not for.
+pub fn account_root(cache: &Path, agent: &Uuid) -> PathBuf {
+    cache.join(ACCOUNTS).join(agent.to_string()).join(ROLL)
+}
+
+/// The session's folder, in the account's `root` (`account_root`). Each
+/// viewer running holds a lock on its own: a folder whose lock can be taken
+/// was left by one that ended without emptying it (a crash), and is deleted
+/// at the next start (`sweep_leftovers`).
 pub struct Folder {
     dir: PathBuf,
     lock: Option<File>,
 }
 
 const LOCK: &str = ".lock";
+const ACCOUNTS: &str = "accounts";
+const ROLL: &str = "photo-roll";
+/// The copies, in a session's folder.
+const PHOTOS: &str = "photos";
+/// The folder of every session before they went under their account.
+const OLD_ROOT: &str = "photo-reel";
 
 impl Folder {
     pub fn open(root: &Path) -> std::io::Result<Folder> {
-        sweep(root);
         let dir = root.join(Uuid::new_v4().simple().to_string());
         std::fs::create_dir_all(&dir)?;
         let lock = File::create(dir.join(LOCK))?;
         lock.try_lock().map_err(std::io::Error::other)?;
+        std::fs::create_dir_all(dir.join(PHOTOS))?;
         Ok(Folder { dir, lock: Some(lock) })
     }
 
     /// The copy of the photo `id`.
     pub fn path(&self, id: u64) -> PathBuf {
-        self.dir.join(format!("{id}.png"))
+        self.dir.join(PHOTOS).join(format!("{id}.png"))
     }
 }
 
@@ -260,6 +285,36 @@ impl Drop for Folder {
         if let Err(e) = std::fs::remove_dir_all(&self.dir) {
             log::warn!("photo reel: {} not deleted: {e}", self.dir.display());
         }
+        // the account's folders, when no other session is left in them
+        if let Some(root) = self.dir.parent() {
+            remove_empty_root(root);
+        }
+    }
+}
+
+/// Delete what ended sessions left in the cache folder `cache`, for every
+/// account: a crashed session's photos do not wait for its account's next
+/// login. The caller keeps it off the frame.
+pub fn sweep_leftovers(cache: &Path) {
+    let old = cache.join(OLD_ROOT);
+    sweep(&old);
+    let _ = std::fs::remove_dir(&old);
+    let Ok(accounts) = std::fs::read_dir(cache.join(ACCOUNTS)) else {
+        return;
+    };
+    for account in accounts.flatten() {
+        let root = account.path().join(ROLL);
+        sweep(&root);
+        remove_empty_root(&root);
+    }
+}
+
+/// An account's `root`, and the account's folder above it, once empty.
+fn remove_empty_root(root: &Path) {
+    if std::fs::remove_dir(root).is_ok()
+        && let Some(account) = root.parent()
+    {
+        let _ = std::fs::remove_dir(account);
     }
 }
 
@@ -350,19 +405,48 @@ mod tests {
     }
 
     #[test]
-    fn saved_to_disk_the_file_replaces_the_copy() {
+    fn saved_to_disk_the_copy_stays_the_source() {
         let mut reel = Reel::default();
         let (id, _) = reel.add(1, (4, 4), false, Some("copy.png".into()), true, vec![Place::Profile]);
-        assert_eq!(reel.sent(id, disk("mine.png")), Some("copy.png".into()));
+        reel.sent(id, disk("mine.png"));
         let p = reel.get(id).expect("photo");
-        assert_eq!(p.file, Some("mine.png".into()));
-        assert!(!p.own_copy);
+        assert_eq!(p.file, Some("copy.png".into()));
+        assert!(p.own_copy);
         assert_eq!(p.on_disk(), Some(Path::new("mine.png")));
-        // a second destination adds a place, frees nothing
-        assert_eq!(reel.sent(id, Place::Inventory(Uuid::nil())), None);
-        assert_eq!(reel.sent(id, Place::Inventory(Uuid::nil())), None);
+        // a second destination adds a place, once
+        reel.sent(id, Place::Inventory(Uuid::nil()));
+        reel.sent(id, Place::Inventory(Uuid::nil()));
         assert_eq!(reel.get(id).map(|p| p.places.len()), Some(3));
         assert!(reel.get(id).is_some_and(|p| p.went(&Place::Inventory(Uuid::max()))));
+    }
+
+    #[test]
+    fn saved_to_disk_while_the_copy_is_written_it_waits_for_the_copy() {
+        let mut reel = Reel::default();
+        let (id, _) = reel.add(1, (4, 4), false, None, true, vec![]);
+        reel.sent(id, disk("mine.png"));
+        assert_eq!(reel.get(id).and_then(|p| p.file.clone()), None);
+        reel.copied(id, "copy.png".into());
+        assert_eq!(reel.get(id).and_then(|p| p.file.clone()), Some("copy.png".into()));
+    }
+
+    #[test]
+    fn with_no_copy_the_file_on_disk_is_the_source() {
+        let mut reel = Reel::default();
+        // the copy failed after the save
+        let (a, _) = reel.add(1, (4, 4), false, None, true, vec![]);
+        reel.sent(a, disk("a.png"));
+        reel.copy_failed(a);
+        let p = reel.get(a).expect("photo");
+        assert_eq!(p.file, Some("a.png".into()));
+        assert!(!p.own_copy);
+        assert!(deletion(p).copy.is_none());
+        // the copy failed before the save
+        let (b, _) = reel.add(2, (4, 4), false, None, true, vec![]);
+        reel.copy_failed(b);
+        assert_eq!(reel.get(b).and_then(|p| p.file.clone()), None);
+        reel.sent(b, disk("b.png"));
+        assert_eq!(reel.get(b).and_then(|p| p.file.clone()), Some("b.png".into()));
     }
 
     #[test]
@@ -416,6 +500,16 @@ mod tests {
     }
 
     #[test]
+    fn deleting_a_saved_photo_recycles_its_file_and_deletes_its_copy() {
+        let mut reel = Reel::default();
+        let (id, _) = reel.add(1, (4, 4), false, Some("copy.png".into()), true, vec![]);
+        reel.sent(id, disk("mine.png"));
+        let d = deletion(reel.get(id).expect("photo"));
+        assert_eq!(d.recycle, [PathBuf::from("mine.png")]);
+        assert_eq!(d.copy, Some("copy.png".into()));
+    }
+
+    #[test]
     fn sent_again_inside_the_destination() {
         assert_eq!(fit_inside((7680, 4320), (2048, 2048)), (2048, 1152));
         assert_eq!(fit_inside((1000, 2000), (1024, 768)), (384, 768));
@@ -424,19 +518,43 @@ mod tests {
     }
 
     #[test]
-    fn folder_copies_and_leftovers() {
-        let root = std::env::temp_dir().join(format!("aurora-reel-test-{}", Uuid::new_v4().simple()));
-        // a crashed viewer's folder: no lock held
-        let stale = root.join("stale");
-        std::fs::create_dir_all(&stale).expect("stale dir");
-        File::create(stale.join(LOCK)).expect("stale lock");
-        let folder = Folder::open(&root).expect("folder");
-        assert!(!stale.exists());
-        // another running viewer's folder survives its sweep
-        let other = Folder::open(&root).expect("other");
-        assert!(folder.dir.exists());
+    fn sessions_go_under_their_account_and_their_leftovers_go_at_the_start() {
+        let cache = std::env::temp_dir().join(format!("aurora-reel-test-{}", Uuid::new_v4().simple()));
+        let (me, crashed) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let root = account_root(&cache, &me);
+        assert_eq!(root, cache.join("accounts").join(me.to_string()).join("photo-roll"));
 
+        // a crashed viewer's folder of another account, then of the time
+        // before the accounts: no lock held
+        let stale = account_root(&cache, &crashed).join("stale").join(PHOTOS);
+        std::fs::create_dir_all(&stale).expect("stale dir");
+        File::create(stale.join("1.png")).expect("stale photo");
+        let old = cache.join(OLD_ROOT).join("old");
+        std::fs::create_dir_all(&old).expect("old dir");
+        File::create(old.join(LOCK)).expect("old lock");
+        // another running viewer's folder survives the sweep, and keeps the
+        // folders above it
+        let running = Folder::open(&root).expect("running");
+        sweep_leftovers(&cache);
+        assert!(running.dir.exists());
+        assert!(!cache.join(ACCOUNTS).join(crashed.to_string()).exists());
+        assert!(!cache.join(OLD_ROOT).exists());
+
+        let second = Folder::open(&root).expect("second");
+        drop(second);
+        assert!(running.dir.exists());
+        // the last session of the account gone, nothing of it is left
+        drop(running);
+        assert!(!cache.join(ACCOUNTS).join(me.to_string()).exists());
+        let _ = std::fs::remove_dir_all(&cache);
+    }
+
+    #[test]
+    fn folder_copies() {
+        let root = std::env::temp_dir().join(format!("aurora-reel-test-{}", Uuid::new_v4().simple()));
+        let folder = Folder::open(&root).expect("folder");
         let path = folder.path(3);
+        assert_eq!(path, folder.dir.join("photos").join("3.png"));
         let rgba: Vec<u8> = (0..4 * 3 * 2).map(|i| i as u8 * 10).collect();
         write_copy(&path, (3, 2), &rgba).expect("copy");
         assert_eq!(load(&path, None).expect("load"), (3, 2, rgba));
@@ -445,7 +563,6 @@ mod tests {
         let dir = folder.dir.clone();
         drop(folder);
         assert!(!dir.exists());
-        drop(other);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

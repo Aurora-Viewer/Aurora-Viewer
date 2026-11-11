@@ -58,8 +58,13 @@ pub(super) struct SavedStack {
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub(super) struct SavedRow {
+    #[serde(default)]
     pub item: Option<Uuid>,
-    pub asset: Uuid,
+    /// Written to project files for full-permission items only
+    /// (`SavedStack::name_assets`). A row always plays the asset of its
+    /// inventory item: this field never starts a download on its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset: Option<Uuid>,
     pub name: String,
     pub frame: u32,
     pub enabled: bool,
@@ -70,7 +75,45 @@ impl SavedStack {
             && self
                 .rows
                 .iter()
-                .all(|r| r.name.len() <= 256 && r.frame <= 1_000_000 && !r.asset.is_nil())
+                .all(|r| r.name.len() <= 256 && r.frame <= 1_000_000 && r.asset.is_none_or(|a| !a.is_nil()))
+    }
+    /// Keeps a row's asset id only when `shared` gives one for its item, and
+    /// then the item's current one: project files name animations by
+    /// inventory item.
+    pub fn name_assets(&mut self, shared: impl Fn(Uuid) -> Option<Uuid>) {
+        for row in &mut self.rows {
+            row.asset = row.item.and_then(&shared);
+        }
+    }
+}
+
+/// The asset of an animation item of the agent's inventory that has full
+/// permissions (copy, modify and transfer), like the UUID field of the
+/// texture picker (`actions::asset_uuid_shown`).
+pub(super) fn shared_asset(inv: &Inventory, id: Uuid) -> Option<Uuid> {
+    let original = inv.items.get(&actions::original(inv, id)?)?;
+    if original.owner_mask & actions::FULL != actions::FULL {
+        return None;
+    }
+    item(inv, id).map(|(asset, _)| asset)
+}
+
+/// `shared_asset` of every animation item, gathered on the main thread for
+/// a background export of a project read from disk.
+#[derive(Default)]
+pub(super) struct SharedAssets(std::collections::HashMap<Uuid, Uuid>);
+impl SharedAssets {
+    pub fn new(inv: &Inventory) -> Self {
+        Self(
+            inv.items
+                .values()
+                .filter(|it| it.asset_type == 20)
+                .filter_map(|it| Some((it.id, shared_asset(inv, it.id)?)))
+                .collect(),
+        )
+    }
+    pub fn get(&self, item: Uuid) -> Option<Uuid> {
+        self.0.get(&item).copied()
     }
 }
 
@@ -128,6 +171,12 @@ impl Stack {
                     row.clip = None;
                     continue;
                 }
+            } else if row.clip.is_none() {
+                // A row plays an animation of the agent's inventory: an asset
+                // id alone (a project file from someone else) stays missing.
+                // Only the clips the editor builds itself (demo) have no item.
+                row.failed = true;
+                continue;
             }
             if row.clip.is_none() {
                 row.clip = streamer.get(&row.asset);
@@ -158,7 +207,7 @@ impl Stack {
                 .iter()
                 .map(|r| SavedRow {
                     item: r.item,
-                    asset: r.asset,
+                    asset: (!r.asset.is_nil()).then_some(r.asset),
                     name: r.name.clone(),
                     frame: r.frame,
                     enabled: r.enabled,
@@ -170,11 +219,20 @@ impl Stack {
         let previous = std::mem::take(&mut self.rows);
         self.suppress_live = saved.suppress_live;
         for row in &saved.rows {
-            let mut restored = Row::new(row.asset, row.name.clone());
+            let mut restored = Row::new(row.asset.unwrap_or_default(), row.name.clone());
             restored.item = row.item;
             restored.frame = row.frame;
             restored.enabled = row.enabled;
-            restored.clip = previous.iter().find(|r| r.asset == row.asset).and_then(|r| r.clip.clone());
+            // Reuse a clip already playing for the same item; rows without an
+            // item only find the editor's own clips (demo) this way.
+            if let Some(kept) = previous
+                .iter()
+                .find(|r| r.item == row.item && (row.item.is_some() || r.asset == restored.asset))
+                && kept.clip.is_some()
+            {
+                restored.asset = kept.asset;
+                restored.clip = kept.clip.clone();
+            }
             self.rows.push(restored);
         }
     }
@@ -198,6 +256,7 @@ impl Stack {
                 loop_in: 0.0,
                 loop_out: 2.0,
                 looping: true,
+                ends_after: None,
                 ease_in: 0.0,
                 ease_out: 0.0,
                 hand_pose: 0,
@@ -332,7 +391,9 @@ impl Stack {
                     self.replacement = None;
                 }
                 if self.picker {
-                    ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text(aurora_i18n::tr!("ik-edit-animation-search")));
+                    crate::ui::widgets::search_text_edit(ui, p, &mut self.filter, |edit| {
+                        edit.hint_text(aurora_i18n::tr!("ik-edit-animation-search"))
+                    });
                     if self.cache.as_ref() != Some(&(inv.generation, self.filter.clone())) {
                         let filter = self.filter.to_lowercase();
                         self.candidates = inv
@@ -344,7 +405,7 @@ impl Stack {
                             })
                             .collect();
                         self.candidates
-                            .sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()).then(a.0.cmp(&b.0)));
+                            .sort_by(|a, b| crate::natural_order::cmp(&a.1, &b.1).then(a.0.cmp(&b.0)));
                         self.cache = Some((inv.generation, self.filter.clone()));
                     }
                     let mut chosen = None;
@@ -504,5 +565,110 @@ mod tests {
             stack.add(&inv, original);
         }
         assert_eq!(stack.rows.len(), LIMIT);
+    }
+    fn animation(id: u128, asset: u128, owner_mask: u32) -> InvItem {
+        InvItem {
+            id: Uuid::from_u128(id),
+            asset_type: 20,
+            asset_id: Uuid::from_u128(asset),
+            name: format!("Animation {id}"),
+            owner_mask,
+            ..Default::default()
+        }
+    }
+    #[test]
+    fn project_rows_name_the_asset_of_full_permission_items_only() {
+        let mut inv = Inventory::default();
+        let full = animation(1, 0xa1, actions::FULL);
+        let no_copy = animation(2, 0xa2, actions::FULL & !actions::COPY);
+        let no_transfer = animation(3, 0xa3, actions::FULL & !actions::TRANSFER);
+        for it in [&full, &no_copy, &no_transfer] {
+            inv.items.insert(it.id, it.clone());
+        }
+        let mut stack = Stack::default();
+        for it in [&full, &no_copy, &no_transfer] {
+            stack.add(&inv, it.id);
+        }
+        let mut saved = stack.save();
+        assert!(
+            saved.rows.iter().all(|r| r.asset.is_some()),
+            "the in-memory profile copy keeps every asset"
+        );
+        saved.name_assets(|id| shared_asset(&inv, id));
+        let assets: Vec<_> = saved.rows.iter().map(|r| (r.item, r.asset)).collect();
+        assert_eq!(
+            assets,
+            [
+                (Some(full.id), Some(full.asset_id)),
+                (Some(no_copy.id), None),
+                (Some(no_transfer.id), None),
+            ]
+        );
+        let json = serde_json::to_string(&saved).unwrap();
+        assert!(json.contains(&full.asset_id.to_string()));
+        assert!(!json.contains(&no_copy.asset_id.to_string()));
+        assert!(!json.contains(&no_transfer.asset_id.to_string()));
+        assert!(json.contains(&no_copy.id.to_string()), "the row still names its item");
+        let mut background = stack.save();
+        background.name_assets(|id| SharedAssets::new(&inv).get(id));
+        assert_eq!(background, saved);
+        let mut stripped = saved.clone();
+        stripped.rows[0].asset = None;
+        let mut restored = Stack::default();
+        restored.restore(&stripped);
+        assert_eq!(restored.rows[1].asset, Uuid::nil());
+        assert_eq!(
+            restored.rows.iter().map(|r| r.item).collect::<Vec<_>>(),
+            stack.rows.iter().map(|r| r.item).collect::<Vec<_>>()
+        );
+    }
+    #[test]
+    fn a_row_with_only_an_asset_id_stays_missing_while_inventory_rows_resolve_their_item() {
+        let mut inv = Inventory::default();
+        let owned = animation(1, 0xb1, actions::FULL & !actions::COPY);
+        inv.items.insert(owned.id, owned.clone());
+        let row = |item: Option<Uuid>, asset: u128| SavedRow {
+            item,
+            asset: Some(Uuid::from_u128(asset)),
+            name: "Layer".into(),
+            frame: 3,
+            enabled: true,
+        };
+        let saved = SavedStack {
+            rows: vec![
+                // Another agent's file: an asset id with no item of ours.
+                row(None, 0xb2),
+                row(Some(Uuid::from_u128(9)), 0xb3),
+                // Our item wins over the asset id written next to it.
+                row(Some(owned.id), 0xb4),
+            ],
+            suppress_live: false,
+        };
+        assert!(saved.valid());
+        // Even an asset already loaded in the viewer is not played by id.
+        let lib = crate::scene::avatar::AvatarLibrary::load();
+        let mut demo = Stack::default();
+        demo.demo(&lib.rig, "animations");
+        let clip = demo.rows[0].clip.clone().unwrap();
+        let dir = std::env::temp_dir().join(format!("aurora-ik-rows-{}", Uuid::new_v4()));
+        let mut streamer = AnimStreamer::new(dir.clone());
+        for asset in [0xb2, 0xb3, 0xb4] {
+            streamer.insert(Uuid::from_u128(asset), clip.clone());
+        }
+        let mut stack = Stack::default();
+        stack.restore(&saved);
+        stack.tick(&mut streamer, &mut inv);
+        assert!(stack.rows[0].failed && stack.rows[0].clip.is_none());
+        assert!(stack.rows[1].failed && stack.rows[1].clip.is_none());
+        assert_eq!(stack.rows[2].asset, owned.asset_id);
+        assert_eq!(stack.rows[2].name, owned.name);
+        assert!(stack.rows[2].clip.is_none(), "the item's own asset is still loading");
+        assert!(!stack.rows[2].failed);
+        assert!(stack.samples().is_empty());
+        streamer.insert(owned.asset_id, clip.clone());
+        stack.tick(&mut streamer, &mut inv);
+        assert_eq!(stack.samples().len(), 1);
+        assert!(stack.rows[0].failed && stack.rows[1].failed);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

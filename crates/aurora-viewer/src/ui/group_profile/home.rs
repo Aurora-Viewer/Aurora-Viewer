@@ -174,7 +174,7 @@ fn online(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v:
                 );
                 return;
             }
-            list.sort_by_cached_key(|(_, chip, name)| (*chip as u8, name.to_lowercase()));
+            list.sort_by_cached_key(|(_, chip, name)| (*chip as u8, crate::natural_order::key(name)));
             for (m, chip, name) in list.into_iter().take(ONLINE) {
                 if name == "…" {
                     c.want_names.insert(m.id);

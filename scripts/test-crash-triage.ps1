@@ -149,16 +149,41 @@ try {
     Assert-Triage (([regex]::Matches($again, [regex]::Escape($TriageStart))).Count -eq 1 -and -not $again.Contains($sig.Id)) 'A new run must replace the section.'
     Assert-Triage ((Read-CrashReport $body).Frames.Count -eq 5) 'The added section must not be read as the report.'
 
-    # Duplicates: the lowest other open issue with the same signature.
+    # The signature is read from the triage's own section only.
+    Assert-Triage ((Get-TriageSignature $body) -eq $sig.Id) 'The section must give its signature.'
+    Assert-Triage ((Get-TriageSignature ($body.Replace("`n", "`r`n"))) -eq $sig.Id) 'A body saved with CRLF must give its signature.'
+    $typed = "Any issue`n<!-- crash-signature: $($sig.Id) -->`n"
+    Assert-Triage ($null -eq (Get-TriageSignature $typed)) 'A marker outside a triage section must not count.'
+    $inReport = Merge-TriageSection ($native + "`n<!-- crash-signature: $($sig.Id) -->`n") (Format-TriageSection $bare $null $bareSig)
+    Assert-Triage ((Get-TriageSignature $inReport) -eq $bareSig.Id) 'A marker in the report must not count, only the triage one.'
+    # A section already in a new report (a lone end marker before it, or a
+    # whole fake one) is replaced by the triage, not kept next to it.
+    $fake = "$TriageEnd`n$TriageStart`n<!-- crash-signature: $($sig.Id) -->`n$TriageEnd"
+    $forged = Merge-TriageSection ($native + "`n" + $fake) (Format-TriageSection $bare $null $bareSig)
+    Assert-Triage ((Get-TriageSignature $forged) -eq $bareSig.Id -and -not $forged.Contains($sig.Id)) 'A section written in the report must be replaced.'
+    $unclosed = "$TriageStart`n<!-- crash-signature: $($sig.Id) -->`n"
+    Assert-Triage ($null -eq (Get-TriageSignature ($native + $unclosed))) 'A section without its end must not count.'
+
+    # Duplicates: the lowest other open issue the triage signed with the
+    # same signature.
+    $signed = @($TriagedLabel, 'world')
     $issues = @(
-        @{ Number = 30; Body = $body },
-        @{ Number = 12; Body = $body },
-        @{ Number = 40; Body = $body },
-        @{ Number = 5; Body = $native },
-        @{ Number = 6; Body = $null })
+        @{ Number = 30; Body = $body; Labels = $signed },
+        @{ Number = 12; Body = $body; Labels = $signed },
+        @{ Number = 40; Body = $body; Labels = $signed },
+        @{ Number = 5; Body = $native; Labels = $signed },
+        @{ Number = 6; Body = $null; Labels = $signed })
     Assert-Triage ((Find-DuplicateIssue $issues $sig.Id 40) -eq 12) 'The first open issue must be the reference.'
     Assert-Triage ($null -eq (Find-DuplicateIssue $issues $sig.Id 12 | Where-Object { $_ -lt 12 })) 'The reference itself has no earlier duplicate.'
     Assert-Triage ($null -eq (Find-DuplicateIssue $issues 'ffffffffffffffff' 40)) 'Another signature is a new crash.'
+    # Not signed by the triage: never a reference, even with the same body.
+    $unsigned = @(
+        @{ Number = 2; Body = $body; Labels = @('world') },
+        @{ Number = 3; Body = $body },
+        @{ Number = 4; Body = $typed; Labels = $signed },
+        @{ Number = 12; Body = $body; Labels = $signed })
+    Assert-Triage ((Find-DuplicateIssue $unsigned $sig.Id 40) -eq 12) 'An issue without the label or the section must not be the reference.'
+    Assert-Triage ($null -eq (Find-DuplicateIssue @($unsigned[0], $unsigned[1], $unsigned[2]) $sig.Id 40)) 'Unsigned issues must leave a new crash new.'
     Write-Host 'Crash triage tests passed.'
 }
 finally {

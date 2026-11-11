@@ -86,6 +86,10 @@ poser. Poses affect only this viewer, including poses of other residents.
 
 ## Library and files
 
+Save reports the saved file’s full path. Load > Pose library opens the saved
+poses directly; its Open folder button opens their directory in the file manager.
+File pickers start in that same directory.
+
 Save writes a named `*.aurora-pose.json` under the current account's local
 `poses/` directory. It retains rotation, relative translation, scale and
 world-lock flags, without subject IDs, avatar names or world coordinates.
@@ -160,6 +164,12 @@ grouped Window (stop on close, confirm a close that loses the pose, DoF
 while posing), Handling (markers, natural
 alignment, trackball sensitivity) and Files (overwrite confirmation, BVH,
 pelvis unlock, priority), with the note on the formats' limits.
+
+The eye next to the gear hides or shows the joint markers and gizmos in one
+click, the same setting as Handling's switch: an open eye while they are
+shown, a struck-through one once hidden. It follows the Legacy Viewer's
+visual manipulators button (`FSFloaterPoser::onToggleVisualManipulators`);
+Aurora keeps the choice at the next opening.
 
 With stop on close, closing the window (its cross, Ctrl+W, the photo
 viewfinder's wand) loses the edited joints of every subject. When some are

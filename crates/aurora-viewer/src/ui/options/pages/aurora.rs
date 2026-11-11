@@ -22,13 +22,16 @@ pub enum Look {
 /// Every choice of the page set to one look (the colored sky ambient
 /// included), and Aurora's water with it;
 /// the avatar plates' own settings and the filing of received items are
-/// left as they are.
+/// left as they are, and so is a gaze on the point under the cursor: the
+/// Aurora look does not choose to show others what the cursor is over.
 pub fn set_all(s: &mut Settings, look: Look) {
     let aurora = look == Look::Aurora;
     s.chat_style = if aurora { ChatStyle::Aurora } else { ChatStyle::Legacy };
     s.classic_name_tags = !aurora;
     s.lookat.style = if aurora { Style::Aurora } else { Style::Legacy };
-    s.lookat.aim = if aurora { Aim::Point } else { Aim::Direction };
+    if !aurora {
+        s.lookat.aim = Aim::Direction;
+    }
     s.notifications_style = if aurora {
         NotificationsStyle::Aurora
     } else {
@@ -47,6 +50,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.classic_search = !aurora;
     s.classic_region_estate = !aurora;
     s.classic_inventory = !aurora;
+    s.classic_outfit_gallery = !aurora;
     s.build.legacy_window = !aurora;
     s.classic_places = !aurora;
     s.classic_pay_window = !aurora;
@@ -271,6 +275,14 @@ pub fn page(cx: &mut Cx, tab: usize) {
             );
             look(
                 cx,
+                tr!("ui-options-aurora-outfit-gallery"),
+                tr!("ui-options-aurora-outfit-gallery-help"),
+                tr!("ui-options-aurora-outfit-gallery-aurora"),
+                tr!("ui-options-aurora-outfit-gallery-classic"),
+                &field!(classic_outfit_gallery),
+            );
+            look(
+                cx,
                 tr!("ui-options-aurora-build"),
                 tr!("ui-options-aurora-build-help"),
                 aurora,
@@ -392,6 +404,18 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-aurora-use-bridge-help"),
                     &field!(use_bridge),
                 );
+                use crate::world::portals::Sources;
+                cx.combo(
+                    tr!("ui-options-aurora-portal-sources"),
+                    tr!("ui-options-aurora-portal-sources-help"),
+                    &field!(portal_sources),
+                    &[
+                        (Sources::Friends, tr!("ui-options-aurora-portal-sources-friends")),
+                        (Sources::FriendsAndGroups, tr!("ui-options-aurora-portal-sources-groups")),
+                        (Sources::Everyone, tr!("ui-options-aurora-portal-sources-everyone")),
+                        (Sources::Nobody, tr!("ui-options-aurora-portal-sources-nobody")),
+                    ],
+                );
             });
             cx.group(tr!("ui-options-aurora-gaze"), |cx| {
                 cx.wide().choice(
@@ -465,6 +489,18 @@ mod tests {
     }
 
     #[test]
+    fn the_aurora_button_keeps_the_gaze_choice() {
+        let mut s = Settings::default();
+        set_all(&mut s, Look::Aurora);
+        assert_eq!(s.lookat.aim, Aim::Direction, "never turned to the point by the button");
+        s.lookat.aim = Aim::Point;
+        set_all(&mut s, Look::Aurora);
+        assert_eq!(s.lookat.aim, Aim::Point, "a chosen point stays");
+        set_all(&mut s, Look::Legacy);
+        assert_eq!(s.lookat.aim, Aim::Direction);
+    }
+
+    #[test]
     fn the_two_buttons_set_every_look_and_leave_the_plates_alone() {
         let mut s = Settings {
             plates_friends_only_full: true,
@@ -485,6 +521,7 @@ mod tests {
         assert!(s.classic_search, "Search opens the Legacy Viewer's tabs");
         assert!(s.classic_region_estate);
         assert!(s.classic_inventory, "the Legacy Viewer's single inventory tree");
+        assert!(s.classic_outfit_gallery, "the Legacy Viewer's small outfit tiles");
         assert!(s.build.legacy_window, "the Legacy Viewer's build tools and tabs");
         assert!(s.classic_places, "Places opens the Legacy Viewer's three tabs");
         assert!(s.classic_pay_window);
@@ -524,6 +561,10 @@ mod tests {
             "the Aurora inventory is the default"
         );
         assert!(!s.classic_places && !fresh.classic_places, "Aurora's Places is the default");
+        assert!(
+            !s.classic_outfit_gallery && !fresh.classic_outfit_gallery,
+            "the showcase is the default"
+        );
         assert!(!s.build.legacy_window && !fresh.build.legacy_window);
         assert!(!s.classic_pay_window && !fresh.classic_pay_window);
         assert!(!s.legacy_money_tracker && !fresh.legacy_money_tracker);

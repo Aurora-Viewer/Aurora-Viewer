@@ -6,6 +6,10 @@
 $CrashMarker = '<!-- aurora-crash v1 -->'
 $TriageStart = '<!-- crash-triage:start -->'
 $TriageEnd = '<!-- crash-triage:end -->'
+# Set by the triage on each issue it signed (scripts/crash-triage.ps1). Only
+# a maintainer or the workflow can set a label: an issue without it is no
+# reference, whatever its body says.
+$TriagedLabel = 'crash-triaged'
 # The viewer's own module, the one whose symbols each release publishes.
 $OwnModule = 'aurora_viewer'
 
@@ -293,20 +297,46 @@ function Format-TriageSection($Frames, [string]$SymbolsName, $Signature) {
     $lines -join "`n"
 }
 
+# The triage section of a body: from the first start marker to the next end
+# marker. Its start and length, or $null.
+function Find-TriageSection([string]$Body) {
+    if (-not $Body) { return $null }
+    $start = $Body.IndexOf($TriageStart)
+    if ($start -lt 0) { return $null }
+    $end = $Body.IndexOf($TriageEnd, $start)
+    if ($end -lt 0) { return $null }
+    @{ Start = $start; Length = $end + $TriageEnd.Length - $start }
+}
+
 # Replaces an earlier triage section (re-run, new symbols) instead of adding one.
 function Merge-TriageSection([string]$Body, [string]$Section) {
-    $start = $Body.IndexOf($TriageStart)
-    $end = $Body.IndexOf($TriageEnd)
-    if ($start -ge 0 -and $end -gt $start) {
-        return $Body.Substring(0, $start) + $Section + $Body.Substring($end + $TriageEnd.Length)
+    $found = Find-TriageSection $Body
+    if ($found) {
+        return $Body.Substring(0, $found.Start) + $Section + $Body.Substring($found.Start + $found.Length)
     }
     $Body.TrimEnd() + "`n`n" + $Section + "`n"
 }
 
-# The first open issue (lowest number) with the same signature, other than this one.
+<#
+    The signature the triage wrote in a body: the marker on the line just
+    before the end of the triage section, where Format-TriageSection puts it
+    and where Merge-TriageSection replaces it. A marker anywhere else (in the
+    report, or typed by anyone) is not read.
+#>
+function Get-TriageSignature([string]$Body) {
+    $found = Find-TriageSection $Body
+    if (-not $found) { return $null }
+    $section = $Body.Substring($found.Start, $found.Length - $TriageEnd.Length)
+    if ($section -match '(?:^|\n)<!-- crash-signature: ([0-9a-f]{16}) -->\r?\n$') { return $Matches[1] }
+    $null
+}
+
+# The first open issue (lowest number) the triage signed with the same
+# signature, other than this one. Each issue: Number, Body, Labels (names).
 function Find-DuplicateIssue($Issues, [string]$SignatureId, [int]$Self) {
-    $marker = "<!-- crash-signature: $SignatureId -->"
-    $same = @($Issues | Where-Object { $_.Number -ne $Self -and $_.Body -and $_.Body.Contains($marker) } | Sort-Object Number)
+    $same = @($Issues | Where-Object {
+            $_.Number -ne $Self -and @($_.Labels) -contains $TriagedLabel -and (Get-TriageSignature $_.Body) -eq $SignatureId
+        } | Sort-Object Number)
     if ($same.Count) { return [int]$same[0].Number }
     $null
 }

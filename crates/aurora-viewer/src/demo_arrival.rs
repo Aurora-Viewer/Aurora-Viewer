@@ -1,5 +1,7 @@
-//! AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1]:
+//! AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1][,meshfail=<s>]:
 //! an arrival in a busy region, to measure what the loading shows first.
+//! With `meshfail`, the server refuses mesh requests (403) for that many
+//! seconds, to see the meshes come back after their downloads failed.
 //!
 //! `n` objects (1,200 by default) arrive all around our avatar, the nearest
 //! first and about 600 a second as a simulator sends them, from 3 to 120 m
@@ -111,14 +113,14 @@ fn list_files(dir: &Path, ext: &str, bytes: std::ops::Range<u64>, most: usize, k
     all.sort();
     all.into_iter()
         .filter(|p| std::fs::metadata(p).is_ok_and(|m| bytes.contains(&m.len())))
-        .filter(|p| keep(p))
+        .filter(|p| super::source::usable(p) && keep(p))
         .take(most)
         .collect()
 }
 
 /// A mesh whose header reads, rigged (with a skin) or not.
 fn mesh_with_skin(path: &Path, skin: bool) -> bool {
-    crate::cache::read(path)
+    super::source::read(path)
         .ok()
         .and_then(|d| aurora_assets::parse_mesh_header(&d).ok())
         .is_some_and(|h| h.skin.is_some() == skin && h.lods.iter().any(Option::is_some))
@@ -170,6 +172,8 @@ pub struct ArrivalDemo {
     worn: u32,
     /// `pbr=1`: PBR materials on one object in twelve.
     pbr: bool,
+    /// `meshfail=`: seconds during which the server refuses mesh requests.
+    mesh_outage: Option<Duration>,
     files: Arc<OnceLock<Files>>,
     armed: Option<Instant>,
     run: Option<Run>,
@@ -244,6 +248,7 @@ impl ArrivalDemo {
             avatars,
             worn,
             pbr,
+            mesh_outage: option::<f32>(&value, "meshfail").map(|s| Duration::from_secs_f32(s.max(0.0))),
             files,
             armed: None,
             run: None,
@@ -276,7 +281,7 @@ impl ArrivalDemo {
                     }
                     let path = files.tex_dir.join(format!("{id}.j2c"));
                     served.requests[0].fetch_add(1, Ordering::Relaxed);
-                    return Some(if path.is_file() {
+                    return Some(if super::source::usable(&path) {
                         path
                     } else {
                         files.textures[(id.as_u128() % files.textures.len() as u128) as usize].clone()
@@ -295,7 +300,7 @@ impl ArrivalDemo {
                 Some(path)
             })
         };
-        let link = super::asset_server::Link::new(self.delay, self.mbps);
+        let link = super::asset_server::Link::refusing_meshes(self.delay, self.mbps, self.mesh_outage);
         let url = match super::asset_server::start_assets(resolve, link.clone()) {
             Ok(url) => url,
             Err(e) => {
