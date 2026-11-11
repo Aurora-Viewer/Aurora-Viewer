@@ -5,6 +5,12 @@
 //! winter, CEST in summer), else its offset (UTC+4). The system island's
 //! tooltip gives both times, with how far local time is from SLT.
 //!
+//! Local time's offset is always the system's own: its time zone data
+//! follows the OS updates, while chrono-tz's bundled copy is frozen at its
+//! release (#3018: British Columbia left Pacific time for UTC−7 all year on
+//! 2026-11-01, which chrono-tz 0.10.4 still gives as PST, UTC−8). The
+//! bundled zone only names the offset, when it agrees with the system.
+//!
 //! The Legacy Viewer's status bar shows SLT alone (LLStatusBar::
 //! updateClockDisplay); FSStatusBarTimeFormat picks 12 or 24 hours, the
 //! seconds and the time zone, by default the format of the viewer's
@@ -58,18 +64,29 @@ fn local(unix: i64) -> (i64, String) {
     }
 }
 
-/// Local time's offset and label at `unix`: from the zone read at startup,
-/// else from the system's offset alone (a label like UTC+1).
+/// Local time's offset and label at `unix`: the system's offset, named by
+/// the zone read at startup when that zone agrees with it.
 fn local_at(unix: i64) -> (i64, String) {
-    if let Some(tz) = LOCAL_ZONE.get().copied().flatten() {
-        return zone_at(tz, unix);
-    }
     use chrono::{Offset, TimeZone};
-    let offset = chrono::Local
+    let system = chrono::Local
         .timestamp_opt(unix, 0)
         .single()
-        .map_or(0, |t| i64::from(t.offset().fix().local_minus_utc()));
-    (offset, zone_label(None, offset))
+        .map(|t| i64::from(t.offset().fix().local_minus_utc()));
+    let zone = LOCAL_ZONE.get().copied().flatten().map(|tz| zone_at(tz, unix));
+    local_from(system, zone)
+}
+
+/// Local time from the system's offset and the bundled zone's offset and
+/// label. The system wins: when the bundled rules disagree (a zone changed
+/// after chrono-tz's release), its label would be wrong too, so the offset
+/// names itself (UTC−7).
+fn local_from(system: Option<i64>, zone: Option<(i64, String)>) -> (i64, String) {
+    match (system, zone) {
+        (Some(offset), Some((zone_offset, label))) if zone_offset == offset => (offset, label),
+        (Some(offset), _) => (offset, zone_label(None, offset)),
+        (None, Some(zone)) => zone,
+        (None, None) => (0, zone_label(None, 0)),
+    }
 }
 
 /// A zone's offset and label at `unix`.
@@ -412,6 +429,26 @@ mod tests {
         assert_eq!(zone_label(None, -12600), "UTC−3:30");
         assert_eq!(zone_label(Some("+03"), 10800), "UTC+3");
         assert_eq!(zone_label(Some(""), 0), "UTC");
+    }
+
+    /// The system's offset wins over the bundled zone's (#3018), whose
+    /// label is kept only when both agree.
+    #[test]
+    fn local_time_follows_the_systems_offset() {
+        // 2026-11-10 22:33:56 UTC, the reporter's Terminal time
+        let unix = 1_794_350_036;
+        let bundled = zone_at(chrono_tz::America::Vancouver, unix);
+        // the system's data: British Columbia on UTC−7 since 2026-11-01
+        assert_eq!(local_from(Some(-7 * 3600), Some(bundled.clone())), (-7 * 3600, "UTC−7".to_owned()));
+        assert_eq!(
+            local_from(Some(-8 * 3600), Some((-8 * 3600, "PST".to_owned()))),
+            (-8 * 3600, "PST".to_owned())
+        );
+        assert_eq!(local_from(Some(3600), None), (3600, "UTC+1".to_owned()));
+        assert_eq!(local_from(None, Some(bundled.clone())), bundled);
+        assert_eq!(local_from(None, None), (0, "UTC".to_owned()));
+        // SLT stays US Pacific: UTC−8 after the first Sunday of November
+        assert_eq!(offset(ClockZone::Slt, unix), -8 * 3600);
     }
 
     /// Windows short time patterns of a few regional formats.
