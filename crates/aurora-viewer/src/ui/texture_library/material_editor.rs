@@ -21,8 +21,8 @@ pub(super) struct Editor {
     pub close_ready: bool,
     deferred_maps: Vec<(usize, Uuid)>,
     /// Per map: its UUID, the inventory generation, its name, and whether
-    /// its UUID may be copied (`rules::asset_uuid_shown`).
-    map_names: [(Option<Uuid>, u64, String, bool); 4],
+    /// its UUID may be copied, and the confirmed god state used for that decision.
+    map_names: [(Option<Uuid>, u64, String, bool, bool); 4],
 }
 impl Editor {
     pub fn new(asset: Uuid, material: Arc<PbrMaterial>) -> Self {
@@ -41,7 +41,7 @@ impl Editor {
             close_after_save: false,
             close_ready: false,
             deferred_maps: Vec::new(),
-            map_names: std::array::from_fn(|_| (None, u64::MAX, String::new(), false)),
+            map_names: std::array::from_fn(|_| (None, u64::MAX, String::new(), false, false)),
         }
     }
     pub fn dirty(&self) -> bool {
@@ -332,7 +332,9 @@ impl Editor {
                         *map_mut(value, slot) = None;
                     }
                     let cached = &mut self.map_names[slot];
-                    if cached.0 != map || cached.1 != world.inventory.generation {
+                    let god = world.god_level > 0;
+                    if cached.0 != map || cached.1 != world.inventory.generation || cached.4 != god {
+                        let copy_uuid = map.is_some_and(|id| rules::asset_uuid_shown_to(&world.inventory, id, god));
                         *cached = (
                             map,
                             world.inventory.generation,
@@ -343,10 +345,17 @@ impl Editor {
                                     .values()
                                     .find(|it| it.asset_id == id)
                                     .map(|it| it.name.clone())
-                                    .unwrap_or_else(|| id.to_string())
+                                    .unwrap_or_else(|| {
+                                        if copy_uuid {
+                                            id.to_string()
+                                        } else {
+                                            aurora_i18n::tr!("resource-preview-map-protected").into()
+                                        }
+                                    })
                             })
                             .unwrap_or_else(|| aurora_i18n::tr!("import-no-map").into()),
-                            map.is_some_and(|id| rules::asset_uuid_shown(&world.inventory, id)),
+                            copy_uuid,
+                            god,
                         );
                     }
                     if widgets::icon_button(ui, p, "copy-filled", aurora_i18n::tr!("resource-preview-copy-uuid"), cached.3) {
@@ -406,7 +415,7 @@ impl Editor {
         let texture = rules::original(&world.inventory, cargo.0)
             .and_then(|id| world.inventory.items.get(&id))
             .filter(|it| is_texture(it));
-        let allowed = ui.is_enabled() && texture.is_some_and(|it| map_source(&world.inventory, it));
+        let allowed = ui.is_enabled() && texture.is_some_and(|it| map_source(&world.inventory, it, world.god_level > 0));
         crate::ui::inventory::drag::feedback(
             ui.ctx(),
             if allowed {
@@ -455,7 +464,7 @@ impl Editor {
                     .inventory
                     .items
                     .values()
-                    .any(|it| it.asset_id == asset && map_source(&world.inventory, it));
+                    .any(|it| it.asset_id == asset && map_source(&world.inventory, it, world.god_level > 0));
             if allowed {
                 let mut value = (*self.draft).clone();
                 *map_mut(&mut value, slot) = (!asset.is_nil()).then_some(asset);
@@ -491,9 +500,9 @@ fn is_texture(item: &aurora_net::inventory::InvItem) -> bool {
     matches!(item.asset_type, 0 | 15)
 }
 /// LLMaterialEditor::postBuild filters replacement maps by COPY|TRANSFER,
-/// for the picker and for drops alike.
-fn map_source(inv: &crate::world::inventory::Inventory, item: &aurora_net::inventory::InvItem) -> bool {
-    is_texture(item) && rules::held(inv, item) & (rules::COPY | rules::TRANSFER) == rules::COPY | rules::TRANSFER
+/// for the picker and for drops alike, except for a god.
+fn map_source(inv: &crate::world::inventory::Inventory, item: &aurora_net::inventory::InvItem, god: bool) -> bool {
+    is_texture(item) && (god || rules::held(inv, item) & (rules::COPY | rules::TRANSFER) == rules::COPY | rules::TRANSFER)
 }
 fn scalar(ui: &mut egui::Ui, label: &str, value: &mut f32) {
     ui.label(label);
@@ -526,6 +535,78 @@ fn map_mut(value: &mut PbrMaterial, slot: usize) -> &mut Option<Uuid> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn draw_map(editor: &mut Editor, world: &World) {
+        let mut frame = crate::ui::texture_picker::tests::PickerUi::new();
+        let item = aurora_net::inventory::InvItem {
+            id: Uuid::from_u128(711),
+            ..Default::default()
+        };
+        let mut value = (*editor.draft).clone();
+        frame.settle(|ctx, p| {
+            let mut ui = egui::Ui::new(
+                ctx.clone(),
+                egui::Id::unique("god_material_map"),
+                egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 180.0))),
+            );
+            editor.map_row(
+                &mut ui,
+                p,
+                &item,
+                world,
+                &mut value,
+                0,
+                &HashMap::new(),
+                &Default::default(),
+                &mut Vec::new(),
+            );
+        });
+    }
+
+    #[test]
+    fn god_permissions_material_map_cache_rechecks_grant_and_revoke() {
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let asset = Uuid::from_u128(712);
+        let mut editor = Editor::new(
+            Uuid::from_u128(711),
+            Arc::new(PbrMaterial {
+                base_color_texture: Some(asset),
+                ..Default::default()
+            }),
+        );
+        world.god_level = 200;
+        draw_map(&mut editor, &world);
+        assert!(editor.map_names[0].3);
+        world.god_level = 0;
+        draw_map(&mut editor, &world);
+        assert!(
+            !editor.map_names[0].3,
+            "leaving god mode disables Copy UUID without an inventory change"
+        );
+        assert!(
+            !editor.map_names[0].2.contains(&asset.to_string()),
+            "the label cannot disclose a protected UUID"
+        );
+        world.god_level = 200;
+        draw_map(&mut editor, &world);
+        assert!(editor.map_names[0].3, "a later god grant restores UUID access");
+    }
+
+    #[test]
+    fn god_permissions_material_map_label_hides_unlisted_asset() {
+        let world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let asset = Uuid::from_u128(713);
+        let mut editor = Editor::new(
+            Uuid::from_u128(711),
+            Arc::new(PbrMaterial {
+                base_color_texture: Some(asset),
+                ..Default::default()
+            }),
+        );
+        draw_map(&mut editor, &world);
+        assert!(!editor.map_names[0].3);
+        assert!(!editor.map_names[0].2.contains(&asset.to_string()));
+    }
+
     #[test]
     fn pbr_bom_choices_preview_cancel_and_save_the_magic_uuid_in_every_map() {
         for slot in 0..4 {
@@ -632,11 +713,17 @@ mod tests {
             ..Default::default()
         };
         let full = rules::COPY | rules::MODIFY | rules::TRANSFER;
-        assert!(map_source(&Default::default(), &texture(0, full)));
-        assert!(map_source(&Default::default(), &texture(0, rules::COPY | rules::TRANSFER)));
-        assert!(!map_source(&Default::default(), &texture(0, rules::COPY | rules::MODIFY)));
-        assert!(!map_source(&Default::default(), &texture(0, rules::MODIFY | rules::TRANSFER)));
-        assert!(!map_source(&Default::default(), &texture(7, full)));
+        assert!(map_source(&Default::default(), &texture(0, full), false));
+        assert!(map_source(&Default::default(), &texture(0, rules::COPY | rules::TRANSFER), false));
+        assert!(!map_source(&Default::default(), &texture(0, rules::COPY | rules::MODIFY), false));
+        assert!(!map_source(
+            &Default::default(),
+            &texture(0, rules::MODIFY | rules::TRANSFER),
+            false
+        ));
+        assert!(!map_source(&Default::default(), &texture(7, full), false));
+        // a god's picker takes any texture (LLMaterialEditor::postBuild)
+        assert!(map_source(&Default::default(), &texture(0, rules::MODIFY), true));
     }
     #[test]
     fn a_map_upload_finishing_during_save_is_kept_as_a_new_draft() {

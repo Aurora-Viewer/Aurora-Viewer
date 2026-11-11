@@ -213,7 +213,12 @@ impl World {
             .as_ref()
             .and_then(|(.., access)| access.as_deref())
             .map_or(0, aurora_net::search::short_string_to_access);
-        let rating = rating_of(region, self.agent_access());
+        // a god's lures are never held back by the rating (process_improved_im)
+        let rating = if self.god_level > 0 {
+            Rating::Allowed
+        } else {
+            rating_of(region, self.agent_access())
+        };
         if godlike && rating == Rating::Allowed {
             // "you're about to be teleported": no box
             log::info!("teleport: god lure from {}, accepted", im.from_agent_id);
