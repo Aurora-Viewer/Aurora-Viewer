@@ -8693,8 +8693,14 @@ impl App {
         } else {
             None
         };
+        // (the hover's outline and pulse go with the tooltips option)
         let outline = seat
-            .or_else(|| target.as_ref().filter(|_| actionable).map(|(_, index, _)| *index))
+            .or_else(|| {
+                target
+                    .as_ref()
+                    .filter(|_| actionable && settings.tooltips)
+                    .map(|(_, index, _)| *index)
+            })
             .and_then(|index| {
                 let (center, rotation, _) = crate::scene::Scene::object_transform(&self.world, index, Instant::now(), 0)?;
                 let half = self.world.objects.get(index)?.scale * 0.5;
@@ -8717,7 +8723,10 @@ impl App {
         let pressed = down && !self.vr_trigger_down;
         self.vr_trigger_down = down;
         // a light pulse as the beam arrives on something clickable
-        let hover = target.as_ref().filter(|_| actionable).map(|(_, index, _)| *index);
+        let hover = target
+            .as_ref()
+            .filter(|_| actionable && settings.tooltips)
+            .map(|(_, index, _)| *index);
         let haptics = self.settings.camera.vr.haptics;
         if haptics && hover.is_some() && hover != self.vr_hover {
             renderer.vr_haptic(side, 0.15, 0.02);
