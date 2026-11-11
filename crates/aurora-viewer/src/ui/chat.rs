@@ -213,7 +213,7 @@ pub struct ChatUi {
     /// A conversation's notices too (its sub-option, off), given every
     /// frame by the app.
     pub compact_im_notices: bool,
-    /// Emotes join their sender's group in the workspace styles
+    /// Emotes join their sender's group in the Aurora style
     /// (Preferences › Chat, off), given every frame by the app.
     pub group_emotes: bool,
     /// The nearby chat's field shows its channel selector (Preferences ›
