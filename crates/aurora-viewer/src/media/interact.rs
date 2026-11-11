@@ -380,7 +380,7 @@ impl MediaManager {
         let Some(p) = self.focused_mut().and_then(|m| m.plugin.as_mut()) else {
             return pressed;
         };
-        keys::forward(p, code, scancode, pressed, repeat, text, mods) || pressed
+        keys::edit(p, code, pressed, repeat, mods) || keys::forward(p, code, scancode, pressed, repeat, text, mods) || pressed
     }
 
     /// Release the focus (LLViewerMediaFocus::clearFocus).

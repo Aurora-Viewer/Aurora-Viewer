@@ -21354,7 +21354,10 @@ impl ApplicationHandler for App {
                     if !typing && let Some(p) = web {
                         use winit::platform::scancode::PhysicalKeyExtScancode;
                         let scancode = ke.physical_key.to_scancode().unwrap_or(0);
-                        if crate::media::keys::forward(p, code, scancode, pressed, ke.repeat, ke.text.as_deref(), web_mods) || pressed {
+                        if crate::media::keys::edit(p, code, pressed, ke.repeat, web_mods)
+                            || crate::media::keys::forward(p, code, scancode, pressed, ke.repeat, ke.text.as_deref(), web_mods)
+                            || pressed
+                        {
                             return;
                         }
                     }

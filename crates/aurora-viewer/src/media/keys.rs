@@ -10,7 +10,7 @@
 //! characters (LLWindowMacOSX::getNativeKeyData). The helpers of every
 //! system are built everywhere, so that their tests run on any.
 
-use aurora_media::{MediaPlugin, Modifiers};
+use aurora_media::{EditCommand, MediaPlugin, Modifiers};
 use winit::keyboard::KeyCode;
 
 #[cfg_attr(any(target_os = "linux", target_os = "macos"), allow(dead_code))]
@@ -147,6 +147,49 @@ pub fn key_lparam(scancode: u32, up: bool, repeat: bool) -> u32 {
 }
 
 #[cfg_attr(target_os = "linux", allow(dead_code))]
+/// The Edit menu command a key is, or None. With Control held (Command
+/// counts as Control on macOS, LLKeyboardMacOSX::updateModifiers), the Legacy
+/// Viewer gives the key to the menus before the focused page
+/// (LLViewerWindow::handleKey, indra/newview/llviewerwindow.cpp), and the
+/// Edit menu's shortcuts (menu_edit.xml) send their command to the focused
+/// media, its edit handler (LLViewerMediaImpl::paste and the others,
+/// indra/newview/llviewermedia.cpp). The modifiers must match exactly, as in
+/// LLMenuItemGL::handleAcceleratorKey: Ctrl+Shift+V is not Paste.
+pub fn edit_shortcut(code: KeyCode, mods: Modifiers) -> Option<EditCommand> {
+    if !(mods.control || mods.command) || mods.alt || mods.shift {
+        return None;
+    }
+    Some(match code {
+        KeyCode::KeyZ => EditCommand::Undo,
+        KeyCode::KeyY => EditCommand::Redo,
+        KeyCode::KeyX => EditCommand::Cut,
+        KeyCode::KeyC => EditCommand::Copy,
+        KeyCode::KeyV => EditCommand::Paste,
+        KeyCode::KeyA => EditCommand::SelectAll,
+        _ => return None,
+    })
+}
+
+/// Whether a held shortcut runs its command again: the items with
+/// `allow_key_repeat` in menu_edit.xml (Undo, Redo, Paste).
+fn edit_repeats(cmd: EditCommand) -> bool {
+    matches!(cmd, EditCommand::Undo | EditCommand::Redo | EditCommand::Paste)
+}
+
+/// Run an Edit menu shortcut on a page instead of sending it the key: the
+/// command on the press (and on a repeat when it allows one), nothing on the
+/// release. True when the key is a shortcut, which the page then never gets,
+/// on every system, as in the Legacy Viewer.
+pub fn edit(p: &mut MediaPlugin, code: KeyCode, pressed: bool, repeat: bool, mods: Modifiers) -> bool {
+    let Some(cmd) = edit_shortcut(code, mods) else {
+        return false;
+    };
+    if pressed && (!repeat || edit_repeats(cmd)) {
+        p.edit(cmd);
+    }
+    true
+}
+
 /// UTF-16 code units of a text, one WM_CHAR each.
 pub fn char_units(text: &str) -> Vec<u32> {
     text.encode_utf16().map(|u| u as u32).collect()
@@ -510,6 +553,30 @@ mod tests {
         assert_eq!(key_lparam(0x1E, true, false) >> 30, 3);
         assert_eq!(char_units("é😀"), vec![0xE9, 0xD83D, 0xDE00]);
         assert_eq!(virtual_key(KeyCode::KeyA), Some(0x41));
+    }
+
+    #[test]
+    fn edit_shortcuts_are_the_legacy_edit_menu() {
+        let none = Modifiers::default();
+        let ctrl = Modifiers { control: true, ..none };
+        let command = Modifiers { command: true, ..none };
+        assert_eq!(edit_shortcut(KeyCode::KeyV, ctrl), Some(EditCommand::Paste));
+        assert_eq!(edit_shortcut(KeyCode::KeyV, command), Some(EditCommand::Paste));
+        assert_eq!(edit_shortcut(KeyCode::KeyC, ctrl), Some(EditCommand::Copy));
+        assert_eq!(edit_shortcut(KeyCode::KeyX, ctrl), Some(EditCommand::Cut));
+        assert_eq!(edit_shortcut(KeyCode::KeyA, ctrl), Some(EditCommand::SelectAll));
+        assert_eq!(edit_shortcut(KeyCode::KeyZ, ctrl), Some(EditCommand::Undo));
+        assert_eq!(edit_shortcut(KeyCode::KeyY, ctrl), Some(EditCommand::Redo));
+        // plain typing and other shortcuts go to the page
+        assert_eq!(edit_shortcut(KeyCode::KeyV, none), None);
+        assert_eq!(edit_shortcut(KeyCode::KeyF, ctrl), None);
+        assert_eq!(edit_shortcut(KeyCode::Delete, ctrl), None);
+        // the modifiers must match exactly
+        assert_eq!(edit_shortcut(KeyCode::KeyV, Modifiers { shift: true, ..ctrl }), None);
+        assert_eq!(edit_shortcut(KeyCode::KeyV, Modifiers { alt: true, ..ctrl }), None);
+        assert!(edit_repeats(EditCommand::Paste));
+        assert!(!edit_repeats(EditCommand::Copy));
+        assert!(!edit_repeats(EditCommand::SelectAll));
     }
 
     #[test]
