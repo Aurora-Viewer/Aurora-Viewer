@@ -22439,9 +22439,10 @@ impl ApplicationHandler for App {
                 self.group_profile_ui.create.demo(DemoStart { draft, then });
                 self.panels.perf = false;
             }
-            // AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|lost:
+            // AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|lost|collapsed:
             // the Contacts tab of Conversations (or its torn-off window, or
-            // the resident picker of "Add..."); `lost` starts in the state a
+            // the resident picker of "Add...", or its friends with the
+            // contact sheet collapsed); `lost` starts in the state a
             // restart used to leave: torn off, its tab hidden and its window
             // never reopened
             if let Ok(v) = std::env::var("AURORA_DEMO_CONTACTS") {
@@ -22465,6 +22466,7 @@ impl ApplicationHandler for App {
                 if matches!(v.as_str(), "add" | "ajout") {
                     self.contacts_ui.pick_new_friend();
                 }
+                self.settings.friends_list.sheet_collapsed = v == "collapsed";
                 if let Ok(filter) = std::env::var("AURORA_DEMO_CONTACTS_FILTER") {
                     self.contacts_ui.filter_groups(&filter);
                     // the same in Aurora's look of People, under its Groups pill
