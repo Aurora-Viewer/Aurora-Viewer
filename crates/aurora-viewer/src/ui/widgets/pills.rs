@@ -783,6 +783,11 @@ mod search_tests {
             assert!(ctx.read_response(clear).is_some(), "kind={kind}: a filled field has a clear action");
             ctx.memory_mut(|m| m.request_focus(field.id));
             frame(&ctx, kind, &mut text, vec![], true);
+            assert_eq!(
+                ctx.memory(|m| m.focused()),
+                Some(field.id),
+                "kind={kind}: the field holds the focus before Tab"
+            );
             frame(&ctx, kind, &mut text, vec![tab.clone()], true);
             for _ in 0..2 {
                 frame(&ctx, kind, &mut text, vec![], true);
