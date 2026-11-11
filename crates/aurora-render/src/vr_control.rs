@@ -28,6 +28,13 @@ pub(crate) struct Control {
     translation: RwLock<glam::Vec3>,
     input: RwLock<crate::VrInputState>,
     pointer: RwLock<crate::VrPointer>,
+    display: RwLock<crate::VrDisplay>,
+    /// Pending vibration per hand: (amplitude, seconds).
+    haptics: parking_lot::Mutex<[Option<(f32, f32)>; 2]>,
+    recenter: AtomicBool,
+    /// World-space shift of the view (ahead of the eyes, height), applied on
+    /// top of the anchor each frame, so re-anchoring keeps it.
+    offset: RwLock<glam::Vec3>,
 }
 impl Control {
     pub fn new(available: bool) -> Self {
@@ -38,7 +45,48 @@ impl Control {
             translation: RwLock::new(glam::Vec3::ZERO),
             input: RwLock::new(crate::VrInputState::default()),
             pointer: RwLock::new(crate::VrPointer::default()),
+            display: RwLock::new(crate::VrDisplay::default()),
+            haptics: parking_lot::Mutex::new([None; 2]),
+            recenter: AtomicBool::new(false),
+            offset: RwLock::new(glam::Vec3::ZERO),
         }
+    }
+    pub fn set_display(&self, display: crate::VrDisplay) {
+        *self.display.write() = display;
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    pub fn display(&self) -> crate::VrDisplay {
+        *self.display.read()
+    }
+    /// A pulse on one hand; a stronger pending one is kept.
+    pub fn haptic(&self, side: crate::VrSide, amplitude: f32, seconds: f32) {
+        if !(amplitude.is_finite() && seconds.is_finite()) {
+            return;
+        }
+        let slot = &mut self.haptics.lock()[side as usize];
+        if slot.is_none_or(|(a, _)| a < amplitude) {
+            *slot = Some((amplitude, seconds));
+        }
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    pub fn take_haptics(&self) -> [Option<(f32, f32)>; 2] {
+        std::mem::take(&mut *self.haptics.lock())
+    }
+    pub fn recenter(&self) {
+        self.recenter.store(true, Ordering::Release);
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    pub fn take_recenter(&self) -> bool {
+        self.recenter.swap(false, Ordering::AcqRel)
+    }
+    pub fn set_offset(&self, offset: glam::Vec3) {
+        if offset.is_finite() {
+            *self.offset.write() = offset;
+        }
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    pub fn offset(&self) -> glam::Vec3 {
+        *self.offset.read()
     }
     pub fn state(&self) -> VrState {
         match self.state.load(Ordering::Acquire) {

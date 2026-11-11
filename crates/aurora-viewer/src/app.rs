@@ -443,6 +443,10 @@ pub struct App {
     /// The avatar position already carried into the VR anchor.
     vr_avatar_position: Option<Vec3>,
     vr_trigger_down: bool,
+    /// The right thumbstick held in, for recentring.
+    vr_recenter: crate::vr::Hold,
+    /// The object the VR pointer is on, for the vibration as it arrives.
+    vr_hover: Option<usize>,
     input: MoveInput,
     joystick: joystick::State,
     /// Keys and bindable mouse buttons held down.
@@ -1569,6 +1573,8 @@ impl App {
             vr_world_since: None,
             vr_avatar_position: None,
             vr_trigger_down: false,
+            vr_recenter: Default::default(),
+            vr_hover: None,
             input: MoveInput::default(),
             joystick: Default::default(),
             down: HashSet::new(),
@@ -8086,6 +8092,30 @@ impl App {
             let forward = crate::vr::movement_vector(glam::Vec2::Y, vr.head_forward, 0.0);
             self.world.agent.yaw = forward.y.atan2(forward.x);
         }
+        // A: jump, held up (flight starts as with the key held); B: crouch
+        // or go down in flight. In camera-only mode they raise and lower
+        // the camera.
+        if vr.right.active {
+            let rise = vr.right.primary as i8 as f32 - vr.right.secondary as i8 as f32;
+            if settings.locomotion == crate::camera::VrLocomotion::CameraOnly {
+                if rise != 0.0 {
+                    renderer.add_vr_translation(Vec3::Z * rise * settings.movement_speed * dt);
+                }
+            } else {
+                input.up |= vr.right.primary;
+                input.down |= vr.right.secondary;
+            }
+        }
+        // the right thumbstick held in for a moment: recentre
+        if self
+            .vr_recenter
+            .step(vr.right.active && vr.right.thumbstick_click, Duration::from_millis(600), Instant::now())
+        {
+            renderer.vr_recenter();
+            if settings.haptics {
+                renderer.vr_haptic(aurora_render::VrSide::Right, 0.6, 0.06);
+            }
+        }
         let left_stick = crate::vr::dead_zone(vr.left.thumbstick, settings.thumbstick_dead_zone);
         if settings.locomotion == crate::camera::VrLocomotion::CameraOnly && vr.left.active {
             let direction = crate::vr::movement_vector(left_stick, vr.head_forward, 0.0);
@@ -8127,11 +8157,22 @@ impl App {
         }
     }
 
-    /// Carry the headset anchor with the avatar, including vertical motion,
-    /// while OpenXR still supplies the local physical head offset.
+    /// Carry the headset anchor with the avatar's eyes, including vertical
+    /// motion, while OpenXR still supplies the local physical head offset.
+    /// The eyes, not the body's centre: they lead it by 0.12 m like the
+    /// first-person camera's, so when the avatar turns they swing round and
+    /// the view goes with them instead of ending up inside the head. The
+    /// view offset (ahead of the eyes, height) follows the facing too.
     fn follow_vr_avatar(&mut self, renderer: &Renderer) {
-        let position = self.world.agent.position;
-        if !renderer.vr_engaged() || self.settings.camera.vr.locomotion == crate::camera::VrLocomotion::CameraOnly {
+        let settings = &self.settings.camera.vr;
+        let yaw = self.world.agent.yaw;
+        let facing = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
+        let camera_only = settings.locomotion == crate::camera::VrLocomotion::CameraOnly;
+        renderer.set_vr_offset(
+            crate::vr::view_offset(facing, if camera_only { 0.0 } else { settings.forward_offset }, settings.height_offset),
+        );
+        let position = self.world.agent.position + facing * crate::vr::EYE_LEAD;
+        if !renderer.vr_engaged() || camera_only {
             self.vr_avatar_position = None;
             return;
         }
@@ -8187,7 +8228,17 @@ impl App {
         let down = crate::vr::trigger_held(self.vr_trigger_down, controller.trigger);
         let pressed = down && !self.vr_trigger_down;
         self.vr_trigger_down = down;
+        // a light pulse as the beam arrives on something clickable
+        let hover = target.as_ref().filter(|_| actionable).map(|(_, index, _)| *index);
+        let haptics = self.settings.camera.vr.haptics;
+        if haptics && hover.is_some() && hover != self.vr_hover {
+            renderer.vr_haptic(side, 0.15, 0.02);
+        }
+        self.vr_hover = hover;
         if pressed && let Some((target, index, point)) = target {
+            if haptics {
+                renderer.vr_haptic(side, 0.5, 0.04);
+            }
             self.activate_object_action(target, index, point, Some(ray));
         }
     }

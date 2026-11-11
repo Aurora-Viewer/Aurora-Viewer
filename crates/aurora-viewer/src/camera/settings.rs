@@ -288,6 +288,13 @@ pub struct VrSettings {
     pub dominant_hand: VrHand,
     pub controller_pointer: bool,
     pub pointer_distance: f32,
+    /// Metres the view sits ahead of the avatar's eyes, along its facing,
+    /// so the headset is not inside the head or body.
+    pub forward_offset: f32,
+    /// Metres the view is raised (negative: lowered), e.g. when seated.
+    pub height_offset: f32,
+    /// Controller vibration on pointing at and clicking objects.
+    pub haptics: bool,
     pub exposure: f32,
     pub brightness: f32,
     pub contrast: f32,
@@ -331,6 +338,9 @@ impl Default for VrSettings {
             dominant_hand: VrHand::Right,
             controller_pointer: true,
             pointer_distance: 8.0,
+            forward_offset: 0.1,
+            height_offset: 0.0,
+            haptics: true,
             exposure: 0.0,
             brightness: 0.0,
             contrast: 1.0,
@@ -527,6 +537,8 @@ impl CameraSettings {
         self.vr.snap_turn_cooldown = fix(self.vr.snap_turn_cooldown, 0.05, 1.0, d.vr.snap_turn_cooldown);
         self.vr.thumbstick_dead_zone = fix(self.vr.thumbstick_dead_zone, 0.0, 0.8, d.vr.thumbstick_dead_zone);
         self.vr.pointer_distance = fix(self.vr.pointer_distance, 0.5, 64.0, d.vr.pointer_distance);
+        self.vr.forward_offset = fix(self.vr.forward_offset, 0.0, 0.5, d.vr.forward_offset);
+        self.vr.height_offset = fix(self.vr.height_offset, -1.0, 1.0, d.vr.height_offset);
         self.vr.exposure = fix(self.vr.exposure, -4.0, 4.0, d.vr.exposure);
         self.vr.brightness = fix(self.vr.brightness, -1.0, 1.0, d.vr.brightness);
         self.vr.contrast = fix(self.vr.contrast, 0.0, 2.0, d.vr.contrast);

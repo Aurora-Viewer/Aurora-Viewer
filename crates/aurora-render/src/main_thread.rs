@@ -1300,6 +1300,23 @@ impl Renderer {
     pub fn set_vr_pointer(&self, pointer: crate::VrPointer) {
         self.vr.set_pointer(pointer);
     }
+    /// The VR picture adjustments and comfort vignette for the next frames.
+    pub fn set_vr_display(&self, display: crate::VrDisplay) {
+        self.vr.set_display(display);
+    }
+    /// A short vibration on one controller.
+    pub fn vr_haptic(&self, side: crate::VrSide, amplitude: f32, seconds: f32) {
+        self.vr.haptic(side, amplitude, seconds);
+    }
+    /// Anchor the headset view again at the avatar's eyes, facing its way.
+    pub fn vr_recenter(&self) {
+        self.vr.recenter();
+    }
+    /// Shift the headset view in the world (ahead of the avatar's eyes,
+    /// higher or lower), on top of where it is anchored.
+    pub fn set_vr_offset(&self, offset: glam::Vec3) {
+        self.vr.set_offset(offset);
+    }
     pub fn add_vr_yaw(&self, radians: f32) {
         self.vr.add_yaw(radians);
     }

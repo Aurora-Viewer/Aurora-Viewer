@@ -53,9 +53,10 @@ pub struct VrInputState {
 
 /// One of the two OpenXR hands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(usize)]
 pub enum VrSide {
-    Left,
-    Right,
+    Left = 0,
+    Right = 1,
 }
 
 impl VrInputState {
@@ -85,6 +86,50 @@ pub struct VrPointer {
     pub actionable: bool,
 }
 
+/// Picture adjustments and comfort darkening applied to the eyes after the
+/// world, in the display's encoding (VR-only preferences).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VrDisplay {
+    /// Stops: the picture is multiplied by 2^exposure.
+    pub exposure: f32,
+    /// Added after contrast, -1..1.
+    pub brightness: f32,
+    /// Around mid grey; 1 leaves it.
+    pub contrast: f32,
+    /// 0 grey, 1 unchanged, 2 doubled.
+    pub saturation: f32,
+    /// Output = input^(1/gamma).
+    pub gamma: f32,
+    /// Comfort vignette, 0 none to 1 strongest: the edges of the view
+    /// darken while moving or turning.
+    pub vignette: f32,
+}
+
+impl Default for VrDisplay {
+    fn default() -> Self {
+        Self {
+            exposure: 0.0,
+            brightness: 0.0,
+            contrast: 1.0,
+            saturation: 1.0,
+            gamma: 1.0,
+            vignette: 0.0,
+        }
+    }
+}
+
+impl VrDisplay {
+    /// Whether the picture is changed at all (the vignette apart).
+    pub fn adjusts(&self) -> bool {
+        let d = Self::default();
+        (self.exposure - d.exposure).abs() > 1e-3
+            || (self.brightness - d.brightness).abs() > 1e-3
+            || (self.contrast - d.contrast).abs() > 1e-3
+            || (self.saturation - d.saturation).abs() > 1e-3
+            || (self.gamma - d.gamma).abs() > 1e-3
+    }
+}
+
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 mod openxr_input {
     use super::{Quat, Vec2, Vec3, VrControllerState, VrInputState};
@@ -102,6 +147,7 @@ mod openxr_input {
         secondary: xr::Action<bool>,
         menu: xr::Action<bool>,
         thumbstick_click: xr::Action<bool>,
+        haptic: xr::Action<xr::Haptic>,
         aim_spaces: [xr::Space; 2],
         hands: [xr::Path; 2],
         /// A small live record makes an unfamiliar runtime's controller
@@ -124,6 +170,7 @@ mod openxr_input {
             let secondary = set.create_action::<bool>("secondary", "Secondary button", &hands)?;
             let menu = set.create_action::<bool>("menu", "Menu button", &hands)?;
             let thumbstick_click = set.create_action::<bool>("thumbstick_click", "Thumbstick click", &hands)?;
+            let haptic = set.create_action::<xr::Haptic>("haptic", "Vibration", &hands)?;
 
             let touch_bindings = |profile: &str| -> xr::Result<()> {
                 let path = |suffix: &str| instance.string_to_path(suffix);
@@ -145,6 +192,8 @@ mod openxr_input {
                         xr::Binding::new(&menu, path("/user/hand/left/input/menu/click")?),
                         xr::Binding::new(&thumbstick_click, path("/user/hand/left/input/thumbstick/click")?),
                         xr::Binding::new(&thumbstick_click, path("/user/hand/right/input/thumbstick/click")?),
+                        xr::Binding::new(&haptic, path("/user/hand/left/output/haptic")?),
+                        xr::Binding::new(&haptic, path("/user/hand/right/output/haptic")?),
                     ],
                 )
             };
@@ -166,6 +215,8 @@ mod openxr_input {
                     xr::Binding::new(&aim_pose, instance.string_to_path("/user/hand/right/input/aim/pose")?),
                     xr::Binding::new(&primary, instance.string_to_path("/user/hand/left/input/select/click")?),
                     xr::Binding::new(&primary, instance.string_to_path("/user/hand/right/input/select/click")?),
+                    xr::Binding::new(&haptic, instance.string_to_path("/user/hand/left/output/haptic")?),
+                    xr::Binding::new(&haptic, instance.string_to_path("/user/hand/right/output/haptic")?),
                 ],
             )?;
             session.attach_action_sets(&[&set])?;
@@ -184,6 +235,7 @@ mod openxr_input {
                 secondary,
                 menu,
                 thumbstick_click,
+                haptic,
                 aim_spaces,
                 hands,
                 next_diagnostic: std::sync::Mutex::new(Instant::now()),
@@ -205,6 +257,22 @@ mod openxr_input {
             };
             self.diagnose(session, state);
             Ok(state)
+        }
+
+        /// One vibration pulse on a hand (0 left, 1 right).
+        pub(crate) fn pulse<G: xr::Graphics>(
+            &self,
+            session: &xr::Session<G>,
+            hand: usize,
+            amplitude: f32,
+            seconds: f32,
+        ) -> xr::Result<()> {
+            let nanos = (seconds.clamp(0.0, 1.0) * 1e9) as i64;
+            let event = xr::HapticVibration::new()
+                .amplitude(amplitude.clamp(0.0, 1.0))
+                .duration(xr::Duration::from_nanos(nanos.max(1)))
+                .frequency(xr::FREQUENCY_UNSPECIFIED);
+            self.haptic.apply_feedback(session, self.hands[hand], &event)
         }
 
         fn diagnose<G: xr::Graphics>(&self, session: &xr::Session<G>, state: VrInputState) {

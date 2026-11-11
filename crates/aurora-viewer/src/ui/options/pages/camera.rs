@@ -263,6 +263,25 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     0.5..=64.0,
                     " m",
                 );
+                cx.toggle(
+                    tr!("ui-options-camera-vr-haptics"),
+                    tr!("ui-options-camera-vr-haptics-help"),
+                    &field!(camera.vr.haptics),
+                );
+                cx.slider(
+                    tr!("ui-options-camera-vr-forward-offset"),
+                    tr!("ui-options-camera-vr-forward-offset-help"),
+                    &field!(camera.vr.forward_offset),
+                    0.0..=0.5,
+                    " m",
+                );
+                cx.slider(
+                    tr!("ui-options-camera-vr-height-offset"),
+                    tr!("ui-options-camera-vr-height-offset-help"),
+                    &field!(camera.vr.height_offset),
+                    -1.0..=1.0,
+                    " m",
+                );
             });
         }
         1 => {

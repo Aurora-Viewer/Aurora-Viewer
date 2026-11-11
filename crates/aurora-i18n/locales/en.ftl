@@ -13665,6 +13665,12 @@ ui-options-camera-vr-controller-pointer = Controller pointer
 ui-options-camera-vr-controller-pointer-help = Shows the laser from your dominant hand. Pull the trigger to click what it touches.
 ui-options-camera-vr-pointer-distance = Pointer distance
 ui-options-camera-vr-pointer-distance-help = Maximum distance of the VR UI pointer.
+ui-options-camera-vr-haptics = Controller vibration
+ui-options-camera-vr-haptics-help = A light pulse when the laser reaches something you can click, a firmer one when you click.
+ui-options-camera-vr-forward-offset = View ahead of the eyes
+ui-options-camera-vr-forward-offset-help = Moves your view this far in front of your avatar's eyes, so you don't see the inside of its head or body. It turns with your avatar.
+ui-options-camera-vr-height-offset = View height
+ui-options-camera-vr-height-offset-help = Raises or lowers your view, for example when you play seated. Hold the right thumbstick down to recentre.
 
 app-vr-leave = Press { $key } to return to desktop mode
 

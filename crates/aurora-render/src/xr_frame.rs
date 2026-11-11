@@ -309,6 +309,20 @@ impl Session {
         let frame = self.waiter.wait()?;
         self.stream.begin()?;
         let mut controller_input = self.input.sync(&self.session, &self.local, frame.predicted_display_time)?;
+        for (hand, pulse) in self.control.take_haptics().into_iter().enumerate() {
+            if let Some((amplitude, seconds)) = pulse
+                && let Err(e) = self.input.pulse(&self.session, hand, amplitude, seconds)
+            {
+                log::debug!("XR world: vibration refused: {e}");
+            }
+        }
+        if self.control.take_recenter() {
+            // anchored again, as at entry, on the next still head
+            log::info!("XR world: recentring on request");
+            self.anchor = None;
+            self.settle = (0, None);
+            self.anchored = None;
+        }
         let (flags, views) = self.session.locate_views(VIEWS, frame.predicted_display_time, &self.local)?;
         if !frame.should_render
             || views.len() != 2
@@ -393,7 +407,9 @@ impl Session {
             let p = head.pose.position;
             self.anchor = Some(anchor.turn_about(anchor.world_point(glam::Vec3::new(p.x, p.y, p.z)), yaw));
         }
-        let anchor = self.anchor.ok_or("Invalid desktop anchor")?;
+        // the viewer's view offset (ahead of the eyes, height) on top, not
+        // kept in the anchor: a recentre or re-anchor keeps it
+        let anchor = self.anchor.ok_or("Invalid desktop anchor")?.translate(self.control.offset());
         // Controllers are placed with this frame's final anchor (after the
         // locomotion and turn above), the one the eyes use: placed before
         // it, the drawn controllers and the pointer's ray trailed the view

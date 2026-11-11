@@ -13664,6 +13664,12 @@ ui-options-camera-vr-controller-pointer = Pointeur du contrôleur
 ui-options-camera-vr-controller-pointer-help = Affiche le laser de votre main dominante. Appuyez sur la gâchette pour cliquer sur ce qu'il touche.
 ui-options-camera-vr-pointer-distance = Distance du pointeur
 ui-options-camera-vr-pointer-distance-help = Distance maximale du pointeur de l'interface VR.
+ui-options-camera-vr-haptics = Vibration des manettes
+ui-options-camera-vr-haptics-help = Une légère impulsion quand le laser atteint un objet cliquable, une plus forte quand vous cliquez.
+ui-options-camera-vr-forward-offset = Vue devant les yeux
+ui-options-camera-vr-forward-offset-help = Place votre vue à cette distance devant les yeux de votre avatar, pour ne pas voir l'intérieur de sa tête ou de son corps. Elle tourne avec votre avatar.
+ui-options-camera-vr-height-offset = Hauteur de la vue
+ui-options-camera-vr-height-offset-help = Monte ou baisse votre vue, par exemple quand vous jouez assis. Maintenez le stick droit enfoncé pour recentrer.
 
 app-vr-leave = Appuyez sur { $key } pour revenir au mode bureau
 

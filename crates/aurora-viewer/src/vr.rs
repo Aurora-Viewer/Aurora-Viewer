@@ -53,6 +53,40 @@ pub fn keys_stick(forward: bool, back: bool, left: bool, right: bool) -> Vec2 {
     Vec2::new(axis(right, left), axis(forward, back)).normalize_or_zero()
 }
 
+/// How far the avatar's eyes lead its centre along its facing (the
+/// first-person camera's standing eye, `camera::mouselook_eye`).
+pub const EYE_LEAD: f32 = 0.12;
+
+/// The world shift of the VR view: `forward` metres along the avatar's
+/// level facing, `height` metres up.
+pub fn view_offset(facing: Vec3, forward: f32, height: f32) -> Vec3 {
+    facing.with_z(0.0).normalize_or_zero() * forward + Vec3::Z * height
+}
+
+/// A button held long enough, for actions that must not fire on a brush
+/// (recentring on the thumbstick click).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Hold {
+    since: Option<Instant>,
+    fired: bool,
+}
+
+impl Hold {
+    /// True once, when `down` has been held for `hold`.
+    pub fn step(&mut self, down: bool, hold: Duration, now: Instant) -> bool {
+        if !down {
+            *self = Self::default();
+            return false;
+        }
+        let since = *self.since.get_or_insert(now);
+        if !self.fired && now.duration_since(since) >= hold {
+            self.fired = true;
+            return true;
+        }
+        false
+    }
+}
+
 /// Trigger hysteresis: pressed past 0.7, released only under 0.35.
 pub fn trigger_held(was_held: bool, value: f32) -> bool {
     if was_held { value > 0.35 } else { value >= 0.7 }
@@ -117,6 +151,28 @@ mod tests {
         let left = movement_vector(keys_stick(false, false, true, false), Vec3::X, 0.0);
         let stick = movement_vector(Vec2::new(-1.0, 0.0), Vec3::X, 0.0);
         assert!(left.distance(stick) < 1e-6);
+    }
+
+    #[test]
+    fn view_offset_turns_with_the_facing() {
+        let east = view_offset(Vec3::X, 0.1, 0.2);
+        assert!(east.distance(Vec3::new(0.1, 0.0, 0.2)) < 1e-6);
+        // a pitched facing still moves the view level
+        let north = view_offset(Vec3::new(0.0, 0.5, 0.8), 0.1, 0.0);
+        assert!(north.distance(Vec3::new(0.0, 0.1, 0.0)) < 1e-6);
+    }
+
+    #[test]
+    fn hold_fires_once_after_its_time() {
+        let now = Instant::now();
+        let hold = Duration::from_millis(600);
+        let mut h = Hold::default();
+        assert!(!h.step(true, hold, now));
+        assert!(!h.step(true, hold, now + Duration::from_millis(300)));
+        assert!(h.step(true, hold, now + Duration::from_millis(700)));
+        assert!(!h.step(true, hold, now + Duration::from_millis(900)));
+        assert!(!h.step(false, hold, now + Duration::from_secs(1)));
+        assert!(!h.step(true, hold, now + Duration::from_secs(2)));
     }
 
     #[test]
