@@ -281,6 +281,12 @@ pub struct ToolbarUi {
     /// "Show Friends Only" is on (FSRenderFriendsOnly).
     pub friends_only_active: bool,
     pub show_name_tags: bool,
+    /// World › HUDs › Show HUDs is on (given by the app): the HUDs button
+    /// lights while they are hidden.
+    pub show_huds: bool,
+    /// The interface is hidden (given by the app): its button, reached
+    /// through a screen edge, lights and shows it again.
+    pub interface_hidden: bool,
     pub movelock_status: String,
     /// The violet of the Grid status button's flash (0: none), given by
     /// the app on a new entry of the grid's status feed.

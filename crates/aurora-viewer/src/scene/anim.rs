@@ -441,7 +441,12 @@ impl Motion {
         }
         let elapsed = stop.saturating_duration_since(self.continuous_activation).as_secs_f64();
         let span = f64::from(a.loop_out - a.loop_in);
-        let fraction = if span > 0.0 { (elapsed - f64::from(a.loop_in)) % span } else { 0.0 };
+        // fmod, as setStopTime: reversed loop points give a negative span
+        let fraction = if span == 0.0 {
+            0.0
+        } else {
+            (elapsed - f64::from(a.loop_in)) % span
+        };
         let delay = (f64::from(a.duration - a.loop_in - a.ease_out) - fraction).max(0.0);
         stop.checked_add(Duration::from_secs_f64(delay)).unwrap_or(stop)
     }

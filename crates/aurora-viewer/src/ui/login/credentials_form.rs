@@ -68,6 +68,7 @@ pub fn content(
                         form.agree_tos = false;
                         form.critical_message = None;
                         form.read_critical = false;
+                        form.forget_next_server();
                     }
                 }
                 ui.add_space(8.0);
@@ -90,6 +91,7 @@ pub fn content(
                     form.agree_tos = false;
                     form.critical_message = None;
                     form.read_critical = false;
+                    form.forget_next_server();
                 }
                 Some(user)
             } else {
@@ -173,6 +175,13 @@ pub fn content(
                     });
                 widgets::checkbox(ui, p, &mut form.read_critical, aurora_i18n::tr!("ui-login-critical-message-read"));
             }
+            // the login would go on to another server: the user decides
+            if let Some(server) = &form.next_server {
+                ui.add_space(8.0);
+                ui.label(RichText::new(aurora_i18n::tr!("ui-login-next-server")).strong());
+                ui.label(aurora_i18n::tr!("ui-login-next-server-body", server = server.as_str()));
+                widgets::checkbox(ui, p, &mut form.accept_next_server, aurora_i18n::tr!("ui-login-next-server-accept"));
+            }
             if let Some(error) = &form.error {
                 ui.label(RichText::new(error).color(p.danger));
             }
@@ -186,6 +195,7 @@ pub fn content(
                 && (!form.show_mfa || !form.mfa_token.trim().is_empty())
                 && (form.tos_message.is_none() || form.agree_tos)
                 && (form.critical_message.is_none() || form.read_critical)
+                && (form.next_server.is_none() || form.accept_next_server)
         })
         .inner
         && !grids_open;
@@ -219,6 +229,12 @@ pub fn content(
         form.tos_message = None;
         form.critical_message = None;
         form.show_mfa = false;
+        let next_server = form.next_server.take();
+        if std::mem::take(&mut form.accept_next_server)
+            && let Some(server) = next_server
+        {
+            form.accepted_next_servers.push(server);
+        }
     }
     pressed
 }
@@ -255,6 +271,7 @@ pub fn dialog(
         form.show_mfa = false;
         form.tos_message = None;
         form.critical_message = None;
+        form.forget_next_server();
         form.password.clear();
         form.mfa_token.clear();
         if adding
