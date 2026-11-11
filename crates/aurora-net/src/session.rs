@@ -13,6 +13,7 @@ mod currency;
 mod estate;
 mod experience_events;
 mod gestures;
+mod god;
 mod inventory_copies;
 mod inventory_moves;
 mod inventory_preview;
@@ -2132,6 +2133,8 @@ impl Session<'_> {
             }
             NetCommand::Land(l) => self.on_land_command(l),
             NetCommand::Estate(e) => self.on_estate_command(e),
+            NetCommand::RequestGodlikePowers { godlike } => self.request_godlike(godlike),
+            NetCommand::God(c) => self.on_god_command(c),
             NetCommand::ParcelInfoRequest(id) => {
                 let mut m = ParcelInfoRequest::default();
                 m.agent_data.agent_id = self.agent_id();
@@ -4092,6 +4095,7 @@ impl Session<'_> {
             || self.dispatch_search(from, pkt)?
             || self.dispatch_groups(pkt)?
             || self.dispatch_build(pkt)?
+            || self.dispatch_god(pkt)?
         {
             return Ok(());
         }
@@ -6618,7 +6622,7 @@ mod event_queue_tests {
 mod script_dialog_tests {
     use super::*;
 
-    fn test_shared(events: crossbeam_channel::Sender<(Instant, NetEvent)>) -> Shared {
+    pub(in crate::session) fn test_shared(events: crossbeam_channel::Sender<(Instant, NetEvent)>) -> Shared {
         Shared {
             http: reqwest::Client::new(),
             caps_http: reqwest::Client::new(),
@@ -6633,7 +6637,7 @@ mod script_dialog_tests {
         }
     }
 
-    fn test_login(main_port: u16) -> Arc<LoginResponse> {
+    pub(in crate::session) fn test_login(main_port: u16) -> Arc<LoginResponse> {
         Arc::new(LoginResponse {
             agent_id: Uuid::from_u128(1),
             session_id: Uuid::from_u128(2),
@@ -6657,7 +6661,12 @@ mod script_dialog_tests {
         })
     }
 
-    fn test_session<'a>(sh: &'a Shared, sock: Arc<UdpSocket>, sims: HashMap<SocketAddr, Sim>, main: SocketAddr) -> Session<'a> {
+    pub(in crate::session) fn test_session<'a>(
+        sh: &'a Shared,
+        sock: Arc<UdpSocket>,
+        sims: HashMap<SocketAddr, Sim>,
+        main: SocketAddr,
+    ) -> Session<'a> {
         let (eq_tx, _) = mpsc::unbounded_channel();
         let (caps_tx, _) = mpsc::unbounded_channel();
         let (notecard_copy_tx, _) = mpsc::unbounded_channel();
@@ -7210,5 +7219,24 @@ mod script_dialog_tests {
             assert_eq!(parts.join(" "), words);
             assert!(main.try_recv_from(&mut large).is_err(), "three parts only");
         }
+    }
+
+    /// The next packets the region receives, decoded as `M`, past the
+    /// others (pings, agent updates) until `n` of them arrived.
+    pub(in crate::session) async fn received<M: Msg>(sim: &UdpSocket, n: usize) -> Vec<M> {
+        let mut datagram = [0; 1500];
+        let mut out = Vec::new();
+        while out.len() < n {
+            let (size, _) = tokio::time::timeout(Duration::from_secs(2), sim.recv_from(&mut datagram))
+                .await
+                .expect("the packet reaches the region")
+                .expect("packet");
+            let packet = parse_packet(&datagram[..size]).expect("datagram");
+            if packet.id == M::ID {
+                assert!(packet.reliable());
+                out.push(packet.decode().expect("message"));
+            }
+        }
+        out
     }
 }

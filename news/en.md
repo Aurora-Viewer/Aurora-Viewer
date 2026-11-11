@@ -26,6 +26,16 @@ An empty line starts a new paragraph.
 
 # Aurora Viewer news
 
+## 2026-11-11 — Aurora 0.9.6: outfit showcase, auto portraits and 65 photo looks
+Appearance's Outfit gallery becomes a showcase: large pictures of your outfits, a rail for favourites, outfits without a picture and folders, and wear in one click (the small tiles stay in Preferences › Aurora). Auto portrait frames you in a studio for the outfit's free picture, Take the portraits does every outfit in one go, and an optional HD picture costs the grid's upload price. The photo LUT tab now holds 20 looks by Czar Fenris and 45 by Nanner Pudding, thank you both! Your cache and settings are kept.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.6)
+
+## 2026-11-11 — The Milky Way from real stars, and Rendering types
+The Milky Way is now drawn from the 2.5 million stars of the Tycho-2 Catalogue, with its star clouds and dark lanes, and Star hour can show the sky by the real clock. Advanced › Rendering types hides terrain, water, objects, avatars or particles to see behind them, like the Legacy Viewer. A Mac starts at the display's logical resolution with Mid-High quality, AMD RX 9000 cards keep their contact shadows, and HUD media answer first in busy regions.
+
+## 2026-11-11 — Poser, building, inventory and fixes
+Hold Space to brake your avatar, like the Legacy Viewer. The poser gets Save as… and shows where a pose went. Move handles are easier to grab, land selections snap to the parcel grid, and glTF materials keep 2K maps. Favorites lists starred items without their folders, and the delete confirmation can be turned off. Region / Estate asks before a change that can send people home. Thanks to anne-skydancer, circuskid, emmelinedevere, Gaalrauch, KanikaBreed, LisaScheers, Marakiinfinity, Memekiller, Nowalski and Odessa-Draekavik.
+
 ## 2026-11-10 — Aurora 0.9.5: Region Tracker, contact set markers and appearance XML
 World › Region tracker watches a list of regions, like the Legacy Viewer: whether each one is up and how many avatars are there, without opening the map; the World map's Track region adds one. A contact set can now mark its members in the world, through walls and at the screen's edge: set its World marker in People › Contact sets (off by default). Import XML, in the shape, physics and clothing editors, loads an appearance file from a shape website or another viewer. Your cache and settings are kept.
 [Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.5)
