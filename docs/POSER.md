@@ -36,6 +36,17 @@ picked in the world shows its side in the selector. The Hands tab has the
 five presets, applied to the chosen side (both in Mirror, in one undo step),
 and a finger grid: finger × base, middle and tip. Edited joints have violet dots, including their
 in-world markers.
+**Several joints at once**: Shift + click a joint's marker, row or finger
+cell (Ctrl + click works in the lists too) adds it to the selected joint, or
+takes it out; a plain click selects one joint again, and "Only this one"
+under the joint's name does the same. The joints added follow every change
+of the selected one: the same turn in their own frame, the same move, the
+same scale ratio, so both eyes look the same way (Mirror would turn them
+in opposite directions). Their markers have a thinner ring and their rows
+are lit. Mirror, Reset joint and the world pin apply to all of them, as in
+the Legacy Viewer's multi-select joint lists. Dragging another joint of the
+selection makes it lead the others. Changing tabs keeps only the joints
+the new tab shows, and the Side selector swaps a selected pair's lead.
 Only the active tab's joints and shafts are visible and selectable. Changing
 tabs selects a joint in that group and replaces the previous group's gizmo.
 
@@ -54,6 +65,11 @@ is clamped. Only the unparented skeleton root translates freely. Explicit
 scale edits still change proportions through the normal skeleton rules.
 A world lock attempts to hold a joint's position and orientation when its
 ancestors or subject move, yielding at reach limits to preserve attachments.
+The rotation gizmo has an outer, camera-facing ring beyond its three axis
+rings, shown in amber when the pointer comes near it: dragging it turns the
+joint about the line from the camera to the joint, in the pointer's
+direction. The axis rings win where they are close; locks, Mirror and undo
+apply as for the axis rings.
 Scale has local X/Y/Z cube handles and a central uniform-scale cube. Drag an
 axis cube outward to enlarge that channel, or drag the central cube right/up
 to enlarge all three channels. Scale values stay bounded and keep their

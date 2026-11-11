@@ -64,6 +64,7 @@ mod folders;
 mod hover_pick;
 mod texture_picker;
 use folders::chat_log_root;
+mod admin_status;
 mod contents_drop_demo;
 mod contents_folder_drag_demo;
 mod dof;
@@ -108,6 +109,9 @@ mod movement;
 mod object_actions;
 mod object_menu;
 mod object_menu_demo;
+mod outfit_batch;
+mod outfit_hd;
+mod outfit_portrait;
 mod own_motion;
 mod pay;
 mod photo_isolate;
@@ -678,6 +682,8 @@ pub struct App {
     delete_confirm: Option<(Vec<uuid::Uuid>, String)>,
     /// "Freeze" / "Eject" waiting for an answer (app/land_moderation.rs).
     moderation_ask: Option<land_moderation::Ask>,
+    /// A resident's Admin › Kick / Freeze / Unfreeze, waiting for its message.
+    god_kick_ask: Option<admin_status::KickAsk>,
     /// The object menus' questions and script queue (app/object_menu.rs).
     object_menu: object_menu::ObjectMenu,
     /// Teleport asked by a place link, waiting for a yes (TeleportViaSLAPP),
@@ -1083,6 +1089,10 @@ pub struct App {
     demo_script_sources: std::collections::HashMap<aurora_net::scripts::ScriptTarget, String>,
     demo_script_experiences: std::collections::HashMap<aurora_net::scripts::ScriptTarget, uuid::Uuid>,
     inventory_images: inventory_thumbnail::ImageJobs,
+    /// The outfit's auto portrait or square photo mode under way.
+    outfit_portrait: Option<outfit_portrait::Session>,
+    /// The outfits' batch portraits, from their window's opening.
+    outfit_batch: Option<outfit_batch::Batch>,
     appearance_ui: ui::appearance::AppearanceUi,
     shape_ui: crate::shape_editor::State,
     shape_camera: Option<Camera>,
@@ -1304,6 +1314,7 @@ fn apply_test_overrides(settings: &mut Settings) {
         settings.fsr_quality = v.min(4);
     }
     if let Some(v) = std::env::var("AURORA_RENDER_SCALE").ok().and_then(|v| v.parse::<u32>().ok()) {
+        settings.render_scale_auto = false;
         settings.render_scale_percent = v.clamp(50, 100);
     }
     if let Some(v) = std::env::var("AURORA_TEXTURE_BUDGET_MB").ok().and_then(|v| v.parse::<u32>().ok()) {
@@ -1336,6 +1347,24 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Ok(v) = std::env::var("AURORA_OCCLUSION") {
         settings.occlusion_culling = v != "0";
     }
+}
+
+/// While "Match the display" is on (`render_scale_auto`),
+/// `render_scale_percent` follows the window's scale factor, as the Legacy
+/// Viewer's RenderHiDPI 0 draws a Retina Mac's world at its logical
+/// resolution: moving the window to a 1×, 1.5× or 2× display changes the
+/// world resolution without a restart. Returns whether the percentage
+/// changed.
+fn sync_auto_render_scale(settings: &mut crate::settings::Settings, scale_factor: f64) -> bool {
+    if !settings.render_scale_auto {
+        return false;
+    }
+    let percent = crate::settings::auto_render_scale(scale_factor);
+    if settings.render_scale_percent == percent {
+        return false;
+    }
+    settings.render_scale_percent = percent;
+    true
 }
 
 /// Shows `conversation` with its field taking the keyboard, ready to type
@@ -1378,6 +1407,12 @@ impl App {
         // the regional 12 / 24 hours and time zone of the bars' clock, read once
         ui::bars::clock::read_system_clock();
         let mut settings = Settings::load();
+        if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
+            && std::env::var("AURORA_DEMO_INVENTORY")
+                .is_ok_and(|mode| matches!(mode.as_str(), "delete-confirm" | "delete-tab") || mode.starts_with("aurora-delete-confirm"))
+        {
+            settings.inventory.confirm_delete = true;
+        }
         if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
             && let Ok(mode) = std::env::var("AURORA_DEMO_MINIMIZED_MUTE")
         {
@@ -1480,6 +1515,7 @@ impl App {
         });
 
         let panels = Panels::from_settings(&settings);
+        let appearance_ui = ui::appearance::AppearanceUi::restored(settings.appearance_tab);
         let chat_ui = ChatUi::from_settings(&settings);
         let mut scene = Scene::new(cache, lib.clone());
         scene.jobs.execute(|| {
@@ -1663,6 +1699,7 @@ impl App {
             context_menu_was: false,
             delete_confirm: None,
             moderation_ask: None,
+            god_kick_ask: None,
             object_menu: Default::default(),
             place_confirm: None,
             suitcase_ask: None,
@@ -1923,7 +1960,9 @@ impl App {
             demo_script_sources: Default::default(),
             demo_script_experiences: Default::default(),
             inventory_images: Default::default(),
-            appearance_ui: Default::default(),
+            outfit_portrait: None,
+            outfit_batch: None,
+            appearance_ui,
             shape_ui: Default::default(),
             shape_camera: None,
             physics_ui: Default::default(),
@@ -2907,6 +2946,7 @@ impl App {
             } else if mode == "mfa-refused"
                 || (mode == "add-mfa" && self.login_form.mfa_token.trim().is_empty())
                 || (mode == "terms" && !(self.login_form.agree_tos && self.login_form.read_critical))
+                || (mode == "next-server" && self.login_form.accepted_next_servers.is_empty())
             {
                 if mode == "terms" {
                     log::info!(
@@ -3000,6 +3040,7 @@ impl App {
             id0,
             last_exec: self.last_exec(),
             platform: crate::system_info::login_platform(),
+            accepted_next_servers: self.login_form.accepted_next_servers.clone(),
         };
         self.login_form.busy = true;
         self.login_form.error = None;
@@ -3283,6 +3324,10 @@ impl App {
             }
             if self.photo_owns_upload(request) {
                 self.photo_uploaded(result);
+                return;
+            }
+            if self.outfit_hd_owns(request) {
+                self.outfit_hd_uploaded(result);
                 return;
             }
             let material_map = self.imports.uploading_entry(request);
@@ -3731,6 +3776,7 @@ impl App {
                 critical_required,
                 bad_credentials,
                 previous_session,
+                next_server,
             } => {
                 // A refused login spends its code, whatever the reason: the next
                 // attempt sends none, so the server can ask for a new one
@@ -3764,6 +3810,9 @@ impl App {
                     }
                     self.login_form.show_mfa = true;
                     self.login_form.error = Some(aurora_i18n::tr!("app-enter-the-code-from-your-authenticator-app").into());
+                } else if let Some(server) = next_server {
+                    self.login_form.next_server = Some(server);
+                    self.login_form.accept_next_server = false;
                 } else if tos_required {
                     self.login_form.tos_message = Some(error);
                 } else if critical_required {
@@ -4683,6 +4732,7 @@ impl App {
             Action::Search => ui::widgets::toggle_floater(&self.egui_ctx, ui::search::WINDOW, &mut self.panels.search),
             Action::Performance => ui::widgets::toggle_floater(&self.egui_ctx, "perf", &mut self.panels.perf),
             Action::DevToolbox => ui::widgets::toggle_floater(&self.egui_ctx, ui::dev_toolbox::WINDOW, &mut self.panels.dev_toolbox),
+            Action::RequestAdminStatus => self.request_admin_status(true),
             Action::DebugSettings => {
                 ui::widgets::toggle_floater(&self.egui_ctx, ui::debug_settings::WINDOW, &mut self.panels.debug_settings)
             }
@@ -4707,6 +4757,27 @@ impl App {
             Action::HideParticles => {
                 self.settings.world_overlays.hide_particles = !self.settings.world_overlays.hide_particles;
                 self.settings.save();
+            }
+            Action::RenderTrees
+            | Action::RenderAvatars
+            | Action::RenderTerrain
+            | Action::RenderSky
+            | Action::RenderWater
+            | Action::RenderObjects
+            | Action::RenderGrass
+            | Action::RenderClouds => {
+                let h = &mut self.settings.debug.hidden_types;
+                let off = match action {
+                    Action::RenderTrees => &mut h.trees,
+                    Action::RenderAvatars => &mut h.avatars,
+                    Action::RenderTerrain => &mut h.terrain,
+                    Action::RenderSky => &mut h.sky,
+                    Action::RenderWater => &mut h.water,
+                    Action::RenderObjects => &mut h.objects,
+                    Action::RenderGrass => &mut h.grass,
+                    _ => &mut h.clouds,
+                };
+                *off = !*off;
             }
             Action::ShowTransparency => {
                 let d = &mut self.settings.debug;
@@ -7818,6 +7889,10 @@ impl App {
             i.up = k(Action::Up) && !passing;
             // Page Down / C: crouch on the ground (crouch-walk while moving), descend in flight
             i.down = k(Action::Down);
+            // Space: brake, on the ground or in the air. The Legacy Viewer
+            // binds stop_moving in first and third person, not when seated
+            // (app_settings/key_bindings.xml).
+            i.stop = k(Action::StopMoving) && !self.world.agent.is_sitting();
         }
         // the Controls window's buttons, held like their keys
         let held = |a: Action| self.controls_held.contains(&a);
@@ -8892,6 +8967,8 @@ impl App {
                 crate::world::appearance::DEMO_TAKE_OFF_FOLDER,
             ));
         }
+        self.outfit_portrait_demo();
+        self.outfit_batch_demo();
         // AURORA_DEMO_GROUP_REGION: the Group titles window
         if self.demo && self.frame_count == 600 && crate::demo::group_region::on() {
             self.panels.group_titles = true;
@@ -8969,6 +9046,7 @@ impl App {
             self.options_ui.media_filter = rules.map(<[_]>::to_vec);
         }
         self.poll_inventory_images();
+        self.poll_outfit_hd();
         // a click whose depth is back already (the render thread finished
         // the last frame while this thread waited for its next one)
         self.resolve_clicks();
@@ -9354,6 +9432,8 @@ impl App {
         let (w, h) = gfx.renderer.size();
         // a photo drawn at its own size this frame: its proportions, the
         // part of it this frame draws, the height its details are chosen for
+        self.outfit_batch_frame();
+        self.outfit_portrait_frame(&gfx.renderer);
         self.photo_update(&gfx.renderer);
         self.viewfinder_frame(&mut gfx.renderer);
         self.photo_isolate_frame(&mut gfx.renderer);
@@ -9777,6 +9857,7 @@ impl App {
             self.scene.surface_protection = self.settings.surface_protection();
             self.scene.textures.set_max_resolution(self.settings.max_texture_resolution);
             self.scene.max_avatars = self.settings.max_avatars as usize;
+            self.scene.hidden_types = self.settings.debug.hidden_types;
             if self.demo {
                 self.scene.max_avatars = crate::demo::impostor_flip(self.scene.max_avatars);
             }
@@ -9862,6 +9943,7 @@ impl App {
                 self.settings.save();
             }
             self.scene.poser = self.ik_editor.pose_layers(&self.world);
+            self.outfit_portrait_pose();
             self.ik_editor.tick_pose_storage(&self.scene.jobs, &self.egui_ctx, &self.world);
             if !self.scene.poser.is_empty() {
                 self.scene.ik_edit = Default::default();
@@ -10748,7 +10830,16 @@ impl App {
             lights,
             spot_shadows,
             clear_color: Vec4::new(env.fog_color.x, env.fog_color.y, env.fog_color.z, 1.0),
-            sky: env.sky,
+            sky: aurora_render::SkyParams {
+                // the Clouds rendering type hidden: a cloud scale of zero
+                // draws none, nor their shadow (common.wgsl, clouds)
+                cloud_scale: if self.settings.debug.hidden_types.clouds {
+                    0.0
+                } else {
+                    env.sky.cloud_scale
+                },
+                ..env.sky
+            },
             water: env.water,
             mirror,
             probes,
@@ -10769,6 +10860,7 @@ impl App {
             },
             // the photo's isolation, "show only" on an empty background
             cutout: self.world.photo_isolation.empty_background(),
+            hide_sky: self.settings.debug.hidden_types.sky,
             look: None,
         };
         // a photo's look, or the live view's in the photo mode
@@ -10861,6 +10953,8 @@ impl App {
                             | "aurora-keyboard-wide"
                     ) || v.starts_with("note-")
                         || v.starts_with("clipboard-")
+                        || v.starts_with("delete-")
+                        || v.starts_with("aurora-delete-")
                         || v.starts_with("aurora-menu-")
                         || v.starts_with("bulk-")
                 }))
@@ -11396,6 +11490,7 @@ impl App {
             crate::autoreplace::set_enabled(self.settings.auto_replace);
             crate::link_trust::configure(&self.settings.trusted_sites);
             crate::link_preview::configure_sites(&self.settings.link_previews.picture_sites, crate::demo::picture_sites());
+            sync_auto_render_scale(&mut self.settings, gfx.window.scale_factor());
             gfx.renderer.apply_settings(self.settings.render_settings());
             self.panels.time_of_day = self.settings.time_of_day;
             self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));
@@ -12276,6 +12371,7 @@ impl App {
         self.demo_friends_only_steps();
         self.demo_social_menu_steps();
         self.demo_land_moderation();
+        self.demo_admin_status();
         if self.demo && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| matches!(m.as_str(), "touch" | "touch-shift")) {
             if self.frame_count == 720
                 && let Some(view) = self.scene.lists.hud_view
@@ -13968,6 +14064,13 @@ impl App {
                 self.settings.save();
             }
             BarAction::ShowTransparency => self.settings.debug.show_alpha = !self.settings.debug.show_alpha,
+            BarAction::RenderTypes(hidden, particles) => {
+                self.settings.debug.hidden_types = hidden;
+                if self.settings.world_overlays.hide_particles != particles {
+                    self.settings.world_overlays.hide_particles = particles;
+                    self.settings.save();
+                }
+            }
             BarAction::OwnedLand => {
                 ui::widgets::open_floater(&self.egui_ctx, ui::owned_land::WINDOW, &mut self.panels.owned_land);
                 self.world.group_money.request_owned_land();
@@ -14057,6 +14160,8 @@ impl App {
                 self.settings.save();
                 log::info!("quickjump: {}", self.settings.quickjump);
             }
+            BarAction::AdminStatus(godlike) => self.request_admin_status(godlike),
+            BarAction::Admin(a) => self.admin_action(a),
             BarAction::ToggleQuietSnapshots => {
                 self.settings.snapshot.sound = !self.settings.snapshot.sound;
                 self.settings.save();
@@ -14986,6 +15091,12 @@ impl App {
         self.login_form.mfa_for = Some(key.clone());
     }
 
+    /// Logged in (or about to) on Second Life rather than an OpenSim grid
+    /// (AURORA_DEMO_USERINFO=opensim: the demo plays another grid).
+    fn second_life(&self) -> bool {
+        !matches!(self.settings.grid, crate::settings::GridChoice::Custom) && !(self.demo && crate::demo::home::opensim())
+    }
+
     /// The preferences window, in the world and over the login screen. Every
     /// setting is the viewer's own (settings.rs), so all of them can change
     /// before login; only the transcripts folder belongs to an account, and
@@ -15031,8 +15142,7 @@ impl App {
         self.options_ui.maturity = self.world.login.is_some().then(|| self.world.agent_access());
         // the account settings the grid keeps, asked at each opening
         // (AURORA_DEMO_USERINFO=opensim: another grid's)
-        let second_life =
-            !matches!(self.settings.grid, crate::settings::GridChoice::Custom) && !(self.demo && crate::demo::home::opensim());
+        let second_life = self.second_life();
         self.world.follow_preferences(self.panels.settings, second_life);
         self.options_ui.account = self.world.login.is_some().then(|| ui::options::privacy::Account {
             info: self.world.user_info.info.clone(),
@@ -15330,6 +15440,22 @@ impl App {
                     self.start_login();
                 }
                 if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
+                    && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("next-server")
+                {
+                    self.demo_mfa_challenge = None;
+                    // the offline login server sends the login on to another
+                    // server (LoginError::NextServer)
+                    log::info!("demo login: the login server sends the login on to another server");
+                    self.on_app_event(NetEvent::LoginFailed {
+                        error: String::new(),
+                        mfa_required: false,
+                        tos_required: false,
+                        critical_required: false,
+                        bad_credentials: false,
+                        previous_session: false,
+                        next_server: Some("login.other-grid.example".into()),
+                    });
+                } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
                     && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("terms")
                 {
                     self.demo_mfa_challenge = None;
@@ -15348,6 +15474,7 @@ impl App {
                         critical_required: !tos,
                         bad_credentials: false,
                         previous_session: false,
+                        next_server: None,
                     });
                 } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at) {
                     self.demo_mfa_challenge = None;
@@ -15367,6 +15494,7 @@ impl App {
                         critical_required: false,
                         bad_credentials: refused,
                         previous_session: false,
+                        next_server: None,
                     });
                 } else if self.demo_mfa_challenge.is_some() {
                     ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -15701,6 +15829,11 @@ impl App {
                     ban_lines: self.settings.maps.ban_lines,
                     world_overlays: self.settings.world_overlays,
                     show_transparency: self.settings.debug.show_alpha,
+                    hidden_types: self.settings.debug.hidden_types,
+                    render_type_keys: ui::bars::RENDER_TYPE_ACTIONS.map(|a| {
+                        a.and_then(|a| self.settings.keybinds.get(a)[0].as_ref().map(|b| b.label()))
+                            .unwrap_or_default()
+                    }),
                     conversation_thumbnails: self.chat_ui.thumbnails.top_count(),
                     region: if self.world.rlva.has("showloc") {
                         aurora_i18n::tr!("rlva-hidden-region")
@@ -15751,6 +15884,9 @@ impl App {
                     can_go_home: self.world.rlva_can_teleport_home(),
                     release_notes: self.world.main_has_cap("ServerReleaseNotes"),
                     region_console: self.world.main_has_cap("SimConsoleAsync"),
+                    god_level: self.world.god_level,
+                    admin_objects: !self.build.selection.is_empty(),
+                    admin_requests: self.world.opensim_extras().is_none(),
                     motd: !self.world.motd.is_empty(),
                     grid_help: self.grid_help(),
                     marketplace: self.marketplace_home().is_some()
@@ -15763,6 +15899,7 @@ impl App {
                             group: self.world.groups.group(&parcel.group_id),
                             health: self.world.health,
                             frozen: self.world.frozen,
+                            god_level: self.world.god_level,
                         }),
                         _ => Vec::new(),
                     },
@@ -16550,6 +16687,14 @@ impl App {
                 {
                     self.world.apply(ev);
                 }
+                // AURORA_DEMO_CHAT_LINES=stagger: the nearby chat lines said
+                // one at a time
+                if self.demo
+                    && self.in_world()
+                    && let Some(ev) = crate::demo::chat_lines_due()
+                {
+                    self.world.apply(ev);
+                }
                 // AURORA_DEMO_SNOOZE: Tess writes in the group chat, which
                 // `auto` snoozes by itself
                 if self.demo && self.in_world() {
@@ -16598,11 +16743,13 @@ impl App {
                 // friends tab
                 let people_aurora = !self.settings.classic_people && !(self.demo && crate::demo::people::legacy());
                 let friends_before = self.settings.friends_list.clone();
+                let second_life = self.second_life();
                 let contacts_radar = ui::people::RadarData {
                     radar: &self.radar,
                     settings: &mut self.settings.radar,
                     voice: &voice_levels,
                     draw_distance: self.settings.draw_distance,
+                    second_life,
                     now: self.radar_clock.elapsed().as_secs_f64(),
                     pics: &self.avatar_pics,
                 };
@@ -16821,6 +16968,7 @@ impl App {
                     self.on_contacts_action(c, &mut a);
                 }
                 t = self.ui_parts.lap(Part::UiChat, t);
+                let second_life = self.second_life();
                 let mut people_map = |ui: &mut egui::Ui, size: egui::Vec2| {
                     let acts = self.people_map_ui.draw(
                         ui,
@@ -16843,6 +16991,7 @@ impl App {
                     settings: &mut self.settings.radar,
                     voice: &voice_levels,
                     draw_distance: self.settings.draw_distance,
+                    second_life,
                     now: self.radar_clock.elapsed().as_secs_f64(),
                     pics: &self.avatar_pics,
                 };
@@ -16993,6 +17142,7 @@ impl App {
                 let complexity = self.scene.avatar_complexity.get(&self.world.agent_id).copied().unwrap_or_default();
                 let mut open = self.panels.appearance;
                 self.appearance_ui.fill_previews = self.settings.appearance_fill_previews;
+                self.appearance_ui.showcase = !self.settings.classic_outfit_gallery;
                 for action in ui::appearance::show(
                     &ctx,
                     &p,
@@ -17012,6 +17162,8 @@ impl App {
                     self.settings.save();
                 }
                 self.panels.appearance = open;
+                self.outfit_portrait_window(&ctx, &p);
+                self.outfit_batch_window(&ctx, &p);
                 self.update_demo_shape_mesh();
                 self.shape_ui.update(&mut self.world, &self.scene, &ctx);
                 let shape_preferences = (self.shape_ui.hints, self.shape_ui.feet);
@@ -17088,6 +17240,7 @@ impl App {
                     }
                 }
                 self.land_moderation_ui(&ctx, &p);
+                self.god_kick_ui(&ctx, &p);
                 if let Some((ids, text)) = self.delete_confirm.clone()
                     && let Some(yes) = ui::context::delete_confirm(&ctx, &p, &text)
                 {
@@ -17944,6 +18097,7 @@ impl App {
                 self.settings.people_tab = self.panels.people_tab;
                 self.settings.show_inventory = self.panels.inventory;
                 self.settings.show_appearance = self.panels.appearance;
+                self.settings.appearance_tab = u8::try_from(self.appearance_ui.tab).unwrap_or(0);
                 self.settings.show_ao = self.panels.ao;
                 // (the photo's time of day is its own layer, never saved)
                 if self.panels.time_of_day != self.settings.time_of_day {
@@ -18203,6 +18357,7 @@ impl ApplicationHandler for App {
         // Cmd+Q asks like the close button (mac_quit.rs). Cmd+H stays Hide.
         #[cfg(target_os = "macos")]
         crate::mac_quit::route_quit_to_close();
+        sync_auto_render_scale(&mut self.settings, window.scale_factor());
         let created = self.open_renderer(&window);
         let renderer = match created {
             Ok(r) => r,
@@ -18243,6 +18398,12 @@ impl ApplicationHandler for App {
                 system_mb
             );
             level.apply(&mut self.settings);
+            if cfg!(target_os = "macos") && level == crate::graphics_presets::Preset::Medium {
+                // a Mac starts where the Legacy Viewer's Mac table puts
+                // Apple GPUs (GPU class 3, MidHigh)
+                crate::graphics_presets::mac_mid_high::apply(&mut self.settings);
+                log::info!("new profile: the Mac MidHigh values (featuretable_mac.txt)");
+            }
             apply_test_overrides(&mut self.settings);
             self.settings.save();
         }
@@ -18384,6 +18545,7 @@ impl ApplicationHandler for App {
                         | "first-mfa"
                         | "mfa-refused"
                         | "terms"
+                        | "next-server"
                         | "add"
                         | "password"
                         | "connecting"
@@ -18393,7 +18555,7 @@ impl ApplicationHandler for App {
                     self.login_form.accounts = (0..match mode.as_str() {
                         "cards2" | "drag2" | "drag-card2" | "mfa" | "manage" | "manage-confirm" | "add" | "password" | "connecting"
                         | "add-connecting" => 2,
-                        "first" | "first-mfa" | "mfa-refused" | "terms" | "first-connecting" => 0,
+                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "first-connecting" => 0,
                         "cards1" | "derez1" | "add-mfa" => 1,
                         "cards8" | "drag" | "drag-card" | "manage8" | "manage-drag" | "wheel-gap" | "arrows" => 8,
                         _ => 3,
@@ -18440,7 +18602,7 @@ impl ApplicationHandler for App {
                     self.settings.remember_password = !self.login_form.accounts.is_empty();
                     if matches!(
                         mode.as_str(),
-                        "first" | "first-mfa" | "mfa-refused" | "terms" | "add" | "add-mfa" | "password"
+                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "add" | "add-mfa" | "password"
                     ) {
                         self.settings.remember_password = false;
                         self.login_form.editing = true;
@@ -18450,7 +18612,7 @@ impl ApplicationHandler for App {
                             self.login_form.add_return = Some((self.settings.login_uri(), self.settings.username.trim().to_lowercase()));
                             self.settings.username.clear();
                         }
-                        if mode == "add-mfa" || mode == "terms" {
+                        if matches!(mode.as_str(), "add-mfa" | "terms" | "next-server") {
                             // a second identity, ready to submit (no real credential)
                             self.settings.username = "Example new account".into();
                             self.login_form.password = "demo-placeholder".into();
@@ -18719,6 +18881,13 @@ impl ApplicationHandler for App {
                     self.panels.owned_land = true;
                     self.world.group_money.request_owned_land();
                 }
+            }
+            // AURORA_DEMO_RENDER_TYPES=water,avatars,…: those rendering
+            // types hidden from the start (Advanced › Rendering types)
+            if let Ok(list) = std::env::var("AURORA_DEMO_RENDER_TYPES") {
+                let (hidden, particles) = crate::scene::render_types::Hidden::parse(&list);
+                self.settings.debug.hidden_types = hidden;
+                self.settings.world_overlays.hide_particles |= particles;
             }
             // AURORA_DEMO_CAM="yaw,pitch,distance" (radians, meters) for captures
             if let Ok(v) = std::env::var("AURORA_DEMO_CAM") {
@@ -19717,7 +19886,9 @@ impl ApplicationHandler for App {
             }
             if let Ok(view) = std::env::var("AURORA_DEMO_APPEARANCE") {
                 crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);
-                if view.starts_with("folders") {
+                // showcase: the gallery's showcase with folders, pictures and favorites
+                let showcase = view == "showcase" || view.starts_with("portrait") || view == "photo-mode" || view.starts_with("batch");
+                if view.starts_with("folders") || showcase {
                     crate::world::outfit_folders::seed_demo(&mut self.world.inventory, self.world.agent_id);
                     if view.starts_with("folders-many") {
                         crate::world::outfit_folders::seed_demo_many(&mut self.world.inventory);
@@ -19738,6 +19909,10 @@ impl ApplicationHandler for App {
                 if matches!(view.as_str(), "gallery-fit" | "gallery-fill") {
                     ui::appearance::demo_previews(&self.egui_ctx, &mut self.world.inventory, &mut self.ui_images);
                     self.settings.appearance_fill_previews = view == "gallery-fill";
+                }
+                if showcase {
+                    ui::appearance::demo_previews(&self.egui_ctx, &mut self.world.inventory, &mut self.ui_images);
+                    ui::appearance::demo_showcase(&mut self.world.inventory, &mut self.appearance_ui);
                 }
                 let many = crate::world::appearance::demo_outfit_count();
                 if many > 0 {
@@ -19898,6 +20073,10 @@ impl ApplicationHandler for App {
                         | "favorites-multi"
                         | "aurora-favorites"
                         | "aurora-favorites-multi"
+                        | "favorites-flat"
+                        | "favorites-parents"
+                        | "aurora-favorites-flat"
+                        | "aurora-favorites-parents"
                         | "aurora-folder-window"
                         | "aurora-folder-window-wide"
                         | "additional"
@@ -20003,6 +20182,19 @@ impl ApplicationHandler for App {
                         }
                     }
                     if view.contains("favorites") {
+                        if view.ends_with("-flat") || view.ends_with("-parents") {
+                            // A folder nested below an ordinary parent, plus
+                            // items starred independently in another folder.
+                            self.world
+                                .inventory
+                                .folders
+                                .get_mut(&uuid::Uuid::from_u128(8204))
+                                .expect("demo Body folder")
+                                .info
+                                .favorite = true;
+                            self.world.inventory.generation += 1;
+                            self.settings.inventory.favorites_show_parent_folders = view.ends_with("-parents");
+                        }
                         let ids: Vec<_> = [8100, 8109, 8110].into_iter().map(uuid::Uuid::from_u128).collect();
                         if view.ends_with("multi") {
                             self.inventory_ui.show_original(&self.world.inventory, ids[0]);
@@ -20967,9 +21159,20 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Resized(s) => {
                 ui::menu::window_geometry_changed(&self.egui_ctx);
+                if sync_auto_render_scale(&mut self.settings, g.window.scale_factor()) {
+                    g.renderer.apply_settings(self.settings.render_settings());
+                }
                 g.renderer.resize(s.width, s.height);
                 self.geom_changed = Some(Instant::now());
                 self.sync_minimized_mute();
+            }
+            WindowEvent::ScaleFactorChanged { .. } => {
+                // Moving the window to a display of another scale recomputes
+                // the automatic world resolution before the Resized event that
+                // winit sends next.
+                if sync_auto_render_scale(&mut self.settings, g.window.scale_factor()) {
+                    g.renderer.apply_settings(self.settings.render_settings());
+                }
             }
             WindowEvent::Moved(_) => {
                 ui::menu::window_geometry_changed(&self.egui_ctx);

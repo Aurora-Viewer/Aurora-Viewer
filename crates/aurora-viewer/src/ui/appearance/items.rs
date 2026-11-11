@@ -34,7 +34,7 @@ pub(super) fn sort_links(inv: &crate::world::inventory::Inventory, links: &mut [
 
 /// LLPanelWearableOutfitItem::updateItem: clothing follows the confirmed COF;
 /// objects are worn when the simulator reports them attached to our avatar.
-pub(super) fn worn_items(world: &World) -> HashSet<Uuid> {
+pub(crate) fn worn_items(world: &World) -> HashSet<Uuid> {
     let mut worn = world.worn_attachment_items();
     if let Some(cof) = model::cof(&world.inventory) {
         worn.extend(
