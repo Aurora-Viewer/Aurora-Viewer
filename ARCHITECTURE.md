@@ -1347,6 +1347,9 @@ updated when ordinary avatars would use impostors. Eligibility is checked
 every frame. Closing releases poses by default, with an explicit keep option.
 `poser/{data,controls,bones,ui}.rs` implement history, paired joint groups,
 presets, symmetry, numeric controls, trackball, library and settings.
+`poser/compact.rs` is the default compact window (the same state as the full
+one in `ui.rs`) and the pure rules of the markers on hover and of a click on
+another posed avatar.
 `poser/trackball.rs` projects joint axes and rotates in the rendered camera
 frame, including camera roll. `poser/scale_gizmo.rs` edits local scale channels
 with axis/uniform handles and one undo checkpoint per drag. `poser/together.rs`
@@ -3511,6 +3514,13 @@ the window, its tabs, and the simple Friends, Groups and Blocked lists of Firest
 redrawn windows (group profile, About Land, People).
 The "Invisible" status (right to see us online withdrawn from each friend, then given back to those who had it)
 is in `world/status.rs`.
+`ui/widgets/tracks.rs` holds the tracks: choices with an icon (and a
+short word) in one sunken bar, the chosen cell lit and sliding
+(`icon_track`; `segmented` is its plain-text form), clusters of square
+buttons (`button_track`, `track_button`), an inspector row's two-way choice
+(`labelled_choice`), the Apple-style help tag (`help_tag`) and a row's
+icon-over-label button face (`paint_tile_button`). The compact poser is
+their first user.
 `ui/widgets/unread.rs` is the one unread counter (islands, dock, Firestorm's
 bars, Conversations list): dark red, its digits' ink centred to the pixel.
 `ui/widgets/volume.rs` is the one volume slider (Preferences › Sound, the

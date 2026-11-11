@@ -199,9 +199,12 @@ impl Editor {
             self.poser.scale_gizmo.cancel();
             return false;
         };
-        let allow_hover = ctx.input(|i| i.pointer.interact_pos()).is_none_or(|p| {
-            geometry.cam.project(geometry.pivot).is_some_and(|c| c.distance(p) <= 9.0) || !self.point_owns_pointer(ctx, rig, p)
-        });
+        // the poser's Ctrl picks another part or avatar (`poser_ctrl_picks`)
+        let picking_parts = self.poser_ctrl_picks(ctx.input(|i| i.modifiers)) && !self.poser.scale_gizmo.dragging();
+        let allow_hover = !picking_parts
+            && ctx.input(|i| i.pointer.interact_pos()).is_none_or(|p| {
+                geometry.cam.project(geometry.pivot).is_some_and(|c| c.distance(p) <= 9.0) || !self.point_owns_pointer(ctx, rig, p)
+            });
         let (owns, change) = self
             .poser
             .scale_gizmo
@@ -209,7 +212,7 @@ impl Editor {
         if let Some(scale) = change {
             self.set_pose_scale(rig, bone, scale);
         }
-        owns
+        owns && !picking_parts
     }
 }
 

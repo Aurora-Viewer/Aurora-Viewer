@@ -41,6 +41,7 @@ pub(crate) mod scroll_offset;
 #[cfg(test)]
 pub(crate) mod steady_tests;
 mod text_field;
+mod tracks;
 mod unread;
 mod volume;
 mod workspace;
@@ -53,6 +54,10 @@ pub use pills::{
     search_text_edit_with_margin,
 };
 pub use text_field::text_field;
+pub use tracks::{
+    TRACK_INSET, TrackFace, TrackLit, button_track, help_tag, icon_track, labelled_choice, paint_tile_button, track_button,
+    wide_button_track,
+};
 pub use unread::{CountSize, UnreadCount, unread_count};
 pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
 pub use workspace::{
