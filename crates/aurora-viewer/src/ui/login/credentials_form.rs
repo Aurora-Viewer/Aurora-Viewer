@@ -177,6 +177,7 @@ pub fn content(
             }
             // the login would go on to another server: the user decides
             if let Some(server) = &form.next_server {
+                ui.add_space(8.0);
                 ui.label(RichText::new(aurora_i18n::tr!("ui-login-next-server")).strong());
                 ui.label(aurora_i18n::tr!("ui-login-next-server-body", server = server.as_str()));
                 widgets::checkbox(ui, p, &mut form.accept_next_server, aurora_i18n::tr!("ui-login-next-server-accept"));
