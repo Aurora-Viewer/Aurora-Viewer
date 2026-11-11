@@ -256,6 +256,8 @@ pub struct CameraSettings {
     /// every start crashed PCs that never use VR (#2309); the first
     /// "Restart in VR" turns it on.
     pub vr_at_start: bool,
+    /// Controller locomotion and display choices used only while VR is active.
+    pub vr: VrSettings,
 }
 
 /// Where the headset view starts on VR entry (Preferences › Camera › VR).
@@ -267,6 +269,75 @@ pub enum VrView {
     FirstPerson,
     /// Where the desktop camera was when VR was entered.
     DesktopCamera,
+}
+
+/// Native OpenXR interaction preferences. They are kept under Camera because
+/// headset motion owns the active camera, while avatar movement still uses
+/// Aurora's ordinary agent-control path.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VrSettings {
+    pub locomotion: VrLocomotion,
+    pub turn: VrTurn,
+    pub movement_speed: f32,
+    pub smooth_turn_speed: f32,
+    pub snap_turn_angle: f32,
+    pub snap_turn_cooldown: f32,
+    pub thumbstick_dead_zone: f32,
+    pub comfort_vignette: bool,
+    pub dominant_hand: VrHand,
+    pub controller_pointer: bool,
+    pub pointer_distance: f32,
+    pub exposure: f32,
+    pub brightness: f32,
+    pub contrast: f32,
+    pub saturation: f32,
+    pub gamma: f32,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VrLocomotion {
+    #[default]
+    Smooth,
+    CameraOnly,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VrTurn {
+    #[default]
+    Smooth,
+    Snap,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VrHand {
+    Left,
+    #[default]
+    Right,
+}
+
+impl Default for VrSettings {
+    fn default() -> Self {
+        Self {
+            locomotion: VrLocomotion::Smooth,
+            turn: VrTurn::Smooth,
+            movement_speed: 2.5,
+            smooth_turn_speed: 2.0,
+            snap_turn_angle: 45.0f32.to_radians(),
+            snap_turn_cooldown: 0.25,
+            thumbstick_dead_zone: 0.2,
+            comfort_vignette: false,
+            dominant_hand: VrHand::Right,
+            controller_pointer: true,
+            pointer_distance: 8.0,
+            exposure: 0.0,
+            brightness: 0.0,
+            contrast: 1.0,
+            saturation: 1.0,
+            gamma: 1.0,
+        }
+    }
 }
 
 impl Default for CameraSettings {
@@ -306,6 +377,7 @@ impl Default for CameraSettings {
             show_interface_in_mouselook: false,
             vr_view: VrView::FirstPerson,
             vr_at_start: false,
+            vr: Default::default(),
         }
     }
 }
@@ -444,6 +516,22 @@ impl CameraSettings {
         self.zoom_time = fix(self.zoom_time, 0.0, 4.0, d.zoom_time);
         self.smoothing = fix(self.smoothing, *SMOOTHING_RANGE.start(), *SMOOTHING_RANGE.end(), d.smoothing);
         self.dynamic_strength = fix(self.dynamic_strength, 0.0, 30.0, d.dynamic_strength);
+        self.vr.movement_speed = fix(self.vr.movement_speed, 0.5, 8.0, d.vr.movement_speed);
+        self.vr.smooth_turn_speed = fix(self.vr.smooth_turn_speed, 0.25, 6.0, d.vr.smooth_turn_speed);
+        self.vr.snap_turn_angle = fix(
+            self.vr.snap_turn_angle,
+            15.0f32.to_radians(),
+            90.0f32.to_radians(),
+            d.vr.snap_turn_angle,
+        );
+        self.vr.snap_turn_cooldown = fix(self.vr.snap_turn_cooldown, 0.05, 1.0, d.vr.snap_turn_cooldown);
+        self.vr.thumbstick_dead_zone = fix(self.vr.thumbstick_dead_zone, 0.0, 0.8, d.vr.thumbstick_dead_zone);
+        self.vr.pointer_distance = fix(self.vr.pointer_distance, 0.5, 64.0, d.vr.pointer_distance);
+        self.vr.exposure = fix(self.vr.exposure, -4.0, 4.0, d.vr.exposure);
+        self.vr.brightness = fix(self.vr.brightness, -1.0, 1.0, d.vr.brightness);
+        self.vr.contrast = fix(self.vr.contrast, 0.0, 2.0, d.vr.contrast);
+        self.vr.saturation = fix(self.vr.saturation, 0.0, 2.0, d.vr.saturation);
+        self.vr.gamma = fix(self.vr.gamma, 0.5, 2.5, d.vr.gamma);
         self
     }
 }

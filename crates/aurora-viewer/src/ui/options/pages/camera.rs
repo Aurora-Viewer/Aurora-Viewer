@@ -189,6 +189,80 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-camera-vr-at-start-help"),
                     &field!(camera.vr_at_start),
                 );
+                use crate::camera::{VrHand, VrLocomotion, VrTurn};
+                cx.unfolded().choice(
+                    tr!("ui-options-camera-vr-locomotion"),
+                    tr!("ui-options-camera-vr-locomotion-help"),
+                    &field!(camera.vr.locomotion),
+                    &[
+                        (VrLocomotion::Smooth, tr!("ui-options-camera-vr-locomotion-smooth"), false),
+                        (VrLocomotion::CameraOnly, tr!("ui-options-camera-vr-locomotion-camera-only"), false),
+                        (VrLocomotion::None, tr!("ui-options-camera-vr-locomotion-none"), false),
+                    ],
+                );
+                cx.slider(
+                    tr!("ui-options-camera-vr-movement-speed"),
+                    tr!("ui-options-camera-vr-movement-speed-help"),
+                    &field!(camera.vr.movement_speed),
+                    0.5..=8.0,
+                    " m/s",
+                );
+                cx.unfolded().choice(
+                    tr!("ui-options-camera-vr-turning"),
+                    tr!("ui-options-camera-vr-turning-help"),
+                    &field!(camera.vr.turn),
+                    &[
+                        (VrTurn::Smooth, tr!("ui-options-camera-vr-turning-smooth"), false),
+                        (VrTurn::Snap, tr!("ui-options-camera-vr-turning-snap"), false),
+                    ],
+                );
+                cx.slider(
+                    tr!("ui-options-camera-vr-smooth-turn-speed"),
+                    tr!("ui-options-camera-vr-smooth-turn-speed-help"),
+                    &field!(camera.vr.smooth_turn_speed),
+                    0.25..=6.0,
+                    " rad/s",
+                );
+                cx.slider(
+                    tr!("ui-options-camera-vr-snap-turn-angle"),
+                    tr!("ui-options-camera-vr-snap-turn-angle-help"),
+                    &field!(camera.vr.snap_turn_angle),
+                    15.0f32.to_radians()..=90.0f32.to_radians(),
+                    " rad",
+                );
+                cx.slider(
+                    tr!("ui-options-camera-vr-thumbstick-dead-zone"),
+                    tr!("ui-options-camera-vr-thumbstick-dead-zone-help"),
+                    &field!(camera.vr.thumbstick_dead_zone),
+                    0.0..=0.8,
+                    "",
+                );
+                cx.toggle(
+                    tr!("ui-options-camera-vr-comfort-vignette"),
+                    tr!("ui-options-camera-vr-comfort-vignette-help"),
+                    &field!(camera.vr.comfort_vignette),
+                );
+                cx.unfolded().choice(
+                    tr!("ui-options-camera-vr-dominant-hand"),
+                    tr!("ui-options-camera-vr-dominant-hand-help"),
+                    &field!(camera.vr.dominant_hand),
+                    &[
+                        (VrHand::Left, tr!("ui-options-camera-vr-dominant-hand-left"), false),
+                        (VrHand::Right, tr!("ui-options-camera-vr-dominant-hand-right"), false),
+                    ],
+                );
+                cx.toggle(
+                    tr!("ui-options-camera-vr-controller-pointer"),
+                    tr!("ui-options-camera-vr-controller-pointer-help"),
+                    &field!(camera.vr.controller_pointer),
+                );
+                cx.slider(
+                    tr!("ui-options-camera-vr-pointer-distance"),
+                    tr!("ui-options-camera-vr-pointer-distance-help"),
+                    &field!(camera.vr.pointer_distance),
+                    0.5..=64.0,
+                    " m",
+                );
             });
         }
         1 => {

@@ -73,6 +73,10 @@ impl Graphics {
         }
         let mut extensions = xr::ExtensionSet::default();
         extensions.khr_vulkan_enable2 = true;
+        // Quest 3's Touch Plus controllers have their own profile. Older
+        // runtimes can keep using the Oculus Touch fallback without this
+        // extension, so only request it where the runtime advertises it.
+        extensions.meta_touch_controller_plus = available.meta_touch_controller_plus;
         let xr = entry.create_instance(
             &xr::ApplicationInfo {
                 application_name: "Aurora Vulkan interoperability",

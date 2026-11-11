@@ -6061,7 +6061,8 @@ impl Backend {
                 return Err(Box::new(packet));
             };
             let created = (|| -> Result<XrWorld, Box<dyn std::error::Error>> {
-                let session = crate::xr_frame::Session::new(runtime, *system, &self.device, &self.queue, self.config.format)?;
+                let session =
+                    crate::xr_frame::Session::new(runtime, *system, &self.device, &self.queue, self.config.format, self.vr.clone())?;
                 let mut init = (**seed).clone();
                 init.external = true;
                 init.xr = None;

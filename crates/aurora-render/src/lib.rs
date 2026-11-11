@@ -75,6 +75,7 @@ mod ui_glass;
 mod ui_world;
 pub mod upload;
 mod vr_control;
+mod vr_input;
 pub mod vram;
 pub mod vulkan_drivers;
 pub mod vulkan_layers;
@@ -82,6 +83,7 @@ pub mod water_effects;
 mod water_optics;
 mod water_wake;
 pub use vr_control::VrState;
+pub use vr_input::{VrControllerState, VrInputState};
 /// Whether a VR headset is ready now (`xr_device::headset_ready`), for the
 /// restart that brings VR when the headset came after startup; not probed
 /// on macOS yet (its Metal path is unvalidated).

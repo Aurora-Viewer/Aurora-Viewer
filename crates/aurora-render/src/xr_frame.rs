@@ -27,6 +27,8 @@ pub(crate) struct Eyes {
 }
 pub(crate) struct Session {
     session: xr::Session<GraphicsApi>,
+    input: crate::vr_input::Actions,
+    control: std::sync::Arc<crate::vr_control::Control>,
     waiter: xr::FrameWaiter,
     stream: xr::FrameStream<GraphicsApi>,
     local: xr::Space,
@@ -62,6 +64,7 @@ impl Session {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
+        control: std::sync::Arc<crate::vr_control::Control>,
     ) -> Result<Self> {
         #[cfg(not(target_os = "macos"))]
         let (session, waiter, stream) = {
@@ -127,6 +130,7 @@ impl Session {
             .min(1600);
         let local = session.create_reference_space(xr::ReferenceSpaceType::LOCAL, xr::Posef::IDENTITY)?;
         let head = session.create_reference_space(xr::ReferenceSpaceType::VIEW, xr::Posef::IDENTITY)?;
+        let input = crate::vr_input::Actions::new(instance, &session)?;
         let mut swap_usage =
             xr::SwapchainUsageFlags::COLOR_ATTACHMENT | xr::SwapchainUsageFlags::TRANSFER_SRC | xr::SwapchainUsageFlags::SAMPLED;
         let mut eye_usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING;
@@ -226,6 +230,8 @@ impl Session {
         });
         Ok(Self {
             session,
+            input,
+            control,
             waiter,
             stream,
             local,
@@ -302,6 +308,7 @@ impl Session {
         }
         let frame = self.waiter.wait()?;
         self.stream.begin()?;
+        let mut controller_input = self.input.sync(&self.session, &self.local, frame.predicted_display_time)?;
         let (flags, views) = self.session.locate_views(VIEWS, frame.predicted_display_time, &self.local)?;
         if !frame.should_render
             || views.len() != 2
@@ -375,6 +382,32 @@ impl Session {
             );
         }
         let anchor = self.anchor.ok_or("Invalid desktop anchor")?;
+        for controller in [&mut controller_input.left, &mut controller_input.right] {
+            if controller.active {
+                if let Some(pose) = anchor.world_pose(Pose {
+                    position: controller.position,
+                    orientation: controller.orientation,
+                }) {
+                    controller.position = pose.position;
+                    controller.orientation = pose.orientation;
+                } else {
+                    controller.active = false;
+                }
+            }
+        }
+        self.control.publish_input(controller_input);
+        let translation = self.control.take_translation();
+        if translation != glam::Vec3::ZERO {
+            self.anchor = Some(anchor.translate(translation));
+        }
+        let anchor = self.anchor.ok_or("Invalid desktop anchor")?;
+        let yaw = self.control.take_yaw();
+        if yaw != 0.0 {
+            let head = self.head.locate(&self.local, frame.predicted_display_time)?;
+            let p = head.pose.position;
+            self.anchor = Some(anchor.turn_about(anchor.world_point(glam::Vec3::new(p.x, p.y, p.z)), yaw));
+        }
+        let anchor = self.anchor.ok_or("Invalid desktop anchor")?;
         let camera = |i: usize| -> Result<EyeView> {
             let v = views[i];
             anchor
@@ -391,6 +424,8 @@ impl Session {
                 .ok_or_else(|| "Invalid runtime eye pose".into())
         };
         let cameras = [camera(0)?, camera(1)?];
+        self.control
+            .publish_head_forward(cameras[0].view.inverse().transform_vector3(glam::Vec3::NEG_Z));
         let mut output = Vec::new();
         for i in 0..2 {
             let index = self.swaps[i].acquire_image()? as usize;

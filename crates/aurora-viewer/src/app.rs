@@ -440,6 +440,9 @@ pub struct App {
     /// `--vr`: enter VR once the world has shown for a moment.
     vr_at_start: bool,
     vr_world_since: Option<Instant>,
+    /// The avatar position already carried into the VR anchor.
+    vr_avatar_position: Option<Vec3>,
+    vr_trigger_down: bool,
     input: MoveInput,
     joystick: joystick::State,
     /// Keys and bindable mouse buttons held down.
@@ -608,6 +611,8 @@ pub struct App {
     fb_since: Option<Instant>,
     /// Turn key held since (yaw rate ramp).
     turn_since: Option<Instant>,
+    /// Snap-turn edge and cooldown state, independent of desktop key turns.
+    vr_snap_turn: crate::vr::SnapTurn,
     /// Since when each camera key is held (CameraKeys rate ramp).
     cam_key_since: [Option<Instant>; 10],
     /// Look-at: the privacy settings (PrivateLookAtTarget,
@@ -1562,6 +1567,8 @@ impl App {
             vr_set_up: false,
             vr_at_start: crate::cli::get().vr,
             vr_world_since: None,
+            vr_avatar_position: None,
+            vr_trigger_down: false,
             input: MoveInput::default(),
             joystick: Default::default(),
             down: HashSet::new(),
@@ -1653,6 +1660,7 @@ impl App {
             voice_level: 0.0,
             fb_since: None,
             turn_since: None,
+            vr_snap_turn: Default::default(),
             cam_key_since: [None; 10],
             look_at_privacy: None,
             static_eyes: Default::default(),
@@ -7813,7 +7821,8 @@ impl App {
         self.alt_codes.key_pressed(code, ke.repeat)
     }
 
-    fn update_move_input(&mut self, typing: bool, dt: f32) {
+    fn update_move_input(&mut self, typing: bool, dt: f32, renderer: &Renderer) {
+        let (vr_active, vr_input) = (renderer.vr_engaged(), renderer.vr_input());
         self.poll_joystick(dt);
         if self.joystick_flycam_step(dt) {
             return;
@@ -7927,6 +7936,7 @@ impl App {
             i.forward |= self.right_drag;
         }
         i.run = self.temp_run.is_some() || self.joystick.running;
+        self.apply_vr_locomotion(&mut i, vr_active, vr_input, renderer, dt);
         if self.world.rlva.has("temprun") {
             i.run = false;
         }
@@ -8030,6 +8040,112 @@ impl App {
         };
         self.camera.apply_keys(keys, &mut self.world.agent, &self.settings.camera, dt);
         self.camera.joystick_pitch(i.joystick_pitch, dt);
+    }
+
+    /// Merge controller input into the existing avatar-control path. This
+    /// intentionally does not translate the camera or predict a position.
+    fn apply_vr_locomotion(
+        &mut self,
+        input: &mut MoveInput,
+        vr_active: bool,
+        vr: aurora_render::VrInputState,
+        renderer: &Renderer,
+        dt: f32,
+    ) {
+        if !vr_active {
+            return;
+        }
+        let settings = &self.settings.camera.vr;
+        let left_stick = crate::vr::dead_zone(vr.left.thumbstick, settings.thumbstick_dead_zone);
+        if settings.locomotion == crate::camera::VrLocomotion::CameraOnly && vr.left.active {
+            let direction = crate::vr::movement_vector(left_stick, vr.head_forward, 0.0);
+            renderer.add_vr_translation(direction * settings.movement_speed * dt);
+        }
+        if vr.left.active && settings.locomotion == crate::camera::VrLocomotion::Smooth {
+            let direction = crate::vr::movement_vector(left_stick, vr.head_forward, 0.0);
+            if direction.length_squared() > 0.0 {
+                // A lateral stick component is a strafe, not a request to
+                // turn the avatar. Forward/back keeps its facing with the
+                // headset so the simulator receives ordinary strafe flags.
+                if left_stick.y.abs() > 0.15 {
+                    let forward = crate::vr::movement_vector(glam::Vec2::Y, vr.head_forward, 0.0);
+                    self.world.agent.yaw = forward.y.atan2(forward.x);
+                }
+                let intent = crate::vr::movement_intent(left_stick);
+                input.forward |= intent.forward;
+                input.back |= intent.back;
+                input.strafe_left |= intent.left;
+                input.strafe_right |= intent.right;
+                // Aurora's network protocol has digital walking controls. Its
+                // normal run state is the only server-authoritative speed step.
+                input.run |= settings.movement_speed >= 3.5;
+            }
+        }
+        if vr.right.active {
+            let right_x = crate::vr::dead_zone(vr.right.thumbstick, settings.thumbstick_dead_zone).x;
+            let right_y = crate::vr::dead_zone(vr.right.thumbstick, settings.thumbstick_dead_zone).y;
+            if settings.locomotion == crate::camera::VrLocomotion::CameraOnly {
+                renderer.add_vr_translation(Vec3::Z * right_y * settings.movement_speed * dt);
+            }
+            match settings.turn {
+                crate::camera::VrTurn::Smooth => renderer.add_vr_yaw(-right_x * settings.smooth_turn_speed * dt),
+                crate::camera::VrTurn::Snap => {
+                    let cooldown = Duration::try_from_secs_f32(settings.snap_turn_cooldown).unwrap_or(Duration::ZERO);
+                    renderer.add_vr_yaw(-self.vr_snap_turn.step(right_x, settings.snap_turn_angle, cooldown, Instant::now()));
+                }
+            }
+        }
+    }
+
+    /// Carry the headset anchor with the avatar, including vertical motion,
+    /// while OpenXR still supplies the local physical head offset.
+    fn follow_vr_avatar(&mut self, renderer: &Renderer) {
+        let position = self.world.agent.position;
+        if !renderer.vr_engaged() || self.settings.camera.vr.locomotion == crate::camera::VrLocomotion::CameraOnly {
+            self.vr_avatar_position = None;
+            return;
+        }
+        if let Some(previous) = self.vr_avatar_position.replace(position) {
+            let delta = position - previous;
+            if delta.is_finite() && delta.length_squared() > 0.0 {
+                renderer.add_vr_translation(delta);
+            }
+        }
+    }
+
+    /// Trigger a world object's normal click action from the dominant hand.
+    fn vr_world_touch(&mut self, active: bool, input: aurora_render::VrInputState) {
+        if !active || !self.settings.camera.vr.controller_pointer {
+            self.vr_trigger_down = false;
+            return;
+        }
+        let controller = match self.settings.camera.vr.dominant_hand {
+            crate::camera::VrHand::Left => input.left,
+            crate::camera::VrHand::Right => input.right,
+        };
+        let down = controller.active && controller.trigger >= 0.7;
+        if self.vr_trigger_down || !down {
+            self.vr_trigger_down = down;
+            return;
+        }
+        self.vr_trigger_down = true;
+        let direction = (controller.orientation * Vec3::NEG_Z).normalize_or(Vec3::Y);
+        let ray = (controller.position, direction);
+        let Some(point) = self.scene.interaction_point(
+            &self.world,
+            Some(ray),
+            None,
+            self.build.open,
+            self.settings.camera.vr.pointer_distance,
+        ) else {
+            return;
+        };
+        let Some(index) = self.scene.left_interaction_at_ray(&self.world, point, ray, true) else {
+            return;
+        };
+        if let Some(target) = crate::interaction::target(&self.world, index, &self.interactions.props) {
+            self.activate_object_action(target, index, point, Some(ray));
+        }
     }
 
     // ------------------------------------------------------------------ frame
@@ -9428,7 +9544,8 @@ impl App {
 
         // ---- agent / camera
         let typing = self.egui_ctx.egui_wants_keyboard_input();
-        self.update_move_input(typing, dt);
+        self.update_move_input(typing, dt, &gfx.renderer);
+        self.vr_world_touch(gfx.renderer.vr_engaged(), gfx.renderer.vr_input());
         if self.demo
             && let Ok(mode) = std::env::var("AURORA_DEMO_GROUNDING")
             && let Some(input) = crate::demo::grounding::scripted_input(&mode, self.frame_count)
@@ -9485,6 +9602,7 @@ impl App {
             self.update_own_prediction(ml, dt);
             let camera_distance = self.camera.position.distance(self.world.agent.position);
             self.world.agent.update(&self.input, ml, dt, camera_distance);
+            self.follow_vr_avatar(&gfx.renderer);
             if self.demo
                 && let Ok(mode) = std::env::var("AURORA_DEMO_GROUNDING")
             {
@@ -10267,7 +10385,7 @@ impl App {
             self.scene.set_first_person(
                 self.camera
                     .first_person_view()
-                    .then_some(self.settings.camera.show_avatar_in_mouselook),
+                    .then_some(self.settings.camera.show_avatar_in_mouselook || gfx.renderer.vr_engaged()),
             );
             self.scene.update_portal_clipping(&mut gfx.renderer, &self.world);
             self.scene.build_lists(&mut gfx.renderer, &cull, self.settings.shadows);

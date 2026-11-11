@@ -1,5 +1,10 @@
 //! Requests cross to the rendering worker without moving graphics/session ownership.
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::{
+    sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering},
+    time::Instant,
+};
+
+use parking_lot::RwLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -19,12 +24,18 @@ impl VrState {
 pub(crate) struct Control {
     wanted: AtomicBool,
     state: AtomicU8,
+    yaw_delta: AtomicU32,
+    translation: RwLock<glam::Vec3>,
+    input: RwLock<crate::VrInputState>,
 }
 impl Control {
     pub fn new(available: bool) -> Self {
         Self {
             wanted: AtomicBool::new(false),
             state: AtomicU8::new(if available { VrState::Off } else { VrState::Unavailable } as u8),
+            yaw_delta: AtomicU32::new(0.0f32.to_bits()),
+            translation: RwLock::new(glam::Vec3::ZERO),
+            input: RwLock::new(crate::VrInputState::default()),
         }
     }
     pub fn state(&self) -> VrState {
@@ -58,6 +69,47 @@ impl Control {
         );
         true
     }
+    pub fn input(&self) -> crate::VrInputState {
+        *self.input.read()
+    }
+    pub fn add_yaw(&self, radians: f32) {
+        if radians.is_finite() {
+            let mut old = self.yaw_delta.load(Ordering::Relaxed);
+            loop {
+                let next = (f32::from_bits(old) + radians).clamp(-std::f32::consts::PI, std::f32::consts::PI);
+                match self
+                    .yaw_delta
+                    .compare_exchange_weak(old, next.to_bits(), Ordering::Release, Ordering::Relaxed)
+                {
+                    Ok(_) => break,
+                    Err(found) => old = found,
+                }
+            }
+        }
+    }
+    pub fn add_translation(&self, delta: glam::Vec3) {
+        if delta.is_finite() {
+            *self.translation.write() += delta;
+        }
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    pub fn take_yaw(&self) -> f32 {
+        f32::from_bits(self.yaw_delta.swap(0.0f32.to_bits(), Ordering::AcqRel))
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    pub fn take_translation(&self) -> glam::Vec3 {
+        std::mem::take(&mut *self.translation.write())
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    pub fn publish_input(&self, input: crate::VrInputState) {
+        *self.input.write() = input;
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    pub fn publish_head_forward(&self, forward: glam::Vec3) {
+        let mut input = self.input.write();
+        input.head_forward = forward;
+        input.updated_at = Some(Instant::now());
+    }
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos", test))]
     pub fn started(&self) {
         self.state.store(
@@ -68,6 +120,9 @@ impl Control {
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos", test))]
     pub fn finish(&self, failed: bool) {
         self.wanted.store(false, Ordering::Release);
+        let mut input = self.input.write();
+        *input = crate::VrInputState::default();
+        input.updated_at = Some(Instant::now());
         self.state
             .store(if failed { VrState::Failed } else { VrState::Off } as u8, Ordering::Release);
     }

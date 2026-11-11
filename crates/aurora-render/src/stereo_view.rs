@@ -56,6 +56,20 @@ pub struct EyeView {
     pub position: Vec3,
 }
 impl Anchor {
+    pub fn world_pose(self, pose: Pose) -> Option<Pose> {
+        let world = self.0 * pose.matrix()?;
+        let (_, orientation, position) = world.to_scale_rotation_translation();
+        Some(Pose { position, orientation })
+    }
+    pub fn turn_about(self, point: Vec3, radians: f32) -> Self {
+        Self(Mat4::from_translation(point) * Mat4::from_rotation_z(radians) * Mat4::from_translation(-point) * self.0)
+    }
+    pub fn world_point(self, point: Vec3) -> Vec3 {
+        self.0.transform_point3(point)
+    }
+    pub fn translate(self, delta: Vec3) -> Self {
+        Self(Mat4::from_translation(delta) * self.0)
+    }
     pub fn new(desktop_view: Mat4, initial_head: Pose) -> Option<Self> {
         let det = desktop_view.determinant();
         if !desktop_view.is_finite() || !det.is_finite() || det.abs() < 1e-8 {

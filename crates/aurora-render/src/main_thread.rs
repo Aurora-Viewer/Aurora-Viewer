@@ -1290,6 +1290,17 @@ impl Renderer {
     pub fn vr_engaged(&self) -> bool {
         self.vr.state().engaged()
     }
+    /// Latest controller data supplied by the OpenXR render worker. The
+    /// desktop input route remains independent from this snapshot.
+    pub fn vr_input(&self) -> crate::VrInputState {
+        self.vr.input()
+    }
+    pub fn add_vr_yaw(&self, radians: f32) {
+        self.vr.add_yaw(radians);
+    }
+    pub fn add_vr_translation(&self, delta: glam::Vec3) {
+        self.vr.add_translation(delta);
+    }
     pub fn set_vr_enabled(&self, on: bool) -> bool {
         self.vr.request(on)
     }
