@@ -446,7 +446,8 @@ pub enum NetEvent {
         handle: RegionHandle,
         max_children: Option<u32>,
     },
-    /// The mute list (LLMuteList): downloaded file, or keep the cached copy.
+    /// The mute list (LLMuteList): downloaded file, keep the cached copy, or
+    /// empty on the server.
     MuteList(crate::social::MuteListSource),
     /// Groups the agent belongs to (AgentGroupDataUpdate; added or updated).
     Groups(Vec<crate::social::GroupMembership>),

@@ -250,7 +250,7 @@ impl ShapeParams {
         })
     }
 
-    #[cfg(test)]
+    /// Number of bytes in a complete AvatarAppearance parameter block.
     pub fn transmitted_count(&self) -> usize {
         self.transmitted.len()
     }
