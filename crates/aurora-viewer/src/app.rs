@@ -11065,6 +11065,7 @@ impl App {
                             | "aurora-keyboard"
                             | "aurora-keyboard-fold"
                             | "aurora-keyboard-wide"
+                            | "enter-key"
                     ) || v.starts_with("note-")
                         || v.starts_with("clipboard-")
                         || v.starts_with("delete-")
@@ -20337,6 +20338,11 @@ impl ApplicationHandler for App {
                     landmark.asset_id = crate::demo::place::landmark_ids(1).1;
                     self.world.inventory.add_items(vec![landmark]);
                 }
+                if view == "enter-key" {
+                    self.settings.inventory = ui::inventory::InventoryPreferences::default();
+                    self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8100));
+                    self.inventory_ui.expand_all = Some(true);
+                }
                 if matches!(view.as_str(), "outfit-menu" | "outfit-menu-loading") {
                     crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);
                     if view == "outfit-menu-loading" {
@@ -20824,7 +20830,10 @@ impl ApplicationHandler for App {
                     ) {
                         self.inventory_ui.demo_menu = Some(id);
                     }
-                } else if !configured_view && crate::world::inventory::demo::big().is_none() {
+                } else if !configured_view
+                    && crate::world::inventory::demo::big().is_none()
+                    && !matches!(view.as_str(), "enter-key" | "aurora-enter-key")
+                {
                     self.inventory_ui.show_original(&self.world.inventory, self.world.inventory.root);
                 }
                 for cmd in crate::world::appearance::sync_commands(

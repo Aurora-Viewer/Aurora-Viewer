@@ -206,13 +206,15 @@ impl InventoryUi {
     /// LLFloaterReg::showInstance: each item owns its document. Opening an
     /// existing item raises/restores it without replacing an unsaved draft.
     pub fn open_document(&mut self, ctx: &egui::Context, item: Uuid, kind: i32) -> bool {
+        let owner = super::clipboard::focus_id(self);
         let existing = if self.preview == Some(item) {
+            self.document_owner = Some(owner);
             Some((self.ui_id, self.preview_text.is_none()))
         } else {
-            self.windows
-                .iter()
-                .find(|w| w.state.preview == Some(item))
-                .map(|w| (w.state.ui_id, w.state.preview_text.is_none()))
+            self.windows.iter_mut().find(|w| w.state.preview == Some(item)).map(|w| {
+                w.state.document_owner = Some(owner);
+                (w.state.ui_id, w.state.preview_text.is_none())
+            })
         };
         if let Some((editor, loading)) = existing {
             let id = preview_window_id(editor, item, kind);
@@ -220,7 +222,8 @@ impl InventoryUi {
             ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(id)));
             return loading;
         }
-        let state = Self::document(item);
+        let mut state = Self::document(item);
+        state.document_owner = Some(owner);
         self.windows.push(InventoryWindow {
             id: state.ui_id,
             root: Uuid::nil(),

@@ -869,6 +869,9 @@ pub(super) fn preview(
         }
         st.preview = None;
         st.reset_document();
+        // The closed document gives the list that opened it its keyboard
+        // back (LLToastAlertPanel restores the focus it saved).
+        super::clipboard::return_document_focus(ctx, st);
         if let Some((asset, local)) = st.playing {
             actions.push(InvAction::Animation {
                 asset,
@@ -1046,6 +1049,9 @@ fn animation(
     });
     if !open {
         st.preview = None;
+        // The closed document gives the list that opened it its keyboard
+        // back (LLToastAlertPanel restores the focus it saved).
+        super::clipboard::return_document_focus(ctx, st);
         if let Some((asset, local)) = st.playing.filter(|(asset, _)| *asset == it.asset_id) {
             actions.push(InvAction::Animation {
                 asset,
