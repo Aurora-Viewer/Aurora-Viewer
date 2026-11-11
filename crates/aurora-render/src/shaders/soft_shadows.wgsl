@@ -253,11 +253,15 @@ fn store(px: vec2<u32>, light: f32, distance: f32, radius: f32) {
     textureStore(out_tex, px, vec4<u32>((d << 16u) | (code << 10u) | l, 0u, 0u, 0u));
 }
 
-// (light, distance, radius; distance -1 for no surface)
-fn unpack(texel: u32) -> vec3<f32> {
+// (light, distance; distance -1 for no surface)
+fn unpack(texel: u32) -> vec2<f32> {
     let d = unpack2x16float(texel >> 16u).x;
-    let r = 0.005 * exp2(f32((texel >> 10u) & 63u) / 6.0);
-    return vec3<f32>(f32(texel & 1023u) / 1023.0, select(d, -1.0, d < 0.0), r);
+    return vec2<f32>(f32(texel & 1023u) / 1023.0, select(d, -1.0, d < 0.0));
+}
+
+// The radius of the filter the texel holds, in metres.
+fn unpack_radius(texel: u32) -> f32 {
+    return 0.005 * exp2(f32((texel >> 10u) & 63u) / 6.0);
 }
 
 @compute @workgroup_size(8, 8)
@@ -294,13 +298,16 @@ fn blur(id: vec3<u32>, axis: vec2<i32>) {
         return;
     }
     let px = vec2<i32>(id.xy);
-    let c = unpack(textureLoad(in_tex, px, 0).x);
+    let texel = textureLoad(in_tex, px, 0).x;
+    let c = unpack(texel);
+    let radius = unpack_radius(texel);
     if (c.y < 0.0) {
-        store(id.xy, c.x, c.y, c.z);
+        store(id.xy, c.x, c.y, radius);
         return;
     }
     let size = vec2<i32>(p.size.xy) - vec2<i32>(1);
-    let spread = 0.4 * c.z;
+    let spread = 0.4 * radius;
+    let sharp = -0.5 / (spread * spread);
     var sum = c.x;
     var weights = 1.0;
     for (var i = -4; i <= 4; i++) {
@@ -310,11 +317,11 @@ fn blur(id: vec3<u32>, axis: vec2<i32>) {
         let s = unpack(textureLoad(in_tex, clamp(px + axis * i, vec2<i32>(0), size), 0).x);
         let a = f32(i) * p.camera.w;
         let apart = (s.y - c.y) * (s.y - c.y) + s.y * c.y * a * a;
-        let w = exp(-f32(i * i) / 8.0) * exp(-apart / (2.0 * spread * spread)) * select(0.0, 1.0, s.y >= 0.0);
+        let w = exp(-0.125 * f32(i * i) + sharp * apart) * select(0.0, 1.0, s.y >= 0.0);
         sum += s.x * w;
         weights += w;
     }
-    store(id.xy, sum / weights, c.y, c.z);
+    store(id.xy, sum / weights, c.y, radius);
 }
 
 @compute @workgroup_size(8, 8)
