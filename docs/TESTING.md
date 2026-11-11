@@ -5512,7 +5512,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_SCROLL=up\|new` | The friend's conversation, long, shown from its top: the button back to the latest messages; `new` with three messages come in (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_LINE_MENU=1` | Open a visible message's context menu in Aurora or Compact (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
-| `AURORA_DEMO_CONTENTS_DROP=world\|panel[:ctrl][:drop]` | A selection of four inventory entries carried over an object or onto its Contents tab, with or without Ctrl |
+| `AURORA_DEMO_CONTENTS_DROP=world\|panel\|tab[:ctrl][:drop]` | A selection of four inventory entries carried over an object, onto its Contents list, or resting on the Contents tab until it opens |
 | `AURORA_DEMO_GIVE=profile\|avatar\|texture[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
@@ -6955,7 +6955,7 @@ failure. Grid validation and any paid upload are performed by the human.
   (the Share confirmation opens), onto a group's (no hint, nothing given),
   and Escape during the drag (the messages come back). No grid is needed.
 
-- **`AURORA_DEMO_CONTENTS_DROP=world|panel[:ctrl][:drop]`**: with
+- **`AURORA_DEMO_CONTENTS_DROP=world|panel|tab[:ctrl][:drop]`**: with
   `AURORA_DEMO_INVENTORY=1` and `AURORA_DEMO_ACTIONS=1`, a selection of
   four entries (a notecard, a script, a sound and an object) is carried
   from frame 700, without a press. `world` puts the pointer on the yellow
@@ -6963,15 +6963,23 @@ failure. Grid validation and any paid upload are performed by the human.
   selection needs Ctrl, so nothing is outlined and `:drop` says "Hold Ctrl
   over an object…"; with `:ctrl` the box gets the violet outline and
   `:drop` (frame 720) puts the four entries into its contents, the script
-  stopped. `panel` puts the pointer on the Contents tab: add
+  stopped. `panel` puts the pointer on the Contents list: add
   `AURORA_DEMO_BUILD=move,object:976` and `AURORA_DEMO_BUILD_TAB=contents`
   (also useful with `world` to see the contents arrive); the list gets its
   violet outline and `:drop` adds the four entries, the script running
   unless `:ctrl`. Capture at frame 715 (hover) or 800 (drop) with
   `AURORA_FPS_LIMIT=60`: "Contents (3 items)" becomes "(7 items)".
-  Manually: select several items (Ctrl+click) or a folder and drag them
-  onto an object you own with and without Ctrl, onto someone else's (a
-  no-transfer item refuses the whole drop), and onto the Contents tab.
+  `tab` rests the same drag on the Contents tab while General is showing
+  (`AURORA_DEMO_BUILD_TAB=general`, both `AURORA_DEMO_BUILD_STYLE=aurora`
+  and `legacy`): the tab opens after about half a second. Capture at
+  frame 760. `:drop` moves onto the list at frame 760 and releases at
+  frame 780, so the four entries arrive. A drag that only passes over
+  the tab does not open it.
+  Manually: select an object, leave General showing, and drag a notecard
+  from the inventory onto Contents until the tab opens, then drop it
+  into the list. Sweep across the tabs without resting: they stay put.
+  Onto an object you own, with and without Ctrl, and onto someone else's
+  (a no-transfer item refuses the whole drop).
 
 - **`AURORA_DEMO_GIVE=profile|avatar|texture[:over|:drop]`**: with `AURORA_DEMO_INVENTORY=1`, seven of
   its entries are carried from frame 700, without a press. `profile`, with
