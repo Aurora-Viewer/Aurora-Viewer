@@ -289,6 +289,9 @@ fn describe_transport_error(e: &reqwest::Error) -> String {
         // content decoding is off: reqwest reports short or broken bodies
         // as decode errors
         "body read failed"
+    } else if e.is_builder() {
+        // A URL libcurl would also refuse (a path with no host). Not retried.
+        "invalid URL"
     } else if e.is_request() {
         aurora_i18n::tr!("fetch-request-failed")
     } else {
@@ -687,9 +690,11 @@ enum Attempt {
 
 async fn attempt(http: &reqwest::Client, req: &FetchRequest, attempts: u32, paced: Option<&Paced>) -> Attempt {
     // Like llcorehttp's GET: Accept from the caller, Range when asked, and
-    // no Accept-Encoding (the client does not decode content).
+    // no Accept-Encoding (the client does not decode content). The URL gets
+    // the scheme libcurl would guess when the grid omitted it.
+    let url = crate::curl_url::ensure_scheme(&req.url);
     let mut rb = http
-        .get(&req.url)
+        .get(&url)
         .header(reqwest::header::ACCEPT, req.accept)
         .timeout(Duration::from_secs(60));
     if let Some(range) = req.range {
@@ -710,7 +715,7 @@ async fn attempt(http: &reqwest::Client, req: &FetchRequest, attempts: u32, pace
             if let Some(p) = paced {
                 p.answer(Answer::Refused);
             }
-            let host = host_of(&req.url);
+            let host = host_of(&url);
             probe::host_response(&host, 0, sent.elapsed(), 0);
             let why = format!("status none, {}, host {host}", describe_transport_error(&e));
             if transport_retryable(&e) {
@@ -1098,6 +1103,25 @@ mod tests {
             accept: "image/x-j2c",
         };
         do_fetch(&client(), &req, policy, &sem, permit, &NetStats::default(), None).await
+    }
+
+    #[tokio::test]
+    async fn a_path_only_capability_is_an_invalid_url() {
+        let r = fetch("/cap/x".into(), None, FAST).await;
+        let err = r.data.expect_err("no host");
+        assert!(err.contains("invalid URL"), "{err}");
+        assert_eq!(r.status, 0);
+    }
+
+    #[tokio::test]
+    async fn a_capability_without_a_scheme_is_fetched_as_http() {
+        let body = b"j2c";
+        let (base, server) = serve(vec![response("200 OK", &[], body)]).await;
+        let schemeless = base.trim_start_matches("http://");
+        let r = fetch(format!("{schemeless}/cap/?texture_id=1"), None, FAST).await;
+        assert_eq!(r.status, 200, "{:?}", r.data);
+        assert_eq!(r.data.as_deref().ok(), Some(&body[..]));
+        server.await.expect("server");
     }
 
     #[tokio::test]
