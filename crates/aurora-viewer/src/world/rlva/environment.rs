@@ -368,8 +368,8 @@ impl World {
     fn rlva_reset_environment(&mut self, locked: bool) {
         self.rlva.clear_environment();
         if !locked {
-            // the lock flag of the selector can lag behind a restriction
-            // released in the same message
+            // the selector is already locked when `@setenv=n` comes later in
+            // the same message (`@setenv_daytime:-1=force,setenv=n`)
             let held = std::mem::replace(&mut self.eep.rlva_locked, false);
             self.eep.clear_local();
             self.eep.rlva_locked = held;
