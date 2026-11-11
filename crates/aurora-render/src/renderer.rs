@@ -6135,6 +6135,7 @@ impl Backend {
         // the desktop mirror keeps only the exit hint.
         let panel = self.vr.panel();
         let tip = self.vr.tip();
+        let wrist = self.vr.wrist();
         let mirror_ui = packet.ui.take().map(|mut ui| {
             for (id, deltas) in &ui.textures_delta.set {
                 for delta in deltas.iter() {
@@ -6145,7 +6146,7 @@ impl Backend {
                 self.egui.free_texture(id);
             }
             ui.textures_delta.clear();
-            if panel.is_none() && tip.is_none() {
+            if panel.is_none() && tip.is_none() && wrist.is_none() {
                 ui.retain_vr_hint();
             }
             ui.tessellate()
@@ -6206,11 +6207,11 @@ impl Backend {
             .picture
             .apply(&self.device, &self.queue, [&eyes.textures[0], &eyes.textures[1]], self.vr.display());
         let eye_views = [0, 1].map(|i| eyes.cameras[i].projection * eyes.cameras[i].view);
-        if (panel.is_some() || tip.is_some())
+        if (panel.is_some() || tip.is_some() || wrist.is_some())
             && let Some(ui) = &mirror_ui
         {
             world.panel.paint(&self.device, &self.queue, &mut self.egui, ui, mirror_size);
-            for shown in [panel, tip].into_iter().flatten() {
+            for shown in [panel, tip, wrist].into_iter().flatten() {
                 world.panel.draw(
                     &self.device,
                     &self.queue,
@@ -6219,10 +6220,17 @@ impl Backend {
                 );
             }
         }
+        // each eye's world depth (single-sampled), so that walls hide the
+        // controllers and the beam
+        let world_depth = [0, 1].map(|i| {
+            let t = &world.backends[i].targets;
+            t.depth_msaa_tex.is_none().then_some(&t.depth_ss_tex)
+        });
         world.pointer.draw(
             &self.device,
             &self.queue,
             [0, 1].map(|i| (&eyes.textures[i], eyes.cameras[i].projection * eyes.cameras[i].view)),
+            world_depth,
             &self.vr.input(),
             self.vr.pointer(),
         );

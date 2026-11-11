@@ -145,8 +145,8 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> 
         }
     }
 
-    /// Draw the frame's interface into the panel's image, over a dark,
-    /// slightly see-through background.
+    /// Draw the frame's interface into the panel's image, over a faint
+    /// tint: the world shows where the interface draws nothing.
     pub fn paint(
         &mut self,
         device: &wgpu::Device,
@@ -220,12 +220,14 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> 
                         depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
-                            // a dark blue-grey, opaque: the world must not show through the text
+                            // nearly clear (a faint dark tint, premultiplied):
+                            // where the interface draws nothing, the world shows
+                            // through; its bars and windows have their own frames
                             load: wgpu::LoadOp::Clear(wgpu::Color {
-                                r: 0.035,
-                                g: 0.04,
-                                b: 0.06,
-                                a: 1.0,
+                                r: 0.035 * 0.18,
+                                g: 0.04 * 0.18,
+                                b: 0.06 * 0.18,
+                                a: 0.18,
                             }),
                             store: wgpu::StoreOp::Store,
                         },

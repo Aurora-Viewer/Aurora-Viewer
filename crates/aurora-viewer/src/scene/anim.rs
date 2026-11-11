@@ -469,6 +469,8 @@ impl Motion {
 #[derive(Default)]
 pub struct Controller {
     pub(super) poser: Option<(Arc<crate::ik_edit::poser::SubjectPose>, Mat4)>,
+    /// Wrist targets of our own avatar in VR (model space).
+    pub(super) vr_hands: super::vr_arms::Hands,
     pub(super) ik: super::ik::Pose,
     /// LLControlAvatar disables default head / eye motions.
     pub control: bool,
@@ -1618,6 +1620,16 @@ impl Controller {
         let (rotations, positions) = edited.as_ref().map_or((rotations, local_pos.as_slice()), |p| {
             (p.rotations.as_slice(), p.positions.as_slice())
         });
+        // in VR, our arms reach for the controllers, over all of the above
+        let armed: Vec<Quat>;
+        let rotations = if self.poser.is_none() && self.vr_hands.iter().any(Option::is_some) {
+            let mut reached = rotations.to_vec();
+            super::vr_arms::apply(rig, &mut reached, positions, pelvis, scale, &self.vr_hands);
+            armed = reached;
+            armed.as_slice()
+        } else {
+            rotations
+        };
         let world = self.poser.as_ref().map_or_else(
             || rig.world_with(rotations, pelvis, positions, scale),
             |(pose, model)| pose.matrices(rig, *model),

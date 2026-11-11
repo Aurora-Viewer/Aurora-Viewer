@@ -131,6 +131,8 @@ pub struct VrPointer {
     /// The microphone, shown as a light on the left controller: sending
     /// (green) or not (dim); None when voice is off.
     pub mic: Option<bool>,
+    /// The other hand's beam on the interface panel: its hand and length.
+    pub panel_beam: Option<(VrSide, f32)>,
 }
 
 /// Points along a teleport arc, the last one where it lands.

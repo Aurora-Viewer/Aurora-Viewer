@@ -38,6 +38,8 @@ pub(crate) struct Control {
     panel: RwLock<Option<crate::VrPanel>>,
     /// The hover tip's label by the beam (part of the interface image).
     tip: RwLock<Option<crate::VrPanel>>,
+    /// The wrist's chat panel above the left hand (part of the interface image).
+    wrist: RwLock<Option<crate::VrPanel>>,
 }
 impl Control {
     pub fn new(available: bool) -> Self {
@@ -54,6 +56,7 @@ impl Control {
             offset: RwLock::new(glam::Vec3::ZERO),
             panel: RwLock::new(None),
             tip: RwLock::new(None),
+            wrist: RwLock::new(None),
         }
     }
     pub fn set_display(&self, display: crate::VrDisplay) {
@@ -191,6 +194,13 @@ impl Control {
     pub fn tip(&self) -> Option<crate::VrPanel> {
         *self.tip.read()
     }
+    pub fn set_wrist(&self, wrist: Option<crate::VrPanel>) {
+        *self.wrist.write() = wrist.filter(|p| p.center.is_finite() && p.right.is_finite() && p.up.is_finite());
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    pub fn wrist(&self) -> Option<crate::VrPanel> {
+        *self.wrist.read()
+    }
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos", test))]
     pub fn started(&self) {
         self.state.store(
@@ -207,6 +217,7 @@ impl Control {
         *self.pointer.write() = crate::VrPointer::default();
         *self.panel.write() = None;
         *self.tip.write() = None;
+        *self.wrist.write() = None;
         self.state
             .store(if failed { VrState::Failed } else { VrState::Off } as u8, Ordering::Release);
     }

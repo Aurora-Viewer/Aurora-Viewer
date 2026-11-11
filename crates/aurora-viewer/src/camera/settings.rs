@@ -302,6 +302,18 @@ pub struct VrSettings {
     pub tooltips: bool,
     /// Standing still, the avatar turns after the head once it is well away.
     pub body_follows_head: bool,
+    /// What the left stick's forward follows: the head, or the left hand.
+    pub walk_direction: VrWalkDirection,
+    /// The avatar's arms follow the controllers (seen in this viewer only:
+    /// the protocol carries no hand positions).
+    pub avatar_hands: bool,
+    /// The controller models drawn in the hands.
+    pub show_controllers: bool,
+    /// Local chat on a small panel above the left hand, while it is raised
+    /// and looked at.
+    pub wrist_chat: bool,
+    /// The interface panel comes back in front of the view after a turn away.
+    pub panel_follows: bool,
     pub exposure: f32,
     pub brightness: f32,
     pub contrast: f32,
@@ -319,6 +331,15 @@ pub enum VrLocomotion {
     Teleport,
     CameraOnly,
     None,
+}
+
+/// Where the left stick walks: where the head looks, or where the left
+/// controller points (looking around while walking straight on).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VrWalkDirection {
+    #[default]
+    Head,
+    Hand,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -355,6 +376,11 @@ impl Default for VrSettings {
             vignette_strength: 0.6,
             tooltips: true,
             body_follows_head: true,
+            walk_direction: VrWalkDirection::Head,
+            avatar_hands: true,
+            show_controllers: true,
+            wrist_chat: true,
+            panel_follows: true,
             exposure: 0.0,
             brightness: 0.0,
             contrast: 1.0,

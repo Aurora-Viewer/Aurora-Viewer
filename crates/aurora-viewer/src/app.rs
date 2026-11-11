@@ -446,6 +446,21 @@ pub struct App {
     vr_trigger_down: bool,
     /// The pointing hand's grip held (sit on what the beam is on, or stand up).
     vr_grip_down: bool,
+    /// The object carried by the trigger with the build tools open.
+    vr_grab: Option<vr_ui::VrGrab>,
+    /// The right thumbstick tapped: the menu of what the beam is on.
+    vr_menu_tap: bool,
+    /// The other hand's trigger held, for the interface panel.
+    vr_off_trigger_down: bool,
+    /// The interface panel held by the grip: the beam's distance to it and
+    /// the panel's centre from the beam's point.
+    vr_panel_drag: Option<(f32, Vec3)>,
+    /// The panel gliding back in front of the view after a turn away.
+    vr_panel_return: bool,
+    /// Where the wrist's chat goes this frame (the left hand raised and
+    /// looked at), and the part of the interface it was laid out in.
+    vr_wrist_at: Option<Vec3>,
+    vr_wrist_rect: Option<egui::Rect>,
     /// The right thumbstick held in, for recentring.
     vr_recenter: crate::vr::Hold,
     /// The object the VR pointer is on, for the vibration as it arrives.
@@ -1609,6 +1624,13 @@ impl App {
             vr_avatar_position: None,
             vr_trigger_down: false,
             vr_grip_down: false,
+            vr_grab: None,
+            vr_menu_tap: false,
+            vr_off_trigger_down: false,
+            vr_panel_drag: None,
+            vr_panel_return: false,
+            vr_wrist_at: None,
+            vr_wrist_rect: None,
             vr_recenter: Default::default(),
             vr_hover: None,
             vr_vignette: 0.0,
@@ -8213,29 +8235,35 @@ impl App {
         if keys != glam::Vec2::ZERO && settings.locomotion != crate::camera::VrLocomotion::CameraOnly {
             input.run |= running;
         }
-        // the right thumbstick held in for a moment: recentre
-        if self
-            .vr_recenter
-            .step(vr.right.active && vr.right.thumbstick_click, Duration::from_millis(600), Instant::now())
-        {
+        // the right thumbstick held in for a moment: recentre; tapped: the
+        // menu of what the beam is on (vr_world_touch)
+        let stick_in = vr.right.active && vr.right.thumbstick_click;
+        if self.vr_recenter.tapped(stick_in) {
+            self.vr_menu_tap = true;
+        }
+        if self.vr_recenter.step(stick_in, Duration::from_millis(600), Instant::now()) {
             renderer.vr_recenter();
             if settings.haptics {
                 renderer.vr_haptic(aurora_render::VrSide::Right, 0.6, 0.06);
             }
         }
         let left_stick = crate::vr::dead_zone(vr.left.thumbstick, settings.thumbstick_dead_zone);
+        // the stick walks where the head faces, or where the left hand points
+        let walk_forward = crate::vr::walk_forward(
+            settings.walk_direction == crate::camera::VrWalkDirection::Hand,
+            vr.head_forward, vr.left.active.then_some(vr.left.orientation));
         if settings.locomotion == crate::camera::VrLocomotion::CameraOnly && vr.left.active {
-            let direction = crate::vr::movement_vector(left_stick, vr.head_forward, 0.0);
+            let direction = crate::vr::movement_vector(left_stick, walk_forward, 0.0);
             renderer.add_vr_translation(direction * settings.movement_speed * dt);
         }
         if vr.left.active && settings.locomotion == crate::camera::VrLocomotion::Smooth {
-            let direction = crate::vr::movement_vector(left_stick, vr.head_forward, 0.0);
+            let direction = crate::vr::movement_vector(left_stick, walk_forward, 0.0);
             if direction.length_squared() > 0.0 {
                 // A lateral stick component is a strafe, not a request to
                 // turn the avatar. Forward/back keeps its facing with the
                 // headset so the simulator receives ordinary strafe flags.
                 if left_stick.y.abs() > 0.15 {
-                    let forward = crate::vr::movement_vector(glam::Vec2::Y, vr.head_forward, 0.0);
+                    let forward = crate::vr::movement_vector(glam::Vec2::Y, walk_forward, 0.0);
                     self.world.agent.yaw = forward.y.atan2(forward.x);
                 }
                 let intent = crate::vr::movement_intent(left_stick);
@@ -8425,15 +8453,29 @@ impl App {
             crate::camera::VrHand::Right => aurora_render::VrSide::Right,
         };
         let controller = input.hand(side);
+        let menu_tap = std::mem::take(&mut self.vr_menu_tap);
+        // our avatar's arms reach for the controllers: the wrist sits a
+        // little behind the aim point, towards the elbow
+        self.scene.vr_hands = if active && settings.avatar_hands {
+            [input.left, input.right].map(|hand| {
+                let wrist = hand.position + hand.orientation.normalize() * Vec3::Z * 0.08;
+                (hand.active && wrist.is_finite()).then_some(wrist)
+            })
+        } else {
+            [None; 2]
+        };
         if !active || !settings.controller_pointer || !controller.active {
             self.vr_trigger_down = false;
+            if self.vr_grab.is_some() {
+                self.vr_grab_carry(&controller, true);
+            }
             self.vr_grip_down = false;
             // (a press held on the panel is let go)
             self.vr_panel_pointer((Vec3::ZERO, Vec3::Z), (false, true), 0.0);
             self.vr_look = None;
             self.vr_tip_label(renderer, None, input.head_position);
             renderer.set_vr_pointer(aurora_render::VrPointer {
-                controllers: active,
+                controllers: active && settings.show_controllers,
                 arc: self.vr_arc.filter(|_| active),
                 mic: self.vr_mic_light(),
                 ..Default::default()
@@ -8448,8 +8490,29 @@ impl App {
         let grip_down = crate::vr::trigger_held(self.vr_grip_down, controller.grip);
         let grip = grip_down && !self.vr_grip_down;
         self.vr_grip_down = grip_down;
+        // the grip on the interface panel takes it: it follows the beam,
+        // facing the headset, until the grip is let go
+        if !grip_down {
+            self.vr_panel_drag = None;
+        }
+        if grip
+            && let Some(panel) = self.vr_panel
+            && let Some((t, _, _)) = panel.hit(ray.0, ray.1)
+        {
+            self.vr_panel_drag = Some((t, panel.center - (ray.0 + ray.1 * t)));
+            self.vr_panel_return = false;
+        }
+        if let Some((t, offset)) = self.vr_panel_drag
+            && let Some(panel) = &mut self.vr_panel
+        {
+            let center = ray.0 + ray.1 * t + offset;
+            let forward = (center - input.head_position).with_z(0.0).normalize_or(Vec3::X);
+            panel.center = center;
+            panel.right = forward.cross(Vec3::Z).normalize_or(Vec3::Y) * panel.right.length();
+            renderer.set_vr_panel(self.vr_panel);
+        }
         let sitting = self.world.agent.is_sitting();
-        if grip && sitting {
+        if grip && sitting && self.vr_panel_drag.is_none() {
             self.send(NetCommand::OneShotControl(control::STAND_UP));
         }
         // the panel, when the beam meets it, takes the trigger (a left
@@ -8461,14 +8524,31 @@ impl App {
         } else {
             0.0
         };
-        if let Some(t) = self.vr_panel_pointer(ray, trigger, scroll) {
+        // the other hand's beam works the panel too, while the pointing
+        // hand's is not on it (that one goes on to the world)
+        let off_side = match side {
+            aurora_render::VrSide::Left => aurora_render::VrSide::Right,
+            aurora_render::VrSide::Right => aurora_render::VrSide::Left,
+        };
+        let off = input.hand(off_side);
+        let off_ray = (off.position, (off.orientation * Vec3::NEG_Z).normalize_or(Vec3::Y));
+        let off_down = crate::vr::trigger_held(self.vr_off_trigger_down, off.trigger);
+        let pointing_on_panel = self.vr_panel.is_some_and(|p| p.hit(ray.0, ray.1).is_some());
+        let off_on_panel = !pointing_on_panel && off.active && self.vr_panel.is_some_and(|p| p.hit(off_ray.0, off_ray.1).is_some());
+        let mut panel_beam = None;
+        if off_on_panel {
+            let off_trigger = (off_down && !self.vr_off_trigger_down, !off_down && self.vr_off_trigger_down);
+            panel_beam = self.vr_panel_pointer(off_ray, off_trigger, scroll).map(|t| (off_side, t));
+        }
+        self.vr_off_trigger_down = off_down;
+        if !off_on_panel && let Some(t) = self.vr_panel_pointer(ray, trigger, scroll) {
             self.vr_trigger_down = down;
             self.vr_hover = None;
             // (on the panel the tip shows there, at the beam)
             self.vr_look = None;
             self.vr_tip_label(renderer, None, input.head_position);
             renderer.set_vr_pointer(aurora_render::VrPointer {
-                controllers: true,
+                controllers: settings.show_controllers,
                 hand: Some(side),
                 length: t,
                 hit: true,
@@ -8476,6 +8556,7 @@ impl App {
                 outline: None,
                 arc: self.vr_arc,
                 mic: self.vr_mic_light(),
+                panel_beam: None,
             });
             return;
         }
@@ -8488,6 +8569,23 @@ impl App {
         let actionable = target
             .as_ref()
             .is_some_and(|(t, _, _)| t.action != crate::interaction::Action::Disabled);
+        // the right thumbstick tapped: the right-click menu (the pie) of the
+        // object or the ground the beam is on, on the interface panel,
+        // opened for it when closed
+        if menu_tap && let Some(point) = point {
+            let picked = self.scene.left_interaction_at_ray(&self.world, point, ray, true);
+            self.object_menu_pick(picked, Some(ray), Vec::new(), false);
+            let screen = self.egui_ctx.content_rect();
+            self.open_menu_for(picked, point, screen.center());
+            if self.vr_panel.is_none() {
+                let aspect = screen.height() / screen.width().max(1.0);
+                self.vr_panel = Some(vr_ui::place_panel(input.head_position, input.head_forward, aspect));
+                renderer.set_vr_panel(self.vr_panel);
+            }
+            if settings.haptics {
+                renderer.vr_haptic(side, 0.35, 0.04);
+            }
+        }
         if grip && !sitting && let Some(point) = point {
             self.vr_sit(point, ray);
             if settings.haptics {
@@ -8507,7 +8605,7 @@ impl App {
             Some(aurora_render::VrBox { center, rotation, half })
         });
         renderer.set_vr_pointer(aurora_render::VrPointer {
-            controllers: true,
+            controllers: settings.show_controllers,
             hand: Some(side),
             length: point.map_or(far, |p| (p - ray.0).dot(ray.1).max(0.0)),
             hit: point.is_some(),
@@ -8515,6 +8613,7 @@ impl App {
             outline,
             arc: self.vr_arc,
             mic: self.vr_mic_light(),
+            panel_beam,
         });
         // pressed past 0.7, released under 0.35: a trigger resting near one
         // threshold must not click again and again
@@ -8528,7 +8627,20 @@ impl App {
             renderer.vr_haptic(side, 0.15, 0.02);
         }
         self.vr_hover = hover;
-        if pressed && let Some((target, index, point)) = target {
+        // with the build tools open, the trigger takes an object we may
+        // edit and carries it with the hand (turning with it) until let go
+        if self.vr_grab.is_some() {
+            self.vr_grab_carry(&controller, !down);
+        } else if pressed
+            && self.build.open
+            && let Some(point) = point
+            && let Some(grab) = self.vr_grab_start(point, ray, &controller)
+        {
+            self.vr_grab = Some(grab);
+            if haptics {
+                renderer.vr_haptic(side, 0.5, 0.04);
+            }
+        } else if pressed && let Some((target, index, point)) = target {
             if haptics {
                 renderer.vr_haptic(side, 0.5, 0.04);
             }
@@ -11724,6 +11836,7 @@ impl App {
             // the VR on-screen keyboard last, over the windows: a key's click
             // comes after the text field it types into (app/vr_ui.rs)
             self.vr_keyboard(ui.ctx());
+            self.vr_wrist_chat(ui.ctx());
             actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
             if inventory_drop.is_empty() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);

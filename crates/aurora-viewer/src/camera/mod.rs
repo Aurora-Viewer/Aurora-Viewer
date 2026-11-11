@@ -22,7 +22,7 @@ mod settings;
 pub use focus::FocusObject;
 pub use free::FreeCamera;
 pub use settings::{
-    CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, SMOOTHING_RANGE, SavedViews, VrHand, VrLocomotion, VrSettings, VrTurn, VrView,
+    CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE, SMOOTHING_RANGE, SavedViews, VrHand, VrLocomotion, VrSettings, VrTurn, VrView, VrWalkDirection,
     zoom_lens,
 };
 

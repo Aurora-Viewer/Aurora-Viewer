@@ -3,7 +3,7 @@
 //! Conversion to `MoveInput` stays in `app.rs`, so controller acquisition,
 //! user preferences and avatar/network control remain separate concerns.
 
-use glam::{Vec2, Vec3};
+use glam::{Quat, Vec2, Vec3};
 use std::time::{Duration, Instant};
 
 /// Removes a radial stick dead zone and rescales the remaining range.
@@ -25,6 +25,16 @@ pub fn movement_vector(stick: Vec2, head_forward: Vec3, dead_zone_threshold: f32
     // lateral sign: forward × up is the physical left direction here.
     let left = forward.cross(Vec3::Z).normalize_or(Vec3::Y);
     (forward * stick.y + left * stick.x).clamp_length_max(1.0)
+}
+
+/// The direction the left stick's "forward" walks: the head's, or with
+/// `hand` the left controller's (its aim, levelled). A controller pointing
+/// nearly straight up or down has no clear heading: the head's is kept.
+pub fn walk_forward(hand: bool, head_forward: Vec3, left: Option<Quat>) -> Vec3 {
+    match left.filter(|_| hand).map(|q| (q * Vec3::NEG_Z).with_z(0.0)) {
+        Some(aim) if aim.length_squared() > 0.05 => aim.normalize(),
+        _ => head_forward,
+    }
 }
 
 /// Directional digital controls consumed by Aurora's normal `AgentUpdate`
@@ -123,6 +133,12 @@ pub struct Hold {
 }
 
 impl Hold {
+    /// True when `down` ends a press let go before the hold fired (a tap);
+    /// ask before `step`, which forgets the press.
+    pub fn tapped(&self, down: bool) -> bool {
+        !down && self.since.is_some() && !self.fired
+    }
+
     /// True once, when `down` has been held for `hold`.
     pub fn step(&mut self, down: bool, hold: Duration, now: Instant) -> bool {
         if !down {
@@ -185,6 +201,19 @@ impl SnapTurn {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_stick_walks_where_the_hand_points_when_asked() {
+        let head = Vec3::X;
+        // the hand turned a quarter to the left (aim -Z rotated to +Y)
+        let left = Quat::from_rotation_arc(Vec3::NEG_Z, Vec3::Y);
+        assert!(walk_forward(true, head, Some(left)).abs_diff_eq(Vec3::Y, 1e-5));
+        assert_eq!(walk_forward(false, head, Some(left)), head);
+        assert_eq!(walk_forward(true, head, None), head);
+        // pointing at the floor (world Z is up): no heading, the head's is kept
+        let floor = Quat::from_rotation_arc(Vec3::NEG_Z, Vec3::new(0.01, 0.0, -1.0).normalize());
+        assert_eq!(walk_forward(true, head, Some(floor)), head);
+    }
+
     use super::*;
 
     #[test]

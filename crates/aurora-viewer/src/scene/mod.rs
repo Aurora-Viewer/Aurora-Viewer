@@ -25,6 +25,7 @@ mod foot_support;
 pub mod geometry_need;
 mod grounding;
 mod hand_ik;
+mod vr_arms;
 pub mod hover;
 pub mod hud;
 pub(crate) mod ik;
@@ -838,6 +839,9 @@ pub struct Scene {
     pub pause_all_skeletons: bool,
     pub ik_edit: ik::EditRequest,
     pub poser: HashMap<Uuid, Arc<crate::ik_edit::poser::SubjectPose>>,
+    /// The VR controllers' wrists (world, left then right) that our avatar's
+    /// arms reach for; None each when not in VR or the option is off.
+    pub vr_hands: [Option<Vec3>; 2],
     /// Follow receipt clocks instead of the Legacy Viewer's activation / pause clock.
     pub synchronize_animations: bool,
     pub ground_avatar_feet: bool,
@@ -1545,6 +1549,7 @@ impl Scene {
             pause_all_skeletons: false,
             ik_edit: ik::EditRequest::default(),
             poser: HashMap::new(),
+            vr_hands: [None; 2],
             synchronize_animations: false,
             ground_avatar_feet: false,
             ground_feet_while_moving: false,
@@ -5505,6 +5510,14 @@ impl Scene {
                 world.avatar_models.insert(owner, model);
             }
             motions.poser = self.poser.get(&owner).zip(model).map(|(pose, model)| (pose.clone(), model));
+            motions.vr_hands = match model.filter(|_| owner == world.agent_id) {
+                Some(model) => {
+                    let inverse = model.inverse();
+                    self.vr_hands
+                        .map(|hand| hand.map(|p| inverse.transform_point3(p)).filter(|p| p.is_finite()))
+                }
+                None => [None; 2],
+            };
             motions.sitting = !control && world.objects.get(idx).is_some_and(|o| o.parent_id != 0);
             let preview = if owner == world.agent_id && !self.ik_edit.active {
                 world.animation_preview_clock

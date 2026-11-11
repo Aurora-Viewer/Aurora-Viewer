@@ -201,6 +201,16 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         (VrLocomotion::None, tr!("ui-options-camera-vr-locomotion-none"), false),
                     ],
                 );
+                use crate::camera::VrWalkDirection;
+                cx.unfolded().choice(
+                    tr!("ui-options-camera-vr-walk-direction"),
+                    tr!("ui-options-camera-vr-walk-direction-help"),
+                    &field!(camera.vr.walk_direction),
+                    &[
+                        (VrWalkDirection::Head, tr!("ui-options-camera-vr-walk-direction-head"), false),
+                        (VrWalkDirection::Hand, tr!("ui-options-camera-vr-walk-direction-hand"), false),
+                    ],
+                );
                 cx.slider(
                     tr!("ui-options-camera-vr-movement-speed"),
                     tr!("ui-options-camera-vr-movement-speed-help"),
@@ -275,6 +285,26 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-camera-vr-body-follows-head"),
                     tr!("ui-options-camera-vr-body-follows-head-help"),
                     &field!(camera.vr.body_follows_head),
+                );
+                cx.toggle(
+                    tr!("ui-options-camera-vr-avatar-hands"),
+                    tr!("ui-options-camera-vr-avatar-hands-help"),
+                    &field!(camera.vr.avatar_hands),
+                );
+                cx.toggle(
+                    tr!("ui-options-camera-vr-show-controllers"),
+                    tr!("ui-options-camera-vr-show-controllers-help"),
+                    &field!(camera.vr.show_controllers),
+                );
+                cx.toggle(
+                    tr!("ui-options-camera-vr-wrist-chat"),
+                    tr!("ui-options-camera-vr-wrist-chat-help"),
+                    &field!(camera.vr.wrist_chat),
+                );
+                cx.toggle(
+                    tr!("ui-options-camera-vr-panel-follows"),
+                    tr!("ui-options-camera-vr-panel-follows-help"),
+                    &field!(camera.vr.panel_follows),
                 );
                 cx.toggle(
                     tr!("ui-options-camera-vr-tooltips"),
@@ -362,6 +392,29 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         reset
                     },
                 );
+            });
+            // what each controller button does, for reading in the headset
+            cx.group(tr!("ui-options-camera-vr-controls"), |cx| {
+                for (button, action) in [
+                    (tr!("ui-vr-control-left-stick"), tr!("ui-vr-control-left-stick-action")),
+                    (tr!("ui-vr-control-left-stick-click"), tr!("ui-vr-control-left-stick-click-action")),
+                    (tr!("ui-vr-control-right-stick"), tr!("ui-vr-control-right-stick-action")),
+                    (tr!("ui-vr-control-right-stick-tap"), tr!("ui-vr-control-right-stick-tap-action")),
+                    (tr!("ui-vr-control-right-stick-hold"), tr!("ui-vr-control-right-stick-hold-action")),
+                    (tr!("ui-vr-control-trigger"), tr!("ui-vr-control-trigger-action")),
+                    (tr!("ui-vr-control-other-trigger"), tr!("ui-vr-control-other-trigger-action")),
+                    (tr!("ui-vr-control-grip"), tr!("ui-vr-control-grip-action")),
+                    (tr!("ui-vr-control-a"), tr!("ui-vr-control-a-action")),
+                    (tr!("ui-vr-control-b"), tr!("ui-vr-control-b-action")),
+                    (tr!("ui-vr-control-x"), tr!("ui-vr-control-x-action")),
+                    (tr!("ui-vr-control-y"), tr!("ui-vr-control-y-action")),
+                    (tr!("ui-vr-control-wrist"), tr!("ui-vr-control-wrist-action")),
+                ] {
+                    cx.row(button, action, &Nothing, |ui, _| {
+                        ui.label(action);
+                        false
+                    });
+                }
             });
         }
         1 => {

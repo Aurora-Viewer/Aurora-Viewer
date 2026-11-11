@@ -77,6 +77,13 @@ impl App {
         let Some((picked, point)) = self.menu_pick() else {
             return;
         };
+        let ppp = self.egui_ctx.pixels_per_point().max(0.1);
+        self.open_menu_for(picked, point, egui::pos2(self.cursor_pos.0 / ppp, self.cursor_pos.1 / ppp));
+    }
+
+    /// The menu of `picked` (None: the ground) at `point`, opened at `pos`
+    /// (points): the right click's, and the VR thumbstick's from the beam.
+    pub(super) fn open_menu_for(&mut self, picked: Option<usize>, point: Vec3, pos: egui::Pos2) {
         if let Some(source) = picked
             .and_then(|idx| self.world.objects.get(idx))
             .filter(|object| object.is_editable_preview())
@@ -136,10 +143,9 @@ impl App {
         if self.clicks.scripted() || self.demo && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
             log::info!("demo menu: {target:?}");
         }
-        let ppp = self.egui_ctx.pixels_per_point().max(0.1);
         self.world.ui_sounds.push(UiSound::PieMenuAppear);
         self.context_menu = Some(ui::context::ContextMenu {
-            pos: egui::pos2(self.cursor_pos.0 / ppp, self.cursor_pos.1 / ppp),
+            pos,
             point,
             target,
             pie_path: Vec::new(),

@@ -1314,6 +1314,11 @@ impl Renderer {
     pub fn set_vr_tip(&self, tip: Option<crate::VrPanel>) {
         self.vr.set_tip(tip);
     }
+    /// The wrist's chat panel in VR: its part of the interface image, placed
+    /// above the left hand (None: not shown).
+    pub fn set_vr_wrist(&self, wrist: Option<crate::VrPanel>) {
+        self.vr.set_wrist(wrist);
+    }
     /// A short vibration on one controller.
     pub fn vr_haptic(&self, side: crate::VrSide, amplitude: f32, seconds: f32) {
         self.vr.haptic(side, amplitude, seconds);

@@ -3,9 +3,10 @@
 //!
 //! Geometry is built on the CPU each frame from the controller poses of the
 //! frame being rendered (`xr_frame::Session::begin`), so the models and the
-//! beam stay locked to the hands. It is drawn without depth, over the world:
-//! the beam ends at the surface the viewer traced, and a controller is never
-//! more than an arm's length away.
+//! beam stay locked to the hands. Each eye starts from the depth of the
+//! world it shows, so a hand pushed into a wall or behind a pillar is hidden
+//! by it as a real hand would be; the beam ends at the surface the viewer
+//! traced.
 use crate::pipeline_cache::CachedPipelines;
 use crate::{VrControllerState, VrInputState, VrPointer, VrSide};
 use bytemuck::{Pod, Zeroable};
@@ -32,9 +33,10 @@ pub(crate) struct Overlay {
     group: wgpu::BindGroup,
     vertices: Option<wgpu::Buffer>,
     scratch: Vec<Vertex>,
-    /// The overlay's own depth, cleared for each eye: the model's nearest
-    /// surface shows (without it, its back and inner faces were painted
-    /// over its front in their list order).
+    /// The overlay's depth, for each eye a copy of the world's (or cleared
+    /// when it cannot be had): the world hides what is behind it, and the
+    /// model's nearest surface shows (without a depth, its back and inner
+    /// faces were painted over its front in their list order).
     depth: Option<(wgpu::Texture, wgpu::TextureView)>,
 }
 
@@ -147,6 +149,7 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) color: vec4<f3
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         eyes: [(&wgpu::Texture, Mat4); 2],
+        world_depth: [Option<&wgpu::Texture>; 2],
         input: &VrInputState,
         pointer: VrPointer,
     ) {
@@ -178,17 +181,23 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) color: vec4<f3
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: DEPTH,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             });
             let view = texture.create_view(&Default::default());
             self.depth = Some((texture, view));
         }
-        let Some((_, depth)) = &self.depth else { return };
+        let Some((depth_texture, depth)) = &self.depth else { return };
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("VR controllers"),
         });
         for (i, (texture, _)) in eyes.iter().enumerate() {
+            // the world's depth for this eye when it has the overlay's size
+            // and format (not with MSAA, nor when the world is drawn smaller)
+            let world = world_depth[i].filter(|d| d.size() == size && d.format() == DEPTH && d.sample_count() == 1);
+            if let Some(world) = world {
+                encoder.copy_texture_to_texture(world.as_image_copy(), depth_texture.as_image_copy(), size);
+            }
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("VR controllers"),
@@ -204,7 +213,11 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) color: vec4<f3
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: depth,
                     depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(0.0),
+                        load: if world.is_some() {
+                            wgpu::LoadOp::Load
+                        } else {
+                            wgpu::LoadOp::Clear(0.0)
+                        },
                         store: wgpu::StoreOp::Discard,
                     }),
                     stencil_ops: None,
@@ -233,6 +246,21 @@ pub(crate) fn build(input: &VrInputState, pointer: VrPointer, out: &mut Vec<Vert
         }
         if pointing && pointer.length > 0.0 {
             beam(hand, pointer, out);
+        }
+        if let Some((beam_side, length)) = pointer.panel_beam
+            && beam_side == side
+            && !pointing
+        {
+            beam(
+                hand,
+                VrPointer {
+                    length,
+                    hit: true,
+                    actionable: true,
+                    ..pointer
+                },
+                out,
+            );
         }
     }
     if let Some(b) = pointer.outline {
@@ -537,6 +565,7 @@ mod tests {
             outline: None,
             arc: None,
             mic: None,
+            panel_beam: None,
         };
         let mut out = Vec::new();
         build(&input, pointer, &mut out);
