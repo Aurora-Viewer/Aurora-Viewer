@@ -213,6 +213,13 @@ impl Session<'_> {
                 m.data.object_permissions = *permissions;
                 self.send_main(&m, true);
             }
+            NetCommand::ForceScriptControlRelease => {
+                // LLAgent::forceReleaseControls: reliable, to the agent's region
+                let mut m = ForceScriptControlRelease::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                self.send_main(&m, true);
+            }
             _ => return false,
         }
         true

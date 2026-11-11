@@ -3502,6 +3502,11 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 anims: vec![(anim, 1)],
             }]
         }
+        // Advanced › Release Keys: the region releases what the scripts
+        // took, every bit of both kinds (app/release_keys.rs)
+        aurora_net::NetCommand::ForceScriptControlRelease => {
+            vec![NetEvent::ScriptControlChange(vec![(false, u32::MAX, false), (false, u32::MAX, true)])]
+        }
         // "Stop animations": the simulator answers with the stand restarted
         // (LLAgent::stopCurrentAnimations sends it right after)
         aurora_net::NetCommand::AnimationStateReset => vec![NetEvent::AvatarAnimations {

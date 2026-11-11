@@ -123,6 +123,7 @@ mod pointing;
 mod quick_prefs;
 mod region_restart;
 mod region_window;
+mod release_keys;
 mod relogin;
 mod report_abuse;
 mod reset_skeleton;
@@ -6931,6 +6932,7 @@ impl App {
         self.demo_script_steps();
         self.world_click_demo_steps();
         self.object_menu_demo_steps();
+        self.release_keys_demo_steps();
         if self.frame_count == 400
             && let Ok(mode) = std::env::var("AURORA_DEMO_BEACONS")
         {
@@ -14243,6 +14245,7 @@ impl App {
                 self.settings.save();
                 log::info!("quiet snapshots: {}", !self.settings.snapshot.sound);
             }
+            BarAction::ReleaseKeys => self.release_keys(),
             BarAction::ToggleWaterWalk => self.toggle_water_walk(),
             BarAction::ToggleSwimming => self.toggle_swimming(),
             BarAction::MoveLockOptions => self.movelock_ui.open = true,
@@ -15998,6 +16001,7 @@ impl App {
                     show_name_tags: self.settings.show_name_tags,
                     fly_override: self.world.fly_override,
                     quiet_snapshots: !self.settings.snapshot.sound,
+                    release_keys: release_keys::enabled(&self.world),
                     parcel_landmark,
                     can_set_home: self.world.can_set_home(),
                     can_go_home: self.world.rlva_can_teleport_home(),
