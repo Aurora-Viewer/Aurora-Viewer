@@ -231,7 +231,20 @@ impl App {
         }
     }
 
-    pub(super) fn submit_inventory_change(&mut self, mut change: aurora_net::inventory::operations::Mutation) {
+    pub(super) fn submit_inventory_change(&mut self, change: aurora_net::inventory::operations::Mutation) {
+        self.submit_inventory_edit(change, None);
+    }
+
+    pub(super) fn submit_inventory_delete(&mut self, deletion: ui::inventory::DeleteRequest) {
+        self.inventory_ui.consume_clipboard = false;
+        self.submit_inventory_edit(deletion.change, Some(deletion.selection));
+    }
+
+    fn submit_inventory_edit(
+        &mut self,
+        mut change: aurora_net::inventory::operations::Mutation,
+        selection: Option<ui::inventory::DeleteSelection>,
+    ) {
         if self.inventory_ui.pending.is_some() {
             self.inventory_ui.consume_clipboard = false;
             return;
@@ -250,6 +263,9 @@ impl App {
             change.copies.len()
         );
         self.inventory_ui.begin_mutation(request, &change);
+        if let Some(selection) = selection {
+            self.inventory_ui.begin_delete(request, selection);
+        }
         self.inventory_ui.pending_refresh.clone_from(&change.refresh);
         self.inventory_ui.created_selection = change.operations.iter().find_map(|op| {
             if let aurora_net::inventory::operations::Operation::Folder { id, .. } = op {
@@ -295,6 +311,11 @@ impl App {
             InvAction::TakeTask(request) => self.take_task_inventory(*request),
             InvAction::StopConfirmingDelete => self.settings.inventory.confirm_delete = false,
             InvAction::Edit(change) => self.edit_inventory(change, false),
+            InvAction::Delete(deletion) => {
+                if let Some(deletion) = self.listings_ui.guard_inventory_delete(&self.world.inventory, *deletion) {
+                    self.submit_inventory_delete(deletion);
+                }
+            }
             InvAction::Drop(change) => self.edit_inventory(change, true),
             InvAction::Create { parent, kind, name } => {
                 if rules::destination(&self.world.inventory, parent) {
@@ -415,7 +436,11 @@ impl App {
                     if !self.inventory_ui.open_document(&self.egui_ctx, id, it.asset_type) {
                         return;
                     }
-                    if matches!(it.asset_type, 7 | 10) && rules::held(&self.world.inventory, &it) & rules::COPY == 0 {
+                    // any god reads any (LLPreviewNotecard::loadAsset: isGodlike())
+                    if matches!(it.asset_type, 7 | 10)
+                        && self.world.god_level == 0
+                        && rules::held(&self.world.inventory, &it) & rules::COPY == 0
+                    {
                         self.inventory_preview(
                             id,
                             it.asset_id,
@@ -439,7 +464,7 @@ impl App {
                 }
             }
             InvAction::SaveContent { editor, item, text, close } => {
-                let allowed = crate::world::inventory::preview::can_edit(&self.world.inventory, item);
+                let allowed = crate::world::inventory::preview::can_edit(&self.world.inventory, item, self.world.god_level);
                 let kind = self.world.inventory.items.get(&item).map_or(-1, |it| it.asset_type);
                 let busy = self.inventory_ui.preview == Some(item) && self.inventory_ui.save_pending
                     || self
@@ -628,6 +653,8 @@ impl App {
             result => result,
         };
         self.inventory_ui.finish_bulk_permissions(result.as_ref().err().map(String::as_str));
+        self.inventory_ui
+            .finish_delete(request, result.is_ok(), result.as_ref().is_ok_and(|reply| reply.moves_queued));
         self.inventory_ui.finish_mutation(result.is_ok());
         if result.as_ref().is_ok_and(|reply| reply.moves_queued) {
             self.inventory_ui.moves_queued_notice();
@@ -701,7 +728,7 @@ impl App {
             return;
         }
         let kind = self.world.inventory.items.get(&item).map_or(-1, |it| it.asset_type);
-        let editable = crate::world::inventory::preview::can_edit(&self.world.inventory, item);
+        let editable = crate::world::inventory::preview::can_edit(&self.world.inventory, item, self.world.god_level);
         if self.inventory_ui.preview == Some(item) {
             self.inventory_ui.load_document(kind, editable, &result);
         }
