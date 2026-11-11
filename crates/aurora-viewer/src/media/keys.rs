@@ -146,7 +146,6 @@ pub fn key_lparam(scancode: u32, up: bool, repeat: bool) -> u32 {
     l
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))]
 /// The Edit menu command a key is, or None. With Control held (Command
 /// counts as Control on macOS, LLKeyboardMacOSX::updateModifiers), the Legacy
 /// Viewer gives the key to the menus before the focused page
@@ -154,20 +153,47 @@ pub fn key_lparam(scancode: u32, up: bool, repeat: bool) -> u32 {
 /// Edit menu's shortcuts (menu_edit.xml) send their command to the focused
 /// media, its edit handler (LLViewerMediaImpl::paste and the others,
 /// indra/newview/llviewermedia.cpp). The modifiers must match exactly, as in
-/// LLMenuItemGL::handleAcceleratorKey: Ctrl+Shift+V is not Paste.
-pub fn edit_shortcut(code: KeyCode, mods: Modifiers) -> Option<EditCommand> {
+/// LLMenuItemGL::handleAcceleratorKey: Ctrl+Shift+V is not Paste. The key is
+/// the layout's letter, as the Legacy Viewer's SDL keycode (`event.key.key`
+/// in LLWindowSDL::handleEvent, indra/llwindow/llwindowsdl.cpp), so
+/// Ctrl+Z is Undo on QWERTZ and AZERTY too; the physical key stands in on a
+/// layout without Latin letters, as egui-winit does.
+pub fn edit_shortcut(letter: Option<char>, code: KeyCode, mods: Modifiers) -> Option<EditCommand> {
     if !(mods.control || mods.command) || mods.alt || mods.shift {
         return None;
     }
-    Some(match code {
-        KeyCode::KeyZ => EditCommand::Undo,
-        KeyCode::KeyY => EditCommand::Redo,
-        KeyCode::KeyX => EditCommand::Cut,
-        KeyCode::KeyC => EditCommand::Copy,
-        KeyCode::KeyV => EditCommand::Paste,
-        KeyCode::KeyA => EditCommand::SelectAll,
+    let letter = letter
+        .filter(char::is_ascii_alphabetic)
+        .map(|c| c.to_ascii_lowercase())
+        .or(match code {
+            KeyCode::KeyZ => Some('z'),
+            KeyCode::KeyY => Some('y'),
+            KeyCode::KeyX => Some('x'),
+            KeyCode::KeyC => Some('c'),
+            KeyCode::KeyV => Some('v'),
+            KeyCode::KeyA => Some('a'),
+            _ => None,
+        })?;
+    Some(match letter {
+        'z' => EditCommand::Undo,
+        'y' => EditCommand::Redo,
+        'x' => EditCommand::Cut,
+        'c' => EditCommand::Copy,
+        'v' => EditCommand::Paste,
+        'a' => EditCommand::SelectAll,
         _ => return None,
     })
+}
+
+/// The letter a key gives on the active layout (winit's logical key, which
+/// Control does not change), or None for a named or multi-character key.
+pub fn layout_letter(key: &winit::keyboard::Key) -> Option<char> {
+    let winit::keyboard::Key::Character(s) = key else {
+        return None;
+    };
+    let mut chars = s.chars();
+    let c = chars.next()?;
+    chars.next().is_none().then_some(c)
 }
 
 /// Whether a held shortcut runs its command again: the items with
@@ -180,8 +206,8 @@ fn edit_repeats(cmd: EditCommand) -> bool {
 /// command on the press (and on a repeat when it allows one), nothing on the
 /// release. True when the key is a shortcut, which the page then never gets,
 /// on every system, as in the Legacy Viewer.
-pub fn edit(p: &mut MediaPlugin, code: KeyCode, pressed: bool, repeat: bool, mods: Modifiers) -> bool {
-    let Some(cmd) = edit_shortcut(code, mods) else {
+pub fn edit(p: &mut MediaPlugin, letter: Option<char>, code: KeyCode, pressed: bool, repeat: bool, mods: Modifiers) -> bool {
+    let Some(cmd) = edit_shortcut(letter, code, mods) else {
         return false;
     };
     if pressed && (!repeat || edit_repeats(cmd)) {
@@ -190,6 +216,7 @@ pub fn edit(p: &mut MediaPlugin, code: KeyCode, pressed: bool, repeat: bool, mod
     true
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 /// UTF-16 code units of a text, one WM_CHAR each.
 pub fn char_units(text: &str) -> Vec<u32> {
     text.encode_utf16().map(|u| u as u32).collect()
@@ -560,20 +587,30 @@ mod tests {
         let none = Modifiers::default();
         let ctrl = Modifiers { control: true, ..none };
         let command = Modifiers { command: true, ..none };
-        assert_eq!(edit_shortcut(KeyCode::KeyV, ctrl), Some(EditCommand::Paste));
-        assert_eq!(edit_shortcut(KeyCode::KeyV, command), Some(EditCommand::Paste));
-        assert_eq!(edit_shortcut(KeyCode::KeyC, ctrl), Some(EditCommand::Copy));
-        assert_eq!(edit_shortcut(KeyCode::KeyX, ctrl), Some(EditCommand::Cut));
-        assert_eq!(edit_shortcut(KeyCode::KeyA, ctrl), Some(EditCommand::SelectAll));
-        assert_eq!(edit_shortcut(KeyCode::KeyZ, ctrl), Some(EditCommand::Undo));
-        assert_eq!(edit_shortcut(KeyCode::KeyY, ctrl), Some(EditCommand::Redo));
+        assert_eq!(edit_shortcut(None, KeyCode::KeyV, ctrl), Some(EditCommand::Paste));
+        assert_eq!(edit_shortcut(None, KeyCode::KeyV, command), Some(EditCommand::Paste));
+        assert_eq!(edit_shortcut(None, KeyCode::KeyC, ctrl), Some(EditCommand::Copy));
+        assert_eq!(edit_shortcut(None, KeyCode::KeyX, ctrl), Some(EditCommand::Cut));
+        assert_eq!(edit_shortcut(None, KeyCode::KeyA, ctrl), Some(EditCommand::SelectAll));
+        assert_eq!(edit_shortcut(None, KeyCode::KeyZ, ctrl), Some(EditCommand::Undo));
+        assert_eq!(edit_shortcut(None, KeyCode::KeyY, ctrl), Some(EditCommand::Redo));
         // plain typing and other shortcuts go to the page
-        assert_eq!(edit_shortcut(KeyCode::KeyV, none), None);
-        assert_eq!(edit_shortcut(KeyCode::KeyF, ctrl), None);
-        assert_eq!(edit_shortcut(KeyCode::Delete, ctrl), None);
+        assert_eq!(edit_shortcut(None, KeyCode::KeyV, none), None);
+        assert_eq!(edit_shortcut(None, KeyCode::KeyF, ctrl), None);
+        assert_eq!(edit_shortcut(None, KeyCode::Delete, ctrl), None);
         // the modifiers must match exactly
-        assert_eq!(edit_shortcut(KeyCode::KeyV, Modifiers { shift: true, ..ctrl }), None);
-        assert_eq!(edit_shortcut(KeyCode::KeyV, Modifiers { alt: true, ..ctrl }), None);
+        assert_eq!(edit_shortcut(None, KeyCode::KeyV, Modifiers { shift: true, ..ctrl }), None);
+        assert_eq!(edit_shortcut(None, KeyCode::KeyV, Modifiers { alt: true, ..ctrl }), None);
+        // the layout's letter decides: QWERTZ swaps Z and Y, AZERTY moves A and Z
+        assert_eq!(edit_shortcut(Some('z'), KeyCode::KeyY, ctrl), Some(EditCommand::Undo));
+        assert_eq!(edit_shortcut(Some('y'), KeyCode::KeyZ, ctrl), Some(EditCommand::Redo));
+        assert_eq!(edit_shortcut(Some('a'), KeyCode::KeyQ, ctrl), Some(EditCommand::SelectAll));
+        assert_eq!(edit_shortcut(Some('q'), KeyCode::KeyA, ctrl), None);
+        assert_eq!(edit_shortcut(Some('W'), KeyCode::KeyZ, ctrl), None);
+        // a layout without Latin letters falls back to the physical key
+        assert_eq!(edit_shortcut(Some('м'), KeyCode::KeyV, ctrl), Some(EditCommand::Paste));
+        assert_eq!(layout_letter(&winit::keyboard::Key::Character("v".into())), Some('v'));
+        assert_eq!(layout_letter(&winit::keyboard::Key::Named(winit::keyboard::NamedKey::Delete)), None);
         assert!(edit_repeats(EditCommand::Paste));
         assert!(!edit_repeats(EditCommand::Copy));
         assert!(!edit_repeats(EditCommand::SelectAll));

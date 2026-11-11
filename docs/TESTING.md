@@ -10112,7 +10112,8 @@ What the inventory must show with these scenarios:
   after, then "aurora" is typed. With `edit`, Ctrl+A, Ctrl+X and Ctrl+V
   twice follow (Cmd on macOS): the field reads "auroraaurora" when the
   Edit menu shortcuts reach the page. The cut goes through the system
-  clipboard. `AURORA_DEMO_MEDIA_CLICK_FRAME` changes
+  clipboard, which holds "stale" first: "stalestale" means the cut did
+  nothing. `AURORA_DEMO_MEDIA_CLICK_FRAME` changes
   the starting frame to let the plugin load; also works with
   `AURORA_DEMO_HUDS=media`.
 - **Media plugins.** The media scenarios need Aurora's media plugins pack

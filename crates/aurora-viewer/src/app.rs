@@ -13369,6 +13369,7 @@ impl App {
                 let mods = aurora_media::Modifiers::default();
                 self.media.on_key(
                     &self.world,
+                    ch.chars().next(),
                     code,
                     0x1E,
                     k.is_multiple_of(2),
@@ -13378,8 +13379,14 @@ impl App {
                 );
             }
             // `edit`: then Ctrl+A, Ctrl+X, Ctrl+V twice (Cmd on macOS), so
-            // the field reads "auroraaurora" when the shortcuts reach the page
-            if v.split(',').any(|s| s.trim() == "edit") && (870..878).contains(&f) {
+            // the field reads "auroraaurora" when the shortcuts reach the page.
+            // The clipboard holds "stale" first: a cut that does nothing
+            // leaves "stalestale", not a pass from an earlier run's clipboard.
+            let edit = v.split(',').any(|s| s.trim() == "edit");
+            if edit && f == 864 {
+                self.egui_ctx.copy_text("stale".to_owned());
+            }
+            if edit && (870..878).contains(&f) {
                 let k = (f - 870) as usize;
                 let code = [KeyCode::KeyA, KeyCode::KeyX, KeyCode::KeyV, KeyCode::KeyV][k / 2];
                 let mods = aurora_media::Modifiers {
@@ -13387,7 +13394,8 @@ impl App {
                     command: cfg!(target_os = "macos"),
                     ..Default::default()
                 };
-                self.media.on_key(&self.world, code, 0, k.is_multiple_of(2), false, None, mods);
+                self.media
+                    .on_key(&self.world, None, code, 0, k.is_multiple_of(2), false, None, mods);
             }
         }
         // AURORA_DEMO_CAMERA="alt,x,y" (pan, zoom, ml, wheel, fly): camera/demo.rs
@@ -21361,12 +21369,13 @@ impl ApplicationHandler for App {
                         shift: self.shift,
                         command: self.command,
                     };
+                    let letter = crate::media::keys::layout_letter(&ke.logical_key);
                     let web = self.focused_web();
                     let web_focused = web.is_some();
                     if !typing && let Some(p) = web {
                         use winit::platform::scancode::PhysicalKeyExtScancode;
                         let scancode = ke.physical_key.to_scancode().unwrap_or(0);
-                        if crate::media::keys::edit(p, code, pressed, ke.repeat, web_mods)
+                        if crate::media::keys::edit(p, letter, code, pressed, ke.repeat, web_mods)
                             || crate::media::keys::forward(p, code, scancode, pressed, ke.repeat, ke.text.as_deref(), web_mods)
                             || pressed
                         {
@@ -21385,7 +21394,7 @@ impl ApplicationHandler for App {
                         };
                         if self
                             .media
-                            .on_key(&self.world, code, scancode, pressed, ke.repeat, ke.text.as_deref(), mods)
+                            .on_key(&self.world, letter, code, scancode, pressed, ke.repeat, ke.text.as_deref(), mods)
                             && pressed
                         {
                             return;
