@@ -697,6 +697,12 @@ impl ViewCache {
         self.built
     }
 
+    /// The rendered sort, without the model generation: a late Delete respects
+    /// a new sort while ordinary inventory updates keep the same intent.
+    pub(super) fn selection_sort(&self) -> Option<Sort> {
+        self.version.map(|(_, _, _, sort)| sort)
+    }
+
     /// The date a folder sorts by: its newest descendant's, 0 when it holds
     /// no dated item.
     pub fn folder_date(&self, id: Uuid) -> i64 {

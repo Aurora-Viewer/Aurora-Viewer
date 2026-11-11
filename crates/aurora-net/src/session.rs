@@ -222,6 +222,8 @@ impl Drop for Sim {
 
 pub(crate) struct Shared {
     pub http: reqwest::Client,
+    /// `http` with the login's own HTTP redirects (`login::redirect_policy`).
+    pub login_http: reqwest::Client,
     pub caps_http: reqwest::Client,
     pub events: crate::EventSender,
     pub controls: Arc<Mutex<AgentControls>>,
@@ -431,7 +433,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
             fraction: 0.1,
         },
     );
-    let login = match login::login(&sh.http, &req).await {
+    let login = match login::login(&sh.login_http, &req).await {
         Ok(l) => Arc::new(l),
         Err(e) => {
             let (mfa, tos) = (matches!(e, LoginError::MfaRequired(_)), matches!(e, LoginError::TosRequired(_)));
@@ -457,6 +459,10 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     critical_required: critical,
                     bad_credentials,
                     previous_session,
+                    next_server: match e {
+                        LoginError::NextServer(server) => Some(server),
+                        _ => None,
+                    },
                 },
             );
             return;
@@ -486,6 +492,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     critical_required: false,
                     bad_credentials: false,
                     previous_session: false,
+                    next_server: None,
                 },
             );
             return;
@@ -6283,6 +6290,7 @@ mod event_queue_tests {
     pub(super) fn shared(events: crate::EventSender) -> Shared {
         Shared {
             http: reqwest::Client::new(),
+            login_http: reqwest::Client::new(),
             caps_http: reqwest::Client::new(),
             events,
             controls: Arc::new(Mutex::new(AgentControls::default())),
@@ -6625,6 +6633,7 @@ mod script_dialog_tests {
     pub(in crate::session) fn test_shared(events: crossbeam_channel::Sender<(Instant, NetEvent)>) -> Shared {
         Shared {
             http: reqwest::Client::new(),
+            login_http: reqwest::Client::new(),
             caps_http: reqwest::Client::new(),
             events: crate::EventSender(events),
             controls: Arc::new(Mutex::new(AgentControls::default())),

@@ -1054,19 +1054,26 @@ fn tip_body(
         *action = BarAction::NetworkGraph;
     }
 
-    let music = media.music_status.text();
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, TIP_ROW), Sense::hover());
+    let music = ui
+        .painter()
+        .layout(media.music_status.text(), FontId::proportional(11.5), p.muted, (w - 22.0).max(1.0));
+    // Failure reasons and consent messages need wrapping, unlike a short
+    // "playing" value. Keep them below the label in this narrow tooltip.
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, TIP_ROW + music.size().y), Sense::hover());
+    let label_rect = Rect::from_min_size(rect.min, Vec2::new(w, TIP_ROW));
     paint_tip_row(
         ui,
         p,
         icons,
-        rect,
+        label_rect,
         "radio",
         aurora_i18n::tr!("ui-bars-tip-music"),
-        &music,
+        "",
         p.muted,
         11.5,
     );
+    ui.painter()
+        .galley(Pos2::new(rect.left() + 22.0, rect.top() + TIP_ROW), music, p.muted);
 
     let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 11.0), Sense::hover());
     ui.painter()
@@ -1176,6 +1183,7 @@ mod tests {
             fly_override: false,
             quiet_snapshots: false,
             marketplace: false,
+            destinations: false,
             parcel_landmark: None,
             can_set_home: false,
             can_go_home: true,

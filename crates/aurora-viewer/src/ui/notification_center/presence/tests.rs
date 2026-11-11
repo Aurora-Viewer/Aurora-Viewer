@@ -166,6 +166,7 @@ fn status(classic: bool) -> StatusInfo<'static> {
         fly_override: false,
         quiet_snapshots: false,
         marketplace: false,
+        destinations: false,
         parcel_landmark: None,
         can_set_home: false,
         can_go_home: true,
