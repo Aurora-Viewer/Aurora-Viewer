@@ -464,6 +464,8 @@ pub struct App {
     /// panel this frame.
     vr_minimap: bool,
     vr_map_panel: Option<aurora_render::VrPanel>,
+    /// The right hand raised and looked at: its wrist shows the minimap.
+    vr_right_raised: bool,
     /// Sending on the microphone, as last heard in VR (a sound on each change).
     vr_mic_state: Option<bool>,
     /// The right-click pie open in VR, floating at this point of the world,
@@ -1682,7 +1684,8 @@ impl App {
             vr_last_offset: Vec3::ZERO,
             vr_snap_at: None,
             vr_locomotion_before: None,
-            vr_minimap: false,
+            vr_minimap: true,
+            vr_right_raised: false,
             vr_map_panel: None,
             vr_mic_state: None,
             vr_pie: None,
@@ -16252,7 +16255,7 @@ impl App {
             .interface
             // (the VR interface panel shows the whole interface, though VR is
             // mouselook underneath)
-            .follow_mouselook(&ctx, mouselook, self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some() || self.vr_pie.is_some() || self.vr_minimap)
+            .follow_mouselook(&ctx, mouselook, self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some() || self.vr_pie.is_some() || self.vr_right_raised)
             .is_some()
         {
             self.chat_ui.let_keyboard_go();
@@ -16777,7 +16780,7 @@ impl App {
                 let chrome = self.interface.bars(&ui::interface::Frame {
                     classic: classic_bars,
                     mouselook: self.camera.mouselook(),
-                    show_in_mouselook: self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some() || self.vr_pie.is_some() || self.vr_minimap,
+                    show_in_mouselook: self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some() || self.vr_pie.is_some() || self.vr_right_raised,
                     chat_active: self.chat_ui.in_use(),
                     // AURORA_DEMO_BARS=peek: the pointer at the top edge
                     pointer: if demo_hidden == Some(true) {
@@ -16992,7 +16995,7 @@ impl App {
                     &ui::interface::Frame {
                         classic: classic_bars,
                         mouselook: self.camera.mouselook(),
-                        show_in_mouselook: self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some() || self.vr_pie.is_some() || self.vr_minimap,
+                        show_in_mouselook: self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some() || self.vr_pie.is_some() || self.vr_right_raised,
                         chat_active: false,
                         // AURORA_DEMO_BARS=peekleft: the pointer at the left edge
                         pointer: if self.demo && ui::bars::demo::get().peek_left {

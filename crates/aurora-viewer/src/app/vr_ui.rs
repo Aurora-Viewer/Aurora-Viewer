@@ -115,6 +115,7 @@ impl App {
             renderer.set_vr_menu(None);
             renderer.set_vr_map(None);
             self.vr_map_panel = None;
+            self.vr_right_raised = false;
             self.vr_pie = None;
             self.vr_menu_panel = None;
             return;
@@ -250,6 +251,11 @@ impl App {
         let raised = (self.vr_minimap && self.vr_panel.is_none() && !camera_in_right)
             .then(|| wrist_point(input.head_position, input.head_forward, &input.right))
             .flatten();
+        // (the interface is drawn for it, the minimap window opened)
+        self.vr_right_raised = raised.is_some();
+        if raised.is_some() {
+            self.panels.minimap = true;
+        }
         let map = raised.and_then(|at| {
             let part = self.egui_ctx.memory(|m| m.area_rect(egui::Id::unique("minimap")))?.intersect(rect);
             if part.width() < 1.0 || part.height() < 1.0 {
