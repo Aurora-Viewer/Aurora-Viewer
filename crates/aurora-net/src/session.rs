@@ -2823,6 +2823,13 @@ impl Session<'_> {
             } => {
                 self.create_notecard_item(request, parent, name, data, permissions);
             }
+            NetCommand::CreateScriptItem {
+                request,
+                parent,
+                name,
+                description,
+                source,
+            } => self.create_script_item(request, parent, name, description, source),
             NetCommand::CreateInventoryItem {
                 parent,
                 kind,

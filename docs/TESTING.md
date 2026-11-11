@@ -1638,6 +1638,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_PARTICLE_EDITOR=1\|fountain\|inject` | Build › Edit particles on the object selected by `AURORA_DEMO_BUILD` |
 | `AURORA_DEMO_COLOR_PICKER=<mode>` | Colour picker and gestures offline |
 | `AURORA_DEMO_SCRIPTS=<mode>` | Editing and saving scripts offline |
+| `AURORA_DEMO_SCRIPT_RECOVERY=1\|recover\|edit` | Copies of unsaved scripts and their recovery at login |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages of the Firestorm LSL bridge (hidden) |
 | `AURORA_DEMO_MOVELOCK=<mode>` | Bridge lifecycle/lock and native sitting choice; see details below |
 | `AURORA_DEMO_BRIDGE_QUERY=radar\|scripts\|object\|error` | Bridge altitude correction, basic script and extended object-information reports |
@@ -2360,6 +2361,18 @@ New `llOwnerSay` messages open Script debug if their routing is enabled; the
 errors of owned objects also appear there, after filtering of the bridge and
 of blocked objects. The window allows seeing all the objects or a single one
 and clearing the displayed messages.
+
+**`AURORA_DEMO_SCRIPT_RECOVERY=1|recover|edit`**: the copies of the scripts
+left unsaved, which the demo keeps only with this variable (a demo run never
+offers another one's scripts). `1` leaves a copy at login, as a crash would:
+the Script recovery window lists "Demo door script", ticked. Recover creates
+it in Lost and Found with the unsaved text and shows it in the inventory;
+Cancel forgets it; the window's X keeps it for the next run. `recover`
+answers Recover at frame 400. `edit` opens the demo inventory script at
+frame 280 and types in it at frame 320 without saving: within ten seconds
+the log says `script backup: unsaved changes copied`, and a run killed then
+started again with `edit` offers that text (`1` replaces it with its own). The copies are in the
+demo's account folder, `script-backups`, sealed with the cache key.
 
 **`AURORA_DEMO_HOVER_TIPS=bubble|card|readout|legacy[:all][:noland][:avatars]`** — the
 world tooltips on for the session in that form (the Legacy Viewer's text
