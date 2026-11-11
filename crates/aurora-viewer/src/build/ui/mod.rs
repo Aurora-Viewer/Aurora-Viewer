@@ -24,6 +24,7 @@ mod legacy;
 mod notecards;
 pub use notecards::{loaded as layout_notecard_loaded, saved as layout_notecard_saved};
 mod mesh;
+mod name_focus;
 mod object;
 pub(crate) mod particles;
 mod replace;
@@ -366,6 +367,12 @@ pub fn show(
         tool.ui.layout.drag = None;
         return false;
     }
+    // Sampled before a press can surrender the field: an empty click while
+    // the window already holds the keyboard commits that field, and does
+    // not select it again.
+    name_focus::note(ctx);
+    name_focus::keep_through_release(ctx);
+    let restore_text = name_focus::pending(ctx);
     press_takes_build_field_focus(ctx);
     let before = s.clone();
     let property_lines_before = *env.property_lines;
@@ -498,6 +505,9 @@ pub fn show(
             compact::body(ui, p, tool, world, s, mods, env);
         }
     });
+    if restore_text {
+        name_focus::apply(ctx);
+    }
     if let Some((target, asset, item)) = tool.ui.slot_drop.take() {
         let sel = texture::selected(tool, world);
         match tool.admit_item(world, item, &texture_preview::admit_targets(target, &sel)) {

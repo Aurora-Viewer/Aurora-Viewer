@@ -10,6 +10,8 @@ mod contents_keyboard_tests;
 mod layout_tests;
 #[path = "legacy_tests.rs"]
 mod legacy_tests;
+#[path = "name_focus_tests.rs"]
+mod name_focus_tests;
 
 fn fixture() -> (World, BuildTool, BuildSettings) {
     let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
