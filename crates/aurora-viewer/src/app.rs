@@ -15610,6 +15610,12 @@ impl App {
                         self.ik_editor.show(&ctx, &p, &self.world, projector);
                         self.ik_editor.over_viewfinder = false;
                     }
+                    // the posing consent too, poser open or not: a request
+                    // asked from the poser goes out now, another resident's
+                    // request shows its answer at once (it would time out
+                    // behind the photo mode), and the reminder that someone
+                    // may pose us stays in sight
+                    self.poser_consent_ui(&ctx, &p, true);
                     // Personal Lighting, opened from the light panel, stays
                     // over it too: the photo's light refined without leaving
                     if self.panels.personal_lighting {
@@ -15776,7 +15782,7 @@ impl App {
                 let favorites = self.favorites_view(favorites_shown, here);
                 let location_landmarks = self.world.landmarks.named(&self.world.inventory);
                 let (classic_bars, islands) = self.bars_look();
-                self.poser_consent_ui(&ctx, &p);
+                self.poser_consent_ui(&ctx, &p, false);
                 let own_name = self.world.own_name();
                 // AURORA_DEMO_BARS: the long parcel name of the mockup (the
                 // islands only: Firestorm's bars stay as they were)
@@ -21329,8 +21335,23 @@ impl ApplicationHandler for App {
                         self.down.remove(&Input::key(code));
                         return;
                     }
+                    // a dialog over the photo mode reads its keys through
+                    // egui: Enter is its own, the other keys go on to their
+                    // usual handling without the viewfinder's
+                    // (`viewfinder::behind_dialog`)
+                    let behind = self.viewfinder_behind_dialog(code, pressed);
+                    if matches!(
+                        behind,
+                        Some(viewfinder::BehindDialog::Answer | viewfinder::BehindDialog::ReleaseShutter)
+                    ) {
+                        self.down.remove(&Input::key(code));
+                        return;
+                    }
                     // the photo viewfinder's keys (the shutter, its menu…)
-                    if !self.egui_ctx.egui_wants_keyboard_input() && self.viewfinder_key(code, &ke.logical_key, pressed, ke.repeat) {
+                    if behind.is_none()
+                        && !self.egui_ctx.egui_wants_keyboard_input()
+                        && self.viewfinder_key(code, &ke.logical_key, pressed, ke.repeat)
+                    {
                         self.down.remove(&Input::key(code));
                         return;
                     }

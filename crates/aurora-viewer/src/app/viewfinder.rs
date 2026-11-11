@@ -1179,6 +1179,75 @@ enum VfSound {
     Click,
 }
 
+/// What a key does while a dialog (any modal: a pose request…) is open over
+/// the photo mode, which reads its keys through egui.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum BehindDialog {
+    /// Enter pressed: the dialog's key (it answers the dialog), so it must
+    /// not also take a photo nor reach anything else.
+    Answer,
+    /// Enter let go: the shutter's half press ends without a photo, as a
+    /// cancel does, so the next press focuses again instead of firing with
+    /// the old focus.
+    ReleaseShutter,
+    /// Any other key: not the viewfinder's (its menu, help, AF and lens wait
+    /// behind the dialog), but its usual handling, as outside the photo
+    /// mode: a push-to-talk or movement key let go must still be heard.
+    Usual,
+}
+
+/// `BehindDialog` for a key, or None when the viewfinder handles it as
+/// usual (no viewfinder, or no dialog open over it).
+pub(super) fn behind_dialog(viewfinder_on: bool, dialog_open: bool, shutter: bool, pressed: bool) -> Option<BehindDialog> {
+    if !viewfinder_on || !dialog_open {
+        return None;
+    }
+    Some(match (shutter, pressed) {
+        (true, true) => BehindDialog::Answer,
+        (true, false) => BehindDialog::ReleaseShutter,
+        (false, _) => BehindDialog::Usual,
+    })
+}
+
+impl App {
+    /// The photo mode's keys while a dialog is open over it
+    /// (`behind_dialog`), the shutter's release applied.
+    pub(super) fn viewfinder_behind_dialog(&mut self, code: KeyCode, pressed: bool) -> Option<BehindDialog> {
+        let dialog = self.egui_ctx.memory(|m| m.top_modal_layer()).is_some();
+        let shutter = matches!(code, KeyCode::Enter | KeyCode::NumpadEnter);
+        let behind = behind_dialog(self.viewfinder_on(), dialog, shutter, pressed);
+        if behind == Some(BehindDialog::ReleaseShutter) {
+            self.snapshots.vf.pressed = false;
+        }
+        behind
+    }
+}
+
+#[cfg(test)]
+mod behind_dialog_tests {
+    use super::{BehindDialog, behind_dialog};
+
+    #[test]
+    fn a_dialog_over_the_photo_mode_takes_enter_lets_the_shutter_go_and_leaves_other_keys_their_usual_handling() {
+        // no dialog, or no photo mode: the viewfinder's own keys as usual
+        for (on, dialog) in [(true, false), (false, true), (false, false)] {
+            for shutter in [true, false] {
+                for pressed in [true, false] {
+                    assert_eq!(behind_dialog(on, dialog, shutter, pressed), None);
+                }
+            }
+        }
+        // a dialog over the photo mode: Enter answers it, no photo
+        assert_eq!(behind_dialog(true, true, true, true), Some(BehindDialog::Answer));
+        // Enter let go behind it: the half press ends, no photo
+        assert_eq!(behind_dialog(true, true, true, false), Some(BehindDialog::ReleaseShutter));
+        // any other key, pressed or let go (push to talk, movement): its
+        // usual handling, only the viewfinder's own actions skipped
+        assert_eq!(behind_dialog(true, true, false, true), Some(BehindDialog::Usual));
+        assert_eq!(behind_dialog(true, true, false, false), Some(BehindDialog::Usual));
+    }
+}
+
 #[cfg(test)]
 mod free_pad_tests {
     use super::free_pad_axes;
