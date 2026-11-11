@@ -8417,6 +8417,7 @@ impl App {
             renderer.set_vr_pointer(aurora_render::VrPointer {
                 controllers: active,
                 arc: self.vr_arc.filter(|_| active),
+                mic: self.vr_mic_light(),
                 ..Default::default()
             });
             return;
@@ -8447,6 +8448,7 @@ impl App {
                 actionable: true,
                 outline: None,
                 arc: self.vr_arc,
+                mic: self.vr_mic_light(),
             });
             return;
         }
@@ -8479,6 +8481,7 @@ impl App {
             actionable,
             outline,
             arc: self.vr_arc,
+            mic: self.vr_mic_light(),
         });
         // pressed past 0.7, released under 0.35: a trigger resting near one
         // threshold must not click again and again

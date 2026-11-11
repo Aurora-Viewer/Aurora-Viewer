@@ -192,6 +192,11 @@ pub(crate) fn build(input: &VrInputState, pointer: VrPointer, out: &mut Vec<Vert
         let pointing = pointer.hand == Some(side);
         if pointer.controllers {
             controller(hand, side, pointing, out);
+            if side == VrSide::Left
+                && let Some(on) = pointer.mic
+            {
+                mic_light(hand, on, out);
+            }
         }
         if pointing && pointer.length > 0.0 {
             beam(hand, pointer, out);
@@ -323,6 +328,26 @@ fn controller(hand: VrControllerState, side: VrSide, pointing: bool, out: &mut V
     );
 }
 
+/// The microphone's light on top of the left controller: bright green while
+/// sending, a dim grey dot otherwise.
+fn mic_light(hand: VrControllerState, on: bool, out: &mut Vec<Vertex>) {
+    let q = hand.orientation.normalize();
+    let (right, up, forward) = (q * Vec3::X, q * Vec3::Y, q * Vec3::NEG_Z);
+    let color = if on { Vec3::new(0.25, 1.0, 0.4) } else { Vec3::splat(0.3) };
+    let size = if on { 0.009 } else { 0.006 };
+    // (unshaded: a light, not a surface)
+    let lit = color.extend(1.0);
+    let center = hand.position - forward * 0.05 + up * 0.002;
+    let axes = [right * size, up * size, forward * size];
+    for (a, b, c) in [(0, 1, 2), (1, 2, 0), (2, 0, 1)] {
+        for sign in [1.0f32, -1.0] {
+            let face = center + axes[a] * sign;
+            let (u, v) = (axes[b], axes[c] * sign);
+            push_quad(out, [face - u - v, face + u - v, face + u + v, face - u + v], [lit; 4]);
+        }
+    }
+}
+
 fn beam(hand: VrControllerState, pointer: VrPointer, out: &mut Vec<Vertex>) {
     let q = hand.orientation.normalize();
     let (right, up, forward) = (q * Vec3::X, q * Vec3::Y, q * Vec3::NEG_Z);
@@ -412,6 +437,7 @@ mod tests {
             actionable: true,
             outline: None,
             arc: None,
+            mic: None,
         };
         let mut out = Vec::new();
         build(&input, pointer, &mut out);

@@ -1,5 +1,5 @@
 //! The viewer's interface in VR: a floating panel opened with the left
-//! controller's menu button, used with the pointer beam (the trigger is the
+//! controller's X button (or its menu button where the runtime passes it on), used with the pointer beam (the trigger is the
 //! left mouse button, the right thumbstick scrolls), and an on-screen
 //! keyboard while a text field has the focus.
 //!
@@ -35,8 +35,10 @@ pub(super) fn place_panel(head: Vec3, head_forward: Vec3, aspect: f32) -> aurora
 }
 
 impl App {
-    /// The left menu button opens and closes the panel; it is closed
-    /// outside VR. Kept in the render worker's hands every frame.
+    /// Left X (or the left menu button, where the runtime passes it on:
+    /// Virtual Desktop keeps it for its own menu) opens and closes the
+    /// panel; it is closed outside VR. Kept in the render worker's hands
+    /// every frame.
     pub(super) fn vr_panel_button(&mut self, renderer: &Renderer) {
         let input = renderer.vr_input();
         if !renderer.vr_engaged() {
@@ -46,7 +48,7 @@ impl App {
             renderer.set_vr_panel(None);
             return;
         }
-        let menu = input.left.active && input.left.menu;
+        let menu = input.left.active && (input.left.primary || input.left.menu);
         if menu && !self.vr_menu_click {
             self.vr_panel = if self.vr_panel.is_some() {
                 None
@@ -61,6 +63,12 @@ impl App {
         }
         self.vr_menu_click = menu;
         renderer.set_vr_panel(self.vr_panel);
+    }
+
+    /// The microphone's light on the left controller: sending or not; None
+    /// while voice is off.
+    pub(super) fn vr_mic_light(&self) -> Option<bool> {
+        self.settings.audio.voice_enabled.then(|| self.talking())
     }
 
     /// The beam on the panel: pointer events for the interface. True when

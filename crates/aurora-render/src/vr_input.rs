@@ -128,6 +128,9 @@ pub struct VrPointer {
     pub outline: Option<VrBox>,
     /// The teleport arc being aimed.
     pub arc: Option<VrArc>,
+    /// The microphone, shown as a light on the left controller: sending
+    /// (green) or not (dim); None when voice is off.
+    pub mic: Option<bool>,
 }
 
 /// Points along a teleport arc, the last one where it lands.
