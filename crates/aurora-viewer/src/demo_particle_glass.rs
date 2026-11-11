@@ -92,10 +92,9 @@ pub fn events() -> Vec<NetEvent> {
             let (left, right) = (2.2, -2.2);
             objects.push(pane(FIRST_ID, at(9.0, left, 1.9), upright, 3.0, 0.45, 0.0));
             objects.push(pane(FIRST_ID + 1, at(9.0, right, 1.9), upright, 3.0, 0.45, 0.4));
-            let mut id = FIRST_ID + 2;
-            for (along, side) in [(11.0, left), (11.0, right), (7.0, left), (7.0, right), (9.0, left + 1.0)] {
+            let spots = [(11.0, left), (11.0, right), (7.0, left), (7.0, right), (9.0, left + 1.0)];
+            for (id, (along, side)) in (FIRST_ID + 2..).zip(spots) {
                 objects.push(emitter(id, at(along, side, 0.3)));
-                id += 1;
             }
         }
         Mode::Dense => {
