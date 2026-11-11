@@ -48,7 +48,7 @@ impl World {
         self.groups.out.push(NetCommand::RequestOfflineMessages);
     }
 
-    /// MuteListUpdate / UseCachedMuteList answered.
+    /// MuteListUpdate / UseCachedMuteList / "emptymutelist" answered.
     pub(super) fn on_mute_list(&mut self, src: aurora_net::MuteListSource) {
         self.mutes.on_server(src, self.cache_dir.as_deref());
         self.restore_deferred_group_chats();
