@@ -6331,10 +6331,14 @@ impl Backend {
         let _second = world.backends[1].render_view(other);
         if let (Some(cam_packet), Some((backend, _))) = (camera_packet, world.camera.as_mut()) {
             let shot = backend.render_view(cam_packet);
-            // the photo the camera took (or reads back later) answers for the frame
-            if first.captured.is_none() && shot.captured.is_some() {
+            // the photo the camera took answers for the frame: its end always
+            // (even without an image), or the main thread keeps the request
+            // open and the photo job waits, the world held for it
+            if shot.snapshot {
+                first.snapshot = true;
                 first.captured = shot.captured;
-                first.snapshot |= shot.snapshot;
+            } else if first.captured.is_none() {
+                first.captured = shot.captured;
             }
         }
         // the VR picture preferences and the comfort vignette, then the

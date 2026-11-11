@@ -525,16 +525,7 @@ impl App {
                 });
             });
         if camera {
-            // out in the other hand, or put away
-            self.vr_photo_camera = if camera_out {
-                None
-            } else {
-                Some(VrPhotoCamera {
-                    held: true,
-                    position: Vec3::ZERO,
-                    rotation: glam::Quat::IDENTITY,
-                })
-            };
+            self.vr_toggle_camera();
         }
         if place && let Some(camera) = &mut self.vr_photo_camera {
             camera.held = !camera.held;
@@ -543,11 +534,7 @@ impl App {
             self.toggle_mic();
         }
         if map {
-            self.vr_minimap = !map_on;
-            // the minimap window itself, which the wrist shows
-            if self.vr_minimap {
-                self.panels.minimap = true;
-            }
+            self.vr_toggle_map();
         }
         if dictate {
             self.vr_dictate(ctx);
@@ -560,6 +547,27 @@ impl App {
         }
         self.vr_recenter_request |= recenter;
         self.vr_close_panel |= close;
+    }
+
+    /// The VR camera out in the other hand, or put away.
+    fn vr_toggle_camera(&mut self) {
+        self.vr_photo_camera = if self.vr_photo_camera.is_some() {
+            None
+        } else {
+            Some(VrPhotoCamera {
+                held: true,
+                position: Vec3::ZERO,
+                rotation: glam::Quat::IDENTITY,
+            })
+        };
+    }
+
+    /// The minimap on the right wrist, on or off (its window opened for it).
+    fn vr_toggle_map(&mut self) {
+        self.vr_minimap = !self.vr_minimap;
+        if self.vr_minimap {
+            self.panels.minimap = true;
+        }
     }
 
     /// Dictation: Windows' voice typing (Win+H) into the text field that
@@ -642,6 +650,8 @@ impl App {
             }),
         }));
         if shutter {
+            // a shutter only we hear, whatever the photo's own sound setting
+            self.play_ui_sound_forced(crate::ui_sound::UiSound::Snapshot);
             self.photo_to_disk();
             if settings.haptics {
                 renderer.vr_haptic(side, 0.7, 0.05);
@@ -717,6 +727,14 @@ impl App {
         let current = self.vr_wrist_tab;
         // the view's switches: first or third person, camera only
         let (mut person, mut camera_only) = (false, false);
+        // the quick row: camera, microphone, map, flying, standing up, recentre
+        let (mut camera, mut place, mut mic, mut map, mut fly, mut stand, mut recenter) =
+            (false, false, false, false, false, false, false);
+        let camera_held = self.vr_photo_camera.as_ref().map(|c| c.held);
+        let mic_on = self.mic_on;
+        let map_on = self.vr_minimap;
+        let flying = self.world.agent.flying;
+        let sitting = self.world.agent.is_sitting();
         let third = self.vr_third_person;
         let only = self.settings.camera.vr.locomotion == crate::camera::VrLocomotion::CameraOnly;
         let shown = egui::Area::new(egui::Id::unique("vr-wrist-chat"))
@@ -756,6 +774,31 @@ impl App {
                             .add(egui::Button::new(aurora_i18n::tr!("ui-vr-wrist-camera-only")).selected(only))
                             .clicked();
                     });
+                    ui.horizontal_wrapped(|ui| {
+                        camera = ui
+                            .add(egui::Button::new(aurora_i18n::tr!("ui-vr-toolbar-camera")).selected(camera_held.is_some()))
+                            .clicked();
+                        if let Some(held) = camera_held {
+                            let text = if held {
+                                aurora_i18n::tr!("ui-vr-toolbar-camera-set-down")
+                            } else {
+                                aurora_i18n::tr!("ui-vr-toolbar-camera-take")
+                            };
+                            place = ui.button(text).clicked();
+                        }
+                        let mic_text = if mic_on {
+                            aurora_i18n::tr!("ui-vr-toolbar-mic-on")
+                        } else {
+                            aurora_i18n::tr!("ui-vr-toolbar-mic-off")
+                        };
+                        mic = ui.add(egui::Button::new(mic_text).selected(mic_on)).clicked();
+                        map = ui.add(egui::Button::new(aurora_i18n::tr!("ui-vr-toolbar-map")).selected(map_on)).clicked();
+                        fly = ui.add(egui::Button::new(aurora_i18n::tr!("ui-vr-wrist-fly")).selected(flying)).clicked();
+                        if sitting {
+                            stand = ui.button(aurora_i18n::tr!("ui-vr-wrist-stand")).clicked();
+                        }
+                        recenter = ui.button(aurora_i18n::tr!("ui-vr-toolbar-recenter")).clicked();
+                    });
                 });
             });
         self.vr_wrist_rect = Some(shown.response.rect);
@@ -765,6 +808,25 @@ impl App {
         if person {
             self.vr_third_person = !third;
         }
+        if camera {
+            self.vr_toggle_camera();
+        }
+        if place && let Some(camera) = &mut self.vr_photo_camera {
+            camera.held = !camera.held;
+        }
+        if mic && self.in_world() {
+            self.toggle_mic();
+        }
+        if map {
+            self.vr_toggle_map();
+        }
+        if fly {
+            self.toggle_fly();
+        }
+        if stand {
+            self.send(NetCommand::OneShotControl(aurora_net::control::STAND_UP));
+        }
+        self.vr_recenter_request |= recenter;
         if camera_only {
             let vr = &mut self.settings.camera.vr;
             if only {
