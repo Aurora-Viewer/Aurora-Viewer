@@ -1,13 +1,16 @@
 //! AURORA_DEMO_PARTICLE_GLASS: particles sorted in with blended faces, to see
 //! what is drawn over what (`scene::particle_order`), and what it costs.
 //!
-//! - `1`: along the start view, 9 m ahead, two 3 m glass panes side by side
-//!   at face alpha 0.45, the right one glowing (glow 0.4). An emitter (the
-//!   plaza fountain's) stands 2 m behind each pane, one 2 m in front, and one
-//!   in the left pane's plane, so that its arc crosses it. Behind a pane the
-//!   particles are tinted by the glass, in front they are clear; the arc
-//!   through the pane is cut exactly at it; the glowing pane keeps its glow
-//!   over the particles behind it.
+//! - `1`: along the start view, 9 m ahead, three 3 m glass panes side by
+//!   side at face alpha 0.45: an ordinary one on the left, a fullbright one
+//!   in the middle, a glowing one (glow 0.4) on the right. An emitter (the
+//!   plaza fountain's) stands 2 m behind each pane, one 2 m in front of each,
+//!   and one in the left pane's plane, so that its arc crosses it. Behind a
+//!   pane the particles are tinted by the glass, in front they are clear;
+//!   the arc through the pane is cut exactly at it; the glowing pane keeps
+//!   its glow over the particles behind it, and the fullbright one sorts
+//!   with them like the others (they are all blended faces). The emitters
+//!   show in red: the particle-source beacon highlight, a debug overlay.
 //! - `sparse`: what a busy place looks like more than `dense` does: 60 thin
 //!   panes spread over 8 to 68 m ahead and 22 m across, and 6 emitters in
 //!   it, each far from most of the panes on the screen. By depth alone the
@@ -45,14 +48,14 @@ fn mode() -> Option<Mode> {
     }
 }
 
-fn pane(id: u32, pos: Vec3, rot: Quat, size: f32, alpha: f32, glow: f32) -> ObjectUpdate {
+fn pane(id: u32, pos: Vec3, rot: Quat, size: f32, alpha: f32, fullbright: bool, glow: f32) -> ObjectUpdate {
     prim(
         id,
         pos,
         rot,
         Vec3::new(0.04, size, size),
         shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0),
-        te([0.55, 0.75, 1.0, alpha], 0, false, glow),
+        te([0.55, 0.75, 1.0, alpha], 0, fullbright, glow),
         ExtraParams::default(),
         "",
     )
@@ -96,11 +99,20 @@ pub fn events() -> Vec<NetEvent> {
     match mode {
         Mode::Glass => {
             // the panes' centres 1.9 m up: they stand on the ground
-            let (left, right) = (2.2, -2.2);
-            objects.push(pane(FIRST_ID, at(9.0, left, 1.9), upright, 3.0, 0.45, 0.0));
-            objects.push(pane(FIRST_ID + 1, at(9.0, right, 1.9), upright, 3.0, 0.45, 0.4));
-            let spots = [(11.0, left), (11.0, right), (7.0, left), (7.0, right), (9.0, left + 1.0)];
-            for (id, (along, side)) in (FIRST_ID + 2..).zip(spots) {
+            let (left, middle, right) = (3.4, 0.0, -3.4);
+            objects.push(pane(FIRST_ID, at(9.0, left, 1.9), upright, 3.0, 0.45, false, 0.0));
+            objects.push(pane(FIRST_ID + 1, at(9.0, middle, 1.9), upright, 3.0, 0.45, true, 0.0));
+            objects.push(pane(FIRST_ID + 2, at(9.0, right, 1.9), upright, 3.0, 0.45, false, 0.4));
+            let spots = [
+                (11.0, left),
+                (11.0, middle),
+                (11.0, right),
+                (7.0, left),
+                (7.0, middle),
+                (7.0, right),
+                (9.0, left + 1.0),
+            ];
+            for (id, (along, side)) in (FIRST_ID + 3..).zip(spots) {
                 objects.push(emitter(id, at(along, side, 0.3)));
             }
         }
@@ -109,7 +121,7 @@ pub fn events() -> Vec<NetEvent> {
                 let along = 8.0 + k as f32;
                 // spread over 22 m across, the order of the sides scrambled
                 let side = ((k * 7) % 13) as f32 * 1.8 - 10.8;
-                objects.push(pane(FIRST_ID + k, at(along, side, 1.9), upright, 3.0, 0.3, 0.0));
+                objects.push(pane(FIRST_ID + k, at(along, side, 1.9), upright, 3.0, 0.3, false, 0.0));
             }
             let spots = [(14.0, -9.0), (24.0, 6.0), (34.0, -3.0), (44.0, 9.0), (54.0, -7.0), (64.0, 2.0)];
             for (id, (along, side)) in (FIRST_ID + 300..).zip(spots) {
@@ -121,7 +133,7 @@ pub fn events() -> Vec<NetEvent> {
                 // 8 to 80 m, alternating sides of the line of sight
                 let along = 8.0 + k as f32 * 0.24;
                 let side = if k % 2 == 0 { -1.6 } else { 1.6 } + (((k * 7) % 5) as f32 - 2.0) * 0.3;
-                objects.push(pane(FIRST_ID + k, at(along, side, 1.9), upright, 3.0, 0.3, 0.0));
+                objects.push(pane(FIRST_ID + k, at(along, side, 1.9), upright, 3.0, 0.3, false, 0.0));
             }
             for k in 0..36u32 {
                 let along = 9.0 + k as f32 * 2.0;

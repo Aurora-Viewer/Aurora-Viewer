@@ -4512,7 +4512,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_COPLANAR_DECAL=1`, `mask` or `blend` | Two dirt strips blended over a grass face of the same static mesh, 9 m along the start view (#3059) |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
 | `AURORA_DEMO_PLANTS=1`, `far` or `dense` | Linden trees and grass: every species near or far along the start view, or a forest |
-| `AURORA_DEMO_PARTICLE_GLASS=1`, `sparse` or `dense` | Fountains behind, in front of and through two glass panes (the right one glowing); 60 spread-out panes and 6 emitters; or 300 thin panes and 36 emitters (the cap of 256 particle runs) |
+| `AURORA_DEMO_PARTICLE_GLASS=1`, `sparse` or `dense` | Fountains behind, in front of and through three glass panes (one fullbright, one glowing; the emitters show red: the particle-source beacon highlight); 60 spread-out panes and 6 emitters; or 300 thin panes and 36 emitters (the cap of 256 particle runs) |
 | `AURORA_PARTICLE_OVERLAP=0` | With the interleave, the particle runs from the depths alone, not from where the faces are on the screen (A/B; read at launch) |
 | `AURORA_PARTICLE_INTERLEAVE=0` | Particles as before the interleave: all after the blended faces and the overlays, radial sort, not clipped at the water, none of its pipelines or targets made (A/B; read at launch, not live) |
 | `AURORA_DEMO_BLEND_SHADOWS=1` or `dense` | Alpha-blended panels in the sun (greenhouse pane, face and texture alpha), or 400 greenhouse panes |
@@ -4799,8 +4799,8 @@ both open states and the selection count. Capture at frame 620.
 - **`AURORA_DEMO_PARTICLE_GLASS=1|dense`** (`demo_particle_glass.rs`), with
   `AURORA_PARTICLE_INTERLEAVE=0|1` for the A/B: particles drawn between the
   blended faces by view depth (`scene/particle_order.rs`). `1`: two 3 m
-  glass panes 9 m along the start view (face alpha 0.45, the right one
-  glowing), a fountain 2 m behind each, one 2 m in front of each and one in
+  glass panes 9 m along the start view (face alpha 0.45, the middle one
+  fullbright, the right one glowing), a fountain 2 m behind each, one 2 m in front of each and one in
   the left pane's plane. Expected: the particles behind a pane tinted by the
   glass and those in front clear, the arc through the left pane cut exactly
   at it, the glowing pane keeping its glow over the particles behind it;

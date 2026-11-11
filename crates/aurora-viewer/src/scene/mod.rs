@@ -7257,6 +7257,21 @@ mod tests {
         assert_eq!(classify(&face(true, blend, 0.0), AlphaKind::Mask), Pass::Hidden);
     }
 
+    /// The particles are placed among the faces of `blend` (`particle_order`):
+    /// a translucent face is in it whether it is fullbright or glows (neither
+    /// is a pass of its own; a glow only adds a draw right after the face), as
+    /// the Legacy Viewer's alpha pool holds them (LLDrawPoolAlpha::renderAlpha).
+    #[test]
+    fn a_translucent_face_is_blended_whatever_its_glow() {
+        for glow in [false, true] {
+            let face = FaceDraw {
+                te_alpha: 0.45,
+                ..test_face(Pass::Hidden, glow)
+            };
+            assert_eq!(classify(&face, AlphaKind::Opaque), Pass::Blend, "glow {glow}");
+        }
+    }
+
     #[test]
     fn hide_water_is_invisible_but_keeps_its_gpu_exclusion_draw() {
         let mut face = FaceDraw {
