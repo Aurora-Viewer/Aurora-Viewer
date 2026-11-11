@@ -272,6 +272,11 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     " m",
                 );
                 cx.toggle(
+                    tr!("ui-options-camera-vr-body-follows-head"),
+                    tr!("ui-options-camera-vr-body-follows-head-help"),
+                    &field!(camera.vr.body_follows_head),
+                );
+                cx.toggle(
                     tr!("ui-options-camera-vr-tooltips"),
                     tr!("ui-options-camera-vr-tooltips-help"),
                     &field!(camera.vr.tooltips),

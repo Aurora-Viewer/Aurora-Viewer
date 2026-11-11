@@ -300,6 +300,8 @@ pub struct VrSettings {
     /// The hover tip of what the beam points at, as a label beside it
     /// (when the hover tips are on).
     pub tooltips: bool,
+    /// Standing still, the avatar turns after the head once it is well away.
+    pub body_follows_head: bool,
     pub exposure: f32,
     pub brightness: f32,
     pub contrast: f32,
@@ -352,6 +354,7 @@ impl Default for VrSettings {
             haptics: true,
             vignette_strength: 0.6,
             tooltips: true,
+            body_follows_head: true,
             exposure: 0.0,
             brightness: 0.0,
             contrast: 1.0,

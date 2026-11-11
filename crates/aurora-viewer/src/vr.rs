@@ -71,6 +71,39 @@ pub fn teleport_aiming(was: bool, stick_y: f32) -> bool {
     if was { stick_y > 0.3 } else { stick_y > 0.6 }
 }
 
+/// The avatar's body turning after the head while standing: once the head
+/// is more than 50° away it turns (at most 3 rad/s) until within 5°.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BodyFollow {
+    turning: bool,
+}
+
+impl BodyFollow {
+    const START: f32 = 50.0 * std::f32::consts::PI / 180.0;
+    const STOP: f32 = 5.0 * std::f32::consts::PI / 180.0;
+    const RATE: f32 = 3.0;
+
+    /// The body's new yaw from its yaw and the head's, radians.
+    pub fn step(&mut self, body: f32, head: f32, dt: f32) -> f32 {
+        let diff = (head - body + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+        if diff.abs() > Self::START {
+            self.turning = true;
+        }
+        if !self.turning || !diff.is_finite() {
+            return body;
+        }
+        if diff.abs() < Self::STOP {
+            self.turning = false;
+            return body;
+        }
+        body + diff.signum() * (Self::RATE * dt.max(0.0)).min(diff.abs())
+    }
+
+    pub fn reset(&mut self) {
+        self.turning = false;
+    }
+}
+
 /// How far the avatar's eyes lead its centre along its facing (the
 /// first-person camera's standing eye, `camera::mouselook_eye`).
 pub const EYE_LEAD: f32 = 0.12;
@@ -212,6 +245,24 @@ mod tests {
         assert!(teleport_aiming(false, 0.7));
         assert!(teleport_aiming(true, 0.5));
         assert!(!teleport_aiming(true, 0.2));
+    }
+
+    #[test]
+    fn body_turns_after_the_head_past_50_degrees_then_settles() {
+        let mut follow = BodyFollow::default();
+        // 30° away: the body stays
+        assert_eq!(follow.step(0.0, 30f32.to_radians(), 0.1), 0.0);
+        // 90° away: it turns toward the head, no further than the rate
+        let mut body = follow.step(0.0, 90f32.to_radians(), 0.1);
+        assert!((body - 0.3).abs() < 1e-5);
+        for _ in 0..20 {
+            body = follow.step(body, 90f32.to_radians(), 0.1);
+        }
+        assert!((body - 90f32.to_radians()).abs() < 5f32.to_radians());
+        // across the ±180° seam it takes the short way
+        let mut follow = BodyFollow::default();
+        let body = follow.step(170f32.to_radians(), -110f32.to_radians(), 0.1);
+        assert!(body > 170f32.to_radians());
     }
 
     #[test]

@@ -478,6 +478,8 @@ pub struct App {
     /// What the beam points at in the world, for the hover tips (with VR
     /// tooltips on).
     vr_look: Option<(Option<usize>, Vec3)>,
+    /// The body turning after the head while standing in VR.
+    vr_body: crate::vr::BodyFollow,
     input: MoveInput,
     joystick: joystick::State,
     /// Keys and bindable mouse buttons held down.
@@ -1625,6 +1627,7 @@ impl App {
             vr_keyboard_target: None,
             vr_keyboard_shift: false,
             vr_look: None,
+            vr_body: Default::default(),
             input: MoveInput::default(),
             joystick: Default::default(),
             down: HashSet::new(),
@@ -8279,6 +8282,20 @@ impl App {
                     renderer.add_vr_yaw(-self.vr_snap_turn.step(right_x, settings.snap_turn_angle, cooldown, Instant::now()));
                 }
             }
+        }
+        // standing still, the body turns after the head once it is well
+        // away (50°), as a person's does: an avatar turn, which others see
+        let standing = !moving_by_controls(keys, key_turn, left_stick, &settings)
+            && !self.world.agent.is_sitting()
+            && !self.world.agent.flying
+            && settings.locomotion != crate::camera::VrLocomotion::CameraOnly
+            && settings.body_follows_head
+            && self.autopilot.is_none();
+        if standing && vr.head_forward.with_z(0.0).length_squared() > 1e-6 {
+            let head = vr.head_forward.y.atan2(vr.head_forward.x);
+            self.world.agent.yaw = self.vr_body.step(self.world.agent.yaw, head, dt);
+        } else {
+            self.vr_body.reset();
         }
         // the picture preferences and the comfort vignette (off unless
         // chosen in Preferences): it closes in quickly while moving or
@@ -22071,6 +22088,18 @@ fn apply_test_fps_limit(settings: &mut Settings, value: &str) {
 
 /// agent_jump (indra/newview/llviewerinput.cpp): AutomaticFly. Turning the
 /// option off clears the hold, so enabling it cannot reuse an old press.
+/// Whether the walking keys, the turn keys or the left stick (walking in
+/// smooth or camera-only mode) move the avatar this frame in VR.
+fn moving_by_controls(keys: glam::Vec2, key_turn: f32, left_stick: glam::Vec2, settings: &crate::camera::VrSettings) -> bool {
+    keys != glam::Vec2::ZERO
+        || key_turn != 0.0
+        || (left_stick != glam::Vec2::ZERO
+            && matches!(
+                settings.locomotion,
+                crate::camera::VrLocomotion::Smooth | crate::camera::VrLocomotion::CameraOnly
+            ))
+}
+
 fn automatic_fly_held(since: &mut Option<Instant>, up: bool, enabled: bool, now: Instant) -> bool {
     if !up || !enabled {
         *since = None;
