@@ -1378,7 +1378,8 @@ fn chat_lines_said() -> Vec<NetEvent> {
 /// Conversations window of that style, where a resident says a line, an
 /// emote and another line, then another resident an emote and a line.
 /// `on` groups the emotes with their sender's messages for the run
-/// (Preferences > Chat), nothing saved.
+/// (Preferences > Chat), nothing saved; the option is the Aurora style's,
+/// so `compact:on` shows Compact unchanged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EmotesScene {
     pub style: crate::settings::ChatStyle,

@@ -293,7 +293,10 @@ impl<'a> Grouping<'a> {
         }
         let (gap, emotes_alone) = match self.layout {
             Layout::Classic => (GROUP_SECONDS, false),
-            Layout::Aurora | Layout::Compact => (WORKSPACE_GROUP_SECONDS, !self.group_emotes),
+            // Compact names the sender on every row, so an emote there already
+            // reads as part of the run: grouping it would only drop a 2 px gap.
+            Layout::Aurora => (WORKSPACE_GROUP_SECONDS, !self.group_emotes),
+            Layout::Compact => (WORKSPACE_GROUP_SECONDS, true),
         };
         let emote = emotes_alone && is_emote(line);
         look.header = emote
@@ -903,11 +906,13 @@ mod tests {
             line("Bob", "/me laughs", 40 + 480),
         ];
         let today = Slt::of(lines[0].time);
-        for layout in [Layout::Aurora, Layout::Compact] {
-            let mut g = Grouping::with(today, layout).grouping_emotes(true);
-            let looks: Vec<bool> = lines.iter().map(|l| g.look(l).header).collect();
-            assert_eq!(looks, [true, false, false, true, false, true], "{layout:?}");
-        }
+        let mut g = Grouping::with(today, Layout::Aurora).grouping_emotes(true);
+        let looks: Vec<bool> = lines.iter().map(|l| g.look(l).header).collect();
+        assert_eq!(looks, [true, false, false, true, false, true]);
+        // Compact keeps its rows as they are: the option is the Aurora style's
+        let mut g = Grouping::with(today, Layout::Compact).grouping_emotes(true);
+        let compact: Vec<bool> = lines.iter().map(|l| g.look(l).header).collect();
+        assert_eq!(compact, [true, true, true, true, true, true]);
         // off, the default: each emote and the line after it stand alone
         let mut g = Grouping::with(today, Layout::Aurora);
         let off: Vec<bool> = lines.iter().map(|l| g.look(l).header).collect();
