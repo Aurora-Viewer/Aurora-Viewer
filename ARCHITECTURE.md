@@ -133,6 +133,12 @@ rigid worn linksets as well as meshes skinned to that point (#1694).
 CPU transforms and GPU anchors share this frame; missing poses use the
 existing bone/rest fallback, and HUD points stay in screen space.
 
+`world/appearance_xml.rs` snapshots only the agent’s current visual parameters
+and joint palette for Legacy Viewer-compatible `linden_genepool` XML export.
+The Appearance gear menu shares the scoped file-job lifecycle in
+`ui/appearance/json.rs`: native dialogs, XML encoding and atomic file writes
+run off the frame thread. Account changes discard stale completion notices.
+Texture UUIDs remain null; the root is avatar-local rather than a world location.
 
 The inventory Favorites view in `ui/inventory/view.rs` lists starred items
 and folders directly by default, without ancestor
