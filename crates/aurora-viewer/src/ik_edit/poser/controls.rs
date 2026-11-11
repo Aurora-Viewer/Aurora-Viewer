@@ -19,6 +19,10 @@ pub(super) enum Operation {
 impl Editor {
     pub(super) fn pose_operation(&mut self, rig: &Rig, frame: &Frame, operation: Operation) {
         self.mirrors.initialize(rig);
+        // the joint actions go to every selected joint, as the Legacy
+        // Viewer's loop over FSFloaterPoser::getUiSelectedPoserJoints
+        let chosen: Vec<usize> = self.selected.into_iter().chain(self.followers()).collect();
+        let reset = self.reset_joints();
         let Some(session) = self.poser.sessions.get_mut(&self.poser.subject) else {
             return;
         };
@@ -37,10 +41,12 @@ impl Editor {
         };
         match operation {
             Operation::Mirror => {
-                if let Some(b) = self.selected
-                    && let Some(other) = self.mirrors.counterpart(b)
-                {
-                    copy(pose, b, other);
+                for &b in &chosen {
+                    if let Some(other) = self.mirrors.counterpart(b)
+                        && !chosen.contains(&other)
+                    {
+                        copy(pose, b, other);
+                    }
                 }
             }
             Operation::Flip | Operation::LeftToRight | Operation::RightToLeft => {
@@ -67,11 +73,7 @@ impl Editor {
             // mirror style does (FSPoserAnimator::resetJoint,
             // indra/newview/fsposeranimator.cpp)
             Operation::ResetJoint => {
-                let mirrored = self
-                    .selected
-                    .filter(|_| self.poser.side == Side::Mirror)
-                    .and_then(|b| self.mirrors.counterpart(b));
-                for b in self.selected.into_iter().chain(mirrored) {
+                for &b in &reset {
                     pose.rotations[b] = session.base.rotations[b];
                     pose.origin[b] = session.base.origin[b];
                     pose.positions[b] = session.base.positions[b];
@@ -89,14 +91,36 @@ impl Editor {
                 pose.locks.clear();
             }
             Operation::WorldLock => {
-                if let Some(b) = self.selected
-                    && pose.locks.remove(&b).is_none()
-                {
-                    pose.locks.insert(b, frame.joints[b]);
+                // one state for all: the selected joint's decides
+                let lock = self.selected.is_some_and(|b| !pose.locks.contains_key(&b));
+                for &b in &chosen {
+                    if lock {
+                        pose.locks.insert(b, frame.joints[b]);
+                    } else {
+                        pose.locks.remove(&b);
+                    }
                 }
             }
         }
         self.refresh = true;
+    }
+    /// The joints Reset joint resets: the selected one and those selected
+    /// with it (the Legacy Viewer's loop over
+    /// FSFloaterPoser::getUiSelectedPoserJoints), and in Mirror their
+    /// counterparts too (FSPoserAnimator::resetJoint,
+    /// indra/newview/fsposeranimator.cpp). `mirrors` must be initialised.
+    pub(super) fn reset_joints(&self) -> Vec<usize> {
+        let chosen: Vec<usize> = self.selected.into_iter().chain(self.followers()).collect();
+        let mirrored: Vec<usize> = if self.poser.side == Side::Mirror {
+            chosen
+                .iter()
+                .filter_map(|&b| self.mirrors.counterpart(b))
+                .filter(|o| !chosen.contains(o))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        chosen.into_iter().chain(mirrored).collect()
     }
     /// A hand preset on one hand (`Some(true)`: the left), or both in one
     /// undo step.
@@ -208,28 +232,44 @@ impl Editor {
                     value * scale_signs
                 },
             );
-        } else if let Some(session) = self.poser.sessions.get_mut(&self.poser.subject) {
+        } else {
+            // the joints selected with it follow the change (`together`)
+            let followers = self.followers();
+            let Some(session) = self.poser.sessions.get_mut(&self.poser.subject) else {
+                return;
+            };
             if !self.poser.drag_checkpoint {
                 session.checkpoint();
                 self.poser.drag_checkpoint = true;
             }
+            let before = session.pose.clone();
             let pose = Arc::make_mut(&mut session.pose);
-            match self.poser.transform {
+            let change = match self.poser.transform {
                 0 => {
                     let q = Quat::from_euler(EulerRot::ZYX, value.z.to_radians(), value.y.to_radians(), value.x.to_radians());
                     pose.rotations[bone] = if self.poser.delta { base.rotations[bone] * q } else { q };
                     set_angles = Some(q);
+                    together::Change::Rotate
                 }
-                _ => pose.scales[bone] = if self.poser.delta { base.scales[bone] * value } else { value },
-            }
+                _ => {
+                    pose.scales[bone] = if self.poser.delta { base.scales[bone] * value } else { value };
+                    together::Change::Scale
+                }
+            };
             pose.locks.remove(&bone);
-            if self.symmetry
-                && let Some(other) = self.mirrors.counterpart(bone)
-            {
-                pose.rotations[other] = data::mirrored(rig, pose.rotations[bone], bone, other);
-                pose.origin[other] = data::mirrored(rig, pose.origin[bone], bone, other);
-                pose.scales[other] = base.scales[other] * (pose.scales[bone] / base.scales[bone]);
-                pose.locks.remove(&other);
+            together::follow(rig, &before, pose, bone, &followers, change);
+            if self.symmetry {
+                for changed in std::iter::once(bone).chain(followers.iter().copied()) {
+                    if let Some(other) = self.mirrors.counterpart(changed)
+                        && other != bone
+                        && !followers.contains(&other)
+                    {
+                        pose.rotations[other] = data::mirrored(rig, pose.rotations[changed], changed, other);
+                        pose.origin[other] = data::mirrored(rig, pose.origin[changed], changed, other);
+                        pose.scales[other] = base.scales[other] * (pose.scales[changed] / base.scales[changed]);
+                        pose.locks.remove(&other);
+                    }
+                }
             }
             self.refresh = true;
         }
@@ -317,6 +357,30 @@ impl Editor {
                 };
                 ui.label(egui::RichText::new(title).size(16.0).strong().color(p.ink));
                 ui.label(egui::RichText::new(name).size(11.5).monospace().color(p.muted_dim));
+                let followers = self.followers();
+                if !followers.is_empty() {
+                    let names = followers
+                        .iter()
+                        .map(|b| bones::label(&rig.canonical_names[*b]))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    ui.add_space(2.0);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(aurora_i18n::tr!("poser-together", count = followers.len()))
+                                .size(12.0)
+                                .color(p.teal),
+                        )
+                        .on_hover_text(names);
+                        if ui
+                            .button(aurora_i18n::text("poser-together-clear"))
+                            .on_hover_text(aurora_i18n::text("poser-together-clear-tip"))
+                            .clicked()
+                        {
+                            self.clear_together();
+                        }
+                    });
+                }
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 self.reset_button(ui, p, rig, frame);

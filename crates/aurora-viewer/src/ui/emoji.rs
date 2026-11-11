@@ -573,12 +573,11 @@ impl Emoji {
                 }
             }
         });
-        let search = ui.add(
-            egui::TextEdit::singleline(&mut self.query)
-                .id(egui::Id::unique(SEARCH_ID))
+        let search = crate::ui::widgets::search_text_edit(ui, p, &mut self.query, |edit| {
+            edit.id(egui::Id::unique(SEARCH_ID))
                 .hint_text(aurora_i18n::tr!("ui-emoji-search-emoji-name-or-code"))
-                .desired_width(f32::INFINITY),
-        );
+                .desired_width(f32::INFINITY)
+        });
         // (a click on a tab or a picture leaves the keyboard nowhere: back
         // to the search, so typing still filters)
         if opened || ui.ctx().memory(|m| m.focused().is_none()) {

@@ -26,8 +26,6 @@ fn fixture() -> (World, Editor) {
     );
     let mut editor = Editor::default();
     editor.open_poser();
-    // the tests made before the compact window drive the full one
-    editor.poser.compact = false;
     editor.pose_layers(&world);
     (world, editor)
 }
@@ -2243,4 +2241,63 @@ fn the_body_outline_stops_at_the_neck_and_leaves_the_head_to_the_face() {
         silhouette::depth(&caps, project(at[rig.names["mNeck"]]).unwrap()) > 0.0,
         "the neck is"
     );
+}
+
+#[test]
+fn compact_reset_counts_the_joints_selected_together() {
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let (left, right) = (rig.names["mEyeLeft"], rig.names["mEyeRight"]);
+    let frame = Frame::new(&world).unwrap();
+    editor.poser.group = 1;
+    editor.click_pose_bone(left, &rig, &frame, false);
+    editor.click_pose_bone(right, &rig, &frame, true);
+    editor.poser.side = Side::Left;
+    assert_eq!(editor.reset_joints(), vec![left, right]);
+    assert!(!editor.reset_available(false), "nothing edited yet");
+    // only the follower turned: Reset joint resets it with the lead
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    Arc::make_mut(&mut session.pose).rotations[right] = Quat::from_rotation_z(0.4) * session.base.rotations[right];
+    assert!(editor.reset_available(false), "a follower's edit is the reset's");
+    editor.pose_operation(&rig, &frame, controls::Operation::ResetJoint);
+    assert!(!editor.reset_available(false), "both reset in one step");
+}
+
+#[test]
+fn a_joint_picked_alone_leaves_no_joint_following() {
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let (left, right) = (rig.names["mEyeLeft"], rig.names["mEyeRight"]);
+    let frame = Frame::new(&world).unwrap();
+    editor.poser.group = 1;
+    editor.click_pose_bone(left, &rig, &frame, false);
+    editor.click_pose_bone(right, &rig, &frame, true);
+    assert_eq!(editor.followers(), vec![right]);
+    // Ctrl + click on another group's part selects that joint alone
+    editor.click_pose_bone(rig.pelvis, &rig, &frame, false);
+    assert!(editor.followers().is_empty());
+    assert_eq!(editor.selected, Some(rig.pelvis));
+}
+
+#[test]
+fn the_compact_window_drops_inner_followers_and_hands_an_inner_lead_over() {
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let (skull, spine, eye) = (rig.names["mSkull"], rig.names["mSpine1"], rig.names["mEyeLeft"]);
+    // an inner follower goes, the lead stays
+    editor.selected = Some(eye);
+    editor.poser.together = vec![skull];
+    editor.drop_inner_selection(&rig);
+    assert_eq!((editor.selected, editor.followers()), (Some(eye), vec![]));
+    // an inner lead hands over to a follower the window shows
+    editor.selected = Some(spine);
+    editor.poser.together = vec![skull, eye];
+    editor.drop_inner_selection(&rig);
+    assert_eq!((editor.selected, editor.followers()), (Some(eye), vec![]));
+    assert!(!editor.poser.unselected);
+    // alone, it is unselected as before
+    editor.selected = Some(skull);
+    editor.drop_inner_selection(&rig);
+    assert_eq!(editor.selected, None);
+    assert!(editor.poser.unselected);
 }

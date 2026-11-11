@@ -41,6 +41,7 @@ pub(crate) mod scroll_offset;
 #[cfg(test)]
 pub(crate) mod steady_tests;
 mod text_field;
+mod tracks;
 mod unread;
 mod volume;
 mod workspace;
@@ -49,9 +50,14 @@ pub use copy_on_click::copy_on_click;
 pub(crate) use modal_keys::{default_button, enter_pressed};
 pub use pills::{
     clearable_search_box, dot_pill, dot_pill_width, filter_field, filter_pill, filter_pill_at, filter_pill_width, pill_tab, pill_tab_wide,
-    search_box,
+    reveal_search_selection, search_box, search_cleared, search_list_item, search_scroll_to_column, search_scroll_to_row, search_text_edit,
+    search_text_edit_with_margin,
 };
 pub use text_field::text_field;
+pub use tracks::{
+    TRACK_INSET, TrackFace, TrackLit, button_track, help_tag, icon_track, labelled_choice, paint_tile_button, track_button,
+    wide_button_track,
+};
 pub use unread::{CountSize, UnreadCount, unread_count};
 pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
 pub use workspace::{
@@ -2048,8 +2054,8 @@ pub fn status_dot(ui: &mut egui::Ui, color: Color32) {
     ui.painter().circle_filled(rect.center(), 3.5, color);
 }
 
-pub fn search_field(ui: &mut egui::Ui, text: &mut String, hint: &str, width: f32) -> egui::Response {
-    ui.add(egui::TextEdit::singleline(text).hint_text(hint).desired_width(width))
+pub fn search_field(ui: &mut egui::Ui, p: &Palette, text: &mut String, hint: &str, width: f32) -> egui::Response {
+    search_text_edit(ui, p, text, |edit| edit.hint_text(hint).desired_width(width))
 }
 
 /// Small flat button with a Tabler icon (copy / paste / flip...).
@@ -2111,7 +2117,7 @@ fn sized_icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enab
 
 /// Small flat text button.
 pub fn flat_button(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Response {
-    text_button(ui, p, label, None)
+    text_button(ui, p.ink, label, None)
 }
 
 /// A light toolbar action using the same gray/active underline as the tabs.
@@ -2163,14 +2169,51 @@ pub fn paint_ink_left(painter: &egui::Painter, galley: std::sync::Arc<egui::Gall
 
 /// Equal-sized dialog buttons; long script labels keep their full hover text.
 pub fn flat_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: Vec2) -> egui::Response {
-    text_button(ui, p, label, Some(size)).on_hover_text(label)
+    text_button(ui, p.ink, label, Some(size)).on_hover_text(label)
 }
 
-fn text_button(ui: &mut egui::Ui, p: &Palette, label: &str, size: Option<Vec2>) -> egui::Response {
+/// The initial Enter action of a confirmation with no text field. Give its
+/// visible default real focus so the first Tab advances from that button.
+pub fn default_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: Vec2) -> egui::Response {
+    let hint = modal_keys::show_default_hint(ui);
+    ui.scope(|ui| {
+        if hint {
+            let active = ui.visuals().widgets.active;
+            ui.visuals_mut().widgets.inactive = active;
+            ui.visuals_mut().widgets.hovered = active;
+        }
+        let ink = if hint { p.on_accent } else { p.ink };
+        let mut response = text_button(ui, ink, label, Some(size)).on_hover_text(label);
+        // Keep the modal's opening-Enter guard when its default gains focus:
+        // egui otherwise turns held-key repeats into focused-button clicks.
+        if ui.input(|input| {
+            input.events.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::Key {
+                        key: egui::Key::Enter,
+                        pressed: true,
+                        repeat: true,
+                        ..
+                    }
+                )
+            })
+        }) {
+            response.flags.remove(egui::response::Flags::FAKE_PRIMARY_CLICKED);
+        }
+        if hint && response.enabled() && ui.memory(|m| m.allows_interaction(response.layer_id)) {
+            response.request_focus();
+        }
+        modal_keys::default_button(response)
+    })
+    .inner
+}
+
+fn text_button(ui: &mut egui::Ui, ink: Color32, label: &str, size: Option<Vec2>) -> egui::Response {
     // Keep the button in the parent's layout so wrapped toolbars can break
     // before it. A child UI would wrap internally and enlarge narrow windows.
     // The theme gives every button its plain filled face.
-    let button = egui::Button::new(RichText::new(label).font(control_font(ui, 12.0)).color(p.ink));
+    let button = egui::Button::new(RichText::new(label).font(control_font(ui, 12.0)).color(ink));
     match size {
         Some(size) => ui.add_sized(size, button.truncate()),
         None => {
@@ -2964,6 +3007,63 @@ pub fn row_text_origin(painter: &egui::Painter, galley: &egui::Galley, left: f32
 pub fn paint_row_text(painter: &egui::Painter, galley: std::sync::Arc<egui::Galley>, left: f32, center_y: f32, color: Color32) {
     let pos = row_text_origin(painter, &galley, left, center_y);
     painter.galley(pos, galley, color);
+}
+
+/// A row of a window's rail (Places, Appearance's showcase): icon, name,
+/// count; `depth` indents a sub-folder. The chosen row takes the accent's
+/// wash, a hovered one the raised face.
+#[allow(clippy::too_many_arguments)]
+pub fn rail_row(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    tint: Color32,
+    label: &str,
+    count: Option<usize>,
+    on: bool,
+    depth: usize,
+) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), on, label));
+    if !ui.is_rect_visible(rect) {
+        return resp;
+    }
+    let radius = ui.visuals().window_corner_radius;
+    if on {
+        ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.28));
+    } else if resp.hovered() {
+        ui.painter().rect_filled(rect, radius, p.raised);
+    }
+    let x = rect.left() + 10.0 + depth as f32 * 14.0;
+    if let Some(t) = super::icons::global(icon) {
+        ui.painter().image(
+            t.id(),
+            egui::Rect::from_center_size(egui::pos2(x + 8.0, rect.center().y), Vec2::splat(16.0)),
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+            if on && tint == p.muted { p.violet_pale } else { tint },
+        );
+    }
+    let one_line = |text: &str, size: f32, color: Color32, width: f32| {
+        let mut job =
+            egui::text::LayoutJob::single_section(text.to_owned(), egui::TextFormat::simple(egui::FontId::proportional(size), color));
+        job.wrap = egui::text::TextWrapping {
+            max_width: width.max(1.0),
+            max_rows: 1,
+            break_anywhere: true,
+            overflow_character: Some('…'),
+        };
+        ui.painter().layout_job(job)
+    };
+    let num = count.map(|n| one_line(&n.to_string(), 11.5, p.muted, 40.0));
+    let num_w = num.as_ref().map_or(0.0, |g| g.size().x + 10.0);
+    let ink = if tint == p.violet_light { tint } else { p.ink };
+    let g = one_line(label, 13.0, ink, rect.right() - num_w - x - 25.0);
+    paint_row_text(ui.painter(), g, x + 25.0, rect.center().y, ink);
+    if let Some(g) = num {
+        let w = g.size().x;
+        paint_row_text(ui.painter(), g, rect.right() - 10.0 - w, rect.center().y, p.muted);
+    }
+    resp
 }
 
 /// The margin that puts the capitals of a text field in `font` in the middle

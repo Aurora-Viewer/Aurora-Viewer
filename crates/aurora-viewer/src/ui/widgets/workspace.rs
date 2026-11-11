@@ -363,6 +363,9 @@ fn section<R>(
             state.toggle(ui);
             header.mark_changed();
         }
+        if super::search_cleared(ui) {
+            ui.ctx().animate_bool_with_time(id, open, 0.0);
+        }
     } else if header.clicked() {
         state.toggle(ui);
         header.mark_changed();

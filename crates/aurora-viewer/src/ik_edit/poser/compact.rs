@@ -14,6 +14,7 @@
 //! full window's, with the same rules and the same state.
 use super::*;
 use crate::ui::menu;
+use crate::ui::widgets::{TrackFace, TrackLit};
 use document::LoadMode;
 
 /// The body's width.
@@ -29,7 +30,7 @@ const TOGGLE: egui::Vec2 = egui::vec2(34.0, 26.0);
 /// The small square buttons of the last row.
 const BUTTON: f32 = 26.0;
 /// The track's inset around its cells, as the theme's `segmented`.
-const INSET: f32 = 2.0;
+const INSET: f32 = widgets::TRACK_INSET;
 
 /// Where a click picks an avatar posed: its joints' box, a little wider for
 /// the body around the bones.
@@ -109,219 +110,9 @@ impl Pile {
     }
 }
 
-/// What a cell of a track shows.
-enum Face<'a> {
-    Icon(&'a str),
-    Letter(&'a str),
-}
-
-/// How a track shows its chosen cell: `Accent` fills it in the accent (the
-/// groups, the window's one strong choice), `Quiet` raises it and lights
-/// its glyph in the accent (the modes and sides), so that one violet block
-/// leads the eye rather than four.
-#[derive(Clone, Copy, PartialEq)]
-enum Lit {
-    Accent,
-    Quiet,
-}
-
-/// A choice among cells in one track, painted as the theme's `segmented`;
-/// `labels` puts a short word under each icon. The highlight slides to the
-/// chosen cell and the hover fades in and out, both with egui's animation
-/// time (none under Reduce animations). Returns the cell clicked, if it
-/// was not the chosen one.
-fn track(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    id: &str,
-    cell: egui::Vec2,
-    chosen: usize,
-    lit: Lit,
-    cells: &[(Face, &str, &str)],
-) -> Option<usize> {
-    let n = cells.len() as f32;
-    let size = egui::vec2(cell.x * n + INSET * 2.0, cell.y + INSET * 2.0);
-    let (bar, _) = ui.allocate_exact_size(size, Sense::hover());
-    ui.painter().rect_filled(bar, ui.visuals().widgets.inactive.corner_radius, p.bar);
-    let id = ui.scope_id().with(("poser-track", id));
-    let cell_at = |i: f32| egui::Rect::from_min_size(egui::pos2(bar.left() + INSET + cell.x * i, bar.top() + INSET), cell);
-    // the highlight, sliding from the cell chosen before
-    let time = ui.style().animation_time;
-    let slide = ui.ctx().animate_value_with_time(id, chosen as f32, time);
-    let (face, chosen_ink) = match lit {
-        Lit::Accent => (p.violet, p.on_accent),
-        Lit::Quiet => (p.raised, p.violet_light),
-    };
-    ui.painter().rect_filled(cell_at(slide), widgets::inner_radius(ui.visuals()), face);
-    let mut picked = None;
-    for (i, (glyph_face, label, tip)) in cells.iter().enumerate() {
-        let rect = cell_at(i as f32);
-        let response = ui.interact(rect, id.with(i), Sense::click());
-        let on = chosen == i;
-        let hover = ui.ctx().animate_bool(id.with(("hover", i)), response.hovered() && !on);
-        if hover > 0.0 {
-            ui.painter()
-                .rect_filled(rect, widgets::inner_radius(ui.visuals()), p.raised.gamma_multiply(0.5 * hover));
-        }
-        let ink = if on { chosen_ink } else { p.muted.lerp_to_gamma(p.ink, hover) };
-        let glyph = if label.is_empty() {
-            rect.center()
-        } else {
-            egui::pos2(rect.center().x, rect.top() + 14.0)
-        };
-        match glyph_face {
-            Face::Icon(name) => crate::ui::viewfinder::icon(
-                ui.painter(),
-                name,
-                egui::Rect::from_center_size(glyph, egui::Vec2::splat(16.0)),
-                ink,
-            ),
-            Face::Letter(letter) => {
-                ui.painter().text(
-                    glyph,
-                    egui::Align2::CENTER_CENTER,
-                    letter,
-                    egui::FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx())),
-                    ink,
-                );
-            }
-        }
-        if !label.is_empty() {
-            let galley = ui
-                .painter()
-                .layout_no_wrap((*label).to_owned(), egui::FontId::proportional(10.5), ink);
-            let left = rect.center().x - galley.size().x.min(rect.width() - 4.0) * 0.5;
-            ui.painter().with_clip_rect(rect.shrink(2.0)).galley(
-                egui::pos2(left, rect.bottom() - 9.0 - galley.size().y * 0.5),
-                galley,
-                ink,
-            );
-        }
-        let name = if label.is_empty() { *tip } else { *label };
-        response.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, on, name));
-        if response.on_hover_text(*tip).clicked() && !on {
-            picked = Some(i);
-        }
-    }
-    picked
-}
-
-/// A track holding a few small buttons side by side (`square`), so that a
-/// set (the view toggles, the files) reads as one cluster.
-fn cluster<R>(ui: &mut egui::Ui, p: &Palette, count: usize, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    let size = egui::vec2(
-        count as f32 * BUTTON + (count.max(1) - 1) as f32 * 2.0 + INSET * 2.0,
-        BUTTON + INSET * 2.0,
-    );
-    let (bar, _) = ui.allocate_exact_size(size, Sense::hover());
-    ui.painter().rect_filled(bar, ui.visuals().widgets.inactive.corner_radius, p.bar);
-    let mut inner = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(bar.shrink(INSET))
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-    );
-    inner.spacing_mut().item_spacing.x = 2.0;
-    add(&mut inner)
-}
-
-/// A help tag (Apple's): the control's name in bold, then one short line
-/// saying what it does.
-pub(super) fn help(response: egui::Response, p: &Palette, title: &str, detail: &str) -> egui::Response {
-    response.on_hover_ui(|ui| {
-        ui.set_max_width(240.0);
-        ui.label(
-            egui::RichText::new(title)
-                .font(egui::FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx())))
-                .color(p.ink),
-        );
-        if !detail.is_empty() {
-            ui.label(egui::RichText::new(detail).size(11.5).color(p.muted));
-        }
-    })
-}
-
-/// A small square button of a cluster (`square_sized` at `BUTTON`).
+/// A small square button of a cluster (`widgets::track_button` at `BUTTON`).
 fn square(ui: &mut egui::Ui, p: &Palette, icon: &str, (title, detail): (&str, &str), on: bool, enabled: bool) -> egui::Response {
-    square_sized(ui, p, egui::Vec2::splat(BUTTON), icon, (title, detail), on, enabled)
-}
-
-/// A button of a cluster: raised under the pointer, and while `on` raised
-/// with its icon lit in the accent (a quiet "on", as the modes); its help
-/// tag names it (`help`); its response anchors a menu.
-fn square_sized(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    size: egui::Vec2,
-    icon: &str,
-    (title, detail): (&str, &str),
-    on: bool,
-    enabled: bool,
-) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(size, if enabled { Sense::click() } else { Sense::hover() });
-    let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
-    let hover = ui
-        .ctx()
-        .animate_bool(response.id.with("hover"), enabled && (open || response.hovered()));
-    let lift = if on { 1.0 } else { 0.5 * hover };
-    if lift > 0.0 {
-        ui.painter()
-            .rect_filled(rect, widgets::inner_radius(ui.visuals()), p.raised.gamma_multiply(lift));
-    }
-    let ink = match (enabled, on) {
-        (false, _) => p.muted_dim,
-        (true, true) => p.violet_light,
-        (true, false) => p.muted.lerp_to_gamma(p.ink, hover),
-    };
-    crate::ui::viewfinder::icon(
-        ui.painter(),
-        icon,
-        egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(15.0)),
-        ink,
-    );
-    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, on, title));
-    help(response, p, title, detail)
-}
-
-/// A track holding one button as wide as `width` (the depth of field,
-/// between the modes and the sides).
-fn wide_cluster(ui: &mut egui::Ui, p: &Palette, width: f32, add: impl FnOnce(&mut egui::Ui, egui::Vec2)) {
-    let (bar, _) = ui.allocate_exact_size(egui::vec2(width, BUTTON + INSET * 2.0), Sense::hover());
-    ui.painter().rect_filled(bar, ui.visuals().widgets.inactive.corner_radius, p.bar);
-    let mut inner = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(bar.shrink(INSET))
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-    );
-    add(&mut inner, bar.shrink(INSET).size());
-}
-
-/// The Fine-tune panel's header rows: smaller than the panel's rows, they
-/// introduce the sliders.
-const HEADER_H: f32 = 24.0;
-/// The least width of a header row's cell: "Change", with room.
-const HEADER_CELL: f32 = 68.0;
-
-/// A row of the Fine-tune header: its name on the left, a small two-way
-/// choice on the right, as an Apple inspector row; both choices as wide as
-/// the wider word. Returns the cell clicked, if it was not the chosen one.
-fn labelled_choice(ui: &mut egui::Ui, p: &Palette, id: &str, label: &str, chosen: usize, choices: &[(&str, &str); 2]) -> Option<usize> {
-    let mut picked = None;
-    ui.horizontal(|ui| {
-        ui.set_min_height(HEADER_H);
-        ui.label(egui::RichText::new(label).size(12.0).color(p.muted));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let font = egui::FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
-            let widest = choices
-                .iter()
-                .map(|(word, _)| ui.painter().layout_no_wrap((*word).to_owned(), font.clone(), p.ink).size().x)
-                .fold(0.0, f32::max);
-            // one width for every header row's cells, so that they line up
-            let cell = egui::vec2((widest + 18.0).max(HEADER_CELL), HEADER_H - 2.0 * INSET);
-            let cells = choices.map(|(word, tip)| (Face::Letter(word), "", tip));
-            picked = track(ui, p, id, cell, chosen, Lit::Quiet, &cells);
-        });
-    });
-    picked
+    widgets::track_button(ui, p, egui::Vec2::splat(BUTTON), icon, (title, detail), on, enabled)
 }
 
 /// The gap between the sets of a row (the two tracks and the switch
@@ -412,12 +203,20 @@ impl Editor {
         self.poser.options_anchor = anchor;
     }
 
-    /// Unselect a bone inside the body (`inner_bone`), as a click beside
-    /// does: the compact window poses only what it shows.
+    /// Unselect the bones inside the body (`inner_bone`), as a click beside
+    /// does: the compact window poses only what it shows. An inner lead
+    /// hands over to a follower the window shows, as a tab change does.
     pub(super) fn drop_inner_selection(&mut self, rig: &Rig) {
+        self.poser.together.retain(|b| !inner_bone(&rig.canonical_names[*b]));
         if self.selected.is_some_and(|b| inner_bone(&rig.canonical_names[b])) {
             self.selected = None;
-            self.poser.unselected = true;
+            if let Some(next) = self.poser.together.first().copied() {
+                self.poser.together.remove(0);
+                self.selected = Some(next);
+                self.refresh = true;
+            } else {
+                self.poser.unselected = true;
+            }
         }
     }
 
@@ -646,33 +445,33 @@ impl Editor {
     fn compact_groups(&mut self, ui: &mut egui::Ui, p: &Palette, rig: &Rig, frame: &Frame) {
         let cells = [
             (
-                Face::Icon("stretching"),
+                TrackFace::Icon("stretching"),
                 aurora_i18n::text("poser-body"),
                 aurora_i18n::text("poser-body"),
             ),
             (
-                Face::Icon("mood-smile-filled"),
+                TrackFace::Icon("mood-smile-filled"),
                 aurora_i18n::text("poser-face"),
                 aurora_i18n::text("poser-face"),
             ),
             (
-                Face::Icon("hand-stop"),
+                TrackFace::Icon("hand-stop"),
                 aurora_i18n::text("poser-hands"),
                 aurora_i18n::text("poser-hands"),
             ),
             (
-                Face::Icon("bone-filled"),
+                TrackFace::Icon("bone-filled"),
                 aurora_i18n::text("poser-misc-short"),
                 aurora_i18n::text("poser-misc"),
             ),
             (
-                Face::Icon("ripple"),
+                TrackFace::Icon("ripple"),
                 aurora_i18n::text("poser-physics"),
                 aurora_i18n::text("poser-physics"),
             ),
         ];
         let cell = egui::vec2((ui.available_width() - INSET * 2.0) / cells.len() as f32, GROUPS_H - INSET * 2.0);
-        if let Some(group) = track(ui, p, "groups", cell, self.poser.group, Lit::Accent, &cells) {
+        if let Some(group) = widgets::icon_track(ui, p, "groups", cell, self.poser.group, TrackLit::Accent, &cells) {
             self.poser.group = group;
             self.poser.library_open = false;
             self.select_pose_group(group, rig, frame);
@@ -683,17 +482,17 @@ impl Editor {
     /// three-way toggles.
     fn compact_transform(&mut self, ui: &mut egui::Ui, p: &Palette, rig: &Rig, frame: &Frame) {
         let modes = [
-            (Face::Icon("rotate-360"), "", aurora_i18n::text("poser-mode-rotation")),
-            (Face::Icon("arrows-move"), "", aurora_i18n::text("poser-mode-position")),
-            (Face::Icon("resize"), "", aurora_i18n::text("poser-mode-scale")),
+            (TrackFace::Icon("rotate-360"), "", aurora_i18n::text("poser-mode-rotation")),
+            (TrackFace::Icon("arrows-move"), "", aurora_i18n::text("poser-mode-position")),
+            (TrackFace::Icon("resize"), "", aurora_i18n::text("poser-mode-scale")),
         ];
         // the sides' initials, in the viewer's language
         let left: String = aurora_i18n::text("poser-side-left").chars().take(1).collect();
         let right: String = aurora_i18n::text("poser-side-right").chars().take(1).collect();
         let sides = [
-            (Face::Letter(&left), "", aurora_i18n::text("poser-side-left-tip")),
-            (Face::Letter(&right), "", aurora_i18n::text("poser-side-right-tip")),
-            (Face::Icon("arrows-horizontal"), "", aurora_i18n::text("poser-side-mirror-tip")),
+            (TrackFace::Letter(&left), "", aurora_i18n::text("poser-side-left-tip")),
+            (TrackFace::Letter(&right), "", aurora_i18n::text("poser-side-right-tip")),
+            (TrackFace::Icon("arrows-horizontal"), "", aurora_i18n::text("poser-side-mirror-tip")),
         ];
         let (mut mode, mut side) = (None, None);
         ui.horizontal(|ui| {
@@ -701,18 +500,18 @@ impl Editor {
             // room between them, an even gap on each side
             ui.spacing_mut().item_spacing.x = 0.0;
             let track_w = 3.0 * TOGGLE.x + 2.0 * INSET;
-            mode = track(ui, p, "modes", TOGGLE, self.poser.transform, Lit::Quiet, &modes);
+            mode = widgets::icon_track(ui, p, "modes", TOGGLE, self.poser.transform, TrackLit::Quiet, &modes);
             ui.add_space(ROW_GAP);
             let width = ui.available_width() - track_w - ROW_GAP;
-            wide_cluster(ui, p, width, |ui, size| {
+            widgets::wide_button_track(ui, p, width, BUTTON, |ui, size| {
                 let dof = self.poser.dof;
                 let tag = (aurora_i18n::text("poser-tip-dof"), aurora_i18n::text("poser-tip-dof-detail"));
-                if square_sized(ui, p, size, "aperture", tag, dof, true).clicked() {
+                if widgets::track_button(ui, p, size, "aperture", tag, dof, true).clicked() {
                     self.poser.dof = !dof;
                 }
             });
             ui.add_space(ROW_GAP);
-            side = track(ui, p, "sides", TOGGLE, self.poser.side as usize, Lit::Quiet, &sides);
+            side = widgets::icon_track(ui, p, "sides", TOGGLE, self.poser.side as usize, TrackLit::Quiet, &sides);
         });
         if let Some(i) = mode {
             self.poser.transform = i;
@@ -808,7 +607,7 @@ impl Editor {
         } else {
             ("poser-tip-sliders-show", "poser-tip-sliders-show-detail")
         };
-        if help(disclosure, p, aurora_i18n::text(tag), aurora_i18n::text(detail)).clicked() {
+        if widgets::help_tag(disclosure, p, aurora_i18n::text(tag), aurora_i18n::text(detail)).clicked() {
             self.poser.joint_open = !self.poser.joint_open;
         }
         let left = name_left;
@@ -821,6 +620,32 @@ impl Editor {
                     egui::pos2(row.right() - 6.0, row.bottom()),
                 ))
                 .galley(at, galley, p.ink);
+        }
+        // the joints selected with it (Shift + click), as in the full
+        // window's joint panel
+        let followers = self.followers();
+        if !followers.is_empty() {
+            let names = followers
+                .iter()
+                .map(|b| bones::label(&rig.canonical_names[*b]))
+                .collect::<Vec<_>>()
+                .join(", ");
+            ui.horizontal(|ui| {
+                ui.add_space(10.0);
+                ui.label(
+                    egui::RichText::new(aurora_i18n::tr!("poser-together", count = followers.len()))
+                        .size(12.0)
+                        .color(p.teal),
+                )
+                .on_hover_text(names);
+                if ui
+                    .button(aurora_i18n::text("poser-together-clear"))
+                    .on_hover_text(aurora_i18n::text("poser-together-clear-tip"))
+                    .clicked()
+                {
+                    self.clear_together();
+                }
+            });
         }
         if !self.poser.joint_open {
             return;
@@ -846,7 +671,7 @@ impl Editor {
                     (aurora_i18n::text("poser-handles-show"), aurora_i18n::text("poser-tip-handles-show")),
                     (aurora_i18n::text("poser-handles-hide"), aurora_i18n::text("poser-tip-handles-hide")),
                 ];
-                if let Some(i) = labelled_choice(
+                if let Some(i) = widgets::labelled_choice(
                     ui,
                     p,
                     "handles",
@@ -863,7 +688,7 @@ impl Editor {
                         aurora_i18n::text("poser-tip-values-change"),
                     ),
                 ];
-                if let Some(i) = labelled_choice(
+                if let Some(i) = widgets::labelled_choice(
                     ui,
                     p,
                     "values",
@@ -905,7 +730,7 @@ impl Editor {
             let cluster_w = 3.0 * BUTTON + 2.0 * 2.0 + 2.0 * INSET;
             let gap = ((ui.available_width() - 3.0 * cluster_w) * 0.5).max(0.0);
             // picking: joints, Ctrl + click body parts, switching avatar
-            cluster(ui, p, 3, |ui| {
+            widgets::button_track(ui, p, 3, BUTTON, |ui| {
                 let hover = self.poser.markers && self.poser.markers_hover;
                 // turned off in the full window (its eye): say so, a click
                 // brings them back
@@ -936,7 +761,7 @@ impl Editor {
             // going back: the history, then the reset (Photos' Revert next
             // to its undo); Shift turns the reset to the whole pose, the way
             // the Option key turns a menu item on the Mac
-            cluster(ui, p, 3, |ui| {
+            widgets::button_track(ui, p, 3, BUTTON, |ui| {
                 let (can_undo, can_redo) = self
                     .poser
                     .sessions
@@ -982,7 +807,7 @@ impl Editor {
             });
             ui.add_space(gap);
             // the files
-            cluster(ui, p, 3, |ui| {
+            widgets::button_track(ui, p, 3, BUTTON, |ui| {
                 let tag = (aurora_i18n::text("poser-tip-save"), aurora_i18n::text("poser-tip-save-detail"));
                 let save = square(ui, p, "device-floppy-filled", tag, false, free);
                 // AURORA_DEMO_POSER=compact-save: the form opens by itself
@@ -1031,9 +856,8 @@ impl Editor {
     /// Whether the reset would change anything, so that it greys out when
     /// it would not (Apple's rule for unavailable actions): the whole pose
     /// when `whole` (Shift) has any joint edited or locked; otherwise the
-    /// selected joint, or in Mirror its counterpart too, as `ResetJoint`
-    /// resets both (FSPoserAnimator::resetJoint,
-    /// indra/newview/fsposeranimator.cpp).
+    /// joints `ResetJoint` resets (`reset_joints`: the selection, and in
+    /// Mirror the counterparts).
     pub(super) fn reset_available(&self, whole: bool) -> bool {
         let Some(session) = self.poser.sessions.get(&self.poser.subject).filter(|s| s.enabled) else {
             // stopped: `pose_operation` leaves the pose as it is
@@ -1043,11 +867,7 @@ impl Editor {
         if whole {
             return !session.pose.locks.is_empty() || (0..session.pose.rotations.len()).any(|b| session.edited(b));
         }
-        let mirrored = self
-            .selected
-            .filter(|_| self.poser.side == Side::Mirror)
-            .and_then(|b| self.mirrors.counterpart(b));
-        self.selected.into_iter().chain(mirrored).any(changed)
+        self.reset_joints().into_iter().any(changed)
     }
 
     /// Save's form: the name, the export options, Save, and Save as….

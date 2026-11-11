@@ -76,6 +76,7 @@ impl Editor {
             self.selected = None;
             // a click beside on them must not leave you with none
             self.poser.unselected = false;
+            self.poser.together.clear();
             self.refresh = true;
         }
         if !self.poser.sessions.contains_key(&self.poser.subject)
@@ -114,6 +115,7 @@ impl Editor {
         self.poser.subject = id;
         self.selected = None;
         self.poser.unselected = false;
+        self.poser.together.clear();
         self.refresh = true;
         self.drag = None;
         self.gizmo.cancel();
@@ -121,6 +123,8 @@ impl Editor {
     }
     pub(in crate::ik_edit) fn commit_poser_manipulation(&mut self, rig: &Rig, frame: &Frame, rotate: bool) -> bool {
         let Some(bone) = self.selected else { return false };
+        let followers = self.followers();
+        let selected = self.selected;
         let rotation = Quat::from_euler(
             EulerRot::ZYX,
             self.degrees.z.to_radians(),
@@ -148,11 +152,30 @@ impl Editor {
         } else if !edited.move_joint(rig, bone, self.position) {
             return true;
         }
+        // the joints this drag changed itself (the leader, the followers and
+        // the chains their moves bend): Mirror reflects them onto their
+        // counterparts but never writes over one of them, so a selected pair
+        // keeps its own solves while an unpaired follower still mirrors, as
+        // with the sliders
+        let mut dragged = vec![false; rig.len()];
+        if !followers.is_empty() {
+            let mut start = (*session.pose).clone();
+            start.rotations.clone_from(&before.rotations);
+            start.positions.clone_from(&before.positions);
+            let change = if rotate { together::Change::Rotate } else { together::Change::Move };
+            together::follow(rig, &start, &mut edited, bone, &followers, change);
+            for (joint, dragged) in dragged.iter_mut().enumerate() {
+                *dragged = edited.rotations[joint] != before.rotations[joint] || joint == bone || followers.contains(&joint);
+            }
+        }
         if self.symmetry {
             let rotations = edited.rotations.clone();
             for (changed, rotation) in rotations.into_iter().enumerate() {
+                // a joint selected with the others takes their change, not a reflection
                 if rotation != before.rotations[changed]
                     && let Some(other) = self.mirrors.counterpart(changed)
+                    && Some(other) != selected
+                    && !dragged[other]
                 {
                     edited.rotations[other] = data::mirrored(rig, rotation, changed, other);
                     edited.origin[other] = data::mirrored(rig, edited.origin[changed], changed, other);
@@ -502,32 +525,7 @@ fn person_row(
     let detail_cut = widgets::paint_elided(ui, &detail.text, egui::pos2(left, rect.center().y + 9.0), width, small, p.muted);
     let mut clicked_button = false;
     if let (Some(consent), Some(b), Some(at)) = (consent, button, button_rect) {
-        let face = match (consent.accent, consent.enabled, b.hovered()) {
-            (true, _, false) => p.violet,
-            (true, _, true) => p.violet_light,
-            (false, true, true) => p.raised,
-            (false, true, false) => p.raised.gamma_multiply(0.7),
-            (false, false, _) => p.bar,
-        };
-        ui.painter().rect_filled(at, radius, face);
-        let ink = match (consent.accent, consent.enabled) {
-            (true, _) => p.on_accent,
-            (false, true) => p.ink,
-            (false, false) => p.muted,
-        };
-        crate::ui::viewfinder::icon(
-            ui.painter(),
-            consent.icon,
-            egui::Rect::from_center_size(egui::pos2(at.center().x, at.top() + 11.0), egui::Vec2::splat(14.0)),
-            ink,
-        );
-        let galley = ui
-            .painter()
-            .layout_no_wrap(consent.label.to_owned(), egui::FontId::proportional(10.5), ink);
-        let x = at.center().x - galley.size().x.min(at.width() - 4.0) * 0.5;
-        ui.painter()
-            .with_clip_rect(at.shrink(2.0))
-            .galley(egui::pos2(x, at.bottom() - 10.0 - galley.size().y * 0.5), galley, ink);
+        widgets::paint_tile_button(ui, p, at, consent.icon, consent.label, consent.accent, consent.enabled, b.hovered());
         b.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, consent.enabled, consent.label));
         clicked_button = consent.enabled && b.on_hover_text(consent.tip).clicked();
     }

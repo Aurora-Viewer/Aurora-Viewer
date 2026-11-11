@@ -373,11 +373,9 @@ impl Editor {
         } else {
             self.side_selector(&mut left, p, rig, frame);
             left.add_space(2.0);
-            left.add(
-                egui::TextEdit::singleline(&mut self.poser.filter)
-                    .hint_text(aurora_i18n::tr!("poser-search"))
-                    .desired_width(f32::INFINITY),
-            );
+            crate::ui::widgets::search_text_edit(&mut left, p, &mut self.poser.filter, |edit| {
+                edit.hint_text(aurora_i18n::tr!("poser-search")).desired_width(f32::INFINITY)
+            });
             left.add_space(2.0);
             let height = left.available_height();
             egui::ScrollArea::vertical()
@@ -590,13 +588,12 @@ impl Editor {
                 }
             });
         });
-        ui.add(
-            egui::TextEdit::singleline(&mut self.poser.storage.filter)
-                .hint_text(aurora_i18n::tr!("poser-library-search"))
-                .desired_width(f32::INFINITY),
-        );
+        crate::ui::widgets::search_text_edit(ui, p, &mut self.poser.storage.filter, |edit| {
+            edit.hint_text(aurora_i18n::tr!("poser-library-search"))
+                .desired_width(f32::INFINITY)
+        });
         let filter = self.poser.storage.filter.clone();
-        let scroll_to = std::mem::take(&mut self.poser.storage.scroll_to_selected);
+        let scroll_to = std::mem::take(&mut self.poser.storage.scroll_to_selected) || widgets::search_cleared(ui);
         let height = (ui.available_height() - 40.0).max(30.0);
         let mut load = None;
         egui::ScrollArea::vertical()
@@ -631,7 +628,7 @@ impl Editor {
                         p.muted,
                     );
                     if selected && scroll_to {
-                        response.scroll_to_me(Some(egui::Align::Center));
+                        response.scroll_to_me_animation(Some(egui::Align::Center), egui::style::ScrollAnimation::none());
                     }
                     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, &entry.name));
                     if response.clicked() {
