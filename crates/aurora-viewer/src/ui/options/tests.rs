@@ -274,6 +274,8 @@ const BEFORE: &[&str] = &[
     "no_neighbour_regions",
     "cache_size_mb",
     "cache_location",
+    "browser_behavior",
+    "browser_home_page",
     "audio",
     "media",
     "keybinds",
@@ -309,6 +311,7 @@ const BEFORE: &[&str] = &[
     "classic_search",
     "classic_region_estate",
     "classic_places",
+    "destinations_style",
     "classic_inventory",
     "classic_pay_window",
     "legacy_money_tracker",
@@ -760,6 +763,35 @@ fn group_titles_are_chosen_in_one_dropdown_and_reset_together() {
     s.group_titles = GroupTitles::AllExceptMine;
     reset_page_settings(Page::Avatars, &mut s);
     assert_eq!(s.group_titles, GroupTitles::All);
+}
+
+#[test]
+fn browser_behavior_radio_writes_the_selected_setting() {
+    use crate::settings::BrowserBehavior;
+
+    let mut frames = Frames::new();
+    let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+    assert_eq!(s.browser_behavior, BrowserBehavior::BuiltInForSecondLife);
+    let choices = [
+        (BrowserBehavior::SystemForAll, aurora_i18n::tr!("ui-options-browser-system-all")),
+        (
+            BrowserBehavior::BuiltInForSecondLife,
+            aurora_i18n::tr!("ui-options-browser-second-life"),
+        ),
+        (BrowserBehavior::BuiltInForAll, aurora_i18n::tr!("ui-options-browser-internal-all")),
+    ];
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Network, 0, Vec::new());
+    }
+    for (behavior, label) in choices {
+        let at = texts.iter().find(|t| t.source == label).expect("browser choice").rect.center();
+        for events in click(at) {
+            texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Network, 0, events);
+        }
+        assert_eq!(s.browser_behavior, behavior);
+        assert!(r.changed);
+    }
 }
 
 #[test]

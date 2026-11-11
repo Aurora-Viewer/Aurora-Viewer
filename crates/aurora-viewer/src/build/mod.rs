@@ -8,6 +8,9 @@
 //! frame and send MultipleObjectUpdate when the mouse is released (stretching
 //! also every 0.1 s, like LLManipScale).
 
+mod admin;
+#[cfg(test)]
+mod admin_tests;
 pub mod align;
 pub mod anim_pause;
 pub mod contents;
@@ -999,9 +1002,10 @@ pub fn edit_parent(world: &World, idx: usize, now: Instant) -> Option<(Vec3, Qua
     let parent_idx = world.objects.parent_of(o)?;
     let (p, r, _) = crate::scene::Scene::object_transform(world, idx, now, 0)?;
     if world.objects.get(parent_idx)?.is_avatar() {
-        // the attachment point as posed now, on the body or in the HUD
+        // the attachment point as posed now, on the body or in the HUD (the
+        // root is drawn at most 3.5 m from it, scene/draw_limits.rs)
         let rotation = (r * o.rotation.inverse()).normalize();
-        Some((p - rotation * o.position, rotation))
+        Some((p - rotation * crate::scene::draw_limits::attachment_offset(o.position), rotation))
     } else {
         crate::scene::Scene::object_transform(world, parent_idx, now, 0).map(|(p, r, _)| (p, r))
     }

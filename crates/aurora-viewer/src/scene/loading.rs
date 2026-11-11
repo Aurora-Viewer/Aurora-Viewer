@@ -431,6 +431,28 @@ impl Scene {
         self.avatar_load_parts(world, idx, None).2.is_empty()
     }
 
+    /// LLVOAvatar::getRezzedStatus, as far as the avatar render info needs
+    /// it: 0 an appearance still missing (getHasMissingParts), 1 grey (a
+    /// bake not downloaded yet), 2 textured, 4 also everything it wears
+    /// built (`worn`: only then is what it wears looked at). Aurora shows a
+    /// bake once downloaded, so the Legacy Viewer's 3 (bakes fully
+    /// downloaded but something worn missing) reads as 2.
+    pub fn avatar_rez_status(&self, world: &World, idx: usize, worn: bool) -> u8 {
+        let mut status = 2;
+        for (te, name, _) in avatar::BAKES {
+            let main = matches!(name, "head" | "upper" | "lower");
+            match bake_need(world.bake_texture(idx, te), main) {
+                BakeNeed::Undefined => return 0,
+                BakeNeed::Texture(t) if self.textures.is_wanted(&t) && !self.textures.is_loaded(&t) => status = 1,
+                _ => {}
+            }
+        }
+        if status == 2 && worn && self.avatar_complete(world, idx) {
+            status = 4;
+        }
+        status
+    }
+
     /// Our own avatar fully shown in its new look: not loading, its bakes
     /// downloaded and shown (none held behind the last good one), what it
     /// wears built; what the rez effect waits for after an outfit change.

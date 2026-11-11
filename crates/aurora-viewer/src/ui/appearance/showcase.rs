@@ -708,11 +708,17 @@ fn preview_panel(
     let (picture, _) = ui.allocate_exact_size(Vec2::splat(side), Sense::hover());
     let radius = ui.visuals().window_corner_radius;
     ui.painter().rect_filled(picture, radius, p.panel);
+    // the outfit's paid HD picture once it has loaded (`outfit_hd`), else
+    // its picture; the cards keep the thumbnail
+    let hd = model::outfit_hd_picture(inv, id);
+    if let Some(hd) = hd {
+        st.wanted_images.insert(hd);
+    }
     let image = st.outfit_picture(inv, id);
     if !image.is_nil() {
         st.wanted_images.insert(image);
     }
-    if let Some(t) = images.get(&image) {
+    if let Some(t) = hd.and_then(|hd| images.get(&hd)).or_else(|| images.get(&image)) {
         let (image_rect, uv) = super::preview_rects(picture.shrink(2.0), t.size_vec2(), st.fill_previews);
         ui.painter().image(t.id(), image_rect, uv, widgets::PICTURE_TINT);
     } else {
@@ -890,7 +896,7 @@ fn section_of(asset_type: i32) -> usize {
 fn contents(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi, id: Uuid, actions: &mut Vec<Action>) {
     let inv = &world.inventory;
     let mut links = model::folder_links(inv, id);
-    items::sort_links(inv, &mut links, false);
+    items::sort_links(inv, &mut links);
     let found: Vec<_> = links
         .iter()
         .filter(|l| !l.folder)
