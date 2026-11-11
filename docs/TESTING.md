@@ -1638,6 +1638,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_PARTICLE_EDITOR=1\|fountain\|inject` | Build › Edit particles on the object selected by `AURORA_DEMO_BUILD` |
 | `AURORA_DEMO_COLOR_PICKER=<mode>` | Colour picker and gestures offline |
 | `AURORA_DEMO_SCRIPTS=<mode>` | Editing and saving scripts offline |
+| `AURORA_DEMO_SCRIPT_RECOVERY=1\|recover\|edit` | Copies of unsaved scripts and their recovery at login |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages of the Firestorm LSL bridge (hidden) |
 | `AURORA_DEMO_MOVELOCK=<mode>` | Bridge lifecycle/lock and native sitting choice; see details below |
 | `AURORA_DEMO_BRIDGE_QUERY=radar\|scripts\|object\|error` | Bridge altitude correction, basic script and extended object-information reports |
@@ -1766,14 +1767,160 @@ at 360 by 780; Aurora's visible icons and expanded transform area
 can raise its minimum height. Append
 `+settings`, `+organize` or `+folded` to `AURORA_DEMO_BUILD_TAB=general` to inspect
 the side settings, hidden-item storage/notecard buttons or folded numeric values.
-The visible rail icons set the minimum editor height: attempt to shrink the
-window, then hide/restore icons and repeat. Every remaining icon must fit without
-a rail scrollbar. Check the settings gear remains square with values open/closed.
+Use `+expanded` to show the numeric values, and `+default-layout` to inspect the
+current default option layout without relying on a saved arrangement.
+Aurora's navigation has a horizontal section row above the editing panel
+(General, Object, Features, Materials and Contents), and a horizontal tool row at
+the bottom (Camera, Move, Edit, Create and Land). All five object-editing tabs use
+the Object icon and the same localized window title: Build in English,
+Construction in French. The customizable two-column
+options and action row sit below the impact summary and above the section icons.
+Impact, remaining capacity and object/prim counts share a single line inside
+the title section, directly below the ownership/permission status. Minimizing
+keeps only the top title/icon/help/minimize/close row; status, summary and the
+attached settings panel are hidden until restoration. Clicking the summary opens the existing weights
+window; unusually long summaries stay on one line with their full text on hover.
+The shared position, size and rotation values stay below the editing panel.
+The complete shared-controls container (both option columns, actions and the
+part/reference row) uses its measured content height, without a vertical scroll
+area. Adding or removing options grows or shrinks that container. Expanded
+Position/Size/Rotation also uses its measured height, without a vertical scroll
+area; all three vector rows stay visible. The editor's minimum height follows
+these measurements while retaining its chosen geometry when the contents fit.
+Expanded, they use the full panel width. Their collapse arrow sits near the
+middle of the Position caption line. Copy, stored paste and system clipboard
+paste are visible on each vector's own caption line. System paste uses the same
+request, vector parser, permission checks and transform bounds as the Legacy
+"p" action, independently of the internal copy buffer and active manipulator.
+Moving the options block preserves every saved item position, column and state.
+The default left column is Move, Rotate, Stretch, Select a face, Align and Edit
+linked parts. The right column is Stretch both sides, Stretch textures, Snap,
+Show highlight, Edit axis at root and Select reflection probes. The five
+selection/group/follow options remain in Settings. Each column stacks its own
+items: inserting, removing, reordering or wrapping a caption in one column does
+not add gaps or change item positions in the other. Full-width action rows remain
+boundaries between column groups. Drops into an empty tail append to that
+column's own list; Up/Down reorganizes its own column.
+Object is the former Shape section: Locked, Physics, Temporary and Phantom
+appear above its shape controls, using the same permission checks as Legacy.
+The former default section order upgrades once; custom orders remain intact.
+Move, Rotate, Stretch and Align are independent one-column controls using the
+same checkboxes as the other shared options. Move or hide each separately;
+the active mode is checked, and clicking it again keeps that mode selected.
+Snap is also one movable single-column checkbox row, displayed as
+`Snap - Grid / Objects` with compact inline choices. Choosing either mode enables
+Snap; the checkbox disables
+or restores the remembered mode. The active mode has accent, bold and underlined
+text. Its row height stays fixed in Off/Grid/Objects and Organize states, in
+either column. The choice is saved in settings and notecard profiles. Surface
+placement controls remain in a separate Settings section for active Objects
+snapping, without expanding the Snap option. Legacy retains its existing controls.
+Append `+snap-left` or `+snap-right` to `AURORA_DEMO_BUILD_TAB` for native captures
+of the Snap row in either column immediately before the action row.
+Old grouped arrangements expand in place, retaining their destination.
+Shared controls keep their existing caption sizes in compact rows.
+Link, Unlink and Duplicate share one text-action row, while Undo and
+Redo keep their icons. A four-point gap above the action row lightly separates it
+from the shared options. Object places Locked/Physics in the left column and
+Temporary/Phantom in the right column. Below them, Replace link has a disabled
+Select a link button until one linked part of an owned, modifiable object is
+selected with Edit linked parts active; it then reads Replace.
+The detailed replacement panel keeps its existing title and validation rules.
+Both styles clear unavailable transform numbers and their copy/paste actions,
+using the complete selection's properties and effective operation rights.
+A whole no-modify object with Move rights retains Position/Rotation, as in
+LLPanelObject::getState; linked movement and Size require Modify. Unknown or
+mixed denied selections do not expose the primary object's numbers. Geometry
+parameters and sculpt maps are hidden without Modify or for multiple volumes.
+Features also clears unavailable flexibility, light/projector and reflection
+probe parameters, following LLPanelVolume::getState. Public physics values,
+object flags, ownership and mesh LOD statistics remain readable as in Legacy.
+Texture/PBR/media selections and asset identifiers retain their shared guards.
+Use the existing shared/shared-denied demos for granted/revoked rights in both
+styles, plus the native permission regressions for mixed/unknown selections.
+The name and description fields stay in General. Check text editing, read-only
+selection and multi-object editing retain their existing permission checks.
+The everyone-permissions heading reads "Anyone can:". Aurora's sale options
+use the same horizontal divider below Click to as the one above it, without a
+surrounding frame. Legacy retains its existing sale frame.
+Share, Anyone can and Next owner start their controls at the same horizontal
+position. Move and Edit reserve the same first-column width, measured from
+their localized captions, so both Copy checkboxes align. Check these three
+rows in English, French and Japanese without widening the editor.
+The compact rows leave four-point gaps before Copy/Transfer and between
+Share and Deed, preserving the shared checkbox origins and Copy column.
+Captions sit two points from their own checkbox so the French Transfer
+caption also fits on one line at the existing width.
+Aurora also separates the everyone permissions and Show in search from the
+preceding controls. The price caption reads Price L$ (localized and using the
+region's currency).
+The French reflection-probe selection caption is shortened to "Sondes de
+réflexion" so the ordinary one-column option stays on one line.
+Aurora's shared binary options use the shared checkboxes, with no button face
+behind the label. Compact controls use an 18-point minimum row height and
+one-point row gaps, keeping the same text size and allowing wrapped captions.
+The entire label toggles the option; organizing must not toggle options.
+Both states reserve the same height, including wrapped labels.
+Transient build status messages appear in an opaque themed card below the
+editor for six seconds, without changing its content height. A newer status
+replaces the previous one. Owned-object deletion clears the old inline status
+instead of reporting the number of objects sent to Trash. Requests involving
+objects owned by someone else keep their warning. The side settings' notecard
+status and detailed-panel validation messages retain their own presentation.
+Append `+notice` to `AURORA_DEMO_BUILD_TAB` to trigger a synthetic build status
+at frame 700; a frame-900 capture shows the card over the demo world.
+In the two-column options block, Select a face and Edit linked parts can each
+use either column, just like the other options. Their
+previous/value/next controls share a separate horizontal row with Global, Local,
+Reference and Settings below the action row. Link/Face readouts show a dash when
+inactive or unavailable. This row stays horizontal when transform values are
+folded or expanded, and Settings remains reachable when actions are hidden.
+Check normal and Organize modes: reordering must not alter option values, and
+organizing must not step parts/faces or change the coordinate reference.
+While organizing, the two columns have no headings. Existing empty cells and
+row edges remain targetable without appending a blank row below the controls.
+Use the lower edge of the last row to append an item in either column. An empty
+options block still exposes its own drop area.
+Movable controls show a grip and inset outline during organization, painted
+over their existing geometry without adding padding, rows or width. Ordinary
+checkboxes return when organization ends. During a compatible drag, all legal
+occupied and empty destinations have violet outlines; the hovered destination
+also shows its insertion edge. Unrelated panels do not show drop markers.
+The action bar can only sit before or after the complete two-column block.
+Dragging it exposes just those two edges; dropping in the middle does nothing
+and shows the forbidden cursor. Up/Down moves the focused bar between edges,
+adding/moving options keeps its chosen edge, and older middle placements
+normalize to the bottom without changing either column's order.
+Append `+drag-option` or `+drag-actions` to `AURORA_DEMO_BUILD_TAB` for a held
+synthetic layout drag from frame 700; these enable organization for this demo
+run. Use `AURORA_DEMO_POINTER` to place the preview over a destination, and
+capture at frame 900. Compare with `+organize` without a drag: main-window and
+control rectangles must stay unchanged throughout the gesture.
+Drop here captions and slot outlines appear only while dragging a compatible
+item; the hovered column and insertion edge are highlighted. The hidden storage
+hint also appears only during a compatible drag. Drop an option in each column, including a
+blank partner and an occupied cell, then restart or export/load a notecard:
+the chosen column must persist without moving other options into that column.
+Left/Right arrows on a focused footer option also choose its column. Older
+local settings retain their column choices on first load.
+The impact/counts and remaining-capacity summary stays above the section row,
+outside the scrolling panel, without a divider or extra gap before the icons.
+The title bar uses only the shared minimize/restore
+button beside Close; Aurora no longer has a separate section-collapse button.
+The bottom tool row stays visible in every tool mode.
+Attempt to shrink the window, then hide/restore icons:
+the remaining buttons share their row, and hiding an entire row releases its
+height. Every button must remain visible. Check the settings gear remains square
+with values open/closed.
 The old `+grid` suffix now opens the same side settings with inline ruler controls.
 Human validation: move the main window to both sides; settings follow its free
 side and bottom. Organize options without changing their checkbox states, move
-both toolbar rows and rail icons into hidden storage and restore them. Export a
-named notecard, change the layout/ruler, load that inventory notecard and confirm
+individual mode buttons, the action row and navigation icons into hidden storage
+and restore them.
+The Reset all button below Load from a notecard restores the default order,
+locations and visibility of every control, preserving option values. A pending
+notecard load must not overwrite this reset when its response arrives.
+Export a named notecard, change the layout/ruler, load that inventory notecard and confirm
 restoration without changing object transforms. Check a foreign or malformed
 notecard reports an error without changing any settings. Construction preferences
 and layout save automatically in the local global settings file, shared across
@@ -2361,6 +2508,18 @@ errors of owned objects also appear there, after filtering of the bridge and
 of blocked objects. The window allows seeing all the objects or a single one
 and clearing the displayed messages.
 
+**`AURORA_DEMO_SCRIPT_RECOVERY=1|recover|edit`**: the copies of the scripts
+left unsaved, which the demo keeps only with this variable (a demo run never
+offers another one's scripts). `1` leaves a copy at login, as a crash would:
+the Script recovery window lists "Demo door script", ticked. Recover creates
+it in Lost and Found with the unsaved text and shows it in the inventory;
+Cancel forgets it; the window's X keeps it for the next run. `recover`
+answers Recover at frame 400. `edit` opens the demo inventory script at
+frame 280 and types in it at frame 320 without saving: within ten seconds
+the log says `script backup: unsaved changes copied`, and a run killed then
+started again with `edit` offers that text (`1` replaces it with its own). The copies are in the
+demo's account folder, `script-backups`, sealed with the cache key.
+
 **`AURORA_DEMO_HOVER_TIPS=bubble|card|readout|legacy[:all][:noland][:avatars]`** — the
 world tooltips on for the session in that form (the Legacy Viewer's text
 with `legacy`), the saved settings untouched; on land unless `noland`, on
@@ -2626,7 +2785,7 @@ one drag (closer than 0.4 s) making one step.
 **`AURORA_DEMO_BUILD_TAB=general|rights|object|transform|shape|features|texture[:pbr|bp|bp-normal|bp-specular|media]|contents`**
 — section of the build window shown by the script. General includes object
 permissions; `rights`, `object` and `transform` redirect to General for older
-scenarios. `+weights`, `+media` and `+permissions` open the related dialogs;
+scenarios; `shape` opens the renamed Object section. `+weights`, `+media` and `+permissions` open the related dialogs;
 `+grid` opens the side settings with inline ruler controls.
 
 Use `faces-ready,object:99620` with `texture:bp-normal` or `texture:bp-specular`
@@ -2661,6 +2820,14 @@ neither may be interrupted by saving an intermediate digit or drag position.
 The window stays open. Changes must update the original object's item even
 after changing the build selection, and survive closing and reopening its
 properties. Check the same behavior with `AURORA_DEMO_INVENTORY=properties`.
+With `AURORA_DEMO_BUILD=contents-ready,object:118` and
+`AURORA_DEMO_BUILD_TAB=contents`, New script, Reset scripts and Refresh share a
+row. Rights, the inventory's shared CMT menu and the search field share the
+following row; search fills the remaining width. The CMT
+choice belongs to this construction window, independently of inventory: Mine
+by default, Next owner, Both or Hidden. Switching it changes only the displayed
+suffix, never item permissions or simulator commands. `contents+next-owner`
+still selects Both for captures.
 With `AURORA_DEMO_BUILD=contents-ready,object:118` and
 `AURORA_DEMO_BUILD_TAB=contents+permissions`, check the eleven icon filters,
 All/Clear, Group/Anyone/Next owner columns and OK/Apply/Cancel. No-copy forces

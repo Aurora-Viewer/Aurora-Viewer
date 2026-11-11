@@ -172,7 +172,23 @@ pub fn transform_spin(
     tentative: bool,
     min_decimals: usize,
 ) -> Edit {
+    // LLPanelObject::getState clears forbidden transform fields, rather than
+    // leaving their numbers readable in disabled controls.
+    if !ui.is_enabled() {
+        return empty_spin(ui, width);
+    }
     spinner(ui, v, increment, range, decimals, width, tentative, min_decimals, false)
+}
+
+/// An unavailable number has no numeric widget, draft or accessible value.
+pub fn empty_spin(ui: &mut egui::Ui, width: f32) -> Edit {
+    let height = if super::legacy::active(ui) { 20.0 } else { 26.0 };
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        ui.add_sized([(width - 13.0).max(16.0), height], egui::Label::new("—"));
+        crate::ui::widgets::step_buttons(ui, height);
+    });
+    Edit::default()
 }
 
 #[allow(clippy::too_many_arguments)]
