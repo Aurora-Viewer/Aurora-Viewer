@@ -56,7 +56,7 @@ pub use mixer::{Channel, ChannelSettings, ENGINE_SAMPLE_RATE};
 pub use output::OutputInfo;
 pub use processing::{EchoReference, MicProcessing};
 pub use reverb::ReverbParams;
-pub use stream::StreamStatus;
+pub use stream::{StreamError, StreamStatus};
 pub use wind::WindTarget;
 
 use mixer::{ClipVoice, Command, Mixer, PcmSource, SharedParams, WorldVoice};

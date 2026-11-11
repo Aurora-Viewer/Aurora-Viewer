@@ -302,6 +302,10 @@ pub mod turn;
 /// (AURORA_DEMO_VOICE_CONTROLS).
 #[path = "demo_voice_controls.rs"]
 pub mod voice_controls;
+/// Transparent shells with a shiny blended legacy material, the wet layers
+/// of mesh bodies (AURORA_DEMO_WET_LAYER).
+#[path = "demo_wet_layer.rs"]
+pub mod wet_layer;
 /// A worn object of ours (AURORA_DEMO_WORN).
 #[path = "demo_worn.rs"]
 pub mod worn;
@@ -2895,7 +2899,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
     match cmd {
         // a lure accepted offline: the teleport starts, then has nowhere to go
         aurora_net::NetCommand::AcceptLure { .. } => vec![
-            NetEvent::TeleportStarted,
+            NetEvent::TeleportStarted { flags: 0 },
             NetEvent::TeleportFailed {
                 reason: aurora_i18n::tr!("demo-no-teleport-offline").into(),
             },
@@ -3068,6 +3072,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         // block list: Violet Wolf, an object, a name and the chat of group 2
         aurora_net::NetCommand::RequestMuteList { .. } => {
             // AURORA_DEMO_PEOPLE's tabs: their own block list
+            if people::server_empty_mute_list() {
+                return vec![NetEvent::MuteList(aurora_net::MuteListSource::ServerEmpty)];
+            }
             if let Some(text) = people::mute_list() {
                 return vec![NetEvent::MuteList(aurora_net::MuteListSource::File(text))];
             }
@@ -3081,10 +3088,11 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             );
             // The animesh fixture needs its wearer visible in full, and
             // AURORA_DEMO_PEOPLE the wolf as a friend. The attachment-click,
-            // derender and seat-kill fixtures need the same visible,
-            // unblocked wearer.
+            // derender, reload and seat-kill fixtures need the same
+            // visible, unblocked wearer.
             let text = if std::env::var_os("AURORA_DEMO_ANIMESH").is_some()
                 || std::env::var_os("AURORA_DEMO_DERENDER").is_some()
+                || std::env::var_os("AURORA_DEMO_RELOAD_AVATAR").is_some()
                 || std::env::var_os("AURORA_DEMO_FRIENDS_ONLY").is_some()
                 || seat_kill::on()
                 || std::env::var("AURORA_DEMO_WORLD_CLICKS").is_ok_and(|m| m.starts_with("worn-"))
@@ -3496,6 +3504,14 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 avatar: DEMO_AGENT,
                 anims: vec![(anim, 1)],
             }]
+        }
+        // Advanced › Release Keys: the region releases what the scripts
+        // took, every bit of both kinds (app/release_keys.rs)
+        aurora_net::NetCommand::ForceScriptControlRelease => {
+            vec![NetEvent::ScriptControlChange(vec![
+                (false, u32::MAX, false),
+                (false, u32::MAX, true),
+            ])]
         }
         // "Stop animations": the simulator answers with the stand restarted
         // (LLAgent::stopCurrentAnimations sends it right after)
@@ -4191,6 +4207,22 @@ fn map_block(x: u16, y: u16, name: &str, access: u8) -> aurora_net::MapBlock {
 /// AURORA_DEMO_TP_NO_ARRIVAL=1: the region never confirms a demo teleport.
 pub fn tp_no_arrival() -> bool {
     std::env::var_os("AURORA_DEMO_TP_NO_ARRIVAL").is_some()
+}
+
+/// AURORA_DEMO_TP_CANCEL=locked: the demo teleport's TeleportStart carries
+/// TELEPORT_FLAGS_DISABLE_CANCEL (no Cancel on the teleport screen).
+pub fn tp_cancel_flags() -> u32 {
+    if std::env::var("AURORA_DEMO_TP_CANCEL").is_ok_and(|v| v == "locked") {
+        crate::world::teleport_cancel::TELEPORT_FLAGS_DISABLE_CANCEL
+    } else {
+        0
+    }
+}
+
+/// AURORA_DEMO_TP_CANCEL=1: the teleport screen's Cancel is pressed 1.5 s
+/// into the demo teleport.
+pub fn tp_cancel_pressed() -> bool {
+    std::env::var("AURORA_DEMO_TP_CANCEL").is_ok_and(|v| v == "1")
 }
 
 pub fn friend_join_scenario() -> bool {
@@ -5610,6 +5642,19 @@ pub fn events() -> Vec<NetEvent> {
         "",
     ));
     id += 1;
+    if wet_layer::enabled() {
+        let (sx, sy) = std::env::var("AURORA_DEMO_POS")
+            .ok()
+            .and_then(|v| {
+                let p: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+                (p.len() >= 2).then(|| (p[0], p[1]))
+            })
+            .unwrap_or((132.0, 126.0));
+        for o in wet_layer::objects(id, sx, sy) {
+            add(o);
+        }
+        id += wet_layer::COUNT;
+    }
     // AURORA_DEMO_HALO: a wide translucent pane 3 m ahead of the start
     // position, facing the camera, so that the avatar stands between the
     // camera and the pane (issue #556: no halo around the avatar on it)
@@ -6184,6 +6229,35 @@ fn notification_samples(notifications: bool, inventory_offer: bool, menu: Option
         });
         return ev;
     }
+    // `repeat`: a fountain's menu clicked three times on one channel, then
+    // once on another, and a game table's menu on the first channel
+    // (Preferences › Chat › Notifications › Script dialogs per object): one
+    // per channel keeps three, the fountain's third, its other channel and
+    // the table; unlimited keeps the five
+    if menu == "repeat" {
+        let colors = vec![
+            aurora_i18n::tr!("demo-purple").to_owned(),
+            aurora_i18n::tr!("demo-turquoise").to_owned(),
+            aurora_i18n::tr!("demo-amber").to_owned(),
+        ];
+        let dialog = |object: u128, name: &str, channel: i32, n: usize| NetEvent::ScriptDialog {
+            sender: ([127, 0, 0, 1], 13000).into(),
+            object_id: Uuid::from_u128(object),
+            object_name: name.into(),
+            owner_name: aurora_i18n::tr!("demo-violet-wolf").into(),
+            owner_id: Uuid::nil(),
+            message: format!("{} ({n})", aurora_i18n::tr!("demo-choose-a-color-for-the-water")),
+            channel,
+            buttons: colors.clone(),
+        };
+        let fountain = aurora_i18n::tr!("demo-fountain");
+        for n in 1..=3 {
+            ev.push(dialog(0xF0, fountain, -4242, n));
+        }
+        ev.push(dialog(0xF0, fountain, -4243, 4));
+        ev.push(dialog(0xF7, aurora_i18n::tr!("demo-game-table"), -4242, 5));
+        return ev;
+    }
     // `scripted`: every window a scripted object sends (llDialog, llTextBox,
     // llRequestPermissions, llLoadURL, llGiveInventory), then four pieces of
     // information after them; the windows stay out until answered
@@ -6346,6 +6420,30 @@ mod notification_tests {
             ] if buttons[0] == "!!llTextBox!!" && gift.dialog == crate::world::notifications::im::TASK_INVENTORY_OFFERED
         ));
         assert_eq!(events.len(), 9);
+    }
+
+    /// `repeat`: through the world, one per channel keeps the fountain's
+    /// last menu on its channel, its other channel and the table's; a
+    /// change of the limit closes them, and unlimited keeps all five.
+    #[test]
+    fn repeated_menus_follow_the_script_dialog_limit() {
+        use crate::world::script_dialog_limit::Limit;
+        let shown = |limit| {
+            let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            world.set_script_dialog_limit(limit);
+            for event in notification_samples(false, false, Some("repeat")) {
+                world.apply(event);
+            }
+            world.notifications.list.iter().map(|n| n.body.clone()).collect::<Vec<_>>()
+        };
+        let one_per_channel = shown(Limit::PerChannel);
+        assert_eq!(one_per_channel.len(), 3);
+        for n in ["(3)", "(4)", "(5)"] {
+            assert!(one_per_channel.iter().any(|body| body.ends_with(n)), "{n} in {one_per_channel:?}");
+        }
+        let one_per_object = shown(Limit::PerObject);
+        assert_eq!(one_per_object.len(), 2);
+        assert_eq!(shown(Limit::Unlimited).len(), 5);
     }
 }
 
@@ -6617,6 +6715,19 @@ pub fn animesh_points() -> bool {
     std::env::var("AURORA_DEMO_ANIMESH").is_ok_and(|v| v == "points")
 }
 
+/// AURORA_DEMO_ANIMESH=far: the ground animesh's animation carries its
+/// pelvis 8 m forward (drawn 3 m from its object, draw_limits.rs), and the
+/// worn animesh sits 5 m from its attachment point (drawn at 3.5 m).
+pub fn animesh_far() -> bool {
+    std::env::var("AURORA_DEMO_ANIMESH").is_ok_and(|v| v == "far")
+}
+
+/// AURORA_DEMO_ANIMESH=far: the animation the ground animesh plays too.
+pub const ANIMESH_FAR_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0106);
+
+/// The worn animesh's offset from its point with AURORA_DEMO_ANIMESH=far.
+pub const ANIMESH_FAR_WORN: Vec3 = Vec3::new(4.0, 3.0, 0.0);
+
 /// AURORA_DEMO_ANIMESH=churn: the ground animesh changes its mesh asset every
 /// `ANIMESH_CHURN_FRAMES` frames, as rigged meshes come and go on a grid.
 pub fn animesh_churn() -> bool {
@@ -6649,7 +6760,11 @@ pub fn animesh_events() -> Vec<NetEvent> {
         .map(|o| NetEvent::AvatarAnimations {
             sources: Vec::new(),
             avatar: o.full_id,
-            anims: vec![(ANIMESH_ANIM, 1)],
+            anims: if animesh_far() && o.local_id == 9200 {
+                vec![(ANIMESH_ANIM, 1), (ANIMESH_FAR_ANIM, 2)]
+            } else {
+                vec![(ANIMESH_ANIM, 1)]
+            },
         })
         .collect();
     // Signals deliberately arrive before their objects, as on a grid.
@@ -6769,6 +6884,9 @@ pub(crate) fn animesh_objects(ground_mesh: Uuid) -> Vec<ObjectUpdate> {
         }
         if parent == 9001 {
             o.state = 0x60;
+            if animesh_far() {
+                o.position = ANIMESH_FAR_WORN;
+            }
         } // Right hand.
         objects.push(o);
     }
@@ -8329,6 +8447,28 @@ pub fn point_animation() -> aurora_assets::Animation {
     a
 }
 
+/// AURORA_DEMO_ANIMESH=far: the pelvis held 8 m forward, as an animation
+/// with a large root motion.
+pub fn far_animation() -> aurora_assets::Animation {
+    use aurora_assets::anim::{JointMotion, PosKey};
+    let mut a = idle_animation();
+    a.duration = 2.0;
+    a.loop_out = 2.0;
+    a.joints = vec![JointMotion {
+        joint_name: "mPelvis".into(),
+        priority: 4,
+        rot_keys: Vec::new(),
+        pos_keys: [0.0, 2.0]
+            .into_iter()
+            .map(|time| PosKey {
+                time,
+                position: Vec3::new(8.0, 0.0, 0.0),
+            })
+            .collect(),
+    }];
+    a
+}
+
 /// Offline seam test: different first/last poses, first key at 1/15 s.
 pub fn loop_animation() -> aurora_assets::Animation {
     use aurora_assets::anim::{JointMotion, PosKey, RotKey};
@@ -8727,6 +8867,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     if let Some(texture) = legacy_bump::texture(id) {
         return Some(texture);
     }
+    if let Some(texture) = wet_layer::texture(id) {
+        return Some(texture);
+    }
     if *id == hud::TEX_MASK_PANEL {
         return Some(hud::mask_cutoff_texture());
     }
@@ -9101,6 +9244,9 @@ pub fn legacy_materials() -> Vec<(Uuid, crate::scene::legacy_mat::LegacyMaterial
     ];
     if legacy_bump::enabled() {
         list.push((legacy_bump::LEGACY_MATERIAL, legacy_bump::legacy_material()));
+    }
+    if wet_layer::enabled() {
+        list.push((wet_layer::MATERIAL, wet_layer::material()));
     }
     list
 }
