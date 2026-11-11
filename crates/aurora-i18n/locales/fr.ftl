@@ -9344,6 +9344,10 @@ ui-options-aurora-places = Lieux
 ui-options-aurora-places-help = Une liste avec aperçu, qui s’élargit en volet de dossiers, ou les trois onglets du Legacy Viewer.
 ui-options-aurora-places-aurora = Liste et aperçu
 ui-options-aurora-places-classic = Onglets (Legacy)
+ui-options-aurora-destinations = Destinations
+ui-options-aurora-destinations-help = La fenêtre Aurora liste les lieux du guide avec filtres, aperçu et actions ; Legacy affiche la page web du guide. Une grille dont le guide n’est qu’une page web affiche cette page dans les deux ; sur une grille sans guide, le bouton reste grisé.
+ui-options-aurora-destinations-aurora = Aurora
+ui-options-aurora-destinations-classic = Page web (Legacy)
 ui-options-aurora-people = Personnes
 ui-options-aurora-people-help = Lignes avec photo, badges et portée, ou tableau à colonnes comme le radar du Legacy Viewer.
 ui-options-aurora-people-rows = Lignes riches
@@ -9667,6 +9671,33 @@ web-browser-not-secure = La connexion n'est pas sécurisée
 web-browser-loading = Chargement…
 marketplace-unavailable = La Place du marché s'affiche ici une fois connecté à Second Life.
 destinations-unavailable = Cette grille n’a pas de guide des destinations.
+destinations-hot = Populaire maintenant
+destinations-search = Chercher un lieu du guide
+destinations-results = Résultats
+destinations-count = { $category } · { $count ->
+    [one] { $count } lieu
+   *[other] { $count } lieux
+    }
+destinations-maturity = Maturité
+destinations-sort-population = Par affluence
+destinations-sort-name = Par nom
+destinations-sort-newest = Plus récents
+destinations-hide-visited = Masquer les lieux visités
+destinations-visited = Déjà visité
+destinations-until = Jusqu’au { $date }
+destinations-people = { $count ->
+    [one] { $count } personne là-bas
+   *[other] { $count } personnes là-bas
+    }
+destinations-updated-now = Guide officiel de la grille · à jour à l’instant
+destinations-updated = Guide officiel de la grille · à jour il y a { $minutes } min
+destinations-loading = Chargement du guide…
+destinations-failed = Le guide n’a pas pu être lu. Réessayez dans un instant.
+destinations-refresh = Actualiser
+destinations-empty = Aucun lieu avec ces filtres.
+destinations-same-category = Dans la même catégorie
+destinations-no-same = Aucun autre lieu pour l’instant.
+destinations-here-only = Un repère se crée là où vous êtes : téléportez-vous d’abord.
 marketplace-listings-title = Annonces Place du marché
 marketplace-listings-menu = Annonces Place du marché
 marketplace-listings-tab-all = Toutes

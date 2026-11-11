@@ -5556,7 +5556,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GRID_HELP=<page>` | Help › Knowledge base shown, opening this page |
 | `AURORA_DEMO_MARKETPLACE=<page>` | Marketplace window open at start on this page |
 | `AURORA_DEMO_WEB_BROWSER=<page>` | Toolbar web browser window open at start on this page |
-| `AURORA_DEMO_DESTINATIONS=<page>\|sl` | Destination Guide window open at start on this page (`sl`: the Second Life guide) |
+| `AURORA_DEMO_DESTINATIONS=compact\|wide\|legacy\|empty\|<page>\|sl` | Destinations window open at start: Aurora's window on a made-up guide, the Legacy web window, or a web page (`sl`: the Second Life guide) |
 | `AURORA_DEMO_MARKETPLACE_LISTINGS=<mode>` | Marketplace listings window open on a simulated SLM server |
 | `AURORA_DEMO_BAN=1` | Ban lines |
 | `AURORA_DEMO_RESTRICTED=1` | Parcel that forbids everything |
@@ -8846,6 +8846,28 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the status line and load bar under the page. An http(s) link clicked in
   a page opens in the same window; a SLURL acts in the viewer; a link that
   asks for a new window (`target="_blank"`) does nothing.
+- **`AURORA_DEMO_DESTINATIONS=compact|wide|legacy|empty`**: Aurora's
+  Destinations window (Preferences › Aurora › Destinations, the default)
+  opens at start on a guide made up offline (`demo_destinations.rs`: 11
+  categories, 13 invented places with plain pictures drawn by the viewer,
+  read by the real feed's parser; no network). `compact`: the window as it
+  opens (440 wide), the first visited place opened in its row; `wide`: the
+  same widened (1120), a rail of categories with counts, three columns of
+  cards and the preview of a place. Check in both: What's Hot Now first
+  (7 places, by population), the G / M / A toggles (A off by default; a
+  rating above the account's is not offered), the order menu (population,
+  name, newest), the search (it covers every category: "saiko" lists two
+  places), the people count on the pictures, "Already visited" on Lantern
+  Isle and Pixel Arcade (from the demo's teleport history), "Until …" on
+  the Garden Concert, the footer "Official grid guide · updated just now"
+  and its refresh button. Teleport, Show on map, About Land and Copy SLurl
+  act as for any place link; Create landmark and Add to favorites are
+  dimmed with a tooltip outside the place's region. The widen / compact
+  button of the title bar switches the two layouts; "Hide visited places"
+  is in the wide toolbar only. `empty`: a guide with categories and no
+  place ("No place with these filters."). `legacy`: the Legacy style for
+  this run, the guide's web page (below). When the window closes, the log
+  says how many pictures it let go (`destination guide: window closed`).
 - **`AURORA_DEMO_DESTINATIONS=<page>|sl`**: the Destination Guide
   (toolbar `destinations`, World › Destinations after Places,
   LLFloaterDestinations) stands for this page in demo and opens at start;

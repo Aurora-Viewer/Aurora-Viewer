@@ -13,11 +13,19 @@
 //! "destination_guide_url". A grid that names none has no guide: the
 //! button is dimmed and the menu entry hidden (GridFeatureCheck
 //! destination_guide).
+//!
+//! Aurora draws the guide itself on Second Life (`aurora.rs`, from the feed
+//! the page reads: `destination_guide.rs`); the page stays the Legacy
+//! style, and the only one on a grid whose guide is a web page.
+
+pub mod aurora;
 
 use super::web_view::WebView;
 use super::widgets::{self, Floater};
+use crate::destination_guide::{DestinationGuide, Source};
 use crate::theme::Palette;
 use egui::{Rect, RichText, Vec2};
+use std::time::Instant;
 
 pub const WINDOW: &str = "destinations";
 
@@ -89,12 +97,33 @@ pub struct GuideWeb<'a> {
     pub url: Option<&'a str>,
 }
 
+/// Aurora's own window: where its feed comes from, and what it needs of
+/// the viewer.
+pub struct Native<'a> {
+    pub source: Source,
+    pub runtime: Option<&'a tokio::runtime::Handle>,
+    pub env: aurora::Env<'a>,
+}
+
 #[derive(Default)]
 pub struct DestinationsUi {
     web: WebView,
     /// The page the running browser was sent to (the grid's guide can
     /// change after a Hypergrid teleport: handleUrlChanged).
     loaded: String,
+    pub aurora: aurora::AuroraState,
+    pub guide: DestinationGuide,
+}
+
+/// The look the window was last shown in (persisted): the two looks have
+/// their own size, the web page's being the Legacy Viewer's small one.
+fn last_look(ctx: &egui::Context, native: bool) -> bool {
+    let id = egui::Id::unique("destinations-native-look");
+    let last: Option<bool> = ctx.data_mut(|d| d.get_persisted(id));
+    if last != Some(native) {
+        ctx.data_mut(|d| d.insert_persisted(id, native));
+    }
+    last.is_some_and(|l| l != native)
 }
 
 impl DestinationsUi {
@@ -112,7 +141,91 @@ impl DestinationsUi {
         self.web.process_id()
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, env: &GuideWeb) {
+    /// `native`: Aurora's window, None for the guide's page.
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        open: &mut bool,
+        env: &GuideWeb,
+        native: Option<&Native>,
+    ) -> Option<aurora::Action> {
+        // nothing is asked while the window is closed or shows the page
+        self.guide.poll(
+            ctx,
+            native.and_then(|n| n.runtime),
+            native.map(|n| n.source),
+            native.map_or_else(Default::default, |n| n.env.access),
+            *open && native.is_some(),
+            Instant::now(),
+        );
+        if let Some(native) = native {
+            // the browser does not run behind Aurora's window
+            if self.web.running() || !self.loaded.is_empty() {
+                self.web = WebView::default();
+                self.loaded.clear();
+            }
+            if !*open {
+                return None;
+            }
+            return self.show_native(ctx, p, open, &native.env);
+        }
+        self.show_web(ctx, p, open, env);
+        None
+    }
+
+    fn show_native(&mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, env: &aurora::Env) -> Option<aurora::Action> {
+        let work = super::layout::work_area(ctx);
+        let room = work.size() - Vec2::splat(2.0 * super::layout::GAP);
+        let size = aurora::COMPACT_SIZE.min(room).max(aurora::MIN_SIZE);
+        if last_look(ctx, true) {
+            widgets::size_floater(ctx, WINDOW, size);
+        }
+        let default = Rect::from_min_size((work.center() - size * 0.5).round(), size);
+        // the title bar follows the width the window had last frame
+        let height = egui::AreaState::load(ctx, egui::Id::unique(WINDOW))
+            .and_then(|state| state.size)
+            .map_or(size.y, |s| s.y);
+        let wide = egui::AreaState::load(ctx, egui::Id::unique(WINDOW))
+            .and_then(|state| state.size)
+            .is_some_and(|s| s.x - widgets::floater_chrome(ctx).x >= aurora::WIDE);
+        let (mut widen, mut reduce) = (false, false);
+        let mut floater = Floater::new(
+            WINDOW,
+            aurora_i18n::tr!("toolbar-command-destinations"),
+            default.min,
+            default.size(),
+        );
+        floater.min_size = aurora::MIN_SIZE;
+        // the mockup's panes reach the window's edges
+        floater.flush_body = true;
+        floater = if wide {
+            floater.action("arrows-minimize", aurora_i18n::tr!("common-compact-view"), &mut reduce)
+        } else {
+            floater.action("arrow-autofit-width-filled", aurora_i18n::tr!("inventory-widen"), &mut widen)
+        };
+        let mut action = None;
+        floater.show(ctx, p, open, |ui| {
+            let body = Rect::from_min_max(ui.cursor().min, ui.max_rect().max);
+            let mut child = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(body)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            );
+            child.set_clip_rect(body.intersect(ui.clip_rect()));
+            action = self.aurora.body(&mut child, p, &mut self.guide, env);
+            ui.allocate_rect(body, egui::Sense::hover());
+        });
+        if widen {
+            widgets::size_floater(ctx, WINDOW, Vec2::new(aurora::WIDE_SIZE.x.min(room.x), height.max(size.y)));
+        }
+        if reduce {
+            widgets::size_floater(ctx, WINDOW, Vec2::new(size.x, height));
+        }
+        action
+    }
+
+    fn show_web(&mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, env: &GuideWeb) {
         if !*open {
             // the browser does not run behind a closed window
             if self.web.running() || !self.loaded.is_empty() {
@@ -123,6 +236,9 @@ impl DestinationsUi {
         }
         let work = super::layout::work_area(ctx);
         let size = DEFAULT_SIZE.min(work.size() - Vec2::splat(2.0 * super::layout::GAP)).max(MIN_SIZE);
+        if last_look(ctx, false) {
+            widgets::size_floater(ctx, WINDOW, size);
+        }
         let default = Rect::from_min_size((work.center() - size * 0.5).round(), size);
         let mut floater = Floater::new(
             WINDOW,
@@ -241,7 +357,38 @@ mod tests {
                     cookie: None,
                     url: None,
                 };
-                ui.show(ctx, p, &mut true, &env);
+                ui.show(ctx, p, &mut true, &env, None);
+            },
+        );
+    }
+
+    #[test]
+    fn aurora_window_keeps_its_size_compact_and_wide() {
+        let browser = aurora_media::BrowserSettings::default();
+        let history = crate::demo::destinations::history();
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            WINDOW,
+            &[Vec2::new(440.0, 560.0), aurora::MIN_SIZE, Vec2::new(aurora::WIDE + 40.0, 560.0)],
+            aurora_i18n::text("destinations-updated-now"),
+            DestinationsUi::default,
+            |ui, ctx, p| {
+                let env = GuideWeb {
+                    paths: None,
+                    browser: &browser,
+                    cookie: None,
+                    url: Some("https://guide.example.invalid/"),
+                };
+                let native = Native {
+                    source: Source::Demo(crate::demo::destinations::Fixture::Full),
+                    runtime: None,
+                    env: aurora::Env {
+                        history: &history,
+                        access: aurora_net::search::AgentAccess { max: 42, preferred: 42 },
+                        here: Some("Lantern Isle"),
+                    },
+                };
+                ui.aurora.demo_open = true;
+                ui.show(ctx, p, &mut true, &env, Some(&native));
             },
         );
     }

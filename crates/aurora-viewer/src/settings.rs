@@ -231,6 +231,17 @@ pub enum WorldMapStyle {
     Legacy,
 }
 
+/// The Destinations window: Aurora's own list of the guide's places
+/// (`ui/destinations/aurora.rs`, the default), or the guide's web page as
+/// the Legacy Viewer shows it (Preferences › Aurora). A grid whose guide is
+/// a web page only shows that page in both.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum DestinationsStyle {
+    #[default]
+    Aurora,
+    Legacy,
+}
+
 /// The photo mode: Aurora's viewfinder (the world full screen under a
 /// camera's overlay, `ui::viewfinder`), Aurora's panel anchored on the
 /// right, or the Legacy Viewer's floater (floater_snapshot.xml: a floating
@@ -1273,6 +1284,8 @@ pub struct Settings {
     pub classic_places: bool,
     /// The order of Aurora's "Places" lists.
     pub places_sort: PlacesSort,
+    /// The Destinations window's look.
+    pub destinations_style: DestinationsStyle,
     pub invert_mouse: bool,
     /// Aurora extension: allow the left/right mouse chord on land and objects
     /// without a click action, in addition to our avatar. Off by default.
@@ -2263,6 +2276,7 @@ impl Default for Settings {
             outfit_portrait: Default::default(),
             classic_places: false,
             places_sort: PlacesSort::Visit,
+            destinations_style: DestinationsStyle::Aurora,
             invert_mouse: false,
             arrows_strafe: false,
             world_mouse_walk: false,

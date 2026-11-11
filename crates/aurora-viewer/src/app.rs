@@ -3930,7 +3930,13 @@ impl App {
                 self.login_favorites.session_started(&self.settings, self.demo);
                 // the demo's teleport history: several days, never saved
                 if self.demo {
-                    self.world.tp_storage = crate::world::tphistory::HistoryStorage::in_memory(crate::demo::place::history());
+                    let mut visits = crate::demo::place::history();
+                    // AURORA_DEMO_DESTINATIONS: two of the guide's places visited
+                    if crate::demo::destinations::mode().is_some() {
+                        visits.extend(crate::demo::destinations::history());
+                        visits.sort_by(|a, b| a.date.total_cmp(&b.date));
+                    }
+                    self.world.tp_storage = crate::world::tphistory::HistoryStorage::in_memory(visits);
                     // earlier places in the session, for the arrows' list
                     if crate::ui::bars::demo::get().open == Some(crate::ui::bars::demo::Open::TpList) {
                         self.world.tp_history = crate::world::tphistory::TeleportHistory::seeded(crate::demo::place::session());
@@ -14766,16 +14772,17 @@ impl App {
     /// The grid's Destination Guide page (LFSimFeatureHandler::
     /// destinationGuideURL), None on a grid without one.
     /// AURORA_DEMO_DESTINATIONS=<page>: a page of the tester's choice in
-    /// demo, "sl" for the Second Life guide's address.
+    /// demo, "sl" for the Second Life guide's address; the native modes
+    /// (compact, wide, legacy, empty) have the Second Life guide's.
     fn destination_guide(&self) -> Option<String> {
         use ui::destinations::{GuideGrid, guide_url};
         let language = aurora_i18n::language();
         if self.demo {
             let page = std::env::var("AURORA_DEMO_DESTINATIONS").ok().filter(|u| !u.trim().is_empty())?;
-            return match page.trim() {
-                "sl" => guide_url(GuideGrid::SecondLife, language),
-                page => Some(page.to_owned()),
-            };
+            if page.trim() == "sl" || crate::demo::destinations::mode().is_some() {
+                return guide_url(GuideGrid::SecondLife, language);
+            }
+            return Some(page.trim().to_owned());
         }
         match self.settings.grid {
             crate::settings::GridChoice::SecondLife => guide_url(GuideGrid::SecondLife, language),
@@ -14799,6 +14806,26 @@ impl App {
                     .unwrap_or("");
                 guide_url(GuideGrid::OpenSim { region, login, id }, language)
             }
+        }
+    }
+
+    /// Where Aurora's Destinations window reads the guide: the feed of the
+    /// Second Life guide's page on both Second Life grids (guide.js reads
+    /// the main grid's on both), the demo's made-up guide in demo; None
+    /// shows the guide's web page (the Legacy style, another grid's guide).
+    fn destination_feed(&self) -> Option<crate::destination_guide::Source> {
+        use crate::destination_guide::Source;
+        if self.demo {
+            return crate::demo::destinations::mode()
+                .and_then(crate::demo::destinations::fixture)
+                .map(Source::Demo);
+        }
+        if self.settings.destinations_style != crate::settings::DestinationsStyle::Aurora {
+            return None;
+        }
+        match self.settings.grid {
+            crate::settings::GridChoice::SecondLife | crate::settings::GridChoice::SecondLifeBeta => Some(Source::Live),
+            crate::settings::GridChoice::Custom => None,
         }
     }
 
@@ -16009,7 +16036,7 @@ impl App {
                     grid_help: self.grid_help(),
                     marketplace: self.marketplace_home().is_some()
                         || (self.demo && crate::world::marketplace::demo::Mode::from_env().is_some()),
-                    destinations: self.destination_guide().is_some(),
+                    destinations: self.destination_guide().is_some() || self.destination_feed().is_some(),
                     parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
                         (Some(region), Some(parcel)) => ui::parcel_icons::parcel_icons(&ui::parcel_icons::ParcelState {
                             region_flags: region.region_flags,
@@ -17857,7 +17884,18 @@ impl App {
                 let guide_cookie = cookie
                     .as_ref()
                     .filter(|_| !self.demo && self.settings.grid != crate::settings::GridChoice::Custom);
-                self.destinations_ui.show(
+                // Aurora's window (Preferences › Aurora), else the page
+                let feed = self.destination_feed();
+                let native = feed.map(|source| ui::destinations::Native {
+                    source,
+                    runtime: Some(self.net.runtime()),
+                    env: ui::destinations::aurora::Env {
+                        history: &self.world.tp_storage.items,
+                        access: self.world.agent_access(),
+                        here: self.world.main().map(|r| r.name.as_str()),
+                    },
+                });
+                let landmark = self.destinations_ui.show(
                     &ctx,
                     &p,
                     &mut self.panels.destinations,
@@ -17867,8 +17905,16 @@ impl App {
                         cookie: guide_cookie,
                         url: guide.as_deref(),
                     },
+                    native.as_ref(),
                 );
-                self.toolbar_ui.destinations = guide.is_some();
+                self.toolbar_ui.destinations = guide.is_some() || feed.is_some();
+                if let Some(ui::destinations::aurora::Action::Landmark { favorite }) = landmark {
+                    // LLFloaterCreateLandmark, in Favorites for the star
+                    let folder = favorite
+                        .then(|| ui::places::system_folder(&self.world.inventory, ui::places::model::FOLDER_FAVORITES))
+                        .flatten();
+                    self.open_create_landmark(folder);
+                }
                 self.show_marketplace_listings(&ctx, &p);
                 let web = ui::profile::WebContext {
                     paths: paths.as_ref(),
@@ -19190,10 +19236,21 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
             }
             // AURORA_DEMO_DESTINATIONS=<page>|sl: the Destination Guide on
-            // that page (sl: the Second Life guide's address), open at start
+            // that page (sl: the Second Life guide's address), open at start;
+            // compact|wide|empty: Aurora's window on the made-up guide,
+            // legacy: the Legacy style for this run
             if self.destination_guide().is_some() {
+                use crate::demo::destinations::Mode;
                 self.panels.destinations = true;
                 self.panels.perf = false;
+                match crate::demo::destinations::mode() {
+                    Some(Mode::Compact) => self.destinations_ui.aurora.demo_open = true,
+                    Some(Mode::Wide) => {
+                        self.destinations_ui.aurora.demo_open = true;
+                        ui::widgets::size_floater(&self.egui_ctx, ui::destinations::WINDOW, ui::destinations::aurora::WIDE_SIZE);
+                    }
+                    _ => {}
+                }
             }
             // AURORA_DEMO_MARKETPLACE_LISTINGS=merchant|not-merchant|error|audit:
             // Me › Marketplace listings open on the demo SLM server

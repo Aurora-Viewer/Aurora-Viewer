@@ -9348,6 +9348,10 @@ ui-options-aurora-places = Places
 ui-options-aurora-places-help = A list with a preview that widens into a rail of folders, or the Legacy Viewer's three tabs.
 ui-options-aurora-places-aurora = List and preview
 ui-options-aurora-places-classic = Tabs (Legacy)
+ui-options-aurora-destinations = Destinations
+ui-options-aurora-destinations-help = Aurora's window lists the guide's places with filters, a preview and actions; Legacy shows the guide's web page. A grid whose guide is only a web page shows that page in both; on a grid without a guide the button stays dimmed.
+ui-options-aurora-destinations-aurora = Aurora
+ui-options-aurora-destinations-classic = Web page (Legacy)
 ui-options-aurora-people = People
 ui-options-aurora-people-help = Rows with picture, badges and range, or a table with columns like the Legacy Viewer's radar.
 ui-options-aurora-people-rows = Rich rows
@@ -9671,6 +9675,33 @@ web-browser-not-secure = The connection is not secure
 web-browser-loading = Loading…
 marketplace-unavailable = The Marketplace shows here once connected to Second Life.
 destinations-unavailable = This grid has no destination guide.
+destinations-hot = What's hot now
+destinations-search = Search a place in the guide
+destinations-results = Results
+destinations-count = { $category } · { $count ->
+    [one] { $count } place
+   *[other] { $count } places
+    }
+destinations-maturity = Maturity
+destinations-sort-population = By population
+destinations-sort-name = By name
+destinations-sort-newest = Newest first
+destinations-hide-visited = Hide visited places
+destinations-visited = Already visited
+destinations-until = Until { $date }
+destinations-people = { $count ->
+    [one] { $count } person there
+   *[other] { $count } people there
+    }
+destinations-updated-now = Official grid guide · updated just now
+destinations-updated = Official grid guide · updated { $minutes } min ago
+destinations-loading = Loading the guide…
+destinations-failed = The guide could not be read. Try again in a moment.
+destinations-refresh = Refresh
+destinations-empty = No place with these filters.
+destinations-same-category = In the same category
+destinations-no-same = No other place for now.
+destinations-here-only = A landmark is made where you stand: teleport there first.
 marketplace-listings-title = Marketplace listings
 marketplace-listings-menu = Marketplace listings
 marketplace-listings-tab-all = All
