@@ -6134,6 +6134,7 @@ impl Backend {
         // whole interface only on its panel, when the viewer shows it; else
         // the desktop mirror keeps only the exit hint.
         let panel = self.vr.panel();
+        let tip = self.vr.tip();
         let mirror_ui = packet.ui.take().map(|mut ui| {
             for (id, deltas) in &ui.textures_delta.set {
                 for delta in deltas.iter() {
@@ -6144,7 +6145,7 @@ impl Backend {
                 self.egui.free_texture(id);
             }
             ui.textures_delta.clear();
-            if panel.is_none() {
+            if panel.is_none() && tip.is_none() {
                 ui.retain_vr_hint();
             }
             ui.tessellate()
@@ -6205,16 +6206,18 @@ impl Backend {
             .picture
             .apply(&self.device, &self.queue, [&eyes.textures[0], &eyes.textures[1]], self.vr.display());
         let eye_views = [0, 1].map(|i| eyes.cameras[i].projection * eyes.cameras[i].view);
-        if let Some(panel) = panel
+        if (panel.is_some() || tip.is_some())
             && let Some(ui) = &mirror_ui
         {
             world.panel.paint(&self.device, &self.queue, &mut self.egui, ui, mirror_size);
-            world.panel.draw(
-                &self.device,
-                &self.queue,
-                [(&eyes.textures[0], eye_views[0]), (&eyes.textures[1], eye_views[1])],
-                panel,
-            );
+            for shown in [panel, tip].into_iter().flatten() {
+                world.panel.draw(
+                    &self.device,
+                    &self.queue,
+                    [(&eyes.textures[0], eye_views[0]), (&eyes.textures[1], eye_views[1])],
+                    shown,
+                );
+            }
         }
         world.pointer.draw(
             &self.device,

@@ -36,6 +36,8 @@ pub(crate) struct Control {
     /// top of the anchor each frame, so re-anchoring keeps it.
     offset: RwLock<glam::Vec3>,
     panel: RwLock<Option<crate::VrPanel>>,
+    /// The hover tip's label by the beam (part of the interface image).
+    tip: RwLock<Option<crate::VrPanel>>,
 }
 impl Control {
     pub fn new(available: bool) -> Self {
@@ -51,6 +53,7 @@ impl Control {
             recenter: AtomicBool::new(false),
             offset: RwLock::new(glam::Vec3::ZERO),
             panel: RwLock::new(None),
+            tip: RwLock::new(None),
         }
     }
     pub fn set_display(&self, display: crate::VrDisplay) {
@@ -181,6 +184,13 @@ impl Control {
     pub fn panel(&self) -> Option<crate::VrPanel> {
         *self.panel.read()
     }
+    pub fn set_tip(&self, tip: Option<crate::VrPanel>) {
+        *self.tip.write() = tip.filter(|p| p.center.is_finite() && p.right.is_finite() && p.up.is_finite());
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    pub fn tip(&self) -> Option<crate::VrPanel> {
+        *self.tip.read()
+    }
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos", test))]
     pub fn started(&self) {
         self.state.store(
@@ -196,6 +206,7 @@ impl Control {
         input.updated_at = Some(Instant::now());
         *self.pointer.write() = crate::VrPointer::default();
         *self.panel.write() = None;
+        *self.tip.write() = None;
         self.state
             .store(if failed { VrState::Failed } else { VrState::Off } as u8, Ordering::Release);
     }

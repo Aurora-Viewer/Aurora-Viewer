@@ -475,6 +475,9 @@ pub struct App {
     vr_ui_pos: egui::Pos2,
     vr_keyboard_target: Option<egui::Id>,
     vr_keyboard_shift: bool,
+    /// What the beam points at in the world, for the hover tips (with VR
+    /// tooltips on).
+    vr_look: Option<(Option<usize>, Vec3)>,
     input: MoveInput,
     joystick: joystick::State,
     /// Keys and bindable mouse buttons held down.
@@ -1621,6 +1624,7 @@ impl App {
             vr_ui_pos: egui::Pos2::ZERO,
             vr_keyboard_target: None,
             vr_keyboard_shift: false,
+            vr_look: None,
             input: MoveInput::default(),
             joystick: Default::default(),
             down: HashSet::new(),
@@ -8391,6 +8395,8 @@ impl App {
             self.vr_trigger_down = false;
             // (a press held on the panel is let go)
             self.vr_panel_pointer((Vec3::ZERO, Vec3::Z), (false, true), 0.0);
+            self.vr_look = None;
+            self.vr_tip_label(renderer, None, input.head_position);
             renderer.set_vr_pointer(aurora_render::VrPointer {
                 controllers: active,
                 arc: self.vr_arc.filter(|_| active),
@@ -8413,6 +8419,9 @@ impl App {
         if let Some(t) = self.vr_panel_pointer(ray, trigger, scroll) {
             self.vr_trigger_down = down;
             self.vr_hover = None;
+            // (on the panel the tip shows there, at the beam)
+            self.vr_look = None;
+            self.vr_tip_label(renderer, None, input.head_position);
             renderer.set_vr_pointer(aurora_render::VrPointer {
                 controllers: true,
                 hand: Some(side),
@@ -8433,6 +8442,11 @@ impl App {
         let actionable = target
             .as_ref()
             .is_some_and(|(t, _, _)| t.action != crate::interaction::Action::Disabled);
+        // the hover tip of what the beam is on, as a label beside it
+        self.vr_look = point
+            .filter(|_| settings.tooltips)
+            .map(|p| (target.as_ref().map(|(_, index, _)| *index), p));
+        self.vr_tip_label(renderer, self.vr_look.map(|(_, p)| p), input.head_position);
         // the clickable prim pointed at is outlined (the desktop has the
         // cursor's shape for this; VR has no cursor)
         let outline = target.as_ref().filter(|_| actionable).and_then(|(_, index, _)| {
@@ -11703,6 +11717,10 @@ impl App {
         }
         self.look_hover = None;
         self.hover_tips.avatar = None;
+        // in VR the beam is the hover (app/vr_ui.rs)
+        if let Some(look) = self.vr_look {
+            self.look_hover = Some(look);
+        }
         let tips_on = self.hover_tips_on();
         if matches!(self.screen, Screen::World)
             && !self.build.open
@@ -16133,7 +16151,7 @@ impl App {
                 }
                 // the hover tips of what the pointer rested on (none in
                 // mouselook nor over a held photo)
-                if let Some(action) = self.draw_hover_tips(&ctx, &p, !self.camera.mouselook() && !held) {
+                if let Some(action) = self.draw_hover_tips(&ctx, &p, (!self.camera.mouselook() || self.vr_look.is_some()) && !held) {
                     a.ctx_action = Some(action);
                 }
                 ui::sky_beacons::draw(

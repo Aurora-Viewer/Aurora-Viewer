@@ -272,6 +272,11 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     " m",
                 );
                 cx.toggle(
+                    tr!("ui-options-camera-vr-tooltips"),
+                    tr!("ui-options-camera-vr-tooltips-help"),
+                    &field!(camera.vr.tooltips),
+                );
+                cx.toggle(
                     tr!("ui-options-camera-vr-haptics"),
                     tr!("ui-options-camera-vr-haptics-help"),
                     &field!(camera.vr.haptics),

@@ -30,6 +30,7 @@ pub(super) fn place_panel(head: Vec3, head_forward: Vec3, aspect: f32) -> aurora
         // (Z up: the facing crossed with up is the viewer's right)
         right: forward.cross(Vec3::Z).normalize_or(Vec3::Y) * half,
         up: Vec3::Z * half * aspect.clamp(0.2, 3.0),
+        uv: aurora_render::VrPanel::WHOLE,
     }
 }
 
@@ -113,6 +114,38 @@ impl App {
             });
         }
         Some(t)
+    }
+
+    /// The hover tip's label by the beam: the part of the interface image
+    /// where the tip was laid out (at the middle, `draw_hover_tips`), a
+    /// little in front of the hit and above it, facing the headset, larger
+    /// with distance so it reads the same.
+    pub(super) fn vr_tip_label(&self, renderer: &Renderer, at: Option<Vec3>, head: Vec3) {
+        let label = at.zip(self.hover_tip_rect()).and_then(|(point, tip)| {
+            let screen = self.egui_ctx.content_rect();
+            if screen.width() < 1.0 || screen.height() < 1.0 || tip.width() < 1.0 {
+                return None;
+            }
+            let to_head = head - point;
+            let distance = to_head.length().clamp(0.6, 12.0);
+            let forward = (-to_head).with_z(0.0).normalize_or(Vec3::X);
+            let metres_per_point = 0.0008 * distance;
+            let half = egui::vec2(tip.width(), tip.height()) * 0.5 * metres_per_point;
+            let toward = to_head.normalize_or_zero() * (0.15 * distance).min(0.6);
+            let uv = [
+                (tip.min.x - screen.min.x) / screen.width(),
+                (tip.min.y - screen.min.y) / screen.height(),
+                (tip.max.x - screen.min.x) / screen.width(),
+                (tip.max.y - screen.min.y) / screen.height(),
+            ];
+            Some(aurora_render::VrPanel {
+                center: point + toward + Vec3::Z * (half.y + 0.04 * distance),
+                right: forward.cross(Vec3::Z).normalize_or(Vec3::Y) * half.x,
+                up: Vec3::Z * half.y,
+                uv: uv.map(|c| c.clamp(0.0, 1.0)),
+            })
+        });
+        renderer.set_vr_tip(label);
     }
 
     /// The on-screen keyboard, at the bottom of the interface while the

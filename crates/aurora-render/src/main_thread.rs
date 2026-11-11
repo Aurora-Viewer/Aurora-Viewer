@@ -1309,6 +1309,11 @@ impl Renderer {
     pub fn set_vr_panel(&self, panel: Option<crate::VrPanel>) {
         self.vr.set_panel(panel);
     }
+    /// The hover tip's label in VR: the tip's part of the interface image,
+    /// placed in the world (None: no label).
+    pub fn set_vr_tip(&self, tip: Option<crate::VrPanel>) {
+        self.vr.set_tip(tip);
+    }
     /// A short vibration on one controller.
     pub fn vr_haptic(&self, side: crate::VrSide, amplitude: f32, seconds: f32) {
         self.vr.haptic(side, amplitude, seconds);

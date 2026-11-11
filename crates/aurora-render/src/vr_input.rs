@@ -61,6 +61,14 @@ pub struct VrPanel {
     pub center: Vec3,
     pub right: Vec3,
     pub up: Vec3,
+    /// The part of the interface image shown on it: left, top, right,
+    /// bottom, 0..1 (the whole image for the panel, the hover tip's
+    /// rectangle for a tip label).
+    pub uv: [f32; 4],
+}
+
+impl VrPanel {
+    pub const WHOLE: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
 }
 
 impl VrPanel {
@@ -413,6 +421,7 @@ mod tests {
             center: Vec3::new(0.0, 2.0, 1.5),
             right: Vec3::X * 0.6,
             up: Vec3::Z * 0.4,
+            uv: VrPanel::WHOLE,
         };
         // the viewer at the origin looking +Y sees the panel's front
         let (t, u, v) = panel.hit(Vec3::new(0.0, 0.0, 1.5), Vec3::Y).expect("centre");

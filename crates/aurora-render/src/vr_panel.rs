@@ -246,11 +246,12 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> 
             position: (panel.center + panel.right * x + panel.up * y).to_array(),
             uv: [u, v],
         };
+        let [u0, v0, u1, v1] = panel.uv;
         let (tl, tr, br, bl) = (
-            corner(-1.0, 1.0, 0.0, 0.0),
-            corner(1.0, 1.0, 1.0, 0.0),
-            corner(1.0, -1.0, 1.0, 1.0),
-            corner(-1.0, -1.0, 0.0, 1.0),
+            corner(-1.0, 1.0, u0, v0),
+            corner(1.0, 1.0, u1, v0),
+            corner(1.0, -1.0, u1, v1),
+            corner(-1.0, -1.0, u0, v1),
         );
         queue.write_buffer(&self.vertices, 0, bytemuck::cast_slice(&[tl, tr, br, tl, br, bl]));
         for (i, (_, view_proj)) in eyes.iter().enumerate() {

@@ -31,6 +31,11 @@ pub(crate) struct HoverTipsState {
 impl App {
     /// The tips are on: the saved settings (the main switch, or avatars
     /// alone), or the demo's scenario.
+    /// Where the tip was drawn last frame, in points (the VR label).
+    pub(super) fn hover_tip_rect(&self) -> Option<egui::Rect> {
+        self.hover_tips.rect
+    }
+
     pub(super) fn hover_tips_on(&self) -> bool {
         tips::any_enabled(&self.settings.hover_tips) || (self.demo && crate::demo::hover_tips::scenario().is_some())
     }
@@ -86,6 +91,14 @@ impl App {
         let pointer = ctx
             .input(|i| i.pointer.latest_pos())
             .or_else(|| self.demo.then(|| egui::pos2(self.cursor_pos.0 / ppp, self.cursor_pos.1 / ppp)));
+        // in VR the beam is the pointer: the tip is laid out at the middle
+        // of the interface, and the headset shows that part by the beam
+        // (app/vr_ui.rs)
+        let pointer = if self.vr_look.is_some() {
+            Some(ctx.content_rect().center())
+        } else {
+            pointer
+        };
         let frame = tips::Frame {
             subject,
             pointer,
