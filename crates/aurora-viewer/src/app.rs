@@ -132,6 +132,7 @@ mod revoke_on_sit;
 mod rlva;
 mod safe_graphics;
 mod script_clicks;
+mod script_recovery;
 mod scripts;
 mod settings_backup;
 mod shape_editor;
@@ -1094,6 +1095,8 @@ pub struct App {
     task_notecards: std::collections::HashMap<(uuid::Uuid, uuid::Uuid), task_notecards::TaskNotecard>,
     demo_documents: std::collections::HashMap<uuid::Uuid, Vec<u8>>,
     script_editors: ui::scripts::Editors,
+    /// The scripts an earlier session left unsaved (app/script_recovery.rs).
+    script_recovery: script_recovery::Recovery,
     demo_script_sources: std::collections::HashMap<aurora_net::scripts::ScriptTarget, String>,
     demo_script_experiences: std::collections::HashMap<aurora_net::scripts::ScriptTarget, uuid::Uuid>,
     inventory_images: inventory_thumbnail::ImageJobs,
@@ -1970,6 +1973,7 @@ impl App {
             task_notecards: Default::default(),
             demo_documents: Default::default(),
             script_editors: Default::default(),
+            script_recovery: Default::default(),
             demo_script_sources: Default::default(),
             demo_script_experiences: Default::default(),
             inventory_images: Default::default(),
@@ -2653,6 +2657,17 @@ impl App {
                     Ok(uuid::Uuid::new_v4())
                 };
                 self.task_notecard_saved(*request, *object, *item, result);
+                return;
+            }
+            if let NetCommand::CreateScriptItem {
+                request,
+                parent,
+                name,
+                description,
+                source,
+            } = &cmd
+            {
+                self.demo_create_script(*request, *parent, name, description, source);
                 return;
             }
             if let NetCommand::CreateInventoryItem {
@@ -3397,6 +3412,9 @@ impl App {
             return;
         }
         if let NetEvent::InventoryContentSaved { request, item, result } = ev {
+            if self.script_recovery_saved(request, item, &result) {
+                return;
+            }
             if self.ik_editor.project_saving(request) {
                 if let Ok(saved) = &result {
                     self.world.inventory.add_items(vec![saved.clone()]);
@@ -3890,6 +3908,7 @@ impl App {
                     )
                 };
                 self.load_region_titles(l.agent_id);
+                self.script_recovery_login(l.agent_id);
                 self.chat_ui.recent_emojis = if self.demo {
                     let mut recent = ui::emoji::recent::Recent::demo(&crate::demo::recent_emojis());
                     if let Ok(favorites) = std::env::var("AURORA_DEMO_FAVORITE_EMOJIS") {
@@ -6261,6 +6280,9 @@ impl App {
             self.world.social.avatar_names.save(&path);
         }
         self.settings.save();
+        // the copies of the script editors closed just before (ui/scripts/backup.rs)
+        self.script_editors.back_up();
+        crate::ui::scripts::backup::flush(Duration::from_secs(2));
         // the last lines of the conversations reach their files
         self.world.chat_log.flush(Duration::from_secs(2));
         // the recent emojis of a message sent just before
@@ -6945,6 +6967,7 @@ impl App {
             }
         }
         self.demo_script_steps();
+        self.demo_script_recovery_steps();
         self.world_click_demo_steps();
         self.object_menu_demo_steps();
         self.release_keys_demo_steps();
@@ -17594,6 +17617,7 @@ impl App {
                 }
                 self.show_task_notecards(&ctx, &p);
                 self.show_scripts(&ctx, &p);
+                self.show_script_recovery(&ctx, &p);
                 for action in ui::inventory::task_drop::confirm(&ctx, &p, &mut self.task_transfer) {
                     self.apply_inventory_action(action);
                 }

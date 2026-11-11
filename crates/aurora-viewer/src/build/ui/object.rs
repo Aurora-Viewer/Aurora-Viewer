@@ -279,8 +279,9 @@ pub fn parse_vector(t: &str) -> Option<Vec3> {
     (parts.len() == 3).then(|| Vec3::new(parts[0], parts[1], parts[2]))
 }
 
-/// Icon of the paste entries, the one of the paste buttons.
+/// System clipboard paste uses the same icon as the other paste menus.
 const PASTE: &str = "clipboard-text-filled";
+const PASTE_STORED: &str = "clipboard-data-filled";
 
 #[allow(clippy::too_many_arguments)]
 fn vec_block(
@@ -295,6 +296,7 @@ fn vec_block(
     decimals: usize,
     enabled: bool,
     mixed: [bool; 3],
+    collapse: Option<&mut bool>,
 ) -> (Edit, Option<Vec3>, bool) {
     if super::legacy::active(ui) {
         return legacy_vec_block(ui, p, tool, which, title, v, increment, range, decimals, enabled, mixed);
@@ -309,31 +311,48 @@ fn vec_block(
         aurora_i18n::tr!("build-compact-size"),
         aurora_i18n::tr!("build-compact-rotation"),
     ][which];
-    // LLPanelObject::onCopyPos/Size/Rot keeps a separate value per vector.
-    // Keep each pair on its own caption line, independent of the manipulator.
+    // LLPanelObject::onCopyPos/Size/Rot and onPastePosClip/SizeClip/RotClip
+    // (indra/newview/llpanelobject.cpp) keep internal and system pastes separate.
     ui.horizontal(|ui| {
         ui.label(RichText::new(title).size(super::common::BODY).color(p.muted));
+        if let Some(expanded) = collapse {
+            ui.add_space((ui.max_rect().center().x - ui.cursor().min.x - 11.0).max(3.0));
+            if super::compact::icon_button(ui, p, "caret-down-filled", aurora_i18n::tr!("build-layout-transform"), true).clicked() {
+                *expanded = false;
+            }
+        }
         super::compact::actions(ui, |ui| {
-            if super::compact::icon_button(
+            let system = super::compact::icon_button(ui, p, PASTE, aurora_i18n::tr!("build-compact-paste-system"), enabled);
+            #[cfg(test)]
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(egui::Id::unique(("vector-system-paste", which)), system.rect));
+            if system.clicked() {
+                tool.ui.requests.push(Request::PasteVector(which));
+            }
+            let stored = super::compact::icon_button(
                 ui,
                 p,
-                PASTE,
-                &aurora_i18n::tr!("build-ui-object-paste", n = vector_name),
+                PASTE_STORED,
+                aurora_i18n::tr!("build-compact-paste-vector"),
                 enabled && tool.ui.vec_clipboard[which].is_some(),
-            )
-            .clicked()
-            {
+            );
+            #[cfg(test)]
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(egui::Id::unique(("vector-stored-paste", which)), stored.rect));
+            if stored.clicked() {
                 paste = tool.ui.vec_clipboard[which];
             }
-            if super::compact::icon_button(
+            let copy_button = super::compact::icon_button(
                 ui,
                 p,
                 "copy-filled",
                 &aurora_i18n::tr!("build-ui-object-copy", n = vector_name),
                 enabled,
-            )
-            .clicked()
-            {
+            );
+            #[cfg(test)]
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(egui::Id::unique(("vector-copy", which)), copy_button.rect));
+            if copy_button.clicked() {
                 copy = true;
             }
         });
@@ -408,13 +427,16 @@ fn vec_block(
             );
         }
     });
+    #[cfg(test)]
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(egui::Id::unique(("build-vector-fields", which)), row.response.rect));
     // The row menu also accepts vectors from the system clipboard.
     menu::context_menu(&row.response, p, |ui| {
         if menu::item_if(ui, p, "copy-filled", aurora_i18n::tr!("build-compact-copy-vector"), enabled) {
             copy = true;
         }
         let stored = enabled && tool.ui.vec_clipboard[which].is_some();
-        if menu::item_if(ui, p, PASTE, aurora_i18n::tr!("build-compact-paste-vector"), stored) {
+        if menu::item_if(ui, p, PASTE_STORED, aurora_i18n::tr!("build-compact-paste-vector"), stored) {
             paste = tool.ui.vec_clipboard[which];
         }
         if menu::item_if(ui, p, PASTE, aurora_i18n::tr!("build-compact-paste-system"), enabled) {
@@ -537,8 +559,18 @@ pub fn show_transform(
     let decimals = s.decimal_precision.min(7) as usize;
 
     let mixed = mixed_vectors(tool, world, s);
-    let can_move = crate::build::can_transform(world, idx, s.edit_linked, EditMode::Move);
-    let can_scale = crate::build::can_transform(world, idx, s.edit_linked, EditMode::Stretch);
+    // LLSelectMgr::selectGetEditMoveLinksetPermissions and
+    // LLPanelObject::getState (indra/newview/llselectmgr.cpp, llpanelobject.cpp)
+    // require the complete selection's properties and operation rights.
+    let known = tool.selection.iter().all(|key| {
+        world
+            .objects
+            .index_of(key)
+            .and_then(|idx| world.objects.get(idx))
+            .is_some_and(|o| tool.props.get(&o.full_id).is_some_and(|props| props.full))
+    });
+    let can_move = known && crate::build::manip::can_transform_selection(world, &tool.selection, s.edit_linked, EditMode::Move);
+    let can_scale = known && crate::build::manip::can_transform_selection(world, &tool.selection, s.edit_linked, EditMode::Stretch);
     let (z, y, x) = if local { local_rot } else { wr }.to_euler(EulerRot::ZYX);
     let wrap = |a: f32| {
         let d = (a.to_degrees() / 0.05).round() * 0.05;
@@ -573,6 +605,7 @@ pub fn show_transform(
         decimals,
         can_move,
         mixed[0],
+        (!s.legacy_window).then_some(&mut s.transform_expanded),
     );
     if copy {
         copy_vector(ui, tool, 0, Vec3::from_array(pos), decimals);
@@ -601,6 +634,7 @@ pub fn show_transform(
         decimals,
         can_scale,
         mixed[1],
+        None,
     );
     if copy {
         copy_vector(ui, tool, 1, Vec3::from_array(size), decimals);
@@ -622,6 +656,7 @@ pub fn show_transform(
         decimals,
         can_move,
         mixed[2],
+        None,
     );
     if copy {
         copy_vector(ui, tool, 2, Vec3::from_array(rot), decimals);
@@ -651,46 +686,59 @@ pub fn show_flags(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
             .and_then(|o| tool.props.get(&o.full_id))
             .is_some_and(|pr| pr.owner_mask & perm::MOVE == 0)
     }));
-    if let Some(v) = check(
-        ui,
-        p,
-        locked.unwrap_or(false),
-        locked_mixed,
-        aurora_i18n::tr!("build-ui-object-locked"),
-        self_owned,
-    ) {
-        tool.set_perm(world, perm_field::OWNER, !v, perm::MOVE | perm::MODIFY);
-    }
     let root_ok = editable && is_root;
-    if let Some(v) = check(
-        ui,
-        p,
-        flags & FLAGS_USE_PHYSICS != 0,
-        false,
-        aurora_i18n::tr!("build-ui-object-physics"),
-        root_ok && !flexible,
-    ) {
-        tool.set_flags(world, Some(v), None, None);
+    let checks = [
+        (
+            aurora_i18n::tr!("build-ui-object-locked"),
+            locked.unwrap_or(false),
+            locked_mixed,
+            self_owned,
+        ),
+        (
+            aurora_i18n::tr!("build-ui-object-physics"),
+            flags & FLAGS_USE_PHYSICS != 0,
+            false,
+            root_ok && !flexible,
+        ),
+        (
+            aurora_i18n::tr!("common-temporary"),
+            flags & FLAGS_TEMPORARY_ON_REZ != 0,
+            false,
+            root_ok,
+        ),
+        (
+            aurora_i18n::tr!("build-ui-object-phantom"),
+            flags & FLAGS_PHANTOM != 0,
+            false,
+            root_ok && !flexible,
+        ),
+    ];
+    let mut changes = [None; 4];
+    let mut column = |ui: &mut egui::Ui, indices: &[usize]| {
+        for &index in indices {
+            let (caption, value, mixed, enabled) = checks[index];
+            changes[index] = check(ui, p, value, mixed, caption, enabled);
+        }
+    };
+    if super::legacy::active(ui) {
+        column(ui, &[0, 1, 2, 3]);
+    } else {
+        ui.columns(2, |columns| {
+            column(&mut columns[0], &[0, 1]);
+            column(&mut columns[1], &[2, 3]);
+        });
     }
-    if let Some(v) = check(
-        ui,
-        p,
-        flags & FLAGS_TEMPORARY_ON_REZ != 0,
-        false,
-        aurora_i18n::tr!("common-temporary"),
-        root_ok,
-    ) {
-        tool.set_flags(world, None, Some(v), None);
+    if let Some(value) = changes[0] {
+        tool.set_perm(world, perm_field::OWNER, !value, perm::MOVE | perm::MODIFY);
     }
-    if let Some(v) = check(
-        ui,
-        p,
-        flags & FLAGS_PHANTOM != 0,
-        false,
-        aurora_i18n::tr!("build-ui-object-phantom"),
-        root_ok && !flexible,
-    ) {
-        tool.set_flags(world, None, None, Some(v));
+    if let Some(value) = changes[1] {
+        tool.set_flags(world, Some(value), None, None);
+    }
+    if let Some(value) = changes[2] {
+        tool.set_flags(world, None, Some(value), None);
+    }
+    if let Some(value) = changes[3] {
+        tool.set_flags(world, None, None, Some(value));
     }
 }
 
@@ -704,7 +752,14 @@ pub fn show_shape(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
         return;
     }
     let editable = tool.can_modify(world, idx);
-    let single = tool.sel_prims(world).len() == 1 || tool.roots(world).len() == 1;
+    let single = tool.sel_prims(world).len() == 1;
+    // LLPanelObject::getState clears geometry without Modify or with several
+    // selected volumes. Mesh LOD statistics above remain public, as in
+    // activateMeshFields; sculpt maps and shape parameters do not.
+    if !editable || !single {
+        super::common::small(ui, p, "—");
+        return;
+    }
     let mut chosen_type = None;
     let legacy = super::legacy::active(ui);
     ui.horizontal(|ui| {
