@@ -1412,7 +1412,8 @@ fn contact_shadow(frag: vec2<f32>) -> f32 {
 // camera only (a blended face in front of it, an MSAA sample of another
 // surface, a reflection or a probe, which have `soft.x == 0`).
 fn soft_shadow(world_pos: vec3<f32>, frag: vec2<f32>) -> f32 {
-    if (frame.soft.x < 0.5) {
+    // (a blended face outside the occlusion depth keeps the filter of before)
+    if (frame.soft.x < 0.5 || !screen_surface) {
         return -1.0;
     }
     let p = vec2<i32>(frag);

@@ -20,7 +20,7 @@ struct Params {
     camera: vec4<f32>,      // xyz: the camera; w: the angle between two neighbouring pixels' rays
     splits: vec4<f32>,      // the three cascades' far distances; w: the frame's noise phase
     light: vec4<f32>,       // x: tan of the light's half angle, y: largest filter radius (m), z: filter taps, w: blocker gathers
-    size: vec4<u32>,        // x, y: the target's size
+    size: vec4<u32>,        // x, y: the target's size; z, w: its first pixel in the whole photo (0 outside a tile)
 }
 
 @group(0) @binding(0) var<uniform> p: Params;
@@ -32,7 +32,8 @@ struct Params {
 @group(0) @binding(6) var out_tex: texture_storage_2d<r32uint, write>;
 // The shadow atlas's minimum depths over blocks of 4, 8 and 16 texels (levels
 // 0 to 2 of `mm`), which the search for casters reads: a block holds the
-// nearest depth of its texels, so no thin caster slips between the samples.
+// nearest depth of its texels, so no thin caster slips between the texels
+// of a block.
 // In the build passes `mm_in` is the level before and `mm_out` the level made.
 @group(0) @binding(7) var mm_in: texture_2d<f32>;
 @group(0) @binding(8) var mm_out: texture_storage_2d<r32float, write>;
@@ -162,7 +163,11 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
         // of blocks of 4, 8 or 16 texels (the larger the wider the disk, so
         // that its gathers keep covering it), and one of the texels at the
         // point itself, which always finds a thin caster whose shadow it is
-        // inside.
+        // inside. A thin caster cannot slip between the texels of a block,
+        // but one far from the point can fall between the eight gathers:
+        // it then goes unseen by the search (the filter still sees it).
+        // The point's shadow is bounded by the filter taps, a few per cent
+        // of the light at the widest softness.
         let search = p.light.y / (2.0 * radius);
         let texel_m = 2.0 * radius * texel;
         let wide = p.light.y / texel_m;
@@ -292,7 +297,7 @@ fn soft(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let n = normal_at(px, depth, pos);
-    let f = soft_factor(pos, n, view_depth, id.xy);
+    let f = soft_factor(pos, n, view_depth, id.xy + p.size.zw);
     store(id.xy, f.x, view_depth, f.y);
 }
 

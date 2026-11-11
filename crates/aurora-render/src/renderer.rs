@@ -8148,6 +8148,7 @@ impl Backend {
         // ---- soft sun shadows: the shadow of each pixel of the prepass (or
         // of the occlusion depth, with the blended faces opaque enough in it)
         if let (true, Some(soft), Some(t)) = (self.soft_now, &self.soft, &self.targets.soft) {
+            let photo = self.snapshot_window.is_some() || f.photo_scale > 1.0;
             soft.write(
                 &self.queue,
                 t,
@@ -8157,9 +8158,11 @@ impl Backend {
                     inv_view_proj: Mat4::from_cols_array_2d(&main.inv_view_proj),
                     camera: Vec3::from_slice(&main.camera_pos[..3]),
                     softness: f.shadow_softness,
-                    // the TAA accumulates a new pattern each frame
-                    phase: if self.taa.is_some() { (self.frame_index % 16) as u32 } else { 0 },
-                    photo: self.snapshot_window.is_some() || f.photo_scale > 1.0,
+                    // the TAA accumulates a new pattern each frame (a photo
+                    // keeps one, which its tiles share)
+                    phase: if self.taa.is_some() && !photo { (self.frame_index % 16) as u32 } else { 0 },
+                    photo,
+                    tile: photo_part(f.photo_tile),
                 },
             );
             soft.encode(&mut encoder, t, blend_in_ao_depth);

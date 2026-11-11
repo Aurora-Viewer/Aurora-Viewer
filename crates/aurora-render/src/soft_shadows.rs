@@ -19,7 +19,7 @@
 //! soft shadows PR, #2288); the real sun, 0.53 degrees, is a softness of 0.23.
 //! The search for casters reads the shadow atlas's minimum depths over blocks
 //! of 4, 8 and 16 texels, built each frame by a small pass (`mm_build0`,
-//! `mm_build`), so that no thin caster slips between its samples.
+//! `mm_build`), so that no thin caster slips between the texels of a block.
 //!
 //! Off, nothing is created or drawn, and the shadows are those of before to
 //! the pixel: the pipelines are made with the first frame that wants them,
@@ -176,6 +176,17 @@ pub(crate) struct Frame {
     pub phase: u32,
     /// A photo: more taps.
     pub photo: bool,
+    /// The part of the whole photo this frame draws (`photo_part`; the
+    /// whole image otherwise): the noise is counted from the photo's corner,
+    /// so that the tiles of a photo share one pattern without seams.
+    pub tile: [f32; 4],
+}
+
+/// The pixel of the whole photo a tile's first pixel is (the noise's origin),
+/// as GTAO's `pixel_noise` counts it (gtao.wgsl).
+pub(crate) fn tile_origin(tile: [f32; 4], size: (u32, u32)) -> [u32; 2] {
+    let at = |part: f32, whole: f32, size: u32| (part / whole.max(1e-6) * size as f32).round().max(0.0) as u32;
+    [at(tile[0], tile[2], size.0), at(tile[1], tile[3], size.1)]
 }
 
 /// The pipelines, made with the first frame that wants the soft shadows.
@@ -522,6 +533,7 @@ impl SoftShadows {
 
     /// The constants of the frame, before the encoder runs.
     pub(crate) fn write(&self, queue: &wgpu::Queue, t: &Targets, f: &Frame) {
+        let origin = tile_origin(f.tile, t.size);
         let u = ParamsU {
             cascade_vp: f.cascades.map(|m| m.to_cols_array_2d()),
             inv_view_proj: f.inv_view_proj.to_cols_array_2d(),
@@ -533,7 +545,7 @@ impl SoftShadows {
                 if f.photo { PHOTO_TAPS } else { TAPS },
                 GATHERS,
             ],
-            size: [t.size.0, t.size.1, 0, 0],
+            size: [t.size.0, t.size.1, origin[0], origin[1]],
         };
         queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&u));
     }
@@ -571,12 +583,15 @@ impl SoftShadows {
 /// The angle between the rays of two neighbouring pixels at the centre of
 /// the view, which the blur turns into metres.
 fn pixel_angle(inv_view_proj: Mat4, height: u32) -> f32 {
-    let ray = |y: f32| {
-        let a = inv_view_proj.project_point3(Vec3::new(0.0, y, 1.0));
-        let b = inv_view_proj.project_point3(Vec3::new(0.0, y, 0.5));
+    // in double precision: far from the origin (a skybox) the camera's
+    // translation would swamp the two points' difference in single
+    let inv = inv_view_proj.as_dmat4();
+    let ray = |y: f64| {
+        let a = inv.project_point3(glam::DVec3::new(0.0, y, 1.0));
+        let b = inv.project_point3(glam::DVec3::new(0.0, y, 0.5));
         (a - b).normalize()
     };
-    ray(0.0).angle_between(ray(2.0 / height.max(1) as f32))
+    ray(0.0).angle_between(ray(2.0 / f64::from(height.max(1)))) as f32
 }
 
 #[cfg(test)]
@@ -716,6 +731,43 @@ mod tests {
         assert!(common.contains("shadow_lift(shadow_factor(pos,normal"));
         assert!(include_str!("shaders/env.wgsl").contains("shadow_lift(shadow_factor(in.world_pos"));
         assert!(include_str!("shaders/object.wgsl").contains("shadow_lift(sh), ll_sun_linear(a)"));
+    }
+
+    #[test]
+    fn the_pixel_angle_holds_far_from_the_origin() {
+        // a projection of 60 degrees, the camera at the origin and at skybox
+        // altitude: the angle between neighbouring pixels' rays is the same
+        let fov = 60.0_f64.to_radians();
+        let height = 1080_u32;
+        let expected = 2.0 * (fov / 2.0).tan() / f64::from(height);
+        for z in [0.0_f64, 4096.0] {
+            let proj = glam::DMat4::perspective_infinite_reverse_rh(fov, 16.0 / 9.0, 0.1);
+            let view = glam::DMat4::look_at_rh(glam::DVec3::new(10.0, -20.0, z), glam::DVec3::new(10.0, 50.0, z - 5.0), glam::DVec3::Z);
+            let inverse = (proj * view).inverse().as_mat4();
+            let angle = f64::from(pixel_angle(inverse, height));
+            assert!((angle / expected - 1.0).abs() < 0.01, "z = {z}: {angle} against {expected}");
+        }
+    }
+
+    #[test]
+    fn a_tiles_noise_starts_at_its_pixel_of_the_whole_photo() {
+        // the whole image, a window: the origin
+        assert_eq!(tile_origin([0.0, 0.0, 1.0, 1.0], (1920, 1080)), [0, 0]);
+        // the middle third of a 3 x 3 split, drawn at 640 x 360 a tile
+        assert_eq!(tile_origin([1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0], (640, 360)), [640, 360]);
+        assert_eq!(tile_origin([2.0 / 3.0, 0.0, 1.0 / 3.0, 1.0 / 3.0], (640, 360)), [1280, 0]);
+    }
+
+    #[test]
+    fn the_shader_texts_hold_the_surface_and_lift_rules() {
+        let common = include_str!("shaders/common.wgsl");
+        // a blended face outside the occlusion depth keeps the filter of before
+        assert!(common.contains("if (frame.soft.x < 0.5 || !screen_surface) {"));
+        // the terrain's wet glint takes the lift on a classic sky only (the
+        // others have it from `sun_shadow`)
+        assert!(include_str!("shaders/env.wgsl").contains("*select(sh, shadow_lift(sh), is_classic_sky()))*wet;"));
+        // the noise is counted from the photo's corner
+        assert!(include_str!("shaders/soft_shadows.wgsl").contains("id.xy + p.size.zw"));
     }
 
     #[test]
@@ -1049,6 +1101,7 @@ mod tests {
                     softness,
                     phase: 0,
                     photo: false,
+                    tile: [0.0, 0.0, 1.0, 1.0],
                 },
             );
             let mut encoder = device.create_command_encoder(&Default::default());

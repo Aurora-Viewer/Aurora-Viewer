@@ -11079,7 +11079,7 @@ What the inventory must show with these scenarios:
   Percentage-closer soft shadows in compute, once per pixel of the depth
   prepass: a search of the shadow map finds the casters and their mean
   distance (read in the minimum depths of blocks of 4, 8 and 16 texels of
-  the atlas, rebuilt each frame, so that no thin caster is missed), the
+  the atlas, rebuilt each frame, so that no thin caster slips between the texels of a block), the
   light's size (2.3 degrees across at a softness of 1) gives the
   penumbra, and 12 rotated taps take the light (32 in a photo), then a
   bilateral blur in the world's metres removes their noise. The penumbra is
