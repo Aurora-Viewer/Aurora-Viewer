@@ -111,37 +111,37 @@ while rethinking the user interface.
   </tr>
 </table>
 
-### New in 0.9.6 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+### New in 0.9.7 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>A showcase for your outfits</h3>
-      Appearance's Outfit gallery shows each outfit as a large picture, with
-      favourites, folders and one-click wear. Auto portrait frames you in a
-      studio, and Take the portraits does every outfit in one go.
+      <h3>A rethought Build window</h3>
+      The selection sits in a header that folds away, the options form
+      columns you arrange yourself with Organize options…, position, size
+      and rotation keep the full width, and Contents gets its own display
+      menu.
     </td>
     <td width="50%" valign="top">
-      <h3>65 photo looks built in</h3>
-      The photo LUT tab comes with 20 looks by Czar Fenris and 45 by Nanner
-      Pudding, shared with every Aurora user. Import several .cube files of
-      your own at once.
+      <h3>Script recovery, like the Legacy Viewer</h3>
+      After a crash or a lost connection, the unsaved changes of your
+      scripts come back at the next login, in Lost And Found. Advanced ›
+      Release keys frees the controls a broken vehicle or HUD keeps.
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <h3>The Milky Way from real stars</h3>
-      The night sky's band is drawn from the 2.5 million stars of the
-      Tycho-2 Catalogue, and Star hour can follow the real clock.
-      Advanced › Rendering types hides parts of the world, like the Legacy
-      Viewer.
+      <h3>Destinations, in Aurora's own window</h3>
+      Search the grid's Destination Guide, filter by category and rating,
+      see how many people are at each place and which ones you visited,
+      and teleport in one click.
     </td>
     <td valign="top">
-      <h3>Poser, building and inventory</h3>
-      Space brakes your avatar like the Legacy Viewer, the poser gets
-      Save as…, move handles are easier to grab, land selections snap to
-      the parcel grid, and Favorites lists starred items without their
-      folders.
+      <h3>Poser and appearance</h3>
+      A compact poser window that leaves the scene free, several joints
+      moved together with Shift + click, a ring that turns a joint around
+      the camera's view, and Export XML for your shape, physics and
+      clothing.
     </td>
   </tr>
 </table>
