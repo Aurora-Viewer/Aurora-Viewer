@@ -1991,7 +1991,7 @@ pub fn show(
                     ui,
                     p,
                     "file-export",
-                    aurora_i18n::tr!("appearance-xml-export"),
+                    aurora_i18n::tr!("appearance-xml-export-mine"),
                     idle && crate::world::appearance_xml::ready(world),
                 ) {
                     st.json.export_appearance(ui.ctx(), world);
@@ -2311,7 +2311,7 @@ mod tests {
             draw(&ctx, &mut world, &mut state, None);
         }
         assert!(!crate::world::appearance_xml::ready(&world));
-        assert!(click_menu(&ctx, &mut world, &mut state, aurora_i18n::tr!("appearance-xml-export")).is_empty());
+        assert!(click_menu(&ctx, &mut world, &mut state, aurora_i18n::tr!("appearance-xml-export-mine")).is_empty());
         assert!(!state.json.busy());
     }
 

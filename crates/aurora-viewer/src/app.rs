@@ -9003,7 +9003,7 @@ impl App {
                 cof_version: 1,
                 appearance_version: 1,
                 hover_height: 0.0,
-                attachments: 0,
+                attachments: Vec::new(),
             }));
             if mode == "xml-unavailable" {
                 self.world.preview_shape(Some(vec![0]));

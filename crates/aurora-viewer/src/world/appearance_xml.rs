@@ -1,5 +1,11 @@
 //! Self-only LLVOAvatar::dumpArchetypeXML / dump_visual_param export
 //! (indra/newview/llvoavatar.cpp, originally LGPL 2.1). No asset export.
+//!
+//! Stricter than the Legacy Viewer, whose dump checks no permission: the
+//! parameters of a wearable type are written only when the agent may modify
+//! every worn item of that type (`actions::appearance_xml_export_allowed`,
+//! the rule of the editors' Export XML button); the others are left out and
+//! counted, so a no-modify shape or skin is not written to a file.
 use super::World;
 use crate::scene::avatar::AvatarLibrary;
 use aurora_llsd::xml::{self, Element};
@@ -21,14 +27,51 @@ pub struct Snapshot {
     library: Arc<AvatarLibrary>,
     values: Vec<u8>,
     posed: Vec<Mat4>,
+    /// Wearable types (LLWearableType) left out: a worn item of the type
+    /// that the agent may not modify.
+    refused: std::collections::BTreeSet<u8>,
+    /// How many worn items made them left out.
+    left_out: usize,
+}
+
+/// The wearable types whose parameters may not be written, and how many worn
+/// items refuse it: each worn body part or clothing item of the outfit is
+/// checked with `actions::appearance_xml_export_allowed`.
+fn refused_types(world: &World) -> (std::collections::BTreeSet<u8>, usize) {
+    let mut refused = std::collections::BTreeSet::new();
+    let mut count = 0;
+    let links = super::appearance::cof(&world.inventory)
+        .into_iter()
+        .flat_map(|cof| super::appearance::folder_links(&world.inventory, cof));
+    for link in links.filter(|link| !link.folder) {
+        let Some(item) = world.inventory.items.get(&link.target) else {
+            continue;
+        };
+        if !matches!(item.asset_type, 5 | 13) {
+            continue;
+        }
+        if !super::inventory::actions::appearance_xml_export_allowed(item, world.agent_id) {
+            refused.insert((item.flags & 0xff) as u8);
+            count += 1;
+        }
+    }
+    (refused, count)
 }
 impl Snapshot {
     pub fn own(world: &World) -> Option<Self> {
+        let (refused, left_out) = refused_types(world);
         ready(world).then(|| Self {
             library: world.avatar_lib.clone(),
             values: world.visual_params(&world.agent_id).unwrap_or_default().to_vec(),
             posed: world.avatar_poses.get(&world.agent_id).cloned().unwrap_or_default(),
+            refused,
+            left_out,
         })
+    }
+
+    /// How many worn items were left out for want of modify rights.
+    pub fn left_out(&self) -> usize {
+        self.left_out
     }
 
     pub fn write(&self, path: &std::path::Path) -> Result<(), String> {
@@ -48,6 +91,13 @@ impl Snapshot {
             "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<linden_genepool version=\"1.0\">\n\t<archetype name=\"???\">\n",
         );
         for (id, param) in params {
+            let refused = param
+                .attr("wearable")
+                .and_then(crate::world::inventory::wearable::kind_of)
+                .is_some_and(|kind| self.refused.contains(&kind));
+            if refused {
+                continue;
+            }
             let Some(value) = weights.get(&id).copied() else {
                 continue;
             };
@@ -194,7 +244,7 @@ mod tests {
             cof_version: 0,
             appearance_version: 1,
             hover_height: 0.0,
-            attachments: 0,
+            attachments: Vec::new(),
         };
         world.apply(NetEvent::Appearance(appearance));
         world
@@ -312,6 +362,59 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), snapshot.bytes().unwrap());
         std::fs::remove_file(&path).unwrap();
         assert!(snapshot.write(&path.join("missing.xml")).is_err());
+    }
+
+    /// The wearable types of the file's parameters.
+    fn types(snapshot: &Snapshot) -> std::collections::BTreeSet<String> {
+        let bytes = snapshot.bytes().expect("export");
+        let root = xml::parse(&bytes).expect("xml");
+        root.elements()
+            .next()
+            .expect("archetype")
+            .elements()
+            .filter(|e| e.name == "param")
+            .filter_map(|e| e.attr("wearable").map(str::to_owned))
+            .collect()
+    }
+
+    #[test]
+    fn appearance_xml_leaves_out_the_worn_items_the_agent_may_not_modify() {
+        use crate::world::inventory::actions::{COPY, FULL, MODIFY, TRANSFER};
+        let mut world = world();
+        crate::world::appearance::seed_demo(&mut world.inventory, world.agent_id);
+        crate::world::appearance::seed_demo_wearables(&mut world.inventory, world.agent_id);
+        let shape = crate::shape_editor::worn_shape(&world).expect("worn shape");
+        let all = Snapshot::own(&world).expect("snapshot");
+        assert_eq!(all.left_out(), 0, "every demo wearable is the agent's, full permissions");
+        assert!(types(&all).contains("shape") && types(&all).contains("skin"));
+        let other = Uuid::from_u128(99);
+        // The cases of actions::appearance_xml_export_allowed that refuse.
+        for (what, owner, group_owned, owner_mask) in [
+            ("no modify", world.agent_id, false, COPY | TRANSFER),
+            ("someone else's", other, false, FULL),
+            ("group owned", world.agent_id, true, FULL),
+        ] {
+            let item = world.inventory.items.get_mut(&shape).expect("shape item");
+            item.owner = owner;
+            item.group_owned = group_owned;
+            item.owner_mask = owner_mask;
+            item.everyone_mask = COPY;
+            let snapshot = Snapshot::own(&world).expect("snapshot");
+            assert_eq!(snapshot.left_out(), 1, "{what}");
+            let kinds = types(&snapshot);
+            assert!(!kinds.contains("shape"), "{what}: no shape parameter");
+            assert!(kinds.contains("skin"), "{what}: the other wearables stay");
+        }
+        // No copy or no transfer still allows it, as the editors' button.
+        for owner_mask in [MODIFY | TRANSFER, COPY | MODIFY] {
+            let item = world.inventory.items.get_mut(&shape).expect("shape item");
+            item.owner = world.agent_id;
+            item.group_owned = false;
+            item.owner_mask = owner_mask;
+            let snapshot = Snapshot::own(&world).expect("snapshot");
+            assert_eq!(snapshot.left_out(), 0);
+            assert!(types(&snapshot).contains("shape"));
+        }
     }
 
     #[test]

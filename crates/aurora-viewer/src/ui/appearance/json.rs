@@ -12,7 +12,8 @@ use std::{
 enum Outcome {
     Saved(PathBuf),
     Read(Backup),
-    AppearanceSaved(PathBuf),
+    /// The file, and how many worn items were left out (no modify rights).
+    AppearanceSaved(PathBuf, usize),
     Failed(String),
     Cancelled,
 }
@@ -98,6 +99,7 @@ impl State {
         let Some(snapshot) = crate::world::appearance_xml::Snapshot::own(world) else {
             return;
         };
+        let left_out = snapshot.left_out();
         self.spawn(ctx, world, true, move || {
             let Some(path) = rfd::FileDialog::new()
                 .set_title(aurora_i18n::tr!("appearance-xml-export"))
@@ -108,10 +110,10 @@ impl State {
                 return Outcome::Cancelled;
             };
             match snapshot.write(&path) {
-                Ok(()) => Outcome::AppearanceSaved(path),
+                Ok(()) => Outcome::AppearanceSaved(path, left_out),
                 Err(reason) => {
                     log::warn!("appearance XML export failed: {reason}");
-                    Outcome::Failed(aurora_i18n::tr!("appearance-xml-failed").into())
+                    Outcome::Failed(aurora_i18n::tr!("appearance-xml-export-failed").into())
                 }
             }
         });
@@ -161,7 +163,7 @@ impl State {
                 Err(TryRecvError::Empty) => None,
                 Err(TryRecvError::Disconnected) => Some(Outcome::Failed(
                     if appearance {
-                        aurora_i18n::tr!("appearance-xml-failed")
+                        aurora_i18n::tr!("appearance-xml-export-failed")
                     } else {
                         aurora_i18n::tr!("outfit-json-failed")
                     }
@@ -171,11 +173,11 @@ impl State {
             if let Some(outcome) = outcome {
                 self.job = None;
                 match outcome {
-                    Outcome::AppearanceSaved(path) => {
+                    Outcome::AppearanceSaved(path, left_out) => {
                         world.notifications.push(
                             crate::world::notifications::Kind::Info,
                             aurora_i18n::tr!("appearance-xml-export"),
-                            aurora_i18n::tr!("appearance-xml-saved", file = path.display().to_string()),
+                            saved_message(&path, left_out),
                             crate::world::notifications::Data::None,
                         );
                     }
@@ -378,6 +380,16 @@ pub(crate) fn demo(world: &World, st: &mut AppearanceUi, partial: bool) {
     }
 }
 
+/// "Appearance saved to …", and how many worn items were left out.
+fn saved_message(path: &std::path::Path, left_out: usize) -> String {
+    let saved = aurora_i18n::tr!("appearance-xml-saved", file = path.display().to_string());
+    if left_out == 0 {
+        saved
+    } else {
+        format!("{saved} {}", aurora_i18n::tr!("appearance-xml-left-out", count = left_out))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -451,7 +463,7 @@ mod tests {
         for outcome in [
             Outcome::Cancelled,
             Outcome::Failed("failure".into()),
-            Outcome::AppearanceSaved("appearance.xml".into()),
+            Outcome::AppearanceSaved("appearance.xml".into(), 0),
         ] {
             let (sender, receiver) = std::sync::mpsc::channel();
             assert!(sender.send(outcome).is_ok());
@@ -483,7 +495,7 @@ mod tests {
             pending: None,
         };
         world.agent_id = Uuid::from_u128(2);
-        assert!(sender.send(Outcome::AppearanceSaved("appearance.xml".into())).is_ok());
+        assert!(sender.send(Outcome::AppearanceSaved("appearance.xml".into(), 0)).is_ok());
         let count = world.notifications.list.len();
         assert!(state.poll(&ctx, &mut world).is_empty());
         assert_eq!(world.notifications.list.len(), count);

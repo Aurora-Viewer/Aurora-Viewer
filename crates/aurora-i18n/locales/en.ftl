@@ -5663,6 +5663,12 @@ appearance-xml-export = Export an appearance XML
 appearance-xml-exported = Settings saved to { $file }.
 appearance-xml-export-failed = The appearance file could not be saved.
 appearance-xml-export-refused = Exporting needs modify rights on this item.
+appearance-xml-export-mine = Export my appearance XML…
+appearance-xml-saved = Appearance saved to { $file }.
+appearance-xml-left-out = { $count ->
+    [one] 1 worn item was left out: exporting needs modify rights on it.
+   *[other] { $count } worn items were left out: exporting needs modify rights on them.
+    }
 common-unmute = Unmute
 ui-options-restore-default-shortcuts = Restore default shortcuts
 ui-options-restore-the-local-environment-selected-sky-water-and-day = Restore the local environment (selected sky, water and day cycle) at the next login
@@ -13828,10 +13834,6 @@ admin-kick-message = An administrator has logged you off.
 admin-freeze-message = You have been frozen. You cannot move or chat. An administrator will contact you via instant message (IM).
 admin-unfreeze-message = You are no longer frozen.
 
-appearance-xml-export = Export my appearance XML…
-appearance-xml-file-type = Appearance XML (*.xml)
-appearance-xml-saved = Appearance saved to { $file }.
-appearance-xml-failed = Could not save appearance XML.
 picker-pipette-hint = Click an object face to select its texture or material from your inventory.
 
 picker-pipette-no-texture = No copyable texture found in your inventory.

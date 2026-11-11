@@ -9151,9 +9151,10 @@ region position is written. It exports no mesh, texture files or inventory
 items, and has no route for another avatar. Mesh override diagnostics and
 rigged extents from the reference debug dump are not separate XML records;
 the current joint transforms already include the applied pose/overrides.
-The Legacy Viewer’s wearable importer consumes the parameter IDs and values.
-Check the saved XML in that importer with an editable shape; no XML import
-is added to Aurora by this feature.
+The Legacy Viewer’s wearable importer and Aurora's Import XML button (shape,
+physics and layer editors) consume the parameter IDs and values. The
+parameters of a worn item the agent may not modify are left out (stricter
+than the Legacy Viewer), and the notice says how many worn items were.
 
 In My Outfits, double-click an unworn attachment or clothing item to add it
 beside the current outfit; double-click a worn one to take it off. Worn and

@@ -5644,6 +5644,9 @@ appearance-xml-export = 容姿のＸＭＬをエクスポート
 appearance-xml-exported = 設定を{ $file }に保存しました。
 appearance-xml-export-failed = 容姿のファイルを保存できませんでした。
 appearance-xml-export-refused = エクスポートにはこのアイテムの修正権限が必要です。
+appearance-xml-export-mine = 自分の容姿をＸＭＬでエクスポート…
+appearance-xml-saved = 容姿を{ $file }に保存しました。
+appearance-xml-left-out = 着用中のアイテム{ $count }件を除外しました。エクスポートには修正権限が必要です。
 common-unmute = ミュート解除
 ui-options-restore-default-shortcuts = デフォルトのショートカットを復元
 ui-options-restore-the-local-environment-selected-sky-water-and-day = 次回ログイン時にローカルの環境（選択した空、水面、デイサイクル）を復元
@@ -13780,10 +13783,6 @@ admin-kick-message = 管理者によってログオフされました。
 admin-freeze-message = フリーズされました。移動もチャットもできません。管理者がインスタントメッセージ（IM）で連絡します。
 admin-unfreeze-message = フリーズが解除されました。
 
-appearance-xml-export = 自分のアピアランスをXMLにエクスポート…
-appearance-xml-file-type = アピアランス XML (*.xml)
-appearance-xml-saved = アピアランスを { $file } に保存しました。
-appearance-xml-failed = アピアランスXMLを保存できませんでした。
 picker-pipette-hint = オブジェクトの面をクリックして、インベントリからそのテクスチャまたはマテリアルを選択します。
 
 picker-pipette-no-texture = コピー可能なテクスチャがインベントリにありません。
