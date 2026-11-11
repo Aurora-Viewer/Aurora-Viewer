@@ -10587,6 +10587,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEBUG_GEOM_DELAY=<seconds>` | Every built geometry reaches the GPU that long after its job ended, as on a slow PC in a busy region |
 | `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those at least half covered (default), none, all, or `none` by turns |
 | `AURORA_DEMO_VIEWER_STATS=1` | Writes once to the log the viewer statistics report the grid would receive (demo mode, nothing sent) |
+| `AURORA_DEMO_RENDER_INFO=<overlimit>[/<reporting>]` | The demo's region answers the avatar render info with these counts (8 reporting by default): the "may not see you fully" notice; the report it would get goes to the log |
 
 ### Details
 
@@ -10601,6 +10602,22 @@ What the inventory must show with these scenarios:
   adapter address and the serial show as `(not logged)`). On the
   grid the report is logged at debug level only, `sending viewer
   statistics: …` (`RUST_LOG=info,aurora_net=debug`).
+- **`AURORA_DEMO_RENDER_INFO=<overlimit>[/<reporting>]`**
+  (`aurora_net::render_info`, `app/render_info.rs`,
+  `world/complexity_notice.rs`): on the grid each region is told every 60 s
+  (2 s more per avatar) the complexity of the avatars we see there and which
+  ones we draw as silhouettes, and asked every 15 s how many viewers around
+  report on us (`reportinglimit`) and how many of them draw us as one
+  (`overlimit`). In demo mode nothing is sent: every 15 s the demo's region
+  answers with the given counts, our own avatar among the reporters (`3`:
+  3 of the 7 others; `7/8`: all of them). The notice "Your avatar complexity
+  is N." with its second line (with `3`: "You may not be rendered by
+  everyone around you.") shows 70 s after the launch, as the Legacy Viewer
+  waits that long; it stays Preferences › Graphics › Avatars › Complexity
+  notices seconds (10; 0 shows none, nor does mouselook), and the next one
+  for other counts waits 5 minutes unless it is still out. Once our avatar
+  has its complexity, the log gets one line `avatar render info (demo): <n>
+  avatars reported: <llsd>` with the report the agent's region would get.
 - **`AURORA_VULKAN_LAYERS=keep`**: at start the viewer sets the variables
   that disable Overwolf's implicit Vulkan layers (`VK_LAYER_OW_OVERLAY`,
   `DISABLE_VULKAN_OW_OVERLAY_LAYER=1`; `VK_LAYER_OW_OBS_HOOK`,

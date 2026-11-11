@@ -125,6 +125,7 @@ mod region_restart;
 mod region_window;
 mod release_keys;
 mod relogin;
+mod render_info;
 mod report_abuse;
 mod reset_skeleton;
 mod revoke_on_sit;
@@ -466,6 +467,8 @@ pub struct App {
     relogin: relogin::Relogin,
     /// The viewer's part of Linden Lab's viewer statistics (app/viewer_stats.rs).
     viewer_stats: viewer_stats::Tracker,
+    /// The avatar render info and the complexity notice (app/render_info.rs).
+    render_info: render_info::Tracker,
     panels: Panels,
     /// Conversations and the mini-map as last frame left them (their
     /// startup settings follow an open or a close only).
@@ -1593,6 +1596,7 @@ impl App {
             demo_mfa_challenge: None,
             relogin: Default::default(),
             viewer_stats: Default::default(),
+            render_info: Default::default(),
             startup_windows: ui::StartupWindows::new(&panels),
             panels,
             chat_ui,
@@ -3322,6 +3326,10 @@ impl App {
         if let NetEvent::ScriptTeleportRequest { .. } = ev {
             // llMapDestination asked for the map (BEACON_SHOW_MAP)
             self.panels.world_map = true;
+            return;
+        }
+        if let NetEvent::AvatarRenderInfo { handle, visibility } = ev {
+            self.render_info_answer(handle, visibility);
             return;
         }
         if let NetEvent::UploadCost(cost) = ev {
@@ -9104,6 +9112,7 @@ impl App {
             return;
         }
         self.update_notice();
+        self.update_render_info();
         // Aurora's media plugins: downloaded once, when none are found (the
         // web pages of the profiles need them even with media disabled), and
         // only once the user agreed (the card of `ui::media_pack`, or a

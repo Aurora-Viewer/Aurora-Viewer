@@ -311,6 +311,13 @@ pub enum Data {
     Update {
         ready: bool,
     },
+    /// Our avatar complexity, and how many people around may not see us
+    /// fully (AgentComplexity / AgentComplexityWithVisibility, notifytips
+    /// with no log): a toast only, for ShowMyComplexityChanges seconds
+    /// (`world/complexity_notice.rs`).
+    Complexity {
+        seconds: u32,
+    },
 }
 
 /// What the question of an experience shows besides the permissions.
@@ -689,6 +696,19 @@ impl Notifications {
             n.transient = true;
         }
         id
+    }
+
+    /// The avatar complexity notice: it replaces the one still out (unique
+    /// "AgentComplexityNotice", combine "cancel_old"), a toast only. With
+    /// no text it only takes the old one away.
+    pub fn replace_complexity(&mut self, text: Option<(String, String)>, seconds: u32) -> Option<u64> {
+        self.list.retain(|n| !matches!(n.data, Data::Complexity { .. }));
+        let (title, body) = text?;
+        let id = self.push(Kind::Info, title, body, Data::Complexity { seconds });
+        if let Some(n) = self.list.iter_mut().find(|n| n.id == id) {
+            n.transient = true;
+        }
+        Some(id)
     }
 
     /// A message of a conversation out of sight: it replaces the entry of
