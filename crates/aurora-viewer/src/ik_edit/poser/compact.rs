@@ -304,8 +304,25 @@ impl Editor {
             subjects::subject_short_name(world, self.poser.subject)
         };
         let now = ui.input(|i| i.time);
-        let subject_pic = self.picture(self.poser.subject, now);
-        let other_pics: Vec<_> = others.iter().map(|(id, _)| self.picture(*id, now)).collect();
+        // a profile picture is a resident's: an animesh (an object) has none,
+        // and asking the server for its profile would send an object's id
+        let person = |id: Uuid| {
+            id == world.agent_id
+                || world
+                    .objects
+                    .index_of_uuid(&id)
+                    .and_then(|i| world.objects.get(i))
+                    .is_some_and(|o| o.is_avatar())
+        };
+        let subject_pic = if person(self.poser.subject) {
+            self.picture(self.poser.subject, now)
+        } else {
+            None
+        };
+        let other_pics: Vec<_> = others
+            .iter()
+            .map(|(id, _)| if person(*id) { self.picture(*id, now) } else { None })
+            .collect();
         let mut pick = None;
         ui.horizontal(|ui| {
             ui.set_min_height(HEAD_DISC + 4.0);

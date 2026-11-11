@@ -1945,7 +1945,7 @@ fn a_click_a_worn_hud_took_keeps_the_joint_and_the_next_one_on_the_ground_unsele
         pressed,
         modifiers: egui::Modifiers::NONE,
     };
-    let mut click = |editor: &mut Editor| {
+    let click = |editor: &mut Editor, frames: &mut Frames| {
         for events in [
             vec![egui::Event::PointerMoved(ground)],
             vec![button(true)],
@@ -1958,10 +1958,28 @@ fn a_click_a_worn_hud_took_keeps_the_joint_and_the_next_one_on_the_ground_unsele
     assert!(editor.selected.is_some());
     // the app's press path gave this press to a HUD button
     editor.press_on_hud = true;
-    click(&mut editor);
+    click(&mut editor, &mut frames);
     assert!(editor.selected.is_some(), "the HUD's click leaves the joint selected");
     assert!(!editor.press_on_hud, "read once");
-    click(&mut editor);
+    // a drag on a HUD (no click) does not leave its press to the next click
+    editor.press_on_hud = true;
+    for events in [
+        vec![egui::Event::PointerMoved(ground)],
+        vec![button(true)],
+        vec![egui::Event::PointerMoved(ground + egui::vec2(80.0, 40.0))],
+        vec![egui::Event::PointerButton {
+            pos: ground + egui::vec2(80.0, 40.0),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+        vec![],
+    ] {
+        frames.run(events, |ui| editor.show(ui.ctx(), &p, &world, &proj));
+    }
+    assert!(!editor.press_on_hud, "the HUD's press ends with its release");
+    assert!(editor.selected.is_some(), "a drag is no click beside");
+    click(&mut editor, &mut frames);
     assert_eq!(editor.selected, None, "a click on the ground still unselects");
 }
 
@@ -2300,4 +2318,57 @@ fn the_compact_window_drops_inner_followers_and_hands_an_inner_lead_over() {
     editor.drop_inner_selection(&rig);
     assert_eq!(editor.selected, None);
     assert!(editor.poser.unselected);
+}
+
+#[test]
+fn ctrl_over_the_subject_stays_the_subjects_with_a_partner_close_behind() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (mut world, mut editor) = selected_fixture();
+    let peer = demo::poser::PEER;
+    let own = world.avatar_poses[&world.agent_id].clone();
+    world.avatar_poses.insert(peer, own);
+    let mut consent = std::mem::take(&mut world.poser_consent);
+    consent.request(&world, peer, Instant::now());
+    consent.demo_accept(&world, peer, std::time::Duration::ZERO);
+    world.poser_consent = consent;
+    let rig = &world.avatar_lib.rig;
+    let frame = editor.editor_frame(&world).unwrap();
+    let peer_frame = Frame::subject(&world, peer).expect("the peer's skeleton");
+    // the camera in front of us, the peer straight behind us on screen
+    let chest = frame.joints[rig.names["mChest"]].w_axis.truncate();
+    let away = peer_frame.joints[rig.names["mChest"]].w_axis.truncate() - chest;
+    let eye = chest - away.normalize() * 3.0;
+    let proj = Projector {
+        view_proj: glam::camera::rh::proj::directx::perspective_infinite_reverse(0.8, 800.0 / 900.0, 0.05)
+            * glam::camera::rh::view::look_to_mat4(eye, (chest - eye).normalize(), Vec3::Z),
+        width: 800.0,
+        height: 900.0,
+        ppp: 1.0,
+    };
+    // on the torso, beside the chest's marker (a marker takes its own click)
+    let on_me = proj.project(chest).unwrap().0 + egui::vec2(14.0, 18.0);
+    let mut frames = Frames::new();
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser");
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser-compact");
+    let p = crate::theme::Theme::default().palette();
+    let me = editor.poser.subject;
+    for _ in 0..3 {
+        frames.run(
+            vec![
+                egui::Event::ModifiersChanged(egui::Modifiers::CTRL),
+                egui::Event::PointerMoved(on_me),
+            ],
+            |ui| editor.show(ui.ctx(), &p, &world, &proj),
+        );
+    }
+    let button = |pressed| egui::Event::PointerButton {
+        pos: on_me,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::CTRL,
+    };
+    for events in [vec![button(true)], vec![button(false)], vec![], vec![]] {
+        frames.run(events, |ui| editor.show(ui.ctx(), &p, &world, &proj));
+    }
+    assert_eq!(editor.poser.subject, me, "the partner behind is not picked through us");
 }

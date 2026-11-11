@@ -255,7 +255,25 @@ impl Editor {
                 compact::body_area(points).map(|area| (id, area, near, f))
             })
             .collect();
-        let areas: Vec<(Uuid, egui::Rect, f32)> = others.iter().map(|(id, area, near, _)| (*id, *area, *near)).collect();
+        // under the pointer means on their body, not in the box around it,
+        // and never behind the subject's own body there: Ctrl over the
+        // subject stays the subject's (its handles, Ctrl's rotation) when a
+        // partner stands close behind
+        let nearest = |f: &Frame| {
+            f.joints
+                .iter()
+                .filter_map(|m| proj.project(m.w_axis.truncate()))
+                .map(|(_, d)| d)
+                .fold(f32::INFINITY, f32::min)
+        };
+        let subject_near = (self.body_depth(rig, proj, frame, pointer) > 0.0).then(|| nearest(frame));
+        let body: Vec<usize> = (0..rig.len()).filter(|j| !optional_bone(&rig.canonical_names[*j])).collect();
+        let areas: Vec<(Uuid, egui::Rect, f32)> = others
+            .iter()
+            .filter(|(_, _, near, _)| subject_near.is_none_or(|own| *near < own))
+            .filter(|(_, _, _, f)| overlay::other_body_depth(rig, proj, f, &body, pointer) > 0.0)
+            .map(|(id, area, near, _)| (*id, *area, *near))
+            .collect();
         let Some(id) = compact::clicked_subject(&areas, pointer) else {
             return Hint::None;
         };

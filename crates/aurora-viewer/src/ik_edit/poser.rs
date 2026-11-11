@@ -555,6 +555,8 @@ impl Editor {
         // compact-face: no joint selected, so that no gizmo covers the face
         if mode == "poser-compact-face" && frame == 500 {
             self.selected = None;
+            self.poser.unselected = true;
+            self.clear_together();
         }
         // the head edited at 450, then the window's cross: the confirmation
         if mode == "poser-close" && frame == 700 {

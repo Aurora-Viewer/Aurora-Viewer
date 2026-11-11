@@ -124,18 +124,22 @@ impl Editor {
     /// HUD took the click, it unselects the joint. Aurora's own: the Legacy
     /// Viewer's poser keeps its joint until another is chosen in its list.
     fn click_beside(&mut self, ctx: &egui::Context, world: &World, hint: world_hints::Hint, markers_on: bool) {
-        let (clicked, ctrl) = ctx.input(|i| {
+        let (clicked, released, ctrl) = ctx.input(|i| {
             (
                 i.pointer.primary_clicked() && !i.modifiers.alt,
+                i.pointer.primary_released(),
                 i.modifiers.ctrl || i.modifiers.command,
             )
         });
+        // the HUD's press ends with its release, a click or a drag: read
+        // there, it cannot outlive a drag and take a later click
+        let hud_press = released && std::mem::take(&mut self.press_on_hud);
         let Some(pointer) = ctx.input(|i| i.pointer.interact_pos()) else {
             return;
         };
         let over_ui = ctx.layer_id_at(pointer).is_some_and(|l| l.order > egui::Order::Background);
-        // a click a worn HUD took (`press_on_hud`, read once) is the HUD's
-        let on_hud = clicked && std::mem::take(&mut self.press_on_hud);
+        // a click a worn HUD took (`press_on_hud`) is the HUD's
+        let on_hud = clicked && hud_press;
         if !clicked || on_hud || over_ui || self.poser.pointer_owned || self.drag.is_some() || self.gizmo.dragging() {
             return;
         }
@@ -159,6 +163,18 @@ impl Editor {
             _ => {}
         }
     }
+    /// How far inside the subject's silhouette `at` is (negative outside):
+    /// the body, and the wings, tail and hind limbs only when used (a mesh,
+    /// or the pose moved them): unused, they rest beside it in empty space.
+    pub(super) fn body_depth(&self, rig: &Rig, proj: &Projector, frame: &Frame, at: egui::Pos2) -> f32 {
+        let body: Vec<usize> = (0..rig.len())
+            .filter(|j| {
+                let name = &rig.canonical_names[*j];
+                group(name) != 4 && (!optional_bone(name) || self.poser.other_used.contains(name))
+            })
+            .collect();
+        other_body_depth(rig, proj, frame, &body, at)
+    }
     /// Whether the markers show (`compact::markers_shown`): in the "On
     /// hover" mode, the pointer over the subject's silhouette, with a wider
     /// margin to leave than to enter and a short linger once it left, so
@@ -176,27 +192,7 @@ impl Editor {
             ctx.layer_id_at(at)
                 .is_some_and(|l| l.order > egui::Order::Background && l.order != egui::Order::Tooltip)
         });
-        let depth = pointer.map(|at| {
-            // the body, and the wings, tail and hind limbs only when used (a
-            // mesh, or the pose moved them): unused, they rest beside it in
-            // empty space
-            let body: Vec<usize> = (0..rig.len())
-                .filter(|j| {
-                    let name = &rig.canonical_names[*j];
-                    group(name) != 4 && (!optional_bone(name) || self.poser.other_used.contains(name))
-                })
-                .collect();
-            let world_at: Vec<glam::Vec3> = frame.joints.iter().map(|m| m.w_axis.truncate()).collect();
-            let capsules = silhouette::capsules(
-                &rig.parent,
-                &rig.canonical_names,
-                &world_at,
-                &body,
-                silhouette::Links::Inside,
-                |w| proj.project(w).map(|(p, _)| p),
-            );
-            silhouette::depth(&capsules, at)
-        });
+        let depth = pointer.map(|at| self.body_depth(rig, proj, frame, at));
         let near = compact::markers_shown(true, depth, self.poser.markers_near, over_ui, held);
         let now = ctx.input(|i| i.time);
         if near {
@@ -342,4 +338,14 @@ impl Editor {
         }
         response.on_hover_text(&rig.canonical_names[bone]);
     }
+}
+
+/// How far inside the silhouette of `body`'s joints of `frame` `at` is
+/// (negative outside).
+pub(super) fn other_body_depth(rig: &Rig, proj: &Projector, frame: &Frame, body: &[usize], at: egui::Pos2) -> f32 {
+    let world_at: Vec<glam::Vec3> = frame.joints.iter().map(|m| m.w_axis.truncate()).collect();
+    let capsules = silhouette::capsules(&rig.parent, &rig.canonical_names, &world_at, body, silhouette::Links::Inside, |w| {
+        proj.project(w).map(|(p, _)| p)
+    });
+    silhouette::depth(&capsules, at)
 }
