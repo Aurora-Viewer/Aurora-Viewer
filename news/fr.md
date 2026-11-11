@@ -26,6 +26,26 @@ Une ligne vide commence un nouveau paragraphe.
 
 # Actualités d'Aurora Viewer
 
+## 2026-11-12 — Aurora 0.9.7 : la fenêtre Construction revue, la récupération de scripts et Destinations
+La fenêtre Construction est réorganisée : la sélection tient dans un en-tête repliable, les options forment des colonnes au-dessus des onglets, à ranger avec Organiser les options…, position, taille et rotation gardent toute la largeur, et Contenu a son menu d'affichage. Après un plantage ou une connexion perdue, la Récupération de scripts rend vos modifications non enregistrées à la connexion suivante, dans Objets perdus et trouvés. Destinations ouvre la fenêtre d'Aurora sur le Guide des destinations : recherche, catégories, notes et téléport en un clic. Cache et réglages sont gardés.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.7)
+
+## 2026-11-12 — Poser, apparence et avatars
+Le poser gagne une fenêtre compacte qui laisse la scène libre, Maj + clic pour bouger plusieurs articulations ensemble, et un anneau qui tourne une articulation autour de l'axe de la caméra. Exporter XML, à côté d'Importer XML dans les éditeurs de silhouette, de physique et de vêtements, enregistre un fichier d'apparence, et le menu ⚙ d'Apparence exporte toute votre tenue. Votre avatar joue les animations de parole, de cri et de chuchotement dans le chat local, Recharger l'avatar répare un avatar qui s'affiche mal, et les couches mouillées et brillantes des corps mesh s'affichent.
+
+## 2026-11-12 — Encore plus proche du Legacy Viewer, et des correctifs
+Dialogues de script par objet garde un seul menu par objet au lieu d'une pile. Avancé › Libérer les touches rend les contrôles qu'un véhicule ou un HUD cassé retient, et un téléport en cours peut s'annuler. Les notices de groupe s'affichent aussi dans le chat du groupe, Navigateur préféré choisit où s'ouvrent les liens, et la Voie lactée est plus discrète, avec son curseur. Sur OpenSim, Demander le statut d'administrateur donne les pouvoirs d'administrateur. Merci à anne-skydancer, Bruica, circuskid, Gaalrauch, iGao, KanikaBreed, Marakiinfinity, Nowalski et Odessa-Draekavik.
+
+## 2026-11-11 — Aurora 0.9.6 : la vitrine des tenues, les portraits auto et 65 looks photo
+La Galerie des tenues d'Apparence devient une vitrine : de grandes photos de vos tenues, un rail pour les favoris, les tenues sans photo et les dossiers, et on porte en un clic (les petites vignettes restent dans Préférences › Aurora). Portrait auto vous cadre en studio pour la photo gratuite de la tenue, Faire les portraits les fait toutes d'un coup, et une Photo HD en option coûte le prix d'envoi de la grille. L'onglet LUT du mode photo compte 20 looks de Czar Fenris et 45 de Nanner Pudding, merci à vous deux ! Cache et réglages sont gardés.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.6)
+
+## 2026-11-11 — La Voie lactée des vraies étoiles, et les Types de rendu
+La Voie lactée est faite des 2,5 millions d'étoiles du catalogue Tycho-2, avec ses nuages d'étoiles et ses bandes sombres, et l'Heure des étoiles peut suivre la vraie horloge. Avancé › Types de rendu masque le terrain, l'eau, les objets, les avatars ou les particules pour voir derrière, comme le Legacy Viewer. Un Mac démarre à la résolution logique de l'écran en qualité Mid-High, les cartes AMD RX 9000 gardent leurs ombres de contact, et les médias des HUD passent en premier dans les régions chargées.
+
+## 2026-11-11 — Poser, construction, inventaire et correctifs
+Maintenez Espace pour freiner votre avatar, comme le Legacy Viewer. Le poser gagne Enregistrer sous… et montre où va une pose. Les poignées de déplacement se saisissent mieux, les sélections de terrain s'alignent sur la grille des parcelles, et le glTF garde ses cartes 2K. Favoris liste les éléments étoilés sans leurs dossiers, et la confirmation de suppression peut se couper. Région / Domaine confirme tout changement qui renvoie des gens chez eux. Merci à anne-skydancer, circuskid, emmelinedevere, Gaalrauch, KanikaBreed, LisaScheers, Marakiinfinity, Memekiller, Nowalski et Odessa-Draekavik.
+
 ## 2026-11-10 — Aurora 0.9.5 : le Suivi de région, les marqueurs des cercles et l'apparence en XML
 Monde › Suivi de région surveille une liste de régions, comme le Legacy Viewer : si chacune est en ligne et combien d'avatars s'y trouvent, sans ouvrir la carte ; Suivre la région, sur la Carte du monde, en ajoute une. Un cercle de contacts peut marquer ses membres dans le monde, à travers les murs et au bord de l'écran : réglez son Marqueur dans le monde dans Personnes › Cercles (désactivé par défaut). Importer XML, dans les éditeurs de silhouette, de physique et de vêtements, charge un fichier d'apparence d'un site de silhouettes ou d'un autre viewer. Cache et réglages sont gardés.
 [En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.5)

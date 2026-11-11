@@ -111,35 +111,37 @@ while rethinking the user interface.
   </tr>
 </table>
 
-### New in 0.9.5 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+### New in 0.9.7 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>Region Tracker, like the Legacy Viewer</h3>
-      Watch a list of regions from World › Region tracker or the map's
-      Track region: whether each one is up and how many avatars are there,
-      without opening the map.
+      <h3>A rethought Build window</h3>
+      The selection sits in a header that folds away, the options form
+      columns you arrange yourself with Organize options…, position, size
+      and rotation keep the full width, and Contents gets its own display
+      menu.
     </td>
     <td width="50%" valign="top">
-      <h3>Find your contacts in the world</h3>
-      A contact set can mark its members with a small circle or diamond,
-      seen through walls and held at the screen's edge when they are out of
-      view. Off by default, chosen set by set.
+      <h3>Script recovery, like the Legacy Viewer</h3>
+      After a crash or a lost connection, the unsaved changes of your
+      scripts come back at the next login, in Lost And Found. Advanced ›
+      Release keys frees the controls a broken vehicle or HUD keeps.
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <h3>Emojis and chat</h3>
-      A row of your recent emojis by the chat field, favourite emojis if
-      you want them, recent GIFs in the picker, Alt+Enter for ((OOC)) chat,
-      and Request teleport next to Offer teleport.
+      <h3>Destinations, in Aurora's own window</h3>
+      Search the grid's Destination Guide, filter by category and rating,
+      see how many people are at each place and which ones you visited,
+      and teleport in one click.
     </td>
     <td valign="top">
-      <h3>Your avatar, your view</h3>
-      Import an appearance XML into the shape and clothing editors, hide
-      the face lights other avatars wear, hide every name tag in one click,
-      and keep avatar tips with world tooltips off.
+      <h3>Poser and appearance</h3>
+      A compact poser window that leaves the scene free, several joints
+      moved together with Shift + click, a ring that turns a joint around
+      the camera's view, and Export XML for your shape, physics and
+      clothing.
     </td>
   </tr>
 </table>
@@ -868,6 +870,14 @@ and wears the confirmed copy; Copy permission is required. **Cancel** restores
 the current server appearance. Closing a modified shape offers Save, Discard or
 Cancel. A shape without Modify is read-only and can only be copied unchanged;
 a modifiable no-copy shape can be saved in place.
+
+### Export your appearance XML
+
+Open **Appearance**, click the gear menu and choose **Export my appearance XML…**.
+Choose where to save `appearance.xml`. The option becomes available when your
+own appearance has loaded. The file uses the Legacy Viewer’s appearance XML
+format, including the shape parameters its wearable editor can import. It
+contains no texture or mesh files and does not change what you are wearing.
 
 ### Hover height
 

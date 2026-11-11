@@ -8,6 +8,9 @@
 //! frame and send MultipleObjectUpdate when the mouse is released (stretching
 //! also every 0.1 s, like LLManipScale).
 
+mod admin;
+#[cfg(test)]
+mod admin_tests;
 pub mod align;
 pub mod anim_pause;
 pub mod contents;
@@ -143,6 +146,8 @@ pub struct BuildSettings {
     /// with `snap` (`snap_mode`); off by default, so moving behaves as the
     /// Legacy Viewer's until it is chosen.
     pub object_snap: bool,
+    /// The inline Snap control remembers its choice while disabled.
+    pub snap_objects_preferred: bool,
     /// "Place on surface" (`place.rs`; Aurora's own): whether it turns the
     /// selection ("Auto rotate") or keeps its rotation, and the side it then
     /// puts against the surface.
@@ -289,8 +294,22 @@ impl BuildSettings {
         }
     }
     pub fn set_snap_mode(&mut self, mode: SnapMode) {
+        let choice = if mode == SnapMode::Off { self.snap_mode() } else { mode };
+        if choice != SnapMode::Off {
+            self.snap_objects_preferred = choice == SnapMode::Objects;
+        }
         self.snap = mode == SnapMode::Grid;
         self.object_snap = mode == SnapMode::Objects;
+    }
+    pub fn snap_choice(&self) -> SnapMode {
+        match self.snap_mode() {
+            SnapMode::Off if self.snap_objects_preferred => SnapMode::Objects,
+            SnapMode::Off => SnapMode::Grid,
+            mode => mode,
+        }
+    }
+    pub fn set_snap_enabled(&mut self, enabled: bool) {
+        self.set_snap_mode(if enabled { self.snap_choice() } else { SnapMode::Off });
     }
     /// `gizmo_scale` within the slider's range; an edited settings file
     /// falls back to the Legacy Viewer's size.
@@ -337,7 +356,7 @@ mod worn_tests;
 /// whole no-modify object is allowed; linked edits and stretching need Modify.
 /// LLViewerObject::permMove / permModify inherit the root's effective flags.
 pub fn can_transform(world: &World, idx: usize, linked: bool, mode: EditMode) -> bool {
-    if !world.rlva_can_edit(idx) {
+    if !world.rlva_can_edit(idx) || linking::permanent(world, idx) || linking::permanent(world, root_of(world, idx)) {
         return false;
     }
     use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
@@ -618,6 +637,7 @@ impl Default for BuildSettings {
             grid_mode: 0,
             snap: true,
             object_snap: false,
+            snap_objects_preferred: false,
             place_rotate: false,
             place_side: place::Side::Bottom,
             place_offset: 0.0,
@@ -999,9 +1019,10 @@ pub fn edit_parent(world: &World, idx: usize, now: Instant) -> Option<(Vec3, Qua
     let parent_idx = world.objects.parent_of(o)?;
     let (p, r, _) = crate::scene::Scene::object_transform(world, idx, now, 0)?;
     if world.objects.get(parent_idx)?.is_avatar() {
-        // the attachment point as posed now, on the body or in the HUD
+        // the attachment point as posed now, on the body or in the HUD (the
+        // root is drawn at most 3.5 m from it, scene/draw_limits.rs)
         let rotation = (r * o.rotation.inverse()).normalize();
-        Some((p - rotation * o.position, rotation))
+        Some((p - rotation * crate::scene::draw_limits::attachment_offset(o.position), rotation))
     } else {
         crate::scene::Scene::object_transform(world, parent_idx, now, 0).map(|(p, r, _)| (p, r))
     }
@@ -1643,7 +1664,7 @@ impl BuildTool {
                 not_owned = format!("{}", not_owned)
             )
         } else {
-            aurora_i18n::tr!("build-mod-object-s-sent-to-trash", value0 = format!("{}", roots.len()))
+            String::new()
         };
         self.deselect_all(world);
     }

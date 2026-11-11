@@ -676,6 +676,7 @@ impl App {
                         .collect();
                     self.imports.clear_appearance_targets(&mut self.world.objects, &targets, Some(id));
                     self.build.forget_local_picker_asset(id);
+                    self.texture_library.forget_local_asset(id);
                     if let Some(index) = self.imports.entries.iter().position(|e| e.id == id) {
                         let mut entry = self.imports.entries.remove(index);
                         if let Some(Source::Mesh(draft)) = &mut entry.source {
