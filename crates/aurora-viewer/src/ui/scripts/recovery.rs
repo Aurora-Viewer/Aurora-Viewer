@@ -42,11 +42,9 @@ pub enum Answer {
 /// key) is left where it is and not offered.
 pub fn scan(dir: PathBuf) -> crossbeam_channel::Receiver<Vec<Row>> {
     let (tx, rx) = crossbeam_channel::bounded(1);
-    let spawned = std::thread::Builder::new()
-        .name("aurora-script-recovery".into())
-        .spawn(move || {
-            let _ = tx.send(read(&dir));
-        });
+    let spawned = std::thread::Builder::new().name("aurora-script-recovery".into()).spawn(move || {
+        let _ = tx.send(read(&dir));
+    });
     if let Err(e) = spawned {
         log::warn!("script recovery: not checked ({e})");
     }

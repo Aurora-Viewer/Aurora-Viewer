@@ -30,7 +30,11 @@ pub(super) struct Recovery {
 
 /// The name a recovered script is created with.
 fn creation_name(name: &str) -> String {
-    if name == NEW_SCRIPT { name.replace(' ', "_") } else { name.to_owned() }
+    if name == NEW_SCRIPT {
+        name.replace(' ', "_")
+    } else {
+        name.to_owned()
+    }
 }
 
 /// LLViewerAssetType::generateDescriptionFor(AT_LSL_TEXT): the local time
@@ -147,7 +151,12 @@ impl App {
 
     /// The answer to a recovered script's creation; false for another
     /// request.
-    pub(super) fn script_recovery_saved(&mut self, request: Uuid, item: Uuid, result: &Result<aurora_net::inventory::InvItem, String>) -> bool {
+    pub(super) fn script_recovery_saved(
+        &mut self,
+        request: Uuid,
+        item: Uuid,
+        result: &Result<aurora_net::inventory::InvItem, String>,
+    ) -> bool {
         let Some((path, name)) = self.script_recovery.pending.remove(&request) else {
             return false;
         };
@@ -156,8 +165,11 @@ impl App {
                 log::info!("script recovery: a script recovered into Lost and Found");
                 self.world.inventory.add_items(vec![saved.clone()]);
                 if name == NEW_SCRIPT
-                    && let Ok(change) =
-                        crate::world::inventory::actions::patch(&self.world.inventory, saved.id, aurora_llsd::llsd_map! { "name" => name.as_str() })
+                    && let Ok(change) = crate::world::inventory::actions::patch(
+                        &self.world.inventory,
+                        saved.id,
+                        aurora_llsd::llsd_map! { "name" => name.as_str() },
+                    )
                 {
                     self.apply_inventory_action(crate::ui::inventory::InvAction::Edit(change));
                 }
@@ -280,7 +292,10 @@ mod tests {
     #[test]
     fn the_description_is_the_legacy_one() {
         use chrono::TimeZone;
-        let at = chrono::Local.with_ymd_and_hms(2026, 11, 11, 9, 5, 3).single().expect("a local time");
+        let at = chrono::Local
+            .with_ymd_and_hms(2026, 11, 11, 9, 5, 3)
+            .single()
+            .expect("a local time");
         assert_eq!(description(at), "2026-11-11 09:05:03 lsl2 script");
     }
 }

@@ -895,7 +895,10 @@ mod tests {
         };
         let copied = |it: &InvItem, library: bool| permissions(rules::agent_mask(it, me), library, 0).1;
         assert!(copied(&item(me, full, 0, false), false), "full permissions");
-        assert!(copied(&item(me, perm::COPY | perm::MODIFY, 0, false), false), "no transfer, as the Legacy Viewer");
+        assert!(
+            copied(&item(me, perm::COPY | perm::MODIFY, 0, false), false),
+            "no transfer, as the Legacy Viewer"
+        );
         assert!(!copied(&item(me, perm::MODIFY | perm::TRANSFER, 0, false), false), "no copy");
         assert!(!copied(&item(me, perm::COPY | perm::TRANSFER, 0, false), false), "no modify");
         assert!(!copied(&item(other, full, 0, false), false), "someone else's, nothing for everyone");

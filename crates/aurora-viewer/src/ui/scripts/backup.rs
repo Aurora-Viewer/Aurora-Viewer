@@ -100,18 +100,16 @@ fn worker() -> Option<&'static crossbeam_channel::Sender<Message>> {
     WORKER
         .get_or_init(|| {
             let (tx, rx) = crossbeam_channel::unbounded::<Message>();
-            let spawned = std::thread::Builder::new()
-                .name("aurora-script-backups".into())
-                .spawn(move || {
-                    for message in rx {
-                        match message {
-                            Message::Job(job) => apply(job),
-                            Message::Flush(done) => {
-                                let _ = done.send(());
-                            }
+            let spawned = std::thread::Builder::new().name("aurora-script-backups".into()).spawn(move || {
+                for message in rx {
+                    match message {
+                        Message::Job(job) => apply(job),
+                        Message::Flush(done) => {
+                            let _ = done.send(());
                         }
                     }
-                });
+                }
+            });
             match spawned {
                 Ok(_) => Some(tx),
                 Err(e) => {
@@ -133,10 +131,10 @@ pub fn run(jobs: Vec<Job>) {
     for job in jobs {
         match worker {
             Some(tx) => {
-                if let Err(e) = tx.send(Message::Job(job)) {
-                    if let Message::Job(job) = e.into_inner() {
-                        apply(job);
-                    }
+                if let Err(e) = tx.send(Message::Job(job))
+                    && let Message::Job(job) = e.into_inner()
+                {
+                    apply(job);
                 }
             }
             None => apply(job),
@@ -301,8 +299,16 @@ mod tests {
         let inventory = target(0, 7);
         let in_object = target(9, 7);
         assert_eq!(file(dir, inventory), file(dir, inventory), "the same file for every copy");
-        assert_ne!(file(dir, inventory), file(dir, in_object), "the same item id in an object is another script");
-        let name = file(dir, inventory).file_name().and_then(|n| n.to_str()).unwrap_or_default().to_owned();
+        assert_ne!(
+            file(dir, inventory),
+            file(dir, in_object),
+            "the same item id in an object is another script"
+        );
+        let name = file(dir, inventory)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_owned();
         assert!(!name.contains(&Uuid::from_u128(7).to_string()) && !name.contains("Door"));
         assert!(is_copy(&file(dir, inventory)));
         assert!(!is_copy(Path::new("backups/notes.txt")));
@@ -317,13 +323,20 @@ mod tests {
         };
         let sealed = encode(&copy).expect("sealed");
         let text = String::from_utf8_lossy(&sealed);
-        assert!(!text.contains("unsaved") && !text.contains("Door"), "neither the text nor the name in clear");
+        assert!(
+            !text.contains("unsaved") && !text.contains("Door"),
+            "neither the text nor the name in clear"
+        );
         assert_eq!(decode(sealed.clone()), Some(copy));
         let mut damaged = sealed;
         let last = damaged.len() - 1;
         damaged[last] ^= 1;
         assert_eq!(decode(damaged), None);
-        assert_eq!(decode(b"{\"name\":\"x\",\"source\":\"y\",\"saved\":0}".to_vec()), None, "a plain file is refused");
+        assert_eq!(
+            decode(b"{\"name\":\"x\",\"source\":\"y\",\"saved\":0}".to_vec()),
+            None,
+            "a plain file is refused"
+        );
     }
 
     #[test]
@@ -332,18 +345,35 @@ mod tests {
         let t = target(0, 1);
         let mut book = Book::default();
         let start = Instant::now();
-        assert!(book.plan(Some(dir), [doc(t, "a", false, true)], start, false).is_empty(), "nothing unsaved");
+        assert!(
+            book.plan(Some(dir), [doc(t, "a", false, true)], start, false).is_empty(),
+            "nothing unsaved"
+        );
         let jobs = book.plan(Some(dir), [doc(t, "ab", true, true)], start + INTERVAL, false);
         assert_eq!(writes(&jobs), 1);
         assert!(book.owns(&file(dir, t)));
         // typing goes on: no copy before the interval
-        assert!(book.plan(Some(dir), [doc(t, "abc", true, true)], start + INTERVAL + Duration::from_secs(1), false).is_empty());
+        assert!(
+            book.plan(
+                Some(dir),
+                [doc(t, "abc", true, true)],
+                start + INTERVAL + Duration::from_secs(1),
+                false
+            )
+            .is_empty()
+        );
         let jobs = book.plan(Some(dir), [doc(t, "abc", true, true)], start + INTERVAL * 2, false);
         assert!(matches!(&jobs[..], [Job::Write(path, copy)] if *path == file(dir, t) && copy.source == "abc" && copy.name == "Door"));
         // the same text: not written again
-        assert!(book.plan(Some(dir), [doc(t, "abc", true, true)], start + INTERVAL * 3, false).is_empty());
+        assert!(
+            book.plan(Some(dir), [doc(t, "abc", true, true)], start + INTERVAL * 3, false)
+                .is_empty()
+        );
         // forced (the connection is lost): at once
-        assert_eq!(writes(&book.plan(Some(dir), [doc(t, "abcd", true, true)], start + INTERVAL * 3, true)), 1);
+        assert_eq!(
+            writes(&book.plan(Some(dir), [doc(t, "abcd", true, true)], start + INTERVAL * 3, true)),
+            1
+        );
     }
 
     #[test]
@@ -352,7 +382,11 @@ mod tests {
         let mut book = Book::default();
         let jobs = book.plan(Some(dir), [doc(target(0, 1), "changed", true, false)], Instant::now(), true);
         assert!(jobs.is_empty(), "no modify, read only, not loaded: no copy");
-        assert!(book.plan(None, [doc(target(0, 1), "changed", true, true)], Instant::now(), true).is_empty(), "no folder: nothing");
+        assert!(
+            book.plan(None, [doc(target(0, 1), "changed", true, true)], Instant::now(), true)
+                .is_empty(),
+            "no folder: nothing"
+        );
     }
 
     #[test]
@@ -361,7 +395,10 @@ mod tests {
         let (a, b) = (target(0, 1), target(5, 2));
         let mut book = Book::default();
         let now = Instant::now();
-        assert_eq!(writes(&book.plan(Some(dir), [doc(a, "x", true, true), doc(b, "y", true, true)], now, true)), 2);
+        assert_eq!(
+            writes(&book.plan(Some(dir), [doc(a, "x", true, true), doc(b, "y", true, true)], now, true)),
+            2
+        );
         // a saved: its text is the server's again
         let jobs = book.plan(Some(dir), [doc(a, "x", false, true), doc(b, "y", true, true)], now, false);
         assert_eq!(jobs, vec![Job::Remove(file(dir, a))]);
