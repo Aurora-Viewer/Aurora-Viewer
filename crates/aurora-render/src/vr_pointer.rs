@@ -1,0 +1,384 @@
+//! Tracked controllers and the pointer beam, drawn into both eyes after the
+//! world.
+//!
+//! Geometry is built on the CPU each frame from the controller poses of the
+//! frame being rendered (`xr_frame::Session::begin`), so the models and the
+//! beam stay locked to the hands. It is drawn without depth, over the world:
+//! the beam ends at the surface the viewer traced, and a controller is never
+//! more than an arm's length away.
+use crate::pipeline_cache::CachedPipelines;
+use crate::{VrControllerState, VrInputState, VrPointer, VrSide};
+use bytemuck::{Pod, Zeroable};
+use glam::{Mat4, Vec3, Vec4};
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable, PartialEq)]
+pub(crate) struct Vertex {
+    pub position: [f32; 3],
+    /// Premultiplied alpha.
+    pub color: [f32; 4],
+}
+
+/// Uniform slot stride: one view-projection per eye at a dynamic offset.
+const SLOT: u64 = 256;
+/// Beam radius at the hand, metres.
+const BEAM_RADIUS: f32 = 0.0025;
+
+pub(crate) struct Overlay {
+    pipeline: wgpu::RenderPipeline,
+    uniforms: wgpu::Buffer,
+    group: wgpu::BindGroup,
+    vertices: Option<wgpu::Buffer>,
+    scratch: Vec<Vertex>,
+}
+
+impl Overlay {
+    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("VR controllers"),
+            source: wgpu::ShaderSource::Wgsl(
+                r#"
+@group(0) @binding(0) var<uniform> view_proj: mat4x4<f32>;
+struct In { @location(0) position: vec3<f32>, @location(1) color: vec4<f32> }
+struct Out { @builtin(position) position: vec4<f32>, @location(0) color: vec4<f32> }
+@vertex fn vs(v: In) -> Out {
+    var o: Out; o.position = view_proj * vec4(v.position, 1.0); o.color = v.color; return o;
+}
+@fragment fn fs(o: Out) -> @location(0) vec4<f32> { return o.color; }
+"#
+                .into(),
+            ),
+        });
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("VR controllers eye"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: wgpu::BufferSize::new(64),
+                },
+                count: None,
+            }],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("VR controllers"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
+            label: Some("VR controllers"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x4],
+                })],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("VR controllers eyes"),
+            size: SLOT * 2,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("VR controllers eye"),
+            layout: &layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &uniforms,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(64),
+                }),
+            }],
+        });
+        Self {
+            pipeline,
+            uniforms,
+            group,
+            vertices: None,
+            scratch: Vec::new(),
+        }
+    }
+
+    /// Draw over both eyes' finished images. Submitted on the queue after
+    /// the eyes' own work and before the mirror and the runtime release.
+    pub fn draw(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        eyes: [(&wgpu::Texture, Mat4); 2],
+        input: &VrInputState,
+        pointer: VrPointer,
+    ) {
+        self.scratch.clear();
+        build(input, pointer, &mut self.scratch);
+        if self.scratch.is_empty() {
+            return;
+        }
+        let bytes: &[u8] = bytemuck::cast_slice(&self.scratch);
+        if self.vertices.as_ref().is_none_or(|b| b.size() < bytes.len() as u64) {
+            self.vertices = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("VR controllers vertices"),
+                size: (bytes.len() as u64).next_power_of_two().max(4096),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+        }
+        let Some(vertices) = &self.vertices else { return };
+        queue.write_buffer(vertices, 0, bytes);
+        for (i, (_, view_proj)) in eyes.iter().enumerate() {
+            queue.write_buffer(&self.uniforms, SLOT * i as u64, bytemuck::bytes_of(&view_proj.to_cols_array()));
+        }
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("VR controllers"),
+        });
+        for (i, (texture, _)) in eyes.iter().enumerate() {
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("VR controllers"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &self.group, &[(SLOT * i as u64) as u32]);
+            pass.set_vertex_buffer(0, vertices.slice(..bytes.len() as u64));
+            pass.draw(0..self.scratch.len() as u32, 0..1);
+        }
+        queue.submit([encoder.finish()]);
+    }
+}
+
+/// The frame's triangles (a list, three vertices each) in world space.
+pub(crate) fn build(input: &VrInputState, pointer: VrPointer, out: &mut Vec<Vertex>) {
+    for side in [VrSide::Left, VrSide::Right] {
+        let hand = input.hand(side);
+        if !hand.active || !hand.position.is_finite() || !hand.orientation.is_finite() {
+            continue;
+        }
+        let pointing = pointer.hand == Some(side);
+        if pointer.controllers {
+            controller(hand, side, pointing, out);
+        }
+        if pointing && pointer.length > 0.0 {
+            beam(hand, pointer, out);
+        }
+    }
+}
+
+/// Simple shading from a fixed overhead light, so the boxes read as solid.
+fn shade(normal: Vec3, color: Vec3) -> Vec3 {
+    let light = Vec3::new(0.3, 0.2, 0.93).normalize();
+    color * (0.55 + 0.45 * normal.dot(light).max(0.0))
+}
+
+fn push_quad(out: &mut Vec<Vertex>, corners: [Vec3; 4], colors: [Vec4; 4]) {
+    for i in [0, 1, 2, 0, 2, 3] {
+        out.push(Vertex {
+            position: corners[i].to_array(),
+            color: colors[i].to_array(),
+        });
+    }
+}
+
+/// An oriented box: centre, three half-axes, opaque colour.
+fn push_box(out: &mut Vec<Vertex>, center: Vec3, axes: [Vec3; 3], color: Vec3) {
+    for (a, b, c) in [(0, 1, 2), (1, 2, 0), (2, 0, 1)] {
+        for sign in [1.0f32, -1.0] {
+            let n = axes[a] * sign;
+            let (u, v) = (axes[b], axes[c] * sign);
+            let face = center + n;
+            let lit = shade(n.normalize_or_zero(), color).extend(1.0);
+            push_quad(out, [face - u - v, face + u - v, face + u + v, face - u + v], [lit; 4]);
+        }
+    }
+}
+
+fn controller(hand: VrControllerState, side: VrSide, pointing: bool, out: &mut Vec<Vertex>) {
+    let q = hand.orientation.normalize();
+    let (right, up, forward) = (q * Vec3::X, q * Vec3::Y, q * Vec3::NEG_Z);
+    let base = match side {
+        VrSide::Left => Vec3::new(0.25, 0.42, 0.85),
+        VrSide::Right => Vec3::new(0.85, 0.45, 0.2),
+    };
+    // grip squeezes the body darker, a little like a held object
+    let body = base * (1.0 - 0.35 * hand.grip);
+    // the aim pose sits at the controller's front: the handle hangs behind
+    // and below it
+    push_box(
+        out,
+        hand.position - forward * 0.065 - up * 0.02,
+        [right * 0.02, up * 0.016, forward * 0.06],
+        body,
+    );
+    // the tip lights up as the trigger is pulled
+    let lit = if pointing { 0.6 + 0.4 * hand.trigger } else { 0.45 };
+    push_box(
+        out,
+        hand.position - forward * 0.004,
+        [right * 0.012, up * 0.01, forward * 0.006],
+        Vec3::splat(lit),
+    );
+}
+
+fn beam(hand: VrControllerState, pointer: VrPointer, out: &mut Vec<Vertex>) {
+    let q = hand.orientation.normalize();
+    let (right, up, forward) = (q * Vec3::X, q * Vec3::Y, q * Vec3::NEG_Z);
+    let length = pointer.length.min(1000.0);
+    let start = hand.position;
+    let end = start + forward * length;
+    let color = if pointer.actionable {
+        Vec3::new(0.35, 0.85, 1.0)
+    } else {
+        Vec3::splat(0.92)
+    };
+    let pressed = hand.trigger >= 0.7;
+    let radius = BEAM_RADIUS * if pressed { 1.6 } else { 1.0 };
+    let (a0, a1) = (if pressed { 0.95 } else { 0.8 }, if pointer.hit { 0.55 } else { 0.0 });
+    let premul = |alpha: f32| (color * alpha).extend(alpha);
+    // a hexagonal tube: seen from either eye without facing the camera
+    const SIDES: usize = 6;
+    let ring = |i: usize| {
+        let a = i as f32 / SIDES as f32 * std::f32::consts::TAU;
+        (right * a.cos() + up * a.sin()) * radius
+    };
+    for i in 0..SIDES {
+        let (p, n) = (ring(i), ring(i + 1));
+        push_quad(
+            out,
+            [start + p, start + n, end + n * 0.5, end + p * 0.5],
+            [premul(a0), premul(a0), premul(a1), premul(a1)],
+        );
+    }
+    if pointer.hit {
+        // an octahedron at the hit, growing with distance so it stays visible
+        let r = (0.006 * length).max(0.012);
+        let tip = premul(1.0);
+        let dirs = [right, up, -right, -up];
+        for i in 0..4 {
+            let (a, b) = (end + dirs[i] * r, end + dirs[(i + 1) % 4] * r);
+            for pole in [end + forward * r, end - forward * r] {
+                for v in [a, b, pole] {
+                    out.push(Vertex {
+                        position: v.to_array(),
+                        color: tip.to_array(),
+                    });
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::Quat;
+
+    fn hand(position: Vec3) -> VrControllerState {
+        VrControllerState {
+            active: true,
+            position,
+            orientation: Quat::IDENTITY,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn nothing_without_active_hands_or_options() {
+        let mut out = Vec::new();
+        build(&VrInputState::default(), VrPointer::default(), &mut out);
+        assert!(out.is_empty());
+        let input = VrInputState {
+            right: hand(Vec3::ZERO),
+            ..Default::default()
+        };
+        build(&input, VrPointer::default(), &mut out);
+        assert!(out.is_empty(), "controllers off and no beam hand");
+    }
+
+    #[test]
+    fn beam_runs_along_aim_to_its_length() {
+        let input = VrInputState {
+            right: hand(Vec3::new(1.0, 2.0, 3.0)),
+            ..Default::default()
+        };
+        let pointer = VrPointer {
+            controllers: false,
+            hand: Some(VrSide::Right),
+            length: 4.0,
+            hit: true,
+            actionable: true,
+        };
+        let mut out = Vec::new();
+        build(&input, pointer, &mut out);
+        assert_eq!(out.len() % 3, 0);
+        // OpenXR aim is -Z of the pose: the far end is 4 m that way
+        let far = out.iter().map(|v| v.position[2]).fold(f32::INFINITY, f32::min);
+        assert!((far - (3.0 - 4.0 - 0.024)).abs() < 1e-3, "{far}");
+        assert!(out.iter().all(|v| v.color[3] <= 1.0 && v.color[0] <= v.color[3] + 1e-6));
+    }
+
+    #[test]
+    fn both_controllers_drawn_beam_only_from_pointing_hand() {
+        let input = VrInputState {
+            left: hand(Vec3::X),
+            right: hand(-Vec3::X),
+            ..Default::default()
+        };
+        let mut only = Vec::new();
+        build(
+            &input,
+            VrPointer {
+                controllers: true,
+                ..Default::default()
+            },
+            &mut only,
+        );
+        assert_eq!(only.len(), 2 * 2 * 36, "two boxes per controller");
+        let mut with_beam = Vec::new();
+        build(
+            &input,
+            VrPointer {
+                controllers: true,
+                hand: Some(VrSide::Left),
+                length: 2.0,
+                ..Default::default()
+            },
+            &mut with_beam,
+        );
+        assert_eq!(with_beam.len(), only.len() + 6 * 6);
+    }
+}

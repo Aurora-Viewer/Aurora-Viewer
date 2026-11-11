@@ -1295,6 +1295,11 @@ impl Renderer {
     pub fn vr_input(&self) -> crate::VrInputState {
         self.vr.input()
     }
+    /// What the VR pointer's ray reaches, drawn by the render worker with
+    /// the controllers (ignored outside VR).
+    pub fn set_vr_pointer(&self, pointer: crate::VrPointer) {
+        self.vr.set_pointer(pointer);
+    }
     pub fn add_vr_yaw(&self, radians: f32) {
         self.vr.add_yaw(radians);
     }

@@ -27,6 +27,7 @@ pub(crate) struct Control {
     yaw_delta: AtomicU32,
     translation: RwLock<glam::Vec3>,
     input: RwLock<crate::VrInputState>,
+    pointer: RwLock<crate::VrPointer>,
 }
 impl Control {
     pub fn new(available: bool) -> Self {
@@ -36,6 +37,7 @@ impl Control {
             yaw_delta: AtomicU32::new(0.0f32.to_bits()),
             translation: RwLock::new(glam::Vec3::ZERO),
             input: RwLock::new(crate::VrInputState::default()),
+            pointer: RwLock::new(crate::VrPointer::default()),
         }
     }
     pub fn state(&self) -> VrState {
@@ -71,6 +73,16 @@ impl Control {
     }
     pub fn input(&self) -> crate::VrInputState {
         *self.input.read()
+    }
+    pub fn set_pointer(&self, mut pointer: crate::VrPointer) {
+        if !pointer.length.is_finite() {
+            pointer.length = 0.0;
+        }
+        *self.pointer.write() = pointer;
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    pub fn pointer(&self) -> crate::VrPointer {
+        *self.pointer.read()
     }
     pub fn add_yaw(&self, radians: f32) {
         if radians.is_finite() {
@@ -123,6 +135,7 @@ impl Control {
         let mut input = self.input.write();
         *input = crate::VrInputState::default();
         input.updated_at = Some(Instant::now());
+        *self.pointer.write() = crate::VrPointer::default();
         self.state
             .store(if failed { VrState::Failed } else { VrState::Off } as u8, Ordering::Release);
     }

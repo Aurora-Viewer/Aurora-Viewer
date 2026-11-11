@@ -8042,8 +8042,10 @@ impl App {
         self.camera.joystick_pitch(i.joystick_pitch, dt);
     }
 
-    /// Merge controller input into the existing avatar-control path. This
-    /// intentionally does not translate the camera or predict a position.
+    /// Merge controller input into the existing avatar-control path, and
+    /// put the desktop walking and turning controls in the headset's frame.
+    /// Outside camera-only mode it does not translate the camera or predict
+    /// a position.
     fn apply_vr_locomotion(
         &mut self,
         input: &mut MoveInput,
@@ -8056,6 +8058,34 @@ impl App {
             return;
         }
         let settings = &self.settings.camera.vr;
+        // Keyboard, Controls window and joystick walking keep working beside
+        // the controllers, but in the headset's frame: the walking keys go
+        // where the head looks (as the left stick does), and the turn keys
+        // turn the view, which an avatar turn alone never did in VR.
+        let keys = crate::vr::keys_stick(input.forward, input.back, input.strafe_left, input.strafe_right);
+        let key_turn = input.turn_left as i8 as f32 - input.turn_right as i8 as f32;
+        if key_turn != 0.0 {
+            renderer.add_vr_yaw(key_turn * settings.smooth_turn_speed * dt);
+            input.turn_left = false;
+            input.turn_right = false;
+        }
+        if settings.locomotion == crate::camera::VrLocomotion::CameraOnly {
+            // the camera moves, the avatar stays where it is
+            let rise = input.up as i8 as f32 - input.down as i8 as f32;
+            let step = crate::vr::movement_vector(keys, vr.head_forward, 0.0) + Vec3::Z * rise;
+            if step != Vec3::ZERO {
+                renderer.add_vr_translation(step * settings.movement_speed * dt);
+            }
+            input.forward = false;
+            input.back = false;
+            input.strafe_left = false;
+            input.strafe_right = false;
+            input.up = false;
+            input.down = false;
+        } else if keys.y != 0.0 {
+            let forward = crate::vr::movement_vector(glam::Vec2::Y, vr.head_forward, 0.0);
+            self.world.agent.yaw = forward.y.atan2(forward.x);
+        }
         let left_stick = crate::vr::dead_zone(vr.left.thumbstick, settings.thumbstick_dead_zone);
         if settings.locomotion == crate::camera::VrLocomotion::CameraOnly && vr.left.active {
             let direction = crate::vr::movement_vector(left_stick, vr.head_forward, 0.0);
@@ -8113,37 +8143,51 @@ impl App {
         }
     }
 
-    /// Trigger a world object's normal click action from the dominant hand.
-    fn vr_world_touch(&mut self, active: bool, input: aurora_render::VrInputState) {
-        if !active || !self.settings.camera.vr.controller_pointer {
-            self.vr_trigger_down = false;
-            return;
-        }
-        let controller = match self.settings.camera.vr.dominant_hand {
-            crate::camera::VrHand::Left => input.left,
-            crate::camera::VrHand::Right => input.right,
+    /// The VR pointer: trace the dominant hand's ray every frame, hand what
+    /// it reaches to the render worker (which draws the controllers and the
+    /// beam), and give a trigger pull the object's normal click action.
+    fn vr_world_touch(&mut self, renderer: &Renderer) {
+        let active = renderer.vr_engaged();
+        let input = renderer.vr_input();
+        let settings = &self.settings.camera.vr;
+        let side = match settings.dominant_hand {
+            crate::camera::VrHand::Left => aurora_render::VrSide::Left,
+            crate::camera::VrHand::Right => aurora_render::VrSide::Right,
         };
-        let down = controller.active && controller.trigger >= 0.7;
-        if self.vr_trigger_down || !down {
-            self.vr_trigger_down = down;
+        let controller = input.hand(side);
+        if !active || !settings.controller_pointer || !controller.active {
+            self.vr_trigger_down = false;
+            renderer.set_vr_pointer(aurora_render::VrPointer {
+                controllers: active,
+                ..Default::default()
+            });
             return;
         }
-        self.vr_trigger_down = true;
+        let far = settings.pointer_distance;
         let direction = (controller.orientation * Vec3::NEG_Z).normalize_or(Vec3::Y);
         let ray = (controller.position, direction);
-        let Some(point) = self.scene.interaction_point(
-            &self.world,
-            Some(ray),
-            None,
-            self.build.open,
-            self.settings.camera.vr.pointer_distance,
-        ) else {
-            return;
-        };
-        let Some(index) = self.scene.left_interaction_at_ray(&self.world, point, ray, true) else {
-            return;
-        };
-        if let Some(target) = crate::interaction::target(&self.world, index, &self.interactions.props) {
+        let point = self.scene.vr_ray_point(&self.world, ray, far);
+        let target = point.and_then(|point| {
+            let index = self.scene.left_interaction_at_ray(&self.world, point, ray, true)?;
+            let target = crate::interaction::target(&self.world, index, &self.interactions.props)?;
+            Some((target, index, point))
+        });
+        let actionable = target
+            .as_ref()
+            .is_some_and(|(t, _, _)| t.action != crate::interaction::Action::Disabled);
+        renderer.set_vr_pointer(aurora_render::VrPointer {
+            controllers: true,
+            hand: Some(side),
+            length: point.map_or(far, |p| (p - ray.0).dot(ray.1).max(0.0)),
+            hit: point.is_some(),
+            actionable,
+        });
+        // pressed past 0.7, released under 0.35: a trigger resting near one
+        // threshold must not click again and again
+        let down = crate::vr::trigger_held(self.vr_trigger_down, controller.trigger);
+        let pressed = down && !self.vr_trigger_down;
+        self.vr_trigger_down = down;
+        if pressed && let Some((target, index, point)) = target {
             self.activate_object_action(target, index, point, Some(ray));
         }
     }
@@ -9545,7 +9589,7 @@ impl App {
         // ---- agent / camera
         let typing = self.egui_ctx.egui_wants_keyboard_input();
         self.update_move_input(typing, dt, &gfx.renderer);
-        self.vr_world_touch(gfx.renderer.vr_engaged(), gfx.renderer.vr_input());
+        self.vr_world_touch(&gfx.renderer);
         if self.demo
             && let Ok(mode) = std::env::var("AURORA_DEMO_GROUNDING")
             && let Some(input) = crate::demo::grounding::scripted_input(&mode, self.frame_count)

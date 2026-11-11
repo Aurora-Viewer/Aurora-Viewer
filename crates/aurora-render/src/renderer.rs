@@ -1818,6 +1818,7 @@ impl std::ops::DerefMut for EguiSlot {
 struct XrWorld {
     backends: [Backend; 2],
     mirror: crate::vr_mirror::Mirror,
+    pointer: crate::vr_pointer::Overlay,
     session: crate::xr_frame::Session,
     runtime: openxr::Instance,
 }
@@ -6077,6 +6078,7 @@ impl Backend {
                 Ok(XrWorld {
                     backends: [left, right],
                     mirror: crate::vr_mirror::Mirror::new(&self.device, &self.config, &self.present_modes),
+                    pointer: crate::vr_pointer::Overlay::new(&self.device, self.config.format),
                     session,
                     runtime: runtime.clone(),
                 })
@@ -6187,6 +6189,15 @@ impl Backend {
         let mirror_size = desktop_size;
         let mut first = world.backends[0].render_view(packet);
         let _second = world.backends[1].render_view(other);
+        // the controllers and the pointer beam, over both eyes, at the poses
+        // `begin` just published for this frame
+        world.pointer.draw(
+            &self.device,
+            &self.queue,
+            [0, 1].map(|i| (&eyes.textures[i], eyes.cameras[i].projection * eyes.cameras[i].view)),
+            &self.vr.input(),
+            self.vr.pointer(),
+        );
         first.stats.presented = world.mirror.present(
             &self.device,
             &self.queue,

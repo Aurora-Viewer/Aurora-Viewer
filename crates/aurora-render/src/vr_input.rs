@@ -51,6 +51,40 @@ pub struct VrInputState {
     pub updated_at: Option<Instant>,
 }
 
+/// One of the two OpenXR hands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VrSide {
+    Left,
+    Right,
+}
+
+impl VrInputState {
+    pub fn hand(&self, side: VrSide) -> VrControllerState {
+        match side {
+            VrSide::Left => self.left,
+            VrSide::Right => self.right,
+        }
+    }
+}
+
+/// What the viewer found along the pointing controller's ray, for the render
+/// worker's controller overlay. The worker draws it at the controllers'
+/// poses of the frame it renders, so the beam never trails the hand; the
+/// length comes from the viewer's last trace along that hand's ray.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct VrPointer {
+    /// Draw the tracked controllers in the eyes.
+    pub controllers: bool,
+    /// The hand the beam leaves from; None draws no beam.
+    pub hand: Option<VrSide>,
+    /// Metres from the aim origin to the hit, or to the pointer's reach.
+    pub length: f32,
+    /// The beam ends on a surface (a hit marker is drawn there).
+    pub hit: bool,
+    /// That surface's object has a click action (the beam is tinted).
+    pub actionable: bool,
+}
+
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 mod openxr_input {
     use super::{Quat, Vec2, Vec3, VrControllerState, VrInputState};

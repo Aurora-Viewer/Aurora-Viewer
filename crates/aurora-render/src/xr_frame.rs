@@ -382,6 +382,22 @@ impl Session {
             );
         }
         let anchor = self.anchor.ok_or("Invalid desktop anchor")?;
+        let translation = self.control.take_translation();
+        if translation != glam::Vec3::ZERO {
+            self.anchor = Some(anchor.translate(translation));
+        }
+        let anchor = self.anchor.ok_or("Invalid desktop anchor")?;
+        let yaw = self.control.take_yaw();
+        if yaw != 0.0 {
+            let head = self.head.locate(&self.local, frame.predicted_display_time)?;
+            let p = head.pose.position;
+            self.anchor = Some(anchor.turn_about(anchor.world_point(glam::Vec3::new(p.x, p.y, p.z)), yaw));
+        }
+        let anchor = self.anchor.ok_or("Invalid desktop anchor")?;
+        // Controllers are placed with this frame's final anchor (after the
+        // locomotion and turn above), the one the eyes use: placed before
+        // it, the drawn controllers and the pointer's ray trailed the view
+        // by a frame of movement.
         for controller in [&mut controller_input.left, &mut controller_input.right] {
             if controller.active {
                 if let Some(pose) = anchor.world_pose(Pose {
@@ -396,18 +412,6 @@ impl Session {
             }
         }
         self.control.publish_input(controller_input);
-        let translation = self.control.take_translation();
-        if translation != glam::Vec3::ZERO {
-            self.anchor = Some(anchor.translate(translation));
-        }
-        let anchor = self.anchor.ok_or("Invalid desktop anchor")?;
-        let yaw = self.control.take_yaw();
-        if yaw != 0.0 {
-            let head = self.head.locate(&self.local, frame.predicted_display_time)?;
-            let p = head.pose.position;
-            self.anchor = Some(anchor.turn_about(anchor.world_point(glam::Vec3::new(p.x, p.y, p.z)), yaw));
-        }
-        let anchor = self.anchor.ok_or("Invalid desktop anchor")?;
         let camera = |i: usize| -> Result<EyeView> {
             let v = views[i];
             anchor

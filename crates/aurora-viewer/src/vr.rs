@@ -46,6 +46,18 @@ pub fn movement_intent(stick: Vec2) -> MovementIntent {
     }
 }
 
+/// The held walking keys (or Controls window buttons, or a joystick's
+/// digital walk) as a stick, so they move in VR the way the left stick does.
+pub fn keys_stick(forward: bool, back: bool, left: bool, right: bool) -> Vec2 {
+    let axis = |plus: bool, minus: bool| plus as i8 as f32 - minus as i8 as f32;
+    Vec2::new(axis(right, left), axis(forward, back)).normalize_or_zero()
+}
+
+/// Trigger hysteresis: pressed past 0.7, released only under 0.35.
+pub fn trigger_held(was_held: bool, value: f32) -> bool {
+    if was_held { value > 0.35 } else { value >= 0.7 }
+}
+
 /// State for snap-turn edge detection and its comfort cooldown.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SnapTurn {
@@ -85,6 +97,30 @@ mod tests {
         let forward = movement_vector(Vec2::Y, Vec3::new(0.0, 0.5, 0.8), 0.1);
         assert!(forward.y > 0.99);
         assert!(forward.z.abs() < 1e-6);
+    }
+
+    #[test]
+    fn keys_make_a_unit_stick_and_opposites_cancel() {
+        assert_eq!(keys_stick(true, false, false, false), Vec2::Y);
+        assert_eq!(keys_stick(true, true, false, false), Vec2::ZERO);
+        let diagonal = keys_stick(true, false, true, false);
+        assert!((diagonal.length() - 1.0).abs() < 1e-6 && diagonal.x < 0.0 && diagonal.y > 0.0);
+        // a left key moves the same way as the stick pushed left
+        let left = movement_vector(keys_stick(false, false, true, false), Vec3::X, 0.0);
+        let stick = movement_vector(Vec2::new(-1.0, 0.0), Vec3::X, 0.0);
+        assert!(left.distance(stick) < 1e-6);
+    }
+
+    #[test]
+    fn trigger_clicks_once_through_jitter() {
+        let mut held = false;
+        let mut clicks = 0;
+        for value in [0.0, 0.72, 0.68, 0.71, 0.5, 0.69, 0.3, 0.75] {
+            let now = trigger_held(held, value);
+            clicks += (now && !held) as u32;
+            held = now;
+        }
+        assert_eq!(clicks, 2);
     }
 
     #[test]

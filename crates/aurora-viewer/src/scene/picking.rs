@@ -1381,6 +1381,17 @@ impl Scene {
         })
     }
 
+    /// Where a VR controller's ray first meets the world, traced on the CPU.
+    /// A controller has no GPU depth pick under it, and `interaction_point`
+    /// without one only looks at see-through faces: every opaque object was
+    /// missed. The nearest surface that is not ignored (objects, avatars,
+    /// terrain) is found first, then a hidden clicker in front of it wins,
+    /// as it does over the GPU depth for a mouse click.
+    pub fn vr_ray_point(&self, world: &World, ray: (Vec3, Vec3), far: f32) -> Option<Vec3> {
+        let surface = self.point_behind_ignored_mode(world, ray, far, Instant::now(), None, FacePick::Left);
+        self.transparent_action_point_mode(world, ray, surface, true, far, None, FacePick::Left)
+    }
+
     /// Usually keep the GPU depth pick. Only trace past it when an ignored
     /// object's triangles actually intercept the ray; it stays visible.
     pub fn interaction_point(&self, world: &World, ray: Option<(Vec3, Vec3)>, depth: Option<Vec3>, build: bool, far: f32) -> Option<Vec3> {

@@ -13661,7 +13661,7 @@ ui-options-camera-vr-dominant-hand-help = Contrôleur utilisé pour le pointeur 
 ui-options-camera-vr-dominant-hand-left = Gauche
 ui-options-camera-vr-dominant-hand-right = Droite
 ui-options-camera-vr-controller-pointer = Pointeur du contrôleur
-ui-options-camera-vr-controller-pointer-help = Affiche le laser du pointeur de l'interface VR.
+ui-options-camera-vr-controller-pointer-help = Affiche le laser de votre main dominante. Appuyez sur la gâchette pour cliquer sur ce qu'il touche.
 ui-options-camera-vr-pointer-distance = Distance du pointeur
 ui-options-camera-vr-pointer-distance-help = Distance maximale du pointeur de l'interface VR.
 

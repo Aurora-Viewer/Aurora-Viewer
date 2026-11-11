@@ -13620,7 +13620,7 @@ ui-options-camera-vr-dominant-hand-help = VRポインターに使うコントロ
 ui-options-camera-vr-dominant-hand-left = 左
 ui-options-camera-vr-dominant-hand-right = 右
 ui-options-camera-vr-controller-pointer = コントローラーポインター
-ui-options-camera-vr-controller-pointer-help = VR UIのレーザーポインターを表示します。
+ui-options-camera-vr-controller-pointer-help = 利き手からレーザーを表示します。トリガーを引くと、レーザーが当たったものをクリックします。
 ui-options-camera-vr-pointer-distance = ポインター距離
 ui-options-camera-vr-pointer-distance-help = VR UIポインターの最大距離です。
 
