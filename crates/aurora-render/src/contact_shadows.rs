@@ -116,7 +116,7 @@ const SHADOW_CONTRAST: f32 = 4.0;
 /// ahead), at 5 cm it stays within the shadow's own edge.
 ///
 /// A caster is taken as deep as it is wide along the ray, at most that
-/// (the shader's `reach.x`, [`run_units`]): with a sun ahead, a ground pixel
+/// (the shader's `caster_run.x`, [`run_units`]): with a sun ahead, a ground pixel
 /// whose ray passes behind a post up to 5 cm counted the post as a body the
 /// ray went under, and a 3 cm post's shadow was about twice as wide as the
 /// shadow map's near its base. A hoof or a shoe, many pixels wide, keeps the
@@ -136,13 +136,16 @@ pub(crate) fn occluder_units(depth: f32, near: f32) -> f32 {
     }
 }
 
-/// The shader's `reach.x`: units of surface thickness per pixel of a caster's
+/// The shader's `caster_run.x`: units of surface thickness per pixel of a caster's
 /// width along the ray, from the projection's vertical focal (`proj.y_axis.y`,
 /// a tile's included) and the target's height. N pixels of a caster at z
 /// metres are N × z × pixel angle metres wide, and its depth is taken as that
 /// many metres at most (`depth_delta`): a post thinner than [`OCCLUDER_DEPTH`]
 /// no longer reaches that deep. 0 (no limit) without a usable projection.
 pub(crate) fn run_units(focal_y: f32, height: u32) -> f32 {
+    // a projection flipped in Y has a negative focal: the pixel's angle is
+    // the same
+    let focal_y = focal_y.abs();
     let pixel_angle = 2.0 / (focal_y * height.max(1) as f32);
     if focal_y > 0.0 && pixel_angle.is_finite() {
         pixel_angle / SURFACE_THICKNESS
@@ -539,7 +542,7 @@ struct ParamsU {
     light: [f32; 4],
     wave_offset: [i32; 4],
     tuning: [f32; 4],
-    reach: [f32; 4],
+    caster_run: [f32; 4],
 }
 
 /// The light of the frame as Bend takes it: the direction towards it (w =
@@ -894,10 +897,11 @@ impl ContactShadows {
     }
 
     /// The dispatches and their constants for a light at `light` (clip
-    /// position, [`light_projection`]) seen through a projection whose near
-    /// plane is `near` metres away (`proj`: its depth and vertical focal),
-    /// in an image `scale` times taller than the viewfinder's view of it (its
-    /// pipeline, [`Self::prepare`]), before the encoder runs.
+    /// position, [`light_projection`]) seen through the projection `proj`
+    /// (its near plane for the occluders' depth, its vertical focal for the
+    /// pixel's angle), in an image `scale` times taller than the viewfinder's
+    /// view of it (its pipeline, [`Self::prepare`]), before the encoder
+    /// runs.
     pub(crate) fn write(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, t: &Targets, light: [f32; 4], proj: &Mat4, scale: f32) {
         let mode = Override::from_env();
         let occluder = occluder_units(mode.occluder_depth(), proj.w_axis.z);
@@ -909,7 +913,7 @@ impl ContactShadows {
         self.write_with(device, queue, t, light, scale, (occluder, run));
     }
 
-    /// [`Self::write`] with the shader's `tuning.w` and `reach.x` given.
+    /// [`Self::write`] with the shader's `tuning.w` and `caster_run.x` given.
     fn write_with(
         &mut self,
         device: &wgpu::Device,
@@ -928,7 +932,7 @@ impl ContactShadows {
                 light: self.list.light,
                 wave_offset: [d.wave_offset[0], d.wave_offset[1], 0, 0],
                 tuning: [SURFACE_THICKNESS, BILINEAR_THRESHOLD, SHADOW_CONTRAST, occluder],
-                reach: [run, 0.0, 0.0, 0.0],
+                caster_run: [run, 0.0, 0.0, 0.0],
             };
             let at = i * self.stride as usize;
             bytes[at..at + std::mem::size_of::<ParamsU>()].copy_from_slice(bytemuck::bytes_of(&u));
@@ -1133,7 +1137,8 @@ mod tests {
             assert!((units - expected).abs() < expected * 1e-4, "{z} m: {units} against {expected}");
         }
         assert_eq!(run_units(0.0, 900), 0.0);
-        assert_eq!(run_units(-1.0, 900), 0.0);
+        // a projection flipped in Y has the same pixel angle
+        assert_eq!(run_units(-proj.y_axis.y, height), per_pixel);
         assert_eq!(run_units(f32::NAN, 900), 0.0);
         assert!(run_units(1.7, 0).is_finite());
     }
@@ -1267,6 +1272,192 @@ mod tests {
         assert_eq!(photo.matches("stored_depth(wave, sample_index + i)").count(), 3);
     }
 
+    /// Each variant drops what it says and only that (the shaders' own
+    /// validity: `contact_shadows_shader_is_valid` in lib.rs).
+    #[test]
+    fn each_variant_drops_its_construct() {
+        let bend = include_str!("shaders/contact_shadows.wgsl");
+        assert_eq!(variant_source(Variant::Bend), bend);
+        assert_eq!(variant_source(Variant::Skip), bend);
+        let no_exit = variant_source(Variant::NoEarlyOut);
+        assert!(!no_exit.contains("workgroupUniformLoad") && no_exit.contains("workgroupBarrier()"));
+        let no_shared = variant_source(Variant::NoShared);
+        for gone in ["var<workgroup>", "workgroupBarrier", "workgroupUniformLoad", "depth_data"] {
+            assert!(!no_shared.contains(gone), "{gone}");
+        }
+        assert_eq!(no_shared.matches("stored_depth(wave, sample_index + i)").count(), 3);
+        assert!(variant_source(Variant::Short).contains("const SAMPLE_COUNT: i32 = 16;"));
+    }
+
+    /// The mask each variant draws over a ground with a box on it, read
+    /// back: `no-early-out` and `no-shared` must draw Bend's exactly, or
+    /// the tester's answers would compare different work.
+    #[test]
+    #[ignore = "requires a GPU"]
+    fn the_variants_that_keep_the_image_draw_bends_mask() {
+        let Some((device, queue)) = test_device() else {
+            return;
+        };
+        let (w, h) = (320u32, 192u32);
+        let format = wgpu::TextureFormat::Depth32Float;
+        // reversed depth: a ground rising towards the camera, a box nearer,
+        // sky along the top
+        let depth_tex = draw_depth(
+            &device,
+            &queue,
+            (w, h),
+            "let ground = 0.0005 * (pos.y + 96.0);
+            let in_box = pos.x >= 120.0 && pos.x < 170.0 && pos.y >= 90.0 && pos.y < 130.0;
+            return select(select(ground, ground * 1.02, in_box), 0.0, pos.y < 20.0);",
+        );
+        let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        // the sun ahead and high, its point on screen above the image
+        let light = [0.2, 1.6, 0.0, 0.8];
+        let mask_at = |variant: Variant, scale: f32| -> Vec<u8> {
+            let mut cs = ContactShadows::with_variant(&device, variant);
+            let t = cs.targets(&device, &depth_view, format, w, h);
+            let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.6, 0.1);
+            cs.write(&device, &queue, &t, light, &proj, scale);
+            read_mask(&device, &queue, &cs, &t, (w, h))
+        };
+        let mask = |variant: Variant| mask_at(variant, 1.0);
+        let bend = mask(Variant::Bend);
+        let shadowed = bend.iter().filter(|&&v| v > 128).count();
+        assert!(shadowed > 50 && shadowed < bend.len() / 2, "a shadow to compare: {shadowed} pixels");
+        // the pixels two wavefronts write (where Bend's dispatches meet) take
+        // whichever lands last: only the others are compared
+        let mut writes = vec![0u8; (w * h) as usize];
+        let list = build_dispatch_list(light, [w as i32, h as i32], [0, 0], [w as i32, h as i32], WAVE_SIZE);
+        written_pixels(&list, WAVE_SIZE, |x, y| {
+            if x >= 0 && y >= 0 && x < w as i32 && y < h as i32 {
+                writes[(y * w as i32 + x) as usize] += 1;
+            }
+        });
+        let once = writes.iter().filter(|&&n| n == 1).count();
+        assert!(once > writes.len() * 3 / 4, "{once} pixels written once");
+        let differ = |other: &[u8]| -> Vec<(usize, u8, u8)> {
+            bend.iter()
+                .zip(other)
+                .enumerate()
+                .filter(|(i, (a, b))| a != b && writes[*i] == 1)
+                .map(|(i, (a, b))| (i, *a, *b))
+                .collect()
+        };
+        let again = differ(&mask(Variant::Bend));
+        assert!(
+            again.is_empty(),
+            "Bend twice: {} pixels differ, {:?}",
+            again.len(),
+            &again[..again.len().min(8)]
+        );
+        for variant in [Variant::NoEarlyOut, Variant::NoShared] {
+            let d = differ(&mask(variant));
+            assert!(d.is_empty(), "{variant:?}: {} pixels differ, {:?}", d.len(), &d[..d.len().min(8)]);
+        }
+        assert!(mask(Variant::Skip).iter().all(|&v| v == 0), "skip: nothing");
+        // a photo's pipeline (twice the samples) on an RX 9000: the same mask
+        // as Bend's photo pipeline
+        let bend_photo = mask_at(Variant::Bend, 2.0);
+        assert_ne!(bend_photo, bend, "the photo's samples make longer shadows");
+        let d: Vec<usize> = bend_photo
+            .iter()
+            .zip(mask_at(Variant::NoShared, 2.0))
+            .enumerate()
+            .filter(|(i, (a, b))| **a != *b && writes[*i] == 1)
+            .map(|(i, _)| i)
+            .collect();
+        assert!(d.is_empty(), "NoShared photo: {} pixels differ", d.len());
+    }
+
+    /// The thick-caster rule on a ground with a 3 pixel bar, a 40 pixel block
+    /// and a 25 pixel one, each nearer by 2 %: the bar casts a narrower
+    /// shadow, the blocks lose a few edge pixels at most, and with the sun
+    /// behind the camera (or a direction) the mask is the same bit for bit.
+    #[test]
+    #[ignore = "requires a GPU"]
+    fn a_thin_caster_shadows_no_wider_than_it_is() {
+        let Some((device, queue)) = test_device() else {
+            return;
+        };
+        let (w, h) = (320u32, 192u32);
+        let depth_tex = draw_depth(
+            &device,
+            &queue,
+            (w, h),
+            "let ground = 0.0005 * (pos.y + 96.0);
+            let bar = pos.x >= 60.0 && pos.x < 63.0 && pos.y >= 90.0 && pos.y < 130.0;
+            let block = pos.x >= 200.0 && pos.x < 240.0 && pos.y >= 90.0 && pos.y < 130.0;
+            let shoe = pos.x >= 120.0 && pos.x < 145.0 && pos.y >= 90.0 && pos.y < 130.0;
+            return select(select(ground, ground * 1.02, bar || block || shoe), 0.0, pos.y < 20.0);",
+        );
+        let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.6, 0.1);
+        let occluder = occluder_units(OCCLUDER_DEPTH, 0.1);
+        let run = run_units(proj.y_axis.y, h);
+        let mask = |light: [f32; 4], run: f32| -> Vec<u8> {
+            let mut cs = ContactShadows::with_variant(&device, Variant::Bend);
+            let t = cs.targets(&device, &depth_view, wgpu::TextureFormat::Depth32Float, w, h);
+            cs.write_with(&device, &queue, &t, light, 1.0, (occluder, run));
+            read_mask(&device, &queue, &cs, &t, (w, h))
+        };
+        // the ground around each caster, the caster's own pixels left out
+        let shadowed = |mask: &[u8], x: std::ops::Range<u32>, own: std::ops::Range<u32>| {
+            (0..h)
+                .flat_map(|y| x.clone().map(move |x| (x, y)))
+                .filter(|&(x, y)| !(own.contains(&x) && (90..130).contains(&y)) && mask[(y * w + x) as usize] > 128)
+                .count()
+        };
+        let around = |mask: &[u8]| {
+            [
+                shadowed(mask, 40..90, 60..63),
+                shadowed(mask, 100..180, 120..145),
+                shadowed(mask, 180..260, 200..240),
+            ]
+        };
+        // the sun ahead and high, then low: its point on screen above the
+        // image, then inside it
+        for (name, light) in [("near", [0.2, 1.6, 0.0, 0.8]), ("far", [0.2, 3.0, 0.0, 0.8])] {
+            let (deep, ruled) = (around(&mask(light, 0.0)), around(&mask(light, run)));
+            let [bar_deep, shoe_deep, block_deep] = deep;
+            let [bar_ruled, shoe_ruled, block_ruled] = ruled;
+            let said = format!(
+                "{name} sun: bar {bar_ruled} / {bar_deep}, shoe {shoe_ruled} / {shoe_deep}, block {block_ruled} / {block_deep} (rule / without)"
+            );
+            assert!(bar_deep > 0 && shoe_deep > 0 && block_deep > 0, "{said}");
+            // the rule only takes shadow away (the few pixels where two
+            // wavefronts meet take whichever lands last); the bar loses most
+            // of its widening where the rays are shallow (the steep ones had
+            // none)
+            assert!(
+                bar_ruled <= bar_deep + 3 && shoe_ruled <= shoe_deep + 3 && block_ruled <= block_deep + 3,
+                "{said}"
+            );
+            if name == "near" {
+                assert!(bar_ruled > 0 && bar_ruled * 4 <= bar_deep * 3, "{said}");
+            }
+            // the wide casters lose the first pixels of their run (about 6 % of
+            // their shadow here)
+            assert!(shoe_ruled * 10 >= shoe_deep * 9 && block_ruled * 10 >= block_deep * 9, "{said}");
+        }
+        // the sun behind the camera, and a direction: the ray never recedes,
+        // so the rule changes nothing (the pixels two wavefronts write are
+        // left out, whichever lands last)
+        for light in [[0.2, 1.6, 0.0, -0.8], [0.2, 1.6, 0.0, 0.0]] {
+            let list = build_dispatch_list(light, [w as i32, h as i32], [0, 0], [w as i32, h as i32], WAVE_SIZE);
+            let mut writes = vec![0u8; (w * h) as usize];
+            written_pixels(&list, WAVE_SIZE, |x, y| {
+                if x >= 0 && y >= 0 && x < w as i32 && y < h as i32 {
+                    writes[(y * w as i32 + x) as usize] += 1;
+                }
+            });
+            let (deep, ruled) = (mask(light, 0.0), mask(light, run));
+            let shadow = deep.iter().filter(|&&v| v > 128).count();
+            assert!(shadow > 50, "{light:?}: a shadow to compare ({shadow} pixels)");
+            let differ = (0..deep.len()).filter(|&i| deep[i] != ruled[i] && writes[i] == 1).count();
+            assert_eq!(differ, 0, "{light:?}: {differ} pixels differ");
+        }
+    }
+
     fn test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         let instance = wgpu::Instance::default();
         let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
@@ -1394,156 +1585,5 @@ mod tests {
         data.chunks(row as usize)
             .flat_map(|r| r[..(w * 4) as usize].chunks(4).map(|p| p[0]))
             .collect()
-    }
-
-    /// Each variant drops what it says and only that (the shaders' own
-    /// validity: `contact_shadows_shader_is_valid` in lib.rs).
-    #[test]
-    fn each_variant_drops_its_construct() {
-        let bend = include_str!("shaders/contact_shadows.wgsl");
-        assert_eq!(variant_source(Variant::Bend), bend);
-        assert_eq!(variant_source(Variant::Skip), bend);
-        let no_exit = variant_source(Variant::NoEarlyOut);
-        assert!(!no_exit.contains("workgroupUniformLoad") && no_exit.contains("workgroupBarrier()"));
-        let no_shared = variant_source(Variant::NoShared);
-        for gone in ["var<workgroup>", "workgroupBarrier", "workgroupUniformLoad", "depth_data"] {
-            assert!(!no_shared.contains(gone), "{gone}");
-        }
-        assert_eq!(no_shared.matches("stored_depth(wave, sample_index + i)").count(), 3);
-        assert!(variant_source(Variant::Short).contains("const SAMPLE_COUNT: i32 = 16;"));
-    }
-
-    /// The mask each variant draws over a ground with a box on it, read
-    /// back: `no-early-out` and `no-shared` must draw Bend's exactly, or
-    /// the tester's answers would compare different work.
-    #[test]
-    #[ignore = "requires a GPU"]
-    fn the_variants_that_keep_the_image_draw_bends_mask() {
-        let Some((device, queue)) = test_device() else {
-            return;
-        };
-        let (w, h) = (320u32, 192u32);
-        let format = wgpu::TextureFormat::Depth32Float;
-        // reversed depth: a ground rising towards the camera, a box nearer,
-        // sky along the top
-        let depth_tex = draw_depth(
-            &device,
-            &queue,
-            (w, h),
-            "let ground = 0.0005 * (pos.y + 96.0);
-            let in_box = pos.x >= 120.0 && pos.x < 170.0 && pos.y >= 90.0 && pos.y < 130.0;
-            return select(select(ground, ground * 1.02, in_box), 0.0, pos.y < 20.0);",
-        );
-        let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
-        // the sun ahead and high, its point on screen above the image
-        let light = [0.2, 1.6, 0.0, 0.8];
-        let mask_at = |variant: Variant, scale: f32| -> Vec<u8> {
-            let mut cs = ContactShadows::with_variant(&device, variant);
-            let t = cs.targets(&device, &depth_view, format, w, h);
-            let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.6, 0.1);
-            cs.write(&device, &queue, &t, light, &proj, scale);
-            read_mask(&device, &queue, &cs, &t, (w, h))
-        };
-        let mask = |variant: Variant| mask_at(variant, 1.0);
-        let bend = mask(Variant::Bend);
-        let shadowed = bend.iter().filter(|&&v| v > 128).count();
-        assert!(shadowed > 50 && shadowed < bend.len() / 2, "a shadow to compare: {shadowed} pixels");
-        // the pixels two wavefronts write (where Bend's dispatches meet) take
-        // whichever lands last: only the others are compared
-        let mut writes = vec![0u8; (w * h) as usize];
-        let list = build_dispatch_list(light, [w as i32, h as i32], [0, 0], [w as i32, h as i32], WAVE_SIZE);
-        written_pixels(&list, WAVE_SIZE, |x, y| {
-            if x >= 0 && y >= 0 && x < w as i32 && y < h as i32 {
-                writes[(y * w as i32 + x) as usize] += 1;
-            }
-        });
-        let once = writes.iter().filter(|&&n| n == 1).count();
-        assert!(once > writes.len() * 3 / 4, "{once} pixels written once");
-        let differ = |other: &[u8]| -> Vec<(usize, u8, u8)> {
-            bend.iter()
-                .zip(other)
-                .enumerate()
-                .filter(|(i, (a, b))| a != b && writes[*i] == 1)
-                .map(|(i, (a, b))| (i, *a, *b))
-                .collect()
-        };
-        let again = differ(&mask(Variant::Bend));
-        assert!(
-            again.is_empty(),
-            "Bend twice: {} pixels differ, {:?}",
-            again.len(),
-            &again[..again.len().min(8)]
-        );
-        for variant in [Variant::NoEarlyOut, Variant::NoShared] {
-            let d = differ(&mask(variant));
-            assert!(d.is_empty(), "{variant:?}: {} pixels differ, {:?}", d.len(), &d[..d.len().min(8)]);
-        }
-        assert!(mask(Variant::Skip).iter().all(|&v| v == 0), "skip: nothing");
-        // a photo's pipeline (twice the samples) on an RX 9000: the same mask
-        // as Bend's photo pipeline
-        let bend_photo = mask_at(Variant::Bend, 2.0);
-        assert_ne!(bend_photo, bend, "the photo's samples make longer shadows");
-        let d: Vec<usize> = bend_photo
-            .iter()
-            .zip(mask_at(Variant::NoShared, 2.0))
-            .enumerate()
-            .filter(|(i, (a, b))| **a != *b && writes[*i] == 1)
-            .map(|(i, _)| i)
-            .collect();
-        assert!(d.is_empty(), "NoShared photo: {} pixels differ", d.len());
-    }
-
-    /// A caster 3 pixels wide casts a narrower shadow with the thick-caster
-    /// rule than without it, one 40 pixels wide the same.
-    #[test]
-    #[ignore = "requires a GPU"]
-    fn a_thin_caster_shadows_no_wider_than_it_is() {
-        let Some((device, queue)) = test_device() else {
-            return;
-        };
-        let (w, h) = (320u32, 192u32);
-        let depth_tex = draw_depth(
-            &device,
-            &queue,
-            (w, h),
-            "let ground = 0.0005 * (pos.y + 96.0);
-            let bar = pos.x >= 60.0 && pos.x < 63.0 && pos.y >= 90.0 && pos.y < 130.0;
-            let block = pos.x >= 200.0 && pos.x < 240.0 && pos.y >= 90.0 && pos.y < 130.0;
-            return select(select(ground, ground * 1.02, bar || block), 0.0, pos.y < 20.0);",
-        );
-        let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
-        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.6, 0.1);
-        // the sun ahead and high, its point on screen above the image
-        let light = [0.2, 1.6, 0.0, 0.8];
-        let occluder = occluder_units(OCCLUDER_DEPTH, 0.1);
-        let mask = |run: f32| -> Vec<u8> {
-            let mut cs = ContactShadows::with_variant(&device, Variant::Bend);
-            let t = cs.targets(&device, &depth_view, wgpu::TextureFormat::Depth32Float, w, h);
-            cs.write_with(&device, &queue, &t, light, 1.0, (occluder, run));
-            read_mask(&device, &queue, &cs, &t, (w, h))
-        };
-        let (deep, ruled) = (mask(0.0), mask(run_units(proj.y_axis.y, h)));
-        // the ground around each caster, the caster's own pixels left out
-        let shadowed = |mask: &[u8], x: std::ops::Range<u32>, own: std::ops::Range<u32>| {
-            (0..h)
-                .flat_map(|y| x.clone().map(move |x| (x, y)))
-                .filter(|&(x, y)| !(own.contains(&x) && (90..130).contains(&y)) && mask[(y * w + x) as usize] > 128)
-                .count()
-        };
-        let (bar_deep, bar_ruled) = (shadowed(&deep, 40..90, 60..63), shadowed(&ruled, 40..90, 60..63));
-        let (block_deep, block_ruled) = (shadowed(&deep, 180..260, 200..240), shadowed(&ruled, 180..260, 200..240));
-        assert!(bar_deep > 0 && block_deep > 0, "shadows to compare: {bar_deep}, {block_deep}");
-        assert!(
-            bar_ruled < bar_deep,
-            "the bar: {bar_ruled} pixels with the rule, {bar_deep} without"
-        );
-        // the block keeps its depth after its first few pixels (the rule looks
-        // back along the ray): a few edge pixels differ, far fewer than the
-        // bar's
-        let (bar_less, block_less) = (bar_deep - bar_ruled, block_deep.abs_diff(block_ruled));
-        assert!(
-            block_less * 10 <= block_deep && block_less * bar_deep * 2 <= bar_less * block_deep,
-            "the block: {block_ruled} pixels with the rule, {block_deep} without; the bar: {bar_ruled}, {bar_deep}"
-        );
     }
 }

@@ -34,12 +34,11 @@
 // workgroup memory (no wave intrinsics in WGSL), the shadow stored rather
 // than the light, no debug outputs, occluders taken as deep as the ray went
 // under them (up to `tuning.w`, and as deep as they are wide along the ray)
-// rather than a shell (`depth_delta`), more
-// samples in a photo larger than the viewfinder (the four constants below
-// replaced in a pipeline of its own, `shader_source` in contact_shadows.rs:
-// the shadow keeps its length in the image), Bend's defaults otherwise
-// (BilinearSamplingOffsetMode and IgnoreEdgePixels off, no precision
-// offset).
+// rather than a shell (`depth_delta`), more samples in a photo larger than
+// the viewfinder (the four constants below replaced in a pipeline of its
+// own, `shader_source` in contact_shadows.rs: the shadow keeps its length
+// in the image), Bend's defaults otherwise (BilinearSamplingOffsetMode and
+// IgnoreEdgePixels off, no precision offset).
 
 struct Params {
     // x, y: the light on screen (pixels, y down), z: its depth, w: 1 when
@@ -52,8 +51,8 @@ struct Params {
     // depth (0: Bend's shell of one unit)
     tuning: vec4<f32>,
     // x: units of depth per pixel of an occluder's run along the ray (0:
-    // every occluder as deep as tuning.w)
-    reach: vec4<f32>,
+    // every occluder as deep as tuning.w); yzw: padding to a vec4
+    caster_run: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -111,7 +110,9 @@ fn in_front(w: ShadowWindow, sample_depth: f32) -> f32 {
 }
 
 // The consecutive samples in front of the ray within the window: the
-// caster's width along the ray so far, in pixels.
+// caster's width along the ray so far, in samples (a pixel along the major
+// axis: on a diagonal ray a sample is up to 1.4 pixels of the caster, so the
+// width is then under-counted and the depth a little shallower).
 fn next_run(w: ShadowWindow, v: f32, run: f32) -> f32 {
     return select(0.0, run + 1.0, v > 0.0 && v < w.depth + 1.0);
 }
@@ -238,7 +239,7 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
         sample_distance[0],
         direction,
         max(1.0, params.tuning.w * sampling_depth[0]),
-        params.reach.x,
+        params.caster_run.x,
     );
     var run = 0.0;
     // sample i lies i + 1 pixels along the ray

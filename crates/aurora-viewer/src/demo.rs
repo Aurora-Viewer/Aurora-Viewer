@@ -8031,6 +8031,7 @@ pub fn feet_events(blend: bool, crowd: u32) -> Vec<NetEvent> {
     }
     // the same for AURORA_DEMO_POS="100,100", with three thin posts: the
     // contact shadow is no wider than the caster is along the ray
+    let post = hoof;
     for (i, (x, d)) in [(102.0f32, 0.03f32), (103.0, 0.06), (104.0, 0.12)].into_iter().enumerate() {
         let y = 99.0;
         objects.push(prim(
@@ -8038,7 +8039,7 @@ pub fn feet_events(blend: bool, crowd: u32) -> Vec<NetEvent> {
             Vec3::new(x, y, floor_at(x, y) + 0.8),
             Quat::IDENTITY,
             Vec3::new(d, d, 1.6),
-            hoof,
+            post,
             te([0.8, 0.8, 0.8, 1.0], 0, false, 0.0),
             ExtraParams::default(),
             "",

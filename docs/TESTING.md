@@ -4824,10 +4824,14 @@ both open states and the selection count. Capture at frame 620.
   (frame 780 at 60 fps), the ground under the hovering shoe takes its
   contact shadow; with `AURORA_CONTACT_SHADOWS=shell` it stays lit, a
   thin dark line along the sole's edge. From `AURORA_DEMO_POS="100,100"`
-  (camera looking east) three round posts 1.6 m tall (3, 6 and 12 cm
-  across) stand about 5 m away, with a hoof and a shoe hovering 2 cm beside
-  them: thin and thick casters for the contact shadows' width
+  (camera looking east, about 3 m behind the avatar) three round posts
+  1.6 m tall (3, 6 and 12 cm across) stand 2, 3 and 4 m east and 1 m south
+  of the start position (the first about 5 m from the camera), a hoof on
+  the ground and a shoe hovering 2 cm above it about 2 m east and 1.7 and
+  2.3 m north of it:
+  thin and thick casters for the contact shadows' width
   (`AURORA_CONTACT_SHADOWS=deep` against `1`, with `AURORA_DEMO_SUN=30,15`).
+  `AURORA_DEMO_POS="101.8,100.3"` brings the hoof and the shoe to about 3 m.
 - **`AURORA_DEMO_LASHES=1`** (with `AURORA_DEMO_HAIR`, for example
   `1,48,20`): our avatar also wears a small red ball, a blended rigged
   mesh, inside the head shell on the side the default camera sees: the
@@ -10896,21 +10900,23 @@ What the inventory must show with these scenarios:
   each (on in odd seconds), the mask kept ready; `prepass` on, but cast by
   the depth prepass alone (opaque and masked faces, terrain), as before the
   blended faces opaque enough and the impostor cards were drawn into a copy
-  of it for them (see `AURORA_DEMO_FEET`); `shell` on, each depth taken
-  as a shell of 0.5 % of its distance (Bend's window, before issue 988)
-  instead of a body as deep as the ray went under it (up to 5 cm, with
-  the sun ahead of the camera): a ray that goes under a thick caster is
-  stopped only where it grazes its edges; `deep` on, every occluder taken
-  up to 5 cm deep whatever its width (the window before the thick-caster
-  rule: a body is as deep as it is wide along the ray, so a post thinner
-  than 5 cm no longer shadows the ground the ray passes behind it). To
+  of it for them (see `AURORA_DEMO_FEET`); with `1` (the default when on),
+  with the sun ahead of the camera each occluder is a body as deep as the
+  ray went under it, up to 5 cm and no deeper than it is wide along the
+  ray (a post thinner than 5 cm no longer shadows the ground the ray passes
+  behind it); `shell` on, each depth taken as a shell of 0.5 % of its
+  distance (Bend's window, before issue 988): a ray that goes under a thick
+  caster is stopped only where it grazes its edges; `deep` on, every
+  occluder taken up to 5 cm deep whatever its width (the window before the
+  thick-caster rule). To
   compare, at `AURORA_DEMO_POS=100,100` with `AURORA_DEMO_FEET=opaque`,
   `AURORA_DEBUG_SHADOWS=1`, `AURORA_DEMO_SUN=30,15` and a capture at frame
   1100 or later: the 3 and 6 cm posts' shadows near their bases are 5.8-7.6
   and 9.0-9.4 pixels wide with `deep`, 4.6-5.2 and 7.4-7.8 with `1` (the
   shadow map alone: 3.3-3.5 and 6.6-6.8); with `AURORA_DEMO_SUN=150,20`
-  (sun behind) and on the hoof and the shoe (`AURORA_DEMO_SUN=0,12`) the two
-  look the same. **`AURORA_CONTACT_SOFT=0`**:
+  (sun behind) the two look the same; on the hoof and the shoe
+  (`AURORA_DEMO_SUN=0,12`, close-up) the shadows under them are as full, the
+  thin fringe along the hovering shoe's gap is partly lighter with `1`. **`AURORA_CONTACT_SOFT=0`**:
   the mask reaches the shading as the pass wrote it, without the 5 × 5
   softening over each surface (`contact_shadows_filter.wgsl`): hard steps
   of whole pixels on curved bodies (the sides of our avatar with
