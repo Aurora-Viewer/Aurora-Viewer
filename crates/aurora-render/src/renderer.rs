@@ -2322,6 +2322,39 @@ fn extra<T>(
     (!first_use(oom, what, false, refused && !lost)).then_some(made)
 }
 
+/// Whether the volumetric clouds are asked for this frame: over the sky of
+/// the main view when it is drawn (not hidden by the debug filter), not
+/// under the water (the sky is seen through its fog), nor in a cut-out
+/// photo (no sky).
+fn clouds_wanted(cutout: bool, hide_sky: bool, camera_z: f32, water_level: f32) -> bool {
+    !cutout && !hide_sky && camera_z >= water_level
+}
+
+/// The clouds' size-bound targets for `size` (and a still's) are made,
+/// checked: false while refused or waiting (the frame draws the Legacy
+/// layer, like `dof_targets`).
+fn cloud_targets(
+    oom: &mut crate::gpu_alloc::Refusals,
+    clouds: &mut crate::clouds::Clouds,
+    device: &wgpu::Device,
+    size: (u32, u32),
+    still: bool,
+    lost: bool,
+) -> bool {
+    if clouds.has_targets(size, still) {
+        return true;
+    }
+    if !oom.extras_ready(Instant::now()) {
+        return false;
+    }
+    let (_, refused) = crate::gpu_alloc::scoped(device, || clouds.ensure_targets(device, size, still));
+    if first_use(oom, "volumetric clouds", false, refused && !lost) {
+        clouds.release_targets();
+        return false;
+    }
+    true
+}
+
 /// The depth of field's targets for `size` are made, checked: false while
 /// refused or waiting (the frame goes without the effect).
 fn dof_targets(
@@ -6891,7 +6924,7 @@ impl Backend {
         // ---- volumetric clouds (clouds.rs): over the sky of the main view
         // when the setting is on and the Legacy layer would draw something;
         // not under the water (the sky is seen through its fog), nor in a
-        // cut-out photo (no sky). A photo, a tile of one or any other still
+        // cut-out photo (no sky), nor with the sky hidden. A photo, a tile of one or any other still
         // is traced once in full (clouds.rs `StillSpec`), with no history.
         // Until the noise is made the sky shader keeps the Legacy layer.
         let still = (snapshot.is_some() || f.photo_tile != Mat4::IDENTITY).then(|| {
@@ -6903,17 +6936,37 @@ impl Backend {
         let cloud_params = f
             .clouds
             .as_ref()
-            .filter(|_| !f.cutout && f.camera_pos.z >= camera_water_level)
+            .filter(|_| clouds_wanted(f.cutout, f.hide_sky, f.camera_pos.z, camera_water_level))
             .and_then(|c| {
                 let rotation = Mat4::from_mat3(glam::Mat3::from_mat4(f.view));
                 crate::clouds::Params::new(f, c, f.proj * rotation, inv_view_proj_rot(f.proj, f.view))
             });
         match (&f.clouds, &mut self.clouds) {
             (None, clouds) => *clouds = None,
-            (Some(_), clouds @ None) => *clouds = Some(crate::clouds::Clouds::new(&self.device)),
+            (Some(_), clouds @ None) => {
+                // (checked: refused, the Legacy layer stays and it is tried
+                // again later; the noise file is read once it is made)
+                *clouds = extra(
+                    &mut self.oom,
+                    &self.device,
+                    self.lost.get(),
+                    "volumetric clouds",
+                    crate::clouds::Clouds::new,
+                );
+                if let Some(c) = clouds {
+                    c.start_noise_read();
+                }
+            }
             _ => {}
         }
-        self.clouds_now = cloud_params.is_some() && self.clouds.as_ref().is_some_and(|c| c.ready());
+        // (the targets are made before the decision: refused, this frame
+        // draws the Legacy layer)
+        let cloud_size = (self.targets.color_tex.width().max(2), self.targets.color_tex.height().max(2));
+        let cloud_targets_ok = match (&mut self.clouds, &cloud_params) {
+            (Some(c), Some(_)) if c.ready() => cloud_targets(&mut self.oom, c, &self.device, cloud_size, still.is_some(), self.lost.get()),
+            _ => false,
+        };
+        self.clouds_now = cloud_params.is_some() && cloud_targets_ok;
         if self.clouds_now {
             // (common.wgsl: the sky pass leaves the clouds to clouds.rs)
             main.features[1] = 1;
@@ -8475,7 +8528,10 @@ impl Backend {
         // the noise slice, the trace and the reconstruction (clouds.rs)
         let scene_samples = self.targets.depth_msaa_tex.as_ref().map_or(1, |t| t.sample_count());
         let scene_gbuf = self.targets.gbuf.is_some();
-        if let (Some(clouds), Some(p)) = (&mut self.clouds, &cloud_params) {
+        // (until the noise is made `encode` generates it and allocates
+        // nothing; after, it needs the targets made above)
+        let clouds_encode = self.clouds_now || self.clouds.as_ref().is_some_and(|c| !c.ready());
+        if let (Some(clouds), Some(p), true) = (&mut self.clouds, &cloud_params, clouds_encode) {
             if clouds.weather_stale(p.weather_key) {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("cloud weather"),
@@ -8501,8 +8557,15 @@ impl Backend {
                 drop(pass);
                 clouds.weather_drawn(p.weather_key);
             }
-            let size = (self.targets.color_tex.width(), self.targets.color_tex.height());
-            clouds.encode(&self.device, &self.queue, &mut encoder, p, &self.targets.depth_ss, size, still);
+            clouds.encode(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                p,
+                &self.targets.depth_ss,
+                cloud_size,
+                still,
+            );
             clouds.prepare(&self.device, scene_samples, scene_gbuf, HDR_FORMAT, GBUF_FORMAT, DEPTH_FORMAT);
         } else if let Some(clouds) = &mut self.clouds {
             clouds.skipped(still.is_some());
@@ -9956,6 +10019,15 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_clouds_are_asked_for_only_over_a_drawn_sky() {
+        assert!(clouds_wanted(false, false, 30.0, 20.0));
+        assert!(clouds_wanted(false, false, 20.0, 20.0));
+        assert!(!clouds_wanted(true, false, 30.0, 20.0), "cut-out photo");
+        assert!(!clouds_wanted(false, true, 30.0, 20.0), "sky hidden: no trace for nothing");
+        assert!(!clouds_wanted(false, false, 19.0, 20.0), "under the water");
+    }
 
     /// The occlusion's table is read by index against the main view's
     /// arguments: a cut-out photo leaves the ground and the water out of both,

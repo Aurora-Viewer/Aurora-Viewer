@@ -1444,6 +1444,9 @@ pub struct CloudsFrame {
     /// Size of the cloud texture as loaded so far (it grows while it loads;
     /// the weather map is drawn again for it).
     pub texture_size: (u32, u32),
+    /// Revision of the cloud texture's texels (`Textures::revision_of`):
+    /// a reload of the same size changes it, and the weather map follows.
+    pub texture_revision: u64,
 }
 
 #[derive(Debug, Clone, Copy)]

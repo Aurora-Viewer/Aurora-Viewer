@@ -4928,7 +4928,8 @@ both open states and the selection count. Capture at frame 620.
   refused by a full video memory. An effect the frame can go without is
   left out and tried again after 2 s, then twice as long each time up to
   30 s: the selection outline (`AURORA_DEMO_BUILD`), the depth of field
-  (`AURORA_DEMO_DOF`), a photo look; the log says once `<what>: out of
+  (`AURORA_DEMO_DOF`), a photo look, the volumetric clouds (the Legacy
+  layer stays; `AURORA_DEMO_CLOUDS`); the log says once `<what>: out of
   video memory, drawn without it for now`. One the frame cannot go without
   shows the interface alone, as `AURORA_GPU_OOM_TARGETS` does: RLVa's
   vision spheres and reduced scene (`AURORA_DEMO_RLVA`), the TAA history

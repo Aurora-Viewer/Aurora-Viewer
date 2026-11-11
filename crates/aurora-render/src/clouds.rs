@@ -166,6 +166,7 @@ impl Params {
                 s.cloud_pos_density2.z,
                 s.cloud_texture,
                 c.texture_size,
+                c.texture_revision,
             ),
         })
     }
@@ -368,9 +369,17 @@ pub fn noise_step(frame: u32) -> NoiseStep {
 }
 
 /// Hash of what the weather map is made of: the Legacy cloud parameters it
-/// reads and the cloud texture (its slot and size, which grows while it
-/// loads). The map is drawn again only when it changes.
-pub fn weather_key(cloud_shadow: f32, density1: f32, density2: f32, texture_slot: u32, texture_size: (u32, u32)) -> u64 {
+/// reads and the cloud texture (its slot, its size, which grows while it
+/// loads, and its revision: a reload of the same size). The map is drawn
+/// again only when it changes.
+pub fn weather_key(
+    cloud_shadow: f32,
+    density1: f32,
+    density2: f32,
+    texture_slot: u32,
+    texture_size: (u32, u32),
+    texture_revision: u64,
+) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325_u64;
     for v in [
         cloud_shadow.to_bits(),
@@ -379,6 +388,8 @@ pub fn weather_key(cloud_shadow: f32, density1: f32, density2: f32, texture_slot
         texture_slot,
         texture_size.0,
         texture_size.1,
+        texture_revision as u32,
+        (texture_revision >> 32) as u32,
     ] {
         h = (h ^ v as u64).wrapping_mul(0x0100_0000_01b3);
     }
@@ -571,7 +582,7 @@ impl Clouds {
             weather: view(&weather_tex),
             weather_key: None,
             noise_frames: 0,
-            loading: Some(Self::read_noise()),
+            loading: None,
             sized: None,
             still: None,
             latest: None,
@@ -582,6 +593,62 @@ impl Clouds {
             composite: Vec::new(),
             composite_group: None,
         }
+    }
+
+    /// Starts reading the shipped noise file, once the textures it goes
+    /// into are made (a refused `new` starts no thread).
+    pub fn start_noise_read(&mut self) {
+        if self.loading.is_none() && self.noise_frames == 0 {
+            self.loading = Some(Self::read_noise());
+        }
+    }
+
+    /// The targets for `size` (a still's, or the live ones) are made
+    /// (`ensure_targets` would make nothing).
+    pub fn has_targets(&self, size: (u32, u32), still: bool) -> bool {
+        let size = (size.0.max(2), size.1.max(2));
+        if still {
+            self.still.as_ref().is_some_and(|(s, _)| *s == size)
+        } else {
+            self.sized.as_ref().is_some_and(|s| s.size == size)
+        }
+    }
+
+    /// Makes the targets for `size`, if not made (the renderer calls it
+    /// inside an error scope: renderer.rs `cloud_targets`). A still keeps
+    /// its own image: the live history, its size and its camera stay as the
+    /// last live frame left them, so that the first live frame after the
+    /// photo does not flash.
+    pub fn ensure_targets(&mut self, device: &wgpu::Device, size: (u32, u32), still: bool) {
+        let size = (size.0.max(2), size.1.max(2));
+        if self.has_targets(size, still) {
+            return;
+        }
+        if still {
+            use wgpu::TextureFormat::Rgba16Float;
+            let usage = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
+            let view = texture(
+                device,
+                "cloud still",
+                [size.0, size.1, 1],
+                wgpu::TextureDimension::D2,
+                Rgba16Float,
+                usage,
+            )
+            .create_view(&Default::default());
+            self.still = Some((size, view));
+        } else {
+            self.sized = Some(Self::make_sized(device, size));
+            self.latest = None;
+        }
+    }
+
+    /// Drops the size-bound targets (they were refused, or half made).
+    pub fn release_targets(&mut self) {
+        self.sized = None;
+        self.still = None;
+        self.latest = None;
+        self.composite_group = None;
     }
 
     /// The noise is complete: the clouds can be drawn this frame.
@@ -681,28 +748,11 @@ impl Clouds {
         still: Option<StillSpec>,
     ) {
         let size = (size.0.max(2), size.1.max(2));
-        // (a still keeps its own image: the live history, its size and its
-        // camera stay as the last live frame left them, so that the first
-        // live frame after the photo does not flash)
+        // (the targets are made, checked, before: `ensure_targets`. A live
+        // frame drops the still of the photo before it)
+        self.composite_group = None;
         if still.is_none() {
             self.still = None;
-            if self.sized.as_ref().is_none_or(|s| s.size != size) {
-                self.sized = Some(Self::make_sized(device, size));
-                self.latest = None;
-            }
-        } else if self.still.as_ref().is_none_or(|(s, _)| *s != size) {
-            use wgpu::TextureFormat::Rgba16Float;
-            let usage = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
-            let view = texture(
-                device,
-                "cloud still",
-                [size.0, size.1, 1],
-                wgpu::TextureDimension::D2,
-                Rgba16Float,
-                usage,
-            )
-            .create_view(&Default::default());
-            self.still = Some((size, view));
         }
         let reading = self.poll_noise(queue);
         // (while the file is read, nothing is generated: it is usually done
@@ -797,7 +847,10 @@ impl Clouds {
         if !shown {
             return;
         }
-        if let Some((_, target)) = &self.still {
+        if still.is_some() {
+            let Some((_, target)) = self.still.as_ref().filter(|(s, _)| *s == size) else {
+                return;
+            };
             pass(
                 "cloud still",
                 &self.pipelines.trace_still,
@@ -828,7 +881,9 @@ impl Clouds {
             }));
             return;
         }
-        let Some(sized) = &self.sized else { return };
+        let Some(sized) = self.sized.as_ref().filter(|s| s.size == size) else {
+            return;
+        };
         let write = self.latest.map_or(0, |i| 1 - i);
         let read = self.latest.unwrap_or(1 - write);
         let ts = (hw.div_ceil(2), hh.div_ceil(2));
@@ -989,15 +1044,31 @@ impl Clouds {
     /// leaves the live history alone.
     pub fn skipped(&mut self, still: bool) {
         self.composite_group = None;
-        if !still {
-            self.latest = None;
-        }
+        drop_live(still, &mut self.latest, &mut self.still);
+    }
+}
+
+/// What a skipped frame forgets: a live one drops the history and the
+/// still image of the last photo; a still (a photo's frame) leaves both.
+fn drop_live<T>(still: bool, latest: &mut Option<usize>, kept_still: &mut Option<T>) {
+    if !still {
+        *latest = None;
+        *kept_still = None;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_skipped_live_frame_drops_the_history_and_the_still() {
+        let (mut latest, mut kept) = (Some(1), Some(()));
+        drop_live(true, &mut latest, &mut kept);
+        assert_eq!((latest, kept), (Some(1), Some(())), "a still leaves both");
+        drop_live(false, &mut latest, &mut kept);
+        assert_eq!((latest, kept), (None, None));
+    }
 
     /// `jitter_still` of the shader.
     fn still_jitter(p: (u32, u32), s: u32, n: u32) -> f32 {
@@ -1177,15 +1248,18 @@ mod tests {
 
     #[test]
     fn the_weather_map_is_drawn_again_only_for_a_change() {
-        let k = weather_key(0.27, 1.0, 1.0, 12, (256, 256));
-        assert_eq!(k, weather_key(0.27, 1.0, 1.0, 12, (256, 256)));
+        let k = weather_key(0.27, 1.0, 1.0, 12, (256, 256), 5);
+        assert_eq!(k, weather_key(0.27, 1.0, 1.0, 12, (256, 256), 5));
         for other in [
-            weather_key(0.28, 1.0, 1.0, 12, (256, 256)),
-            weather_key(0.27, 0.9, 1.0, 12, (256, 256)),
-            weather_key(0.27, 1.0, 0.9, 12, (256, 256)),
-            weather_key(0.27, 1.0, 1.0, 13, (256, 256)),
+            weather_key(0.28, 1.0, 1.0, 12, (256, 256), 5),
+            weather_key(0.27, 0.9, 1.0, 12, (256, 256), 5),
+            weather_key(0.27, 1.0, 0.9, 12, (256, 256), 5),
+            weather_key(0.27, 1.0, 1.0, 13, (256, 256), 5),
             // the texture grew while it loaded
-            weather_key(0.27, 1.0, 1.0, 12, (512, 512)),
+            weather_key(0.27, 1.0, 1.0, 12, (512, 512), 5),
+            // the same texture, loaded again at the same size
+            weather_key(0.27, 1.0, 1.0, 12, (256, 256), 6),
+            weather_key(0.27, 1.0, 1.0, 12, (256, 256), 5 + (1 << 32)),
         ] {
             assert_ne!(k, other);
         }

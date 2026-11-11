@@ -10884,6 +10884,9 @@ impl App {
                 Some(env.sky.cloud_texture)
                     .filter(|slot| *slot != 0)
                     .and_then(|slot| gfx.renderer.textures.size_of(slot)),
+                Some(env.sky.cloud_texture)
+                    .and_then(|slot| gfx.renderer.textures.revision_of(slot))
+                    .unwrap_or(0),
             ),
         };
         // a photo's look, or the live view's in the photo mode

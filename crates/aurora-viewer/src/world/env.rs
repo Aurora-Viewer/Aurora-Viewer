@@ -110,10 +110,12 @@ pub fn clouds_frame(
     on: bool,
     main_region: Option<aurora_net::RegionHandle>,
     texture_size: Option<(u32, u32)>,
+    texture_revision: u64,
 ) -> Option<aurora_render::CloudsFrame> {
     on.then(|| aurora_render::CloudsFrame {
         region_origin: main_region.map_or([0.0; 2], |h| [(h >> 32) as f64, (h & 0xffff_ffff) as f64]),
         texture_size: texture_size.unwrap_or((0, 0)),
+        texture_revision,
     })
 }
 
@@ -439,15 +441,16 @@ mod tests {
     #[test]
     fn the_clouds_follow_the_setting_and_the_grid() {
         assert_eq!(
-            clouds_frame(false, Some(1), Some((256, 256))),
+            clouds_frame(false, Some(1), Some((256, 256)), 1),
             None,
             "Legacy: nothing is asked of the renderer"
         );
         let handle = (256_000u64 << 32) | 256_256;
-        let c = clouds_frame(true, Some(handle), Some((512, 256))).expect("on");
+        let c = clouds_frame(true, Some(handle), Some((512, 256)), 7).expect("on");
         assert_eq!(c.region_origin, [256_000.0, 256_256.0]);
         assert_eq!(c.texture_size, (512, 256));
-        let none = clouds_frame(true, None, None).expect("on");
+        assert_eq!(c.texture_revision, 7);
+        let none = clouds_frame(true, None, None, 0).expect("on");
         assert_eq!((none.region_origin, none.texture_size), ([0.0; 2], (0, 0)));
     }
 
