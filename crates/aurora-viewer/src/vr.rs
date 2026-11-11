@@ -59,10 +59,18 @@ pub fn trigger_held(was_held: bool, value: f32) -> bool {
 }
 
 /// State for snap-turn edge detection and its comfort cooldown.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct SnapTurn {
     armed: bool,
     last: Option<Instant>,
+}
+
+/// Armed from the start: the first flick turns, without first centring the
+/// stick.
+impl Default for SnapTurn {
+    fn default() -> Self {
+        Self { armed: true, last: None }
+    }
 }
 
 impl SnapTurn {

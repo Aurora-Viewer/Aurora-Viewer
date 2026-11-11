@@ -21134,11 +21134,14 @@ impl ApplicationHandler for App {
             return;
         }
         // VR exit owns Escape before egui, pickers, chat or camera shortcuts.
+        // Only Escape: every other key goes on as on the desktop, so the
+        // movement keys walk in VR (they were all swallowed here while VR
+        // was view-only).
         if self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged())
             && let WindowEvent::KeyboardInput { event: key, .. } = &event
+            && key.physical_key == PhysicalKey::Code(KeyCode::Escape)
         {
             if key.state == ElementState::Pressed
-                && key.physical_key == PhysicalKey::Code(KeyCode::Escape)
                 && let Some(gfx) = &self.gfx
             {
                 gfx.renderer.set_vr_enabled(false);
