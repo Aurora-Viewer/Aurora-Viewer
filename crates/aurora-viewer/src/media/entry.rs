@@ -20,6 +20,9 @@ pub const PERM_OWNER: u8 = 1;
 pub const PERM_GROUP: u8 = 2;
 pub const PERM_ANYONE: u8 = 4;
 
+/// `controls` of LLMediaEntry::MINI (STANDARD is 0).
+pub const MINI_CONTROLS: u8 = 1;
+
 /// One face's media settings (LLMediaEntry, defaults of its constructor).
 #[derive(Debug, Clone, PartialEq)]
 pub struct MediaEntry {
@@ -140,6 +143,12 @@ impl MediaEntry {
     fn has_media_permission(&self, perms: u8, owner: bool) -> bool {
         let bits = if owner { PERM_OWNER | PERM_ANYONE } else { PERM_ANYONE };
         perms & bits != 0
+    }
+
+    /// `PRIM_MEDIA_CONTROLS_MINI` (LLMediaEntry::MINI): the controls keep
+    /// their buttons without the address and the time slider.
+    pub fn mini_controls(&self) -> bool {
+        self.controls == MINI_CONTROLS
     }
 
     /// LLMediaEntry::checkCandidateUrl: allowed by the whitelist (if on).
@@ -542,6 +551,23 @@ pub fn parse_get_response(v: &Llsd, object: Uuid) -> Result<ObjectMediaData, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mini_controls_come_from_the_llsd_controls_field() {
+        // LLMediaEntry::MediaControls: STANDARD is 0, MINI is the next value.
+        let mut standard_llsd = Llsd::new_map();
+        standard_llsd.insert("controls", 0);
+        let standard = MediaEntry::from_llsd(&standard_llsd);
+        assert!(!standard.mini_controls());
+        assert_eq!(standard.controls, 0);
+        let mut mini_llsd = Llsd::new_map();
+        mini_llsd.insert("controls", 1);
+        let mini = MediaEntry::from_llsd(&mini_llsd);
+        assert!(mini.mini_controls());
+        assert_eq!(mini.controls, MINI_CONTROLS);
+        let missing = MediaEntry::from_llsd(&Llsd::new_map());
+        assert!(!missing.mini_controls(), "a missing controls key stays standard");
+    }
 
     #[test]
     fn entry_round_trips() {
