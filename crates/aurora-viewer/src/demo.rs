@@ -6229,6 +6229,35 @@ fn notification_samples(notifications: bool, inventory_offer: bool, menu: Option
         });
         return ev;
     }
+    // `repeat`: a fountain's menu clicked three times on one channel, then
+    // once on another, and a game table's menu on the first channel
+    // (Preferences › Chat › Notifications › Script dialogs per object): one
+    // per channel keeps three, the fountain's third, its other channel and
+    // the table; unlimited keeps the five
+    if menu == "repeat" {
+        let colors = vec![
+            aurora_i18n::tr!("demo-purple").to_owned(),
+            aurora_i18n::tr!("demo-turquoise").to_owned(),
+            aurora_i18n::tr!("demo-amber").to_owned(),
+        ];
+        let dialog = |object: u128, name: &str, channel: i32, n: usize| NetEvent::ScriptDialog {
+            sender: ([127, 0, 0, 1], 13000).into(),
+            object_id: Uuid::from_u128(object),
+            object_name: name.into(),
+            owner_name: aurora_i18n::tr!("demo-violet-wolf").into(),
+            owner_id: Uuid::nil(),
+            message: format!("{} ({n})", aurora_i18n::tr!("demo-choose-a-color-for-the-water")),
+            channel,
+            buttons: colors.clone(),
+        };
+        let fountain = aurora_i18n::tr!("demo-fountain");
+        for n in 1..=3 {
+            ev.push(dialog(0xF0, fountain, -4242, n));
+        }
+        ev.push(dialog(0xF0, fountain, -4243, 4));
+        ev.push(dialog(0xF7, aurora_i18n::tr!("demo-game-table"), -4242, 5));
+        return ev;
+    }
     // `scripted`: every window a scripted object sends (llDialog, llTextBox,
     // llRequestPermissions, llLoadURL, llGiveInventory), then four pieces of
     // information after them; the windows stay out until answered
@@ -6391,6 +6420,30 @@ mod notification_tests {
             ] if buttons[0] == "!!llTextBox!!" && gift.dialog == crate::world::notifications::im::TASK_INVENTORY_OFFERED
         ));
         assert_eq!(events.len(), 9);
+    }
+
+    /// `repeat`: through the world, one per channel keeps the fountain's
+    /// last menu on its channel, its other channel and the table's; a
+    /// change of the limit closes them, and unlimited keeps all five.
+    #[test]
+    fn repeated_menus_follow_the_script_dialog_limit() {
+        use crate::world::script_dialog_limit::Limit;
+        let shown = |limit| {
+            let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            world.set_script_dialog_limit(limit);
+            for event in notification_samples(false, false, Some("repeat")) {
+                world.apply(event);
+            }
+            world.notifications.list.iter().map(|n| n.body.clone()).collect::<Vec<_>>()
+        };
+        let one_per_channel = shown(Limit::PerChannel);
+        assert_eq!(one_per_channel.len(), 3);
+        for n in ["(3)", "(4)", "(5)"] {
+            assert!(one_per_channel.iter().any(|body| body.ends_with(n)), "{n} in {one_per_channel:?}");
+        }
+        let one_per_object = shown(Limit::PerObject);
+        assert_eq!(one_per_object.len(), 2);
+        assert_eq!(shown(Limit::Unlimited).len(), 5);
     }
 }
 

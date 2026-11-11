@@ -2523,7 +2523,7 @@ Transaction windows, with the same variable:
   the next owner.
 - `buy-empty`: offers contents that cannot be sold and disables the purchase.
 
-**`AURORA_DEMO_DIALOG=12|4|long|links|scripted`** — llDialog menu of twelve answers in
+**`AURORA_DEMO_DIALOG=12|4|long|links|scripted|repeat`** — llDialog menu of twelve answers in
 three columns, arranged from the bottom to the top like Firestorm; `4`: four
 answers, to check the incomplete last row; `long`: long label truncated,
 with the full text on hover. Block and Ignore buttons under the menu.
@@ -2538,7 +2538,13 @@ llGiveInventory), then four pieces of information. The windows stay out
 until answered, in both notification styles: the newest three shown, the
 others behind "+ N more", the information folding away after its time;
 open and close the list, or go into mouselook and back, and they come out
-again.
+again. `repeat`: a fountain's menu sent three times on one channel, once on
+another, and a game table's menu on the first channel, as a HUD or vendor
+clicked several times. With Preferences › Chat › Notifications › "Script
+dialogs per object" on its default (one per channel) three stay: the
+fountain's "(3)" and "(4)" and the table's "(5)"; "One per object" keeps the
+fountain's last and the table's; "Unlimited" keeps all five (choose it, then
+relaunch: a change closes the dialogs open).
 
 **`AURORA_DEMO_BUILD="mode,x,y[,part,dx,dy]"`** — script of the build
 tools. Modes: `move`, `rotate`, `stretch`, `face`, `align`, `grab`,
