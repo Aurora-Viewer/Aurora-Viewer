@@ -444,8 +444,10 @@ impl Session {
                 .ok_or_else(|| "Invalid runtime eye pose".into())
         };
         let cameras = [camera(0)?, camera(1)?];
-        self.control
-            .publish_head_forward(cameras[0].view.inverse().transform_vector3(glam::Vec3::NEG_Z));
+        self.control.publish_head(
+            cameras[0].view.inverse().transform_vector3(glam::Vec3::NEG_Z),
+            (cameras[0].position + cameras[1].position) * 0.5,
+        );
         let mut output = Vec::new();
         for i in 0..2 {
             let index = self.swaps[i].acquire_image()? as usize;

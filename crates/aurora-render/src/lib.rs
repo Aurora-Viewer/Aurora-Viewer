@@ -79,6 +79,8 @@ mod vr_input;
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 mod vr_display;
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+mod vr_panel;
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 mod vr_pointer;
 pub mod vram;
 pub mod vulkan_drivers;
@@ -87,7 +89,7 @@ pub mod water_effects;
 mod water_optics;
 mod water_wake;
 pub use vr_control::VrState;
-pub use vr_input::{VrArc, VrBox, VrControllerState, VrDisplay, VrInputState, VrPointer, VrSide};
+pub use vr_input::{VrArc, VrBox, VrControllerState, VrDisplay, VrInputState, VrPanel, VrPointer, VrSide};
 /// Whether a VR headset is ready now (`xr_device::headset_ready`), for the
 /// restart that brings VR when the headset came after startup; not probed
 /// on macOS yet (its Metal path is unvalidated).

@@ -48,7 +48,39 @@ pub struct VrInputState {
     /// Horizontal and vertical world direction of the headset after Aurora's
     /// VR anchor has mapped the OpenXR local space into the scene.
     pub head_forward: Vec3,
+    /// The headset's world position (between the eyes).
+    pub head_position: Vec3,
     pub updated_at: Option<Instant>,
+}
+
+/// The viewer's interface shown as a floating screen in VR: its centre and
+/// the half-width and half-height vectors of its rectangle, in world space.
+/// The interface is drawn on it whole, its top-left at `center - right + up`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VrPanel {
+    pub center: Vec3,
+    pub right: Vec3,
+    pub up: Vec3,
+}
+
+impl VrPanel {
+    /// Where a ray meets the panel: (distance, u, v), u and v 0..1 from the
+    /// top-left corner; None when it misses (or the panel is behind).
+    pub fn hit(&self, origin: Vec3, dir: Vec3) -> Option<(f32, f32, f32)> {
+        let normal = self.up.cross(self.right).normalize_or_zero();
+        let facing = dir.dot(normal);
+        if facing.abs() < 1e-5 {
+            return None;
+        }
+        let t = (self.center - origin).dot(normal) / facing;
+        if !(t > 0.0) || !t.is_finite() {
+            return None;
+        }
+        let local = origin + dir * t - self.center;
+        let x = local.dot(self.right) / self.right.length_squared();
+        let y = local.dot(self.up) / self.up.length_squared();
+        (x.abs() <= 1.0 && y.abs() <= 1.0).then(|| (t, (x + 1.0) * 0.5, (1.0 - y) * 0.5))
+    }
 }
 
 /// One of the two OpenXR hands.
@@ -278,6 +310,7 @@ mod openxr_input {
                 left: self.controller(session, local, time, 0)?,
                 right: self.controller(session, local, time, 1)?,
                 head_forward: Vec3::ZERO,
+                head_position: Vec3::ZERO,
                 updated_at: Some(Instant::now()),
             };
             self.diagnose(session, state);
@@ -373,6 +406,22 @@ pub(crate) use openxr_input::Actions;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn panel_hit_maps_corners_and_misses_behind() {
+        let panel = VrPanel {
+            center: Vec3::new(0.0, 2.0, 1.5),
+            right: Vec3::X * 0.6,
+            up: Vec3::Z * 0.4,
+        };
+        // the viewer at the origin looking +Y sees the panel's front
+        let (t, u, v) = panel.hit(Vec3::new(0.0, 0.0, 1.5), Vec3::Y).expect("centre");
+        assert!((t - 2.0).abs() < 1e-5 && (u - 0.5).abs() < 1e-5 && (v - 0.5).abs() < 1e-5);
+        let (_, u, v) = panel.hit(Vec3::new(-0.59, 0.0, 1.89), Vec3::Y).expect("top left");
+        assert!(u < 0.02 && v < 0.02);
+        assert!(panel.hit(Vec3::new(0.7, 0.0, 1.5), Vec3::Y).is_none(), "beside it");
+        assert!(panel.hit(Vec3::new(0.0, 4.0, 1.5), Vec3::Y).is_none(), "behind the ray");
+    }
 
     #[test]
     fn default_controller_is_inactive_and_neutral() {

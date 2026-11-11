@@ -1304,6 +1304,11 @@ impl Renderer {
     pub fn set_vr_display(&self, display: crate::VrDisplay) {
         self.vr.set_display(display);
     }
+    /// Show the interface as a floating screen in VR at `panel` (None hides
+    /// it; the headset then keeps only the exit hint, as before).
+    pub fn set_vr_panel(&self, panel: Option<crate::VrPanel>) {
+        self.vr.set_panel(panel);
+    }
     /// A short vibration on one controller.
     pub fn vr_haptic(&self, side: crate::VrSide, amplitude: f32, seconds: f32) {
         self.vr.haptic(side, amplitude, seconds);

@@ -1820,6 +1820,7 @@ struct XrWorld {
     mirror: crate::vr_mirror::Mirror,
     pointer: crate::vr_pointer::Overlay,
     picture: crate::vr_display::Adjust,
+    panel: crate::vr_panel::Panel,
     session: crate::xr_frame::Session,
     runtime: openxr::Instance,
 }
@@ -6081,6 +6082,7 @@ impl Backend {
                     mirror: crate::vr_mirror::Mirror::new(&self.device, &self.config, &self.present_modes),
                     pointer: crate::vr_pointer::Overlay::new(&self.device, self.config.format),
                     picture: crate::vr_display::Adjust::new(&self.device, self.config.format),
+                    panel: crate::vr_panel::Panel::new(&self.device, self.config.format),
                     session,
                     runtime: runtime.clone(),
                 })
@@ -6128,7 +6130,10 @@ impl Backend {
             }
         };
         self.vr.started();
-        // Keep the desktop egui texture atlas current, even though the headset has no UI.
+        // Keep the desktop egui texture atlas current. The headset has the
+        // whole interface only on its panel, when the viewer shows it; else
+        // the desktop mirror keeps only the exit hint.
+        let panel = self.vr.panel();
         let mirror_ui = packet.ui.take().map(|mut ui| {
             for (id, deltas) in &ui.textures_delta.set {
                 for delta in deltas.iter() {
@@ -6139,7 +6144,9 @@ impl Backend {
                 self.egui.free_texture(id);
             }
             ui.textures_delta.clear();
-            ui.retain_vr_hint();
+            if panel.is_none() {
+                ui.retain_vr_hint();
+            }
             ui.tessellate()
         });
         packet.lists.strip_viewer_overlays();
@@ -6197,6 +6204,18 @@ impl Backend {
         world
             .picture
             .apply(&self.device, &self.queue, [&eyes.textures[0], &eyes.textures[1]], self.vr.display());
+        let eye_views = [0, 1].map(|i| eyes.cameras[i].projection * eyes.cameras[i].view);
+        if let Some(panel) = panel
+            && let Some(ui) = &mirror_ui
+        {
+            world.panel.paint(&self.device, &self.queue, &mut self.egui, ui, mirror_size);
+            world.panel.draw(
+                &self.device,
+                &self.queue,
+                [(&eyes.textures[0], eye_views[0]), (&eyes.textures[1], eye_views[1])],
+                panel,
+            );
+        }
         world.pointer.draw(
             &self.device,
             &self.queue,

@@ -35,6 +35,7 @@ pub(crate) struct Control {
     /// World-space shift of the view (ahead of the eyes, height), applied on
     /// top of the anchor each frame, so re-anchoring keeps it.
     offset: RwLock<glam::Vec3>,
+    panel: RwLock<Option<crate::VrPanel>>,
 }
 impl Control {
     pub fn new(available: bool) -> Self {
@@ -49,6 +50,7 @@ impl Control {
             haptics: parking_lot::Mutex::new([None; 2]),
             recenter: AtomicBool::new(false),
             offset: RwLock::new(glam::Vec3::ZERO),
+            panel: RwLock::new(None),
         }
     }
     pub fn set_display(&self, display: crate::VrDisplay) {
@@ -165,10 +167,19 @@ impl Control {
         *self.input.write() = input;
     }
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
-    pub fn publish_head_forward(&self, forward: glam::Vec3) {
+    pub fn publish_head(&self, forward: glam::Vec3, position: glam::Vec3) {
         let mut input = self.input.write();
         input.head_forward = forward;
+        input.head_position = position;
         input.updated_at = Some(Instant::now());
+    }
+    /// The interface panel to draw in VR (None: hidden).
+    pub fn set_panel(&self, panel: Option<crate::VrPanel>) {
+        *self.panel.write() = panel.filter(|p| p.center.is_finite() && p.right.is_finite() && p.up.is_finite());
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    pub fn panel(&self) -> Option<crate::VrPanel> {
+        *self.panel.read()
     }
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos", test))]
     pub fn started(&self) {
@@ -184,6 +195,7 @@ impl Control {
         *input = crate::VrInputState::default();
         input.updated_at = Some(Instant::now());
         *self.pointer.write() = crate::VrPointer::default();
+        *self.panel.write() = None;
         self.state
             .store(if failed { VrState::Failed } else { VrState::Off } as u8, Ordering::Release);
     }

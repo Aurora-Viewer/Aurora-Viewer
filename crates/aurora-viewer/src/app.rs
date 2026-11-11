@@ -68,6 +68,7 @@ mod contents_drop_demo;
 mod contents_folder_drag_demo;
 mod dof;
 mod double_click;
+mod vr_ui;
 mod driver_check;
 mod egui_shadow;
 mod env_apply;
@@ -459,6 +460,21 @@ pub struct App {
     vr_run_click: bool,
     vr_crouch: bool,
     vr_crouch_click: bool,
+    /// Left Y: held to talk (hold mode), or down last frame (toggle mode).
+    vr_talk_held: bool,
+    vr_talk_click: bool,
+    /// The interface panel in VR (app/vr_ui.rs): where it is, the menu
+    /// button last frame, pointer events for the next frame's interface,
+    /// the beam on it, its button held, where, and the on-screen keyboard's
+    /// text field and shift.
+    vr_panel: Option<aurora_render::VrPanel>,
+    vr_menu_click: bool,
+    vr_ui_events: Vec<egui::Event>,
+    vr_on_panel: bool,
+    vr_ui_down: bool,
+    vr_ui_pos: egui::Pos2,
+    vr_keyboard_target: Option<egui::Id>,
+    vr_keyboard_shift: bool,
     input: MoveInput,
     joystick: joystick::State,
     /// Keys and bindable mouse buttons held down.
@@ -1595,6 +1611,16 @@ impl App {
             vr_run_click: false,
             vr_crouch: false,
             vr_crouch_click: false,
+            vr_talk_held: false,
+            vr_talk_click: false,
+            vr_panel: None,
+            vr_menu_click: false,
+            vr_ui_events: Vec::new(),
+            vr_on_panel: false,
+            vr_ui_down: false,
+            vr_ui_pos: egui::Pos2::ZERO,
+            vr_keyboard_target: None,
+            vr_keyboard_shift: false,
             input: MoveInput::default(),
             joystick: Default::default(),
             down: HashSet::new(),
@@ -4629,7 +4655,7 @@ impl App {
         if self.minimized_mute.active || self.speak_denied().is_some() {
             false
         } else if self.settings.audio.mic_hold {
-            self.mic_button_held || self.settings.keybinds.held(Action::PushToTalk, &self.down, self.mods())
+            self.mic_button_held || self.vr_talk_held || self.settings.keybinds.held(Action::PushToTalk, &self.down, self.mods())
         } else {
             self.mic_on
         }
@@ -8083,8 +8109,23 @@ impl App {
         if !vr_active {
             self.vr_teleport_aiming = false;
             self.vr_arc = None;
+            self.vr_talk_held = false;
+            self.vr_talk_click = false;
             return;
         }
+        // Left Y is the microphone, like the push-to-talk key: held to talk
+        // in hold mode, each press switching it in toggle mode
+        let talk = vr.left.active && vr.left.secondary;
+        if self.settings.audio.mic_hold {
+            self.vr_talk_held = talk;
+        } else if talk && !self.vr_talk_click && self.in_world() {
+            self.toggle_mic();
+            if self.settings.camera.vr.haptics {
+                // a firmer pulse as the microphone comes on
+                renderer.vr_haptic(aurora_render::VrSide::Left, if self.mic_on { 0.6 } else { 0.25 }, 0.05);
+            }
+        }
+        self.vr_talk_click = talk;
         // (a copy: the teleport below needs the whole viewer)
         let settings = self.settings.camera.vr.clone();
         // Keyboard, Controls window and joystick walking keep working beside
@@ -8220,7 +8261,8 @@ impl App {
             self.vr_teleport_aiming = false;
             self.vr_landing = None;
         }
-        if vr.right.active {
+        // (on the interface panel the right stick scrolls it instead)
+        if vr.right.active && !self.vr_on_panel {
             let right_x = crate::vr::dead_zone(vr.right.thumbstick, settings.thumbstick_dead_zone).x;
             let right_y = crate::vr::dead_zone(vr.right.thumbstick, settings.thumbstick_dead_zone).y;
             if settings.locomotion == crate::camera::VrLocomotion::CameraOnly {
@@ -8324,6 +8366,10 @@ impl App {
             let delta = position - previous;
             if delta.is_finite() && delta.length_squared() > 0.0 {
                 renderer.add_vr_translation(delta);
+                // the interface panel goes along with the view
+                if let Some(panel) = &mut self.vr_panel {
+                    panel.center += delta;
+                }
             }
         }
     }
@@ -8332,9 +8378,10 @@ impl App {
     /// it reaches to the render worker (which draws the controllers and the
     /// beam), and give a trigger pull the object's normal click action.
     fn vr_world_touch(&mut self, renderer: &Renderer) {
+        self.vr_panel_button(renderer);
         let active = renderer.vr_engaged();
         let input = renderer.vr_input();
-        let settings = &self.settings.camera.vr;
+        let settings = self.settings.camera.vr.clone();
         let side = match settings.dominant_hand {
             crate::camera::VrHand::Left => aurora_render::VrSide::Left,
             crate::camera::VrHand::Right => aurora_render::VrSide::Right,
@@ -8342,6 +8389,8 @@ impl App {
         let controller = input.hand(side);
         if !active || !settings.controller_pointer || !controller.active {
             self.vr_trigger_down = false;
+            // (a press held on the panel is let go)
+            self.vr_panel_pointer((Vec3::ZERO, Vec3::Z), (false, true), 0.0);
             renderer.set_vr_pointer(aurora_render::VrPointer {
                 controllers: active,
                 arc: self.vr_arc.filter(|_| active),
@@ -8352,6 +8401,29 @@ impl App {
         let far = settings.pointer_distance;
         let direction = (controller.orientation * Vec3::NEG_Z).normalize_or(Vec3::Y);
         let ray = (controller.position, direction);
+        // the panel, when the beam meets it, takes the trigger (a left
+        // click) and the right thumbstick (scrolling) instead of the world
+        let down = crate::vr::trigger_held(self.vr_trigger_down, controller.trigger);
+        let trigger = (down && !self.vr_trigger_down, !down && self.vr_trigger_down);
+        let scroll = if input.right.active {
+            crate::vr::dead_zone(input.right.thumbstick, settings.thumbstick_dead_zone).y
+        } else {
+            0.0
+        };
+        if let Some(t) = self.vr_panel_pointer(ray, trigger, scroll) {
+            self.vr_trigger_down = down;
+            self.vr_hover = None;
+            renderer.set_vr_pointer(aurora_render::VrPointer {
+                controllers: true,
+                hand: Some(side),
+                length: t,
+                hit: true,
+                actionable: true,
+                outline: None,
+                arc: self.vr_arc,
+            });
+            return;
+        }
         let point = self.scene.vr_ray_point(&self.world, ray, far);
         let target = point.and_then(|point| {
             let index = self.scene.left_interaction_at_ray(&self.world, point, ray, true)?;
@@ -11226,6 +11298,8 @@ impl App {
         ui::fonts::preview::release_unused(&self.egui_ctx);
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
         raw.events.extend(self.alt_text.drain(..).map(egui::Event::Text));
+        // the VR beam on the interface panel, and the on-screen keyboard
+        raw.events.append(&mut self.vr_ui_events);
         self.demo_script_input(&mut raw);
         // Synthetic preedit uses the ordinary focused Conversations editor.
         if self.demo && self.frame_count == 710 && std::env::var("AURORA_DEMO_CHAT_INPUT").is_ok_and(|mode| mode == "ime") {
@@ -11547,6 +11621,9 @@ impl App {
             // gets no input events: what the first pass clicked must survive
             // the second, or a click that changed a row's size is lost.
             actions.merge(self.draw_ui(ui, &projector, &gfx.renderer));
+            // the VR on-screen keyboard last, over the windows: a key's click
+            // comes after the text field it types into (app/vr_ui.rs)
+            self.vr_keyboard(ui.ctx());
             actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
             if inventory_drop.is_empty() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
