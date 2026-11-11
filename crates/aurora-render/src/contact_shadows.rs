@@ -1295,22 +1295,94 @@ mod tests {
     #[test]
     #[ignore = "requires a GPU"]
     fn the_variants_that_keep_the_image_draw_bends_mask() {
-        let Some((device, queue)) = test_device() else {
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
             return;
         };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("device");
         let (w, h) = (320u32, 192u32);
         let format = wgpu::TextureFormat::Depth32Float;
-        // reversed depth: a ground rising towards the camera, a box nearer,
+        let depth_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("test depth"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        // reversed depth drawn by a full-screen triangle (a depth texture
+        // takes no copy): a ground rising towards the camera, a box nearer,
         // sky along the top
-        let depth_tex = draw_depth(
-            &device,
-            &queue,
-            (w, h),
-            "let ground = 0.0005 * (pos.y + 96.0);
-            let in_box = pos.x >= 120.0 && pos.x < 170.0 && pos.y >= 90.0 && pos.y < 130.0;
-            return select(select(ground, ground * 1.02, in_box), 0.0, pos.y < 20.0);",
-        );
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("test depth"),
+            source: wgpu::ShaderSource::Wgsl(
+                "@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+                    let p = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
+                    return vec4<f32>(p * 2.0 - 1.0, 0.0, 1.0);
+                }
+                @fragment fn fs(@builtin(position) pos: vec4<f32>) -> @builtin(frag_depth) f32 {
+                    let ground = 0.0005 * (pos.y + 96.0);
+                    let in_box = pos.x >= 120.0 && pos.x < 170.0 && pos.y >= 90.0 && pos.y < 130.0;
+                    return select(select(ground, ground * 1.02, in_box), 0.0, pos.y < 20.0);
+                }"
+                .into(),
+            ),
+        });
+        let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
+            label: Some("test depth"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: Default::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
         let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("test depth"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&pipeline);
+            pass.draw(0..3, 0..1);
+        }
+        queue.submit([encoder.finish()]);
         // the sun ahead and high, its point on screen above the image
         let light = [0.2, 1.6, 0.0, 0.8];
         let mask_at = |variant: Variant, scale: f32| -> Vec<u8> {
@@ -1318,7 +1390,38 @@ mod tests {
             let t = cs.targets(&device, &depth_view, format, w, h);
             let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.6, 0.1);
             cs.write(&device, &queue, &t, light, &proj, scale);
-            read_mask(&device, &queue, &cs, &t, (w, h))
+            let mut encoder = device.create_command_encoder(&Default::default());
+            cs.encode(&mut encoder, &t, false);
+            let row = (w * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size: crate::readback::readback_size((row * h) as u64),
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            encoder.copy_texture_to_buffer(
+                t.raw.texture().as_image_copy(),
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(row),
+                        rows_per_image: Some(h),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+            );
+            queue.submit([encoder.finish()]);
+            buffer.slice(..).map_async(wgpu::MapMode::Read, |r| r.expect("map"));
+            device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+            let data = buffer.slice(..).get_mapped_range().expect("mapped");
+            data.chunks(row as usize)
+                .flat_map(|r| r[..(w * 4) as usize].chunks(4).map(|p| p[0]))
+                .collect()
         };
         let mask = |variant: Variant| mask_at(variant, 1.0);
         let bend = mask(Variant::Bend);
