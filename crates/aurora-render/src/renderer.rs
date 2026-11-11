@@ -8666,14 +8666,14 @@ impl Backend {
             // fade reads the scene depth, which this pass writes. Without
             // MSAA it is copied first, with it the single-sampled one
             // serves. The meshes keep the frame group without a depth.)
-            if n_part_under > 0 {
-                if let Some((copy, _)) = &self.targets.depth_copy {
-                    encoder.copy_texture_to_texture(
-                        self.targets.depth_ss_tex.as_image_copy(),
-                        copy.as_image_copy(),
-                        self.targets.depth_ss_tex.size(),
-                    );
-                }
+            if n_part_under > 0
+                && let Some((copy, _)) = &self.targets.depth_copy
+            {
+                encoder.copy_texture_to_texture(
+                    self.targets.depth_ss_tex.as_image_copy(),
+                    copy.as_image_copy(),
+                    self.targets.depth_ss_tex.size(),
+                );
             }
             {
                 let mut pass = begin_scene_b(&mut encoder, &self.targets, "blend under water", false, true);
