@@ -2491,18 +2491,19 @@ mod tests {
         assert_eq!(loc_buffer_offset(7), 32);
     }
 
-    /// `texture_page_index` as common.wgsl defines it.
-    fn page_helper() -> &'static str {
-        let common = include_str!("shaders/common.wgsl");
+    /// `texture_page_index` as common.wgsl defines it, with LF line endings
+    /// (a Windows checkout has CRLF).
+    fn page_helper() -> String {
+        let common = include_str!("shaders/common.wgsl").replace("\r\n", "\n");
         let start = common.find("fn texture_page_index(").expect("page helper in common.wgsl");
         let end = start + common[start..].find("\n}\n").expect("end of the page helper") + 2;
-        &common[start..end]
+        common[start..end].to_owned()
     }
 
     #[test]
     fn the_overlay_page_lookup_is_the_scene_helper() {
         // rlva_overlay.wgsl has its own bindings: the same body, on its buffer
-        let overlay = include_str!("shaders/rlva_overlay.wgsl");
+        let overlay = include_str!("shaders/rlva_overlay.wgsl").replace("\r\n", "\n");
         let expected = page_helper()
             .replace("fn texture_page_index(", "fn page_of(")
             .replace("tex_loc.", "locations.");
