@@ -162,12 +162,14 @@ impl BuildTool {
         (b.min.x <= b.max.x).then_some(b)
     }
 
+    /// computeManipulatorSize, times the display scale like its
+    /// LLUI::getScaleFactor().
     fn cone_size(cam: &Cam, center: Vec3) -> f32 {
         let d = cam.eye.distance(center);
         if d < ALMOST_ZERO {
-            return MANIPULATOR_SIZE;
+            return MANIPULATOR_SIZE * cam.ppp;
         }
-        MANIPULATOR_SIZE * d * (MANIPULATOR_SIZE / cam.height * cam.fov_y).tan()
+        MANIPULATOR_SIZE * d * (MANIPULATOR_SIZE / cam.height * cam.fov_y).tan() * cam.ppp
     }
 
     /// handleHover / findSelectedManipulator.

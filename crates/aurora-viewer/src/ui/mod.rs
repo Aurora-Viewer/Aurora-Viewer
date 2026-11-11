@@ -37,6 +37,7 @@ pub mod controls;
 pub mod crosshair;
 pub mod debug_overlay;
 pub mod debug_settings;
+pub mod destinations;
 pub mod dev_toolbox;
 pub mod display_name;
 pub mod emoji;
@@ -214,6 +215,8 @@ pub struct Panels {
     pub avatar_align_mini: bool,
     /// The built-in web browser (toolbar `webbrowser`).
     pub web_browser: bool,
+    /// The Destination Guide (toolbar `destinations`, World › Destinations).
+    pub destinations: bool,
     /// "Quick preferences" (toolbar `quickprefs`).
     pub quick_prefs: bool,
     /// "Voice controls" (toolbar): who is in the voice channel and who speaks.
@@ -283,6 +286,7 @@ impl Panels {
             avatar_align: false,
             avatar_align_mini: settings.avatar_align_mini,
             web_browser: false,
+            destinations: false,
             quick_prefs: false,
             voice_controls: false,
             about: false,

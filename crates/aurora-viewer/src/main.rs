@@ -33,6 +33,7 @@ mod credentials;
 mod cursors;
 mod deep_profile;
 mod demo;
+mod destination_guide;
 mod dev_toolbox;
 mod disk_io;
 mod dof;

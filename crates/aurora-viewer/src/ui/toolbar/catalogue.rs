@@ -1,5 +1,5 @@
 //! The commands of the "Toolbar buttons" window: Firestorm's toybox
-//! (indra/newview/app_settings/commands.xml, the 67 commands with
+//! (indra/newview/app_settings/commands.xml, the commands with
 //! `available_in_toybox`, originally LGPL 2.1) and Aurora's own (friends,
 //! home, favourites, immersive mode). Aurora keeps its command names where it had one
 //! (`conversations` for Firestorm's `chat`, `worldmap` for `map`…), so that
@@ -75,12 +75,15 @@ pub const COMMANDS: &[Command] = commands![
     // Aurora's own: the interface hidden but the chat (#859)
     "immersive", "maximize", "ui-bars-immersive", true;
     "name_tags", "label-filled", "ui-bars-immersive-hide-tags", true;
+    // Aurora's own: Show User Interface and Show HUDs as buttons (the Legacy
+    // Viewer has them in its menus only)
+    "hide_interface", "eye-off", "ui-bars-hide-interface", true;
+    "huds", "device-desktop-filled", "ui-bars-immersive-hide-huds", true;
     // Aurora's own: the photo reel's quick view, the session's photos
     "photo_roll", "carousel-horizontal-filled", "toolbar-command-photo-roll", true;
     // Firestorm's, not in Aurora yet
     "avatar", "user-circle", "toolbar-command-avatar", false;
-    "destinations", "map-2", "toolbar-command-destinations", false;
-    "howto", "Command_HowTo_Icon", "toolbar-command-howto", false;
+    "destinations", "map-2", "toolbar-command-destinations", true;
     "picks", "heart-filled", "toolbar-command-picks", true;
     "poser", "wand", "toolbar-command-poser", true;
     "flickr", "brand-flickr", "toolbar-command-flickr", false;
@@ -119,6 +122,16 @@ impl Command {
     pub fn label_in(&self, language: &str) -> &'static str {
         aurora_i18n::text_in(language, self.key)
     }
+}
+
+/// Commands the Legacy Viewer dropped: only stale entries of its skins'
+/// toolbars.xml name them, and it skips them. A saved layout (older Aurora,
+/// imported) that still has one drops it, with no empty button.
+const RETIRED: &[&str] = &["howto"];
+
+/// Whether `id` names a command that no longer exists.
+pub fn retired(id: &str) -> bool {
+    RETIRED.contains(&id)
 }
 
 /// The catalogue's entry of a command.

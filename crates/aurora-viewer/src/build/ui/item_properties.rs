@@ -32,7 +32,9 @@ fn editable(tool: &BuildTool, world: &World, object: Uuid, item: &TaskItem) -> b
         .objects
         .index_of_uuid(&object)
         .is_some_and(|idx| tool.contents_editable(world, idx))
-        && ((!item.group_owned && item.owner_id == world.agent_id)
+        // allowOperation(PERM_MODIFY, …, GOD_LIKE): a god edits any item
+        && (world.god_level > 0
+            || (!item.group_owned && item.owner_id == world.agent_id)
             || (item.group_owned && !item.group_id.is_nil() && world.groups.is_member(&item.group_id)))
         && !matches!(item.asset_type, 2 | 24 | 25)
 }
