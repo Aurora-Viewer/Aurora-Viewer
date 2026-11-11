@@ -45,7 +45,8 @@ fn whats_hot_lists_by_population_within_the_ratings() {
     // a place of What's Hot Now is shown under its own category
     let clubs = g.categories.iter().position(|c| c.key == "clubs").unwrap();
     assert_eq!(cache.items[0].home, clubs);
-    assert!(cache.count_line.contains("7 places"), "{}", cache.count_line);
+    let expected = aurora_i18n::tr!("destinations-count", category = aurora_i18n::tr!("destinations-hot"), count = 7i64);
+    assert_eq!(cache.count_line, expected);
     // General only
     let cache = build(&g.categories, key(&g, guide::HOT, [true, false, false], ADULT), "", &none);
     assert_eq!(cache.items.len(), 4);
@@ -77,7 +78,12 @@ fn the_search_covers_the_whole_guide_once() {
     let mut listed = names(&g, &cache);
     listed.sort();
     assert_eq!(listed, ["Garden Concert", "Saiko Gardens"]);
-    assert!(cache.count_line.starts_with("Results"), "{}", cache.count_line);
+    let expected = aurora_i18n::tr!(
+        "destinations-count",
+        category = aurora_i18n::tr!("destinations-results"),
+        count = 2i64
+    );
+    assert_eq!(cache.count_line, expected);
 }
 
 #[test]
@@ -122,7 +128,11 @@ fn the_orders_and_an_event_end() {
     assert!(dates.windows(2).all(|w| w[0] >= w[1]), "{dates:?}");
     // the demo's concert ends in a few days: its date shows
     let events = build(&g.categories, key(&g, "events", [true, true, false], ADULT), "", &none);
-    assert!(events.items[0].until.as_deref().is_some_and(|u| u.starts_with("Until ")));
+    let (_, m, d) = g.categories.iter().find(|c| c.key == "events").unwrap().places[0]
+        .until
+        .expect("the concert ends");
+    let expected = aurora_i18n::tr!("destinations-until", date = crate::ui::land::day_month(None, m as usize, d as i64));
+    assert_eq!(events.items[0].until.as_deref(), Some(expected.as_str()));
     assert!(events.items[0].location.starts_with("Saikomori · "));
 }
 
