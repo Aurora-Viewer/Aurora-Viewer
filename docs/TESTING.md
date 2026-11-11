@@ -9842,7 +9842,7 @@ What the inventory must show with these scenarios:
 |---|---|
 | `AURORA_DEMO_MEDIA=<url>` or `1` | Media on a prim |
 | `AURORA_DEMO_PARCEL_MEDIA=<url>` or `1` | Parcel media |
-| `AURORA_DEMO_MEDIA_CLICK="x,y[,x2,y2]"` | Clicks on the media |
+| `AURORA_DEMO_MEDIA_CLICK="x,y[,x2,y2][,edit]"` | Clicks on the media |
 | `AURORA_DEMO_MEDIA_CLICK_FRAME=<n>` | Starting frame of these clicks |
 | `AURORA_DEMO_MEDIA_PACK=consent`, `declined`, `downloading`, `installing` or `failed` | The download's consent card, or a fixed state of the media plugins download |
 | `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
@@ -10109,7 +10109,10 @@ What the inventory must show with these scenarios:
   what the other residents' plates show.
 - **`AURORA_DEMO_MEDIA_CLICK`**: focus click at frame 700 by default,
   second click 60 frames after, optional click on the field 120 frames
-  after, then "aurora" is typed. `AURORA_DEMO_MEDIA_CLICK_FRAME` changes
+  after, then "aurora" is typed. With `edit`, Ctrl+A, Ctrl+X and Ctrl+V
+  twice follow (Cmd on macOS): the field reads "auroraaurora" when the
+  Edit menu shortcuts reach the page. The cut goes through the system
+  clipboard. `AURORA_DEMO_MEDIA_CLICK_FRAME` changes
   the starting frame to let the plugin load; also works with
   `AURORA_DEMO_HUDS=media`.
 - **Media plugins.** The media scenarios need Aurora's media plugins pack

@@ -13377,6 +13377,18 @@ impl App {
                     mods,
                 );
             }
+            // `edit`: then Ctrl+A, Ctrl+X, Ctrl+V twice (Cmd on macOS), so
+            // the field reads "auroraaurora" when the shortcuts reach the page
+            if v.split(',').any(|s| s.trim() == "edit") && (870..878).contains(&f) {
+                let k = (f - 870) as usize;
+                let code = [KeyCode::KeyA, KeyCode::KeyX, KeyCode::KeyV, KeyCode::KeyV][k / 2];
+                let mods = aurora_media::Modifiers {
+                    control: !cfg!(target_os = "macos"),
+                    command: cfg!(target_os = "macos"),
+                    ..Default::default()
+                };
+                self.media.on_key(&self.world, code, 0, k.is_multiple_of(2), false, None, mods);
+            }
         }
         // AURORA_DEMO_CAMERA="alt,x,y" (pan, zoom, ml, wheel, fly): camera/demo.rs
         if self.demo
