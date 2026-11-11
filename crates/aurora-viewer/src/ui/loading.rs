@@ -497,7 +497,9 @@ pub fn show(
 }
 
 /// Teleport screen over the world (and the end of the loading screen fading
-/// out): the same banner.
+/// out): the same banner. With `cancel`, the Cancel button of the login
+/// screen in the same corner (LLProgressView's cancel_btn); true when it was
+/// pressed.
 #[allow(clippy::too_many_arguments)]
 pub fn teleport_overlay(
     ctx: &egui::Context,
@@ -510,7 +512,8 @@ pub fn teleport_overlay(
     fraction: Option<f32>,
     alpha: f32,
     place: &Place,
-) {
+    cancel: bool,
+) -> bool {
     let a = alpha.clamp(0.0, 1.0);
     let rect = ctx.content_rect();
     let t = ctx.input(|i| i.time) as f32;
@@ -531,8 +534,23 @@ pub fn teleport_overlay(
     if !backdrop.is_some_and(|b| b.paint(&painter, p, rect, a)) {
         super::aurora_bg::paint(&painter, p, rect, t, a);
     }
-    banner(ctx, &painter, p, rect, logo, title, dest, detail, fraction, place, t, a);
+    let corner = banner(ctx, &painter, p, rect, logo, title, dest, detail, fraction, place, t, a);
     ctx.request_repaint();
+    let mut pressed = false;
+    if cancel && a > 0.5 {
+        let area = egui::Area::new(egui::Id::new("teleport_cancel"))
+            .order(egui::Order::Foreground)
+            .pivot(egui::Align2::RIGHT_CENTER)
+            .fixed_pos(corner)
+            .show(ctx, |ui| {
+                let label = aurora_i18n::tr!("common-cancel");
+                let kind = super::widgets::ActionKind::Flat;
+                pressed = super::widgets::action_button(ui, p, "x", label, kind, Vec2::new(0.0, 28.0)).clicked();
+            });
+        // above the screen's own area, which a click on it raises
+        ctx.move_to_top(area.response.layer_id);
+    }
+    pressed
 }
 
 #[cfg(test)]
@@ -575,7 +593,8 @@ mod tests {
                     Some(1.0),
                     1.0,
                     &Place::default(),
-                )
+                    false,
+                );
             },
         );
         output.textures_delta.clear();

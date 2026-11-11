@@ -2899,7 +2899,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
     match cmd {
         // a lure accepted offline: the teleport starts, then has nowhere to go
         aurora_net::NetCommand::AcceptLure { .. } => vec![
-            NetEvent::TeleportStarted,
+            NetEvent::TeleportStarted { flags: 0 },
             NetEvent::TeleportFailed {
                 reason: aurora_i18n::tr!("demo-no-teleport-offline").into(),
             },
@@ -4196,6 +4196,22 @@ fn map_block(x: u16, y: u16, name: &str, access: u8) -> aurora_net::MapBlock {
 /// AURORA_DEMO_TP_NO_ARRIVAL=1: the region never confirms a demo teleport.
 pub fn tp_no_arrival() -> bool {
     std::env::var_os("AURORA_DEMO_TP_NO_ARRIVAL").is_some()
+}
+
+/// AURORA_DEMO_TP_CANCEL=locked: the demo teleport's TeleportStart carries
+/// TELEPORT_FLAGS_DISABLE_CANCEL (no Cancel on the teleport screen).
+pub fn tp_cancel_flags() -> u32 {
+    if std::env::var("AURORA_DEMO_TP_CANCEL").is_ok_and(|v| v == "locked") {
+        crate::world::teleport_cancel::TELEPORT_FLAGS_DISABLE_CANCEL
+    } else {
+        0
+    }
+}
+
+/// AURORA_DEMO_TP_CANCEL=1: the teleport screen's Cancel is pressed 1.5 s
+/// into the demo teleport.
+pub fn tp_cancel_pressed() -> bool {
+    std::env::var("AURORA_DEMO_TP_CANCEL").is_ok_and(|v| v == "1")
 }
 
 pub fn friend_join_scenario() -> bool {

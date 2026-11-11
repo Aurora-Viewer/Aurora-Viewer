@@ -101,6 +101,7 @@ pub mod staff;
 pub mod status;
 pub mod suitcase;
 pub mod system_messages;
+pub mod teleport_cancel;
 pub mod teleport_invites;
 pub mod temp_attachments;
 pub mod terrain;
@@ -475,6 +476,8 @@ pub struct World {
     pub tp_progress: f32,
     pub tp_status: String,
     pub tp_failed: bool,
+    /// Whether the teleport screen offers Cancel, and a cancel sent.
+    pub tp_cancel: teleport_cancel::TeleportCancel,
     /// Outfit restore at login (Current Outfit folder).
     pub outfit: outfit::OutfitRestore,
     /// Objects already reported by a diagnostic (logged once).
@@ -875,6 +878,7 @@ impl World {
             tp_progress: 0.0,
             tp_status: String::new(),
             tp_failed: false,
+            tp_cancel: Default::default(),
             own_animations_awaited: None,
             outfit: Default::default(),
             diag_reported: HashSet::new(),
@@ -1244,6 +1248,7 @@ impl World {
         self.arrival_wait_since = None;
         self.tp_show_progress = show_progress;
         self.tp_failed = false;
+        self.tp_cancel.on_request();
         self.tp_progress = 0.05;
         self.tp_status = aurora_i18n::tr!("world-mod-requesting-teleport").into();
         if show_progress {
@@ -2854,6 +2859,7 @@ impl World {
                 self.arrived_once = true;
                 if self.teleporting {
                     self.friends_only_teleport_arrival();
+                    self.tp_cancel.on_end();
                 }
                 self.teleporting = false;
                 self.park_far_regions();
@@ -3198,7 +3204,12 @@ impl World {
                 self.coarse.remove(&handle);
                 None
             }
-            NetEvent::TeleportProgress { message } => {
+            NetEvent::TeleportProgress { message, flags } => {
+                if self.tp_cancel.ignores_progress(self.teleporting) {
+                    log::warn!("Unexpected teleport progress message '{message}' (teleport cancelled)");
+                    return None;
+                }
+                self.tp_cancel.on_simulator_flags(flags);
                 if !self.teleporting {
                     self.tp_show_progress = false;
                 }
@@ -3220,13 +3231,22 @@ impl World {
                 None
             }
             NetEvent::TeleportFinished { handle, flying } => {
+                // process_teleport_finish: a TeleportFinish after our cancel
+                // means the simulator ignored it or got it too late; the
+                // teleport is done on its side and resumes here
+                // (restoreCanceledTeleportRequest), without its sound again.
+                let restored = self.tp_cancel.on_finish() && !self.teleporting;
+                if restored {
+                    log::info!("Restoring canceled teleport request");
+                    self.tp_failed = false;
+                }
                 self.teleporting = true;
                 let remote = Some(handle) != self.main_region;
                 // TeleportStart has no destination. Unlike Firestorm's
                 // process_teleport_start, defer its sound until a region change
                 // is confirmed, preserving silence for local script/lure TPs.
                 // A known remote request already played it in begin_teleport.
-                if remote && !self.tp_show_progress {
+                if remote && !self.tp_show_progress && !restored {
                     self.ui_sounds.push(UiSound::TeleportOut);
                 }
                 self.tp_show_progress = remote;
@@ -3259,7 +3279,8 @@ impl World {
                 self.agent.flying = self.friend_join_local_flight(flying).unwrap_or(flying || self.fly_after_teleport);
                 None
             }
-            NetEvent::TeleportStarted => {
+            NetEvent::TeleportStarted { flags } => {
+                self.tp_cancel.on_simulator_flags(flags);
                 if !self.teleporting {
                     self.cancel_friend_join_flight();
                     self.cancel_friend_join();
@@ -3281,6 +3302,7 @@ impl World {
                 self.cancel_friend_join_flight();
                 self.cancel_friend_join();
                 self.tp_history.failed();
+                self.tp_cancel.on_end();
                 self.teleporting = false;
                 self.tp_failed = true;
                 self.system_notice(
@@ -6878,9 +6900,10 @@ mod motion_tests {
         world.begin_teleport(false);
         assert!(world.teleporting && !world.tp_show_progress);
         assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
-        world.apply(NetEvent::TeleportStarted);
+        world.apply(NetEvent::TeleportStarted { flags: 0 });
         world.apply(NetEvent::TeleportProgress {
             message: "requesting".into(),
+            flags: 0,
         });
         assert!(world.teleporting && !world.tp_show_progress);
         assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
@@ -6897,9 +6920,10 @@ mod motion_tests {
         assert_eq!(world.parcel_name, aurora_i18n::tr!("world-mod-demo-parcel"));
         assert_eq!(world.tp_history.previous().expect("previous arrival").position, previous);
         // Late progress packets must never bring back a local loading screen.
-        world.apply(NetEvent::TeleportStarted);
+        world.apply(NetEvent::TeleportStarted { flags: 0 });
         world.apply(NetEvent::TeleportProgress {
             message: "arriving".into(),
+            flags: 0,
         });
         assert!(!world.tp_show_progress);
         assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
@@ -7069,7 +7093,7 @@ mod motion_tests {
         let previous = world.agent.position;
         // A preceding remote arrival may still have its screen fading out.
         world.tp_show_progress = true;
-        world.apply(NetEvent::TeleportStarted);
+        world.apply(NetEvent::TeleportStarted { flags: 0 });
         assert!(!world.tp_show_progress);
         world.apply(NetEvent::TeleportLocal { flying: false });
         world.apply(NetEvent::AgentMovementComplete {
@@ -7094,7 +7118,7 @@ mod motion_tests {
     fn unknown_destination_only_shows_progress_when_another_region_is_confirmed() {
         let (mut world, handle) = teleport_fixture();
         world.begin_teleport(false);
-        world.apply(NetEvent::TeleportStarted);
+        world.apply(NetEvent::TeleportStarted { flags: 0 });
         assert!(!world.tp_show_progress);
         assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
         let destination = handle + (256_u64 << 32);
@@ -7123,7 +7147,7 @@ mod motion_tests {
     fn known_remote_destination_shows_progress_and_failure_ends_the_teleport() {
         let (mut world, handle) = teleport_fixture();
         world.begin_teleport(true);
-        world.apply(NetEvent::TeleportStarted);
+        world.apply(NetEvent::TeleportStarted { flags: 0 });
         assert!(world.teleporting && world.tp_show_progress);
         world.apply(NetEvent::TeleportFinished {
             handle: handle + (256_u64 << 32),
@@ -8646,7 +8670,7 @@ mod motion_tests {
         let (mut world, here) = teleport_fixture();
         let there = west_of(here);
         world.agent.position = Vec3::new(0.5, 50.0, 30.0);
-        world.apply(NetEvent::TeleportStarted);
+        world.apply(NetEvent::TeleportStarted { flags: 0 });
         world.apply(NetEvent::MainRegionChanged { handle: there });
         assert_eq!(world.take_origin_shift(), Vec3::ZERO);
         world.apply(NetEvent::AgentMovementComplete {
