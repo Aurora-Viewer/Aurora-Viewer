@@ -461,7 +461,7 @@ fn pelvis_height_keys_lift_the_whole_avatar_in_the_native_animation() {
 
 #[test]
 fn animation_timeline_shortcuts_match_the_documented_commands() {
-    use ui::TimelineShortcut as Shortcut;
+    use timeline::TimelineShortcut as Shortcut;
     let none = egui::Modifiers::NONE;
     let ctrl = egui::Modifiers {
         ctrl: true,
@@ -487,8 +487,16 @@ fn animation_timeline_shortcuts_match_the_documented_commands() {
     assert_eq!(timeline::timeline_shortcut(egui::Key::C, ctrl), Some(Shortcut::CopyPose));
     assert_eq!(timeline::timeline_shortcut(egui::Key::V, ctrl), Some(Shortcut::PastePose));
     assert_eq!(timeline::timeline_shortcut(egui::Key::S, ctrl), Some(Shortcut::SaveProject));
+    assert_eq!(
+        timeline::timeline_shortcut(egui::Key::ArrowLeft, none),
+        Some(Shortcut::PreviousFrame)
+    );
+    assert_eq!(timeline::timeline_shortcut(egui::Key::ArrowRight, none), Some(Shortcut::NextFrame));
+    assert_eq!(timeline::timeline_shortcut(egui::Key::K, none), Some(Shortcut::KeyBone));
     assert_eq!(timeline::timeline_shortcut(egui::Key::Z, ctrl_alt), None);
     assert_eq!(timeline::timeline_shortcut(egui::Key::V, none), None);
+    assert_eq!(timeline::timeline_shortcut(egui::Key::K, ctrl), None);
+    assert_eq!(timeline::timeline_shortcut(egui::Key::ArrowLeft, ctrl), None);
 }
 
 #[test]
@@ -503,13 +511,382 @@ fn animation_timeline_shortcut_keys_follow_the_typed_character() {
         ("c", egui::Key::C),
         ("v", egui::Key::V),
         ("s", egui::Key::S),
+        ("k", egui::Key::K),
+        ("K", egui::Key::K),
     ] {
         assert_eq!(timeline::timeline_key(&Key::Character(typed.into())), Some(expected));
     }
     assert_eq!(timeline::timeline_key(&Key::Named(NamedKey::Space)), Some(egui::Key::Space));
     assert_eq!(timeline::timeline_key(&Key::Named(NamedKey::Home)), Some(egui::Key::Home));
     assert_eq!(timeline::timeline_key(&Key::Named(NamedKey::Delete)), Some(egui::Key::Delete));
+    assert_eq!(timeline::timeline_key(&Key::Named(NamedKey::ArrowLeft)), Some(egui::Key::ArrowLeft));
+    assert_eq!(
+        timeline::timeline_key(&Key::Named(NamedKey::ArrowRight)),
+        Some(egui::Key::ArrowRight)
+    );
     assert_eq!(timeline::timeline_key(&Key::Character("ß".into())), None);
+}
+
+#[test]
+fn arrow_keys_step_one_frame_within_the_range_and_k_keys_the_selected_bone() {
+    let mut document = Document::new();
+    document.range(0, 30);
+    let mut editor = Editor {
+        open: true,
+        selected: Some(7),
+        clip: State {
+            active: true,
+            document: Some(Arc::new(document)),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let ctx = egui::Context::default();
+    let press = |editor: &mut Editor, key| assert!(editor.handle_timeline_shortcut(&ctx, key, egui::Modifiers::NONE));
+    editor.clip_seek(10);
+
+    press(&mut editor, egui::Key::ArrowRight);
+    assert_eq!(editor.clip.frame, 11);
+    press(&mut editor, egui::Key::ArrowLeft);
+    press(&mut editor, egui::Key::ArrowLeft);
+    assert_eq!(editor.clip.frame, 9);
+    assert_eq!(editor.clip.cursor, 9.0, "the continuous playhead follows the step");
+
+    editor.clip_seek(30);
+    press(&mut editor, egui::Key::ArrowRight);
+    assert_eq!(editor.clip.frame, 30, "stepping stops at the end of the range");
+    editor.clip_seek(0);
+    press(&mut editor, egui::Key::ArrowLeft);
+    assert_eq!(editor.clip.frame, 0, "and at its start");
+    assert_eq!(editor.clip.document.as_ref().unwrap().end, 30, "stepping never extends the range");
+
+    editor.studio_toggle_clip_playback();
+    press(&mut editor, egui::Key::ArrowRight);
+    assert!(!editor.clip.playing, "stepping pauses playback");
+
+    assert!(editor.clip.capture.is_none());
+    press(&mut editor, egui::Key::K);
+    assert!(matches!(editor.clip.capture, Some(Capture::Bone(7))));
+    editor.clip.capture = None;
+    editor.selected = None;
+    press(&mut editor, egui::Key::K);
+    assert!(editor.clip.capture.is_none(), "K keys nothing without a selected bone");
+}
+
+#[test]
+fn timeline_ruler_labels_stay_apart_at_every_zoom() {
+    let steps = [1, 5, 10, 30, 60, 150, 300, 600];
+    assert_eq!(timeline::ruler_tick_step(60.0), 1);
+    assert_eq!(timeline::ruler_tick_step(20.0), 5);
+    assert_eq!(timeline::ruler_tick_step(1.0), 60);
+    assert_eq!(timeline::ruler_tick_step(0.01), 6000, "past the longest step, a multiple of it");
+    assert_eq!(timeline::ruler_tick_step(0.0), 600);
+    assert_eq!(timeline::ruler_tick_step(f32::NAN), 600);
+    for points_per_frame in [0.03, 0.1, 0.17, 0.5, 2.0, 7.3, 16.6, 33.0, 80.0] {
+        let step = timeline::ruler_tick_step(points_per_frame);
+        assert!(step as f32 * points_per_frame >= 60.0, "{step} frames at {points_per_frame} points");
+        if let Some(index) = steps.iter().position(|candidate| *candidate == step)
+            && index > 0
+        {
+            assert!(
+                steps[index - 1] as f32 * points_per_frame < 60.0,
+                "the closest step that fits at {points_per_frame} points"
+            );
+        }
+    }
+    assert_eq!(timeline::ruler_minor_step(1), None);
+    for step in steps.into_iter().skip(1).chain([1200, 6000]) {
+        let minor = timeline::ruler_minor_step(step).expect("a minor step");
+        assert!(minor < step && step % minor == 0, "{minor} divides {step}");
+    }
+}
+
+#[test]
+fn ctrl_wheel_zoom_keeps_the_frame_under_the_pointer() {
+    let (zoom, start) = timeline::zoom_timeline_around(0, 1800, 1.0, 0, 0.25, 2.0);
+    assert_eq!(zoom, 2.0);
+    let (left, right) = timeline::timeline_view(0, 1800, zoom, start);
+    let under_pointer = left as f32 + 0.25 * (right - left) as f32;
+    assert!(
+        (under_pointer - 450.0).abs() <= 1.0,
+        "frame 450 stays under the pointer: {under_pointer}"
+    );
+
+    // frame 1035 sits at 90 % of the view 225..1125
+    let (zoom, start) = timeline::zoom_timeline_around(0, 1800, zoom, start, 0.9, 1.5);
+    assert_eq!(zoom, 3.0);
+    let (left, right) = timeline::timeline_view(0, 1800, zoom, start);
+    assert!((left as f32 + 0.9 * (right - left) as f32 - 1035.0).abs() <= 1.0);
+
+    assert_eq!(timeline::zoom_timeline_around(0, 1800, 64.0, 0, 0.5, 4.0).0, 64.0);
+    assert_eq!(timeline::zoom_timeline_around(0, 1800, 1.0, 0, 0.5, 0.25), (1.0, 0));
+    assert_eq!(timeline::zoom_timeline_around(0, 1800, 2.0, 100, 0.5, f32::NAN), (2.0, 100));
+    let (_, edge) = timeline::zoom_timeline_around(0, 1800, 1.0, 0, 1.0, 8.0);
+    assert_eq!(
+        timeline::timeline_view(0, 1800, 8.0, edge).1,
+        1800,
+        "zooming at the end keeps the end in view"
+    );
+}
+
+#[test]
+fn shift_wheel_pans_within_the_animation() {
+    assert_eq!(timeline::pan_timeline(0, 1800, 4.0, 0, 100), 100);
+    assert_eq!(timeline::pan_timeline(0, 1800, 4.0, 100, -500), 0);
+    assert_eq!(timeline::pan_timeline(0, 1800, 4.0, 1000, 5000), 1350, "the view stops at the end");
+    assert_eq!(timeline::pan_timeline(0, 1800, 1.0, 0, 300), 0, "nothing to pan at full view");
+}
+
+#[test]
+fn ruler_and_lanes_share_one_frame_scale() {
+    let lane = egui::Rect::from_min_size(egui::pos2(100.0, 0.0), egui::vec2(314.0, 20.0));
+    let scale = timeline::FrameScale::new(lane, 0, 30);
+    assert_eq!(scale.x(0.0), 107.0, "the first frame sits inside the lane's padding");
+    assert_eq!(scale.x(30.0), 407.0);
+    assert_eq!(scale.points_per_frame(), 10.0);
+    assert!((scale.x(12.5) - 232.0).abs() < 1e-3, "a playing playhead sits between frames");
+    assert_eq!(scale.frame_at(151.0), 4);
+    assert_eq!(scale.frame_at(0.0), 0);
+    assert_eq!(scale.frame_at(1000.0), 30);
+
+    let keys = [0, 10, 20, 30];
+    assert_eq!(timeline::key_under(&keys, &scale, 108.0), Some(0));
+    assert_eq!(timeline::key_under(&keys, &scale, 215.0), Some(10));
+    assert_eq!(timeline::key_under(&keys, &scale, 216.0), None, "beyond the grab distance");
+    assert_eq!(timeline::key_under(&keys, &scale, 157.0), None);
+    let zoomed = timeline::FrameScale::new(lane, 10, 20);
+    assert_eq!(timeline::key_under(&keys, &zoomed, 100.0), Some(10), "only the visible keys");
+    assert_eq!(timeline::key_under(&[0, 30], &zoomed, 107.0), None);
+}
+
+#[test]
+fn previous_and_next_key_follow_the_selected_bone_or_every_keyed_bone() {
+    let track = |bone, authored, keys: &[u32]| TimelineTrack {
+        bone,
+        name: format!("bone {bone}"),
+        enabled: true,
+        authored,
+        keys: keys.to_vec(),
+    };
+    let tracks = [track(1, true, &[0, 30, 60]), track(2, true, &[0, 45]), track(3, false, &[0, 10])];
+    assert_eq!(timeline::neighbour_key(&tracks, Some(1), 30, true), Some(60));
+    assert_eq!(timeline::neighbour_key(&tracks, Some(1), 30, false), Some(0));
+    assert_eq!(timeline::neighbour_key(&tracks, Some(1), 60, true), None);
+    assert_eq!(
+        timeline::neighbour_key(&tracks, Some(3), 0, true),
+        Some(10),
+        "a selected bone's own track"
+    );
+    assert_eq!(timeline::neighbour_key(&tracks, None, 30, true), Some(45));
+    assert_eq!(timeline::neighbour_key(&tracks, None, 50, false), Some(45));
+    assert_eq!(
+        timeline::neighbour_key(&tracks, None, 5, true),
+        Some(30),
+        "the hidden rest key of an untouched bone is skipped"
+    );
+    assert_eq!(
+        timeline::neighbour_key(&tracks, Some(9), 5, true),
+        Some(30),
+        "a bone without a track"
+    );
+}
+
+#[test]
+fn frame_keys_ignore_the_hidden_rest_pose_of_a_fresh_draft() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = &lib.rig;
+    let head = rig.names["mHead"];
+    let bones = (0..rig.len()).collect::<Vec<_>>();
+    let mut document = Document::new();
+    document
+        .record(rig, &frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale), 0, &bones, &[])
+        .unwrap();
+    for track in &mut document.tracks {
+        track.authored = false;
+    }
+    let mut editor = Editor {
+        open: true,
+        selected: Some(head),
+        clip: State {
+            active: true,
+            document: Some(Arc::new(document)),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    assert!(!editor.clip.has_key(None, 0), "no key of the frame on a fresh draft");
+    assert!(
+        editor.clip.has_key(Some(head), 0),
+        "the selected bone's lane still shows its rest key"
+    );
+
+    let tracks = editor.clip.document.as_ref().unwrap().tracks.len();
+    editor.studio_delete_clip_keyframe();
+    let document = editor.clip.document.as_ref().unwrap();
+    assert_eq!(document.tracks.len(), tracks);
+    assert!(
+        document.tracks.iter().all(|track| !track.motion.rot_keys.is_empty()),
+        "deleting the frame's keys keeps the rest pose of the untouched bones"
+    );
+    assert_eq!(document.frames(None), vec![0]);
+}
+
+#[test]
+fn releasing_a_key_drag_commits_the_frame_it_reached() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = &lib.rig;
+    let head = rig.names["mHead"];
+    let mut document = Document::new();
+    document.range(0, 30);
+    let mut rotations = rig.local_rot.clone();
+    for at in [0, 30] {
+        rotations[head] = Quat::from_rotation_z(at as f32 / 60.0) * rig.local_rot[head];
+        document
+            .record(rig, &frame(&lib, &rotations, &rig.local_pos, &rig.scale), at, &[head], &[])
+            .unwrap();
+    }
+    let mut editor = Editor {
+        open: true,
+        clip: State {
+            active: true,
+            document: Some(Arc::new(document)),
+            drag_key: Some((head, 0, 15)),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    editor.finish_timeline_key_drag(true);
+    assert_eq!(
+        editor.clip.drag_key,
+        Some((head, 0, 15)),
+        "the drag goes on while the button is down"
+    );
+    assert!(editor.clip.undo.is_empty());
+
+    // no pointer position is needed at the release: the drag's frame is kept
+    editor.finish_timeline_key_drag(false);
+    assert_eq!(editor.clip.document.as_ref().unwrap().frames(Some(head)), vec![15, 30]);
+    assert_eq!(editor.clip.drag_key, None);
+    assert_eq!(editor.clip.undo.len(), 1);
+    assert_eq!(editor.clip.frame, 15);
+}
+
+#[test]
+fn dragging_the_auto_key_step_fills_one_undo_entry() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let world = World::new(Arc::new(AvatarLibrary::load()));
+    let mut document = Document::new();
+    document.auto_keyframe = true;
+    let mut editor = Editor {
+        open: true,
+        clip: State {
+            active: true,
+            document: Some(Arc::new(document)),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let palette = crate::theme::Theme::default().palette();
+    let mut frames = Frames::new();
+    let mut draw = |ui: &mut egui::Ui| editor.studio_timeline_overlay(ui.ctx(), &palette, &world);
+    frames.run(Vec::new(), &mut draw);
+    let texts = frames.run(Vec::new(), &mut draw);
+    let step = texts
+        .iter()
+        .find(|text| text.source.starts_with("0.5"))
+        .expect("the auto-key step value")
+        .rect
+        .center();
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    frames.run(vec![egui::Event::PointerMoved(step), button(step, true)], &mut draw);
+    for offset in 1..=6 {
+        frames.run(
+            vec![egui::Event::PointerMoved(step + egui::vec2(8.0 * offset as f32, 0.0))],
+            &mut draw,
+        );
+    }
+    frames.run(vec![button(step + egui::vec2(48.0, 0.0), false)], &mut draw);
+    drop(draw);
+
+    let seconds = editor.clip.document.as_ref().unwrap().auto_key_advance_seconds;
+    assert!(seconds > 0.5, "the drag changed the step: {seconds}");
+    assert_eq!(editor.clip.undo.len(), 1, "one undo entry for the whole drag");
+}
+
+#[test]
+fn the_playhead_crosses_the_ruler_and_the_lanes_at_the_frame_scale_of_both() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = &lib.rig;
+    let world = World::new(lib.clone());
+    let head = rig.names["mHead"];
+    let mut document = Document::new();
+    document.range(0, 30);
+    document
+        .record(rig, &frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale), 0, &[head], &[])
+        .unwrap();
+    let mut editor = Editor {
+        open: true,
+        selected: Some(head),
+        clip: State {
+            active: true,
+            document: Some(Arc::new(document)),
+            frame: 10,
+            cursor: 10.5,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let palette = crate::theme::Theme::default().palette();
+    let mut frames = Frames::new();
+    let mut draw = |ui: &mut egui::Ui| editor.studio_timeline_overlay(ui.ctx(), &palette, &world);
+    frames.run(Vec::new(), &mut draw);
+    let shapes = frames.shapes(Vec::new(), &mut draw);
+    let segments = shapes
+        .iter()
+        .filter_map(|shape| match shape {
+            egui::Shape::LineSegment { points, stroke } => Some((*points, *stroke)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let baseline = segments
+        .iter()
+        .map(|(points, _)| *points)
+        .filter(|points| (points[0].y - points[1].y).abs() < 0.1 && (points[1].x - points[0].x) > 80.0)
+        .max_by(|a, b| a[0].y.total_cmp(&b[0].y))
+        .expect("the head lane's baseline");
+    let playhead = segments
+        .iter()
+        .find(|(points, stroke)| stroke.color == palette.teal && (points[0].x - points[1].x).abs() < 0.1)
+        .map(|(points, _)| *points)
+        .expect("the playhead line");
+    let expected = baseline[0].x + (baseline[1].x - baseline[0].x) * 10.5 / 30.0;
+    assert!(
+        (playhead[0].x - expected).abs() < 0.5,
+        "the playhead sits at the continuous cursor on the lane's scale: {} vs {expected}",
+        playhead[0].x
+    );
+    let (top, bottom) = (playhead[0].y.min(playhead[1].y), playhead[0].y.max(playhead[1].y));
+    assert!(
+        top < baseline[0].y - 20.0 && bottom > baseline[0].y,
+        "one line from the ruler down through the lane"
+    );
+
+    let texts = frames.run(Vec::new(), &mut draw);
+    let zero = texts
+        .iter()
+        .find(|text| text.source == "0")
+        .expect("the ruler's first frame number");
+    assert!(
+        (zero.rect.center().x - baseline[0].x).abs() < 1.0,
+        "the ruler's frame 0 stands over the lane's frame 0"
+    );
 }
 
 #[test]

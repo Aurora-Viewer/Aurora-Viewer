@@ -1,36 +1,83 @@
-//! Compact creation pages: timeline, keyed bones, and native playback metadata.
+//! The animation editor's panel: the name and drafts, one row of pages (Bone,
+//! Tracks, Clip, Display) and the key/export footer. Playback, scrubbing and
+//! key navigation live in the timeline window, never twice.
 use super::*;
 
 pub(super) fn checkpoint_on_edit(response: &egui::Response) -> bool {
     response.drag_started() || (response.changed() && !response.dragged())
 }
 
+fn interpolation_label(mode: document::Interpolation) -> &'static str {
+    match mode {
+        document::Interpolation::Smooth => aurora_i18n::tr!("anim-edit-interpolation-smooth"),
+        document::Interpolation::Linear => aurora_i18n::tr!("anim-edit-interpolation-linear"),
+        document::Interpolation::Stepped => aurora_i18n::tr!("anim-edit-interpolation-stepped"),
+        document::Interpolation::Curve => aurora_i18n::tr!("anim-edit-interpolation-curve"),
+    }
+}
+
+/// The interpolation choice of one track: whether it changed, and whether
+/// that change starts an undo step.
+fn interpolation_combo(ui: &mut egui::Ui, id_salt: impl egui::AsIdSalt, interpolation: &mut document::Interpolation) -> (bool, bool) {
+    let mut changed = false;
+    let mut checkpoint = false;
+    egui::ComboBox::from_id_salt(id_salt)
+        .selected_text(interpolation_label(*interpolation))
+        .show_ui(ui, |ui| {
+            for mode in [
+                document::Interpolation::Smooth,
+                document::Interpolation::Linear,
+                document::Interpolation::Stepped,
+                document::Interpolation::Curve,
+            ] {
+                let response = ui.selectable_value(interpolation, mode, interpolation_label(mode));
+                changed |= response.changed();
+                checkpoint |= checkpoint_on_edit(&response);
+            }
+        });
+    (changed, checkpoint)
+}
+
 impl Editor {
+    /// The draft selector. Choosing a draft swaps it with the current one and
+    /// starts it at its first frame.
+    fn drafts_ui(&mut self, ui: &mut egui::Ui, selected_text: String, width: Option<f32>) {
+        let mut choice = None;
+        let mut combo = egui::ComboBox::from_id_salt("animation-drafts").selected_text(selected_text);
+        if let Some(width) = width {
+            combo = combo.width(width);
+        }
+        combo
+            .show_ui(ui, |ui| {
+                for (index, draft) in self.clip.history.iter().enumerate() {
+                    if ui.selectable_label(false, format!("{} · {}", index + 1, draft.name)).clicked() {
+                        choice = Some(index);
+                    }
+                }
+            })
+            .response
+            .on_hover_text(aurora_i18n::tr!("anim-edit-drafts-hint"));
+        let Some(index) = choice else { return };
+        if let Some(current) = self.clip.document.as_mut() {
+            std::mem::swap(current, &mut self.clip.history[index]);
+        } else {
+            self.clip.document = Some(self.clip.history.remove(index));
+        }
+        self.clip.clear_undo_history();
+        self.clip.auto_key_retime_from = None;
+        let at = self.clip.document.as_ref().map_or(0, |d| d.start);
+        if self.clip.active {
+            // the staged pose edits belong to the draft that was left
+            self.clip_seek(at);
+        } else {
+            self.clip.seek(at);
+        }
+        self.clip.changed();
+    }
     pub(in crate::ik_edit) fn clip_entry_ui(&mut self, ui: &mut egui::Ui, palette: &Palette, world: &World, frame: &Frame) {
         if !self.clip.history.is_empty() {
             let current = self.clip.document.as_ref().map_or_else(String::new, |d| d.name.clone());
-            let mut choice = None;
-            egui::ComboBox::from_id_salt("animation-drafts")
-                .selected_text(current)
-                .show_ui(ui, |ui| {
-                    for (index, draft) in self.clip.history.iter().enumerate() {
-                        if ui.selectable_label(false, format!("{} · {}", index + 1, draft.name)).clicked() {
-                            choice = Some(index);
-                        }
-                    }
-                });
-            if let Some(index) = choice {
-                if let Some(current) = self.clip.document.as_mut() {
-                    std::mem::swap(current, &mut self.clip.history[index]);
-                } else {
-                    self.clip.document = Some(self.clip.history.remove(index));
-                }
-                self.clip.clear_undo_history();
-                self.clip.auto_key_retime_from = None;
-                let at = self.clip.document.as_ref().map_or(0, |d| d.start);
-                self.clip.seek(at);
-                self.clip.changed();
-            }
+            self.drafts_ui(ui, current, None);
         }
         ui.horizontal_wrapped(|ui| {
             if self.clip.document.is_some() && ui.button(aurora_i18n::tr!("anim-edit-resume")).clicked() {
@@ -93,7 +140,7 @@ impl Editor {
             });
         }
         if let Some(error) = &self.clip.error {
-            ui.colored_label(palette.muted, error);
+            ui.colored_label(palette.danger, error);
         }
     }
     pub(super) fn clip_seek(&mut self, frame: u32) {
@@ -124,128 +171,174 @@ impl Editor {
         self.gizmo.cancel();
         self.refresh = true;
     }
-    pub(in crate::ik_edit) fn clip_ui(&mut self, ui: &mut egui::Ui, palette: &Palette, world: &World, frame: &Frame) {
-        let Some((start, end, mut name)) = self
-            .clip
-            .document
-            .as_ref()
-            .map(|document| (document.start, document.end, document.name.clone()))
-        else {
-            return;
-        };
-        let tracks = self.clip.timeline_tracks().unwrap_or_default();
-        let keys = self
-            .selected
-            .and_then(|bone| tracks.iter().find(|track| track.bone == bone))
-            .map_or(&[][..], |track| track.keys.as_slice());
-        if ui
-            .add(
-                egui::TextEdit::singleline(&mut name)
-                    .char_limit(100)
-                    .hint_text(aurora_i18n::tr!("anim-edit-name")),
-            )
-            .changed()
-            && let Some(d) = self.clip.document.as_mut()
-        {
-            Arc::make_mut(d).name = name;
+    /// The animation editor's own window, narrower than the IK contacts one,
+    /// and its timeline when Avatar Studio does not draw it already.
+    pub(in crate::ik_edit) fn clip_window_ui(&mut self, ctx: &egui::Context, palette: &Palette, world: &World, frame: &Frame) {
+        let mut open = self.open;
+        let mut floater = Floater::new(
+            WINDOW,
+            aurora_i18n::tr!("anim-edit-title"),
+            egui::pos2(24.0, 85.0),
+            egui::vec2(400.0, 640.0),
+        );
+        floater.min_size.x = 360.0;
+        floater.show(ctx, palette, &mut open, |ui| self.clip_panel_ui(ui, palette, world, frame));
+        self.open = open;
+        if !self.clip.from_avatar_studio {
+            self.studio_timeline_overlay(ctx, palette, world);
         }
-        let mut tab = self.clip.tab as usize;
+    }
+    fn clip_panel_ui(&mut self, ui: &mut egui::Ui, palette: &Palette, world: &World, frame: &Frame) {
+        if self.clip_header_ui(ui, palette) {
+            return;
+        }
+        let mut tab = ClipTab::ALL.iter().position(|tab| *tab == self.clip.tab).unwrap_or(0);
         widgets::tabs(
             ui,
             palette,
             &mut tab,
             &[
-                (aurora_i18n::tr!("anim-edit-timeline"), true),
-                (aurora_i18n::tr!("anim-edit-tracks"), true),
-                (aurora_i18n::tr!("anim-edit-settings"), true),
+                (aurora_i18n::tr!("anim-panel-tab-bone"), true),
+                (aurora_i18n::tr!("anim-panel-tab-tracks"), true),
+                (aurora_i18n::tr!("anim-panel-tab-clip"), true),
+                (aurora_i18n::tr!("ik-edit-tab-visible"), true),
             ],
         );
-        self.clip.tab = tab as u8;
-        if self.clip.tab == 1 {
-            self.clip_tracks_ui(ui, palette, world, frame);
+        self.clip.tab = ClipTab::ALL[tab.min(ClipTab::ALL.len() - 1)];
+        let footer = if self.clip.footer_height > 0.0 {
+            self.clip.footer_height + ui.spacing().item_spacing.y
+        } else {
+            150.0
+        };
+        egui::ScrollArea::vertical()
+            .id_salt(("animation-editor-page", tab))
+            .auto_shrink([false, true])
+            .max_height((ui.available_height() - footer).max(60.0))
+            .show(ui, |ui| {
+                if self.clip.waiting_source() {
+                    ui.label(aurora_i18n::tr!("anim-edit-building"));
+                    return;
+                }
+                match self.clip.tab {
+                    ClipTab::Bone => self.clip_bone_ui(ui, palette, world, frame),
+                    ClipTab::Tracks => self.clip_tracks_ui(ui, palette, world, frame),
+                    ClipTab::Clip => self.clip_settings_ui(ui, palette),
+                    ClipTab::Display => self.visibility_ui(ui, palette, world, frame),
+                }
+            });
+        // Measure once per frame so wrapped buttons and status lines reserve
+        // their real height without replaying actions.
+        let footer = ui.scope(|ui| self.clip_export_ui(ui, palette));
+        if (self.clip.footer_height - footer.response.rect.height()).abs() > 0.5 {
+            self.clip.footer_height = footer.response.rect.height();
+            ui.ctx().request_repaint();
+        }
+    }
+    /// The name with the drafts beside it, then the way back to IK contacts
+    /// (not from Avatar Studio, where it means nothing) and the timeline when
+    /// its window was closed. True once the editor was left.
+    fn clip_header_ui(&mut self, ui: &mut egui::Ui, palette: &Palette) -> bool {
+        let Some(mut name) = self.clip.document.as_ref().map(|document| document.name.clone()) else {
+            return false;
+        };
+        let drafts = !self.clip.history.is_empty();
+        let drafts_width = 120.0;
+        ui.horizontal(|ui| {
+            let reserved = if drafts {
+                drafts_width + ui.spacing().item_spacing.x + ui.spacing().icon_width
+            } else {
+                0.0
+            };
+            let edit = egui::TextEdit::singleline(&mut name)
+                .char_limit(100)
+                .hint_text(aurora_i18n::tr!("anim-edit-name"))
+                .desired_width((ui.available_width() - reserved).max(80.0));
+            if ui.add(edit).changed()
+                && let Some(document) = self.clip.document.as_mut()
+            {
+                Arc::make_mut(document).name = name;
+            }
+            if drafts {
+                self.drafts_ui(ui, aurora_i18n::tr!("anim-panel-drafts").to_owned(), Some(drafts_width));
+            }
+        });
+        let back = !self.clip.from_avatar_studio;
+        let timeline = !self.clip.timeline_open;
+        let mut left = false;
+        if back || timeline {
+            ui.horizontal(|ui| {
+                if back && ui.button(aurora_i18n::tr!("anim-edit-return")).clicked() {
+                    self.leave_clip();
+                    left = true;
+                }
+                if timeline
+                    && widgets::action_button(
+                        ui,
+                        palette,
+                        "timeline",
+                        aurora_i18n::tr!("anim-edit-timeline"),
+                        widgets::ActionKind::Flat,
+                        egui::vec2(0.0, ui.spacing().interact_size.y),
+                    )
+                    .on_hover_text(aurora_i18n::tr!("avatar-studio-animation-timeline-show"))
+                    .clicked()
+                {
+                    self.clip.timeline_open = true;
+                }
+            });
+        }
+        left
+    }
+    /// The selected bone's track: its interpolation, priority and, for a
+    /// custom curve, the curve editor. Changing them makes the track part of
+    /// the export, as on the Tracks page.
+    pub(in crate::ik_edit) fn clip_bone_track_ui(&mut self, ui: &mut egui::Ui, palette: &Palette, bone: usize) {
+        let Some(document) = &self.clip.document else { return };
+        let Some((index, track)) = document.tracks.iter().enumerate().find(|(_, track)| track.bone == bone) else {
+            ui.colored_label(palette.muted, aurora_i18n::tr!("anim-panel-no-track"));
+            return;
+        };
+        let (old_priority, old_interpolation, authored) = (track.motion.priority, track.interpolation, track.authored);
+        let mut priority = old_priority;
+        let mut interpolation = old_interpolation;
+        let curve = track.curve;
+        let mut changed = false;
+        let mut checkpoint = false;
+        egui::Grid::new(("animation-bone-track", bone)).num_columns(2).show(ui, |ui| {
+            ui.label(aurora_i18n::tr!("anim-panel-interpolation"));
+            let (edited, undo) = interpolation_combo(ui, ("animation-bone-interpolation", bone), &mut interpolation);
+            changed |= edited;
+            checkpoint |= undo;
+            ui.end_row();
+            ui.label(aurora_i18n::tr!("import-priority"));
+            let response = ui
+                .add(egui::DragValue::new(&mut priority).range(-1..=6).speed(1))
+                .on_hover_text(aurora_i18n::tr!("anim-edit-priority-hint"));
+            changed |= response.changed();
+            checkpoint |= checkpoint_on_edit(&response);
+            ui.end_row();
+        });
+        let mut curve_change = None;
+        if interpolation == document::Interpolation::Curve {
+            curve_change = Self::curve_editor_ui(ui, palette, curve);
+        }
+        if !changed && curve_change.is_none() {
             return;
         }
-        if self.clip.tab == 2 {
-            self.clip_settings_ui(ui, palette);
-            return;
-        }
-        ui.label(aurora_i18n::tr!("anim-edit-workflow"));
-        ui.horizontal(|ui| {
-            if ui
-                .button(if self.clip.playing {
-                    aurora_i18n::tr!("ik-graph-pause")
-                } else {
-                    aurora_i18n::tr!("ik-graph-play")
-                })
-                .clicked()
-            {
-                self.studio_toggle_clip_playback();
-            }
-            if ui.button(aurora_i18n::tr!("ik-graph-rewind")).clicked() {
-                self.clip_seek(start);
-            }
-        });
-        let mut value = self.clip.frame;
-        ui.label(aurora_i18n::tr!("anim-edit-frame"));
-        let mut seek = false;
-        ui.horizontal(|ui| {
-            seek |= ui.add(egui::Slider::new(&mut value, start..=end).show_value(false)).changed();
-            seek |= ui.add(egui::DragValue::new(&mut value).range(start..=end).speed(1)).changed();
-            let fps = self.clip.document.as_ref().map_or(FPS as u32, |document| document.fps);
-            ui.label(aurora_i18n::tr!(
-                "anim-edit-seconds",
-                seconds = format!("{:.3}", value.saturating_sub(start) as f32 / fps as f32)
-            ));
-        });
-        if seek {
-            self.clip_seek(value);
-        }
-        ui.horizontal(|ui| {
-            if ui.button(aurora_i18n::tr!("anim-edit-prev-key")).clicked()
-                && let Some(frame) = keys.iter().copied().rev().find(|f| *f < self.clip.frame && *f >= start)
-            {
-                self.clip_seek(frame);
-            }
-            if ui.button(aurora_i18n::tr!("anim-edit-next-key")).clicked()
-                && let Some(frame) = keys.iter().copied().find(|f| *f > self.clip.frame && *f <= end)
-            {
-                self.clip_seek(frame);
-            }
-        });
-        if let Some(bone) = self.selected {
-            ui.strong(&world.avatar_lib.rig.canonical_names[bone]);
-        }
-        if let Some(bone) = self.selected
-            && ui
-                .add_enabled(
-                    keys.contains(&self.clip.frame),
-                    egui::Button::new(aurora_i18n::tr!("anim-edit-remove-key")),
-                )
-                .clicked()
-        {
+        if checkpoint || curve_change.is_some_and(|(_, checkpoint)| checkpoint) {
             self.clip.checkpoint();
-            if let Some(document) = self.clip.document.as_mut() {
-                Arc::make_mut(document).remove(bone, self.clip.frame);
+        }
+        if let Some(document) = self.clip.document.as_mut()
+            && let Some(track) = Arc::make_mut(document).tracks.get_mut(index)
+        {
+            track.motion.priority = priority;
+            track.interpolation = interpolation;
+            track.authored = authored || priority != old_priority || interpolation != old_interpolation;
+            if let Some((curve, _)) = curve_change {
+                track.curve = curve;
+                track.authored = true;
             }
             self.clip.changed();
-            self.goals.clear();
-            self.authoring = authoring::State::default();
-        }
-        ui.label(aurora_i18n::tr!("anim-edit-key-list"));
-        ui.horizontal_wrapped(|ui| {
-            let visible_start = keys.partition_point(|key| *key < start);
-            let visible_end = keys.partition_point(|key| *key <= end);
-            let visible = &keys[visible_start..visible_end];
-            let pivot = visible.partition_point(|k| *k < self.clip.frame);
-            let first = pivot.saturating_sub(12);
-            for &key in visible.iter().skip(first).take(24) {
-                if ui.selectable_label(self.clip.frame == key, key.to_string()).clicked() {
-                    self.clip_seek(key);
-                }
-            }
-        });
-        if self.clip.building {
-            ui.colored_label(palette.muted, aurora_i18n::tr!("anim-edit-building"));
         }
     }
     pub(super) fn clip_capture_ui(&mut self, ui: &mut egui::Ui) {
@@ -302,43 +395,9 @@ impl Editor {
                     let priority_response = ui.add(egui::DragValue::new(&mut priority).range(-1..=6).speed(1));
                     changed |= priority_response.changed();
                     checkpoint |= checkpoint_on_edit(&priority_response);
-                    egui::ComboBox::from_id_salt(("native-track-interpolation", track.bone))
-                        .selected_text(match interpolation {
-                            document::Interpolation::Smooth => aurora_i18n::tr!("anim-edit-interpolation-smooth"),
-                            document::Interpolation::Linear => aurora_i18n::tr!("anim-edit-interpolation-linear"),
-                            document::Interpolation::Stepped => aurora_i18n::tr!("anim-edit-interpolation-stepped"),
-                            document::Interpolation::Curve => aurora_i18n::tr!("anim-edit-interpolation-curve"),
-                        })
-                        .show_ui(ui, |ui| {
-                            let response = ui.selectable_value(
-                                &mut interpolation,
-                                document::Interpolation::Smooth,
-                                aurora_i18n::tr!("anim-edit-interpolation-smooth"),
-                            );
-                            changed |= response.changed();
-                            checkpoint |= checkpoint_on_edit(&response);
-                            let response = ui.selectable_value(
-                                &mut interpolation,
-                                document::Interpolation::Linear,
-                                aurora_i18n::tr!("anim-edit-interpolation-linear"),
-                            );
-                            changed |= response.changed();
-                            checkpoint |= checkpoint_on_edit(&response);
-                            let response = ui.selectable_value(
-                                &mut interpolation,
-                                document::Interpolation::Stepped,
-                                aurora_i18n::tr!("anim-edit-interpolation-stepped"),
-                            );
-                            changed |= response.changed();
-                            checkpoint |= checkpoint_on_edit(&response);
-                            let response = ui.selectable_value(
-                                &mut interpolation,
-                                document::Interpolation::Curve,
-                                aurora_i18n::tr!("anim-edit-interpolation-curve"),
-                            );
-                            changed |= response.changed();
-                            checkpoint |= checkpoint_on_edit(&response);
-                        });
+                    let (edited, undo) = interpolation_combo(ui, ("native-track-interpolation", track.bone), &mut interpolation);
+                    changed |= edited;
+                    checkpoint |= undo;
                     if changed {
                         let authored = track.authored
                             || (enabled && changed)
@@ -625,7 +684,7 @@ impl Editor {
             ui.add(egui::Label::new(message).truncate()).on_hover_text(message);
         }
         if let Some(error) = &self.clip.error {
-            ui.add(egui::Label::new(egui::RichText::new(error).color(palette.muted)).truncate())
+            ui.add(egui::Label::new(egui::RichText::new(error).color(palette.danger)).truncate())
                 .on_hover_text(error);
         }
     }

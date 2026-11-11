@@ -4218,8 +4218,15 @@ pose editor. It retains contact definitions while keyed samples and staged
 pose goals drive the own avatar. `clip/document.rs` captures LL-local
 rotations and scaled-parent positions, records pelvis translations by default
 and other directly edited position channels, trims/rebases native tracks and
-samples new boundaries. `clip/ui.rs` separates timeline, per-bone priorities
-and classic playback metadata. `clip/files.rs` binds previews and runs the
+samples new boundaries; every key edit matches a key by the frame the
+timeline draws it on, so off-grid imported keys stay editable. `clip/ui.rs`
+draws the editor's own window: Bone, Tracks, Clip and Display pages over the
+key/export footer. `clip/timeline.rs` draws the timeline window: one toolbar
+(transport, Move/Rotate, IK/FK, Mirror, keying, edit, view, File), a frame
+ruler sharing the lanes' scale, and the bone lanes with their keys.
+`clip/picker.rs` builds the Bone page's clickable Body/Hands/Face skeleton
+from the rig's rest pose (pure classification, projection and fit, cached per
+rig). `clip/files.rs` binds previews and runs the
 existing `aurora_assets::import_animation` codec, full native validation,
 file dialogs and writes on background jobs. Preview revisions atomically
 replace the sample before recorded corrections are removed; later pose edits

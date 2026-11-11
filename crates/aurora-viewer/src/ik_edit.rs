@@ -1158,89 +1158,85 @@ impl Editor {
             }
             self.pick_segment(ctx, palette, world, &frame, &segments, gizmo_owns);
         }
+        if self.clip.active {
+            // the animation editor has its own, narrower window and pages
+            self.clip_window_ui(ctx, palette, world, &frame);
+        } else {
+            self.ik_window_ui(ctx, palette, world, &frame);
+        }
+        if !self.open {
+            self.leave_clip();
+            self.cancel_link_pick();
+            self.drag = None;
+            self.gizmo.cancel();
+        }
+    }
+
+    /// The IK contacts window. Creating or resuming an animation in its
+    /// Animations page hands over to the animation editor's window.
+    fn ik_window_ui(&mut self, ctx: &egui::Context, palette: &Palette, world: &World, frame: &Frame) {
         let mut open = self.open;
         let mut floater = Floater::new(
             "ik-edit",
-            if self.clip.active {
-                aurora_i18n::tr!("anim-edit-title")
-            } else {
-                aurora_i18n::tr!("ik-edit-title")
-            },
+            aurora_i18n::tr!("ik-edit-title"),
             egui::pos2(24.0, 85.0),
             egui::vec2(530.0, 785.0),
         );
         floater.min_size.x = 530.0;
         floater.show(ctx, palette, &mut open, |ui| {
-            if self.clip.active && ui.button(aurora_i18n::tr!("anim-edit-return")).clicked() {
-                self.leave_clip();
-            }
-            if !self.clip.active {
-                self.library_title_ui(ui);
-            }
+            self.library_title_ui(ui);
             self.project_tabs_ui(ui, palette);
             self.link_pick_status_ui(ui, palette, world);
-            let footer = if self.clip.active {
-                150.0
-            } else if self.links.footer_height > 0.0 {
+            let footer = if self.links.footer_height > 0.0 {
                 self.links.footer_height + ui.spacing().item_spacing.y
             } else {
                 190.0
             };
             let mut body = egui::ScrollArea::vertical()
                 .id_salt(("ik-editor-body", self.tab))
-                .auto_shrink([false, self.clip.active])
+                .auto_shrink([false, false])
                 .max_height((ui.available_height() - footer).max(60.0));
             if self.links.reveal_offsets {
                 body = body.vertical_scroll_offset(110.0);
             }
-            body.show(ui, |ui| {
-                if self.clip.waiting_source() {
-                    ui.label(aurora_i18n::tr!("anim-edit-building"));
-                    return;
+            body.show(ui, |ui| match self.tab {
+                5 => self.library_browser_ui(ui, palette, world),
+                3 => self.visibility_ui(ui, palette, world, frame),
+                2 => {
+                    self.clip_entry_ui(ui, palette, world, frame);
+                    if !self.clip.active {
+                        self.ensure_profiles(world, frame);
+                        let mut profile = self.graph.profile.unwrap_or(0);
+                        ui.horizontal(|ui| {
+                            ui.strong(aurora_i18n::tr!("ik-profile-title"));
+                            let width = ui.available_width().max(80.0);
+                            self.profile_selector_ui(ui, &mut profile, "ik-animation-profile", width);
+                        });
+                        if self.graph.profile != Some(profile) {
+                            self.switch_profile(profile, world, frame);
+                        }
+                        self.animations.show(ui, palette, &world.inventory);
+                    }
                 }
-                match self.tab {
-                    5 => self.library_browser_ui(ui, palette, world),
-                    3 => self.visibility_ui(ui, palette, world, &frame),
-                    2 => {
-                        if !self.clip.active {
-                            self.clip_entry_ui(ui, palette, world, &frame);
-                        }
-                        if self.clip.active {
-                            self.clip_ui(ui, palette, world, &frame);
-                        } else {
-                            self.ensure_profiles(world, &frame);
-                            let mut profile = self.graph.profile.unwrap_or(0);
-                            ui.horizontal(|ui| {
-                                ui.strong(aurora_i18n::tr!("ik-profile-title"));
-                                let width = ui.available_width().max(80.0);
-                                self.profile_selector_ui(ui, &mut profile, "ik-animation-profile", width);
-                            });
-                            if self.graph.profile != Some(profile) {
-                                self.switch_profile(profile, world, &frame);
-                            }
-                            self.animations.show(ui, palette, &world.inventory);
-                        }
+                0 => {
+                    if !self.picking {
+                        self.manipulation_ui(ui);
+                        self.pose_ui(ui, palette, world, frame);
                     }
-                    0 => {
-                        if !self.picking {
-                            self.manipulation_ui(ui, palette);
-                            self.pose_ui(ui, palette, world, &frame);
-                        }
-                    }
-                    4 => {
-                        if !self.picking {
-                            self.nodes_ui(ui, palette, world, &frame);
-                        }
-                    }
-                    _ => self.links_ui(ui, palette, world, &frame),
                 }
+                4 => {
+                    if !self.picking {
+                        self.nodes_ui(ui, palette, world, frame);
+                    }
+                }
+                _ => self.links_ui(ui, palette, world, frame),
             });
-            if self.clip.active {
-                self.clip_export_ui(ui, palette);
-            } else {
+            // The animation editor takes over from the next frame once
+            // creation started above.
+            if !self.clip.active {
                 // Measure once per frame so wrapping, diagnostics and font/window
                 // changes reserve their real height without replaying actions.
-                let footer = ui.scope(|ui| self.footer_ui(ui, palette, world, &frame));
+                let footer = ui.scope(|ui| self.footer_ui(ui, palette, world, frame));
                 if (self.links.footer_height - footer.response.rect.height()).abs() > 0.5 {
                     self.links.footer_height = footer.response.rect.height();
                     ctx.request_repaint();
@@ -1248,12 +1244,11 @@ impl Editor {
             }
         });
         self.open = open;
-        if !self.open {
-            self.leave_clip();
-            self.cancel_link_pick();
-            self.drag = None;
-            self.gizmo.cancel();
-        }
+    }
+
+    /// The window the editor shows: the animation editor has its own.
+    pub fn window_id(&self) -> &'static str {
+        if self.clip.active { clip::WINDOW } else { "ik-edit" }
     }
 }
 

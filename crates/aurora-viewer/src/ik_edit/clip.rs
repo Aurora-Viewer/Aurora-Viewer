@@ -8,6 +8,7 @@ pub(super) mod document;
 pub(super) mod files;
 #[cfg(test)]
 mod key_tests;
+mod picker;
 #[cfg(test)]
 mod tests;
 mod timeline;
@@ -15,12 +16,34 @@ mod ui;
 use document::{Document, FPS, MAX_FRAME};
 pub use files::Prepared;
 
+/// The animation editor's window: its own, narrower than IK contacts'.
+pub(super) const WINDOW: &str = "animation-editor";
+
 #[derive(Clone, Copy)]
 pub(super) enum Capture {
     Bone(usize),
     Modified,
     AutoKeyModified,
     Pose,
+}
+
+/// The animation editor panel's pages, in tab order. Playback, scrubbing and
+/// key navigation live in the timeline window.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum ClipTab {
+    /// The bone picker and the selected bone's pose and track.
+    #[default]
+    Bone,
+    /// Every keyed bone with its switch, priority and interpolation.
+    Tracks,
+    /// Range, FPS, loop, ease, hand pose and expression.
+    Clip,
+    /// Which skeleton groups show their handles.
+    Display,
+}
+
+impl ClipTab {
+    pub(super) const ALL: [Self; 4] = [Self::Bone, Self::Tracks, Self::Clip, Self::Display];
 }
 struct Preview {
     revision: u64,
@@ -86,7 +109,11 @@ pub(super) struct State {
     saved_authoring: authoring::State,
     saved_disabled: Vec<usize>,
     saved_pose_transform: Option<usize>,
-    tab: u8,
+    tab: ClipTab,
+    picker: picker::Picker,
+    /// The panel footer's height, measured each frame: the page above it
+    /// scrolls in what is left.
+    footer_height: f32,
     export: Option<files::Action>,
     busy: bool,
     error: Option<String>,
@@ -137,7 +164,9 @@ impl Default for State {
             saved_authoring: authoring::State::default(),
             saved_disabled: Vec::new(),
             saved_pose_transform: None,
-            tab: 0,
+            tab: ClipTab::Bone,
+            picker: picker::Picker::default(),
+            footer_height: 0.0,
             export: None,
             busy: false,
             error: None,
@@ -206,11 +235,15 @@ impl State {
         self.timeline_tracks = Some((self.revision, tracks.clone()));
         Some(tracks)
     }
+    /// Whether `bone` has a key at `frame`, or with `None` whether any track
+    /// the user authored has one. A fresh draft seeds every bone with a
+    /// hidden rest-pose key at frame 0 (`authored` false): it is not a key
+    /// of the frame, but a selected bone's own track still shows it.
     pub(super) fn has_key(&mut self, bone: Option<usize>, frame: u32) -> bool {
         self.timeline_tracks().is_some_and(|tracks| {
             tracks
                 .iter()
-                .any(|track| bone.is_none_or(|bone| track.bone == bone) && track.keys.binary_search(&frame).is_ok())
+                .any(|track| bone.map_or(track.authored, |bone| track.bone == bone) && track.keys.binary_search(&frame).is_ok())
         })
     }
     fn checkpoint(&mut self) {
@@ -545,7 +578,7 @@ impl Editor {
     pub(super) fn open_from_avatar_studio(&mut self, world: &World) {
         self.open = true;
         self.tab = 2;
-        self.clip.tab = 1;
+        self.clip.tab = ClipTab::Bone;
         self.clip.from_avatar_studio = true;
         self.clip.timeline_open = true;
         // The clip editor has its own keyed pose controls. Leaving the Poser
@@ -616,8 +649,8 @@ impl Editor {
         self.clip.seek(0);
         self.clip.playing = true;
         self.select(wrist, rig, &frame);
-        self.tab = 2;
-        self.clip.tab = 0;
+        self.clip.tab = ClipTab::Bone;
+        self.clip.picker.view = picker::View::Body;
     }
 
     pub(super) fn jump_demo_from_avatar_studio(&mut self, world: &World, frame: &Frame) {
@@ -641,8 +674,9 @@ impl Editor {
         self.clip.changed();
         self.clip.seek(30);
         self.select(pelvis, rig, frame);
-        self.tab = 0;
-        self.clip.tab = 0;
+        // the Bone page with its Root height slider, the timeline out of the way
+        self.clip.tab = ClipTab::Bone;
+        self.clip.picker.view = picker::View::Body;
         self.clip.timeline_open = false;
     }
 
@@ -693,11 +727,11 @@ impl Editor {
         self.clip.frame = if mode == "clip-frame" { 45 } else { 15 };
         self.clip.cursor = f64::from(self.clip.frame);
         self.clip.tab = if mode == "clip-priority" || mode == "animation-editor" {
-            1
+            ClipTab::Tracks
         } else if ["clip-settings", "clip-crop"].contains(&mode) {
-            2
+            ClipTab::Clip
         } else {
-            0
+            ClipTab::Bone
         };
         self.select(head, rig, frame);
         self.tab = 2;

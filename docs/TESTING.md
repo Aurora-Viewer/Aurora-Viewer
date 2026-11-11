@@ -3557,7 +3557,8 @@ That ignored test creates and removes its own isolated profile.
   root and bone reset in its source card, and world/local space and pose reset
   in Options. IK Edit has no separate Pose tab. Contact calibration and relative
   target offsets are in an advanced selected-source section. Detach updates the binding mode without recapturing its
-  offset. Native clip authoring retains its chain/space/reset controls in Pose.
+  offset. Native clip authoring has its IK/FK, chain root and reset controls
+  on its Bone page, and space/symmetry in that page's Advanced section.
   `gizmo` shows world-axis arrows/planes, `gizmo-local` uses the wrist's axes,
   and `gizmo-rotate` shows world-axis rotation rings. Both complete-script and
   ready-to-paste `string RIG = "…";` exports stay at the bottom, including
@@ -3634,10 +3635,16 @@ That ignored test creates and removes its own isolated profile.
   footer. `animations-release` closes at 720; capture 800 for resumed contacts.
   These samples neither upload animations nor send animation-stop messages.
   `clip` opens native animation creation with head/pelvis keys at 0/30/60,
-  displayed at frame 15. `clip-frame` shows 45, `clip-priority` shows per-bone
-  priority/track switches, `clip-settings` shows native timing, and `clip-crop`
+  displayed at frame 15, in the Animation editor's own window on its Bone
+  page, with the timeline window beside it. `clip-frame` shows 45,
+  `clip-priority` shows per-bone priority/track switches on Tracks,
+  `clip-settings` shows native timing on Clip, and `clip-crop`
   trims to 15–45. `clip-import` stages native bytes in the ordinary inspector
   without uploading. `clip-release` closes at 720 (capture 800 for restoration).
+  On Bone, the skeleton picker shows Body, Hands and Face: hover a joint to
+  enlarge it and see its name, click it to select the bone (teal); bones keyed
+  at the frame carry a violet ring, and the avatar's left side is on the
+  right. Close the timeline and reopen it with **Timeline** in the editor.
   Lower Poser settings' **Sensitivity** and drag a move axis, rotation ring,
   scale axis and uniform scale handle: each should move proportionally less;
   at the default 0.5, transforms retain their existing response. Close and
@@ -8960,11 +8967,11 @@ and Reset button; it must not grow to fill the available screen height.
 sampled from the current rig. The seeded preview is five seconds; a new editor
 project starts at 30 seconds and can be extended to the 60-second Second Life
 animation limit at every supported FPS; changing FPS preserves elapsed time.
-  `animation-jump` opens the Pose tab at the mPelvis track's jump apex with the
+  `animation-jump` opens the Bone page at the mPelvis track's jump apex with the
   timeline window closed so the Root height slider is visible. Check the slider,
-  then reopen **Timeline** from the Studio toolbar and play the takeoff/apex/
-  landing keys to confirm the entire avatar rises and returns smoothly.
-Before opening it, set the Poser to Scale. In animation mode the Pose controls
+  then reopen **Timeline** from the Studio toolbar or the editor and play the
+  takeoff/apex/landing keys to confirm the entire avatar rises and returns smoothly.
+Before opening it, set the Poser to Scale. In animation mode the Bone page
 should offer rotation and position only; return to posing and confirm Scale is
 selected again.
 Use the timeline zoom buttons to inspect adjacent keys, pan to later frames,

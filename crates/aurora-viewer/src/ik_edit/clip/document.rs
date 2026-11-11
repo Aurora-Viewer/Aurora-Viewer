@@ -695,36 +695,15 @@ impl Document {
                 continue;
             };
             track.authored = true;
-            if let Some(key) = track
-                .motion
-                .rot_keys
-                .iter_mut()
-                .find(|k| (k.time - time).abs() < 0.001 / self.fps as f32)
-            {
-                key.rotation = q;
-            } else {
-                track.motion.rot_keys.push(RotKey { time, rotation: q });
-                track.motion.rot_keys.sort_by(|a, b| a.time.total_cmp(&b.time));
-            }
+            upsert_key(&mut track.motion.rot_keys, at, self.fps, RotKey { time, rotation: q });
             if position {
-                let position = local;
                 if track.motion.pos_keys.is_empty() && at > 0 {
                     track.motion.pos_keys.push(PosKey {
                         time: 0.0,
                         position: track.base_position,
                     });
                 }
-                if let Some(key) = track
-                    .motion
-                    .pos_keys
-                    .iter_mut()
-                    .find(|k| (k.time - time).abs() < 0.001 / self.fps as f32)
-                {
-                    key.position = position;
-                } else {
-                    track.motion.pos_keys.push(PosKey { time, position });
-                    track.motion.pos_keys.sort_by(|a, b| a.time.total_cmp(&b.time));
-                }
+                upsert_key(&mut track.motion.pos_keys, at, self.fps, PosKey { time, position: local });
             }
         }
         if at < self.start || at > self.end {
@@ -732,17 +711,14 @@ impl Document {
         }
         Ok(())
     }
-    pub fn remove(&mut self, bone: usize, at: u32) {
-        let time = at as f32 / self.fps as f32;
-        if let Some(track) = self.tracks.iter_mut().find(|t| t.bone == bone) {
-            track.motion.rot_keys.retain(|k| (k.time - time).abs() >= 0.001 / self.fps as f32);
-            track.motion.pos_keys.retain(|k| (k.time - time).abs() >= 0.001 / self.fps as f32);
-        }
-    }
+    /// The pose of the authored, enabled tracks at a frame. The baseline
+    /// tracks a fresh draft seeds for every bone stay out: pasting them would
+    /// make every untouched joint part of the exported animation.
     pub fn copy_keyframe(&self, at: u32) -> Vec<Keyframe> {
         let time = at as f32 / self.fps as f32;
         self.tracks
             .iter()
+            .filter(|track| track.enabled && track.authored)
             .filter_map(|track| {
                 let rotation = track.rotation_at(time);
                 let position = track.position_at(time);
@@ -755,17 +731,18 @@ impl Document {
             .collect()
     }
     pub fn paste_keyframe(&mut self, at: u32, keys: &[Keyframe]) {
-        let time = at.min(self.max_frame()) as f32 / self.fps as f32;
+        let frame = at.min(self.max_frame());
+        let time = frame_time(frame, self.fps);
         for key in keys {
             let Some(track) = self.tracks.iter_mut().find(|track| track.bone == key.bone) else {
                 continue;
             };
             if let Some(rotation) = key.rotation {
-                upsert_rotation(&mut track.motion.rot_keys, time, rotation, self.fps);
+                upsert_key(&mut track.motion.rot_keys, frame, self.fps, RotKey { time, rotation });
                 track.authored = true;
             }
             if let Some(position) = key.position {
-                upsert_position(&mut track.motion.pos_keys, time, position, self.fps);
+                upsert_key(&mut track.motion.pos_keys, frame, self.fps, PosKey { time, position });
                 track.authored = true;
             }
         }
@@ -774,39 +751,36 @@ impl Document {
         }
     }
     pub fn move_track_keyframe(&mut self, bone: usize, from: u32, to: u32) {
-        let source = from.min(self.max_frame()) as f32 / self.fps as f32;
-        let destination = to.min(self.max_frame()) as f32 / self.fps as f32;
-        if (source - destination).abs() < f32::EPSILON {
+        let source = from.min(self.max_frame());
+        let destination = to.min(self.max_frame());
+        if source == destination {
             return;
         }
+        let fps = self.fps;
         if let Some(track) = self.tracks.iter_mut().find(|track| track.bone == bone) {
-            let has_source = track
-                .motion
-                .rot_keys
-                .iter()
-                .any(|key| (key.time - source).abs() < 0.001 / self.fps as f32)
-                || track
-                    .motion
-                    .pos_keys
-                    .iter()
-                    .any(|key| (key.time - source).abs() < 0.001 / self.fps as f32);
-            move_track_keys(track, source, destination, self.fps);
+            let has_source = has_key_on(&track.motion.rot_keys, source, fps) || has_key_on(&track.motion.pos_keys, source, fps);
+            move_key(&mut track.motion.rot_keys, source, destination, fps);
+            move_key(&mut track.motion.pos_keys, source, destination, fps);
             track.authored |= has_source;
         }
         if to < self.start || to > self.end {
             self.range(self.start.min(to), self.end.max(to));
         }
     }
+    /// Delete every authored key the frame shows. The hidden baseline keys of
+    /// a fresh draft's untouched tracks keep the preview at rest and stay.
     pub fn remove_keyframe(&mut self, at: u32) {
-        let time = at as f32 / self.fps as f32;
-        for track in &mut self.tracks {
-            remove_track_keys(track, time, self.fps);
+        let fps = self.fps;
+        for track in self.tracks.iter_mut().filter(|track| track.authored) {
+            remove_keys(&mut track.motion.rot_keys, at, fps);
+            remove_keys(&mut track.motion.pos_keys, at, fps);
         }
     }
     pub fn remove_track_keyframe(&mut self, bone: usize, at: u32) {
-        let time = at as f32 / self.fps as f32;
+        let fps = self.fps;
         if let Some(track) = self.tracks.iter_mut().find(|track| track.bone == bone) {
-            remove_track_keys(track, time, self.fps);
+            remove_keys(&mut track.motion.rot_keys, at, fps);
+            remove_keys(&mut track.motion.pos_keys, at, fps);
         }
     }
     #[cfg(test)]
@@ -964,53 +938,68 @@ impl Document {
     }
 }
 
-fn move_track_keys(track: &mut Track, source: f32, destination: f32, fps: u32) {
-    move_rotation_key(&mut track.motion.rot_keys, source, destination, fps);
-    move_position_key(&mut track.motion.pos_keys, source, destination, fps);
+/// A key belongs to the frame its time rounds to, exactly as the timeline
+/// draws it (`State::timeline_tracks`). Every edit matches keys this way, so a
+/// key off the frame grid, from an imported `.anim`/`.bvh` or left between
+/// frames by an FPS change, can still be deleted, dragged or replaced from the
+/// frame that shows it.
+pub(super) fn key_on_frame(time: f32, frame: u32, fps: u32) -> bool {
+    time.is_finite() && (time * fps as f32).round() == frame as f32
 }
 
-fn move_rotation_key(keys: &mut Vec<RotKey>, source: f32, destination: f32, fps: u32) {
-    let tolerance = 0.001 / fps as f32;
-    let Some(mut moved) = keys.iter().rfind(|key| (key.time - source).abs() < tolerance).cloned() else {
-        return;
-    };
-    moved.time = destination;
-    keys.retain(|key| (key.time - source).abs() >= tolerance && (key.time - destination).abs() >= tolerance);
-    keys.push(moved);
-    keys.sort_by(|a, b| a.time.total_cmp(&b.time));
+fn frame_time(frame: u32, fps: u32) -> f32 {
+    frame as f32 / fps as f32
 }
 
-fn move_position_key(keys: &mut Vec<PosKey>, source: f32, destination: f32, fps: u32) {
-    let tolerance = 0.001 / fps as f32;
-    let Some(mut moved) = keys.iter().rfind(|key| (key.time - source).abs() < tolerance).cloned() else {
-        return;
-    };
-    moved.time = destination;
-    keys.retain(|key| (key.time - source).abs() >= tolerance && (key.time - destination).abs() >= tolerance);
-    keys.push(moved);
-    keys.sort_by(|a, b| a.time.total_cmp(&b.time));
+/// Rotation and position keys share the frame rules below.
+trait Timed: Clone {
+    fn time(&self) -> f32;
+    fn set_time(&mut self, time: f32);
 }
 
-fn remove_track_keys(track: &mut Track, time: f32, fps: u32) {
-    let tolerance = 0.001 / fps as f32;
-    track.motion.rot_keys.retain(|key| (key.time - time).abs() >= tolerance);
-    track.motion.pos_keys.retain(|key| (key.time - time).abs() >= tolerance);
-}
-
-fn upsert_rotation(keys: &mut Vec<RotKey>, time: f32, rotation: Quat, fps: u32) {
-    if let Some(key) = keys.iter_mut().find(|key| (key.time - time).abs() < 0.001 / fps as f32) {
-        key.rotation = rotation;
-    } else {
-        keys.push(RotKey { time, rotation });
-        keys.sort_by(|a, b| a.time.total_cmp(&b.time));
+impl Timed for RotKey {
+    fn time(&self) -> f32 {
+        self.time
+    }
+    fn set_time(&mut self, time: f32) {
+        self.time = time;
     }
 }
 
-fn upsert_position(keys: &mut Vec<PosKey>, time: f32, position: Vec3, fps: u32) {
-    if let Some(key) = keys.iter_mut().find(|key| (key.time - time).abs() < 0.001 / fps as f32) {
-        key.position = position;
-    } else {
-        keys.push(PosKey { time, position });
-        keys.sort_by(|a, b| a.time.total_cmp(&b.time));
+impl Timed for PosKey {
+    fn time(&self) -> f32 {
+        self.time
     }
+    fn set_time(&mut self, time: f32) {
+        self.time = time;
+    }
+}
+
+fn has_key_on<K: Timed>(keys: &[K], frame: u32, fps: u32) -> bool {
+    keys.iter().any(|key| key_on_frame(key.time(), frame, fps))
+}
+
+fn remove_keys<K: Timed>(keys: &mut Vec<K>, frame: u32, fps: u32) {
+    keys.retain(|key| !key_on_frame(key.time(), frame, fps));
+}
+
+/// One key per frame: the new key, at the frame's exact time, replaces every
+/// key the frame shows (several when a denser import rounds onto it).
+fn upsert_key<K: Timed>(keys: &mut Vec<K>, frame: u32, fps: u32, mut key: K) {
+    key.set_time(frame_time(frame, fps));
+    remove_keys(keys, frame, fps);
+    keys.push(key);
+    keys.sort_by(|a, b| a.time().total_cmp(&b.time()));
+}
+
+/// Move the frame's last key onto another frame, snapped to that frame's exact
+/// time. The destination's own keys are replaced, in either drag direction.
+fn move_key<K: Timed>(keys: &mut Vec<K>, from: u32, to: u32, fps: u32) {
+    let Some(mut moved) = keys.iter().rfind(|key| key_on_frame(key.time(), from, fps)).cloned() else {
+        return;
+    };
+    moved.set_time(frame_time(to, fps));
+    keys.retain(|key| !key_on_frame(key.time(), from, fps) && !key_on_frame(key.time(), to, fps));
+    keys.push(moved);
+    keys.sort_by(|a, b| a.time().total_cmp(&b.time()));
 }

@@ -4739,7 +4739,8 @@ impl App {
             ),
             Action::IkEdit => {
                 self.ik_editor.open_ik();
-                ui::widgets::open_floater(&self.egui_ctx, "ik-edit", &mut self.ik_editor.open);
+                let window = self.ik_editor.window_id();
+                ui::widgets::open_floater(&self.egui_ctx, window, &mut self.ik_editor.open);
             }
             Action::Gestures => ui::widgets::toggle_floater(&self.egui_ctx, "gestures", &mut self.panels.gestures),
             Action::Minimap => self.panels.minimap = !self.panels.minimap,
@@ -21374,9 +21375,10 @@ impl ApplicationHandler for App {
                     // already received this event above; only route it when
                     // no text field or focused widget owns keyboard input.
                     if pressed
-                        && !ke.repeat
                         && !altgr_text
                         && let Some(key) = crate::ik_edit::Editor::map_timeline_key(&ke.logical_key)
+                        // a held arrow keeps stepping frames; the other accelerators fire once
+                        && (!ke.repeat || matches!(key, egui::Key::ArrowLeft | egui::Key::ArrowRight))
                         && self.ik_editor.handle_timeline_shortcut(
                             &self.egui_ctx,
                             key,
