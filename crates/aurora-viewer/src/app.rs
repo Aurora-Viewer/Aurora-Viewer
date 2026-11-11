@@ -842,6 +842,7 @@ pub struct App {
     /// World › SL Marketplace (LLFloaterMarketplace).
     marketplace_ui: ui::marketplace::MarketplaceUi,
     web_browser_ui: ui::web_browser::WebBrowserUi,
+    destinations_ui: ui::destinations::DestinationsUi,
     /// Me › Marketplace listings (LLFloaterMarketplaceListings).
     listings_ui: ui::marketplace_listings::ListingsUi,
     /// The demo's SLM server (AURORA_DEMO_MARKETPLACE_LISTINGS).
@@ -1809,6 +1810,7 @@ impl App {
             buy_land_source: Default::default(),
             marketplace_ui: Default::default(),
             web_browser_ui: Default::default(),
+            destinations_ui: Default::default(),
             listings_ui: Default::default(),
             demo_slm: None,
             people_map_ui: Default::default(),
@@ -3137,6 +3139,9 @@ impl App {
         self.web_browser_ui = Default::default();
         // closed, or the next session would open the home page by itself
         self.panels.web_browser = false;
+        // the guide belongs to the grid, and its browser to the session
+        self.destinations_ui = Default::default();
+        self.panels.destinations = false;
         // the listings belong to the account (LLMarketplaceData)
         self.listings_ui = Default::default();
         self.demo_slm = None;
@@ -14758,12 +14763,52 @@ impl App {
         ui::marketplace::home(&self.settings.grid).map(str::to_owned)
     }
 
+    /// The grid's Destination Guide page (LFSimFeatureHandler::
+    /// destinationGuideURL), None on a grid without one.
+    /// AURORA_DEMO_DESTINATIONS=<page>: a page of the tester's choice in
+    /// demo, "sl" for the Second Life guide's address.
+    fn destination_guide(&self) -> Option<String> {
+        use ui::destinations::{GuideGrid, guide_url};
+        let language = aurora_i18n::language();
+        if self.demo {
+            let page = std::env::var("AURORA_DEMO_DESTINATIONS").ok().filter(|u| !u.trim().is_empty())?;
+            return match page.trim() {
+                "sl" => guide_url(GuideGrid::SecondLife, language),
+                page => Some(page.to_owned()),
+            };
+        }
+        match self.settings.grid {
+            crate::settings::GridChoice::SecondLife => guide_url(GuideGrid::SecondLife, language),
+            crate::settings::GridChoice::SecondLifeBeta => guide_url(GuideGrid::SecondLifeBeta, language),
+            crate::settings::GridChoice::Custom => {
+                let region = self.world.opensim_extras().and_then(|e| e.destination_guide_url.as_deref());
+                let login = self
+                    .world
+                    .login
+                    .as_ref()
+                    .map(|l| l.raw["destination_guide_url"].as_str())
+                    .unwrap_or("");
+                let id = crate::grids::active(&self.settings)
+                    .map(|g| {
+                        if g.nickname.is_empty() {
+                            g.name.as_str()
+                        } else {
+                            g.nickname.as_str()
+                        }
+                    })
+                    .unwrap_or("");
+                guide_url(GuideGrid::OpenSim { region, login, id }, language)
+            }
+        }
+    }
+
     /// All embedded web windows share native input ownership and shortcut guards.
     fn web_has_focus(&self) -> bool {
         self.profile_ui.web_has_focus()
             || self.search_ui.web_has_focus()
             || self.marketplace_ui.web_has_focus()
             || self.web_browser_ui.web_has_focus(self.panels.web_browser)
+            || self.destinations_ui.web_has_focus(self.panels.destinations)
     }
 
     /// LLMediaCtrl::handleKeyHere / handleUnicodeCharHere: the clicked page
@@ -14774,6 +14819,7 @@ impl App {
             .or_else(|| self.search_ui.focused_web())
             .or_else(|| self.marketplace_ui.focused_web())
             .or_else(|| self.web_browser_ui.focused_web(self.panels.web_browser))
+            .or_else(|| self.destinations_ui.focused_web(self.panels.destinations))
     }
 
     /// The session id the web tab's search page is opened with; none in
@@ -15963,6 +16009,7 @@ impl App {
                     grid_help: self.grid_help(),
                     marketplace: self.marketplace_home().is_some()
                         || (self.demo && crate::world::marketplace::demo::Mode::from_env().is_some()),
+                    destinations: self.destination_guide().is_some(),
                     parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
                         (Some(region), Some(parcel)) => ui::parcel_icons::parcel_icons(&ui::parcel_icons::ParcelState {
                             region_flags: region.region_flags,
@@ -17803,6 +17850,25 @@ impl App {
                         home: &self.settings.browser_home_page,
                     },
                 );
+                // the Destination Guide: the same plugins and browser
+                // settings, and the OpenID cookie on Second Life
+                // (LLFloaterDestinations::postBuild, getOpenIDCookie)
+                let guide = self.destination_guide();
+                let guide_cookie = cookie
+                    .as_ref()
+                    .filter(|_| !self.demo && self.settings.grid != crate::settings::GridChoice::Custom);
+                self.destinations_ui.show(
+                    &ctx,
+                    &p,
+                    &mut self.panels.destinations,
+                    &ui::destinations::GuideWeb {
+                        paths: paths.as_ref(),
+                        browser: &browser,
+                        cookie: guide_cookie,
+                        url: guide.as_deref(),
+                    },
+                );
+                self.toolbar_ui.destinations = guide.is_some();
                 self.show_marketplace_listings(&ctx, &p);
                 let web = ui::profile::WebContext {
                     paths: paths.as_ref(),
@@ -19121,6 +19187,12 @@ impl ApplicationHandler for App {
             {
                 self.web_browser_ui.go_to(&page);
                 self.panels.web_browser = true;
+                self.panels.perf = false;
+            }
+            // AURORA_DEMO_DESTINATIONS=<page>|sl: the Destination Guide on
+            // that page (sl: the Second Life guide's address), open at start
+            if self.destination_guide().is_some() {
+                self.panels.destinations = true;
                 self.panels.perf = false;
             }
             // AURORA_DEMO_MARKETPLACE_LISTINGS=merchant|not-merchant|error|audit:

@@ -870,6 +870,24 @@ fn toolbar_sanitize_keeps_each_command_once_over_the_three_toolbars() {
     assert_eq!(commands(&settings.right), ["search"]);
 }
 
+/// A saved or imported layout naming `howto` (dropped by the Legacy Viewer)
+/// loads without it and keeps the rest.
+#[test]
+fn toolbar_sanitize_skips_the_retired_howto_command() {
+    let mut settings = ToolbarSettings {
+        buttons: Some(vec![button("people"), button("howto"), button("inventory")]),
+        left: vec![button("howto"), button("radar")],
+        right: vec![button("search"), button("howto")],
+        ..Default::default()
+    };
+    settings.sanitize();
+    let layout = layout();
+    assert_eq!(commands(settings.buttons(&layout)), ["people", "inventory"]);
+    assert_eq!(commands(&settings.left), ["radar"]);
+    assert_eq!(commands(&settings.right), ["search"]);
+    assert!(catalogue::find("howto").is_none());
+}
+
 /// The window lists the Legacy Viewer commands and Aurora additions, each
 /// once, with an embedded icon and localized labels;
 /// what Aurora runs does something, what it cannot run yet does nothing.
@@ -877,12 +895,12 @@ fn toolbar_sanitize_keeps_each_command_once_over_the_three_toolbars() {
 fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
     let skin = Layout::default();
     let all = catalogue(&skin);
-    assert_eq!(all.len(), 78);
-    assert_eq!(COMMANDS.len(), 78);
+    assert_eq!(all.len(), 77);
+    assert_eq!(COMMANDS.len(), 77);
     let mut ids: Vec<_> = COMMANDS.iter().map(|c| c.id).collect();
     ids.sort_unstable();
     ids.dedup();
-    assert_eq!(ids.len(), 78, "each command once");
+    assert_eq!(ids.len(), 77, "each command once");
     assert!(ready("texture_library"));
     assert!(ready("movelock") && ready("move_lock") && ready("movement") && ready("water_walk"));
     assert_eq!(catalogue::find("move_lock").map(|c| c.id), Some("movelock"));
