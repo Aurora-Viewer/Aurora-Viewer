@@ -196,6 +196,11 @@ pub struct ContactsUi {
 }
 
 impl ContactsUi {
+    /// Initial group filter text (demo scenarios).
+    pub fn filter_groups(&mut self, text: &str) {
+        self.group_filter = text.to_owned();
+    }
+
     /// "Add..." of the friend list: the resident picker.
     pub fn pick_new_friend(&mut self) {
         self.pick_for = Some(PickFor::Friend);
@@ -281,7 +286,7 @@ impl ContactsUi {
         self.ask_new_set_for(Vec::new());
     }
 
-    /// "New contact set…" of a resident's menu: the new set's name asked
+    /// "New contact setâ€¦" of a resident's menu: the new set's name asked
     /// (AddNewContactSet), then these residents added to it.
     pub fn ask_new_set_for(&mut self, ids: Vec<Uuid>) {
         self.new_set_members = ids;
@@ -616,7 +621,7 @@ pub fn panel(
     actions
 }
 
-/// The torn-off Contacts window (floater_fs_contacts.xml, 396 × 390); its
+/// The torn-off Contacts window (floater_fs_contacts.xml, 396 Ã— 390); its
 /// title bar button docks it back into Conversations. It shows what the
 /// docked tab shows (#961): People's friends tab in Aurora's look
 /// (`friends`, the same pane state as the docked tab, so the filter,
@@ -679,7 +684,7 @@ const PICKER_ID: &str = "contacts_avatar_picker";
 fn picked(world: &mut World, st: &mut ContactsUi, what: PickFor, ids: Vec<Uuid>) {
     match what {
         PickFor::Friend => {
-            // onAvatarPicked → requestFriendshipDialog; Firestorm's picker
+            // onAvatarPicked â†’ requestFriendshipDialog; Firestorm's picker
             // refuses friends (isItemsFreeOfFriends), the shared one does not
             match ids.iter().find(|id| **id != world.agent_id && !world.social.is_friend(id)) {
                 Some(to) => {
@@ -735,7 +740,7 @@ fn friend_rows(world: &World, settings: &ContactsSettings, filter: &str) -> Vec<
                     full_name(n, &o, settings.full_name_display_first),
                 ),
                 None => {
-                    let legacy = world.social.names.get(&f.id).cloned().unwrap_or_else(|| "…".into());
+                    let legacy = world.social.names.get(&f.id).cloned().unwrap_or_else(|| "â€¦".into());
                     (legacy.clone(), legacy.clone(), legacy)
                 }
             };
@@ -792,7 +797,7 @@ fn friends_tab(
         let list_w = (ui.available_width() - BUTTONS_W - 8.0).max(120.0);
         ui.vertical(|ui| {
             ui.set_width(list_w);
-            widgets::search_field(ui, &mut st.friend_filter, aurora_i18n::tr!("ui-contacts-filter-friends"), list_w);
+            widgets::search_field(ui, p, &mut st.friend_filter, aurora_i18n::tr!("ui-contacts-filter-friends"), list_w);
             ui.add_space(3.0);
             friend_table(ui, p, world, st, settings, &rows, &order, list_w, actions);
         });
@@ -921,6 +926,14 @@ fn friend_table(
                 for r in rows {
                     // dragged onto a conversation, a friend joins it
                     let (rect, resp) = ui.allocate_exact_size(Vec2::new(rows_w, ROW_H), Sense::click_and_drag());
+                    widgets::reveal_search_selection(
+                        ui,
+                        &resp,
+                        st.friends_anchor
+                            .filter(|id| st.friends_sel.contains(id))
+                            .or_else(|| st.friends_sel.last().copied())
+                            == Some(r.id),
+                    );
                     resp.dnd_set_drag_payload(super::call_invite::PersonDrag(r.id));
                     if !ui.is_rect_visible(rect) {
                         continue;
@@ -1056,7 +1069,7 @@ fn friend_menu(
     if menu::item_if(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport"), online) {
         actions.push(ContactsAction::OfferTeleport(id));
     }
-    if menu::item(ui, p, "plane-arrival-filled", aurora_i18n::tr!("common-request-teleport")) {
+    if menu::item_if(ui, p, "car-filled", aurora_i18n::tr!("common-request-teleport"), online) {
         st.ask_teleport_request(id, world.status.cfg.reject_teleports);
     }
     if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
@@ -1302,7 +1315,7 @@ fn groups_tab(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Contac
         let list_w = (ui.available_width() - BUTTONS_W - 8.0).max(120.0);
         ui.vertical(|ui| {
             ui.set_width(list_w);
-            widgets::search_field(ui, &mut st.group_filter, aurora_i18n::tr!("ui-contacts-filter-groups"), list_w);
+            widgets::search_field(ui, p, &mut st.group_filter, aurora_i18n::tr!("ui-contacts-filter-groups"), list_w);
             ui.add_space(3.0);
             let list_h = (fill_height(ui, DEFAULT_TAB_H - 30.0) - footer_or_default(st.groups_footer)).max(60.0);
             let list = group_list(ui, p, world, st, pics, &groups, &filter, list_w, list_h, actions);
@@ -1348,33 +1361,35 @@ fn group_list(
                 .min_scrolled_height(list_h)
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
-                    let shown: Vec<_> = groups
-                        .iter()
-                        .filter(|g| filter.is_empty() || g.name.to_lowercase().contains(filter))
-                        .collect();
+                    let plan = crate::world::groups::plan_group_list(groups, &st.group_filter, |g| &g.name);
+                    // "None (no group tag)" row on top.
+                    // Differs from LLGroupList::refresh (indra/newview/llgrouplist.cpp):
+                    // 1) LLGroupList only adds "none" when !have_filter; Aurora deliberately keeps
+                    //    it visible while filtering so residents can always clear their active group tag (#2788).
+                    // 2) The label uses "None (no group tag)" rather than Legacy Viewer's "none" (GroupsNone)
+                    //    for clarity.
+                    if plan.show_none {
+                        group_row(ui, p, world, st, pics, None, rows_w, actions);
+                    }
                     if groups.is_empty() {
                         ui.label(
                             RichText::new(aurora_i18n::tr!("ui-contacts-looking-for-a-group-to-join-try-search"))
                                 .size(12.0)
                                 .color(p.muted),
                         );
-                    } else if shown.is_empty() {
+                    } else if let Some(query) = &plan.no_match {
                         ui.label(
                             RichText::new(aurora_i18n::tr!(
                                 "ui-contacts-no-group-containing-was-found",
-                                value0 = st.group_filter.trim().to_string()
+                                value0 = query.clone()
                             ))
                             .size(12.0)
                             .color(p.muted),
                         );
                     }
-                    // "none" on top when not filtering (LLGroupList::refresh)
-                    if filter.is_empty() && !groups.is_empty() {
-                        group_row(ui, p, world, st, pics, None, rows_w, actions);
-                    }
-                    let pinned = shown.iter().filter(|g| world.groups.favorites.contains(&g.id)).count();
-                    for (i, g) in shown.iter().enumerate() {
-                        if filter.is_empty() && pinned > 0 && i == pinned && pinned < shown.len() {
+                    let pinned = plan.items.iter().filter(|g| world.groups.favorites.contains(&g.id)).count();
+                    for (i, &g) in plan.items.iter().enumerate() {
+                        if filter.is_empty() && pinned > 0 && i == pinned && pinned < plan.items.len() {
                             // LLGroupListSeparator after the pinned groups
                             let (r, _) = ui.allocate_exact_size(Vec2::new(rows_w, 7.0), Sense::hover());
                             ui.painter()
@@ -1395,12 +1410,13 @@ fn group_row(
     world: &mut World,
     st: &mut ContactsUi,
     pics: &Pics,
-    g: Option<&&aurora_net::GroupMembership>,
+    g: Option<&aurora_net::GroupMembership>,
     width: f32,
     actions: &mut Vec<ContactsAction>,
 ) {
     let id = g.map(|g| g.id).unwrap_or_default();
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 22.0), Sense::click());
+    widgets::reveal_search_selection(ui, &resp, st.group_sel == Some(id));
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -1416,16 +1432,30 @@ fn group_row(
         st.wanted_images.insert(i);
     }
     row_icon(ui, p, icon, insignia.and_then(|i| pics.images.get(&i)), "users-group");
-    // active group in bold; hidden from the profile: GroupHiddenInProfile
+    // active group in bold and active pill; hidden from the profile: GroupHiddenInProfile
     let active = world.groups.active == id;
-    let name = g.map(|g| g.name.clone()).unwrap_or_else(|| aurora_i18n::tr!("extra-none").into());
+    let name = g
+        .map(|g| g.name.clone())
+        .unwrap_or_else(|| aurora_i18n::tr!("ui-contacts-none-no-group-tag").into());
     let col = match g {
         Some(g) if g.list_in_profile => p.indigo_light,
         _ => p.ink,
     };
     let pinned = world.groups.favorites.contains(&id);
-    let text_w = width - 30.0 - if pinned { 18.0 } else { 0.0 };
+    let pinned_w = if pinned { 18.0 } else { 0.0 };
+    let (tag_ink, tag_fill) = widgets::active_tag_colors(p);
+    let active_tag = active.then(|| {
+        let text = aurora_i18n::tr!("people-groups-active-tag");
+        widgets::tag_pill_layout(ui, text, tag_ink)
+    });
+    let active_w = active_tag.as_ref().map_or(0.0, |(_, w)| *w + 6.0);
+    let text_w = (width - 30.0 - pinned_w - active_w).max(0.0);
     row_text(ui, &name, egui::pos2(icon.right() + 6.0, rect.center().y), text_w, col, active);
+    if let Some((g, tag_w)) = active_tag {
+        let pill_right = rect.right() - pinned_w - 4.0;
+        let pill_rect = egui::Rect::from_min_size(egui::pos2(pill_right - tag_w, rect.center().y - 8.0), Vec2::new(tag_w, 16.0));
+        widgets::paint_tag_pill(ui, g, pill_rect, tag_ink, tag_fill);
+    }
     if pinned && let Some(t) = super::icons::global("pinned-filled") {
         let r = egui::Rect::from_center_size(egui::pos2(rect.right() - 10.0, rect.center().y), Vec2::splat(12.0));
         ui.painter().image(
@@ -1438,8 +1468,14 @@ fn group_row(
     if resp.clicked() || resp.secondary_clicked() {
         st.group_sel = Some(id);
     }
-    if resp.double_clicked() && !id.is_nil() {
-        actions.push(ContactsAction::GroupChat(id));
+    if resp.double_clicked() {
+        if id.is_nil() {
+            if world.groups.active != id {
+                actions.push(ContactsAction::Net(NetCommand::ActivateGroup(id)));
+            }
+        } else {
+            actions.push(ContactsAction::GroupChat(id));
+        }
     }
     menu::context_menu(&resp, p, |ui| group_menu(ui, p, world, st, id, actions));
 }
@@ -1451,7 +1487,7 @@ fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Contac
         ui,
         p,
         "circle-check-filled",
-        aurora_i18n::tr!("common-enable"),
+        aurora_i18n::tr!("common-activate"),
         world.groups.active != id,
     ) {
         actions.push(ContactsAction::Net(NetCommand::ActivateGroup(id)));
@@ -1511,7 +1547,7 @@ fn group_buttons(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Con
     if side_button(ui, p, aurora_i18n::tr!("ui-contacts-titles"), "", true) {
         actions.push(ContactsAction::GroupTitles);
     }
-    if side_button(ui, p, aurora_i18n::tr!("common-enable"), "", sel != world.groups.active) {
+    if side_button(ui, p, aurora_i18n::tr!("common-activate"), "", sel != world.groups.active) {
         actions.push(ContactsAction::Net(NetCommand::ActivateGroup(sel)));
     }
     let pinned = world.groups.favorites.contains(&sel);
@@ -1583,7 +1619,7 @@ fn sets_tab(
             .get(id)
             .map(|n| n.complete(&o))
             .or_else(|| social.names.get(id).cloned())
-            .unwrap_or_else(|| "…".into())
+            .unwrap_or_else(|| "â€¦".into())
     };
     let online = |id: &Uuid| social.friends.iter().any(|f| f.id == *id && f.online);
     let count = members.len();
@@ -1676,7 +1712,7 @@ fn sets_tab(
                 }
             });
             ui.add_space(3.0);
-            widgets::search_field(ui, &mut st.set_filter, aurora_i18n::tr!("ui-contacts-filter-people"), list_w);
+            widgets::search_field(ui, p, &mut st.set_filter, aurora_i18n::tr!("ui-contacts-filter-people"), list_w);
             ui.add_space(3.0);
             let list_h = (fill_height(ui, DEFAULT_TAB_H - 60.0) - footer_or_default(st.sets_footer)).max(60.0);
             let list = egui::Frame::new().fill(p.field.gamma_multiply(0.6)).show(ui, |ui| {
@@ -1698,6 +1734,14 @@ fn sets_tab(
                         let row_h = if settings.set_list_icons { 22.0 } else { ROW_H };
                         for (id, name, on, color) in &rows {
                             let (rect, resp) = ui.allocate_exact_size(Vec2::new(list_w - widgets::scroll_strip(ui), row_h), Sense::click());
+                            widgets::reveal_search_selection(
+                                ui,
+                                &resp,
+                                st.set_anchor
+                                    .filter(|id| st.set_sel.contains(id))
+                                    .or_else(|| st.set_sel.last().copied())
+                                    == Some(*id),
+                            );
                             if !ui.is_rect_visible(rect) {
                                 continue;
                             }
@@ -1743,6 +1787,15 @@ fn sets_tab(
                                 }
                                 if menu::item_if(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport"), *on) {
                                     actions.push(ContactsAction::OfferTeleport(*id));
+                                }
+                                if menu::item_if(
+                                    ui,
+                                    p,
+                                    "car-filled",
+                                    aurora_i18n::tr!("common-request-teleport"),
+                                    world.social.can_request_teleport(id),
+                                ) {
+                                    context::request(ui.ctx(), CtxAction::RequestTeleport(*id));
                                 }
                             });
                         }
@@ -2168,7 +2221,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
                         .hint_text(hint.to_owned()),
                 )
                 .on_hover_text(aurora_i18n::tr!("ui-contacts-enter-to-confirm"));
-            // Enter while the field has focus (or just gave it up) confirms —
+            // Enter while the field has focus (or just gave it up) confirms â€”
             // same pattern as script search. Relying on lost_focus alone missed
             // presses that left the field focused, so Send never ran.
             if (r.has_focus() || r.lost_focus()) && widgets::enter_pressed(ui) {

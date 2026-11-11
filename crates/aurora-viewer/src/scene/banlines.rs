@@ -33,7 +33,7 @@ pub struct BanLines {
     records: Vec<u32>,
     /// Blended draws with their distance to the camera (sorted with the
     /// other alpha faces).
-    pub cmds: Vec<(f32, DrawCmd)>,
+    pub cmds: Vec<(Vec3, DrawCmd)>,
 }
 
 /// 256² band of diagonal stripes in the middle rows, transparent around
@@ -230,7 +230,7 @@ impl BanLines {
                     // sort point: the wall at the eye's height
                     let mid = p1 + along * 0.5 + Vec3::Z * (eye.z.clamp(p1.z, p1.z + tall) - p1.z);
                     self.cmds.push((
-                        eye.distance(mid),
+                        mid,
                         DrawCmd {
                             index_count: quad.index_count,
                             first_index: quad.index_offset,

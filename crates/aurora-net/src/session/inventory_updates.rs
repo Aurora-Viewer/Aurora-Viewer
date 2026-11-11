@@ -331,6 +331,7 @@ mod tests {
             .expect("HTTP client");
         let sh = Shared {
             http: http.clone(),
+            login_http: http.clone(),
             caps_http: http,
             events: crate::EventSender(events),
             controls: Arc::new(Mutex::new(AgentControls::default())),
@@ -388,7 +389,7 @@ mod tests {
             control_flags: 0,
             one_shot: 0,
             cam_warned: false,
-            far: 128.0,
+            far: FarStep::new(Instant::now()),
             refuse_neighbours: false,
             fov: DEFAULT_FOV,
             logout_started: None,
@@ -408,6 +409,7 @@ mod tests {
             estate_invoice: uuid::Uuid::nil(),
             terrain_raw: Default::default(),
             decode_failures: HashMap::new(),
+            rejected_full: Default::default(),
             inventory_uploads: Default::default(),
             inventory_previews: Default::default(),
             script_transfers: Default::default(),
