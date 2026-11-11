@@ -446,6 +446,12 @@ pub struct App {
     vr_trigger_down: bool,
     /// The pointing hand's grip held (sit on what the beam is on, or stand up).
     vr_grip_down: bool,
+    /// The VR view's mode last frame (third person, camera only) and the
+    /// view offset then: a change puts the headset back at the avatar's eyes.
+    vr_view_mode: Option<(bool, bool)>,
+    vr_last_offset: Vec3,
+    /// A recentre asked: the headset goes back to the eyes once it is anchored.
+    vr_snap_at: Option<Instant>,
     /// The locomotion before camera-only was chosen on the wrist, for going
     /// back to it.
     vr_locomotion_before: Option<crate::camera::VrLocomotion>,
@@ -1666,6 +1672,9 @@ impl App {
             vr_avatar_position: None,
             vr_trigger_down: false,
             vr_grip_down: false,
+            vr_view_mode: None,
+            vr_last_offset: Vec3::ZERO,
+            vr_snap_at: None,
             vr_locomotion_before: None,
             vr_minimap: false,
             vr_map_panel: None,
@@ -8315,6 +8324,7 @@ impl App {
         }
         if self.vr_recenter.step(stick_in, Duration::from_millis(600), Instant::now()) {
             renderer.vr_recenter();
+            self.vr_snap_at = Some(Instant::now() + Duration::from_millis(700));
             if settings.haptics {
                 renderer.vr_haptic(aurora_render::VrSide::Right, 0.6, 0.06);
             }
@@ -8506,13 +8516,39 @@ impl App {
         } else {
             (settings.forward_offset, settings.height_offset)
         };
-        renderer.set_vr_offset(crate::vr::view_offset(facing, ahead, up));
+        let offset = crate::vr::view_offset(facing, ahead, up);
+        renderer.set_vr_offset(offset);
+        let shown_offset = std::mem::replace(&mut self.vr_last_offset, offset);
         let position = match seated {
             Some((eye, _)) => eye,
             None => self.world.agent.position + facing * crate::vr::EYE_LEAD,
         };
+        let mode = (self.vr_third_person, camera_only);
+        let changed = self.vr_view_mode.replace(mode).is_some_and(|before| before != mode);
         if !renderer.vr_engaged() || camera_only {
             self.vr_avatar_position = None;
+            if !renderer.vr_engaged() {
+                self.vr_view_mode = None;
+                self.vr_snap_at = None;
+            }
+            return;
+        }
+        // back from camera only, between first and third person, or after a
+        // recentre: the headset (less the offset it was shown with) goes to
+        // the avatar's eyes, the new offset then puts the view in place
+        let snap_due = self.vr_snap_at.is_some_and(|at| Instant::now() >= at);
+        if changed || snap_due {
+            self.vr_snap_at = None;
+            let head = renderer.vr_input().head_position;
+            let eye = self.camera.eye_point(&self.world.agent, &self.settings.camera);
+            let delta = eye - (head - shown_offset);
+            if head != Vec3::ZERO && delta.is_finite() {
+                renderer.add_vr_translation(delta);
+                if let Some(panel) = &mut self.vr_panel {
+                    panel.center += delta;
+                }
+            }
+            self.vr_avatar_position = Some(position);
             return;
         }
         if let Some(previous) = self.vr_avatar_position.replace(position) {

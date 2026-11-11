@@ -193,6 +193,7 @@ impl App {
         }
         if std::mem::take(&mut self.vr_recenter_request) {
             renderer.vr_recenter();
+            self.vr_snap_at = Some(Instant::now() + std::time::Duration::from_millis(700));
         }
         let rect = self.egui_ctx.content_rect();
         let aspect = rect.height() / rect.width().max(1.0);

@@ -1787,6 +1787,12 @@ impl Camera {
         Some(p + r * if eye { sit.eye } else { sit.at })
     }
 
+    /// Where the avatar looks from, as first person's eye (standing or
+    /// seated). For VR, which puts the headset there.
+    pub fn eye_point(&self, agent: &AgentState, s: &CameraSettings) -> Vec3 {
+        self.mouselook_eye(agent, s, None)
+    }
+
     /// Seated (on an object or the ground): where the avatar looks from, as
     /// first person's eye, and the seat's turn when on an object. For VR.
     pub fn seated_eye(&self, agent: &AgentState, s: &CameraSettings) -> Option<(Vec3, Option<glam::Quat>)> {
