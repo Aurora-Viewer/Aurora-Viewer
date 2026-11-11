@@ -73,7 +73,7 @@ pub fn supports(behaviour: &str, set: bool) -> bool {
             || COLORS.contains(&n)
             || TEXTURES.contains(&n)
             || matches!(n, "cloudscroll" | "daytime")
-            || (set && matches!(n, "asset" | "preset" | "daycycle"))
+            || (set && matches!(n, "asset" | "preset" | "daycycle" | "reset"))
             || component(n).is_some()
     })
 }
@@ -99,7 +99,7 @@ pub fn command_names(set: bool) -> Vec<String> {
         }
     }
     if set {
-        names.extend(["asset", "preset", "daycycle"].map(|name| format!("{prefix}{name}")));
+        names.extend(["asset", "preset", "daycycle", "reset"].map(|name| format!("{prefix}{name}")));
     }
     names
 }
@@ -308,6 +308,13 @@ impl World {
             self.rlva.environment_request = Some((source, command.clone()));
             return true;
         }
+        // `@setenv_reset=force` is not in the Legacy Viewer's RLVa: it comes
+        // from the RestrainedLove viewer, where it is a synonym of
+        // `@setenv_daytime:-1=force`. Supported here as the same reset.
+        if set && name == "reset" {
+            self.rlva_reset_environment();
+            return true;
+        }
         if name == "daytime" {
             if let Param::Reply(channel) = command.param {
                 self.rlva.reply(
@@ -322,7 +329,7 @@ impl World {
                 );
             } else if let Some(value) = number(&command.option) {
                 if value == -1.0 {
-                    self.rlva.clear_environment();
+                    self.rlva_reset_environment();
                 } else if (0.0..=1.0).contains(&value) {
                     let sky = self
                         .rlva
@@ -349,6 +356,16 @@ impl World {
             self.rlva.reply(channel, &command.behaviour, result.unwrap_or_default());
         }
         true
+    }
+
+    /// Back to the shared environment, like RlvEnvironment's `daytime` -1
+    /// (clearEnvironment(ENV_LOCAL), setSelectedEnvironment(ENV_LOCAL)): in
+    /// the Legacy Viewer RLVa writes into the user's local environment, so
+    /// the reset drops both RLVa's sky and the user's own local choice (a
+    /// World › Environment preset, a personal sky or day).
+    fn rlva_reset_environment(&mut self) {
+        self.rlva.clear_environment();
+        self.eep.rlva_clear_local();
     }
 
     pub fn rlva_environment_frames(
