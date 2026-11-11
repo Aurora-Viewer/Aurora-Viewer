@@ -896,7 +896,7 @@ fn section_of(asset_type: i32) -> usize {
 fn contents(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi, id: Uuid, actions: &mut Vec<Action>) {
     let inv = &world.inventory;
     let mut links = model::folder_links(inv, id);
-    items::sort_links(inv, &mut links, false);
+    items::sort_links(inv, &mut links);
     let found: Vec<_> = links
         .iter()
         .filter(|l| !l.folder)

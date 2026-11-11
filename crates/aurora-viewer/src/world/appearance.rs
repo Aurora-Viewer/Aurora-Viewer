@@ -1077,6 +1077,22 @@ fn drop_coalesced(inv: &Inventory, links: &mut Vec<OutfitLink>) {
     links.retain(|l| l.folder || !inv.items.get(&l.target).is_some_and(coalesced));
 }
 
+/// A clothing link's place among the layers of its wearable type `kind`,
+/// closest to the body first: the `@<type * 100 + index>` of its description
+/// (build_order_string, indra/newview/llappearancemgr.cpp), read as a number.
+/// A link without one, or with another type's, sinks to the end, as in
+/// WearablesOrderComparator: ties then go by name. The outfit lists and the
+/// layers worn share this order, so a list shows what the avatar wears.
+pub fn layer_rank(link: &OutfitLink, kind: u32) -> (u32, String) {
+    let order = link
+        .desc
+        .strip_prefix('@')
+        .and_then(|s| s.parse::<u32>().ok())
+        .filter(|order| order / 100 == kind)
+        .unwrap_or(u32::MAX);
+    (order, link.name.to_lowercase())
+}
+
 fn normalize_layers(inv: &Inventory, links: &mut [OutfitLink]) {
     for kind in 4..=16 {
         let mut indices: Vec<_> = links
@@ -1089,17 +1105,9 @@ fn normalize_layers(inv: &Inventory, links: &mut [OutfitLink]) {
                         .get(&l.target)
                         .is_some_and(|it| it.asset_type == 5 && it.flags & 0xff == kind)
             })
-            .map(|(i, l)| {
-                let order = l
-                    .desc
-                    .strip_prefix('@')
-                    .and_then(|s| s.parse::<u32>().ok())
-                    .filter(|order| order / 100 == kind)
-                    .unwrap_or(u32::MAX);
-                (i, order)
-            })
+            .map(|(i, l)| (i, layer_rank(l, kind)))
             .collect();
-        indices.sort_by_key(|(_, order)| *order);
+        indices.sort_by(|a, b| a.1.cmp(&b.1));
         for (order, (i, _)) in indices.iter().enumerate() {
             links[*i].desc = format!("@{}", kind * 100 + order as u32);
         }
@@ -2601,6 +2609,53 @@ mod tests {
             links.iter().find(|l| l.target == Uuid::from_u128(715)).expect("jacket").desc,
             "@800"
         );
+    }
+
+    #[test]
+    fn layers_without_a_place_sink_to_the_top_by_name() {
+        // WearablesOrderComparator: placed tattoos keep their order; an
+        // empty description, a creator's text or another type's place go
+        // after them, by name, whatever the folder's order
+        let mut inv = Inventory::default();
+        let mut links = Vec::new();
+        for (n, name, desc) in [
+            (1, "Zebra freckles", ""),
+            (2, "Outer tattoo", "@1401"),
+            (3, "Beard", "Made by a creator"),
+            (4, "Inner tattoo", "@1400"),
+            (5, "anchor tattoo", "@500"),
+        ] {
+            let id = Uuid::from_u128(n);
+            inv.add_items(vec![InvItem {
+                id,
+                asset_type: 5,
+                flags: 14,
+                name: name.into(),
+                ..Default::default()
+            }]);
+            links.push(OutfitLink {
+                target: id,
+                name: name.into(),
+                desc: desc.into(),
+                folder: false,
+                inv_type: 18,
+            });
+        }
+        normalize_layers(&inv, &mut links);
+        let mut order: Vec<_> = links.iter().map(|l| (l.desc.clone(), l.target.as_u128())).collect();
+        order.sort();
+        assert_eq!(
+            order,
+            [
+                ("@1400".to_owned(), 4),
+                ("@1401".to_owned(), 2),
+                ("@1402".to_owned(), 5),
+                ("@1403".to_owned(), 3),
+                ("@1404".to_owned(), 1),
+            ]
+        );
+        assert!(layer_rank(&links[0], 14) > layer_rank(&links[1], 14));
+        assert_eq!(layer_rank(&links[0], 5).0, u32::MAX, "another type's place");
     }
 
     #[test]

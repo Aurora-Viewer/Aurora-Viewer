@@ -311,6 +311,13 @@ pub enum Data {
     Update {
         ready: bool,
     },
+    /// Our avatar complexity, and how many people around may not see us
+    /// fully (AgentComplexity / AgentComplexityWithVisibility, notifytips
+    /// with no log): a toast only, for ShowMyComplexityChanges seconds
+    /// (`world/complexity_notice.rs`).
+    Complexity {
+        seconds: u32,
+    },
 }
 
 /// What the question of an experience shows besides the permissions.
@@ -691,6 +698,19 @@ impl Notifications {
         id
     }
 
+    /// The avatar complexity notice: it replaces the one still out (unique
+    /// "AgentComplexityNotice", combine "cancel_old"), a toast only. With
+    /// no text it only takes the old one away.
+    pub fn replace_complexity(&mut self, text: Option<(String, String)>, seconds: u32) -> Option<u64> {
+        self.list.retain(|n| !matches!(n.data, Data::Complexity { .. }));
+        let (title, body) = text?;
+        let id = self.push(Kind::Info, title, body, Data::Complexity { seconds });
+        if let Some(n) = self.list.iter_mut().find(|n| n.id == id) {
+            n.transient = true;
+        }
+        Some(id)
+    }
+
     /// A message of a conversation out of sight: it replaces the entry of
     /// that conversation still waiting (a new toast, the count of messages
     /// since it was last read), so that a chatty friend fills one card.
@@ -725,6 +745,17 @@ impl Notifications {
     pub fn acknowledge_messages(&mut self, read: impl Fn(&Uuid) -> bool) {
         self.list
             .retain(|n| !matches!(n.data, Data::Message { session, .. } if read(&session)));
+    }
+
+    /// Close the script dialogs and text boxes that `closes` picks by their
+    /// object and channel, with no answer sent (LLNotificationsUtil::cancel,
+    /// for `script_dialog_limit.rs`). They leave no history entry, as any
+    /// script prompt.
+    pub fn close_script_prompts(&mut self, closes: impl Fn(Uuid, i32) -> bool) {
+        self.list.retain(|n| match n.data {
+            Data::Dialog { object, channel, .. } | Data::TextBox { object, channel, .. } => !closes(object, channel),
+            _ => true,
+        });
     }
 
     /// The listed entries (the toast-only ones left out).

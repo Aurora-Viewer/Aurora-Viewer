@@ -43,6 +43,7 @@ mod sound_explorer;
 // mod bug_report;
 mod alt_graph;
 mod avatar_health;
+mod avatar_reload;
 mod blender_live;
 mod blender_shape;
 mod buy_currency;
@@ -122,13 +123,16 @@ mod pointing;
 mod quick_prefs;
 mod region_restart;
 mod region_window;
+mod release_keys;
 mod relogin;
+mod render_info;
 mod report_abuse;
 mod reset_skeleton;
 mod revoke_on_sit;
 mod rlva;
 mod safe_graphics;
 mod script_clicks;
+mod script_recovery;
 mod scripts;
 mod settings_backup;
 mod shape_editor;
@@ -465,6 +469,8 @@ pub struct App {
     relogin: relogin::Relogin,
     /// The viewer's part of Linden Lab's viewer statistics (app/viewer_stats.rs).
     viewer_stats: viewer_stats::Tracker,
+    /// The avatar render info and the complexity notice (app/render_info.rs).
+    render_info: render_info::Tracker,
     panels: Panels,
     /// Conversations and the mini-map as last frame left them (their
     /// startup settings follow an open or a close only).
@@ -698,7 +704,7 @@ pub struct App {
     suitcase_passed: bool,
     /// External web link waiting for the warning's answer, with the state of
     /// its "Do not warn me again" box and, for a dangerous link, the reason.
-    url_confirm: Option<(String, bool, Option<&'static str>)>,
+    url_confirm: Option<(String, bool, Option<&'static str>, crate::link_trust::BrowserEntryPoint)>,
     /// The media filter's question on screen.
     media_filter_prompt: ui::media_filter::PromptUi,
     script_dialogs_were: usize,
@@ -842,6 +848,7 @@ pub struct App {
     /// World › SL Marketplace (LLFloaterMarketplace).
     marketplace_ui: ui::marketplace::MarketplaceUi,
     web_browser_ui: ui::web_browser::WebBrowserUi,
+    destinations_ui: ui::destinations::DestinationsUi,
     /// Me › Marketplace listings (LLFloaterMarketplaceListings).
     listings_ui: ui::marketplace_listings::ListingsUi,
     /// The demo's SLM server (AURORA_DEMO_MARKETPLACE_LISTINGS).
@@ -1089,6 +1096,8 @@ pub struct App {
     task_notecards: std::collections::HashMap<(uuid::Uuid, uuid::Uuid), task_notecards::TaskNotecard>,
     demo_documents: std::collections::HashMap<uuid::Uuid, Vec<u8>>,
     script_editors: ui::scripts::Editors,
+    /// The scripts an earlier session left unsaved (app/script_recovery.rs).
+    script_recovery: script_recovery::Recovery,
     demo_script_sources: std::collections::HashMap<aurora_net::scripts::ScriptTarget, String>,
     demo_script_experiences: std::collections::HashMap<aurora_net::scripts::ScriptTarget, uuid::Uuid>,
     inventory_images: inventory_thumbnail::ImageJobs,
@@ -1105,6 +1114,8 @@ pub struct App {
     local_bakes: crate::local_bakes::LocalBakes,
     /// Me › Avatar health and the customise animation.
     avatar_health: avatar_health::AvatarHealth,
+    /// "Reload avatar": when each avatar was last reloaded.
+    avatar_reloads: avatar_reload::Reloads,
     last_social_poll: Instant,
     /// Last keyboard / mouse button input (automatic away, AFKTimeout), and
     /// whether the current away status was set by that timer.
@@ -1589,6 +1600,7 @@ impl App {
             demo_mfa_challenge: None,
             relogin: Default::default(),
             viewer_stats: Default::default(),
+            render_info: Default::default(),
             startup_windows: ui::StartupWindows::new(&panels),
             panels,
             chat_ui,
@@ -1807,6 +1819,7 @@ impl App {
             buy_land_source: Default::default(),
             marketplace_ui: Default::default(),
             web_browser_ui: Default::default(),
+            destinations_ui: Default::default(),
             listings_ui: Default::default(),
             demo_slm: None,
             people_map_ui: Default::default(),
@@ -1961,6 +1974,7 @@ impl App {
             task_notecards: Default::default(),
             demo_documents: Default::default(),
             script_editors: Default::default(),
+            script_recovery: Default::default(),
             demo_script_sources: Default::default(),
             demo_script_experiences: Default::default(),
             inventory_images: Default::default(),
@@ -1973,6 +1987,7 @@ impl App {
             wearable_ui: Default::default(),
             local_bakes: Default::default(),
             avatar_health: Default::default(),
+            avatar_reloads: Default::default(),
             last_social_poll: Instant::now(),
             last_input: Instant::now(),
             auto_away: false,
@@ -2645,6 +2660,17 @@ impl App {
                 self.task_notecard_saved(*request, *object, *item, result);
                 return;
             }
+            if let NetCommand::CreateScriptItem {
+                request,
+                parent,
+                name,
+                description,
+                source,
+            } = &cmd
+            {
+                self.demo_create_script(*request, *parent, name, description, source);
+                return;
+            }
             if let NetCommand::CreateInventoryItem {
                 parent,
                 kind,
@@ -3134,6 +3160,9 @@ impl App {
         self.web_browser_ui = Default::default();
         // closed, or the next session would open the home page by itself
         self.panels.web_browser = false;
+        // the guide belongs to the grid, and its browser to the session
+        self.destinations_ui = Default::default();
+        self.panels.destinations = false;
         // the listings belong to the account (LLMarketplaceData)
         self.listings_ui = Default::default();
         self.demo_slm = None;
@@ -3201,6 +3230,7 @@ impl App {
         self.wearable_ui = Default::default();
         self.local_bakes.end_session(&mut self.scene);
         self.reset_avatar_health();
+        self.avatar_reloads = Default::default();
         self.interactions = Default::default();
         self.screen = Screen::Login;
         self.login_form.busy = false;
@@ -3297,7 +3327,7 @@ impl App {
         if let NetEvent::ServerReleaseNotes(page) = ev {
             // LLFloaterAbout::handleServerReleaseNotes, then LLWeb::loadURL
             match page {
-                Ok(url) => self.egui_ctx.open_url(egui::OpenUrl::new_tab(url)),
+                Ok(url) => self.open_web_link(url, None),
                 Err(_) => {
                     self.world.notifications.push(
                         crate::world::notifications::Kind::Alert,
@@ -3312,6 +3342,10 @@ impl App {
         if let NetEvent::ScriptTeleportRequest { .. } = ev {
             // llMapDestination asked for the map (BEACON_SHOW_MAP)
             self.panels.world_map = true;
+            return;
+        }
+        if let NetEvent::AvatarRenderInfo { handle, visibility } = ev {
+            self.render_info_answer(handle, visibility);
             return;
         }
         if let NetEvent::UploadCost(cost) = ev {
@@ -3379,6 +3413,9 @@ impl App {
             return;
         }
         if let NetEvent::InventoryContentSaved { request, item, result } = ev {
+            if self.script_recovery_saved(request, item, &result) {
+                return;
+            }
             if self.ik_editor.project_saving(request) {
                 if let Ok(saved) = &result {
                     self.world.inventory.add_items(vec![saved.clone()]);
@@ -3554,6 +3591,7 @@ impl App {
                 self.settings.save();
             }
             let blender_shape = self.blender_shape_loaded(item, asset, &result);
+            let shape_xml = self.shape_xml_menu_loaded(item, asset, &result);
             if self.wearable_ui.loaded(&mut self.world, item, asset, &result) {
                 return;
             }
@@ -3563,7 +3601,7 @@ impl App {
             if self.shape_ui.loaded(&mut self.world, item, asset, &result) {
                 return;
             }
-            if blender_shape {
+            if blender_shape || shape_xml {
                 return;
             }
             if self.ao_ui.import == Some(item) {
@@ -3871,6 +3909,7 @@ impl App {
                     )
                 };
                 self.load_region_titles(l.agent_id);
+                self.script_recovery_login(l.agent_id);
                 self.chat_ui.recent_emojis = if self.demo {
                     let mut recent = ui::emoji::recent::Recent::demo(&crate::demo::recent_emojis());
                     if let Ok(favorites) = std::env::var("AURORA_DEMO_FAVORITE_EMOJIS") {
@@ -3921,7 +3960,13 @@ impl App {
                 self.login_favorites.session_started(&self.settings, self.demo);
                 // the demo's teleport history: several days, never saved
                 if self.demo {
-                    self.world.tp_storage = crate::world::tphistory::HistoryStorage::in_memory(crate::demo::place::history());
+                    let mut visits = crate::demo::place::history();
+                    // AURORA_DEMO_DESTINATIONS: two of the guide's places visited
+                    if crate::demo::destinations::mode().is_some() {
+                        visits.extend(crate::demo::destinations::history());
+                        visits.sort_by(|a, b| a.date.total_cmp(&b.date));
+                    }
+                    self.world.tp_storage = crate::world::tphistory::HistoryStorage::in_memory(visits);
                     // earlier places in the session, for the arrows' list
                     if crate::ui::bars::demo::get().open == Some(crate::ui::bars::demo::Open::TpList) {
                         self.world.tp_history = crate::world::tphistory::TeleportHistory::seeded(crate::demo::place::session());
@@ -5601,6 +5646,7 @@ impl App {
         w.quiet_automated_chat = self.settings.compact_automated_chat || (self.demo && crate::demo::object_chat::on());
         // FSAnnounceIncomingIM (AURORA_DEMO_IM_ANNOUNCE=1: on for the run)
         w.announce_incoming_im = self.settings.announce_incoming_im || (self.demo && crate::demo::im_announce::forced());
+        w.set_script_dialog_limit(self.settings.script_dialog_limit);
         w.notifications.toasts = crate::world::notifications::ToastPrefs {
             presence: self.settings.toast_friends_online,
             presence_in_chat: self.settings.friends_online_in_chat,
@@ -6235,6 +6281,9 @@ impl App {
             self.world.social.avatar_names.save(&path);
         }
         self.settings.save();
+        // the copies of the script editors closed just before (ui/scripts/backup.rs)
+        self.script_editors.back_up();
+        crate::ui::scripts::backup::flush(Duration::from_secs(2));
         // the last lines of the conversations reach their files
         self.world.chat_log.flush(Duration::from_secs(2));
         // the recent emojis of a message sent just before
@@ -6919,8 +6968,10 @@ impl App {
             }
         }
         self.demo_script_steps();
+        self.demo_script_recovery_steps();
         self.world_click_demo_steps();
         self.object_menu_demo_steps();
+        self.release_keys_demo_steps();
         if self.frame_count == 400
             && let Ok(mode) = std::env::var("AURORA_DEMO_BEACONS")
         {
@@ -7542,6 +7593,35 @@ impl App {
         for anim in std::mem::take(&mut self.world.animation_stops) {
             self.send(NetCommand::AgentAnimation { anim, start: false });
         }
+    }
+
+    /// The teleport screen's Cancel (LLProgressView::onCancelButtonClicked,
+    /// LLAgent::teleportCancel): TeleportCancel when the request had left,
+    /// the screen closes and the resident stays where they are.
+    fn cancel_teleport(&mut self) {
+        let Some(outcome) = self.world.cancel_teleport(self.settings.always_show_tp_cancel) else {
+            return;
+        };
+        if self.demo_tp_start.take().is_some() {
+            // the offline demo has no simulator to tell
+            self.demo_tp_dest = None;
+            self.demo_tp_region = None;
+            aurora_net::transition::end(Some(aurora_net::transition::Kind::Teleport), "cancelled (demo)", &self.net.stats);
+        } else if outcome == crate::world::teleport_cancel::Cancelled::Sent {
+            self.send(NetCommand::TeleportCancel);
+        }
+        // the progress view hides at once (setVisible(false)): no arrival
+        // to wait for, the screen fades out on the world we stayed in
+        if let Some(o) = self.tp_overlay.as_mut() {
+            o.end.get_or_insert(Instant::now());
+        }
+        self.was_teleporting = false;
+        self.tp_dest = None;
+        log::info!(
+            "teleport cancel: teleporting {}, position {:.1?}",
+            self.world.teleporting,
+            self.world.agent.position
+        );
     }
 
     fn show_teleport_progress(&mut self) {
@@ -8981,6 +9061,26 @@ impl App {
         {
             self.send(cmd);
         }
+        if self.demo
+            && self.frame_count == 650
+            && let Ok(mode) = std::env::var("AURORA_DEMO_APPEARANCE")
+            && matches!(mode.as_str(), "xml" | "xml-unavailable")
+        {
+            self.world.apply(NetEvent::Appearance(aurora_net::AvatarAppearance {
+                avatar_id: self.world.agent_id,
+                texture_entry: None,
+                visual_params: self.world.avatar_lib.shape_params.values_with(&[(33, 0.7)]),
+                cof_version: 1,
+                appearance_version: 1,
+                hover_height: 0.0,
+                attachments: Vec::new(),
+            }));
+            if mode == "xml-unavailable" {
+                self.world.preview_shape(Some(vec![0]));
+            }
+            self.egui_ctx
+                .data_mut(|data| data.insert_temp(egui::Id::unique("appearance_xml_demo"), true));
+        }
         // AURORA_DEMO_APPEARANCE=take-off-folder: the inventory's Remove from
         // current outfit on an ordinary folder (#1849)
         if self.demo && self.frame_count == 600 && std::env::var("AURORA_DEMO_APPEARANCE").as_deref() == Ok("take-off-folder") {
@@ -9048,6 +9148,7 @@ impl App {
             return;
         }
         self.update_notice();
+        self.update_render_info();
         // Aurora's media plugins: downloaded once, when none are found (the
         // web pages of the profiles need them even with media disabled), and
         // only once the user agreed (the card of `ui::media_pack`, or a
@@ -9306,6 +9407,10 @@ impl App {
             self.world.groups.mute_when_notices_off = self.settings.mute_groups_without_notices;
             self.world.groups.report_blocks = self.settings.report_blocks;
             self.world.groups.show_joined_invitations = self.settings.show_joined_group_invitations;
+            self.world.groups.notices_in_chat = crate::world::groups::NoticesInChat {
+                on: self.settings.group_notices_in_chat,
+                subjects: self.settings.group_notice_subjects_in_chat,
+            };
             self.world.group_titles = self.settings.group_titles;
             self.world.portal_sources = self.portal_sources();
             self.world.fly_after_teleport = self.settings.fly_after_teleport && !(self.demo && crate::demo::friend_join_flight_scenario());
@@ -10490,6 +10595,13 @@ impl App {
             // offline demo teleport: the real steps, landing where we were
             let e = t0.elapsed().as_secs_f32();
             let w = &mut self.world;
+            // TeleportStart / TeleportProgress offer Cancel, TeleportFinish
+            // (the step "connecting to the region") takes it away
+            if e >= 2.4 {
+                w.tp_cancel.on_finish();
+            } else if e >= 0.35 {
+                w.tp_cancel.on_simulator_flags(crate::demo::tp_cancel_flags());
+            }
             if e >= 3.2 && !crate::demo::tp_no_arrival() {
                 self.demo_tp_start = None;
                 w.tp_progress = 0.6;
@@ -10530,6 +10642,10 @@ impl App {
             } else if e >= 0.35 {
                 w.tp_progress = w.tp_progress.max(0.10);
                 w.tp_status = aurora_i18n::tr!("common-teleport-accepted").into();
+            }
+            // AURORA_DEMO_TP_CANCEL=1: Cancel pressed during the transfer
+            if crate::demo::tp_cancel_pressed() && (1.5..2.4).contains(&e) {
+                self.cancel_teleport();
             }
         }
         // TeleportLocal can also resolve an initially unknown destination.
@@ -10674,6 +10790,7 @@ impl App {
                 hour: self.settings.night_sky_hour,
             },
             self.settings.night_sky_gain,
+            self.settings.night_sky_milky_way,
             env.sky.sun_dir,
             // the sky's moment: a photo's held instant for all its parts
             // (snapshot::Hold, Freeze World), the demo's fixed one in the
@@ -12006,6 +12123,19 @@ impl App {
                     self.send(command);
                 }
             }
+            // the notices' cards closed, then Aurora Builders' chat shown:
+            // its notice's line stays (FSGroupNoticesToIMLog)
+            if self.frame_count == crate::demo::notifs::CHAT_AT && mode == "group-notice-chat" {
+                let ids: Vec<u64> = self.world.notifications.list.iter().map(|n| n.id).collect();
+                for id in ids {
+                    let (commands, _) = self.world.respond_notification(id, crate::world::notifications::Response::Dismiss);
+                    for command in commands {
+                        self.send(command);
+                    }
+                }
+                self.world.social.focus_im = Some(crate::demo::DEMO_GROUP1);
+                ui::notifications::open_conversations(&self.egui_ctx, &mut self.panels.chat);
+            }
             if self.frame_count == crate::demo::notifs::ANSWER_AT && matches!(mode.as_str(), "history" | "legacy-history") {
                 // a few cards answered or closed: they go to the history
                 let ids: Vec<(u64, bool)> = self.world.notifications.listed().map(|n| (n.id, n.interactive())).collect();
@@ -12427,6 +12557,7 @@ impl App {
         }
         self.demo_worn_steps();
         self.demo_derender_steps();
+        self.demo_reload_avatar_steps();
         self.demo_friends_only_steps();
         self.demo_social_menu_steps();
         self.demo_land_moderation();
@@ -13718,6 +13849,17 @@ impl App {
         if !ui::chat::sends_local_line(c.channel, &c.message) || (c.channel == 0 && self.chat_command(&c.message)) {
             return;
         }
+        // PlayChatAnim: the talk, shout or whisper animation starts before
+        // the line leaves (FSNearbyChat::sendChatFromViewer)
+        if self.settings.play_chat_anim
+            && let Some(anim) = self
+                .world
+                .rlva
+                .chat_animation_volume(&c.message, c.chat_type)
+                .and_then(|kind| ui::chat::chat_animation(c.channel, kind))
+        {
+            self.send(NetCommand::AgentAnimation { anim, start: true });
+        }
         // :shortcode: emoji
         let message = ui::emoji::expand_shortcodes(&c.message);
         self.chat_ui.recent_emojis.note(&message);
@@ -13970,6 +14112,7 @@ impl App {
                 self.settings.save();
             }
             BarAction::ShowHuds(visible) => self.set_show_huds(visible),
+            BarAction::ToggleHuds => self.set_show_huds(!self.settings.show_huds),
             BarAction::HudZoom(zoom) => self.world.hud_zoom = zoom.clamp(0.1, 1.0),
             BarAction::None => {}
             BarAction::IkEdit => {
@@ -14095,7 +14238,14 @@ impl App {
                 self.world.set_friends_only(on);
             }
             BarAction::BuyCurrency => self.open_buy_currency(),
-            BarAction::Marketplace => self.marketplace_ui.open(None),
+            // FSLoadSLMarketplace (llviewermenu.cpp): the system browser when
+            // every link goes there, else the Marketplace window
+            BarAction::Marketplace => match self.marketplace_home() {
+                Some(home) if self.settings.browser_behavior == crate::settings::BrowserBehavior::SystemForAll => {
+                    self.open_web_link(home, Some(crate::link_trust::BrowserEntryPoint::MarketplaceLink));
+                }
+                _ => self.marketplace_ui.open(None),
+            },
             BarAction::MarketplaceListings => self.open_marketplace_listings(),
             BarAction::ToggleMarketplaceListings => {
                 let window = ui::marketplace_listings::WINDOW;
@@ -14228,6 +14378,7 @@ impl App {
                 self.settings.save();
                 log::info!("quiet snapshots: {}", !self.settings.snapshot.sound);
             }
+            BarAction::ReleaseKeys => self.release_keys(),
             BarAction::ToggleWaterWalk => self.toggle_water_walk(),
             BarAction::ToggleSwimming => self.toggle_swimming(),
             BarAction::MoveLockOptions => self.movelock_ui.open = true,
@@ -14749,12 +14900,73 @@ impl App {
         ui::marketplace::home(&self.settings.grid).map(str::to_owned)
     }
 
+    /// The grid's Destination Guide page (LFSimFeatureHandler::
+    /// destinationGuideURL), None on a grid without one.
+    /// AURORA_DEMO_DESTINATIONS=<page>: a page of the tester's choice in
+    /// demo, "sl" for the Second Life guide's address; the native modes
+    /// (compact, wide, legacy, empty) have the Second Life guide's.
+    fn destination_guide(&self) -> Option<String> {
+        use ui::destinations::{GuideGrid, guide_url};
+        let language = aurora_i18n::language();
+        if self.demo {
+            let page = std::env::var("AURORA_DEMO_DESTINATIONS").ok().filter(|u| !u.trim().is_empty())?;
+            if page.trim() == "sl" || crate::demo::destinations::mode().is_some() {
+                return guide_url(GuideGrid::SecondLife, language);
+            }
+            return Some(page.trim().to_owned());
+        }
+        match self.settings.grid {
+            crate::settings::GridChoice::SecondLife => guide_url(GuideGrid::SecondLife, language),
+            crate::settings::GridChoice::SecondLifeBeta => guide_url(GuideGrid::SecondLifeBeta, language),
+            crate::settings::GridChoice::Custom => {
+                let region = self.world.opensim_extras().and_then(|e| e.destination_guide_url.as_deref());
+                let login = self
+                    .world
+                    .login
+                    .as_ref()
+                    .map(|l| l.raw["destination_guide_url"].as_str())
+                    .unwrap_or("");
+                let id = crate::grids::active(&self.settings)
+                    .map(|g| {
+                        if g.nickname.is_empty() {
+                            g.name.as_str()
+                        } else {
+                            g.nickname.as_str()
+                        }
+                    })
+                    .unwrap_or("");
+                guide_url(GuideGrid::OpenSim { region, login, id }, language)
+            }
+        }
+    }
+
+    /// Where Aurora's Destinations window reads the guide: the feed of the
+    /// Second Life guide's page on both Second Life grids (guide.js reads
+    /// the main grid's on both), the demo's made-up guide in demo; None
+    /// shows the guide's web page (the Legacy style, another grid's guide).
+    fn destination_feed(&self) -> Option<crate::destination_guide::Source> {
+        use crate::destination_guide::Source;
+        if self.demo {
+            return crate::demo::destinations::mode()
+                .and_then(crate::demo::destinations::fixture)
+                .map(Source::Demo);
+        }
+        if self.settings.destinations_style != crate::settings::DestinationsStyle::Aurora {
+            return None;
+        }
+        match self.settings.grid {
+            crate::settings::GridChoice::SecondLife | crate::settings::GridChoice::SecondLifeBeta => Some(Source::Live),
+            crate::settings::GridChoice::Custom => None,
+        }
+    }
+
     /// All embedded web windows share native input ownership and shortcut guards.
     fn web_has_focus(&self) -> bool {
         self.profile_ui.web_has_focus()
             || self.search_ui.web_has_focus()
             || self.marketplace_ui.web_has_focus()
             || self.web_browser_ui.web_has_focus(self.panels.web_browser)
+            || self.destinations_ui.web_has_focus(self.panels.destinations)
     }
 
     /// LLMediaCtrl::handleKeyHere / handleUnicodeCharHere: the clicked page
@@ -14765,6 +14977,7 @@ impl App {
             .or_else(|| self.search_ui.focused_web())
             .or_else(|| self.marketplace_ui.focused_web())
             .or_else(|| self.web_browser_ui.focused_web(self.panels.web_browser))
+            .or_else(|| self.destinations_ui.focused_web(self.panels.destinations))
     }
 
     /// The session id the web tab's search page is opened with; none in
@@ -15865,6 +16078,8 @@ impl App {
                     self.settings.reduce_motion,
                 );
                 self.toolbar_ui.show_name_tags = self.settings.show_name_tags;
+                self.toolbar_ui.show_huds = self.settings.show_huds;
+                self.toolbar_ui.interface_hidden = self.interface.hidden;
                 let show_balance = if self.demo {
                     ui::bars::demo::get().show_balance.unwrap_or(self.settings.show_balance)
                 } else {
@@ -15940,6 +16155,7 @@ impl App {
                     show_name_tags: self.settings.show_name_tags,
                     fly_override: self.world.fly_override,
                     quiet_snapshots: !self.settings.snapshot.sound,
+                    release_keys: release_keys::enabled(&self.world),
                     parcel_landmark,
                     can_set_home: self.world.can_set_home(),
                     can_go_home: self.world.rlva_can_teleport_home(),
@@ -15952,6 +16168,7 @@ impl App {
                     grid_help: self.grid_help(),
                     marketplace: self.marketplace_home().is_some()
                         || (self.demo && crate::world::marketplace::demo::Mode::from_env().is_some()),
+                    destinations: self.destination_guide().is_some() || self.destination_feed().is_some(),
                     parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
                         (Some(region), Some(parcel)) => ui::parcel_icons::parcel_icons(&ui::parcel_icons::ParcelState {
                             region_flags: region.region_flags,
@@ -17228,6 +17445,7 @@ impl App {
                 self.outfit_batch_window(&ctx, &p);
                 self.update_demo_shape_mesh();
                 self.shape_ui.update(&mut self.world, &self.scene, &ctx);
+                self.poll_shape_xml_menu();
                 let shape_preferences = (self.shape_ui.hints, self.shape_ui.feet);
                 let shape_group = self.shape_ui.group;
                 let (shape_actions, visible) = ui::shape::show(&ctx, &p, &mut self.world, &mut self.shape_ui, (&self.settings).into());
@@ -17367,17 +17585,17 @@ impl App {
                     self.answer_suitcase(ask, yes);
                 }
                 self.portal_crossing_question(&ctx, &p);
-                if let Some((url, dont_warn, danger)) = self.url_confirm.as_mut()
+                if let Some((url, dont_warn, danger, entry)) = self.url_confirm.as_mut()
                     && let Some(yes) = ui::context::external_link_confirm(&ctx, &p, url, dont_warn, *danger)
                 {
-                    let (url, dont_warn) = (url.clone(), *dont_warn);
+                    let (url, dont_warn, entry) = (url.clone(), *dont_warn, *entry);
                     self.url_confirm = None;
                     if yes {
                         if dont_warn {
                             self.settings.warn_external_links = false;
                             self.settings.save();
                         }
-                        ctx.open_url(egui::OpenUrl::new_tab(url));
+                        self.route_web_link(url, entry);
                     }
                 }
                 ui::media::show(
@@ -17406,6 +17624,7 @@ impl App {
                 }
                 self.show_task_notecards(&ctx, &p);
                 self.show_scripts(&ctx, &p);
+                self.show_script_recovery(&ctx, &p);
                 for action in ui::inventory::task_drop::confirm(&ctx, &p, &mut self.task_transfer) {
                     self.apply_inventory_action(action);
                 }
@@ -17585,7 +17804,7 @@ impl App {
                     }
                     // only web links (llLoadURL / goto URL), opened after the user's click
                     if let Some(u) = url.filter(|u| u.starts_with("https://") || u.starts_with("http://")) {
-                        ctx.open_url(egui::OpenUrl::new_tab(u));
+                        self.open_web_link(u, None);
                     }
                 }
                 self.world.record_notification_history();
@@ -17793,6 +18012,50 @@ impl App {
                         home: &self.settings.browser_home_page,
                     },
                 );
+                // the Destination Guide: the same plugins and browser
+                // settings, and the OpenID cookie on Second Life
+                // (LLFloaterDestinations::postBuild, getOpenIDCookie)
+                let guide = self.destination_guide();
+                let guide_cookie = cookie
+                    .as_ref()
+                    .filter(|_| !self.demo && self.settings.grid != crate::settings::GridChoice::Custom);
+                // Aurora's window (Preferences › Aurora), else the page
+                let feed = self.destination_feed();
+                let native = feed.map(|source| ui::destinations::Native {
+                    source,
+                    runtime: Some(self.net.runtime()),
+                    env: ui::destinations::aurora::Env {
+                        history: &self.world.tp_storage.items,
+                        access: self.world.agent_access(),
+                        here: self.world.main().map(|r| r.name.as_str()),
+                    },
+                });
+                let mut wide = self.settings.destinations_wide;
+                let landmark = self.destinations_ui.show(
+                    &ctx,
+                    &p,
+                    &mut self.panels.destinations,
+                    &ui::destinations::GuideWeb {
+                        paths: paths.as_ref(),
+                        browser: &browser,
+                        cookie: guide_cookie,
+                        url: guide.as_deref(),
+                    },
+                    native.as_ref(),
+                    &mut wide,
+                );
+                if wide != self.settings.destinations_wide {
+                    self.settings.destinations_wide = wide;
+                    self.settings.save();
+                }
+                self.toolbar_ui.destinations = guide.is_some() || feed.is_some();
+                if let Some(ui::destinations::aurora::Action::Landmark { favorite }) = landmark {
+                    // LLFloaterCreateLandmark, in Favorites for the star
+                    let folder = favorite
+                        .then(|| ui::places::system_folder(&self.world.inventory, ui::places::model::FOLDER_FAVORITES))
+                        .flatten();
+                    self.open_create_landmark(folder);
+                }
                 self.show_marketplace_listings(&ctx, &p);
                 let web = ui::profile::WebContext {
                     paths: paths.as_ref(),
@@ -18170,6 +18433,7 @@ impl App {
                 }
                 t = self.ui_parts.lap(Part::UiOptions, t);
                 // teleport screen (and the login loading screen fading out)
+                let mut tp_cancel_pressed = false;
                 if let Some(o) = self.tp_overlay.as_mut() {
                     // quick fade in, fade out at the end
                     let fade_in = if o.loading_end {
@@ -18212,7 +18476,13 @@ impl App {
                         let facts = ui::loading::PlaceFacts::gather(&mut self.world, &mut self.map_tiles, &name, point, arrived);
                         ui::loading::BannerText { name, stage, facts }
                     });
-                    ui::loading::teleport_overlay(
+                    // Cancel until TeleportFinish, when the simulator allows it
+                    let cancel = !o.loading_end
+                        && o.arrived.is_none()
+                        && o.end.is_none()
+                        && self.world.teleporting
+                        && self.world.tp_cancel.offered(self.settings.always_show_tp_cancel);
+                    tp_cancel_pressed = ui::loading::teleport_overlay(
                         &ctx,
                         &p,
                         self.logo.as_ref(),
@@ -18223,10 +18493,14 @@ impl App {
                         Some(o.shown),
                         alpha,
                         &text.facts.place(),
+                        cancel,
                     );
                     if o.end.is_some() {
                         o.leaving = Some(text);
                     }
+                }
+                if tp_cancel_pressed {
+                    self.cancel_teleport();
                 }
             }
         }
@@ -18850,11 +19124,14 @@ impl ApplicationHandler for App {
                 self.settings.night_sky = mode;
                 self.panels.time_of_day = 4;
             }
-            if let Some((latitude, gain)) = crate::demo::night_sky::place() {
+            if let Some((latitude, gain, milky_way)) = crate::demo::night_sky::place() {
                 self.settings.night_sky_place = crate::world::night_sky::SkyPlace::Custom;
                 self.settings.night_sky_latitude = latitude;
                 if let Some(gain) = gain {
                     self.settings.night_sky_gain = gain;
+                }
+                if let Some(milky_way) = milky_way {
+                    self.settings.night_sky_milky_way = milky_way;
                 }
                 self.settings.sync_night_sky();
             }
@@ -19109,6 +19386,26 @@ impl ApplicationHandler for App {
                 self.web_browser_ui.go_to(&page);
                 self.panels.web_browser = true;
                 self.panels.perf = false;
+            }
+            // AURORA_DEMO_DESTINATIONS=<page>|sl: the Destination Guide on
+            // that page (sl: the Second Life guide's address), open at start;
+            // compact|wide|empty: Aurora's window on the made-up guide,
+            // legacy: the Legacy style for this run
+            if self.destination_guide().is_some() {
+                use crate::demo::destinations::Mode;
+                self.panels.destinations = true;
+                self.panels.perf = false;
+                match crate::demo::destinations::mode() {
+                    Some(Mode::Compact) => {
+                        self.destinations_ui.aurora.demo_open = true;
+                        self.destinations_ui.demo_wide = Some(false);
+                    }
+                    Some(Mode::Wide) => {
+                        self.destinations_ui.aurora.demo_open = true;
+                        self.destinations_ui.demo_wide = Some(true);
+                    }
+                    _ => {}
+                }
             }
             // AURORA_DEMO_MARKETPLACE_LISTINGS=merchant|not-merchant|error|audit:
             // Me › Marketplace listings open on the demo SLM server
@@ -20859,7 +21156,10 @@ impl ApplicationHandler for App {
             // on a prim east of the start position, playing at once
             if let Some(v) = std::env::var_os("AURORA_DEMO_MEDIA") {
                 let v = v.to_string_lossy().into_owned();
-                let url = if v == "1" || v.is_empty() {
+                // Mini controls: the same page, with the address hidden
+                // (LLMediaEntry::MINI, LLPanelPrimMediaControls::updateShape).
+                let mini = v == "mini";
+                let url = if v == "1" || v.is_empty() || mini {
                     crate::demo::demo_media_page().to_string()
                 } else {
                     v
@@ -20868,7 +21168,7 @@ impl ApplicationHandler for App {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
                 }
-                self.media.demo_entry(object, face, &url);
+                self.media.demo_face(object, face, &url, mini);
             }
             // AURORA_DEMO_WORN: an object worn on our avatar's back
             if std::env::var_os("AURORA_DEMO_WORN").is_some() {
