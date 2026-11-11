@@ -529,7 +529,8 @@ impl<'a> Floater<'a> {
     /// Show the floater; `open` is cleared by the close button.
     pub fn show<R>(mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
         super::layout::set_partial_outside(ctx, egui::Id::unique(self.id), self.partial_outside);
-        if window_hidden(ctx, egui::Id::unique(self.id), *open, self.chat) {
+        let role = if self.chat { HideKeep::Chat } else { HideKeep::None };
+        if window_hidden(ctx, egui::Id::unique(self.id), *open, role) {
             // its toolbar button still closes it with the interface hidden,
             // as it does the windows it toggles itself
             if close_asked(ctx, self.id) {
@@ -1034,7 +1035,8 @@ impl<'a> Floater<'a> {
 /// placed by the layout (`layout::Slot`), snaps to the other windows when
 /// moved with Alt or resized, and is resized by the same edge handles.
 /// `locked`: the user can neither move nor resize it (it still follows the
-/// viewer's edges and the group it is glued to).
+/// viewer's edges and the group it is glued to). `keep_in_mouselook`: stays
+/// visible when entering mouselook (the mini-map, `LLAgent::endAnimationUpdateUI`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn bare_window(
     ctx: &egui::Context,
@@ -1045,10 +1047,12 @@ pub(crate) fn bare_window(
     default: egui::Rect,
     min_size: Vec2,
     locked: bool,
+    keep_in_mouselook: bool,
     body: impl FnOnce(&mut egui::Ui),
 ) {
     let window_id = egui::Id::unique(id);
-    if window_hidden(ctx, window_id, true, false) {
+    let role = if keep_in_mouselook { HideKeep::Mouselook } else { HideKeep::None };
+    if window_hidden(ctx, window_id, true, role) {
         return;
     }
     let drag = if locked {
@@ -1123,16 +1127,26 @@ fn on_pixels(ctx: &egui::Context, rect: egui::Rect) -> egui::Rect {
 const PLACE_POS: &str = "place_pos";
 
 /// The windows the hidden interface keeps out of sight (Alt+Shift+U,
+/// Which windows stay shown when [`hide_windows`] hides the interface:
+/// immersive mode (#859) keeps the chat windows; mouselook keeps the mini-map
+/// (`LLAgent::endAnimationUpdateUI`, indra/newview/llagent.cpp).
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum HideKeep {
+    #[default]
+    None,
+    Chat,
+    Mouselook,
+}
+
 /// LLFloaterView::hideAllFloaters / showHiddenFloaters): those open on the
 /// frame it was hidden. A window opened afterwards shows; one closed in the
-/// meantime is forgotten. Immersive mode (#859) keeps the chat windows.
+/// meantime is forgotten.
 #[derive(Clone, Default)]
 struct HiddenWindows {
     /// The frame whose open windows are hidden.
     capture: Option<u64>,
     ids: std::collections::HashSet<egui::Id>,
-    /// The chat windows stay (immersive mode).
-    keep_chat: bool,
+    keep: HideKeep,
 }
 
 fn hidden_windows_id() -> egui::Id {
@@ -1144,13 +1158,14 @@ pub fn interface_hidden(ctx: &egui::Context) -> bool {
     ctx.data(|d| d.get_temp::<HiddenWindows>(hidden_windows_id()).is_some())
 }
 
-/// Hide the windows open now (on the next frame), or show them back; with
-/// `keep_chat`, the chat windows stay. Called between two frames.
-pub fn hide_windows(ctx: &egui::Context, hide: bool, keep_chat: bool) {
+/// Hide the windows open now (on the next frame), or show them back; `keep`
+/// leaves the chat windows (immersive mode) or the mini-map (mouselook).
+/// Called between two frames.
+pub fn hide_windows(ctx: &egui::Context, hide: bool, keep: HideKeep) {
     let state = HiddenWindows {
         capture: hide.then(|| ctx.cumulative_frame_nr()),
         ids: Default::default(),
-        keep_chat,
+        keep,
     };
     ctx.data_mut(|d| {
         if hide {
@@ -1161,15 +1176,14 @@ pub fn hide_windows(ctx: &egui::Context, hide: bool, keep_chat: bool) {
     });
 }
 
-/// The window `id` (`open` or not, a `chat` window or not) is kept hidden
-/// this frame.
-fn window_hidden(ctx: &egui::Context, id: egui::Id, open: bool, chat: bool) -> bool {
+/// The window `id` (`open` or not, with its `role`) is kept hidden this frame.
+fn window_hidden(ctx: &egui::Context, id: egui::Id, open: bool, role: HideKeep) -> bool {
     let frame = ctx.cumulative_frame_nr();
     ctx.data_mut(|d| {
         let Some(mut state) = d.get_temp::<HiddenWindows>(hidden_windows_id()) else {
             return false;
         };
-        if chat && state.keep_chat {
+        if role != HideKeep::None && state.keep == role {
             return false;
         }
         let hidden = if !open {
