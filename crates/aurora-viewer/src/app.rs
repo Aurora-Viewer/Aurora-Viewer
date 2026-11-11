@@ -516,6 +516,15 @@ pub struct App {
     last_frame: Instant,
     /// Duration of the frame before the last one (s).
     prev_dt: f32,
+    /// Seconds since frame 600, for the demo camera scenarios that move by
+    /// time (camera/demo.rs `steps_at`).
+    demo_camera_clock: f32,
+    /// AURORA_CAPTURE_TIMES: the captures still to take at those seconds of
+    /// the camera's clock, in order (`<name>-t<seconds>.png`).
+    capture_times: Vec<(f32, std::path::PathBuf)>,
+    /// The time capture registered and not yet saved: the camera's clock
+    /// stays at its time until then.
+    capture_held: Option<std::path::PathBuf>,
     start: Instant,
     right_drag: bool,
     /// The camera's vertical angle last sent in AgentFOV.
@@ -1613,6 +1622,11 @@ impl App {
             egui_replay: false,
             last_frame: Instant::now(),
             prev_dt: 0.0,
+            demo_camera_clock: 0.0,
+            capture_times: std::env::var_os("AURORA_CAPTURE")
+                .map(|p| capture_time_files(std::path::Path::new(&p), &std::env::var("AURORA_CAPTURE_TIMES").unwrap_or_default()))
+                .unwrap_or_default(),
+            capture_held: None,
             start: Instant::now(),
             right_drag: false,
             sent_fov: crate::camera::DEFAULT_FOV,
@@ -1978,8 +1992,14 @@ impl App {
             stream_list: Default::default(),
             capture: std::env::var_os("AURORA_CAPTURE").map(|p| {
                 let frames = std::env::var("AURORA_CAPTURE_FRAMES").unwrap_or_default();
+                // (with capture times alone, no frame is captured by number)
+                let by_time = std::env::var("AURORA_CAPTURE_TIMES").is_ok_and(|t| !t.trim().is_empty());
                 (
-                    capture_files(std::path::Path::new(&p), &frames),
+                    if by_time && frames.trim().is_empty() {
+                        Vec::new()
+                    } else {
+                        capture_files(std::path::Path::new(&p), &frames)
+                    },
                     std::env::var_os("AURORA_CAPTURE_EXIT").is_some(),
                 )
             }),
@@ -4311,7 +4331,38 @@ impl App {
                 sources: Vec::new(),
             });
         }
-        for step in crate::camera::demo::steps(spec, self.frame_count) {
+        // (the scenarios that move by time count from frame 600)
+        let mut dt = self.last_frame.elapsed().as_secs_f32().min(0.1);
+        if !self.capture_times.is_empty() || self.capture_held.is_some() {
+            // AURORA_CAPTURE_TIMES: every skeleton holds still (as in the
+            // photo mode's frozen world), so that what the path's camera
+            // sees at a time (the hair on the head) is the same in every run
+            self.scene.pause_all_skeletons = true;
+        }
+        if self.frame_count <= 600 {
+            self.demo_camera_clock = 0.0;
+        } else if self.capture_held.is_some() {
+            // AURORA_CAPTURE_TIMES: the clock held at the capture's time
+            // until the picture is saved (it is taken a frame or two later)
+            dt = 0.0;
+        } else {
+            self.demo_camera_clock += dt;
+            if let Some(&(t, _)) = self.capture_times.first()
+                && self.demo_camera_clock >= t
+            {
+                // the camera exactly where the path is at `t`, whatever the
+                // frame rate: every run captures the same place
+                dt = (dt - (self.demo_camera_clock - t)).max(0.0);
+                self.demo_camera_clock = t;
+                let (_, file) = self.capture_times.remove(0);
+                if let Some((files, _)) = &mut self.capture {
+                    let at = files.partition_point(|(f, _)| *f <= self.frame_count);
+                    files.insert(at, (self.frame_count, file.clone()));
+                    self.capture_held = Some(file);
+                }
+            }
+        }
+        for step in crate::camera::demo::steps_at(spec, self.frame_count, self.demo_camera_clock, dt) {
             match step {
                 Step::Cursor(x, y) => self.cursor_pos = (x, y),
                 Step::CursorOnOwnTag => {
@@ -4362,6 +4413,43 @@ impl App {
                 }
                 Step::Wheel(clicks) => self.camera_wheel(clicks),
                 Step::Fly => self.world.agent.flying = true,
+                Step::HairCam(t) => {
+                    // the scripted camera on the path, locked on its eye
+                    // and its focus (no lag, no threshold), from our
+                    // avatar's head as it stands and turns
+                    if let (Some(handle), Some(head), Some((eye, at))) = (
+                        self.world.main_region,
+                        self.scene.head_world(&self.world, &self.world.agent_id, Instant::now()),
+                        crate::camera::demo::hair_path(t),
+                    ) {
+                        let rot = glam::Quat::from_rotation_z(self.world.agent.yaw);
+                        let (eye, at) = (head + rot * eye, head + rot * at);
+                        self.world.apply(NetEvent::SetFollowCam {
+                            handle,
+                            object: crate::camera::demo::HAIR_CAM,
+                            properties: vec![
+                                (12, 1.0),
+                                (5, 0.0),
+                                (6, 0.0),
+                                (10, 0.0),
+                                (11, 0.0),
+                                (14, eye.x),
+                                (15, eye.y),
+                                (16, eye.z),
+                                (18, at.x),
+                                (19, at.y),
+                                (20, at.z),
+                                (21, 1.0),
+                                (22, 1.0),
+                            ],
+                        });
+                    }
+                }
+                Step::HairCamOff => {
+                    self.world.apply(NetEvent::ClearFollowCam {
+                        object: crate::camera::demo::HAIR_CAM,
+                    });
+                }
                 Step::FollowEvents => {
                     if let Some(handle) = self.world.main_region {
                         let events = if spec == "scripted-sit" {
@@ -12251,13 +12339,30 @@ impl App {
                 self.inventory_images.auto_capture_pending = false;
                 let (at, file) = files.remove(0);
                 match image::save_buffer(&file, &px, w, h, image::ExtendedColorType::Rgba8) {
-                    Ok(()) => log::info!("frame {at} captured to {}", file.display()),
+                    Ok(()) => log::info!(
+                        "frame {at} captured to {} (camera clock {:.4} s)",
+                        file.display(),
+                        self.demo_camera_clock
+                    ),
                     Err(e) => log::warn!("capture failed: {e}"),
                 }
-                if *exit && files.is_empty() {
+                if self.capture_held.as_ref() == Some(&file) {
+                    self.capture_held = None;
+                }
+                if *exit && files.is_empty() && self.capture_times.is_empty() {
                     self.quit_at = Some(Instant::now());
                 }
             }
+        }
+        // AURORA_EXIT_AFTER=<seconds>: a clean exit once that long has run
+        // (the unattended measurement runs of a camera that moves by time,
+        // whatever the frame rate; docs/TESTING.md)
+        if let Some(after) = exit_after()
+            && self.quit_at.is_none()
+            && EXIT_AFTER_START.get_or_init(Instant::now).elapsed().as_secs_f32() >= after
+        {
+            log::info!("exit after {after} s");
+            self.quit_at = Some(Instant::now());
         }
         let mut net = self.net.stats.snapshot();
         if self.demo {
@@ -21672,6 +21777,14 @@ fn present_mode_name(mode: Option<aurora_render::wgpu::PresentMode>) -> &'static
     mode.map_or("unknown", aurora_render::present::name)
 }
 
+/// `AURORA_EXIT_AFTER=<seconds>`: a clean exit after that many seconds of
+/// frames (read once).
+fn exit_after() -> Option<f32> {
+    static AFTER: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    *AFTER.get_or_init(|| std::env::var("AURORA_EXIT_AFTER").ok()?.trim().parse().ok())
+}
+static EXIT_AFTER_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
 /// AURORA_CAPTURE files: one per frame of AURORA_CAPTURE_FRAMES (comma
 /// separated, default 240), in frame order; with several frames each file is
 /// named `<name>-<frame>.<ext>`.
@@ -21692,6 +21805,27 @@ fn capture_files(path: &std::path::Path, frames: &str) -> Vec<(u64, std::path::P
         .unwrap_or_else(|| "png".into());
     at.into_iter()
         .map(|f| (f, path.with_file_name(format!("{stem}-{f}.{ext}"))))
+        .collect()
+}
+
+/// AURORA_CAPTURE files for AURORA_CAPTURE_TIMES (seconds of the clock of
+/// a demo camera that moves by time, comma separated): one per time, in
+/// order, named `<name>-t<seconds>.<ext>`.
+fn capture_time_files(path: &std::path::Path, times: &str) -> Vec<(f32, std::path::PathBuf)> {
+    let mut at: Vec<f32> = times
+        .split(',')
+        .filter_map(|v| v.trim().parse::<f32>().ok())
+        .filter(|t| t.is_finite() && *t >= 0.0)
+        .collect();
+    at.sort_by(f32::total_cmp);
+    at.dedup();
+    let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "png".into());
+    at.into_iter()
+        .map(|t| (t, path.with_file_name(format!("{stem}-t{t}.{ext}"))))
         .collect()
 }
 
@@ -21723,7 +21857,7 @@ fn restart_with_vr() {
 
 #[cfg(test)]
 mod tests {
-    use super::{RightGesture, UiActions, WindowedGeometry, capture_files, frame_cap, fullscreen_shortcut};
+    use super::{RightGesture, UiActions, WindowedGeometry, capture_files, capture_time_files, frame_cap, fullscreen_shortcut};
     use crate::settings::Settings;
     use std::path::{Path, PathBuf};
 
@@ -22084,6 +22218,16 @@ mod tests {
         let off = world.notifications.push_presence(jane, "Jane Doe is offline.", false);
         assert_eq!(open_notification_to_type(&ctx, &mut world, &mut chat, &mut open, off), None);
         assert!(!open && !chat.conv_focus_request);
+    }
+
+    #[test]
+    fn capture_files_by_time() {
+        assert!(capture_time_files(Path::new("c/a.png"), "").is_empty());
+        assert_eq!(
+            capture_time_files(Path::new("c/a.png"), "5.0167, 1.5,x,-2, 1.5"),
+            vec![(1.5, PathBuf::from("c/a-t1.5.png")), (5.0167, PathBuf::from("c/a-t5.0167.png"))]
+        );
+        assert_eq!(capture_time_files(Path::new("c/a"), "3"), vec![(3.0, PathBuf::from("c/a-t3.png"))]);
     }
 
     #[test]

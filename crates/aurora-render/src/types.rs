@@ -315,6 +315,31 @@ pub struct DrawRecord {
     /// Finite portal cut: center.xyz and encoded horizontal entry direction.
     /// Only active with PORTAL_CLIP; zero is also a valid opening at the origin.
     pub portal_clip: [f32; 4],
+    /// x: the face's identity for the order-independent transparency
+    /// ([`oit_tie`]: the object's full id and the face's index hashed, the
+    /// same on every launch; the stochastic masks are seeded by it and the
+    /// triangle, oit_stochastic.rs). y, z, w: spare.
+    pub identity: [u32; 4],
+}
+
+/// The identity of a face for the order-independent transparency
+/// (`DrawRecord::identity[0]`): a hash of the object's full id (its UUID,
+/// not the region's local id) and of the face's index, the same on every
+/// frame and every launch, whatever the order the objects were loaded in or
+/// where their geometry sits (the stochastic masks are seeded by it; the
+/// shader keeps the low 24 bits).
+pub fn oit_tie(id: [u8; 16], face: u32) -> u32 {
+    // FNV-1a over the id and the face, then a final mix so that every byte
+    // reaches the low 24 bits
+    let mut h: u32 = 0x811c_9dc5;
+    for b in id.into_iter().chain(face.to_le_bytes()) {
+        h = (h ^ u32::from(b)).wrapping_mul(0x0100_0193);
+    }
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x7feb_352d);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x846c_a68b);
+    h ^ (h >> 16)
 }
 
 /// Modes of `DrawRecord::rez` (`rez_apply` in object.wgsl).
@@ -353,6 +378,7 @@ impl Default for DrawRecord {
             spec_uv: [1.0, 1.0, 0.0, 0.0],
             legacy: [0.0; 4],
             spec_color: [1.0, 1.0, 1.0, 0.0],
+            identity: [0; 4],
             anim: [0; 4],
             anim_xf: [0.0; 4],
             rez: [0; 4],
@@ -1101,6 +1127,12 @@ pub struct RenderSettings {
     pub probe_slots: u32,
     /// GPU occlusion culling (UseOcclusion).
     pub occlusion: bool,
+    /// Order-independent transparency (oit_stochastic.rs): the blended
+    /// faces drawn with depth-based stochastic transparency rather than in
+    /// the sorted order, in every anti-aliasing mode. Off (the default:
+    /// an opt-in), they are blended in the drawing order and the targets are
+    /// freed.
+    pub oit: bool,
 }
 
 impl Default for RenderSettings {
@@ -1128,6 +1160,7 @@ impl Default for RenderSettings {
             anisotropy: 8,
             probe_slots: 32,
             occlusion: true,
+            oit: false,
         }
     }
 }
@@ -2022,11 +2055,12 @@ mod tests {
     /// matrix, then one 16-byte vector per field).
     #[test]
     fn draw_record_layout_matches_wgsl() {
-        assert_eq!(std::mem::size_of::<DrawRecord>(), 64 + 14 * 16);
+        assert_eq!(std::mem::size_of::<DrawRecord>(), 64 + 15 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, anim), 64 + 10 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, anim_xf), 64 + 11 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, rez), 64 + 12 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, portal_clip), 64 + 13 * 16);
+        assert_eq!(std::mem::offset_of!(DrawRecord, identity), 64 + 14 * 16);
         let wgsl = include_str!("shaders/common.wgsl");
         let start = wgsl.find("struct DrawRecord {").expect("DrawRecord in common.wgsl");
         let body = &wgsl[start..start + wgsl[start..].find("};").expect("end of DrawRecord")];
@@ -2053,9 +2087,28 @@ mod tests {
                 "anim",
                 "anim_xf",
                 "rez",
-                "portal_clip"
+                "portal_clip",
+                "identity"
             ]
         );
+    }
+
+    /// The OIT tie-break depends on the object's id and the face's index
+    /// only: the same value whenever they are the same, another one when
+    /// either differs, nothing else in it (no slot, no offset, no order).
+    #[test]
+    fn oit_tie_depends_on_the_id_and_the_face_only() {
+        let a = [0x11; 16];
+        let b = [0x22; 16];
+        assert_eq!(oit_tie(a, 3), oit_tie(a, 3));
+        assert_ne!(oit_tie(a, 3), oit_tie(a, 4));
+        assert_ne!(oit_tie(a, 3), oit_tie(b, 3));
+        // the shader keeps 24 bits: distinct there too for these
+        let low = |v: u32| v & 0xff_ffff;
+        assert_ne!(low(oit_tie(a, 3)), low(oit_tie(a, 4)));
+        assert_ne!(low(oit_tie(a, 3)), low(oit_tie(b, 3)));
+        // a face of a system avatar part: its own namespace of indices
+        assert_ne!(low(oit_tie(a, 0)), low(oit_tie(a, 0x8000)));
     }
 
     #[test]
