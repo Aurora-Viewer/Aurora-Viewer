@@ -47,6 +47,36 @@ pub fn seed_lost(inv: &mut Inventory, agent: Uuid) {
     inv.generation += 1;
 }
 
+/// A Lost and Found folder alone, when the demo inventory has none (the
+/// script recovery scenario puts the recovered scripts there).
+pub fn seed_lost_folder(inv: &mut Inventory) {
+    if inv.system_folder(16).is_some() {
+        return;
+    }
+    inv.folders.insert(
+        LOST_FOLDER,
+        Folder {
+            info: InvFolder {
+                id: LOST_FOLDER,
+                parent: inv.root,
+                name: aurora_i18n::tr!("common-lost-and-found").to_owned(),
+                type_default: 16,
+                version: 1,
+                ..Default::default()
+            },
+            children: Vec::new(),
+            items: Vec::new(),
+            state: FetchState::Fetched,
+            library: false,
+        },
+    );
+    let root = inv.root;
+    if let Some(folder) = inv.folders.get_mut(&root) {
+        folder.children.push(LOST_FOLDER);
+    }
+    inv.generation += 1;
+}
+
 pub fn lost_reply(agent: Uuid) -> aurora_net::inventory::orphans::Contents {
     aurora_net::inventory::orphans::Contents {
         folders: Vec::new(),
