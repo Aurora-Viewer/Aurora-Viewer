@@ -42,8 +42,8 @@ pub enum Kind {
     Keyword,
     /// A script dialog or text box.
     ScriptDialog,
-    /// An offer or a notice that came as a message (a teleport, a
-    /// friendship, items, a group notice…).
+    /// An offer that came as a message (a teleport, a friendship, items, a
+    /// group invitation).
     Offer,
     /// A message of the grid's system, shown in nearby chat.
     System,
@@ -51,7 +51,8 @@ pub enum Kind {
     Online,
     /// A friend went offline.
     Offline,
-    /// Anything else (a simulator alert, the region restart, a payment…).
+    /// Anything else (a simulator alert, the region restart, a payment, a
+    /// group notice, an answer to an offer…).
     Notice,
 }
 
@@ -122,13 +123,17 @@ pub fn toast_xml(title: &str, body: &str) -> String {
     )
 }
 
-/// A Windows toast's Tag and Group: its id, its thread, each cut to the
-/// 64 characters Windows takes (a session's id has 36).
+/// A Windows toast's Tag and Group: this run's mark and its id, its
+/// thread, each cut to the 64 characters Windows takes (a session's id has
+/// 36). A same Tag and Group replaces, across every process of the
+/// AppUserModelID, and each run counts its ids from 1: the mark keeps a
+/// second viewer, or the last run's toasts still in the Action Center,
+/// from being replaced.
 #[cfg(any(windows, test))]
-fn toast_tag_group(toast: &Toast) -> (String, String) {
+fn toast_tag_group(run: &str, toast: &Toast) -> (String, String) {
     const MAX: usize = 64;
     let cut = |s: &str| s.chars().take(MAX).collect::<String>();
-    (toast.id.to_string(), cut(&toast.thread))
+    (cut(&format!("{run}-{}", toast.id)), cut(&toast.thread))
 }
 
 #[cfg(any(windows, test))]
@@ -406,9 +411,14 @@ mod win {
                 return;
             }
         };
+        // this run's mark in each Tag: the process and the second it began
+        let started = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let run = format!("{}-{started}", std::process::id());
         let mut shown: VecDeque<ToastNotification> = VecDeque::new();
         for toast in rx {
-            match build(&toast, &clicks).and_then(|t| notifier.Show(&t).map(|()| t)) {
+            match build(&toast, &run, &clicks).and_then(|t| notifier.Show(&t).map(|()| t)) {
                 Ok(t) => {
                     shown.push_back(t);
                     if shown.len() > KEEP {
@@ -420,15 +430,17 @@ mod win {
         }
     }
 
-    fn build(toast: &Toast, clicks: &Sender<u64>) -> windows::core::Result<ToastNotification> {
+    fn build(toast: &Toast, run: &str, clicks: &Sender<u64>) -> windows::core::Result<ToastNotification> {
         let xml = XmlDocument::new()?;
         xml.LoadXml(&HSTRING::from(toast_xml(&toast.title, &toast.body)))?;
         let t = ToastNotification::CreateToastNotification(&xml)?;
         // the Group gathers a conversation's notices; the Tag, unique,
-        // keeps each one (a same Tag and Group replaces)
-        let (tag, group) = super::toast_tag_group(toast);
-        t.SetTag(&HSTRING::from(tag))?;
-        t.SetGroup(&HSTRING::from(group))?;
+        // keeps each one (a same Tag and Group replaces). Neither is worth
+        // the notification: one Windows refuses, it is shown without.
+        let (tag, group) = super::toast_tag_group(run, toast);
+        if let Err(e) = t.SetTag(&HSTRING::from(tag)).and_then(|()| t.SetGroup(&HSTRING::from(group))) {
+            log::warn!("system notification shown ungrouped ({e})");
+        }
         let (id, clicks) = (toast.id, clicks.clone());
         t.Activated(&TypedEventHandler::new(move |_: Ref<ToastNotification>, _: Ref<IInspectable>| {
             let _ = clicks.send(id);
@@ -568,7 +580,7 @@ mod tests {
     }
 
     #[test]
-    fn the_windows_tag_is_the_id_and_the_group_the_thread() {
+    fn the_windows_tag_is_the_run_and_id_and_the_group_the_thread() {
         let toast = |thread: &str| Toast {
             id: 42,
             kind: Kind::Message,
@@ -577,10 +589,18 @@ mod tests {
             body: String::new(),
         };
         let session = "6f1e3b0a-1c1d-4a3e-9b1a-2b3c4d5e6f70";
-        assert_eq!(toast_tag_group(&toast(session)), ("42".into(), session.into()));
+        assert_eq!(
+            toast_tag_group("1234-1794405226", &toast(session)),
+            ("1234-1794405226-42".into(), session.into())
+        );
+        // two runs, the same id and thread: two Tags, neither replaces
+        assert_ne!(
+            toast_tag_group("1234-1794405226", &toast("presence")).0,
+            toast_tag_group("5678-1794405300", &toast("presence")).0
+        );
         // never past Windows' 64 characters
-        let (_, group) = toast_tag_group(&toast(&"x".repeat(80)));
-        assert_eq!(group.chars().count(), 64);
+        let (tag, group) = toast_tag_group(&"9".repeat(80), &toast(&"x".repeat(80)));
+        assert_eq!((tag.chars().count(), group.chars().count()), (64, 64));
     }
 
     #[test]
