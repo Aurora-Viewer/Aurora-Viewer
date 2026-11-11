@@ -9,6 +9,7 @@ use aurora_net::scripts::{MAX_SOURCE, ScriptOptions, ScriptSaved, ScriptTarget};
 use egui::Vec2;
 use uuid::Uuid;
 
+pub mod backup;
 mod colors;
 mod debug;
 mod dialogs;
@@ -20,6 +21,7 @@ mod folding;
 mod indent;
 mod preprocessor;
 mod reference;
+pub mod recovery;
 pub mod settings;
 mod syntax;
 mod view;
@@ -161,6 +163,10 @@ pub struct Editors {
     includes: std::collections::HashMap<Uuid, PendingInclude>,
     pub agent: Uuid,
     pub agent_name: String,
+    /// The account's folder of copies of the unsaved scripts (backup.rs);
+    /// `None` keeps none.
+    pub backup_dir: Option<std::path::PathBuf>,
+    pub backups: backup::Book,
 }
 
 struct PendingInclude {
@@ -177,7 +183,32 @@ impl Editors {
         self.debug.open = true;
     }
 
+    /// Copy the unsaved scripts (backup.rs), at most every
+    /// `backup::INTERVAL`, off the frame thread.
+    pub fn back_up(&mut self) {
+        self.back_up_now(false);
+    }
+
+    fn back_up_now(&mut self, force: bool) {
+        let docs = self.documents.iter().map(|e| backup::Doc {
+            target: e.target,
+            name: &e.name,
+            source: &e.source,
+            unsaved: e.loaded && e.source != e.baseline,
+            editable: e.loaded && e.can_edit,
+        });
+        let jobs = self
+            .backups
+            .plan(self.backup_dir.as_deref(), docs, std::time::Instant::now(), force);
+        backup::run(jobs);
+    }
+
     pub fn disconnected(&mut self) {
+        // the latest text is copied, and the copies stay for the next login
+        // whatever the editors do now (LLScriptEdContainer's destructor
+        // keeps the file when there is no region)
+        self.back_up_now(true);
+        self.backups.release();
         self.includes.clear();
         self.documents.retain(|e| e.dirty() || e.saving.is_some());
         for e in &mut self.documents {
