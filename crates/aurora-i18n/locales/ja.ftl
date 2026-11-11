@@ -3994,7 +3994,6 @@ ui-music-muted = ミュート中
 ui-music-waiting = 許可待ち
 ui-music-blocked = フィルターで拒否
 ui-music-connecting = 接続中…
-ui-music-error = 再生エラー
 ui-music-no-device = 音声出力なし
 ui-bars-tip-hints = 時計をクリック：ＳＬＴまたは現地時間・ＦＰＳ：パフォーマンス・スピーカーにカーソル：音量。右クリック：プリセット、表示項目、インターフェースを隠す。
 ui-bars-graphics-presets = グラフィックプリセット
@@ -13702,6 +13701,18 @@ picker-pipette-no-material = コピー可能なマテリアルがインベント
 
 local-texture-preview-hint = ローカルテクスチャ — このコンピューターのファイルのプレビュー。
 
+# Parcel radio state and stream failures
+music-state-error = 再生できません：{ $reason }
+music-error-web-page = このウェブページにはラジオのストリームがありません
+music-error-playlist = このラジオのプレイリストは再生できません
+music-error-http = HTTP ステータス { $code }
+music-error-tls = 安全な接続に失敗しました
+music-error-connection = 接続に失敗しました
+music-error-address = ストリームのアドレスが無効、または未対応です
+music-error-format = 音声形式が無効、または未対応です
+music-error-interrupted = 音声ストリームが中断されました
+music-error-notice = 区画の音楽：{ $status }
+music-error-worker = 音楽プレーヤーを起動できません
 # Object linking: LLSelectMgr::linkObjects
 build-link-error-title = オブジェクトをリンクできません
 build-link-downloading = オブジェクト情報をダウンロード中です。しばらく待ってから再度リンクしてください。
