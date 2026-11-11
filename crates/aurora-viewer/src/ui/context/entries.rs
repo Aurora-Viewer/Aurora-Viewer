@@ -793,9 +793,23 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
         aurora_i18n::tr!("ui-context-information-options"),
         true,
         |ui| {
+            // On a worn object, that object (menu_attachment_other.xml); what
+            // the wearer wears stays a row of its own, so a saved arrangement
+            // keeps its command.
+            if let Some(object) = attachment {
+                ui.item(
+                    "zoom-scan-filled",
+                    aurora_i18n::tr!("ui-context-inspect-2"),
+                    CtxAction::Inspect(object),
+                );
+            }
             ui.item_if(
                 "zoom-scan-filled",
-                aurora_i18n::tr!("ui-context-inspect-2"),
+                if attachment.is_some() {
+                    aurora_i18n::tr!("ui-context-inspect-worn")
+                } else {
+                    aurora_i18n::tr!("ui-context-inspect-2")
+                },
                 f.worn,
                 CtxAction::InspectAvatar(id),
             );
@@ -1664,6 +1678,46 @@ mod tests {
             false,
         );
         assert!(!ours.enabled);
+    }
+
+    #[test]
+    fn inspect_on_someone_s_worn_object_inspects_that_object() {
+        let (avatar, worn) = (Uuid::from_u128(7), Uuid::from_u128(8));
+        let wearing = Facts {
+            worn: true,
+            ..Facts::default()
+        };
+        let labelled = |target: &Target, key: &'static str| {
+            rows(world_menu(target, &wearing, Vec3::ZERO))
+                .into_iter()
+                .filter(|e| e.label == aurora_i18n::text(key))
+                .map(|e| e.kind)
+                .collect::<Vec<_>>()
+        };
+        let on_worn = Target::Avatar {
+            id: avatar,
+            own: false,
+            attachment: Some(worn),
+        };
+        // Clicked object › Inspect and Information › Inspect (menu_attachment_other.xml)
+        let inspect = labelled(&on_worn, "ui-context-inspect-2");
+        assert_eq!(inspect.len(), 2);
+        for kind in &inspect {
+            assert!(matches!(kind, Kind::Action(CtxAction::Inspect(id)) if *id == worn));
+        }
+        let everything = labelled(&on_worn, "ui-context-inspect-worn");
+        assert!(matches!(&everything[..], [Kind::Action(CtxAction::InspectAvatar(id))] if *id == avatar));
+        // the body keeps its one Inspect of everything worn
+        let on_body = Target::Avatar {
+            id: avatar,
+            own: false,
+            attachment: None,
+        };
+        assert!(matches!(
+            &labelled(&on_body, "ui-context-inspect-2")[..],
+            [Kind::Action(CtxAction::InspectAvatar(id))] if *id == avatar
+        ));
+        assert!(labelled(&on_body, "ui-context-inspect-worn").is_empty());
     }
 
     #[test]

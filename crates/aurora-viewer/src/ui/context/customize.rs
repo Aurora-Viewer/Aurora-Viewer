@@ -585,6 +585,56 @@ mod tests {
     }
 
     #[test]
+    fn scene_menu_saved_inspect_everything_worn_keeps_its_command_on_a_worn_object() {
+        let (avatar, worn) = (Uuid::from_u128(7), Uuid::from_u128(8));
+        let m = ContextMenu {
+            target: Target::Avatar {
+                id: avatar,
+                own: false,
+                attachment: Some(worn),
+            },
+            ..menu(1)
+        };
+        let facts = Facts {
+            worn: true,
+            ..Default::default()
+        };
+        let entries = entries::world_menu(&m.target, &facts, Vec3::ZERO);
+        // the id arrangements saved for Information › Inspect before it inspected the worn object
+        let saved = "/group:info-circle-filled:0/InspectAvatar:0";
+        let catalog = Catalog::new(&entries);
+        let row = catalog.entries.iter().find(|e| e.id == saved).expect("saved row");
+        let layout::Kind::Action(index) = row.kind else {
+            panic!("action row")
+        };
+        assert!(matches!(catalog.commands[index].kind, entries::Kind::Action(CtxAction::InspectAvatar(id)) if id == avatar));
+        assert_eq!(row.label, aurora_i18n::tr!("ui-context-inspect-worn"));
+        let mut prefs = Preferences::default();
+        profile(&mut prefs, scope(&m.target, &facts))
+            .layout
+            .placements
+            .insert(saved.into(), layout::HIDDEN.into());
+        let (rows, _) = radial_entries(&m, &facts, &entries, &prefs);
+        let information = rows
+            .iter()
+            .find_map(|row| match &row.kind {
+                entries::Kind::Submenu(children) if row.label == aurora_i18n::tr!("ui-context-information-options") => Some(children),
+                _ => None,
+            })
+            .expect("Information");
+        assert!(
+            information
+                .iter()
+                .any(|row| matches!(row.kind, entries::Kind::Action(CtxAction::Inspect(id)) if id == worn))
+        );
+        assert!(
+            !information
+                .iter()
+                .any(|row| matches!(row.kind, entries::Kind::Action(CtxAction::InspectAvatar(_))))
+        );
+    }
+
+    #[test]
     fn scene_menu_radial_icon_bars_have_a_label_and_follow_absolute_slot_order() {
         let m = menu(1);
         let facts = Facts::default();

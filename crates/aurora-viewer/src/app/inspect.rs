@@ -43,9 +43,11 @@ impl App {
         self.inspect_wire(true);
     }
 
-    /// "Inspect" of an avatar's menu: every object it wears, one linkset
-    /// each, in the window LLFloaterInspect gives the selection of one
-    /// worn object (menu_attachment_other.xml).
+    /// "Inspect" of an avatar's menu, "Inspect everything worn" of a worn
+    /// object's: every object it wears, one linkset each, in the window
+    /// LLFloaterInspect gives a selection. Not in the Legacy Viewer, whose
+    /// avatar menu has no Inspect and whose worn object's Inspect shows that
+    /// object alone (menu_attachment_other.xml).
     pub(super) fn inspect_avatar(&mut self, id: Uuid) {
         let roots = worn_roots(&self.world, &id);
         if roots.is_empty() {

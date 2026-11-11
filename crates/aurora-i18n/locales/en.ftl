@@ -3790,6 +3790,7 @@ ui-land-general-script-info = Script info
 world-profiles-joined-today = Joined today
 keybinds-insert = Insert
 ui-context-inspect-2 = Inspect
+ui-context-inspect-worn = Inspect everything worn
 inspect-title = Inspect Objects
 inspect-col-name = Object Name
 inspect-col-description = Description

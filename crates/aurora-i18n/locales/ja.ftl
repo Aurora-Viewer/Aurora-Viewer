@@ -3781,6 +3781,7 @@ ui-land-general-script-info = スクリプト情報
 world-profiles-joined-today = 今日参加
 keybinds-insert = 挿入
 ui-context-inspect-2 = 調査
+ui-context-inspect-worn = 装着物をすべて調査
 inspect-title = オブジェクトを調査
 inspect-col-name = オブジェクト名
 inspect-col-description = 説明
