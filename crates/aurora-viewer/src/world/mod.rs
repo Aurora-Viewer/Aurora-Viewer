@@ -6567,7 +6567,10 @@ mod motion_tests {
         assert_eq!(world.animation_stops.len(), 2);
         assert!(world.animation_stops.contains(&sit) && world.animation_stops.contains(&hands));
         assert!(!world.animation_stops.contains(&ao));
-        assert!(!world.animation_stops.contains(&static_eyes), "what we started ourselves keeps playing");
+        assert!(
+            !world.animation_stops.contains(&static_eyes),
+            "what we started ourselves keeps playing"
+        );
         assert!(world.animation_sources.contains_key(&Uuid::from_u128(999)));
         assert!(world.animation_sources.contains_key(&world.agent_id));
         world.animation_stops.clear();
