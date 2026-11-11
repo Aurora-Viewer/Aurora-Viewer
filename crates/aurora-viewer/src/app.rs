@@ -43,6 +43,7 @@ mod sound_explorer;
 // mod bug_report;
 mod alt_graph;
 mod avatar_health;
+mod avatar_reload;
 mod blender_live;
 mod blender_shape;
 mod buy_currency;
@@ -64,6 +65,7 @@ mod folders;
 mod hover_pick;
 mod texture_picker;
 use folders::chat_log_root;
+mod admin_status;
 mod contents_drop_demo;
 mod contents_folder_drag_demo;
 mod dof;
@@ -108,6 +110,8 @@ mod movement;
 mod object_actions;
 mod object_menu;
 mod object_menu_demo;
+mod outfit_batch;
+mod outfit_hd;
 mod outfit_portrait;
 mod own_motion;
 mod pay;
@@ -679,6 +683,8 @@ pub struct App {
     delete_confirm: Option<(Vec<uuid::Uuid>, String)>,
     /// "Freeze" / "Eject" waiting for an answer (app/land_moderation.rs).
     moderation_ask: Option<land_moderation::Ask>,
+    /// A resident's Admin › Kick / Freeze / Unfreeze, waiting for its message.
+    god_kick_ask: Option<admin_status::KickAsk>,
     /// The object menus' questions and script queue (app/object_menu.rs).
     object_menu: object_menu::ObjectMenu,
     /// Teleport asked by a place link, waiting for a yes (TeleportViaSLAPP),
@@ -692,7 +698,7 @@ pub struct App {
     suitcase_passed: bool,
     /// External web link waiting for the warning's answer, with the state of
     /// its "Do not warn me again" box and, for a dangerous link, the reason.
-    url_confirm: Option<(String, bool, Option<&'static str>)>,
+    url_confirm: Option<(String, bool, Option<&'static str>, crate::link_trust::BrowserEntryPoint)>,
     /// The media filter's question on screen.
     media_filter_prompt: ui::media_filter::PromptUi,
     script_dialogs_were: usize,
@@ -836,6 +842,7 @@ pub struct App {
     /// World › SL Marketplace (LLFloaterMarketplace).
     marketplace_ui: ui::marketplace::MarketplaceUi,
     web_browser_ui: ui::web_browser::WebBrowserUi,
+    destinations_ui: ui::destinations::DestinationsUi,
     /// Me › Marketplace listings (LLFloaterMarketplaceListings).
     listings_ui: ui::marketplace_listings::ListingsUi,
     /// The demo's SLM server (AURORA_DEMO_MARKETPLACE_LISTINGS).
@@ -878,6 +885,8 @@ pub struct App {
     /// Radio intent and the last known station; neither is an engine status.
     parcel_music: parcel_music::Radio,
     music_status: ui::audio::MusicStatus,
+    /// Stations whose failure was told in the local chat this session.
+    music_error_said: std::collections::HashSet<String>,
     /// Parcel media and media on a prim (web / video plugins).
     media: crate::media::MediaManager,
     media_ui: ui::media::MediaUi,
@@ -1086,6 +1095,8 @@ pub struct App {
     inventory_images: inventory_thumbnail::ImageJobs,
     /// The outfit's auto portrait or square photo mode under way.
     outfit_portrait: Option<outfit_portrait::Session>,
+    /// The outfits' batch portraits, from their window's opening.
+    outfit_batch: Option<outfit_batch::Batch>,
     appearance_ui: ui::appearance::AppearanceUi,
     shape_ui: crate::shape_editor::State,
     shape_camera: Option<Camera>,
@@ -1095,6 +1106,8 @@ pub struct App {
     local_bakes: crate::local_bakes::LocalBakes,
     /// Me › Avatar health and the customise animation.
     avatar_health: avatar_health::AvatarHealth,
+    /// "Reload avatar": when each avatar was last reloaded.
+    avatar_reloads: avatar_reload::Reloads,
     last_social_poll: Instant,
     /// Last keyboard / mouse button input (automatic away, AFKTimeout), and
     /// whether the current away status was set by that timer.
@@ -1401,6 +1414,12 @@ impl App {
         ui::bars::clock::read_system_clock();
         let mut settings = Settings::load();
         if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
+            && std::env::var("AURORA_DEMO_INVENTORY")
+                .is_ok_and(|mode| matches!(mode.as_str(), "delete-confirm" | "delete-tab") || mode.starts_with("aurora-delete-confirm"))
+        {
+            settings.inventory.confirm_delete = true;
+        }
+        if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
             && let Ok(mode) = std::env::var("AURORA_DEMO_MINIMIZED_MUTE")
         {
             settings.audio.mute_when_minimized = mode != "off";
@@ -1686,6 +1705,7 @@ impl App {
             context_menu_was: false,
             delete_confirm: None,
             moderation_ask: None,
+            god_kick_ask: None,
             object_menu: Default::default(),
             place_confirm: None,
             suitcase_ask: None,
@@ -1790,6 +1810,7 @@ impl App {
             buy_land_source: Default::default(),
             marketplace_ui: Default::default(),
             web_browser_ui: Default::default(),
+            destinations_ui: Default::default(),
             listings_ui: Default::default(),
             demo_slm: None,
             people_map_ui: Default::default(),
@@ -1815,6 +1836,7 @@ impl App {
             app_link_parcels: HashSet::new(),
             parcel_music: Default::default(),
             music_status: Default::default(),
+            music_error_said: Default::default(),
             audio_engine: match aurora_audio::AudioEngine::new_with_device(out_device) {
                 Ok(e) => {
                     let o = e.output_info();
@@ -1947,6 +1969,7 @@ impl App {
             demo_script_experiences: Default::default(),
             inventory_images: Default::default(),
             outfit_portrait: None,
+            outfit_batch: None,
             appearance_ui,
             shape_ui: Default::default(),
             shape_camera: None,
@@ -1954,6 +1977,7 @@ impl App {
             wearable_ui: Default::default(),
             local_bakes: Default::default(),
             avatar_health: Default::default(),
+            avatar_reloads: Default::default(),
             last_social_poll: Instant::now(),
             last_input: Instant::now(),
             auto_away: false,
@@ -2931,6 +2955,7 @@ impl App {
             } else if mode == "mfa-refused"
                 || (mode == "add-mfa" && self.login_form.mfa_token.trim().is_empty())
                 || (mode == "terms" && !(self.login_form.agree_tos && self.login_form.read_critical))
+                || (mode == "next-server" && self.login_form.accepted_next_servers.is_empty())
             {
                 if mode == "terms" {
                     log::info!(
@@ -3024,6 +3049,7 @@ impl App {
             id0,
             last_exec: self.last_exec(),
             platform: crate::system_info::login_platform(),
+            accepted_next_servers: self.login_form.accepted_next_servers.clone(),
         };
         self.login_form.busy = true;
         self.login_form.error = None;
@@ -3113,6 +3139,9 @@ impl App {
         self.web_browser_ui = Default::default();
         // closed, or the next session would open the home page by itself
         self.panels.web_browser = false;
+        // the guide belongs to the grid, and its browser to the session
+        self.destinations_ui = Default::default();
+        self.panels.destinations = false;
         // the listings belong to the account (LLMarketplaceData)
         self.listings_ui = Default::default();
         self.demo_slm = None;
@@ -3180,6 +3209,7 @@ impl App {
         self.wearable_ui = Default::default();
         self.local_bakes.end_session(&mut self.scene);
         self.reset_avatar_health();
+        self.avatar_reloads = Default::default();
         self.interactions = Default::default();
         self.screen = Screen::Login;
         self.login_form.busy = false;
@@ -3276,7 +3306,7 @@ impl App {
         if let NetEvent::ServerReleaseNotes(page) = ev {
             // LLFloaterAbout::handleServerReleaseNotes, then LLWeb::loadURL
             match page {
-                Ok(url) => self.egui_ctx.open_url(egui::OpenUrl::new_tab(url)),
+                Ok(url) => self.open_web_link(url, None),
                 Err(_) => {
                     self.world.notifications.push(
                         crate::world::notifications::Kind::Alert,
@@ -3307,6 +3337,10 @@ impl App {
             }
             if self.photo_owns_upload(request) {
                 self.photo_uploaded(result);
+                return;
+            }
+            if self.outfit_hd_owns(request) {
+                self.outfit_hd_uploaded(result);
                 return;
             }
             let material_map = self.imports.uploading_entry(request);
@@ -3529,6 +3563,7 @@ impl App {
                 self.settings.save();
             }
             let blender_shape = self.blender_shape_loaded(item, asset, &result);
+            let shape_xml = self.shape_xml_menu_loaded(item, asset, &result);
             if self.wearable_ui.loaded(&mut self.world, item, asset, &result) {
                 return;
             }
@@ -3538,7 +3573,7 @@ impl App {
             if self.shape_ui.loaded(&mut self.world, item, asset, &result) {
                 return;
             }
-            if blender_shape {
+            if blender_shape || shape_xml {
                 return;
             }
             if self.ao_ui.import == Some(item) {
@@ -3755,6 +3790,7 @@ impl App {
                 critical_required,
                 bad_credentials,
                 previous_session,
+                next_server,
             } => {
                 // A refused login spends its code, whatever the reason: the next
                 // attempt sends none, so the server can ask for a new one
@@ -3788,6 +3824,9 @@ impl App {
                     }
                     self.login_form.show_mfa = true;
                     self.login_form.error = Some(aurora_i18n::tr!("app-enter-the-code-from-your-authenticator-app").into());
+                } else if let Some(server) = next_server {
+                    self.login_form.next_server = Some(server);
+                    self.login_form.accept_next_server = false;
                 } else if tos_required {
                     self.login_form.tos_message = Some(error);
                 } else if critical_required {
@@ -4707,6 +4746,7 @@ impl App {
             Action::Search => ui::widgets::toggle_floater(&self.egui_ctx, ui::search::WINDOW, &mut self.panels.search),
             Action::Performance => ui::widgets::toggle_floater(&self.egui_ctx, "perf", &mut self.panels.perf),
             Action::DevToolbox => ui::widgets::toggle_floater(&self.egui_ctx, ui::dev_toolbox::WINDOW, &mut self.panels.dev_toolbox),
+            Action::RequestAdminStatus => self.request_admin_status(true),
             Action::DebugSettings => {
                 ui::widgets::toggle_floater(&self.egui_ctx, ui::debug_settings::WINDOW, &mut self.panels.debug_settings)
             }
@@ -4731,6 +4771,27 @@ impl App {
             Action::HideParticles => {
                 self.settings.world_overlays.hide_particles = !self.settings.world_overlays.hide_particles;
                 self.settings.save();
+            }
+            Action::RenderTrees
+            | Action::RenderAvatars
+            | Action::RenderTerrain
+            | Action::RenderSky
+            | Action::RenderWater
+            | Action::RenderObjects
+            | Action::RenderGrass
+            | Action::RenderClouds => {
+                let h = &mut self.settings.debug.hidden_types;
+                let off = match action {
+                    Action::RenderTrees => &mut h.trees,
+                    Action::RenderAvatars => &mut h.avatars,
+                    Action::RenderTerrain => &mut h.terrain,
+                    Action::RenderSky => &mut h.sky,
+                    Action::RenderWater => &mut h.water,
+                    Action::RenderObjects => &mut h.objects,
+                    Action::RenderGrass => &mut h.grass,
+                    _ => &mut h.clouds,
+                };
+                *off = !*off;
             }
             Action::ShowTransparency => {
                 let d = &mut self.settings.debug;
@@ -5937,6 +5998,7 @@ impl App {
                 verdict,
                 None,
             );
+            self.tell_music_error();
             return;
         };
         // Disable before submitting a station; enable only after the authorized
@@ -5978,6 +6040,7 @@ impl App {
             verdict,
             Some(&status),
         );
+        self.tell_music_error();
         // StreamTitleDisplay: metadata follows the actual connection, never the
         // radio toggle. Leave the offline title scenario's metadata in place.
         let title = match status {
@@ -5999,6 +6062,17 @@ impl App {
             self.tell_stream_title(&title);
         }
         self.sync_minimized_mute();
+    }
+
+    /// One local chat line per failing station and session: the tooltip
+    /// keeps the reason, retries and revisits stay quiet.
+    fn tell_music_error(&mut self) {
+        if matches!(&self.music_status, ui::audio::MusicStatus::Error(e) if parcel_music::error_is_told(e))
+            && parcel_music::first_error_notice(&mut self.music_error_said, self.parcel_music.station())
+        {
+            self.world
+                .system_message(aurora_i18n::tr!("music-error-notice", status = self.music_status.text()));
+        }
     }
 
     fn remember_music_choice(&mut self) {
@@ -7080,10 +7154,13 @@ impl App {
                 // pie tool, and only its visual manipulators take scene clicks
                 // (FSFloaterPoser::enableVisualManipulators, FSToolCompPose).
                 // World presses stay the editor's.
-                return !(self.ik_editor.posing()
+                let hud = self.ik_editor.posing()
                     && !self.ik_editor.poser_owns_pointer()
                     && self.huds_shown()
-                    && self.scene.hud_pick(&self.world, self.cursor_pos, false).is_some());
+                    && self.scene.hud_pick(&self.world, self.cursor_pos, false).is_some();
+                // its click leaves the poser's selection as it is
+                self.ik_editor.press_on_hud = hud;
+                return !hud;
             }
         }
         // Report Abuse's object picker takes the click (LLToolObjPicker)
@@ -8199,6 +8276,7 @@ impl App {
         wanted.extend(self.search_ui.wanted_pics.drain());
         wanted.extend(self.group_profile_ui.wanted_pics.drain());
         wanted.extend(self.people_ui.wanted_pics.drain());
+        wanted.extend(self.ik_editor.take_poser_wanted_pictures());
         wanted.extend(self.voice_controls_ui.wanted_pics.drain());
         wanted.extend(self.contacts_people_ui.wanted_pics.drain());
         wanted.extend(self.notif_ui.wanted_pics.drain());
@@ -8921,6 +8999,7 @@ impl App {
             ));
         }
         self.outfit_portrait_demo();
+        self.outfit_batch_demo();
         // AURORA_DEMO_GROUP_REGION: the Group titles window
         if self.demo && self.frame_count == 600 && crate::demo::group_region::on() {
             self.panels.group_titles = true;
@@ -8998,6 +9077,7 @@ impl App {
             self.options_ui.media_filter = rules.map(<[_]>::to_vec);
         }
         self.poll_inventory_images();
+        self.poll_outfit_hd();
         // a click whose depth is back already (the render thread finished
         // the last frame while this thread waited for its next one)
         self.resolve_clicks();
@@ -9383,6 +9463,7 @@ impl App {
         let (w, h) = gfx.renderer.size();
         // a photo drawn at its own size this frame: its proportions, the
         // part of it this frame draws, the height its details are chosen for
+        self.outfit_batch_frame();
         self.outfit_portrait_frame(&gfx.renderer);
         self.photo_update(&gfx.renderer);
         self.viewfinder_frame(&mut gfx.renderer);
@@ -9807,6 +9888,7 @@ impl App {
             self.scene.surface_protection = self.settings.surface_protection();
             self.scene.textures.set_max_resolution(self.settings.max_texture_resolution);
             self.scene.max_avatars = self.settings.max_avatars as usize;
+            self.scene.hidden_types = self.settings.debug.hidden_types;
             if self.demo {
                 self.scene.max_avatars = crate::demo::impostor_flip(self.scene.max_avatars);
             }
@@ -10597,6 +10679,7 @@ impl App {
                 hour: self.settings.night_sky_hour,
             },
             self.settings.night_sky_gain,
+            self.settings.night_sky_milky_way,
             env.sky.sun_dir,
             // the sky's moment: a photo's held instant for all its parts
             // (snapshot::Hold, Freeze World), the demo's fixed one in the
@@ -10779,7 +10862,16 @@ impl App {
             lights,
             spot_shadows,
             clear_color: Vec4::new(env.fog_color.x, env.fog_color.y, env.fog_color.z, 1.0),
-            sky: env.sky,
+            sky: aurora_render::SkyParams {
+                // the Clouds rendering type hidden: a cloud scale of zero
+                // draws none, nor their shadow (common.wgsl, clouds)
+                cloud_scale: if self.settings.debug.hidden_types.clouds {
+                    0.0
+                } else {
+                    env.sky.cloud_scale
+                },
+                ..env.sky
+            },
             water: env.water,
             mirror,
             probes,
@@ -10800,6 +10892,7 @@ impl App {
             },
             // the photo's isolation, "show only" on an empty background
             cutout: self.world.photo_isolation.empty_background(),
+            hide_sky: self.settings.debug.hidden_types.sky,
             look: None,
         };
         // a photo's look, or the live view's in the photo mode
@@ -10892,6 +10985,8 @@ impl App {
                             | "aurora-keyboard-wide"
                     ) || v.starts_with("note-")
                         || v.starts_with("clipboard-")
+                        || v.starts_with("delete-")
+                        || v.starts_with("aurora-delete-")
                         || v.starts_with("aurora-menu-")
                         || v.starts_with("bulk-")
                 }))
@@ -11040,6 +11135,19 @@ impl App {
                     _ => {}
                 }
             }
+        }
+        // AURORA_DEMO_POSER=compact-face: Ctrl held over the face while
+        // posing the Body, for its oval tint (`poser::world_hints`)
+        if self.demo
+            && self.frame_count >= 560
+            && std::env::var("AURORA_DEMO_POSER").is_ok_and(|mode| mode == "compact-face")
+            && let Some(pos) = self
+                .ik_editor
+                .poser_focus(&self.world, "mFaceNoseBase")
+                .and_then(|point| self.build.cam.project(point))
+        {
+            raw.events.push(egui::Event::ModifiersChanged(egui::Modifiers::CTRL));
+            raw.events.push(egui::Event::PointerMoved(pos));
         }
         if self.demo && ui::widgets::demo::rez_mode().is_some() {
             let mode = ui::widgets::demo::rez_mode().unwrap_or("1");
@@ -11510,6 +11618,26 @@ impl App {
             self.on_build_request(r);
         }
         self.update_avatar_pics(&mut gfx.renderer);
+        if self.ik_editor.posing() {
+            self.ik_editor.set_poser_pictures(&self.avatar_pics);
+            // a few times a second: worn meshes change seldom
+            if self.frame_count.is_multiple_of(10) {
+                let mut joints = self.scene.rigged_joints(&self.world, self.ik_editor.poser_subject());
+                // AURORA_DEMO_POSER=compact-wings / compact-tail: as if a worn
+                // mesh used the wings and the tail, or the tail alone (the demo
+                // wears none)
+                let demo = self.demo.then(|| std::env::var("AURORA_DEMO_POSER").ok()).flatten();
+                if let Some(parts) = demo.as_deref().and_then(|m| match m {
+                    "compact-wings" => Some(&["Wing", "Tail"][..]),
+                    "compact-tail" => Some(&["Tail"][..]),
+                    _ => None,
+                }) {
+                    let rig = &self.world.avatar_lib.rig;
+                    joints.extend((0..rig.len()).filter(|j| parts.iter().any(|part| rig.canonical_names[*j].contains(part))));
+                }
+                self.ik_editor.set_poser_rigged_joints(joints);
+            }
+        }
         self.update_maps();
         self.poll_key_to_name();
 
@@ -12305,9 +12433,11 @@ impl App {
         }
         self.demo_worn_steps();
         self.demo_derender_steps();
+        self.demo_reload_avatar_steps();
         self.demo_friends_only_steps();
         self.demo_social_menu_steps();
         self.demo_land_moderation();
+        self.demo_admin_status();
         if self.demo && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| matches!(m.as_str(), "touch" | "touch-shift")) {
             if self.frame_count == 720
                 && let Some(view) = self.scene.lists.hud_view
@@ -13847,6 +13977,7 @@ impl App {
                 self.settings.save();
             }
             BarAction::ShowHuds(visible) => self.set_show_huds(visible),
+            BarAction::ToggleHuds => self.set_show_huds(!self.settings.show_huds),
             BarAction::HudZoom(zoom) => self.world.hud_zoom = zoom.clamp(0.1, 1.0),
             BarAction::None => {}
             BarAction::IkEdit => {
@@ -13854,15 +13985,17 @@ impl App {
             }
             BarAction::Poser => {
                 self.ik_editor.open_poser();
-                ui::widgets::open_floater(&self.egui_ctx, "poser", &mut self.ik_editor.open);
+                let window = self.ik_editor.poser_window(&self.settings.poser);
+                ui::widgets::open_floater(&self.egui_ctx, window, &mut self.ik_editor.open);
             }
             // a minimized poser expands, a shown one closes as its cross
             // does (FSFloaterPoser::onClose)
             BarAction::TogglePoser => {
-                if self.ik_editor.open && self.ik_editor.posing() && ui::widgets::floater_minimized(&self.egui_ctx, "poser") {
-                    ui::widgets::expand_floater(&self.egui_ctx, "poser");
+                let window = self.ik_editor.poser_window(&self.settings.poser);
+                if self.ik_editor.open && self.ik_editor.posing() && ui::widgets::floater_minimized(&self.egui_ctx, window) {
+                    ui::widgets::expand_floater(&self.egui_ctx, window);
                 } else if self.ik_editor.toggle_poser() {
-                    ui::widgets::open_floater(&self.egui_ctx, "poser", &mut self.ik_editor.open);
+                    ui::widgets::open_floater(&self.egui_ctx, window, &mut self.ik_editor.open);
                 }
             }
             BarAction::Portals => {
@@ -13970,7 +14103,14 @@ impl App {
                 self.world.set_friends_only(on);
             }
             BarAction::BuyCurrency => self.open_buy_currency(),
-            BarAction::Marketplace => self.marketplace_ui.open(None),
+            // FSLoadSLMarketplace (llviewermenu.cpp): the system browser when
+            // every link goes there, else the Marketplace window
+            BarAction::Marketplace => match self.marketplace_home() {
+                Some(home) if self.settings.browser_behavior == crate::settings::BrowserBehavior::SystemForAll => {
+                    self.open_web_link(home, Some(crate::link_trust::BrowserEntryPoint::MarketplaceLink));
+                }
+                _ => self.marketplace_ui.open(None),
+            },
             BarAction::MarketplaceListings => self.open_marketplace_listings(),
             BarAction::ToggleMarketplaceListings => {
                 let window = ui::marketplace_listings::WINDOW;
@@ -14000,6 +14140,13 @@ impl App {
                 self.settings.save();
             }
             BarAction::ShowTransparency => self.settings.debug.show_alpha = !self.settings.debug.show_alpha,
+            BarAction::RenderTypes(hidden, particles) => {
+                self.settings.debug.hidden_types = hidden;
+                if self.settings.world_overlays.hide_particles != particles {
+                    self.settings.world_overlays.hide_particles = particles;
+                    self.settings.save();
+                }
+            }
             BarAction::OwnedLand => {
                 ui::widgets::open_floater(&self.egui_ctx, ui::owned_land::WINDOW, &mut self.panels.owned_land);
                 self.world.group_money.request_owned_land();
@@ -14089,6 +14236,8 @@ impl App {
                 self.settings.save();
                 log::info!("quickjump: {}", self.settings.quickjump);
             }
+            BarAction::AdminStatus(godlike) => self.request_admin_status(godlike),
+            BarAction::Admin(a) => self.admin_action(a),
             BarAction::ToggleQuietSnapshots => {
                 self.settings.snapshot.sound = !self.settings.snapshot.sound;
                 self.settings.save();
@@ -14615,12 +14764,52 @@ impl App {
         ui::marketplace::home(&self.settings.grid).map(str::to_owned)
     }
 
+    /// The grid's Destination Guide page (LFSimFeatureHandler::
+    /// destinationGuideURL), None on a grid without one.
+    /// AURORA_DEMO_DESTINATIONS=<page>: a page of the tester's choice in
+    /// demo, "sl" for the Second Life guide's address.
+    fn destination_guide(&self) -> Option<String> {
+        use ui::destinations::{GuideGrid, guide_url};
+        let language = aurora_i18n::language();
+        if self.demo {
+            let page = std::env::var("AURORA_DEMO_DESTINATIONS").ok().filter(|u| !u.trim().is_empty())?;
+            return match page.trim() {
+                "sl" => guide_url(GuideGrid::SecondLife, language),
+                page => Some(page.to_owned()),
+            };
+        }
+        match self.settings.grid {
+            crate::settings::GridChoice::SecondLife => guide_url(GuideGrid::SecondLife, language),
+            crate::settings::GridChoice::SecondLifeBeta => guide_url(GuideGrid::SecondLifeBeta, language),
+            crate::settings::GridChoice::Custom => {
+                let region = self.world.opensim_extras().and_then(|e| e.destination_guide_url.as_deref());
+                let login = self
+                    .world
+                    .login
+                    .as_ref()
+                    .map(|l| l.raw["destination_guide_url"].as_str())
+                    .unwrap_or("");
+                let id = crate::grids::active(&self.settings)
+                    .map(|g| {
+                        if g.nickname.is_empty() {
+                            g.name.as_str()
+                        } else {
+                            g.nickname.as_str()
+                        }
+                    })
+                    .unwrap_or("");
+                guide_url(GuideGrid::OpenSim { region, login, id }, language)
+            }
+        }
+    }
+
     /// All embedded web windows share native input ownership and shortcut guards.
     fn web_has_focus(&self) -> bool {
         self.profile_ui.web_has_focus()
             || self.search_ui.web_has_focus()
             || self.marketplace_ui.web_has_focus()
             || self.web_browser_ui.web_has_focus(self.panels.web_browser)
+            || self.destinations_ui.web_has_focus(self.panels.destinations)
     }
 
     /// LLMediaCtrl::handleKeyHere / handleUnicodeCharHere: the clicked page
@@ -14631,6 +14820,7 @@ impl App {
             .or_else(|| self.search_ui.focused_web())
             .or_else(|| self.marketplace_ui.focused_web())
             .or_else(|| self.web_browser_ui.focused_web(self.panels.web_browser))
+            .or_else(|| self.destinations_ui.focused_web(self.panels.destinations))
     }
 
     /// The session id the web tab's search page is opened with; none in
@@ -15367,6 +15557,22 @@ impl App {
                     self.start_login();
                 }
                 if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
+                    && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("next-server")
+                {
+                    self.demo_mfa_challenge = None;
+                    // the offline login server sends the login on to another
+                    // server (LoginError::NextServer)
+                    log::info!("demo login: the login server sends the login on to another server");
+                    self.on_app_event(NetEvent::LoginFailed {
+                        error: String::new(),
+                        mfa_required: false,
+                        tos_required: false,
+                        critical_required: false,
+                        bad_credentials: false,
+                        previous_session: false,
+                        next_server: Some("login.other-grid.example".into()),
+                    });
+                } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
                     && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("terms")
                 {
                     self.demo_mfa_challenge = None;
@@ -15385,6 +15591,7 @@ impl App {
                         critical_required: !tos,
                         bad_credentials: false,
                         previous_session: false,
+                        next_server: None,
                     });
                 } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at) {
                     self.demo_mfa_challenge = None;
@@ -15404,6 +15611,7 @@ impl App {
                         critical_required: false,
                         bad_credentials: refused,
                         previous_session: false,
+                        next_server: None,
                     });
                 } else if self.demo_mfa_challenge.is_some() {
                     ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -15503,6 +15711,12 @@ impl App {
                         self.ik_editor.show(&ctx, &p, &self.world, projector);
                         self.ik_editor.over_viewfinder = false;
                     }
+                    // the posing consent too, poser open or not: a request
+                    // asked from the poser goes out now, another resident's
+                    // request shows its answer at once (it would time out
+                    // behind the photo mode), and the reminder that someone
+                    // may pose us stays in sight
+                    self.poser_consent_ui(&ctx, &p, true);
                     // Personal Lighting, opened from the light panel, stays
                     // over it too: the photo's light refined without leaving
                     if self.panels.personal_lighting {
@@ -15669,7 +15883,7 @@ impl App {
                 let favorites = self.favorites_view(favorites_shown, here);
                 let location_landmarks = self.world.landmarks.named(&self.world.inventory);
                 let (classic_bars, islands) = self.bars_look();
-                self.poser_consent_ui(&ctx, &p);
+                self.poser_consent_ui(&ctx, &p, false);
                 let own_name = self.world.own_name();
                 // AURORA_DEMO_BARS: the long parcel name of the mockup (the
                 // islands only: Firestorm's bars stay as they were)
@@ -15707,6 +15921,8 @@ impl App {
                     self.settings.reduce_motion,
                 );
                 self.toolbar_ui.show_name_tags = self.settings.show_name_tags;
+                self.toolbar_ui.show_huds = self.settings.show_huds;
+                self.toolbar_ui.interface_hidden = self.interface.hidden;
                 let show_balance = if self.demo {
                     ui::bars::demo::get().show_balance.unwrap_or(self.settings.show_balance)
                 } else {
@@ -15732,6 +15948,11 @@ impl App {
                     ban_lines: self.settings.maps.ban_lines,
                     world_overlays: self.settings.world_overlays,
                     show_transparency: self.settings.debug.show_alpha,
+                    hidden_types: self.settings.debug.hidden_types,
+                    render_type_keys: ui::bars::RENDER_TYPE_ACTIONS.map(|a| {
+                        a.and_then(|a| self.settings.keybinds.get(a)[0].as_ref().map(|b| b.label()))
+                            .unwrap_or_default()
+                    }),
                     conversation_thumbnails: self.chat_ui.thumbnails.top_count(),
                     region: if self.world.rlva.has("showloc") {
                         aurora_i18n::tr!("rlva-hidden-region")
@@ -15782,10 +16003,14 @@ impl App {
                     can_go_home: self.world.rlva_can_teleport_home(),
                     release_notes: self.world.main_has_cap("ServerReleaseNotes"),
                     region_console: self.world.main_has_cap("SimConsoleAsync"),
+                    god_level: self.world.god_level,
+                    admin_objects: !self.build.selection.is_empty(),
+                    admin_requests: self.world.opensim_extras().is_none(),
                     motd: !self.world.motd.is_empty(),
                     grid_help: self.grid_help(),
                     marketplace: self.marketplace_home().is_some()
                         || (self.demo && crate::world::marketplace::demo::Mode::from_env().is_some()),
+                    destinations: self.destination_guide().is_some(),
                     parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
                         (Some(region), Some(parcel)) => ui::parcel_icons::parcel_icons(&ui::parcel_icons::ParcelState {
                             region_flags: region.region_flags,
@@ -15794,6 +16019,7 @@ impl App {
                             group: self.world.groups.group(&parcel.group_id),
                             health: self.world.health,
                             frozen: self.world.frozen,
+                            god_level: self.world.god_level,
                         }),
                         _ => Vec::new(),
                     },
@@ -16581,6 +16807,14 @@ impl App {
                 {
                     self.world.apply(ev);
                 }
+                // AURORA_DEMO_CHAT_LINES=stagger: the nearby chat lines said
+                // one at a time
+                if self.demo
+                    && self.in_world()
+                    && let Some(ev) = crate::demo::chat_lines_due()
+                {
+                    self.world.apply(ev);
+                }
                 // AURORA_DEMO_SNOOZE: Tess writes in the group chat, which
                 // `auto` snoozes by itself
                 if self.demo && self.in_world() {
@@ -17049,8 +17283,10 @@ impl App {
                 }
                 self.panels.appearance = open;
                 self.outfit_portrait_window(&ctx, &p);
+                self.outfit_batch_window(&ctx, &p);
                 self.update_demo_shape_mesh();
                 self.shape_ui.update(&mut self.world, &self.scene, &ctx);
+                self.poll_shape_xml_menu();
                 let shape_preferences = (self.shape_ui.hints, self.shape_ui.feet);
                 let shape_group = self.shape_ui.group;
                 let (shape_actions, visible) = ui::shape::show(&ctx, &p, &mut self.world, &mut self.shape_ui, (&self.settings).into());
@@ -17125,6 +17361,7 @@ impl App {
                     }
                 }
                 self.land_moderation_ui(&ctx, &p);
+                self.god_kick_ui(&ctx, &p);
                 if let Some((ids, text)) = self.delete_confirm.clone()
                     && let Some(yes) = ui::context::delete_confirm(&ctx, &p, &text)
                 {
@@ -17189,17 +17426,17 @@ impl App {
                     self.answer_suitcase(ask, yes);
                 }
                 self.portal_crossing_question(&ctx, &p);
-                if let Some((url, dont_warn, danger)) = self.url_confirm.as_mut()
+                if let Some((url, dont_warn, danger, entry)) = self.url_confirm.as_mut()
                     && let Some(yes) = ui::context::external_link_confirm(&ctx, &p, url, dont_warn, *danger)
                 {
-                    let (url, dont_warn) = (url.clone(), *dont_warn);
+                    let (url, dont_warn, entry) = (url.clone(), *dont_warn, *entry);
                     self.url_confirm = None;
                     if yes {
                         if dont_warn {
                             self.settings.warn_external_links = false;
                             self.settings.save();
                         }
-                        ctx.open_url(egui::OpenUrl::new_tab(url));
+                        self.route_web_link(url, entry);
                     }
                 }
                 ui::media::show(
@@ -17407,7 +17644,7 @@ impl App {
                     }
                     // only web links (llLoadURL / goto URL), opened after the user's click
                     if let Some(u) = url.filter(|u| u.starts_with("https://") || u.starts_with("http://")) {
-                        ctx.open_url(egui::OpenUrl::new_tab(u));
+                        self.open_web_link(u, None);
                     }
                 }
                 self.world.record_notification_history();
@@ -17615,6 +17852,25 @@ impl App {
                         home: &self.settings.browser_home_page,
                     },
                 );
+                // the Destination Guide: the same plugins and browser
+                // settings, and the OpenID cookie on Second Life
+                // (LLFloaterDestinations::postBuild, getOpenIDCookie)
+                let guide = self.destination_guide();
+                let guide_cookie = cookie
+                    .as_ref()
+                    .filter(|_| !self.demo && self.settings.grid != crate::settings::GridChoice::Custom);
+                self.destinations_ui.show(
+                    &ctx,
+                    &p,
+                    &mut self.panels.destinations,
+                    &ui::destinations::GuideWeb {
+                        paths: paths.as_ref(),
+                        browser: &browser,
+                        cookie: guide_cookie,
+                        url: guide.as_deref(),
+                    },
+                );
+                self.toolbar_ui.destinations = guide.is_some();
                 self.show_marketplace_listings(&ctx, &p);
                 let web = ui::profile::WebContext {
                     paths: paths.as_ref(),
@@ -18429,6 +18685,7 @@ impl ApplicationHandler for App {
                         | "first-mfa"
                         | "mfa-refused"
                         | "terms"
+                        | "next-server"
                         | "add"
                         | "password"
                         | "connecting"
@@ -18438,7 +18695,7 @@ impl ApplicationHandler for App {
                     self.login_form.accounts = (0..match mode.as_str() {
                         "cards2" | "drag2" | "drag-card2" | "mfa" | "manage" | "manage-confirm" | "add" | "password" | "connecting"
                         | "add-connecting" => 2,
-                        "first" | "first-mfa" | "mfa-refused" | "terms" | "first-connecting" => 0,
+                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "first-connecting" => 0,
                         "cards1" | "derez1" | "add-mfa" => 1,
                         "cards8" | "drag" | "drag-card" | "manage8" | "manage-drag" | "wheel-gap" | "arrows" => 8,
                         _ => 3,
@@ -18485,7 +18742,7 @@ impl ApplicationHandler for App {
                     self.settings.remember_password = !self.login_form.accounts.is_empty();
                     if matches!(
                         mode.as_str(),
-                        "first" | "first-mfa" | "mfa-refused" | "terms" | "add" | "add-mfa" | "password"
+                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "add" | "add-mfa" | "password"
                     ) {
                         self.settings.remember_password = false;
                         self.login_form.editing = true;
@@ -18495,7 +18752,7 @@ impl ApplicationHandler for App {
                             self.login_form.add_return = Some((self.settings.login_uri(), self.settings.username.trim().to_lowercase()));
                             self.settings.username.clear();
                         }
-                        if mode == "add-mfa" || mode == "terms" {
+                        if matches!(mode.as_str(), "add-mfa" | "terms" | "next-server") {
                             // a second identity, ready to submit (no real credential)
                             self.settings.username = "Example new account".into();
                             self.login_form.password = "demo-placeholder".into();
@@ -18671,11 +18928,14 @@ impl ApplicationHandler for App {
                 self.settings.night_sky = mode;
                 self.panels.time_of_day = 4;
             }
-            if let Some((latitude, gain)) = crate::demo::night_sky::place() {
+            if let Some((latitude, gain, milky_way)) = crate::demo::night_sky::place() {
                 self.settings.night_sky_place = crate::world::night_sky::SkyPlace::Custom;
                 self.settings.night_sky_latitude = latitude;
                 if let Some(gain) = gain {
                     self.settings.night_sky_gain = gain;
+                }
+                if let Some(milky_way) = milky_way {
+                    self.settings.night_sky_milky_way = milky_way;
                 }
                 self.settings.sync_night_sky();
             }
@@ -18764,6 +19024,13 @@ impl ApplicationHandler for App {
                     self.panels.owned_land = true;
                     self.world.group_money.request_owned_land();
                 }
+            }
+            // AURORA_DEMO_RENDER_TYPES=water,avatars,…: those rendering
+            // types hidden from the start (Advanced › Rendering types)
+            if let Ok(list) = std::env::var("AURORA_DEMO_RENDER_TYPES") {
+                let (hidden, particles) = crate::scene::render_types::Hidden::parse(&list);
+                self.settings.debug.hidden_types = hidden;
+                self.settings.world_overlays.hide_particles |= particles;
             }
             // AURORA_DEMO_CAM="yaw,pitch,distance" (radians, meters) for captures
             if let Ok(v) = std::env::var("AURORA_DEMO_CAM") {
@@ -18922,6 +19189,12 @@ impl ApplicationHandler for App {
             {
                 self.web_browser_ui.go_to(&page);
                 self.panels.web_browser = true;
+                self.panels.perf = false;
+            }
+            // AURORA_DEMO_DESTINATIONS=<page>|sl: the Destination Guide on
+            // that page (sl: the Second Life guide's address), open at start
+            if self.destination_guide().is_some() {
+                self.panels.destinations = true;
                 self.panels.perf = false;
             }
             // AURORA_DEMO_MARKETPLACE_LISTINGS=merchant|not-merchant|error|audit:
@@ -19763,7 +20036,7 @@ impl ApplicationHandler for App {
             if let Ok(view) = std::env::var("AURORA_DEMO_APPEARANCE") {
                 crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);
                 // showcase: the gallery's showcase with folders, pictures and favorites
-                let showcase = view == "showcase" || view.starts_with("portrait") || view == "photo-mode";
+                let showcase = view == "showcase" || view.starts_with("portrait") || view == "photo-mode" || view.starts_with("batch");
                 if view.starts_with("folders") || showcase {
                     crate::world::outfit_folders::seed_demo(&mut self.world.inventory, self.world.agent_id);
                     if view.starts_with("folders-many") {
@@ -20673,7 +20946,10 @@ impl ApplicationHandler for App {
             // on a prim east of the start position, playing at once
             if let Some(v) = std::env::var_os("AURORA_DEMO_MEDIA") {
                 let v = v.to_string_lossy().into_owned();
-                let url = if v == "1" || v.is_empty() {
+                // Mini controls: the same page, with the address hidden
+                // (LLMediaEntry::MINI, LLPanelPrimMediaControls::updateShape).
+                let mini = v == "mini";
+                let url = if v == "1" || v.is_empty() || mini {
                     crate::demo::demo_media_page().to_string()
                 } else {
                     v
@@ -20682,7 +20958,7 @@ impl ApplicationHandler for App {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
                 }
-                self.media.demo_entry(object, face, &url);
+                self.media.demo_face(object, face, &url, mini);
             }
             // AURORA_DEMO_WORN: an object worn on our avatar's back
             if std::env::var_os("AURORA_DEMO_WORN").is_some() {
@@ -21195,8 +21471,23 @@ impl ApplicationHandler for App {
                         self.down.remove(&Input::key(code));
                         return;
                     }
+                    // a dialog over the photo mode reads its keys through
+                    // egui: Enter is its own, the other keys go on to their
+                    // usual handling without the viewfinder's
+                    // (`viewfinder::behind_dialog`)
+                    let behind = self.viewfinder_behind_dialog(code, pressed);
+                    if matches!(
+                        behind,
+                        Some(viewfinder::BehindDialog::Answer | viewfinder::BehindDialog::ReleaseShutter)
+                    ) {
+                        self.down.remove(&Input::key(code));
+                        return;
+                    }
                     // the photo viewfinder's keys (the shutter, its menu…)
-                    if !self.egui_ctx.egui_wants_keyboard_input() && self.viewfinder_key(code, &ke.logical_key, pressed, ke.repeat) {
+                    if behind.is_none()
+                        && !self.egui_ctx.egui_wants_keyboard_input()
+                        && self.viewfinder_key(code, &ke.logical_key, pressed, ke.repeat)
+                    {
                         self.down.remove(&Input::key(code));
                         return;
                     }

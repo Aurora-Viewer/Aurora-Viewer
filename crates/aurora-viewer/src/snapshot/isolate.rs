@@ -7,7 +7,7 @@
 //! and the photo keeps its alpha: a PNG with nothing around the subject.
 //!
 //! The scene flags what is left out for the GPU lists
-//! (`object_flags::PHOTO_HIDDEN`); the particles, name plates and water
+//! (`object_flags::HIDDEN`); the particles, name plates and water
 //! effects read [`object_visible`]. While choosing in the scene everything
 //! is drawn, the chosen ones outlined, so that anything can be clicked.
 

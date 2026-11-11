@@ -66,6 +66,16 @@ pub enum ChatThumbnails {
     TopRight,
 }
 
+/// Where web pages open, like `PreferredBrowserBehavior` and
+/// `LLWeb::useExternalBrowser` in the Legacy Viewer.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum BrowserBehavior {
+    SystemForAll,
+    #[default]
+    BuiltInForSecondLife,
+    BuiltInForAll,
+}
+
 /// Where the islands show the favourites (Preferences › Interface,
 /// "Favourites access"): a button of the place island and its menu (the
 /// default), a row of pills under the islands, or a button of the dock and
@@ -397,6 +407,9 @@ pub struct DebugView {
     pub lod_info: bool,
     /// Dev Toolbox R3: every face tinted by the pass it is drawn in.
     pub pass_view: bool,
+    /// Advanced › Rendering types: what is not drawn (the Legacy Viewer's
+    /// render types, not saved there either).
+    pub hidden_types: crate::scene::render_types::Hidden,
 }
 
 impl DebugView {
@@ -460,6 +473,8 @@ pub struct Settings {
     /// The Legacy Viewer's FSBrowserHomePage: the page the built-in web browser (toolbar
     /// button) opens on (Preferences › Network and cache).
     pub browser_home_page: String,
+    /// PreferredBrowserBehavior (Preferences › Network and cache).
+    pub browser_behavior: BrowserBehavior,
     /// Alpha feedback shortcut; Help and login remain available.
     pub show_bug_report: bool,
     /// ShowHUDAttachments, enabled by default in Firestorm.
@@ -602,6 +617,9 @@ pub struct Settings {
     pub night_sky_hour: crate::world::night_sky::StarHour,
     /// Brightness of the real stars, 0.5 to 4 times the catalogue's.
     pub night_sky_gain: f32,
+    /// Brightness of the real sky's Milky Way, 0 (hidden) to 2 times its
+    /// map's light.
+    pub night_sky_milky_way: f32,
     pub exposure: f32,
     /// Contrast adaptive sharpening (Firestorm RenderCASSharpness, 0.4).
     pub sharpen: f32,
@@ -1935,6 +1953,7 @@ impl Default for Settings {
             language: "default".into(),
             language_is_public: true,
             browser_home_page: crate::ui::web_browser::DEFAULT_HOME.into(),
+            browser_behavior: BrowserBehavior::default(),
             show_bug_report: true,
             show_huds: true,
             sun_beacon: false,
@@ -1993,6 +2012,7 @@ impl Default for Settings {
             night_sky_longitude: crate::world::night_sky::LONGITUDE as f32,
             night_sky_hour: Default::default(),
             night_sky_gain: crate::world::night_sky::DEFAULT_GAIN,
+            night_sky_milky_way: crate::world::night_sky::DEFAULT_MILKY_WAY,
             exposure: 1.0,
             sharpen: 0.4,
             glow: true,
@@ -2628,9 +2648,9 @@ impl Settings {
 
     /// The night sky's place, latitude and longitude agree (a preset gives
     /// its own, Custom keeps the ones typed), within range; the stars'
-    /// brightness within 0.5 to 4.
+    /// brightness within 0.5 to 4, the Milky Way's within 0 to 2.
     pub(crate) fn sync_night_sky(&mut self) {
-        use crate::world::night_sky::{DEFAULT_GAIN, GAIN_RANGE, LATITUDE, LONGITUDE};
+        use crate::world::night_sky::{DEFAULT_GAIN, DEFAULT_MILKY_WAY, GAIN_RANGE, LATITUDE, LONGITUDE, MILKY_WAY_RANGE, within};
         self.night_sky_latitude = match self.night_sky_place.latitude() {
             Some(latitude) => latitude,
             None if self.night_sky_latitude.is_finite() => self.night_sky_latitude.clamp(-90.0, 90.0),
@@ -2641,11 +2661,8 @@ impl Settings {
             None if self.night_sky_longitude.is_finite() => self.night_sky_longitude.clamp(-180.0, 180.0),
             None => LONGITUDE as f32,
         };
-        self.night_sky_gain = if self.night_sky_gain.is_finite() {
-            self.night_sky_gain.clamp(*GAIN_RANGE.start(), *GAIN_RANGE.end())
-        } else {
-            DEFAULT_GAIN
-        };
+        self.night_sky_gain = within(self.night_sky_gain, GAIN_RANGE, DEFAULT_GAIN);
+        self.night_sky_milky_way = within(self.night_sky_milky_way, MILKY_WAY_RANGE, DEFAULT_MILKY_WAY);
     }
 
     pub(crate) fn sanitized(mut self) -> Settings {
@@ -3825,6 +3842,35 @@ mod tests {
             assert_eq!(saved.plate_click, original.plate_click);
             assert_eq!(saved.plate_shift_click, original.plate_shift_click);
             assert_eq!(saved.plate_ctrl_click, original.plate_ctrl_click);
+        }
+    }
+
+    #[test]
+    fn browser_behavior_round_trips_and_old_settings_keep_aurora_routing() {
+        let old: Settings = serde_json::from_str(r#"{"browser_home_page":"https://example.net/"}"#).expect("old settings");
+        assert_eq!(old.browser_behavior, BrowserBehavior::BuiltInForSecondLife);
+        // an ordinary link still opens in the system browser, as before the choice existed
+        assert!(crate::link_trust::should_use_system_browser(
+            "https://example.org/chat",
+            old.browser_behavior,
+            crate::link_trust::BrowserEntryPoint::Link
+        ));
+        let old_saved = serde_json::to_string(&old).expect("save old settings");
+        let old_reloaded: Settings = serde_json::from_str(&old_saved).expect("reload old settings");
+        assert_eq!(old_reloaded.browser_behavior, BrowserBehavior::BuiltInForSecondLife);
+
+        for behavior in [
+            BrowserBehavior::SystemForAll,
+            BrowserBehavior::BuiltInForSecondLife,
+            BrowserBehavior::BuiltInForAll,
+        ] {
+            let original = Settings {
+                browser_behavior: behavior,
+                ..Settings::default()
+            };
+            let json = serde_json::to_string(&original).expect("save browser choice");
+            let reloaded: Settings = serde_json::from_str(&json).expect("reload browser choice");
+            assert_eq!(reloaded.browser_behavior, behavior);
         }
     }
 

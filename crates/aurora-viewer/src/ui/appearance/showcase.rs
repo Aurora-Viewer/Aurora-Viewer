@@ -233,7 +233,7 @@ pub(super) fn show(
         collection_menu(&mut g, p, world, st, entries, shown.len(), favorites, no_picture);
         g.add_space(6.0);
     }
-    banner(&mut g, p, st, no_picture);
+    banner(&mut g, p, world, st, shown, no_picture, actions);
     egui::ScrollArea::vertical()
         .id_salt("appearance_showcase")
         .auto_shrink([false, false])
@@ -391,9 +391,18 @@ fn collection_menu(
     });
 }
 
-/// "N outfits have no picture yet", with the way to see them; closed for
-/// the session by its cross.
-fn banner(ui: &mut egui::Ui, p: &Palette, st: &mut AppearanceUi, no_picture: usize) {
+/// "N outfits have no picture yet", with Take the portraits (the batch
+/// portraits' window, over our own outfits shown); closed for the session
+/// by its cross.
+fn banner(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    st: &mut AppearanceUi,
+    shown: &[Uuid],
+    no_picture: usize,
+    actions: &mut Vec<Action>,
+) {
     let state = &mut st.showcase_state;
     if no_picture == 0 || state.banner_hidden || state.filter == Filter::NoPicture {
         return;
@@ -407,9 +416,10 @@ fn banner(ui: &mut egui::Ui, p: &Palette, st: &mut AppearanceUi, no_picture: usi
                 if super::icon_button(ui, p, "x", aurora_i18n::tr!("ui-appearance-showcase-dismiss")).clicked() {
                     state.banner_hidden = true;
                 }
-                let show = aurora_i18n::tr!("ui-appearance-showcase-show-them");
-                if widgets::flat_button(ui, p, show).clicked() {
-                    state.filter = Filter::NoPicture;
+                let take = aurora_i18n::tr!("ui-appearance-batch-open");
+                if widgets::flat_button(ui, p, take).clicked() {
+                    let own = shown.iter().copied().filter(|id| own_outfit(world, *id)).collect();
+                    actions.push(Action::OutfitBatch(own));
                 }
                 ui.add(egui::Label::new(egui::RichText::new(text).size(12.0).color(p.muted)).truncate());
             });
@@ -698,11 +708,17 @@ fn preview_panel(
     let (picture, _) = ui.allocate_exact_size(Vec2::splat(side), Sense::hover());
     let radius = ui.visuals().window_corner_radius;
     ui.painter().rect_filled(picture, radius, p.panel);
+    // the outfit's paid HD picture once it has loaded (`outfit_hd`), else
+    // its picture; the cards keep the thumbnail
+    let hd = model::outfit_hd_picture(inv, id);
+    if let Some(hd) = hd {
+        st.wanted_images.insert(hd);
+    }
     let image = st.outfit_picture(inv, id);
     if !image.is_nil() {
         st.wanted_images.insert(image);
     }
-    if let Some(t) = images.get(&image) {
+    if let Some(t) = hd.and_then(|hd| images.get(&hd)).or_else(|| images.get(&image)) {
         let (image_rect, uv) = super::preview_rects(picture.shrink(2.0), t.size_vec2(), st.fill_previews);
         ui.painter().image(t.id(), image_rect, uv, widgets::PICTURE_TINT);
     } else {
@@ -880,7 +896,7 @@ fn section_of(asset_type: i32) -> usize {
 fn contents(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi, id: Uuid, actions: &mut Vec<Action>) {
     let inv = &world.inventory;
     let mut links = model::folder_links(inv, id);
-    items::sort_links(inv, &mut links, false);
+    items::sort_links(inv, &mut links);
     let found: Vec<_> = links
         .iter()
         .filter(|l| !l.folder)

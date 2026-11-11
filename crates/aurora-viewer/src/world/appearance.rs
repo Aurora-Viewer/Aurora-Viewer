@@ -61,6 +61,9 @@ pub enum Action {
     OutfitPortrait(Uuid),
     /// The photo mode, square, for an outfit's picture.
     OutfitPhotoMode(Uuid),
+    /// The batch portraits' window, over these outfits (the showcase's,
+    /// in its order).
+    OutfitBatch(Vec<Uuid>),
     Wear(Uuid, bool),
     WearOutfits {
         folders: Vec<Uuid>,
@@ -152,6 +155,32 @@ pub fn outfit_image(inv: &Inventory, outfit: Uuid) -> Uuid {
         todo.extend(&folder.children);
     }
     Uuid::nil()
+}
+
+/// The HD pictures this viewer uploaded into an outfit's own folder
+/// (`snapshot::portrait::HD_PICTURE_DESC`): our own textures, not links,
+/// oldest first. The showcase shows the newest in its large preview; the
+/// cards keep the thumbnail, as LLOutfitGallery::refreshOutfit does.
+pub fn hd_pictures(inv: &Inventory, outfit: Uuid) -> Vec<&InvItem> {
+    let Some(folder) = inv.folders.get(&outfit) else {
+        return Vec::new();
+    };
+    let mut found: Vec<(usize, &InvItem)> = folder
+        .items
+        .iter()
+        .filter_map(|id| inv.items.get(id))
+        .filter(|it| {
+            it.parent == outfit && it.asset_type == 0 && !it.asset_id.is_nil() && it.desc == crate::snapshot::portrait::HD_PICTURE_DESC
+        })
+        .enumerate()
+        .collect();
+    found.sort_by_key(|(at, it)| (it.created_at, *at));
+    found.into_iter().map(|(_, it)| it).collect()
+}
+
+/// The newest HD picture of an outfit, its texture's asset.
+pub fn outfit_hd_picture(inv: &Inventory, outfit: Uuid) -> Option<Uuid> {
+    hd_pictures(inv, outfit).last().map(|it| it.asset_id)
 }
 
 /// LLInventoryModel::findCategoryUUIDForTypeInRoot (llinventorymodel.cpp),
@@ -921,6 +950,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
         | Action::OutfitSnapshot(_)
         | Action::OutfitPortrait(_)
         | Action::OutfitPhotoMode(_)
+        | Action::OutfitBatch(_)
         | Action::Category(..)
         | Action::Folders(_)
         | Action::DeleteFromOutfit { .. }
@@ -1044,6 +1074,22 @@ fn drop_coalesced(inv: &Inventory, links: &mut Vec<OutfitLink>) {
     links.retain(|l| l.folder || !inv.items.get(&l.target).is_some_and(coalesced));
 }
 
+/// A clothing link's place among the layers of its wearable type `kind`,
+/// closest to the body first: the `@<type * 100 + index>` of its description
+/// (build_order_string, indra/newview/llappearancemgr.cpp), read as a number.
+/// A link without one, or with another type's, sinks to the end, as in
+/// WearablesOrderComparator: ties then go by name. The outfit lists and the
+/// layers worn share this order, so a list shows what the avatar wears.
+pub fn layer_rank(link: &OutfitLink, kind: u32) -> (u32, String) {
+    let order = link
+        .desc
+        .strip_prefix('@')
+        .and_then(|s| s.parse::<u32>().ok())
+        .filter(|order| order / 100 == kind)
+        .unwrap_or(u32::MAX);
+    (order, link.name.to_lowercase())
+}
+
 fn normalize_layers(inv: &Inventory, links: &mut [OutfitLink]) {
     for kind in 4..=16 {
         let mut indices: Vec<_> = links
@@ -1056,17 +1102,9 @@ fn normalize_layers(inv: &Inventory, links: &mut [OutfitLink]) {
                         .get(&l.target)
                         .is_some_and(|it| it.asset_type == 5 && it.flags & 0xff == kind)
             })
-            .map(|(i, l)| {
-                let order = l
-                    .desc
-                    .strip_prefix('@')
-                    .and_then(|s| s.parse::<u32>().ok())
-                    .filter(|order| order / 100 == kind)
-                    .unwrap_or(u32::MAX);
-                (i, order)
-            })
+            .map(|(i, l)| (i, layer_rank(l, kind)))
             .collect();
-        indices.sort_by_key(|(_, order)| *order);
+        indices.sort_by(|a, b| a.1.cmp(&b.1));
         for (order, (i, _)) in indices.iter().enumerate() {
             links[*i].desc = format!("@{}", kind * 100 + order as u32);
         }
@@ -2351,6 +2389,38 @@ mod tests {
     }
 
     #[test]
+    fn the_newest_hd_picture_is_found_and_never_worn() {
+        let mut inv = fixture();
+        let outfit = Uuid::from_u128(702);
+        let before = folder_links(&inv, outfit);
+        assert_eq!(outfit_hd_picture(&inv, outfit), None);
+        let texture = |n: u128, desc: &str, created_at: i64| InvItem {
+            id: Uuid::from_u128(0x4d00 + n),
+            parent: outfit,
+            name: format!("Photo {n}"),
+            desc: desc.to_owned(),
+            asset_type: 0,
+            asset_id: Uuid::from_u128(0x4e00 + n),
+            created_at,
+            ..Default::default()
+        };
+        let ours = crate::snapshot::portrait::HD_PICTURE_DESC;
+        inv.add_items(vec![
+            texture(1, ours, 10),
+            texture(2, ours, 20),
+            // a texture the user keeps in the folder is not ours
+            texture(3, "a merchant's picture", 30),
+        ]);
+        assert_eq!(outfit_hd_picture(&inv, outfit), Some(Uuid::from_u128(0x4e02)));
+        assert_eq!(
+            hd_pictures(&inv, outfit).iter().map(|it| it.id).collect::<Vec<_>>(),
+            [Uuid::from_u128(0x4d01), Uuid::from_u128(0x4d02)]
+        );
+        // a texture in the folder is never part of what the outfit wears
+        assert_eq!(folder_links(&inv, outfit).len(), before.len());
+    }
+
+    #[test]
     fn save_to_selected_outfit_updates_its_links_and_the_cof_base() {
         let mut inv = fixture();
         let selected = Uuid::from_u128(702);
@@ -2536,6 +2606,53 @@ mod tests {
             links.iter().find(|l| l.target == Uuid::from_u128(715)).expect("jacket").desc,
             "@800"
         );
+    }
+
+    #[test]
+    fn layers_without_a_place_sink_to_the_top_by_name() {
+        // WearablesOrderComparator: placed tattoos keep their order; an
+        // empty description, a creator's text or another type's place go
+        // after them, by name, whatever the folder's order
+        let mut inv = Inventory::default();
+        let mut links = Vec::new();
+        for (n, name, desc) in [
+            (1, "Zebra freckles", ""),
+            (2, "Outer tattoo", "@1401"),
+            (3, "Beard", "Made by a creator"),
+            (4, "Inner tattoo", "@1400"),
+            (5, "anchor tattoo", "@500"),
+        ] {
+            let id = Uuid::from_u128(n);
+            inv.add_items(vec![InvItem {
+                id,
+                asset_type: 5,
+                flags: 14,
+                name: name.into(),
+                ..Default::default()
+            }]);
+            links.push(OutfitLink {
+                target: id,
+                name: name.into(),
+                desc: desc.into(),
+                folder: false,
+                inv_type: 18,
+            });
+        }
+        normalize_layers(&inv, &mut links);
+        let mut order: Vec<_> = links.iter().map(|l| (l.desc.clone(), l.target.as_u128())).collect();
+        order.sort();
+        assert_eq!(
+            order,
+            [
+                ("@1400".to_owned(), 4),
+                ("@1401".to_owned(), 2),
+                ("@1402".to_owned(), 5),
+                ("@1403".to_owned(), 3),
+                ("@1404".to_owned(), 1),
+            ]
+        );
+        assert!(layer_rank(&links[0], 14) > layer_rank(&links[1], 14));
+        assert_eq!(layer_rank(&links[0], 5).0, u32::MAX, "another type's place");
     }
 
     #[test]

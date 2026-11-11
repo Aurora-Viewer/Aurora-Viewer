@@ -23,6 +23,20 @@ use super::skin::Layout;
 use crate::theme::Palette;
 use egui::{Color32, RichText, Vec2};
 
+/// Advanced › Admin's entries (menu_viewer.xml, the Admin menu).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdminAction {
+    TakeCopy,
+    ForceOwnerToMe,
+    ForceOwnerPermissive,
+    Delete,
+    Lock,
+    AssetIds,
+    ParcelForceOwnerToMe,
+    ClaimPublicLand,
+    SaveRegionState,
+}
+
 #[derive(Default)]
 pub enum BarAction {
     ToggleVr,
@@ -79,11 +93,16 @@ pub enum BarAction {
     /// Show Friends Only switched (RFO, FSRenderFriendsOnly).
     ToggleFriendsOnly,
     ToggleNameTags,
+    /// The toolbar's HUDs button: Show HUDs switched.
+    ToggleHuds,
     ToggleMoveLock,
     /// Me › Quickjump (Self.toggleIgnorePreJump, FSIgnoreFinishAnimation).
     ToggleQuickjump,
     /// Advanced › Quiet snapshots (PlayModeUISndSnapshot).
     ToggleQuietSnapshots,
+    /// Advanced › Request Admin Status (true) / Leave Admin Status (false).
+    AdminStatus(bool),
+    Admin(AdminAction),
     ToggleWaterWalk,
     ToggleSwimming,
     MoveLockOptions,
@@ -190,6 +209,9 @@ pub enum BarAction {
     HoverTips(HoverTipsMenu),
     WorldOverlays(crate::world::beacons::Overlays),
     ShowTransparency,
+    /// Advanced › Rendering types: what is not drawn, and whether the
+    /// particles are hidden (their own switch, World › Show more).
+    RenderTypes(crate::scene::render_types::Hidden, bool),
     OwnedLand,
 }
 
@@ -270,6 +292,9 @@ pub struct StatusInfo<'a> {
     /// The grid has a Marketplace (World › SL Marketplace is shown only on
     /// the Second Life grids, GridCheck "secondlife").
     pub marketplace: bool,
+    /// The grid has a Destination Guide (World › Destinations is shown only
+    /// then, GridFeatureCheck destination_guide).
+    pub destinations: bool,
     /// The landmark lying on the agent's parcel (hasParcelLandmark): the
     /// star is lit and World › Landmark this place greyed out.
     pub parcel_landmark: Option<super::landmark_create::ParcelLandmark>,
@@ -284,6 +309,15 @@ pub struct StatusInfo<'a> {
     /// console, estate managers).
     pub release_notes: bool,
     pub region_console: bool,
+    /// The god level the region gave us: Advanced › Request / Leave Admin
+    /// Status.
+    pub god_level: u8,
+    /// Objects are selected: Admin › Object's entries act on them.
+    pub admin_objects: bool,
+    /// The region answers GodlikeMessage and StateSave: OpenSim ignores
+    /// both (no handler in LLClientView's subscribers), so Get Asset IDs,
+    /// Claim Public Land and Save Region State are left out there.
+    pub admin_requests: bool,
     /// The grid sent a message at login (Contents › Message of the day).
     pub motd: bool,
     /// The help page of the grid info (OpenSim), with the grid's name:
@@ -325,6 +359,10 @@ pub struct StatusInfo<'a> {
     pub hover_tips: HoverTipsMenu,
     pub world_overlays: crate::world::beacons::Overlays,
     pub show_transparency: bool,
+    /// Advanced › Rendering types (not saved), and the keys of each row's
+    /// shortcut, in the order of `RENDER_TYPE_ACTIONS`.
+    pub hidden_types: crate::scene::render_types::Hidden,
+    pub render_type_keys: [String; 10],
     /// The conversations' thumbnails at the top right (#1134): how many,
     /// 0 for none (`thumbnails::reserve_top`).
     pub conversation_thumbnails: usize,
@@ -577,6 +615,82 @@ fn flip(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: &mut bool, 
         *on = !*on;
     }
     clicked
+}
+
+/// The shortcut of each row of Advanced › Rendering types, in its order
+/// (Animesh has none, as in the Legacy Viewer).
+pub const RENDER_TYPE_ACTIONS: [Option<crate::keybinds::Action>; 10] = {
+    use crate::keybinds::Action as A;
+    [
+        Some(A::RenderTerrain),
+        Some(A::RenderWater),
+        Some(A::RenderSky),
+        Some(A::RenderClouds),
+        Some(A::RenderObjects),
+        Some(A::RenderAvatars),
+        None,
+        Some(A::RenderTrees),
+        Some(A::RenderGrass),
+        Some(A::HideParticles),
+    ]
+};
+
+/// The icons of Advanced › Rendering types: its submenu, its rows in the
+/// order of `RENDER_TYPE_ACTIONS`, then Show all.
+pub const RENDER_TYPE_ICONS: [&str; 12] = [
+    "stack-2-filled",
+    "mountain-filled",
+    "droplet-filled",
+    "sun-filled",
+    "cloud-filled",
+    "box",
+    "user-filled",
+    "run",
+    "tree",
+    "seedling-filled",
+    "sparkles-filled",
+    "eye-filled",
+];
+
+/// Advanced › Rendering types: a tick on what is drawn, as the Legacy
+/// Viewer's Develop › Rendering Types (render_type_from_string,
+/// indra/newview/llviewermenu.cpp); the menu stays open, to turn several
+/// off in a row. The Legacy Viewer's material passes (Simple, Alpha,
+/// Bump…) are not listed: Aurora does not split its draws that way.
+fn render_types_menu(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, action: &mut BarAction) {
+    use aurora_i18n::tr;
+    let mut h = st.hidden_types;
+    let mut particles = st.world_overlays.hide_particles;
+    let mut changed = false;
+    let rows = [
+        (tr!("render-types-terrain"), &mut h.terrain),
+        (tr!("render-types-water"), &mut h.water),
+        (tr!("render-types-sky"), &mut h.sky),
+        (tr!("render-types-clouds"), &mut h.clouds),
+        (tr!("render-types-objects"), &mut h.objects),
+        (tr!("render-types-avatars"), &mut h.avatars),
+        (tr!("render-types-animesh"), &mut h.animesh),
+        (tr!("render-types-trees"), &mut h.trees),
+        (tr!("render-types-grass"), &mut h.grass),
+        (tr!("render-types-particles"), &mut particles),
+    ];
+    let icons = &RENDER_TYPE_ICONS[1..];
+    for (((label, off), keys), icon) in rows.into_iter().zip(&st.render_type_keys).zip(icons) {
+        let mut drawn = !*off;
+        if menu::toggle_keys(ui, p, icon, label, &mut drawn, keys) {
+            *off = !drawn;
+            changed = true;
+        }
+    }
+    let any_hidden = h != Default::default() || particles;
+    if menu::item_if(ui, p, RENDER_TYPE_ICONS[11], tr!("render-types-show-all"), any_hidden) {
+        h = Default::default();
+        particles = false;
+        changed = true;
+    }
+    if changed {
+        *action = BarAction::RenderTypes(h, particles);
+    }
 }
 
 /// Check row of a menu for the floater `id`, ticked while it is open: it
@@ -943,6 +1057,11 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             "places",
             &mut panels.places,
         );
+        // menu_viewer.xml: Destinations, after Places (Floater.Toggle), on a
+        // grid with a guide
+        if st.destinations && menu::item(ui, p, "map-2", aurora_i18n::tr!("toolbar-command-destinations")) {
+            super::widgets::toggle_floater(ui.ctx(), super::destinations::WINDOW, &mut panels.destinations);
+        }
         // menu_viewer.xml: Parcel Details (About Land), then Region Details
         // (Region / Estate, Alt+R)
         // (About Land's floater has an id per layout: the flag alone)
@@ -1282,6 +1401,10 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 crate::ui::debug_settings::WINDOW,
                 &mut panels.debug_settings,
             );
+            // Develop › Rendering Types (LLAdvancedToggleRenderType)
+            menu::submenu(ui, p, RENDER_TYPE_ICONS[0], aurora_i18n::tr!("render-types-menu"), true, |ui| {
+                render_types_menu(ui, p, st, action);
+            });
             // Develop › Consoles › Region Debug Console, for those the
             // region gives the console to
             if st.region_console {
@@ -1294,6 +1417,23 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                     crate::ui::sim_console::WINDOW,
                     &mut panels.sim_console,
                 );
+            }
+            // Advanced › Request Admin Status (Ctrl+Alt+G) / Leave Admin
+            // Status (Advanced.RequestAdminStatus / LeaveAdminStatus): asked
+            // of the region, which grants it or not
+            if st.god_level == 0 {
+                // the default chord (⌘⌥G on macOS), as the other menu rows
+                let keys = crate::keybinds::chord_label("KeyG", true, true, false);
+                if menu::item_keys(ui, p, "crown-filled", aurora_i18n::tr!("god-mode-request"), &keys) {
+                    *action = BarAction::AdminStatus(true);
+                }
+            } else if menu::item(ui, p, "crown-filled", aurora_i18n::tr!("god-mode-leave")) {
+                *action = BarAction::AdminStatus(false);
+            }
+            // Advanced › Admin (menu_viewer.xml), while the region keeps
+            // our god level
+            if st.god_level > 0 {
+                admin_menu(ui, p, st.admin_objects, st.admin_requests, action);
             }
             // Advanced › Quiet Snapshots (PlayModeUISndSnapshot)
             let quiet = aurora_i18n::tr!("photo-quiet-snapshots");
@@ -2195,6 +2335,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "gridstatus" => toggle(super::grid_status::WINDOW, &mut panels.grid_status),
         // ToggleWebBrowser: the browser window on the home page, or closed
         "webbrowser" => toggle(super::web_browser::WINDOW, &mut panels.web_browser),
+        // Floater.Toggle destinations: the grid's Destination Guide
+        "destinations" => toggle(super::destinations::WINDOW, &mut panels.destinations),
         // Floater.Toggle fs_voice_controls
         "voice" => toggle(super::voice_controls::WINDOW, &mut panels.voice_controls),
         // the Legacy Viewer's Statistics (Floater.Toggle stats) opens
@@ -2217,6 +2359,9 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         // TogglePerAccountControl FSRenderFriendsOnly
         "RFO" => return BarAction::ToggleFriendsOnly,
         "name_tags" => return BarAction::ToggleNameTags,
+        // View › Show User Interface and World › HUDs › Show HUDs as buttons
+        "hide_interface" => return BarAction::ToggleInterface,
+        "huds" => return BarAction::ToggleHuds,
         "preferences" => toggle("options", &mut panels.settings),
         // Firestorm's Move and View buttons open the controls
         "move" => {
@@ -2298,6 +2443,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "regiontracker" => panels.region_tracker,
         "gridstatus" => panels.grid_status,
         "webbrowser" => panels.web_browser,
+        "destinations" => panels.destinations,
         "voice" => panels.voice_controls,
         "performance" | "statistics" => panels.perf,
         "snapshot" => panels.snapshot,
@@ -3023,6 +3169,10 @@ pub(crate) fn toolbar_row(
             toolbar.chat_bar_active
         } else if b.command == "name_tags" {
             !toolbar.show_name_tags
+        } else if b.command == "huds" {
+            !toolbar.show_huds
+        } else if b.command == "hide_interface" {
+            toolbar.interface_hidden
         } else if b.command == "RFO" {
             toolbar.friends_only_active
         } else if b.command == "vr_view" {
@@ -3041,7 +3191,9 @@ pub(crate) fn toolbar_row(
             && (!panels.chat || super::widgets::floater_minimized(ui.ctx(), "conversations"));
         let count = if badge { row.unread } else { 0 };
         // the Photo roll's button, dimmed while the session has no photo
-        let usable = !(b.command == "photo_roll" && toolbar.photo_roll_empty);
+        // and the Destination Guide's on a grid without one (GridFeatureCheck)
+        let no_guide = b.command == "destinations" && !toolbar.destinations;
+        let usable = !(b.command == "photo_roll" && toolbar.photo_roll_empty) && !no_guide;
         let tip = if badge {
             aurora_i18n::tr!(
                 "ui-bars-unread",
@@ -3055,8 +3207,24 @@ pub(crate) fn toolbar_row(
                 aurora_i18n::tr!("ui-bars-immersive-hide-tags")
             }
             .to_owned()
+        } else if b.command == "huds" {
+            if active {
+                aurora_i18n::tr!("ui-bars-immersive-show-huds")
+            } else {
+                aurora_i18n::tr!("ui-bars-immersive-hide-huds")
+            }
+            .to_owned()
+        } else if b.command == "hide_interface" {
+            if active {
+                aurora_i18n::tr!("ui-bars-show-interface")
+            } else {
+                aurora_i18n::tr!("ui-bars-hide-interface")
+            }
+            .to_owned()
         } else if !super::toolbar::ready(&b.command) {
             format!("{}\n{}", super::toolbar::label(b), menu::not_yet())
+        } else if no_guide {
+            format!("{}\n{}", super::toolbar::label(b), aurora_i18n::tr!("destinations-unavailable"))
         } else if !usable {
             format!("{}\n{}", super::toolbar::label(b), aurora_i18n::tr!("photo-reel-none"))
         } else {
@@ -3076,7 +3244,12 @@ pub(crate) fn toolbar_row(
             p,
             icons,
             &b.command,
-            if b.command == "name_tags" && active { "label-off" } else { &b.icon },
+            match (b.command.as_str(), active) {
+                ("name_tags", true) => "label-off",
+                ("huds", true) => "device-desktop-off",
+                ("hide_interface", true) => "eye-filled",
+                _ => &b.icon,
+            },
             super::toolbar::label(b),
             &tip,
             active,
@@ -3337,6 +3510,76 @@ pub fn bottom_bar(
         super::widgets::finish_bar_glass(&painter, slot, resp.response.rect, p);
     }
     (out, action, resp.response.rect.top(), width_committed)
+}
+
+/// Advanced › Admin: the Object, Parcel and Region entries of the Legacy
+/// Viewer's Admin menu (menu_viewer.xml; handle_force_ownership,
+/// handle_force_delete, handle_object_lock, handle_claim_public_land…).
+fn admin_menu(ui: &mut egui::Ui, p: &Palette, objects: bool, requests: bool, action: &mut BarAction) {
+    let mut row = |ui: &mut egui::Ui, icon: &str, label: &str, enabled: bool, a: AdminAction| {
+        if ui.add_enabled_ui(enabled, |ui| menu::item(ui, p, icon, label)).inner {
+            *action = BarAction::Admin(a);
+        }
+    };
+    menu::submenu(ui, p, "crown-filled", aurora_i18n::tr!("admin-menu"), true, |ui| {
+        menu::submenu(ui, p, "cube", aurora_i18n::tr!("admin-object"), true, |ui| {
+            row(
+                ui,
+                "copy-filled",
+                aurora_i18n::tr!("admin-take-copy"),
+                objects,
+                AdminAction::TakeCopy,
+            );
+            row(
+                ui,
+                "user-filled",
+                aurora_i18n::tr!("admin-force-owner"),
+                objects,
+                AdminAction::ForceOwnerToMe,
+            );
+            row(
+                ui,
+                "key-filled",
+                aurora_i18n::tr!("admin-force-permissive"),
+                objects,
+                AdminAction::ForceOwnerPermissive,
+            );
+            row(ui, "trash-filled", aurora_i18n::tr!("admin-delete"), objects, AdminAction::Delete);
+            row(ui, "lock-filled", aurora_i18n::tr!("admin-lock"), objects, AdminAction::Lock);
+            if requests {
+                row(ui, "id-filled", aurora_i18n::tr!("admin-asset-ids"), objects, AdminAction::AssetIds);
+            }
+        });
+        menu::submenu(ui, p, "map-pin-filled", aurora_i18n::tr!("admin-parcel"), true, |ui| {
+            row(
+                ui,
+                "user-filled",
+                aurora_i18n::tr!("admin-force-owner"),
+                true,
+                AdminAction::ParcelForceOwnerToMe,
+            );
+            if requests {
+                row(
+                    ui,
+                    "flag-filled",
+                    aurora_i18n::tr!("admin-claim-public-land"),
+                    true,
+                    AdminAction::ClaimPublicLand,
+                );
+            }
+        });
+        if requests {
+            menu::submenu(ui, p, "world-filled", aurora_i18n::tr!("admin-region"), true, |ui| {
+                row(
+                    ui,
+                    "device-floppy-filled",
+                    aurora_i18n::tr!("admin-save-region-state"),
+                    true,
+                    AdminAction::SaveRegionState,
+                );
+            });
+        }
+    });
 }
 
 #[cfg(test)]
@@ -3750,6 +3993,7 @@ mod tests {
             ("group_titles", super::super::group_titles::WINDOW, |p| p.group_titles),
             ("gridstatus", super::super::grid_status::WINDOW, |p| p.grid_status),
             ("webbrowser", super::super::web_browser::WINDOW, |p| p.web_browser),
+            ("destinations", super::super::destinations::WINDOW, |p| p.destinations),
             ("beacons", super::super::beacons::WINDOW, |p| p.beacons),
             ("quickprefs", super::super::quick_prefs::WINDOW, |p| p.quick_prefs),
             ("settings_debug", super::super::debug_settings::WINDOW, |p| p.debug_settings),
@@ -3828,6 +4072,13 @@ mod tests {
         // World › Hide name tags' button
         assert!(super::super::toolbar::ready("name_tags"));
         assert!(matches!(run_command(&ctx, "name_tags", &mut panels), BarAction::ToggleNameTags));
+        // Show User Interface and Show HUDs' buttons
+        assert!(super::super::toolbar::ready("hide_interface") && super::super::toolbar::ready("huds"));
+        assert!(matches!(
+            run_command(&ctx, "hide_interface", &mut panels),
+            BarAction::ToggleInterface
+        ));
+        assert!(matches!(run_command(&ctx, "huds", &mut panels), BarAction::ToggleHuds));
     }
 
     #[test]
