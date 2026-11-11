@@ -10309,6 +10309,20 @@ impl App {
             self.world.agent.pitch = pitch;
             gfx.renderer.cut_motion_history();
         }
+        // in VR the camera is the headset: the levels of detail, the draw
+        // distance, the interest list sent to the simulator and the sounds
+        // follow the head, not the avatar (the desktop camera is kept in
+        // `vr_camera` and comes back when VR ends)
+        if gfx.renderer.vr_engaged() {
+            let head = gfx.renderer.vr_input();
+            if head.head_position.is_finite()
+                && head.head_position != Vec3::ZERO
+                && let Some(forward) = head.head_forward.try_normalize()
+            {
+                self.camera.position = head.head_position;
+                self.camera.target = head.head_position + forward;
+            }
+        }
         let mut view = self.camera.view();
         let mut proj = frame_proj(&self.camera);
         let mut vp = proj * view;
