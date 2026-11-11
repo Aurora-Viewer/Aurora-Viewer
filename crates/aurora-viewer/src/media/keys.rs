@@ -200,13 +200,28 @@ fn edit_repeats(cmd: EditCommand) -> bool {
     matches!(cmd, EditCommand::Undo | EditCommand::Redo | EditCommand::Paste)
 }
 
-/// Whether the page reads the clipboard through the viewer: under Wayland,
-/// where Chromium picks its Wayland backend and the page, drawn off screen,
-/// never has the keyboard focus that a Wayland client needs to read the
-/// clipboard, so `edit_paste` finds nothing to paste. The viewer's window
-/// has that focus.
+/// Whether the page reads the clipboard through the viewer: on Linux, where
+/// `edit_paste` finds nothing to paste. Under Wayland, Chromium picks its
+/// Wayland backend and the page, drawn off screen, never has the keyboard
+/// focus that a Wayland client needs to read the clipboard; the viewer's
+/// window has that focus. Under X11 the plugin's Chromium neither reads the
+/// X clipboard nor answers for it (`page_cuts`).
 pub fn paste_through_viewer() -> bool {
-    cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some()
+    cfg!(target_os = "linux")
+}
+
+/// Whether Cut and Copy go to the page as `edit_cut` and `edit_copy`: on
+/// every system but Linux under X11 (`cuts_on`).
+pub fn page_cuts() -> bool {
+    cuts_on(cfg!(target_os = "linux"), std::env::var_os("WAYLAND_DISPLAY").is_some())
+}
+
+/// `page_cuts` for a system: not on Linux under X11, where a page's cut or
+/// copy takes the X clipboard and its Chromium never answers a request for
+/// it, so every other program's paste waits on it until it gives up (the
+/// viewer's own for 4 s). Under Wayland the cut stays in the page.
+fn cuts_on(linux: bool, wayland: bool) -> bool {
+    !linux || wayland
 }
 
 /// Whether a key press is Paste and the viewer reads the clipboard for it
@@ -251,13 +266,20 @@ pub fn edit(
     if !pressed {
         return false;
     }
-    if !repeat || edit_repeats(cmd) {
+    if (!repeat || edit_repeats(cmd)) && sent(cmd, page_cuts()) {
         match clipboard {
             Some(text) if cmd == EditCommand::Paste => paste_typed(p, text),
             _ => p.edit(cmd),
         }
     }
     true
+}
+
+/// Whether a shortcut's command goes to the page: Cut and Copy only where
+/// the page cuts (`page_cuts`); elsewhere the key does nothing, as the
+/// plugin drops a printable key with Control held.
+fn sent(cmd: EditCommand, cuts: bool) -> bool {
+    cuts || !matches!(cmd, EditCommand::Cut | EditCommand::Copy)
 }
 
 /// The longest paste typed into a page, in characters: each one is a
@@ -701,6 +723,24 @@ mod tests {
         // another program copied since: its text is typed
         assert_eq!(paste_text(Some(&t("old")), t("new")), t("new"));
         assert_eq!(paste_text(Some(&None), t("new")), t("new"));
+    }
+
+    #[test]
+    fn x11_keeps_cut_and_copy_from_the_page() {
+        // Linux under X11: no edit_cut or edit_copy, the page never takes the X clipboard
+        assert!(!cuts_on(true, false));
+        // Linux under Wayland and every other system: the page cuts
+        assert!(cuts_on(true, true));
+        assert!(cuts_on(false, false));
+        assert!(!sent(EditCommand::Cut, false));
+        assert!(!sent(EditCommand::Copy, false));
+        assert!(sent(EditCommand::Paste, false));
+        assert!(sent(EditCommand::SelectAll, false));
+        assert!(sent(EditCommand::Undo, false));
+        assert!(sent(EditCommand::Redo, false));
+        assert!(sent(EditCommand::Cut, true));
+        assert!(sent(EditCommand::Copy, true));
+        assert_eq!(paste_through_viewer(), cfg!(target_os = "linux"));
     }
 
     #[test]

@@ -455,7 +455,7 @@ pub struct App {
     /// The page (its plugin's process id) that last cut or copied, and the
     /// system clipboard's text then: the cut stays in that page's own
     /// clipboard under Wayland (keys::paste_through_viewer). None when no
-    /// page did.
+    /// page did; always under X11, where no page cuts (keys::page_cuts).
     page_copy: Option<(Option<u32>, Option<String>)>,
     screen: Screen,
     login_form: LoginForm,
@@ -14724,7 +14724,7 @@ impl App {
 
     /// LLMediaCtrl::handleKeyHere / handleUnicodeCharHere: the clicked page
     /// receives keys before chat, gestures or viewer commands.
-    /// The text a Paste types into a page under Wayland
+    /// The text a Paste types into a page on Linux
     /// (keys::paste_through_viewer), read from the system clipboard; None
     /// lets the page paste from its own clipboard: for any other key, and
     /// when the clipboard has not changed since this page's last cut or
@@ -14749,7 +14749,7 @@ impl App {
         };
         let mut read = || self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text());
         match cmd {
-            aurora_media::EditCommand::Cut | aurora_media::EditCommand::Copy if !repeat => {
+            aurora_media::EditCommand::Cut | aurora_media::EditCommand::Copy if !repeat && keys::page_cuts() => {
                 self.page_copy = Some((page, read()));
                 None
             }
@@ -21427,7 +21427,7 @@ impl ApplicationHandler for App {
                         command: self.command,
                     };
                     let letter = crate::media::keys::layout_letter(&ke.logical_key);
-                    // Paste under Wayland: the viewer reads the clipboard
+                    // Paste on Linux: the viewer reads the clipboard
                     // and types it into the page (keys::paste_through_viewer)
                     let page_keys = !typing && (self.media.focus.is_some() || self.focused_web().is_some());
                     let clipboard = if page_keys {
