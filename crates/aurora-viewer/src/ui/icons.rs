@@ -54,6 +54,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "chart-line",
     "check",
     "chevron-down",
+    "chevron-up",
     "chevron-left",
     "chevron-right",
     "chevrons-down",
@@ -145,11 +146,15 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "question-mark",
     "radio",
     "refresh",
+    "refresh-dot",
     "refresh-off",
     "reload",
     "repeat",
     "restore",
     "rotate-2",
+    "resize",
+    "ripple",
+    "rotate-3d",
     "rotate-360",
     "rotate-clockwise",
     "rotate-clockwise-2",
@@ -182,6 +187,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "swimming",
     "terminal-2",
     "text-size",
+    "tree",
     "typography",
     "unlink",
     "upload",
@@ -335,6 +341,8 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "layout-align-top",
     "layout-bottombar",
     "layout-dashboard",
+    "layout-sidebar-left-collapse",
+    "layout-sidebar-left-expand",
     "layout-sidebar-right",
     "layout-grid",
     "layout-navbar-collapse",
@@ -388,6 +396,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "replace",
     "rosette-discount-check",
     "search",
+    "seedling",
     "send",
     "settings",
     "shield",
@@ -448,9 +457,11 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "square-number-7",
     "square-number-8",
     "square-number-9",
+    "square-rounded-minus",
     "square-rounded-chevron-right",
     "square-rounded-chevrons-down",
     "square-rounded-chevrons-up",
+    "square-rounded-plus",
     "stack",
     "star",
     "stack-2",
@@ -497,7 +508,6 @@ const ALIASES: &[(&str, &str)] = &[
     ("Command_Preferences_Icon", "settings-filled"),
     ("Command_Build_Icon", "box"),
     ("Command_Gestures_Icon", "hand-move"),
-    ("Command_HowTo_Icon", "help-circle-filled"),
     ("Command_Environments_Icon", "sunset-2-filled"),
     ("Command_Places_Icon", "map-pin-filled"),
     ("groundsit", "armchair"),
@@ -930,6 +940,14 @@ mod tests {
             // Its dark outside edge must stay transparent, not become a solid blob.
             assert_eq!(image.pixels[230 * 240 + 3].a(), 0, "outline {name}");
             assert_eq!(image.pixels[230 * 240 + 10].a(), 255, "arrow {name}");
+        }
+    }
+
+    #[test]
+    fn the_rendering_types_menu_icons_are_embedded() {
+        let names: Vec<&str> = OUTLINE.iter().chain(FILLED).map(|(name, _)| *name).collect();
+        for icon in crate::ui::bars::RENDER_TYPE_ICONS {
+            assert!(names.contains(&icon), "{icon} is not embedded");
         }
     }
 

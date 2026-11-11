@@ -46,6 +46,7 @@ pub mod pipeline_cache;
 mod portal_tests;
 pub mod present;
 pub mod preview;
+mod preview_mesh;
 pub mod probes;
 pub mod projector_shadows;
 mod readback;
@@ -120,7 +121,7 @@ pub use textures::{MASK_CUTOFF, MipLevel, alpha_coverage, build_mips, build_mips
 pub use types::*;
 pub use ui_blur::blurred_backdrop;
 pub use ui_frame::{EguiFrame, EguiHandOver, vr_hint_marker};
-pub use ui_glass::{glass_panel, glass_panel_faded, glass_region};
+pub use ui_glass::{glass_diamond, glass_panel, glass_panel_faded, glass_region};
 pub use ui_world::end_world_labels;
 pub use upload::{StagedMesh, StagedTexture, StagingPool, TexelFormat};
 
@@ -1060,10 +1061,13 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
         let (count, hard) = crate::contact_shadows::samples(100.0);
         validate(&crate::contact_shadows::shader_source(count, hard));
         // the diagnostic variants (AURORA_CONTACT_VARIANT)
-        use crate::contact_shadows::{Variant, variant_source};
+        use crate::contact_shadows::{Variant, photo_source, variant_source};
         for v in [Variant::NoEarlyOut, Variant::NoShared, Variant::Short] {
             validate(&variant_source(v));
         }
+        // a photo's on the RX 9000 cards, up to the most samples
+        validate(&photo_source(Variant::NoShared, 192, 13));
+        validate(&photo_source(Variant::NoShared, count, hard));
     }
 
     #[test]

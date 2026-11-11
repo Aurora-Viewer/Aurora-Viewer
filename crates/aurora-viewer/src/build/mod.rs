@@ -8,6 +8,9 @@
 //! frame and send MultipleObjectUpdate when the mouse is released (stretching
 //! also every 0.1 s, like LLManipScale).
 
+mod admin;
+#[cfg(test)]
+mod admin_tests;
 pub mod align;
 pub mod anim_pause;
 pub mod contents;
@@ -27,6 +30,7 @@ pub mod layout;
 mod linking;
 pub mod manip;
 mod material_preview;
+use material_preview::MaterialTabKey;
 pub mod materials;
 mod new_defaults;
 mod object_snap;
@@ -231,6 +235,10 @@ pub struct BuildSettings {
     pub show_parcel_owners: bool,
     /// SyncMaterialSettings: normal / specular maps follow the diffuse UVs.
     pub sync_materials: bool,
+    /// Texture tab: a new selection opens the PBR or Blinn-Phong tab that
+    /// fits its faces, as LLPanelFace::updateUI does (`material_preview.rs`).
+    /// On by default; off keeps the last tab chosen.
+    pub auto_material_tab: bool,
     /// ShowPhysicsShapeInEdit (Features tab eye toggle).
     pub show_physics_shape: bool,
     /// FSCopyObjKeySeparator for "Copy UUID".
@@ -654,6 +662,7 @@ impl Default for BuildSettings {
             expanded: true,
             show_parcel_owners: false,
             sync_materials: false,
+            auto_material_tab: true,
             show_physics_shape: false,
             copy_key_separator: ",".into(),
             limit_select_distance: true,
@@ -763,6 +772,10 @@ pub struct BuildTool {
     /// Last inspected selection/mode; object display choices live in the world.
     material_preview_selection: HashSet<Uuid>,
     material_preview_mode: Option<bool>,
+    /// Selection the Texture tab was last chosen for (`auto_material_tab`).
+    material_tab_for: Option<MaterialTabKey>,
+    /// `keep_texture_tab`: the next selection keeps the tab asked for.
+    keep_material_tab: bool,
     /// The build floater is open (build mode).
     pub open: bool,
     pub tool: Tool,
@@ -854,6 +867,8 @@ impl Default for BuildTool {
             wheel_selection: cycle::Wheel::default(),
             material_preview_selection: HashSet::new(),
             material_preview_mode: None,
+            material_tab_for: None,
+            keep_material_tab: false,
             open: false,
             tool: Tool::Edit,
             edit_mode: EditMode::Move,
@@ -987,9 +1002,10 @@ pub fn edit_parent(world: &World, idx: usize, now: Instant) -> Option<(Vec3, Qua
     let parent_idx = world.objects.parent_of(o)?;
     let (p, r, _) = crate::scene::Scene::object_transform(world, idx, now, 0)?;
     if world.objects.get(parent_idx)?.is_avatar() {
-        // the attachment point as posed now, on the body or in the HUD
+        // the attachment point as posed now, on the body or in the HUD (the
+        // root is drawn at most 3.5 m from it, scene/draw_limits.rs)
         let rotation = (r * o.rotation.inverse()).normalize();
-        Some((p - rotation * o.position, rotation))
+        Some((p - rotation * crate::scene::draw_limits::attachment_offset(o.position), rotation))
     } else {
         crate::scene::Scene::object_transform(world, parent_idx, now, 0).map(|(p, r, _)| (p, r))
     }
@@ -1729,6 +1745,7 @@ impl BuildTool {
         }
         let flags = if select_copy { FLAGS_CREATE_SELECTED } else { 0 };
         for (handle, ids) in self.group_by_region(world, &roots) {
+            world.objects.expect_local_duplicates(handle, &ids, offset, select_copy, None);
             self.send(BuildCmd::Duplicate {
                 handle,
                 local_ids: ids,
@@ -2404,6 +2421,8 @@ impl BuildTool {
         }
         let Some((_, off)) = Self::region_at(world, point) else { return };
         let (ray_start, ray_end, ray_target, bypass) = self.placement_ray(world, s, point, target, cursor, off);
+        // The simulator chooses the surface offset and, optionally, rotation.
+        let radius = bounds_of(world, &self.selection, false, Instant::now()).map_or(1.0, |bounds| bounds.half.length() * 2.0 + 1.0);
         let mut by_region: HashMap<RegionHandle, Vec<u32>> = HashMap::new();
         for r in roots {
             if let Some(o) = world.objects.get(r) {
@@ -2411,6 +2430,9 @@ impl BuildTool {
             }
         }
         for (handle, local_ids) in by_region {
+            world
+                .objects
+                .expect_local_duplicates(handle, &local_ids, Vec3::ZERO, false, Some((point - off, radius, s.copy_rotates)));
             self.send(BuildCmd::DuplicateOnRay {
                 handle,
                 local_ids,

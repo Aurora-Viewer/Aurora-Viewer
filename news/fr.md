@@ -26,6 +26,26 @@ Une ligne vide commence un nouveau paragraphe.
 
 # Actualités d'Aurora Viewer
 
+## 2026-11-11 — Aurora 0.9.6 : la vitrine des tenues, les portraits auto et 65 looks photo
+La Galerie des tenues d'Apparence devient une vitrine : de grandes photos de vos tenues, un rail pour les favoris, les tenues sans photo et les dossiers, et on porte en un clic (les petites vignettes restent dans Préférences › Aurora). Portrait auto vous cadre en studio pour la photo gratuite de la tenue, Faire les portraits les fait toutes d'un coup, et une Photo HD en option coûte le prix d'envoi de la grille. L'onglet LUT du mode photo compte 20 looks de Czar Fenris et 45 de Nanner Pudding, merci à vous deux ! Cache et réglages sont gardés.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.6)
+
+## 2026-11-11 — La Voie lactée des vraies étoiles, et les Types de rendu
+La Voie lactée est faite des 2,5 millions d'étoiles du catalogue Tycho-2, avec ses nuages d'étoiles et ses bandes sombres, et l'Heure des étoiles peut suivre la vraie horloge. Avancé › Types de rendu masque le terrain, l'eau, les objets, les avatars ou les particules pour voir derrière, comme le Legacy Viewer. Un Mac démarre à la résolution logique de l'écran en qualité Mid-High, les cartes AMD RX 9000 gardent leurs ombres de contact, et les médias des HUD passent en premier dans les régions chargées.
+
+## 2026-11-11 — Poser, construction, inventaire et correctifs
+Maintenez Espace pour freiner votre avatar, comme le Legacy Viewer. Le poser gagne Enregistrer sous… et montre où va une pose. Les poignées de déplacement se saisissent mieux, les sélections de terrain s'alignent sur la grille des parcelles, et le glTF garde ses cartes 2K. Favoris liste les éléments étoilés sans leurs dossiers, et la confirmation de suppression peut se couper. Région / Domaine confirme tout changement qui renvoie des gens chez eux. Merci à anne-skydancer, circuskid, emmelinedevere, Gaalrauch, KanikaBreed, LisaScheers, Marakiinfinity, Memekiller, Nowalski et Odessa-Draekavik.
+
+## 2026-11-10 — Aurora 0.9.5 : le Suivi de région, les marqueurs des cercles et l'apparence en XML
+Monde › Suivi de région surveille une liste de régions, comme le Legacy Viewer : si chacune est en ligne et combien d'avatars s'y trouvent, sans ouvrir la carte ; Suivre la région, sur la Carte du monde, en ajoute une. Un cercle de contacts peut marquer ses membres dans le monde, à travers les murs et au bord de l'écran : réglez son Marqueur dans le monde dans Personnes › Cercles (désactivé par défaut). Importer XML, dans les éditeurs de silhouette, de physique et de vêtements, charge un fichier d'apparence d'un site de silhouettes ou d'un autre viewer. Cache et réglages sont gardés.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.5)
+
+## 2026-11-10 — Emojis, chat et L$
+Vos emojis récents forment une rangée près du champ de chat, et le sélecteur de GIF montre ceux que vous avez envoyés. Activez Emojis favoris dans Préférences › Chat pour garder les vôtres en tête, avec un onglet étoile dans le sélecteur. Alt+Entrée envoie du chat ((OOC)), et Demander une téléportation s'ajoute à Proposer une téléportation dans la conversation. Un bouton replie ou déplie la liste des conversations. Les L$ reçus ou dépensés s'affichent sous votre solde, et un résident qui vous paie affiche une notification.
+
+## 2026-11-10 — Votre vue, le monde et des correctifs
+Préférences › Graphismes peut masquer les lumières portées par les autres avatars en gardant les vôtres, et Monde › Masquer les étiquettes des avatars les cache toutes en un clic. Les infobulles des avatars peuvent rester sans celles du monde, et la question du filtre média devient un bandeau qui laisse voler. Le sol reste aux passages de région, une mémoire vidéo pleine ne fige plus le monde, et les radios de parcelle tiennent aux téléportations. Merci à circuskid, ClifHofmann, dash-sl, Gaalrauch, iGao, KanikaBreed, Nowalski, Odessa-Draekavik et RheaMercury.
+
 ## 2026-11-08 — Aurora 0.9.4 : les Paramètres de débogage, et plus d'options du Legacy Viewer
 Le bouton Paramètres de débogage, ou Ctrl+Alt+Maj+S, ouvre une fenêtre avec chaque réglage par son nom : une recherche, une étoile sur ceux que vous avez changés et Rétablir la valeur par défaut. Préférences › Construire règle ce que devient une nouvelle prim : couleur, transparence, lueur, lumineux, physique, temporaire ou fantôme. Préférences › Graphismes gagne une distance d'affichage progressive (désactivée par défaut), le détail des Arbres et les Particules des objets portés, et Préférences › Protections peut masquer les objets à la surface démesurée. Cache et réglages sont gardés.
 [En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.4)

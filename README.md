@@ -111,37 +111,37 @@ while rethinking the user interface.
   </tr>
 </table>
 
-### New in 0.9.4 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+### New in 0.9.6 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>Debug settings, like the Legacy Viewer</h3>
-      Every setting by name in one window, from the toolbar or
-      Ctrl+Alt+Shift+S: search the names and descriptions, see the ones you
-      changed, and reset any of them to its default.
+      <h3>A showcase for your outfits</h3>
+      Appearance's Outfit gallery shows each outfit as a large picture, with
+      favourites, folders and one-click wear. Auto portrait frames you in a
+      studio, and Take the portraits does every outfit in one go.
     </td>
     <td width="50%" valign="top">
-      <h3>More of the Legacy Viewer's options</h3>
-      Build preferences for new prims, a progressive draw distance, the
-      Trees detail, large surface protection, particles from worn objects,
-      camera smoothing up to 300 and a limit for the chat lines above the
-      chat bar.
+      <h3>65 photo looks built in</h3>
+      The photo LUT tab comes with 20 looks by Czar Fenris and 45 by Nanner
+      Pudding, shared with every Aurora user. Import several .cube files of
+      your own at once.
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <h3>A fuller world</h3>
-      Neighbouring regions appear at your draw distance, objects no longer
-      vanish at some camera angles, and the world comes back by itself
-      after video memory was full at login. Media screens in busy regions
-      load again.
+      <h3>The Milky Way from real stars</h3>
+      The night sky's band is drawn from the 2.5 million stars of the
+      Tycho-2 Catalogue, and Star hour can follow the real clock.
+      Advanced › Rendering types hides parts of the world, like the Legacy
+      Viewer.
     </td>
     <td valign="top">
-      <h3>Calls, music and chat</h3>
-      Private calls stay connected across teleports, parcel music no longer
-      cuts out while you cam around, Ctrl+Tab cycles the conversations, and
-      the Japanese IME shows the active conversion segment.
+      <h3>Poser, building and inventory</h3>
+      Space brakes your avatar like the Legacy Viewer, the poser gets
+      Save as…, move handles are easier to grab, land selections snap to
+      the parcel grid, and Favorites lists starred items without their
+      folders.
     </td>
   </tr>
 </table>
@@ -871,6 +871,14 @@ the current server appearance. Closing a modified shape offers Save, Discard or
 Cancel. A shape without Modify is read-only and can only be copied unchanged;
 a modifiable no-copy shape can be saved in place.
 
+### Export your appearance XML
+
+Open **Appearance**, click the gear menu and choose **Export my appearance XML…**.
+Choose where to save `appearance.xml`. The option becomes available when your
+own appearance has loaded. The file uses the Legacy Viewer’s appearance XML
+format, including the shape parameters its wearable editor can import. It
+contains no texture or mesh files and does not change what you are wearing.
+
 ### Hover height
 
 Open **Appearance › Hover Height** to adjust your height from -3 to +3 m.
@@ -1124,9 +1132,13 @@ clippy on a Mac, and the merge queue runs the tests and draws a demo frame on
 an Apple GPU.
 
 Preferences › Graphics › Smoothness offers a 50–100% **3D render scale**.
-At lower scales, the world is reconstructed with a nine-tap Catmull-Rom spatial
-upscaler; controls, HUDs and world labels retain the window's native resolution.
-Saved photos render at their requested resolution. The default remains 100%.
+At lower scales, the world is reconstructed and sharpened in one AMD CAS spatial
+upscaler (Sharpness 0, or HDR off, keeps a Catmull-Rom reconstruction); controls, HUDs and world labels retain the window's native resolution.
+Saved photos render at their requested resolution. Its **Match the display**
+switch follows the display's logical resolution instead (50% on a 2× display,
+67% on 1.5×), as the Legacy Viewer draws a Retina Mac's world: on by default
+on macOS, where a new profile also starts from the Legacy Viewer's Mac
+Mid-High values; elsewhere it is off and the default remains 100%.
 With AMD FSR 3.1 as the anti-aliasing, FSR's own mode (Native AA, Quality,
 Balanced, Performance, Ultra performance) takes the render scale's place.
 Bindless texture pages use the adapter's binding-array limit rather than its

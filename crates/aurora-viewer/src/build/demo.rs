@@ -2,7 +2,7 @@
 //! `AURORA_DEMO_BUILD="mode,x,y[,part,dx,dy]"`.
 //!
 //! - mode: move | rotate | stretch | face | align | grab | focus | create |
-//!   land | select
+//!   land | select | select-join (a simulated multi-parcel selection)
 //!   cycle | cycle-linked: nested objects, three CTRL + wheel notches
 //!   (deeper, deeper, nearer), centered on `object:99610`.
 //!   linked-click | linked-click-ready: select a whole object, then switch
@@ -137,14 +137,9 @@ fn handle_px(tool: &BuildTool, world: &World, s: &BuildSettings, part: Part) -> 
     let p = match part {
         Part::Arrow(i) => c + g.rotation * unit(i) * len * 0.9,
         Part::Plane(i) => {
-            let at_g = g.rotation.inverse() * cam.at;
-            let mut v = Vec3::ZERO;
-            for j in 0..3 {
-                if j != i {
-                    v[j] = at_g[j].signum() * super::manip::PLANE_OFFSET * len;
-                }
-            }
-            c + g.rotation * v
+            let q = super::manip::plane_handles(cam, &f)[i]?;
+            let p = q[0].lerp(q[2], 0.5);
+            return Some((p.x * cam.ppp, p.y * cam.ppp));
         }
         Part::Ring(i) => {
             let r = super::manip::ring_radius(cam, &f, c);
@@ -233,6 +228,10 @@ pub fn apply_tab(tool: &mut BuildTool) {
         "media" => 2,
         _ => tool.ui.tex_tab,
     };
+    // The scenario's tab, not the one its selection would open on.
+    if matches!(sub.trim(), "pbr" | "bp" | "classic" | "bp-normal" | "bp-specular" | "media") {
+        tool.keep_texture_tab();
+    }
     match sub.trim() {
         "bp-normal" => tool.ui.bp_channel = 1,
         "bp-specular" => tool.ui.bp_channel = 2,
@@ -359,7 +358,7 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
         "focus" => (Tool::Focus, EditMode::Move, 6),
         "create" | "create-preview" => (Tool::Create, EditMode::Move, 6),
         "land" => (Tool::Land, EditMode::Move, 1),
-        "select" => (Tool::Land, EditMode::Move, 6),
+        "select" | "select-join" => (Tool::Land, EditMode::Move, 6),
         _ => (Tool::Edit, EditMode::Move, 6),
     };
     let h = if object.is_some() { 2 } else { 3 };
@@ -695,9 +694,9 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             .unwrap_or_default(),
         260 | 270 if cycle => vec![Step::Wheel(-1.0)],
         280 if cycle => vec![Step::Wheel(1.0)],
-        235 if parts[0] == "select" => vec![Step::Cursor(x + dx, y + dy)],
+        235 if matches!(parts[0], "select" | "select-join") => vec![Step::Cursor(x + dx, y + dy)],
         235 if parts[0].starts_with("invisible-") => vec![Step::CloseView],
-        240 if parts[0] == "select" => vec![Step::Release],
+        240 if matches!(parts[0], "select" | "select-join") => vec![Step::Release],
         250 => match handle.and_then(|h| handle_px(tool, world, s, h)) {
             Some((hx, hy)) => {
                 log::info!("demo build: grabbing {:?} at {hx:.0},{hy:.0}", handle);

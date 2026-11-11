@@ -1495,6 +1495,10 @@ fn material_tab_clicks_switch_the_selected_objects_local_render_mode() {
     for _ in 0..5 {
         inspector.show(vec![]);
     }
+    // The frame's update has chosen the tab for this selection (PBR), so
+    // the clicks below are the user's own choices.
+    inspector.tool.update_material_preview(&mut inspector.world, &inspector.settings);
+    assert_eq!(inspector.tool.ui.tex_tab, 1);
     inspector.tool.out.clear();
     for (tab, label) in [
         (0, aurora_i18n::tr!("build-ui-texture-blinn-phong")),
