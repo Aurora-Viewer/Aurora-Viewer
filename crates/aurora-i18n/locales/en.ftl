@@ -13802,3 +13802,9 @@ ui-options-attached-particles-hint = Draw the particles of what avatars wear: sp
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = Progressive draw distance
 ui-options-draw-distance-stepping-hint = After logging in and after a teleport to another region, the draw distance starts at 32 m and doubles back up to yours, so that what is near loads first.
+
+# Minimap avatar name format.
+ui-minimap-avatar-name-format = Avatar name format
+ui-minimap-name-display = Display Name
+ui-minimap-name-legacy = Legacy Name
+ui-minimap-name-display-legacy = Display Name (Legacy Name)

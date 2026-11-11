@@ -13801,3 +13801,9 @@ ui-options-attached-particles-hint = Affiche les particules de ce que portent le
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = Distance d'affichage progressive
 ui-options-draw-distance-stepping-hint = Après la connexion et après une téléportation vers une autre région, la distance d'affichage part de 32 m et double jusqu'à la vôtre, pour que ce qui est proche se charge d'abord.
+
+# Minimap avatar name format.
+ui-minimap-avatar-name-format = Format du nom d’avatar
+ui-minimap-name-display = Nom d'affichage
+ui-minimap-name-legacy = Nom classique
+ui-minimap-name-display-legacy = Nom d'affichage (nom classique)
