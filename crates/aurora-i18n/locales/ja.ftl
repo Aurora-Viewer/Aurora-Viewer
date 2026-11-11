@@ -13633,7 +13633,6 @@ inventory-folder-color-subfolders = すべてのサブフォルダに適用
 inventory-folder-color-all = すべてのフォルダに適用
 inventory-folder-color-all-title = すべてのフォルダに色を付けますか？
 inventory-folder-color-all-question = { $count }個のフォルダすべてにこの色が付き、付けていた色は置き換えられます。ライブラリは変わりません。
-inventory-folder-color-all-restore-question = { $count }個のフォルダすべての色が消え、既定の色に戻ります。
 inventory-folder-color-all-apply = すべてに適用
 inventory-folder-colors-inherit = サブフォルダは親フォルダの色を引き継ぐ
 inventory-folder-colors-inherit-help = 自分の色がないフォルダは、新しいフォルダも含め、最も近い色付きの親フォルダの色で表示されます。フォルダ自身に色を付けた場合はその色が優先されます。

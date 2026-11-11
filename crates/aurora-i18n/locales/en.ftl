@@ -13682,7 +13682,6 @@ inventory-folder-color-subfolders = Apply to all subfolders
 inventory-folder-color-all = Apply to ALL folders
 inventory-folder-color-all-title = Color all folders?
 inventory-folder-color-all-question = Every one of your { $count } folders will get this color, replacing the colors you gave them. The Library keeps its own.
-inventory-folder-color-all-restore-question = Every one of your { $count } folders will lose its color and show the default one again.
 inventory-folder-color-all-apply = Apply to all
 inventory-folder-colors-inherit = Subfolder takes color from parent folder
 inventory-folder-colors-inherit-help = A folder without a color of its own shows the color of its nearest colored parent, new folders included. Its own color, when you give it one, comes first.

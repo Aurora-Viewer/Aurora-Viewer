@@ -98,15 +98,6 @@ pub fn set(prefs: &mut InventoryPreferences, ids: &[Uuid], color: Option<[u8; 3]
     }
 }
 
-/// Every folder of the inventory takes this color (the Library's excluded);
-/// `None` removes every color but the Library's, also of folders gone since.
-fn set_all(inv: &Inventory, prefs: &mut InventoryPreferences, color: Option<[u8; 3]>) {
-    match color {
-        Some(_) => set(prefs, &targets(inv, &[], false, true), color),
-        None => prefs.folder_colors.retain(|id, _| inv.folders.get(id).is_some_and(|f| f.library)),
-    }
-}
-
 /// The color all of `ids` share, if they share one.
 fn shared(prefs: &InventoryPreferences, ids: &[Uuid]) -> Option<[u8; 3]> {
     let first = *prefs.folder_colors.get(ids.first()?)?;
@@ -124,16 +115,8 @@ pub(super) struct Picker {
     /// its id, so egui reopens it at its old depth, under an inventory
     /// clicked since (the expanded window covers it).
     raise: bool,
-    /// "Apply to all subfolders": a color also goes to every folder inside.
-    subfolders: bool,
-    /// "Apply to ALL folders": a color goes to every folder, once confirmed.
-    all: bool,
-    /// "Apply to ALL folders" was confirmed since it was ticked: the next
-    /// colors go to every folder without asking again.
-    all_confirmed: bool,
-    /// A color (or `None`, the default) waiting for "Apply to ALL folders"
-    /// to be confirmed.
-    confirm: Option<Option<[u8; 3]>>,
+    /// The color "Apply to ALL folders" waits to give, until confirmed.
+    confirm: Option<[u8; 3]>,
 }
 
 impl Picker {
@@ -143,15 +126,12 @@ impl Picker {
             ids,
             custom: [r, g, b, 255],
             raise: true,
-            subfolders: false,
-            all: false,
-            all_confirmed: false,
             confirm: None,
         }
     }
 
-    /// The color the ticks give at once: the selected folders' own, else the
-    /// custom swatch's.
+    /// The color the two "Apply to" buttons give: the selected folders'
+    /// own, else the custom swatch's.
     fn current(&self, prefs: &InventoryPreferences) -> [u8; 3] {
         shared(prefs, &self.ids).unwrap_or({
             let [r, g, b, _] = self.custom;
@@ -159,34 +139,16 @@ impl Picker {
         })
     }
 
-    /// A tick turned on acts at once, so it never waits for a color to be
-    /// clicked: "Apply to all subfolders" gives the selected folders' color
-    /// to everything inside them, "Apply to ALL folders" asks first, then
-    /// gives the current color to every folder. Turned off, it only stops.
-    fn ticked(&mut self, inv: &Inventory, prefs: &mut InventoryPreferences, subfolders_on: bool, all_on: bool) {
-        if subfolders_on && let Some(color) = shared(prefs, &self.ids) {
-            set(prefs, &targets(inv, &self.ids, true, false), Some(color));
-        }
-        if all_on {
-            self.all_confirmed = false;
-            self.confirm = Some(Some(self.current(prefs)));
-        }
-        if !self.all {
-            self.all_confirmed = false;
-            self.confirm = None;
-        }
+    /// "Apply to all subfolders": the selected folders' color (or the custom
+    /// swatch's) to them and every folder inside them.
+    fn apply_to_subfolders(&mut self, inv: &Inventory, prefs: &mut InventoryPreferences) {
+        let color = self.current(prefs);
+        set(prefs, &targets(inv, &self.ids, true, false), Some(color));
     }
 
-    /// A color chosen in the palette (`None`: "Restore default"), given to
-    /// the folders the ticks say; for all folders, once confirmed.
-    fn apply(&mut self, inv: &Inventory, prefs: &mut InventoryPreferences, color: Option<[u8; 3]>) {
-        if self.all && self.all_confirmed {
-            set_all(inv, prefs, color);
-        } else if self.all {
-            self.confirm = Some(color);
-        } else {
-            set(prefs, &targets(inv, &self.ids, self.subfolders, false), color);
-        }
+    /// "Apply to ALL folders": the current color waits for the confirmation.
+    fn ask_all(&mut self, prefs: &InventoryPreferences) {
+        self.confirm = Some(self.current(prefs));
     }
 
     /// Follows the selection: new folders also bring their color to the
@@ -242,20 +204,25 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut I
             Some(name) => ui.label(RichText::new(name).strong().color(p.ink)),
             None => ui.label(RichText::new(aurora_i18n::tr!("inventory-folder-color-none")).color(p.muted)),
         };
-        // "Apply to ALL folders" needs no selection
-        ui.add_enabled_ui(target.is_some() || picker.all, |ui| {
-            palette(ui, p, ui_id, inv, picker, prefs, current)
-        });
+        ui.add_enabled_ui(target.is_some(), |ui| palette(ui, p, ui_id, picker, prefs, current));
         ui.add_space(2.0);
-        let subfolders_on = ui
-            .add_enabled_ui(!picker.all, |ui| {
-                crate::ui::widgets::checkbox(ui, p, &mut picker.subfolders, aurora_i18n::tr!("inventory-folder-color-subfolders")).changed()
-            })
-            .inner
-            && picker.subfolders;
-        let all_changed = crate::ui::widgets::checkbox(ui, p, &mut picker.all, aurora_i18n::tr!("inventory-folder-color-all")).changed();
-        if subfolders_on || all_changed {
-            picker.ticked(inv, prefs, subfolders_on, all_changed && picker.all);
+        // the current color to more folders at once ("Apply to ALL folders"
+        // needs no selection, and asks first)
+        let width = ui.available_width();
+        if ui
+            .add_enabled(
+                target.is_some(),
+                egui::Button::new(aurora_i18n::tr!("inventory-folder-color-subfolders")).min_size(Vec2::new(width, 0.0)),
+            )
+            .clicked()
+        {
+            picker.apply_to_subfolders(inv, prefs);
+        }
+        if ui
+            .add(egui::Button::new(aurora_i18n::tr!("inventory-folder-color-all")).min_size(Vec2::new(width, 0.0)))
+            .clicked()
+        {
+            picker.ask_all(prefs);
         }
         ui.label(
             RichText::new(aurora_i18n::tr!("inventory-folder-color-private"))
@@ -273,20 +240,12 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, st: &mut I
 }
 
 /// The swatches, the custom color and "Restore default" of the picker's folders.
-fn palette(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    ui_id: Uuid,
-    inv: &Inventory,
-    picker: &mut Picker,
-    prefs: &mut InventoryPreferences,
-    current: Option<[u8; 3]>,
-) {
+fn palette(ui: &mut egui::Ui, p: &Palette, ui_id: Uuid, picker: &mut Picker, prefs: &mut InventoryPreferences, current: Option<[u8; 3]>) {
     for row in PRESETS.chunks(PER_ROW) {
         ui.horizontal(|ui| {
             for &color in row {
                 if swatch(ui, p, color, current == Some(color)).clicked() {
-                    picker.apply(inv, prefs, Some(color));
+                    set(prefs, &picker.ids, Some(color));
                     let [r, g, b] = color;
                     picker.custom = [r, g, b, 255];
                 }
@@ -297,21 +256,20 @@ fn palette(
     ui.horizontal(|ui| {
         if color_button(ui, p, ("inventory_folder_color_custom", ui_id), &mut picker.custom, false).changed() {
             let [r, g, b, _] = picker.custom;
-            picker.apply(inv, prefs, Some([r, g, b]));
+            set(prefs, &picker.ids, Some([r, g, b]));
         }
         ui.label(RichText::new(aurora_i18n::tr!("inventory-folder-color-custom")).color(p.ink));
     });
-    let targets = targets(inv, &picker.ids, picker.subfolders, picker.all);
-    let colored = targets.iter().any(|id| prefs.folder_colors.contains_key(id));
+    let colored = picker.ids.iter().any(|id| prefs.folder_colors.contains_key(id));
     if ui
         .add_enabled(colored, egui::Button::new(aurora_i18n::tr!("inventory-folder-color-restore")))
         .clicked()
     {
-        picker.apply(inv, prefs, None);
+        set(prefs, &picker.ids, None);
     }
 }
 
-/// "Apply to ALL folders": a color (or the default) waits for this answer,
+/// "Apply to ALL folders": the color waits for this answer,
 /// as the Legacy Viewer's confirmations do: Enter applies, Escape cancels.
 fn confirm_all(
     ctx: &egui::Context,
@@ -334,10 +292,7 @@ fn confirm_all(
                 .color(p.ink),
         );
         ui.add_space(6.0);
-        let question = match color {
-            Some(_) => aurora_i18n::tr!("inventory-folder-color-all-question", count = every),
-            None => aurora_i18n::tr!("inventory-folder-color-all-restore-question", count = every),
-        };
+        let question = aurora_i18n::tr!("inventory-folder-color-all-question", count = every);
         ui.label(RichText::new(question).color(p.ink));
         ui.add_space(12.0);
         ui.horizontal(|ui| {
@@ -357,16 +312,10 @@ fn confirm_all(
     });
     match answer {
         Some(true) => {
-            set_all(inv, prefs, color);
+            set(prefs, &targets(inv, &[], false, true), Some(color));
             picker.confirm = None;
-            picker.all_confirmed = true;
         }
-        // Cancel takes the tick back: nothing was changed
-        Some(false) => {
-            picker.confirm = None;
-            picker.all = false;
-            picker.all_confirmed = false;
-        }
+        Some(false) => picker.confirm = None,
         None => {}
     }
 }
@@ -523,47 +472,27 @@ mod tests {
     fn subfolders_and_all_folders_take_the_color() {
         let inv = tree();
         let u = Uuid::from_u128;
-        let mut picker = Picker::new(&InventoryPreferences::default(), vec![u(2)]);
         let mut prefs = InventoryPreferences::default();
-        picker.subfolders = true;
-        picker.apply(&inv, &mut prefs, Some(PRESETS[1]));
+        set(&mut prefs, &[u(2)], Some(PRESETS[1]));
+        let mut picker = Picker::new(&prefs, vec![u(2)]);
+        picker.apply_to_subfolders(&inv, &mut prefs);
         assert_eq!(prefs.folder_colors.keys().copied().collect::<Vec<_>>(), vec![u(2), u(3), u(4)]);
+        // an uncolored folder gives the custom swatch's color
+        let mut picker = Picker::new(&prefs, vec![u(5)]);
+        picker.custom = [9, 8, 7, 255];
+        picker.apply_to_subfolders(&inv, &mut prefs);
+        assert_eq!(prefs.folder_colors.get(&u(5)), Some(&[9, 8, 7]));
         // all folders: nothing until confirmed, then every folder but the Library's
-        picker.all = true;
-        picker.apply(&inv, &mut prefs, Some(PRESETS[2]));
-        assert_eq!(picker.confirm, Some(Some(PRESETS[2])));
+        picker.ask_all(&prefs);
+        assert_eq!(picker.confirm, Some([9, 8, 7]));
         assert_eq!(prefs.folder_colors.get(&u(1)), None);
-        set_all(&inv, &mut prefs, Some(PRESETS[2]));
+        set(&mut prefs, &targets(&inv, &[], false, true), picker.confirm);
         assert_eq!(prefs.folder_colors.len(), 5);
         assert_eq!(prefs.folder_colors.get(&u(9)), None);
-        // once confirmed, the next colors go everywhere without asking
-        picker.confirm = None;
-        picker.all_confirmed = true;
-        picker.apply(&inv, &mut prefs, Some(PRESETS[3]));
-        assert_eq!(picker.confirm, None);
-        assert!(prefs.folder_colors.values().all(|c| *c == PRESETS[3]));
     }
 
-    #[test]
-    fn ticking_subfolders_colors_them_at_once() {
-        let inv = tree();
-        let u = Uuid::from_u128;
-        let mut prefs = InventoryPreferences::default();
-        set(&mut prefs, &[u(2)], Some(PRESETS[4]));
-        let mut picker = Picker::new(&prefs, vec![u(2)]);
-        picker.subfolders = true;
-        picker.ticked(&inv, &mut prefs, true, false);
-        assert_eq!(prefs.folder_colors.get(&u(4)), Some(&PRESETS[4]));
-        // an uncolored folder gives its subfolders nothing
-        let mut picker = Picker::new(&prefs, vec![u(5)]);
-        picker.subfolders = true;
-        picker.ticked(&inv, &mut prefs, true, false);
-        assert_eq!(prefs.folder_colors.get(&u(5)), None);
-    }
-
-    /// Through real frames: ticking "Apply to ALL folders" asks at once; its
-    /// "Apply to all" colors every folder; "Restore default" then clears every
-    /// color without asking again; Cancel takes the tick back.
+    /// Through real frames: "Apply to ALL folders" asks; Cancel changes
+    /// nothing; asked again, "Apply to all" colors every folder.
     #[test]
     fn all_folders_asks_then_applies_through_the_window() {
         let mut inv = Inventory::default();
@@ -575,14 +504,15 @@ mod tests {
         };
         demo(&mut st, &mut prefs);
         st.selection.insert(Uuid::from_u128(8200));
-        assert!(!prefs.folder_colors.is_empty());
+        let color = shared(&prefs, &[Uuid::from_u128(8200)]).expect("the demo's color");
+        let before = prefs.folder_colors.clone();
         let p = crate::theme::Theme::default().palette();
         let mut frames = crate::ui::widgets::elide_tests::Frames::new();
         let run = |frames: &mut crate::ui::widgets::elide_tests::Frames,
                    events: Vec<egui::Event>,
                    inv: &Inventory,
                    st: &mut InventoryUi,
-                   prefs: &mut InventoryPreferences| { frames.run(events, |ui| show(ui.ctx(), &p, inv, st, prefs)) };
+                   prefs: &mut InventoryPreferences| frames.run(events, |ui| show(ui.ctx(), &p, inv, st, prefs));
         let click = |pos: egui::Pos2| {
             vec![
                 vec![egui::Event::PointerMoved(pos)],
@@ -608,16 +538,23 @@ mod tests {
         for _ in 0..5 {
             texts = run(&mut frames, vec![], &inv, &mut st, &mut prefs);
         }
-        let all = find(&texts, aurora_i18n::tr!("inventory-folder-color-all")).expect("the ALL tick is drawn");
+        let all = find(&texts, aurora_i18n::tr!("inventory-folder-color-all")).expect("the ALL button is drawn");
         for events in click(all) {
             texts = run(&mut frames, events, &inv, &mut st, &mut prefs);
         }
-        assert!(st.folder_color.as_ref().expect("open").all, "the tick is on");
-        let color = shared(&prefs, &[Uuid::from_u128(8200)]).expect("the demo's color");
-        assert_eq!(st.folder_color.as_ref().expect("open").confirm, Some(Some(color)), "asks at once");
-        let apply = find(&texts, aurora_i18n::tr!("inventory-folder-color-all-apply")).expect("the confirmation is drawn");
-        for events in click(apply) {
+        assert_eq!(st.folder_color.as_ref().expect("open").confirm, Some(color), "asks first");
+        let cancel = find(&texts, aurora_i18n::tr!("common-cancel")).expect("the confirmation is drawn");
+        for events in click(cancel) {
             texts = run(&mut frames, events, &inv, &mut st, &mut prefs);
+        }
+        assert_eq!(st.folder_color.as_ref().expect("open").confirm, None);
+        assert_eq!(prefs.folder_colors, before, "Cancel changes nothing");
+        for events in click(all) {
+            texts = run(&mut frames, events, &inv, &mut st, &mut prefs);
+        }
+        let apply = find(&texts, aurora_i18n::tr!("inventory-folder-color-all-apply")).expect("asked again");
+        for events in click(apply) {
+            run(&mut frames, events, &inv, &mut st, &mut prefs);
         }
         assert!(
             inv.folders
@@ -626,25 +563,6 @@ mod tests {
                 .all(|(id, _)| prefs.folder_colors.get(id) == Some(&color)),
             "every folder takes the color"
         );
-        let restore = find(&texts, aurora_i18n::tr!("inventory-folder-color-restore")).expect("Restore default is drawn");
-        for events in click(restore) {
-            texts = run(&mut frames, events, &inv, &mut st, &mut prefs);
-        }
-        assert!(prefs.folder_colors.is_empty(), "every color removed: {:?}", prefs.folder_colors);
-        // untick and tick again: it asks again; Cancel takes the tick back
-        let all = find(&texts, aurora_i18n::tr!("inventory-folder-color-all")).expect("the ALL tick is drawn");
-        for _ in 0..2 {
-            for events in click(all) {
-                texts = run(&mut frames, events, &inv, &mut st, &mut prefs);
-            }
-        }
-        let cancel = find(&texts, aurora_i18n::tr!("common-cancel")).expect("asks again");
-        for events in click(cancel) {
-            run(&mut frames, events, &inv, &mut st, &mut prefs);
-        }
-        let picker = st.folder_color.as_ref().expect("open");
-        assert!(!picker.all && picker.confirm.is_none());
-        assert!(prefs.folder_colors.is_empty());
     }
 
     #[test]

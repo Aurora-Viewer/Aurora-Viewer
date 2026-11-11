@@ -13681,7 +13681,6 @@ inventory-folder-color-subfolders = Appliquer à tous les sous-dossiers
 inventory-folder-color-all = Appliquer à TOUS les dossiers
 inventory-folder-color-all-title = Colorer tous les dossiers ?
 inventory-folder-color-all-question = Vos { $count } dossiers prendront tous cette couleur, à la place de celles que vous leur aviez données. La Bibliothèque garde les siennes.
-inventory-folder-color-all-restore-question = Vos { $count } dossiers perdront tous leur couleur et reprendront celle par défaut.
 inventory-folder-color-all-apply = Appliquer à tous
 inventory-folder-colors-inherit = Les sous-dossiers prennent la couleur du dossier parent
 inventory-folder-colors-inherit-help = Un dossier sans couleur à lui prend celle de son plus proche parent coloré, nouveaux dossiers compris. Sa propre couleur, si vous lui en donnez une, passe en premier.
