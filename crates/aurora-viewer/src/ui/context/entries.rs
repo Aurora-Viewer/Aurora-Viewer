@@ -1119,7 +1119,11 @@ fn contact_set_entries(ui: &mut Builder, f: &Facts, id: Uuid) {
 /// "Reload avatar" (`app/avatar_reload.rs`), ours or another's: not in the
 /// Legacy Viewer's menus, which spread its steps over several entries.
 fn reload_avatar_item(ui: &mut Builder, avatar: Uuid) {
-    ui.item("refresh-dot", aurora_i18n::tr!("ui-context-reload-avatar"), CtxAction::ReloadAvatar(avatar));
+    ui.item(
+        "refresh-dot",
+        aurora_i18n::tr!("ui-context-reload-avatar"),
+        CtxAction::ReloadAvatar(avatar),
+    );
 }
 
 /// Avatar.ResetSkeleton / Avatar.ResetSkeletonAndAnimations: enabled for
@@ -1346,7 +1350,9 @@ mod tests {
                 let target = Target::Avatar { id, own, attachment };
                 let entries = world_menu(&target, &Facts::default(), Vec3::ZERO);
                 assert!(
-                    entries.iter().any(|e| matches!(e.kind, Kind::Action(CtxAction::ReloadAvatar(a)) if a == id)),
+                    entries
+                        .iter()
+                        .any(|e| matches!(e.kind, Kind::Action(CtxAction::ReloadAvatar(a)) if a == id)),
                     "a top-level row, own {own}, attachment {attachment:?}"
                 );
             }
