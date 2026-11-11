@@ -302,6 +302,10 @@ pub mod turn;
 /// (AURORA_DEMO_VOICE_CONTROLS).
 #[path = "demo_voice_controls.rs"]
 pub mod voice_controls;
+/// Transparent shells with a shiny blended legacy material, the wet layers
+/// of mesh bodies (AURORA_DEMO_WET_LAYER).
+#[path = "demo_wet_layer.rs"]
+pub mod wet_layer;
 /// A worn object of ours (AURORA_DEMO_WORN).
 #[path = "demo_worn.rs"]
 pub mod worn;
@@ -1253,7 +1257,8 @@ pub fn bubbles_events() -> Vec<NetEvent> {
 /// one resident, an emote, an object's line, a long line with a link, a
 /// shout. `legacy` shows them as the Legacy Viewer's lines for the session
 /// (nothing is saved). An optional `:0` through `:50` overrides the maximum
-/// wrapped text lines for this demo. Some(true) for `legacy`.
+/// wrapped text lines for this demo. Some(true) for `legacy`. `stagger` and
+/// `legacy:stagger` say them one at a time (`chat_lines_due`).
 pub fn chat_lines_scenario() -> Option<bool> {
     let mode = std::env::var("AURORA_DEMO_CHAT_LINES").ok()?;
     match mode.split(':').next()? {
@@ -1261,6 +1266,37 @@ pub fn chat_lines_scenario() -> Option<bool> {
         "" | "0" => None,
         _ => Some(false),
     }
+}
+
+/// `AURORA_DEMO_CHAT_LINES=stagger|legacy:stagger`: the lines are said one
+/// at a time instead of at the arrival.
+fn chat_lines_stagger() -> bool {
+    std::env::var("AURORA_DEMO_CHAT_LINES").is_ok_and(|mode| mode.ends_with("stagger"))
+}
+
+/// `AURORA_DEMO_CHAT_LINES=stagger`: the scenario's next line now due, once:
+/// one every 2 s from 3 s after the first look in world, so that each
+/// leaves on its own at the end of its fade, as in a busy region (#2544:
+/// the others moved for a frame). Asked every frame in world.
+pub fn chat_lines_due() -> Option<NetEvent> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static SAID: AtomicUsize = AtomicUsize::new(0);
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    if chat_lines_scenario().is_none() || !chat_lines_stagger() {
+        return None;
+    }
+    let secs = START.get_or_init(std::time::Instant::now).elapsed().as_secs_f64();
+    if secs < 3.0 {
+        return None;
+    }
+    let due = ((secs - 3.0) / 2.0) as usize + 1;
+    let said = SAID.load(Ordering::Relaxed);
+    if said >= due {
+        return None;
+    }
+    let line = chat_lines_said().into_iter().nth(said)?;
+    SAID.store(said + 1, Ordering::Relaxed);
+    Some(line)
 }
 
 pub fn chat_lines_limit() -> Option<u32> {
@@ -1278,6 +1314,14 @@ pub fn chat_volume_comparison() -> bool {
 }
 
 pub fn chat_lines_events() -> Vec<NetEvent> {
+    if chat_lines_stagger() {
+        return Vec::new();
+    }
+    chat_lines_said()
+}
+
+/// The lines of `AURORA_DEMO_CHAT_LINES`, in the order they are said.
+fn chat_lines_said() -> Vec<NetEvent> {
     let object = Uuid::from_u128(0xC4A7_0000_0000_0000_0000_0000_0000_0001);
     let nova = aurora_i18n::tr!("demo-nova-example");
     let orion = aurora_i18n::tr!("demo-orion-example");
@@ -3041,10 +3085,11 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             );
             // The animesh fixture needs its wearer visible in full, and
             // AURORA_DEMO_PEOPLE the wolf as a friend. The attachment-click,
-            // derender and seat-kill fixtures need the same visible,
-            // unblocked wearer.
+            // derender, reload and seat-kill fixtures need the same
+            // visible, unblocked wearer.
             let text = if std::env::var_os("AURORA_DEMO_ANIMESH").is_some()
                 || std::env::var_os("AURORA_DEMO_DERENDER").is_some()
+                || std::env::var_os("AURORA_DEMO_RELOAD_AVATAR").is_some()
                 || std::env::var_os("AURORA_DEMO_FRIENDS_ONLY").is_some()
                 || seat_kill::on()
                 || std::env::var("AURORA_DEMO_WORLD_CLICKS").is_ok_and(|m| m.starts_with("worn-"))
@@ -5570,6 +5615,19 @@ pub fn events() -> Vec<NetEvent> {
         "",
     ));
     id += 1;
+    if wet_layer::enabled() {
+        let (sx, sy) = std::env::var("AURORA_DEMO_POS")
+            .ok()
+            .and_then(|v| {
+                let p: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+                (p.len() >= 2).then(|| (p[0], p[1]))
+            })
+            .unwrap_or((132.0, 126.0));
+        for o in wet_layer::objects(id, sx, sy) {
+            add(o);
+        }
+        id += wet_layer::COUNT;
+    }
     // AURORA_DEMO_HALO: a wide translucent pane 3 m ahead of the start
     // position, facing the camera, so that the avatar stands between the
     // camera and the pane (issue #556: no halo around the avatar on it)
@@ -8687,6 +8745,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     if let Some(texture) = legacy_bump::texture(id) {
         return Some(texture);
     }
+    if let Some(texture) = wet_layer::texture(id) {
+        return Some(texture);
+    }
     if *id == hud::TEX_MASK_PANEL {
         return Some(hud::mask_cutoff_texture());
     }
@@ -9061,6 +9122,9 @@ pub fn legacy_materials() -> Vec<(Uuid, crate::scene::legacy_mat::LegacyMaterial
     ];
     if legacy_bump::enabled() {
         list.push((legacy_bump::LEGACY_MATERIAL, legacy_bump::legacy_material()));
+    }
+    if wet_layer::enabled() {
+        list.push((wet_layer::MATERIAL, wet_layer::material()));
     }
     list
 }

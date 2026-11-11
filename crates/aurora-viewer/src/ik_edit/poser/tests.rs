@@ -69,6 +69,9 @@ fn poser_tabs_replace_visible_joints_and_selection_without_editing_the_pose() {
     let mut frames = Frames::new();
     let p = crate::theme::Theme::default().palette();
     let initial = editor.poser.sessions[&world.agent_id].pose.clone();
+    // as if a worn mesh used every Other bone: the tab shows them all but
+    // the spine, the groin and the skull (the full window's list alone)
+    editor.poser.rigged = (0..rig.len()).filter(|b| group(&rig.canonical_names[*b]) == OTHER_GROUP).collect();
     let mut texts = Vec::new();
     for _ in 0..5 {
         texts = frames.run(Vec::new(), |ui| editor.show(ui.ctx(), &p, &world, &proj));
@@ -106,11 +109,12 @@ fn poser_tabs_replace_visible_joints_and_selection_without_editing_the_pose() {
             markers,
             (0..rig.len())
                 .filter(|b| group(&rig.canonical_names[*b]) == tab && proj.project(frame.joints[*b].w_axis.truncate()).is_some())
+                .filter(|b| !inner_bone(&rig.canonical_names[*b]))
                 .count(),
             "only active tab markers are painted"
         );
         for name in &rig.canonical_names {
-            assert_eq!(editor.bone_visible(name), group(name) == tab);
+            assert_eq!(editor.bone_visible(name), group(name) == tab && !inner_bone(name), "{name}");
         }
         for segment in editor.skeleton_segments(&world, &proj, &frame) {
             let segments::Source::Bone(bone) = segment.source else {
@@ -733,6 +737,16 @@ fn poser_window_stays_steady_at_scaled_fonts_and_keeps_the_upload_footer_visible
                     let (world, mut editor) = selected_fixture();
                     editor.poser.library_open = library;
                     editor.poser.settings_open = settings;
+                    editor.poser.storage.message = Some(
+                        aurora_i18n::tr!(
+                            "poser-saved-to",
+                            path = format!(
+                                "/a-long-local-profile-directory/{}/Portrait.aurora-pose.json",
+                                "nested-directory/".repeat(12)
+                            )
+                        )
+                        .to_string(),
+                    );
                     (world, editor)
                 },
                 |(world, editor), ctx, p| {
@@ -817,6 +831,100 @@ fn poser_bone_rows_and_xyz_controls_are_painted_inside_their_scroll_clips() {
     }
 }
 #[test]
+fn poser_name_can_be_replaced_and_survives_idle_frames() {
+    use crate::ui::widgets::elide_tests::{Frames, painted};
+    let (world, mut editor) = selected_fixture();
+    let frame = editor.editor_frame(&world).unwrap();
+    let p = crate::theme::Theme::default().palette();
+    let mut frames = Frames::new();
+    let mut texts = Vec::new();
+    for _ in 0..5 {
+        texts = frames.run(Vec::new(), |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame));
+    }
+    let pointer = painted(&texts, &editor.poser.name).rect.center();
+    for pressed in [true, false] {
+        frames.run(
+            vec![
+                egui::Event::PointerMoved(pointer),
+                egui::Event::PointerButton {
+                    pos: pointer,
+                    pressed,
+                    button: egui::PointerButton::Primary,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame),
+        );
+    }
+    let modifiers = egui::Modifiers {
+        ctrl: true,
+        command: true,
+        ..Default::default()
+    };
+    frames.run(
+        vec![egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }],
+        |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame),
+    );
+    frames.run(
+        vec![
+            egui::Event::Text("Portrait".into()),
+            egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: String::new(),
+                active_range_chars: None,
+            }),
+        ],
+        |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame),
+    );
+    assert_eq!(editor.poser.name, "Portrait");
+    for _ in 0..30 {
+        frames.run(Vec::new(), |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame));
+        assert_eq!(editor.poser.name, "Portrait");
+    }
+}
+#[test]
+fn poser_load_menu_opens_the_existing_library_without_a_file_picker() {
+    use crate::ui::widgets::elide_tests::{Frames, painted};
+    let (world, mut editor) = selected_fixture();
+    let frame = editor.editor_frame(&world).unwrap();
+    let p = crate::theme::Theme::default().palette();
+    editor.poser.storage.ready = true;
+    let mut frames = Frames::new();
+    let mut texts = Vec::new();
+    for _ in 0..5 {
+        texts = frames.run(Vec::new(), |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame));
+    }
+    for label in ["poser-load-menu", "poser-library"] {
+        let pointer = painted(&texts, aurora_i18n::text(label)).rect.center();
+        for pressed in [true, false] {
+            frames.run(
+                vec![
+                    egui::Event::PointerMoved(pointer),
+                    egui::Event::PointerButton {
+                        pos: pointer,
+                        pressed,
+                        button: egui::PointerButton::Primary,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame),
+            );
+        }
+        texts = frames.run(Vec::new(), |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame));
+    }
+    assert!(editor.poser.library_open);
+    assert!(!editor.poser.storage.ready);
+    assert!(
+        editor.poser.storage.job.is_none(),
+        "opening the library must not launch a file picker"
+    );
+}
+#[test]
 fn poser_library_saves_bvh_confirms_overwrite_and_correlates_loads_to_the_original_subject() {
     let (world, editor) = fixture();
     let owner = Uuid::new_v4();
@@ -831,6 +939,7 @@ fn poser_library_saves_bvh_confirms_overwrite_and_correlates_loads_to_the_origin
     let ctx = egui::Context::default();
     let mut service = storage::Service::default();
     let tick = |service: &mut storage::Service| service.tick(&jobs, &ctx, owner, rig.clone(), world.avatar_lib.skeleton.as_ref());
+    service.filter = "does not match Portrait".into();
     service.job = Some(storage::Job::Save(storage::Save {
         document: document.clone(),
         pose: session.pose.clone(),
@@ -844,6 +953,60 @@ fn poser_library_saves_bvh_confirms_overwrite_and_correlates_loads_to_the_origin
     }
     assert_eq!(service.entries.len(), 1);
     let path = service.entries[0].path.clone();
+    assert_eq!(service.saved_path, None);
+    assert_eq!(service.selected, Some(0));
+    assert!(service.filter.is_empty(), "a search that hides the saved pose is cleared");
+    assert!(service.scroll_to_selected, "the list scrolls to the saved pose once");
+    assert!(service.message.as_ref().unwrap().contains(path.to_string_lossy().as_ref()));
+
+    // A search the saved pose matches stays.
+    service.filter = "PORT".into();
+    service.scroll_to_selected = false;
+    service.job = Some(storage::Job::Save(storage::Save {
+        document: document.clone(),
+        pose: session.pose.clone(),
+        bvh: true,
+        unlock: true,
+        confirm: false,
+        pick: false,
+    }));
+    for _ in 0..3 {
+        tick(&mut service);
+    }
+    if let Some((document, pose, bvh, unlock)) = service.overwrite.take() {
+        // saving the same name again asks to overwrite: confirm it
+        service.job = Some(storage::Job::Save(storage::Save {
+            document,
+            pose,
+            bvh,
+            unlock,
+            confirm: true,
+            pick: false,
+        }));
+        for _ in 0..3 {
+            tick(&mut service);
+        }
+    }
+    assert_eq!(service.selected, Some(0));
+    assert_eq!(service.filter, "PORT", "a search the saved pose matches is kept");
+    assert!(service.scroll_to_selected);
+    service.scroll_to_selected = false;
+
+    // A user can select an existing row while the post-save refresh is pending.
+    service.saved_path = Some(path.clone());
+    service.ready = false;
+    for _ in 0..3 {
+        tick(&mut service);
+    }
+    assert_eq!(service.selected, Some(0));
+    assert_eq!(service.saved_path, None, "a current selection must consume the pending saved path");
+
+    service.selected = None;
+    service.ready = false;
+    for _ in 0..3 {
+        tick(&mut service);
+    }
+    assert_eq!(service.selected, None, "a later library refresh must not reuse the saved path");
     let bvh = std::fs::read(root.join("poses/Portrait.bvh")).unwrap();
     let imported = aurora_assets::import_animation::parse_bvh_pose(&bvh, world.avatar_lib.skeleton.as_ref().unwrap()).unwrap();
     assert!(
@@ -884,6 +1047,7 @@ fn poser_handles_own_the_pointer_and_leave_the_rest_of_the_scene_to_huds() {
     let at = |name: &str| proj.project(frame.joints[rig.names[name]].w_axis.truncate()).unwrap().0;
     let mut frames = Frames::new();
     crate::ui::widgets::minimize_floater(&frames.ctx, "poser");
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser-compact");
     let p = crate::theme::Theme::default().palette();
     let mut hover = |editor: &mut Editor, pointer: egui::Pos2| {
         for _ in 0..3 {
@@ -1156,6 +1320,9 @@ fn poser_title_eye_hides_and_shows_the_markers_and_gizmos() {
     let frame = editor.editor_frame(&world).unwrap();
     let mut frames = Frames::new();
     let p = crate::theme::Theme::default().palette();
+    // the full window's title (the compact one has its markers button in its
+    // last row)
+    editor.poser.window_override = Some(false);
     crate::ui::widgets::place_floater(&frames.ctx, "poser", egui::pos2(30.0, 30.0), egui::vec2(880.0, 760.0));
     assert!(editor.poser.markers);
     // the eye shows what is on screen: open, then struck through once hidden
@@ -1172,4 +1339,1036 @@ fn poser_title_eye_hides_and_shows_the_markers_and_gizmos() {
         assert_eq!(editor.poser.markers, after, "{icon} toggles the settings' switch");
         assert!(!editor.poser.settings_open, "no detour through the settings");
     }
+}
+
+#[test]
+fn hover_markers_follow_the_silhouette_with_a_wider_margin_to_leave() {
+    use compact::{REVEAL_ENTER, REVEAL_LEAVE, markers_shown};
+    assert!(markers_shown(false, None, false, false, false), "Always mode shows them");
+    assert!(markers_shown(true, Some(5.0), false, false, false), "on the body");
+    assert!(
+        markers_shown(true, Some(-REVEAL_ENTER + 1.0), false, false, false),
+        "just beside it"
+    );
+    let between = -(REVEAL_ENTER + REVEAL_LEAVE) / 2.0;
+    assert!(!markers_shown(true, Some(between), false, false, false), "too far to come");
+    assert!(
+        markers_shown(true, Some(between), true, false, false),
+        "but near enough to stay: no flicker at the edge"
+    );
+    assert!(
+        !markers_shown(true, Some(-REVEAL_LEAVE - 1.0), true, false, false),
+        "gone past the wider margin"
+    );
+    assert!(
+        !markers_shown(true, Some(5.0), false, true, false),
+        "a window over the avatar hides them"
+    );
+    assert!(!markers_shown(true, None, true, false, false), "pointer outside the viewer");
+    assert!(
+        markers_shown(true, Some(-500.0), false, false, true),
+        "a drag that leaves keeps them"
+    );
+}
+
+#[test]
+fn a_click_picks_the_nearest_posed_avatar_under_the_pointer() {
+    let (near, far) = (Uuid::from_u128(1), Uuid::from_u128(2));
+    let near_area = compact::body_area([egui::pos2(100.0, 100.0), egui::pos2(140.0, 300.0)]).unwrap();
+    let far_area = compact::body_area([egui::pos2(110.0, 120.0), egui::pos2(130.0, 220.0)]).unwrap();
+    let others = [(far, far_area, 9.0), (near, near_area, 3.0)];
+    assert_eq!(
+        compact::clicked_subject(&others, egui::pos2(120.0, 150.0)),
+        Some(near),
+        "the nearer one in front"
+    );
+    assert_eq!(compact::clicked_subject(&others, egui::pos2(120.0, 290.0)), Some(near));
+    assert_eq!(
+        compact::clicked_subject(&others, egui::pos2(600.0, 150.0)),
+        None,
+        "the ground beside"
+    );
+    assert_eq!(compact::clicked_subject(&[], egui::pos2(120.0, 150.0)), None);
+}
+
+#[test]
+fn a_click_beside_the_joints_unselects_and_the_pelvis_is_not_picked_again() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (world, mut editor) = selected_fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = editor.editor_frame(&world).unwrap();
+    let proj = projector(frame.joints[rig.pelvis].w_axis.truncate());
+    let at = |name: &str| proj.project(frame.joints[rig.names[name]].w_axis.truncate()).unwrap().0;
+    let mut frames = Frames::new();
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser");
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser-compact");
+    let p = crate::theme::Theme::default().palette();
+    let mut click = |editor: &mut Editor, pointer: egui::Pos2| {
+        let button = |pressed| egui::Event::PointerButton {
+            pos: pointer,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        for events in [
+            vec![egui::Event::PointerMoved(pointer)],
+            vec![button(true)],
+            vec![button(false)],
+            vec![],
+            vec![],
+        ] {
+            frames.run(events, |ui| editor.show(ui.ctx(), &p, &world, &proj));
+        }
+    };
+    assert!(editor.selected.is_some());
+    click(&mut editor, egui::pos2(790.0, 890.0));
+    assert_eq!(editor.selected, None, "the ground beside unselects");
+    assert!(editor.poser.unselected);
+    click(&mut editor, egui::pos2(790.0, 880.0));
+    assert_eq!(editor.selected, None, "the pelvis is not chosen again by itself");
+    click(&mut editor, at("mKneeLeft"));
+    assert_eq!(editor.selected, Some(rig.names["mKneeLeft"]), "a joint's marker selects it");
+    assert!(!editor.poser.unselected);
+}
+
+#[test]
+fn reset_joint_in_mirror_resets_both_sides_and_one_side_otherwise() {
+    let (mut world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let left = rig.names["mElbowLeft"];
+    let right = rig.names["mElbowRight"];
+    let bend_both = |world: &mut World, editor: &mut Editor| {
+        let frame = Frame::new(world).unwrap();
+        editor.select(left, &rig, &frame);
+        let base = editor.poser.sessions[&world.agent_id].pose.clone();
+        editor.poser_transform(&rig, &frame, base.positions[left], Quat::from_rotation_z(0.6), true);
+        render(world, editor);
+        editor.pose_operation(&rig, &Frame::new(world).unwrap(), controls::Operation::Mirror);
+        let session = &editor.poser.sessions[&world.agent_id];
+        assert!(session.edited(left) && session.edited(right));
+    };
+    // Left: the reset leaves the right elbow as it is
+    bend_both(&mut world, &mut editor);
+    editor.poser.side = Side::Left;
+    editor.pose_operation(&rig, &Frame::new(&world).unwrap(), controls::Operation::ResetJoint);
+    let session = &editor.poser.sessions[&world.agent_id];
+    assert!(!session.edited(left) && session.edited(right));
+    // Mirror: both elbows go back (FSPoserAnimator::resetJoint)
+    bend_both(&mut world, &mut editor);
+    editor.poser.side = Side::Mirror;
+    editor.select(left, &rig, &Frame::new(&world).unwrap());
+    editor.pose_operation(&rig, &Frame::new(&world).unwrap(), controls::Operation::ResetJoint);
+    let session = &editor.poser.sessions[&world.agent_id];
+    assert!(!session.edited(left) && !session.edited(right));
+}
+
+#[test]
+fn an_avatar_who_accepted_can_be_posed_by_a_click_before_any_menu_choice() {
+    let (mut world, editor) = fixture();
+    let peer = demo::poser::PEER;
+    assert!(
+        !editor.poseable_others(&world).contains(&peer),
+        "not asked yet: a click only unselects"
+    );
+    let mut consent = std::mem::take(&mut world.poser_consent);
+    consent.request(&world, peer, Instant::now());
+    assert!(!editor.poseable_others(&world).contains(&peer), "asked, no answer yet");
+    consent.demo_accept(&world, peer, std::time::Duration::ZERO);
+    world.poser_consent = consent;
+    assert!(editor.poseable_others(&world).contains(&peer), "accepted: a click poses them");
+    assert!(
+        !editor.poseable_others(&world).contains(&world.agent_id),
+        "the subject itself is not listed"
+    );
+}
+
+#[test]
+fn another_groups_part_is_offered_only_when_clearly_nearer() {
+    use world_hints::offered_joint;
+    // joints 0 and 1 are Body, 2 Hands, 3 Physics (never offered)
+    let groups = [0, 0, 2, 4];
+    let offer = [true, true, true, false];
+    let joints = [
+        (0, egui::pos2(0.0, 0.0)),
+        (1, egui::pos2(100.0, 0.0)),
+        (2, egui::pos2(100.0, 40.0)),
+        (3, egui::pos2(100.0, 41.0)),
+    ];
+    assert_eq!(
+        offered_joint(&joints, &groups, &offer, 0, egui::pos2(100.0, 45.0)),
+        Some(2),
+        "on the hand: Hands"
+    );
+    assert_eq!(
+        offered_joint(&joints, &groups, &offer, 0, egui::pos2(100.0, 22.0)),
+        None,
+        "between wrist and hand: Body keeps it"
+    );
+    assert_eq!(
+        offered_joint(&joints, &groups, &offer, 2, egui::pos2(100.0, 45.0)),
+        None,
+        "already in Hands"
+    );
+    assert_eq!(
+        offered_joint(&joints, &groups, &offer, 2, egui::pos2(2.0, 0.0)),
+        Some(0),
+        "from Hands, the body offers Body"
+    );
+    // a joint that may not be offered does not hide the current group's
+    let none = [true, true, false, false];
+    assert_eq!(offered_joint(&joints, &groups, &none, 0, egui::pos2(100.0, 45.0)), None);
+}
+
+#[test]
+fn wings_and_tail_are_their_own_parts_offered_only_when_a_mesh_uses_them() {
+    use world_hints::{TAIL, WINGS, offerable, part, part_key};
+    let (world, _) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let keys: Vec<usize> = rig.canonical_names.iter().map(|n| part_key(n)).collect();
+    let wing = rig.names["mWing1Left"];
+    let tail = rig.names["mTail1"];
+    assert_eq!(keys[wing], WINGS);
+    assert_eq!(keys[tail], TAIL);
+    let wings = part(&rig.parent, &keys, wing);
+    assert!(!wings.contains(&tail), "the tail is apart from the wings");
+    assert!(wings.iter().all(|j| keys[*j] == WINGS));
+    assert!(part(&rig.parent, &keys, tail).iter().all(|j| keys[*j] == TAIL));
+    assert!(
+        !offerable(WINGS, false) && offerable(WINGS, true),
+        "wings only when a mesh uses them"
+    );
+    assert!(!offerable(TAIL, false) && offerable(TAIL, true));
+    let hind = keys[rig.names["mHindLimb1Left"]];
+    assert!(!offerable(hind, true), "the hind limbs lie over the legs: never offered");
+    assert!(!offerable(keys[rig.names["mSkull"]], true));
+    assert!(!offerable(4, true), "physics is never offered");
+    assert!(offerable(keys[rig.names["mHandIndex1Left"]], false), "the hands always");
+}
+
+#[test]
+fn a_part_is_one_hand_one_face_and_stops_at_other_groups() {
+    let (world, _) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let groups: Vec<usize> = rig.canonical_names.iter().map(|n| world_hints::part_key(n)).collect();
+    let left = world_hints::part(&rig.parent, &groups, rig.names["mHandIndex1Left"]);
+    assert!(left.contains(&rig.names["mHandThumb3Left"]), "the whole left hand");
+    assert!(!left.contains(&rig.names["mHandIndex1Right"]), "not the other hand");
+    assert!(!left.contains(&rig.names["mWristLeft"]), "the wrist is Body's");
+    assert!(left.iter().all(|j| groups[*j] == 2));
+    let face = world_hints::part(&rig.parent, &groups, rig.names["mFaceLipUpperCenter"]);
+    assert!(
+        face.contains(&rig.names["mFaceEyeAltLeft"]) || face.len() > 20,
+        "the face is one part"
+    );
+    assert!(face.iter().all(|j| groups[*j] == 1));
+}
+
+#[test]
+fn the_tint_is_the_union_of_the_bones_capsules_painted_once() {
+    use silhouette::{Capsule, depth, trace};
+    // an upper arm and a forearm, thinner at the wrist
+    let arm = [
+        Capsule {
+            a: egui::pos2(0.0, 0.0),
+            b: egui::pos2(100.0, 0.0),
+            ra: 12.0,
+            rb: 9.0,
+        },
+        Capsule {
+            a: egui::pos2(100.0, 0.0),
+            b: egui::pos2(100.0, 90.0),
+            ra: 9.0,
+            rb: 6.0,
+        },
+    ];
+    assert!(depth(&arm, egui::pos2(50.0, 5.0)) > 0.0, "on the upper arm");
+    assert!(depth(&arm, egui::pos2(103.0, 85.0)) > 0.0, "on the forearm near the wrist");
+    assert!(
+        depth(&arm, egui::pos2(50.0, 40.0)) < 0.0,
+        "in the elbow's crook: not a hull's triangle"
+    );
+    assert!(depth(&arm, egui::pos2(100.0, 92.0 + 8.0)) < 0.0, "past the wrist");
+    let shape = trace(&arm);
+    assert!(!shape.triangles.is_empty() && !shape.edge.is_empty());
+    // every triangle lies on the arm: the inside is clipped, nothing doubles
+    let area: f32 = shape
+        .triangles
+        .iter()
+        .map(|[a, b, c]| ((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)).abs() / 2.0)
+        .sum();
+    let expected = 100.0 * 21.0 + 90.0 * 15.0 + std::f32::consts::PI * 9.0 * 9.0 / 2.0;
+    assert!(
+        (area - expected).abs() / expected < 0.2,
+        "area {area} near {expected}: painted once"
+    );
+    assert!(trace::<Capsule>(&[]).triangles.is_empty());
+}
+
+#[test]
+fn the_face_part_has_no_links_and_a_hand_reaches_its_wrist() {
+    use silhouette::{Links, capsules, links_of};
+    let (world, _) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = Frame::new(&world).unwrap();
+    let proj = projector(frame.joints[rig.pelvis].w_axis.truncate());
+    let at: Vec<glam::Vec3> = frame.joints.iter().map(|m| m.w_axis.truncate()).collect();
+    let project = |w: glam::Vec3| proj.project(w).map(|(p, _)| p);
+    let keys: Vec<usize> = rig.canonical_names.iter().map(|n| world_hints::part_key(n)).collect();
+    assert_eq!(links_of(1), Links::None);
+    let face = world_hints::part(&rig.parent, &keys, rig.names["mFaceLipUpperCenter"]);
+    let face_caps = capsules(&rig.parent, &rig.canonical_names, &at, &face, links_of(1), project);
+    assert!(face_caps.iter().all(|c| c.a == c.b), "the face: joints only, no star from the head");
+    let hand = world_hints::part(&rig.parent, &keys, rig.names["mHandIndex1Left"]);
+    let hand_caps = capsules(&rig.parent, &rig.canonical_names, &at, &hand, links_of(2), project);
+    let wrist = project(at[rig.names["mWristLeft"]]).unwrap();
+    assert!(hand_caps.iter().any(|c| c.a == wrist), "the fingers reach the wrist: the palm");
+}
+
+#[test]
+fn the_other_tab_shows_only_the_bones_a_mesh_uses_or_the_pose_moved() {
+    let (mut world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let tail = rig.names["mTail1"];
+    let wing = rig.names["mWing1Left"];
+    let hind = rig.names["mHindLimb1Left"];
+    editor.poser.group = OTHER_GROUP;
+    editor.refresh_other_bones(&rig);
+    assert!(editor.poser.other_used.is_empty(), "nothing worn: the tab is empty");
+    // the spine's collapsed pairs too (the human's choice, 2026-11-10: their
+    // markers sit upside down and moving them tears the body apart)
+    assert!(!editor.poser_bone_visible("mSpine1") && !editor.poser_bone_visible("mSpine4"));
+    // a worn tail
+    editor.poser.rigged = [tail].into();
+    editor.refresh_other_bones(&rig);
+    assert!(editor.poser_bone_visible("mTail1"));
+    assert!(!editor.poser_bone_visible("mWing1Left") && !editor.poser_bone_visible("mHindLimb1Left"));
+    // a pose that bends a wing keeps it reachable
+    let frame = Frame::new(&world).unwrap();
+    editor.select(wing, &rig, &frame);
+    let base = editor.poser.sessions[&world.agent_id].pose.clone();
+    editor.poser_transform(&rig, &frame, base.positions[wing], Quat::from_rotation_z(0.4), true);
+    render(&mut world, &editor);
+    editor.refresh_other_bones(&rig);
+    assert!(editor.poser_bone_visible("mWing1Left"), "an edited wing stays shown");
+    assert!(!editor.poser_bone_visible(&rig.canonical_names[hind]));
+    // the other tabs are untouched
+    editor.poser.group = 0;
+    assert!(editor.poser_bone_visible("mElbowLeft"));
+}
+
+#[test]
+fn an_empty_other_tab_stays_open_instead_of_going_back_to_body() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (world, mut editor) = selected_fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = editor.editor_frame(&world).unwrap();
+    let proj = projector(frame.joints[rig.pelvis].w_axis.truncate());
+    let mut frames = Frames::new();
+    let p = crate::theme::Theme::default().palette();
+    editor.refresh_other_bones(rig);
+    editor.select_pose_group(OTHER_GROUP, rig, &frame);
+    assert_eq!(editor.selected, None, "nothing worn: no Other joint to select");
+    for _ in 0..3 {
+        frames.run(Vec::new(), |ui| editor.show(ui.ctx(), &p, &world, &proj));
+    }
+    assert_eq!(editor.poser.group, OTHER_GROUP, "the tab stays open");
+    assert_eq!(editor.selected, None, "the pelvis is not picked again");
+}
+
+#[test]
+fn a_click_on_the_ground_unselects_with_the_markers_hidden_on_hover() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (world, mut editor) = selected_fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = editor.editor_frame(&world).unwrap();
+    let proj = projector(frame.joints[rig.pelvis].w_axis.truncate());
+    let mut frames = Frames::new();
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser");
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser-compact");
+    let p = crate::theme::Theme::default().palette();
+    editor.poser.markers_hover = true;
+    let ground = egui::pos2(790.0, 890.0);
+    // away from the avatar for a second: the markers fade out
+    for _ in 0..60 {
+        frames.run(vec![egui::Event::PointerMoved(ground)], |ui| {
+            editor.show(ui.ctx(), &p, &world, &proj)
+        });
+    }
+    assert!(editor.selected.is_some());
+    let button = |pressed| egui::Event::PointerButton {
+        pos: ground,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    for events in [vec![button(true)], vec![button(false)], vec![], vec![]] {
+        frames.run(events, |ui| editor.show(ui.ctx(), &p, &world, &proj));
+    }
+    assert_eq!(editor.selected, None, "the ground unselects, markers hidden or not");
+}
+
+#[test]
+fn the_body_is_one_part_from_the_head_to_the_feet() {
+    let (world, _) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let keys: Vec<usize> = rig.canonical_names.iter().map(|n| world_hints::part_key(n)).collect();
+    for start in ["mChest", "mKneeLeft", "mPelvis", "mHead"] {
+        let body = world_hints::part(&rig.parent, &keys, rig.names[start]);
+        for joint in ["mPelvis", "mTorso", "mChest", "mHead", "mAnkleLeft", "mAnkleRight", "mWristLeft"] {
+            assert!(body.contains(&rig.names[joint]), "hovering {start} shows {joint}");
+        }
+    }
+    // the torso joins the pelvis across the spine joints, which are Other's
+    let frame = Frame::new(&world).unwrap();
+    let proj = projector(frame.joints[rig.pelvis].w_axis.truncate());
+    let at: Vec<glam::Vec3> = frame.joints.iter().map(|m| m.w_axis.truncate()).collect();
+    let project = |w: glam::Vec3| proj.project(w).map(|(p, _)| p);
+    let body = world_hints::part(&rig.parent, &keys, rig.pelvis);
+    let caps = silhouette::capsules(&rig.parent, &rig.canonical_names, &at, &body, silhouette::Links::Inside, project);
+    let waist = project(at[rig.pelvis])
+        .unwrap()
+        .lerp(project(at[rig.names["mTorso"]]).unwrap(), 0.5);
+    assert!(silhouette::depth(&caps, waist) > 0.0, "no gap at the waist");
+}
+
+#[test]
+fn a_ctrl_click_on_an_avatar_who_accepted_poses_them_and_a_plain_click_does_not() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (mut world, mut editor) = selected_fixture();
+    let peer = demo::poser::PEER;
+    // the peer stands posed beside us, and has accepted
+    let own = world.avatar_poses[&world.agent_id].clone();
+    world.avatar_poses.insert(peer, own);
+    let mut consent = std::mem::take(&mut world.poser_consent);
+    consent.request(&world, peer, Instant::now());
+    consent.demo_accept(&world, peer, std::time::Duration::ZERO);
+    world.poser_consent = consent;
+    let peer_frame = Frame::subject(&world, peer).expect("the peer's skeleton");
+    let rig = &world.avatar_lib.rig;
+    let frame = editor.editor_frame(&world).unwrap();
+    let proj = projector(frame.joints[rig.pelvis].w_axis.truncate());
+    let on_peer = proj.project(peer_frame.joints[rig.names["mChest"]].w_axis.truncate()).unwrap().0;
+    let mut frames = Frames::new();
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser");
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser-compact");
+    let p = crate::theme::Theme::default().palette();
+    editor.poser.markers_hover = true;
+    let me = editor.poser.subject;
+    for (keys, expected, why) in [
+        (
+            egui::Modifiers::NONE,
+            me,
+            "a plain click stays the world's (a photo's focus, a HUD)",
+        ),
+        (egui::Modifiers::CTRL, peer, "Ctrl + click poses them"),
+    ] {
+        // a second over them: our own markers fade out, their preview
+        // (with Ctrl) stays
+        for _ in 0..60 {
+            frames.run(
+                vec![egui::Event::ModifiersChanged(keys), egui::Event::PointerMoved(on_peer)],
+                |ui| editor.show(ui.ctx(), &p, &world, &proj),
+            );
+        }
+        let button = |pressed| egui::Event::PointerButton {
+            pos: on_peer,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: keys,
+        };
+        for events in [vec![button(true)], vec![button(false)], vec![], vec![]] {
+            frames.run(events, |ui| editor.show(ui.ctx(), &p, &world, &proj));
+        }
+        assert_eq!(editor.poser.subject, expected, "{why}");
+    }
+}
+
+#[test]
+fn a_y_angle_past_ninety_degrees_stays_as_set() {
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let frame = Frame::new(&world).unwrap();
+    let elbow = rig.names["mElbowLeft"];
+    editor.select(elbow, &rig, &frame);
+    editor.poser.transform = 0;
+    // a slider dragged from 85° to 120°, one frame at a time
+    for y in [85.0, 95.0, 105.0, 120.0] {
+        let set = Vec3::new(10.0, y, -20.0);
+        editor.apply_joint_value(&rig, &frame, elbow, set);
+        let shown = editor.joint_value(&rig, &frame, elbow).unwrap();
+        assert!(
+            (shown - set).length() < 1e-3,
+            "Y {y}: shows {shown:?}, not the same turn read the other way"
+        );
+    }
+    // the same rotation still: Y 120° with X and Z as set
+    let q = editor.poser.sessions[&world.agent_id].pose.rotations[elbow];
+    let expected = Quat::from_euler(EulerRot::ZYX, (-20f32).to_radians(), 120f32.to_radians(), 10f32.to_radians());
+    assert!(q.dot(expected).abs() > 0.9999);
+    // once something else turns the joint, the angles are read from it again
+    editor.poser.sessions.get_mut(&world.agent_id).unwrap().history(false);
+    let after = editor.joint_value(&rig, &frame, elbow).unwrap();
+    assert!(after.y.abs() <= 90.0 + 1e-3, "read back from the rotation: {after:?}");
+}
+
+#[test]
+fn compact_reset_greys_out_when_it_would_change_nothing() {
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let left = rig.names["mElbowLeft"];
+    let right = rig.names["mElbowRight"];
+    let frame = Frame::new(&world).unwrap();
+    editor.select(left, &rig, &frame);
+    editor.poser.side = Side::Left;
+    assert!(!editor.reset_available(false), "an untouched joint has nothing to reset");
+    assert!(!editor.reset_available(true), "nor an untouched pose");
+    // only the counterpart bent: one side has nothing, Mirror resets it too
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    Arc::make_mut(&mut session.pose).rotations[right] = Quat::from_rotation_z(0.6) * session.base.rotations[right];
+    assert!(!editor.reset_available(false));
+    editor.poser.side = Side::Mirror;
+    assert!(
+        editor.reset_available(false),
+        "Mirror resets both sides (FSPoserAnimator::resetJoint)"
+    );
+    assert!(editor.reset_available(true), "Shift: the whole pose has an edit");
+    // a lock alone is something the reset removes
+    editor.poser.side = Side::Left;
+    editor.pose_operation(&rig, &frame, controls::Operation::ResetAll);
+    assert!(!editor.reset_available(true));
+    editor.pose_operation(&rig, &frame, controls::Operation::WorldLock);
+    assert!(editor.reset_available(false) && editor.reset_available(true));
+}
+
+#[test]
+fn an_ellipse_is_inside_to_its_edge_and_a_tilted_one_follows_its_axes() {
+    use silhouette::{Ellipse, Field};
+    let c = egui::pos2(100.0, 100.0);
+    let round = Ellipse::of_axes(c, [egui::vec2(20.0, 0.0), egui::vec2(0.0, 20.0), egui::Vec2::ZERO]).unwrap();
+    assert!((round.depth(c) - 20.0).abs() < 1e-3, "its centre is a radius deep");
+    assert!(round.depth(c + egui::vec2(19.5, 0.0)) > 0.0);
+    assert!(round.depth(c + egui::vec2(20.5, 0.0)) < 0.0);
+    // tall and thin: inside up the long axis, outside as far to the side
+    let tall = Ellipse::of_axes(c, [egui::vec2(10.0, 0.0), egui::vec2(0.0, 30.0), egui::Vec2::ZERO]).unwrap();
+    assert!(tall.depth(c + egui::vec2(0.0, 25.0)) > 0.0);
+    assert!(tall.depth(c + egui::vec2(25.0, 0.0)) < 0.0);
+    assert_eq!(tall.bounds(), egui::Rect::from_center_size(c, egui::vec2(20.0, 60.0)));
+    // seen edge on, there is no outline
+    assert!(Ellipse::of_axes(c, [egui::vec2(10.0, 0.0), egui::vec2(20.0, 0.0), egui::Vec2::ZERO]).is_none());
+}
+
+#[test]
+fn the_face_tint_is_an_oval_over_the_face_and_not_the_neck() {
+    use silhouette::Field;
+    let (world, _) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = Frame::new(&world).unwrap();
+    let head = frame.joints[rig.names["mHead"]];
+    let proj = projector(head.w_axis.truncate());
+    let at: Vec<glam::Vec3> = frame.joints.iter().map(|m| m.w_axis.truncate()).collect();
+    let project = |w: glam::Vec3| proj.project(w).map(|(p, _)| p);
+    let keys: Vec<usize> = rig.canonical_names.iter().map(|n| world_hints::part_key(n)).collect();
+    let face = world_hints::part(&rig.parent, &keys, rig.names["mFaceLipUpperCenter"]);
+    let oval = silhouette::face(&rig.canonical_names, &at, &face, head, project).expect("the face faces the camera");
+    for joint in [
+        "mFaceLipUpperCenter",
+        "mFaceEyeAltLeft",
+        "mFaceEyeAltRight",
+        "mFaceNoseBase",
+        "mFaceForeheadCenter",
+    ] {
+        let point = project(at[rig.names[joint]]).unwrap();
+        assert!(oval.depth(point) > 0.0, "{joint} is inside the oval");
+    }
+    for joint in ["mNeck", "mChest"] {
+        let point = project(at[rig.names[joint]]).unwrap();
+        assert!(oval.depth(point) < 0.0, "{joint} is not");
+    }
+    // one smooth closed outline on its edge, not a cloud of dots
+    let outline = oval.outline(64);
+    assert_eq!(outline.len(), 64);
+    assert!(outline.iter().all(|p| oval.depth(*p).abs() < 0.05), "the outline lies on the edge");
+}
+
+#[test]
+fn another_part_shows_and_takes_the_click_only_while_ctrl_is_held() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (world, mut editor) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = Frame::new(&world).unwrap();
+    let proj = projector(frame.joints[rig.pelvis].w_axis.truncate());
+    let p = crate::theme::Theme::default().palette();
+    editor.poser.group = 0;
+    // a fingertip while posing the Body: the Hands part
+    let finger = proj
+        .project(frame.joints[rig.names["mHandMiddle3Left"]].w_axis.truncate())
+        .unwrap()
+        .0;
+    let mut frames = Frames::new();
+    let hint = |frames: &mut Frames, editor: &mut Editor, keys: egui::Modifiers| -> world_hints::Hint {
+        let mut out = world_hints::Hint::None;
+        let events = vec![egui::Event::ModifiersChanged(keys), egui::Event::PointerMoved(finger)];
+        frames.run(events, |ui| {
+            out = editor.world_hint(ui.ctx(), &p, &world, &proj, &frame, true);
+        });
+        out
+    };
+    assert_eq!(
+        hint(&mut frames, &mut editor, egui::Modifiers::NONE),
+        world_hints::Hint::None,
+        "no Ctrl: no tint, the click stays the world's"
+    );
+    assert!(
+        matches!(
+            hint(&mut frames, &mut editor, egui::Modifiers::CTRL),
+            world_hints::Hint::Group(j) if group(&rig.canonical_names[j]) == 2
+        ),
+        "Ctrl: the hand is offered"
+    );
+}
+
+#[test]
+fn a_click_a_worn_hud_took_keeps_the_joint_and_the_next_one_on_the_ground_unselects() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (world, mut editor) = selected_fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = editor.editor_frame(&world).unwrap();
+    let proj = projector(frame.joints[rig.pelvis].w_axis.truncate());
+    let mut frames = Frames::new();
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser");
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser-compact");
+    let p = crate::theme::Theme::default().palette();
+    let ground = egui::pos2(790.0, 890.0);
+    let button = |pressed| egui::Event::PointerButton {
+        pos: ground,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let click = |editor: &mut Editor, frames: &mut Frames| {
+        for events in [
+            vec![egui::Event::PointerMoved(ground)],
+            vec![button(true)],
+            vec![button(false)],
+            vec![],
+        ] {
+            frames.run(events, |ui| editor.show(ui.ctx(), &p, &world, &proj));
+        }
+    };
+    assert!(editor.selected.is_some());
+    // the app's press path gave this press to a HUD button
+    editor.press_on_hud = true;
+    click(&mut editor, &mut frames);
+    assert!(editor.selected.is_some(), "the HUD's click leaves the joint selected");
+    assert!(!editor.press_on_hud, "read once");
+    // a drag on a HUD (no click) does not leave its press to the next click
+    editor.press_on_hud = true;
+    for events in [
+        vec![egui::Event::PointerMoved(ground)],
+        vec![button(true)],
+        vec![egui::Event::PointerMoved(ground + egui::vec2(80.0, 40.0))],
+        vec![egui::Event::PointerButton {
+            pos: ground + egui::vec2(80.0, 40.0),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+        vec![],
+    ] {
+        frames.run(events, |ui| editor.show(ui.ctx(), &p, &world, &proj));
+    }
+    assert!(!editor.press_on_hud, "the HUD's press ends with its release");
+    assert!(editor.selected.is_some(), "a drag is no click beside");
+    click(&mut editor, &mut frames);
+    assert_eq!(editor.selected, None, "a click on the ground still unselects");
+}
+
+#[test]
+fn the_reset_greys_out_once_posing_is_stopped() {
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let elbow = rig.names["mElbowLeft"];
+    let frame = Frame::new(&world).unwrap();
+    editor.select(elbow, &rig, &frame);
+    editor.poser.side = Side::Left;
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    session.enabled = true;
+    Arc::make_mut(&mut session.pose).rotations[elbow] = Quat::from_rotation_z(0.6) * session.base.rotations[elbow];
+    assert!(editor.reset_available(false) && editor.reset_available(true), "posing, edited: lit");
+    editor.poser.sessions.get_mut(&world.agent_id).unwrap().enabled = false;
+    assert!(
+        !editor.reset_available(false) && !editor.reset_available(true),
+        "stopped: the reset would change nothing (pose_operation leaves a stopped pose)"
+    );
+}
+
+#[test]
+fn from_the_other_tab_ctrl_over_the_chest_offers_the_body_past_the_hidden_spine() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (world, mut editor) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = Frame::new(&world).unwrap();
+    let proj = projector(frame.joints[rig.pelvis].w_axis.truncate());
+    let p = crate::theme::Theme::default().palette();
+    // the Other tab, nothing worn: the spine is hidden, but mSpine3 sits on
+    // mChest and would count as the tab's own, nearer than the body's
+    editor.poser.group = OTHER_GROUP;
+    editor.refresh_other_bones(rig);
+    assert!(!editor.poser_bone_visible("mSpine3"));
+    let chest = proj.project(frame.joints[rig.names["mChest"]].w_axis.truncate()).unwrap().0;
+    let mut frames = Frames::new();
+    let mut hint = world_hints::Hint::None;
+    frames.run(
+        vec![
+            egui::Event::ModifiersChanged(egui::Modifiers::CTRL),
+            egui::Event::PointerMoved(chest),
+        ],
+        |ui| {
+            hint = editor.world_hint(ui.ctx(), &p, &world, &proj, &frame, true);
+        },
+    );
+    assert!(
+        matches!(hint, world_hints::Hint::Group(j) if group(&rig.canonical_names[j]) == 0),
+        "the Body is offered: {hint:?}"
+    );
+}
+
+#[test]
+fn the_handles_give_way_to_ctrl_only_over_a_part_or_avatar_it_shows() {
+    let (_world, mut editor) = fixture();
+    editor.poser.active = true;
+    // Ctrl with nothing to pick under the pointer: the handles keep it (its
+    // temporary rotation, a handle's click in the photo mode)
+    editor.poser.ctrl_hint = false;
+    assert!(!editor.poser_ctrl_picks(egui::Modifiers::CTRL));
+    // a part or an avatar shown under the pointer last frame: they give way
+    editor.poser.ctrl_hint = true;
+    assert!(editor.poser_ctrl_picks(egui::Modifiers::CTRL));
+    assert!(editor.poser_ctrl_picks(egui::Modifiers::COMMAND));
+    // no Ctrl: the handles, always
+    assert!(!editor.poser_ctrl_picks(egui::Modifiers::NONE));
+}
+
+#[test]
+fn a_bone_inside_the_body_is_listed_in_the_full_window_and_dropped_by_the_compact_one() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (world, mut editor) = selected_fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = editor.editor_frame(&world).unwrap();
+    let proj = projector(frame.joints[rig.pelvis].w_axis.truncate());
+    let p = crate::theme::Theme::default().palette();
+    let skull = rig.names["mSkull"];
+    // hair rigged to the skull: in the full window's Other list
+    editor.poser.rigged = [skull].into();
+    editor.poser.window_override = Some(false);
+    editor.refresh_other_bones(rig);
+    editor.select_pose_group(OTHER_GROUP, rig, &frame);
+    assert!(editor.poser.other_inner_used.contains("mSkull") && !editor.poser_bone_visible("mSkull"));
+    let mut frames = Frames::new();
+    crate::ui::widgets::place_floater(&frames.ctx, "poser", egui::pos2(30.0, 30.0), egui::vec2(880.0, 760.0));
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        texts = frames.run(Vec::new(), |ui| editor.show(ui.ctx(), &p, &world, &proj));
+    }
+    assert!(
+        texts.iter().any(|t| t.source == bones::label("mSkull")),
+        "the full window lists the skull"
+    );
+    // chosen there, then the compact window: dropped, as a click beside
+    editor.selected = Some(skull);
+    editor.poser.window_override = Some(true);
+    for _ in 0..2 {
+        frames.run(Vec::new(), |ui| editor.show(ui.ctx(), &p, &world, &proj));
+    }
+    assert_eq!(editor.selected, None, "no bone inside the body in the compact window");
+}
+
+/// One frame of the poser with `keys` held and the pointer at `at`, the
+/// primary button pressed or let go there when `button` says so.
+fn pose_frame(
+    frames: &mut crate::ui::widgets::elide_tests::Frames,
+    editor: &mut Editor,
+    world: &World,
+    proj: &Projector,
+    keys: egui::Modifiers,
+    at: egui::Pos2,
+    button: Option<bool>,
+) {
+    let p = crate::theme::Theme::default().palette();
+    let mut events = vec![egui::Event::ModifiersChanged(keys), egui::Event::PointerMoved(at)];
+    if let Some(pressed) = button {
+        events.push(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: keys,
+        });
+    }
+    frames.run(events, |ui| editor.show(ui.ctx(), &p, world, proj));
+}
+
+/// A point around `center` (rings out to 120 points, every 15 degrees)
+/// where, with Ctrl newly held, the selected joint's handles take the
+/// pointer and `want` holds after that frame.
+fn point_on_handles(
+    frames: &mut crate::ui::widgets::elide_tests::Frames,
+    editor: &mut Editor,
+    world: &World,
+    proj: &Projector,
+    center: egui::Pos2,
+    want: impl Fn(&Editor, egui::Pos2) -> bool,
+) -> Option<egui::Pos2> {
+    for radius in (4..=120).step_by(4) {
+        for k in 0..24 {
+            let angle = k as f32 * std::f32::consts::TAU / 24.0;
+            let at = center + egui::vec2(angle.cos(), angle.sin()) * radius as f32;
+            pose_frame(frames, editor, world, proj, egui::Modifiers::NONE, at, None);
+            pose_frame(frames, editor, world, proj, egui::Modifiers::CTRL, at, None);
+            if editor.poser.gizmo_hover && want(editor, at) {
+                return Some(at);
+            }
+        }
+    }
+    None
+}
+
+/// Nothing of the open tab's skeleton (marker or shaft) under `at`, read
+/// from the segments themselves, whatever the poser reports.
+fn bare(editor: &Editor, world: &World, proj: &Projector, at: egui::Pos2) -> bool {
+    let frame = Frame::new(world).unwrap();
+    !editor.poser.marker_hover && segments::pick(&editor.skeleton_segments(world, proj, &frame), at).is_none()
+}
+
+/// The left wrist chosen in the Body tab: its handles around it, the
+/// fingers (Hands) under some of them.
+fn wrist_fixture() -> (World, Editor, usize, Projector, crate::ui::widgets::elide_tests::Frames) {
+    let (world, mut editor) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = Frame::new(&world).unwrap();
+    let proj = projector(frame.joints[rig.pelvis].w_axis.truncate());
+    let wrist = rig.names["mWristLeft"];
+    editor.select(wrist, rig, &frame);
+    editor.poser.group = 0;
+    let frames = crate::ui::widgets::elide_tests::Frames::new();
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser");
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser-compact");
+    (world, editor, wrist, proj, frames)
+}
+
+#[test]
+fn a_ctrl_click_through_the_handles_reaches_the_part_under_them_across_frames() {
+    let (world, mut editor, wrist, proj, mut frames) = wrist_fixture();
+    let rig = &world.avatar_lib.rig;
+    let center = proj.project(Frame::new(&world).unwrap().joints[wrist].w_axis.truncate()).unwrap().0;
+    let at = point_on_handles(&mut frames, &mut editor, &world, &proj, center, |e, _| e.poser.ctrl_hint)
+        .expect("a point of the wrist's handles over the fingers");
+    // hovered, then pressed, held and let go on separate frames
+    let ctrl = egui::Modifiers::CTRL;
+    for button in [None, Some(true), None, None, Some(false), None] {
+        pose_frame(&mut frames, &mut editor, &world, &proj, ctrl, at, button);
+    }
+    assert!(
+        editor.selected.is_some_and(|b| group(&rig.canonical_names[b]) == 2),
+        "the Ctrl + click picks the hand: {:?}",
+        editor.selected.map(|b| rig.canonical_names[b].clone())
+    );
+}
+
+#[test]
+fn ctrl_on_the_handles_with_nothing_under_them_keeps_them_and_the_joint() {
+    let (world, mut editor, wrist, proj, mut frames) = wrist_fixture();
+    let center = proj.project(Frame::new(&world).unwrap().joints[wrist].w_axis.truncate()).unwrap().0;
+    let at = point_on_handles(&mut frames, &mut editor, &world, &proj, center, |e, at| {
+        !e.poser.ctrl_hint && bare(e, &world, &proj, at)
+    })
+    .expect("a point of the wrist's handles with nothing to pick");
+    // the handles keep the pointer with Ctrl: in the photo mode the press
+    // stays the poser's (`poser_owns_pointer`), not the world's
+    assert!(editor.poser_owns_pointer(), "the handles own the pointer");
+    for button in [Some(true), None, Some(false), None] {
+        pose_frame(&mut frames, &mut editor, &world, &proj, egui::Modifiers::CTRL, at, button);
+    }
+    assert_eq!(editor.selected, Some(wrist), "the Ctrl + click on the handles does not unselect");
+}
+
+#[test]
+fn a_press_moved_from_a_part_onto_the_handles_alone_keeps_the_joint() {
+    let ctrl = egui::Modifiers::CTRL;
+    // points of the handles with nothing to pick, the nearest first; one
+    // where no marker takes the pointer during the press either (a marker
+    // would take the click whatever the handles do)
+    let (world, mut editor, wrist, proj, mut frames) = wrist_fixture();
+    let center = proj.project(Frame::new(&world).unwrap().joints[wrist].w_axis.truncate()).unwrap().0;
+    let on_part = point_on_handles(&mut frames, &mut editor, &world, &proj, center, |e, _| e.poser.ctrl_hint)
+        .expect("a point of the handles over the fingers");
+    let mut tried = 0;
+    for radius in (4..=120).step_by(4) {
+        for k in 0..24 {
+            let angle = k as f32 * std::f32::consts::TAU / 24.0;
+            let alone = center + egui::vec2(angle.cos(), angle.sin()) * radius as f32;
+            let (world, mut editor, wrist, proj, mut frames) = wrist_fixture();
+            pose_frame(&mut frames, &mut editor, &world, &proj, egui::Modifiers::NONE, alone, None);
+            pose_frame(&mut frames, &mut editor, &world, &proj, ctrl, alone, None);
+            if !(editor.poser.gizmo_hover && !editor.poser.ctrl_hint && bare(&editor, &world, &proj, alone)) {
+                continue;
+            }
+            tried += 1;
+            // Ctrl over the hand (the handles give way), then in one frame
+            // the pointer moves onto the handles alone and presses; held;
+            // let go
+            pose_frame(&mut frames, &mut editor, &world, &proj, ctrl, on_part, None);
+            pose_frame(&mut frames, &mut editor, &world, &proj, ctrl, on_part, None);
+            assert!(editor.poser.ctrl_hint);
+            let mut marker = false;
+            for button in [Some(true), None, None, Some(false), None] {
+                pose_frame(&mut frames, &mut editor, &world, &proj, ctrl, alone, button);
+                marker |= editor.poser.marker_hover;
+            }
+            if marker {
+                continue;
+            }
+            assert_eq!(
+                editor.selected,
+                Some(wrist),
+                "decided where the press lands: the handles, no unselect"
+            );
+            return;
+        }
+    }
+    panic!("no point of the handles free of markers during a press ({tried} tried)");
+}
+
+#[test]
+fn the_body_outline_stops_at_the_neck_and_leaves_the_head_to_the_face() {
+    let (world, _) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = Frame::new(&world).unwrap();
+    let proj = projector(frame.joints[rig.names["mHead"]].w_axis.truncate());
+    let at: Vec<glam::Vec3> = frame.joints.iter().map(|m| m.w_axis.truncate()).collect();
+    let project = |w: glam::Vec3| proj.project(w).map(|(p, _)| p);
+    let keys: Vec<usize> = rig.canonical_names.iter().map(|n| world_hints::part_key(n)).collect();
+    let body = world_hints::part(&rig.parent, &keys, rig.pelvis);
+    assert!(body.contains(&rig.names["mHead"]), "the head is still a Body bone to pose");
+    let outline = world_hints::outline_members(0, &body, &rig.canonical_names);
+    let caps = silhouette::capsules(&rig.parent, &rig.canonical_names, &at, &outline, silhouette::Links::Inside, project);
+    // inside the head (its sphere is 9.5 cm): outside the body's outline;
+    // the neck: inside
+    let crown = project(at[rig.names["mHead"]] + glam::Vec3::Z * 0.05).unwrap();
+    assert!(silhouette::depth(&caps, crown) < 0.0, "the head is not the body's outline");
+    assert!(
+        silhouette::depth(&caps, project(at[rig.names["mNeck"]]).unwrap()) > 0.0,
+        "the neck is"
+    );
+}
+
+#[test]
+fn compact_reset_counts_the_joints_selected_together() {
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let (left, right) = (rig.names["mEyeLeft"], rig.names["mEyeRight"]);
+    let frame = Frame::new(&world).unwrap();
+    editor.poser.group = 1;
+    editor.click_pose_bone(left, &rig, &frame, false);
+    editor.click_pose_bone(right, &rig, &frame, true);
+    editor.poser.side = Side::Left;
+    assert_eq!(editor.reset_joints(), vec![left, right]);
+    assert!(!editor.reset_available(false), "nothing edited yet");
+    // only the follower turned: Reset joint resets it with the lead
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    Arc::make_mut(&mut session.pose).rotations[right] = Quat::from_rotation_z(0.4) * session.base.rotations[right];
+    assert!(editor.reset_available(false), "a follower's edit is the reset's");
+    editor.pose_operation(&rig, &frame, controls::Operation::ResetJoint);
+    assert!(!editor.reset_available(false), "both reset in one step");
+}
+
+#[test]
+fn a_joint_picked_alone_leaves_no_joint_following() {
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let (left, right) = (rig.names["mEyeLeft"], rig.names["mEyeRight"]);
+    let frame = Frame::new(&world).unwrap();
+    editor.poser.group = 1;
+    editor.click_pose_bone(left, &rig, &frame, false);
+    editor.click_pose_bone(right, &rig, &frame, true);
+    assert_eq!(editor.followers(), vec![right]);
+    // Ctrl + click on another group's part selects that joint alone
+    editor.click_pose_bone(rig.pelvis, &rig, &frame, false);
+    assert!(editor.followers().is_empty());
+    assert_eq!(editor.selected, Some(rig.pelvis));
+}
+
+#[test]
+fn the_compact_window_drops_inner_followers_and_hands_an_inner_lead_over() {
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let (skull, spine, eye) = (rig.names["mSkull"], rig.names["mSpine1"], rig.names["mEyeLeft"]);
+    // an inner follower goes, the lead stays
+    editor.selected = Some(eye);
+    editor.poser.together = vec![skull];
+    editor.drop_inner_selection(&rig);
+    assert_eq!((editor.selected, editor.followers()), (Some(eye), vec![]));
+    // an inner lead hands over to a follower the window shows
+    editor.selected = Some(spine);
+    editor.poser.together = vec![skull, eye];
+    editor.drop_inner_selection(&rig);
+    assert_eq!((editor.selected, editor.followers()), (Some(eye), vec![]));
+    assert!(!editor.poser.unselected);
+    // alone, it is unselected as before
+    editor.selected = Some(skull);
+    editor.drop_inner_selection(&rig);
+    assert_eq!(editor.selected, None);
+    assert!(editor.poser.unselected);
+}
+
+#[test]
+fn ctrl_over_the_subject_stays_the_subjects_with_a_partner_close_behind() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (mut world, mut editor) = selected_fixture();
+    let peer = demo::poser::PEER;
+    let own = world.avatar_poses[&world.agent_id].clone();
+    world.avatar_poses.insert(peer, own);
+    let mut consent = std::mem::take(&mut world.poser_consent);
+    consent.request(&world, peer, Instant::now());
+    consent.demo_accept(&world, peer, std::time::Duration::ZERO);
+    world.poser_consent = consent;
+    let rig = &world.avatar_lib.rig;
+    let frame = editor.editor_frame(&world).unwrap();
+    let peer_frame = Frame::subject(&world, peer).expect("the peer's skeleton");
+    // the camera in front of us, the peer straight behind us on screen
+    let chest = frame.joints[rig.names["mChest"]].w_axis.truncate();
+    let away = peer_frame.joints[rig.names["mChest"]].w_axis.truncate() - chest;
+    let eye = chest - away.normalize() * 3.0;
+    let proj = Projector {
+        view_proj: glam::camera::rh::proj::directx::perspective_infinite_reverse(0.8, 800.0 / 900.0, 0.05)
+            * glam::camera::rh::view::look_to_mat4(eye, (chest - eye).normalize(), Vec3::Z),
+        width: 800.0,
+        height: 900.0,
+        ppp: 1.0,
+    };
+    // on the torso, beside the chest's marker (a marker takes its own click)
+    let on_me = proj.project(chest).unwrap().0 + egui::vec2(14.0, 18.0);
+    let mut frames = Frames::new();
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser");
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser-compact");
+    let p = crate::theme::Theme::default().palette();
+    let me = editor.poser.subject;
+    for _ in 0..3 {
+        frames.run(
+            vec![
+                egui::Event::ModifiersChanged(egui::Modifiers::CTRL),
+                egui::Event::PointerMoved(on_me),
+            ],
+            |ui| editor.show(ui.ctx(), &p, &world, &proj),
+        );
+    }
+    let button = |pressed| egui::Event::PointerButton {
+        pos: on_me,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::CTRL,
+    };
+    for events in [vec![button(true)], vec![button(false)], vec![], vec![]] {
+        frames.run(events, |ui| editor.show(ui.ctx(), &p, &world, &proj));
+    }
+    assert_eq!(editor.poser.subject, me, "the partner behind is not picked through us");
 }

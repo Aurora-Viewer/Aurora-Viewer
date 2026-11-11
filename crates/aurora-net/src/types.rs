@@ -376,6 +376,12 @@ pub struct OpenSimExtras {
     pub search_url: String,
     /// "map-server-url": the grid's map tile server.
     pub map_url: String,
+    /// "destination-guide-url": the grid's Destination Guide page
+    /// (LFSimFeatureHandler::destinationGuideURL). `None` when the region
+    /// does not name the key: only then does the login response's page
+    /// count; a key given empty means "no guide" and wins over it
+    /// (LFSimFeatureHandler::setSupportedFeatures tests `extras.has`).
+    pub destination_guide_url: Option<String>,
     /// "whisper-range", "say-range", "shout-range": how far the region's
     /// chat carries, in meters (None: the usual 10, 20 and 100 m).
     pub whisper_range: Option<f32>,
@@ -418,6 +424,9 @@ impl OpenSimExtras {
             grid_url: grid_url.trim().to_owned(),
             search_url: extras["search-server-url"].to_string_value().trim().to_owned(),
             map_url: extras["map-server-url"].to_string_value().trim().to_owned(),
+            destination_guide_url: extras
+                .has("destination-guide-url")
+                .then(|| extras["destination-guide-url"].to_string_value().trim().to_owned()),
             whisper_range: figure("whisper-range"),
             say_range: figure("say-range"),
             shout_range: figure("shout-range"),
@@ -429,6 +438,9 @@ impl OpenSimExtras {
 
 #[derive(Debug, Clone)]
 pub enum NetEvent {
+    /// GrantGodlikePowers: the god level the region gives us (0: none,
+    /// 200 and more: an administrator of the grid or of the region).
+    GodLevel(u8),
     /// OpenRegionInfo's MaxLinkCount, in children (LLWorld::setMaxLinkedPrims).
     RegionLinkLimit {
         handle: RegionHandle,
@@ -525,6 +537,8 @@ pub enum NetEvent {
     /// `tos_required` / `critical_required`: the Terms of Service to accept
     /// (reason "tos") or a message to read (reason "critical"), each with
     /// its own flag in the next request; `error` is then the server's text.
+    /// `next_server`: the login server sends the login on to this other
+    /// server (`LoginError::NextServer`), which the user agrees to first.
     LoginFailed {
         error: String,
         mfa_required: bool,
@@ -532,6 +546,7 @@ pub enum NetEvent {
         critical_required: bool,
         bad_credentials: bool,
         previous_session: bool,
+        next_server: Option<String>,
     },
     LoggedIn(Arc<LoginResponse>),
     /// A simulator circuit was established (main or neighbor).
@@ -1983,6 +1998,13 @@ pub enum NetCommand {
     Land(crate::land::LandCommand),
     /// Region / Estate window (estate.rs).
     Estate(crate::estate::EstateCommand),
+    /// Request / Leave Admin Status (RequestGodlikePowers): `godlike` asks
+    /// the region for its god level, false gives it back.
+    RequestGodlikePowers {
+        godlike: bool,
+    },
+    /// Advanced › Admin (god.rs), with the god level the region granted.
+    God(crate::god::GodCommand),
     /// GrantUserRights: rights we give a friend (1 online, 2 map, 4 modify).
     GrantUserRights {
         friend: Uuid,
@@ -2433,6 +2455,7 @@ mod opensim_extras_tests {
                 ("GridURL", "http://hg.osgrid.org:80/"),
                 ("search-server-url", " https://search.example/?q=[QUERY] "),
                 ("map-server-url", "https://maps.example/"),
+                ("destination-guide-url", " https://guide.example/[GRID_LOWERCASE]/ "),
             ]
             .into_iter()
             .map(|(k, v)| (k.to_owned(), Llsd::String(v.to_owned())))
@@ -2442,6 +2465,18 @@ mod opensim_extras_tests {
         assert_eq!(read.grid_url, "hg.osgrid.org:80/");
         assert_eq!(read.search_url, "https://search.example/?q=[QUERY]");
         assert_eq!(read.map_url, "https://maps.example/");
+        assert_eq!(
+            read.destination_guide_url.as_deref(),
+            Some("https://guide.example/[GRID_LOWERCASE]/")
+        );
+        // a key present but empty is not an absent one
+        let empty = Llsd::Map(
+            [("destination-guide-url".to_owned(), Llsd::String(String::new()))]
+                .into_iter()
+                .collect(),
+        );
+        assert_eq!(OpenSimExtras::from_llsd(&empty).destination_guide_url.as_deref(), Some(""));
+        assert_eq!(OpenSimExtras::from_llsd(&Llsd::new_map()).destination_guide_url, None);
         // a GridURL given without a scheme, as most grids do
         let bare = Llsd::Map(
             [("GridURL".to_owned(), Llsd::String("grid.example:8002".to_owned()))]
