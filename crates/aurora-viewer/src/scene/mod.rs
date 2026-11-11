@@ -353,6 +353,10 @@ pub struct FaceDraw {
     pub pbr_alpha: Option<u8>, // 0 opaque, 1 blend, 2 mask
     /// Legacy material alpha mode (`legacy_mat::alpha_mode`).
     pub legacy_alpha: Option<u8>,
+    /// Its legacy material has a glossiness or an environment intensity:
+    /// blended, its reflections show even where its texture is transparent
+    /// (`legacy_glare` in object.wgsl).
+    pub legacy_glare: bool,
     pub two_sided: bool,
     /// The smaller of the texture entry's two scales, or of the frame grid of
     /// its texture animation: every texture of the face is loaded for it
@@ -386,6 +390,14 @@ impl FaceDraw {
     /// genDrawInfo, indra/newview/llvovolume.cpp, originally LGPL 2.1).
     pub fn fully_transparent(&self) -> bool {
         self.te_alpha < 0.004 && matches!(self.pbr_alpha, None | Some(1))
+    }
+
+    /// A legacy material drawn blended (its alpha mode, or a face color
+    /// alpha below 1) with a glossiness or an environment: its alpha is
+    /// max(texture alpha, glare) in materialF.glsl, so a transparent
+    /// texture still shows its reflections.
+    fn glares_when_blended(&self) -> bool {
+        self.legacy_glare && self.pbr_alpha.is_none() && (self.legacy_alpha == Some(legacy_mat::alpha_mode::BLEND) || self.te_alpha < 0.999)
     }
 
     /// Alpha mode bits of the face's draw record (shaders, shadows). A
@@ -3161,11 +3173,11 @@ impl Scene {
         }
     }
 
-    /// Textures that went without a slot (a full texture table) and have one
-    /// now (`TextureStreamer::take_reslotted`): the objects and avatars
-    /// whose faces draw them still hold the white texture, and are built
-    /// again. One pass over the objects, only in a frame that follows such
-    /// a round (a few times a second at most, and only after a full table).
+    /// Textures given a slot after a full table, or rebound to/from local
+    /// files (`TextureStreamer::take_reslotted`): the objects and avatars
+    /// whose faces still hold the previous slot are built again. One pass
+    /// over the objects only after a slot transition, never for pixel-only
+    /// local reloads.
     fn rebuild_reslotted(&mut self, world: &mut World) {
         let mut ids = std::mem::take(&mut self.reslotted_tmp);
         self.textures.take_reslotted(&mut ids);
@@ -3993,6 +4005,7 @@ impl Scene {
             }
             // legacy material (LLMaterial) of the texture entry
             let mut legacy_alpha = plant.map(|_| legacy_mat::alpha_mode::MASK);
+            let mut legacy_glare = false;
             let local_normal = o.local_texture(fi, crate::world::objects::LocalTextureSlot::Normal);
             let local_specular = o.local_texture(fi, crate::world::objects::LocalTextureSlot::Specular);
             if mat_id.is_none() && (!tf.material_id.is_nil() || local_normal.is_some() || local_specular.is_some()) {
@@ -4049,6 +4062,7 @@ impl Scene {
                         )
                     };
                     rec.legacy = [lm.normal_rot, lm.specular_rot, gloss, env];
+                    legacy_glare = gloss > 0.0 || env > 0.0;
                     rec.spec_color = [lin(spec_rgb[0]), lin(spec_rgb[1]), lin(spec_rgb[2]), 1.0];
                     rec.params[3] = lm.alpha_cutoff as f32 / 255.0;
                     if lm.diffuse_alpha_mode == legacy_mat::alpha_mode::EMISSIVE {
@@ -4172,6 +4186,7 @@ impl Scene {
                 te_alpha: if invisible { 0.0 } else { rec.base_color[3] },
                 pbr_alpha,
                 legacy_alpha,
+                legacy_glare,
                 two_sided,
                 repeats,
                 glow: rec.emissive[3] > 0.0,
@@ -4479,6 +4494,7 @@ impl Scene {
                     te_alpha: if hidden { 0.0 } else { 1.0 },
                     pbr_alpha: None,
                     legacy_alpha: None,
+                    legacy_glare: false,
                     two_sided: false,
                     repeats: 1.0,
                     glow: false,
@@ -6151,8 +6167,10 @@ fn te_invisible(o: &Object, face: usize) -> bool {
 
 fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
     // fully transparent face, or the transparent texture (unused layers of
-    // mesh heads and bodies): nothing to draw
-    if f.fully_transparent() || (f.base_slot == aurora_render::textures::TRANSPARENT && f.pbr_alpha.is_none()) {
+    // mesh heads and bodies): nothing to draw. A blended legacy material
+    // that glares still shows its reflections there, as materialF.glsl
+    // draws it (#1420): the "shine" layers of heads and eyes.
+    if f.fully_transparent() || (f.base_slot == aurora_render::textures::TRANSPARENT && f.pbr_alpha.is_none() && !f.glares_when_blended()) {
         return Pass::Hidden;
     }
     // A system body part: the avatar pool decides, not the texture alone.
@@ -6230,6 +6248,49 @@ mod layer_rank_tests {
 mod tests {
     use super::*;
     use aurora_net::NetEvent;
+
+    #[test]
+    fn saved_material_local_maps_rebuild_the_object_after_local_slot_restoration() {
+        let avatars = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(avatars.clone());
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let objects: Vec<_> = world
+            .objects
+            .iter()
+            .filter(|(_, o)| !o.is_avatar())
+            .take(2)
+            .map(|(idx, _)| idx)
+            .collect();
+        let id = Uuid::from_u128(900);
+        let asset = Uuid::from_u128(901);
+        let material = aurora_assets::PbrMaterial {
+            base_color_texture: Some(id),
+            ..Default::default()
+        };
+        let bytes = material.encode_asset().expect("saved material");
+        let loaded = aurora_assets::parse_material_asset(&bytes).expect("reopened material");
+        let mut scene = Scene::new(std::env::temp_dir(), avatars);
+        scene.materials.insert(asset, loaded);
+        scene.gpu.resize_with(world.objects.slots.len(), Default::default);
+        scene.gpu[objects[0]].tex_ids = vec![scene.materials.get(&asset).expect("material").base_color_texture.expect("local ID")];
+        scene.gpu[objects[1]].tex_ids = vec![Uuid::from_u128(902)];
+        for &idx in &objects {
+            let object = world.objects.get_mut_untracked(idx).expect("object");
+            object.material_dirty = false;
+            object.render.needs_records = false;
+        }
+        scene.textures.register_local_image(id, 20, AlphaKind::Opaque, false);
+        scene.textures.register_local_image(id, 30, AlphaKind::Opaque, false);
+        scene.rebuild_reslotted(&mut world);
+        assert!(world.objects.get(objects[0]).expect("material user").render.needs_records);
+        assert!(!world.objects.get(objects[1]).expect("unrelated object").render.needs_records);
+        assert_eq!(
+            scene.materials.get(&asset).expect("material unchanged").base_color_texture,
+            Some(id)
+        );
+    }
 
     #[test]
     fn texture_animation_moves_its_face_or_every_face_for_all_sides() {
@@ -7116,6 +7177,7 @@ mod tests {
             te_alpha: 1.0,
             pbr_alpha: None,
             legacy_alpha: None,
+            legacy_glare: false,
             two_sided: false,
             repeats: 1.0,
             glow,
@@ -7136,6 +7198,31 @@ mod tests {
         let mut usage = Vec::new();
         note_face_usage(&mut usage, &face, 256.0, true);
         assert!(usage.contains(&(source, texture_importance::per_repeats(256.0, 2.0), true)));
+    }
+
+    /// materialF.glsl (blend): a transparent texture under a glossy or shiny
+    /// legacy material still shows its reflections (alpha = max(texture
+    /// alpha, glare)), the "wet" layers over mesh bodies (#1420). Without
+    /// one, or not blended, the transparent texture stays hidden.
+    #[test]
+    fn transparent_texture_under_a_glaring_legacy_material_is_blended() {
+        let face = |glare: bool, legacy: Option<u8>, te_alpha: f32| FaceDraw {
+            base_slot: aurora_render::textures::TRANSPARENT,
+            legacy_glare: glare,
+            legacy_alpha: legacy,
+            te_alpha,
+            ..test_face(Pass::Hidden, false)
+        };
+        let blend = Some(legacy_mat::alpha_mode::BLEND);
+        let none = Some(legacy_mat::alpha_mode::NONE);
+        let mask = Some(legacy_mat::alpha_mode::MASK);
+        assert_eq!(classify(&face(true, blend, 1.0), AlphaKind::Mask), Pass::Blend);
+        assert_eq!(classify(&face(true, none, 0.5), AlphaKind::Mask), Pass::Blend);
+        assert_eq!(classify(&face(false, blend, 1.0), AlphaKind::Mask), Pass::Hidden);
+        assert_eq!(classify(&face(true, none, 1.0), AlphaKind::Mask), Pass::Hidden);
+        assert_eq!(classify(&face(true, mask, 1.0), AlphaKind::Mask), Pass::Hidden);
+        // a zero face color alpha hides it whatever the material
+        assert_eq!(classify(&face(true, blend, 0.0), AlphaKind::Mask), Pass::Hidden);
     }
 
     #[test]
