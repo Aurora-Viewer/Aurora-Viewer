@@ -9,7 +9,7 @@
 use crate::pipeline_cache::CachedPipelines;
 use crate::{VrControllerState, VrInputState, VrPointer, VrSide};
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Mat4, Quat, Vec3, Vec4};
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable, PartialEq)]
@@ -288,44 +288,116 @@ fn push_quad(out: &mut Vec<Vertex>, corners: [Vec3; 4], colors: [Vec4; 4]) {
     }
 }
 
-/// An oriented box: centre, three half-axes, opaque colour.
-fn push_box(out: &mut Vec<Vertex>, center: Vec3, axes: [Vec3; 3], color: Vec3) {
-    for (a, b, c) in [(0, 1, 2), (1, 2, 0), (2, 0, 1)] {
-        for sign in [1.0f32, -1.0] {
-            let n = axes[a] * sign;
-            let (u, v) = (axes[b], axes[c] * sign);
-            let face = center + n;
-            let lit = shade(n.normalize_or_zero(), color).extend(1.0);
-            push_quad(out, [face - u - v, face + u - v, face + u + v, face - u + v], [lit; 4]);
-        }
-    }
+/// The controller model (`tools/vr_controller/build_controller.py`): the
+/// right hand's, in aim-pose axes, a triangle list of (position, normal,
+/// part).
+struct Model {
+    vertices: Vec<(Vec3, Vec3, u32)>,
 }
 
+/// The model's parts, as the generator numbers them.
+mod part {
+    #[cfg_attr(not(test), allow(dead_code))] // (the body is the default colour)
+    pub const BODY: u32 = 0;
+    // (1: a tracking ring, which the model no longer has)
+    pub const TRIGGER: u32 = 2;
+    pub const GRIP: u32 = 3;
+    pub const STICK: u32 = 4;
+    pub const PRIMARY: u32 = 5;
+    pub const SECONDARY: u32 = 6;
+    pub const MENU: u32 = 7;
+}
+
+/// Where the thumbstick and the trigger turn, aim-pose axes (the
+/// generator's `STICK_PIVOT` and `TRIGGER_PIVOT`).
+const STICK_PIVOT: Vec3 = Vec3::new(-0.004, 0.0165, 0.05);
+const TRIGGER_PIVOT: Vec3 = Vec3::new(0.0, -0.011, 0.026);
+
+fn model() -> &'static Model {
+    static MODEL: std::sync::OnceLock<Model> = std::sync::OnceLock::new();
+    MODEL.get_or_init(|| parse_model(include_bytes!("vr_controller.bin")).unwrap_or(Model { vertices: Vec::new() }))
+}
+
+fn parse_model(bytes: &[u8]) -> Option<Model> {
+    let word = |at: usize| bytes.get(at..at + 4).map(|b| [b[0], b[1], b[2], b[3]]);
+    if bytes.get(..4)? != b"AVRC" || u32::from_le_bytes(word(4)?) != 1 {
+        return None;
+    }
+    let count = u32::from_le_bytes(word(8)?) as usize;
+    const STRIDE: usize = 28;
+    if bytes.len() != 12 + count * STRIDE || count % 3 != 0 {
+        return None;
+    }
+    let f = |at: usize| word(at).map(f32::from_le_bytes);
+    let vertices = (0..count)
+        .map(|i| {
+            let at = 12 + i * STRIDE;
+            Some((
+                Vec3::new(f(at)?, f(at + 4)?, f(at + 8)?),
+                Vec3::new(f(at + 12)?, f(at + 16)?, f(at + 20)?),
+                u32::from_le_bytes(word(at + 24)?),
+            ))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(Model { vertices })
+}
+
+/// One controller: the model at the hand's aim pose, mirrored for the left
+/// hand, its thumbstick tilted with the stick and its trigger pulled in,
+/// the body tinted in the hand's colour and the pressed parts lit.
 fn controller(hand: VrControllerState, side: VrSide, pointing: bool, out: &mut Vec<Vertex>) {
     let q = hand.orientation.normalize();
-    let (right, up, forward) = (q * Vec3::X, q * Vec3::Y, q * Vec3::NEG_Z);
-    let base = match side {
+    let accent = match side {
         VrSide::Left => Vec3::new(0.25, 0.42, 0.85),
         VrSide::Right => Vec3::new(0.85, 0.45, 0.2),
     };
-    // grip squeezes the body darker, a little like a held object
-    let body = base * (1.0 - 0.35 * hand.grip);
-    // the aim pose sits at the controller's front: the handle hangs behind
-    // and below it
-    push_box(
-        out,
-        hand.position - forward * 0.065 - up * 0.02,
-        [right * 0.02, up * 0.016, forward * 0.06],
-        body,
-    );
-    // the tip lights up as the trigger is pulled
-    let lit = if pointing { 0.6 + 0.4 * hand.trigger } else { 0.45 };
-    push_box(
-        out,
-        hand.position - forward * 0.004,
-        [right * 0.012, up * 0.01, forward * 0.006],
-        Vec3::splat(lit),
-    );
+    let left = side == VrSide::Left;
+    let stick_turn =
+        Quat::from_rotation_x(-hand.thumbstick.y.clamp(-1.0, 1.0) * 0.35) * Quat::from_rotation_z(-hand.thumbstick.x.clamp(-1.0, 1.0) * 0.35);
+    let trigger_turn = Quat::from_rotation_x(hand.trigger.clamp(0.0, 1.0) * 0.3);
+    let lit = |pressed: f32, rest: Vec3| rest.lerp(accent * 1.2 + Vec3::splat(0.25), pressed.clamp(0.0, 1.0));
+    let colors = |p: u32| match p {
+        part::TRIGGER => lit(hand.trigger, Vec3::splat(0.2)),
+        part::GRIP => lit(hand.grip, Vec3::splat(0.2)),
+        part::STICK => lit(hand.thumbstick_click as u8 as f32, Vec3::splat(0.22)),
+        part::PRIMARY => lit(hand.primary as u8 as f32, Vec3::splat(0.3)),
+        part::SECONDARY => lit(hand.secondary as u8 as f32, Vec3::splat(0.3)),
+        part::MENU => lit(hand.menu as u8 as f32, Vec3::splat(0.3)),
+        // the body faintly in the hand's colour, more for the pointing hand
+        // (and a part a newer model has that this renderer does not know)
+        _ => Vec3::splat(0.13).lerp(accent, if pointing { 0.3 } else { 0.18 }),
+    };
+    let mut tri = [Vertex {
+        position: [0.0; 3],
+        color: [0.0; 4],
+    }; 3];
+    for (i, &(mut position, mut normal, p)) in model().vertices.iter().enumerate() {
+        // the menu button is the left controller's
+        if p == part::MENU && !left {
+            continue;
+        }
+        if left {
+            position.x = -position.x;
+            normal.x = -normal.x;
+        }
+        let turn = match p {
+            part::STICK => Some((STICK_PIVOT * Vec3::new(if left { -1.0 } else { 1.0 }, 1.0, 1.0), stick_turn)),
+            part::TRIGGER => Some((TRIGGER_PIVOT, trigger_turn)),
+            _ => None,
+        };
+        if let Some((pivot, r)) = turn {
+            position = pivot + r * (position - pivot);
+            normal = r * normal;
+        }
+        let n = (q * normal).normalize_or_zero();
+        tri[i % 3] = Vertex {
+            position: (hand.position + q * position).to_array(),
+            color: shade(n, colors(p)).extend(1.0).to_array(),
+        };
+        if i % 3 == 2 {
+            out.extend_from_slice(&tri);
+        }
+    }
 }
 
 /// The microphone's light on top of the left controller: bright green while
@@ -464,7 +536,9 @@ mod tests {
             },
             &mut only,
         );
-        assert_eq!(only.len(), 2 * 2 * 36, "two boxes per controller");
+        // the model on both hands, the menu button on the left only
+        let menu = model().vertices.iter().filter(|v| v.2 == part::MENU).count();
+        assert_eq!(only.len(), 2 * model().vertices.len() - menu);
         let mut with_beam = Vec::new();
         build(
             &input,
@@ -477,6 +551,19 @@ mod tests {
             &mut with_beam,
         );
         assert_eq!(with_beam.len(), only.len() + 6 * 6);
+    }
+
+    #[test]
+    fn model_parses_with_every_part_and_sensible_size() {
+        let m = model();
+        assert!(m.vertices.len() > 300 && m.vertices.len() % 3 == 0);
+        for p in [part::BODY, part::TRIGGER, part::GRIP, part::STICK, part::PRIMARY, part::SECONDARY, part::MENU] {
+            assert!(m.vertices.iter().any(|v| v.2 == p), "part {p}");
+        }
+        // a hand-sized thing behind the aim point: within 20 cm, mostly behind it
+        assert!(m.vertices.iter().all(|v| v.0.length() < 0.2));
+        assert!(m.vertices.iter().all(|v| v.0.z > -0.03));
+        assert!(parse_model(b"AVRC").is_none());
     }
 
     #[test]
