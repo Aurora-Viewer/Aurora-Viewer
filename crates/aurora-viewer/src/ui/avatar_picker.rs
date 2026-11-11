@@ -282,8 +282,10 @@ mod tests {
         let mut sel = Vec::new();
         let mut anchor = None;
         let plain = egui::Modifiers::default();
-        let mut shift = egui::Modifiers::default();
-        shift.shift = true;
+        let shift = egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
         click_select(&mut sel, &mut anchor, &order, order[1], plain);
         assert_eq!(sel, vec![order[1]]);
         assert_eq!(anchor, Some(order[1]));
@@ -298,8 +300,10 @@ mod tests {
         let order: Vec<Uuid> = (1..=40).map(Uuid::from_u128).collect();
         let mut sel = Vec::new();
         let mut anchor = Some(order[0]);
-        let mut shift = egui::Modifiers::default();
-        shift.shift = true;
+        let shift = egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
         click_select(&mut sel, &mut anchor, &order, order[39], shift);
         assert_eq!(sel.len(), 40);
     }
