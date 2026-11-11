@@ -72,6 +72,10 @@ pub const COMMANDS: &[Command] = commands![
     // Aurora's own: the interface hidden but the chat (#859)
     "immersive", "maximize", "ui-bars-immersive", true;
     "name_tags", "label-filled", "ui-bars-immersive-hide-tags", true;
+    // Aurora's own: Show User Interface and Show HUDs as buttons (the Legacy
+    // Viewer has them in its menus only)
+    "hide_interface", "eye-off", "ui-bars-hide-interface", true;
+    "huds", "device-desktop-filled", "ui-bars-immersive-hide-huds", true;
     // Aurora's own: the photo reel's quick view, the session's photos
     "photo_roll", "carousel-horizontal-filled", "toolbar-command-photo-roll", true;
     // Firestorm's, not in Aurora yet
