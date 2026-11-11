@@ -81,9 +81,42 @@ impl Radio {
     }
 }
 
+/// An error worth a local chat line. A dropped stream (`Interrupted`) is
+/// reconnected on its own: it stays in the status tooltip only, so a
+/// station that was playing does not say "Can't play" while it reconnects.
+pub(super) fn error_is_told(error: &aurora_audio::StreamError) -> bool {
+    !matches!(error, aurora_audio::StreamError::Interrupted)
+}
+
+/// Bounded session history: retries and revisits never repeat a station notice.
+/// Once the history is full, stop notices rather than evicting/repeating them.
+pub(super) fn first_error_notice(seen: &mut std::collections::HashSet<String>, url: &str) -> bool {
+    !url.is_empty() && seen.len() < 256 && seen.insert(url.to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_interrupted_stream_stays_in_the_tooltip() {
+        assert!(!error_is_told(&aurora_audio::StreamError::Interrupted));
+        assert!(error_is_told(&aurora_audio::StreamError::Connection));
+        assert!(error_is_told(&aurora_audio::StreamError::HttpStatus(503)));
+    }
+
+    #[test]
+    fn parcel_music_error_notice_is_once_per_url_and_bounded() {
+        let mut seen = std::collections::HashSet::new();
+        assert!(first_error_notice(&mut seen, "https://radio.example/a"));
+        assert!(!first_error_notice(&mut seen, "https://radio.example/a"));
+        assert!(!first_error_notice(&mut seen, ""));
+        for i in 0..300 {
+            first_error_notice(&mut seen, &format!("https://radio.example/{i}"));
+        }
+        assert_eq!(seen.len(), 256);
+        assert!(!first_error_notice(&mut seen, "https://radio.example/a"));
+    }
 
     #[test]
     fn parcel_music_resuming_and_enabling_never_bypass_media_filter_consent() {

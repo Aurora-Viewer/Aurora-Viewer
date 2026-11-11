@@ -357,14 +357,14 @@ fn window_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, place: &Place, 
     });
 }
 
-/// A flat button of the Places bottom bars.
-pub fn button(ui: &mut egui::Ui, p: &Palette, label: &str, tip: &str, enabled: bool, width: f32) -> bool {
+/// A flat button of the Places bottom bars; its response keeps the label's
+/// width on one line (`Response::intrinsic_size`), for a bar sizing its window.
+pub fn button(ui: &mut egui::Ui, p: &Palette, label: &str, tip: &str, enabled: bool, width: f32) -> egui::Response {
     let b = egui::Button::new(RichText::new(label).size(12.0).color(p.ink))
         .fill(p.raised)
         .corner_radius(ui.visuals().widgets.inactive.corner_radius);
     ui.add_enabled(enabled, |ui: &mut egui::Ui| ui.add_sized([width, 23.0], b))
         .on_hover_text(tip)
-        .clicked()
 }
 
 /// The look of a place profile's bottom buttons, which follows the Places
@@ -403,7 +403,7 @@ fn profile_button(
     enabled: bool,
 ) -> bool {
     match look {
-        ButtonLook::Legacy(width) => button(ui, p, label, tip, enabled, width),
+        ButtonLook::Legacy(width) => button(ui, p, label, tip, enabled, width).clicked(),
         ButtonLook::Aurora => {
             let size = egui::vec2(widgets::action_button_fit(ui, icon, label), 26.0);
             widgets::action_button_if(ui, p, icon, label, kind, size, enabled)

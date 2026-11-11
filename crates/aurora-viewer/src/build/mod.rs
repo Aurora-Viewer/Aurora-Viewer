@@ -8,6 +8,9 @@
 //! frame and send MultipleObjectUpdate when the mouse is released (stretching
 //! also every 0.1 s, like LLManipScale).
 
+mod admin;
+#[cfg(test)]
+mod admin_tests;
 pub mod align;
 pub mod anim_pause;
 pub mod contents;
@@ -999,9 +1002,10 @@ pub fn edit_parent(world: &World, idx: usize, now: Instant) -> Option<(Vec3, Qua
     let parent_idx = world.objects.parent_of(o)?;
     let (p, r, _) = crate::scene::Scene::object_transform(world, idx, now, 0)?;
     if world.objects.get(parent_idx)?.is_avatar() {
-        // the attachment point as posed now, on the body or in the HUD
+        // the attachment point as posed now, on the body or in the HUD (the
+        // root is drawn at most 3.5 m from it, scene/draw_limits.rs)
         let rotation = (r * o.rotation.inverse()).normalize();
-        Some((p - rotation * o.position, rotation))
+        Some((p - rotation * crate::scene::draw_limits::attachment_offset(o.position), rotation))
     } else {
         crate::scene::Scene::object_transform(world, parent_idx, now, 0).map(|(p, r, _)| (p, r))
     }
@@ -1741,6 +1745,7 @@ impl BuildTool {
         }
         let flags = if select_copy { FLAGS_CREATE_SELECTED } else { 0 };
         for (handle, ids) in self.group_by_region(world, &roots) {
+            world.objects.expect_local_duplicates(handle, &ids, offset, select_copy, None);
             self.send(BuildCmd::Duplicate {
                 handle,
                 local_ids: ids,
@@ -2416,6 +2421,8 @@ impl BuildTool {
         }
         let Some((_, off)) = Self::region_at(world, point) else { return };
         let (ray_start, ray_end, ray_target, bypass) = self.placement_ray(world, s, point, target, cursor, off);
+        // The simulator chooses the surface offset and, optionally, rotation.
+        let radius = bounds_of(world, &self.selection, false, Instant::now()).map_or(1.0, |bounds| bounds.half.length() * 2.0 + 1.0);
         let mut by_region: HashMap<RegionHandle, Vec<u32>> = HashMap::new();
         for r in roots {
             if let Some(o) = world.objects.get(r) {
@@ -2423,6 +2430,9 @@ impl BuildTool {
             }
         }
         for (handle, local_ids) in by_region {
+            world
+                .objects
+                .expect_local_duplicates(handle, &local_ids, Vec3::ZERO, false, Some((point - off, radius, s.copy_rotates)));
             self.send(BuildCmd::DuplicateOnRay {
                 handle,
                 local_ids,
