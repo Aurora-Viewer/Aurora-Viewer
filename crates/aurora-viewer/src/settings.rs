@@ -1573,9 +1573,9 @@ pub struct Settings {
 /// around the foot of objects, at 4 it is grainy (captures of 2026-10-17).
 pub(crate) const SCREEN_INDIRECT_INTENSITY: f32 = 1.5;
 
-/// The default shadow softness, a light 2.3 degrees across (the real sun
-/// is 0.23), and the range of the slider.
-pub(crate) const SHADOW_SOFTNESS: f32 = 1.0;
+/// The default shadow softness, 0.4 (a light about 0.9 degrees across; 1 is
+/// 2.3 degrees, the real sun 0.23), and the range of the slider.
+pub(crate) const SHADOW_SOFTNESS: f32 = 0.4;
 pub(crate) const SHADOW_SOFTNESS_MAX: f32 = 2.0;
 /// The shadows as the Legacy Viewer draws them.
 pub(crate) const SHADOW_INTENSITY: f32 = 1.0;
