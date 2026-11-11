@@ -331,10 +331,8 @@ blended faces under the surface, clipped to their side and writing depth; their
 soft fade reads a copy of the scene depth made on first use
 (`Targets::depth_copy`, bound by `FrameGroups::under`; with MSAA the
 single-sampled depth serves). The runs come from the particles' view depths
-against the faces', and, when those leave many switches, from where the faces
-are on a coarse screen grid (`particle_order::Overlap`): a particle only has to
-keep its order with the faces it can overlap. At most 256 switches are drawn
-(the runs with the smallest depth gaps merge past that).
+against the faces' (`particle_order::interleave`). At most 256 switches are
+drawn (the runs with the smallest depth gaps merge past that).
 `AURORA_PARTICLE_INTERLEAVE=0` keeps the former single draw after the faces and
 the overlays, and makes none of the pipelines and targets above.
 

@@ -23,7 +23,7 @@
 
 use std::time::Instant;
 
-use glam::{Mat4, Vec3, Vec4};
+use glam::Vec3;
 
 use super::Scene;
 use super::blend_order::BlendEntry;
@@ -79,73 +79,26 @@ pub struct Scratch {
 /// the index in the whole blended list of `faces[0]` (the runs' `before`
 /// count from the start of that list). A particle goes before the first
 /// face nearer than it; at the same depth the face comes first, the particle
-/// over it. Past `cap` runs before a face, the runs with the smallest depth
-/// gap between them are merged, the merged run drawn at the later place (its
-/// farther particles then over the faces in between, the error the whole
-/// list had before).
+/// over it; a face whose depth is not a number counts as depth 0. Past `cap`
+/// runs before a face, the runs with the smallest depth gap between them are
+/// merged, the merged run drawn at the later place (its farther particles
+/// then over the faces in between, the error the whole list had before).
 pub fn interleave(faces: &[f32], parts: &[f32], first_face: u32, cap: usize, scratch: &mut Scratch, out: &mut Vec<ParticleRun>) {
-    place(faces, parts, first_face, cap, scratch, out, |_, slot| (slot, slot));
-}
-
-/// A face's depth as the merge reads it: NaN counts as 0, as the particles'.
-fn face_depth(d: f32) -> f32 {
-    if d.is_nan() { 0.0 } else { d }
-}
-
-/// `interleave` with a looser place for each particle: `bounds(i, slot)`
-/// gives, for particle `i` whose depth place is `slot` (the number of faces
-/// farther than it), the boundaries `lo..=hi` (a boundary `b` is before face
-/// `b`, `faces.len()` after the last) it may be drawn at without crossing a
-/// face it overlaps on screen: `lo <= slot <= hi`. The runs are then the
-/// fewest the particles' order allows: a run goes on while one boundary
-/// suits all its particles, then is drawn at the lowest of them (later runs
-/// keep the most freedom), the last one at the highest (it is free after the
-/// last face). `bounds` is called once per particle, in order, with `slot`
-/// never decreasing.
-pub fn place(
-    faces: &[f32],
-    parts: &[f32],
-    first_face: u32,
-    cap: usize,
-    scratch: &mut Scratch,
-    out: &mut Vec<ParticleRun>,
-    mut bounds: impl FnMut(usize, u32) -> (u32, u32),
-) {
     debug_assert!(cap >= 1);
     let cap = cap.max(1);
     out.clear();
-    if parts.is_empty() {
-        return;
-    }
-    let n_faces = faces.len() as u32;
-    let push = |out: &mut Vec<ParticleRun>, boundary: u32, end: usize| {
-        let before = first_face + boundary;
-        match out.last_mut() {
-            Some(r) if r.before == before => r.end = end as u32,
-            _ => out.push(ParticleRun { before, end: end as u32 }),
-        }
-    };
-    let mut slot = 0usize;
-    // the boundaries the open run may be drawn at, and the last one drawn at
-    let (mut lo, mut hi) = (0u32, n_faces);
+    let mut f = 0usize;
     for (i, &d) in parts.iter().enumerate() {
-        while slot < faces.len() && face_depth(faces[slot]) >= d {
-            slot += 1;
+        while f < faces.len() && face_depth(faces[f]) >= d {
+            f += 1;
         }
-        let (l, h) = bounds(i, slot as u32);
-        let (l, h) = (l.min(slot as u32), h.max(slot as u32).min(n_faces));
-        let (nl, nh) = (lo.max(l), hi.min(h));
-        if nl <= nh {
-            (lo, hi) = (nl, nh);
-        } else {
-            let boundary = lo;
-            push(out, boundary, i);
-            lo = boundary.max(l);
-            hi = h;
+        let before = first_face + f as u32;
+        match out.last_mut() {
+            Some(r) if r.before == before => r.end = i as u32 + 1,
+            _ => out.push(ParticleRun { before, end: i as u32 + 1 }),
         }
     }
-    push(out, hi, parts.len());
-    let after_last = first_face + n_faces;
+    let after_last = first_face + faces.len() as u32;
     let inner = out.iter().filter(|r| r.before < after_last).count();
     if inner <= cap || out.len() < 2 {
         return;
@@ -180,6 +133,11 @@ pub fn place(
     out.truncate(w);
 }
 
+/// A face's depth as the merge reads it: NaN counts as 0, as the particles'.
+fn face_depth(d: f32) -> f32 {
+    if d.is_nan() { 0.0 } else { d }
+}
+
 /// Depths of the particles, in list order.
 pub fn depths(basis: &SortBasis, parts: &[ParticleInstance], out: &mut Vec<f32>) {
     out.clear();
@@ -187,7 +145,7 @@ pub fn depths(basis: &SortBasis, parts: &[ParticleInstance], out: &mut Vec<f32>)
 }
 
 /// Radius of the sphere around a particle's quad (for the side of the
-/// water it is drawn on and its place on the screen): half the diagonal of
+/// water it is drawn on): half the diagonal of
 /// a billboard, half the diagonal of a ribbon's width and length (a ribbon's
 /// `size[1]` is not used: its length is its axis, as `vs_particle` has it).
 pub fn radius(p: &ParticleInstance) -> f32 {
@@ -223,191 +181,6 @@ pub fn split_water(parts: &mut Vec<ParticleInstance>, under: &mut Vec<ParticleIn
     crossing
 }
 
-// ---------------------------------------------------------------- overlap
-
-/// Screen cells of the grid the overlap is looked up in.
-const GRID_X: usize = 16;
-const GRID_Y: usize = 9;
-const CELLS: usize = GRID_X * GRID_Y;
-/// A sphere covering more cells than this counts as everywhere.
-const WIDE: usize = 36;
-/// `AURORA_PARTICLE_OVERLAP=0` leaves the runs to the depths alone (the 256
-/// switches cap still applies), to compare. Read once.
-fn overlap_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("AURORA_PARTICLE_OVERLAP").as_deref() != Ok("0"))
-}
-
-/// The overlap is only looked at when the depths alone leave more runs than
-/// this: with fewer, it cannot save enough to pay for itself.
-const OVERLAP_FROM: usize = 24;
-
-/// Where a sphere falls on the screen grid.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Cells {
-    /// Off the screen or behind the camera: overlaps nothing drawn.
-    Hidden,
-    /// Unknown, across the near plane or over many cells: taken as everywhere.
-    Wide,
-    /// The cells `x0..=x1` by `y0..=y1`.
-    Box(u8, u8, u8, u8),
-}
-
-/// The cells a world sphere (`[centre, radius]`) covers under `view_proj`,
-/// conservatively: its screen extent is bounded by the sphere's reach in
-/// clip space, with the depth the nearest and farthest of it.
-fn cells_of(view_proj: &Mat4, sphere: [f32; 4]) -> Cells {
-    let [x, y, z, r] = sphere;
-    if r.is_nan() || r <= 0.0 || !sphere.iter().all(|v| v.is_finite()) {
-        return Cells::Wide;
-    }
-    let clip = *view_proj * Vec4::new(x, y, z, 1.0);
-    let row = |i: usize| Vec3::new(view_proj.x_axis[i], view_proj.y_axis[i], view_proj.z_axis[i]).length();
-    let (rx, ry, rw) = (r * row(0), r * row(1), r * row(3));
-    let (wmin, wmax) = (clip.w - rw, clip.w + rw);
-    if wmax <= 0.0 {
-        return Cells::Hidden;
-    }
-    if wmin <= 1e-3 {
-        return Cells::Wide;
-    }
-    let range = |c: f32, reach: f32| {
-        let (lo, hi) = (c - reach, c + reach);
-        ((lo / wmin).min(lo / wmax), (hi / wmin).max(hi / wmax))
-    };
-    let (x_lo, x_hi) = range(clip.x, rx);
-    let (y_lo, y_hi) = range(clip.y, ry);
-    if x_hi < -1.0 || x_lo > 1.0 || y_hi < -1.0 || y_lo > 1.0 {
-        return Cells::Hidden;
-    }
-    let cell = |v: f32, n: usize| (((v + 1.0) * 0.5 * n as f32).floor().max(0.0) as usize).min(n - 1);
-    let (x0, x1, y0, y1) = (cell(x_lo, GRID_X), cell(x_hi, GRID_X), cell(y_lo, GRID_Y), cell(y_hi, GRID_Y));
-    if (x1 - x0 + 1) * (y1 - y0 + 1) > WIDE {
-        return Cells::Wide;
-    }
-    Cells::Box(x0 as u8, y0 as u8, x1 as u8, y1 as u8)
-}
-
-/// The faces on a coarse screen grid, in drawing order, to tell which of
-/// them a particle can overlap.
-#[derive(Default)]
-pub struct Overlap {
-    view_proj: Mat4,
-    /// Per face: the cells it covers (`Wide` ones are in `wide` instead).
-    cells: Vec<Cells>,
-    /// The faces of each cell, ascending: `items[start[c]..start[c + 1]]`.
-    start: Vec<u32>,
-    items: Vec<u32>,
-    /// The faces covering everywhere, ascending.
-    wide: Vec<u32>,
-    /// Where the particles' walk is in each list: only moves forward, the
-    /// particles coming nearer and nearer.
-    cursor: Vec<u32>,
-    wide_cursor: usize,
-    fill: Vec<u32>,
-}
-
-impl Overlap {
-    /// Take the faces (their spheres, in drawing order).
-    pub fn prepare(&mut self, view_proj: &Mat4, faces: &[BlendEntry]) {
-        self.view_proj = *view_proj;
-        self.cells.clear();
-        self.wide.clear();
-        self.start.clear();
-        self.start.resize(CELLS + 1, 0);
-        for (i, e) in faces.iter().enumerate() {
-            let c = cells_of(view_proj, e.sphere);
-            match c {
-                Cells::Wide => self.wide.push(i as u32),
-                Cells::Box(x0, y0, x1, y1) => {
-                    for cy in y0..=y1 {
-                        for cx in x0..=x1 {
-                            self.start[cy as usize * GRID_X + cx as usize + 1] += 1;
-                        }
-                    }
-                }
-                Cells::Hidden => {}
-            }
-            self.cells.push(c);
-        }
-        for c in 0..CELLS {
-            self.start[c + 1] += self.start[c];
-        }
-        self.items.clear();
-        self.items.resize(self.start[CELLS] as usize, 0);
-        self.fill.clear();
-        self.fill.extend_from_slice(&self.start[..CELLS]);
-        for (i, c) in self.cells.iter().enumerate() {
-            if let Cells::Box(x0, y0, x1, y1) = *c {
-                for cy in y0..=y1 {
-                    for cx in x0..=x1 {
-                        let cell = cy as usize * GRID_X + cx as usize;
-                        self.items[self.fill[cell] as usize] = i as u32;
-                        self.fill[cell] += 1;
-                    }
-                }
-            }
-        }
-        self.begin_particles();
-    }
-
-    /// Start the walk over the particles again (their places only grow).
-    pub fn begin_particles(&mut self) {
-        self.cursor.clear();
-        self.cursor.extend_from_slice(&self.start[..CELLS]);
-        self.wide_cursor = 0;
-    }
-
-    /// The boundaries (`lo..=hi`, see `place`) a particle with the depth
-    /// place `slot` may be drawn at without crossing a face it overlaps:
-    /// after the nearest overlapped face farther than it, before the
-    /// nearest overlapped face nearer than it. Particles come in drawing
-    /// order, `slot` never decreasing. Conservative: a face counts as
-    /// overlapped when it shares a cell.
-    pub fn bounds(&mut self, particle: &ParticleInstance, slot: u32, n_faces: u32) -> (u32, u32) {
-        let sphere = [particle.pos[0], particle.pos[1], particle.pos[2], radius(particle)];
-        let cells = cells_of(&self.view_proj, sphere);
-        // not on the screen: it overlaps nothing, any place does
-        if cells == Cells::Hidden {
-            return (0, n_faces);
-        }
-        let (mut lo, mut hi) = (0u32, n_faces);
-        // the faces covering everywhere apply to every particle
-        while self.wide_cursor < self.wide.len() && self.wide[self.wide_cursor] < slot {
-            self.wide_cursor += 1;
-        }
-        if self.wide_cursor > 0 {
-            lo = lo.max(self.wide[self.wide_cursor - 1] + 1);
-        }
-        if let Some(&next) = self.wide.get(self.wide_cursor) {
-            hi = hi.min(next);
-        }
-        match cells {
-            // over many cells, or across the near plane: by depth alone
-            Cells::Wide | Cells::Hidden => (slot, slot),
-            Cells::Box(x0, y0, x1, y1) => {
-                for cy in y0..=y1 {
-                    for cx in x0..=x1 {
-                        let cell = cy as usize * GRID_X + cx as usize;
-                        let end = self.start[cell + 1];
-                        let cursor = &mut self.cursor[cell];
-                        while *cursor < end && self.items[*cursor as usize] < slot {
-                            *cursor += 1;
-                        }
-                        if *cursor > self.start[cell] {
-                            lo = lo.max(self.items[*cursor as usize - 1] + 1);
-                        }
-                        if *cursor < end {
-                            hi = hi.min(self.items[*cursor as usize]);
-                        }
-                    }
-                }
-                (lo, hi)
-            }
-        }
-    }
-}
-
 // ------------------------------------------------------------- placement
 
 /// What the frame's blended-face sort gave, for the particles.
@@ -416,7 +189,6 @@ pub struct AlphaView {
     pub basis: SortBasis,
     /// The water height the lists were split at (the camera above it).
     pub plane: Option<f32>,
-    pub view_proj: Mat4,
 }
 
 /// Memory `place_particles` reuses from a frame to the next.
@@ -425,33 +197,15 @@ pub struct Work {
     scratch: Scratch,
     depths: Vec<f32>,
     face_depths: Vec<f32>,
-    overlap: Overlap,
 }
 
 /// The runs of `parts` among `faces` (the non-rigged tail of a sorted blended
-/// list, `first` its index in the whole list): by depth, and when that
-/// leaves many switches, by where the faces really are on the screen.
+/// list, `first` its index in the whole list), by view depth.
 fn place_list(view: &AlphaView, faces: &[BlendEntry], first: u32, parts: &[ParticleInstance], work: &mut Work, out: &mut Vec<ParticleRun>) {
     work.face_depths.clear();
     work.face_depths.extend(faces.iter().map(|e| e.distance));
     depths(&view.basis, parts, &mut work.depths);
     interleave(&work.face_depths, &work.depths, first, MAX_RUNS, &mut work.scratch, out);
-    let after_last = first + faces.len() as u32;
-    if out.iter().filter(|r| r.before < after_last).count() <= OVERLAP_FROM || !overlap_enabled() {
-        return;
-    }
-    work.overlap.prepare(&view.view_proj, faces);
-    let n_faces = faces.len() as u32;
-    let overlap = &mut work.overlap;
-    place(
-        &work.face_depths,
-        &work.depths,
-        first,
-        MAX_RUNS,
-        &mut work.scratch,
-        out,
-        |i, slot| overlap.bounds(&parts[i], slot, n_faces),
-    );
 }
 
 /// Place the sorted particles of `lists` among the blended faces
@@ -719,11 +473,6 @@ mod tests {
 
     // -------------------------------------------------------- placement
 
-    fn view_proj() -> Mat4 {
-        glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 16.0 / 9.0, 0.1)
-            * glam::camera::rh::view::look_at_mat4(Vec3::ZERO, Vec3::X, Vec3::Z)
-    }
-
     fn view(plane: Option<f32>) -> AlphaView {
         AlphaView {
             basis: SortBasis {
@@ -731,13 +480,11 @@ mod tests {
                 forward: Some(Vec3::X),
             },
             plane,
-            view_proj: view_proj(),
         }
     }
 
-    /// A blended face at view depth `depth`, `side` of the line of sight
-    /// (its sphere a small one there).
-    fn face_at(depth: f32, side: f32) -> BlendEntry {
+    /// A blended face at view depth `depth`.
+    fn face_at(depth: f32) -> BlendEntry {
         BlendEntry {
             distance: depth,
             cmd: aurora_render::DrawCmd {
@@ -753,7 +500,6 @@ mod tests {
             object: 0,
             face: 0,
             rig: None,
-            sphere: [depth, side * depth * 0.4, 0.0, 0.5],
         }
     }
 
@@ -787,7 +533,7 @@ mod tests {
         lists.particles_under.push(particle_at(1.0, 0.0));
         let before = lists.particles.clone();
         let v = view(Some(0.0));
-        placed(Some(&v), false, &[face_at(20.0, 0.0)], 0, &[], 0, &mut lists);
+        placed(Some(&v), false, &[face_at(20.0)], 0, &[], 0, &mut lists);
         assert!(lists.particle_runs.is_empty() && lists.particles_under.is_empty() && lists.particle_under_runs.is_empty());
         assert_eq!(lists.particles.len(), before.len());
         assert!(lists.particles.iter().zip(&before).all(|(a, b)| a.pos == b.pos));
@@ -799,7 +545,7 @@ mod tests {
     #[test]
     fn the_rigged_prefix_offsets_the_runs_by_its_length() {
         // two rigged faces drawn apart, then faces at 30 and 10
-        let blend = [face_at(50.0, 0.0), face_at(40.0, 0.0), face_at(30.0, 0.0), face_at(10.0, 0.0)];
+        let blend = [face_at(50.0), face_at(40.0), face_at(30.0), face_at(10.0)];
         let mut lists = DrawLists {
             particles: vec![particle_at(20.0, 0.0)],
             ..Default::default()
@@ -825,8 +571,8 @@ mod tests {
             ..Default::default()
         };
         let v = view(Some(20.0));
-        let under = [face_at(25.0, 0.0), face_at(5.0, 0.0)];
-        placed(Some(&v), true, &[face_at(15.0, 0.0)], 0, &under, 0, &mut lists);
+        let under = [face_at(25.0), face_at(5.0)];
+        placed(Some(&v), true, &[face_at(15.0)], 0, &under, 0, &mut lists);
         let z = |l: &[ParticleInstance]| l.iter().map(|p| p.pos[2]).collect::<Vec<_>>();
         assert_eq!(z(&lists.particles), [30.0, 20.2]);
         assert_eq!(z(&lists.particles_under), [20.2, 10.0]);
@@ -846,76 +592,9 @@ mod tests {
     }
 
     #[test]
-    fn the_cap_of_one_run_is_kept_and_the_bounds_clamped() {
-        // `bounds` out of range (below the slot, past the last face) is clamped
-        let mut out = Vec::new();
-        place(&[9.0, 7.0], &[10.0, 8.0, 1.0], 0, 1, &mut Scratch::default(), &mut out, |_, _| {
-            (5, 0)
-        });
+    fn a_cap_of_one_run_keeps_one_run_before_the_faces() {
+        let out = merged(&[9.0, 7.0], &[10.0, 8.0, 1.0], 0, 1);
         assert_eq!(out.last().map(|r| r.end), Some(3));
         assert!(out.iter().filter(|r| r.before < 2).count() <= 1);
-    }
-
-    #[test]
-    fn the_overlap_frees_a_plume_from_faces_it_does_not_touch() {
-        // 60 faces, all on the left of the view, one every 2 m of depth; a
-        // plume on the right, a particle between each pair: by depth alone
-        // every pair is cut, by the overlap none
-        let faces: Vec<BlendEntry> = (0..60).map(|k| face_at(200.0 - k as f32 * 2.0, 1.0)).collect();
-        let parts: Vec<ParticleInstance> = (0..59).map(|k| particle_at(199.0 - k as f32 * 2.0, -1.0)).collect();
-        let mut lists = DrawLists {
-            particles: parts,
-            ..Default::default()
-        };
-        let v = view(None);
-        placed(Some(&v), true, &faces, 0, &[], 0, &mut lists);
-        assert_eq!(lists.particle_runs.len(), 1, "{:?}", lists.particle_runs);
-        assert_eq!(lists.particle_runs[0].end, 59);
-    }
-
-    #[test]
-    fn the_overlap_keeps_the_order_with_the_faces_a_particle_touches() {
-        // the same, plus a face on the plume's side at 101 m
-        let mut faces: Vec<BlendEntry> = (0..60).map(|k| face_at(200.0 - k as f32 * 2.0, 1.0)).collect();
-        faces.push(face_at(101.0, -1.0));
-        faces.sort_by(|a, b| b.distance.total_cmp(&a.distance));
-        let touched = faces.iter().position(|f| f.sphere[1] < 0.0).unwrap() as u32;
-        let parts: Vec<ParticleInstance> = (0..59).map(|k| particle_at(199.0 - k as f32 * 2.0, -1.0)).collect();
-        let mut lists = DrawLists {
-            particles: parts,
-            ..Default::default()
-        };
-        let v = view(None);
-        placed(Some(&v), true, &faces, 0, &[], 0, &mut lists);
-        // the boundary each particle is drawn at
-        let mut boundary = Vec::new();
-        let mut from = 0;
-        for r in &lists.particle_runs {
-            boundary.extend(std::iter::repeat_n(r.before, (r.end - from) as usize));
-            from = r.end;
-        }
-        assert_eq!(boundary.len(), 59);
-        for (k, b) in boundary.iter().enumerate() {
-            let depth = 199.0 - k as f32 * 2.0;
-            if depth > 101.0 {
-                assert!(*b <= touched, "particle at {depth} m after the face at 101 m");
-            } else {
-                assert!(*b > touched, "particle at {depth} m before the face at 101 m");
-            }
-        }
-        assert!(lists.particle_runs.len() <= 2, "{:?}", lists.particle_runs);
-    }
-
-    #[test]
-    fn cells_follow_the_projection() {
-        let vp = view_proj();
-        // dead ahead: the middle cells; behind or far beside the view:
-        // nothing; no radius or across the near plane or very big: everywhere
-        assert!(matches!(cells_of(&vp, [50.0, 0.0, 0.0, 0.1]), Cells::Box(7..=8, 4, 7..=8, 4)));
-        assert_eq!(cells_of(&vp, [-10.0, 0.0, 0.0, 1.0]), Cells::Hidden);
-        assert_eq!(cells_of(&vp, [10.0, 400.0, 0.0, 1.0]), Cells::Hidden);
-        assert_eq!(cells_of(&vp, [10.0, 0.0, 0.0, 0.0]), Cells::Wide);
-        assert_eq!(cells_of(&vp, [0.5, 0.0, 0.0, 2.0]), Cells::Wide);
-        assert_eq!(cells_of(&vp, [10.0, 0.0, 0.0, 8.0]), Cells::Wide);
     }
 }

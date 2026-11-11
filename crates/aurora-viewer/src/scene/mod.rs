@@ -1160,9 +1160,6 @@ struct MeshNeed {
 #[derive(Clone, Copy)]
 pub struct CullView {
     pub planes: [Vec4; 6],
-    /// The camera's view and projection, for what is placed by its place on
-    /// screen (`particle_order`).
-    pub view_proj: Mat4,
     pub eye: Vec3,
     pub screen_height: f32,
     pub tan_half_fov: f32,
@@ -1188,7 +1185,6 @@ impl CullView {
         let norm = |p: Vec4| p / p.truncate().length().max(1e-6);
         // reverse-Z infinite: near plane is r3 - r2, far plane absent (use r2 as "far" accept-all)
         CullView {
-            view_proj,
             planes: [
                 norm(r3 + r0),
                 norm(r3 - r0),
@@ -5126,19 +5122,6 @@ impl Scene {
                             object: idx as u32,
                             face: f.te_index,
                             rig,
-                            sphere: if face_sort && !g.rigged {
-                                face_depth
-                                    .as_ref()
-                                    .and_then(|(depth, geom)| {
-                                        geom.pick_faces
-                                            .get(f.te_index as usize)?
-                                            .as_ref()
-                                            .map(|face| depth.sphere(face.bounds))
-                                    })
-                                    .unwrap_or(cmd.bounds)
-                            } else {
-                                cmd.bounds
-                            },
                         };
                         let (after, before) = blend_order::water_sides(sc.z, sr, under_water_plane);
                         if before {
@@ -5212,7 +5195,6 @@ impl Scene {
                     object: u32::MAX,
                     face: 0,
                     rig: None,
-                    sphere: [0.0; 4],
                 })
             }),
         );
@@ -5239,7 +5221,6 @@ impl Scene {
                 forward: face_sort.then_some(alpha_forward),
             },
             plane: under_water_plane,
-            view_proj: view.view_proj,
         });
         self.lists.blend_glow.extend(self.blend_sorted.iter().map(|e| e.glow));
         self.lists

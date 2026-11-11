@@ -90,9 +90,6 @@ pub struct FaceDepth {
     axis: Vec3,
     front: Vec3,
     offset: f32,
-    linear: Mat3,
-    absolute: Mat3,
-    origin: Vec3,
 }
 
 impl FaceDepth {
@@ -103,17 +100,7 @@ impl FaceDepth {
             axis: linear.transpose() * forward,
             front: absolute.transpose() * (forward * forward) * 0.5,
             offset: (model.w_axis.truncate() - eye).dot(forward),
-            linear,
-            absolute,
-            origin: model.w_axis.truncate(),
         }
-    }
-
-    /// A world sphere holding the face: its box's centre, and the radius of
-    /// the box's extent in world axes (`BlendEntry::sphere`).
-    pub fn sphere(&self, bounds: FaceBounds) -> [f32; 4] {
-        let center = self.linear * bounds.center + self.origin;
-        center.extend((self.absolute * bounds.half).length()).to_array()
     }
 
     pub fn of(&self, bounds: FaceBounds) -> f32 {
@@ -211,10 +198,6 @@ pub struct BlendEntry {
     pub face: u8,
     /// A rigged mesh: its place among those of its skeleton.
     pub rig: Option<RigOrder>,
-    /// A world sphere (centre, radius) holding the face, for what is placed
-    /// by its place on screen (`particle_order`): the face's own bounds, else
-    /// its object's; radius 0 when unknown (taken as the whole screen).
-    pub sphere: [f32; 4],
 }
 
 /// AURORA_RIGGED_BLEND: by default the rigged faces apart, object by object
@@ -498,7 +481,6 @@ mod tests {
             object: record,
             face: 0,
             rig: None,
-            sphere: [0.0; 4],
         }
     }
 

@@ -12,10 +12,7 @@
 //!   with them like the others (they are all blended faces). The emitters
 //!   show in red: the particle-source beacon highlight, a debug overlay.
 //! - `sparse`: what a busy place looks like more than `dense` does: 60 thin
-//!   panes spread over 8 to 68 m ahead and 22 m across, and 6 emitters in
-//!   it, each far from most of the panes on the screen. By depth alone the
-//!   plumes are cut by every pane in their depth band; by where the panes are,
-//!   by few.
+//!   panes spread over 8 to 68 m ahead and 22 m across, and 6 emitters in it.
 //! - `dense`: 300 thin panes along the view, 8 to 80 m ahead, each beside
 //!   the line of sight, and 36 emitters spread over the same depths, for the
 //!   cost of the runs at the cap (`AURORA_PROFILE`; 256 runs are drawn at

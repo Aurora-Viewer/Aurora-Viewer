@@ -4513,7 +4513,6 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
 | `AURORA_DEMO_PLANTS=1`, `far` or `dense` | Linden trees and grass: every species near or far along the start view, or a forest |
 | `AURORA_DEMO_PARTICLE_GLASS=1`, `sparse` or `dense` | Fountains behind, in front of and through three glass panes (one fullbright, one glowing; the emitters show red: the particle-source beacon highlight); 60 spread-out panes and 6 emitters; or 300 thin panes and 36 emitters (the cap of 256 particle runs) |
-| `AURORA_PARTICLE_OVERLAP=0` | With the interleave, the particle runs from the depths alone, not from where the faces are on the screen (A/B; read at launch) |
 | `AURORA_PARTICLE_INTERLEAVE=0` | Particles as before the interleave: all after the blended faces and the overlays, radial sort, not clipped at the water, none of its pipelines or targets made (A/B; read at launch, not live) |
 | `AURORA_DEMO_BLEND_SHADOWS=1` or `dense` | Alpha-blended panels in the sun (greenhouse pane, face and texture alpha), or 400 greenhouse panes |
 | `AURORA_DEMO_FEET=opaque` or `blend` | A shoe on each foot of our avatar and of the crowd, and two blocks on the ground (contact shadows) |
@@ -4806,8 +4805,7 @@ both open states and the selection count. Capture at frame 620.
   at it, the glowing pane keeping its glow over the particles behind it;
   with `AURORA_PARTICLE_INTERLEAVE=0` all the particles are over the glass.
   `sparse`: 60 panes spread over 8 to 68 m ahead and 22 m across, and 6
-  fountains among them, each far on the screen from most of the panes: a
-  plume is cut by the panes it overlaps, not by all those at its depths.
+  fountains among them: the usual few runs of a busy place.
   `dense`: 300 thin panes 8 to 80 m ahead and 36 fountains over the same
   depths, more than 256 runs by depth alone, for the cost of the cap: read
   `p_part_order`, `part_runs`, `r_*`, `g_transparent` and `g_post` with
@@ -4815,7 +4813,10 @@ both open states and the selection count. Capture at frame 620.
   (the variable is read at launch). With the interleave the particles are
   drawn inside the blended part of the GPU timing and the overlays after
   them: `g_transparent` then holds the particles and `g_post` less, so
-  compare their sum. Under the water,
+  compare their sum. The particle-source beacons and the other debug
+  highlights (the red emitters of this scenario) are drawn after the
+  particles too, over them, as the Legacy Viewer draws its highlights after
+  the alpha pass; with `AURORA_PARTICLE_INTERLEAVE=0` they are under them. Under the water,
   `AURORA_DEMO_WATER=shore:alpha:particles` (also `medium:shore:alpha:particles`)
   adds a fountain behind and one in front of each of the three blended boxes
   of `:alpha`: the particles under the surface are refracted and fogged like
