@@ -22439,12 +22439,12 @@ impl ApplicationHandler for App {
                 self.group_profile_ui.create.demo(DemoStart { draft, then });
                 self.panels.perf = false;
             }
-            // AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|lost|collapsed:
+            // AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|lost|sheet|collapsed:
             // the Contacts tab of Conversations (or its torn-off window, or
-            // the resident picker of "Add...", or its friends with the
-            // contact sheet collapsed); `lost` starts in the state a
-            // restart used to leave: torn off, its tab hidden and its window
-            // never reopened
+            // the resident picker of "Add...", or its friends in a window wide
+            // enough for the contact sheet, shown or collapsed); `lost` starts
+            // in the state a restart used to leave: torn off, its tab hidden
+            // and its window never reopened
             if let Ok(v) = std::env::var("AURORA_DEMO_CONTACTS") {
                 self.panels.chat = true;
                 self.panels.perf = false;
@@ -22467,6 +22467,9 @@ impl ApplicationHandler for App {
                     self.contacts_ui.pick_new_friend();
                 }
                 self.settings.friends_list.sheet_collapsed = v == "collapsed";
+                if matches!(v.as_str(), "sheet" | "collapsed") {
+                    ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(900.0, 560.0));
+                }
                 if let Ok(filter) = std::env::var("AURORA_DEMO_CONTACTS_FILTER") {
                     self.contacts_ui.filter_groups(&filter);
                     // the same in Aurora's look of People, under its Groups pill
