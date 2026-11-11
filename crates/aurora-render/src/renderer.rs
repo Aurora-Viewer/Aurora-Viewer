@@ -8839,9 +8839,22 @@ impl Backend {
                                 continue;
                             }
                             let run = (b0 + from as u64 * stride, end - from);
-                            blended(&mut pass, &self.pipelines.blend_depth_solid, from, end);
-                            draw_sided(&mut pass, &self.pipelines.blend_depth_fringe, run, from);
-                            draw_sided(&mut pass, &self.pipelines.blend_depth_fringe_depth, run, from);
+                            if lists.blend_depth_quiet.binary_search(&end).is_ok() {
+                                // eyelashes and brows, drawn before the hair:
+                                // their depth where nearly opaque only (a
+                                // lash itself, in front of a strand), then
+                                // their colour, so that neither their
+                                // card's nearly empty part nor their lashes
+                                // blurred into a band by the mipmaps cut
+                                // the hair drawn after them in straight
+                                // edges (#2121)
+                                draw_sided(&mut pass, &self.pipelines.blend_depth_opaque, run, from);
+                                blended(&mut pass, &self.pipelines.blend_depth_color, from, end);
+                            } else {
+                                blended(&mut pass, &self.pipelines.blend_depth_solid, from, end);
+                                draw_sided(&mut pass, &self.pipelines.blend_depth_fringe, run, from);
+                                draw_sided(&mut pass, &self.pipelines.blend_depth_fringe_depth, run, from);
+                            }
                             from = end;
                         }
                     }
