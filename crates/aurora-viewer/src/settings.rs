@@ -1505,6 +1505,10 @@ pub struct Settings {
     /// which an avatar also shows as a silhouette (0 = no limit; ignored
     /// without a complexity limit, as in LL).
     pub max_attachment_area: f32,
+    /// ShowMyComplexityChanges: seconds the notices about our avatar
+    /// complexity, and about the people around who may not see us fully,
+    /// stay (0 = no notices; 10 as in the Legacy Viewer's settings.xml).
+    pub complexity_notice_seconds: u32,
     /// Avatars still loading: 0 particle cloud + progress bar under the name
     /// (Firestorm), 1 progress bar only (drawn as they load), 2 nothing.
     pub loading_avatars: u8,
@@ -2368,6 +2372,7 @@ impl Default for Settings {
             probe_range: 512.0,
             max_complexity: 350_000,
             max_attachment_area: 1000.0,
+            complexity_notice_seconds: 10,
             loading_avatars: 0,
             complexity_mode: 0,
             avatar_physics: true,
@@ -2998,6 +3003,7 @@ impl Settings {
             1.0
         };
         self.loading_avatars = self.loading_avatars.min(2);
+        self.complexity_notice_seconds = self.complexity_notice_seconds.min(60);
         self.max_attachment_area = if self.max_attachment_area.is_finite() {
             self.max_attachment_area.clamp(0.0, 100_000.0)
         } else {
