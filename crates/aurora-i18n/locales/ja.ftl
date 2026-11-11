@@ -14585,3 +14585,6 @@ joystick-layout-positional = 位置に基づく
 
 joystick-layout-auto = 自動
 joystick-layout-xinput = XInput
+
+# Favorite Wearables window (FSFloaterWearableFavorites)
+ui-wearable-favorites-invalid-name = フォルダー名に / や \ は使えません：「{ $name }」

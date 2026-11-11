@@ -117,6 +117,7 @@ pub mod user_info;
 pub mod voice_moderation;
 pub mod windlight_presets;
 pub mod worldmap;
+pub mod wearable_favorites;
 pub mod worn_listed;
 
 #[cfg(test)]

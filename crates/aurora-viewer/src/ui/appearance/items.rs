@@ -19,13 +19,7 @@ use uuid::Uuid;
 /// above attachments, including body parts, as requested in #1356.
 pub(super) fn sort_links(inv: &crate::world::inventory::Inventory, links: &mut [aurora_net::outfits::OutfitLink]) {
     links.sort_by_cached_key(|link| {
-        let (group, kind) = match inv.items.get(&link.target).filter(|_| !link.folder) {
-            Some(it) if it.asset_type == 13 => (0, it.flags & 0xff),
-            Some(it) if it.asset_type == 5 => (1, it.flags & 0xff),
-            Some(it) if it.asset_type == 6 => (2, 0),
-            Some(_) => (3, 0),
-            None => (4, 0),
-        };
+        let (group, kind) = model::type_rank(inv.items.get(&link.target).filter(|_| !link.folder));
         let layer = (group == 1).then(|| model::layer_rank(link, kind).0);
         (group, kind, layer, link.name.to_lowercase(), link.target)
     });

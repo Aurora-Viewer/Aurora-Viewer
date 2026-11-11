@@ -14668,3 +14668,6 @@ joystick-layout-positional = Positionnelle
 
 joystick-layout-auto = Automatique
 joystick-layout-xinput = XInput
+
+# Favorite Wearables window (FSFloaterWearableFavorites)
+ui-wearable-favorites-invalid-name = Un nom de dossier ne peut pas contenir / ni \ : « { $name } »

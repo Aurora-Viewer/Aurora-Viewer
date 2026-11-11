@@ -248,7 +248,22 @@ pub fn folder_links(inv: &Inventory, folder: Uuid) -> Vec<OutfitLink> {
     links
 }
 
-pub(super) fn item_link(it: &InvItem) -> OutfitLink {
+/// The wearable-type group of an item in the type-name order of the
+/// wearable lists (LLWearableItemTypeNameComparator, llwearableitemslist.cpp):
+/// body parts, clothing, then objects (system wearables above attachments,
+/// as requested in #1356), each by wearable type; anything else after, a
+/// missing item last.
+pub fn type_rank(it: Option<&InvItem>) -> (u8, u32) {
+    match it {
+        Some(it) if it.asset_type == 13 => (0, it.flags & 0xff),
+        Some(it) if it.asset_type == 5 => (1, it.flags & 0xff),
+        Some(it) if it.asset_type == 6 => (2, 0),
+        Some(_) => (3, 0),
+        None => (4, 0),
+    }
+}
+
+pub(crate) fn item_link(it: &InvItem) -> OutfitLink {
     OutfitLink {
         target: it.id,
         name: it.name.clone(),
