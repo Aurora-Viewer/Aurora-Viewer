@@ -2069,7 +2069,7 @@ impl App {
         }
         self.world.rlva_note_attachment_command(&cmd, actor, Instant::now());
         self.world.note_outfit_command(&cmd);
-        self.world.rlva.note_sit_command(&cmd, actor);
+        self.world.rlva_note_sit_command(&cmd, actor);
         if self.world.rlva.enabled()
             && let NetCommand::RezAttachments(items) = &mut cmd
         {

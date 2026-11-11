@@ -40,11 +40,16 @@ impl World {
             self.rlva.stand_return = None;
             self.rlva.stand_seated = false;
         } else if self.rlva.stand_origin.is_some() {
-            if self.agent.is_sitting() {
+            // Only RequestSit captures an origin. Unlike the reference's
+            // untyped cached source, a ground sit cannot confirm a failed
+            // object request and make its stale position a return target.
+            if self.agent.seated {
                 self.rlva.stand_seated = true;
             } else if self.rlva.stand_seated {
                 self.rlva.stand_return = self.rlva.stand_origin.take();
                 self.rlva.stand_seated = false;
+            } else if self.agent.ground_sit {
+                self.rlva.stand_origin = None;
             }
         }
     }
