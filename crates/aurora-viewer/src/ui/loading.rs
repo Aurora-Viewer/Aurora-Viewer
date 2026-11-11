@@ -538,7 +538,7 @@ pub fn teleport_overlay(
     ctx.request_repaint();
     let mut pressed = false;
     if cancel && a > 0.5 {
-        let area = egui::Area::new(egui::Id::new("teleport_cancel"))
+        let area = egui::Area::new(egui::Id::unique("teleport_cancel"))
             .order(egui::Order::Foreground)
             .pivot(egui::Align2::RIGHT_CENTER)
             .fixed_pos(corner)
@@ -603,5 +603,68 @@ mod tests {
             _ => false,
         });
         assert!(painted, "the region name is not painted in the first frame");
+    }
+
+    #[test]
+    fn the_teleport_screen_cancel_button_takes_the_click() {
+        // the screen's own area swallows clicks over the whole window: the
+        // button must stay above it, also after a click on the screen
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let label = aurora_i18n::tr!("common-cancel");
+        let mut frame = |events: Vec<egui::Event>| {
+            let mut pressed = false;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 900.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    pressed = teleport_overlay(
+                        ui.ctx(),
+                        &p,
+                        None,
+                        None,
+                        "Teleport",
+                        "Lagune",
+                        "Scene",
+                        Some(0.2),
+                        1.0,
+                        &Place::default(),
+                        true,
+                    )
+                },
+            );
+            output.textures_delta.clear();
+            let at = output.shapes.iter().find_map(|clipped| match &clipped.shape {
+                Shape::Text(text) if text.galley.text() == label => Some(text.visual_bounding_rect().center()),
+                _ => None,
+            });
+            (pressed, at)
+        };
+        let click = |at: Pos2| {
+            let button = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            [
+                vec![egui::Event::PointerMoved(at)],
+                vec![button(true)],
+                vec![button(false)],
+                Vec::new(),
+            ]
+        };
+        frame(Vec::new());
+        let (_, at) = frame(Vec::new());
+        let at = at.expect("the Cancel button is painted");
+        // a click on the screen first, away from the button
+        for events in click(Pos2::new(600.0, 450.0)) {
+            assert!(!frame(events).0);
+        }
+        let pressed = click(at).into_iter().map(|events| frame(events).0).any(|p| p);
+        assert!(pressed, "the click on Cancel reached the screen behind it");
     }
 }

@@ -7565,11 +7565,7 @@ impl App {
             // the offline demo has no simulator to tell
             self.demo_tp_dest = None;
             self.demo_tp_region = None;
-            aurora_net::transition::end(
-                Some(aurora_net::transition::Kind::Teleport),
-                "cancelled (demo)",
-                &self.net.stats,
-            );
+            aurora_net::transition::end(Some(aurora_net::transition::Kind::Teleport), "cancelled (demo)", &self.net.stats);
         } else if outcome == crate::world::teleport_cancel::Cancelled::Sent {
             self.send(NetCommand::TeleportCancel);
         }

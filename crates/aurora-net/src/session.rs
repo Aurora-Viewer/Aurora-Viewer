@@ -1726,11 +1726,7 @@ impl Session<'_> {
                 m.info.agent_id = self.agent_id();
                 m.info.session_id = self.session_id();
                 self.send_main(&m, true);
-                transition::end(
-                    Some(transition::Kind::Teleport),
-                    "cancelled (TeleportCancel sent)",
-                    &self.sh.stats,
-                );
+                transition::end(Some(transition::Kind::Teleport), "cancelled (TeleportCancel sent)", &self.sh.stats);
             }
             NetCommand::CancelRegionRestart => {
                 // LLPanelRegionInfo::sendEstateOwnerMessage("restart", {"-1"}),
