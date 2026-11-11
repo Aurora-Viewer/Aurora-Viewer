@@ -40,6 +40,8 @@ pub(crate) struct Control {
     tip: RwLock<Option<crate::VrPanel>>,
     /// The wrist's chat panel above the left hand (part of the interface image).
     wrist: RwLock<Option<crate::VrPanel>>,
+    /// The VR camera, while it is out.
+    camera: RwLock<Option<crate::VrCameraView>>,
 }
 impl Control {
     pub fn new(available: bool) -> Self {
@@ -57,6 +59,7 @@ impl Control {
             panel: RwLock::new(None),
             tip: RwLock::new(None),
             wrist: RwLock::new(None),
+            camera: RwLock::new(None),
         }
     }
     pub fn set_display(&self, display: crate::VrDisplay) {
@@ -194,6 +197,15 @@ impl Control {
     pub fn tip(&self) -> Option<crate::VrPanel> {
         *self.tip.read()
     }
+    pub fn set_camera(&self, camera: Option<crate::VrCameraView>) {
+        *self.camera.write() = camera.filter(|c| {
+            c.position.is_finite() && c.forward.length_squared() > 1e-6 && c.up.length_squared() > 1e-6 && c.fov_y > 0.05
+        });
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    pub fn camera(&self) -> Option<crate::VrCameraView> {
+        *self.camera.read()
+    }
     pub fn set_wrist(&self, wrist: Option<crate::VrPanel>) {
         *self.wrist.write() = wrist.filter(|p| p.center.is_finite() && p.right.is_finite() && p.up.is_finite());
     }
@@ -218,6 +230,7 @@ impl Control {
         *self.panel.write() = None;
         *self.tip.write() = None;
         *self.wrist.write() = None;
+        *self.camera.write() = None;
         self.state
             .store(if failed { VrState::Failed } else { VrState::Off } as u8, Ordering::Release);
     }

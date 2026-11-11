@@ -291,6 +291,28 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-camera-vr-avatar-hands-help"),
                     &field!(camera.vr.avatar_hands),
                 );
+                cx.slider(
+                    tr!("ui-options-camera-vr-arm-scale"),
+                    tr!("ui-options-camera-vr-arm-scale-help"),
+                    &field!(camera.vr.arm_scale),
+                    0.5..=2.0,
+                    "",
+                );
+                cx.toggle(
+                    tr!("ui-options-camera-vr-teleport-when-allowed"),
+                    tr!("ui-options-camera-vr-teleport-when-allowed-help"),
+                    &field!(camera.vr.teleport_when_allowed),
+                );
+                cx.toggle(
+                    tr!("ui-options-camera-vr-gestures"),
+                    tr!("ui-options-camera-vr-gestures-help"),
+                    &field!(camera.vr.gestures),
+                );
+                cx.toggle(
+                    tr!("ui-options-camera-vr-camera-on-desktop"),
+                    tr!("ui-options-camera-vr-camera-on-desktop-help"),
+                    &field!(camera.vr.camera_on_desktop),
+                );
                 cx.toggle(
                     tr!("ui-options-camera-vr-show-controllers"),
                     tr!("ui-options-camera-vr-show-controllers-help"),
@@ -409,6 +431,8 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     (tr!("ui-vr-control-x"), tr!("ui-vr-control-x-action")),
                     (tr!("ui-vr-control-y"), tr!("ui-vr-control-y-action")),
                     (tr!("ui-vr-control-wrist"), tr!("ui-vr-control-wrist-action")),
+                    (tr!("ui-vr-control-camera"), tr!("ui-vr-control-camera-action")),
+                    (tr!("ui-vr-control-gestures"), tr!("ui-vr-control-gestures-action")),
                 ] {
                     cx.row(button, action, &Nothing, |ui, _| {
                         ui.label(action);

@@ -309,6 +309,17 @@ pub struct VrSettings {
     pub avatar_hands: bool,
     /// The controller models drawn in the hands.
     pub show_controllers: bool,
+    /// How far the avatar's hands go for a given reach of ours (its arm
+    /// length over ours, set by the calibration).
+    pub arm_scale: f32,
+    /// Point and walk teleports instead where the parcel lets anyone
+    /// arrive anywhere (it walks elsewhere).
+    pub teleport_when_allowed: bool,
+    /// A nod, a head shake or a wave of a raised hand plays the matching
+    /// animation, which everyone sees.
+    pub gestures: bool,
+    /// While the VR camera is out, the desktop window shows its view.
+    pub camera_on_desktop: bool,
     /// Local chat on a small panel above the left hand, while it is raised
     /// and looked at.
     pub wrist_chat: bool,
@@ -379,6 +390,10 @@ impl Default for VrSettings {
             walk_direction: VrWalkDirection::Head,
             avatar_hands: true,
             show_controllers: true,
+            arm_scale: 1.0,
+            teleport_when_allowed: false,
+            gestures: true,
+            camera_on_desktop: true,
             wrist_chat: true,
             panel_follows: true,
             exposure: 0.0,

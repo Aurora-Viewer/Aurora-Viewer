@@ -108,6 +108,43 @@ impl App {
     /// check. Walking, not a local teleport: many parcels send a teleport to
     /// their landing point or refuse it. Nothing while flying or held in
     /// place, as for a double-click walk. True when it started.
+    /// The parcel we stand on lets anyone arrive anywhere in it (landing
+    /// type "anywhere"), and `point` is in it: a teleport there lands where
+    /// asked instead of at a landing point.
+    pub(super) fn teleport_lands_at(&self, point: Vec3) -> bool {
+        let Some(parcel) = self.world.parcel.as_deref() else { return false };
+        let width = self.world.main().map_or(256, |r| r.heightmap.size_x as usize);
+        let (x, y) = (point.x.floor(), point.y.floor());
+        if parcel.landing_type != 2 || x < 0.0 || y < 0.0 || x >= width as f32 || y >= width as f32 {
+            return false;
+        }
+        // the parcel's cells, 4 m each, a bit per cell row by row
+        let columns = width / 4;
+        let cell = (y as usize / 4) * columns + x as usize / 4;
+        parcel.bitmap.get(cell / 8).is_some_and(|b| b & (1 << (cell % 8)) != 0)
+    }
+
+    /// Point and walk's landing: a teleport where the option asks for it
+    /// and the parcel allows landing there, else a walk.
+    pub(super) fn vr_go_to(&mut self, point: Vec3, run: bool, teleport: bool) -> bool {
+        if teleport && self.teleport_lands_at(point) {
+            let global = self
+                .world
+                .main_origin()
+                .map(|(x, y)| glam::DVec3::new(x as f64, y as f64, 0.0) + point.as_dvec3());
+            if global.is_some_and(|g| !self.world.rlva_can_teleport_global(g)) {
+                self.world.system_notice(
+                    aurora_i18n::tr!("rlva-blocked-autopilot"),
+                    crate::world::notice_topics::Topic::Warning,
+                );
+                return false;
+            }
+            self.teleport_to_point(point);
+            return true;
+        }
+        self.walk_to_point_checked(point, run)
+    }
+
     pub(super) fn walk_to_point_checked(&mut self, point: Vec3, run: bool) -> bool {
         let global = self
             .world

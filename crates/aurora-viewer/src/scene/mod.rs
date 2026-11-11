@@ -25,7 +25,7 @@ mod foot_support;
 pub mod geometry_need;
 mod grounding;
 mod hand_ik;
-mod vr_arms;
+pub mod vr_arms;
 pub mod hover;
 pub mod hud;
 pub(crate) mod ik;
@@ -841,7 +841,7 @@ pub struct Scene {
     pub poser: HashMap<Uuid, Arc<crate::ik_edit::poser::SubjectPose>>,
     /// The VR controllers' wrists (world, left then right) that our avatar's
     /// arms reach for; None each when not in VR or the option is off.
-    pub vr_hands: [Option<Vec3>; 2],
+    pub vr_hands: vr_arms::Hands,
     /// Follow receipt clocks instead of the Legacy Viewer's activation / pause clock.
     pub synchronize_animations: bool,
     pub ground_avatar_feet: bool,
@@ -5513,8 +5513,13 @@ impl Scene {
             motions.vr_hands = match model.filter(|_| owner == world.agent_id) {
                 Some(model) => {
                     let inverse = model.inverse();
-                    self.vr_hands
-                        .map(|hand| hand.map(|p| inverse.transform_point3(p)).filter(|p| p.is_finite()))
+                    self.vr_hands.map(|hand| {
+                        hand.map(|h| vr_arms::Hand {
+                            wrist: inverse.transform_point3(h.wrist),
+                            ..h
+                        })
+                        .filter(|h| h.wrist.is_finite())
+                    })
                 }
                 None => [None; 2],
             };

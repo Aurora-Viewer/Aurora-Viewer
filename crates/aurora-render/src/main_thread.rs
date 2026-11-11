@@ -1319,6 +1319,10 @@ impl Renderer {
     pub fn set_vr_wrist(&self, wrist: Option<crate::VrPanel>) {
         self.vr.set_wrist(wrist);
     }
+    /// The VR camera while it is out (None: put away).
+    pub fn set_vr_camera(&self, camera: Option<crate::VrCameraView>) {
+        self.vr.set_camera(camera);
+    }
     /// A short vibration on one controller.
     pub fn vr_haptic(&self, side: crate::VrSide, amplitude: f32, seconds: f32) {
         self.vr.haptic(side, amplitude, seconds);

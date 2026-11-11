@@ -154,6 +154,35 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> 
         }
     }
 
+    /// Show `image` (the VR camera's) instead of an interface image: the
+    /// viewfinder is a panel of its own.
+    pub fn show_image(&mut self, device: &wgpu::Device, image: &wgpu::Texture) {
+        let view = image.create_view(&Default::default());
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("VR viewfinder"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &self.uniforms,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(64),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+        self.target = Some((image.clone(), group));
+    }
+
     /// Draw the frame's interface into the panel's image, over the HUDs
     /// (`huds`: drawn off screen at the window's size over the tint) or the
     /// faint tint alone: the world shows where nothing is drawn.

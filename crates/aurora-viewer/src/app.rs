@@ -446,6 +446,36 @@ pub struct App {
     vr_trigger_down: bool,
     /// The pointing hand's grip held (sit on what the beam is on, or stand up).
     vr_grip_down: bool,
+    /// The VR view behind the avatar (third person) instead of at its eyes,
+    /// switched on the VR toolbar.
+    vr_third_person: bool,
+    /// The last notification seen in VR: a script's menu (the blue dialog)
+    /// arriving after it opens the panel, to answer it.
+    vr_dialog_seen: u64,
+    /// The VR camera, while it is out, and the other hand's grip held.
+    vr_photo_camera: Option<vr_ui::VrPhotoCamera>,
+    vr_off_grip_down: bool,
+    /// Asked from the VR toolbar or the wrist: open the panel, close it,
+    /// recentre (done where the renderer is at hand).
+    vr_open_panel: bool,
+    vr_close_panel: bool,
+    vr_recenter_request: bool,
+    /// The grip held to sit: the seat under the beam is outlined, and the
+    /// grip's release sits there.
+    vr_seat_aim: bool,
+    /// The arms' calibration: since when, and the widest span seen.
+    vr_calibration: Option<(Instant, f32)>,
+    /// The head and hand gestures being watched, and the gesture animation
+    /// playing (stopped at that time), with a pause after it.
+    vr_nod: crate::vr::Oscillation,
+    vr_shake: crate::vr::Oscillation,
+    vr_wave: crate::vr::Oscillation,
+    vr_head_yaw: Option<(f32, f32)>,
+    vr_gesture: Option<(uuid::Uuid, Instant)>,
+    /// The wrist's tab: local chat (None) or a conversation.
+    vr_wrist_tab: Option<uuid::Uuid>,
+    /// The wrist's panel shown this frame (for the beam).
+    vr_wrist_panel: Option<aurora_render::VrPanel>,
     /// The object carried by the trigger with the build tools open.
     vr_grab: Option<vr_ui::VrGrab>,
     /// The right thumbstick tapped: the menu of what the beam is on.
@@ -1624,6 +1654,22 @@ impl App {
             vr_avatar_position: None,
             vr_trigger_down: false,
             vr_grip_down: false,
+            vr_third_person: false,
+            vr_dialog_seen: 0,
+            vr_photo_camera: None,
+            vr_off_grip_down: false,
+            vr_open_panel: false,
+            vr_close_panel: false,
+            vr_recenter_request: false,
+            vr_seat_aim: false,
+            vr_calibration: None,
+            vr_nod: Default::default(),
+            vr_shake: Default::default(),
+            vr_wave: Default::default(),
+            vr_head_yaw: None,
+            vr_gesture: None,
+            vr_wrist_tab: None,
+            vr_wrist_panel: None,
             vr_grab: None,
             vr_menu_tap: false,
             vr_off_trigger_down: false,
@@ -8290,7 +8336,7 @@ impl App {
                 && let Some(point) = self.vr_landing.take()
             {
                 let run = running || point.distance(self.world.agent.position) > 5.0;
-                if self.walk_to_point_checked(point, run) && settings.haptics {
+                if self.vr_go_to(point, run, settings.teleport_when_allowed) && settings.haptics {
                     renderer.vr_haptic(aurora_render::VrSide::Left, 0.5, 0.05);
                 }
             }
@@ -8418,12 +8464,27 @@ impl App {
     fn follow_vr_avatar(&mut self, renderer: &Renderer) {
         let settings = &self.settings.camera.vr;
         let yaw = self.world.agent.yaw;
-        let facing = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
+        // seated, the view goes where the avatar looks from: its eyes on the
+        // seat, turned with it
+        let seated = self.camera.seated_eye(&self.world.agent, &self.settings.camera);
+        let facing = match seated {
+            Some((_, Some(turn))) => (turn * Vec3::X).with_z(0.0).normalize_or(Vec3::new(yaw.cos(), yaw.sin(), 0.0)),
+            _ => Vec3::new(yaw.cos(), yaw.sin(), 0.0),
+        };
         let camera_only = settings.locomotion == crate::camera::VrLocomotion::CameraOnly;
-        renderer.set_vr_offset(
-            crate::vr::view_offset(facing, if camera_only { 0.0 } else { settings.forward_offset }, settings.height_offset),
-        );
-        let position = self.world.agent.position + facing * crate::vr::EYE_LEAD;
+        // third person: behind the avatar and above it, swinging round as it turns
+        let (ahead, up) = if camera_only {
+            (0.0, settings.height_offset)
+        } else if self.vr_third_person {
+            (-crate::vr::THIRD_PERSON_BACK, settings.height_offset + crate::vr::THIRD_PERSON_UP)
+        } else {
+            (settings.forward_offset, settings.height_offset)
+        };
+        renderer.set_vr_offset(crate::vr::view_offset(facing, ahead, up));
+        let position = match seated {
+            Some((eye, _)) => eye,
+            None => self.world.agent.position + facing * crate::vr::EYE_LEAD,
+        };
         if !renderer.vr_engaged() || camera_only {
             self.vr_avatar_position = None;
             return;
@@ -8456,14 +8517,28 @@ impl App {
         let menu_tap = std::mem::take(&mut self.vr_menu_tap);
         // our avatar's arms reach for the controllers: the wrist sits a
         // little behind the aim point, towards the elbow
-        self.scene.vr_hands = if active && settings.avatar_hands {
+        let first_person = !self.vr_third_person
+            && self.settings.camera.vr_view == crate::camera::VrView::FirstPerson
+            && settings.locomotion != crate::camera::VrLocomotion::CameraOnly;
+        self.scene.vr_hands = if active && settings.avatar_hands && first_person && !self.world.agent.is_sitting() {
             [input.left, input.right].map(|hand| {
                 let wrist = hand.position + hand.orientation.normalize() * Vec3::Z * 0.08;
-                (hand.active && wrist.is_finite()).then_some(wrist)
+                (hand.active && wrist.is_finite()).then_some(crate::scene::vr_arms::Hand {
+                    wrist,
+                    grip: hand.grip,
+                    trigger: hand.trigger,
+                    scale: settings.arm_scale,
+                })
             })
         } else {
             [None; 2]
         };
+        if active {
+            self.vr_calibrate_step(renderer, &input);
+            self.vr_gestures(&input, &settings);
+        } else {
+            self.vr_calibration = None;
+        }
         if !active || !settings.controller_pointer || !controller.active {
             self.vr_trigger_down = false;
             if self.vr_grab.is_some() {
@@ -8489,6 +8564,11 @@ impl App {
         // else sit on what the beam is on, below
         let grip_down = crate::vr::trigger_held(self.vr_grip_down, controller.grip);
         let grip = grip_down && !self.vr_grip_down;
+        // let go after aiming at a seat: sit there (below, on the beam's point)
+        let seat_release = !grip_down && self.vr_grip_down && self.vr_seat_aim;
+        if !grip_down {
+            self.vr_seat_aim = false;
+        }
         self.vr_grip_down = grip_down;
         // the grip on the interface panel takes it: it follows the beam,
         // facing the headset, until the grip is let go
@@ -8533,14 +8613,18 @@ impl App {
         let off = input.hand(off_side);
         let off_ray = (off.position, (off.orientation * Vec3::NEG_Z).normalize_or(Vec3::Y));
         let off_down = crate::vr::trigger_held(self.vr_off_trigger_down, off.trigger);
-        let pointing_on_panel = self.vr_panel.is_some_and(|p| p.hit(ray.0, ray.1).is_some());
-        let off_on_panel = !pointing_on_panel && off.active && self.vr_panel.is_some_and(|p| p.hit(off_ray.0, off_ray.1).is_some());
+        let pointing_on_panel = self.vr_ui_hit(ray).is_some();
+        let off_on_panel = !pointing_on_panel && off.active && self.vr_ui_hit(off_ray).is_some();
         let mut panel_beam = None;
         if off_on_panel {
             let off_trigger = (off_down && !self.vr_off_trigger_down, !off_down && self.vr_off_trigger_down);
             panel_beam = self.vr_panel_pointer(off_ray, off_trigger, scroll).map(|t| (off_side, t));
         }
+        // the camera in the other hand: its trigger takes a photo, its grip
+        // sets the camera down or picks it up again
+        let off_pressed = off_down && !self.vr_off_trigger_down && !off_on_panel;
         self.vr_off_trigger_down = off_down;
+        self.vr_camera_step(renderer, &off, off_side, off_pressed, &settings);
         if !off_on_panel && let Some(t) = self.vr_panel_pointer(ray, trigger, scroll) {
             self.vr_trigger_down = down;
             self.vr_hover = None;
@@ -8586,7 +8670,11 @@ impl App {
                 renderer.vr_haptic(side, 0.35, 0.04);
             }
         }
-        if grip && !sitting && let Some(point) = point {
+        // the grip squeezed: aim at a seat (outlined below); let go: sit
+        if grip && !sitting && self.vr_panel_drag.is_none() {
+            self.vr_seat_aim = true;
+        }
+        if seat_release && !sitting && let Some(point) = point {
             self.vr_sit(point, ray);
             if settings.haptics {
                 renderer.vr_haptic(side, 0.5, 0.04);
@@ -8599,11 +8687,19 @@ impl App {
         self.vr_tip_label(renderer, self.vr_look.map(|(_, p)| p), input.head_position);
         // the clickable prim pointed at is outlined (the desktop has the
         // cursor's shape for this; VR has no cursor)
-        let outline = target.as_ref().filter(|_| actionable).and_then(|(_, index, _)| {
-            let (center, rotation, _) = crate::scene::Scene::object_transform(&self.world, *index, Instant::now(), 0)?;
-            let half = self.world.objects.get(*index)?.scale * 0.5;
-            Some(aurora_render::VrBox { center, rotation, half })
-        });
+        // (aiming at a seat: whatever object the beam is on, the seat)
+        let seat = if self.vr_seat_aim {
+            point.and_then(|p| self.scene.left_interaction_at_ray(&self.world, p, ray, true))
+        } else {
+            None
+        };
+        let outline = seat
+            .or_else(|| target.as_ref().filter(|_| actionable).map(|(_, index, _)| *index))
+            .and_then(|index| {
+                let (center, rotation, _) = crate::scene::Scene::object_transform(&self.world, index, Instant::now(), 0)?;
+                let half = self.world.objects.get(index)?.scale * 0.5;
+                Some(aurora_render::VrBox { center, rotation, half })
+            });
         renderer.set_vr_pointer(aurora_render::VrPointer {
             controllers: settings.show_controllers,
             hand: Some(side),
@@ -11838,6 +11934,7 @@ impl App {
             self.vr_keyboard(ui.ctx());
             self.vr_wrist_chat(ui.ctx());
             self.vr_mouse_cursor(ui.ctx());
+            self.vr_toolbar(ui.ctx());
             actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
             if inventory_drop.is_empty() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);

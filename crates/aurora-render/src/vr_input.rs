@@ -53,6 +53,21 @@ pub struct VrInputState {
     pub updated_at: Option<Instant>,
 }
 
+/// The VR camera: a third view of the world drawn from where it is held or
+/// set down, shown on its viewfinder, used for photos while it is out, and
+/// on the desktop window with `desktop`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VrCameraView {
+    pub position: Vec3,
+    pub forward: Vec3,
+    pub up: Vec3,
+    /// Vertical field of view, radians.
+    pub fov_y: f32,
+    pub desktop: bool,
+    /// The viewfinder's screen in the world (its image is the camera's).
+    pub viewfinder: Option<VrPanel>,
+}
+
 /// The viewer's interface shown as a floating screen in VR: its centre and
 /// the half-width and half-height vectors of its rectangle, in world space.
 /// The interface is drawn on it whole, its top-left at `center - right + up`.

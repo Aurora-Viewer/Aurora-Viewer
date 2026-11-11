@@ -1787,6 +1787,16 @@ impl Camera {
         Some(p + r * if eye { sit.eye } else { sit.at })
     }
 
+    /// Seated (on an object or the ground): where the avatar looks from, as
+    /// first person's eye, and the seat's turn when on an object. For VR.
+    pub fn seated_eye(&self, agent: &AgentState, s: &CameraSettings) -> Option<(Vec3, Option<glam::Quat>)> {
+        if !agent.is_sitting() {
+            return None;
+        }
+        let eye = self.mouselook_eye(agent, s, None);
+        eye.is_finite().then_some((eye, self.avatar.rotation))
+    }
+
     fn mouselook_eye(&self, agent: &AgentState, s: &CameraSettings, eye_offset: Option<Vec3>) -> Vec3 {
         let posed = eye_offset.filter(|p| p.is_finite());
         // Requested opt-in: follow the eye midpoint's translation, never the

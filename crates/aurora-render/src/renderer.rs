@@ -50,6 +50,9 @@ const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const GBUF_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+/// The VR camera's image, pixels (its viewfinder and the desktop's view;
+/// photos are drawn at their own size).
+const VR_CAMERA_SIZE: (u32, u32) = (1280, 720);
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 #[repr(C)]
@@ -1827,6 +1830,10 @@ struct XrWorld {
     pointer: crate::vr_pointer::Overlay,
     picture: crate::vr_display::Adjust,
     panel: crate::vr_panel::Panel,
+    /// The VR camera's renderer and the image it draws, while it is out,
+    /// and its viewfinder.
+    camera: Option<(Backend, wgpu::Texture)>,
+    viewfinder: crate::vr_panel::Panel,
     session: crate::xr_frame::Session,
     runtime: openxr::Instance,
 }
@@ -6092,6 +6099,8 @@ impl Backend {
                     pointer: crate::vr_pointer::Overlay::new(&self.device, self.config.format),
                     picture: crate::vr_display::Adjust::new(&self.device, self.config.format),
                     panel: crate::vr_panel::Panel::new(&self.device, self.config.format),
+                    camera: None,
+                    viewfinder: crate::vr_panel::Panel::new(&self.device, self.config.format),
                     session,
                     runtime: runtime.clone(),
                 })
@@ -6170,6 +6179,97 @@ impl Backend {
         packet.lists.strip_viewer_overlays();
         let mut other_lists = DrawLists::default();
         other_lists.copy_from(&packet.lists);
+        // the VR camera: a third view, drawn after the eyes; a photo asked
+        // while it is out is taken by it
+        let camera = self.vr.camera();
+        let camera_packet = camera.and_then(|cam| {
+            if world.camera.is_none() {
+                let seed = self.xr_seed.as_ref()?;
+                let mut init = (**seed).clone();
+                init.external = true;
+                init.xr = None;
+                init.width = VR_CAMERA_SIZE.0;
+                init.height = VR_CAMERA_SIZE.1;
+                init.output_format = Some(self.config.format);
+                init.scene = packet.scene.clone();
+                let image = self.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("VR camera"),
+                    size: wgpu::Extent3d {
+                        width: VR_CAMERA_SIZE.0,
+                        height: VR_CAMERA_SIZE.1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: self.config.format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_SRC,
+                    view_formats: &[],
+                });
+                match Backend::new(init) {
+                    Ok(backend) => world.camera = Some((backend, image)),
+                    Err(e) => {
+                        log::warn!("VR camera: its renderer could not be made: {e}");
+                        return None;
+                    }
+                }
+            }
+            let (_, image) = world.camera.as_ref()?;
+            let capture = match packet.capture {
+                Some(crate::packet::Capture::Snapshot(_)) => packet.capture.take(),
+                _ => None,
+            };
+            let aspect = match &capture {
+                Some(crate::packet::Capture::Snapshot(spec)) => spec.photo.0 as f32 / spec.photo.1.max(1) as f32,
+                _ => VR_CAMERA_SIZE.0 as f32 / VR_CAMERA_SIZE.1 as f32,
+            };
+            let mut lists = DrawLists::default();
+            lists.copy_from(&packet.lists);
+            let mut params = packet.params.clone();
+            let view = glam::camera::rh::view::look_to_mat4(cam.position, cam.forward.normalize(), cam.up.normalize());
+            let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(cam.fov_y, aspect, 0.1);
+            params.view = view;
+            params.proj = proj;
+            params.camera_pos = cam.position;
+            params.fov_y = cam.fov_y;
+            if capture.is_none() {
+                params.photo_tile = Mat4::IDENTITY;
+                params.photo_scale = 1.0;
+                params.photo_context = crate::types::PhotoContext::None;
+            }
+            if let Some(gpu) = &mut lists.gpu {
+                gpu.planes = crate::gpu_cull::view_planes(proj * view);
+                gpu.eye = cam.position;
+                gpu.pixel_scale = VR_CAMERA_SIZE.1 as f32 * proj.y_axis.y;
+            }
+            let mut surface = packet.surface;
+            surface.width = VR_CAMERA_SIZE.0;
+            surface.height = VR_CAMERA_SIZE.1;
+            Some(FramePacket {
+                output: Some(image.clone()),
+                index: packet.index,
+                writes: Default::default(),
+                uploads: packet.uploads.empty_sibling(),
+                scene: packet.scene.clone(),
+                params,
+                lists,
+                ui: None,
+                surface,
+                settings: packet.settings,
+                hover: None,
+                picks: Vec::new(),
+                drawn: Vec::new(),
+                capture,
+                histogram: None,
+                motion_cut: packet.motion_cut,
+                input_at: None,
+            })
+        });
+        if camera.is_none() {
+            world.camera = None;
+        }
         if panel.is_some() {
             packet.lists.copy_huds_from(&huds);
         }
@@ -6219,6 +6319,14 @@ impl Backend {
         let mirror_size = desktop_size;
         let mut first = world.backends[0].render_view(packet);
         let _second = world.backends[1].render_view(other);
+        if let (Some(cam_packet), Some((backend, _))) = (camera_packet, world.camera.as_mut()) {
+            let shot = backend.render_view(cam_packet);
+            // the photo the camera took (or reads back later) answers for the frame
+            if first.captured.is_none() && shot.captured.is_some() {
+                first.captured = shot.captured;
+                first.snapshot |= shot.snapshot;
+            }
+        }
         // the VR picture preferences and the comfort vignette, then the
         // controllers and the pointer beam over both eyes, at the poses
         // `begin` just published for this frame
@@ -6246,6 +6354,18 @@ impl Backend {
             let t = &world.backends[i].targets;
             t.depth_msaa_tex.is_none().then_some(&t.depth_ss_tex)
         });
+        // the camera's viewfinder, showing what it sees
+        if let (Some(cam), Some((_, image))) = (camera, world.camera.as_ref())
+            && let Some(viewfinder) = cam.viewfinder
+        {
+            world.viewfinder.show_image(&self.device, image);
+            world.viewfinder.draw(
+                &self.device,
+                &self.queue,
+                [(&eyes.textures[0], eye_views[0]), (&eyes.textures[1], eye_views[1])],
+                viewfinder,
+            );
+        }
         world.pointer.draw(
             &self.device,
             &self.queue,
@@ -6254,11 +6374,17 @@ impl Backend {
             &self.vr.input(),
             self.vr.pointer(),
         );
+        // the desktop window: the left eye, or the camera's view while it is
+        // out and asked for there (a spectator view to stream or record)
+        let mirrored = match (camera, world.camera.as_ref()) {
+            (Some(cam), Some((_, image))) if cam.desktop => image,
+            _ => &eyes.textures[0],
+        };
         first.stats.presented = world.mirror.present(
             &self.device,
             &self.queue,
             &self.surface,
-            &eyes.textures[0],
+            mirrored,
             (mirror_size.0, mirror_size.1),
             &mut self.egui,
             mirror_ui.as_ref(),

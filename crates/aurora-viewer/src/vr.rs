@@ -154,6 +154,57 @@ impl Hold {
     }
 }
 
+/// The third-person VR view: this far behind the avatar's eyes and this far
+/// above them (metres).
+pub const THIRD_PERSON_BACK: f32 = 2.5;
+pub const THIRD_PERSON_UP: f32 = 0.6;
+
+/// A back-and-forth motion (a nod, a head shake, a wave): the value has to
+/// turn back by more than `amplitude` from its last extreme, `count` times
+/// within `window`. True once, on the turn that completes it.
+#[derive(Debug, Clone, Default)]
+pub struct Oscillation {
+    extreme: Option<f32>,
+    rising: bool,
+    turns: std::collections::VecDeque<Instant>,
+}
+
+impl Oscillation {
+    pub fn step(&mut self, value: f32, amplitude: f32, count: usize, window: Duration, now: Instant) -> bool {
+        if !value.is_finite() {
+            return false;
+        }
+        let Some(extreme) = self.extreme else {
+            self.extreme = Some(value);
+            return false;
+        };
+        let further = if self.rising { value > extreme } else { value < extreme };
+        if further {
+            self.extreme = Some(value);
+            return false;
+        }
+        if (value - extreme).abs() < amplitude {
+            return false;
+        }
+        // turned back far enough: one more turn
+        self.rising = !self.rising;
+        self.extreme = Some(value);
+        self.turns.push_back(now);
+        while self.turns.front().is_some_and(|t| now.duration_since(*t) > window) {
+            self.turns.pop_front();
+        }
+        if self.turns.len() >= count {
+            self.turns.clear();
+            return true;
+        }
+        false
+    }
+
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
 /// The comfort vignette eased toward `target`: closing in about 0.1 s,
 /// opening in about 0.25 s.
 pub fn ease_vignette(current: f32, target: f32, dt: f32) -> f32 {
@@ -201,6 +252,24 @@ impl SnapTurn {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_nod_is_three_turns_back_and_forth() {
+        let start = Instant::now();
+        let mut nod = Oscillation::default();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        let window = Duration::from_millis(1200);
+        // down, up, down, up: the third turn back completes it
+        let path = [0.0, -0.2, 0.05, -0.2, 0.05];
+        let fired: Vec<bool> = path.iter().enumerate().map(|(i, v)| nod.step(*v, 0.12, 3, window, at(i as u64 * 200))).collect();
+        assert_eq!(fired, [false, false, false, false, true]);
+        // small wobbles never count
+        let mut still = Oscillation::default();
+        assert!(!(0..20).any(|i| still.step(if i % 2 == 0 { 0.0 } else { 0.05 }, 0.12, 3, window, at(i * 100))));
+        // too slow: the turns fall out of the window
+        let mut slow = Oscillation::default();
+        assert!(!path.iter().enumerate().any(|(i, v)| slow.step(*v, 0.12, 3, window, at(i as u64 * 900))));
+    }
+
     #[test]
     fn the_stick_walks_where_the_hand_points_when_asked() {
         let head = Vec3::X;
