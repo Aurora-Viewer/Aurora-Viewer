@@ -13745,6 +13745,17 @@ impl App {
         if !ui::chat::sends_local_line(c.channel, &c.message) || (c.channel == 0 && self.chat_command(&c.message)) {
             return;
         }
+        // PlayChatAnim: the talk, shout or whisper animation starts before
+        // the line leaves (FSNearbyChat::sendChatFromViewer)
+        if self.settings.play_chat_anim
+            && let Some(anim) = self
+                .world
+                .rlva
+                .chat_animation_volume(&c.message, c.chat_type)
+                .and_then(|kind| ui::chat::chat_animation(c.channel, kind))
+        {
+            self.send(NetCommand::AgentAnimation { anim, start: true });
+        }
         // :shortcode: emoji
         let message = ui::emoji::expand_shortcodes(&c.message);
         self.chat_ui.recent_emojis.note(&message);
