@@ -1108,6 +1108,7 @@ impl App {
                 }
                 entry.local_published = true;
                 entry.local_generation = prepared.generation;
+                self.egui_ctx.request_repaint();
             } else {
                 entry.local_failed_generation = Some(prepared.generation);
                 self.imports.message = aurora_i18n::tr!("import-local-staging-busy").into();
@@ -1115,6 +1116,9 @@ impl App {
             entry.local_pending = false;
         }
         self.imports.local_uploads = pending;
+        if !self.imports.local_uploads.is_empty() {
+            self.egui_ctx.request_repaint();
+        }
         let referenced: std::collections::HashSet<_> = self.imports.entries.iter().flat_map(|e| e.local_slots.keys().copied()).collect();
         for (asset, slot) in previous_slots {
             if !referenced.contains(&asset) {
