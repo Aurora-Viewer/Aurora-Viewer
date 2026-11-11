@@ -90,22 +90,25 @@ impl Session {
         };
         #[cfg(target_os = "macos")]
         let (session, waiter, stream) = crate::xr_device::create_session(instance, system, queue)?;
-        // The eyes are drawn in the viewer's output format. A runtime that
-        // offers only its sRGB twin, or the reverse (SteamVR on Linux with a
-        // Vive Pro, 2026-11-01, had no B8G8R8A8_UNORM), gets the same bytes
-        // copied into its images each frame: the same layout, already encoded
-        // for the display, so the picture is unchanged.
+        // The eyes are drawn in the viewer's output format, whose bytes are
+        // already encoded for the display (the desktop's surface is a plain
+        // 8-bit one and the shaders write sRGB values into it). The runtime
+        // must be told so: OpenXR composites a plain UNORM image as linear
+        // light and encodes it again, which made the headset's picture pale
+        // and too bright beside the desktop's. So the runtime's sRGB images
+        // are taken whenever it has them, the same bytes copied into them
+        // each frame (the same layout); a plain image only when it has
+        // nothing else (the picture is then lighter than the desktop's).
         let offered = session.enumerate_swapchain_formats()?;
-        let twin = if format.is_srgb() {
-            format.remove_srgb_suffix()
-        } else {
-            format.add_srgb_suffix()
-        };
-        let eye_format = if offered.contains(&raw_format(format)?) {
+        let srgb = format.add_srgb_suffix();
+        let eye_format = if raw_format(srgb).is_ok_and(|raw| offered.contains(&raw)) {
+            if srgb != format {
+                log::info!("XR world: drawing in {format:?} and copying into the runtime's {srgb:?} images");
+            }
+            srgb
+        } else if offered.contains(&raw_format(format)?) {
+            log::warn!("XR world: the runtime has no {srgb:?} images; {format:?} is composited as linear, the picture looks lighter");
             format
-        } else if twin != format && offered.contains(&raw_format(twin)?) {
-            log::info!("XR world: the runtime has no {format:?} images, drawing in {format:?} and copying into {twin:?}");
-            twin
         } else {
             log::warn!("XR world: the runtime offers only these image formats: {offered:?}");
             return Err("Runtime does not support the viewer output format".into());
