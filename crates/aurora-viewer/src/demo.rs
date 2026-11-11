@@ -7976,6 +7976,13 @@ pub fn feet_events(blend: bool, crowd: u32) -> Vec<NetEvent> {
     let alpha = if blend { 0.95 } else { 1.0 };
     let mut objects = Vec::new();
     let avatars = std::iter::once(9000).chain((0..crowd).map(|k| 100_000 + k * 64));
+    // the fixtures take the ids after the last shoe's (210_000 + 4 k + side,
+    // k up to `crowd`), so they never replace a worn shoe whatever the crowd
+    let mut free = 210_000 + 4 * (crowd + 1);
+    let mut next_id = || {
+        free += 1;
+        free - 1
+    };
     for (k, avatar_id) in avatars.enumerate() {
         // left foot, right foot
         for (side, point) in [7u8, 8].into_iter().enumerate() {
@@ -7994,9 +8001,9 @@ pub fn feet_events(blend: bool, crowd: u32) -> Vec<NetEvent> {
             objects.push(shoe);
         }
     }
-    for (i, (x, y, a)) in [(130.6, 137.4, 1.0), (131.4, 138.8, 0.95)].into_iter().enumerate() {
+    for (x, y, a) in [(130.6, 137.4, 1.0), (131.4, 138.8, 0.95)] {
         objects.push(prim(
-            210_900 + i as u32,
+            next_id(),
             Vec3::new(x, y, floor_at(x, y) + 0.3),
             Quat::IDENTITY,
             Vec3::new(0.3, 0.3, 0.6),
@@ -8011,15 +8018,12 @@ pub fn feet_events(blend: bool, crowd: u32) -> Vec<NetEvent> {
     // as the shoes are
     let hoof = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_CIRCLE, 100, 0, 0);
     let shoe = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
-    for (i, (x, y, lift, size, volume)) in [
+    for (x, y, lift, size, volume) in [
         (130.2, 136.3, 0.0, Vec3::new(0.14, 0.14, 0.1), hoof),
         (130.3, 135.9, 0.02, Vec3::new(0.26, 0.12, 0.1), shoe),
-    ]
-    .into_iter()
-    .enumerate()
-    {
+    ] {
         objects.push(prim(
-            210_902 + i as u32,
+            next_id(),
             Vec3::new(x, y, floor_at(x, y) + lift + size.z * 0.5),
             Quat::IDENTITY,
             size,
@@ -8032,10 +8036,10 @@ pub fn feet_events(blend: bool, crowd: u32) -> Vec<NetEvent> {
     // the same for AURORA_DEMO_POS="100,100", with three thin posts: the
     // contact shadow is no wider than the caster is along the ray
     let post = hoof;
-    for (i, (x, d)) in [(102.0f32, 0.03f32), (103.0, 0.06), (104.0, 0.12)].into_iter().enumerate() {
+    for (x, d) in [(102.0f32, 0.03f32), (103.0, 0.06), (104.0, 0.12)] {
         let y = 99.0;
         objects.push(prim(
-            210_950 + i as u32,
+            next_id(),
             Vec3::new(x, y, floor_at(x, y) + 0.8),
             Quat::IDENTITY,
             Vec3::new(d, d, 1.6),
@@ -8045,15 +8049,12 @@ pub fn feet_events(blend: bool, crowd: u32) -> Vec<NetEvent> {
             "",
         ));
     }
-    for (i, (x, y, lift, size, volume)) in [
+    for (x, y, lift, size, volume) in [
         (101.8, 101.7, 0.0, Vec3::new(0.14, 0.14, 0.1), hoof),
         (102.0, 102.3, 0.02, Vec3::new(0.26, 0.12, 0.1), shoe),
-    ]
-    .into_iter()
-    .enumerate()
-    {
+    ] {
         objects.push(prim(
-            210_960 + i as u32,
+            next_id(),
             Vec3::new(x, y, floor_at(x, y) + lift + size.z * 0.5),
             Quat::IDENTITY,
             size,
@@ -8246,6 +8247,33 @@ mod sun_tests {
         assert!((parse_sun("200,35").expect("two angles").length() - 1.0).abs() < 1e-6);
         assert_eq!(parse_sun("10"), None);
         assert_eq!(parse_sun("east,10"), None);
+    }
+}
+
+#[cfg(test)]
+mod feet_tests {
+    use super::*;
+
+    /// The shoes and the fixtures of `AURORA_DEMO_FEET` never share a local
+    /// id, whatever the crowd: a repeated id replaces the object in the store.
+    #[test]
+    fn feet_demo_objects_have_unique_ids() {
+        for crowd in [0, 40, 225, 238, 240, 400] {
+            for blend in [false, true] {
+                let mut ids = Vec::new();
+                for ev in feet_events(blend, crowd) {
+                    if let NetEvent::ObjectUpdates { objects, .. } = ev {
+                        ids.extend(objects.iter().map(|o| o.local_id));
+                    }
+                }
+                let mut sorted = ids.clone();
+                sorted.sort_unstable();
+                sorted.dedup();
+                assert_eq!(sorted.len(), ids.len(), "crowd {crowd}: a local id is used twice");
+                // two shoes for each avatar, and the 9 fixtures
+                assert_eq!(ids.len() as u32, 2 * (crowd + 1) + 9, "crowd {crowd}");
+            }
+        }
     }
 }
 
