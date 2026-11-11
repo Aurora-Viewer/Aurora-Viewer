@@ -1001,6 +1001,16 @@ fn ll_spec(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, gloss: f32) -> f32 {
     return lit * fres * ll_light_func(nh, gloss) * gt / (nh * nl);
 }
 
+// The "glare" of a blended legacy material (class3/deferred/materialF.glsl,
+// DIFFUSE_ALPHA_MODE_BLEND): the brightness of its sharp environment
+// reflection times the environment intensity, plus its local light
+// highlights. The face's alpha is max(texture alpha, glare) (shade_material),
+// so a transparent layer with a specular map shows its reflections only:
+// the "wet" and "shine" layers worn over mesh bodies (#1420). The sun's
+// highlight does not count, as there. Reset by shade_material, written by
+// legacy_light and legacy_local_spec.
+var<private> legacy_glare: f32 = 0.0;
+
 // Legacy material lighting applied to the sun + sky result `col`, as
 // softenLightF.glsl: sun highlight, applyGlossEnv and applyLegacyEnv. The
 // local light highlights are separate (legacy_local_spec), as LL adds them
@@ -1072,8 +1082,15 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
         var fresnel = 1.0 - dot(v, n);
         fresnel = min(fresnel * fresnel + env, 1.0);
         col = mix(col, env_sky * env * fresnel * 0.5, env);
+        legacy_glare += clamp(max(max(env_sky.r, env_sky.g), env_sky.b), 0.0, 1.0) * env;
     }
     return col;
+}
+
+// calcPointLightOrSpotLight's glare (materialF.glsl) from the highlight of
+// one local light, as written there: the red first, then the brightest.
+fn add_light_glare(sc: vec3<f32>) {
+    legacy_glare = max(legacy_glare, sc.r) + max(max(sc.r, sc.g), sc.b);
 }
 
 // Local light highlights of legacy materials (multiPointLightF). Our light
@@ -1097,7 +1114,9 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
             if (dist < radius) {
                 let atten = ll_light_atten(dist / radius, lt.color_falloff.w);
                 let s = ll_spec(n, v, to_l / max(dist, 1e-4), spec.a) * atten;
-                col += clamp(s * lt.color_falloff.rgb / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+                let sc = clamp(s * lt.color_falloff.rgb / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+                col += sc;
+                add_light_glare(sc);
             }
         }
     }
@@ -1108,7 +1127,9 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
         }
         if (spec.a > 0.0) {
             let s = ll_spec(n, v, at.l, spec.a) * at.atten;
-            col += clamp(s * at.color / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+            let sc = clamp(s * at.color / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+            col += sc;
+            add_light_glare(sc);
         }
         if (env > 0.0) {
             // the view reflected to the plane the projector emits from
@@ -1405,6 +1426,7 @@ fn shade(in: VsOut, front: bool) -> Shaded {
 // may be discarded between `eval_material` and this (fs_blend).
 fn shade_material(in: VsOut, m: Material) -> Shaded {
     let rec = records[in.record];
+    legacy_glare = 0.0;
     surface_occlusion = m.occlusion;
     // a blended face opaque enough (fs_depth_contact) is in the occlusion's
     // depth when BLEND_SCREEN_DEPTH; a more transparent one would get what
@@ -1474,7 +1496,14 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     }
     var s: Shaded;
     col = debug_view(col, in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy);
-    s.color = vec4<f32>(finite_hdr(light_tiles_checked(col, in.world_pos, in.clip.xy)), m.color.a);
+    // materialF.glsl (blend): al = max(diffuse alpha, glare) x vertex alpha,
+    // the vertex alpha being the face color's (a fullbright face takes the
+    // other branch and has no glare, as emissive_brightness 1 there)
+    var alpha = m.color.a;
+    if ((rec.flags.x & (FLAG_LEGACY_MAT | FLAG_ALPHA_BLEND)) == (FLAG_LEGACY_MAT | FLAG_ALPHA_BLEND)) {
+        alpha = max(alpha, min(legacy_glare, 1.0) * rec.base_color.a);
+    }
+    s.color = vec4<f32>(finite_hdr(light_tiles_checked(col, in.world_pos, in.clip.xy)), alpha);
     s.n = m.n;
     s.roughness = m.roughness;
     s.metallic = m.metallic;
@@ -1626,7 +1655,10 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
         }
     }
     let m = eval_material(in, front);
-    if (BLEND_EARLY_DISCARD && m.color.a < 0.004) {
+    // a legacy material's empty texels may still glare (materialF.glsl has
+    // no early test): lit first, their alpha is known after shade_material
+    let may_glare = (records[in.record].flags.x & FLAG_LEGACY_MAT) != 0u && (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0);
+    if (BLEND_EARLY_DISCARD && m.color.a < 0.004 && !may_glare) {
         discard;
     }
     // Blended and alpha-tested: the hair, eyelashes and skirt of a system
