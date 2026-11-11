@@ -7128,11 +7128,11 @@ impl Backend {
             // the light through the projection the depth prepass was drawn
             // with (jittered under TAA)
             let light = crate::contact_shadows::light_projection(fu.proj * fu.view, f.sun_dir);
-            // an infinite reversed projection keeps its near plane there
-            // (centred or not: tiled photos); a photo larger than the
-            // viewfinder marches as much further
-            self.contact
-                .write(&self.device, &self.queue, t, light, fu.proj.w_axis.z, f.photo_scale);
+            // an infinite reversed projection keeps its near plane there, and
+            // its vertical focal gives the pixel's angle (centred or not:
+            // tiled photos); a photo larger than the viewfinder marches as
+            // much further
+            self.contact.write(&self.device, &self.queue, t, light, &fu.proj, f.photo_scale);
         }
         if let (true, Some(t)) = (self.targets.gtao_shown, &mut self.targets.gtao) {
             let prev = self.prev_view_proj.unwrap_or(unjittered_vp);
