@@ -625,6 +625,13 @@ pub enum NetEvent {
         handle: RegionHandle,
         caps: Arc<HashMap<String, String>>,
     },
+    /// A region's answer to the GET of `AvatarRenderInfo` with both counts
+    /// (render_info.rs): of the viewers around that report on us,
+    /// `over_limit` draw our avatar as a silhouette.
+    AvatarRenderInfo {
+        handle: RegionHandle,
+        visibility: crate::render_info::Visibility,
+    },
     /// SimulatorFeatures of a region (voice server type: "webrtc" / "vivox",
     /// RenderMaterials limits read by LLViewerRegion::resetMaterialsCapThrottle
     /// and getMaxMaterialsPerTransaction; `None` = not given by the region).
