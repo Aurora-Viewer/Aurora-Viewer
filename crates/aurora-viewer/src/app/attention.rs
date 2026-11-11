@@ -7,6 +7,7 @@
 use super::App;
 use crate::keywords::KeywordSettings;
 use crate::settings::Settings;
+use crate::system_notify::Kind;
 use crate::world::attention::{Cause, Notice, Open};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
@@ -70,7 +71,7 @@ pub fn flashes(cause: Cause, s: &Settings) -> bool {
         Cause::ObjectIm => s.flash_on_message && s.flash_on_object_im,
         Cause::ScriptDialog => s.flash_on_script_dialog,
         // FSKeywords::notify plays its sound and tells Growl, no flash
-        Cause::Keyword | Cause::Notice => false,
+        Cause::Keyword | Cause::Presence(_) | Cause::Notice => false,
     }
 }
 
@@ -117,6 +118,41 @@ fn kind_of(open: Open) -> &'static str {
     }
 }
 
+/// What the system is told a notification is, from why it came and what
+/// it opens: a message in a conversation is an IM, one in nearby chat the
+/// grid's system, one under the bell an offer.
+pub fn toast_kind(cause: Cause, open: Open) -> Kind {
+    match cause {
+        Cause::Message => match open {
+            Open::Conversation(_) => Kind::Message,
+            Open::NearbyChat => Kind::System,
+            Open::Notifications | Open::Window => Kind::Offer,
+        },
+        Cause::ObjectIm => Kind::ObjectIm,
+        Cause::ScriptDialog => Kind::ScriptDialog,
+        Cause::Mention => Kind::Mention,
+        Cause::Keyword => Kind::Keyword,
+        Cause::Presence(true) => Kind::Online,
+        Cause::Presence(false) => Kind::Offline,
+        Cause::Notice => Kind::Notice,
+    }
+}
+
+/// The conversation a notification belongs to, for the desktop to group
+/// by: the session's id, one thread for every friend's online and offline
+/// notice, else what the click opens.
+pub fn thread_key(kind: Kind, open: Open) -> String {
+    if matches!(kind, Kind::Online | Kind::Offline) {
+        return crate::system_notify::PRESENCE_THREAD.to_owned();
+    }
+    match open {
+        Open::Conversation(session) => session.to_string(),
+        Open::NearbyChat => "nearby-chat".to_owned(),
+        Open::Notifications => "notifications".to_owned(),
+        Open::Window => "window".to_owned(),
+    }
+}
+
 /// The body as the system shows it: one line of plain text, cut at
 /// GROWL_MAX_BODY_LENGTH.
 fn body_text(text: &str) -> String {
@@ -140,7 +176,7 @@ impl App {
                 keyword_sound = self::keyword_sound(&self.settings, &self.keyword_settings());
             }
             if let Some(notice) = a.notice {
-                self.tell_system(notice);
+                self.tell_system(a.cause, notice);
             }
         }
         if let Some(id) = keyword_sound {
@@ -161,7 +197,7 @@ impl App {
 
     /// One system notification, when the settings, the focus, do not
     /// disturb and the throttle let it through.
-    pub(super) fn tell_system(&mut self, notice: Notice) {
+    pub(super) fn tell_system(&mut self, cause: Cause, notice: Notice) {
         let forced = self.demo && crate::demo::attention::mode().is_some();
         if !notifies(&self.settings, forced, !self.attention.behind, self.world.status.dnd) {
             return;
@@ -183,7 +219,13 @@ impl App {
             return;
         }
         let body = body_text(&crate::ui::chat::plain_text(&notice.body, name, app));
-        log::info!("system notification shown ({})", kind_of(notice.open));
+        let kind = toast_kind(cause, notice.open);
+        let thread = thread_key(kind, notice.open);
+        log::info!(
+            "system notification shown ({}, {})",
+            kind_of(notice.open),
+            crate::system_notify::category(kind)
+        );
         let st = &mut self.attention;
         st.next_id += 1;
         let id = st.next_id;
@@ -193,7 +235,13 @@ impl App {
         }
         st.notifier
             .get_or_insert_with(crate::system_notify::Notifier::start)
-            .show(crate::system_notify::Toast { id, title, body });
+            .show(crate::system_notify::Toast {
+                id,
+                kind,
+                thread,
+                title,
+                body,
+            });
     }
 
     /// Between frames, the window at hand (the frame holds it): whether it
@@ -386,10 +434,46 @@ mod tests {
         let mut s = Settings::default();
         assert!(flashes(Cause::Message, &s) && flashes(Cause::Mention, &s) && flashes(Cause::ObjectIm, &s));
         assert!(!flashes(Cause::ScriptDialog, &s) && !flashes(Cause::Notice, &s) && !flashes(Cause::Keyword, &s));
+        assert!(!flashes(Cause::Presence(true), &s) && !flashes(Cause::Presence(false), &s));
         s.flash_on_message = false;
         assert!(!flashes(Cause::ObjectIm, &s) && !flashes(Cause::Mention, &s));
         s.flash_on_script_dialog = true;
         assert!(flashes(Cause::ScriptDialog, &s));
+    }
+
+    #[test]
+    fn each_notification_says_its_kind() {
+        let session = Open::Conversation(uuid::Uuid::from_u128(7));
+        assert_eq!(toast_kind(Cause::Message, session), Kind::Message);
+        assert_eq!(toast_kind(Cause::Message, Open::NearbyChat), Kind::System);
+        assert_eq!(toast_kind(Cause::Message, Open::Notifications), Kind::Offer);
+        assert_eq!(toast_kind(Cause::Mention, session), Kind::Mention);
+        assert_eq!(toast_kind(Cause::Mention, Open::NearbyChat), Kind::Mention);
+        assert_eq!(toast_kind(Cause::ObjectIm, Open::NearbyChat), Kind::ObjectIm);
+        assert_eq!(toast_kind(Cause::Keyword, Open::NearbyChat), Kind::Keyword);
+        assert_eq!(toast_kind(Cause::ScriptDialog, Open::Notifications), Kind::ScriptDialog);
+        assert_eq!(toast_kind(Cause::Presence(true), session), Kind::Online);
+        assert_eq!(toast_kind(Cause::Presence(false), session), Kind::Offline);
+        assert_eq!(toast_kind(Cause::Notice, Open::Notifications), Kind::Notice);
+        assert_eq!(toast_kind(Cause::Notice, Open::Window), Kind::Notice);
+    }
+
+    #[test]
+    fn a_conversation_is_its_own_thread_and_presence_one_for_all() {
+        let jane = uuid::Uuid::from_u128(7);
+        let tom = uuid::Uuid::from_u128(8);
+        let im = |id| thread_key(Kind::Message, Open::Conversation(id));
+        assert_eq!(im(jane), jane.to_string());
+        assert_ne!(im(jane), im(tom));
+        // a mention or a keyword in a group chat joins its conversation
+        assert_eq!(thread_key(Kind::Mention, Open::Conversation(jane)), im(jane));
+        assert_eq!(thread_key(Kind::Keyword, Open::Conversation(jane)), im(jane));
+        // every friend's online and offline notice share one thread
+        assert_eq!(thread_key(Kind::Online, Open::Conversation(jane)), "presence");
+        assert_eq!(thread_key(Kind::Offline, Open::Conversation(tom)), "presence");
+        assert_eq!(thread_key(Kind::Mention, Open::NearbyChat), "nearby-chat");
+        assert_eq!(thread_key(Kind::Offer, Open::Notifications), "notifications");
+        assert_eq!(thread_key(Kind::Notice, Open::Window), "window");
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]

@@ -28,8 +28,11 @@ pub enum Cause {
     /// A line that holds one of the keywords (FSKeywords::notify): its
     /// sound, told to the system, no flash of its own.
     Keyword,
-    /// A notice that never flashes (a friend online, a simulator alert, the
-    /// region restart, whose alert flashes on its own…).
+    /// A friend came online (`true`) or went offline: told, never flashed
+    /// (FriendOnlineOffline).
+    Presence(bool),
+    /// A notice that never flashes (a simulator alert, the region restart,
+    /// whose alert flashes on its own…).
     Notice,
 }
 

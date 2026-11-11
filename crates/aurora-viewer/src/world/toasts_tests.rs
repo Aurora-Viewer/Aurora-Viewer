@@ -358,3 +358,15 @@ fn clicking_a_friend_online_starts_an_im_and_offline_opens_nothing() {
     assert_eq!(w.open_from_notification(off), None);
     assert!(w.social.focus_im.is_none());
 }
+
+#[test]
+fn a_friend_online_or_offline_is_told_to_the_system_as_presence() {
+    let mut w = world();
+    w.social.form_friendship(JANE);
+    w.social.set_online(&[JANE], true);
+    w.flush_online_notices();
+    w.social.set_online(&[JANE], false);
+    w.flush_online_notices();
+    let causes: Vec<_> = w.attention.iter().filter(|a| a.notice.is_some()).map(|a| a.cause).collect();
+    assert_eq!(causes, [attention::Cause::Presence(true), attention::Cause::Presence(false)]);
+}
