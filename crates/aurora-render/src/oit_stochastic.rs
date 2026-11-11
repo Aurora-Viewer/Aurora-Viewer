@@ -1299,9 +1299,48 @@ pub(crate) fn make_resolve(device: &wgpu::Device, shared: &Shared, samples: u32)
     }
 }
 
+/// Whether the alpha passes shade a fragment for its alpha: a blended legacy
+/// material that can glare (`glare_possible` in object.wgsl, which this
+/// mirrors; the glare is the lighting's, shade_material), and the texel's
+/// alpha under the face colour's, the only case the glare raises it.
+#[cfg(test)]
+fn shades_for_alpha(flags: u32, gloss: f32, env: f32, texel_alpha: f32, face_alpha: f32) -> bool {
+    use crate::types::flags as f;
+    let mask = f::LEGACY_MAT | f::ALPHA_BLEND | f::FULLBRIGHT | f::EMISSIVE_MASK;
+    flags & mask == f::LEGACY_MAT | f::ALPHA_BLEND && (gloss > 0.0 || env > 0.0) && texel_alpha < face_alpha
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_glossy_blended_legacy_material_is_shaded_for_its_alpha() {
+        use crate::types::flags as f;
+        let glossy = f::LEGACY_MAT | f::ALPHA_BLEND;
+        // the wet layer's shell: empty texel, gloss, face colour opaque
+        assert!(shades_for_alpha(glossy, 0.5, 0.0, 0.0, 1.0));
+        assert!(shades_for_alpha(glossy, 0.0, 0.2, 0.0, 1.0));
+        // no gloss and no environment intensity: no glare
+        assert!(!shades_for_alpha(glossy, 0.0, 0.0, 0.0, 1.0));
+        // a fullbright face or an emissive mask has none
+        assert!(!shades_for_alpha(glossy | f::FULLBRIGHT, 0.5, 0.5, 0.0, 1.0));
+        assert!(!shades_for_alpha(glossy | f::EMISSIVE_MASK, 0.5, 0.5, 0.0, 1.0));
+        // not blended, or not a legacy material
+        assert!(!shades_for_alpha(f::LEGACY_MAT, 0.5, 0.5, 0.0, 1.0));
+        assert!(!shades_for_alpha(f::ALPHA_BLEND, 0.5, 0.5, 0.0, 1.0));
+        // the texel's alpha already the face colour's: the glare adds nothing
+        assert!(!shades_for_alpha(glossy, 0.5, 0.5, 1.0, 1.0));
+        assert!(!shades_for_alpha(glossy, 0.5, 0.5, 0.8, 0.7));
+        // the same gate as the shader's, flag for flag
+        let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
+        let gate = object.find("fn glare_possible").expect("the gate");
+        let body = &object[gate..gate + object[gate..].find("\n}").expect("end")];
+        assert!(body.contains("FLAG_LEGACY_MAT | FLAG_ALPHA_BLEND | FLAG_FULLBRIGHT | FLAG_EMISSIVE_MASK"));
+        assert!(body.contains("== (FLAG_LEGACY_MAT | FLAG_ALPHA_BLEND)"));
+        assert!(body.contains("rec.legacy.z > 0.0 || rec.legacy.w > 0.0"));
+        assert!(object.contains("glare_possible(rec) && base_a < rec.base_color.a"));
+    }
 
     #[test]
     fn the_mask_table_holds_random_r_subsets() {

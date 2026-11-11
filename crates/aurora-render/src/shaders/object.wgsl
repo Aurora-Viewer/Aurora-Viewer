@@ -1782,8 +1782,23 @@ fn st_material_alpha(rec: DrawRecord, in: VsOut) -> f32 {
     return sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
 }
 
-// A blended fragment's alpha, as fs_blend computes it, without the shading
-// (the alpha-only passes); -1 where fs_blend discards.
+// A blended legacy material that can glare (materialF.glsl: al = max(diffuse
+// alpha, glare) x vertex alpha, shade_material), as `legacy_glare` is not
+// zero only with gloss or environment intensity, and not on a fullbright
+// face or an emissive mask: a superset of the faces whose alpha the lighting
+// raises, so that the others keep the alpha-only shortcut. Mirrored by
+// `glare_possible` in oit_stochastic.rs.
+fn glare_possible(rec: DrawRecord) -> bool {
+    return (rec.flags.x & (FLAG_LEGACY_MAT | FLAG_ALPHA_BLEND | FLAG_FULLBRIGHT | FLAG_EMISSIVE_MASK)) == (FLAG_LEGACY_MAT | FLAG_ALPHA_BLEND)
+        && (rec.legacy.z > 0.0 || rec.legacy.w > 0.0);
+}
+
+// A blended fragment's alpha, as fs_blend computes it (the shading's own
+// result for a glaring legacy material: the shells of a body's wet layer are
+// empty texels that glare, and would otherwise drop out of the alpha and
+// depth passes while the accumulation adds their streaks); -1 where
+// fs_blend discards. The diffuse alpha alone for the rest, without the
+// shading (the alpha-only passes).
 fn blend_alpha(in: VsOut, front: bool) -> f32 {
     if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) {
         return -1.0;
@@ -1804,7 +1819,13 @@ fn blend_alpha(in: VsOut, front: bool) -> f32 {
     if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && base_a < rec.params.w) {
         return -1.0;
     }
-    let a = base_a * rez_alpha(rec, in);
+    var alpha = base_a;
+    // (the glare only raises the alpha where the texel's is under the face
+    // colour's: its share is the face colour's alpha)
+    if (glare_possible(rec) && base_a < rec.base_color.a) {
+        alpha = shade_material(in, eval_material(in, front)).color.a;
+    }
+    let a = alpha * rez_alpha(rec, in);
     if (a < 0.004) {
         return -1.0;
     }
