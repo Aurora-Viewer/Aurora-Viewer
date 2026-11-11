@@ -4,7 +4,7 @@
 use super::*;
 use crate::ui::context::flags::{AFFECTS_NAVMESH, OBJECT_MODIFY};
 
-fn permanent(world: &World, index: usize) -> bool {
+pub(super) fn permanent(world: &World, index: usize) -> bool {
     // LLViewerObject::isPermanentEnforced. This viewer has no god mode.
     world
         .objects

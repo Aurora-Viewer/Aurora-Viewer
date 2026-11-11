@@ -4560,7 +4560,7 @@ build-ui-texture-metallic = Metallic
 ui-options-same-sounds-and-defaults-as-firestorm-these-are-second = Same sounds and defaults as the Legacy Viewer. These are Second Life sounds: they load after login.
 ui-land-experiences-any-resident-experience-can-be-blocked-blocked-experiences-cannot = Any resident experience can be blocked. Blocked experiences cannot run on this land.
 build-ui-floaters-anyone = Anyone
-build-ui-general-anyone = Anyone:
+build-ui-general-anyone = Anyone can:
 build-ui-general-export = Export
 build-ui-floaters-anyone-can-copy = Anyone can copy
 ui-land-media-web-browser = Web browser
@@ -8889,6 +8889,9 @@ script-debug-clear = Clear
 
 script-help-forward = Next
 replace-button = Replace this prim
+replace-button-short = Replace
+replace-link-label = Replace link
+replace-select-link = Select a link
 replace-demo-board = Board game — 15 prims
 replace-demo-old = Card stack
 replace-demo-new = New card stack
@@ -8960,12 +8963,12 @@ replace-recovery-incomplete = Recovery incomplete: { $reason } Check the parts i
 
 # Compact build workspace
 build-compact-title = Build
-build-workspace-title = Construction
+build-workspace-title = Build
 build-workspace-object = OBJECT
 build-workspace-tools = TOOLS
 build-compact-help = Ctrl+B: open / close; Ctrl+1 to 5: camera, move, edit, create, land.
 build-compact-transform = Transform
-build-compact-shape = Shape
+build-compact-shape = Object
 build-compact-materials = Materials
 build-compact-features = Features
 build-compact-rights = Rights
@@ -8976,16 +8979,25 @@ build-compact-select-hint = Click an object to begin.
 build-compact-counts = { $objects ->
     [one] { $objects } object
    *[other] { $objects } objects
-    } · { $prims ->
+    } - { $prims ->
     [one] { $prims } prim
    *[other] { $prims } prims
     }
 build-compact-impact = Impact { $impact }
+build-compact-summary-details = { " - " }{ $capacity }    { $counts }
+build-compact-link-action = Link
+build-compact-unlink-action = Unlink
+build-compact-link-value = Link { $number }
+build-compact-face-value = Face { $number }
 build-compact-move = Move
 build-compact-rotate = Rotate (Ctrl)
 build-compact-stretch = Stretch (Ctrl+Shift)
 build-compact-face = Select a face
 build-compact-align = Align (Shift: stack)
+build-compact-mode-move = Move
+build-compact-mode-rotate = Rotate
+build-compact-mode-stretch = Stretch
+build-compact-mode-align = Align
 build-compact-world = World
 build-compact-local = Local
 build-compact-reference = Reference
@@ -8996,6 +9008,7 @@ build-snap = Snap
 build-snap-off = Off
 build-snap-grid = Grid
 build-snap-objects = Objects
+build-snap-placement-settings = Surface placement
 build-place = Place on surface
 build-place-tip = Then click a surface or the ground: the selection goes against it, centred on the point, shown there as a hologram (P turns it on or off, Esc off).
 build-place-offset = Offset
@@ -9019,7 +9032,7 @@ build-compact-root-axis = Edit axis at root
 build-compact-highlight = Show highlight
 build-compact-probes = Select reflection probes
 build-compact-owned-only = Select only my objects
-build-compact-movable-only = Select only movable objects
+build-compact-movable-only = Select only movable
 build-compact-surrounding = Select by surrounding
 build-compact-undo = Undo (Ctrl+Z)
 build-compact-redo = Redo (Ctrl+Y)
@@ -13058,6 +13071,8 @@ build-layout-loaded = Construction settings restored.
 build-layout-reload = Load
 build-layout-loading = Loading settings…
 build-layout-drop-hidden = Drop here to hide
+build-layout-drop-here = Drop here
+build-layout-drag-hint = Drag to move. Release on a highlighted target.
 build-layout-export = Export
 
 # Compact material layout
