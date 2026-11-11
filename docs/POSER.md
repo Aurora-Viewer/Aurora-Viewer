@@ -54,10 +54,11 @@ is clamped. Only the unparented skeleton root translates freely. Explicit
 scale edits still change proportions through the normal skeleton rules.
 A world lock attempts to hold a joint's position and orientation when its
 ancestors or subject move, yielding at reach limits to preserve attachments.
-The rotation gizmo has an outer, camera-facing ring (faint amber, lit when
-hovered) beyond its three axis rings: dragging it turns the joint about the
-line from the camera to the joint, in the pointer's direction. The axis rings
-win where they are close; locks, Mirror and undo apply as for the axis rings.
+The rotation gizmo has an outer, camera-facing ring beyond its three axis
+rings, shown in amber when the pointer comes near it: dragging it turns the
+joint about the line from the camera to the joint, in the pointer's
+direction. The axis rings win where they are close; locks, Mirror and undo
+apply as for the axis rings.
 Scale has local X/Y/Z cube handles and a central uniform-scale cube. Drag an
 axis cube outward to enlarge that channel, or drag the central cube right/up
 to enlarge all three channels. Scale values stay bounded and keep their

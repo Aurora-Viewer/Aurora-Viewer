@@ -108,9 +108,18 @@ impl Geometry {
         self.pivot + (u * t.cos() + a.cross(u) * t.sin()) * self.length
     }
 
-    /// Drawn in the screen plane, so it stays a circle off-centre and rolled.
+    /// Like FSManipRotateJoint::renderCenterCircle, in the plane facing the
+    /// camera from the joint (normal mCenterToCamNorm): the plane its drag
+    /// turns in, so the joint follows the pointer along the drawn ring even
+    /// off-centre. The camera's up, made orthogonal, keeps t = 0 to the left.
     fn view_ring(&self, t: f32) -> Vec3 {
-        self.pivot + (self.cam.left * t.cos() + self.cam.up * t.sin()) * self.length * VIEW_RING
+        let normal = self.part_axis(Part::Roll);
+        let (left, up) = normal
+            .cross(self.cam.up)
+            .try_normalize()
+            .map(|left| (left, left.cross(normal)))
+            .unwrap_or_else(|| normal.any_orthonormal_pair());
+        self.pivot + (left * t.cos() + up * t.sin()) * self.length * VIEW_RING
     }
 
     fn part_axis(&self, part: Part) -> Vec3 {
@@ -231,16 +240,12 @@ impl Geometry {
                 }
             }
         }
-        if self.tool == Tool::Rotate {
-            let color = fade(palette.amber, if active == Some(Part::Roll) { 1.0 } else { 0.3 });
+        // Like FSManipRotateJoint::renderManipulatorRings, the roll ring shows
+        // only while hovered or dragged; its band is picked all the same.
+        if self.tool == Tool::Rotate && active == Some(Part::Roll) {
             for k in 0..96 {
                 let t = std::f32::consts::TAU / 96.0;
-                p.line_cased(
-                    self.view_ring(k as f32 * t),
-                    self.view_ring((k + 1) as f32 * t),
-                    color,
-                    if active == Some(Part::Roll) { 6.0 } else { 4.0 },
-                );
+                p.line_cased(self.view_ring(k as f32 * t), self.view_ring((k + 1) as f32 * t), palette.amber, 6.0);
             }
         }
     }
