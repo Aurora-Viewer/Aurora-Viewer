@@ -2372,3 +2372,44 @@ fn ctrl_over_the_subject_stays_the_subjects_with_a_partner_close_behind() {
     }
     assert_eq!(editor.poser.subject, me, "the partner behind is not picked through us");
 }
+
+#[test]
+fn poser_whole_avatar_turns_in_rotation_mode() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (mut world, mut editor) = selected_fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let bone = rig.pelvis;
+    let frame = editor.editor_frame(&world).unwrap();
+    // the Whole avatar row, then Rotation
+    editor.select(bone, &rig, &frame);
+    editor.poser.transform = 0;
+    editor.tool = Tool::Rotate;
+    let proj = projector(frame.joints[bone].w_axis.truncate());
+    let pointer = proj.project(frame.joints[bone].w_axis.truncate()).unwrap().0;
+    let mut frames = Frames::new();
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser");
+    let p = crate::theme::Theme::default().palette();
+    let initial = editor.poser.sessions[&world.agent_id].pose.rotations[bone];
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        pressed,
+        button: egui::PointerButton::Primary,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let end = pointer + egui::vec2(35.0, -20.0);
+    for events in [
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        vec![egui::Event::PointerMoved(pointer), button(pointer, true)],
+        vec![egui::Event::PointerMoved(end)],
+        vec![button(end, false)],
+    ] {
+        frames.run(events, |ui| editor.show(ui.ctx(), &p, &world, &proj));
+        render(&mut world, &editor);
+    }
+    // the pelvis stays selected and the whole avatar turned
+    assert_eq!(editor.selected, Some(bone));
+    let after = editor.poser.sessions[&world.agent_id].pose.rotations[bone];
+    assert!(initial.dot(after).abs() < 0.999, "{initial} {after}");
+}

@@ -277,22 +277,18 @@ impl Editor {
             return;
         }
         if self.poser.group == 0 {
+            // The whole avatar is the pelvis, the skeleton's root: one row,
+            // turned and moved in every transform mode, as the Legacy
+            // Viewer's WHOLEAVATAR joint (mPelvis, fsposeranimator.h). It
+            // used to light only in Position, and a second Pelvis row took
+            // the selection when Rotation was chosen.
             caption(ui, p, aurora_i18n::text("poser-whole-avatar"));
-            let label = aurora_i18n::text("poser-avatar-position");
-            if filter.is_empty() || label.to_lowercase().contains(&filter) {
-                let edited = self.subject_edited(rig.pelvis) && self.poser.transform == 1;
-                if self.joint_row(
-                    ui,
-                    p,
-                    label,
-                    self.selected == Some(rig.pelvis) && self.poser.transform == 1,
-                    edited,
-                    "mPelvis",
-                ) {
+            let label = aurora_i18n::text("poser-avatar-row");
+            if filter.is_empty() || label.to_lowercase().contains(&filter) || "mpelvis".contains(&filter) {
+                let edited = self.subject_edited(rig.pelvis);
+                if self.joint_row(ui, p, label, self.selected == Some(rig.pelvis), edited, "mPelvis") {
                     self.clear_together();
                     self.select_pose_bone(rig.pelvis, rig, frame);
-                    self.poser.transform = 1;
-                    self.tool = Tool::Move;
                 }
             }
         }
@@ -301,7 +297,8 @@ impl Editor {
             // the open tab's joints; of the Other bones, the used ones, those
             // inside the body here only (`refresh_other_bones`)
             let inner = self.poser.group == OTHER_GROUP && self.poser.other_inner_used.contains(name);
-            if !self.poser_bone_visible(name) && !inner {
+            // the pelvis is the Whole avatar row above
+            if (!self.poser_bone_visible(name) && !inner) || bone == rig.pelvis {
                 continue;
             }
             let (base, side) = stem(name);
@@ -343,8 +340,7 @@ impl Editor {
             }
             let Some(bone) = self.row_bone(pair) else { continue };
             let both: Vec<_> = pair.iter().flatten().copied().collect();
-            let selected = (self.selected.is_some_and(|s| both.contains(&s)) || both.iter().any(|b| self.poser.together.contains(b)))
-                && !(bone == rig.pelvis && self.poser.transform == 1);
+            let selected = self.selected.is_some_and(|s| both.contains(&s)) || both.iter().any(|b| self.poser.together.contains(b));
             let edited = match self.poser.side {
                 Side::Mirror => both.iter().any(|b| self.subject_edited(*b)),
                 _ => self.subject_edited(bone),
