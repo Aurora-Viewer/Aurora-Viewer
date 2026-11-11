@@ -370,3 +370,43 @@ fn a_friend_online_or_offline_is_told_to_the_system_as_presence() {
     let causes: Vec<_> = w.attention.iter().filter(|a| a.notice.is_some()).map(|a| a.cause).collect();
     assert_eq!(causes, [attention::Cause::Presence(true), attention::Cause::Presence(false)]);
 }
+
+#[test]
+fn an_offer_is_told_to_the_system_as_one_and_an_alert_notice_or_answer_as_a_notice() {
+    use super::notifications::im as d;
+    use attention::Cause::{Message, Offer};
+    let cases = [
+        (d::LURE_USER, Offer),
+        (d::GODLIKE_LURE_USER, Offer),
+        (d::TELEPORT_REQUEST, Offer),
+        (d::FRIENDSHIP_OFFERED, Offer),
+        (d::INVENTORY_OFFERED, Offer),
+        (d::TASK_INVENTORY_OFFERED, Offer),
+        (d::GROUP_INVITATION, Offer),
+        (d::FRIENDSHIP_ACCEPTED, Message),
+        (d::INVENTORY_ACCEPTED, Message),
+        (d::INVENTORY_DECLINED, Message),
+        (d::GROUP_NOTICE, Message),
+        (d::MESSAGEBOX, Message),
+        (d::FROM_TASK_AS_ALERT, Message),
+        (d::GOTO_URL, Message),
+    ];
+    for (dialog, cause) in cases {
+        let mut w = world();
+        let group = matches!(dialog, d::GROUP_NOTICE | d::GROUP_INVITATION);
+        w.apply(NetEvent::InstantMessage(InstantMessage {
+            from_agent_id: if group { GROUP } else { JANE },
+            from_name: "Jane Doe".into(),
+            to_agent_id: ME,
+            dialog,
+            session_id: Uuid::from_u128(0x7A20),
+            message: "Subject|Text".into(),
+            offline: false,
+            from_group: group,
+            binary_bucket: vec![7],
+            timestamp: 0,
+        }));
+        let causes: Vec<_> = w.attention.iter().map(|a| a.cause).collect();
+        assert_eq!(causes, [cause], "dialog {dialog}");
+    }
+}
