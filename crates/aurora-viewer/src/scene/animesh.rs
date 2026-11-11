@@ -260,6 +260,32 @@ impl super::Scene {
                 );
             }
         }
+        // AURORA_DEMO_ANIMESH=far: the fixups of the animesh (ground: an
+        // offset of about 4.3 m back west; worn: none) and how far from its
+        // point the worn root is drawn (3.5 m, sent at 5 m)
+        if crate::demo::animesh_far() {
+            for (local, root) in [(9200, false), (9203, true)] {
+                let Some((i, o)) = world.objects.iter().find(|(_, o)| o.key.local_id == local) else {
+                    continue;
+                };
+                let fixup = world.animesh_fixups.get(&o.full_id).copied().unwrap_or_default();
+                let reach = (root && o.attachment_point() != 0)
+                    .then(|| {
+                        let wearer = world.objects.parent_of(o)?;
+                        let now = Instant::now();
+                        let (wp, wr, _) = Self::object_transform(world, wearer, now, 0)?;
+                        let (p, _, _) = Self::object_transform(world, i, now, 0)?;
+                        let f = super::anchors::attach_frame(world, world.objects.get(wearer)?, o.attachment_point());
+                        Some(p.distance(wp + wr * f.pos))
+                    })
+                    .flatten();
+                log::info!(
+                    "demo animesh far {local}: fixup offset {:.3?} scale {:.3}, drawn from its point {reach:.3?} m",
+                    fixup.offset,
+                    fixup.scale
+                );
+            }
+        }
         // (AURORA_DEMO_ANIMESH=churn: stops growing once meshes are freed)
         let (used, len) = self.skin_binds.counts();
         log::info!("demo animesh: skin bindings {used} used of {len}");

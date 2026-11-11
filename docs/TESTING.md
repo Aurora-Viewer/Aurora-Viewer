@@ -3941,10 +3941,12 @@ Other existing AO modes: interface, interface-group, interface-track, interface-
   `far` checks the drawing limits of `scene/draw_limits.rs`: the ground
   animesh (orange) also plays an animation that holds its pelvis 8 m
   forward, and is drawn with the near side of its box 3 m from its root
-  (about 3.5 m east of the grey plate's spot, not 8 m), as in the Legacy
+  (its centre about 3.8 m east of the root, not 8 m), as in the Legacy
   Viewer; the worn animesh (violet) is sent 5 m from the right hand and
   drawn 3.5 m from it, along the same direction. Clicking either one
-  selects it where it is drawn.
+  selects it where it is drawn. Every 120 frames the log has `demo
+  animesh far 9200: fixup offset Vec3(-4.3…, 0, 0) scale 1.000` and `demo
+  animesh far 9203: … drawn from its point Some(3.500) m`.
 - **`AURORA_DEMO_ANIMESH_TRIS=<n>`**: with `AURORA_DEMO_ANIMESH`, adds
   about n triangles to the demo's rigged mesh, as opaque faces of 45,000
   (each a thin tube around the torso, 7 faces at most). With
