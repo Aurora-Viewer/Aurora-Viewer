@@ -1408,6 +1408,12 @@ impl App {
         ui::bars::clock::read_system_clock();
         let mut settings = Settings::load();
         if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
+            && std::env::var("AURORA_DEMO_INVENTORY")
+                .is_ok_and(|mode| matches!(mode.as_str(), "delete-confirm" | "delete-tab") || mode.starts_with("aurora-delete-confirm"))
+        {
+            settings.inventory.confirm_delete = true;
+        }
+        if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
             && let Ok(mode) = std::env::var("AURORA_DEMO_MINIMIZED_MUTE")
         {
             settings.audio.mute_when_minimized = mode != "off";
@@ -2940,6 +2946,7 @@ impl App {
             } else if mode == "mfa-refused"
                 || (mode == "add-mfa" && self.login_form.mfa_token.trim().is_empty())
                 || (mode == "terms" && !(self.login_form.agree_tos && self.login_form.read_critical))
+                || (mode == "next-server" && self.login_form.accepted_next_servers.is_empty())
             {
                 if mode == "terms" {
                     log::info!(
@@ -3033,6 +3040,7 @@ impl App {
             id0,
             last_exec: self.last_exec(),
             platform: crate::system_info::login_platform(),
+            accepted_next_servers: self.login_form.accepted_next_servers.clone(),
         };
         self.login_form.busy = true;
         self.login_form.error = None;
@@ -3768,6 +3776,7 @@ impl App {
                 critical_required,
                 bad_credentials,
                 previous_session,
+                next_server,
             } => {
                 // A refused login spends its code, whatever the reason: the next
                 // attempt sends none, so the server can ask for a new one
@@ -3801,6 +3810,9 @@ impl App {
                     }
                     self.login_form.show_mfa = true;
                     self.login_form.error = Some(aurora_i18n::tr!("app-enter-the-code-from-your-authenticator-app").into());
+                } else if let Some(server) = next_server {
+                    self.login_form.next_server = Some(server);
+                    self.login_form.accept_next_server = false;
                 } else if tos_required {
                     self.login_form.tos_message = Some(error);
                 } else if critical_required {
@@ -10941,6 +10953,8 @@ impl App {
                             | "aurora-keyboard-wide"
                     ) || v.starts_with("note-")
                         || v.starts_with("clipboard-")
+                        || v.starts_with("delete-")
+                        || v.starts_with("aurora-delete-")
                         || v.starts_with("aurora-menu-")
                         || v.starts_with("bulk-")
                 }))
@@ -15426,6 +15440,22 @@ impl App {
                     self.start_login();
                 }
                 if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
+                    && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("next-server")
+                {
+                    self.demo_mfa_challenge = None;
+                    // the offline login server sends the login on to another
+                    // server (LoginError::NextServer)
+                    log::info!("demo login: the login server sends the login on to another server");
+                    self.on_app_event(NetEvent::LoginFailed {
+                        error: String::new(),
+                        mfa_required: false,
+                        tos_required: false,
+                        critical_required: false,
+                        bad_credentials: false,
+                        previous_session: false,
+                        next_server: Some("login.other-grid.example".into()),
+                    });
+                } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at)
                     && std::env::var("AURORA_DEMO_LOGIN").as_deref() == Ok("terms")
                 {
                     self.demo_mfa_challenge = None;
@@ -15444,6 +15474,7 @@ impl App {
                         critical_required: !tos,
                         bad_credentials: false,
                         previous_session: false,
+                        next_server: None,
                     });
                 } else if self.demo_mfa_challenge.is_some_and(|at| std::time::Instant::now() >= at) {
                     self.demo_mfa_challenge = None;
@@ -15463,6 +15494,7 @@ impl App {
                         critical_required: false,
                         bad_credentials: refused,
                         previous_session: false,
+                        next_server: None,
                     });
                 } else if self.demo_mfa_challenge.is_some() {
                     ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -18507,6 +18539,7 @@ impl ApplicationHandler for App {
                         | "first-mfa"
                         | "mfa-refused"
                         | "terms"
+                        | "next-server"
                         | "add"
                         | "password"
                         | "connecting"
@@ -18516,7 +18549,7 @@ impl ApplicationHandler for App {
                     self.login_form.accounts = (0..match mode.as_str() {
                         "cards2" | "drag2" | "drag-card2" | "mfa" | "manage" | "manage-confirm" | "add" | "password" | "connecting"
                         | "add-connecting" => 2,
-                        "first" | "first-mfa" | "mfa-refused" | "terms" | "first-connecting" => 0,
+                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "first-connecting" => 0,
                         "cards1" | "derez1" | "add-mfa" => 1,
                         "cards8" | "drag" | "drag-card" | "manage8" | "manage-drag" | "wheel-gap" | "arrows" => 8,
                         _ => 3,
@@ -18563,7 +18596,7 @@ impl ApplicationHandler for App {
                     self.settings.remember_password = !self.login_form.accounts.is_empty();
                     if matches!(
                         mode.as_str(),
-                        "first" | "first-mfa" | "mfa-refused" | "terms" | "add" | "add-mfa" | "password"
+                        "first" | "first-mfa" | "mfa-refused" | "terms" | "next-server" | "add" | "add-mfa" | "password"
                     ) {
                         self.settings.remember_password = false;
                         self.login_form.editing = true;
@@ -18573,7 +18606,7 @@ impl ApplicationHandler for App {
                             self.login_form.add_return = Some((self.settings.login_uri(), self.settings.username.trim().to_lowercase()));
                             self.settings.username.clear();
                         }
-                        if mode == "add-mfa" || mode == "terms" {
+                        if matches!(mode.as_str(), "add-mfa" | "terms" | "next-server") {
                             // a second identity, ready to submit (no real credential)
                             self.settings.username = "Example new account".into();
                             self.login_form.password = "demo-placeholder".into();

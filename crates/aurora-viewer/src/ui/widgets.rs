@@ -2167,8 +2167,8 @@ pub fn flat_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: Vec2
     text_button(ui, p.ink, label, Some(size)).on_hover_text(label)
 }
 
-/// The modal's plain Enter action, visibly active before Tab moves focus.
-/// Use the theme's keyboard face without requesting focus or changing input.
+/// The initial Enter action of a confirmation with no text field. Give its
+/// visible default real focus so the first Tab advances from that button.
 pub fn default_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: Vec2) -> egui::Response {
     let hint = modal_keys::show_default_hint(ui);
     ui.scope(|ui| {
@@ -2178,7 +2178,27 @@ pub fn default_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: V
             ui.visuals_mut().widgets.hovered = active;
         }
         let ink = if hint { p.on_accent } else { p.ink };
-        let response = text_button(ui, ink, label, Some(size)).on_hover_text(label);
+        let mut response = text_button(ui, ink, label, Some(size)).on_hover_text(label);
+        // Keep the modal's opening-Enter guard when its default gains focus:
+        // egui otherwise turns held-key repeats into focused-button clicks.
+        if ui.input(|input| {
+            input.events.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::Key {
+                        key: egui::Key::Enter,
+                        pressed: true,
+                        repeat: true,
+                        ..
+                    }
+                )
+            })
+        }) {
+            response.flags.remove(egui::response::Flags::FAKE_PRIMARY_CLICKED);
+        }
+        if hint && response.enabled() && ui.memory(|m| m.allows_interaction(response.layer_id)) {
+            response.request_focus();
+        }
         modal_keys::default_button(response)
     })
     .inner

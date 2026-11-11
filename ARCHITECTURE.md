@@ -1,5 +1,15 @@
 # Aurora Viewer architecture
 
+Inventory Delete carries a `DeleteRequest` with its originating window and
+selection through the Marketplace guard. `app/inventory.rs` binds that intent
+to the mutation's request before sending it, including synchronous demo replies.
+Only its successful result enables selection advancement; queued reliable moves
+also wait for the inventory model to observe the requested Trash moves, excluding
+roots already at their destination. `ui/inventory/delete.rs` reconciles against
+the rebuilt displayed order before drawing rows, preserves a changed selection or view, skips deleted
+subtrees and uses keyboard navigation's existing visibility/scrolling path.
+Both confirmation settings and all four inventory layouts share this path.
+
 Search and filter inputs use `ui/widgets/pills.rs::search_text_edit` or the
 shared `search_field`/`clearable_search_box` wrappers. The in-field clear
 action reserves text padding, preserves editor ids, marks the response
@@ -2789,6 +2799,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `demo_tex_refresh.rs` | `AURORA_DEMO_TEXREFRESH` scenario: a panel whose texture file in the disk cache is stale, the right one on the local asset server (`demo_asset_server.rs`); "Refresh textures" (or `auto`) downloads it again |
 | `demo_slideshow.rs` | `AURORA_DEMO_SLIDESHOW` scenario: a panel whose texture entry changes every few seconds, as a scripted slideshow, its pictures from the local asset server (`demo_asset_server.rs`), with boxes competing for the downloads (`crowd=`) and a link of limited throughput (`mbps=`) |
 | `demo_mask_255.rs` | `AURORA_DEMO_MASK_255` scenario: a real `.j2c` of flat alpha 250-254 in the disk cache, on a panel with no material and on one with a Mask of cutoff 255, hidden; 255: no alpha channel, shown whole |
+| `demo_wet_layer.rs` | `AURORA_DEMO_WET_LAYER` scenario: spheres under transparent shells, two with a shiny blended legacy material whose glare shows drips (#1420), one control without |
 | `demo_aa_switch.rs` | `AURORA_DEMO_AA_SWITCH`: the anti-aliasing changed at given frames, to watch the pipelines for new MSAA samples compile on their worker without a long frame |
 | `demo_blend_shadows.rs` | `AURORA_DEMO_BLEND_SHADOWS` scenario: alpha-blended panels in the sun (greenhouse pane with opaque frame, face and texture alpha above and under the shadow cutoffs), or 400 greenhouse panes for the cost of blended casters |
 | `demo_plants.rs` | `AURORA_DEMO_PLANTS` scenario: the 21 tree species and 6 grass species near or far along the start view, or a forest of about 600 trees and 400 grass tufts; stand-in species textures drawn under their ids, in this scenario only |
@@ -3522,9 +3533,9 @@ field takes the focus, its text selected, when the dialog opens
 (`LLPanel::handleKeyHere`, `LLToastAlertPanel`); a dialog that does
 something else with Enter takes it with `widgets::enter_pressed`.
 Inventory confirmations use `widgets::default_button_sized` to show the
-default Enter action with the theme's keyboard highlight until a widget in
-the modal takes focus. This visual hint does not request keyboard focus or
-change Tab order, and disabled actions stay neutral.
+default Enter action with the theme's keyboard highlight and actual focus.
+The first Tab therefore reaches Cancel, then the ignore checkbox when offered,
+and returns to Delete; disabled actions stay neutral.
 `ui/widgets/keycap.rs` draws the keys of a shortcut (list of
 shortcuts, microphone panel). `ui/widgets/color.rs` is the compact colour picker (`color_button`,
 `color_panel`, RGB / HSV / hexadecimal conversions) and the eyedropper it shares
