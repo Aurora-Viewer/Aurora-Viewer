@@ -5663,6 +5663,12 @@ appearance-xml-export = Export an appearance XML
 appearance-xml-exported = Settings saved to { $file }.
 appearance-xml-export-failed = The appearance file could not be saved.
 appearance-xml-export-refused = Exporting needs modify rights on this item.
+appearance-xml-export-mine = Export my appearance XML…
+appearance-xml-saved = Appearance saved to { $file }.
+appearance-xml-left-out = { $count ->
+    [one] 1 worn item was left out: exporting needs modify rights on it.
+   *[other] { $count } worn items were left out: exporting needs modify rights on them.
+    }
 common-unmute = Unmute
 ui-options-restore-default-shortcuts = Restore default shortcuts
 ui-options-restore-the-local-environment-selected-sky-water-and-day = Restore the local environment (selected sky, water and day cycle) at the next login

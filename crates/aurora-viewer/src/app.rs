@@ -8991,6 +8991,26 @@ impl App {
         {
             self.send(cmd);
         }
+        if self.demo
+            && self.frame_count == 650
+            && let Ok(mode) = std::env::var("AURORA_DEMO_APPEARANCE")
+            && matches!(mode.as_str(), "xml" | "xml-unavailable")
+        {
+            self.world.apply(NetEvent::Appearance(aurora_net::AvatarAppearance {
+                avatar_id: self.world.agent_id,
+                texture_entry: None,
+                visual_params: self.world.avatar_lib.shape_params.values_with(&[(33, 0.7)]),
+                cof_version: 1,
+                appearance_version: 1,
+                hover_height: 0.0,
+                attachments: Vec::new(),
+            }));
+            if mode == "xml-unavailable" {
+                self.world.preview_shape(Some(vec![0]));
+            }
+            self.egui_ctx
+                .data_mut(|data| data.insert_temp(egui::Id::unique("appearance_xml_demo"), true));
+        }
         // AURORA_DEMO_APPEARANCE=take-off-folder: the inventory's Remove from
         // current outfit on an ordinary folder (#1849)
         if self.demo && self.frame_count == 600 && std::env::var("AURORA_DEMO_APPEARANCE").as_deref() == Ok("take-off-folder") {
