@@ -100,6 +100,8 @@ pub enum BarAction {
     ToggleQuickjump,
     /// Advanced › Quiet snapshots (PlayModeUISndSnapshot).
     ToggleQuietSnapshots,
+    /// Advanced › Release Keys (Tools.ReleaseKeys).
+    ReleaseKeys,
     /// Advanced › Request Admin Status (true) / Leave Admin Status (false).
     AdminStatus(bool),
     Admin(AdminAction),
@@ -289,6 +291,9 @@ pub struct StatusInfo<'a> {
     /// Photos are taken without the shutter sound nor the snapshot
     /// animation (Advanced › Quiet snapshots).
     pub quiet_snapshots: bool,
+    /// A script holds a control and no RLVa lock forbids letting it go:
+    /// Advanced › Release Keys is enabled (`app::release_keys::enabled`).
+    pub release_keys: bool,
     /// The grid has a Marketplace (World › SL Marketplace is shown only on
     /// the Second Life grids, GridCheck "secondlife").
     pub marketplace: bool,
@@ -1457,6 +1462,12 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                     }
                 },
             );
+            // Advanced › Release Keys (Tools.ReleaseKeys), greyed while no
+            // script holds a control (Tools.EnableReleaseKeys); no shortcut
+            let release = aurora_i18n::tr!("ui-bars-release-keys");
+            if menu::item_if(ui, p, "keyboard-filled", release, st.release_keys) {
+                *action = BarAction::ReleaseKeys;
+            }
         });
     }
     menu::submenu(ui, p, "help-circle-filled", aurora_i18n::tr!("common-help"), true, |ui| {

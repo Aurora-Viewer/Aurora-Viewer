@@ -178,13 +178,17 @@ impl MuteList {
         true
     }
 
-    /// From the server (file or "use your cache").
+    /// From the server (file, "use your cache" or "empty").
     pub fn on_server(&mut self, src: aurora_net::MuteListSource, cache_dir: Option<&Path>) {
         let text = match src {
             aurora_net::MuteListSource::File(t) => t,
             aurora_net::MuteListSource::UseCache => cache_dir
                 .and_then(|d| std::fs::read_to_string(Self::cache_file(d, &self.agent)).ok())
                 .unwrap_or_default(),
+            aurora_net::MuteListSource::ServerEmpty => {
+                self.on_server_empty(cache_dir);
+                return;
+            }
         };
         // entries added before the list arrived stay (they were sent already)
         let pending: Vec<Mute> = if self.is_loaded() {
@@ -198,6 +202,28 @@ impl MuteList {
         }
         self.state = LoadState::Loaded;
         log::info!("mute list: {} entries, {} by name", self.mutes.len(), self.legacy.len());
+        self.save(cache_dir);
+    }
+
+    /// LLDispatchEmptyMuteList (llmutelist.cpp): the server holds no block
+    /// list. Entries we only have from our cached copy (the request timed
+    /// out first) are outdated and dropped, as there; entries the user added
+    /// before any list came (`changed` made it loaded) were sent already and
+    /// stay. Then the list is loaded from the
+    /// server (MLS_SERVER_EMPTY), so the cache file is written again, empty
+    /// when nothing stays (LLMuteList::cache).
+    fn on_server_empty(&mut self, cache_dir: Option<&Path>) {
+        if self.state == LoadState::Degraded && !(self.mutes.is_empty() && self.legacy.is_empty()) {
+            log::warn!("mute list: the server says it is empty, but our cached copy is not; dropping it");
+            self.mutes.clear();
+            self.legacy.clear();
+        }
+        self.version += 1;
+        self.state = LoadState::Loaded;
+        log::info!(
+            "mute list: empty on the server, {} entries kept",
+            self.mutes.len() + self.legacy.len()
+        );
         self.save(cache_dir);
     }
 
@@ -540,6 +566,72 @@ mod tests {
         .unwrap();
         assert!(m.group_chat_muted(&g));
         assert!(m.entries().iter().all(|e| !e.name.starts_with("Group:")));
+    }
+
+    fn cache_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("aurora-mutes-{tag}-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("test cache dir");
+        dir
+    }
+
+    #[test]
+    fn server_empty_answers_the_request() {
+        let dir = cache_dir("empty");
+        let mut m = list();
+        m.request(Some(&dir));
+        assert!(!m.is_loaded());
+        let version = m.version;
+        m.on_server(aurora_net::MuteListSource::ServerEmpty, Some(&dir));
+        assert_eq!(m.state, LoadState::Loaded);
+        assert!(m.version > version);
+        assert_eq!(m.len(), 0);
+        // the answer stands for a server list: the cache is written, empty
+        let file = MuteList::cache_file(&dir, &Uuid::from_u128(99));
+        assert_eq!(std::fs::read_to_string(&file).expect("cache written"), "");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn server_empty_drops_the_fallback_copy() {
+        let dir = cache_dir("fallback");
+        let me = Uuid::from_u128(99);
+        let a = Uuid::from_u128(1);
+        let file = MuteList::cache_file(&dir, &me);
+        std::fs::write(&file, format!("1 {a} Jane Doe|0\n0 {} Spammer Bob|\n", Uuid::nil())).expect("cache file");
+        let mut m = list();
+        m.request(Some(&dir));
+        // the request timed out: our cached copy, degraded
+        m.state = LoadState::Requested(Instant::now() - std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS + 1));
+        assert!(m.check_timeout(Some(&dir)));
+        assert_eq!(m.state, LoadState::Degraded);
+        assert!(m.text_muted(&a, ""));
+        // the late "emptymutelist": the cached entries are outdated
+        m.on_server(aurora_net::MuteListSource::ServerEmpty, Some(&dir));
+        assert_eq!(m.state, LoadState::Loaded);
+        assert!(!m.text_muted(&a, ""));
+        assert!(!m.is_muted(&Uuid::nil(), "Spammer Bob", 0));
+        assert_eq!(std::fs::read_to_string(&file).expect("cache rewritten"), "");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn server_empty_keeps_what_the_user_blocked_meanwhile() {
+        let a = Uuid::from_u128(1);
+        let mut m = list();
+        m.request(None);
+        m.add(
+            Mute {
+                id: a,
+                name: "Jane".into(),
+                kind: MuteType::Agent,
+                flags: 0,
+            },
+            0,
+        )
+        .unwrap();
+        m.on_server(aurora_net::MuteListSource::ServerEmpty, None);
+        assert_eq!(m.state, LoadState::Loaded);
+        assert!(m.text_muted(&a, ""));
     }
 
     #[test]

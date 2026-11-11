@@ -446,7 +446,8 @@ pub enum NetEvent {
         handle: RegionHandle,
         max_children: Option<u32>,
     },
-    /// The mute list (LLMuteList): downloaded file, or keep the cached copy.
+    /// The mute list (LLMuteList): downloaded file, keep the cached copy, or
+    /// empty on the server.
     MuteList(crate::social::MuteListSource),
     /// Groups the agent belongs to (AgentGroupDataUpdate; added or updated).
     Groups(Vec<crate::social::GroupMembership>),
@@ -711,10 +712,16 @@ pub enum NetEvent {
     RegionRemoved {
         handle: RegionHandle,
     },
-    TeleportStarted,
-    /// TeleportProgress from the simulator (LL message key, e.g. "sending_dest").
+    /// TeleportStart, with its TeleportFlags (TELEPORT_FLAGS_DISABLE_CANCEL:
+    /// the teleport screen offers no Cancel).
+    TeleportStarted {
+        flags: u32,
+    },
+    /// TeleportProgress from the simulator (LL message key, e.g. "sending_dest"),
+    /// with its TeleportFlags.
     TeleportProgress {
         message: String,
+        flags: u32,
     },
     /// TeleportFinish: the destination region is known, connecting to it.
     TeleportFinished {
@@ -1576,6 +1583,11 @@ pub enum NetCommand {
         target: Uuid,
         permissions: u32,
     },
+    /// Make the region release every control the scripts took
+    /// (llTakeControls): Advanced › Release Keys
+    /// (LLAgent::forceReleaseControls). The region answers with
+    /// ScriptControlChange releases.
+    ForceScriptControlRelease,
     /// Accept / decline a session invitation or fetch its history (ChatSessionRequest).
     ChatSession {
         method: crate::social::SessionMethod,
@@ -1617,6 +1629,10 @@ pub enum NetCommand {
         local_ids: Vec<u32>,
     },
     TeleportHome,
+    /// The teleport screen's Cancel (LLAgent::teleportCancel): TeleportCancel
+    /// to the region we are leaving. The simulator may ignore it or get it
+    /// too late; a TeleportFinish then still comes.
+    TeleportCancel,
     /// The content rating the agent wants (UpdateAgentInformation,
     /// LLAgent::sendMaturityPreferenceToServer); answered by
     /// `NetEvent::MaturityPreference`.
