@@ -1007,6 +1007,12 @@ pub struct Settings {
     /// FSMuteGroupWhenNoticesDisabled: refuse group chat of groups whose
     /// notices are turned off.
     pub mute_groups_without_notices: bool,
+    /// FSGroupNoticesToIMLog: a group notice also writes a line in its
+    /// group's chat, or only its transcript when no chat is open (on).
+    pub group_notices_in_chat: bool,
+    /// FSBetterGroupNoticesToIMLog: that line starts with "Group Notice Sent
+    /// by" and the subject, else it is only the notice's text (on).
+    pub group_notice_subjects_in_chat: bool,
     /// GroupSnoozeTime: how long the snooze of a group chat lasts, in
     /// minutes (15; 0 only closes it until its next message). The Legacy
     /// Viewer counts seconds: a snooze is minutes to hours long (#945).
@@ -2178,6 +2184,8 @@ impl Default for Settings {
             trusted_sites: Default::default(),
             mute_all_groups: false,
             mute_groups_without_notices: false,
+            group_notices_in_chat: true,
+            group_notice_subjects_in_chat: true,
             group_snooze_minutes: 15,
             former_group_snooze_seconds: None,
             group_snooze_ask: false,

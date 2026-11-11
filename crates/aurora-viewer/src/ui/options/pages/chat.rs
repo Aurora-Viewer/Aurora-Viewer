@@ -278,6 +278,21 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 tr!("ui-options-reject-chat-from-groups-whose-notices-you-do-not"),
                 &field!(mute_groups_without_notices),
             );
+            // Legacy Viewer › Chat › Notifications (FSGroupNoticesToIMLog,
+            // FSBetterGroupNoticesToIMLog under it), both on
+            cx.toggle(
+                tr!("ui-options-group-notices-in-chat"),
+                tr!("ui-options-group-notices-in-chat-hint"),
+                &field!(group_notices_in_chat),
+            );
+            let off = !cx.s.group_notices_in_chat;
+            cx.subs(off, |cx| {
+                cx.toggle(
+                    tr!("ui-options-group-notice-subjects-in-chat"),
+                    tr!("ui-options-group-notice-subjects-in-chat-hint"),
+                    &field!(group_notice_subjects_in_chat),
+                );
+            });
             // GroupSnoozeTime and FSEnablePerGroupSnoozeDuration: the
             // snooze button of a group chat, in minutes (#945)
             cx.row(
