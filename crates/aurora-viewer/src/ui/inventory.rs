@@ -565,6 +565,9 @@ pub struct InventoryUi {
     list_focus_frame: Option<u64>,
     /// Which row order the list drew last, for the work done outside it.
     shown_order: keyboard::ShownOrder,
+    /// The list's focus target that opened this document window, so closing
+    /// it hands the keyboard back there (see `clipboard::return_focus_to`).
+    document_owner: Option<egui::Id>,
     visible: Vec<Uuid>,
     pub clipboard: Vec<Uuid>,
     pub cut: bool,
@@ -750,6 +753,13 @@ impl InventoryUi {
         } else {
             self.toggle_additional_window(ctx);
         }
+    }
+
+    /// Hand the keyboard back to the list when a window it opened closes, as
+    /// `LLToastAlertPanel` restores the focus it saved (indra/newview,
+    /// lltoastalertpanel.cpp).
+    pub(crate) fn return_focus(&mut self, ctx: &egui::Context) {
+        clipboard::return_focus(ctx, self);
     }
 
     /// RLVa's @showinv closes the additional window with the main one

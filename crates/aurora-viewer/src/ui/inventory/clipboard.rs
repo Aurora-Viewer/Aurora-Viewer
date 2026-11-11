@@ -104,15 +104,42 @@ pub(super) fn request_focus(ui: &egui::Ui, st: &mut InventoryUi) {
     request_focus_ctx(ui.ctx(), st);
 }
 
-/// Hands the keyboard back to the list when a modal dialog over it closes.
-/// egui keeps the closed modal as the top layer for one more pass, which
-/// drops this request and blocks [`list_focus`]'s restore; the restore window
-/// is moved one pass on so the list takes the focus once the modal is gone.
+/// Hands the keyboard back to the list when a modal or a preview over it
+/// closes. egui keeps the closed window as the top layer for one more pass,
+/// so this request is dropped and blocks [`list_focus`]'s restore; the restore
+/// window is moved two passes on (a preview's own text field keeps the focus
+/// for one more) so the list takes it once nothing is above it.
 pub(super) fn return_focus(ctx: &egui::Context, st: &mut InventoryUi) {
     request_focus_ctx(ctx, st);
-    st.list_focus_frame = Some(ctx.cumulative_frame_nr() + 1);
+    st.list_focus_frame = Some(ctx.cumulative_frame_nr() + 2);
     // run those passes now, not at the next input
     ctx.request_repaint();
+}
+
+fn pending_focus_id() -> egui::Id {
+    egui::Id::unique("inventory_pending_focus")
+}
+
+/// The list to focus, the widget that had it when the document closed, and
+/// the frame from which the request may be taken.
+type PendingFocus = (egui::Id, Option<egui::Id>, u64);
+
+/// Hands the keyboard back to `focus` (a list's [`focus_id`]) once the window
+/// above it is gone. A document lives in a window state of its own, so the
+/// request waits in the context for the list that opened it to take it.
+pub(super) fn return_focus_to(ctx: &egui::Context, focus: egui::Id) {
+    let at = ctx.cumulative_frame_nr() + 2;
+    let from = ctx.memory(|m| m.focused());
+    ctx.data_mut(|d| d.insert_temp(pending_focus_id(), Some((focus, from, at))));
+    ctx.request_repaint();
+}
+
+/// The document `st` closed: ask the list that opened it for the keyboard.
+pub(super) fn return_document_focus(ctx: &egui::Context, st: &mut InventoryUi) {
+    match st.document_owner {
+        Some(owner) => return_focus_to(ctx, owner),
+        None => return_focus(ctx, st),
+    }
 }
 
 fn request_focus_ctx(ctx: &egui::Context, st: &mut InventoryUi) {
@@ -150,6 +177,29 @@ pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
     });
     if leaving {
         st.list_focus_frame = None;
+    }
+    // A document opened from this list closed: take the keyboard back once
+    // the window above is gone and no other widget holds it. The window can
+    // outlive the close by a pass or two, so the request stays a few passes.
+    let now = ui.ctx().cumulative_frame_nr();
+    let focused = ui.memory(|m| m.focused());
+    if let Some((focus, from, at)) = ui.ctx().data(|d| d.get_temp::<Option<PendingFocus>>(pending_focus_id())).flatten() {
+        if focus == focus_id(st) {
+            if leaving || now > at + 2 {
+                ui.ctx().data_mut(|d| d.remove_temp::<Option<PendingFocus>>(pending_focus_id()));
+            } else if now >= at
+                && ui.is_enabled()
+                && st.dialog.is_none()
+                && !egui::Popup::is_any_open(ui.ctx())
+                && (focused.is_none() || focused == from)
+                && ui.memory(|m| m.allows_interaction(ui.layer_id()))
+            {
+                ui.ctx().data_mut(|d| d.remove_temp::<Option<PendingFocus>>(pending_focus_id()));
+                request_focus(ui, st);
+            }
+        } else if now > at + 2 {
+            ui.ctx().data_mut(|d| d.remove_temp::<Option<PendingFocus>>(pending_focus_id()));
+        }
     }
     // A discarded sizing pass can omit the list and trigger egui's focus
     // dead-man switch. Restore only its immediately preceding focus request,
@@ -452,21 +502,15 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
         return Vec::new();
     };
     if mode.starts_with("enter") {
-        // Enter puts the demo object on, then takes it off once it is worn
+        // Select and reveal the demo object, keep the list's keyboard, then
+        // Enter puts it on and a second Enter takes it off once it is worn
         // (LLObjectBridge::openItem, as a double-click does).
-        let pos = ctx.data(|data| data.get_temp::<egui::Pos2>(egui::Id::unique(("clipboard_demo_row", st.ui_id, Uuid::from_u128(8100)))));
-        if matches!(frame, 650 | 651) {
-            return pos.map_or_else(Vec::new, |pos| {
-                vec![
-                    egui::Event::PointerMoved(pos),
-                    egui::Event::PointerButton {
-                        pos,
-                        button: egui::PointerButton::Primary,
-                        pressed: frame == 650,
-                        modifiers: egui::Modifiers::NONE,
-                    },
-                ]
-            });
+        let item = Uuid::from_u128(8100);
+        if (640..680).contains(&frame) {
+            st.selected = Some(item);
+            st.selection = HashSet::from([item]);
+            st.reveal = Some(item);
+            ctx.memory_mut(|memory| memory.request_focus(focus_id(st)));
         }
         if matches!(frame, 680 | 720) {
             return vec![egui::Event::Key {
@@ -1337,6 +1381,56 @@ mod tests {
                 assert!(h.st.dialog.is_some(), "{close}: Delete reaches the list without a click");
             }
         }
+    }
+
+    #[test]
+    fn closing_a_notecard_gives_the_list_its_keyboard_back() {
+        let mut h = Harness::new();
+        h.st.preview = Some(id(8103));
+        for _ in 0..3 {
+            h.frame(Vec::new());
+        }
+        assert!(h.st.preview.is_some(), "the notecard opened");
+        let window = super::super::document::preview_window_id(h.st.ui_id, id(8103), 7);
+        crate::ui::widgets::close_floater(&h.ctx, &window);
+        for _ in 0..6 {
+            h.frame(Vec::new());
+        }
+        assert!(h.st.preview.is_none(), "the notecard closed");
+        assert!(
+            h.ctx.memory(|m| m.has_focus(focus_id(&h.st))),
+            "the list has the keyboard again after the document closes"
+        );
+    }
+
+    #[test]
+    fn a_document_window_returns_the_keyboard_to_the_list_that_opened_it() {
+        let mut h = Harness::new();
+        let item = id(8103);
+        let owner = focus_id(&h.st);
+        h.st.open_document(&h.ctx, item, 7);
+        for _ in 0..3 {
+            h.frame(Vec::new());
+        }
+        let at =
+            h.st.windows
+                .iter()
+                .position(|w| w.state.preview == Some(item))
+                .expect("the document window");
+        assert_eq!(h.st.windows[at].state.document_owner, Some(owner));
+        let window = super::super::document::preview_window_id(h.st.windows[at].state.ui_id, item, 7);
+        crate::ui::widgets::close_floater(&h.ctx, &window);
+        for _ in 0..6 {
+            h.frame(Vec::new());
+        }
+        assert!(
+            h.st.windows.iter().all(|w| w.state.preview != Some(item)),
+            "the document window closed"
+        );
+        assert!(
+            h.ctx.memory(|m| m.has_focus(owner)),
+            "the list that opened the document has the keyboard"
+        );
     }
 
     #[test]

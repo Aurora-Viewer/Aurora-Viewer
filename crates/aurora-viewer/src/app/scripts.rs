@@ -541,6 +541,7 @@ impl App {
     }
 
     pub(super) fn show_scripts(&mut self, ctx: &egui::Context, p: &Palette) {
+        let inventory_script = self.script_editors.documents.iter().any(|e| e.target.object.is_nil());
         self.script_editors.agent = self.world.agent_id;
         self.script_editors.agent_name = self.world.social.name_of(&self.world.agent_id);
         let rights: Vec<_> = self
@@ -566,6 +567,12 @@ impl App {
             self.apply_script_action(action);
         }
         self.script_editors.show_debug(ctx, p, &mut self.world.script_debug);
+        // The last script opened from the Inventory gives the list its
+        // keyboard back, so arrows keep moving its selection (LLToastAlertPanel
+        // restores the focus it saved, indra/newview/lltoastalertpanel.cpp).
+        if inventory_script && self.script_editors.documents.is_empty() && self.panels.inventory {
+            self.inventory_ui.return_focus(ctx);
+        }
     }
 
     pub(super) fn apply_script_action(&mut self, action: Action) {
