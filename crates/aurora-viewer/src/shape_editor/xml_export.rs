@@ -5,8 +5,10 @@
 //! The format of LLVOAvatar::dumpArchetypeXML with `group_by_wearables` and
 //! dump_visual_param (indra/newview/llvoavatar.cpp, originally LGPL 2.1), for
 //! the one wearable the editor holds: a `<param id name value wearable
-//! group>` for every parameter of its type, with the draft's weight (its
-//! default when the asset has none) at three decimals, as there.
+//! group>` for every tweakable parameter of its type (LLViewerVisualParam::
+//! isTweakable: groups 0 and 2; the animated ones the physics drives are
+//! left out, as there), with the draft's weight (its default when the asset
+//! has none) at three decimals.
 //!
 //! Stricter than the Legacy Viewer (whose dump checks no permission): the
 //! button needs modify rights on the item
@@ -33,7 +35,7 @@ pub fn document(name: &str, kind: u8, weights: &BTreeMap<i32, f32>, lad: &ShapeP
     out.push_str("<linden_genepool version=\"1.0\">\n");
     let _ = writeln!(out, "\n\t<archetype name=\"{}\">", escape(name));
     let _ = writeln!(out, "\n\t\t<!-- wearable: {wearable} -->");
-    for param in lad.wearable_params(kind) {
+    for param in tweakable(lad, kind) {
         let value = weights
             .get(&param.id)
             .copied()
@@ -50,6 +52,10 @@ pub fn document(name: &str, kind: u8, weights: &BTreeMap<i32, f32>, lad: &ShapeP
     }
     out.push_str("\t</archetype>\n</linden_genepool>\n");
     out
+}
+
+fn tweakable(lad: &ShapeParams, kind: u8) -> impl Iterator<Item = crate::scene::shape::WearableParam<'_>> {
+    lad.wearable_params(kind).filter(|p| matches!(p.group, 0 | 2))
 }
 
 fn escape(text: &str) -> String {
@@ -187,13 +193,14 @@ mod tests {
         let archetype = super::super::xml_import::parse(text.as_bytes()).expect("own export");
         assert_eq!(archetype.errors, 0);
         let ids: Vec<i32> = archetype.params.iter().map(|(id, _)| *id).collect();
-        let expected: Vec<i32> = lad().wearable_params(0).map(|p| p.id).collect();
-        assert_eq!(ids, expected, "every shape parameter, by id");
+        let expected: Vec<i32> = tweakable(lad(), 0).map(|p| p.id).collect();
+        assert_eq!(ids, expected, "every tweakable shape parameter, by id");
+        assert!(lad().wearable_params(0).any(|p| p.group == 1), "the shape has animated ones");
         assert!(!ids.contains(&166), "a hair parameter is not a shape's");
         let get = |id| archetype.params.iter().find(|(i, _)| *i == id).map(|(_, v)| *v);
         assert!((get(33).expect("height") - height_max).abs() < 0.001, "clamped to its range");
         assert!((get(1).expect("brow") - 0.2).abs() < 0.001);
-        let unset = lad().wearable_params(0).find(|p| !weights.contains_key(&p.id)).expect("another");
+        let unset = tweakable(lad(), 0).find(|p| !weights.contains_key(&p.id)).expect("another");
         assert!((get(unset.id).expect("default") - unset.default).abs() < 0.001, "the default");
         // Imported back, the shape gets the same weights.
         let mut back = BTreeMap::new();
