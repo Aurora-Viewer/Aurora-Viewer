@@ -498,7 +498,7 @@ const SEMIBOLD: &str = "aurora-semibold";
 const MAIN: &str = "aurora-main";
 /// Embedded Noto Sans, used when the chosen face has no glyph.
 /// Legacy Viewer: the bundled face after the UI font in
-/// `LLFontRegistry::createFont` (`indra/newview/llfontgl.cpp`). Noto Sans
+/// `LLFontRegistry::createFont` (`indra/llrender/llfontregistry.cpp`). Noto Sans
 /// is already in the binary and draws the small capitals Inter lacks.
 const NOTO_FALLBACK: &str = "aurora-noto";
 /// Semi-bold face of that fallback, for the semi-bold family.
