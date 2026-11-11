@@ -286,9 +286,12 @@ impl Editor {
             let label = aurora_i18n::text("poser-avatar-row");
             if filter.is_empty() || label.to_lowercase().contains(&filter) || "mpelvis".contains(&filter) {
                 let edited = self.subject_edited(rig.pelvis);
-                if self.joint_row(ui, p, label, self.selected == Some(rig.pelvis), edited, "mPelvis") {
-                    self.clear_together();
-                    self.select_pose_bone(rig.pelvis, rig, frame);
+                // lit as the lead or as a joint added to the selection, and
+                // Shift / Ctrl + click adds it, like the other rows
+                let selected = self.selected == Some(rig.pelvis) || self.poser.together.contains(&rig.pelvis);
+                if self.joint_row(ui, p, label, selected, edited, "mPelvis") {
+                    let add = ui.input(|i| i.modifiers.shift || i.modifiers.command);
+                    self.click_pose_bone(rig.pelvis, rig, frame, add);
                 }
             }
         }
