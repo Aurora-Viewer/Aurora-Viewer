@@ -275,6 +275,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "circle-plus",
     "circle-x",
     "click",
+    "clipboard-data",
     "clipboard-text",
     "clock",
     "cloud",
