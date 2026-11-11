@@ -2335,6 +2335,21 @@ mod tests {
                 opening.extend(confirmation_pass(&ctx, &inv, &mut st, Vec::new()));
             }
             assert!(opening.is_empty() && st.dialog.is_some(), "{name}: opening Enter must not confirm");
+            let mut held = key(egui::Key::Enter);
+            if let egui::Event::Key { repeat, .. } = &mut held {
+                *repeat = true;
+            }
+            let mut actions = confirmation_pass(&ctx, &inv, &mut st, vec![held]);
+            actions.extend(confirmation_pass(&ctx, &inv, &mut st, Vec::new()));
+            assert!(
+                actions.is_empty() && st.dialog.is_some(),
+                "{name}: holding opening Enter must not confirm"
+            );
+            let mut release = key(egui::Key::Enter);
+            if let egui::Event::Key { pressed, .. } = &mut release {
+                *pressed = false;
+            }
+            assert!(confirmation_pass(&ctx, &inv, &mut st, vec![release]).is_empty());
             let mut actions = confirmation_pass(&ctx, &inv, &mut st, vec![key(egui::Key::Enter)]);
             actions.extend(confirmation_pass(&ctx, &inv, &mut st, Vec::new()));
             assert!(

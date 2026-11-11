@@ -2178,7 +2178,24 @@ pub fn default_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: V
             ui.visuals_mut().widgets.hovered = active;
         }
         let ink = if hint { p.on_accent } else { p.ink };
-        let response = text_button(ui, ink, label, Some(size)).on_hover_text(label);
+        let mut response = text_button(ui, ink, label, Some(size)).on_hover_text(label);
+        // Keep the modal's opening-Enter guard when its default gains focus:
+        // egui otherwise turns held-key repeats into focused-button clicks.
+        if ui.input(|input| {
+            input.events.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::Key {
+                        key: egui::Key::Enter,
+                        pressed: true,
+                        repeat: true,
+                        ..
+                    }
+                )
+            })
+        }) {
+            response.flags.remove(egui::response::Flags::FAKE_PRIMARY_CLICKED);
+        }
         if hint && response.enabled() && ui.memory(|m| m.allows_interaction(response.layer_id)) {
             response.request_focus();
         }
