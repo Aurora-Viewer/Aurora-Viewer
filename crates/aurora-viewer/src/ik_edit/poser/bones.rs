@@ -222,7 +222,10 @@ impl Editor {
             && let Some(other) = self.mirrors.counterpart(bone)
             && (side == Side::Right && left || side == Side::Left && !left)
         {
-            self.poser.together.retain(|b| *b != other);
+            if self.poser.together.contains(&other) {
+                self.poser.together.retain(|b| *b != other);
+                self.poser.together.push(bone);
+            }
             self.select_pose_bone(other, rig, frame);
         }
     }

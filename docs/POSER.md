@@ -45,7 +45,8 @@ same scale ratio, so both eyes look the same way (Mirror would turn them
 in opposite directions). Their markers have a thinner ring and their rows
 are lit. Mirror, Reset joint and the world pin apply to all of them, as in
 the Legacy Viewer's multi-select joint lists. Dragging another joint of the
-selection makes it lead the others.
+selection makes it lead the others. Changing tabs keeps only the joints
+the new tab shows, and the Side selector swaps a selected pair's lead.
 Only the active tab's joints and shafts are visible and selectable. Changing
 tabs selects a joint in that group and replaces the previous group's gizmo.
 

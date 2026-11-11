@@ -120,21 +120,29 @@ impl Editor {
         } else if !edited.move_joint(rig, bone, self.position) {
             return true;
         }
+        // the joints the followers changed (themselves, and the chains a
+        // move bends): Mirror leaves them, and their counterparts, alone
+        let mut followed = vec![false; rig.len()];
         if !followers.is_empty() {
             let mut start = (*session.pose).clone();
             start.rotations.clone_from(&before.rotations);
             start.positions.clone_from(&before.positions);
+            let led = edited.rotations.clone();
             let change = if rotate { together::Change::Rotate } else { together::Change::Move };
             together::follow(rig, &start, &mut edited, bone, &followers, change);
+            for (joint, followed) in followed.iter_mut().enumerate() {
+                *followed = edited.rotations[joint] != led[joint] || followers.contains(&joint);
+            }
         }
         if self.symmetry {
             let rotations = edited.rotations.clone();
             for (changed, rotation) in rotations.into_iter().enumerate() {
                 // a joint selected with the others takes their change, not a reflection
                 if rotation != before.rotations[changed]
+                    && !followed[changed]
                     && let Some(other) = self.mirrors.counterpart(changed)
                     && Some(other) != selected
-                    && !followers.contains(&other)
+                    && !followed[other]
                 {
                     edited.rotations[other] = data::mirrored(rig, rotation, changed, other);
                     edited.origin[other] = data::mirrored(rig, edited.origin[changed], changed, other);

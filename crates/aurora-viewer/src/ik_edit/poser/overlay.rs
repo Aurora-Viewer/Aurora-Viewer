@@ -21,6 +21,24 @@ impl Editor {
     }
     pub(super) fn select_pose_group(&mut self, group: usize, rig: &Rig, frame: &Frame) {
         self.poser.group = group;
+        // a follower the new tab hides would still move unseen: only the
+        // active tab's joints are selected, as in the Legacy Viewer's lists
+        // (FSFloaterPoser::getUiSelectedPoserJoints reads the active one)
+        let hidden: Vec<usize> = self
+            .poser
+            .together
+            .iter()
+            .copied()
+            .filter(|b| !self.bone_visible(&rig.canonical_names[*b]))
+            .collect();
+        self.poser.together.retain(|b| !hidden.contains(b));
+        // a hidden lead hands over to a follower the tab shows
+        if self.selected.is_some_and(|b| !self.bone_visible(&rig.canonical_names[b]))
+            && let Some(next) = self.poser.together.first().copied()
+        {
+            self.poser.together.remove(0);
+            self.selected = Some(next);
+        }
         if let Some(bone) = self
             .selected
             .filter(|b| self.bone_visible(&rig.canonical_names[*b]))

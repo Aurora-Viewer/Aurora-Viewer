@@ -245,4 +245,67 @@ mod tests {
         assert_eq!(editor.selected, Some(head));
         assert!(editor.followers().is_empty());
     }
+    #[test]
+    fn a_tab_change_drops_the_followers_it_hides() {
+        let (world, mut editor) = super::super::tests::selected_fixture();
+        let rig = &world.avatar_lib.rig;
+        let frame = editor.editor_frame(&world).unwrap();
+        let (left, right, chest) = (rig.names["mEyeLeft"], rig.names["mEyeRight"], rig.names["mChest"]);
+        editor.click_pose_bone(left, rig, &frame, false);
+        editor.click_pose_bone(right, rig, &frame, true);
+        editor.select_pose_group(0, rig, &frame);
+        assert!(editor.followers().is_empty(), "a hidden eye must not follow the body");
+        // a follower the new tab shows stays, and leads when the lead is hidden
+        editor.click_pose_bone(left, rig, &frame, false);
+        editor.click_pose_bone(chest, rig, &frame, true);
+        editor.select_pose_group(0, rig, &frame);
+        assert_eq!(editor.selected, Some(chest));
+        assert!(editor.followers().is_empty());
+    }
+
+    #[test]
+    fn the_side_selector_keeps_a_selected_pair() {
+        let (world, mut editor) = super::super::tests::selected_fixture();
+        let rig = &world.avatar_lib.rig;
+        let frame = editor.editor_frame(&world).unwrap();
+        let (left, right) = (rig.names["mEyeLeft"], rig.names["mEyeRight"]);
+        editor.click_pose_bone(left, rig, &frame, false);
+        editor.click_pose_bone(right, rig, &frame, true);
+        editor.set_pose_side(Side::Right, rig, &frame);
+        assert_eq!(editor.selected, Some(right));
+        assert_eq!(editor.followers(), vec![left]);
+    }
+
+    #[test]
+    fn a_mirrored_move_of_a_selected_pair_goes_where_it_is_dragged() {
+        let (world, mut editor) = super::super::tests::selected_fixture();
+        let rig = world.avatar_lib.rig.clone();
+        let frame = editor.editor_frame(&world).unwrap();
+        let (lead, other) = (rig.names["mWristLeft"], rig.names["mWristRight"]);
+        editor.poser.transform = 1;
+        editor.click_pose_bone(lead, &rig, &frame, false);
+        editor.click_pose_bone(other, &rig, &frame, true);
+        editor.set_pose_side(Side::Mirror, &rig, &frame);
+        assert!(editor.symmetry);
+        let start = editor.poser.sessions[&world.agent_id].pose.matrices(&rig, frame.model);
+        // inwards for the left hand (the arms are stretched out at rest):
+        // the right hand, moved the same way, goes outwards and stops at its
+        // reach, so a leader mirrored from it would not go inwards either
+        let offset = Vec3::new(0.06, -0.05, 0.08);
+        for step in 1..=20 {
+            editor.position = start[lead].w_axis.truncate() + offset * (step as f32 / 20.0);
+            assert!(editor.commit_poser_manipulation(&rig, &frame, false));
+        }
+        let now = editor.poser.sessions[&world.agent_id].pose.matrices(&rig, frame.model);
+        let led = now[lead].w_axis.truncate() - start[lead].w_axis.truncate();
+        let moved = now[other].w_axis.truncate() - start[other].w_axis.truncate();
+        // the leader follows the pointer, sideways included (not the
+        // reflection of the follower's move), and the follower moves alike
+        assert!(led.distance(offset) < 0.03, "{led} vs {offset}");
+        assert!(led.y < -0.03, "{led}");
+        assert!(
+            (moved.x - offset.x).abs() < 0.03 && (moved.z - offset.z).abs() < 0.03,
+            "{moved} vs {offset}"
+        );
+    }
 }
