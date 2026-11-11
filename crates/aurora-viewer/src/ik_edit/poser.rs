@@ -176,9 +176,9 @@ pub(super) struct State {
     /// is asked for its part under the cursor (part_pick.rs).
     pick_wanted: bool,
     /// Its newest answer: the subject it was asked for, the dominant joint
-    /// + 1 (0 off the subject) and the window pixel it was read at; trusted
-    /// only there (`world_hints::fresh_pick`). None before the first since
-    /// Ctrl came.
+    /// plus one (0 off the subject) and the window pixel it was read at,
+    /// trusted only there (`world_hints::fresh_pick`). None before the first
+    /// since Ctrl came.
     mesh_pick: Option<(Uuid, u32, [f32; 2])>,
     /// Whether the scene drew any of the subject's meshes last frame, when it
     /// listed them (`set_poser_meshes_drawn`): an impostored, jelly-dolled or
