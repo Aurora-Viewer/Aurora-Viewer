@@ -564,6 +564,11 @@ impl ScriptInfo {
 #[derive(Default)]
 pub struct Land {
     pub sel: Option<Selection>,
+    /// Parcels the viewer asked about under the pointer or a resident
+    /// (LLViewerParcelMgr's hover parcel, HOVERED_PARCEL_SEQ_ID), the
+    /// latest last: the land moderation rule reads them for every menu
+    /// alike (world/land_moderation.rs).
+    pub seen_parcels: Vec<(RegionHandle, std::sync::Arc<ParcelInfo>)>,
     pub covenant: Option<Covenant>,
     covenant_asked: Option<(RegionHandle, Instant)>,
     pub experience_names: HashMap<Uuid, String>,

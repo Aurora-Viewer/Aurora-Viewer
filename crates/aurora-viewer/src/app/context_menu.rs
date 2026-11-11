@@ -482,7 +482,11 @@ impl App {
             }
             CtxAction::NewPhysics => self.new_physics(),
             CtxAction::Freeze(id) => self.ask_moderation(id, false),
+            CtxAction::ModerationParcel(id) => self.moderation_menu_opened(id),
             CtxAction::Eject(id) => self.ask_moderation(id, true),
+            CtxAction::EstateKick(id) => self.ask_estate(id, land_moderation::EstateAct::Kick),
+            CtxAction::EstateTeleportHome(id) => self.ask_estate(id, land_moderation::EstateAct::TeleportHome),
+            CtxAction::EstateBan(id) => self.ask_estate(id, land_moderation::EstateAct::Ban),
             CtxAction::GodKick(id, flags) => self.ask_god_kick(id, flags),
             CtxAction::EditWorn(item) => {
                 if self.world.inventory.items.get(&item).is_some_and(crate::wearable_editor::supported) {

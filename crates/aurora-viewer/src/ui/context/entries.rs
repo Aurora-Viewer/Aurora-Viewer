@@ -880,7 +880,7 @@ fn avatar_admin(ui: &mut Builder, f: &Facts, id: Uuid) {
 /// Visible only with the corresponding land/nearby-voice moderation rights.
 fn avatar_moderation(ui: &mut Builder, f: &Facts, id: Uuid) {
     let voice = f.voice_volume.and_then(|v| v.moderated);
-    if !f.moderation.allowed && voice.is_none() {
+    if !f.moderation.allowed && !f.moderation.estate && voice.is_none() {
         return;
     }
     ui.submenu("shield-filled", aurora_i18n::tr!("ui-context-moderation-options"), true, |ui| {
@@ -907,11 +907,27 @@ fn avatar_moderation(ui: &mut Builder, f: &Facts, id: Uuid) {
     });
 }
 
-/// Avatar.Freeze / Avatar.Eject, visible only with rights on the avatar's land.
+/// Avatar.Freeze / Avatar.Eject, visible only with rights on the avatar's
+/// land, then the estate's Avatar.TeleportHome / Avatar.Kick /
+/// Avatar.EstateBan, visible to its owner and managers
+/// (menu_fs_radar.xml's entries, the estate's from the mildest to the
+/// strongest: sent home, out of the estate, kept out).
 fn moderation_items(ui: &mut Builder, f: &Facts, id: Uuid) {
     if f.moderation.allowed {
         ui.item("snowflake", aurora_i18n::tr!("ui-context-freeze"), CtxAction::Freeze(id));
         ui.item("player-eject-filled", aurora_i18n::tr!("ui-context-eject"), CtxAction::Eject(id));
+    }
+    if f.moderation.estate {
+        if f.moderation.allowed {
+            ui.separator();
+        }
+        ui.item(
+            "home-filled",
+            aurora_i18n::tr!("ui-context-estate-teleport-home"),
+            CtxAction::EstateTeleportHome(id),
+        );
+        ui.item("door-exit", aurora_i18n::tr!("ui-context-estate-kick"), CtxAction::EstateKick(id));
+        ui.item("ban", aurora_i18n::tr!("ui-context-estate-ban"), CtxAction::EstateBan(id));
     }
 }
 
@@ -1311,6 +1327,30 @@ mod tests {
                     )
                 );
             }
+        }
+    }
+
+    #[test]
+    fn the_estate_entries_follow_the_estate_right_alone() {
+        let id = Uuid::from_u128(7);
+        let target = Target::Avatar {
+            id,
+            own: false,
+            attachment: None,
+        };
+        for (land, estate) in [(false, true), (true, true), (true, false)] {
+            let mut facts = Facts::default();
+            facts.moderation.allowed = land;
+            facts.moderation.estate = estate;
+            let group = world_menu(&target, &facts, Vec3::ZERO)
+                .into_iter()
+                .find(|e| e.label == aurora_i18n::tr!("ui-context-moderation-options"));
+            let actions = rows(group.into_iter().collect());
+            let has = |want: fn(&CtxAction) -> bool| actions.iter().any(|e| matches!(&e.kind, Kind::Action(a) if want(a)));
+            assert_eq!(has(|a| matches!(a, CtxAction::Freeze(_))), land);
+            assert_eq!(has(|a| matches!(a, CtxAction::EstateKick(_))), estate);
+            assert_eq!(has(|a| matches!(a, CtxAction::EstateTeleportHome(_))), estate);
+            assert_eq!(has(|a| matches!(a, CtxAction::EstateBan(_))), estate);
         }
     }
 
