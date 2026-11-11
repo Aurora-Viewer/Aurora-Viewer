@@ -1087,6 +1087,24 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
     return col;
 }
 
+// Whether an empty texel of a blended face may still glare: a legacy
+// material with an environment, or a glossy one with a local light or a
+// projector over it (the sun's highlight never glares). A glossy hair far
+// from any local light keeps leaving before the lighting (fs_blend).
+fn legacy_may_glare(rec: DrawRecord, m: Material, world_pos: vec3<f32>, frag: vec2<f32>) -> bool {
+    if ((rec.flags.x & FLAG_LEGACY_MAT) == 0u) {
+        return false;
+    }
+    if (m.legacy_env > 0.0) {
+        return true;
+    }
+    if (m.legacy_spec.a <= 0.0) {
+        return false;
+    }
+    let lights = light_walk(world_pos, frag);
+    return any((lights.held | lights.projectors) != vec2<u32>(0u));
+}
+
 // calcPointLightOrSpotLight's glare (materialF.glsl) from the highlight of
 // one local light, as written there: the red first, then the brightest.
 fn add_light_glare(sc: vec3<f32>) {
@@ -1657,8 +1675,7 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
     let m = eval_material(in, front);
     // a legacy material's empty texels may still glare (materialF.glsl has
     // no early test): lit first, their alpha is known after shade_material
-    let may_glare = (records[in.record].flags.x & FLAG_LEGACY_MAT) != 0u && (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0);
-    if (BLEND_EARLY_DISCARD && m.color.a < 0.004 && !may_glare) {
+    if (BLEND_EARLY_DISCARD && m.color.a < 0.004 && !legacy_may_glare(records[in.record], m, in.world_pos, in.clip.xy)) {
         discard;
     }
     // Blended and alpha-tested: the hair, eyelashes and skirt of a system
