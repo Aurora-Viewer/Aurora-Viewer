@@ -301,7 +301,7 @@ pub fn places_json(fixture: Fixture, key: &str) -> String {
             }
         })
         .collect();
-    list.sort_by(|a, b| b.1.people.cmp(&a.1.people));
+    list.sort_by_key(|s| std::cmp::Reverse(s.1.people));
     Value::Array(list.into_iter().map(|(i, s)| entry(i, s)).collect()).to_string()
 }
 
