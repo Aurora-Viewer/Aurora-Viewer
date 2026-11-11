@@ -252,7 +252,13 @@ pub fn edit(
     }
     if !repeat || edit_repeats(cmd) {
         match (cmd, clipboard) {
-            (EditCommand::Paste, Some(text)) => p.execute_javascript(&paste_script(text)),
+            // held while a Cut or Copy's answer is awaited, so the paste
+            // gets what it gives (MediaEvent::PasteDue, `due_paste`)
+            (EditCommand::Paste, Some(text)) => {
+                if !p.paste_after_replies(text) {
+                    p.execute_javascript(&paste_script(text));
+                }
+            }
             (EditCommand::Cut | EditCommand::Copy, _) if clipboard_through_viewer() => {
                 let tag = copy_tag();
                 p.execute_javascript_for_reply(&copy_script(&tag, cmd == EditCommand::Cut), &tag);
@@ -277,14 +283,16 @@ fn copy_tag() -> String {
 /// focused text field, else the document's selection; never a password
 /// field's. As a real cut or copy, a `cut` or `copy` event goes first: a
 /// page that cancels it gives its own `text/plain` instead. A cut then
-/// deletes the selection, only in an editable field (one undo step).
-/// The answer is logged as the tag and one JSON string literal, every
+/// deletes the selection, only in an editable field (one undo step; a
+/// focused checkbox, button or other field without text is not one).
+/// The answer is logged as the tag and one JSON string literal, a lone
+/// half of a surrogate pair made U+FFFD as a browser's copy does, every
 /// character past ASCII escaped (XML, which carries it to the viewer, does
 /// not allow some); an empty one when there is nothing to copy, so the
 /// viewer stops waiting. A page that replaced `console.log` gets the log of
 /// a blank frame of its own, removed at once.
 pub fn copy_script(tag: &str, cut: bool) -> String {
-    const SCRIPT: &str = r#"(function(tag,cut){var t='';try{var d=document,e=d.activeElement,r=null;for(;;){if(e&&e.shadowRoot&&e.shadowRoot.activeElement){r=e.shadowRoot;e=r.activeElement;continue}if(e&&/^(I?FRAME|OBJECT|EMBED|FENCEDFRAME)$/.test(e.tagName)){d=e.contentDocument;if(!d)throw 0;e=d.activeElement;r=null;continue}break}var f=e&&/^(INPUT|TEXTAREA)$/.test(e.tagName)?e:null;if(f&&String(f.type).toLowerCase()==='password')throw 0;var ed=f?!f.readOnly&&!f.disabled:!!(e&&e.isContentEditable),sel=r&&r.getSelection?r.getSelection():d.getSelection(),s=null;if(f&&f.selectionStart!=null)s=f.value.substring(f.selectionStart,f.selectionEnd);if(s===null)s=sel?String(sel):'';var a=sel&&sel.anchorNode,tg=(f||ed)?e:a?(a.nodeType===1?a:a.parentElement):null;tg=tg||e||d.body;var dt=new DataTransfer(),go=true;try{go=tg.dispatchEvent(new ClipboardEvent(cut?'cut':'copy',{clipboardData:dt,bubbles:true,cancelable:true,composed:true}))}catch(x){}if(!go)t=dt.getData('text/plain');else if(!cut||ed){t=s;if(cut&&s)d.execCommand('delete')}}catch(x){t=''}var j=JSON.stringify(String(t||'')).replace(/[\u007f-\uffff]/g,function(c){return'\\u'+('000'+c.charCodeAt(0).toString(16)).slice(-4)}),l=console.log;if(!/\[native code\]/.test(Function.prototype.toString.call(l))){try{var i=document.createElement('iframe');i.style.display='none';(document.body||document.documentElement).appendChild(i);i.contentWindow.console.log(tag+j);i.remove();return}catch(x){}}l.call(console,tag+j)})(TAG,CUT)"#;
+    const SCRIPT: &str = r#"(function(tag,cut){var t='';try{var d=document,e=d.activeElement,r=null;for(;;){if(e&&e.shadowRoot&&e.shadowRoot.activeElement){r=e.shadowRoot;e=r.activeElement;continue}if(e&&/^(I?FRAME|OBJECT|EMBED|FENCEDFRAME)$/.test(e.tagName)){d=e.contentDocument;if(!d)throw 0;e=d.activeElement;r=null;continue}break}var f=e&&/^(INPUT|TEXTAREA)$/.test(e.tagName)?e:null;if(f&&String(f.type).toLowerCase()==='password')throw 0;var ed=f?!/^(checkbox|radio|button|submit|reset|file|image|color|range|hidden|date|datetime-local|month|week|time)$/i.test(f.type)&&!f.readOnly&&!f.disabled:!!(e&&e.isContentEditable),sel=r&&r.getSelection?r.getSelection():d.getSelection(),s=null;if(f&&f.selectionStart!=null)s=f.value.substring(f.selectionStart,f.selectionEnd);if(s===null)s=sel?String(sel):'';var a=sel&&sel.anchorNode,tg=(f||ed)?e:a?(a.nodeType===1?a:a.parentElement):null;tg=tg||e||d.body;var dt=new DataTransfer(),go=true;try{go=tg.dispatchEvent(new ClipboardEvent(cut?'cut':'copy',{clipboardData:dt,bubbles:true,cancelable:true,composed:true}))}catch(x){}if(!go)t=dt.getData('text/plain');else if(!cut||ed){t=s;if(cut&&s)d.execCommand('delete')}}catch(x){t=''}var j=JSON.stringify(String(t||'').replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g,'\ufffd')).replace(/[\u007f-\uffff]/g,function(c){return'\\u'+('000'+c.charCodeAt(0).toString(16)).slice(-4)}),l=console.log;if(!/\[native code\]/.test(Function.prototype.toString.call(l))){try{var i=document.createElement('iframe');i.style.display='none';(document.body||document.documentElement).appendChild(i);i.contentWindow.console.log(tag+j);i.remove();return}catch(x){}}l.call(console,tag+j)})(TAG,CUT)"#;
     let tag = serde_json::to_string(tag).unwrap_or_else(|_| "\"\"".into());
     SCRIPT.replace("(TAG,CUT)", &format!("({tag},{cut})"))
 }
@@ -296,6 +304,17 @@ pub fn copy_script(tag: &str, cut: bool) -> String {
 pub fn copied_text(reply: &str) -> Option<String> {
     let text = serde_json::Deserializer::from_str(reply).into_iter::<String>().next()?.ok()?;
     (!text.is_empty()).then_some(text)
+}
+
+/// What a paste held behind a Cut or Copy (`MediaEvent::PasteDue`) puts
+/// into the page: the last of those answers that gave text, which is then
+/// on the system clipboard, else what the clipboard held at the press.
+pub fn due_paste(clipboard: &str, answers: &[String]) -> String {
+    answers
+        .iter()
+        .rev()
+        .find_map(|a| copied_text(a))
+        .unwrap_or_else(|| clipboard.to_owned())
 }
 
 /// The script that pastes `text` into the page's focused field, where the
@@ -713,6 +732,10 @@ mod tests {
         assert!(event < delete && delete < answer);
         // never a password field, and the same reach as the paste
         assert!(s.contains("'password')throw 0"));
+        // a cut deletes only in a field that holds text
+        assert!(s.contains("checkbox|radio|button") && s.contains("&&!f.readOnly&&!f.disabled"));
+        // a lone surrogate becomes U+FFFD before the literal
+        assert!(s.contains(r"(?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g,'\ufffd')"));
         assert!(s.contains("e.shadowRoot.activeElement") && s.contains("OBJECT|EMBED|FENCEDFRAME"));
         // XML, which carries the script to the plugin, refuses U+FFFE and
         // U+FFFF: with one in it the plugin drops the whole script
@@ -724,8 +747,16 @@ mod tests {
         let suffix = " in file() at line 1";
         let reply = |lit: &str| format!("{lit}{suffix}");
         assert_eq!(copied_text(&reply(r#""hello""#)), Some("hello".into()));
-        // escaped past ASCII, as the script sends it: line breaks, tabs, emoji, U+FFFE
-        assert_eq!(copied_text(&reply(r#""a\nb\tc é😀￾""#)), Some("a\nb\tc é😀\u{FFFE}".into()));
+        // escaped past ASCII, as the script sends it: line breaks, tabs,
+        // é, an emoji as its surrogate pair, U+FFFE
+        assert_eq!(
+            copied_text(&reply(r#""a\nb\tc \u00e9\ud83d\ude00\ufffe""#)),
+            Some("a\nb\tc é😀\u{FFFE}".into())
+        );
+        assert_eq!(copied_text(&reply(r#""a\ufffdb""#)), Some("a\u{FFFD}b".into()));
+        // a lone half of a pair is refused whole, so the script sends
+        // U+FFFD in its place
+        assert_eq!(copied_text(&reply(r#""a\ud83db""#)), None);
         // what would be code stays text
         assert_eq!(copied_text(&reply(r#""\"); alert(1); (\"""#)), Some("\"); alert(1); (\"".into()));
         // nothing selected, or not a literal: the clipboard is left alone
@@ -733,6 +764,17 @@ mod tests {
         assert_eq!(copied_text("hello in file() at line 1"), None);
         assert_eq!(copied_text(r#""unterminated"#), None);
         assert_eq!(copied_text(""), None);
+    }
+
+    #[test]
+    fn a_held_paste_takes_the_last_answer_with_text() {
+        let lit = |t: &str| format!("\"{t}\" in file() at line 1");
+        assert_eq!(due_paste("old", &[]), "old");
+        assert_eq!(due_paste("old", &[lit("A")]), "A");
+        // a later copy of nothing leaves the cut text on the clipboard
+        assert_eq!(due_paste("old", &[lit("A"), lit(""), "junk".into()]), "A");
+        assert_eq!(due_paste("old", &[lit("A"), lit("B")]), "B");
+        assert_eq!(due_paste("old", &[lit("")]), "old");
     }
 
     #[test]

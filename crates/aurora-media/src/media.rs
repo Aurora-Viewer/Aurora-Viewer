@@ -168,10 +168,108 @@ pub enum MediaEvent {
     /// line …" (MediaPluginCEF::onConsoleMessageCallback). Page text: to be
     /// parsed, never run.
     ScriptReply(String),
+    /// A paste held behind awaited answers (`paste_after_replies`), due now:
+    /// `clipboard` is what the viewer read at the press, `answers` every
+    /// `ScriptReply` of a script run before it, in order. The page should
+    /// get the last answer that gave text, else `clipboard`.
+    PasteDue {
+        clipboard: String,
+        answers: Vec<String>,
+    },
 }
 
 /// How long `execute_javascript_for_reply` waits for the page's answer.
 const REPLY_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Scripts awaiting their answer, and pastes held behind them, in the
+/// order of the presses: a Paste right after a Cut must paste what the cut
+/// gives, and a second Cut or Copy must not drop the first one's answer.
+#[derive(Debug, Default)]
+struct ReplyQueue {
+    queue: VecDeque<Pending>,
+}
+
+#[derive(Debug)]
+enum Pending {
+    /// `answer` is None until the page answers.
+    Reply {
+        tag: String,
+        until: std::time::Instant,
+        answer: Option<String>,
+    },
+    Paste {
+        clipboard: String,
+        answers: Vec<String>,
+    },
+}
+
+impl ReplyQueue {
+    fn push_reply(&mut self, tag: &str, until: std::time::Instant) {
+        self.queue.push_back(Pending::Reply {
+            tag: tag.to_owned(),
+            until,
+            answer: None,
+        });
+    }
+
+    /// False when nothing is awaited: the caller pastes at once.
+    fn push_paste(&mut self, clipboard: &str) -> bool {
+        if self.queue.is_empty() {
+            return false;
+        }
+        self.queue.push_back(Pending::Paste {
+            clipboard: clipboard.to_owned(),
+            answers: Vec::new(),
+        });
+        true
+    }
+
+    /// Whether a script still awaits its answer (debugging stays on).
+    fn awaiting(&self) -> bool {
+        self.queue.iter().any(|p| matches!(p, Pending::Reply { answer: None, .. }))
+    }
+
+    /// Take a console message as the answer of the script it is tagged
+    /// for; false when it answers none.
+    fn answer(&mut self, debug_text: &str) -> bool {
+        for p in &mut self.queue {
+            if let Pending::Reply {
+                tag,
+                answer: answer @ None,
+                ..
+            } = p
+                && let Some(a) = script_reply(debug_text, tag)
+            {
+                *answer = Some(a.to_owned());
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Hand out, in order, the answers and pastes no earlier script still
+    /// holds back; a script past its wait is dropped unanswered.
+    fn drain(&mut self, now: std::time::Instant, events: &mut Vec<MediaEvent>) {
+        while let Some(front) = self.queue.front() {
+            match front {
+                Pending::Reply { answer: None, until, .. } if now <= *until => break,
+                _ => {}
+            }
+            match self.queue.pop_front() {
+                Some(Pending::Reply { answer: Some(a), .. }) => {
+                    for p in &mut self.queue {
+                        if let Pending::Paste { answers, .. } = p {
+                            answers.push(a.clone());
+                        }
+                    }
+                    events.push(MediaEvent::ScriptReply(a));
+                }
+                Some(Pending::Paste { clipboard, answers }) => events.push(MediaEvent::PasteDue { clipboard, answers }),
+                _ => {}
+            }
+        }
+    }
+}
 
 /// What a console message forwarded as `debug_message` says after `tag`,
 /// when it starts with it: MediaPluginCEF::postDebugMessage writes
@@ -301,9 +399,11 @@ pub struct MediaPlugin {
     stream_volume: Option<crate::stream_volume::StreamVolume>,
     status: MediaStatus,
     events: Vec<MediaEvent>,
-    /// The tag a script's answer starts with, and until when it is awaited
-    /// (`execute_javascript_for_reply`).
-    reply: Option<(String, std::time::Instant)>,
+    /// Scripts awaiting their answer and pastes held behind them
+    /// (`execute_javascript_for_reply`, `paste_after_replies`).
+    replies: ReplyQueue,
+    /// Whether `enable_media_plugin_debugging` was last sent on.
+    debugging: bool,
     failed: bool,
     pub plugin_name: String,
     // media_browser
@@ -415,7 +515,8 @@ impl MediaPlugin {
             stream_volume,
             status: MediaStatus::None,
             events: Vec::new(),
-            reply: None,
+            replies: ReplyQueue::default(),
+            debugging: false,
             failed: false,
             plugin_name: plugin.to_string(),
             location: String::new(),
@@ -522,9 +623,8 @@ impl MediaPlugin {
         for m in self.process.take_messages() {
             self.receive(m);
         }
-        if self.reply.as_ref().is_some_and(|(_, until)| std::time::Instant::now() > *until) {
-            self.end_reply();
-        }
+        self.replies.drain(std::time::Instant::now(), &mut self.events);
+        self.sync_debugging();
         if let Some(response) = self.file_picker.as_ref().and_then(FilePicker::poll) {
             self.file_picker = None;
             self.process.send(&response);
@@ -817,20 +917,31 @@ impl MediaPlugin {
     /// as `debug_message` while debugging is on
     /// (MediaPluginCEF::onConsoleMessageCallback and postDebugMessage,
     /// indra/media_plugins/cef/media_plugin_cef.cpp), so debugging is on
-    /// only from here to the answer, or `REPLY_WAIT` at most. A newer
-    /// request replaces the one awaited. Only the first console message
-    /// that starts with `tag` is an answer: the tag should be unguessable.
+    /// only while an answer is awaited, `REPLY_WAIT` at most for each.
+    /// Every script awaited keeps its own tag, and the answers come out in
+    /// the order of the requests. Only the first console message that
+    /// starts with `tag` is an answer: the tag should be unguessable.
     pub fn execute_javascript_for_reply(&mut self, code: &str, tag: &str) {
-        if self.reply.is_none() {
-            self.send(PluginMessage::new(CLASS_MEDIA, "enable_media_plugin_debugging").with("enable", true));
-        }
-        self.reply = Some((tag.to_owned(), std::time::Instant::now() + REPLY_WAIT));
+        self.replies.push_reply(tag, std::time::Instant::now() + REPLY_WAIT);
+        self.sync_debugging();
         self.execute_javascript(code);
     }
 
-    fn end_reply(&mut self) {
-        self.reply = None;
-        self.send(PluginMessage::new(CLASS_MEDIA, "enable_media_plugin_debugging").with("enable", false));
+    /// A paste of `clipboard` (read at the press) while an answer is still
+    /// awaited: held, and handed back as `MediaEvent::PasteDue` once the
+    /// scripts run before it have answered or timed out, so a Paste right
+    /// after a Cut pastes the cut text. False when nothing is awaited:
+    /// paste now.
+    pub fn paste_after_replies(&mut self, clipboard: &str) -> bool {
+        self.replies.push_paste(clipboard)
+    }
+
+    fn sync_debugging(&mut self) {
+        let on = self.replies.awaiting();
+        if on != self.debugging {
+            self.debugging = on;
+            self.send(PluginMessage::new(CLASS_MEDIA, "enable_media_plugin_debugging").with("enable", on));
+        }
     }
 
     // ------------------------------------------------------------ navigation
@@ -1041,10 +1152,9 @@ impl MediaPlugin {
             }
             "debug_message" => {
                 let text = m.string("message_text");
-                let answer = self.reply.as_ref().and_then(|(tag, _)| script_reply(&text, tag)).map(str::to_owned);
-                if let Some(answer) = answer {
-                    self.end_reply();
-                    self.events.push(MediaEvent::ScriptReply(answer));
+                if self.replies.answer(&text) {
+                    self.replies.drain(std::time::Instant::now(), &mut self.events);
+                    self.sync_debugging();
                 } else {
                     self.events.push(MediaEvent::DebugMessage(text));
                 }
@@ -1219,6 +1329,58 @@ mod tests {
         assert_eq!(script_reply("@Media Msg> Console message: aurora-copy:9999:\"x\"", tag), None);
         assert_eq!(script_reply("@Media Msg> Console message: x aurora-copy:0123:\"x\"", tag), None);
         assert_eq!(script_reply("aurora-copy:0123:\"x\"", tag), None);
+    }
+
+    #[test]
+    fn replies_and_held_pastes_come_out_in_press_order() {
+        let msg = |tag: &str, text: &str| format!("@Media Msg> Console message: {tag}{text}");
+        let now = std::time::Instant::now();
+        let later = now + REPLY_WAIT;
+        let mut q = ReplyQueue::default();
+        let mut ev = Vec::new();
+        // nothing awaited: a paste goes at once
+        assert!(!q.push_paste("old"));
+        // Ctrl+X (a), Ctrl+V, Ctrl+C (b), Ctrl+V: b answers first
+        q.push_reply("a:", later);
+        assert!(q.push_paste("old"));
+        q.push_reply("b:", later);
+        assert!(q.push_paste("old"));
+        assert!(q.awaiting());
+        assert!(q.answer(&msg("b:", "\"B\"")));
+        q.drain(now, &mut ev);
+        assert!(ev.is_empty(), "b waits behind a");
+        assert!(q.awaiting());
+        // a stray message, another tag, or an answer given twice
+        assert!(!q.answer(&msg("c:", "\"C\"")));
+        assert!(!q.answer(&msg("b:", "\"B2\"")));
+        assert!(q.answer(&msg("a:", "\"A\"")));
+        q.drain(now, &mut ev);
+        assert!(!q.awaiting());
+        let clip = |e: &MediaEvent| match e {
+            MediaEvent::ScriptReply(r) => format!("reply {r}"),
+            MediaEvent::PasteDue { clipboard, answers } => format!("paste {clipboard} {answers:?}"),
+            _ => String::new(),
+        };
+        let got: Vec<String> = ev.iter().map(clip).collect();
+        assert_eq!(
+            got,
+            [
+                "reply \"A\"",
+                "paste old [\"\\\"A\\\"\"]",
+                "reply \"B\"",
+                "paste old [\"\\\"A\\\"\", \"\\\"B\\\"\"]",
+            ]
+        );
+        // a script that never answers holds the paste until its wait ends
+        let mut q = ReplyQueue::default();
+        let mut ev = Vec::new();
+        q.push_reply("a:", later);
+        assert!(q.push_paste("old"));
+        q.drain(later, &mut ev);
+        assert!(ev.is_empty());
+        q.drain(later + std::time::Duration::from_millis(1), &mut ev);
+        assert_eq!(ev.iter().map(clip).collect::<Vec<_>>(), ["paste old []"]);
+        assert!(!q.awaiting() && q.queue.is_empty());
     }
 
     #[test]

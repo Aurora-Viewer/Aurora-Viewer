@@ -359,6 +359,10 @@ impl WebView {
                         ui.ctx().copy_text(text);
                     }
                 }
+                MediaEvent::PasteDue { clipboard, answers } => {
+                    use crate::media::keys::{due_paste, paste_script};
+                    p.execute_javascript(&paste_script(&due_paste(&clipboard, &answers)));
+                }
                 MediaEvent::PluginFailed(e) => {
                     log::warn!("web view: browser stopped: {e}");
                     self.failed = Some(e);

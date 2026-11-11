@@ -785,6 +785,9 @@ impl MediaManager {
                             copied = Some(text);
                         }
                     }
+                    MediaEvent::PasteDue { clipboard, answers } => {
+                        p.execute_javascript(&super::keys::paste_script(&super::keys::due_paste(&clipboard, &answers)));
+                    }
                     MediaEvent::PluginFailed(e) => {
                         log::warn!("media: plugin failed for {}: {e}", sanitize(&m.url));
                         m.failed = Some(e);

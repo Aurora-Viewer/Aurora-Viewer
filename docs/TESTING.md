@@ -10109,12 +10109,14 @@ What the inventory must show with these scenarios:
   what the other residents' plates show.
 - **`AURORA_DEMO_MEDIA_CLICK`**: focus click at frame 700 by default,
   second click 60 frames after, optional click on the field 120 frames
-  after, then "aurora" is typed. With `edit`, Ctrl+A, Ctrl+X and, 30
-  frames later, Ctrl+V twice follow (Cmd on macOS): the field reads
+  after, then "aurora" is typed. With `edit`, Ctrl+A, Ctrl+X and Ctrl+V
+  twice follow, two frames apart (Cmd on macOS): the field reads
   "auroraaurora" when the Edit menu shortcuts reach the page and the cut
-  reaches the system clipboard. The clipboard holds "stale" first:
-  "stalestale" means the cut never reached it. Just before the pastes the
-  log has `demo: media clipboard after the cut: Some("aurora")`. With
+  reaches the system clipboard. On Linux the pastes come before the
+  page's answer to the cut and wait for it. The clipboard holds "stale"
+  first: "stalestale" means the pastes did not wait for the cut. At
+  frame 899 the log has
+  `demo: media clipboard after the cut: Some("aurora")`. With
   `paste`, the viewer puts "pasted" on the clipboard, as another program
   would, then presses Ctrl+V: the field reads "aurorapasted" when the page
   gets the system clipboard.

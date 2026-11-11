@@ -13391,9 +13391,10 @@ impl App {
             // the field reads "auroraaurora" when the shortcuts reach the page
             // and the cut reaches the clipboard. The clipboard holds "stale"
             // first: a cut that does nothing leaves "stalestale", not a pass
-            // from an earlier run's clipboard. The pastes wait 30 frames for
-            // the page's answer on Linux (keys::copy_script), and the
-            // clipboard is logged just before them. `paste`: the clipboard
+            // from an earlier run's clipboard. On Linux the pastes come before
+            // the page's answer to the cut (keys::copy_script) and wait for
+            // it, as a quick Ctrl+X, Ctrl+V does; the clipboard is logged at
+            // frame 899, after the answer. `paste`: the clipboard
             // holds "pasted", set by the viewer as another program would,
             // then Ctrl+V, so the field reads "aurorapasted".
             let edit = v.split(',').any(|s| s.trim() == "edit");
@@ -13403,7 +13404,7 @@ impl App {
             }
             // (frame after 870 of the press, key); each release one frame later
             let keys = if edit {
-                &[(0, KeyCode::KeyA), (2, KeyCode::KeyX), (30, KeyCode::KeyV), (32, KeyCode::KeyV)][..]
+                &[(0, KeyCode::KeyA), (2, KeyCode::KeyX), (4, KeyCode::KeyV), (6, KeyCode::KeyV)][..]
             } else if paste {
                 &[(0, KeyCode::KeyV)][..]
             } else {
