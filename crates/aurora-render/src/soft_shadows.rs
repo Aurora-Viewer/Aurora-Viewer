@@ -742,7 +742,11 @@ mod tests {
         let expected = 2.0 * (fov / 2.0).tan() / f64::from(height);
         for z in [0.0_f64, 4096.0] {
             let proj = glam::DMat4::perspective_infinite_reverse_rh(fov, 16.0 / 9.0, 0.1);
-            let view = glam::DMat4::look_at_rh(glam::DVec3::new(10.0, -20.0, z), glam::DVec3::new(10.0, 50.0, z - 5.0), glam::DVec3::Z);
+            let view = glam::DMat4::look_at_rh(
+                glam::DVec3::new(10.0, -20.0, z),
+                glam::DVec3::new(10.0, 50.0, z - 5.0),
+                glam::DVec3::Z,
+            );
             let inverse = (proj * view).inverse().as_mat4();
             let angle = f64::from(pixel_angle(inverse, height));
             assert!((angle / expected - 1.0).abs() < 0.01, "z = {z}: {angle} against {expected}");

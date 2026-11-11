@@ -8160,7 +8160,11 @@ impl Backend {
                     softness: f.shadow_softness,
                     // the TAA accumulates a new pattern each frame (a photo
                     // keeps one, which its tiles share)
-                    phase: if self.taa.is_some() && !photo { (self.frame_index % 16) as u32 } else { 0 },
+                    phase: if self.taa.is_some() && !photo {
+                        (self.frame_index % 16) as u32
+                    } else {
+                        0
+                    },
                     photo,
                     tile: photo_part(f.photo_tile),
                 },
