@@ -28,8 +28,11 @@ const BAND_H: f32 = 24.0;
 const DIST_W: f32 = 58.0;
 const COMPACT_DIST_W: f32 = 46.0;
 const SEEN_W: f32 = 44.0;
-/// Width reserved for Columns › Age on a Near you row (#2999).
-const AGE_W: f32 = 40.0;
+/// Width reserved for Columns › Age on a Near you row (#2999): the cake
+/// and up to five digits.
+const AGE_W: f32 = 52.0;
+/// Space between the cake and the age figure.
+const AGE_ICON_GAP: f32 = 3.0;
 /// Height of the toolbar (search, density, options).
 const TOOLBAR_H: f32 = 30.0;
 /// Width of the sheet, and the width the list keeps beside it: a window
@@ -162,6 +165,19 @@ fn age_text(row: &Row, settings: &RadarSettings) -> Option<(String, bool)> {
             Some((format!("{days}"), young))
         }
     }
+}
+
+/// The age figure in `cell`, against its right edge, after the cake of
+/// Columns › Age: the Legacy table names the figure with its "Age" header,
+/// the Aurora rows have none, so the icon says what the number is. Its
+/// colour follows the figure (red under the age alert).
+fn paint_age(ui: &egui::Ui, p: &Palette, cell: Rect, text: String, young: bool, size: f32) {
+    let color = if young { p.danger } else { p.muted };
+    let galley = ui.painter().layout_no_wrap(text, FontId::proportional(size), color);
+    let left = cell.right() - galley.size().x;
+    let icon = Rect::from_center_size(Pos2::new(left - AGE_ICON_GAP - size / 2.0, cell.center().y), Vec2::splat(size));
+    radar::icon(ui, Column::Age.icon(), icon, size, color);
+    crate::ui::widgets::paint_row_text(ui.painter(), galley, left, cell.center().y, color);
 }
 
 /// A semi-bold text format (the mock-up's weight 600).
@@ -888,10 +904,7 @@ fn paint_rich(
         crate::ui::widgets::paint_row_text(ui.painter(), galley, left, dist.center().y, color);
     }
     if let (Some(age), Some((text, young))) = (end.age, age_text(row, data.settings)) {
-        let color = if young { p.danger } else { p.muted };
-        let galley = ui.painter().layout_no_wrap(text, FontId::proportional(12.0), color);
-        let left = age.right() - galley.size().x;
-        crate::ui::widgets::paint_row_text(ui.painter(), galley, left, age.center().y, color);
+        paint_age(ui, p, age, text, young, 12.0);
     }
     if let Some(seen) = end.seen {
         let galley = ui
@@ -992,10 +1005,7 @@ fn paint_compact(
         crate::ui::widgets::paint_row_text(ui.painter(), galley, left, dist.center().y, color);
     }
     if let (Some(age), Some((text, young))) = (end.age, age_text(row, data.settings)) {
-        let color = if young { p.danger } else { p.muted };
-        let galley = ui.painter().layout_no_wrap(text, FontId::proportional(11.0), color);
-        let left = age.right() - galley.size().x;
-        crate::ui::widgets::paint_row_text(ui.painter(), galley, left, age.center().y, color);
+        paint_age(ui, p, age, text, young, 11.0);
     }
     let width = (end.names_right - left).max(0.0);
     let name_color = if data.settings.color_names {
