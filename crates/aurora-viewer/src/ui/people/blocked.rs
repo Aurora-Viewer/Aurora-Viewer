@@ -1,4 +1,4 @@
-//! People › Blocked in Aurora's look (the People mock-up v2): the block
+//! People â€º Blocked in Aurora's look (the People mock-up v2): the block
 //! list (LLPanelBlockedList, panel_block_list_sidetray.xml, LLMuteList) as
 //! rows, what is blocked of each in pills (everything, or voice, text,
 //! particles, object sounds), each pill a click away from changing it as
@@ -105,7 +105,7 @@ pub(super) fn tab(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi) {
             }
         });
         let w = ui.available_width();
-        widgets::search_box(ui, p, &mut st.filter, aurora_i18n::tr!("people-filter-short"), w);
+        widgets::clearable_search_box(ui, p, &mut st.filter, aurora_i18n::tr!("people-filter-short"), w);
     });
     ui.add_space(7.0);
     let filter = st.filter.trim().to_lowercase();
@@ -150,6 +150,11 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, m: &Mute, all: &[Mute]
     let p = c.p;
     let id = row_id(m);
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), RICH_H), Sense::click());
+    widgets::reveal_search_selection(
+        ui,
+        &resp,
+        st.anchor.filter(|id| st.sel.contains(id)).or_else(|| st.sel.last().copied()) == Some(id),
+    );
     if !ui.is_rect_visible(rect) {
         return;
     }

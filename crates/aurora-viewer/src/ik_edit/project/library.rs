@@ -482,7 +482,7 @@ impl Editor {
         }
         self.project_recovery_ui(ui, p);
         self.object_data_ui(ui, p, world);
-        self.project_import_ui(ui, world);
+        self.project_import_ui(ui, p, world);
         if let Some(message) = &self.project.message {
             ui.add(egui::Label::new(message).truncate()).on_hover_text(message);
         }

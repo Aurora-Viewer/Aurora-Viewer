@@ -109,12 +109,13 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
     if frame == 2 {
         // "-no-details": the same width, the details hidden
         let size = match mode.strip_suffix("-no-details").unwrap_or(mode) {
-            "aurora-medium" | "aurora-sidebar-medium" | "aurora-worn-medium" => egui::vec2(800.0, 640.0),
+            "aurora-medium" | "aurora-sidebar-medium" | "aurora-worn-medium" | "aurora-delete-confirm-medium" => egui::vec2(800.0, 640.0),
             "aurora-wide"
             | "aurora-worn-wide"
             | "aurora-sidebar-wide"
             | "aurora-smart-wide"
             | "aurora-keyboard-wide"
+            | "aurora-delete-confirm-wide"
             | "aurora-rights"
             | "aurora-columns"
             | "aurora-columns-hidden"
@@ -154,7 +155,7 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
 
 /// The count after the title: the number alone at the narrow width.
 pub fn item_count(inv: &Inventory, layout: Layout) -> String {
-    let count = inv.item_count();
+    let count = inv.total_count();
     let number = aurora_i18n::integer(count as i64);
     if layout == Layout::Compact {
         number
@@ -529,6 +530,26 @@ fn explorer_list(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inventory_total_is_shared_by_every_title_width() {
+        let mut inv = Inventory {
+            root: Uuid::from_u128(1),
+            ..Default::default()
+        };
+        inv.created_folders(vec![aurora_net::inventory::InvFolder {
+            id: inv.root,
+            ..Default::default()
+        }]);
+        let number = aurora_i18n::integer(1);
+        assert_eq!(item_count(&inv, Layout::Compact), number);
+        for layout in [Layout::Medium, Layout::Wide] {
+            assert_eq!(
+                item_count(&inv, layout),
+                aurora_i18n::tr!("inventory-items-count", count = 1, number = number.clone())
+            );
+        }
+    }
 
     #[test]
     fn the_window_widens_into_the_explorer_then_the_details() {
