@@ -113,6 +113,11 @@ pub struct DestinationsUi {
     loaded: String,
     pub aurora: aurora::AuroraState,
     pub guide: DestinationGuide,
+    /// Aurora's window was shown last frame: an opening takes the saved view.
+    was_open: bool,
+    /// The view of a demo run (AURORA_DEMO_DESTINATIONS=compact|wide), in
+    /// place of the saved one, which it leaves as it is.
+    pub demo_wide: Option<bool>,
 }
 
 /// The look the window was last shown in (persisted): the two looks have
@@ -141,7 +146,9 @@ impl DestinationsUi {
         self.web.process_id()
     }
 
-    /// `native`: Aurora's window, None for the guide's page.
+    /// `native`: Aurora's window, None for the guide's page. `wide`: the
+    /// saved view of Aurora's window (`destinations_wide`), which it opens
+    /// in and which follows the view chosen.
     pub fn show(
         &mut self,
         ctx: &egui::Context,
@@ -149,6 +156,7 @@ impl DestinationsUi {
         open: &mut bool,
         env: &GuideWeb,
         native: Option<&Native>,
+        wide: &mut bool,
     ) -> Option<aurora::Action> {
         // nothing is asked while the window is closed or shows the page
         self.guide.poll(
@@ -165,30 +173,49 @@ impl DestinationsUi {
                 self.web = WebView::default();
                 self.loaded.clear();
             }
+            let opening = !std::mem::replace(&mut self.was_open, *open);
             if !*open {
                 return None;
             }
-            return self.show_native(ctx, p, open, &native.env);
+            let mut demo = self.demo_wide;
+            let wide = demo.as_mut().unwrap_or(wide);
+            let action = self.show_native(ctx, p, open, &native.env, wide, opening);
+            self.demo_wide = self.demo_wide.and(demo);
+            return action;
         }
+        self.was_open = false;
         self.show_web(ctx, p, open, env);
         None
     }
 
-    fn show_native(&mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, env: &aurora::Env) -> Option<aurora::Action> {
+    fn show_native(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        open: &mut bool,
+        env: &aurora::Env,
+        saved: &mut bool,
+        opening: bool,
+    ) -> Option<aurora::Action> {
         let work = super::layout::work_area(ctx);
         let room = work.size() - Vec2::splat(2.0 * super::layout::GAP);
         let size = aurora::COMPACT_SIZE.min(room).max(aurora::MIN_SIZE);
-        if last_look(ctx, true) {
-            widgets::size_floater(ctx, WINDOW, size);
+        let wide_size = Vec2::new(aurora::WIDE_SIZE.x.min(room.x), aurora::WIDE_SIZE.y.min(room.y).max(size.y));
+        let last = egui::AreaState::load(ctx, egui::Id::unique(WINDOW)).and_then(|state| state.size);
+        let measured = last.map(|s| s.x - widgets::floater_chrome(ctx).x >= aurora::WIDE);
+        // the window opens in the view chosen last (wide the first time:
+        // its default size), whatever size the remembered layout kept; a
+        // size given on purpose this frame (a demo's placement) stays
+        let placed = ctx.data_mut(|d| d.get_temp::<bool>(egui::Id::unique(WINDOW).with("restore_size")));
+        let synced = last_look(ctx, true) || (opening && placed != Some(true) && measured.is_some_and(|wide| wide != *saved));
+        if synced {
+            widgets::size_floater(ctx, WINDOW, if *saved { wide_size } else { size });
         }
-        let default = Rect::from_min_size((work.center() - size * 0.5).round(), size);
+        let first = if *saved { wide_size } else { size };
+        let default = Rect::from_min_size((work.center() - first * 0.5).round(), first);
         // the title bar follows the width the window had last frame
-        let height = egui::AreaState::load(ctx, egui::Id::unique(WINDOW))
-            .and_then(|state| state.size)
-            .map_or(size.y, |s| s.y);
-        let wide = egui::AreaState::load(ctx, egui::Id::unique(WINDOW))
-            .and_then(|state| state.size)
-            .is_some_and(|s| s.x - widgets::floater_chrome(ctx).x >= aurora::WIDE);
+        let height = last.map_or(first.y, |s| s.y);
+        let wide = if synced { *saved } else { measured.unwrap_or(*saved) };
         let (mut widen, mut reduce) = (false, false);
         let mut floater = Floater::new(
             WINDOW,
@@ -217,10 +244,16 @@ impl DestinationsUi {
             ui.allocate_rect(body, egui::Sense::hover());
         });
         if widen {
-            widgets::size_floater(ctx, WINDOW, Vec2::new(aurora::WIDE_SIZE.x.min(room.x), height.max(size.y)));
+            widgets::size_floater(ctx, WINDOW, Vec2::new(wide_size.x, height.max(size.y)));
+            *saved = true;
         }
         if reduce {
             widgets::size_floater(ctx, WINDOW, Vec2::new(size.x, height));
+            *saved = false;
+        }
+        // an edge dragged across the widening point chooses that view too
+        if let Some(resized) = widgets::take_floater_resize(ctx, WINDOW) {
+            *saved = resized.x - widgets::floater_chrome(ctx).x >= aurora::WIDE;
         }
         action
     }
@@ -357,9 +390,108 @@ mod tests {
                     cookie: None,
                     url: None,
                 };
-                ui.show(ctx, p, &mut true, &env, None);
+                ui.show(ctx, p, &mut true, &env, None, &mut true);
             },
         );
+    }
+
+    /// Aurora's window on the made-up guide, open or not, in the saved view
+    /// `wide`.
+    fn show_aurora(ui: &mut DestinationsUi, ctx: &egui::Context, p: &Palette, open: bool, wide: &mut bool) {
+        let browser = aurora_media::BrowserSettings::default();
+        let history = crate::demo::destinations::history();
+        let env = GuideWeb {
+            paths: None,
+            browser: &browser,
+            cookie: None,
+            url: Some("https://guide.example.invalid/"),
+        };
+        let native = Native {
+            source: Source::Demo(crate::demo::destinations::Fixture::Full),
+            runtime: None,
+            env: aurora::Env {
+                history: &history,
+                access: aurora_net::search::AgentAccess { max: 42, preferred: 42 },
+                here: Some("Lantern Isle"),
+            },
+        };
+        ui.show(ctx, p, &mut { open }, &env, Some(&native), wide);
+    }
+
+    /// Whether the window is drawn in its wide view.
+    fn drawn_wide(ctx: &egui::Context) -> bool {
+        let rect = ctx.memory(|m| m.area_rect(egui::Id::unique(WINDOW))).expect("the window is shown");
+        rect.width() - widgets::floater_chrome(ctx).x >= aurora::WIDE
+    }
+
+    #[test]
+    fn aurora_window_opens_wide_then_in_the_last_view() {
+        use crate::ui::widgets::elide_tests::Frames;
+        let p = crate::theme::Theme::default().palette();
+        let new_frames = || {
+            let frames = Frames::new();
+            crate::theme::Theme::default().apply(&frames.ctx, 1.0);
+            crate::ui::fonts::apply(&frames.ctx, crate::ui::fonts::DEFAULT);
+            frames
+        };
+        // the first opening: wide
+        let mut wide = crate::settings::Settings::default().destinations_wide;
+        assert!(wide, "a new user's window opens wide");
+        let mut frames = new_frames();
+        let mut ui = DestinationsUi::default();
+        for _ in 0..3 {
+            frames.run(Vec::new(), |u| show_aurora(&mut ui, u.ctx(), &p, true, &mut wide));
+        }
+        assert!(drawn_wide(&frames.ctx));
+        // made compact by its edge: that view is the saved one
+        let compact = aurora::COMPACT_SIZE;
+        widgets::size_floater(&frames.ctx, WINDOW, compact);
+        frames
+            .ctx
+            .data_mut(|d| d.insert_temp(egui::Id::unique(WINDOW).with("floater_resized"), compact));
+        for _ in 0..3 {
+            frames.run(Vec::new(), |u| show_aurora(&mut ui, u.ctx(), &p, true, &mut wide));
+        }
+        assert!(!wide, "the compact view chosen is saved");
+        assert!(!drawn_wide(&frames.ctx));
+        // closed, then reopened: still compact
+        for open in [false, false, true, true, true] {
+            frames.run(Vec::new(), |u| show_aurora(&mut ui, u.ctx(), &p, open, &mut wide));
+        }
+        assert!(!wide);
+        assert!(!drawn_wide(&frames.ctx));
+        // after a restart, from the saved setting alone: compact, and wide
+        // once the saved view is wide again
+        for saved in [false, true] {
+            let mut wide = saved;
+            let mut frames = new_frames();
+            let mut ui = DestinationsUi::default();
+            for _ in 0..3 {
+                frames.run(Vec::new(), |u| show_aurora(&mut ui, u.ctx(), &p, true, &mut wide));
+            }
+            assert_eq!(wide, saved);
+            assert_eq!(drawn_wide(&frames.ctx), saved, "saved wide: {saved}");
+        }
+        // a layout that kept the compact size gives way to a saved wide view
+        let mut wide = true;
+        for open in [false, false, true, true, true] {
+            frames.run(Vec::new(), |u| show_aurora(&mut ui, u.ctx(), &p, open, &mut wide));
+        }
+        assert!(wide);
+        assert!(drawn_wide(&frames.ctx));
+    }
+
+    #[test]
+    fn the_saved_view_survives_a_restart() {
+        let mut settings = crate::settings::Settings::default();
+        assert!(settings.destinations_wide);
+        settings.destinations_wide = false;
+        let text = serde_json::to_string(&settings).expect("settings serialize");
+        let back: crate::settings::Settings = serde_json::from_str(&text).expect("settings read back");
+        assert!(!back.destinations_wide);
+        // a file written before the setting existed: wide
+        let old: crate::settings::Settings = serde_json::from_str("{}").expect("an empty file reads");
+        assert!(old.destinations_wide);
     }
 
     #[test]
@@ -388,7 +520,10 @@ mod tests {
                     },
                 };
                 ui.aurora.demo_open = true;
-                ui.show(ctx, p, &mut true, &env, Some(&native));
+                // the saved view is the one the window was placed in
+                let placed = ctx.data_mut(|d| d.get_persisted::<Vec2>(egui::Id::unique(WINDOW).with("expanded_size")));
+                let mut wide = placed.is_some_and(|s| s.x - widgets::floater_chrome(ctx).x >= aurora::WIDE);
+                ui.show(ctx, p, &mut true, &env, Some(&native), &mut wide);
             },
         );
     }

@@ -8850,10 +8850,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Destinations window (Preferences › Aurora › Destinations, the default)
   opens at start on a guide made up offline (`demo_destinations.rs`: 11
   categories, 13 invented places with plain pictures drawn by the viewer,
-  read by the real feed's parser; no network). `compact`: the window as it
-  opens (440 wide), the first visited place opened in its row; `wide`: the
-  same widened (1120), a rail of categories with counts, three columns of
-  cards and the preview of a place. Check in both: What's Hot Now first
+  read by the real feed's parser; no network). The window opens wide the
+  first time, then in the view chosen last (`destinations_wide`, saved);
+  the two modes force their view for the run without changing the saved
+  one. `compact`: the compact view (440 wide), the first visited place
+  opened in its row; `wide`: the wide view (1120), a rail of categories
+  with counts, three columns of cards and the preview of a place. Check in both: What's Hot Now first
   (7 places, by population), the G / M / A toggles (A off by default; a
   rating above the account's is not offered), the order menu (population,
   name, newest), the search (it covers every category: "saiko" lists two
@@ -8863,7 +8865,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   and its refresh button. Teleport, Show on map, About Land and Copy SLurl
   act as for any place link; Create landmark and Add to favorites are
   dimmed with a tooltip outside the place's region. The widen / compact
-  button of the title bar switches the two layouts; "Hide visited places"
+  button of the title bar (or the window's edge dragged across the
+  widening point) switches the two layouts; "Hide visited places"
   is in the wide toolbar only. `empty`: a guide with categories and no
   place ("No place with these filters."). `legacy`: the Legacy style for
   this run, the guide's web page (below). When the window closes, the log

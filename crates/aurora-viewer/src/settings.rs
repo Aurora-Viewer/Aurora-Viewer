@@ -1286,6 +1286,9 @@ pub struct Settings {
     pub places_sort: PlacesSort,
     /// The Destinations window's look.
     pub destinations_style: DestinationsStyle,
+    /// Aurora's Destinations window in its wide view (rail, cards and
+    /// preview): the first time, then the last view chosen.
+    pub destinations_wide: bool,
     pub invert_mouse: bool,
     /// Aurora extension: allow the left/right mouse chord on land and objects
     /// without a click action, in addition to our avatar. Off by default.
@@ -2277,6 +2280,7 @@ impl Default for Settings {
             classic_places: false,
             places_sort: PlacesSort::Visit,
             destinations_style: DestinationsStyle::Aurora,
+            destinations_wide: true,
             invert_mouse: false,
             arrows_strafe: false,
             world_mouse_walk: false,

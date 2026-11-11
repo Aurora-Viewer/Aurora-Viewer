@@ -17895,6 +17895,7 @@ impl App {
                         here: self.world.main().map(|r| r.name.as_str()),
                     },
                 });
+                let mut wide = self.settings.destinations_wide;
                 let landmark = self.destinations_ui.show(
                     &ctx,
                     &p,
@@ -17906,7 +17907,12 @@ impl App {
                         url: guide.as_deref(),
                     },
                     native.as_ref(),
+                    &mut wide,
                 );
+                if wide != self.settings.destinations_wide {
+                    self.settings.destinations_wide = wide;
+                    self.settings.save();
+                }
                 self.toolbar_ui.destinations = guide.is_some() || feed.is_some();
                 if let Some(ui::destinations::aurora::Action::Landmark { favorite }) = landmark {
                     // LLFloaterCreateLandmark, in Favorites for the star
@@ -19244,10 +19250,13 @@ impl ApplicationHandler for App {
                 self.panels.destinations = true;
                 self.panels.perf = false;
                 match crate::demo::destinations::mode() {
-                    Some(Mode::Compact) => self.destinations_ui.aurora.demo_open = true,
+                    Some(Mode::Compact) => {
+                        self.destinations_ui.aurora.demo_open = true;
+                        self.destinations_ui.demo_wide = Some(false);
+                    }
                     Some(Mode::Wide) => {
                         self.destinations_ui.aurora.demo_open = true;
-                        ui::widgets::size_floater(&self.egui_ctx, ui::destinations::WINDOW, ui::destinations::aurora::WIDE_SIZE);
+                        self.destinations_ui.demo_wide = Some(true);
                     }
                     _ => {}
                 }
