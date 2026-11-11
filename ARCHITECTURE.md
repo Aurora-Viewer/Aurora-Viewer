@@ -2576,6 +2576,10 @@ on closing and provides `AURORA_DEMO_SHAPE`.
 a worker after its native dialog and sets the weights the edited wearable carries
 (`ShapeParams::wearable_range`) in the shape, physics or layer draft; the three
 editors share its Import button through `ui/shape.rs::name_row`.
+`shape_editor/xml_export.rs` writes the draft back to that format (every
+parameter of the wearable's type, `ShapeParams::wearable_params`, no id) after
+the native save dialog, on a worker; its Export button, next to Import, needs
+modify rights (`actions::appearance_xml_export_allowed`).
 `shape_editor/camera.rs` frames the posed skeleton by category (whole body,
 head, torso or legs), using the existing camera transition.
 

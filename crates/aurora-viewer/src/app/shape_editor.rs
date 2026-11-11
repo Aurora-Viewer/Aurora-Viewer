@@ -248,6 +248,21 @@ impl App {
         {
             self.shape_ui.xml.start_file(&self.egui_ctx, draft, path.into());
         }
+        // AURORA_DEMO_SHAPE_XML_EXPORT=<file>: the Export button's path without
+        // its dialog, under the same permission rule (`readonly` refuses it).
+        if let Ok(path) = std::env::var("AURORA_DEMO_SHAPE_XML_EXPORT")
+            && let Some(draft) = &self.shape_ui.draft
+        {
+            let allowed = draft.can_export_xml(&self.world);
+            let lad = &self.world.avatar_lib.shape_params;
+            if let Err(message) = self
+                .shape_ui
+                .xml_export
+                .start_file(&self.egui_ctx, draft, allowed, lad, path.into())
+            {
+                self.shape_ui.message = message;
+            }
+        }
         self.focus_shape_category();
         if mode == "mesh-drag" {
             self.shape_ui.demo_drag = Some(std::time::Instant::now());
