@@ -942,6 +942,9 @@ pub struct Settings {
     pub flash_on_object_im: bool,
     /// Flash for a script dialog (FSFlashOnScriptDialog, off).
     pub flash_on_script_dialog: bool,
+    /// How many script dialogs an object keeps open (ScriptDialogLimitations,
+    /// one per channel; `world/script_dialog_limit.rs`).
+    pub script_dialog_limit: crate::world::script_dialog_limit::Limit,
     /// Windows notifications for messages, mentions, offers and alerts
     /// while the window is not in front (FSEnableGrowl, off).
     pub system_notifications: bool,
@@ -2146,6 +2149,7 @@ impl Default for Settings {
             flash_on_message: true,
             flash_on_object_im: true,
             flash_on_script_dialog: false,
+            script_dialog_limit: crate::world::script_dialog_limit::Limit::PerChannel,
             system_notifications: false,
             system_notifications_when_active: false,
             chat_toast_seconds: 20.0,

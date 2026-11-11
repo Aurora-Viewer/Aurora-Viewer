@@ -94,6 +94,7 @@ pub mod rig_graph;
 pub mod rig_targets;
 pub mod rlva;
 pub mod script_debug;
+pub mod script_dialog_limit;
 pub mod search;
 pub mod sim_console;
 pub mod social;
@@ -395,6 +396,10 @@ pub struct World {
     /// announcement (FSAnnounceIncomingIM, `im_announce.rs`), given every
     /// frame by the app.
     pub announce_incoming_im: bool,
+    /// How many script dialogs an object keeps open (Preferences › Chat ›
+    /// Notifications, `script_dialog_limit.rs`), given every frame by the
+    /// app through `set_script_dialog_limit`.
+    script_dialog_limit: Option<script_dialog_limit::Limit>,
     /// Fly override (the Legacy Viewer's FSAlwaysFly, read by LLAgent::canFly
     /// in indra/newview/llagent.cpp): the parcel's and the region's no-fly
     /// no longer stop a takeoff nor land the avatar. Never saved, off at
@@ -836,6 +841,7 @@ impl World {
             chat_badge: 0,
             quiet_automated_chat: false,
             announce_incoming_im: false,
+            script_dialog_limit: None,
             fly_override: false,
             notice_topics: Default::default(),
             chat_log: Default::default(),
@@ -3369,6 +3375,12 @@ impl World {
                 // the menu keeps the name for blocking; the card shows it on one line
                 let (object_name, owner_name) = (dialog_names::shown(&object_name).into_owned(), self.dialog_owner(&owner_name));
                 let title = format!("{object_name} ({owner_name})");
+                // the older prompt this one replaces closes, with no reply
+                // (LLScriptFloaterManager::onAddNotification)
+                let rule =
+                    script_dialog_limit::replaces(self.script_dialog_limit.unwrap_or_default(), self.script_dialog_source(&object_id));
+                self.notifications
+                    .close_script_prompts(|old, old_channel| script_dialog_limit::replaced(rule, (old, old_channel), (object_id, channel)));
                 let id = self.notifications.push(notifications::Kind::Script, title, message, data);
                 self.link_object_notification(id, object_id, &object_name, &owner_name);
                 // LLScriptFloater ("script_floater") opening
@@ -4869,6 +4881,29 @@ impl World {
             name
         };
         dialog_names::shown(name).into_owned()
+    }
+
+    /// Preferences › Chat › Notifications' "Script dialogs per object". A
+    /// change closes every open script dialog and text box without an
+    /// answer, as the Legacy Viewer's commit signal on
+    /// ScriptDialogLimitations (LLScriptFloaterManager::clearScriptNotifications);
+    /// the first value given is only taken.
+    pub fn set_script_dialog_limit(&mut self, limit: script_dialog_limit::Limit) {
+        if self.script_dialog_limit.replace(limit).is_some_and(|was| was != limit) {
+            self.notifications.close_script_prompts(|_, _| true);
+        }
+    }
+
+    /// Where the object of a script dialog is, for its limit: the Legacy
+    /// Viewer's getAttachmentItemID and isHUDAttachment, read on its
+    /// linkset (`script_dialog_limit.rs`); an object not in view is in world.
+    fn script_dialog_source(&self, object: &Uuid) -> script_dialog_limit::Source {
+        use script_dialog_limit::Source;
+        match self.objects.index_of_uuid(object).map(|idx| crate::build::select_type(self, idx)) {
+            Some(crate::build::SelectType::Hud) => Source::Hud,
+            Some(crate::build::SelectType::Attachment) => Source::Attachment,
+            Some(crate::build::SelectType::World) | None => Source::InWorld,
+        }
     }
 
     fn link_object_notification(&mut self, id: u64, object: Uuid, name: &str, owner_name: &str) {
@@ -7718,6 +7753,95 @@ mod motion_tests {
         let there = here + (256u64 << 32);
         world.ensure_region(there, (256, 256));
         (world, avatar, worn, here, there)
+    }
+
+    /// ScriptDialogLimitations by where the object is
+    /// (LLScriptFloaterManager::onAddNotification): a worn prim keeps one
+    /// dialog per channel under "for attachments", an object in world one
+    /// in all; "for HUDs" limits a body attachment per object, a HUD per
+    /// channel; a change of the limit closes every prompt.
+    #[test]
+    fn script_dialog_limit_tells_worn_objects_and_closes_on_change() {
+        use script_dialog_limit::Limit;
+        let (mut world, _, worn, here, _) = worn_fixture();
+        let mut hud = worn.clone();
+        hud.local_id = worn.local_id + 1;
+        hud.full_id = Uuid::from_u128(0xBEEF1);
+        // attachment point 31, nibbles swapped (LLViewerObject's state)
+        hud.state = 0xF1;
+        world.apply(NetEvent::ObjectUpdates {
+            handle: here,
+            objects: vec![hud.clone()],
+        });
+        let in_world = Uuid::from_u128(0x4321);
+        let dialog = |object_id, channel| NetEvent::ScriptDialog {
+            sender: ([127, 0, 0, 1], 13000).into(),
+            object_id,
+            object_name: "Menu".into(),
+            owner_name: "Owner".into(),
+            owner_id: Uuid::nil(),
+            message: "Choose".into(),
+            channel,
+            buttons: vec!["OK".into()],
+        };
+        let open = |world: &World, of: Uuid| {
+            world
+                .notifications
+                .list
+                .iter()
+                .filter(|n| matches!(n.data, notifications::Data::Dialog { object, .. } if object == of))
+                .count()
+        };
+        world.set_script_dialog_limit(Limit::PerChannelForAttachments);
+        for object in [worn.full_id, hud.full_id, in_world] {
+            world.apply(dialog(object, 1));
+            world.apply(dialog(object, 2));
+            world.apply(dialog(object, 2));
+        }
+        assert_eq!(open(&world, worn.full_id), 2);
+        assert_eq!(open(&world, hud.full_id), 2);
+        assert_eq!(open(&world, in_world), 1);
+        world.set_script_dialog_limit(Limit::PerChannelForHuds);
+        assert!(
+            world
+                .notifications
+                .list
+                .iter()
+                .all(|n| !matches!(n.data, notifications::Data::Dialog { .. }))
+        );
+        for object in [worn.full_id, hud.full_id] {
+            world.apply(dialog(object, 1));
+            world.apply(dialog(object, 2));
+        }
+        assert_eq!(open(&world, worn.full_id), 1);
+        assert_eq!(open(&world, hud.full_id), 2);
+        // the same value again closes nothing
+        world.set_script_dialog_limit(Limit::PerChannelForHuds);
+        assert_eq!(open(&world, hud.full_id), 2);
+        world.set_script_dialog_limit(Limit::UnlimitedForHuds);
+        for _ in 0..3 {
+            world.apply(dialog(hud.full_id, 1));
+            world.apply(dialog(worn.full_id, 1));
+        }
+        assert_eq!(open(&world, hud.full_id), 3);
+        assert_eq!(open(&world, worn.full_id), 1);
+        // an llTextBox is a script dialog too: one per channel replaces it
+        world.set_script_dialog_limit(Limit::PerChannel);
+        let mut text_box = dialog(in_world, 7);
+        if let NetEvent::ScriptDialog { buttons, .. } = &mut text_box {
+            *buttons = vec!["!!llTextBox!!".into()];
+        }
+        world.apply(text_box);
+        world.apply(dialog(in_world, 8));
+        world.apply(dialog(in_world, 7));
+        assert!(
+            world
+                .notifications
+                .list
+                .iter()
+                .all(|n| !matches!(n.data, notifications::Data::TextBox { .. }))
+        );
+        assert_eq!(open(&world, in_world), 2);
     }
 
     /// Another viewer's typing notices make the avatar type, without its
