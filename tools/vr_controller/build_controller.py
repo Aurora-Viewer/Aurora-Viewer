@@ -206,9 +206,10 @@ def build(s):
     parts.append(
         (FACE, mesh_part(s, "stick_well", lambda bm: dome(bm, stick_at - stick_n * 0.0006, stick_n, 0.0115, 0.0012, 32, 4)))
     )
+    # A/X nearer the hand, B/Y towards the front (as on the controllers)
     for part, x, y, radius in [
-        (PRIMARY, 0.015, HEAD.y + 0.012, 0.0055),
-        (SECONDARY, 0.013, HEAD.y - 0.006, 0.0055),
+        (SECONDARY, 0.015, HEAD.y + 0.012, 0.0055),
+        (PRIMARY, 0.013, HEAD.y - 0.006, 0.0055),
         (MENU, 0.004, HEAD.y - 0.021, 0.0034),
     ]:
         at, n = surface_on(plate, x, y)

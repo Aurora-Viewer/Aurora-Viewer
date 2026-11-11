@@ -65,6 +65,7 @@ impl Session {
         queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
         control: std::sync::Arc<crate::vr_control::Control>,
+        resolution_percent: u32,
     ) -> Result<Self> {
         #[cfg(not(target_os = "macos"))]
         let (session, waiter, stream) = {
@@ -119,13 +120,26 @@ impl Session {
         if views.len() != 2 {
             return Err("Expected stereo views".into());
         }
-        let width = views
+        // the runtime's recommended size scaled by the VR resolution option,
+        // both sides alike (the projection keeps the pixels square), within
+        // what the runtime allows and 4096
+        let recommended = views
             .iter()
-            .map(|v| v.recommended_image_rect_width)
+            .map(|v| (v.recommended_image_rect_width, v.recommended_image_rect_height))
             .max()
-            .ok_or("No views")?
-            .min(1600);
-        let height = views
+            .ok_or("No views")?;
+        let most = views
+            .iter()
+            .map(|v| (v.max_image_rect_width, v.max_image_rect_height))
+            .min()
+            .ok_or("No views")?;
+        let (width, height) = eye_size(recommended, most, resolution_percent);
+        log::info!(
+            "XR world: eyes of {width} x {height} ({resolution_percent}% of the recommended {} x {})",
+            recommended.0,
+            recommended.1
+        );
+        let _ = views
             .iter()
             .map(|v| v.recommended_image_rect_height)
             .max()
@@ -544,6 +558,22 @@ impl Drop for Session {
         self.images.clear();
     }
 }
+/// The eye images' size: the recommended one scaled by `percent`, the
+/// same factor on both sides, no larger than the runtime's maximum nor 4096.
+fn eye_size(recommended: (u32, u32), most: (u32, u32), percent: u32) -> (u32, u32) {
+    let scale = percent.clamp(50, 150) as f32 / 100.0;
+    let (w, h) = (recommended.0 as f32 * scale, recommended.1 as f32 * scale);
+    let fit = [
+        most.0 as f32 / w.max(1.0),
+        most.1 as f32 / h.max(1.0),
+        4096.0 / w.max(h).max(1.0),
+        1.0,
+    ]
+    .into_iter()
+    .fold(f32::INFINITY, f32::min);
+    (((w * fit).round() as u32).max(1), ((h * fit).round() as u32).max(1))
+}
+
 /// The runtime's image format code for an eye format.
 #[cfg(not(target_os = "macos"))]
 fn raw_format(format: wgpu::TextureFormat) -> Result<u32> {

@@ -320,6 +320,9 @@ pub struct VrSettings {
     pub gestures: bool,
     /// While the VR camera is out, the desktop window shows its view.
     pub camera_on_desktop: bool,
+    /// The headset's eye images, percent of the size the runtime
+    /// recommends (50..150; read when VR starts).
+    pub resolution_percent: u32,
     /// Local chat on a small panel above the left hand, while it is raised
     /// and looked at.
     pub wrist_chat: bool,
@@ -394,6 +397,7 @@ impl Default for VrSettings {
             teleport_when_allowed: false,
             gestures: true,
             camera_on_desktop: true,
+            resolution_percent: 100,
             wrist_chat: true,
             panel_follows: true,
             exposure: 0.0,

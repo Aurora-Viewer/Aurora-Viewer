@@ -446,6 +446,15 @@ pub struct App {
     vr_trigger_down: bool,
     /// The pointing hand's grip held (sit on what the beam is on, or stand up).
     vr_grip_down: bool,
+    /// The locomotion before camera-only was chosen on the wrist, for going
+    /// back to it.
+    vr_locomotion_before: Option<crate::camera::VrLocomotion>,
+    /// The minimap shown beside the wrist in VR (the toolbar's Map), and its
+    /// panel this frame.
+    vr_minimap: bool,
+    vr_map_panel: Option<aurora_render::VrPanel>,
+    /// Sending on the microphone, as last heard in VR (a sound on each change).
+    vr_mic_state: Option<bool>,
     /// The right-click pie open in VR, floating at this point of the world,
     /// and its panel this frame (for the beam).
     vr_pie: Option<Vec3>,
@@ -456,9 +465,8 @@ pub struct App {
     /// The last notification seen in VR: a script's menu (the blue dialog)
     /// arriving after it opens the panel, to answer it.
     vr_dialog_seen: u64,
-    /// The VR camera, while it is out, and the other hand's grip held.
+    /// The VR camera, while it is out.
     vr_photo_camera: Option<vr_ui::VrPhotoCamera>,
-    vr_off_grip_down: bool,
     /// Asked from the VR toolbar or the wrist: open the panel, close it,
     /// recentre (done where the renderer is at hand).
     vr_open_panel: bool,
@@ -1658,12 +1666,15 @@ impl App {
             vr_avatar_position: None,
             vr_trigger_down: false,
             vr_grip_down: false,
+            vr_locomotion_before: None,
+            vr_minimap: false,
+            vr_map_panel: None,
+            vr_mic_state: None,
             vr_pie: None,
             vr_menu_panel: None,
             vr_third_person: false,
             vr_dialog_seen: 0,
             vr_photo_camera: None,
-            vr_off_grip_down: false,
             vr_open_panel: false,
             vr_close_panel: false,
             vr_recenter_request: false,
@@ -5638,6 +5649,15 @@ impl App {
     /// Plays an interface sound when the settings allow it (make_ui_sound /
     /// find_ui_sound: its play flag, its asset, the "Interface sounds"
     /// switch).
+    /// An interface sound whatever its own switch and the interface sounds'
+    /// (VR's cues, which the headset has no other way to give).
+    pub(super) fn play_ui_sound_forced(&mut self, s: UiSound) {
+        if let Some(id) = self.settings.audio.ui.resolve(s, true) {
+            self.scene.sounds.want_kept(id);
+            self.scene.sounds.play_ui(self.audio_engine.as_ref(), id);
+        }
+    }
+
     fn play_ui_sound(&mut self, s: UiSound) {
         if !self.settings.audio.ui_sounds {
             return;
@@ -11029,9 +11049,12 @@ impl App {
             let overlays = self.settings.world_overlays;
             self.scene
                 .update_land_overlays(&mut gfx.renderer, &self.world, overlays, &self.palette);
+            // in VR's third person and camera-only views the whole avatar
+            // shows, its head included
+            let vr_whole = gfx.renderer.vr_engaged()
+                && (self.vr_third_person || self.settings.camera.vr.locomotion == crate::camera::VrLocomotion::CameraOnly);
             self.scene.set_first_person(
-                self.camera
-                    .first_person_view()
+                (self.camera.first_person_view() && !vr_whole)
                     .then_some(self.settings.camera.show_avatar_in_mouselook || gfx.renderer.vr_engaged()),
             );
             self.scene.update_portal_clipping(&mut gfx.renderer, &self.world);
@@ -16159,7 +16182,7 @@ impl App {
             .interface
             // (the VR interface panel shows the whole interface, though VR is
             // mouselook underneath)
-            .follow_mouselook(&ctx, mouselook, self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some() || self.vr_pie.is_some())
+            .follow_mouselook(&ctx, mouselook, self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some() || self.vr_pie.is_some() || self.vr_minimap)
             .is_some()
         {
             self.chat_ui.let_keyboard_go();
@@ -16684,7 +16707,7 @@ impl App {
                 let chrome = self.interface.bars(&ui::interface::Frame {
                     classic: classic_bars,
                     mouselook: self.camera.mouselook(),
-                    show_in_mouselook: self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some() || self.vr_pie.is_some(),
+                    show_in_mouselook: self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some() || self.vr_pie.is_some() || self.vr_minimap,
                     chat_active: self.chat_ui.in_use(),
                     // AURORA_DEMO_BARS=peek: the pointer at the top edge
                     pointer: if demo_hidden == Some(true) {
@@ -16899,7 +16922,7 @@ impl App {
                     &ui::interface::Frame {
                         classic: classic_bars,
                         mouselook: self.camera.mouselook(),
-                        show_in_mouselook: self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some() || self.vr_pie.is_some(),
+                        show_in_mouselook: self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some() || self.vr_pie.is_some() || self.vr_minimap,
                         chat_active: false,
                         // AURORA_DEMO_BARS=peekleft: the pointer at the left edge
                         pointer: if self.demo && ui::bars::demo::get().peek_left {
@@ -17157,7 +17180,10 @@ impl App {
                     });
                 }
                 let vr_active = ctx.data(|data| data.get_temp::<bool>(egui::Id::unique("vr-active")).unwrap_or(false));
-                if vr_active {
+                // (not while the interface is in the headset: the panel shows
+                // this image, and the hint would sit over the bottom bar)
+                let in_headset = self.vr_panel.is_some() || self.vr_pie.is_some() || self.vr_wrist_at.is_some();
+                if vr_active && !in_headset {
                     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("vr-exit-hint")));
                     aurora_render::vr_hint_marker(&painter, true);
                     let text = aurora_i18n::tr!("app-vr-leave", key = aurora_i18n::tr!("keybinds-esc").to_string());

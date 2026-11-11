@@ -6081,7 +6081,15 @@ impl Backend {
             };
             let created = (|| -> Result<XrWorld, Box<dyn std::error::Error>> {
                 let session =
-                    crate::xr_frame::Session::new(runtime, *system, &self.device, &self.queue, self.config.format, self.vr.clone())?;
+                    crate::xr_frame::Session::new(
+                        runtime,
+                        *system,
+                        &self.device,
+                        &self.queue,
+                        self.config.format,
+                        self.vr.clone(),
+                        packet.settings.vr_resolution_percent,
+                    )?;
                 let mut init = (**seed).clone();
                 init.external = true;
                 init.xr = None;
@@ -6155,6 +6163,7 @@ impl Backend {
         let tip = self.vr.tip();
         let wrist = self.vr.wrist();
         let menu = self.vr.menu();
+        let map = self.vr.map();
         let mirror_ui = packet.ui.take().map(|mut ui| {
             for (id, deltas) in &ui.textures_delta.set {
                 for delta in deltas.iter() {
@@ -6165,7 +6174,7 @@ impl Backend {
                 self.egui.free_texture(id);
             }
             ui.textures_delta.clear();
-            if panel.is_none() && tip.is_none() && wrist.is_none() && menu.is_none() {
+            if panel.is_none() && tip.is_none() && wrist.is_none() && menu.is_none() && map.is_none() {
                 ui.retain_vr_hint();
             }
             ui.tessellate()
@@ -6335,12 +6344,12 @@ impl Backend {
             .picture
             .apply(&self.device, &self.queue, [&eyes.textures[0], &eyes.textures[1]], self.vr.display());
         let eye_views = [0, 1].map(|i| eyes.cameras[i].projection * eyes.cameras[i].view);
-        if (panel.is_some() || tip.is_some() || wrist.is_some() || menu.is_some())
+        if (panel.is_some() || tip.is_some() || wrist.is_some() || menu.is_some() || map.is_some())
             && let Some(ui) = &mirror_ui
         {
             let huds = world.backends[0].xr_hud_image();
             world.panel.paint(&self.device, &self.queue, &mut self.egui, ui, mirror_size, huds);
-            for shown in [panel, tip, wrist, menu].into_iter().flatten() {
+            for shown in [panel, tip, wrist, menu, map].into_iter().flatten() {
                 world.panel.draw(
                     &self.device,
                     &self.queue,

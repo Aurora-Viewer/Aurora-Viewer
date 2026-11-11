@@ -263,6 +263,9 @@ pub(crate) fn build(input: &VrInputState, pointer: VrPointer, out: &mut Vec<Vert
             );
         }
     }
+    if let Some(on) = pointer.mic {
+        mic_badge(input, on, out);
+    }
     if let Some(b) = pointer.outline {
         outline(b, out);
     }
@@ -338,6 +341,33 @@ fn outline(b: crate::VrBox, out: &mut Vec<Vertex>) {
 fn shade(normal: Vec3, color: Vec3) -> Vec3 {
     let light = Vec3::new(0.3, 0.2, 0.93).normalize();
     color * (0.55 + 0.45 * normal.dot(light).max(0.0))
+}
+
+/// The microphone's badge, fixed in the lower left of the view: green while
+/// sending, white while not. A capsule, its holder, stand and base, facing
+/// the head.
+fn mic_badge(input: &VrInputState, on: bool, out: &mut Vec<Vertex>) {
+    let Some(forward) = input.head_forward.try_normalize() else { return };
+    if !input.head_position.is_finite() {
+        return;
+    }
+    let right = forward.cross(Vec3::Z).try_normalize().unwrap_or(Vec3::Y);
+    let up = right.cross(forward).normalize();
+    let centre = input.head_position + forward * 0.6 - right * 0.2 - up * 0.17;
+    let colour = if on { Vec3::new(0.25, 1.0, 0.4) } else { Vec3::splat(0.92) }.extend(1.0);
+    // rectangles in the badge's plane (x right, y up, metres)
+    let rects = [
+        (-0.006, 0.006, 0.0, 0.022),    // the capsule
+        (-0.011, -0.009, 0.003, 0.014), // the holder's sides
+        (0.009, 0.011, 0.003, 0.014),
+        (-0.011, 0.011, 0.001, 0.003), // its bottom
+        (-0.001, 0.001, -0.007, 0.001), // the stand
+        (-0.006, 0.006, -0.009, -0.007), // the base
+    ];
+    for (x0, x1, y0, y1) in rects {
+        let at = |x: f32, y: f32| centre + right * x + up * y;
+        push_quad(out, [at(x0, y1), at(x1, y1), at(x1, y0), at(x0, y0)], [colour; 4]);
+    }
 }
 
 fn push_quad(out: &mut Vec<Vertex>, corners: [Vec3; 4], colors: [Vec4; 4]) {

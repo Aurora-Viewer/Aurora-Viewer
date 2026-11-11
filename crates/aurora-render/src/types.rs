@@ -1067,6 +1067,9 @@ pub enum AoMethod {
 pub struct RenderSettings {
     /// Percentage of the window resolution used by the world; UI stays native.
     pub render_scale_percent: u32,
+    /// The headset's eye images, percent of the size its runtime recommends
+    /// (read when VR starts).
+    pub vr_resolution_percent: u32,
     pub water_effects: crate::WaterEffects,
     pub aa: AntiAliasing,
     /// With FSR: RCAS's strength (0..1), none without RCAS.
@@ -1117,6 +1120,7 @@ impl Default for RenderSettings {
     fn default() -> Self {
         RenderSettings {
             render_scale_percent: 100,
+            vr_resolution_percent: 100,
             water_effects: crate::WaterEffects::default(),
             // the state `Renderer::new` builds its pipelines and targets
             // for, not the viewer's default (SMAA, in its own settings)

@@ -3273,6 +3273,7 @@ impl Settings {
         water_effects.particle_budget = self.max_particles;
         aurora_render::RenderSettings {
             render_scale_percent: self.render_scale_percent.clamp(50, 100),
+            vr_resolution_percent: self.camera.vr.resolution_percent.clamp(50, 150),
             water_effects,
             aa: match self.antialiasing {
                 0 => AntiAliasing::None,

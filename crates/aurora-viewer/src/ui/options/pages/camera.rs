@@ -308,6 +308,13 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-camera-vr-gestures-help"),
                     &field!(camera.vr.gestures),
                 );
+                cx.slider(
+                    tr!("ui-options-camera-vr-resolution"),
+                    tr!("ui-options-camera-vr-resolution-help"),
+                    &field!(camera.vr.resolution_percent),
+                    50..=150,
+                    " %",
+                );
                 cx.toggle(
                     tr!("ui-options-camera-vr-camera-on-desktop"),
                     tr!("ui-options-camera-vr-camera-on-desktop-help"),
@@ -431,6 +438,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     (tr!("ui-vr-control-x"), tr!("ui-vr-control-x-action")),
                     (tr!("ui-vr-control-y"), tr!("ui-vr-control-y-action")),
                     (tr!("ui-vr-control-wrist"), tr!("ui-vr-control-wrist-action")),
+                    (tr!("ui-vr-control-right-wrist"), tr!("ui-vr-control-right-wrist-action")),
                     (tr!("ui-vr-control-camera"), tr!("ui-vr-control-camera-action")),
                     (tr!("ui-vr-control-gestures"), tr!("ui-vr-control-gestures-action")),
                 ] {

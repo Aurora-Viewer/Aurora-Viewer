@@ -60,8 +60,7 @@ pub(super) struct VrPhotoCamera {
 /// The camera's view, the viewfinder's half size (metres) and how near the
 /// hand must be to pick the camera up again.
 const CAMERA_FOV: f32 = 60.0 * std::f32::consts::PI / 180.0;
-const VIEWFINDER_HALF: (f32, f32) = (0.08, 0.045);
-const CAMERA_REACH: f32 = 0.3;
+const VIEWFINDER_HALF: (f32, f32) = (0.16, 0.09);
 
 /// An object carried by the hand in VR, with the build tools open: its
 /// root's place and turn in the hand's frame when it was taken.
@@ -114,6 +113,8 @@ impl App {
             renderer.set_vr_panel(None);
             renderer.set_vr_wrist(None);
             renderer.set_vr_menu(None);
+            renderer.set_vr_map(None);
+            self.vr_map_panel = None;
             self.vr_pie = None;
             self.vr_menu_panel = None;
             return;
@@ -143,6 +144,19 @@ impl App {
             })
         });
         renderer.set_vr_menu(self.vr_menu_panel);
+        // the microphone heard: one sound as it comes on, another as it
+        // goes off (its badge in the view shows which)
+        let sending = self.vr_mic_light();
+        if let (Some(before), Some(now)) = (self.vr_mic_state, sending)
+            && before != now
+        {
+            self.play_ui_sound_forced(if now {
+                crate::ui_sound::UiSound::MicToggle
+            } else {
+                crate::ui_sound::UiSound::PieMenuHide
+            });
+        }
+        self.vr_mic_state = sending;
         // a script's menu or text box just came: the panel opens on it
         let seen = self.vr_dialog_seen;
         if self.world.notifications.list.iter().any(|n| {
@@ -228,6 +242,31 @@ impl App {
         });
         self.vr_wrist_panel = wrist;
         renderer.set_vr_wrist(wrist);
+        // the minimap (the toolbar's Map) on the right wrist: above the right
+        // hand while it is raised and looked at (the left hand's beam works it)
+        let camera_in_right = self.vr_photo_camera.as_ref().is_some_and(|c| c.held)
+            && self.settings.camera.vr.dominant_hand == crate::camera::VrHand::Left;
+        let raised = (self.vr_minimap && self.vr_panel.is_none() && !camera_in_right)
+            .then(|| wrist_point(input.head_position, input.head_forward, &input.right))
+            .flatten();
+        let map = raised.and_then(|at| {
+            let part = self.egui_ctx.memory(|m| m.area_rect(egui::Id::unique("minimap")))?.intersect(rect);
+            if part.width() < 1.0 || part.height() < 1.0 {
+                return None;
+            }
+            let half = WRIST_WIDTH * 0.5;
+            let half_height = half * part.height() / part.width();
+            let forward = (at - input.head_position).with_z(0.0).normalize_or(Vec3::X);
+            let side = forward.cross(Vec3::Z).normalize_or(Vec3::Y);
+            Some(aurora_render::VrPanel {
+                center: at + Vec3::Z * half_height,
+                right: side * half,
+                up: Vec3::Z * half_height,
+                uv: image_part(part, rect),
+            })
+        });
+        self.vr_map_panel = map;
+        renderer.set_vr_map(map);
     }
 
     /// Where the beam meets the interface in VR: the panel or the wrist's
@@ -235,7 +274,10 @@ impl App {
     /// it is on (0..1).
     pub(super) fn vr_ui_hit(&self, ray: (Vec3, Vec3)) -> Option<(f32, f32, f32)> {
         let mut nearest: Option<(f32, f32, f32)> = None;
-        for panel in [self.vr_menu_panel, self.vr_panel, self.vr_wrist_panel].into_iter().flatten() {
+        for panel in [self.vr_menu_panel, self.vr_panel, self.vr_wrist_panel, self.vr_map_panel]
+            .into_iter()
+            .flatten()
+        {
             if let Some((t, u, v)) = panel.hit(ray.0, ray.1)
                 && nearest.is_none_or(|(near, _, _)| t < near)
             {
@@ -433,6 +475,11 @@ impl App {
         }
         let camera_out = self.vr_photo_camera.is_some();
         let (mut camera, mut dictate, mut calibrate, mut recenter, mut close) = (false, false, false, false, false);
+        let (mut place, mut mic) = (false, false);
+        let mut map = false;
+        let map_on = self.vr_minimap;
+        let held = self.vr_photo_camera.as_ref().map(|c| c.held);
+        let mic_on = self.mic_on;
         let mut person = false;
         let third = self.vr_third_person;
         egui::Area::new(egui::Id::unique("vr-toolbar"))
@@ -452,6 +499,23 @@ impl App {
                         camera = ui
                             .add(egui::Button::new(aurora_i18n::tr!("ui-vr-toolbar-camera")).selected(camera_out).min_size(size))
                             .clicked();
+                        if let Some(held) = held {
+                            let text = if held {
+                                aurora_i18n::tr!("ui-vr-toolbar-camera-set-down")
+                            } else {
+                                aurora_i18n::tr!("ui-vr-toolbar-camera-take")
+                            };
+                            place = ui.add(egui::Button::new(text).min_size(size)).clicked();
+                        }
+                        let mic_text = if mic_on {
+                            aurora_i18n::tr!("ui-vr-toolbar-mic-on")
+                        } else {
+                            aurora_i18n::tr!("ui-vr-toolbar-mic-off")
+                        };
+                        mic = ui.add(egui::Button::new(mic_text).selected(mic_on).min_size(size)).clicked();
+                        map = ui
+                            .add(egui::Button::new(aurora_i18n::tr!("ui-vr-toolbar-map")).selected(map_on).min_size(size))
+                            .clicked();
                         dictate = ui.add(egui::Button::new(aurora_i18n::tr!("ui-vr-toolbar-dictate")).min_size(size)).clicked();
                         calibrate = ui.add(egui::Button::new(aurora_i18n::tr!("ui-vr-toolbar-calibrate")).min_size(size)).clicked();
                         recenter = ui.add(egui::Button::new(aurora_i18n::tr!("ui-vr-toolbar-recenter")).min_size(size)).clicked();
@@ -470,6 +534,19 @@ impl App {
                     rotation: glam::Quat::IDENTITY,
                 })
             };
+        }
+        if place && let Some(camera) = &mut self.vr_photo_camera {
+            camera.held = !camera.held;
+        }
+        if mic && self.in_world() {
+            self.toggle_mic();
+        }
+        if map {
+            self.vr_minimap = !map_on;
+            // the minimap window itself, which the wrist shows
+            if self.vr_minimap {
+                self.panels.minimap = true;
+            }
         }
         if dictate {
             self.vr_dictate(ctx);
@@ -520,10 +597,10 @@ impl App {
         self.world.system_message(aurora_i18n::tr!("vr-dictate-windows-only"));
     }
 
-    /// The VR camera each frame: it follows the other hand while held; that
-    /// hand's grip sets it down, or picks it up within reach; its trigger
-    /// takes a photo (saved as the photo window's "to disk"). The camera's
-    /// view and viewfinder go to the render worker.
+    /// The VR camera each frame: it follows the other hand while held, or
+    /// stays where the toolbar set it down; that hand's trigger takes a
+    /// photo (saved as the photo window's "to disk"). The camera's view and
+    /// viewfinder go to the render worker.
     pub(super) fn vr_camera_step(
         &mut self,
         renderer: &Renderer,
@@ -532,20 +609,11 @@ impl App {
         shutter: bool,
         settings: &crate::camera::VrSettings,
     ) {
-        let grip_down = crate::vr::trigger_held(self.vr_off_grip_down, hand.grip);
-        let grip = grip_down && !self.vr_off_grip_down;
-        self.vr_off_grip_down = grip_down;
+        // (the grip stays free: a hand resting on it must not drop the camera)
         let Some(camera) = &mut self.vr_photo_camera else {
             renderer.set_vr_camera(None);
             return;
         };
-        if grip && hand.active {
-            if camera.held {
-                camera.held = false;
-            } else if camera.position.distance(hand.position) < CAMERA_REACH {
-                camera.held = true;
-            }
-        }
         if camera.held && hand.active {
             camera.rotation = hand.orientation.normalize();
             camera.position = hand.position + camera.rotation * Vec3::new(0.0, 0.03, -0.04);
@@ -564,9 +632,9 @@ impl App {
             up,
             fov_y: CAMERA_FOV,
             desktop: settings.camera_on_desktop,
-            // the screen on the camera's back, facing whoever holds it
+            // the screen above the camera's back, facing whoever holds it
             viewfinder: Some(aurora_render::VrPanel {
-                center: position - forward * 0.01 + up * 0.02,
+                center: position - forward * 0.02 + up * (VIEWFINDER_HALF.1 + 0.06),
                 right: right * VIEWFINDER_HALF.0,
                 up: up * VIEWFINDER_HALF.1,
                 uv: aurora_render::VrPanel::WHOLE,
@@ -646,6 +714,10 @@ impl App {
         let mut picked: Option<Option<uuid::Uuid>> = None;
         let mut reply = false;
         let current = self.vr_wrist_tab;
+        // the view's switches: first or third person, camera only
+        let (mut person, mut camera_only) = (false, false);
+        let third = self.vr_third_person;
+        let only = self.settings.camera.vr.locomotion == crate::camera::VrLocomotion::CameraOnly;
         let shown = egui::Area::new(egui::Id::unique("vr-wrist-chat"))
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(12.0, -12.0))
@@ -669,14 +741,38 @@ impl App {
                         ui.add(egui::Label::new(line.as_str()).wrap());
                     }
                     ui.separator();
-                    if ui.button(aurora_i18n::tr!("ui-vr-wrist-reply")).clicked() {
-                        reply = true;
-                    }
+                    ui.horizontal(|ui| {
+                        if ui.button(aurora_i18n::tr!("ui-vr-wrist-reply")).clicked() {
+                            reply = true;
+                        }
+                        let view = if third {
+                            aurora_i18n::tr!("ui-vr-toolbar-third-person")
+                        } else {
+                            aurora_i18n::tr!("ui-vr-toolbar-first-person")
+                        };
+                        person = ui.button(view).clicked();
+                        camera_only = ui
+                            .add(egui::Button::new(aurora_i18n::tr!("ui-vr-wrist-camera-only")).selected(only))
+                            .clicked();
+                    });
                 });
             });
         self.vr_wrist_rect = Some(shown.response.rect);
         if let Some(tab) = picked {
             self.vr_wrist_tab = tab;
+        }
+        if person {
+            self.vr_third_person = !third;
+        }
+        if camera_only {
+            let vr = &mut self.settings.camera.vr;
+            if only {
+                vr.locomotion = self.vr_locomotion_before.take().unwrap_or_default();
+            } else {
+                self.vr_locomotion_before = Some(vr.locomotion);
+                vr.locomotion = crate::camera::VrLocomotion::CameraOnly;
+            }
+            self.settings.save();
         }
         // reply: the panel opens, on the conversation for a message tab
         if reply {
