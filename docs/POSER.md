@@ -122,8 +122,9 @@ The pose captures the displayed shaped skeleton and overrides its final
 animation palette. Body, Face, Hands, Other bones and Physics expose the
 actual Bento joints and collision volumes. The whole avatar (its pelvis, the
 skeleton's root) is the first Body row, "Avatar (pelvis)": it stays selected
-in Rotation, Position and Scale, so the avatar can be turned as well as moved. Each joint pair has one row: the **Side** selector above the
-list (Left / Right / Mirror) chooses which one is edited, and Mirror is the
+in Rotation, Position and Scale, so the avatar can be turned as well as
+moved. Each joint pair has one row: the **Side** selector above the list
+(Left / Right / Mirror) chooses which one is edited, and Mirror is the
 symmetry (the left joint is edited and its counterpart follows). A joint
 picked in the world shows its side in the selector. The Hands tab has the
 five presets, applied to the chosen side (both in Mirror, in one undo step),
