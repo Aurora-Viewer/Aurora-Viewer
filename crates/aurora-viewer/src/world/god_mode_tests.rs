@@ -43,3 +43,24 @@ fn a_god_manages_the_estate_of_a_region_it_does_not_own() {
     w.apply(NetEvent::GodLevel(225));
     assert!(manages(&w));
 }
+
+#[test]
+fn a_god_gets_the_estate_entries_outside_its_estate() {
+    let mut w = World::new(Arc::new(AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        w.apply(event);
+    }
+    let handle = w.main_region.expect("demo region");
+    let info = w.regions.get_mut(&handle).and_then(|r| r.info.as_mut()).expect("region info");
+    let info = Arc::make_mut(info);
+    info.owner = Uuid::from_u128(0xE57A7E);
+    info.is_estate_manager = false;
+    let estate = |w: &World| {
+        let place = w.moderation_place(handle, Vec3::new(128.0, 128.0, 20.0), None).expect("place");
+        land_moderation::rights(&place, &w.moderation_agent()).estate
+    };
+    assert!(!estate(&w));
+    // LLAvatarActions::canEstateKickOrTeleportHomeMultiple: gods can always kick
+    w.apply(NetEvent::GodLevel(200));
+    assert!(estate(&w));
+}
