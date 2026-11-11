@@ -179,6 +179,7 @@ const BEFORE: &[&str] = &[
     "inventory.recent_hours",
     "inventory.show_worn",
     "inventory.show_favorites",
+    "inventory.favorites_show_parent_folders",
     "inventory.search_trash",
     "inventory.search_library",
     "inventory.search_outfits",
@@ -187,6 +188,7 @@ const BEFORE: &[&str] = &[
     "inventory.double_click_add_clothes",
     "inventory.warn_task_move",
     "inventory.warn_scripted_task_move",
+    "inventory.confirm_delete",
     // Fonts
     "font",
     "font_scale",
@@ -394,8 +396,9 @@ fn a_setting_has_one_page() {
     for (page, path) in &paths {
         // the push-to-talk keys: Sound and voice and Shortcuts, as before;
         // the colored sky ambient: Graphics, and Aurora with the other
-        // differences from the Legacy Viewer
-        if path == "keybinds" || path == "colored_sky_ambient" {
+        // differences from the Legacy Viewer;
+        // inventory delete confirm: Confirmations and Inventory (#2344)
+        if path == "keybinds" || path == "colored_sky_ambient" || path == "inventory.confirm_delete" {
             continue;
         }
         let elsewhere: Vec<_> = paths

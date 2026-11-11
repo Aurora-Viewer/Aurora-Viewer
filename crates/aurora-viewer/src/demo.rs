@@ -1114,8 +1114,14 @@ pub fn gifs_scenario() -> Option<Gifs> {
     })
 }
 
-/// AURORA_DEMO_RECENT_EMOJIS=1|<emojis>: the row under the chat fields, the
-/// given emojis or a full row; unset, it starts empty as a new account's.
+/// Whether `AURORA_DEMO_RECENT_EMOJIS` is set: the row is shown then.
+pub fn recent_emojis_on() -> bool {
+    std::env::var_os("AURORA_DEMO_RECENT_EMOJIS").is_some()
+}
+
+/// AURORA_DEMO_RECENT_EMOJIS=1|<emojis>: the row by the chat fields, the
+/// given emojis or a full row, shown even though Preferences › Chat keeps it
+/// off by default; unset, it starts empty as a new account's.
 pub fn recent_emojis() -> String {
     match std::env::var("AURORA_DEMO_RECENT_EMOJIS") {
         Ok(v) if v.trim() == "1" => "🌟🐱🍕🎶🌈☕🤔😎🥳😍👏😢🙏🎉😅🔥👍❤😭😂".to_owned(),
@@ -1247,7 +1253,8 @@ pub fn bubbles_events() -> Vec<NetEvent> {
 /// one resident, an emote, an object's line, a long line with a link, a
 /// shout. `legacy` shows them as the Legacy Viewer's lines for the session
 /// (nothing is saved). An optional `:0` through `:50` overrides the maximum
-/// wrapped text lines for this demo. Some(true) for `legacy`.
+/// wrapped text lines for this demo. Some(true) for `legacy`. `stagger` and
+/// `legacy:stagger` say them one at a time (`chat_lines_due`).
 pub fn chat_lines_scenario() -> Option<bool> {
     let mode = std::env::var("AURORA_DEMO_CHAT_LINES").ok()?;
     match mode.split(':').next()? {
@@ -1255,6 +1262,37 @@ pub fn chat_lines_scenario() -> Option<bool> {
         "" | "0" => None,
         _ => Some(false),
     }
+}
+
+/// `AURORA_DEMO_CHAT_LINES=stagger|legacy:stagger`: the lines are said one
+/// at a time instead of at the arrival.
+fn chat_lines_stagger() -> bool {
+    std::env::var("AURORA_DEMO_CHAT_LINES").is_ok_and(|mode| mode.ends_with("stagger"))
+}
+
+/// `AURORA_DEMO_CHAT_LINES=stagger`: the scenario's next line now due, once:
+/// one every 2 s from 3 s after the first look in world, so that each
+/// leaves on its own at the end of its fade, as in a busy region (#2544:
+/// the others moved for a frame). Asked every frame in world.
+pub fn chat_lines_due() -> Option<NetEvent> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static SAID: AtomicUsize = AtomicUsize::new(0);
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    if chat_lines_scenario().is_none() || !chat_lines_stagger() {
+        return None;
+    }
+    let secs = START.get_or_init(std::time::Instant::now).elapsed().as_secs_f64();
+    if secs < 3.0 {
+        return None;
+    }
+    let due = ((secs - 3.0) / 2.0) as usize + 1;
+    let said = SAID.load(Ordering::Relaxed);
+    if said >= due {
+        return None;
+    }
+    let line = chat_lines_said().into_iter().nth(said)?;
+    SAID.store(said + 1, Ordering::Relaxed);
+    Some(line)
 }
 
 pub fn chat_lines_limit() -> Option<u32> {
@@ -1272,6 +1310,14 @@ pub fn chat_volume_comparison() -> bool {
 }
 
 pub fn chat_lines_events() -> Vec<NetEvent> {
+    if chat_lines_stagger() {
+        return Vec::new();
+    }
+    chat_lines_said()
+}
+
+/// The lines of `AURORA_DEMO_CHAT_LINES`, in the order they are said.
+fn chat_lines_said() -> Vec<NetEvent> {
     let object = Uuid::from_u128(0xC4A7_0000_0000_0000_0000_0000_0000_0001);
     let nova = aurora_i18n::tr!("demo-nova-example");
     let orion = aurora_i18n::tr!("demo-orion-example");

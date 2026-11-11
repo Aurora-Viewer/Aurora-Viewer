@@ -337,6 +337,9 @@ impl App {
             None
         };
         self.world.agent.step_prediction(intent, rtt, dt, now);
+        if self.input.stop {
+            self.world.agent.prediction.brake();
+        }
         self.world.constrain_agent_lead();
         // a local start or stop waits this long for the simulator's signal
         self.world

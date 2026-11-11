@@ -381,7 +381,7 @@ impl Scene {
             || g.rigged
             || g.owner_avatar.is_some()
             || g.parcel_hidden
-            || g.photo_hidden
+            || g.hidden
             || super::plants::plant_face(o).is_some()
         {
             return None;
