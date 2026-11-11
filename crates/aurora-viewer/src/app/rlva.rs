@@ -225,6 +225,14 @@ impl App {
                     "@setcam_focus:{};4;0/-1/0=force,setcam_fovmin:0.6=n,setcam_fovmax:0.9=n",
                     crate::demo::DEMO_LOUP
                 )
+            } else if let Some(limit) = scenario.strip_prefix("camera-zoom-") {
+                // the camera starts 7.6 m from the focus point
+                self.panels.settings = false;
+                if limit == "max" {
+                    "@setcam_origindistmax:8=n".to_owned()
+                } else {
+                    "@setcam_origindistmin:6=n".to_owned()
+                }
             } else if scenario == "rename" {
                 self.settings.rlva.shared_wear = false;
                 self.settings.rlva.auto_rename = true;
@@ -411,6 +419,26 @@ impl App {
                 self.world.rlva.has("unsit"),
                 self.world.rlva.has("sendchat")
             );
+        }
+        if let Some(limit) = mode.strip_prefix("camera-zoom-") {
+            // five wheel clicks past the distance limit, then one back
+            let out = if limit == "max" { 1.0 } else { -1.0 };
+            let clicks = match self.frame_count {
+                n @ 740..=788 if n % 12 == 8 => out,
+                810 => -out,
+                _ => 0.0,
+            };
+            if clicks != 0.0 {
+                self.camera
+                    .scroll(clicks, false, false, &mut self.world.agent, &mut self.settings.camera);
+            }
+            if matches!(self.frame_count, 800 | 840) {
+                log::info!(
+                    "RLVa demo: {mode}, frame {}, camera to focus {:.3} m",
+                    self.frame_count,
+                    self.camera.position.distance(self.camera.target)
+                );
+            }
         }
         if mode == "sitting" && self.frame_count == 740 {
             self.rlva_demo_message("@sitground=force".to_owned());
