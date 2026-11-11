@@ -26,6 +26,98 @@ Consent); Privacy › "Who can ask to pose my avatar" is its last entry. Other s
 Several subjects can retain independent poses at once. Eligibility is
 checked every frame; losing it removes the corresponding local pose.
 
+### Compact window
+
+The poser opens in the full window described above, as the Legacy
+Viewer's. A small window is an Aurora addition: the title bar's ⤡ button
+switches to it, and ⤢ back; the choice is remembered, and the other window
+opens with the same top right corner. Both windows share the subject, the
+pose, the undo history, the joints selected together and the settings.
+With joints selected together (Shift + click on their markers), the
+selected joint's row is followed by "+ n joints move with it" and Only
+this one; Reset acts on all of them, as in the full window.
+
+- **Head**: the subject's picture, name and state (a teal dot that breathes
+  while posing). The picture opens the subject menu. Every other avatar
+  posed, or who accepted, has a small picture at the right (a "+n" past
+  four): a click poses that one.
+- **Groups**: Body, Face, Hands, Other and Physics in one segmented strip.
+- **Transform, depth of field and side**: Rotation / Position / Scale, the
+  depth of field switch, then Left / Right / Mirror.
+- **Selected joint**: a disclosure row with its name (a violet dot when it
+  is edited) and its values (X · Y · Z). Opened, it shows Fine-tune:
+  Handles Show / Hide, Values Total / Change, and an X, Y and Z slider,
+  the full window's.
+- **Last row**, three groups of one kind each: picking (markers Always or
+  On hover, Ctrl + click body parts, Ctrl + click avatars), going back
+  (undo, redo, reset) and files (Save, Load, Upload). The reset greys out
+  when it would change nothing; its tip names the joint; with Shift it
+  resets the whole pose. Save is a small form: the name, BVH, pelvis,
+  priority, Save to the library, and Save as… (the file chosen in the
+  system dialog). Load lists the library, with the load mode in a submenu
+  and Open file.
+- **Start / Stop**, alone across the window under the last row.
+- **Options** (the title bar's gear): only the settings the window does not
+  show itself: stop posing when the window closes (and the question before
+  losing the pose, shown while it is on), natural rotation, and the
+  question before replacing a pose. The full window's settings hold them
+  all.
+
+Posing in the compact window goes through the markers and gizmos in the
+world, and the Fine-tune sliders; the joint list and the trackball are in
+the full window.
+
+**Other parts with Ctrl** (Ctrl + click body parts on): holding Ctrl over a
+part that another group governs (a hand while posing the Body) tints it in
+the accent, with "Ctrl + click: Hands" by the cursor, and Ctrl + click
+selects its nearest joint and opens its group. Without Ctrl nothing shows
+and the click stays the world's (in the photo mode, a plain click on the
+face still sets the focus, and a Ctrl + click on a part stays the
+poser's instead of passing to the world). The body is one part, drawn
+without the head (the face's oval shows it, and a Ctrl over the head does
+not offer the body), a hand reaches its
+wrist, the face is an oval that follows the head, and the wings and the
+tail are offered only when a worn rigged mesh uses them.
+
+The subject menu (both windows) uses the People list's rows: the picture,
+the name over the account name, and the distance at the right in Near
+you's colours. A nearby avatar's square button reads Ask, Asked (a click
+cancels), Accepted (a click poses them), Refused or No answer.
+
+**Markers on hover** (Settings › Handling, and the compact window's eye /
+hand button): the joints and shafts fade in while the pointer is over the
+avatar being posed, and out when it leaves; the selected joint's gizmo
+stays, and a drag keeps them.
+
+**Clicks in the world**, in both windows (Aurora's own: the Legacy Viewer
+changes joint from its list only): a click that no joint, shaft or gizmo
+takes unselects the joint, and the pelvis is not picked again by itself (a
+click a worn HUD takes leaves it selected); Ctrl + click on another avatar
+posed, or who accepted, poses that one at once (with Ctrl held, their
+skeleton shows under the pointer). A plain click on them stays the
+world's: a photo's focus, a HUD drawn over them.
+
+**The Other tab** lists only the bones a worn rigged mesh uses or the pose
+moved (Aurora's own: the Legacy Viewer lists them all). The bones inside the
+body (the spine, the groin, the skull) are left to the full window's list,
+even used, posed there with the sliders and the trackball, with no markers
+nor handles in the world: the spine's are collapsed pairs whose markers sit
+upside down over the torso and whose moves tear the body apart, and the
+body's own bones bend it. Unused, the wings, the tail and the hind limbs
+rest unseen.
+
+In the compact window's Other tab, a mesh that uses only the bones inside
+the body says so and points to the full window.
+
+**Ctrl and the handles:** where Ctrl shows another part or avatar under the
+pointer, the selected joint's handles let the pointer through, so the Ctrl +
+click reaches it (a rotation sphere over the body); elsewhere they keep Ctrl
+(its temporary rotation, a handle's click in the photo mode), and a drag
+already begun keeps them.
+
+Reset on the selected joint, with Mirror chosen, also resets its
+counterpart, as the Legacy Viewer's mirror does (`FSPoserAnimator::resetJoint`).
+
 The pose captures the displayed shaped skeleton and overrides its final
 animation palette. Body, Face, Hands, Other bones and Physics expose the
 actual Bento joints and collision volumes. Whole-avatar movement is the
@@ -36,6 +128,17 @@ picked in the world shows its side in the selector. The Hands tab has the
 five presets, applied to the chosen side (both in Mirror, in one undo step),
 and a finger grid: finger × base, middle and tip. Edited joints have violet dots, including their
 in-world markers.
+**Several joints at once**: Shift + click a joint's marker, row or finger
+cell (Ctrl + click works in the lists too) adds it to the selected joint, or
+takes it out; a plain click selects one joint again, and "Only this one"
+under the joint's name does the same. The joints added follow every change
+of the selected one: the same turn in their own frame, the same move, the
+same scale ratio, so both eyes look the same way (Mirror would turn them
+in opposite directions). Their markers have a thinner ring and their rows
+are lit. Mirror, Reset joint and the world pin apply to all of them, as in
+the Legacy Viewer's multi-select joint lists. Dragging another joint of the
+selection makes it lead the others. Changing tabs keeps only the joints
+the new tab shows, and the Side selector swaps a selected pair's lead.
 Only the active tab's joints and shafts are visible and selectable. Changing
 tabs selects a joint in that group and replaces the previous group's gizmo.
 

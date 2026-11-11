@@ -5856,12 +5856,16 @@ impl World {
     }
 
     /// The seat prim and its children: the sources LLVOAvatarSelf::
-    /// stopMotionFromSource releases when we get off it.
+    /// stopMotionFromSource releases when we get off it. Never an avatar:
+    /// LLViewerObject::removeChild takes ours out of the seat's child list
+    /// before setParent(NULL) reaches getOffObject, so the motions we asked
+    /// for ourselves (the static eyes, typing, gestures…) keep playing, and
+    /// another sitter is no source of the seat.
     fn seat_linkset_sources(&self, seat_key: ObjKey) -> Vec<Uuid> {
         let seat = self.objects.index_of(&seat_key).into_iter();
         let children = self.objects.children_of(&seat_key).iter().copied();
         seat.chain(children)
-            .filter_map(|idx| self.objects.get(idx).map(|o| o.full_id))
+            .filter_map(|idx| self.objects.get(idx).filter(|o| !o.is_avatar()).map(|o| o.full_id))
             .collect()
     }
 
@@ -6535,15 +6539,18 @@ mod motion_tests {
     fn standing_requests_only_seat_and_linked_prim_animation_stops_once() {
         let (mut world, mut avatar, handle, root, linked) = seated_fixture();
         let (sit, hands, ao) = (Uuid::from_u128(71), Uuid::from_u128(72), Uuid::from_u128(73));
+        // ours, as FSStaticEyes asks for it: the seated avatar is a child of
+        // the seat, yet no source of it
+        let static_eyes = crate::world::lookat::STATIC_EYES;
         world.apply(NetEvent::AvatarAnimations {
             avatar: world.agent_id,
-            anims: vec![(sit, 1), (hands, 1), (ao, 1), (Uuid::from_u128(74), 1)],
-            sources: vec![root, linked, Uuid::from_u128(999)],
+            anims: vec![(sit, 1), (hands, 1), (ao, 1), (static_eyes, 1)],
+            sources: vec![root, linked, Uuid::from_u128(999), world.agent_id],
         });
         // A sequence change/sparse source list must not forget the seat.
         world.apply(NetEvent::AvatarAnimations {
             avatar: world.agent_id,
-            anims: vec![(sit, 2), (hands, 2), (ao, 2)],
+            anims: vec![(sit, 2), (hands, 2), (ao, 2), (static_eyes, 2)],
             // The same motion can also be associated with a linked prim.
             sources: vec![linked],
         });
@@ -6560,7 +6567,12 @@ mod motion_tests {
         assert_eq!(world.animation_stops.len(), 2);
         assert!(world.animation_stops.contains(&sit) && world.animation_stops.contains(&hands));
         assert!(!world.animation_stops.contains(&ao));
+        assert!(
+            !world.animation_stops.contains(&static_eyes),
+            "what we started ourselves keeps playing"
+        );
         assert!(world.animation_sources.contains_key(&Uuid::from_u128(999)));
+        assert!(world.animation_sources.contains_key(&world.agent_id));
         world.animation_stops.clear();
         world.apply(NetEvent::ObjectUpdates {
             handle,
