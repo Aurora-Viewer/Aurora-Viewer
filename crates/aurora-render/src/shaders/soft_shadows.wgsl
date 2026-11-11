@@ -7,17 +7,17 @@
 // common.wgsl) where its surface is the one the pixel was made for.
 //
 // The cascade choice, the normal offset and the receiver bias are those of
-// `cascade_shadow` and `shadow_factor` (common.wgsl); the penumbra of that
-// filter, `SHADOW_PENUMBRA`, is the least this one gives. The tile addressing
+// `cascade_shadow` and `shadow_factor` (common.wgsl). The tile addressing
 // follows the atlas of any shape (`tile_scale`, projector_shadows.rs).
 //
 // Entry points: `soft` (reads the depth and the atlas, writes the mask),
-// `blur_h` and `blur_v` (the mask through the other target and back).
+// `blur_h` and `blur_v` (the mask through the other target and back),
+// `mm_build0` and `mm_build` (the atlas's minimum depths).
 
 struct Params {
     cascade_vp: array<mat4x4<f32>, 3>,
     inv_view_proj: mat4x4<f32>,
-    camera: vec4<f32>,      // xyz: the camera
+    camera: vec4<f32>,      // xyz: the camera; w: the angle between two neighbouring pixels' rays
     splits: vec4<f32>,      // the three cascades' far distances; w: the frame's noise phase
     light: vec4<f32>,       // x: tan of the light's half angle, y: largest filter radius (m), z: filter taps, w: blocker gathers
     size: vec4<u32>,        // x, y: the target's size
@@ -30,10 +30,16 @@ struct Params {
 @group(0) @binding(4) var point_sampler: sampler;
 @group(0) @binding(5) var in_tex: texture_2d<u32>;
 @group(0) @binding(6) var out_tex: texture_storage_2d<r32uint, write>;
+// The shadow atlas's minimum depths over blocks of 4, 8 and 16 texels (levels
+// 0 to 2 of `mm`), which the search for casters reads: a block holds the
+// nearest depth of its texels, so no thin caster slips between the samples.
+// In the build passes `mm_in` is the level before and `mm_out` the level made.
+@group(0) @binding(7) var mm_in: texture_2d<f32>;
+@group(0) @binding(8) var mm_out: texture_storage_2d<r32float, write>;
 
-// Half-width of the filter of before, in metres (common.wgsl, kept equal
-// by a test): the least penumbra, so that no shadow is sharper than it was.
-const SHADOW_PENUMBRA: f32 = 0.03;
+// The least radius of the filter, in metres (soft_shadows.rs FILTER_FLOOR):
+// shadows are sharp where they touch what casts them.
+const FILTER_FLOOR: f32 = 0.015;
 
 // Points of a disk of radius 1, spread evenly (a Poisson-like sequence):
 // every tap count takes each (32 / count)th, the same for every pixel.
@@ -62,24 +68,30 @@ fn ign(frag: vec2<u32>, salt: u32) -> f32 {
     return fract(52.9829189 * fract(dot(f, vec2<f32>(0.06711056, 0.00583715))));
 }
 
-fn world_at(px: vec2<i32>) -> vec3<f32> {
-    let size = vec2<i32>(p.size.xy);
-    let c = clamp(px, vec2<i32>(0), size - vec2<i32>(1));
-    let depth = textureLoad(depth_tex, c, 0);
-    let ndc = vec2<f32>((f32(c.x) + 0.5) / f32(size.x) * 2.0 - 1.0, 1.0 - (f32(c.y) + 0.5) / f32(size.y) * 2.0);
+fn depth_at(px: vec2<i32>) -> f32 {
+    return textureLoad(depth_tex, clamp(px, vec2<i32>(0), vec2<i32>(p.size.xy) - vec2<i32>(1)), 0);
+}
+
+fn world_of(px: vec2<i32>, depth: f32) -> vec3<f32> {
+    let size = vec2<f32>(p.size.xy);
+    let c = vec2<f32>(clamp(px, vec2<i32>(0), vec2<i32>(p.size.xy) - vec2<i32>(1)));
+    let ndc = vec2<f32>((c.x + 0.5) / size.x * 2.0 - 1.0, 1.0 - (c.y + 0.5) / size.y * 2.0);
     let w = p.inv_view_proj * vec4<f32>(ndc, max(depth, 1e-7), 1.0);
     return w.xyz / w.w;
 }
 
-// The normal of the face at a pixel, from the depth: the smaller of the
-// two steps along each axis, so that an edge does not bend it.
-fn normal_at(px: vec2<i32>, pos: vec3<f32>) -> vec3<f32> {
-    let l = pos - world_at(px - vec2<i32>(1, 0));
-    let r = world_at(px + vec2<i32>(1, 0)) - pos;
-    let u = pos - world_at(px - vec2<i32>(0, 1));
-    let d = world_at(px + vec2<i32>(0, 1)) - pos;
-    let dx = select(r, l, dot(l, l) < dot(r, r));
-    let dy = select(d, u, dot(u, u) < dot(d, d));
+// The normal of the face at a pixel, from the depth: along each axis the
+// neighbour whose depth is nearer the pixel's, so that an edge does not bend
+// it (the depths are compared, only the two chosen neighbours unprojected).
+fn normal_at(px: vec2<i32>, depth: f32, pos: vec3<f32>) -> vec3<f32> {
+    let l = depth_at(px - vec2<i32>(1, 0));
+    let r = depth_at(px + vec2<i32>(1, 0));
+    let u = depth_at(px - vec2<i32>(0, 1));
+    let d = depth_at(px + vec2<i32>(0, 1));
+    let sx = select(1, -1, abs(l - depth) < abs(r - depth));
+    let sy = select(1, -1, abs(u - depth) < abs(d - depth));
+    let dx = (world_of(px + vec2<i32>(sx, 0), select(r, l, sx < 0)) - pos) * f32(sx);
+    let dy = (world_of(px + vec2<i32>(0, sy), select(d, u, sy < 0)) - pos) * f32(sy);
     var n = normalize(cross(dx, dy));
     if (dot(n, p.camera.xyz - pos) < 0.0) {
         n = -n;
@@ -94,9 +106,21 @@ fn light_space(world_pos: vec3<f32>, cascade: u32) -> vec3<f32> {
     return vec3<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5, ndc.z);
 }
 
-// Shadow of one cascade (1 lit, 0 shadowed); -1 outside its tile, so that
-// the other cascade of a blend can take over (`cascade_shadow`).
-fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32>) -> f32 {
+// The nearest depths of the 2 x 2 blocks of `level` around an atlas position
+// (in texels).
+fn blocks_at(at: vec2<f32>, level: u32) -> vec4<f32> {
+    let b = vec2<i32>(floor(at / f32(4u << level) - 0.5));
+    return vec4<f32>(
+        textureLoad(mm_in, b, level).x,
+        textureLoad(mm_in, b + vec2<i32>(1, 0), level).x,
+        textureLoad(mm_in, b + vec2<i32>(0, 1), level).x,
+        textureLoad(mm_in, b + vec2<i32>(1, 1), level).x);
+}
+
+// Shadow of one cascade (1 lit, 0 shadowed) and the radius of its filter in
+// metres; the light is -1 outside its tile, so that the other cascade of a
+// blend can take over (`cascade_shadow`).
+fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32>) -> vec2<f32> {
     let m = p.cascade_vp[cascade];
     let row_x = vec3<f32>(m[0].x, m[1].x, m[2].x);
     let row_y = vec3<f32>(m[0].y, m[1].y, m[2].y);
@@ -108,7 +132,7 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
     let q = light_space(world_pos + bias_n, cascade);
     let uv = q.xy;
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || q.z < 0.0 || q.z > 1.0) {
-        return -1.0;
+        return vec2<f32>(-1.0, 0.0);
     }
     let dims = vec2<f32>(textureDimensions(shadow_map));
     // texel of a tile, in tile coordinates
@@ -128,19 +152,37 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
 
     let angle = ign(frag, 0u) * 6.2831853;
     let rot = mat2x2<f32>(cos(angle), sin(angle), -sin(angle), cos(angle));
-    let floor_m = SHADOW_PENUMBRA;
-    var filter_m = floor_m;
+    var filter_m = FILTER_FLOOR;
     if (p.light.x > 0.0) {
-        // blocker search: gathers of 2 x 2 texels over a rotated disk
+        // Blocker search: gathers over a rotated disk of the minimum depths
+        // of blocks of 4, 8 or 16 texels (the larger the wider the disk, so
+        // that its gathers keep covering it), and one of the texels at the
+        // point itself, which always finds a thin caster whose shadow it is
+        // inside.
         let search = p.light.y / (2.0 * radius);
+        let texel_m = 2.0 * radius * texel;
+        let wide = p.light.y / texel_m;
+        let level = select(select(2u, 1u, wide <= 48.0), 0u, wide <= 24.0);
+        let block = f32(4u << level) * texel;
         var separation = 0.0;
         var blockers = 0.0;
+        {
+            let local = clamp(uv, vec2<f32>(texel), vec2<f32>(1.0 - texel));
+            let d = textureGather(shadow_map, point_sampler, (local + tile) * tile_scale);
+            let expected = q.z - bias;
+            let gap = max(vec4<f32>(expected) - d, vec4<f32>(0.0));
+            let hit = select(vec4<f32>(0.0), vec4<f32>(1.0), d < vec4<f32>(expected));
+            separation += dot(gap, hit);
+            blockers += dot(hit, vec4<f32>(1.0));
+        }
         let gathers = u32(p.light.w);
         for (var i = 0u; i < gathers; i++) {
             let o = rot * DISK[(i * 32u) / gathers] * search;
-            let local = clamp(uv + o, vec2<f32>(texel), vec2<f32>(1.0 - texel));
-            let d = textureGather(shadow_map, point_sampler, (local + tile) * tile_scale);
-            let expected = q.z + dot(gradient, local - uv) - bias;
+            let local = clamp(uv + o, vec2<f32>(block), vec2<f32>(1.0 - block));
+            let d = blocks_at((local + tile) * tile_scale * dims, level);
+            // a block's nearest texel may lie anywhere in it: the plane's
+            // depth is taken at the far side of the block
+            let expected = q.z + dot(gradient, local - uv) - bias - 0.5 * block * (abs(gradient.x) + abs(gradient.y));
             let gap = max(vec4<f32>(expected) - d, vec4<f32>(0.0));
             let hit = select(vec4<f32>(0.0), vec4<f32>(1.0), d < vec4<f32>(expected));
             separation += dot(gap, hit);
@@ -148,9 +190,9 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
         }
         if (blockers > 0.0) {
             // the light's half width seen from the receiver, at the blockers'
-            // mean distance, with the filter of before as the least
+            // mean distance; the least is the floor (contact hardening)
             let reach = separation / blockers / depth_per_metre * p.light.x;
-            filter_m = clamp(sqrt(floor_m * floor_m + reach * reach), floor_m, p.light.y);
+            filter_m = clamp(reach, FILTER_FLOOR, max(p.light.y, FILTER_FLOOR));
         }
     }
     let half_uv = max(filter_m / (2.0 * radius), 0.75 * texel);
@@ -161,17 +203,17 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
         let local = clamp(uv + o, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
         sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (local + tile) * tile_scale, q.z + dot(gradient, local - uv) - bias);
     }
-    return sum / f32(taps);
+    return vec2<f32>(sum / f32(taps), filter_m);
 }
 
 // The sun's shadow at a point (`shadow_factor`): the cascade by the point's
 // distance, the last 15 % of a cascade dithered into the next one (one
 // evaluation a pixel, the blur averages the dither) and the fade at the far
-// end of the last cascade.
-fn soft_factor(world_pos: vec3<f32>, n: vec3<f32>, view_depth: f32, frag: vec2<u32>) -> f32 {
+// end of the last cascade. With the radius of the filter.
+fn soft_factor(world_pos: vec3<f32>, n: vec3<f32>, view_depth: f32, frag: vec2<u32>) -> vec2<f32> {
     let splits = p.splits;
     if (view_depth > splits.z) {
-        return 1.0;
+        return vec2<f32>(1.0, 0.0);
     }
     var cascade = 0u;
     if (view_depth > splits.x) { cascade = 1u; }
@@ -189,35 +231,33 @@ fn soft_factor(world_pos: vec3<f32>, n: vec3<f32>, view_depth: f32, frag: vec2<u
     }
     var s = cascade_soft(world_pos, n, pick, frag);
     // in the band, a point outside one tile takes the other (cascade_shadow)
-    if (s < 0.0 && t > 0.0) {
+    if (s.x < 0.0 && t > 0.0) {
         s = cascade_soft(world_pos, n, select(cascade + 1u, cascade, pick != cascade), frag);
     }
-    if (s < 0.0) {
-        return 1.0;
+    if (s.x < 0.0) {
+        return vec2<f32>(1.0, 0.0);
     }
     let fade = clamp((splits.z - view_depth) / (splits.z * 0.1), 0.0, 1.0);
-    return mix(1.0, s, fade);
+    return vec2<f32>(mix(1.0, s.x, fade), s.y);
 }
 
-// The mask's texel: the light let through in the low 12 bits, the distance of
-// the surface it was made for from the camera in the high 20 (4 mm steps up
-// to 4 km; all ones: no surface, the sky). Read by `soft_shadow` in
-// common.wgsl, which keeps the same split.
-const NO_SURFACE: u32 = 0xfffffu;
-
-fn store(px: vec2<u32>, light: f32, distance: f32) {
-    var d = NO_SURFACE;
-    if (distance >= 0.0) {
-        d = min(u32(distance * 256.0), NO_SURFACE - 1u);
-    }
-    let l = u32(clamp(light, 0.0, 1.0) * 4095.0 + 0.5);
-    textureStore(out_tex, px, vec4<u32>((d << 12u) | l, 0u, 0u, 0u));
+// The mask's texel: the distance of the surface it was made for from the
+// camera as an f16 in the high 16 bits (negative: no surface, the sky), the
+// radius of the filter in bits 10 to 15 (0.005 m * 2^(code / 6)), the light
+// let through in the low 10. Read by `soft_shadow` in common.wgsl, which keeps
+// the same split of the distance and the light.
+fn store(px: vec2<u32>, light: f32, distance: f32, radius: f32) {
+    let d = pack2x16float(vec2<f32>(select(-1.0, distance, distance >= 0.0), 0.0)) & 0xffffu;
+    let code = u32(clamp(round(6.0 * log2(max(radius, 0.005) / 0.005)), 0.0, 63.0));
+    let l = u32(clamp(light, 0.0, 1.0) * 1023.0 + 0.5);
+    textureStore(out_tex, px, vec4<u32>((d << 16u) | (code << 10u) | l, 0u, 0u, 0u));
 }
 
-// (light, distance; distance -1 for no surface)
-fn unpack(texel: u32) -> vec2<f32> {
-    let d = texel >> 12u;
-    return vec2<f32>(f32(texel & 4095u) / 4095.0, select(f32(d) / 256.0, -1.0, d == NO_SURFACE));
+// (light, distance, radius; distance -1 for no surface)
+fn unpack(texel: u32) -> vec3<f32> {
+    let d = unpack2x16float(texel >> 16u).x;
+    let r = 0.005 * exp2(f32((texel >> 10u) & 63u) / 6.0);
+    return vec3<f32>(f32(texel & 1023u) / 1023.0, select(d, -1.0, d < 0.0), r);
 }
 
 @compute @workgroup_size(8, 8)
@@ -226,25 +266,29 @@ fn soft(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let px = vec2<i32>(id.xy);
+    let depth = textureLoad(depth_tex, px, 0);
     // reversed depth: 0 is the sky, which no shadow reaches
-    if (textureLoad(depth_tex, px, 0) <= 0.0) {
-        store(id.xy, 1.0, -1.0);
+    if (depth <= 0.0) {
+        store(id.xy, 1.0, -1.0, 0.0);
         return;
     }
-    let pos = world_at(px);
+    let pos = world_of(px, depth);
     let view_depth = distance(pos, p.camera.xyz);
     if (view_depth > p.splits.z) {
-        store(id.xy, 1.0, view_depth);
+        store(id.xy, 1.0, view_depth, 0.0);
         return;
     }
-    let n = normal_at(px, pos);
-    store(id.xy, soft_factor(pos, n, view_depth, id.xy), view_depth);
+    let n = normal_at(px, depth, pos);
+    let f = soft_factor(pos, n, view_depth, id.xy);
+    store(id.xy, f.x, view_depth, f.y);
 }
 
-// Bilateral blur along one axis, 9 taps: a neighbour counts when it is
-// the same surface, at a distance from the camera within a few per cent of
-// the pixel's (more the farther it is along the axis, for a floor seen at a
-// grazing angle), so the shadow never bleeds across an edge.
+// Bilateral blur along one axis, 9 taps, in the world: a neighbour counts by
+// its distance in metres from the pixel's surface (the law of cosines over
+// the pixel's angle), against a share of the pixel's filter radius. The
+// shadow therefore never spreads across an edge, and where the filter is
+// under about a pixel nothing is blurred. A floor seen at a grazing angle,
+// with its many metres to the pixel, keeps a thin shadow whole.
 fn blur(id: vec3<u32>, axis: vec2<i32>) {
     if (id.x >= p.size.x || id.y >= p.size.y) {
         return;
@@ -252,10 +296,11 @@ fn blur(id: vec3<u32>, axis: vec2<i32>) {
     let px = vec2<i32>(id.xy);
     let c = unpack(textureLoad(in_tex, px, 0).x);
     if (c.y < 0.0) {
-        store(id.xy, c.x, c.y);
+        store(id.xy, c.x, c.y, c.z);
         return;
     }
     let size = vec2<i32>(p.size.xy) - vec2<i32>(1);
+    let spread = 0.4 * c.z;
     var sum = c.x;
     var weights = 1.0;
     for (var i = -4; i <= 4; i++) {
@@ -263,12 +308,13 @@ fn blur(id: vec3<u32>, axis: vec2<i32>) {
             continue;
         }
         let s = unpack(textureLoad(in_tex, clamp(px + axis * i, vec2<i32>(0), size), 0).x);
-        let tolerance = (0.005 + 0.01 * f32(abs(i))) * c.y;
-        let w = exp(-f32(i * i) / 8.0) * select(0.0, 1.0, s.y >= 0.0 && abs(s.y - c.y) < tolerance);
+        let a = f32(i) * p.camera.w;
+        let apart = (s.y - c.y) * (s.y - c.y) + s.y * c.y * a * a;
+        let w = exp(-f32(i * i) / 8.0) * exp(-apart / (2.0 * spread * spread)) * select(0.0, 1.0, s.y >= 0.0);
         sum += s.x * w;
         weights += w;
     }
-    store(id.xy, sum / weights, c.y);
+    store(id.xy, sum / weights, c.y, c.z);
 }
 
 @compute @workgroup_size(8, 8)
@@ -276,3 +322,35 @@ fn blur_h(@builtin(global_invocation_id) id: vec3<u32>) { blur(id, vec2<i32>(1, 
 
 @compute @workgroup_size(8, 8)
 fn blur_v(@builtin(global_invocation_id) id: vec3<u32>) { blur(id, vec2<i32>(0, 1)); }
+
+// Level 0 of the minimum depths: 4 x 4 texels of the atlas a thread.
+@compute @workgroup_size(8, 8)
+fn mm_build0(@builtin(global_invocation_id) id: vec3<u32>) {
+    let dims = textureDimensions(shadow_map);
+    if (id.x * 4u >= dims.x || id.y * 4u >= dims.y) {
+        return;
+    }
+    var m = 1.0;
+    for (var y = 0u; y < 4u; y += 2u) {
+        for (var x = 0u; x < 4u; x += 2u) {
+            let d = textureGather(shadow_map, point_sampler, (vec2<f32>(id.xy * 4u + vec2<u32>(x, y)) + 1.0) / vec2<f32>(dims));
+            m = min(m, min(min(d.x, d.y), min(d.z, d.w)));
+        }
+    }
+    textureStore(mm_out, id.xy, vec4<f32>(m, 0.0, 0.0, 0.0));
+}
+
+// The next level: 2 x 2 blocks of the one before (`mm_in`) a thread.
+@compute @workgroup_size(8, 8)
+fn mm_build(@builtin(global_invocation_id) id: vec3<u32>) {
+    let size = vec2<i32>(textureDimensions(mm_in));
+    if (i32(id.x) * 2 >= size.x || i32(id.y) * 2 >= size.y) {
+        return;
+    }
+    let at = vec2<i32>(id.xy) * 2;
+    let last = size - vec2<i32>(1);
+    let m = min(
+        min(textureLoad(mm_in, min(at, last), 0).x, textureLoad(mm_in, min(at + vec2<i32>(1, 0), last), 0).x),
+        min(textureLoad(mm_in, min(at + vec2<i32>(0, 1), last), 0).x, textureLoad(mm_in, min(at + vec2<i32>(1, 1), last), 0).x));
+    textureStore(mm_out, id.xy, vec4<f32>(m, 0.0, 0.0, 0.0));
+}

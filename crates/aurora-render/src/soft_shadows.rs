@@ -4,7 +4,7 @@
 //! casts it, as the sun's does in real life: percentage-closer soft shadows
 //! (Fernando, "Percentage-Closer Soft Shadows", SIGGRAPH 2005). A search of
 //! the shadow map around the point finds the casters and their mean
-//! distance, the size of the sun gives the penumbra from it, and a filter of
+//! distance, the size of the light gives the penumbra from it, and a filter of
 //! rotated taps of that radius takes the light; a bilateral blur then removes
 //! the noise of the rotation. The shading reads the result with one load
 //! (`soft_shadow` in common.wgsl) where its surface is the one of the
@@ -14,8 +14,12 @@
 //! Beyond the Legacy Viewer, which softens its shadows in screen space by a
 //! fixed pixel radius (`RenderShadowBlurSize`, with SSAO on only): here the
 //! penumbra is in metres, grows with the distance of the caster, and is
-//! never narrower than the 3 cm of the filter of before. The size of the
-//! light is the real sun's, 0.53 degrees across, at a softness of 1.
+//! never narrower than 1.5 cm, sharp where a shadow touches what casts it.
+//! The light is 2.3 degrees across at a softness of 1 (the look of the first
+//! soft shadows PR, #2288); the real sun, 0.53 degrees, is a softness of 0.23.
+//! The search for casters reads the shadow atlas's minimum depths over blocks
+//! of 4, 8 and 16 texels, built each frame by a small pass (`mm_build0`,
+//! `mm_build`), so that no thin caster slips between its samples.
 //!
 //! Off, nothing is created or drawn, and the shadows are those of before to
 //! the pixel: the pipelines are made with the first frame that wants them,
@@ -29,19 +33,14 @@ use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 
-/// Half of the sun's apparent diameter, 0.53 degrees across, at a softness
-/// of 1: the penumbra of a shadow cast from a distance `d` is `d` times the
-/// tangent of this angle on each side.
-pub(crate) const SUN_DIAMETER_DEGREES: f32 = 0.53;
+/// Tangent of the light's half angle per unit of softness: a softness of 1
+/// is a light 2.3 degrees across, the real sun (0.53 degrees) about 0.23.
+const LIGHT_TAN: f32 = 0.02;
 
-/// Half-width of the filter of before, in metres (`SHADOW_PENUMBRA` in
-/// common.wgsl and soft_shadows.wgsl): the least penumbra.
-pub(crate) const FILTER_FLOOR: f32 = 0.03;
-
-/// Radius of the search for casters, and the widest filter, in metres, at a
-/// softness of 1 and below; it grows with a larger softness so that the
-/// same distance of caster reaches it.
-const SEARCH_RADIUS: f32 = 0.25;
+/// The least radius of the filter, in metres (`FILTER_FLOOR` in
+/// soft_shadows.wgsl): a shadow is sharp where it touches what casts it,
+/// sharper than the 3 cm filter of before.
+pub(crate) const FILTER_FLOOR: f32 = 0.015;
 
 /// Radius of the light of a projector at a softness of 1, in metres: a
 /// lamp has no size of its own, a small bulb gives the projectors' soft
@@ -57,35 +56,34 @@ pub(crate) fn projectors_soft() -> bool {
 
 /// Taps of the filter in the window, and in a photo (more, for the same
 /// noise under a larger enlargement of the blur).
-const TAPS: f32 = 16.0;
+const TAPS: f32 = 12.0;
 const PHOTO_TAPS: f32 = 32.0;
-/// Gathers (of 2 x 2 texels) of the search for casters.
+/// Gathers (of 2 x 2 blocks) of the search for casters, besides the one of
+/// the texels at the point itself.
 const GATHERS: f32 = 8.0;
 
 /// Pixels the blur reads on each side of a pixel: what a photo drawn in
 /// tiles draws around each one.
 pub(crate) const BLUR_RADIUS: u32 = 4;
 
-/// Tangent of the light's half angle at `softness` (1: the real sun).
+/// Tangent of the light's half angle at `softness` (1: 2.3 degrees across).
 pub(crate) fn light_tan(softness: f32) -> f32 {
-    (SUN_DIAMETER_DEGREES * 0.5).to_radians().tan() * softness.max(0.0)
+    LIGHT_TAN * softness.max(0.0)
 }
 
-/// The widest filter and the radius of the search around a point, in metres.
+/// The widest filter and the radius of the search around a point, in metres:
+/// half a metre per unit of softness, between 25 cm and 1 m.
 pub(crate) fn search_radius(softness: f32) -> f32 {
-    SEARCH_RADIUS * softness.clamp(1.0, 4.0)
+    (0.5 * softness).clamp(0.25, 1.0)
 }
 
 /// Radius of the filter at a point whose casters are `gap` metres nearer the
-/// sun, at `softness`: the light's half width seen from there, joined to the
-/// least by their squares, and never wider than [`search_radius`]. Mirrored
+/// light, at `softness`: the light's half width seen from there, never under
+/// [`FILTER_FLOOR`] (contact hardening) nor over [`search_radius`]. Mirrored
 /// by `cascade_soft` in soft_shadows.wgsl (the tests state the model).
 #[cfg(test)]
 pub(crate) fn filter_radius(gap: f32, softness: f32) -> f32 {
-    let reach = gap.max(0.0) * light_tan(softness);
-    (FILTER_FLOOR * FILTER_FLOOR + reach * reach)
-        .sqrt()
-        .clamp(FILTER_FLOOR, search_radius(softness))
+    (gap.max(0.0) * light_tan(softness)).clamp(FILTER_FLOOR, search_radius(softness).max(FILTER_FLOOR))
 }
 
 /// How far, in metres, the casters of a cascade are read around a point
@@ -183,6 +181,8 @@ pub(crate) struct SoftShadows {
     soft: wgpu::ComputePipeline,
     blur_h: wgpu::ComputePipeline,
     blur_v: wgpu::ComputePipeline,
+    mm_build0: wgpu::ComputePipeline,
+    mm_build: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
     buffer: wgpu::Buffer,
     compare: wgpu::Sampler,
@@ -199,8 +199,13 @@ pub(crate) struct Targets {
     soft_more: wgpu::BindGroup,
     blur_h: wgpu::BindGroup,
     blur_v: wgpu::BindGroup,
-    /// The light let through (low 12 bits) and the distance of the surface it
-    /// was made for (high 20) in an R32Uint; read by the shading.
+    /// The three levels of the atlas's minimum depths, each built from the
+    /// one before, and the size of each.
+    mm: [wgpu::BindGroup; 3],
+    mm_size: [(u32, u32); 3],
+    /// The distance of the surface the mask was made for (an f16, high 16
+    /// bits), the radius of the filter (6 bits) and the light let through (low
+    /// 10) in an R32Uint; the shading reads the distance and the light.
     result: wgpu::TextureView,
     /// Copied out by the tests.
     #[cfg(test)]
@@ -208,6 +213,9 @@ pub(crate) struct Targets {
 }
 
 const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
+const MIN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
+/// Texels of the atlas a block of the first level of minimum depths spans.
+const MIN_BLOCK: u32 = 4;
 
 impl Targets {
     pub(crate) fn result(&self) -> &wgpu::TextureView {
@@ -278,6 +286,26 @@ impl SoftShadows {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 8,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: MIN_FORMAT,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
             ],
         });
         let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -317,6 +345,8 @@ impl SoftShadows {
             soft: make("soft"),
             blur_h: make("blur_h"),
             blur_v: make("blur_v"),
+            mm_build0: make("mm_build0"),
+            mm_build: make("mm_build"),
             layout,
             buffer: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("soft shadows params"),
@@ -339,10 +369,58 @@ impl SoftShadows {
         depth: &wgpu::TextureView,
         depth_more: &wgpu::TextureView,
         shadow: &wgpu::TextureView,
+        atlas: (u32, u32),
         width: u32,
         height: u32,
     ) -> Targets {
         let size = (width.max(1), height.max(1));
+        // minimum depths of the atlas: 4, 8 and 16 texels a block
+        let mm_size: [(u32, u32); 3] = std::array::from_fn(|k| ((atlas.0 / (MIN_BLOCK << k)).max(1), (atlas.1 / (MIN_BLOCK << k)).max(1)));
+        let mm_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("soft shadows minimum depths"),
+            size: wgpu::Extent3d {
+                width: mm_size[0].0,
+                height: mm_size[0].1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 3,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: MIN_FORMAT,
+            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let level = |k: u32| {
+            mm_texture.create_view(&wgpu::TextureViewDescriptor {
+                base_mip_level: k,
+                mip_level_count: Some(1),
+                ..Default::default()
+            })
+        };
+        let mm_all = mm_texture.create_view(&Default::default());
+        // stand-ins for the bindings a pass does not use
+        let tiny = |usage| {
+            device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some("soft shadows stand-in"),
+                    size: wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: MIN_FORMAT,
+                    usage,
+                    view_formats: &[],
+                })
+                .create_view(&Default::default())
+        };
+        let (stand_read, stand_write) = (
+            tiny(wgpu::TextureUsages::TEXTURE_BINDING),
+            tiny(wgpu::TextureUsages::STORAGE_BINDING),
+        );
         let mask = |label: &str| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
@@ -365,7 +443,12 @@ impl SoftShadows {
             a_texture.create_view(&Default::default()),
             b_texture.create_view(&Default::default()),
         );
-        let group = |label: &str, depth: &wgpu::TextureView, read: &wgpu::TextureView, write: &wgpu::TextureView| {
+        let group = |label: &str,
+                     depth: &wgpu::TextureView,
+                     read: &wgpu::TextureView,
+                     write: &wgpu::TextureView,
+                     mm_read: &wgpu::TextureView,
+                     mm_write: &wgpu::TextureView| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(label),
                 layout: &self.layout,
@@ -398,16 +481,30 @@ impl SoftShadows {
                         binding: 6,
                         resource: wgpu::BindingResource::TextureView(write),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: wgpu::BindingResource::TextureView(mm_read),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 8,
+                        resource: wgpu::BindingResource::TextureView(mm_write),
+                    },
                 ],
             })
         };
         Targets {
             size,
             // the pass writes `a` (reading `b`, which it does not use)
-            soft: group("soft shadows", depth, &b, &a),
-            soft_more: group("soft shadows (more)", depth_more, &b, &a),
-            blur_h: group("soft shadows blur h", depth, &a, &b),
-            blur_v: group("soft shadows blur v", depth, &b, &a),
+            soft: group("soft shadows", depth, &b, &a, &mm_all, &stand_write),
+            soft_more: group("soft shadows (more)", depth_more, &b, &a, &mm_all, &stand_write),
+            blur_h: group("soft shadows blur h", depth, &a, &b, &mm_all, &stand_write),
+            blur_v: group("soft shadows blur v", depth, &b, &a, &mm_all, &stand_write),
+            mm: [
+                group("soft shadows min 0", depth, &b, &a, &stand_read, &level(0)),
+                group("soft shadows min 1", depth, &b, &a, &level(0), &level(1)),
+                group("soft shadows min 2", depth, &b, &a, &level(1), &level(2)),
+            ],
+            mm_size,
             result: a,
             #[cfg(test)]
             texture: a_texture,
@@ -419,7 +516,7 @@ impl SoftShadows {
         let u = ParamsU {
             cascade_vp: f.cascades.map(|m| m.to_cols_array_2d()),
             inv_view_proj: f.inv_view_proj.to_cols_array_2d(),
-            camera: f.camera.extend(0.0).to_array(),
+            camera: f.camera.extend(pixel_angle(f.inv_view_proj, t.size.1)).to_array(),
             splits: [f.splits[0], f.splits[1], f.splits[2], (f.phase % 64) as f32],
             light: [
                 light_tan(f.softness),
@@ -432,7 +529,8 @@ impl SoftShadows {
         queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&u));
     }
 
-    /// The three dispatches, after the depth prepass (`more`: after the
+    /// The dispatches (the atlas's minimum depths, the mask, its two blurs),
+    /// after the depth prepass and the shadow cascades (`more`: after the
     /// blended faces were drawn into the occlusion depth). No barrier is
     /// needed between them: each reads the target the one before wrote,
     /// which the pass tracks.
@@ -442,6 +540,11 @@ impl SoftShadows {
             timestamp_writes: None,
         });
         let (x, y) = (t.size.0.div_ceil(8), t.size.1.div_ceil(8));
+        for (k, group) in t.mm.iter().enumerate() {
+            pass.set_pipeline(if k == 0 { &self.mm_build0 } else { &self.mm_build });
+            pass.set_bind_group(0, group, &[]);
+            pass.dispatch_workgroups(t.mm_size[k].0.div_ceil(8), t.mm_size[k].1.div_ceil(8), 1);
+        }
         pass.set_pipeline(&self.soft);
         pass.set_bind_group(0, if more { &t.soft_more } else { &t.soft }, &[]);
         pass.dispatch_workgroups(x, y, 1);
@@ -454,23 +557,38 @@ impl SoftShadows {
     }
 }
 
+/// The angle between the rays of two neighbouring pixels at the centre of
+/// the view, which the blur turns into metres.
+fn pixel_angle(inv_view_proj: Mat4, height: u32) -> f32 {
+    let ray = |y: f32| {
+        let a = inv_view_proj.project_point3(Vec3::new(0.0, y, 1.0));
+        let b = inv_view_proj.project_point3(Vec3::new(0.0, y, 0.5));
+        (a - b).normalize()
+    };
+    ray(0.0).angle_between(ray(2.0 / height.max(1) as f32))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn the_light_is_the_real_sun_at_a_softness_of_one() {
-        // the half angle of 0.53 degrees: tan(0.265 degrees)
-        assert!((light_tan(1.0) - 0.004625).abs() < 1e-5, "{}", light_tan(1.0));
+    fn the_light_is_two_degrees_across_at_a_softness_of_one() {
+        // tan of the half angle 0.02: 2.3 degrees across, the first soft
+        // shadows PR's look; the real sun (0.53 degrees) is about 0.23
+        assert_eq!(light_tan(1.0), 0.02);
+        let degrees = |t: f32| 2.0 * t.atan().to_degrees();
+        assert!((degrees(light_tan(1.0)) - 2.29).abs() < 0.01);
+        assert!((degrees(light_tan(0.23)) - 0.53).abs() < 0.01);
         // proportional to the softness, none at 0 or below
-        assert!((light_tan(4.0) - 4.0 * light_tan(1.0)).abs() < 1e-7);
+        assert!((light_tan(2.0) - 2.0 * light_tan(1.0)).abs() < 1e-7);
         assert_eq!(light_tan(0.0), 0.0);
         assert_eq!(light_tan(-1.0), 0.0);
     }
 
     #[test]
-    fn the_penumbra_never_goes_under_the_filter_of_before_and_stops_at_the_search() {
-        for softness in [0.0, 0.5, 1.0, 2.0, 4.0] {
+    fn the_penumbra_is_sharp_at_the_contact_and_grows_with_the_gap_up_to_the_search() {
+        for softness in [0.0, 0.5, 1.0, 2.0] {
             assert_eq!(filter_radius(0.0, softness), FILTER_FLOOR);
             let mut before = 0.0;
             for gap in [0.0, 0.1, 0.5, 1.0, 3.0, 10.0, 30.0, 100.0, 1.0e4] {
@@ -482,20 +600,29 @@ mod tests {
             let widest = if softness > 0.0 { search_radius(softness) } else { FILTER_FLOOR };
             assert_eq!(filter_radius(1.0e4, softness), widest);
         }
-        // no light size: always the filter of before
+        // the search: half a metre a unit of softness, from 25 cm to 1 m
+        assert_eq!(search_radius(0.2), 0.25);
+        assert_eq!(search_radius(1.0), 0.5);
+        assert_eq!(search_radius(2.0), 1.0);
+        assert_eq!(search_radius(3.0), 1.0);
+        // no light size: always the floor
         assert_eq!(filter_radius(50.0, 0.0), FILTER_FLOOR);
         // a softer light widens it, at the same distance
         assert!(filter_radius(10.0, 2.0) > filter_radius(10.0, 1.0));
-        // the real sun, a caster 10 m up: 4.6 cm on each side, joined to 3 cm
-        let r = filter_radius(10.0, 1.0);
-        assert!((r - (0.03_f32.powi(2) + 0.04625_f32.powi(2)).sqrt()).abs() < 1e-3, "{r}");
+        // a caster 5 m along the light at a softness of 1: 10 cm (the floor
+        // by max, not in quadrature); under 75 cm the floor holds
+        assert!((filter_radius(5.0, 1.0) - 0.10).abs() < 1e-6);
+        assert_eq!(filter_radius(0.5, 1.0), FILTER_FLOOR);
+        // the real sun (0.23), a caster 10 m up: 4.6 cm
+        assert!((filter_radius(10.0, 0.23) - 0.046).abs() < 1e-4);
     }
 
     #[test]
     fn the_casters_reach_is_zero_without_soft_shadows() {
         assert_eq!(reach(false, 1.0), 0.0);
         assert_eq!(reach(false, 4.0), 0.0);
-        assert!(reach(true, 1.0) > FILTER_FLOOR);
+        assert_eq!(reach(true, 1.0), 0.5);
+        assert_eq!(reach(true, 2.0), 1.0);
         assert_eq!(reach(true, 0.0), FILTER_FLOOR);
     }
 
@@ -527,9 +654,8 @@ mod tests {
     fn the_shader_keeps_the_constants_of_the_shading() {
         let shader = include_str!("shaders/soft_shadows.wgsl");
         let common = include_str!("shaders/common.wgsl");
-        let line = format!("const SHADOW_PENUMBRA: f32 = {};", FILTER_FLOOR);
+        let line = format!("const FILTER_FLOOR: f32 = {};", FILTER_FLOOR);
         assert!(shader.contains(&line), "soft_shadows.wgsl: {line}");
-        assert!(common.contains(&line), "common.wgsl: {line}");
         // the normal offset and the receiver bias of `cascade_shadow`
         assert!(shader.contains("n * (0.02 + 0.04 * f32(cascade))"));
         assert!(common.contains("n * (0.02 + 0.04 * f32(cascade))"));
@@ -570,10 +696,13 @@ mod tests {
     fn the_shader_translates_to_spirv_and_msl() {
         let source = include_str!("shaders/soft_shadows.wgsl");
         let module = naga::front::wgsl::parse_str(source).unwrap_or_else(|e| panic!("{}", e.emit_to_string(source)));
-        let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty())
-            .validate(&module)
-            .unwrap_or_else(|e| panic!("{}", e.emit_to_string(source)));
-        assert_eq!(module.entry_points.len(), 3);
+        let info = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32,
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{}", e.emit_to_string(source)));
+        assert_eq!(module.entry_points.len(), 5);
         for ep in &module.entry_points {
             let spv = naga::back::spv::PipelineOptions {
                 shader_stage: ep.stage,
@@ -608,28 +737,26 @@ mod tests {
             eprintln!("no GPU adapter: skipped");
             return;
         };
-        let narrow = gpu.edge(0.5, 4.0);
-        let high = gpu.edge(3.0, 4.0);
-        let sharp_high = gpu.edge(3.0, 0.0);
-        let sun_high = gpu.edge(3.0, 1.0);
-        eprintln!("edge widths (m): {narrow:?} {high:?} {sharp_high:?} {sun_high:?}");
-        for (lit, umbra, _) in [narrow, high, sharp_high, sun_high] {
+        let low = gpu.edge(0.5, 2.0);
+        let high = gpu.edge(3.0, 2.0);
+        let pinpoint = gpu.edge(3.0, 0.0);
+        let mid = gpu.edge(3.0, 1.0);
+        eprintln!("edge widths (m): low {low:?} high {high:?} pinpoint {pinpoint:?} mid {mid:?}");
+        for (lit, umbra, _) in [low, high, pinpoint, mid] {
             assert!(lit > 0.98, "far from the slab the ground is lit: {lit}");
-            assert!(umbra < 0.02, "under the slab it is dark: {umbra}");
+            assert!(umbra < 0.05, "under the slab it is dark: {umbra}");
         }
+        // contact hardening: the caster 0.5 m up has a narrower penumbra than
+        // the one 3 m up, whatever the light
+        assert!(high.2 > low.2 * 1.3, "higher casters give wider penumbrae: {} vs {}", high.2, low.2);
+        // a larger light gives a wider one, a pinpoint light the 1.5 cm floor
+        assert!(high.2 > mid.2 * 1.3, "a larger light gives a wider one: {} vs {}", high.2, mid.2);
         assert!(
-            high.2 > narrow.2 * 1.3,
-            "higher casters give wider penumbrae: {} vs {}",
-            high.2,
-            narrow.2
+            mid.2 > pinpoint.2 * 1.3,
+            "a light with a size beats none: {} vs {}",
+            mid.2,
+            pinpoint.2
         );
-        assert!(
-            high.2 > sun_high.2 * 1.3,
-            "a softer sun gives a wider one: {} vs {}",
-            high.2,
-            sun_high.2
-        );
-        assert!(sun_high.2 >= sharp_high.2 * 0.9, "never sharper than the fixed filter");
     }
 
     /// A ground plane seen from 10 m above, a 2 m square slab at some
@@ -855,7 +982,9 @@ mod tests {
             });
             self.upload_depth(&depth_tex, &depth, VIEW, VIEW);
             let (shadow_view, depth_view) = (shadow.create_view(&Default::default()), depth_tex.create_view(&Default::default()));
-            let targets = self.soft.targets(device, &depth_view, &depth_view, &shadow_view, VIEW, VIEW);
+            let targets = self
+                .soft
+                .targets(device, &depth_view, &depth_view, &shadow_view, (aw, ah), VIEW, VIEW);
             let mut splits = [60.0; 3];
             splits[0] = 20.0;
             splits[1] = 40.0;
@@ -913,7 +1042,7 @@ mod tests {
             let visible = |x: u32| {
                 let at = (row * bytes_per_row + x * 4) as usize;
                 let word = u32::from_le_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]]);
-                (word & 4095) as f32 / 4095.0
+                (word & 1023) as f32 / 1023.0
             };
             let metres = 2.0 * 10.0 * (25.0_f32.to_radians()).tan() / VIEW as f32;
             // the slab spans x in -1..1 (its top hides the ground), the shadow

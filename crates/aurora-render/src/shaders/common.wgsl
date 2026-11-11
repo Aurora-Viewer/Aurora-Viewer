@@ -238,7 +238,7 @@ struct ProbeSet {
 // the sun's contact shadows (contact_shadows.wgsl): 0 lit, 1 in shadow
 @group(0) @binding(13) var contact_tex: texture_2d<f32>;
 // the sun's soft shadows (soft_shadows.wgsl): per pixel, the light let
-// through (12 bits) and the distance of the surface it was made for (20)
+// through (10 bits) and the distance of the surface it was made for (an f16)
 @group(0) @binding(26) var soft_tex: texture_2d<u32>;
 
 @group(1) @binding(0) var<storage, read> records: array<DrawRecord>;
@@ -1420,15 +1420,15 @@ fn soft_shadow(world_pos: vec3<f32>, frag: vec2<f32>) -> f32 {
     if (any(p < vec2<i32>(0)) || any(p >= size)) {
         return -1.0;
     }
-    // the light in the low 12 bits, the surface's distance in the high 20
-    // (4 mm steps; all ones: the sky), as soft_shadows.wgsl `store` writes
+    // the surface's distance as an f16 in the high 16 bits (negative: the
+    // sky), the light in the low 10, as soft_shadows.wgsl `store` writes
     let texel = textureLoad(soft_tex, p, 0).x;
-    let stored = texel >> 12u;
+    let stored = unpack2x16float(texel >> 16u).x;
     let d = distance(world_pos, frame.camera_pos.xyz);
-    if (stored == 0xfffffu || abs(f32(stored) / 256.0 - d) > max(0.01 * d, 0.02)) {
+    if (stored < 0.0 || abs(stored - d) > max(0.01 * d, 0.02)) {
         return -1.0;
     }
-    return f32(texel & 4095u) / 4095.0;
+    return f32(texel & 1023u) / 1023.0;
 }
 
 // The sun's shadow of an opaque surface of the main view: the shadow map
@@ -2102,9 +2102,9 @@ fn projector_soft(k: u32, q: vec3<f32>, n: vec3<f32>, uv: vec2<f32>, receiver: f
             step_uv[0].x * step_z.y - step_uv[1].x * step_z.x) / det;
     }
     let light = frame.soft.z;
-    // the widest half width of the filter at the receiver: 12.5 light radii
-    // (the sun's 25 cm at a softness of 1, soft_shadows.rs)
-    let cap = 12.5 * light;
+    // the widest half width of the filter at the receiver: 25 light radii,
+    // between 25 cm and 1 m (the sun search radius, soft_shadows.rs)
+    let cap = clamp(25.0 * light, 0.25, 1.0);
     let search = min(per_metre * cap / z, vec2<f32>(0.1));
     var ratio = 0.0;
     var blockers = 0.0;

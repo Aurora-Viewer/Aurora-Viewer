@@ -4799,7 +4799,7 @@ both open states and the selection count. Capture at frame 620.
   Preferences' softness, and the shadows are on at least at High.
   `AURORA_SOFT_SHADOWS=0` shows the shadows of before; compare the pole's
   shadow, sharp at its foot and blurred at its tip, and the roof's, with
-  `AURORA_SHADOW_SOFTNESS=1` (the real sun) and `3`. `AURORA_SHADOW_INTENSITY=0.5`
+  `AURORA_SHADOW_SOFTNESS=1` (a light 2.3 degrees across) and `2`. `AURORA_SHADOW_INTENSITY=0.5`
   lets half the light into every shadow. `AURORA_DEMO_CROWD=1` adds a
   standing avatar. Look for acne on the sphere, none on the faces of the
   table, and no halo at the avatars' edges with `AURORA_AA=3` (MSAA 4x).
@@ -10351,7 +10351,7 @@ What the inventory must show with these scenarios:
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
 | `AURORA_SOFT_SHADOWS=0`, `1` or `alt` | Soft sun shadows off, on or one second in two for this launch |
-| `AURORA_SHADOW_SOFTNESS=<0-4>`, `AURORA_SHADOW_INTENSITY=<0-1>` | Size of the light of the soft shadows (1 = the real sun) and darkness of the sun's shadows (1 = as before) for this launch |
+| `AURORA_SHADOW_SOFTNESS=<0-2>`, `AURORA_SHADOW_INTENSITY=<0-1>` | Size of the light of the soft shadows (1 = 2.3 degrees across, the real sun is 0.23) and darkness of the sun's shadows (1 = as before) for this launch |
 | `AURORA_SOFT_PROJECTORS=0` | With the soft shadows, the projectors keep their 5-tap shadows (to measure their cost apart) |
 | `AURORA_PROJECTOR_TRACE=1` | Log projector shadow selection and fades each frame |
 | `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
@@ -10830,15 +10830,18 @@ What the inventory must show with these scenarios:
   on by turns, one second each (on in odd seconds), the mask kept ready.
   Percentage-closer soft shadows in compute, once per pixel of the depth
   prepass: a search of the shadow map finds the casters and their mean
-  distance, the sun's size (0.53 degrees across at a softness of 1) gives
-  the penumbra, and rotated taps take the light, then a bilateral blur
-  removes their noise. The penumbra is never narrower than the 3 cm filter
-  of before. The shading reads the mask where its surface is the one of the
+  distance (read in the minimum depths of blocks of 4, 8 and 16 texels of
+  the atlas, rebuilt each frame, so that no thin caster is missed), the
+  light's size (2.3 degrees across at a softness of 1) gives the
+  penumbra, and 12 rotated taps take the light (32 in a photo), then a
+  bilateral blur in the world's metres removes their noise. The penumbra is
+  never narrower than 1.5 cm: sharp at the contact, soft far from it. The shading reads the mask where its surface is the one of the
   prepass; blended faces in front of it, water, reflections and probes keep
   the filter of before. Off, nothing is created or drawn and the casters'
-  culling planes are those of before. **`AURORA_SHADOW_SOFTNESS=<0-4>`**
-  (the slider, active with the soft shadows only: 1 is the real sun, 4 about
-  the look of PR 2288, 0 the fixed filter) and
+  culling planes are those of before. **`AURORA_SHADOW_SOFTNESS=<0-2>`**
+  (the slider, active with the soft shadows only: 1 is a light 2.3 degrees
+  across, the look of PR 2288, the real sun being 0.23; 0 a light with no
+  size) and
   **`AURORA_SHADOW_INTENSITY=<0-1>`** (how dark the sun's shadows are, with
   or without the soft shadows; 1 is as before) override the settings.
   **`AURORA_SOFT_PROJECTORS=0`** keeps the 5 taps of the projectors' shadows

@@ -3384,6 +3384,7 @@ impl Backend {
                 &contact,
                 None,
                 &shadow_view,
+                crate::projector_shadows::atlas_size(shadow_size, 2),
                 config.width,
                 config.height,
                 msaa_samples,
@@ -4598,6 +4599,7 @@ impl Backend {
         contact: &crate::contact_shadows::ContactShadows,
         soft: Option<&crate::soft_shadows::SoftShadows>,
         shadow: &wgpu::TextureView,
+        atlas: (u32, u32),
         width: u32,
         height: u32,
         samples: u32,
@@ -4708,7 +4710,7 @@ impl Backend {
         // holds them (`blend_in_ao_depth`)
         let soft = soft
             .filter(|_| crate::soft_shadows::Override::from_env().needed(s.soft_shadows))
-            .map(|soft| soft.targets(device, &depth_ss, ao_depth_view, shadow, w, h));
+            .map(|soft| soft.targets(device, &depth_ss, ao_depth_view, shadow, atlas, w, h));
         let water_refl = refl("water reflection", s.water_reflection_scale, false);
         let water_air = refl("water exterior", crate::water_optics::scale(s.water_effects), true);
         let mirror = refl("mirror", s.mirror_scale, false);
@@ -5360,6 +5362,7 @@ impl Backend {
             &self.contact,
             self.soft.as_ref(),
             &self.shadow_view,
+            crate::projector_shadows::atlas_size(self.shadow_size, self.shadow_count),
             size.0,
             size.1,
             self.msaa_samples,

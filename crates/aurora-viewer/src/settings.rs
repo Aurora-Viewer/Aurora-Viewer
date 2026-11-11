@@ -1349,9 +1349,9 @@ pub struct Settings {
     /// real life. Beyond the Legacy Viewer, off by default and in every
     /// graphics level; only with the shadows.
     pub soft_shadows: bool,
-    /// With soft shadows, the size of the light: 1 = the real sun (0.53
-    /// degrees across), 0 = the fixed penumbra of before, up to 4. Without
-    /// soft shadows it has no effect.
+    /// With soft shadows, the size of the light: 1 = 2.3 degrees across (the
+    /// real sun, 0.53 degrees, is 0.23), 0 = no size, up to 2. Without soft
+    /// shadows it has no effect.
     pub shadow_softness: f32,
     /// How dark the sun's shadows are, 0 to 1: 1 = as the Legacy Viewer's,
     /// less lets the light through. Works with or without soft shadows.
@@ -1573,10 +1573,10 @@ pub struct Settings {
 /// around the foot of objects, at 4 it is grainy (captures of 2026-10-17).
 pub(crate) const SCREEN_INDIRECT_INTENSITY: f32 = 1.5;
 
-/// The shadow softness at which the light is the real sun (0.53 degrees
-/// across), and the range of the slider.
+/// The default shadow softness, a light 2.3 degrees across (the real sun
+/// is 0.23), and the range of the slider.
 pub(crate) const SHADOW_SOFTNESS: f32 = 1.0;
-pub(crate) const SHADOW_SOFTNESS_MAX: f32 = 4.0;
+pub(crate) const SHADOW_SOFTNESS_MAX: f32 = 2.0;
 /// The shadows as the Legacy Viewer draws them.
 pub(crate) const SHADOW_INTENSITY: f32 = 1.0;
 
