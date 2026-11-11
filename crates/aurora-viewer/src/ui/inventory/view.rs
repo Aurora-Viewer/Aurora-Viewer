@@ -828,6 +828,9 @@ impl ViewCache {
         } else {
             HashMap::new()
         };
+        // LLItemBridge::getLabelSuffix: the translated link suffix, lowercase
+        // like the searched names.
+        let link_suffix = format!(" ({})", aurora_i18n::tr!("inventory-pill-link").to_lowercase());
         self.results = self
             .entries
             .par_iter()
@@ -956,7 +959,7 @@ impl ViewCache {
                 // LLItemBridge::buildDisplayName includes the link suffix in search.
                 let name = || {
                     if linked {
-                        std::borrow::Cow::Owned(format!("{} (link)", e.name))
+                        std::borrow::Cow::Owned(format!("{}{link_suffix}", e.name))
                     } else {
                         std::borrow::Cow::Borrowed(e.name.as_str())
                     }
@@ -1359,7 +1362,7 @@ mod tests {
             view.search(
                 &inv,
                 inv.root,
-                "older+link",
+                &format!("older+{}", aurora_i18n::tr!("inventory-pill-link").to_lowercase()),
                 &prefs,
                 &Filters::default(),
                 0,
