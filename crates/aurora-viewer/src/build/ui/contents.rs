@@ -281,7 +281,7 @@ fn item_row(
         ui.spacing_mut().item_spacing.x = 4.0;
         widgets::inventory_spacing(ui);
         if let Some(t) = crate::ui::icons::global(item_icon(item.asset_type as i32, item.inv_type as i32, item.flags)) {
-            let color = crate::ui::inventory::item_icon_color(item.asset_type as i32, item.inv_type as i32, item.flags, p);
+            let color = crate::ui::inventory::item_icon_color(item.asset_type as i32, item.inv_type as i32, p);
             ui.add(egui::Image::new(&t).fit_to_exact_size(Vec2::splat(16.0)).tint(color));
         } else {
             ui.add_space(16.0);

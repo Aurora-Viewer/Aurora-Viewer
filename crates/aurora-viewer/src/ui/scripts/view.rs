@@ -1032,7 +1032,7 @@ mod tests {
                 item: Uuid::from_u128(10),
             };
             let mut editors = super::super::Editors::default();
-            editors.open(target, "Script".into(), readable, editable);
+            editors.open(target, "Script".into(), readable, editable, 0);
             let e = &mut editors.documents[0];
             e.can_reset = available;
             if saving {
@@ -1115,7 +1115,7 @@ mod tests {
                 item: Uuid::from_u128(10),
             };
             let mut editors = super::super::Editors::default();
-            let request = editors.open(target, "Wrapping".into(), true, editable).expect("load");
+            let request = editors.open(target, "Wrapping".into(), true, editable, 0).expect("load");
             editors.loaded(request, target, Ok(original.clone()));
             let e = &mut editors.documents[0];
             e.tools.reset_history = false;
@@ -1198,7 +1198,7 @@ mod tests {
                 item: uuid::Uuid::from_u128(10),
             };
             let mut editors = super::super::Editors::default();
-            let request = editors.open(target, "Resize".into(), true, true).unwrap();
+            let request = editors.open(target, "Resize".into(), true, true, 0).unwrap();
             editors.loaded(request, target, Ok("default {\n    event() {\n        code;\n    }\n}".into()));
             let e = &mut editors.documents[0];
             let settings = ScriptSettings::default();
@@ -1277,7 +1277,7 @@ mod tests {
             item: uuid::Uuid::from_u128(10),
         };
         let mut editors = super::super::Editors::default();
-        let request = editors.open(target, "Main".into(), true, false).unwrap();
+        let request = editors.open(target, "Main".into(), true, false, 0).unwrap();
         editors.loaded(request, target, Ok("éあ original".into()));
         let e = &mut editors.documents[0];
         let ctx = egui::Context::default();

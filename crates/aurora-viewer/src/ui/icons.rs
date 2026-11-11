@@ -369,7 +369,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "mood-smile",
     "moon",
     // Aurora-drawn Luau mark for SLua scripts, after the Legacy Viewer's
-    // Inv_Script_Luau: Tabler has no such icon (human decision, 2026-11-08)
+    // Inv_Script_Luau: Tabler has no such icon (decision on PR #2802, docs/BRANDING.md)
     "luau",
     "mountain",
     "mouse",

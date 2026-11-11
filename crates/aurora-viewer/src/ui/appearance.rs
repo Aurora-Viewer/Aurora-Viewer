@@ -700,7 +700,7 @@ fn sensed_row(
         );
     }
     let name = super::inventory::item_icon(it.asset_type, it.inv_type, it.flags);
-    let color = super::inventory::item_icon_color(it.asset_type, it.inv_type, it.flags, p);
+    let color = super::inventory::item_icon_color(it.asset_type, it.inv_type, p);
     if let Some(t) = icons::global(name) {
         ui.painter().image(
             t.id(),

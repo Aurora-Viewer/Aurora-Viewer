@@ -129,7 +129,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                                             ui,
                                             p,
                                             super::inventory::item_icon(item.asset_type as i32, item.inv_type as i32, item.flags),
-                                            super::inventory::item_icon_color(item.asset_type as i32, item.inv_type as i32, item.flags, p),
+                                            super::inventory::item_icon_color(item.asset_type as i32, item.inv_type as i32, p),
                                             &permission_name(&item.name, item.next_owner_mask),
                                         );
                                     }

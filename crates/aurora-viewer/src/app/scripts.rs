@@ -523,9 +523,10 @@ impl App {
             return;
         }
         let Some(info) = self.script_info(target) else { return };
-        let opened = self.script_editors.open(target, info.name, info.can_read, info.can_edit);
-        self.script_editors.item_flags(target, info.flags);
-        if let Some(request) = opened {
+        if let Some(request) = self
+            .script_editors
+            .open(target, info.name, info.can_read, info.can_edit, info.flags)
+        {
             self.send(NetCommand::LoadScript {
                 request,
                 target,

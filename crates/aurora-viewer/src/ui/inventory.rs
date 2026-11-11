@@ -1069,14 +1069,14 @@ pub(crate) fn inventory_item_icon(inv: &Inventory, it: &aurora_net::inventory::I
     if !matches!(it.asset_type, 24 | 25) {
         return (
             item_icon(it.asset_type, it.inv_type, it.flags),
-            item_icon_color(it.asset_type, it.inv_type, it.flags, p),
+            item_icon_color(it.asset_type, it.inv_type, p),
         );
     }
     if let Some(id) = rules::original(inv, it.id) {
         if let Some(target) = inv.items.get(&id) {
             return (
                 super::icons::inventory_link_name(item_icon(target.asset_type, target.inv_type, target.flags)),
-                item_icon_color(target.asset_type, target.inv_type, target.flags, p),
+                item_icon_color(target.asset_type, target.inv_type, p),
             );
         }
         if let Some(folder) = inv.folders.get(&id) {
@@ -1100,10 +1100,8 @@ pub const AURORA_ROW_HEIGHT: f32 = aurora::rows::HEIGHT;
 /// The tint of an item's type icon, the same in every window that lists
 /// items (inventory, Appearance, contents, properties): one colour per
 /// family, so a row's kind reads before its name.
-pub fn item_icon_color(asset_type: i32, inv_type: i32, flags: u32, p: &Palette) -> egui::Color32 {
+pub fn item_icon_color(asset_type: i32, inv_type: i32, p: &Palette) -> egui::Color32 {
     match (asset_type, inv_type) {
-        // the Legacy Viewer's Inv_Script_Luau is blue
-        (10, _) if aurora_net::scripts::is_slua_item(flags) => p.indigo,
         (_, 15) | (0 | 57, _) => p.indigo_light,
         (6 | 49, _) => p.amber,
         (5, _) => p.rose,
@@ -3392,7 +3390,7 @@ mod tests {
             inv.items.insert(target.id, target.clone());
             let (name, tint) = inventory_item_icon(&inv, &link, &p);
             assert_eq!(name, format!("{}_Link", item_icon(asset_type, inv_type, flags)));
-            assert_eq!(tint, item_icon_color(asset_type, inv_type, 0, &p));
+            assert_eq!(tint, item_icon_color(asset_type, inv_type, &p));
             assert_eq!(
                 inventory_item_icon(&inv, &target, &p),
                 (item_icon(asset_type, inv_type, flags), tint)
@@ -3449,15 +3447,14 @@ mod tests {
     #[test]
     fn item_icon_colors_group_types_by_family() {
         let p = crate::theme::Theme::default().palette();
-        assert_eq!(item_icon_color(6, 6, 0, &p), p.amber);
-        assert_eq!(item_icon_color(5, 18, 0, &p), p.rose);
-        assert_eq!(item_icon_color(13, 18, 0, &p), p.violet_light);
-        assert_eq!(item_icon_color(21, 20, 0, &p), p.teal);
+        assert_eq!(item_icon_color(6, 6, &p), p.amber);
+        assert_eq!(item_icon_color(5, 18, &p), p.rose);
+        assert_eq!(item_icon_color(13, 18, &p), p.violet_light);
+        assert_eq!(item_icon_color(21, 20, &p), p.teal);
         // A snapshot is a texture whatever its asset type says.
-        assert_eq!(item_icon_color(0, 15, 0, &p), p.indigo_light);
-        assert_eq!(item_icon_color(24, 24, 0, &p), p.muted);
-        assert_eq!(item_icon_color(10, 10, 0, &p), p.teal);
-        assert_eq!(item_icon_color(10, 10, 1, &p), p.indigo);
+        assert_eq!(item_icon_color(0, 15, &p), p.indigo_light);
+        assert_eq!(item_icon_color(24, 24, &p), p.muted);
+        assert_eq!(item_icon_color(10, 10, &p), p.teal);
     }
 
     #[test]

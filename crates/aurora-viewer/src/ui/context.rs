@@ -1404,7 +1404,7 @@ pub fn suitcase_confirm(
                     for item in items {
                         ui.horizontal(|ui| {
                             let icon = super::inventory::item_icon(item.asset_type, item.inv_type, item.flags);
-                            let tint = super::inventory::item_icon_color(item.asset_type, item.inv_type, item.flags, p);
+                            let tint = super::inventory::item_icon_color(item.asset_type, item.inv_type, p);
                             super::widgets::glyph(ui, icon, tint, 16.0);
                             ui.add(egui::Label::new(RichText::new(&item.name).size(12.5).color(p.ink)).truncate());
                         });
