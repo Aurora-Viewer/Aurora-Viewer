@@ -8347,8 +8347,22 @@ impl App {
             if let Some(from) = previous {
                 let step = p - from;
                 let length = step.length();
+                // the objects along the step, else the land under it: the
+                // scene's pick only looks for the land a metre out, and a
+                // step is about half a metre, so bare ground was never met
+                let below = |q: Vec3| self.world.ground_height(q).is_some_and(|z| q.z <= z);
+                let ground = || {
+                    below(p).then(|| {
+                        let (mut lo, mut hi) = (0.0f32, 1.0f32);
+                        for _ in 0..12 {
+                            let mid = (lo + hi) * 0.5;
+                            if below(from + step * mid) { hi = mid } else { lo = mid }
+                        }
+                        from + step * hi
+                    })
+                };
                 if length > 1e-4
-                    && let Some(hit) = self.scene.vr_ray_point(&self.world, (from, step / length), length)
+                    && let Some(hit) = self.scene.vr_ray_point(&self.world, (from, step / length), length).or_else(ground)
                 {
                     let i = arc.len.min(aurora_render::VrArc::MAX - 1);
                     arc.points[i] = hit;
