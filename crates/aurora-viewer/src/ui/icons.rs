@@ -508,7 +508,6 @@ const ALIASES: &[(&str, &str)] = &[
     ("Command_Preferences_Icon", "settings-filled"),
     ("Command_Build_Icon", "box"),
     ("Command_Gestures_Icon", "hand-move"),
-    ("Command_HowTo_Icon", "help-circle-filled"),
     ("Command_Environments_Icon", "sunset-2-filled"),
     ("Command_Places_Icon", "map-pin-filled"),
     ("groundsit", "armchair"),

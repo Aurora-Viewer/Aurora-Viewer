@@ -1,5 +1,6 @@
-//! The place card shared by the windows that list places (Aurora's Search
-//! and Aurora's Places, whose favourites are dragged into the bar's order): a row with the parcel's snapshot, its name
+//! The place card shared by the windows that list places (Aurora's Search,
+//! Aurora's Places, whose favourites are dragged into the bar's order, and
+//! Aurora's Destinations): a row with the parcel's snapshot, its name
 //! and a second line (region and position, a date…), the G / M / A badge at
 //! the right end, and room before it for what the window adds (traffic, a
 //! sale pill, a favourite star). The snapshot covers its frame, its middle
@@ -32,6 +33,12 @@ impl RowSize {
         height: 48.0,
         thumb: Vec2::new(52.0, 32.0),
     };
+    /// The guide's places in Aurora's Destinations, as it opens: a larger
+    /// photo and three lines.
+    pub const DESTINATIONS: RowSize = RowSize {
+        height: 72.0,
+        thumb: Vec2::new(96.0, 60.0),
+    };
 }
 
 /// What the picture of a row shows.
@@ -54,6 +61,17 @@ pub struct Row<'a> {
     pub selected: bool,
 }
 
+/// What a row of Aurora's Destinations adds to a plain one: a count laid
+/// over its picture (the people there), the rating before its second line
+/// and a third line (a date, a visit), each with its icon.
+#[derive(Default)]
+pub struct Extras<'a> {
+    pub over_picture: Option<(&'a str, &'a str)>,
+    /// The rating's name, as `Row::rating`, before the second line.
+    pub badge: Option<&'a str>,
+    pub third: Option<(&'a str, &'a str, egui::Color32)>,
+}
+
 const PAD: f32 = 8.0;
 const GAP: f32 = 10.0;
 /// Room the drag grip takes before the picture.
@@ -63,19 +81,48 @@ const GRIP: f32 = 16.0;
 /// right edge, before the badge (the first widget it adds is the rightmost);
 /// the two lines take what it leaves.
 pub fn row(ui: &mut egui::Ui, p: &Palette, size: RowSize, row: &Row, trailing: impl FnOnce(&mut egui::Ui)) -> egui::Response {
-    paint_row(ui, p, size, row, false, trailing)
+    paint_row(ui, p, size, row, false, &Extras::default(), trailing)
+}
+
+/// A `row` with what Aurora's Destinations adds (`Extras`).
+pub fn row_with(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    size: RowSize,
+    row: &Row,
+    extras: &Extras,
+    trailing: impl FnOnce(&mut egui::Ui),
+) -> egui::Response {
+    paint_row(ui, p, size, row, false, extras, trailing)
 }
 
 /// A `row` that can also be dragged (the favourites of Places, put in the
 /// bar's order): a grip before its picture, and a response that reports the
 /// drag.
 pub fn draggable_row(ui: &mut egui::Ui, p: &Palette, size: RowSize, row: &Row, trailing: impl FnOnce(&mut egui::Ui)) -> egui::Response {
-    paint_row(ui, p, size, row, true, trailing)
+    paint_row(ui, p, size, row, true, &Extras::default(), trailing)
 }
 
-fn paint_row(ui: &mut egui::Ui, p: &Palette, size: RowSize, row: &Row, grip: bool, trailing: impl FnOnce(&mut egui::Ui)) -> egui::Response {
+fn paint_row(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    size: RowSize,
+    row: &Row,
+    grip: bool,
+    extras: &Extras,
+    trailing: impl FnOnce(&mut egui::Ui),
+) -> egui::Response {
     let sense = if grip { Sense::click_and_drag() } else { Sense::click() };
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), size.height), sense);
+    let title = FontId::new(13.0, crate::ui::fonts::semibold(ui.ctx()));
+    // three lines share the row the two lines share otherwise; a larger
+    // text spreads them and the row grows by the difference (#1227)
+    let gap = if extras.third.is_some() {
+        widgets::two_lines_gap(ui, &title, &FontId::proportional(12.0), 17.0)
+    } else {
+        0.0
+    };
+    let height = size.height.max(2.0 * gap + 34.0);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), sense);
     if !ui.is_rect_visible(rect) {
         return resp;
     }
@@ -102,6 +149,9 @@ fn paint_row(ui: &mut egui::Ui, p: &Palette, size: RowSize, row: &Row, grip: boo
             paint(ui.painter(), thumb);
         }
     }
+    if let Some((icon, text)) = extras.over_picture {
+        picture_pill(ui, p, Pos2::new(thumb.left() + 4.0, thumb.bottom() - 4.0), icon, text, 10.0);
+    }
     // the right end: the badge, then what the window adds
     let mut right = rect.right() - PAD;
     if let Some(name) = row.rating {
@@ -122,17 +172,80 @@ fn paint_row(ui: &mut egui::Ui, p: &Palette, size: RowSize, row: &Row, grip: boo
     let used = end.min_rect();
     let text_right = if used.width() > 0.0 { used.left() - GAP } else { right };
     let width = (text_right - text_left).max(20.0);
-    let title = FontId::new(13.0, crate::ui::fonts::semibold(ui.ctx()));
-    let cut = widgets::paint_elided(ui, row.title, Pos2::new(text_left, rect.center().y - 8.0), width, title, p.ink);
+    let (y1, y2) = if extras.third.is_some() { (-gap, 0.0) } else { (-8.0, 9.0) };
+    let cut = widgets::paint_elided(ui, row.title, Pos2::new(text_left, rect.center().y + y1), width, title, p.ink);
+    let mut sub_left = text_left;
+    if let Some(name) = extras.badge {
+        let badge = Rect::from_center_size(Pos2::new(text_left + 7.0, rect.center().y + y2), Vec2::splat(14.0));
+        if widgets::paint_maturity_badge(ui.painter(), p, name, badge, widgets::inner_radius(ui.visuals())) {
+            sub_left = badge.right() + 6.0;
+        }
+    }
     widgets::paint_elided(
         ui,
         row.subtitle,
-        Pos2::new(text_left, rect.center().y + 9.0),
-        width,
+        Pos2::new(sub_left, rect.center().y + y2),
+        (text_right - sub_left).max(20.0),
         FontId::proportional(12.0),
         p.muted,
     );
+    if let Some((icon, text, color)) = extras.third {
+        let cy = rect.center().y + gap;
+        let mut x = text_left;
+        if let Some(t) = crate::ui::icons::global(icon) {
+            let at = Rect::from_center_size(Pos2::new(x + 6.0, cy), Vec2::splat(12.0));
+            ui.painter()
+                .image(t.id(), at, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), color);
+            x += 17.0;
+        }
+        widgets::paint_elided(
+            ui,
+            text,
+            Pos2::new(x, cy),
+            (text_right - x).max(20.0),
+            FontId::proportional(11.5),
+            color,
+        );
+    }
     if cut { resp.on_hover_text(row.title) } else { resp }
+}
+
+/// A count or a tag laid over a picture, from its lower left corner `at`:
+/// the icon and the text on a dark pill, legible on any photo.
+pub fn picture_pill(ui: &egui::Ui, p: &Palette, at: Pos2, icon: &str, text: &str, size: f32) -> Rect {
+    let font = FontId::new(size, crate::ui::fonts::semibold(ui.ctx()));
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, p.ink);
+    let h = (size * 1.8).round();
+    let icon_w = if icon.is_empty() { 0.0 } else { size + 3.0 };
+    let pill = Rect::from_min_size(
+        Pos2::new(at.x, at.y - h),
+        Vec2::new(galley.size().x + icon_w + 2.0 * (size * 0.6).round(), h),
+    );
+    if !ui.is_rect_visible(pill) {
+        return pill;
+    }
+    ui.painter()
+        .rect_filled(pill, ui.visuals().window_corner_radius, p.navy.gamma_multiply(0.75));
+    let mut x = pill.left() + (size * 0.6).round();
+    if let Some(t) = crate::ui::icons::global(icon) {
+        let r = Rect::from_center_size(Pos2::new(x + size / 2.0, pill.center().y), Vec2::splat(size));
+        ui.painter()
+            .image(t.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), p.ink);
+        x += icon_w;
+    }
+    widgets::paint_row_text(ui.painter(), galley, x, pill.center().y, p.ink);
+    pill
+}
+
+/// The width of a `picture_pill`, for one laid from a right edge.
+pub fn picture_pill_width(ui: &egui::Ui, icon: &str, text: &str, size: f32) -> f32 {
+    let font = FontId::new(size, crate::ui::fonts::semibold(ui.ctx()));
+    let w = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), font, egui::Color32::PLACEHOLDER)
+        .size()
+        .x;
+    w + if icon.is_empty() { 0.0 } else { size + 3.0 } + 2.0 * (size * 0.6).round()
 }
 
 /// A snapshot covering `rect`, or the mountain on the field's face.
