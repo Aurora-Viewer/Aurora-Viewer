@@ -1,5 +1,15 @@
 # Aurora Viewer architecture
 
+Inventory Delete carries a `DeleteRequest` with its originating window and
+selection through the Marketplace guard. `app/inventory.rs` binds that intent
+to the mutation's request before sending it, including synchronous demo replies.
+Only its successful result enables selection advancement; queued reliable moves
+also wait for the inventory model to observe the requested Trash moves, excluding
+roots already at their destination. `ui/inventory/delete.rs` reconciles against
+the rebuilt displayed order before drawing rows, preserves a changed selection or view, skips deleted
+subtrees and uses keyboard navigation's existing visibility/scrolling path.
+Both confirmation settings and all four inventory layouts share this path.
+
 Search and filter inputs use `ui/widgets/pills.rs::search_text_edit` or the
 shared `search_field`/`clearable_search_box` wrappers. The in-field clear
 action reserves text padding, preserves editor ids, marks the response
@@ -3520,9 +3530,9 @@ field takes the focus, its text selected, when the dialog opens
 (`LLPanel::handleKeyHere`, `LLToastAlertPanel`); a dialog that does
 something else with Enter takes it with `widgets::enter_pressed`.
 Inventory confirmations use `widgets::default_button_sized` to show the
-default Enter action with the theme's keyboard highlight until a widget in
-the modal takes focus. This visual hint does not request keyboard focus or
-change Tab order, and disabled actions stay neutral.
+default Enter action with the theme's keyboard highlight and actual focus.
+The first Tab therefore reaches Cancel, then the ignore checkbox when offered,
+and returns to Delete; disabled actions stay neutral.
 `ui/widgets/keycap.rs` draws the keys of a shortcut (list of
 shortcuts, microphone panel). `ui/widgets/color.rs` is the compact colour picker (`color_button`,
 `color_panel`, RGB / HSV / hexadecimal conversions) and the eyedropper it shares

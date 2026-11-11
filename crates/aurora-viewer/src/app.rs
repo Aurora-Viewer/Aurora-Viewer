@@ -1408,6 +1408,12 @@ impl App {
         ui::bars::clock::read_system_clock();
         let mut settings = Settings::load();
         if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
+            && std::env::var("AURORA_DEMO_INVENTORY")
+                .is_ok_and(|mode| matches!(mode.as_str(), "delete-confirm" | "delete-tab") || mode.starts_with("aurora-delete-confirm"))
+        {
+            settings.inventory.confirm_delete = true;
+        }
+        if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
             && let Ok(mode) = std::env::var("AURORA_DEMO_MINIMIZED_MUTE")
         {
             settings.audio.mute_when_minimized = mode != "off";
@@ -10941,6 +10947,8 @@ impl App {
                             | "aurora-keyboard-wide"
                     ) || v.starts_with("note-")
                         || v.starts_with("clipboard-")
+                        || v.starts_with("delete-")
+                        || v.starts_with("aurora-delete-")
                         || v.starts_with("aurora-menu-")
                         || v.starts_with("bulk-")
                 }))
