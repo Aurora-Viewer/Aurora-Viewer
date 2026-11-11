@@ -25,31 +25,34 @@ pub fn page(cx: &mut Cx) {
             0.0..=2.0,
             "",
         );
-        cx.row(
+        cx.row_with(
             tr!("vr-resolution"),
             tr!("vr-resolution-help"),
             &fields!(camera.vr.resolution, camera.vr.resolution_custom),
-            |ui, s| {
+            |ui, s, st, _| {
                 let mut changed = false;
                 let mut preset = match (s.camera.vr.resolution, s.camera.vr.resolution_custom) {
                     (None, _) => None,
-                    (Some([n, m]), false) if n == m && [1600, 2160, 2560].contains(&n) => Some(n),
+                    (Some([n, m]), false) if n == m && [2160, 2560].contains(&n) => Some(n),
                     _ => Some(0),
                 };
                 let label = |choice| match choice {
-                    None => tr!("vr-resolution-recommended").to_owned(),
+                    None => st.vr_default_resolution.map_or_else(
+                        || tr!("vr-resolution-unavailable").to_owned(),
+                        |[width, height]| format!("{width} × {height}"),
+                    ),
                     Some(0) => tr!("vr-custom").to_owned(),
                     Some(n) => format!("{n} × {n}"),
                 };
                 egui::ComboBox::from_id_salt(ui.scope_id().with("vr-resolution"))
                     .selected_text(label(preset))
                     .show_ui(ui, |ui| {
-                        for choice in [None, Some(1600), Some(2160), Some(2560), Some(0)] {
+                        for choice in [None, Some(2160), Some(2560), Some(0)] {
                             if ui.selectable_value(&mut preset, choice, label(choice)).changed() {
                                 s.camera.vr.resolution_custom = choice == Some(0);
                                 s.camera.vr.resolution = choice.map(|n| {
                                     if n == 0 {
-                                        s.camera.vr.resolution.unwrap_or([1600, 1600])
+                                        s.camera.vr.resolution.or(st.vr_default_resolution).unwrap_or([2160, 2160])
                                     } else {
                                         [n, n]
                                     }

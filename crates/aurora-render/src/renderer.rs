@@ -6070,6 +6070,7 @@ impl Backend {
                     self.config.format,
                     packet.settings.vr_resolution,
                 )?;
+                self.vr.set_default_resolution(Some(session.default_resolution));
                 let mut init = (**seed).clone();
                 init.external = true;
                 init.xr = None;

@@ -44,6 +44,7 @@ pub(crate) struct Control {
     focused: AtomicBool,
     head_pose: Mutex<Option<HeadPose>>,
     reference: AtomicU64,
+    default_resolution: AtomicU64,
 }
 impl Control {
     pub fn new(available: bool) -> Self {
@@ -52,9 +53,21 @@ impl Control {
             focused: AtomicBool::new(false),
             head_pose: Mutex::new(None),
             reference: AtomicU64::new(0),
+            default_resolution: AtomicU64::new(0),
             state: AtomicU8::new(if available { VrState::Off } else { VrState::Unavailable } as u8),
         }
     }
+    pub fn default_resolution(&self) -> Option<[u32; 2]> {
+        let packed = self.default_resolution.load(Ordering::Acquire);
+        let size = [(packed >> 32) as u32, packed as u32];
+        (size[0] != 0 && size[1] != 0).then_some(size)
+    }
+
+    pub fn set_default_resolution(&self, size: Option<[u32; 2]>) {
+        let packed = size.map_or(0, |[w, h]| (u64::from(w) << 32) | u64::from(h));
+        self.default_resolution.store(packed, Ordering::Release);
+    }
+
     pub fn head_pose(&self) -> Option<HeadPose> {
         if !self.focused() {
             return None;
@@ -157,6 +170,17 @@ mod tests {
             sampled: std::time::Instant::now(),
         }
     }
+    #[test]
+    fn resolution_metadata_is_available_before_headset_focus() {
+        let control = Control::new(true);
+        assert_eq!(control.default_resolution(), None);
+        control.set_default_resolution(Some([1440, 1600]));
+        assert_eq!(control.default_resolution(), Some([1440, 1600]));
+        assert!(!control.focused());
+        control.set_default_resolution(None);
+        assert_eq!(control.default_resolution(), None);
+    }
+
     #[test]
     fn vr_feedback_rejects_invalid_positions_quaternions_and_stale_samples() {
         let control = Control::new(true);

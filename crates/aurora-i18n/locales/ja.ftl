@@ -14040,8 +14040,8 @@ vr-gamma-help = ヘッドセットの明るさを調整します。既定値は1
 vr-vibrancy = VRの色の鮮やかさ
 vr-vibrancy-help = ヘッドセットの色の鮮やかさを調整します。既定値は1.0です。
 vr-resolution = VRの片目の解像度
-vr-resolution-help = ヘッドセットの推奨サイズを使用します（各辺最大1600ピクセル）。変更を適用するにはビューアを再起動してください。
-vr-resolution-recommended = 推奨
+vr-resolution-help = 自動選択ではヘッドセットの推奨サイズを各辺最大1600ピクセルとデバイスの制限に合わせて表示します。変更を適用するにはビューアを再起動してください。
+vr-resolution-unavailable = ヘッドセットを利用できません
 vr-custom = カスタム
 
 joystick-linux-layout = Linuxのボタン配置

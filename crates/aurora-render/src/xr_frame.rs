@@ -38,6 +38,7 @@ pub(crate) struct Session {
     images: Vec<Vec<wgpu::Texture>>,
     pub width: u32,
     pub height: u32,
+    pub default_resolution: [u32; 2],
     running: bool,
     pub focused: bool,
     anchor: Option<Anchor>,
@@ -68,6 +69,13 @@ fn head_tracked(flags: xr::SpaceLocationFlags) -> bool {
             | xr::SpaceLocationFlags::POSITION_TRACKED
             | xr::SpaceLocationFlags::ORIENTATION_TRACKED,
     )
+}
+
+pub(crate) fn default_resolution(instance: &xr::Instance, system: xr::SystemId, device_limit: u32) -> Option<[u32; 2]> {
+    let views = instance.enumerate_view_configuration_views(system, VIEWS).ok()?;
+    let [left, right] = views.as_slice() else { return None };
+    let size = eye_resolution(None, left, right, device_limit);
+    (size[0] != 0 && size[1] != 0).then_some(size)
 }
 
 fn eye_resolution(
@@ -270,6 +278,7 @@ impl Session {
             images,
             width,
             height,
+            default_resolution: eye_resolution(None, left, right, device.limits().max_texture_dimension_2d),
             running: false,
             focused: false,
             anchor: None,

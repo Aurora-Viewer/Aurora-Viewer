@@ -14102,8 +14102,8 @@ vr-gamma-help = Ajuste la luminosité dans le casque. La valeur par défaut est 
 vr-vibrancy = Intensité des couleurs VR
 vr-vibrancy-help = Ajuste l’intensité des couleurs dans le casque. La valeur par défaut est 1,0.
 vr-resolution = Résolution VR par œil
-vr-resolution-help = Utilise les dimensions recommandées par le casque, jusqu’à 1 600 pixels par côté. Redémarrez le viewer pour appliquer les modifications.
-vr-resolution-recommended = Recommandée
+vr-resolution-help = Le choix automatique affiche les dimensions recommandées par le casque, limitées à 1 600 pixels par côté et aux limites du matériel. Redémarrez le viewer pour appliquer les modifications.
+vr-resolution-unavailable = Casque indisponible
 vr-custom = Personnalisée
 
 joystick-linux-layout = Disposition des boutons sous Linux

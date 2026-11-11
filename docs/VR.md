@@ -198,9 +198,10 @@ warning icon explains that it may cause discomfort.
 Gamma (0.5–2.5) and Colour vibrancy (0–2) adjust the headset image live.
 Gamma and vibrancy default to 1.0. Saved adjustments are retained. The desktop mirror uses the unadjusted eye image.
 
-Recommended resolution uses the runtime’s suggested width and height, capped at
-1600 per side. The 1600 × 1600, 2160 × 2160, 2560 × 2560 and custom sizes are
-explicit alternatives. Restart the viewer after changing it.
+The automatic resolution choice displays the dimensions supplied by the runtime
+after the default 1600-per-side cap and device limits. The 2160 × 2160,
+2560 × 2560 and custom sizes are explicit alternatives. A saved 1600 × 1600
+selection remains available as a custom size. Restart the viewer after changing it.
 The runtime and GPU texture limits may reduce the requested dimensions.
 
 Headset validation: check native Avatar orbit and vertical pan, then framing
@@ -217,7 +218,9 @@ resolution after restarting.
 
 While the headset is engaged, keyboard input is reserved for movement, gestures,
 the bound Mouselook shortcut that cycles VR modes, and Escape to exit. Desktop
-shortcuts and chat typing are suspended during VR.
+shortcuts and chat typing are suspended during VR because a headset UI has not
+yet been implemented. This prevents accidental input from opening invisible
+windows or causing confusing interactions.
 
 VR keeps the selected mode over creator seat cameras, scripted FollowCam and
 forced mouselook. A turret or combat seat that expects forced mouselook may

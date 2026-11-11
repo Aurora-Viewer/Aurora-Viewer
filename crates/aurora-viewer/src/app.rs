@@ -8007,6 +8007,8 @@ impl App {
         self.alt_codes.key_pressed(code, ke.repeat)
     }
 
+    /// The headset has no viewer UI yet. Restrict keyboard actions so an
+    /// accidental shortcut cannot open an invisible window or enter text.
     fn vr_keyboard_input(&mut self, key: &winit::event::KeyEvent) {
         use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
         let PhysicalKey::Code(code) = key.physical_key else {
@@ -9734,6 +9736,7 @@ impl App {
         let Some(mut gfx) = self.gfx.take() else {
             return;
         };
+        self.options_ui.vr_default_resolution = gfx.renderer.vr_default_resolution();
         if let Some(pose) = gfx.renderer.vr_head_pose() {
             if self.vr_reference_generation.is_some_and(|previous| previous != pose.generation) {
                 self.vr_rebase_reference(false);

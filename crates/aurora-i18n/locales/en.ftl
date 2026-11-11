@@ -14104,8 +14104,8 @@ vr-gamma-help = Adjust headset brightness. The default is 1.0.
 vr-vibrancy = VR Colour vibrancy
 vr-vibrancy-help = Adjust headset colour intensity. The default is 1.0.
 vr-resolution = VR resolution per eye
-vr-resolution-help = Recommended uses the headset’s suggested dimensions up to 1600 pixels per side. Restart the viewer to apply changes.
-vr-resolution-recommended = Recommended
+vr-resolution-help = The automatic choice shows the headset’s suggested dimensions, limited to 1600 per side and runtime/device limits. Restart the viewer to apply changes.
+vr-resolution-unavailable = Headset unavailable
 vr-custom = Custom
 
 joystick-linux-layout = Linux button layout

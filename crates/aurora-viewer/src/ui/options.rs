@@ -383,6 +383,7 @@ pub struct OptionsUi {
     /// RLVa `@sendim`: the Do Not Disturb response is an IM, its field greyed.
     pub rlva_sendim_locked: bool,
     pub joystick: crate::joystick::Snapshot,
+    pub vr_default_resolution: Option<[u32; 2]>,
     pub flycam_active: bool,
     pub anti_spam_blocks: Vec<(crate::world::anti_spam::Queue, uuid::Uuid, String)>,
     pub anti_spam_version: u64,
