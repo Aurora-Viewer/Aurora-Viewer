@@ -64,6 +64,7 @@ mod folders;
 mod hover_pick;
 mod texture_picker;
 use folders::chat_log_root;
+mod admin_status;
 mod contents_drop_demo;
 mod contents_folder_drag_demo;
 mod dof;
@@ -681,6 +682,8 @@ pub struct App {
     delete_confirm: Option<(Vec<uuid::Uuid>, String)>,
     /// "Freeze" / "Eject" waiting for an answer (app/land_moderation.rs).
     moderation_ask: Option<land_moderation::Ask>,
+    /// A resident's Admin › Kick / Freeze / Unfreeze, waiting for its message.
+    god_kick_ask: Option<admin_status::KickAsk>,
     /// The object menus' questions and script queue (app/object_menu.rs).
     object_menu: object_menu::ObjectMenu,
     /// Teleport asked by a place link, waiting for a yes (TeleportViaSLAPP),
@@ -1690,6 +1693,7 @@ impl App {
             context_menu_was: false,
             delete_confirm: None,
             moderation_ask: None,
+            god_kick_ask: None,
             object_menu: Default::default(),
             place_confirm: None,
             suitcase_ask: None,
@@ -4721,6 +4725,7 @@ impl App {
             Action::Search => ui::widgets::toggle_floater(&self.egui_ctx, ui::search::WINDOW, &mut self.panels.search),
             Action::Performance => ui::widgets::toggle_floater(&self.egui_ctx, "perf", &mut self.panels.perf),
             Action::DevToolbox => ui::widgets::toggle_floater(&self.egui_ctx, ui::dev_toolbox::WINDOW, &mut self.panels.dev_toolbox),
+            Action::RequestAdminStatus => self.request_admin_status(true),
             Action::DebugSettings => {
                 ui::widgets::toggle_floater(&self.egui_ctx, ui::debug_settings::WINDOW, &mut self.panels.debug_settings)
             }
@@ -12357,6 +12362,7 @@ impl App {
         self.demo_friends_only_steps();
         self.demo_social_menu_steps();
         self.demo_land_moderation();
+        self.demo_admin_status();
         if self.demo && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| matches!(m.as_str(), "touch" | "touch-shift")) {
             if self.frame_count == 720
                 && let Some(view) = self.scene.lists.hud_view
@@ -14145,6 +14151,8 @@ impl App {
                 self.settings.save();
                 log::info!("quickjump: {}", self.settings.quickjump);
             }
+            BarAction::AdminStatus(godlike) => self.request_admin_status(godlike),
+            BarAction::Admin(a) => self.admin_action(a),
             BarAction::ToggleQuietSnapshots => {
                 self.settings.snapshot.sound = !self.settings.snapshot.sound;
                 self.settings.save();
@@ -15843,6 +15851,9 @@ impl App {
                     can_go_home: self.world.rlva_can_teleport_home(),
                     release_notes: self.world.main_has_cap("ServerReleaseNotes"),
                     region_console: self.world.main_has_cap("SimConsoleAsync"),
+                    god_level: self.world.god_level,
+                    admin_objects: !self.build.selection.is_empty(),
+                    admin_requests: self.world.opensim_extras().is_none(),
                     motd: !self.world.motd.is_empty(),
                     grid_help: self.grid_help(),
                     marketplace: self.marketplace_home().is_some()
@@ -15855,6 +15866,7 @@ impl App {
                             group: self.world.groups.group(&parcel.group_id),
                             health: self.world.health,
                             frozen: self.world.frozen,
+                            god_level: self.world.god_level,
                         }),
                         _ => Vec::new(),
                     },
@@ -17195,6 +17207,7 @@ impl App {
                     }
                 }
                 self.land_moderation_ui(&ctx, &p);
+                self.god_kick_ui(&ctx, &p);
                 if let Some((ids, text)) = self.delete_confirm.clone()
                     && let Some(yes) = ui::context::delete_confirm(&ctx, &p, &text)
                 {
