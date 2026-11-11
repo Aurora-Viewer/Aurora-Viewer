@@ -10612,8 +10612,8 @@ What the inventory must show with these scenarios:
   answers with the given counts, our own avatar among the reporters (`3`:
   3 of the 7 others; `7/8`: all of them). The notice "Your avatar complexity
   is N." with its second line (with `3`: "You may not be rendered by
-  everyone around you.") shows 70 s after the launch, as the Legacy Viewer
-  waits that long; it stays Preferences › Graphics › Avatars › Complexity
+  everyone around you.") shows about 75 s after the launch (the Legacy
+  Viewer waits 70 s, and the answers come every 15 s); it stays Preferences › Graphics › Avatars › Complexity
   notices seconds (10; 0 shows none, nor does mouselook), and the next one
   for other counts waits 5 minutes unless it is still out. Once our avatar
   has its complexity, the log gets one line `avatar render info (demo): <n>
