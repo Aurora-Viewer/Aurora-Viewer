@@ -90,9 +90,7 @@ impl LooksUi {
         }
         // in a row: the field centres itself in the height it is given
         ui.horizontal(|ui| {
-            let search =
-                widgets::clearable_search_box(ui, p, &mut self.query, aurora_i18n::tr!("photo-looks-search"), ui.available_width());
-            keep_keys(&search);
+            widgets::clearable_search_box(ui, p, &mut self.query, aurora_i18n::tr!("photo-looks-search"), ui.available_width());
         });
         egui::ScrollArea::vertical()
             .id_salt("looks_list")
