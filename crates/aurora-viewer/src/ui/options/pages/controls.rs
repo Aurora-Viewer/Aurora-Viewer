@@ -82,6 +82,12 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-fly-after-teleport-help"),
             &field!(fly_after_teleport),
         );
+        // FSAlwaysShowTPCancel (panel_preferences_move.xml)
+        cx.toggle(
+            tr!("ui-options-always-show-teleport-cancel"),
+            tr!("ui-options-always-show-teleport-cancel-help"),
+            &field!(always_show_tp_cancel),
+        );
         friends_only_row(cx);
         friends_only_keep_row(cx);
         cx.link(

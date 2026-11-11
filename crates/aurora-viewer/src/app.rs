@@ -123,7 +123,9 @@ mod pointing;
 mod quick_prefs;
 mod region_restart;
 mod region_window;
+mod release_keys;
 mod relogin;
+mod render_info;
 mod report_abuse;
 mod reset_skeleton;
 mod revoke_on_sit;
@@ -465,6 +467,8 @@ pub struct App {
     relogin: relogin::Relogin,
     /// The viewer's part of Linden Lab's viewer statistics (app/viewer_stats.rs).
     viewer_stats: viewer_stats::Tracker,
+    /// The avatar render info and the complexity notice (app/render_info.rs).
+    render_info: render_info::Tracker,
     panels: Panels,
     /// Conversations and the mini-map as last frame left them (their
     /// startup settings follow an open or a close only).
@@ -1592,6 +1596,7 @@ impl App {
             demo_mfa_challenge: None,
             relogin: Default::default(),
             viewer_stats: Default::default(),
+            render_info: Default::default(),
             startup_windows: ui::StartupWindows::new(&panels),
             panels,
             chat_ui,
@@ -3321,6 +3326,10 @@ impl App {
         if let NetEvent::ScriptTeleportRequest { .. } = ev {
             // llMapDestination asked for the map (BEACON_SHOW_MAP)
             self.panels.world_map = true;
+            return;
+        }
+        if let NetEvent::AvatarRenderInfo { handle, visibility } = ev {
+            self.render_info_answer(handle, visibility);
             return;
         }
         if let NetEvent::UploadCost(cost) = ev {
@@ -5611,6 +5620,7 @@ impl App {
         w.quiet_automated_chat = self.settings.compact_automated_chat || (self.demo && crate::demo::object_chat::on());
         // FSAnnounceIncomingIM (AURORA_DEMO_IM_ANNOUNCE=1: on for the run)
         w.announce_incoming_im = self.settings.announce_incoming_im || (self.demo && crate::demo::im_announce::forced());
+        w.set_script_dialog_limit(self.settings.script_dialog_limit);
         w.notifications.toasts = crate::world::notifications::ToastPrefs {
             presence: self.settings.toast_friends_online,
             presence_in_chat: self.settings.friends_online_in_chat,
@@ -6931,6 +6941,7 @@ impl App {
         self.demo_script_steps();
         self.world_click_demo_steps();
         self.object_menu_demo_steps();
+        self.release_keys_demo_steps();
         if self.frame_count == 400
             && let Ok(mode) = std::env::var("AURORA_DEMO_BEACONS")
         {
@@ -7552,6 +7563,35 @@ impl App {
         for anim in std::mem::take(&mut self.world.animation_stops) {
             self.send(NetCommand::AgentAnimation { anim, start: false });
         }
+    }
+
+    /// The teleport screen's Cancel (LLProgressView::onCancelButtonClicked,
+    /// LLAgent::teleportCancel): TeleportCancel when the request had left,
+    /// the screen closes and the resident stays where they are.
+    fn cancel_teleport(&mut self) {
+        let Some(outcome) = self.world.cancel_teleport(self.settings.always_show_tp_cancel) else {
+            return;
+        };
+        if self.demo_tp_start.take().is_some() {
+            // the offline demo has no simulator to tell
+            self.demo_tp_dest = None;
+            self.demo_tp_region = None;
+            aurora_net::transition::end(Some(aurora_net::transition::Kind::Teleport), "cancelled (demo)", &self.net.stats);
+        } else if outcome == crate::world::teleport_cancel::Cancelled::Sent {
+            self.send(NetCommand::TeleportCancel);
+        }
+        // the progress view hides at once (setVisible(false)): no arrival
+        // to wait for, the screen fades out on the world we stayed in
+        if let Some(o) = self.tp_overlay.as_mut() {
+            o.end.get_or_insert(Instant::now());
+        }
+        self.was_teleporting = false;
+        self.tp_dest = None;
+        log::info!(
+            "teleport cancel: teleporting {}, position {:.1?}",
+            self.world.teleporting,
+            self.world.agent.position
+        );
     }
 
     fn show_teleport_progress(&mut self) {
@@ -8991,6 +9031,26 @@ impl App {
         {
             self.send(cmd);
         }
+        if self.demo
+            && self.frame_count == 650
+            && let Ok(mode) = std::env::var("AURORA_DEMO_APPEARANCE")
+            && matches!(mode.as_str(), "xml" | "xml-unavailable")
+        {
+            self.world.apply(NetEvent::Appearance(aurora_net::AvatarAppearance {
+                avatar_id: self.world.agent_id,
+                texture_entry: None,
+                visual_params: self.world.avatar_lib.shape_params.values_with(&[(33, 0.7)]),
+                cof_version: 1,
+                appearance_version: 1,
+                hover_height: 0.0,
+                attachments: Vec::new(),
+            }));
+            if mode == "xml-unavailable" {
+                self.world.preview_shape(Some(vec![0]));
+            }
+            self.egui_ctx
+                .data_mut(|data| data.insert_temp(egui::Id::unique("appearance_xml_demo"), true));
+        }
         // AURORA_DEMO_APPEARANCE=take-off-folder: the inventory's Remove from
         // current outfit on an ordinary folder (#1849)
         if self.demo && self.frame_count == 600 && std::env::var("AURORA_DEMO_APPEARANCE").as_deref() == Ok("take-off-folder") {
@@ -9053,6 +9113,7 @@ impl App {
             return;
         }
         self.update_notice();
+        self.update_render_info();
         // Aurora's media plugins: downloaded once, when none are found (the
         // web pages of the profiles need them even with media disabled), and
         // only once the user agreed (the card of `ui::media_pack`, or a
@@ -9311,6 +9372,10 @@ impl App {
             self.world.groups.mute_when_notices_off = self.settings.mute_groups_without_notices;
             self.world.groups.report_blocks = self.settings.report_blocks;
             self.world.groups.show_joined_invitations = self.settings.show_joined_group_invitations;
+            self.world.groups.notices_in_chat = crate::world::groups::NoticesInChat {
+                on: self.settings.group_notices_in_chat,
+                subjects: self.settings.group_notice_subjects_in_chat,
+            };
             self.world.group_titles = self.settings.group_titles;
             self.world.portal_sources = self.portal_sources();
             self.world.fly_after_teleport = self.settings.fly_after_teleport && !(self.demo && crate::demo::friend_join_flight_scenario());
@@ -10495,6 +10560,13 @@ impl App {
             // offline demo teleport: the real steps, landing where we were
             let e = t0.elapsed().as_secs_f32();
             let w = &mut self.world;
+            // TeleportStart / TeleportProgress offer Cancel, TeleportFinish
+            // (the step "connecting to the region") takes it away
+            if e >= 2.4 {
+                w.tp_cancel.on_finish();
+            } else if e >= 0.35 {
+                w.tp_cancel.on_simulator_flags(crate::demo::tp_cancel_flags());
+            }
             if e >= 3.2 && !crate::demo::tp_no_arrival() {
                 self.demo_tp_start = None;
                 w.tp_progress = 0.6;
@@ -10535,6 +10607,10 @@ impl App {
             } else if e >= 0.35 {
                 w.tp_progress = w.tp_progress.max(0.10);
                 w.tp_status = aurora_i18n::tr!("common-teleport-accepted").into();
+            }
+            // AURORA_DEMO_TP_CANCEL=1: Cancel pressed during the transfer
+            if crate::demo::tp_cancel_pressed() && (1.5..2.4).contains(&e) {
+                self.cancel_teleport();
             }
         }
         // TeleportLocal can also resolve an initially unknown destination.
@@ -12011,6 +12087,19 @@ impl App {
                 for command in commands {
                     self.send(command);
                 }
+            }
+            // the notices' cards closed, then Aurora Builders' chat shown:
+            // its notice's line stays (FSGroupNoticesToIMLog)
+            if self.frame_count == crate::demo::notifs::CHAT_AT && mode == "group-notice-chat" {
+                let ids: Vec<u64> = self.world.notifications.list.iter().map(|n| n.id).collect();
+                for id in ids {
+                    let (commands, _) = self.world.respond_notification(id, crate::world::notifications::Response::Dismiss);
+                    for command in commands {
+                        self.send(command);
+                    }
+                }
+                self.world.social.focus_im = Some(crate::demo::DEMO_GROUP1);
+                ui::notifications::open_conversations(&self.egui_ctx, &mut self.panels.chat);
             }
             if self.frame_count == crate::demo::notifs::ANSWER_AT && matches!(mode.as_str(), "history" | "legacy-history") {
                 // a few cards answered or closed: they go to the history
@@ -13725,6 +13814,17 @@ impl App {
         if !ui::chat::sends_local_line(c.channel, &c.message) || (c.channel == 0 && self.chat_command(&c.message)) {
             return;
         }
+        // PlayChatAnim: the talk, shout or whisper animation starts before
+        // the line leaves (FSNearbyChat::sendChatFromViewer)
+        if self.settings.play_chat_anim
+            && let Some(anim) = self
+                .world
+                .rlva
+                .chat_animation_volume(&c.message, c.chat_type)
+                .and_then(|kind| ui::chat::chat_animation(c.channel, kind))
+        {
+            self.send(NetCommand::AgentAnimation { anim, start: true });
+        }
         // :shortcode: emoji
         let message = ui::emoji::expand_shortcodes(&c.message);
         self.chat_ui.recent_emojis.note(&message);
@@ -14243,6 +14343,7 @@ impl App {
                 self.settings.save();
                 log::info!("quiet snapshots: {}", !self.settings.snapshot.sound);
             }
+            BarAction::ReleaseKeys => self.release_keys(),
             BarAction::ToggleWaterWalk => self.toggle_water_walk(),
             BarAction::ToggleSwimming => self.toggle_swimming(),
             BarAction::MoveLockOptions => self.movelock_ui.open = true,
@@ -15998,6 +16099,7 @@ impl App {
                     show_name_tags: self.settings.show_name_tags,
                     fly_override: self.world.fly_override,
                     quiet_snapshots: !self.settings.snapshot.sound,
+                    release_keys: release_keys::enabled(&self.world),
                     parcel_landmark,
                     can_set_home: self.world.can_set_home(),
                     can_go_home: self.world.rlva_can_teleport_home(),
@@ -18248,6 +18350,7 @@ impl App {
                 }
                 t = self.ui_parts.lap(Part::UiOptions, t);
                 // teleport screen (and the login loading screen fading out)
+                let mut tp_cancel_pressed = false;
                 if let Some(o) = self.tp_overlay.as_mut() {
                     // quick fade in, fade out at the end
                     let fade_in = if o.loading_end {
@@ -18290,7 +18393,13 @@ impl App {
                         let facts = ui::loading::PlaceFacts::gather(&mut self.world, &mut self.map_tiles, &name, point, arrived);
                         ui::loading::BannerText { name, stage, facts }
                     });
-                    ui::loading::teleport_overlay(
+                    // Cancel until TeleportFinish, when the simulator allows it
+                    let cancel = !o.loading_end
+                        && o.arrived.is_none()
+                        && o.end.is_none()
+                        && self.world.teleporting
+                        && self.world.tp_cancel.offered(self.settings.always_show_tp_cancel);
+                    tp_cancel_pressed = ui::loading::teleport_overlay(
                         &ctx,
                         &p,
                         self.logo.as_ref(),
@@ -18301,10 +18410,14 @@ impl App {
                         Some(o.shown),
                         alpha,
                         &text.facts.place(),
+                        cancel,
                     );
                     if o.end.is_some() {
                         o.leaving = Some(text);
                     }
+                }
+                if tp_cancel_pressed {
+                    self.cancel_teleport();
                 }
             }
         }

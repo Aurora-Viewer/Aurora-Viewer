@@ -22,6 +22,7 @@ mod inventory_updates;
 mod inventory_upload;
 mod object_actions;
 mod object_cache;
+mod render_info_net;
 mod scripts;
 mod sim_requests;
 mod slm_net;
@@ -237,6 +238,8 @@ pub(crate) struct Shared {
     pub viewer_stats: Arc<Mutex<crate::viewer_stats::ViewerSide>>,
     /// Reports being posted (`NetClient::wait_viewer_stats`).
     pub viewer_stats_posts: Arc<crate::viewer_stats::PostsInFlight>,
+    /// The avatars the viewer sees (`NetClient::set_seen_avatars`).
+    pub seen_avatars: Arc<Mutex<Vec<crate::render_info::SeenAvatar>>>,
 }
 
 /// How long one appearance request may hold the queue.
@@ -325,6 +328,9 @@ struct Session<'a> {
     /// When Linden Lab's viewer statistics leave (viewer_stats.rs), and the
     /// regions the agent arrived in (LLAgent::mRegionsVisited).
     viewer_stats: crate::viewer_stats::Schedule,
+    /// When each region is told about the avatars we see and asked about
+    /// ours (render_info.rs).
+    render_info: crate::render_info::Schedule,
     regions_visited: std::collections::HashSet<u64>,
     cam_requested_at: Option<Instant>,
     /// The first arrival of this session is still awaited (STATE_AGENT_WAIT).
@@ -527,6 +533,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         finished: false,
         agent_moved: false,
         viewer_stats: Default::default(),
+        render_info: crate::render_info::Schedule::new(Instant::now()),
         regions_visited: Default::default(),
         cam_requested_at: None,
         login_arrival: true,
@@ -994,6 +1001,8 @@ impl Session<'_> {
         let caps = Arc::new(caps);
         sim.caps = caps.clone();
         emit(self.sh, NetEvent::Capabilities { handle: sim.handle, caps });
+        // LLAvatarRenderInfoAccountant::scanNewRegion (setCapabilitiesReceived)
+        self.render_info.new_region(sim.handle, Instant::now());
         let features = sim.caps.get("SimulatorFeatures").cloned().map(|u| (sim.handle, u));
         let terrain_handle = sim.handshake_seen.then_some(sim.handle);
         if let Some(handle) = terrain_handle {
@@ -1353,6 +1362,9 @@ impl Session<'_> {
     fn tick(&mut self) {
         if self.logout_started.is_none() && self.viewer_stats.due(Instant::now(), self.agent_moved) {
             self.send_viewer_stats();
+        }
+        if self.logout_started.is_none() {
+            self.scan_render_info(Instant::now());
         }
         self.expire_task_inventory();
         self.expire_script_transfers();
@@ -1718,6 +1730,15 @@ impl Session<'_> {
                     || "TeleportLandmarkRequest (home) sent".to_string(),
                     &self.sh.stats,
                 );
+            }
+            NetCommand::TeleportCancel => {
+                // LLAgent::teleportCancel: reliable, to the region we leave
+                log::info!("Sending TeleportCancel");
+                let mut m = TeleportCancel::default();
+                m.info.agent_id = self.agent_id();
+                m.info.session_id = self.session_id();
+                self.send_main(&m, true);
+                transition::end(Some(transition::Kind::Teleport), "cancelled (TeleportCancel sent)", &self.sh.stats);
             }
             NetCommand::CancelRegionRestart => {
                 // LLPanelRegionInfo::sendEstateOwnerMessage("restart", {"-1"}),
@@ -3041,6 +3062,7 @@ impl Session<'_> {
             | NetCommand::AgentAnimationChanges { .. }
             | NetCommand::AnimationStateReset
             | NetCommand::RevokePermissions { .. }
+            | NetCommand::ForceScriptControlRelease
             | NetCommand::ObjectGrab { .. }
             | NetCommand::ObjectGrabUpdate { .. }
             | NetCommand::ObjectRelease { .. }
@@ -5041,6 +5063,7 @@ impl Session<'_> {
             if let Some(parameter) = m.param_list.first() {
                 self.on_inventory_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
             }
+            self.on_social_generic(m.agent_data.agent_id, &m.method_data.method);
         } else if id == LargeGenericMessage::ID {
             let m: LargeGenericMessage = pkt.decode()?;
             self.on_experience_generic(
@@ -5056,6 +5079,7 @@ impl Session<'_> {
             if let Some(parameter) = m.param_list.first() {
                 self.on_inventory_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
             }
+            self.on_social_generic(m.agent_data.agent_id, &m.method_data.method);
         } else if id == UpdateCreateInventoryItem::ID {
             let m: UpdateCreateInventoryItem = pkt.decode()?;
             if m.agent_data.agent_id == self.agent_id() {
@@ -5234,6 +5258,7 @@ impl Session<'_> {
                 },
             );
         } else if id == TeleportStart::ID {
+            let m: TeleportStart = pkt.decode()?;
             if transition::current() == Some(transition::Kind::Teleport) {
                 transition::step(|| "TeleportStart".to_string());
             } else {
@@ -5243,7 +5268,12 @@ impl Session<'_> {
                     &self.sh.stats,
                 );
             }
-            emit(self.sh, NetEvent::TeleportStarted);
+            emit(
+                self.sh,
+                NetEvent::TeleportStarted {
+                    flags: m.info.teleport_flags,
+                },
+            );
         } else if id == TeleportProgress::ID {
             let m: TeleportProgress = pkt.decode()?;
             transition::step(|| format!("TeleportProgress '{}'", field_str(&m.info.message)));
@@ -5251,6 +5281,7 @@ impl Session<'_> {
                 self.sh,
                 NetEvent::TeleportProgress {
                     message: field_str(&m.info.message),
+                    flags: m.info.teleport_flags,
                 },
             );
         } else if id == TeleportFailed::ID {
@@ -6300,6 +6331,7 @@ mod event_queue_tests {
             bandwidth_kbps: Default::default(),
             viewer_stats: Default::default(),
             viewer_stats_posts: Default::default(),
+            seen_avatars: Default::default(),
         }
     }
 
@@ -6357,6 +6389,7 @@ mod event_queue_tests {
             finished: false,
             agent_moved: false,
             viewer_stats: Default::default(),
+            render_info: crate::render_info::Schedule::new(Instant::now()),
             regions_visited: Default::default(),
             cam_requested_at: None,
             login_arrival: false,
@@ -6643,6 +6676,7 @@ mod script_dialog_tests {
             bandwidth_kbps: Default::default(),
             viewer_stats: Default::default(),
             viewer_stats_posts: Default::default(),
+            seen_avatars: Default::default(),
         }
     }
 
@@ -6707,6 +6741,7 @@ mod script_dialog_tests {
             finished: false,
             agent_moved: false,
             viewer_stats: Default::default(),
+            render_info: crate::render_info::Schedule::new(Instant::now()),
             regions_visited: Default::default(),
             cam_requested_at: None,
             login_arrival: false,
