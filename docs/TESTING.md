@@ -1753,6 +1753,16 @@ channel switching, all map pickers and tint transactions, alpha/material factors
 vector copy/paste, linked selection, ruler settings and the bottom collapse strip.
 At 330 by 620 the property panel scrolls while the tool block and tabs stay
 in place.
+With the same `AURORA_DEMO_BUILD=move,object:118` and `AURORA_DEMO_BUILD_TAB=general`,
+in both `AURORA_DEMO_BUILD_STYLE=legacy` and `aurora`: rest the pointer on a
+position, size or rotation field without clicking. Roll the wheel up and down,
+one notch at a time (the panel stays put; up raises, down lowers). Hold Alt,
+Ctrl or Shift and roll again, and hold each with an arrow: Alt steps ten
+increments, Ctrl a tenth, Shift a hundredth. Hold an arrow past half a second
+and it keeps stepping until you release it; a short click is still one step.
+Tab moves from field to field and skips the arrows. Dragging a number and
+typing one still work. The colour picker's number fields take the wheel
+too, and their arrows still click and repeat while held.
 Switch Preferences > Aurora > Build tools between Aurora and Legacy while
 editing; the selection, properties and custom Aurora arrangement must survive.
 The bulk Aurora/Legacy choices include this preference, which persists on restart.

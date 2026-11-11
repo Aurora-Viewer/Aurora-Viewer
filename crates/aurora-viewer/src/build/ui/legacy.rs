@@ -316,7 +316,7 @@ pub(super) fn body(
                 }
                 let height = (ui.available_height() - 17.0).max(30.0);
                 let width = widgets::scrolled_width(ui).max(1.0);
-                egui::ScrollArea::vertical()
+                let scrolled = egui::ScrollArea::vertical()
                     .id_salt(("legacy-build-body", tool.tool as u8, tool.tab))
                     .max_height(height)
                     .auto_shrink([false, false])
@@ -347,6 +347,13 @@ pub(super) fn body(
                             });
                         }
                     });
+                // The bar is reserved beside the content (not drawn over it).
+                // Tests wheel that strip: a number field would take the wheel.
+                #[cfg(test)]
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(egui::Id::unique("legacy-build-scroll"), scrolled.inner_rect));
+                #[cfg(not(test))]
+                let _ = scrolled.inner_rect;
             }
             let icon = if s.expanded { "caret-up-filled" } else { "caret-down-filled" };
             let response = widgets::action_button(ui, p, icon, "", widgets::ActionKind::Flat, vec2(ui.available_width(), 14.0))
