@@ -78,6 +78,90 @@ pub struct PortraitSettings {
     pub hide_others: bool,
     /// The choices come back at the next portrait.
     pub keep: bool,
+    /// The paid HD picture sent with the free thumbnail, and its side;
+    /// both kept whatever "keep" says (`opening`).
+    pub hd: bool,
+    pub hd_side: HdSide,
+}
+
+/// The paid HD picture (the user's choice, 2026-11-10): besides the free
+/// 256 × 256 thumbnail, a texture of this side uploaded into the outfit's
+/// folder at the grid's texture upload price, for the showcase's large
+/// preview. Both sides are within the plain texture price (1024 × 1024 and
+/// under, `upload::Prices::cost`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HdSide {
+    #[default]
+    Side512,
+    Side1024,
+}
+
+impl HdSide {
+    pub fn side(self) -> u32 {
+        match self {
+            Self::Side512 => 512,
+            Self::Side1024 => 1024,
+        }
+    }
+}
+
+/// The side the confirmed photo is drawn at: the largest HD picture's, so
+/// that the HD choice can still be made once the photo is shown; the free
+/// thumbnail and a 512 picture are reduced from it.
+pub const SHOT_SIDE: u32 = 1024;
+
+/// The description of the HD pictures this viewer uploads: how the
+/// showcase finds them among the folder's textures, and which older one a
+/// new picture sends to the Trash (one picture an outfit, as
+/// LLAppearanceMgr::removeOutfitPhoto removed the previous photo link).
+/// Data, never shown as interface text.
+pub const HD_PICTURE_DESC: &str = "Outfit HD picture (Aurora Viewer)";
+
+/// Whether the HD picture can be bought now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HdOffer {
+    /// Its price (0 on a grid where uploads are free).
+    Ready(i32),
+    /// The grid's price is not known (not logged in): never promise a
+    /// free upload (`upload::Prices`).
+    Unknown,
+    /// The balance cannot pay it (can_afford_transaction,
+    /// ErrorPhotoCannotAfford); the price.
+    Short(i32),
+}
+
+/// The offer from the texture price and the balance; an unknown balance
+/// leaves the check to the server, as "Save to inventory" does.
+pub fn hd_offer(cost: Option<i32>, balance: Option<i32>) -> HdOffer {
+    match cost {
+        None => HdOffer::Unknown,
+        Some(cost) if balance.is_some_and(|b| b < cost) => HdOffer::Short(cost),
+        Some(cost) => HdOffer::Ready(cost),
+    }
+}
+
+/// The batch portraits' HD pictures: `count` pictures at `each`, their
+/// total confirmed once before the start and checked against the balance
+/// as one payment (None: the price is not known). Each picture is still
+/// paid on its own as it is sent, so an outfit skipped costs nothing.
+pub fn hd_total(each: Option<i32>, count: usize) -> Option<i32> {
+    each.map(|each| each.saturating_mul(i32::try_from(count).unwrap_or(i32::MAX)))
+}
+
+/// The HD picture's inventory name, from the Legacy Viewer's
+/// `outfit_photo_string` ("Photo of "[OUTFIT_NAME]" outfit",
+/// panel_outfit_gallery.xml), cut to the 63 bytes an item name holds.
+pub fn hd_picture_name(outfit: &str) -> String {
+    let mut name = aurora_i18n::tr!("ui-appearance-portrait-hd-item-name", outfit = outfit).to_string();
+    if name.len() > 63 {
+        let mut end = 63;
+        while !name.is_char_boundary(end) {
+            end -= 1;
+        }
+        name.truncate(end);
+    }
+    let name = name.trim().to_owned();
+    if name.is_empty() { "Outfit photo".to_owned() } else { name }
 }
 
 impl Default for PortraitSettings {
@@ -90,6 +174,8 @@ impl Default for PortraitSettings {
             lighting: Lighting::Studio,
             hide_others: true,
             keep: true,
+            hd: false,
+            hd_side: HdSide::Side512,
         }
     }
 }
@@ -103,6 +189,8 @@ impl PortraitSettings {
         } else {
             Self {
                 keep: false,
+                hd: saved.hd,
+                hd_side: saved.hd_side,
                 ..Self::default()
             }
         }
@@ -335,5 +423,54 @@ mod tests {
         assert_eq!(old, PortraitSettings::default());
         assert!(backdrop_rgb(Backdrop::Scene).is_none());
         assert_eq!(arms_lowered(Pose::Current), None);
+    }
+
+    #[test]
+    fn the_hd_choice_survives_settings_not_kept() {
+        let saved = PortraitSettings {
+            keep: false,
+            hd: true,
+            hd_side: HdSide::Side1024,
+            framing: Framing::Face,
+            ..Default::default()
+        };
+        let opened = PortraitSettings::opening(&saved);
+        assert!(opened.hd);
+        assert_eq!(opened.hd_side, HdSide::Side1024);
+        assert_eq!(opened.framing, Framing::Body);
+        assert!(!PortraitSettings::default().hd, "off unless chosen");
+        assert_eq!(HdSide::Side512.side(), 512);
+        assert_eq!(HdSide::Side1024.side(), SHOT_SIDE, "the photo is drawn at the largest side");
+    }
+
+    #[test]
+    fn the_hd_offer_needs_a_known_price_and_the_balance() {
+        assert_eq!(hd_offer(None, Some(1000)), HdOffer::Unknown);
+        assert_eq!(hd_offer(Some(10), Some(5)), HdOffer::Short(10));
+        assert_eq!(hd_offer(Some(10), Some(10)), HdOffer::Ready(10));
+        // an unknown balance leaves the check to the server
+        assert_eq!(hd_offer(Some(10), None), HdOffer::Ready(10));
+        assert_eq!(hd_offer(Some(0), Some(0)), HdOffer::Ready(0));
+    }
+
+    #[test]
+    fn the_batch_total_is_the_count_times_the_price_against_the_balance() {
+        assert_eq!(hd_total(Some(10), 7), Some(70));
+        assert_eq!(hd_total(None, 7), None);
+        assert_eq!(hd_total(Some(10), 0), Some(0));
+        assert_eq!(hd_total(Some(i32::MAX), 3), Some(i32::MAX), "never wraps");
+        // L$ 65 pays six pictures at L$ 10, not seven
+        assert_eq!(hd_offer(hd_total(Some(10), 7), Some(65)), HdOffer::Short(70));
+        assert_eq!(hd_offer(hd_total(Some(10), 6), Some(65)), HdOffer::Ready(60));
+        assert_eq!(hd_offer(hd_total(None, 6), Some(65)), HdOffer::Unknown);
+    }
+
+    #[test]
+    fn the_hd_picture_name_fits_an_item_name() {
+        let name = hd_picture_name("Velvet evening");
+        assert!(name.contains("Velvet evening"));
+        let long = hd_picture_name(&"é".repeat(80));
+        assert!(long.len() <= 63);
+        assert!(!long.is_empty());
     }
 }

@@ -11,6 +11,7 @@ use egui::{RichText, Vec2};
 use model::Action;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
+pub(crate) mod batch;
 mod clipboard;
 mod folders;
 mod gallery;
