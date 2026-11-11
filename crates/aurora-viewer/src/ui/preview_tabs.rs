@@ -130,6 +130,14 @@ impl Hosts {
     }
 }
 
+/// A group's row of tabs: one line that scrolls sideways when the window is
+/// too narrow for every tab, with the mouse wheel as well as Shift + wheel
+/// (egui's `always_scroll_the_only_direction`, off by default).
+pub fn tab_strip<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::scroll_area::ScrollAreaOutput<R> {
+    ui.style_mut().always_scroll_the_only_direction = true;
+    egui::ScrollArea::horizontal().id_salt("preview_tabs").show(ui, add)
+}
+
 pub fn window_id(id: Uuid) -> String {
     format!("inventory_tab_host_{id}")
 }
@@ -150,7 +158,7 @@ impl View {
         ui.horizontal(|ui| {
             let width = (ui.available_width() - 34.0).max(0.0);
             ui.allocate_ui(egui::vec2(width, 36.0), |ui| {
-                egui::ScrollArea::horizontal().id_salt("preview_tabs").show(ui, |ui| {
+                tab_strip(ui, |ui| {
                     ui.horizontal(|ui| {
                         for member in self.labels.iter() {
                             let name = if member.dirty {
@@ -194,6 +202,47 @@ mod tests {
             enabled: true,
         }
     }
+    #[test]
+    fn the_wheel_scrolls_a_tab_strip_too_wide_for_its_window() {
+        let ctx = egui::Context::default();
+        let strip = |ctx: &egui::Context, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(240.0, 120.0))),
+                events,
+                ..Default::default()
+            };
+            let mut offset = 0.0;
+            let _ = ctx.run_ui(input, |ui| {
+                ui.allocate_ui(egui::vec2(200.0, 36.0), |ui| {
+                    offset = tab_strip(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            for n in 0..12 {
+                                let _ = ui.button(format!("A long tab name {n}"));
+                            }
+                        });
+                    })
+                    .state
+                    .clamped_offset()
+                    .x;
+                });
+            });
+            offset
+        };
+        assert_eq!(strip(&ctx, vec![egui::Event::PointerMoved(egui::pos2(60.0, 15.0))]), 0.0);
+        let wheel = egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -120.0),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut offset = strip(&ctx, vec![egui::Event::PointerMoved(egui::pos2(60.0, 15.0)), wheel]);
+        for _ in 0..30 {
+            offset = strip(&ctx, Vec::new());
+        }
+        assert!(offset > 0.0, "a plain vertical wheel moves the tabs sideways: {offset}");
+    }
+
     #[test]
     fn closing_advances_only_after_an_editor_finishes_and_cancel_keeps_remaining_tabs() {
         let mut hosts = Hosts::default();

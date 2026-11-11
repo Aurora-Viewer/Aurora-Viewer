@@ -487,7 +487,7 @@ impl LibraryUi {
                 ui.horizontal(|ui| {
                     let width = (ui.available_width() - 34.0).max(0.0);
                     ui.allocate_ui(egui::vec2(width, 36.0), |ui| {
-                        egui::ScrollArea::horizontal().id_salt("preview_tabs").show(ui, |ui| {
+                        crate::ui::preview_tabs::tab_strip(ui, |ui| {
                             let labels: Vec<_> = group
                                 .items
                                 .iter()
