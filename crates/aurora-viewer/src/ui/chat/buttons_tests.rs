@@ -41,6 +41,7 @@ fn teleport_invitation_paints_one_destination_in_every_style() {
             rating: Rating::Allowed,
             answer: Answer::Pending,
             notification: 0,
+            presented: None,
         });
         h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Invite(1), message));
         h.open(Some(JANE));

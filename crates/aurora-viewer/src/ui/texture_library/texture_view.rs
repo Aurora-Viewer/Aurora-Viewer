@@ -98,8 +98,27 @@ pub(crate) struct ImageView {
     revision: Option<crate::scene::textures::PreviewRevision>,
     pending: Option<crossbeam_channel::Receiver<Decoded>>,
     export_reply: Option<crossbeam_channel::Receiver<String>>,
+    /// Copy UUID allowed for (asset, inventory generation, god): the rule
+    /// walks the whole inventory, so not on every frame (as the picker and
+    /// the material editor keep it).
+    uuid_shown: Option<(uuid::Uuid, u64, bool, bool)>,
 }
 impl ImageView {
+    /// Whether "Copy UUID" is offered for `asset`
+    /// (LLPreviewTexture::postBuild: full permissions; any god sees it),
+    /// computed again only when the asset, the inventory or the god state
+    /// changes.
+    pub(super) fn copy_uuid_allowed(&mut self, inventory: &crate::world::inventory::Inventory, asset: uuid::Uuid, god: bool) -> bool {
+        match self.uuid_shown {
+            Some((a, generation, g, shown)) if a == asset && generation == inventory.generation && g == god => shown,
+            _ => {
+                let shown = rules::asset_uuid_shown_to(inventory, asset, god);
+                self.uuid_shown = Some((asset, inventory.generation, god, shown));
+                shown
+            }
+        }
+    }
+
     pub(super) fn batch_export(path: std::path::PathBuf, png: bool) -> Self {
         Self {
             export_path: Some(path),
@@ -282,11 +301,13 @@ pub(super) struct Gates {
 }
 
 /// The gates of an item whose holder has the permission bits `held`.
-pub(super) fn gates(held: u32) -> Gates {
-    let full = held & rules::FULL == rules::FULL;
+/// `copy_uuid_shown` is the shared asset-id rule (`rules::asset_uuid_shown_to`,
+/// through `ImageView::copy_uuid_allowed`: full permissions, or a god);
+/// Save As needs full permissions.
+pub(super) fn gates(held: u32, copy_uuid_shown: bool) -> Gates {
     Gates {
-        copy_uuid: full,
-        save_as: full,
+        copy_uuid: copy_uuid_shown,
+        save_as: held & rules::FULL == rules::FULL,
     }
 }
 
@@ -296,7 +317,8 @@ pub(super) fn toolbar(
     ui: &mut egui::Ui,
     p: &Palette,
     item: &aurora_net::inventory::InvItem,
-    held: u32,
+    inventory: &crate::world::inventory::Inventory,
+    copy_uuid: bool,
     dimensions: Option<(u32, u32)>,
     display: &mut Display,
     // the 360° switch of a texture that is 2:1, and whether it is on
@@ -308,8 +330,10 @@ pub(super) fn toolbar(
         if widgets::icon_button(ui, p, "refresh", aurora_i18n::tr!("resource-preview-refresh"), true) {
             actions.push(Action::RefreshTexture(item.asset_id));
         }
-        // LLPreviewTexture::postBuild shows "Copy UUID" for full permissions only
-        let gates = gates(held);
+        // LLPreviewTexture::postBuild shows "Copy UUID" for full permissions
+        // only, or to a god (`ImageView::copy_uuid_allowed`); Save As needs
+        // full permissions (both through `gates`)
+        let gates = gates(rules::held(inventory, item), copy_uuid);
         if widgets::icon_button(
             ui,
             p,
@@ -511,6 +535,30 @@ fn checkerboard(ui: &egui::Ui, p: &Palette, image: egui::Rect) {
 mod tests {
     use super::*;
 
+    /// Copy UUID is decided once per asset, inventory generation and god
+    /// state, not by walking the inventory on every frame.
+    #[test]
+    fn copy_uuid_is_computed_again_only_when_its_inputs_change() {
+        use aurora_net::inventory::InvItem;
+        let asset = uuid::Uuid::from_u128(77);
+        let mut inventory = crate::world::inventory::Inventory::default();
+        let mut view = ImageView::default();
+        assert!(view.copy_uuid_allowed(&inventory, asset, true), "a god sees it");
+        assert!(!view.copy_uuid_allowed(&inventory, asset, false), "not held");
+        // a full-permission copy arrives, but the generation did not move: kept
+        let item = InvItem {
+            id: uuid::Uuid::from_u128(78),
+            asset_id: asset,
+            owner: inventory.owner,
+            owner_mask: rules::FULL,
+            ..Default::default()
+        };
+        inventory.items.insert(item.id, item);
+        assert!(!view.copy_uuid_allowed(&inventory, asset, false), "cached for this generation");
+        inventory.generation += 1;
+        assert!(view.copy_uuid_allowed(&inventory, asset, false), "read again after a change");
+    }
+
     #[test]
     fn batch_export_preserves_dimensions_and_never_overwrites_existing_files() {
         let pixels = aurora_render::preview::Image {
@@ -639,10 +687,16 @@ mod tests {
     fn toolbar_gates(held: u32, panorama: bool) -> (bool, bool) {
         use crate::ui::widgets::elide_tests::Frames;
         let p = crate::theme::Theme::default().palette();
+        let mut inventory = crate::world::inventory::Inventory::default();
         let item = aurora_net::inventory::InvItem {
+            id: Uuid::from_u128(4),
             asset_id: Uuid::from_u128(5),
+            owner: inventory.owner,
+            owner_mask: held,
             ..Default::default()
         };
+        inventory.items.insert(item.id, item.clone());
+        let copy_uuid = rules::asset_uuid_shown_to(&inventory, item.asset_id, false);
         let draw = |frames: &mut Frames, events: Vec<egui::Event>| {
             let mut display = Display::default();
             let mut on = panorama;
@@ -652,7 +706,8 @@ mod tests {
                     ui,
                     &p,
                     &item,
-                    held,
+                    &inventory,
+                    copy_uuid,
                     Some((2048, 1024)),
                     &mut display,
                     panorama.then_some(&mut on),
@@ -709,7 +764,6 @@ mod tests {
             ("full and more", FULL | 0x1_0000, true),
         ];
         for (name, held, allowed) in cases {
-            assert_eq!((gates(held).copy_uuid, gates(held).save_as), (allowed, allowed), "{name}");
             for panorama in [false, true] {
                 assert_eq!(toolbar_gates(held, panorama), (allowed, allowed), "{name}, 360°: {panorama}");
             }
@@ -742,7 +796,8 @@ mod tests {
                         ui,
                         p,
                         &item,
-                        0x7fff_ffff,
+                        &crate::world::inventory::Inventory::default(),
+                        true,
                         Some((2048, 1024)),
                         display,
                         Some(&mut on),

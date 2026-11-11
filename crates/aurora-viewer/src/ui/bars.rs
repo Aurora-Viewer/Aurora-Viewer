@@ -23,6 +23,20 @@ use super::skin::Layout;
 use crate::theme::Palette;
 use egui::{Color32, RichText, Vec2};
 
+/// Advanced › Admin's entries (menu_viewer.xml, the Admin menu).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdminAction {
+    TakeCopy,
+    ForceOwnerToMe,
+    ForceOwnerPermissive,
+    Delete,
+    Lock,
+    AssetIds,
+    ParcelForceOwnerToMe,
+    ClaimPublicLand,
+    SaveRegionState,
+}
+
 #[derive(Default)]
 pub enum BarAction {
     ToggleVr,
@@ -88,6 +102,9 @@ pub enum BarAction {
     ToggleQuickjump,
     /// Advanced › Quiet snapshots (PlayModeUISndSnapshot).
     ToggleQuietSnapshots,
+    /// Advanced › Request Admin Status (true) / Leave Admin Status (false).
+    AdminStatus(bool),
+    Admin(AdminAction),
     ToggleWaterWalk,
     ToggleSwimming,
     MoveLockOptions,
@@ -291,6 +308,15 @@ pub struct StatusInfo<'a> {
     /// console, estate managers).
     pub release_notes: bool,
     pub region_console: bool,
+    /// The god level the region gave us: Advanced › Request / Leave Admin
+    /// Status.
+    pub god_level: u8,
+    /// Objects are selected: Admin › Object's entries act on them.
+    pub admin_objects: bool,
+    /// The region answers GodlikeMessage and StateSave: OpenSim ignores
+    /// both (no handler in LLClientView's subscribers), so Get Asset IDs,
+    /// Claim Public Land and Save Region State are left out there.
+    pub admin_requests: bool,
     /// The grid sent a message at login (Contents › Message of the day).
     pub motd: bool,
     /// The help page of the grid info (OpenSim), with the grid's name:
@@ -1385,6 +1411,23 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                     crate::ui::sim_console::WINDOW,
                     &mut panels.sim_console,
                 );
+            }
+            // Advanced › Request Admin Status (Ctrl+Alt+G) / Leave Admin
+            // Status (Advanced.RequestAdminStatus / LeaveAdminStatus): asked
+            // of the region, which grants it or not
+            if st.god_level == 0 {
+                // the default chord (⌘⌥G on macOS), as the other menu rows
+                let keys = crate::keybinds::chord_label("KeyG", true, true, false);
+                if menu::item_keys(ui, p, "crown-filled", aurora_i18n::tr!("god-mode-request"), &keys) {
+                    *action = BarAction::AdminStatus(true);
+                }
+            } else if menu::item(ui, p, "crown-filled", aurora_i18n::tr!("god-mode-leave")) {
+                *action = BarAction::AdminStatus(false);
+            }
+            // Advanced › Admin (menu_viewer.xml), while the region keeps
+            // our god level
+            if st.god_level > 0 {
+                admin_menu(ui, p, st.admin_objects, st.admin_requests, action);
             }
             // Advanced › Quiet Snapshots (PlayModeUISndSnapshot)
             let quiet = aurora_i18n::tr!("photo-quiet-snapshots");
@@ -3431,6 +3474,76 @@ pub fn bottom_bar(
         super::widgets::finish_bar_glass(&painter, slot, resp.response.rect, p);
     }
     (out, action, resp.response.rect.top(), width_committed)
+}
+
+/// Advanced › Admin: the Object, Parcel and Region entries of the Legacy
+/// Viewer's Admin menu (menu_viewer.xml; handle_force_ownership,
+/// handle_force_delete, handle_object_lock, handle_claim_public_land…).
+fn admin_menu(ui: &mut egui::Ui, p: &Palette, objects: bool, requests: bool, action: &mut BarAction) {
+    let mut row = |ui: &mut egui::Ui, icon: &str, label: &str, enabled: bool, a: AdminAction| {
+        if ui.add_enabled_ui(enabled, |ui| menu::item(ui, p, icon, label)).inner {
+            *action = BarAction::Admin(a);
+        }
+    };
+    menu::submenu(ui, p, "crown-filled", aurora_i18n::tr!("admin-menu"), true, |ui| {
+        menu::submenu(ui, p, "cube", aurora_i18n::tr!("admin-object"), true, |ui| {
+            row(
+                ui,
+                "copy-filled",
+                aurora_i18n::tr!("admin-take-copy"),
+                objects,
+                AdminAction::TakeCopy,
+            );
+            row(
+                ui,
+                "user-filled",
+                aurora_i18n::tr!("admin-force-owner"),
+                objects,
+                AdminAction::ForceOwnerToMe,
+            );
+            row(
+                ui,
+                "key-filled",
+                aurora_i18n::tr!("admin-force-permissive"),
+                objects,
+                AdminAction::ForceOwnerPermissive,
+            );
+            row(ui, "trash-filled", aurora_i18n::tr!("admin-delete"), objects, AdminAction::Delete);
+            row(ui, "lock-filled", aurora_i18n::tr!("admin-lock"), objects, AdminAction::Lock);
+            if requests {
+                row(ui, "id-filled", aurora_i18n::tr!("admin-asset-ids"), objects, AdminAction::AssetIds);
+            }
+        });
+        menu::submenu(ui, p, "map-pin-filled", aurora_i18n::tr!("admin-parcel"), true, |ui| {
+            row(
+                ui,
+                "user-filled",
+                aurora_i18n::tr!("admin-force-owner"),
+                true,
+                AdminAction::ParcelForceOwnerToMe,
+            );
+            if requests {
+                row(
+                    ui,
+                    "flag-filled",
+                    aurora_i18n::tr!("admin-claim-public-land"),
+                    true,
+                    AdminAction::ClaimPublicLand,
+                );
+            }
+        });
+        if requests {
+            menu::submenu(ui, p, "world-filled", aurora_i18n::tr!("admin-region"), true, |ui| {
+                row(
+                    ui,
+                    "device-floppy-filled",
+                    aurora_i18n::tr!("admin-save-region-state"),
+                    true,
+                    AdminAction::SaveRegionState,
+                );
+            });
+        }
+    });
 }
 
 #[cfg(test)]

@@ -847,7 +847,7 @@ fn the_gates_need_full_permissions() {
     use crate::world::inventory::actions::{COPY, FULL, MODIFY, TRANSFER};
     let agent = Uuid::from_u128(77);
     let other = Uuid::from_u128(78);
-    let inv = Inventory {
+    let mut inv = Inventory {
         owner: agent,
         ..Default::default()
     };
@@ -870,7 +870,14 @@ fn the_gates_need_full_permissions() {
     ];
     assert_eq!(cases.len(), 8);
     for (name, it, allowed) in cases {
-        let gates = texture_view::gates(rules::held(&inv, &it));
+        let it = aurora_net::inventory::InvItem {
+            id: Uuid::from_u128(1),
+            asset_id: Uuid::from_u128(2),
+            ..it
+        };
+        inv.items.insert(it.id, it.clone());
+        let shown = rules::asset_uuid_shown_to(&inv, it.asset_id, false);
+        let gates = texture_view::gates(rules::held(&inv, &it), shown);
         assert_eq!((gates.copy_uuid, gates.save_as), (allowed, allowed), "{name}");
     }
 }

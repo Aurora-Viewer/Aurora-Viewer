@@ -82,8 +82,26 @@ pub enum MusicStatus {
     Blocked,
     Connecting,
     Playing,
-    Error,
+    /// The last attempt failed, with its reason; kept while a retry connects.
+    Error(aurora_audio::StreamError),
     NoDevice,
+}
+
+/// Why the station cannot be heard, in the resident's language; the server's
+/// own text stays in the log.
+fn error_reason(error: aurora_audio::StreamError) -> String {
+    use aurora_audio::StreamError;
+    match error {
+        StreamError::WebPage => aurora_i18n::tr!("music-error-web-page").to_owned(),
+        StreamError::Playlist => aurora_i18n::tr!("music-error-playlist").to_owned(),
+        StreamError::HttpStatus(code) => aurora_i18n::tr!("music-error-http", code = code.to_string()),
+        StreamError::Tls => aurora_i18n::tr!("music-error-tls").to_owned(),
+        StreamError::Connection => aurora_i18n::tr!("music-error-connection").to_owned(),
+        StreamError::Address => aurora_i18n::tr!("music-error-address").to_owned(),
+        StreamError::AudioFormat => aurora_i18n::tr!("music-error-format").to_owned(),
+        StreamError::Interrupted => aurora_i18n::tr!("music-error-interrupted").to_owned(),
+        StreamError::Worker => aurora_i18n::tr!("music-error-worker").to_owned(),
+    }
 }
 
 impl MusicStatus {
@@ -116,7 +134,7 @@ impl MusicStatus {
         match stream {
             None => Self::NoDevice,
             Some(aurora_audio::StreamStatus::Playing { .. }) => Self::Playing,
-            Some(aurora_audio::StreamStatus::Error(_)) => Self::Error,
+            Some(aurora_audio::StreamStatus::Error(error)) => Self::Error(*error),
             Some(_) => Self::Connecting,
         }
     }
@@ -131,8 +149,8 @@ impl MusicStatus {
             Self::Waiting => aurora_i18n::tr!("ui-music-waiting"),
             Self::Blocked => aurora_i18n::tr!("ui-music-blocked"),
             Self::Connecting => aurora_i18n::tr!("ui-music-connecting"),
-            Self::Error => aurora_i18n::tr!("ui-music-error"),
             Self::NoDevice => aurora_i18n::tr!("ui-music-no-device"),
+            Self::Error(error) => return aurora_i18n::tr!("music-state-error", reason = error_reason(error)),
         }
         .to_owned()
     }
@@ -255,7 +273,12 @@ pub fn top_controls(
             } else {
                 aurora_i18n::tr!("ui-audio-listen-to-parcel-music")
             };
-            let music_tip = format!("{action_tip}\n{}", media.music_status.text());
+            // A parcel without music says so alone, without a second "none".
+            let music_tip = if media.music_available {
+                format!("{action_tip}\n{}", media.music_status.text())
+            } else {
+                action_tip.to_owned()
+            };
             let music = toggle(ui, "radio", &music_tip, media.music_playing, media.music_available);
             if music.clicked() && media.music_available {
                 action = AudioAction::ToggleMusic;
@@ -381,13 +404,16 @@ mod tests {
         use aurora_audio::StreamStatus;
         let mut audio = AudioSettings::default();
         let playing = StreamStatus::Playing { title: None };
-        let failed = StreamStatus::Error("synthetic failure".into());
+        let failed = StreamStatus::Error(aurora_audio::StreamError::Connection);
         let read = |audio: &AudioSettings, verdict, stream| MusicStatus::read(true, true, audio, false, verdict, stream);
         assert_eq!(
             read(&audio, Verdict::Allow, Some(&StreamStatus::Connecting)),
             MusicStatus::Connecting
         );
-        assert_eq!(read(&audio, Verdict::Allow, Some(&failed)), MusicStatus::Error);
+        assert_eq!(
+            read(&audio, Verdict::Allow, Some(&failed)),
+            MusicStatus::Error(aurora_audio::StreamError::Connection)
+        );
         assert_eq!(read(&audio, Verdict::Ask, Some(&playing)), MusicStatus::Waiting);
         assert_eq!(read(&audio, Verdict::Deny, Some(&playing)), MusicStatus::Blocked);
         assert_eq!(read(&audio, Verdict::Allow, Some(&playing)), MusicStatus::Playing);
@@ -410,6 +436,25 @@ mod tests {
             MusicStatus::read(true, true, &audio, true, Verdict::Allow, Some(&playing)),
             MusicStatus::Muted
         );
+    }
+
+    #[test]
+    fn a_music_error_names_its_reason() {
+        use aurora_audio::StreamError;
+        let text = MusicStatus::Error(StreamError::HttpStatus(404)).text();
+        assert!(text.contains("404"), "{text}");
+        let reasons: Vec<_> = [
+            StreamError::WebPage,
+            StreamError::Playlist,
+            StreamError::Tls,
+            StreamError::Connection,
+        ]
+        .into_iter()
+        .map(|error| MusicStatus::Error(error).text())
+        .collect();
+        for (i, text) in reasons.iter().enumerate() {
+            assert!(reasons.iter().skip(i + 1).all(|other| other != text), "{reasons:?}");
+        }
     }
 
     #[test]

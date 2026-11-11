@@ -289,6 +289,7 @@ mod tests {
         let (events, _received) = crossbeam_channel::unbounded();
         let sh = Shared {
             http: reqwest::Client::new(),
+            login_http: reqwest::Client::new(),
             caps_http: reqwest::Client::new(),
             events: crate::EventSender(events),
             controls: Arc::new(Mutex::new(AgentControls::default())),

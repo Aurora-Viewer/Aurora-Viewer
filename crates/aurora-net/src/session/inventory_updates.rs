@@ -331,6 +331,7 @@ mod tests {
             .expect("HTTP client");
         let sh = Shared {
             http: http.clone(),
+            login_http: http.clone(),
             caps_http: http,
             events: crate::EventSender(events),
             controls: Arc::new(Mutex::new(AgentControls::default())),
