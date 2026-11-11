@@ -72,7 +72,6 @@ pub enum ChatThumbnails {
 pub enum BrowserBehavior {
     SystemForAll,
     #[default]
-    #[serde(alias = "AuroraDefault")]
     BuiltInForSecondLife,
     BuiltInForAll,
 }
@@ -3849,18 +3848,11 @@ mod tests {
     fn browser_behavior_round_trips_and_old_settings_keep_aurora_routing() {
         let old: Settings = serde_json::from_str(r#"{"browser_home_page":"https://example.net/"}"#).expect("old settings");
         assert_eq!(old.browser_behavior, BrowserBehavior::BuiltInForSecondLife);
-        let previous_default: Settings =
-            serde_json::from_str(r#"{"browser_behavior":"AuroraDefault"}"#).expect("settings saved by the previous browser preference");
-        assert_eq!(previous_default.browser_behavior, BrowserBehavior::BuiltInForSecondLife);
+        // an ordinary link still opens in the system browser, as before the choice existed
         assert!(crate::link_trust::should_use_system_browser(
             "https://example.org/chat",
             old.browser_behavior,
             crate::link_trust::BrowserEntryPoint::Link
-        ));
-        assert!(!crate::link_trust::should_use_system_browser(
-            &old.browser_home_page,
-            old.browser_behavior,
-            crate::link_trust::BrowserEntryPoint::Toolbar
         ));
         let old_saved = serde_json::to_string(&old).expect("save old settings");
         let old_reloaded: Settings = serde_json::from_str(&old_saved).expect("reload old settings");

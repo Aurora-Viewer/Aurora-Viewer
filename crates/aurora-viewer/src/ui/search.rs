@@ -848,7 +848,7 @@ impl SearchUi {
             }
             if widgets::action_button(ui, p, "external-link-filled", label, ActionKind::Flat, external).clicked() {
                 let url = external_address(&self.web.location, home, env.session);
-                super::context::request(ui.ctx(), super::context::CtxAction::OpenUrlSearch(url));
+                super::context::request(ui.ctx(), super::context::CtxAction::OpenUrlExternal(url));
             }
         });
         if env.anonymous {

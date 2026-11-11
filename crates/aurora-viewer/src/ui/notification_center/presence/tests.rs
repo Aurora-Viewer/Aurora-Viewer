@@ -323,8 +323,6 @@ fn frames_with(size: Vec2, classic: bool, at: PresencePosition, center: Center) 
                 !classic,
                 Some(&mut emoji),
                 &bars::favorites::View::default(),
-                crate::settings::BrowserBehavior::BuiltInForSecondLife,
-                crate::ui::web_browser::DEFAULT_HOME,
             );
             // the room the bars leave, as App reports it
             let area = crate::ui::layout::bars_room(ui.available_rect_before_wrap(), bottom_top, classic);

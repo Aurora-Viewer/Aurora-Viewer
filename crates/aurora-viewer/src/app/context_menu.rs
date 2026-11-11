@@ -7,6 +7,10 @@ use crate::ui::context::{CtxAction, Facts, ObjectFacts, Target};
 use uuid::Uuid;
 
 impl App {
+    /// Open a web link already checked (`open_web_link`) where the browser
+    /// choice sends it: the system browser, the Marketplace window for a
+    /// Marketplace page, else the Web browser window, shown and brought to
+    /// the front like LLWeb::loadURLInternal (indra/newview/llweb.cpp).
     pub(super) fn route_web_link(&mut self, url: String, entry: crate::link_trust::BrowserEntryPoint) {
         let marketplace = self.marketplace_home();
         let marketplace_url = matches!(
@@ -20,10 +24,15 @@ impl App {
             self.marketplace_ui.open(Some(url));
         } else {
             self.web_browser_ui.go_to(&url);
-            self.panels.web_browser = true;
+            let window = ui::web_browser::WINDOW;
+            ui::widgets::open_floater(&self.egui_ctx, window, &mut self.panels.web_browser);
+            ui::widgets::bring_floater_front(&self.egui_ctx, window);
         }
     }
 
+    /// A web link clicked anywhere: refused when it is not a web page, then
+    /// checked (the link warning) and routed (`route_web_link`). `entry`
+    /// None reads it from the URL: a Marketplace page or an ordinary link.
     pub(super) fn open_web_link(&mut self, url: String, requested_entry: Option<crate::link_trust::BrowserEntryPoint>) {
         use crate::link_trust::Trust;
 
@@ -893,7 +902,6 @@ impl App {
             CtxAction::AppLink(link) => self.run_app_link(link),
             CtxAction::OpenUrl(url) => self.open_web_link(url, None),
             CtxAction::OpenUrlExternal(url) => self.open_web_link(url, Some(crate::link_trust::BrowserEntryPoint::ExplicitExternal)),
-            CtxAction::OpenUrlSearch(url) => self.open_web_link(url, Some(crate::link_trust::BrowserEntryPoint::SearchExternal)),
             CtxAction::TeleportToPlaceConfirmed(region, pos) => {
                 self.teleport_to_location(region, pos);
             }

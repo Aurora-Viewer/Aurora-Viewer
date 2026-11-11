@@ -13,70 +13,65 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+/// Where a web link comes from, for the browser choice
+/// (`settings::BrowserBehavior`, the Legacy Viewer's PreferredBrowserBehavior).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BrowserEntryPoint {
+    /// A link of a text, a notification, a script or a server reply
+    /// (LLWeb::loadURL).
     Link,
+    /// A Marketplace page opened from outside the Marketplace window.
     MarketplaceLink,
+    /// The Marketplace listings' open action: the Marketplace window in
+    /// every mode.
     MarketplaceWindow,
+    /// An "Open in browser" button (LLWeb::loadURLExternal): the system
+    /// browser in every mode.
     ExplicitExternal,
-    Toolbar,
-    SearchExternal,
 }
 
-/// Apply the saved browser choice to a particular link entry point. The
-/// Second Life mode preserves Aurora's former entry-point routing where it
-/// differs from the Legacy Viewer's host-based preference.
+/// Whether a web link leaves Aurora for the system browser, like
+/// LLWeb::useExternalBrowser (indra/newview/llweb.cpp, originally LGPL 2.1).
+/// The toolbar's Web browser button is not routed here: toggleWebBrowser
+/// (llviewermenu.cpp) always opens the built-in window.
 pub fn should_use_system_browser(url: &str, behavior: crate::settings::BrowserBehavior, entry: BrowserEntryPoint) -> bool {
     use crate::settings::BrowserBehavior;
-    // The explicit “Open in system browser” controls must honour their label,
-    // regardless of the saved preference, as loadURLExternal does in the Legacy Viewer.
-    if matches!(entry, BrowserEntryPoint::ExplicitExternal | BrowserEntryPoint::SearchExternal) {
-        return true;
-    }
-    if entry == BrowserEntryPoint::MarketplaceWindow {
-        return false;
-    }
-    match behavior {
-        BrowserBehavior::SystemForAll => true,
-        BrowserBehavior::BuiltInForAll => false,
-        BrowserBehavior::BuiltInForSecondLife => match entry {
-            BrowserEntryPoint::MarketplaceLink | BrowserEntryPoint::MarketplaceWindow | BrowserEntryPoint::Toolbar => false,
-            BrowserEntryPoint::Link => use_system_browser(url, behavior),
-            BrowserEntryPoint::ExplicitExternal | BrowserEntryPoint::SearchExternal => true,
-        },
+    match (entry, behavior) {
+        (BrowserEntryPoint::ExplicitExternal, _) => true,
+        (BrowserEntryPoint::MarketplaceWindow, _) => false,
+        (_, BrowserBehavior::SystemForAll) => true,
+        (_, BrowserBehavior::BuiltInForAll) => false,
+        // the grid's Marketplace (its host can be Aditi's) keeps its window
+        (BrowserEntryPoint::MarketplaceLink, BrowserBehavior::BuiltInForSecondLife) => false,
+        (BrowserEntryPoint::Link, BrowserBehavior::BuiltInForSecondLife) => !second_life_host(url),
     }
 }
 
-/// Whether a web URL should leave Aurora. This follows the Legacy Viewer's
-/// `PreferredBrowserBehavior` host list. Mail and other non-web schemes keep
-/// their existing handling in the caller; this predicate still reports mailto
-/// as outside the built-in web browser.
-pub fn use_system_browser(url: &str, behavior: crate::settings::BrowserBehavior) -> bool {
-    use crate::settings::BrowserBehavior;
+/// The hosts of LLWeb::useExternalBrowser's "built-in for Second Life links"
+/// choice, their subdomains included. The Legacy Viewer's pattern
+/// (`\b(lindenlab.com|…)$`) also takes `my-secondlife.com`; only a dot before
+/// the domain counts here, so a look-alike host leaves Aurora.
+const SECOND_LIFE_HOSTS: &[&str] = &[
+    "lindenlab.com",
+    "secondlife.com",
+    "secondlife.io",
+    "secondlifegrid.net",
+    "secondlife-status.statuspage.io",
+];
 
-    let parsed = match reqwest::Url::parse(url.trim()) {
-        Ok(parsed) if matches!(parsed.scheme(), "http" | "https") => parsed,
-        Ok(parsed) if parsed.scheme() == "mailto" => return true,
-        _ => return false,
+/// Whether `url` is a page of the Second Life sites. An address with no host
+/// the parser can read is not one, so it leaves Aurora, as in the Legacy
+/// Viewer (an empty host matches no pattern).
+pub fn second_life_host(url: &str) -> bool {
+    let Some(host) = reqwest::Url::parse(url.trim())
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+    else {
+        return false;
     };
-    match behavior {
-        BrowserBehavior::SystemForAll => true,
-        BrowserBehavior::BuiltInForAll => false,
-        BrowserBehavior::BuiltInForSecondLife => {
-            let Some(host) = parsed.host_str().map(str::to_ascii_lowercase) else {
-                return true;
-            };
-            ![
-                "lindenlab.com",
-                "secondlife.com",
-                "secondlife.io",
-                "secondlifegrid.net",
-                "secondlife-status.statuspage.io",
-            ]
-            .iter()
-            .any(|domain| host == *domain || host.strip_suffix(domain).is_some_and(|prefix| prefix.ends_with('.')))
-        }
-    }
+    SECOND_LIFE_HOSTS
+        .iter()
+        .any(|domain| host == *domain || host.strip_suffix(domain).is_some_and(|prefix| prefix.ends_with('.')))
 }
 
 /// Trusted domains, their subdomains included. Hosts of pages or files
@@ -501,96 +496,64 @@ mod tests {
     fn browser_behavior_routes_the_same_urls_by_preference() {
         use crate::settings::BrowserBehavior::{BuiltInForAll, BuiltInForSecondLife, SystemForAll};
 
+        // [system for all, Second Life links built in, built in for all]
         let cases = [
             ("chat link", "https://example.org/chat", [true, true, false]),
-            (
-                "Marketplace link",
-                "https://marketplace.secondlife.com/p/item",
-                [true, false, false],
-            ),
             ("Second Life page", "https://secondlife.com/destinations", [true, false, false]),
+            ("Second Life subdomain", "https://my.secondlife.com/someone", [true, false, false]),
+            ("grid status", "https://secondlife-status.statuspage.io/", [true, false, false]),
+            ("upper-case host", "https://WWW.LindenLab.com/", [true, false, false]),
             ("other site", "https://video.example.net/watch", [true, true, false]),
-            ("mail link", "mailto:help@example.net", [true, true, true]),
-            ("host lookalike", "https://secondlife.com.evil.example/", [true, true, false]),
+            ("host look-alike", "https://secondlife.com.evil.example/", [true, true, false]),
+            ("name ending alike", "https://notsecondlife.com/", [true, true, false]),
+            ("unreadable address", "https://[bad", [true, true, false]),
         ];
         let behaviors = [SystemForAll, BuiltInForSecondLife, BuiltInForAll];
         for (name, url, expected) in cases {
             for (index, behavior) in behaviors.into_iter().enumerate() {
-                assert_eq!(use_system_browser(url, behavior), expected[index], "{name}, {behavior:?}");
+                assert_eq!(
+                    should_use_system_browser(url, behavior, BrowserEntryPoint::Link),
+                    expected[index],
+                    "{name}, {behavior:?}"
+                );
             }
         }
     }
 
     #[test]
-    fn the_toolbar_sends_a_home_page_the_system_browser_accepts() {
-        // the toolbar button with "system browser for all links": an empty
-        // setting or a bare host must still open a page, not be refused
-        for (setting, expected) in [
-            ("", crate::ui::web_browser::DEFAULT_HOME.to_owned()),
-            ("example.org", "https://example.org/".to_owned()),
-            ("https://example.org/start", "https://example.org/start".to_owned()),
-        ] {
-            let home = crate::ui::web_browser::home_page(setting);
-            assert_eq!(home.trim_end_matches('/'), expected.trim_end_matches('/'), "{setting:?}");
-            assert!(refused_scheme(&home).is_none(), "{setting:?}");
-            assert!(should_use_system_browser(
-                &home,
-                crate::settings::BrowserBehavior::SystemForAll,
-                BrowserEntryPoint::Toolbar
-            ));
-        }
-    }
-
-    #[test]
-    fn default_settings_keep_auroras_entry_point_routing() {
-        use crate::settings::BrowserBehavior::BuiltInForSecondLife;
-        use BrowserEntryPoint::*;
-
-        let routes = [
-            ("https://example.org/chat", Link, true),
-            ("https://marketplace.secondlife.com/p/item", MarketplaceLink, false),
-            ("https://example.org/home", Toolbar, false),
-            ("https://example.org/search", SearchExternal, true),
-            ("https://marketplace.secondlife.com/p/item", ExplicitExternal, true),
-        ];
-        for (url, entry, expected) in routes {
+    fn marketplace_links_follow_the_choice_and_its_window_stays_inside() {
+        use crate::settings::BrowserBehavior::{BuiltInForAll, BuiltInForSecondLife, SystemForAll};
+        let page = "https://marketplace.secondlife.com/p/item";
+        // FSLoadSLMarketplace and loadURL: outside only with "system for all"
+        for (behavior, outside) in [(SystemForAll, true), (BuiltInForSecondLife, false), (BuiltInForAll, false)] {
             assert_eq!(
-                should_use_system_browser(url, BuiltInForSecondLife, entry),
-                expected,
-                "{entry:?}: {url}"
+                should_use_system_browser(page, behavior, BrowserEntryPoint::MarketplaceLink),
+                outside,
+                "{behavior:?}"
             );
-        }
-        assert!(!should_use_system_browser(
-            "https://secondlife.com/destinations",
-            BuiltInForSecondLife,
-            Link
-        ));
-        assert!(should_use_system_browser(
-            "https://secondlife.com/destinations",
-            crate::settings::BrowserBehavior::SystemForAll,
-            Link
-        ));
-    }
-
-    #[test]
-    fn explicit_external_actions_always_leave_viewer() {
-        use crate::settings::BrowserBehavior::{BuiltInForAll, BuiltInForSecondLife, SystemForAll};
-        for behavior in [SystemForAll, BuiltInForSecondLife, BuiltInForAll] {
-            for entry in [BrowserEntryPoint::ExplicitExternal, BrowserEntryPoint::SearchExternal] {
-                assert!(should_use_system_browser("https://example.org", behavior, entry));
-            }
-        }
-    }
-
-    #[test]
-    fn marketplace_listing_open_action_stays_in_marketplace_in_every_mode() {
-        use crate::settings::BrowserBehavior::{BuiltInForAll, BuiltInForSecondLife, SystemForAll};
-        for behavior in [SystemForAll, BuiltInForSecondLife, BuiltInForAll] {
+            // the listings' open action, even off the Marketplace host
             assert!(!should_use_system_browser(
                 "https://not-the-marketplace.example/",
                 behavior,
                 BrowserEntryPoint::MarketplaceWindow
             ));
+        }
+    }
+
+    #[test]
+    fn open_in_browser_buttons_always_leave_the_viewer() {
+        use crate::settings::BrowserBehavior::{BuiltInForAll, BuiltInForSecondLife, SystemForAll};
+        for behavior in [SystemForAll, BuiltInForSecondLife, BuiltInForAll] {
+            for url in [
+                "https://example.org",
+                "https://secondlife.com/",
+                "https://marketplace.secondlife.com/p/item",
+            ] {
+                assert!(
+                    should_use_system_browser(url, behavior, BrowserEntryPoint::ExplicitExternal),
+                    "{behavior:?}: {url}"
+                );
+            }
         }
     }
 

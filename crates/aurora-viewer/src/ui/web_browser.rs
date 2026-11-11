@@ -11,10 +11,13 @@
 //! link opens in this window, a SLURL or app link (`secondlife://`) acts in
 //! the viewer, any other scheme is refused (`link_trust::refused_scheme`);
 //! a link asking for a new window (`target="_blank"`, the plugin's
-//! `click_href`) does nothing, as in the other web windows. The Legacy
-//! Viewer's PreferredBrowserBehavior is not ported. Only a web page is
-//! handed to the system browser ("Open in browser", `external_address`),
-//! through the checks of a clicked link.
+//! `click_href`) does nothing, as in the other web windows. Links of the
+//! rest of the viewer come here or go to the system browser by the browser
+//! choice (PreferredBrowserBehavior, `link_trust::should_use_system_browser`);
+//! the toolbar button opens this window whatever the choice, as
+//! toggleWebBrowser does. Only a web page is handed to the system browser
+//! ("Open in browser", `external_address`), through the checks of a clicked
+//! link.
 
 use super::web_view::WebView;
 use super::widgets::{self, ActionKind, Floater};

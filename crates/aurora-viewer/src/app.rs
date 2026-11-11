@@ -13937,7 +13937,6 @@ impl App {
             self.panels.appearance = true;
         }
         match a.bar {
-            BarAction::OpenUrl(url) => self.on_ctx_action(ui::context::CtxAction::OpenUrl(url)),
             BarAction::ImportStreamList => self.import_stream_list(),
             BarAction::ExportStreamList => self.export_stream_list(),
             BarAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
@@ -14090,7 +14089,14 @@ impl App {
                 self.world.set_friends_only(on);
             }
             BarAction::BuyCurrency => self.open_buy_currency(),
-            BarAction::Marketplace => self.marketplace_ui.open(None),
+            // FSLoadSLMarketplace (llviewermenu.cpp): the system browser when
+            // every link goes there, else the Marketplace window
+            BarAction::Marketplace => match self.marketplace_home() {
+                Some(home) if self.settings.browser_behavior == crate::settings::BrowserBehavior::SystemForAll => {
+                    self.open_web_link(home, Some(crate::link_trust::BrowserEntryPoint::MarketplaceLink));
+                }
+                _ => self.marketplace_ui.open(None),
+            },
             BarAction::MarketplaceListings => self.open_marketplace_listings(),
             BarAction::ToggleMarketplaceListings => {
                 let window = ui::marketplace_listings::WINDOW;
@@ -16218,8 +16224,6 @@ impl App {
                         !classic_bars,
                         Some(&mut self.emoji),
                         &favorites,
-                        self.settings.browser_behavior,
-                        &self.settings.browser_home_page,
                     )
                 };
                 // what the bars leave: where the windows are laid out and
@@ -16262,8 +16266,6 @@ impl App {
                     bar: ui::toolbar::Bar::Left,
                     style: Default::default(),
                     editing: self.toolbar_ui.open && !toolbar_settings.locked,
-                    browser_behavior: self.settings.browser_behavior,
-                    browser_home_page: &self.settings.browser_home_page,
                 };
                 let (room, side_action) = ui::bars::side::bars(
                     ui,

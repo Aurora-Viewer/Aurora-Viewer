@@ -506,11 +506,9 @@ pub enum CtxAction {
     /// Web link clicked in a text: opened at once when trusted, else after
     /// the external link warning.
     OpenUrl(String),
-    /// A page's explicit external-browser button, which used the system
-    /// browser before Aurora added a browser preference.
+    /// An "Open in browser" button (LLWeb::loadURLExternal): the system
+    /// browser whatever the browser choice, after the same link checks.
     OpenUrlExternal(String),
-    /// Search's web result page, opened in the system browser by default.
-    OpenUrlSearch(String),
     /// A `secondlife:///app/...` command clicked in a text (`slapp.rs`).
     AppLink(crate::slapp::AppLink),
     TeleportToPlace(String, glam::Vec3),

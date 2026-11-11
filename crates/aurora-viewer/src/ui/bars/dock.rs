@@ -790,8 +790,6 @@ mod tests {
                 bar: crate::ui::toolbar::Bar::Bottom,
                 style: Style::default(),
                 editing: false,
-                browser_behavior: crate::settings::BrowserBehavior::BuiltInForSecondLife,
-                browser_home_page: crate::ui::web_browser::DEFAULT_HOME,
             };
             let mut result = (None, 0.0, false);
             let mut output = self.ctx.run_ui(
