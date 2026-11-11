@@ -7936,7 +7936,13 @@ pub fn hair_events(demo: HairDemo, crowd: u32) -> Vec<NetEvent> {
 /// blocks also stand on the ground in front of the start position of
 /// AURORA_DEMO_POS="129,134", left of the view: an opaque one and, further
 /// left, a blended one; nearer, a hoof on the ground and a shoe hovering
-/// 2 cm above it (the thick casters of issue 988).
+/// 2 cm above it (the thick casters of issue 988). At
+/// AURORA_DEMO_POS="100,100" (the camera looks east, the sun
+/// AURORA_DEMO_SUN="30,15" ahead) three round posts 1.6 m tall, 3, 6 and 12 cm
+/// across, stand about 5 m away at (102 to 104, 99), with a hoof and a hovering
+/// shoe at (101.8, 101.7) and (102, 102.3): the thin casters whose contact
+/// shadow must not swell past their own width, beside the thick ones that
+/// keep their depth.
 pub fn feet_demo() -> Option<bool> {
     match std::env::var("AURORA_DEMO_FEET").ok()?.trim() {
         "blend" => Some(true),
@@ -8014,6 +8020,39 @@ pub fn feet_events(blend: bool, crowd: u32) -> Vec<NetEvent> {
     {
         objects.push(prim(
             210_902 + i as u32,
+            Vec3::new(x, y, floor_at(x, y) + lift + size.z * 0.5),
+            Quat::IDENTITY,
+            size,
+            volume,
+            te([0.25, 0.12, 0.35, alpha], 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        ));
+    }
+    // the same for AURORA_DEMO_POS="100,100", with three thin posts: the
+    // contact shadow is no wider than the caster is along the ray
+    for (i, (x, d)) in [(102.0f32, 0.03f32), (103.0, 0.06), (104.0, 0.12)].into_iter().enumerate() {
+        let y = 99.0;
+        objects.push(prim(
+            210_950 + i as u32,
+            Vec3::new(x, y, floor_at(x, y) + 0.8),
+            Quat::IDENTITY,
+            Vec3::new(d, d, 1.6),
+            hoof,
+            te([0.8, 0.8, 0.8, 1.0], 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        ));
+    }
+    for (i, (x, y, lift, size, volume)) in [
+        (101.8, 101.7, 0.0, Vec3::new(0.14, 0.14, 0.1), hoof),
+        (102.0, 102.3, 0.02, Vec3::new(0.26, 0.12, 0.1), shoe),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        objects.push(prim(
+            210_960 + i as u32,
             Vec3::new(x, y, floor_at(x, y) + lift + size.z * 0.5),
             Quat::IDENTITY,
             size,

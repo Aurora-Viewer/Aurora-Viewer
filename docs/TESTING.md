@@ -4823,7 +4823,11 @@ both open states and the selection count. Capture at frame 620.
   `AURORA_DEBUG_SHADOWS=1` and `AURORA_DEMO_CAMERA=close,615,672,50`
   (frame 780 at 60 fps), the ground under the hovering shoe takes its
   contact shadow; with `AURORA_CONTACT_SHADOWS=shell` it stays lit, a
-  thin dark line along the sole's edge.
+  thin dark line along the sole's edge. From `AURORA_DEMO_POS="100,100"`
+  (camera looking east) three round posts 1.6 m tall (3, 6 and 12 cm
+  across) stand about 5 m away, with a hoof and a shoe hovering 2 cm beside
+  them: thin and thick casters for the contact shadows' width
+  (`AURORA_CONTACT_SHADOWS=deep` against `1`, with `AURORA_DEMO_SUN=30,15`).
 - **`AURORA_DEMO_LASHES=1`** (with `AURORA_DEMO_HAIR`, for example
   `1,48,20`): our avatar also wears a small red ball, a blended rigged
   mesh, inside the head shell on the side the default camera sees: the
@@ -10459,7 +10463,7 @@ What the inventory must show with these scenarios:
 | `AURORA_FSR_MIP_BIAS=0` | FSR's smaller modes without the textures' mip bias |
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
-| `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
+| `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass`, `shell` or `deep` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, by thin shells, or with every occluder 5 cm deep |
 | `AURORA_PROJECTOR_TRACE=1` | Log projector shadow selection and fades each frame |
 | `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
 | `AURORA_CONTACT_VARIANT=bend`, `no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs of the AMD RX 9000 cards) |
@@ -10885,7 +10889,7 @@ What the inventory must show with these scenarios:
   log filter (`RUST_LOG=warn,aurora_viewer::scene::lights=info` is enough).
   Use a separately named test log and unset the variable after diagnosis;
   these per-frame lines are intended for local investigation.
-- **`AURORA_CONTACT_SHADOWS=0|1|alt|prepass|shell`**: the sun's contact shadows
+- **`AURORA_CONTACT_SHADOWS=0|1|alt|prepass|shell|deep`**: the sun's contact shadows
   (Preferences › Graphics › Contact shadows, `contact_shadows.rs`, after
   Bend Studio's screen space shadows) for this launch, without changing the
   saved setting: `0` off, `1` on, `alt` off and on by turns, one second
@@ -10896,7 +10900,17 @@ What the inventory must show with these scenarios:
   as a shell of 0.5 % of its distance (Bend's window, before issue 988)
   instead of a body as deep as the ray went under it (up to 5 cm, with
   the sun ahead of the camera): a ray that goes under a thick caster is
-  stopped only where it grazes its edges. **`AURORA_CONTACT_SOFT=0`**:
+  stopped only where it grazes its edges; `deep` on, every occluder taken
+  up to 5 cm deep whatever its width (the window before the thick-caster
+  rule: a body is as deep as it is wide along the ray, so a post thinner
+  than 5 cm no longer shadows the ground the ray passes behind it). To
+  compare, at `AURORA_DEMO_POS=100,100` with `AURORA_DEMO_FEET=opaque`,
+  `AURORA_DEBUG_SHADOWS=1`, `AURORA_DEMO_SUN=30,15` and a capture at frame
+  1100 or later: the 3 and 6 cm posts' shadows near their bases are 5.8-7.6
+  and 9.0-9.4 pixels wide with `deep`, 4.6-5.2 and 7.4-7.8 with `1` (the
+  shadow map alone: 3.3-3.5 and 6.6-6.8); with `AURORA_DEMO_SUN=150,20`
+  (sun behind) and on the hoof and the shoe (`AURORA_DEMO_SUN=0,12`) the two
+  look the same. **`AURORA_CONTACT_SOFT=0`**:
   the mask reaches the shading as the pass wrote it, without the 5 × 5
   softening over each surface (`contact_shadows_filter.wgsl`): hard steps
   of whole pixels on curved bodies (the sides of our avatar with
