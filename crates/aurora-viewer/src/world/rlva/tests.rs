@@ -2619,38 +2619,35 @@ fn rlva_linking_refuses_the_locked_seat_like_can_stand_but_sittp_alone_does_not(
 
 /// #3154: `@setenv_daytime:-1=force` and its RestrainedLove synonym
 /// `@setenv_reset=force` go back to the shared environment, like
-/// RlvEnvironment's `daytime` -1 (clearEnvironment(ENV_LOCAL)): the user's
-/// own local sky goes with RLVa's, also while the issuer holds `@setenv=n`;
-/// another object's lock still refuses the command.
+/// RlvEnvironment's `daytime` -1 on ENV_LOCAL: the user's own local sky goes
+/// with RLVa's. Under any `@setenv=n`, the issuer's own included, RLVa
+/// targets ENV_EDIT: only RLVa's sky goes. The lock counts from where it
+/// stands in the message, as the Legacy Viewer runs a message in order.
 #[test]
-fn rlva_environment_reset_returns_to_the_shared_environment() {
+fn rlva_environment_reset_returns_to_the_shared_environment_unless_locked() {
     use crate::world::{World, eep::SkyFrame, eep_env::SourceRights};
-    let force = |world: &mut World, source, text| {
-        assert!(world.rlva_environment_command(source, &Command::parse(text).unwrap()));
-    };
-    for text in ["setenv_daytime:-1=force", "setenv_reset=force"] {
-        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
-        world.rlva.configure(true);
-        // a sky the user picked, then an RLVa sky over it
-        world.eep.apply_local_sky(SkyFrame::default(), SourceRights::Flags(0));
-        assert!(world.eep.has_local());
-        force(&mut world, A, "setenv_ambient:0.2/0.4/0.6=force");
-        assert!(world.rlva.environment.is_some());
-        force(&mut world, A, text);
-        assert!(world.rlva.environment.is_none(), "{text}: RLVa's sky stays");
-        assert!(!world.eep.has_local(), "{text}: the user's local sky stays");
-
-        // the issuer's own lock does not stop it, another object's does
-        world.eep.apply_local_sky(SkyFrame::default(), SourceRights::Flags(0));
-        command(&mut world.rlva, A, "@setenv=n");
-        world.eep.rlva_locked = world.rlva.has("setenv");
-        force(&mut world, A, text);
-        assert!(!world.eep.has_local(), "{text}: refused under its own lock");
-        world.eep.rlva_locked = false;
-        world.eep.apply_local_sky(SkyFrame::default(), SourceRights::Flags(0));
-        world.eep.rlva_locked = true;
-        force(&mut world, B, text);
-        assert!(world.eep.has_local(), "{text}: done under another object's lock");
+    for reset in ["setenv_daytime:-1=force", "setenv_reset=force"] {
+        for (lines, shared) in [
+            (vec![format!("@{reset}")], true),
+            (vec![format!("@{reset},setenv=n")], true),
+            (vec![format!("@setenv=n,{reset}")], false),
+            (vec!["@setenv=n".to_owned(), format!("@{reset}")], false),
+            (vec!["@setenv=n".to_owned(), "@setenv=y".to_owned(), format!("@{reset}")], true),
+        ] {
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            world.rlva.configure(true);
+            // a sky the user picked, then an RLVa sky over it
+            world.eep.apply_local_sky(SkyFrame::default(), SourceRights::Flags(0));
+            world.on_chat(chat("@setenv_ambient:0.2/0.4/0.6=force"));
+            world.rlva_pending();
+            assert!(world.rlva.environment.is_some());
+            for line in &lines {
+                world.on_chat(chat(line));
+                world.rlva_pending();
+            }
+            assert_eq!(world.eep.has_local(), !shared, "{lines:?}: the user's local sky");
+            assert!(world.rlva.environment.is_none(), "{lines:?}: RLVa's sky stays");
+        }
     }
     assert!(environment::supports("setenv_reset", true));
     assert!(!environment::supports("getenv_reset", false));

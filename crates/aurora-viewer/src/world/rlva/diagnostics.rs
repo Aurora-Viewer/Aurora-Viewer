@@ -213,7 +213,8 @@ mod tests {
                     behaviour: "version".into(),
                     option: String::new(),
                     strict: false,
-                    param: Param::Reply(0)
+                    param: Param::Reply(0),
+                    environment_locked: false,
                 }
             ),
             Outcome::Rejected

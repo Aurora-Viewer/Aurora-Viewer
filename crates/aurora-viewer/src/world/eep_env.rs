@@ -771,14 +771,6 @@ impl EnvSelector {
         if self.rlva_locked {
             return;
         }
-        self.rlva_clear_local();
-    }
-
-    /// RLVa's `@setenv_daytime:-1=force` (clearEnvironment(ENV_LOCAL) in
-    /// RlvEnvironment's `daytime` handler): the issuing object may change the
-    /// environment even while it holds `@setenv=n` itself, so the lock that
-    /// keeps the user's own choices out does not apply here.
-    pub fn rlva_clear_local(&mut self) {
         self.pending.clear();
         if self.local.take().is_some() {
             self.local_dirty = true;

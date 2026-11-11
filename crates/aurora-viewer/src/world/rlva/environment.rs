@@ -312,7 +312,7 @@ impl World {
         // from the RestrainedLove viewer, where it is a synonym of
         // `@setenv_daytime:-1=force`. Supported here as the same reset.
         if set && name == "reset" {
-            self.rlva_reset_environment();
+            self.rlva_reset_environment(command.environment_locked);
             return true;
         }
         if name == "daytime" {
@@ -329,7 +329,7 @@ impl World {
                 );
             } else if let Some(value) = number(&command.option) {
                 if value == -1.0 {
-                    self.rlva_reset_environment();
+                    self.rlva_reset_environment(command.environment_locked);
                 } else if (0.0..=1.0).contains(&value) {
                     let sky = self
                         .rlva
@@ -358,14 +358,22 @@ impl World {
         true
     }
 
-    /// Back to the shared environment, like RlvEnvironment's `daytime` -1
-    /// (clearEnvironment(ENV_LOCAL), setSelectedEnvironment(ENV_LOCAL)): in
-    /// the Legacy Viewer RLVa writes into the user's local environment, so
-    /// the reset drops both RLVa's sky and the user's own local choice (a
-    /// World › Environment preset, a personal sky or day).
-    fn rlva_reset_environment(&mut self) {
+    /// RlvEnvironment's `daytime` -1 (clearEnvironment and
+    /// setSelectedEnvironment of RlvEnvironment::getTargetEnvironment).
+    /// Unlocked, the target is ENV_LOCAL, where RLVa writes into the user's
+    /// own local environment: the reset drops RLVa's sky and the user's
+    /// choice (a World › Environment preset, a personal sky or day), back to
+    /// the shared environment. While any object holds `@setenv=n` the target
+    /// is ENV_EDIT: only RLVa's sky goes, the local environment stays.
+    fn rlva_reset_environment(&mut self, locked: bool) {
         self.rlva.clear_environment();
-        self.eep.rlva_clear_local();
+        if !locked {
+            // the lock flag of the selector can lag behind a restriction
+            // released in the same message
+            let held = std::mem::replace(&mut self.eep.rlva_locked, false);
+            self.eep.clear_local();
+            self.eep.rlva_locked = held;
+        }
     }
 
     pub fn rlva_environment_frames(
