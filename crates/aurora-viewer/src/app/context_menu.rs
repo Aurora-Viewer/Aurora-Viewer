@@ -587,7 +587,13 @@ impl App {
             CtxAction::CreateLandmark => self.open_create_landmark(None),
             CtxAction::OpenAppearance { tab, editing } => {
                 self.panels.appearance = true;
-                self.appearance_ui.open(tab, editing);
+                // "Change outfit" (tab 0) opens the outfit view in use,
+                // the gallery or the list, rather than always the gallery
+                if tab == 0 && !editing {
+                    self.appearance_ui.open_outfits();
+                } else {
+                    self.appearance_ui.open(tab, editing);
+                }
             }
             CtxAction::StandUp => self.send(NetCommand::OneShotControl(control::STAND_UP)),
             CtxAction::SitGround => self.send(NetCommand::OneShotControl(control::SIT_ON_GROUND)),

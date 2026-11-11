@@ -101,26 +101,31 @@ impl Session<'_> {
                     self.send(addr, &packet(&local_ids[range]), true);
                 }
             }
-            GodCommand::Request { method, params, .. } => {
-                // a list of objects (Admin › Get Asset IDs: one parameter per
-                // root) is split like LLSelectMgr::sendListToRegions; the
-                // other requests have a few parameters and stay one packet
-                let packet = |chunk: &[String]| {
+            GodCommand::Request {
+                method, params, objects, ..
+            } => {
+                // LLSelectMgr::sendGodlikeRequest: the method and its
+                // parameters head every packet (packGodlikeHead), the roots'
+                // local ids follow and alone are split (sendListToRegions,
+                // packObjectIDAsParam); with no roots, the head alone
+                let packet = |chunk: &[u32]| {
                     let mut m = GodlikeMessage::default();
                     m.agent_data.agent_id = agent_id;
                     m.agent_data.session_id = session_id;
                     m.method_data.method = str_field(&method);
-                    m.param_list = chunk
+                    m.param_list = params
                         .iter()
-                        .map(|p| godlike_message::ParamList { parameter: str_field(p) })
+                        .cloned()
+                        .chain(chunk.iter().map(u32::to_string))
+                        .map(|p| godlike_message::ParamList { parameter: str_field(&p) })
                         .collect();
                     m
                 };
-                if params.is_empty() {
+                if objects.is_empty() {
                     self.send(addr, &packet(&[]), true);
                 }
-                for range in mtu_bounded_ranges(&params, |chunk| encoded_packet_len(&packet(chunk))) {
-                    self.send(addr, &packet(&params[range]), true);
+                for range in mtu_bounded_ranges(&objects, |chunk| encoded_packet_len(&packet(chunk))) {
+                    self.send(addr, &packet(&objects[range]), true);
                 }
             }
             GodCommand::ParcelForceOwner { local_id, owner_id, .. } => {
@@ -238,21 +243,27 @@ mod tests {
             .collect();
         assert_eq!((base, owner), (many.clone(), many.clone()));
 
-        // Get Asset IDs: one parameter per root, split the same way
-        let roots: Vec<String> = (0..300u128).map(|i| Uuid::from_u128(i).to_string()).collect();
+        // Get Asset IDs: one parameter per root, split the same way, and
+        // every packet starts with "assetids" (packGodlikeHead)
         session.on_command(NetCommand::God(GodCommand::Request {
             handle: 10,
             method: "objectinfo".into(),
-            params: roots.clone(),
+            params: vec!["assetids".into()],
+            objects: many.clone(),
         }));
-        let mut params = Vec::new();
-        while params.len() < roots.len() {
+        let mut ids = Vec::new();
+        let mut packets = 0;
+        while ids.len() < many.len() {
             let m = received::<GodlikeMessage>(&main, 1).await.remove(0);
+            packets += 1;
             assert_eq!(field_str(&m.method_data.method), "objectinfo");
-            assert!(encoded_packet_len(&m) <= aurora_msg::packet::MTU);
-            params.extend(m.param_list.iter().map(|p| field_str(&p.parameter)));
+            assert!(m.param_list.len() <= 255 && encoded_packet_len(&m) <= aurora_msg::packet::MTU);
+            let params: Vec<String> = m.param_list.iter().map(|p| field_str(&p.parameter)).collect();
+            assert_eq!(params[0], "assetids", "packet {packets}");
+            ids.extend(params[1..].iter().map(|p| p.parse::<u32>().expect("a local id")));
         }
-        assert_eq!(params, roots);
+        assert!(packets > 1);
+        assert_eq!(ids, many);
 
         // base then owner, all set, with the override
         session.on_command(NetCommand::God(GodCommand::Permissive {
@@ -284,7 +295,8 @@ mod tests {
         session.on_command(NetCommand::God(GodCommand::Request {
             handle: 10,
             method: "objectinfo".into(),
-            params: vec!["assetids".into(), "5".into()],
+            params: vec!["assetids".into()],
+            objects: vec![5],
         }));
         let request = received::<GodlikeMessage>(&main, 1).await.remove(0);
         assert_eq!(field_str(&request.method_data.method), "objectinfo");

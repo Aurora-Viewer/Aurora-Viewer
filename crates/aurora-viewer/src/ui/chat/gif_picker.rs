@@ -631,12 +631,11 @@ impl GifPicker {
         });
         // ---- the search ("Search KLIPY" is the placeholder KLIPY asks for)
         let search_id = egui::Id::unique("gif_picker_search");
-        let search = ui.add(
-            egui::TextEdit::singleline(&mut self.query)
-                .id(search_id)
+        let search = crate::ui::widgets::search_text_edit(ui, p, &mut self.query, |edit| {
+            edit.id(search_id)
                 .hint_text(aurora_i18n::tr!("ui-chat-gif-search", service = tab.name()))
-                .desired_width(f32::INFINITY),
-        );
+                .desired_width(f32::INFINITY)
+        });
         if search.changed() {
             self.typed_at = Some(now);
             self.favorites = false;

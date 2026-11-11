@@ -32,10 +32,13 @@ pub enum GodCommand {
     ForceDelete { handle: RegionHandle, local_ids: Vec<u32> },
     /// GodlikeMessage (LLSelectMgr::sendGodlikeRequest, handle_claim_public_land):
     /// a method and its parameters, the selected roots' local ids after them.
+    /// `params` head every packet (packGodlikeHead); only `objects` is split
+    /// across packets (sendListToRegions, packObjectIDAsParam).
     Request {
         handle: RegionHandle,
         method: String,
         params: Vec<String>,
+        objects: Vec<u32>,
     },
     /// Parcel › Force Owner To Me: ParcelGodForceOwner
     /// (LLViewerParcelMgr::sendParcelGodForceOwner).

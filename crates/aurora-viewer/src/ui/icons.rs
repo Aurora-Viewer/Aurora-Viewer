@@ -182,6 +182,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "swimming",
     "terminal-2",
     "text-size",
+    "tree",
     "typography",
     "unlink",
     "upload",
@@ -390,6 +391,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "replace",
     "rosette-discount-check",
     "search",
+    "seedling",
     "send",
     "settings",
     "shield",
@@ -934,6 +936,14 @@ mod tests {
             // Its dark outside edge must stay transparent, not become a solid blob.
             assert_eq!(image.pixels[230 * 240 + 3].a(), 0, "outline {name}");
             assert_eq!(image.pixels[230 * 240 + 10].a(), 255, "arrow {name}");
+        }
+    }
+
+    #[test]
+    fn the_rendering_types_menu_icons_are_embedded() {
+        let names: Vec<&str> = OUTLINE.iter().chain(FILLED).map(|(name, _)| *name).collect();
+        for icon in crate::ui::bars::RENDER_TYPE_ICONS {
+            assert!(names.contains(&icon), "{icon} is not embedded");
         }
     }
 
