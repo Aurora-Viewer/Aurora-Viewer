@@ -4431,6 +4431,7 @@ ui-appearance-current-outfit-not-in-my-outfits = The current outfit is not saved
 ui-bars-edit-objects-ctrl-3 = Edit objects (Ctrl+3)
 build-ui-tools-edit-parcel = Edit parcel
 ui-context-edit-shape = Edit shape
+ui-context-export-shape-xml = Export shape XML
 ui-context-edit-outfit = Edit outfit
 ui-context-edit-pbr-material = Edit PBR material
 ui-context-edit-land = Edit land
@@ -5656,6 +5657,12 @@ appearance-xml-partial = { $count ->
     [one] 1 setting imported, { $errors } could not be read. Save to keep it.
    *[other] { $count } settings imported, { $errors } could not be read. Save to keep them.
     }
+appearance-xml-export-button = Export XML
+appearance-xml-export-hint = Save this item's slider settings to an appearance XML file, which Import XML can read back here or in another viewer. Needs modify rights on the item; no texture is saved.
+appearance-xml-export = Export an appearance XML
+appearance-xml-exported = Settings saved to { $file }.
+appearance-xml-export-failed = The appearance file could not be saved.
+appearance-xml-export-refused = Exporting needs modify rights on this item.
 common-unmute = Unmute
 ui-options-restore-default-shortcuts = Restore default shortcuts
 ui-options-restore-the-local-environment-selected-sky-water-and-day = Restore the local environment (selected sky, water and day cycle) at the next login

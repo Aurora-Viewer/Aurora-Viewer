@@ -4437,6 +4437,7 @@ ui-appearance-current-outfit-not-in-my-outfits = La tenue actuelle n’est pas e
 ui-bars-edit-objects-ctrl-3 = Modifier des objets (Ctrl+3)
 build-ui-tools-edit-parcel = Modifier la parcelle
 ui-context-edit-shape = Modifier la silhouette
+ui-context-export-shape-xml = Exporter la silhouette (XML)
 ui-context-edit-outfit = Modifier la tenue
 ui-context-edit-pbr-material = Modifier le matériau PBR
 ui-context-edit-land = Modifier le terrain
@@ -5664,6 +5665,12 @@ appearance-xml-partial = { $count ->
     [one] 1 réglage importé, { $errors } illisible(s). Enregistrez pour le garder.
    *[other] { $count } réglages importés, { $errors } illisible(s). Enregistrez pour les garder.
     }
+appearance-xml-export-button = Exporter XML
+appearance-xml-export-hint = Enregistre les réglages des curseurs de cet élément dans un fichier XML d’apparence, qu’Importer XML peut relire ici ou dans un autre viewer. Demande les droits de modification sur l’élément ; aucune texture n’est enregistrée.
+appearance-xml-export = Exporter un XML d’apparence
+appearance-xml-exported = Réglages enregistrés dans { $file }.
+appearance-xml-export-failed = Impossible d’enregistrer le fichier d’apparence.
+appearance-xml-export-refused = L’export demande les droits de modification sur cet élément.
 common-unmute = Rétablir le son
 ui-options-restore-default-shortcuts = Rétablir les raccourcis par défaut
 ui-options-restore-the-local-environment-selected-sky-water-and-day = Rétablit l'environnement local (ciel, eau, cycle du jour choisis) à la prochaine connexion

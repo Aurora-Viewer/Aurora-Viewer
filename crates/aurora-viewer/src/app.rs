@@ -3563,6 +3563,7 @@ impl App {
                 self.settings.save();
             }
             let blender_shape = self.blender_shape_loaded(item, asset, &result);
+            let shape_xml = self.shape_xml_menu_loaded(item, asset, &result);
             if self.wearable_ui.loaded(&mut self.world, item, asset, &result) {
                 return;
             }
@@ -3572,7 +3573,7 @@ impl App {
             if self.shape_ui.loaded(&mut self.world, item, asset, &result) {
                 return;
             }
-            if blender_shape {
+            if blender_shape || shape_xml {
                 return;
             }
             if self.ao_ui.import == Some(item) {
@@ -17285,6 +17286,7 @@ impl App {
                 self.outfit_batch_window(&ctx, &p);
                 self.update_demo_shape_mesh();
                 self.shape_ui.update(&mut self.world, &self.scene, &ctx);
+                self.poll_shape_xml_menu();
                 let shape_preferences = (self.shape_ui.hints, self.shape_ui.feet);
                 let shape_group = self.shape_ui.group;
                 let (shape_actions, visible) = ui::shape::show(&ctx, &p, &mut self.world, &mut self.shape_ui, (&self.settings).into());
