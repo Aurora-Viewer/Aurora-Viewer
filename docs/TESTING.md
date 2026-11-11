@@ -5700,6 +5700,18 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   direction with FOV limits. `camera-prefs` opens Camera preferences under
   an exclusive camera lock: preset, offset, distance and viewing-angle
   controls must be disabled while unrelated options remain editable.
+  `camera-zoom-max` sets `setcam_origindistmax:8` on an alt camera 7.6 m
+  from its focus point and scrolls out five clicks from frame 740, then one
+  back in at frame 810; `camera-zoom-min` does the same inward with
+  `setcam_origindistmin:6`. The log gives the camera's distance to the focus
+  at frames 800 and 840: held at the limit at 800, already back inside at
+  840 (the zoom past the limit is not kept). `camera-zoom-both` sets
+  `setcam_avdistmax:7` and `setcam_origindistmin:7.2`, which both hold the
+  camera, then scrolls one click out at frame 760 and one back in at 810;
+  the log gives both distances and the zoom fraction at frames 750, 800 and
+  840: the camera stays held at 7.2 m from the focus, the click out changes
+  the zoom fraction (the zoom is not refused both ways) and the click back
+  in is refused, since the focus limit still holds.
   `sitting` sends a forced object sit at frame 700, then sitground at 740.
   The native demo simulator must confirm the stand before the ground sit.
   At frame 810 its log reports `ground_sit=true, object_seated=false`;

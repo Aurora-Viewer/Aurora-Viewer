@@ -225,6 +225,15 @@ impl App {
                     "@setcam_focus:{};4;0/-1/0=force,setcam_fovmin:0.6=n,setcam_fovmax:0.9=n",
                     crate::demo::DEMO_LOUP
                 )
+            } else if let Some(limit) = scenario.strip_prefix("camera-zoom-") {
+                // the camera starts 7.6 m from the focus point
+                self.panels.settings = false;
+                match limit {
+                    "max" => "@setcam_origindistmax:8=n".to_owned(),
+                    // 8.0 m from the avatar: both limits clamp every frame
+                    "both" => "@setcam_avdistmax:7=n,setcam_origindistmin:7.2=n".to_owned(),
+                    _ => "@setcam_origindistmin:6=n".to_owned(),
+                }
             } else if scenario == "rename" {
                 self.settings.rlva.shared_wear = false;
                 self.settings.rlva.auto_rename = true;
@@ -411,6 +420,30 @@ impl App {
                 self.world.rlva.has("unsit"),
                 self.world.rlva.has("sendchat")
             );
+        }
+        if let Some(limit) = mode.strip_suffix("-released").unwrap_or(&mode).strip_prefix("camera-zoom-") {
+            // five wheel clicks past the distance limit, then one back; with
+            // both limits held, one click away from the focus and one back
+            let out = if limit == "min" { -1.0 } else { 1.0 };
+            let clicks = match self.frame_count {
+                760 if limit == "both" => out,
+                n @ 740..=788 if n % 12 == 8 && limit != "both" => out,
+                810 => -out,
+                _ => 0.0,
+            };
+            if clicks != 0.0 {
+                self.camera
+                    .scroll(clicks, false, false, &mut self.world.agent, &mut self.settings.camera);
+            }
+            if matches!(self.frame_count, 750 | 800 | 840) {
+                log::info!(
+                    "RLVa demo: {mode}, frame {}, camera to focus {:.3} m, to avatar {:.3} m, zoom {:.4}",
+                    self.frame_count,
+                    self.camera.position.distance(self.camera.target),
+                    self.camera.position.distance(self.world.agent.position),
+                    self.camera.zoom_fraction()
+                );
+            }
         }
         if mode == "sitting" && self.frame_count == 740 {
             self.rlva_demo_message("@sitground=force".to_owned());
