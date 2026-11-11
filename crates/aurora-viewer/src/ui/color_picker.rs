@@ -708,23 +708,28 @@ fn number(ui: &mut egui::Ui, value: &mut f32, max: f32, speed: f32, decimals: us
     // speed and on the arrows this field shares with the build spinners.
     let scale = widgets::spin_key_scale(modifiers);
     let speed = speed * 0.25 * scale;
-    let (mut response, step) = ui
-        .horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 0.0;
-            let response = ui.add_sized(
-                [63.0, 23.0],
-                egui::DragValue::new(&mut *value)
-                    .range(0.0..=max)
-                    .speed(speed)
-                    .min_decimals(decimals)
-                    .max_decimals(decimals)
-                    .custom_parser(aurora_i18n::parse_number),
-            );
-            (response, widgets::step_buttons(ui, 23.0))
-        })
-        .inner;
-    if step != 0 {
-        *value = (*value + increment * scale * step as f32).clamp(0.0, max);
+    let row = ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        let response = ui.add_sized(
+            [63.0, 23.0],
+            egui::DragValue::new(&mut *value)
+                .range(0.0..=max)
+                .speed(speed)
+                .min_decimals(decimals)
+                .max_decimals(decimals)
+                .custom_parser(aurora_i18n::parse_number),
+        );
+        (response, widgets::step_buttons(ui, 23.0))
+    });
+    let row_rect = row.response.rect;
+    let (mut response, step) = row.inner;
+    // The picker's R/G/B, H/S/L and alpha fields are LLSpinCtrls too
+    // (floater_color_picker.xml), so they take the wheel like the build
+    // spinners; not while the number is typed or dragged.
+    let protect = response.has_focus() || response.dragged() || response.drag_stopped();
+    let wheel = widgets::spin_wheel(ui, row_rect, response.id, !protect);
+    if step != 0 || wheel.scaled != 0.0 {
+        *value = (*value + increment * (scale * step as f32 + wheel.scaled)).clamp(0.0, max);
         response.mark_changed();
     }
     response
