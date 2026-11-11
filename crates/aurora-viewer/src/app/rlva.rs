@@ -420,7 +420,7 @@ impl App {
                 self.world.rlva.has("sendchat")
             );
         }
-        if let Some(limit) = mode.strip_prefix("camera-zoom-") {
+        if let Some(limit) = mode.strip_suffix("-released").unwrap_or(&mode).strip_prefix("camera-zoom-") {
             // five wheel clicks past the distance limit, then one back
             let out = if limit == "max" { 1.0 } else { -1.0 };
             let clicks = match self.frame_count {
