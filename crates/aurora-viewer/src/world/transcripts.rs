@@ -907,6 +907,42 @@ mod tests {
         clean(&w, &root);
     }
 
+    /// An empty block list comes back as the "emptymutelist" generic
+    /// message: offline messages are asked for at once, not after the
+    /// request's 30 s timeout.
+    #[test]
+    fn offline_messages_follow_an_empty_block_list_at_once() {
+        use aurora_net::NetCommand;
+        let root = temp();
+        let me = crate::demo::DEMO_AGENT;
+        let mut w = world(&root, me);
+        let asked = |w: &mut World| {
+            w.tick_social();
+            w.groups
+                .take_commands()
+                .iter()
+                .filter(|c| matches!(c, NetCommand::RequestOfflineMessages))
+                .count()
+        };
+        w.movement_complete = true;
+        let handle = 0x0003_E800_0003_E800;
+        w.main_region = Some(handle);
+        w.apply(aurora_net::NetEvent::Capabilities {
+            handle,
+            caps: Arc::new([("ReadOfflineMsgs".to_owned(), "x".to_owned())].into_iter().collect()),
+        });
+        w.apply(aurora_net::NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![crate::demo::action_avatar(false)],
+        });
+        assert_eq!(asked(&mut w), 0);
+        assert!(matches!(w.mutes.state, crate::world::mutes::LoadState::Requested(_)));
+        w.apply(aurora_net::NetEvent::MuteList(aurora_net::MuteListSource::ServerEmpty));
+        assert_eq!(w.mutes.state, crate::world::mutes::LoadState::Loaded);
+        assert_eq!(asked(&mut w), 1);
+        clean(&w, &root);
+    }
+
     /// #1198: a payment we made comes back with the conversation's history,
     /// as one we received does.
     #[test]

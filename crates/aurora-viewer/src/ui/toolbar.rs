@@ -194,15 +194,15 @@ impl ToolbarSettings {
             .find(|&bar| self.bar(bar, layout).iter().any(|b| b.command == command))
     }
 
-    /// No empty command, and each command once over the three toolbars
+    /// No empty or retired command (`howto`), and each command once over the three toolbars
     /// (the bottom one first).
     pub fn sanitize(&mut self) {
         let mut seen = std::collections::HashSet::new();
         if let Some(buttons) = &mut self.buttons {
-            buttons.retain(|b| !b.command.is_empty() && seen.insert(b.command.clone()));
+            buttons.retain(|b| !b.command.is_empty() && !catalogue::retired(&b.command) && seen.insert(b.command.clone()));
         }
         for side in [&mut self.left, &mut self.right] {
-            side.retain(|b| !b.command.is_empty() && seen.insert(b.command.clone()));
+            side.retain(|b| !b.command.is_empty() && !catalogue::retired(&b.command) && seen.insert(b.command.clone()));
         }
     }
 }
@@ -270,6 +270,9 @@ pub struct ToolbarUi {
     /// The photo reel holds no photo (given by the app): its button is
     /// dimmed. And its quick view is open: the button is lit.
     pub photo_roll_empty: bool,
+    /// The grid has a Destination Guide (given by the app): without one,
+    /// its button is dimmed (GridFeatureCheck destination_guide).
+    pub destinations: bool,
     pub photo_roll_active: bool,
     /// The nearby chat bar is shown (MainChatbarVisible).
     pub chat_bar_active: bool,
@@ -278,6 +281,12 @@ pub struct ToolbarUi {
     /// "Show Friends Only" is on (FSRenderFriendsOnly).
     pub friends_only_active: bool,
     pub show_name_tags: bool,
+    /// World › HUDs › Show HUDs is on (given by the app): the HUDs button
+    /// lights while they are hidden.
+    pub show_huds: bool,
+    /// The interface is hidden (given by the app): its button, reached
+    /// through a screen edge, lights and shows it again.
+    pub interface_hidden: bool,
     pub movelock_status: String,
     /// The violet of the Grid status button's flash (0: none), given by
     /// the app on a new entry of the grid's status feed.
