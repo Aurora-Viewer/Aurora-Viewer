@@ -195,6 +195,9 @@ pub struct Facts {
     pub object_sit_blocked: bool,
     pub hover_height: bool,
     pub worn_shape: Option<Uuid>,
+    /// Appearance > Export shape XML: the worn shape may be written to a
+    /// file (`actions::appearance_xml_export_allowed`) and no export runs.
+    pub shape_xml_export: bool,
     pub object: ObjectFacts,
     /// Avatar: (complexity, shown as a silhouette).
     pub complexity: Option<(u32, bool)>,
@@ -236,7 +239,8 @@ pub struct Facts {
     pub removable_clothing: Vec<u8>,
     pub removable_points: Vec<u8>,
 
-    /// "Freeze" / "Eject" of the avatar, and whether the eject may ban.
+    /// "Freeze" / "Eject" of the avatar, whether the eject may ban, and the
+    /// estate's "Kick", "Teleport home" and "Ban".
     pub moderation: crate::world::land_moderation::Rights,
     /// The region gave us a god level: the resident's Admin entries.
     pub god: bool,
@@ -291,13 +295,26 @@ pub enum CtxAction {
     /// handle_attachment_edit).
     TouchWorn(Uuid),
     EditWorn(Uuid),
+    /// Appearance > Export shape XML: the worn shape, by inventory item,
+    /// to an appearance XML file (`shape_editor::xml_export`).
+    ExportShapeXml(Uuid),
     /// "New physics" of the outfit gallery: created, worn and edited
     /// (LLAgentWearables::createWearable).
     NewPhysics,
     /// Avatar.Freeze / Avatar.Eject: asked first (LLAvatarActions::
     /// landFreeze / landEject).
     Freeze(Uuid),
+    /// A list's menu is open on a resident standing on group land the
+    /// viewer does not know: its parcel is asked for (selectParcelAt), and
+    /// Freeze / Eject appear once it comes when the group allows them.
+    ModerationParcel(Uuid),
     Eject(Uuid),
+    /// Avatar.Kick / Avatar.TeleportHome / Avatar.EstateBan of the estate's
+    /// owner and managers: asked first (LLAvatarActions::estateKick,
+    /// estateTeleportHome, estateBan).
+    EstateKick(Uuid),
+    EstateTeleportHome(Uuid),
+    EstateBan(Uuid),
     /// Admin › Kick / Freeze / Unfreeze (LLAvatarActions::kick, freeze,
     /// unfreeze): asked with its message first; `flags` are GodKickUser's.
     GodKick(Uuid, u32),
@@ -417,6 +434,8 @@ pub enum CtxAction {
     RefreshAvatarTextures(Uuid),
     /// "Force appearance update (rebake)" (Advanced.RebakeTextures).
     Rebake,
+    /// "Reload avatar": every refresh of an avatar at once (`app/avatar_reload.rs`).
+    ReloadAvatar(Uuid),
     /// Take / take a copy into the inventory (derez_objects).
     Take(Uuid),
     TakeCopy(Uuid),
@@ -495,6 +514,9 @@ pub enum CtxAction {
     /// Web link clicked in a text: opened at once when trusted, else after
     /// the external link warning.
     OpenUrl(String),
+    /// An "Open in browser" button (LLWeb::loadURLExternal): the system
+    /// browser whatever the browser choice, after the same link checks.
+    OpenUrlExternal(String),
     /// A `secondlife:///app/...` command clicked in a text (`slapp.rs`).
     AppLink(crate::slapp::AppLink),
     TeleportToPlace(String, glam::Vec3),
@@ -924,6 +946,52 @@ fn avatar_menu_reporting(
                 act(CtxAction::PayResident(id));
             }
             block(ui);
+            // menu_fs_radar.xml / menu_mini_map.xml: Freeze, Parcel Eject,
+            // then the estate's Teleport Home, Kick and Ban, each only where
+            // we have the right (Avatar.VisibleFreezeEject,
+            // Avatar.VisibleKickTeleportHome); gathered in the same
+            // "Moderation" submenu as the world menu's
+            let rights = world.resident_rights(id);
+            if world.resident_needs_parcel(id) {
+                act(CtxAction::ModerationParcel(id));
+            }
+            if rights.allowed || rights.estate {
+                menu::submenu(
+                    ui,
+                    p,
+                    "shield-filled",
+                    aurora_i18n::tr!("ui-context-moderation-options"),
+                    true,
+                    |ui| {
+                        if rights.allowed {
+                            if menu::item(ui, p, "snowflake", aurora_i18n::tr!("ui-context-freeze")) {
+                                act(CtxAction::Freeze(id));
+                            }
+                            if menu::item(ui, p, "player-eject-filled", aurora_i18n::tr!("ui-context-eject")) {
+                                act(CtxAction::Eject(id));
+                            }
+                        }
+                        if rights.estate {
+                            if rights.allowed {
+                                menu::separator(ui, p);
+                            }
+                            for (icon, label, action) in [
+                                (
+                                    "home-filled",
+                                    aurora_i18n::tr!("ui-context-estate-teleport-home"),
+                                    CtxAction::EstateTeleportHome(id),
+                                ),
+                                ("door-exit", aurora_i18n::tr!("ui-context-estate-kick"), CtxAction::EstateKick(id)),
+                                ("ban", aurora_i18n::tr!("ui-context-estate-ban"), CtxAction::EstateBan(id)),
+                            ] {
+                                if menu::item(ui, p, icon, label) {
+                                    act(action);
+                                }
+                            }
+                        }
+                    },
+                );
+            }
             // menu_fs_radar.xml / menu_mini_map.xml: Avatar.Derender and
             // Avatar.DerenderPermanent (LLAvatarActions::derender), always enabled
             for (icon, label, permanent) in [
