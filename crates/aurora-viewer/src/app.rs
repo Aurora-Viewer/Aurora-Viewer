@@ -883,6 +883,8 @@ pub struct App {
     /// Radio intent and the last known station; neither is an engine status.
     parcel_music: parcel_music::Radio,
     music_status: ui::audio::MusicStatus,
+    /// Stations whose failure was told in the local chat this session.
+    music_error_said: std::collections::HashSet<String>,
     /// Parcel media and media on a prim (web / video plugins).
     media: crate::media::MediaManager,
     media_ui: ui::media::MediaUi,
@@ -1845,6 +1847,7 @@ impl App {
             app_link_parcels: HashSet::new(),
             parcel_music: Default::default(),
             music_status: Default::default(),
+            music_error_said: Default::default(),
             audio_engine: match aurora_audio::AudioEngine::new_with_device(out_device) {
                 Ok(e) => {
                     let o = e.output_info();
@@ -6000,6 +6003,7 @@ impl App {
                 verdict,
                 None,
             );
+            self.tell_music_error();
             return;
         };
         // Disable before submitting a station; enable only after the authorized
@@ -6041,6 +6045,7 @@ impl App {
             verdict,
             Some(&status),
         );
+        self.tell_music_error();
         // StreamTitleDisplay: metadata follows the actual connection, never the
         // radio toggle. Leave the offline title scenario's metadata in place.
         let title = match status {
@@ -6062,6 +6067,17 @@ impl App {
             self.tell_stream_title(&title);
         }
         self.sync_minimized_mute();
+    }
+
+    /// One local chat line per failing station and session: the tooltip
+    /// keeps the reason, retries and revisits stay quiet.
+    fn tell_music_error(&mut self) {
+        if matches!(&self.music_status, ui::audio::MusicStatus::Error(e) if parcel_music::error_is_told(e))
+            && parcel_music::first_error_notice(&mut self.music_error_said, self.parcel_music.station())
+        {
+            self.world
+                .system_message(aurora_i18n::tr!("music-error-notice", status = self.music_status.text()));
+        }
     }
 
     fn remember_music_choice(&mut self) {
@@ -7143,10 +7159,13 @@ impl App {
                 // pie tool, and only its visual manipulators take scene clicks
                 // (FSFloaterPoser::enableVisualManipulators, FSToolCompPose).
                 // World presses stay the editor's.
-                return !(self.ik_editor.posing()
+                let hud = self.ik_editor.posing()
                     && !self.ik_editor.poser_owns_pointer()
                     && self.huds_shown()
-                    && self.scene.hud_pick(&self.world, self.cursor_pos, false).is_some());
+                    && self.scene.hud_pick(&self.world, self.cursor_pos, false).is_some();
+                // its click leaves the poser's selection as it is
+                self.ik_editor.press_on_hud = hud;
+                return !hud;
             }
         }
         // Report Abuse's object picker takes the click (LLToolObjPicker)
@@ -8262,6 +8281,7 @@ impl App {
         wanted.extend(self.search_ui.wanted_pics.drain());
         wanted.extend(self.group_profile_ui.wanted_pics.drain());
         wanted.extend(self.people_ui.wanted_pics.drain());
+        wanted.extend(self.ik_editor.take_poser_wanted_pictures());
         wanted.extend(self.voice_controls_ui.wanted_pics.drain());
         wanted.extend(self.contacts_people_ui.wanted_pics.drain());
         wanted.extend(self.notif_ui.wanted_pics.drain());
@@ -11130,6 +11150,19 @@ impl App {
                 }
             }
         }
+        // AURORA_DEMO_POSER=compact-face: Ctrl held over the face while
+        // posing the Body, for its oval tint (`poser::world_hints`)
+        if self.demo
+            && self.frame_count >= 560
+            && std::env::var("AURORA_DEMO_POSER").is_ok_and(|mode| mode == "compact-face")
+            && let Some(pos) = self
+                .ik_editor
+                .poser_focus(&self.world, "mFaceNoseBase")
+                .and_then(|point| self.build.cam.project(point))
+        {
+            raw.events.push(egui::Event::ModifiersChanged(egui::Modifiers::CTRL));
+            raw.events.push(egui::Event::PointerMoved(pos));
+        }
         if self.demo && ui::widgets::demo::rez_mode().is_some() {
             let mode = ui::widgets::demo::rez_mode().unwrap_or("1");
             let point = if matches!(mode, "object" | "contents" | "build-object") {
@@ -11599,6 +11632,26 @@ impl App {
             self.on_build_request(r);
         }
         self.update_avatar_pics(&mut gfx.renderer);
+        if self.ik_editor.posing() {
+            self.ik_editor.set_poser_pictures(&self.avatar_pics);
+            // a few times a second: worn meshes change seldom
+            if self.frame_count.is_multiple_of(10) {
+                let mut joints = self.scene.rigged_joints(&self.world, self.ik_editor.poser_subject());
+                // AURORA_DEMO_POSER=compact-wings / compact-tail: as if a worn
+                // mesh used the wings and the tail, or the tail alone (the demo
+                // wears none)
+                let demo = self.demo.then(|| std::env::var("AURORA_DEMO_POSER").ok()).flatten();
+                if let Some(parts) = demo.as_deref().and_then(|m| match m {
+                    "compact-wings" => Some(&["Wing", "Tail"][..]),
+                    "compact-tail" => Some(&["Tail"][..]),
+                    _ => None,
+                }) {
+                    let rig = &self.world.avatar_lib.rig;
+                    joints.extend((0..rig.len()).filter(|j| parts.iter().any(|part| rig.canonical_names[*j].contains(part))));
+                }
+                self.ik_editor.set_poser_rigged_joints(joints);
+            }
+        }
         self.update_maps();
         self.poll_key_to_name();
 
@@ -13947,15 +14000,17 @@ impl App {
             }
             BarAction::Poser => {
                 self.ik_editor.open_poser();
-                ui::widgets::open_floater(&self.egui_ctx, "poser", &mut self.ik_editor.open);
+                let window = self.ik_editor.poser_window(&self.settings.poser);
+                ui::widgets::open_floater(&self.egui_ctx, window, &mut self.ik_editor.open);
             }
             // a minimized poser expands, a shown one closes as its cross
             // does (FSFloaterPoser::onClose)
             BarAction::TogglePoser => {
-                if self.ik_editor.open && self.ik_editor.posing() && ui::widgets::floater_minimized(&self.egui_ctx, "poser") {
-                    ui::widgets::expand_floater(&self.egui_ctx, "poser");
+                let window = self.ik_editor.poser_window(&self.settings.poser);
+                if self.ik_editor.open && self.ik_editor.posing() && ui::widgets::floater_minimized(&self.egui_ctx, window) {
+                    ui::widgets::expand_floater(&self.egui_ctx, window);
                 } else if self.ik_editor.toggle_poser() {
-                    ui::widgets::open_floater(&self.egui_ctx, "poser", &mut self.ik_editor.open);
+                    ui::widgets::open_floater(&self.egui_ctx, window, &mut self.ik_editor.open);
                 }
             }
             BarAction::Portals => {
@@ -15623,6 +15678,12 @@ impl App {
                         self.ik_editor.show(&ctx, &p, &self.world, projector);
                         self.ik_editor.over_viewfinder = false;
                     }
+                    // the posing consent too, poser open or not: a request
+                    // asked from the poser goes out now, another resident's
+                    // request shows its answer at once (it would time out
+                    // behind the photo mode), and the reminder that someone
+                    // may pose us stays in sight
+                    self.poser_consent_ui(&ctx, &p, true);
                     // Personal Lighting, opened from the light panel, stays
                     // over it too: the photo's light refined without leaving
                     if self.panels.personal_lighting {
@@ -15789,7 +15850,7 @@ impl App {
                 let favorites = self.favorites_view(favorites_shown, here);
                 let location_landmarks = self.world.landmarks.named(&self.world.inventory);
                 let (classic_bars, islands) = self.bars_look();
-                self.poser_consent_ui(&ctx, &p);
+                self.poser_consent_ui(&ctx, &p, false);
                 let own_name = self.world.own_name();
                 // AURORA_DEMO_BARS: the long parcel name of the mockup (the
                 // islands only: Firestorm's bars stay as they were)
@@ -21354,8 +21415,23 @@ impl ApplicationHandler for App {
                         self.down.remove(&Input::key(code));
                         return;
                     }
+                    // a dialog over the photo mode reads its keys through
+                    // egui: Enter is its own, the other keys go on to their
+                    // usual handling without the viewfinder's
+                    // (`viewfinder::behind_dialog`)
+                    let behind = self.viewfinder_behind_dialog(code, pressed);
+                    if matches!(
+                        behind,
+                        Some(viewfinder::BehindDialog::Answer | viewfinder::BehindDialog::ReleaseShutter)
+                    ) {
+                        self.down.remove(&Input::key(code));
+                        return;
+                    }
                     // the photo viewfinder's keys (the shutter, its menu…)
-                    if !self.egui_ctx.egui_wants_keyboard_input() && self.viewfinder_key(code, &ke.logical_key, pressed, ke.repeat) {
+                    if behind.is_none()
+                        && !self.egui_ctx.egui_wants_keyboard_input()
+                        && self.viewfinder_key(code, &ke.logical_key, pressed, ke.repeat)
+                    {
                         self.down.remove(&Input::key(code));
                         return;
                     }

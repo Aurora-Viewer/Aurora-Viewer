@@ -3077,7 +3077,9 @@ LUT_3D_SIZE {n}
                 vf.light = v.light;
                 vf.hinted = v.menu || v.help || v.drawer || vf.looks || v.light;
                 if v.poser && self.ik_editor.toggle_poser() {
-                    crate::ui::widgets::open_floater(&self.egui_ctx, "poser", &mut self.ik_editor.open);
+                    // the window in its mode (the compact one by default)
+                    let window = self.ik_editor.poser_window(&self.settings.poser);
+                    crate::ui::widgets::open_floater(&self.egui_ctx, window, &mut self.ik_editor.open);
                 }
                 self.snapshots.quality_ask = v.quality_warning;
             }
