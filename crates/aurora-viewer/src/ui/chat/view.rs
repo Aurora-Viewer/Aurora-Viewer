@@ -196,7 +196,7 @@ pub struct View {
     filter: String,
     find: String,
     layout: Layout,
-    /// Emotes join their sender's group in the workspace (Preferences >
+    /// Emotes join their sender's group in the Aurora layout (Preferences >
     /// Chat), as asked for the next sync and as the rows were built.
     group_emotes: bool,
     grouped_emotes: bool,
@@ -328,7 +328,7 @@ impl<'a> Grouping<'a> {
     }
 
     /// Emotes go through the same sender and time checks as the other
-    /// lines in the workspace layouts, instead of standing alone.
+    /// lines in the Aurora layout, instead of standing alone.
     pub fn grouping_emotes(mut self, on: bool) -> Grouping<'a> {
         self.group_emotes = on;
         self
@@ -459,7 +459,7 @@ impl View {
         self.rows[start..].iter().filter(|r| keep(r.line)).count()
     }
 
-    /// Whether emotes join their sender's group in the workspace layouts;
+    /// Whether emotes join their sender's group in the Aurora layout;
     /// the rows follow at the next `sync`.
     pub fn set_group_emotes(&mut self, on: bool) {
         self.group_emotes = on;
@@ -1055,8 +1055,9 @@ mod tests {
     }
 
     /// With emotes grouped (Preferences > Chat), an emote joins its
-    /// sender's group in both workspace layouts and the next line goes on
-    /// in it; another sender's emote and the time gap still open a group.
+    /// sender's group in the Aurora layout and the next line goes on in it;
+    /// another sender's emote and the time gap still open a group. Compact
+    /// and the option off leave each emote alone.
     #[test]
     fn grouped_emotes_join_their_senders_group() {
         let lines = [

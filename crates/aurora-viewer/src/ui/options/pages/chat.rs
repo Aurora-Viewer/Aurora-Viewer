@@ -105,7 +105,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-mark-unnamed-objects-hint"),
                     &field!(mark_unnamed_objects),
                 );
-                // emotes in their sender's group in the workspace styles,
+                // emotes in their sender's group in the Aurora style,
                 // off (not in the Legacy Viewer, whose lines have no header)
                 cx.conditional(cx.s.chat_style == crate::settings::ChatStyle::Aurora, |cx| {
                     cx.toggle(
