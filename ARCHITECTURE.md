@@ -1349,7 +1349,9 @@ every frame. Closing releases poses by default, with an explicit keep option.
 presets, symmetry, numeric controls, trackball, library and settings.
 `poser/trackball.rs` projects joint axes and rotates in the rendered camera
 frame, including camera roll. `poser/scale_gizmo.rs` edits local scale channels
-with axis/uniform handles and one undo checkpoint per drag. Poser visibility
+with axis/uniform handles and one undo checkpoint per drag. `poser/together.rs`
+holds the joints added with Shift + click and gives them the selected joint's
+change (rotation, move, scale ratio). Poser visibility
 uses the active Body/Face/Hands/Misc/Physics group for markers, shafts and hits;
 changing tabs replaces selection before drawing the scene overlay.
 `poser/{document,storage,bvh}.rs` keep identity-free, shape-relative pose

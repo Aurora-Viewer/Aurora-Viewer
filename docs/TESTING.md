@@ -3440,14 +3440,18 @@ That ignored test creates and removes its own isolated profile.
   list, parent-local numeric controls, markers and native save/load/import
   actions. No motorcycle, contacts or IK-project draft is loaded or written.
   Prefer the dedicated `AURORA_DEMO_POSER` scenarios below. See [Poser](POSER.md).
-- **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|misc|physics|library|settings|close|square-head|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-request|consent-reminder|bridge-starting|bridge-silent|bridge-failed|bridge-off`**:
+- **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|together|misc|physics|library|settings|close|square-head|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-request|consent-reminder|bridge-starting|bridge-silent|bridge-failed|bridge-off`**:
   the full handoff trial, with the real local pose layer and consent state
   machine, on a standing avatar without motorcycle contacts or bone bindings.
   The additional `connected` mode restores a T-pose at 450 and moves the
   left wrist down/inwards at 480; capture 620 shows the bent elbow and
   connected wrist, with the position inspector in avatar coordinates.
   `camera` views the same head rotation from a quarter-turn camera orbit;
-  compare the trackball axes with `self`. `scale` shows the head's local
+  compare the trackball axes with `self`. `together` selects the left
+  eye, adds the right eye with Shift + click and turns the left eye at 450:
+  capture 620 shows both eyes looking the same way (not mirrored), both
+  markers ringed, and "+ 1 joint moves with it" under the joint's name.
+  `scale` shows the head's local
   scale handles; `physics` shows the collision volume scale handles. All
   body-part scenarios display only the selected tab's joints and shafts.
   Open at frame 420, edit at 450, capture 620. Animesh selects an
