@@ -76,6 +76,15 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         &field!(compact_im_system_lines),
                     );
                 });
+                // emotes in their sender's group in the workspace styles,
+                // off (not in the Legacy Viewer, whose lines have no header)
+                cx.conditional(cx.s.chat_style.workspace(), |cx| {
+                    cx.toggle(
+                        tr!("ui-options-group-emotes"),
+                        tr!("ui-options-group-emotes-hint"),
+                        &field!(group_emotes),
+                    );
+                });
                 cx.toggle(
                     tr!("ui-options-chat-keep-focus"),
                     tr!("ui-options-chat-keep-focus-hint"),
