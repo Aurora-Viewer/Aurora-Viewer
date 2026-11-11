@@ -2008,6 +2008,16 @@ const PART_HALO: f32 = 1.25;
 /// Frames without a lit part before its overlay images are freed (about
 /// 4 s at 60 fps).
 const PART_IDLE_FRAMES: u32 = 240;
+/// The part passes' depth test against the scene's (`post_depth`): with an
+/// upscaler, that depth is the nearest render pixel's at the display's size,
+/// a little in front of a slanted surface's own pixels, which would fail one
+/// in two (a hatched tint, holes in the pick); a bias that grows with the
+/// slope covers that gap, the constant one the selection's.
+const PART_DEPTH_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
+    constant: 1,
+    slope_scale: 2.0,
+    clamp: 0.0,
+};
 
 #[derive(Clone, Copy)]
 struct PipeDesc<'a> {
@@ -4161,11 +4171,7 @@ impl Backend {
             format: Some(wgpu::TextureFormat::Rg8Unorm),
             depth_write: false,
             write_mask: wgpu::ColorWrites::RED | wgpu::ColorWrites::GREEN,
-            depth_bias: wgpu::DepthBiasState {
-                constant: 1,
-                slope_scale: 0.0,
-                clamp: 0.0,
-            },
+            depth_bias: PART_DEPTH_BIAS,
             ..base("poser part coverage", "vs_part_mask", "fs_part_mask")
         });
         let part_pick = pipe(PipeDesc {
@@ -4174,11 +4180,7 @@ impl Backend {
             format: Some(crate::part_pick::FORMAT),
             depth_write: false,
             write_mask: wgpu::ColorWrites::RED,
-            depth_bias: wgpu::DepthBiasState {
-                constant: 1,
-                slope_scale: 0.0,
-                clamp: 0.0,
-            },
+            depth_bias: PART_DEPTH_BIAS,
             ..base("poser part pick", "vs_part_pick", "fs_part_pick")
         });
         let ssr_pipe = ssr.then(|| {
