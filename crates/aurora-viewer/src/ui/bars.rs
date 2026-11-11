@@ -4058,7 +4058,10 @@ mod tests {
         assert!(matches!(run_command(&ctx, "name_tags", &mut panels), BarAction::ToggleNameTags));
         // Show User Interface and Show HUDs' buttons
         assert!(super::super::toolbar::ready("hide_interface") && super::super::toolbar::ready("huds"));
-        assert!(matches!(run_command(&ctx, "hide_interface", &mut panels), BarAction::ToggleInterface));
+        assert!(matches!(
+            run_command(&ctx, "hide_interface", &mut panels),
+            BarAction::ToggleInterface
+        ));
         assert!(matches!(run_command(&ctx, "huds", &mut panels), BarAction::ToggleHuds));
     }
 
