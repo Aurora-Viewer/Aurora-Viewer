@@ -1277,6 +1277,10 @@ pub struct Settings {
     /// Aurora extension: allow the left/right mouse chord on land and objects
     /// without a click action, in addition to our avatar. Off by default.
     pub world_mouse_walk: bool,
+    /// A left drag on our avatar turns the camera around it without turning
+    /// the avatar, as a right drag does (the Firestorm habit, feedback #445).
+    /// Off by default: the drag steers the avatar (LLToolPie::startCameraSteering).
+    pub left_drag_avatar_moves_camera: bool,
     pub arrows_strafe: bool,
     /// The arrow keys (and Page Up / Down, Home) move the avatar while the
     /// chat bar has the keyboard, even with text in it; an empty bar always
@@ -2266,6 +2270,7 @@ impl Default for Settings {
             invert_mouse: false,
             arrows_strafe: false,
             world_mouse_walk: false,
+            left_drag_avatar_moves_camera: false,
             arrow_keys_always_move: false,
             letter_keys_move: true,
             walk_backwards_without_turning: false,
