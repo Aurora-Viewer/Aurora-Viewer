@@ -845,9 +845,11 @@ mod tests {
             let e = preset.values().effects;
             assert!(!e.soft_shadows, "{preset:?}");
             assert_eq!(e.shadow_softness, crate::settings::SHADOW_SOFTNESS, "{preset:?}");
-            let mut settings = Settings::default();
-            settings.soft_shadows = true;
-            settings.shadow_softness = 1.7;
+            let mut settings = Settings {
+                soft_shadows: true,
+                shadow_softness: 1.7,
+                ..Settings::default()
+            };
             preset.apply(&mut settings);
             assert!(!settings.soft_shadows && settings.shadow_softness == crate::settings::SHADOW_SOFTNESS);
         }
@@ -876,10 +878,12 @@ mod tests {
     #[test]
     fn the_shadow_softness_and_intensity_are_sanitised() {
         for (softness, intensity) in [(f32::NAN, f32::NAN), (-3.0, -1.0), (50.0, 9.0), (f32::INFINITY, f32::NEG_INFINITY)] {
-            let mut s = Settings::default();
-            s.shadow_softness = softness;
-            s.shadow_intensity = intensity;
-            let s = s.sanitized();
+            let s = Settings {
+                shadow_softness: softness,
+                shadow_intensity: intensity,
+                ..Settings::default()
+            }
+            .sanitized();
             assert!(
                 (0.0..=crate::settings::SHADOW_SOFTNESS_MAX).contains(&s.shadow_softness),
                 "{softness}"
