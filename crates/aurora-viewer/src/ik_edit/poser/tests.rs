@@ -2413,3 +2413,33 @@ fn poser_whole_avatar_turns_in_rotation_mode() {
     let after = editor.poser.sessions[&world.agent_id].pose.rotations[bone];
     assert!(initial.dot(after).abs() < 0.999, "{initial} {after}");
 }
+#[test]
+fn poser_whole_avatar_of_another_subject_turns_only_that_subject() {
+    let (mut world, mut editor) = fixture();
+    world.apply(NetEvent::ObjectUpdates {
+        handle: 1,
+        objects: demo::animesh_objects(demo::ANIMESH_MESH),
+    });
+    let (index, id) = world
+        .objects
+        .iter()
+        .find(|(_, o)| o.key.local_id == 9200)
+        .map(|(i, o)| (i, o.full_id))
+        .unwrap();
+    world.objects.get_mut(index).unwrap().owner_id = world.agent_id;
+    world.avatar_poses.insert(id, world.avatar_poses[&world.agent_id].clone());
+    editor.pick_subject(&world, id);
+    editor.pose_layers(&world);
+    let rig = world.avatar_lib.rig.clone();
+    let frame = editor.editor_frame(&world).unwrap();
+    let own = editor.poser.sessions[&world.agent_id].pose.rotations[rig.pelvis];
+    let theirs = editor.poser.sessions[&id].pose.rotations[rig.pelvis];
+    editor.select(rig.pelvis, &rig, &frame);
+    editor.poser.transform = 0;
+    editor.poser_transform(&rig, &frame, Vec3::ZERO, Quat::from_rotation_z(0.6), true);
+    assert_eq!(editor.selected, Some(rig.pelvis));
+    assert!(editor.poser.sessions[&id].pose.rotations[rig.pelvis].dot(theirs).abs() < 0.99);
+    assert_eq!(editor.poser.sessions[&world.agent_id].pose.rotations[rig.pelvis], own);
+    editor.poser.sessions.get_mut(&id).unwrap().history(false);
+    assert_eq!(editor.poser.sessions[&id].pose.rotations[rig.pelvis], theirs);
+}
