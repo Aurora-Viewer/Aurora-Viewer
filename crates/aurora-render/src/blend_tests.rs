@@ -29,6 +29,7 @@ fn transparent_pbr_sidedness_matches_colour_and_depth_on_gpu() {
 const FLAG_DOUBLE_SIDED:u32={double_sided}u;
 const FLAG_PORTAL_EFFECT:u32={portal}u;
 const FLAG_ALPHA_MASK:u32={mask}u;
+const FLAG_LEGACY_MAT:u32={legacy}u;
 const PORTAL_SURFACE_SCALE:f32=1.16;
 const BLEND_EARLY_DISCARD:bool=true;
 const BLEND_SPLIT:u32=0u;
@@ -40,14 +41,14 @@ const frame=Frame(vec4<f32>(1.0),vec4<f32>(0.0),vec4<f32>(0.0,0.0,1.0,1.0));
 override WATER_CLIP:u32=0u;
 struct VsOut {{@builtin(position) clip:vec4<f32>,@location(0) @interpolate(flat) record:u32,
     @location(1) world_pos:vec3<f32>,@location(2) uv:vec2<f32>}};
-struct Material {{color:vec4<f32>}};
+struct Material {{color:vec4<f32>,legacy_spec:vec4<f32>,legacy_env:f32}};
 struct Surface {{alpha:f32,color:vec3<f32>}};
 struct DepthMaskOut {{record:u32,uv:vec2<f32>,world_pos:vec3<f32>,normal:vec3<f32>,motion_cur:vec4<f32>,motion_prev:vec4<f32>}};
 fn portal_surface(r:DrawRecord,uv:vec2<f32>,aa:f32)->Surface {{return Surface(1.0,vec3<f32>(1.0));}}
 fn apply_fog(c:vec3<f32>,p:vec3<f32>)->vec3<f32> {{return c;}}
 fn portal_clip(r:DrawRecord,p:vec3<f32>) {{}}
 fn sample_tex(t:u32,uv:vec2<f32>)->vec4<f32> {{return vec4<f32>(1.0);}}
-fn eval_material(v:VsOut,front:bool)->Material {{return Material(records[v.record].base_color);}}
+fn eval_material(v:VsOut,front:bool)->Material {{return Material(records[v.record].base_color,vec4<f32>(0.0),0.0);}}
 fn shade_material(v:VsOut,m:Material)->Material {{return m;}}
 fn rez_alpha(r:DrawRecord,v:VsOut)->f32 {{return 1.0;}}
 fn depth_normal(n:vec3<f32>,front:bool,cur:vec4<f32>,prev:vec4<f32>,c:f32)->vec4<f32> {{return vec4<f32>(1.0);}}
@@ -74,6 +75,7 @@ fn normal_composition(r:DrawRecord)->f32 {{return 0.0;}}
         double_sided = flags::DOUBLE_SIDED,
         portal = flags::PORTAL_EFFECT,
         mask = flags::ALPHA_MASK,
+        legacy = flags::LEGACY_MAT,
     );
     let _gpu = crate::test_gpu::lock();
     let instance = wgpu::Instance::default();
