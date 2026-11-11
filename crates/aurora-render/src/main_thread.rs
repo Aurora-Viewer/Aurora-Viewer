@@ -246,7 +246,7 @@ pub struct Renderer {
     drawn_requests: Vec<crate::drawn_pick::DrawnRequest>,
     drawn_answers: Vec<crate::drawn_pick::DrawnAnswer>,
     /// The poser's part pick read back last (`take_part_pick`).
-    part_pick: Option<u32>,
+    part_pick: Option<(u32, [u32; 2])>,
     /// Frames handed over.
     frames: u64,
     /// The renderer's side of the last frame result, and whether it came
@@ -1697,9 +1697,10 @@ impl Renderer {
     }
 
     /// The poser's part under the cursor read back since the last call
-    /// (part_pick.rs, asked with `FrameParams::part_pick`): Some(0) when
-    /// nothing of the subject is there, Some(joint + 1) otherwise.
-    pub fn take_part_pick(&mut self) -> Option<u32> {
+    /// (part_pick.rs, asked with `FrameParams::part_pick`), with the window
+    /// pixel it was read at: 0 when nothing of the subject is there,
+    /// joint + 1 otherwise.
+    pub fn take_part_pick(&mut self) -> Option<(u32, [u32; 2])> {
         self.collect();
         self.part_pick.take()
     }

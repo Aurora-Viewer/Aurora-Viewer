@@ -175,9 +175,16 @@ pub(super) struct State {
     /// Ctrl hovers the subject (an avatar) with the parts on: the renderer
     /// is asked for its part under the cursor (part_pick.rs).
     pick_wanted: bool,
-    /// Its newest answer: the dominant joint + 1 under the cursor, 0 off
-    /// the subject; None before the first since Ctrl came.
-    mesh_pick: Option<u32>,
+    /// Its newest answer: the subject it was asked for, the dominant joint
+    /// + 1 (0 off the subject) and the window pixel it was read at; trusted
+    /// only there (`world_hints::fresh_pick`). None before the first since
+    /// Ctrl came.
+    mesh_pick: Option<(Uuid, u32, [f32; 2])>,
+    /// Whether the scene drew any of the subject's meshes last frame, when it
+    /// listed them (`set_poser_meshes_drawn`): an impostored, jelly-dolled or
+    /// first-person subject has none, and keeps the bone outline. None:
+    /// not known yet (taken as drawn).
+    meshes_drawn: Option<bool>,
     /// The joints edited over every subject, counted as the window shows:
     /// what a close that stops the pose would lose.
     edited_total: usize,
@@ -349,21 +356,26 @@ impl Editor {
     /// The part the renderer draws on the subject's meshes (the avatar and
     /// the joints mask of `aurora_render::FrameParams::part_joints`).
     pub fn poser_part_overlay(&self) -> Option<(Uuid, [u32; 8])> {
-        self.poser.part_overlay.filter(|_| self.poser.active)
+        self.poser.part_overlay.filter(|_| self.poser.active && self.open)
     }
     /// The subject whose part under the cursor the renderer reads this
     /// frame (part_pick.rs), while Ctrl hovers it.
     pub fn poser_pick_subject(&self) -> Option<Uuid> {
-        (self.poser.active && self.poser.pick_wanted).then_some(self.poser.subject)
+        (self.poser.active && self.open && self.poser.pick_wanted).then_some(self.poser.subject)
     }
     /// The renderer's part pick (`Renderer::take_part_pick`): the newest
     /// answer is kept while Ctrl is held, forgotten once it is let go.
-    pub fn set_poser_mesh_pick(&mut self, answer: Option<u32>) {
+    pub fn set_poser_mesh_pick(&mut self, answer: Option<(u32, [u32; 2])>) {
         if !self.poser.pick_wanted {
             self.poser.mesh_pick = None;
-        } else if answer.is_some() {
-            self.poser.mesh_pick = answer;
+        } else if let Some((joint, [x, y])) = answer {
+            self.poser.mesh_pick = Some((self.poser.subject, joint, [x as f32, y as f32]));
         }
+    }
+    /// Whether the scene listed any of the subject's meshes for the part
+    /// (None: it was not asked to).
+    pub fn set_poser_meshes_drawn(&mut self, drawn: Option<bool>) {
+        self.poser.meshes_drawn = drawn;
     }
     /// The subject posed now (you, an animesh or a resident).
     pub fn poser_subject(&self) -> Uuid {
@@ -476,6 +488,12 @@ impl Editor {
     fn close_poser(&mut self) {
         self.poser.close_asked = false;
         self.open = false;
+        // the window no longer runs its hints: nothing stays lit nor picked
+        // (a pose kept by "stop when closed" off goes on without them)
+        self.poser.part_overlay = None;
+        self.poser.pick_wanted = false;
+        self.poser.mesh_pick = None;
+        self.poser.ctrl_hint = false;
         if self.poser.stop_on_close {
             self.poser.active = false;
         }

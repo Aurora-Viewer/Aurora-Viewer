@@ -169,6 +169,19 @@ pub(super) fn picked_part(
     (offer[owner] && groups[owner] != current).then_some(owner)
 }
 
+/// How far, in window pixels, the cursor may be from where the mesh pick
+/// was read for its answer to stand: it comes a frame or two late.
+const PICK_REACH: f32 = 4.0;
+
+/// The mesh pick's answer that stands for the cursor at `pointer` (window
+/// pixels): the one asked for this `subject` and read within `PICK_REACH`
+/// of it. Else None, and the bones decide at once: a flick to another
+/// avatar, the subject switched, a pixel no answer came for.
+pub(super) fn fresh_pick(stored: Option<(Uuid, u32, [f32; 2])>, subject: Uuid, pointer: egui::Pos2) -> Option<u32> {
+    let (asked, joint, [x, y]) = stored?;
+    (asked == subject && pointer.distance(egui::pos2(x, y)) <= PICK_REACH).then_some(joint)
+}
+
 /// The renderer's mask of `members` (`FrameParams::part_joints`): bit j for
 /// each palette joint whose part they are, the joints that follow a bone
 /// included. A fitted mesh body weights its vertices to the collision
@@ -293,19 +306,37 @@ impl Editor {
         // an avatar's part is drawn by the renderer from its meshes, and
         // picked there (part_pick.rs); an animesh's keeps the bones (its
         // skeleton is not an avatar's)
-        let meshes = world
+        let avatar = world
             .objects
             .index_of_uuid(&self.poser.subject)
             .and_then(|i| world.objects.get(i))
             .is_some_and(|o| o.is_avatar());
-        self.poser.pick_wanted = ctrl && self.poser.part_hints && meshes;
+        // the pick is asked for an avatar; its meshes draw the part when the
+        // scene drew any of them (an impostor, a jelly doll, your own avatar
+        // in first person: the bone outline instead)
+        // ... and only while the pointer is over the subject (its skeleton's
+        // area on screen): Ctrl over the rest of the world costs nothing
+        let over_subject = compact::body_area(
+            joints
+                .iter()
+                .filter(|(j, _)| !optional_bone(&rig.canonical_names[*j]) || self.poser.rigged.contains(j))
+                .map(|(_, at)| *at),
+        )
+        .is_some_and(|area| area.contains(pointer));
+        self.poser.pick_wanted = ctrl && self.poser.part_hints && avatar && over_subject;
+        let meshes = avatar && self.poser.meshes_drawn != Some(false);
         // the mesh pick, once one came back: on the subject's surface, the
         // part of its joint; off it, none. Until then, the bones.
-        let picked = self
-            .poser
-            .mesh_pick
-            .filter(|_| self.poser.pick_wanted)
-            .map(|v| v.checked_sub(1).map(|j| j as usize).filter(|j| *j < rig.len()));
+        let pointer_px = pointer * ctx.pixels_per_point();
+        let picked = fresh_pick(self.poser.mesh_pick, self.poser.subject, pointer_px)
+            .filter(|_| self.poser.pick_wanted && meshes)
+            // the palette's identity slot (rig.len(): the system body's
+            // vertices on the root) counts as the pelvis
+            .map(|v| {
+                v.checked_sub(1)
+                    .map(|j| if j as usize == rig.len() { rig.pelvis } else { j as usize })
+                    .filter(|j| *j < rig.len())
+            });
         let candidate = match picked {
             Some(Some(j)) => picked_part(j, &rig.parent, &rig.canonical_names, &groups, &offer, self.poser.group),
             Some(None) => None,
@@ -351,7 +382,14 @@ impl Editor {
             if inside {
                 if meshes {
                     let joints = mask_members(keys[joint], &members, &rig.parent, &keys, &rig.canonical_names, &self.poser.rigged);
-                    self.poser.part_overlay = Some((self.poser.subject, mask_joints(&rig.parent, &rig.canonical_names, &joints)));
+                    let mut mask = mask_joints(&rig.parent, &rig.canonical_names, &joints);
+                    // the identity slot (the system body's root vertices) is
+                    // the body's
+                    let root = rig.len();
+                    if keys[joint] == 0 && root < 256 {
+                        mask[root >> 5] |= 1 << (root & 31);
+                    }
+                    self.poser.part_overlay = Some((self.poser.subject, mask));
                 }
                 tip(aurora_i18n::tr!("poser-ctrl-click-group", group = part_label(keys[joint])).to_string());
                 return Hint::Group(joint);

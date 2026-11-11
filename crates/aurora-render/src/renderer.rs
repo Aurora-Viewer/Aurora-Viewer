@@ -1735,8 +1735,11 @@ pub(crate) struct Backend {
     /// pixel to read; whether the part overlay draws this frame (a part is
     /// lit: the subject's faces are also listed for the pick alone).
     part_pick: crate::part_pick::PartPick,
-    part_pick_px: Option<[u32; 2]>,
+    part_pick_px: Option<([u32; 2], [u32; 2])>,
     part_lit: bool,
+    /// Frames since a part was last lit: its overlay images go after
+    /// `PART_IDLE_FRAMES`.
+    part_idle: u32,
     /// The world's labels, drawn behind what the scene has in front of
     /// them (label_depth.rs).
     label_depth: crate::label_depth::LabelDepth,
@@ -2002,6 +2005,9 @@ const PART_TINT: f32 = 0.4;
 /// around the body rather than a line (a game's hover outline on a
 /// character).
 const PART_HALO: f32 = 1.25;
+/// Frames without a lit part before its overlay images are freed (about
+/// 4 s at 60 fps).
+const PART_IDLE_FRAMES: u32 = 240;
 
 #[derive(Clone, Copy)]
 struct PipeDesc<'a> {
@@ -3571,6 +3577,7 @@ impl Backend {
             part_pick,
             part_pick_px: None,
             part_lit: false,
+            part_idle: 0,
             label_depth,
             impostors,
             motion_history,
@@ -6659,7 +6666,37 @@ impl Backend {
         // the subject's faces serve the pick (Ctrl over it) and the overlay
         // (a part lit): the overlay only when a joint is set
         self.part_lit = !lists.part_faces.is_empty() && f.part_joints != [0; 8];
-        self.part_pick_px = f.part_pick.filter(|_| !lists.part_faces.is_empty());
+        // the cursor, in window pixels, on the target drawn at `post_size`
+        // (a lower render scale, RLVa's divisor); none on a photo frame,
+        // whose `config` is the photo's (the hover is skipped there too)
+        let (window_w, window_h) = (self.config.width.max(1), self.config.height.max(1));
+        self.part_pick_px = f
+            .part_pick
+            .filter(|_| !lists.part_faces.is_empty() && snapshot.is_none())
+            .map(|[x, y]| {
+                let at = [
+                    (u64::from(x) * u64::from(post_size.0) / u64::from(window_w)) as u32,
+                    (u64::from(y) * u64::from(post_size.1) / u64::from(window_h)) as u32,
+                ];
+                (at, [x, y])
+            });
+        // its target under the video memory guard, freed once idle
+        let pick_size = [post_size.0, post_size.1];
+        if self.part_pick_px.is_some() {
+            if self.part_pick.needs_target(pick_size) {
+                let texture = extra(&mut self.oom, &self.device, self.lost.get(), "poser part pick", |device| {
+                    crate::part_pick::PartPick::make_target(device, pick_size)
+                });
+                self.part_pick.set_target(texture, pick_size);
+            }
+        } else {
+            self.part_pick.idle();
+        }
+        // the part's overlay images go the same way once no part is lit
+        self.part_idle = if self.part_lit { 0 } else { self.part_idle.saturating_add(1) };
+        if self.part_idle > PART_IDLE_FRAMES {
+            self.part = None;
+        }
         if self.part_lit {
             let size = [post_size.0, post_size.1];
             if self.part.as_ref().is_none_or(|part| part.size != size) {
@@ -9390,8 +9427,8 @@ impl Backend {
         }
 
         if rg.part_faces.1 > 0
-            && let Some(px) = self.part_pick_px
-            && let Some(view) = self.part_pick.begin(&self.device, [post_size.0, post_size.1], px)
+            && let Some((px, tag)) = self.part_pick_px
+            && let Some(view) = self.part_pick.begin([post_size.0, post_size.1], px, tag)
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("poser part pick"),
@@ -9413,6 +9450,8 @@ impl Backend {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            // the cursor's pixel alone is read: only it is rasterized
+            pass.set_scissor_rect(px[0], px[1], 1, 1);
             bind_mesh(&mut pass, &self.groups.b);
             draw(&mut pass, &self.pipelines.part_pick, rg.part_faces);
             drop(pass);

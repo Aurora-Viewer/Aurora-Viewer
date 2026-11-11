@@ -10430,6 +10430,10 @@ impl App {
             );
             self.scene.update_portal_clipping(&mut gfx.renderer, &self.world);
             self.scene.build_lists(&mut gfx.renderer, &cull, self.settings.shadows);
+            // the poser's subject drawn as meshes or not (an impostor, a
+            // jelly doll, first person): its part falls back to the bones
+            self.ik_editor
+                .set_poser_meshes_drawn(self.scene.poser_part.map(|_| !self.scene.lists.part_faces.is_empty()));
             let preview = if (self.focused || self.demo && self.capture.is_some())
                 && !covered
                 && !self.camera.mouselook()
@@ -10909,10 +10913,17 @@ impl App {
                 .collect(),
             rlva_spheres: self.world.rlva_sphere_frames(self.camera.position, Instant::now()),
             // the poser's hovered part, drawn from the subject's meshes
-            part_joints: self.ik_editor.poser_part_overlay().map_or([0; 8], |(_, mask)| mask),
+            // none in a photo: the part is the poser's interface, not the
+            // scene (a photo without the interface must not carry it)
+            part_joints: self
+                .ik_editor
+                .poser_part_overlay()
+                .filter(|_| self.snapshots.capturing.is_none())
+                .map_or([0; 8], |(_, mask)| mask),
             part_pick: self
                 .ik_editor
                 .poser_pick_subject()
+                .filter(|_| self.snapshots.capturing.is_none())
                 .filter(|_| self.cursor_pos.0 >= 0.0 && self.cursor_pos.1 >= 0.0)
                 .map(|_| [self.cursor_pos.0 as u32, self.cursor_pos.1 as u32]),
             // softer than a selection: the alpha scales the halo, its dark

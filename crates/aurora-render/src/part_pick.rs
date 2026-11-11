@@ -10,7 +10,9 @@
 //! of them, another avatar or an object, hides them), each pixel holding
 //! its dominant palette joint + 1 (`fs_part_pick`); the texel under the
 //! cursor alone is copied and read back a frame or two later, as
-//! drawn_pick.rs does. Nothing is drawn nor allocated while nobody asks.
+//! drawn_pick.rs does. Only that pixel is rasterized (a scissor); nothing
+//! is drawn while nobody asks, and the target is freed a few seconds after
+//! the last pick.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -20,6 +22,8 @@ pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 /// One texel read back, in a row the copy accepts.
 const ROW: u64 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as u64;
 const SLOTS: usize = 3;
+/// Frames without a pick before its target is freed (about 4 s at 60 fps).
+const IDLE_FRAMES: u32 = 240;
 const IDLE: u8 = 0;
 const MAPPED: u8 = 1;
 const FAILED: u8 = 2;
@@ -28,6 +32,9 @@ struct Slot {
     buffer: wgpu::Buffer,
     state: Arc<AtomicU8>,
     pending: bool,
+    /// The window pixel asked, given back with the answer: the poser trusts
+    /// it only while the cursor is still there.
+    tag: [u32; 2],
 }
 
 pub struct PartPick {
@@ -35,8 +42,11 @@ pub struct PartPick {
     slots: Vec<Slot>,
     /// The slot and texel this frame copies: mapped once submitted.
     encoded: Option<(usize, [u32; 2])>,
-    /// The last answer read back: the dominant joint + 1, 0 for none.
-    answer: Option<u32>,
+    /// The last answer read back: the dominant joint + 1 (0 for none) and
+    /// the window pixel it was read at.
+    answer: Option<(u32, [u32; 2])>,
+    /// Frames since the last pick (`idle`).
+    idle: u32,
 }
 
 impl PartPick {
@@ -51,6 +61,7 @@ impl PartPick {
                 }),
                 state: Arc::new(AtomicU8::new(IDLE)),
                 pending: false,
+                tag: [0, 0],
             })
             .collect();
         PartPick {
@@ -58,36 +69,64 @@ impl PartPick {
             slots,
             encoded: None,
             answer: None,
+            idle: 0,
         }
     }
 
-    /// The target for this frame's pick of `pixel` at `size`, if a readback
-    /// is free (the pick waits a frame otherwise): its view.
-    pub fn begin(&mut self, device: &wgpu::Device, size: [u32; 2], pixel: [u32; 2]) -> Option<&wgpu::TextureView> {
-        if pixel[0] >= size[0] || pixel[1] >= size[1] {
+    /// The target a pick at `size` needs (`make_target`), when the one
+    /// held is missing or of another size: the renderer allocates it under
+    /// its video memory guard (`extra`) and hands it over (`set_target`).
+    pub fn needs_target(&self, size: [u32; 2]) -> bool {
+        self.texture.as_ref().is_none_or(|(_, _, at)| *at != size)
+    }
+
+    pub fn make_target(device: &wgpu::Device, size: [u32; 2]) -> wgpu::Texture {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("poser part pick"),
+            size: wgpu::Extent3d {
+                width: size[0],
+                height: size[1],
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        })
+    }
+
+    /// The target allocated for `size` (None: refused, the pick waits).
+    pub fn set_target(&mut self, texture: Option<wgpu::Texture>, size: [u32; 2]) {
+        self.texture = texture.map(|t| {
+            let view = t.create_view(&Default::default());
+            (t, view, size)
+        });
+        self.idle = 0;
+    }
+
+    /// A frame without a pick: the target goes after `IDLE_FRAMES` of them
+    /// (a few seconds), so nothing stays allocated while nobody asks.
+    pub fn idle(&mut self) {
+        self.idle = self.idle.saturating_add(1);
+        if self.idle > IDLE_FRAMES && self.encoded.is_none() {
+            self.texture = None;
+        }
+    }
+
+    /// The target for this frame's pick of `pixel` at `size` (`tag`: the
+    /// window pixel it shows), if it is allocated and a readback is free
+    /// (the pick waits a frame otherwise): its view.
+    pub fn begin(&mut self, size: [u32; 2], pixel: [u32; 2], tag: [u32; 2]) -> Option<&wgpu::TextureView> {
+        if pixel[0] >= size[0] || pixel[1] >= size[1] || self.needs_target(size) {
             return None;
         }
         let slot = self.slots.iter().position(|s| !s.pending)?;
-        if self.texture.as_ref().is_none_or(|(_, _, at)| *at != size) {
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("poser part pick"),
-                size: wgpu::Extent3d {
-                    width: size[0],
-                    height: size[1],
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: FORMAT,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-                view_formats: &[],
-            });
-            let view = texture.create_view(&Default::default());
-            self.texture = Some((texture, view, size));
-        }
         self.slots[slot].pending = true;
+        self.slots[slot].tag = tag;
         self.encoded = Some((slot, pixel));
+        self.idle = 0;
         self.texture.as_ref().map(|(_, view, _)| view)
     }
 
@@ -161,14 +200,14 @@ impl PartPick {
             s.state.store(IDLE, Ordering::Release);
             s.pending = false;
             if let Some(joint) = joint {
-                self.answer = Some(joint);
+                self.answer = Some((joint, s.tag));
             }
         }
     }
 
-    /// The newest answer since the last call: Some(0) when nothing of the
-    /// subject is under the cursor, Some(joint + 1) otherwise.
-    pub fn take_answer(&mut self) -> Option<u32> {
+    /// The newest answer since the last call, with the window pixel it was
+    /// read at: 0 when nothing of the subject is there, joint + 1 otherwise.
+    pub fn take_answer(&mut self) -> Option<(u32, [u32; 2])> {
         self.answer.take()
     }
 }

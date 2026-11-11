@@ -5055,10 +5055,11 @@ impl Scene {
                     {
                         l.select_faces.push(cmd);
                     }
-                    // the poser's hovered part: the subject's skinned body
-                    // and rigged meshes (what they show; the shader keeps
-                    // the part's own triangles)
-                    if poser_part.is_some() && avatar == poser_part && (g.rigged || g.is_avatar) && pass != Pass::Hidden {
+                    // the poser's hovered part: the subject's body and what it
+                    // wears (the shader keeps the part's own skinned
+                    // triangles; an unrigged worn object is coverage alone,
+                    // so the halo does not cross it)
+                    if poser_part.is_some() && avatar == poser_part && pass != Pass::Hidden {
                         l.part_faces.push(cmd);
                     }
                 }

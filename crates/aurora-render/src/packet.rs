@@ -149,7 +149,7 @@ pub(crate) struct FrameResult {
     pub drawn: Vec<DrawnAnswer>,
     /// The poser's part pick read back since the last result (part_pick.rs):
     /// the dominant joint + 1 under the cursor, 0 for none of the subject.
-    pub part_pick: Option<u32>,
+    pub part_pick: Option<(u32, [u32; 2])>,
     /// Last GPU culling counts read back.
     pub cull: CullCounts,
     /// The capture asked with this frame (width, height, RGBA8); None when

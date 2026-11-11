@@ -1811,6 +1811,37 @@ struct PoserPartOut {
     @location(3) @interpolate(flat) record: u32,
 };
 
+// The diffuse coordinates as vs_main gives them, texture animation included,
+// for the part's alpha test.
+fn poser_part_uv(rec: DrawRecord, in: VsIn) -> vec2<f32> {
+    var st = face_st(in, rec);
+    let animated = has_tex_anim(rec);
+    if (animated) {
+        st = tex_anim_st(st, rec, frame.anim_clock.zw);
+    }
+    if (animated && (rec.flags.x & FLAG_PBR) == 0u) {
+        return vec2<f32>(st.x, 1.0 - st.y);
+    }
+    return te_uv(st, rec);
+}
+
+// What of a face the part shows and picks: an alpha-masked face as it is
+// cut out; a blended one where it can be seen (a hair card's or a fishnet's
+// clear texels are not the avatar); others whole.
+const POSER_PART_BLEND_ALPHA: f32 = 0.1;
+fn poser_part_texel_shown(rec: DrawRecord, uv: vec2<f32>) -> bool {
+    let masked = (rec.flags.x & FLAG_ALPHA_MASK) != 0u;
+    let blended = (rec.flags.x & FLAG_ALPHA_BLEND) != 0u;
+    if (!masked && !blended) {
+        return true;
+    }
+    let alpha = sample_tex(rec.tex.x, uv).a * rec.base_color.a;
+    if (masked && rec.base_color.a >= 0.004 && alpha < rec.params.w) {
+        return false;
+    }
+    return !(blended && alpha < POSER_PART_BLEND_ALPHA);
+}
+
 fn in_poser_part(joint: u32) -> bool {
     let word = frame.part_joints[(joint >> 7u) & 1u][(joint >> 5u) & 3u];
     return joint < 256u && ((word >> (joint & 31u)) & 1u) != 0u;
@@ -1823,7 +1854,7 @@ fn vs_part_mask(in: VsIn) -> PoserPartOut {
     var out: PoserPartOut;
     out.clip = eye_clip(rec, ep);
     out.world_pos = ep.xyz + frame.eye.xyz;
-    out.uv = te_uv(face_st(in, rec), rec);
+    out.uv = poser_part_uv(rec, in);
     out.record = in.instance;
     out.part = 0.0;
     if ((rec.flags.x & FLAG_SKINNED) != 0u) {
@@ -1842,11 +1873,7 @@ fn vs_part_mask(in: VsIn) -> PoserPartOut {
 @fragment
 fn fs_part_mask(in: PoserPartOut) -> @location(0) vec4<f32> {
     portal_clip(records[in.record], in.world_pos);
-    let rec = records[in.record];
-    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u) {
-        let alpha = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
-        if (rec.base_color.a >= 0.004 && alpha < rec.params.w) { discard; }
-    }
+    if (!poser_part_texel_shown(records[in.record], in.uv)) { discard; }
     // the part's share, eased so the tint fades where the weights pass to
     // the next part (Overlay::new_part); green: the subject is here
     return vec4<f32>(smoothstep(0.15, 0.85, in.part), 1.0, 0.0, 1.0);
@@ -1871,7 +1898,7 @@ fn vs_part_pick(in: VsIn) -> PoserPickOut {
     var out: PoserPickOut;
     out.clip = eye_clip(rec, ep);
     out.world_pos = ep.xyz + frame.eye.xyz;
-    out.uv = te_uv(face_st(in, rec), rec);
+    out.uv = poser_part_uv(rec, in);
     out.record = in.instance;
     out.joint = 0u;
     if ((rec.flags.x & FLAG_SKINNED) != 0u) {
@@ -1889,11 +1916,7 @@ fn vs_part_pick(in: VsIn) -> PoserPickOut {
 @fragment
 fn fs_part_pick(in: PoserPickOut) -> @location(0) vec4<u32> {
     portal_clip(records[in.record], in.world_pos);
-    let rec = records[in.record];
-    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u) {
-        let alpha = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
-        if (rec.base_color.a >= 0.004 && alpha < rec.params.w) { discard; }
-    }
+    if (!poser_part_texel_shown(records[in.record], in.uv)) { discard; }
     return vec4<u32>(in.joint, 0u, 0u, 0u);
 }
 
