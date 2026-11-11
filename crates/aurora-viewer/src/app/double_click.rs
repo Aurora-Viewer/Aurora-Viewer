@@ -104,6 +104,30 @@ impl App {
         })
     }
 
+    /// Walk (or run) to a point aimed at in VR, with the double click's RLVa
+    /// check. Walking, not a local teleport: many parcels send a teleport to
+    /// their landing point or refuse it. Nothing while flying or held in
+    /// place, as for a double-click walk. True when it started.
+    pub(super) fn walk_to_point_checked(&mut self, point: Vec3, run: bool) -> bool {
+        let global = self
+            .world
+            .main_origin()
+            .map(|(x, y)| glam::DVec3::new(x as f64, y as f64, 0.0) + point.as_dvec3());
+        if global.is_some_and(|g| !self.world.rlva_can_teleport_global(g)) {
+            self.world.system_notice(
+                aurora_i18n::tr!("rlva-blocked-autopilot"),
+                crate::world::notice_topics::Topic::Warning,
+            );
+            return false;
+        }
+        let agent = &self.world.agent;
+        if agent.flying || self.native_anchor.blocks_walk(agent.seated, agent.ground_sit) {
+            return false;
+        }
+        self.walk_to(point, run);
+        true
+    }
+
     /// walkToClickedLocation: not while flying or manually sitting. Our own
     /// idle anchor releases before the walk and does not cancel its handover.
     fn walk_to(&mut self, point: Vec3, run: bool) {

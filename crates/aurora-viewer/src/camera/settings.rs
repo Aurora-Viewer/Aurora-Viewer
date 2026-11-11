@@ -308,6 +308,10 @@ pub struct VrSettings {
 pub enum VrLocomotion {
     #[default]
     Smooth,
+    /// Left stick forward aims an arc from the left controller; letting it
+    /// go walks the avatar there (no teleport: parcels may route or refuse
+    /// it).
+    Teleport,
     CameraOnly,
     None,
 }

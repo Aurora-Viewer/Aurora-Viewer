@@ -196,6 +196,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     &field!(camera.vr.locomotion),
                     &[
                         (VrLocomotion::Smooth, tr!("ui-options-camera-vr-locomotion-smooth"), false),
+                        (VrLocomotion::Teleport, tr!("ui-options-camera-vr-locomotion-teleport"), false),
                         (VrLocomotion::CameraOnly, tr!("ui-options-camera-vr-locomotion-camera-only"), false),
                         (VrLocomotion::None, tr!("ui-options-camera-vr-locomotion-none"), false),
                     ],

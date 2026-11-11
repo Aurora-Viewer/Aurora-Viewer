@@ -53,6 +53,24 @@ pub fn keys_stick(forward: bool, back: bool, left: bool, right: bool) -> Vec2 {
     Vec2::new(axis(right, left), axis(forward, back)).normalize_or_zero()
 }
 
+/// The teleport arc's sample points: thrown from `origin` along `dir` at
+/// 8 m/s under gravity, `count` points 0.06 s apart (Z up).
+pub fn arc_points(origin: Vec3, dir: Vec3, count: usize) -> impl Iterator<Item = Vec3> {
+    const SPEED: f32 = 8.0;
+    const STEP: f32 = 0.06;
+    let velocity = dir.normalize_or(Vec3::X) * SPEED;
+    (0..count).map(move |i| {
+        let t = i as f32 * STEP;
+        origin + velocity * t + Vec3::Z * (-0.5 * 9.81 * t * t)
+    })
+}
+
+/// Teleport aiming on the left stick: pushed forward past 0.6 aims,
+/// let back under 0.3 lands.
+pub fn teleport_aiming(was: bool, stick_y: f32) -> bool {
+    if was { stick_y > 0.3 } else { stick_y > 0.6 }
+}
+
 /// How far the avatar's eyes lead its centre along its facing (the
 /// first-person camera's standing eye, `camera::mouselook_eye`).
 pub const EYE_LEAD: f32 = 0.12;
@@ -176,6 +194,24 @@ mod tests {
         let opening = 1.0 - ease_vignette(1.0, 0.0, 0.05);
         assert!(closing > opening && closing <= 1.0);
         assert_eq!(ease_vignette(0.3, 0.0, 10.0), 0.0);
+    }
+
+    #[test]
+    fn arc_rises_then_falls_forward() {
+        let points: Vec<_> = arc_points(Vec3::ZERO, Vec3::new(1.0, 0.0, 1.0), 24).collect();
+        assert_eq!(points.len(), 24);
+        assert_eq!(points[0], Vec3::ZERO);
+        let top = points.iter().map(|p| p.z).fold(f32::MIN, f32::max);
+        assert!(top > 0.5 && points[23].z < top);
+        assert!(points.windows(2).all(|w| w[1].x > w[0].x));
+    }
+
+    #[test]
+    fn teleport_aim_has_hysteresis() {
+        assert!(!teleport_aiming(false, 0.5));
+        assert!(teleport_aiming(false, 0.7));
+        assert!(teleport_aiming(true, 0.5));
+        assert!(!teleport_aiming(true, 0.2));
     }
 
     #[test]

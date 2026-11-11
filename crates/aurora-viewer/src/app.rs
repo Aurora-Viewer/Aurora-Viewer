@@ -449,6 +449,16 @@ pub struct App {
     vr_hover: Option<usize>,
     /// The comfort vignette's current strength, eased toward its target.
     vr_vignette: f32,
+    /// Teleport: the left stick is aiming, the arc drawn, where it lands.
+    vr_teleport_aiming: bool,
+    vr_arc: Option<aurora_render::VrArc>,
+    vr_landing: Option<Vec3>,
+    /// The left thumbstick click switched walking and running (and was
+    /// down last frame); B toggled crouching (and was down).
+    vr_run: bool,
+    vr_run_click: bool,
+    vr_crouch: bool,
+    vr_crouch_click: bool,
     input: MoveInput,
     joystick: joystick::State,
     /// Keys and bindable mouse buttons held down.
@@ -1578,6 +1588,13 @@ impl App {
             vr_recenter: Default::default(),
             vr_hover: None,
             vr_vignette: 0.0,
+            vr_teleport_aiming: false,
+            vr_arc: None,
+            vr_landing: None,
+            vr_run: false,
+            vr_run_click: false,
+            vr_crouch: false,
+            vr_crouch_click: false,
             input: MoveInput::default(),
             joystick: Default::default(),
             down: HashSet::new(),
@@ -8064,9 +8081,12 @@ impl App {
         dt: f32,
     ) {
         if !vr_active {
+            self.vr_teleport_aiming = false;
+            self.vr_arc = None;
             return;
         }
-        let settings = &self.settings.camera.vr;
+        // (a copy: the teleport below needs the whole viewer)
+        let settings = self.settings.camera.vr.clone();
         // Keyboard, Controls window and joystick walking keep working beside
         // the controllers, but in the headset's frame: the walking keys go
         // where the head looks (as the left stick does), and the turn keys
@@ -8095,9 +8115,11 @@ impl App {
             let forward = crate::vr::movement_vector(glam::Vec2::Y, vr.head_forward, 0.0);
             self.world.agent.yaw = forward.y.atan2(forward.x);
         }
-        // A: jump, held up (flight starts as with the key held); B: crouch
-        // or go down in flight. In camera-only mode they raise and lower
-        // the camera.
+        // A: jump, held up (flight starts as with the key held). B on the
+        // ground toggles crouching (A stands up too); in flight, held, it
+        // goes down. In camera-only mode they raise and lower the camera.
+        let b_pressed = vr.right.active && vr.right.secondary && !self.vr_crouch_click;
+        self.vr_crouch_click = vr.right.active && vr.right.secondary;
         if vr.right.active {
             let rise = vr.right.primary as i8 as f32 - vr.right.secondary as i8 as f32;
             if settings.locomotion == crate::camera::VrLocomotion::CameraOnly {
@@ -8105,9 +8127,40 @@ impl App {
                     renderer.add_vr_translation(Vec3::Z * rise * settings.movement_speed * dt);
                 }
             } else {
+                let agent = &self.world.agent;
+                if agent.flying || agent.is_sitting() {
+                    self.vr_crouch = false;
+                    input.down |= vr.right.secondary && agent.flying;
+                } else if b_pressed {
+                    self.vr_crouch = !self.vr_crouch;
+                    if settings.haptics {
+                        renderer.vr_haptic(aurora_render::VrSide::Right, 0.3, 0.03);
+                    }
+                }
+                if vr.right.primary {
+                    self.vr_crouch = false;
+                }
                 input.up |= vr.right.primary;
-                input.down |= vr.right.secondary;
+                input.down |= self.vr_crouch;
             }
+        } else {
+            self.vr_crouch = false;
+        }
+        // the left thumbstick clicked: switch between walking and running
+        // (from what the movement speed preference chooses)
+        let run_click = vr.left.active && vr.left.thumbstick_click;
+        if run_click && !self.vr_run_click {
+            self.vr_run = !self.vr_run;
+            if settings.haptics {
+                renderer.vr_haptic(aurora_render::VrSide::Left, 0.3, 0.03);
+            }
+        }
+        self.vr_run_click = run_click;
+        // Aurora's network protocol has digital walking controls: running
+        // is the only server-authoritative speed step
+        let running = (settings.movement_speed >= 3.5) != self.vr_run;
+        if keys != glam::Vec2::ZERO && settings.locomotion != crate::camera::VrLocomotion::CameraOnly {
+            input.run |= running;
         }
         // the right thumbstick held in for a moment: recentre
         if self
@@ -8139,10 +8192,33 @@ impl App {
                 input.back |= intent.back;
                 input.strafe_left |= intent.left;
                 input.strafe_right |= intent.right;
-                // Aurora's network protocol has digital walking controls. Its
-                // normal run state is the only server-authoritative speed step.
-                input.run |= settings.movement_speed >= 3.5;
+                input.run |= running;
             }
+        }
+        // Point and walk: the left stick pushed forward aims an arc from the
+        // left controller, let back the avatar walks there (runs when far).
+        // Walking, not a local teleport: many parcels send a teleport to
+        // their landing point, or refuse it.
+        self.vr_arc = None;
+        if settings.locomotion == crate::camera::VrLocomotion::Teleport && vr.left.active {
+            let aiming = crate::vr::teleport_aiming(self.vr_teleport_aiming, left_stick.y);
+            if aiming {
+                let dir = (vr.left.orientation * Vec3::NEG_Z).normalize_or(Vec3::X);
+                let (arc, landing) = self.trace_vr_arc(vr.left.position, dir);
+                self.vr_arc = Some(arc);
+                self.vr_landing = landing;
+            } else if self.vr_teleport_aiming
+                && let Some(point) = self.vr_landing.take()
+            {
+                let run = running || point.distance(self.world.agent.position) > 5.0;
+                if self.walk_to_point_checked(point, run) && settings.haptics {
+                    renderer.vr_haptic(aurora_render::VrSide::Left, 0.5, 0.05);
+                }
+            }
+            self.vr_teleport_aiming = aiming;
+        } else {
+            self.vr_teleport_aiming = false;
+            self.vr_landing = None;
         }
         if vr.right.active {
             let right_x = crate::vr::dead_zone(vr.right.thumbstick, settings.thumbstick_dead_zone).x;
@@ -8164,7 +8240,12 @@ impl App {
         let right_stick = crate::vr::dead_zone(vr.right.thumbstick, settings.thumbstick_dead_zone);
         let moving = keys != glam::Vec2::ZERO
             || key_turn != 0.0
-            || (vr.left.active && left_stick != glam::Vec2::ZERO && settings.locomotion != crate::camera::VrLocomotion::None)
+            || (vr.left.active
+                && left_stick != glam::Vec2::ZERO
+                && matches!(
+                    settings.locomotion,
+                    crate::camera::VrLocomotion::Smooth | crate::camera::VrLocomotion::CameraOnly
+                ))
             || (vr.right.active && right_stick.x != 0.0);
         let target = if settings.comfort_vignette && moving {
             settings.vignette_strength
@@ -8183,6 +8264,41 @@ impl App {
             gamma: settings.gamma,
             vignette: self.vr_vignette,
         });
+    }
+
+    /// The teleport arc from a controller and where it lands: each step of
+    /// the throw traced on the CPU like the pointer's ray. It lands on the
+    /// first surface it meets while falling; one met while still rising (a
+    /// wall, a ceiling) does not count.
+    fn trace_vr_arc(&self, origin: Vec3, dir: Vec3) -> (aurora_render::VrArc, Option<Vec3>) {
+        let mut arc = aurora_render::VrArc {
+            points: [origin; aurora_render::VrArc::MAX],
+            len: 0,
+            lands: false,
+        };
+        let mut previous: Option<Vec3> = None;
+        for p in crate::vr::arc_points(origin, dir, aurora_render::VrArc::MAX) {
+            if let Some(from) = previous {
+                let step = p - from;
+                let length = step.length();
+                if length > 1e-4
+                    && let Some(hit) = self.scene.vr_ray_point(&self.world, (from, step / length), length)
+                {
+                    let i = arc.len.min(aurora_render::VrArc::MAX - 1);
+                    arc.points[i] = hit;
+                    arc.len = i + 1;
+                    arc.lands = step.z < 0.0;
+                    return (arc, arc.lands.then_some(hit));
+                }
+            }
+            if arc.len == aurora_render::VrArc::MAX {
+                break;
+            }
+            arc.points[arc.len] = p;
+            arc.len += 1;
+            previous = Some(p);
+        }
+        (arc, None)
     }
 
     /// Carry the headset anchor with the avatar's eyes, including vertical
@@ -8228,6 +8344,7 @@ impl App {
             self.vr_trigger_down = false;
             renderer.set_vr_pointer(aurora_render::VrPointer {
                 controllers: active,
+                arc: self.vr_arc.filter(|_| active),
                 ..Default::default()
             });
             return;
@@ -8258,6 +8375,7 @@ impl App {
             hit: point.is_some(),
             actionable,
             outline,
+            arc: self.vr_arc,
         });
         // pressed past 0.7, released under 0.35: a trigger resting near one
         // threshold must not click again and again

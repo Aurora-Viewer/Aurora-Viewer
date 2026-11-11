@@ -86,6 +86,21 @@ pub struct VrPointer {
     pub actionable: bool,
     /// The box of the clickable object pointed at, outlined.
     pub outline: Option<VrBox>,
+    /// The teleport arc being aimed.
+    pub arc: Option<VrArc>,
+}
+
+/// Points along a teleport arc, the last one where it lands.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VrArc {
+    pub points: [Vec3; VrArc::MAX],
+    pub len: usize,
+    /// It reaches somewhere to land.
+    pub lands: bool,
+}
+
+impl VrArc {
+    pub const MAX: usize = 24;
 }
 
 /// An oriented box in world space.

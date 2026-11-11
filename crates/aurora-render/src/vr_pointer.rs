@@ -200,6 +200,46 @@ pub(crate) fn build(input: &VrInputState, pointer: VrPointer, out: &mut Vec<Vert
     if let Some(b) = pointer.outline {
         outline(b, out);
     }
+    if let Some(a) = pointer.arc {
+        arc(a, out);
+    }
+}
+
+/// The teleport arc as a thin tube, green where it lands, red where it
+/// does not, with a marker on the landing point.
+fn arc(a: crate::VrArc, out: &mut Vec<Vertex>) {
+    let points = &a.points[..a.len.min(crate::VrArc::MAX)];
+    if points.len() < 2 || points.iter().any(|p| !p.is_finite()) {
+        return;
+    }
+    let color = if a.lands {
+        Vec3::new(0.3, 1.0, 0.45)
+    } else {
+        Vec3::new(1.0, 0.3, 0.25)
+    };
+    let premul = |alpha: f32| (color * alpha).extend(alpha);
+    let radius = 0.008;
+    for pair in points.windows(2) {
+        let dir = (pair[1] - pair[0]).normalize_or_zero();
+        let side = dir.cross(Vec3::Z).normalize_or(Vec3::X) * radius;
+        let up = side.cross(dir).normalize_or_zero() * radius;
+        for n in [side, up] {
+            push_quad(out, [pair[0] - n, pair[1] - n, pair[1] + n, pair[0] + n], [premul(0.85); 4]);
+        }
+    }
+    if a.lands {
+        // a flat ring of quads on the landing spot
+        let end = points[points.len() - 1] + Vec3::Z * 0.02;
+        const SEGMENTS: usize = 16;
+        let (r0, r1) = (0.22, 0.3);
+        for i in 0..SEGMENTS {
+            let at = |k: usize, r: f32| {
+                let t = k as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+                end + Vec3::new(t.cos(), t.sin(), 0.0) * r
+            };
+            push_quad(out, [at(i, r0), at(i + 1, r0), at(i + 1, r1), at(i, r1)], [premul(0.9); 4]);
+        }
+    }
 }
 
 /// The twelve edges of the pointed object's box, as thin glowing bars.
@@ -371,6 +411,7 @@ mod tests {
             hit: true,
             actionable: true,
             outline: None,
+            arc: None,
         };
         let mut out = Vec::new();
         build(&input, pointer, &mut out);
