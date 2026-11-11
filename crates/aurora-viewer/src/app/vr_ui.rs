@@ -30,7 +30,15 @@ const PANEL_AWAY: f32 = 0.5;
 /// room for its labels, and its size in the world per metre away.
 const PIE_RADIUS: f32 = 180.0;
 const PIE_MARGIN: f32 = 24.0;
-const PIE_METRES_PER_POINT: f32 = 0.0009;
+/// The pie in front of the pointing controller: how far, and its half width.
+const PIE_AHEAD: f32 = 0.16;
+const PIE_HALF: f32 = 0.13;
+/// Thumbstick past this: it aims at a slice.
+const PIE_STICK: f32 = 0.45;
+/// A script's menu: how far ahead of the head it floats, its size in the
+/// world per point of the interface.
+const DIALOG_AHEAD: f32 = 0.9;
+const DIALOG_METRES_PER_POINT: f32 = 0.0011;
 const PANEL_GLIDE: f32 = 0.12;
 
 const ROWS: [&str; 4] = ["1234567890", "qwertyuiop", "asdfghjkl'", "zxcvbnm,.?"];
@@ -114,7 +122,10 @@ impl App {
             renderer.set_vr_wrist(None);
             renderer.set_vr_menu(None);
             renderer.set_vr_map(None);
+            renderer.set_vr_dialog(None);
             self.vr_map_panel = None;
+            self.vr_dialog_at = None;
+            self.vr_dialog_panel = None;
             self.vr_right_raised = false;
             self.vr_pie = None;
             self.vr_menu_panel = None;
@@ -124,23 +135,25 @@ impl App {
         if self.context_menu.is_none() {
             self.vr_pie = None;
         }
-        self.vr_menu_panel = self.vr_pie.and_then(|point| {
+        let hand = match self.settings.camera.vr.dominant_hand {
+            crate::camera::VrHand::Left => input.left,
+            crate::camera::VrHand::Right => input.right,
+        };
+        self.vr_menu_panel = self.vr_pie.filter(|_| hand.active).and_then(|_| {
             let screen = self.egui_ctx.content_rect();
             let radius = PIE_RADIUS.min((screen.width().min(screen.height()) * 0.5 - 8.0).max(0.0)) + PIE_MARGIN;
             let part = egui::Rect::from_center_size(screen.center(), egui::vec2(radius * 2.0, radius * 2.0)).intersect(screen);
             if part.width() < 1.0 {
                 return None;
             }
-            let to_head = input.head_position - point;
-            let distance = to_head.length().clamp(0.6, 12.0);
-            let forward = (-to_head).with_z(0.0).normalize_or(Vec3::X);
-            let half = egui::vec2(part.width(), part.height()) * 0.5 * PIE_METRES_PER_POINT * distance;
-            // in front of the object, towards the head
-            let toward = to_head.normalize_or_zero() * (0.2 * distance).min(0.8);
+            // across the controller's aim, a hand's length in front of it,
+            // turning with it (its top the controller's)
+            let turn = hand.orientation.normalize();
+            let half = PIE_HALF;
             Some(aurora_render::VrPanel {
-                center: point + toward,
-                right: forward.cross(Vec3::Z).normalize_or(Vec3::Y) * half.x,
-                up: Vec3::Z * half.y,
+                center: hand.position + turn * Vec3::NEG_Z * PIE_AHEAD,
+                right: turn * Vec3::X * half,
+                up: turn * Vec3::Y * half * part.height() / part.width(),
                 uv: image_part(part, screen),
             })
         });
@@ -167,9 +180,41 @@ impl App {
                     crate::world::notifications::Data::Dialog { .. } | crate::world::notifications::Data::TextBox { .. }
                 )
         }) {
-            self.vr_open_panel = true;
+            let forward = input.head_forward.with_z(0.0).normalize_or(Vec3::X);
+            self.vr_dialog_at = Some((
+                input.head_position + forward * DIALOG_AHEAD,
+                forward,
+                Instant::now(),
+            ));
         }
         self.vr_dialog_seen = self.world.notifications.last_id();
+        // the cards of scripts' menus (the notification toasts, or the
+        // Legacy Viewer style's cards), shown where they float while one is
+        // there; gone once answered
+        let toasts = egui::Id::unique("notification_toasts");
+        let shown = self
+            .egui_ctx
+            .memory(|m| m.areas().is_visible(&egui::LayerId::new(egui::Order::Foreground, toasts)))
+            .then(|| self.egui_ctx.memory(|m| m.area_rect(toasts)))
+            .flatten();
+        if shown.is_none() && self.vr_dialog_at.is_some_and(|(_, _, since)| since.elapsed() > std::time::Duration::from_millis(600)) {
+            self.vr_dialog_at = None;
+        }
+        self.vr_dialog_panel = self.vr_dialog_at.zip(shown).and_then(|((center, forward, _), part)| {
+            let screen = self.egui_ctx.content_rect();
+            let part = part.intersect(screen);
+            if part.width() < 1.0 || part.height() < 1.0 {
+                return None;
+            }
+            let half = egui::vec2(part.width(), part.height()) * 0.5 * DIALOG_METRES_PER_POINT;
+            Some(aurora_render::VrPanel {
+                center,
+                right: forward.cross(Vec3::Z).normalize_or(Vec3::Y) * half.x,
+                up: Vec3::Z * half.y,
+                uv: image_part(part, screen),
+            })
+        });
+        renderer.set_vr_dialog(self.vr_dialog_panel);
         let menu = input.left.active && (input.left.primary || input.left.menu);
         if menu && !self.vr_menu_click {
             self.vr_panel = if self.vr_panel.is_some() {
@@ -276,12 +321,69 @@ impl App {
         renderer.set_vr_map(map);
     }
 
+    /// The pie open: the pointing hand's thumbstick aims at a slice (the
+    /// pointer goes there, out from the pie's middle), its trigger picks
+    /// it. True while it does (the beam and the world are left alone).
+    pub(super) fn vr_pie_pick(
+        &mut self,
+        hand: &aurora_render::VrControllerState,
+        settings: &crate::camera::VrSettings,
+        renderer: &Renderer,
+        side: aurora_render::VrSide,
+    ) -> bool {
+        let stick = crate::vr::dead_zone(hand.thumbstick, settings.thumbstick_dead_zone);
+        let screen = self.egui_ctx.content_rect();
+        let radius = PIE_RADIUS.min((screen.width().min(screen.height()) * 0.5 - 8.0).max(0.0));
+        let aim = (stick.length() > PIE_STICK).then(|| {
+            let dir = stick.normalize();
+            // (screen y goes down; the stick's up is the pie's top)
+            screen.center() + egui::vec2(dir.x, -dir.y) * radius * 0.7
+        });
+        if let Some(pos) = aim {
+            if self.vr_pie_aim.is_none_or(|p| p.distance(pos) > 1.0) {
+                self.vr_ui_events.push(egui::Event::PointerMoved(pos));
+            }
+            if self.vr_pie_aim.is_none() && settings.haptics {
+                renderer.vr_haptic(side, 0.15, 0.02);
+            }
+        }
+        if aim.is_some() || self.vr_pie_aim.is_some() {
+            self.vr_pie_aim = aim.or(self.vr_pie_aim);
+        }
+        let down = crate::vr::trigger_held(self.vr_pie_down, hand.trigger);
+        if down != self.vr_pie_down
+            && let Some(pos) = self.vr_pie_aim
+        {
+            self.vr_ui_events.push(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: down,
+                modifiers: Default::default(),
+            });
+            if down && settings.haptics {
+                renderer.vr_haptic(side, 0.5, 0.04);
+            }
+        }
+        self.vr_pie_down = down;
+        // the stick aimed nowhere yet: the trigger closes the pie
+        if down && self.vr_pie_aim.is_none() {
+            self.vr_pie = None;
+            self.context_menu = None;
+        }
+        if self.vr_pie.is_none() || self.context_menu.is_none() {
+            self.vr_pie_aim = None;
+            self.vr_pie_down = false;
+            return false;
+        }
+        true
+    }
+
     /// Where the beam meets the interface in VR: the panel or the wrist's
     /// chat, the nearer; its distance and the point of the interface image
     /// it is on (0..1).
     pub(super) fn vr_ui_hit(&self, ray: (Vec3, Vec3)) -> Option<(f32, f32, f32)> {
         let mut nearest: Option<(f32, f32, f32)> = None;
-        for panel in [self.vr_menu_panel, self.vr_panel, self.vr_wrist_panel, self.vr_map_panel]
+        for panel in [self.vr_menu_panel, self.vr_dialog_panel, self.vr_panel, self.vr_wrist_panel, self.vr_map_panel]
             .into_iter()
             .flatten()
         {

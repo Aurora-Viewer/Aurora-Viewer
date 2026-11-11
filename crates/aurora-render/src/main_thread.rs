@@ -1319,6 +1319,11 @@ impl Renderer {
     pub fn set_vr_wrist(&self, wrist: Option<crate::VrPanel>) {
         self.vr.set_wrist(wrist);
     }
+    /// A script's menu in VR: its part of the interface image, floating in
+    /// front of the headset (None: none).
+    pub fn set_vr_dialog(&self, dialog: Option<crate::VrPanel>) {
+        self.vr.set_dialog(dialog);
+    }
     /// The minimap in VR: its part of the interface image, beside the wrist
     /// (None: not shown).
     pub fn set_vr_map(&self, map: Option<crate::VrPanel>) {

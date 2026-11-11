@@ -446,6 +446,14 @@ pub struct App {
     vr_trigger_down: bool,
     /// The pointing hand's grip held (sit on what the beam is on, or stand up).
     vr_grip_down: bool,
+    /// The pie's slice aimed at with the pointing hand's thumbstick (a
+    /// pointer position in the interface), and its trigger held on it.
+    vr_pie_aim: Option<egui::Pos2>,
+    vr_pie_down: bool,
+    /// A script's menu floating in VR: where (centre, facing the head) and
+    /// since when, and its panel this frame (for the beam).
+    vr_dialog_at: Option<(Vec3, Vec3, Instant)>,
+    vr_dialog_panel: Option<aurora_render::VrPanel>,
     /// Sitting down in VR switches to first person (third person and camera
     /// only can still be chosen while seated): the view before it (third
     /// person, the locomotion when it was camera only), restored on standing
@@ -1679,6 +1687,10 @@ impl App {
             vr_avatar_position: None,
             vr_trigger_down: false,
             vr_grip_down: false,
+            vr_pie_aim: None,
+            vr_pie_down: false,
+            vr_dialog_at: None,
+            vr_dialog_panel: None,
             vr_seated_view: None,
             vr_view_mode: None,
             vr_last_offset: Vec3::ZERO,
@@ -8391,7 +8403,8 @@ impl App {
             self.vr_landing = None;
         }
         // (on the interface panel the right stick scrolls it instead)
-        if vr.right.active && !self.vr_on_panel {
+        // (not on the panel, nor with the pie open: the stick picks its slices)
+        if vr.right.active && !self.vr_on_panel && self.vr_pie.is_none() {
             let right_x = crate::vr::dead_zone(vr.right.thumbstick, settings.thumbstick_dead_zone).x;
             let right_y = crate::vr::dead_zone(vr.right.thumbstick, settings.thumbstick_dead_zone).y;
             if settings.locomotion == crate::camera::VrLocomotion::CameraOnly {
@@ -8709,6 +8722,23 @@ impl App {
         let off = input.hand(off_side);
         let off_ray = (off.position, (off.orientation * Vec3::NEG_Z).normalize_or(Vec3::Y));
         let off_down = crate::vr::trigger_held(self.vr_off_trigger_down, off.trigger);
+        // a tap with the pie open closes it (and opens nothing else)
+        let menu_tap = if menu_tap && self.vr_pie.take().is_some() {
+            self.context_menu = None;
+            false
+        } else {
+            menu_tap
+        };
+        if self.vr_pie.is_some() && self.vr_pie_pick(&controller, &settings, renderer, side) {
+            self.vr_trigger_down = crate::vr::trigger_held(self.vr_trigger_down, controller.trigger);
+            renderer.set_vr_pointer(aurora_render::VrPointer {
+                controllers: settings.show_controllers,
+                arc: self.vr_arc,
+                mic: self.vr_mic_light(),
+                ..Default::default()
+            });
+            return;
+        }
         let pointing_on_panel = self.vr_ui_hit(ray).is_some();
         let off_on_panel = !pointing_on_panel && off.active && self.vr_ui_hit(off_ray).is_some();
         let mut panel_beam = None;
@@ -16255,7 +16285,7 @@ impl App {
             .interface
             // (the VR interface panel shows the whole interface, though VR is
             // mouselook underneath)
-            .follow_mouselook(&ctx, mouselook, self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some() || self.vr_pie.is_some() || self.vr_right_raised)
+            .follow_mouselook(&ctx, mouselook, self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some() || self.vr_pie.is_some() || self.vr_right_raised || self.vr_dialog_at.is_some())
             .is_some()
         {
             self.chat_ui.let_keyboard_go();
@@ -16780,7 +16810,7 @@ impl App {
                 let chrome = self.interface.bars(&ui::interface::Frame {
                     classic: classic_bars,
                     mouselook: self.camera.mouselook(),
-                    show_in_mouselook: self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some() || self.vr_pie.is_some() || self.vr_right_raised,
+                    show_in_mouselook: self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some() || self.vr_pie.is_some() || self.vr_right_raised || self.vr_dialog_at.is_some(),
                     chat_active: self.chat_ui.in_use(),
                     // AURORA_DEMO_BARS=peek: the pointer at the top edge
                     pointer: if demo_hidden == Some(true) {
@@ -16995,7 +17025,7 @@ impl App {
                     &ui::interface::Frame {
                         classic: classic_bars,
                         mouselook: self.camera.mouselook(),
-                        show_in_mouselook: self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some() || self.vr_pie.is_some() || self.vr_right_raised,
+                        show_in_mouselook: self.settings.camera.show_interface_in_mouselook || self.vr_panel.is_some() || self.vr_pie.is_some() || self.vr_right_raised || self.vr_dialog_at.is_some(),
                         chat_active: false,
                         // AURORA_DEMO_BARS=peekleft: the pointer at the left edge
                         pointer: if self.demo && ui::bars::demo::get().peek_left {

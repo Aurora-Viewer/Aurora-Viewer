@@ -46,6 +46,8 @@ pub(crate) struct Control {
     menu: RwLock<Option<crate::VrPanel>>,
     /// The minimap beside the wrist (part of the interface image).
     map: RwLock<Option<crate::VrPanel>>,
+    /// A script's menu floating in front of the headset.
+    dialog: RwLock<Option<crate::VrPanel>>,
 }
 impl Control {
     pub fn new(available: bool) -> Self {
@@ -66,6 +68,7 @@ impl Control {
             camera: RwLock::new(None),
             menu: RwLock::new(None),
             map: RwLock::new(None),
+            dialog: RwLock::new(None),
         }
     }
     pub fn set_display(&self, display: crate::VrDisplay) {
@@ -212,6 +215,13 @@ impl Control {
     pub fn camera(&self) -> Option<crate::VrCameraView> {
         *self.camera.read()
     }
+    pub fn set_dialog(&self, dialog: Option<crate::VrPanel>) {
+        *self.dialog.write() = dialog.filter(|p| p.center.is_finite() && p.right.is_finite() && p.up.is_finite());
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    pub fn dialog(&self) -> Option<crate::VrPanel> {
+        *self.dialog.read()
+    }
     pub fn set_map(&self, map: Option<crate::VrPanel>) {
         *self.map.write() = map.filter(|p| p.center.is_finite() && p.right.is_finite() && p.up.is_finite());
     }
@@ -253,6 +263,7 @@ impl Control {
         *self.camera.write() = None;
         *self.menu.write() = None;
         *self.map.write() = None;
+        *self.dialog.write() = None;
         self.state
             .store(if failed { VrState::Failed } else { VrState::Off } as u8, Ordering::Release);
     }
