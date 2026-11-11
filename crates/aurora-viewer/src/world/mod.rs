@@ -121,6 +121,8 @@ mod fee_permission_tests;
 #[cfg(test)]
 mod flash_tests;
 #[cfg(test)]
+mod god_mode_tests;
+#[cfg(test)]
 mod group_notice_tests;
 #[cfg(test)]
 mod toasts_tests;
@@ -502,6 +504,9 @@ pub struct World {
     /// A parcel owner or an estate manager froze us (ViewerFrozenMessage):
     /// shown on the navigation bar while it lasts.
     pub frozen: bool,
+    /// The god level the region gave us (GrantGodlikePowers, Advanced ›
+    /// Request Admin Status): 0 none; shown on the navigation bar.
+    pub god_level: u8,
     /// What the simulator killed while the photo mode held the world still
     /// (`freeze_motion`): each object's key and id, removed on thaw.
     held_kills: Vec<(ObjKey, Uuid)>,
@@ -885,6 +890,7 @@ impl World {
             environment_answers: Vec::new(),
             health: 100.0,
             frozen: false,
+            god_level: 0,
             held_kills: Vec::new(),
             social: social::Social::default(),
             contact_sets: Default::default(),
@@ -1287,6 +1293,11 @@ impl World {
                 &l.raw["agent_region_access"].to_string_value(),
             )
         });
+        // a god may set and enter any rating (LLAgentAccess::canSetMaturity,
+        // canAccessAdult: isGodlike() first)
+        if self.god_level > 0 {
+            access.max = aurora_net::search::SIM_ACCESS_ADULT;
+        }
         if let Some(preferred) = self.maturity.preferred {
             access.preferred = preferred.min(access.max);
         }
@@ -2049,6 +2060,22 @@ impl World {
         self.system_notice(text, notice_topics::Topic::Info);
     }
 
+    /// set_god_level (llviewermenu.cpp): the level the region granted, said
+    /// as the EnteringGodMode / LeavingGodMode notifications say it.
+    pub fn set_god_level(&mut self, level: u8) {
+        let old = std::mem::replace(&mut self.god_level, level);
+        if old == level {
+            return;
+        }
+        let text = if level > 0 {
+            aurora_i18n::tr!("god-mode-entering", level = i64::from(level))
+        } else {
+            aurora_i18n::tr!("god-mode-leaving", level = i64::from(old))
+        };
+        log::info!("admin status: god level {old} -> {level}");
+        self.system_notice(text, notice_topics::Topic::Region);
+    }
+
     /// A notice of the viewer in the nearby chat, about `topic` (the icon
     /// of its compact row, #741).
     pub fn system_notice(&mut self, text: impl Into<String>, topic: notice_topics::Topic) {
@@ -2634,6 +2661,10 @@ impl World {
                 // back in a region left moments ago: its objects first, its
                 // simulator only sends what changed since
                 self.unpark_region(handle);
+                None
+            }
+            NetEvent::GodLevel(level) => {
+                self.set_god_level(level);
                 None
             }
             NetEvent::RegionHandshake(info) => {
@@ -5830,12 +5861,16 @@ impl World {
     }
 
     /// The seat prim and its children: the sources LLVOAvatarSelf::
-    /// stopMotionFromSource releases when we get off it.
+    /// stopMotionFromSource releases when we get off it. Never an avatar:
+    /// LLViewerObject::removeChild takes ours out of the seat's child list
+    /// before setParent(NULL) reaches getOffObject, so the motions we asked
+    /// for ourselves (the static eyes, typing, gestures…) keep playing, and
+    /// another sitter is no source of the seat.
     fn seat_linkset_sources(&self, seat_key: ObjKey) -> Vec<Uuid> {
         let seat = self.objects.index_of(&seat_key).into_iter();
         let children = self.objects.children_of(&seat_key).iter().copied();
         seat.chain(children)
-            .filter_map(|idx| self.objects.get(idx).map(|o| o.full_id))
+            .filter_map(|idx| self.objects.get(idx).filter(|o| !o.is_avatar()).map(|o| o.full_id))
             .collect()
     }
 
@@ -6509,15 +6544,18 @@ mod motion_tests {
     fn standing_requests_only_seat_and_linked_prim_animation_stops_once() {
         let (mut world, mut avatar, handle, root, linked) = seated_fixture();
         let (sit, hands, ao) = (Uuid::from_u128(71), Uuid::from_u128(72), Uuid::from_u128(73));
+        // ours, as FSStaticEyes asks for it: the seated avatar is a child of
+        // the seat, yet no source of it
+        let static_eyes = crate::world::lookat::STATIC_EYES;
         world.apply(NetEvent::AvatarAnimations {
             avatar: world.agent_id,
-            anims: vec![(sit, 1), (hands, 1), (ao, 1), (Uuid::from_u128(74), 1)],
-            sources: vec![root, linked, Uuid::from_u128(999)],
+            anims: vec![(sit, 1), (hands, 1), (ao, 1), (static_eyes, 1)],
+            sources: vec![root, linked, Uuid::from_u128(999), world.agent_id],
         });
         // A sequence change/sparse source list must not forget the seat.
         world.apply(NetEvent::AvatarAnimations {
             avatar: world.agent_id,
-            anims: vec![(sit, 2), (hands, 2), (ao, 2)],
+            anims: vec![(sit, 2), (hands, 2), (ao, 2), (static_eyes, 2)],
             // The same motion can also be associated with a linked prim.
             sources: vec![linked],
         });
@@ -6534,7 +6572,12 @@ mod motion_tests {
         assert_eq!(world.animation_stops.len(), 2);
         assert!(world.animation_stops.contains(&sit) && world.animation_stops.contains(&hands));
         assert!(!world.animation_stops.contains(&ao));
+        assert!(
+            !world.animation_stops.contains(&static_eyes),
+            "what we started ourselves keeps playing"
+        );
         assert!(world.animation_sources.contains_key(&Uuid::from_u128(999)));
+        assert!(world.animation_sources.contains_key(&world.agent_id));
         world.animation_stops.clear();
         world.apply(NetEvent::ObjectUpdates {
             handle,

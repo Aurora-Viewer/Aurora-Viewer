@@ -950,11 +950,7 @@ fn preset_choice(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
     let mut selected = current.and_then(|c| Preset::ALL.iter().position(|l| *l == c)).unwrap_or(usize::MAX);
     let changed = super::widgets::segmented(ui, p, &mut selected, &options);
     if current.is_none() && !changed {
-        ui.label(
-            RichText::new(aurora_i18n::tr!("ui-options-preset-custom"))
-                .size(12.0)
-                .color(p.violet_pale),
-        );
+        ui.label(RichText::new(preset_label(s)).size(12.0).color(p.violet_pale));
     }
     match Preset::ALL.get(selected) {
         Some(level) if changed => {
@@ -962,6 +958,16 @@ fn preset_choice(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
             true
         }
         _ => false,
+    }
+}
+
+/// The line under the level row when no level matches: the Mac's own
+/// default on macOS, "Custom" otherwise.
+fn preset_label(s: &Settings) -> &'static str {
+    if cfg!(target_os = "macos") && crate::graphics_presets::mac_mid_high::matches(s) {
+        aurora_i18n::tr!("ui-options-preset-mac-mid-high")
+    } else {
+        aurora_i18n::tr!("ui-options-preset-custom")
     }
 }
 

@@ -90,6 +90,11 @@ impl LineClock {
         self.revision = tick();
     }
 
+    /// A line's text changed in place: the views search the lines again.
+    pub fn edited(&mut self) {
+        self.revision = tick();
+    }
+
     pub fn popped_front(&mut self) {
         self.first += 1;
         self.revision = tick();

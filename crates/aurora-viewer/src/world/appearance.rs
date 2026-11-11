@@ -57,6 +57,13 @@ pub enum Action {
     OutfitImage(Uuid),
     /// A snapshot of the scene, set as the outfit's picture at once.
     OutfitSnapshot(Uuid),
+    /// The auto portrait of an outfit (`snapshot::portrait`).
+    OutfitPortrait(Uuid),
+    /// The photo mode, square, for an outfit's picture.
+    OutfitPhotoMode(Uuid),
+    /// The batch portraits' window, over these outfits (the showcase's,
+    /// in its order).
+    OutfitBatch(Vec<Uuid>),
     Wear(Uuid, bool),
     WearOutfits {
         folders: Vec<Uuid>,
@@ -148,6 +155,32 @@ pub fn outfit_image(inv: &Inventory, outfit: Uuid) -> Uuid {
         todo.extend(&folder.children);
     }
     Uuid::nil()
+}
+
+/// The HD pictures this viewer uploaded into an outfit's own folder
+/// (`snapshot::portrait::HD_PICTURE_DESC`): our own textures, not links,
+/// oldest first. The showcase shows the newest in its large preview; the
+/// cards keep the thumbnail, as LLOutfitGallery::refreshOutfit does.
+pub fn hd_pictures(inv: &Inventory, outfit: Uuid) -> Vec<&InvItem> {
+    let Some(folder) = inv.folders.get(&outfit) else {
+        return Vec::new();
+    };
+    let mut found: Vec<(usize, &InvItem)> = folder
+        .items
+        .iter()
+        .filter_map(|id| inv.items.get(id))
+        .filter(|it| {
+            it.parent == outfit && it.asset_type == 0 && !it.asset_id.is_nil() && it.desc == crate::snapshot::portrait::HD_PICTURE_DESC
+        })
+        .enumerate()
+        .collect();
+    found.sort_by_key(|(at, it)| (it.created_at, *at));
+    found.into_iter().map(|(_, it)| it).collect()
+}
+
+/// The newest HD picture of an outfit, its texture's asset.
+pub fn outfit_hd_picture(inv: &Inventory, outfit: Uuid) -> Option<Uuid> {
+    hd_pictures(inv, outfit).last().map(|it| it.asset_id)
 }
 
 /// LLInventoryModel::findCategoryUUIDForTypeInRoot (llinventorymodel.cpp),
@@ -915,6 +948,9 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
         | Action::Favorite(_)
         | Action::OutfitImage(_)
         | Action::OutfitSnapshot(_)
+        | Action::OutfitPortrait(_)
+        | Action::OutfitPhotoMode(_)
+        | Action::OutfitBatch(_)
         | Action::Category(..)
         | Action::Folders(_)
         | Action::DeleteFromOutfit { .. }
@@ -2342,6 +2378,38 @@ mod tests {
         // an unloaded folder waits instead of taking off part of it
         inv.folders.get_mut(&sub).expect("subfolder").state = FetchState::Unknown;
         assert!(plan(&inv, Action::RemoveOutfit(demo), &HashMap::new()).is_err());
+    }
+
+    #[test]
+    fn the_newest_hd_picture_is_found_and_never_worn() {
+        let mut inv = fixture();
+        let outfit = Uuid::from_u128(702);
+        let before = folder_links(&inv, outfit);
+        assert_eq!(outfit_hd_picture(&inv, outfit), None);
+        let texture = |n: u128, desc: &str, created_at: i64| InvItem {
+            id: Uuid::from_u128(0x4d00 + n),
+            parent: outfit,
+            name: format!("Photo {n}"),
+            desc: desc.to_owned(),
+            asset_type: 0,
+            asset_id: Uuid::from_u128(0x4e00 + n),
+            created_at,
+            ..Default::default()
+        };
+        let ours = crate::snapshot::portrait::HD_PICTURE_DESC;
+        inv.add_items(vec![
+            texture(1, ours, 10),
+            texture(2, ours, 20),
+            // a texture the user keeps in the folder is not ours
+            texture(3, "a merchant's picture", 30),
+        ]);
+        assert_eq!(outfit_hd_picture(&inv, outfit), Some(Uuid::from_u128(0x4e02)));
+        assert_eq!(
+            hd_pictures(&inv, outfit).iter().map(|it| it.id).collect::<Vec<_>>(),
+            [Uuid::from_u128(0x4d01), Uuid::from_u128(0x4d02)]
+        );
+        // a texture in the folder is never part of what the outfit wears
+        assert_eq!(folder_links(&inv, outfit).len(), before.len());
     }
 
     #[test]

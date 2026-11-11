@@ -363,6 +363,9 @@ fn section<R>(
             state.toggle(ui);
             header.mark_changed();
         }
+        if super::search_cleared(ui) {
+            ui.ctx().animate_bool_with_time(id, open, 0.0);
+        }
     } else if header.clicked() {
         state.toggle(ui);
         header.mark_changed();
@@ -405,7 +408,8 @@ pub fn stat(ui: &mut egui::Ui, p: &Palette, label: &str, value: &str) {
 /// toolbar and the menus. A window opened by another one (a picker, a tool of
 /// the script editor) is named after its owner: its own function comes first.
 pub(super) fn window_icon(id: &str) -> &'static str {
-    if id == "poser" {
+    // both poser windows, the compact one included
+    if id == "poser" || id == "poser-compact" {
         return "wand";
     }
     if id.starts_with("poser-") {

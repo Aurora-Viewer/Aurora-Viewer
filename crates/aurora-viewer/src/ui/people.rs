@@ -490,7 +490,7 @@ pub fn people_window(
             }
             1 => friends_tab(ui, p, world, st, radar.pics, friends, panels.conversation_log, &mut actions),
             _ => {
-                widgets::search_field(ui, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
+                widgets::search_field(ui, p, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
                 ui.add_space(4.0);
                 let filter = st.filter.trim().to_lowercase();
                 if panels.people_tab == 2 {
@@ -744,7 +744,7 @@ fn friends_tab(
         radar::tool_menu(ui, p, "arrows-sort", aurora_i18n::tr!("people-view-sort-options"), true, |ui| {
             friends_view_menu(ui, p, settings, log_open, actions);
         });
-        widgets::search_field(ui, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
+        widgets::search_field(ui, p, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
     });
     ui.add_space(4.0);
     let filter = st.filter.trim().to_lowercase();

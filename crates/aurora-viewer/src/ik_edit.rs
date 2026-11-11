@@ -51,6 +51,9 @@ pub struct Editor {
     /// The poser's window shows over the photo viewfinder, whose controls
     /// sit above the windows: it goes up with them (#1389).
     pub over_viewfinder: bool,
+    /// The last world press went to a worn HUD (the app's press path): the
+    /// poser's click beside the joints leaves the selection as it is.
+    pub press_on_hud: bool,
     pub picking: bool,
     pub target: Option<Uuid>,
     pub target_name: String,
@@ -861,7 +864,11 @@ impl Editor {
         let point_hit = ctx
             .input(|i| i.pointer.interact_pos())
             .is_some_and(|p| self.point_owns_pointer(ctx, rig, p));
-        let (owns, change) = self.gizmo.show(ctx, palette, geometry, pose, !point_hit);
+        // the poser's Ctrl picks another part or avatar: the handles let the
+        // pointer through (a drag already begun keeps them)
+        let picking_parts = self.poser_ctrl_picks(modifiers) && !self.gizmo.dragging();
+        let (owns, change) = self.gizmo.show(ctx, palette, geometry, pose, !point_hit && !picking_parts);
+        let owns = owns && !picking_parts;
         if let Some((pose, tool)) = change {
             if self.limb_controls
                 && self.mode == Mode::Ik

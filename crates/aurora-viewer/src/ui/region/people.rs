@@ -223,6 +223,16 @@ fn listed(names: &[String]) -> String {
     }
 }
 
+/// Whether a list change can send someone home: a ban always, the removal
+/// of an allowed resident or group while the estate is limited to its lists.
+pub(crate) fn shuts_out(list: List, add: bool, lists_only: bool) -> bool {
+    match (list, add) {
+        (List::Banned, true) => true,
+        (List::Allowed | List::Groups, false) => lists_only,
+        _ => false,
+    }
+}
+
 /// What the page asks or tells.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum PeopleAsk {
@@ -524,7 +534,7 @@ fn list_card(
         ui.spacing_mut().item_spacing.x = 6.0;
         let buttons = if copy { 3.0 } else { 2.0 };
         let width = ui.available_width() - buttons * 32.0;
-        widgets::search_box(ui, p, &mut s.people.filter[i], aurora_i18n::tr!("common-search"), width);
+        widgets::clearable_search_box(ui, p, &mut s.people.filter[i], aurora_i18n::tr!("common-search"), width);
         if copy && widgets::icon_button(ui, p, "copy-filled", aurora_i18n::tr!("region-people-copy"), can && !all.is_empty()) {
             // copyListToClipboard: the names, one a line
             let text = all.iter().map(|r| r.name.as_str()).collect::<Vec<_>>().join("\n");
@@ -950,7 +960,18 @@ fn ask(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View, world: &mut
                 ),
             };
             let icon = if *list == List::Banned && *add { "ban" } else { list.icon() };
-            (icon, *list == List::Banned && *add, title.to_owned(), text, Some((ok, kind)))
+            // a change that can send them home says so, on a red button
+            let lists_only = world
+                .estate
+                .estate
+                .as_ref()
+                .is_some_and(|e| e.flags & aurora_net::estate::estate_flags::EXTERNALLY_VISIBLE == 0);
+            if shuts_out(*list, *add, lists_only) {
+                let text = format!("{text}\n\n{}", aurora_i18n::tr!("region-people-ask-sent-home"));
+                (icon, true, title.to_owned(), text, Some((ok, ActionKind::Danger)))
+            } else {
+                (icon, false, title.to_owned(), text, Some((ok, kind)))
+            }
         }
     };
     // the scope's choices (all_estates_text)
@@ -1052,6 +1073,22 @@ mod tests {
         assert!(can_change(List::Banned, Role::Manager, false));
         assert!(!can_change(List::Banned, Role::Owner, true));
         assert!(can_change(List::Allowed, Role::Owner, true));
+    }
+
+    #[test]
+    fn bans_and_removals_from_a_closed_estate_warn_of_sent_home() {
+        for lists_only in [false, true] {
+            assert!(shuts_out(List::Banned, true, lists_only));
+            assert!(!shuts_out(List::Banned, false, lists_only), "lifting a ban lets in");
+            assert!(!shuts_out(List::Managers, false, lists_only));
+            for list in [List::Allowed, List::Groups, List::Managers] {
+                assert!(!shuts_out(list, true, lists_only), "adding lets in");
+            }
+        }
+        assert!(shuts_out(List::Allowed, false, true));
+        assert!(shuts_out(List::Groups, false, true));
+        assert!(!shuts_out(List::Allowed, false, false), "an open estate keeps them in");
+        assert!(!shuts_out(List::Groups, false, false));
     }
 
     #[test]
