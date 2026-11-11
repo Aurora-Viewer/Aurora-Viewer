@@ -11622,6 +11622,7 @@ resource-preview-no-fee = Aucun frais d’importation
 resource-preview-read-only = Ce matériau est en lecture seule. La permission de modification est nécessaire pour le modifier.
 resource-preview-map-rights = Une texture de remplacement nécessite les permissions de copie et de transfert.
 resource-preview-map-protected = Texture protégée
+resource-preview-local-maps = Ce matériau utilise des textures locales. Elles restent locales après l’enregistrement et s’affichent sur les objets dans ce viewer.
 resource-preview-upload-map = Importer une texture locale. Vérifiez le tarif dans Importer ; cette texture sera remplacée une fois l’importation terminée.
 texture-library-side = Afficher sur le côté
 texture-library-bottom = Afficher en bas

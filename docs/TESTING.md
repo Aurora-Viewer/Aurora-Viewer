@@ -5233,6 +5233,27 @@ the image fitting, native 100% scroll view, ratio presets/custom ratio, dimensio
 description, UUID, refresh and permission-gated PNG/TGA export. Local map uploads
 open the texture import inspector to review and confirm their fee before replacing
 the map. These modes are offline; inventory save/copy acknowledgements are simulated.
+`preview-controls-local` marks the synthetic base-colour map as a local file:
+check its file name, eye badge and the local-texture explanation. Save / Save As
+remain enabled with the ordinary material permissions.
+`preview-controls-local-narrow` uses a 280 x 520 editor: Cancel wraps to the
+next button row and the full local-texture note stays underneath. Repeat with
+`AURORA_TEXT_SIZE=2` to check the enlarged text.
+`preview-controls-local-picker` also opens its picker on Local with the file
+selected. With `AURORA_DEMO_ACTIONS=sit` to seed the editable cube and
+`AURORA_WINDOW_SIZE=2560,1440` to keep it visible beside the editor,
+`preview-controls-local-apply` saves through the ordinary inventory save/ack
+path at frame 740, closes the image inspector, and applies the saved material
+to the demo object at frame 760. Capture after frame 800: the object
+and material preview share the local wood texture. The log's "demo saved local
+material" line gives the saved asset, map IDs and applied material ID.
+Outside these fixtures, add a PNG through Local, choose it in each of
+the four maps, confirm and reopen, or Cancel to restore the previous map. Editing
+the PNG updates the preview. Save and reopen the material, then apply it to an
+object: its local maps must remain visible. Restart with the source files still
+available and change one file: the saved material still uses that local texture.
+Remove the file: stale picker state must not restore it. Uploading the texture
+through the folder button remains a separate action with its ordinary fee review.
 `vertical` and `horizontal` open the corresponding presentation at frame 600;
 `types` and `types-horizontal` also open the checked
 type menu at frame 650 for screenshots; `inventory` also reveals the actual library folder
