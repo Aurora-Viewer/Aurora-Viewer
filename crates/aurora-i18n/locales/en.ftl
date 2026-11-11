@@ -2434,6 +2434,8 @@ ui-options-send-typing = Say when I am typing
 ui-options-send-typing-hint = The resident of a private conversation sees that you are typing.
 ui-options-play-typing-anim = Play the typing animation
 ui-options-play-typing-anim-hint = Your avatar types on a keyboard while you write in the nearby chat.
+ui-options-play-chat-anim = Play the chat animations
+ui-options-play-chat-anim-hint = Your avatar talks, shouts or whispers when you say a line in the nearby chat. Everyone around sees it. Nothing for a line on another channel.
 ui-options-type-during-emote = Also when emoting
 ui-options-type-during-emote-hint = A /me emote shows you typing as well.
 ui-options-appearance-editing = Appearance editing
@@ -5665,6 +5667,12 @@ appearance-xml-export = Export an appearance XML
 appearance-xml-exported = Settings saved to { $file }.
 appearance-xml-export-failed = The appearance file could not be saved.
 appearance-xml-export-refused = Exporting needs modify rights on this item.
+appearance-xml-export-mine = Export my appearance XML…
+appearance-xml-saved = Appearance saved to { $file }.
+appearance-xml-left-out = { $count ->
+    [one] 1 worn item was left out: exporting needs modify rights on it.
+   *[other] { $count } worn items were left out: exporting needs modify rights on them.
+    }
 common-unmute = Unmute
 ui-options-restore-default-shortcuts = Restore default shortcuts
 ui-options-restore-the-local-environment-selected-sky-water-and-day = Restore the local environment (selected sky, water and day cycle) at the next login

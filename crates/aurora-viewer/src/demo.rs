@@ -3072,6 +3072,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         // block list: Violet Wolf, an object, a name and the chat of group 2
         aurora_net::NetCommand::RequestMuteList { .. } => {
             // AURORA_DEMO_PEOPLE's tabs: their own block list
+            if people::server_empty_mute_list() {
+                return vec![NetEvent::MuteList(aurora_net::MuteListSource::ServerEmpty)];
+            }
             if let Some(text) = people::mute_list() {
                 return vec![NetEvent::MuteList(aurora_net::MuteListSource::File(text))];
             }

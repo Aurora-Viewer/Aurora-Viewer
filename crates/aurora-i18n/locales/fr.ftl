@@ -2437,6 +2437,8 @@ ui-options-send-typing = Signaler quand j'écris
 ui-options-send-typing-hint = Le résident d'une conversation privée voit que vous écrivez.
 ui-options-play-typing-anim = Jouer l'animation de frappe
 ui-options-play-typing-anim-hint = Votre avatar tape sur un clavier pendant que vous écrivez dans le chat local.
+ui-options-play-chat-anim = Jouer les animations de chat
+ui-options-play-chat-anim-hint = Votre avatar parle, crie ou chuchote quand vous dites une ligne dans le chat local. Tout le monde autour le voit. Rien pour une ligne sur un autre canal.
 ui-options-type-during-emote = Aussi pendant les emotes
 ui-options-type-during-emote-hint = Une emote /me montre aussi que vous écrivez.
 ui-options-appearance-editing = Édition de l'apparence
@@ -5673,6 +5675,12 @@ appearance-xml-export = Exporter un XML d’apparence
 appearance-xml-exported = Réglages enregistrés dans { $file }.
 appearance-xml-export-failed = Impossible d’enregistrer le fichier d’apparence.
 appearance-xml-export-refused = L’export demande les droits de modification sur cet élément.
+appearance-xml-export-mine = Exporter mon apparence en XML…
+appearance-xml-saved = Apparence enregistrée dans { $file }.
+appearance-xml-left-out = { $count ->
+    [one] 1 élément porté a été laissé de côté : l’export demande les droits de modification.
+   *[other] { $count } éléments portés ont été laissés de côté : l’export demande les droits de modification.
+    }
 common-unmute = Rétablir le son
 ui-options-restore-default-shortcuts = Rétablir les raccourcis par défaut
 ui-options-restore-the-local-environment-selected-sky-water-and-day = Rétablit l'environnement local (ciel, eau, cycle du jour choisis) à la prochaine connexion
