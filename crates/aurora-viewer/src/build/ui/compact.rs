@@ -1,7 +1,7 @@
 //! Compact Aurora build workspace. Five sections reorganize the
 //! LLFloaterTools / LLPanelObject controls without changing their commands.
 
-use super::{Env, common, contents, features, general, layout, object, replace, texture, tools};
+use super::{Env, common, contents, features, general, layout, object, replace, tab_drag, texture, tools};
 use crate::build::{BuildSettings, BuildTool, EditMode, Mods, Tool};
 use crate::theme::Palette;
 use crate::ui::icons;
@@ -473,9 +473,11 @@ fn transform(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut W
 pub fn body(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, mods: Mods, env: &mut Env) {
     use crate::build::layout::Panel;
     if !s.expanded {
+        tool.ui.tab_drag.stop();
         return;
     }
     if tool.replacement.draft.is_some() || tool.replacement.job.is_some() {
+        tool.ui.tab_drag.stop();
         replace::panel(ui, p, tool, world);
         return;
     }
@@ -499,6 +501,31 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     band(&mut rail, p.bar.gamma_multiply(0.82), 5, 5, |ui| {
         layout::panel(ui, p, tool, world, s, mods, Panel::Navigation);
     });
+    // LLTabContainer::handleDragAndDrop (open_tabs_on_drag_and_drop). The
+    // rail's section buttons are the tabs; a click on one also enters Edit.
+    let enabled = ui.is_enabled() && !tool.ui.layout.organizing;
+    let spots: Vec<_> = tool
+        .ui
+        .layout
+        .targets
+        .iter()
+        .filter_map(|(item, panel, rect)| {
+            if *panel != Panel::Navigation {
+                return None;
+            }
+            Some(tab_drag::Spot {
+                tab: layout::section(*item)?,
+                rect: *rect,
+                enabled,
+            })
+        })
+        .collect();
+    if let Some(tab) = tab_drag::apply(ui, &mut tool.ui.tab_drag, &spots, tool.tab) {
+        if tool.tool != Tool::Edit {
+            tool.set_tool(Tool::Edit);
+        }
+        tool.tab = tab;
+    }
     let mut main = pane(
         ui,
         egui::Rect::from_min_max(egui::pos2(rect.left() + 44.0, rect.top()), egui::pos2(rect.right(), primary_bottom)),

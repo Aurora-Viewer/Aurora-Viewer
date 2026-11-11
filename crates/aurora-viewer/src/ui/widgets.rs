@@ -1822,20 +1822,35 @@ fn control_font(ui: &egui::Ui, default_size: f32) -> egui::FontId {
 
 /// Flat tab strip. Returns true when the selection changed.
 pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
-    tabs_row(ui, p, selected, labels, false, false)
+    tabs_row(ui, p, selected, labels, false, false, None)
+}
+
+/// [`tabs`] plus each tab's rectangle, in order, so a drag can rest on one.
+pub fn tabs_with_rects(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> (bool, Vec<egui::Rect>) {
+    let mut rects = Vec::new();
+    let changed = tabs_row(ui, p, selected, labels, false, false, Some(&mut rects));
+    (changed, rects)
 }
 
 /// The same tab strip at the density of fixed inspector controls.
 pub fn compact_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
-    tabs_row(ui, p, selected, labels, false, true)
+    tabs_row(ui, p, selected, labels, false, true, None)
 }
 
 /// Equal-width tabs spanning a data inspector, with the usual theme and input handling.
 pub fn stretched_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
-    tabs_row(ui, p, selected, labels, true, false)
+    tabs_row(ui, p, selected, labels, true, false, None)
 }
 
-fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)], stretched: bool, compact: bool) -> bool {
+fn tabs_row(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    selected: &mut usize,
+    labels: &[(&str, bool)],
+    stretched: bool,
+    compact: bool,
+    mut rects: Option<&mut Vec<egui::Rect>>,
+) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
@@ -1863,6 +1878,9 @@ fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
                 text_w[i] * compact + extra.min(40.0)
             };
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, height), if *enabled { Sense::click() } else { Sense::hover() });
+            if let Some(rects) = rects.as_mut() {
+                rects.push(rect);
+            }
             let sel = *selected == i;
             if sel || (resp.hovered() && *enabled) {
                 let fill = if sel {

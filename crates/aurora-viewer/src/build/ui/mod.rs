@@ -21,6 +21,8 @@ mod item_properties;
 mod keyboard;
 mod layout;
 mod legacy;
+mod tab_drag;
+pub(crate) use tab_drag::demo_tab_rect;
 mod notecards;
 pub use notecards::{loaded as layout_notecard_loaded, saved as layout_notecard_saved};
 mod mesh;
@@ -193,6 +195,9 @@ pub struct FloaterState {
     pub contents_selection: contents_selection::Selection,
     /// Whether the inventory held over the Contents tab may go in.
     pub contents_drop: crate::build::contents_drop::PlanCheck,
+    /// Inventory drag resting on a section tab
+    /// (`LLTabContainer::handleDragAndDrop`).
+    tab_drag: tab_drag::Wait,
     /// Item being renamed in the Contents tab.
     pub rename: Option<contents_selection::Rename>,
     pub open_notecard: Option<(Uuid, Uuid)>,

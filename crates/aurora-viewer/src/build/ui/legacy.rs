@@ -1,7 +1,7 @@
 //! Reference construction geometry from LLFloaterTools / floater_tools.xml.
 //! The top block follows the 295-point reference canvas. Object keeps flags
 //! and vertical XYZ vectors on the left, shape parameters on the right.
-use super::{Env, common, contents, features, general, object, texture, tools};
+use super::{Env, common, contents, features, general, object, tab_drag, texture, tools};
 use crate::build::{BuildSettings, BuildTool, EditMode, Mods, Tool};
 use crate::theme::Palette;
 use crate::ui::widgets;
@@ -43,6 +43,9 @@ fn slot(ui: &mut egui::Ui, canvas: Rect, xy: [f32; 4], id: &str) -> egui::Ui {
         id,
     )
 }
+
+/// General, Object, Features, Texture, Contents (`tool.tab`).
+const LEGACY_TABS: [usize; 5] = [6, 5, 2, 3, 4];
 
 fn tab_index(tab: usize) -> usize {
     match tab {
@@ -299,20 +302,34 @@ pub(super) fn body(
                 selection(&mut summary, p, tool, world, s, mods);
                 if tool.tool != Tool::Land {
                     let mut tab = tab_index(tool.tab);
-                    if widgets::tabs(
-                        ui,
-                        p,
-                        &mut tab,
-                        &[
-                            (aurora_i18n::tr!("build-compact-general"), true),
-                            (aurora_i18n::tr!("build-legacy-object"), true),
-                            (aurora_i18n::tr!("build-compact-features"), true),
-                            (aurora_i18n::tr!("build-legacy-texture"), true),
-                            (aurora_i18n::tr!("build-compact-contents"), true),
-                        ],
-                    ) {
-                        tool.tab = [6, 5, 2, 3, 4][tab];
+                    let labels = [
+                        (aurora_i18n::tr!("build-compact-general"), true),
+                        (aurora_i18n::tr!("build-legacy-object"), true),
+                        (aurora_i18n::tr!("build-compact-features"), true),
+                        (aurora_i18n::tr!("build-legacy-texture"), true),
+                        (aurora_i18n::tr!("build-compact-contents"), true),
+                    ];
+                    let (changed, rects) = widgets::tabs_with_rects(ui, p, &mut tab, &labels);
+                    if changed {
+                        tool.tab = LEGACY_TABS[tab];
                     }
+                    // LLTabContainer::handleDragAndDrop (open_tabs_on_drag_and_drop).
+                    let enabled = ui.is_enabled();
+                    let spots: Vec<_> = rects
+                        .iter()
+                        .zip(LEGACY_TABS)
+                        .zip(labels)
+                        .map(|((rect, tab_id), (_, on))| tab_drag::Spot {
+                            tab: tab_id,
+                            rect: *rect,
+                            enabled: on && enabled,
+                        })
+                        .collect();
+                    if let Some(next) = tab_drag::apply(ui, &mut tool.ui.tab_drag, &spots, tool.tab) {
+                        tool.tab = next;
+                    }
+                } else {
+                    tool.ui.tab_drag.stop();
                 }
                 let height = (ui.available_height() - 17.0).max(30.0);
                 let width = widgets::scrolled_width(ui).max(1.0);
@@ -347,6 +364,8 @@ pub(super) fn body(
                             });
                         }
                     });
+            } else {
+                tool.ui.tab_drag.stop();
             }
             let icon = if s.expanded { "caret-up-filled" } else { "caret-down-filled" };
             let response = widgets::action_button(ui, p, icon, "", widgets::ActionKind::Flat, vec2(ui.available_width(), 14.0))
