@@ -12242,6 +12242,13 @@ poser-flip = Flip
 poser-symmetry-lr = Left → right
 poser-symmetry-rl = Right → left
 poser-world-lock = Lock / unlock in world
+poser-together = { $count ->
+    [one] + { $count } joint moves with it
+   *[other] + { $count } joints move with it
+    }
+poser-together-clear = Only this one
+poser-together-clear-tip = Keep only this joint selected
+poser-together-tip = Shift + click a joint, its marker or its row, to add it: it then moves with the selected one
 poser-save-library = Save
 poser-load-menu = Load
 poser-load-all = Load all

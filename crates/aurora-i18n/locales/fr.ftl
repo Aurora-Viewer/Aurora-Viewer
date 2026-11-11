@@ -12241,6 +12241,13 @@ poser-flip = Inverser
 poser-symmetry-lr = Gauche → droite
 poser-symmetry-rl = Droite → gauche
 poser-world-lock = Bloquer / libérer dans le monde
+poser-together = { $count ->
+    [one] + { $count } articulation suit celle-ci
+   *[other] + { $count } articulations suivent celle-ci
+    }
+poser-together-clear = Celle-ci seule
+poser-together-clear-tip = Ne garder que cette articulation sélectionnée
+poser-together-tip = Maj + clic sur une articulation, son repère ou sa ligne, pour l’ajouter : elle bouge alors avec celle sélectionnée
 poser-save-library = Enregistrer
 poser-load-menu = Charger
 poser-load-all = Charger tout

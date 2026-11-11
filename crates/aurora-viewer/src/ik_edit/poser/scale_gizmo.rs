@@ -155,6 +155,7 @@ impl Editor {
         }
         self.mirrors.initialize(rig);
         let scale = data::bounded_scale(scale);
+        let followers = self.followers();
         let Some(session) = self
             .poser
             .sessions
@@ -167,14 +168,22 @@ impl Editor {
             session.checkpoint();
             self.poser.drag_checkpoint = true;
         }
+        let before = session.pose.clone();
         let pose = Arc::make_mut(&mut session.pose);
         pose.scales[bone] = scale;
         pose.locks.remove(&bone);
-        if self.symmetry
-            && let Some(other) = self.mirrors.counterpart(bone)
-        {
-            pose.scales[other] = data::bounded_scale(session.base.scales[other] * scale / session.base.scales[bone]);
-            pose.locks.remove(&other);
+        together::follow(rig, &before, pose, bone, &followers, together::Change::Scale);
+        if self.symmetry {
+            for changed in std::iter::once(bone).chain(followers.iter().copied()) {
+                if let Some(other) = self.mirrors.counterpart(changed)
+                    && other != bone
+                    && !followers.contains(&other)
+                {
+                    pose.scales[other] =
+                        data::bounded_scale(session.base.scales[other] * pose.scales[changed] / session.base.scales[changed]);
+                    pose.locks.remove(&other);
+                }
+            }
         }
     }
     pub(super) fn show_pose_scale(&mut self, ctx: &egui::Context, palette: &Palette, proj: &Projector, frame: &Frame, rig: &Rig) -> bool {

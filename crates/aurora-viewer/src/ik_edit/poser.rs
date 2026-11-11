@@ -19,6 +19,7 @@ mod overlay;
 mod scale_gizmo;
 mod storage;
 mod subjects;
+mod together;
 mod trackball;
 mod ui;
 pub(crate) use data::Pose as SubjectPose;
@@ -118,6 +119,9 @@ pub(super) struct State {
     camera: Option<crate::build::geom::Cam>,
     scale_gizmo: scale_gizmo::Gizmo,
     side: Side,
+    /// The joints added to the selected one with Shift + click: they follow
+    /// its changes (`together`).
+    together: Vec<usize>,
     requests: Vec<Request>,
     /// The consent requests travel through the worn bridge's query service
     /// (query.lsl): Ask waits for `Ready`, and the menu says why it waits.
@@ -378,6 +382,17 @@ impl Editor {
                 self.poser.group = 1;
                 if let Some(&bone) = rig.names.get("mFaceLipUpperCenter") {
                     self.select(bone, rig, &pose);
+                }
+            } else if mode == "poser-together" {
+                // both eyes selected (the right one with Shift + click), the
+                // left one turned: the right one takes the same turn
+                self.poser.group = 1;
+                if let (Some(&left), Some(&right)) = (rig.names.get("mEyeLeft"), rig.names.get("mEyeRight")) {
+                    self.click_pose_bone(left, rig, &pose, false);
+                    self.click_pose_bone(right, rig, &pose, true);
+                    if let Some((local, _)) = authoring::local_pose(rig, &pose) {
+                        self.poser_transform(rig, &pose, local.positions[left], Quat::from_rotation_z(0.45), true);
+                    }
                 }
             } else if mode == "poser-physics" {
                 self.poser.group = 4;
