@@ -33,7 +33,7 @@ if ($ReportFile) {
     $report = Read-CrashReport ([IO.File]::ReadAllText($ReportFile))
     if (-not $report) { throw "$ReportFile is not a crash report." }
     $frames = Get-SymbolizedFrames $report $SymbolFile
-    $signature = Get-CrashSignature $report $frames
+    $signature = Get-ReportSignature $report $frames
     $name = $null
     if ($SymbolFile) { $name = Split-Path $SymbolFile -Leaf }
     Show-Triage $report $frames $signature (Format-TriageSection $frames $name $signature)
@@ -76,7 +76,7 @@ if ($tag -and $own -and $own.Id) {
 }
 
 $frames = Get-SymbolizedFrames $report $symbolFile
-$signature = Get-CrashSignature $report $frames
+$signature = Get-ReportSignature $report $frames
 $section = Format-TriageSection $frames $symbolsName $signature
 Show-Triage $report $frames $signature $section
 
@@ -100,8 +100,13 @@ if ($duplicate) {
     $details = @("version $($report.Version)")
     if ($report.System) { $details += $report.System }
     if ($report.Gpu) { $details += $report.Gpu }
+    # A group of GPU losses or shutdowns gathers several causes: what told
+    # this one apart stays on the reference.
+    if ($report.Risk) { $details += "risk factors: $($report.Risk)" }
     Invoke-Gh issue comment $duplicate -R $repo --body "Another occurrence of this crash: #$Issue ($($details -join ', '))." | Out-Null
-    Invoke-Gh issue comment $Issue -R $repo --body "Same crash as #$duplicate (signature ``$($signature.Id)``): closing as a duplicate. Thank you for the report, it was counted there." | Out-Null
+    $same = 'Same crash as'
+    if ($signature.Grouped) { $same = 'Same kind of crash, on the same card family and system, as' }
+    Invoke-Gh issue comment $Issue -R $repo --body "$same #$duplicate (signature ``$($signature.Id)``): closing as a duplicate. Thank you for the report, it was counted there." | Out-Null
     & gh issue close $Issue -R $repo --duplicate-of $duplicate 2>&1 | Out-Host
     # An older gh has no --duplicate-of: the comment above names the issue.
     if ($LASTEXITCODE -ne 0) { Invoke-Gh issue close $Issue -R $repo --reason 'not planned' | Out-Null }

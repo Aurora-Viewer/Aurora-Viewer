@@ -194,15 +194,15 @@ impl ToolbarSettings {
             .find(|&bar| self.bar(bar, layout).iter().any(|b| b.command == command))
     }
 
-    /// No empty command, and each command once over the three toolbars
+    /// No empty or retired command (`howto`), and each command once over the three toolbars
     /// (the bottom one first).
     pub fn sanitize(&mut self) {
         let mut seen = std::collections::HashSet::new();
         if let Some(buttons) = &mut self.buttons {
-            buttons.retain(|b| !b.command.is_empty() && seen.insert(b.command.clone()));
+            buttons.retain(|b| !b.command.is_empty() && !catalogue::retired(&b.command) && seen.insert(b.command.clone()));
         }
         for side in [&mut self.left, &mut self.right] {
-            side.retain(|b| !b.command.is_empty() && seen.insert(b.command.clone()));
+            side.retain(|b| !b.command.is_empty() && !catalogue::retired(&b.command) && seen.insert(b.command.clone()));
         }
     }
 }
@@ -273,6 +273,9 @@ pub struct ToolbarUi {
     /// The grid has an Avatar Welcome Pack (given by the app): without one,
     /// its button is dimmed (GridFeatureCheck avatar_picker).
     pub avatar_welcome: bool,
+    /// The grid has a Destination Guide (given by the app): without one,
+    /// its button is dimmed (GridFeatureCheck destination_guide).
+    pub destinations: bool,
     pub photo_roll_active: bool,
     /// The nearby chat bar is shown (MainChatbarVisible).
     pub chat_bar_active: bool,

@@ -546,6 +546,15 @@ fn quality(cx: &mut Cx) {
                 .changed()
             },
         );
+        // ShowMyComplexityChanges: a debug setting only in the Legacy
+        // Viewer, a row here next to the limits it is about
+        cx.slider(
+            tr!("ui-options-complexity-notices"),
+            tr!("ui-options-complexity-notices-help"),
+            &field!(complexity_notice_seconds),
+            0..=60,
+            " s",
+        );
         cx.stepped(
             tr!("ui-options-loading-avatars"),
             tr!("ui-options-particle-cloud-until-the-avatar-and-its-attachments-load"),

@@ -382,6 +382,12 @@ pub struct OpenSimExtras {
     /// key given empty means "no welcome pack" and wins over it
     /// (LFSimFeatureHandler::setSupportedFeatures tests `extras.has`).
     pub avatar_picker_url: Option<String>,
+    /// "destination-guide-url": the grid's Destination Guide page
+    /// (LFSimFeatureHandler::destinationGuideURL). `None` when the region
+    /// does not name the key: only then does the login response's page
+    /// count; a key given empty means "no guide" and wins over it
+    /// (LFSimFeatureHandler::setSupportedFeatures tests `extras.has`).
+    pub destination_guide_url: Option<String>,
     /// "whisper-range", "say-range", "shout-range": how far the region's
     /// chat carries, in meters (None: the usual 10, 20 and 100 m).
     pub whisper_range: Option<f32>,
@@ -427,6 +433,9 @@ impl OpenSimExtras {
             avatar_picker_url: extras
                 .has("avatar-picker-url")
                 .then(|| extras["avatar-picker-url"].to_string_value().trim().to_owned()),
+            destination_guide_url: extras
+                .has("destination-guide-url")
+                .then(|| extras["destination-guide-url"].to_string_value().trim().to_owned()),
             whisper_range: figure("whisper-range"),
             say_range: figure("say-range"),
             shout_range: figure("shout-range"),
@@ -446,7 +455,8 @@ pub enum NetEvent {
         handle: RegionHandle,
         max_children: Option<u32>,
     },
-    /// The mute list (LLMuteList): downloaded file, or keep the cached copy.
+    /// The mute list (LLMuteList): downloaded file, keep the cached copy, or
+    /// empty on the server.
     MuteList(crate::social::MuteListSource),
     /// Groups the agent belongs to (AgentGroupDataUpdate; added or updated).
     Groups(Vec<crate::social::GroupMembership>),
@@ -624,6 +634,13 @@ pub enum NetEvent {
         handle: RegionHandle,
         caps: Arc<HashMap<String, String>>,
     },
+    /// A region's answer to the GET of `AvatarRenderInfo` with both counts
+    /// (render_info.rs): of the viewers around that report on us,
+    /// `over_limit` draw our avatar as a silhouette.
+    AvatarRenderInfo {
+        handle: RegionHandle,
+        visibility: crate::render_info::Visibility,
+    },
     /// SimulatorFeatures of a region (voice server type: "webrtc" / "vivox",
     /// RenderMaterials limits read by LLViewerRegion::resetMaterialsCapThrottle
     /// and getMaxMaterialsPerTransaction; `None` = not given by the region).
@@ -711,10 +728,16 @@ pub enum NetEvent {
     RegionRemoved {
         handle: RegionHandle,
     },
-    TeleportStarted,
-    /// TeleportProgress from the simulator (LL message key, e.g. "sending_dest").
+    /// TeleportStart, with its TeleportFlags (TELEPORT_FLAGS_DISABLE_CANCEL:
+    /// the teleport screen offers no Cancel).
+    TeleportStarted {
+        flags: u32,
+    },
+    /// TeleportProgress from the simulator (LL message key, e.g. "sending_dest"),
+    /// with its TeleportFlags.
     TeleportProgress {
         message: String,
+        flags: u32,
     },
     /// TeleportFinish: the destination region is known, connecting to it.
     TeleportFinished {
@@ -1576,6 +1599,11 @@ pub enum NetCommand {
         target: Uuid,
         permissions: u32,
     },
+    /// Make the region release every control the scripts took
+    /// (llTakeControls): Advanced › Release Keys
+    /// (LLAgent::forceReleaseControls). The region answers with
+    /// ScriptControlChange releases.
+    ForceScriptControlRelease,
     /// Accept / decline a session invitation or fetch its history (ChatSessionRequest).
     ChatSession {
         method: crate::social::SessionMethod,
@@ -1617,6 +1645,10 @@ pub enum NetCommand {
         local_ids: Vec<u32>,
     },
     TeleportHome,
+    /// The teleport screen's Cancel (LLAgent::teleportCancel): TeleportCancel
+    /// to the region we are leaving. The simulator may ignore it or get it
+    /// too late; a TeleportFinish then still comes.
+    TeleportCancel,
     /// The content rating the agent wants (UpdateAgentInformation,
     /// LLAgent::sendMaturityPreferenceToServer); answered by
     /// `NetEvent::MaturityPreference`.
@@ -2257,6 +2289,18 @@ pub enum NetCommand {
         data: Vec<u8>,
         permissions: Option<crate::inventory::upload::Permissions>,
     },
+    /// A recovered script (LLScriptRecoverQueue::recoverNext /
+    /// onCreateScript): CreateInventoryItem, then its text through
+    /// UpdateScriptAgent, compiled for Mono. Answered by
+    /// `InventoryContentSaved`, with the new item's id when it was created
+    /// but its text could not be saved.
+    CreateScriptItem {
+        request: Uuid,
+        parent: Uuid,
+        name: String,
+        description: String,
+        source: String,
+    },
     /// A new environment settings item holding `data` (LLSettingsVOBase::
     /// createInventoryItem): CreateInventoryItem, then the asset through
     /// UpdateSettingsAgentInventory. Answered by `InventoryContentSaved`.
@@ -2456,6 +2500,7 @@ mod opensim_extras_tests {
                 ("search-server-url", " https://search.example/?q=[QUERY] "),
                 ("map-server-url", "https://maps.example/"),
                 ("avatar-picker-url", " https://avatars.example/[GRID_LOWERCASE]/ "),
+                ("destination-guide-url", " https://guide.example/[GRID_LOWERCASE]/ "),
             ]
             .into_iter()
             .map(|(k, v)| (k.to_owned(), Llsd::String(v.to_owned())))
@@ -2474,6 +2519,18 @@ mod opensim_extras_tests {
         );
         assert_eq!(OpenSimExtras::from_llsd(&empty).avatar_picker_url.as_deref(), Some(""));
         assert_eq!(OpenSimExtras::from_llsd(&Llsd::new_map()).avatar_picker_url, None);
+        assert_eq!(
+            read.destination_guide_url.as_deref(),
+            Some("https://guide.example/[GRID_LOWERCASE]/")
+        );
+        // a key present but empty is not an absent one
+        let empty = Llsd::Map(
+            [("destination-guide-url".to_owned(), Llsd::String(String::new()))]
+                .into_iter()
+                .collect(),
+        );
+        assert_eq!(OpenSimExtras::from_llsd(&empty).destination_guide_url.as_deref(), Some(""));
+        assert_eq!(OpenSimExtras::from_llsd(&Llsd::new_map()).destination_guide_url, None);
         // a GridURL given without a scheme, as most grids do
         let bare = Llsd::Map(
             [("GridURL".to_owned(), Llsd::String("grid.example:8002".to_owned()))]

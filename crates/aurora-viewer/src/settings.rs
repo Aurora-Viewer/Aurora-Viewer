@@ -66,6 +66,16 @@ pub enum ChatThumbnails {
     TopRight,
 }
 
+/// Where web pages open, like `PreferredBrowserBehavior` and
+/// `LLWeb::useExternalBrowser` in the Legacy Viewer.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum BrowserBehavior {
+    SystemForAll,
+    #[default]
+    BuiltInForSecondLife,
+    BuiltInForAll,
+}
+
 /// Where the islands show the favourites (Preferences › Interface,
 /// "Favourites access"): a button of the place island and its menu (the
 /// default), a row of pills under the islands, or a button of the dock and
@@ -216,6 +226,17 @@ impl PresencePosition {
 /// style, Preferences › Aurora).
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum WorldMapStyle {
+    #[default]
+    Aurora,
+    Legacy,
+}
+
+/// The Destinations window: Aurora's own list of the guide's places
+/// (`ui/destinations/aurora.rs`, the default), or the guide's web page as
+/// the Legacy Viewer shows it (Preferences › Aurora). A grid whose guide is
+/// a web page only shows that page in both.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum DestinationsStyle {
     #[default]
     Aurora,
     Legacy,
@@ -463,6 +484,8 @@ pub struct Settings {
     /// The Legacy Viewer's FSBrowserHomePage: the page the built-in web browser (toolbar
     /// button) opens on (Preferences › Network and cache).
     pub browser_home_page: String,
+    /// PreferredBrowserBehavior (Preferences › Network and cache).
+    pub browser_behavior: BrowserBehavior,
     /// Alpha feedback shortcut; Help and login remain available.
     pub show_bug_report: bool,
     /// ShowHUDAttachments, enabled by default in Firestorm.
@@ -871,6 +894,10 @@ pub struct Settings {
     /// chat (PlayTypingAnim, on; Preferences > Chat); the typing notices go
     /// out either way.
     pub play_typing_anim: bool,
+    /// Our avatar plays the talk, shout or whisper animation when we say a
+    /// line aloud in the nearby chat (PlayChatAnim, on; Preferences >
+    /// Avatars, beside the typing animation).
+    pub play_chat_anim: bool,
     /// An emote ("/me") shows us typing too (FSTypeDuringEmote, off).
     pub type_during_emote: bool,
     /// The name tags show who types: the plates' dots, "(Typing)" on the
@@ -926,6 +953,9 @@ pub struct Settings {
     pub flash_on_object_im: bool,
     /// Flash for a script dialog (FSFlashOnScriptDialog, off).
     pub flash_on_script_dialog: bool,
+    /// How many script dialogs an object keeps open (ScriptDialogLimitations,
+    /// one per channel; `world/script_dialog_limit.rs`).
+    pub script_dialog_limit: crate::world::script_dialog_limit::Limit,
     /// Windows notifications for messages, mentions, offers and alerts
     /// while the window is not in front (FSEnableGrowl, off).
     pub system_notifications: bool,
@@ -988,6 +1018,12 @@ pub struct Settings {
     /// FSMuteGroupWhenNoticesDisabled: refuse group chat of groups whose
     /// notices are turned off.
     pub mute_groups_without_notices: bool,
+    /// FSGroupNoticesToIMLog: a group notice also writes a line in its
+    /// group's chat, or only its transcript when no chat is open (on).
+    pub group_notices_in_chat: bool,
+    /// FSBetterGroupNoticesToIMLog: that line starts with "Group Notice Sent
+    /// by" and the subject, else it is only the notice's text (on).
+    pub group_notice_subjects_in_chat: bool,
     /// GroupSnoozeTime: how long the snooze of a group chat lasts, in
     /// minutes (15; 0 only closes it until its next message). The Legacy
     /// Viewer counts seconds: a snooze is minutes to hours long (#945).
@@ -1261,6 +1297,11 @@ pub struct Settings {
     pub classic_places: bool,
     /// The order of Aurora's "Places" lists.
     pub places_sort: PlacesSort,
+    /// The Destinations window's look.
+    pub destinations_style: DestinationsStyle,
+    /// Aurora's Destinations window in its wide view (rail, cards and
+    /// preview): the first time, then the last view chosen.
+    pub destinations_wide: bool,
     pub invert_mouse: bool,
     /// Aurora extension: allow the left/right mouse chord on land and objects
     /// without a click action, in addition to our avatar. Off by default.
@@ -1295,6 +1336,11 @@ pub struct Settings {
     /// Always fly after a teleport (the Legacy Viewer's FSFlyAfterTeleport,
     /// off); a region that blocks flying still lands the avatar.
     pub fly_after_teleport: bool,
+    /// The teleport screen offers Cancel even when the simulator says the
+    /// teleport cannot be cancelled (the Legacy Viewer's FSAlwaysShowTPCancel,
+    /// off). RLVa can still take it away; the simulator ignores the cancel of
+    /// a teleport it will not cancel.
+    pub always_show_tp_cancel: bool,
     /// The crouch key stays down until pressed again (FSCrouchToggle, off).
     pub crouch_toggle: bool,
     /// Quickjump: jump and land without waiting for the pre-jump and landing
@@ -1459,6 +1505,10 @@ pub struct Settings {
     /// which an avatar also shows as a silhouette (0 = no limit; ignored
     /// without a complexity limit, as in LL).
     pub max_attachment_area: f32,
+    /// ShowMyComplexityChanges: seconds the notices about our avatar
+    /// complexity, and about the people around who may not see us fully,
+    /// stay (0 = no notices; 10 as in the Legacy Viewer's settings.xml).
+    pub complexity_notice_seconds: u32,
     /// Avatars still loading: 0 particle cloud + progress bar under the name
     /// (Firestorm), 1 progress bar only (drawn as they load), 2 nothing.
     pub loading_avatars: u8,
@@ -1941,6 +1991,7 @@ impl Default for Settings {
             language: "default".into(),
             language_is_public: true,
             browser_home_page: crate::ui::web_browser::DEFAULT_HOME.into(),
+            browser_behavior: BrowserBehavior::default(),
             show_bug_report: true,
             show_huds: true,
             sun_beacon: false,
@@ -2111,6 +2162,7 @@ impl Default for Settings {
             conversations_own_windows: false,
             send_typing_state: true,
             play_typing_anim: true,
+            play_chat_anim: true,
             type_during_emote: false,
             typing_in_name_tags: true,
             typing_chevron: false,
@@ -2128,6 +2180,7 @@ impl Default for Settings {
             flash_on_message: true,
             flash_on_object_im: true,
             flash_on_script_dialog: false,
+            script_dialog_limit: crate::world::script_dialog_limit::Limit::PerChannel,
             system_notifications: false,
             system_notifications_when_active: false,
             chat_toast_seconds: 20.0,
@@ -2151,6 +2204,8 @@ impl Default for Settings {
             trusted_sites: Default::default(),
             mute_all_groups: false,
             mute_groups_without_notices: false,
+            group_notices_in_chat: true,
+            group_notice_subjects_in_chat: true,
             group_snooze_minutes: 15,
             former_group_snooze_seconds: None,
             group_snooze_ask: false,
@@ -2250,6 +2305,8 @@ impl Default for Settings {
             outfit_portrait: Default::default(),
             classic_places: false,
             places_sort: PlacesSort::Visit,
+            destinations_style: DestinationsStyle::Aurora,
+            destinations_wide: true,
             invert_mouse: false,
             arrows_strafe: false,
             world_mouse_walk: false,
@@ -2260,6 +2317,7 @@ impl Default for Settings {
             automatic_fly: true,
             automatic_land: true,
             fly_after_teleport: false,
+            always_show_tp_cancel: false,
             crouch_toggle: false,
             quickjump: false,
             fly_override_warned: false,
@@ -2314,6 +2372,7 @@ impl Default for Settings {
             probe_range: 512.0,
             max_complexity: 350_000,
             max_attachment_area: 1000.0,
+            complexity_notice_seconds: 10,
             loading_avatars: 0,
             complexity_mode: 0,
             avatar_physics: true,
@@ -2944,6 +3003,7 @@ impl Settings {
             1.0
         };
         self.loading_avatars = self.loading_avatars.min(2);
+        self.complexity_notice_seconds = self.complexity_notice_seconds.min(60);
         self.max_attachment_area = if self.max_attachment_area.is_finite() {
             self.max_attachment_area.clamp(0.0, 100_000.0)
         } else {
@@ -3829,6 +3889,35 @@ mod tests {
             assert_eq!(saved.plate_click, original.plate_click);
             assert_eq!(saved.plate_shift_click, original.plate_shift_click);
             assert_eq!(saved.plate_ctrl_click, original.plate_ctrl_click);
+        }
+    }
+
+    #[test]
+    fn browser_behavior_round_trips_and_old_settings_keep_aurora_routing() {
+        let old: Settings = serde_json::from_str(r#"{"browser_home_page":"https://example.net/"}"#).expect("old settings");
+        assert_eq!(old.browser_behavior, BrowserBehavior::BuiltInForSecondLife);
+        // an ordinary link still opens in the system browser, as before the choice existed
+        assert!(crate::link_trust::should_use_system_browser(
+            "https://example.org/chat",
+            old.browser_behavior,
+            crate::link_trust::BrowserEntryPoint::Link
+        ));
+        let old_saved = serde_json::to_string(&old).expect("save old settings");
+        let old_reloaded: Settings = serde_json::from_str(&old_saved).expect("reload old settings");
+        assert_eq!(old_reloaded.browser_behavior, BrowserBehavior::BuiltInForSecondLife);
+
+        for behavior in [
+            BrowserBehavior::SystemForAll,
+            BrowserBehavior::BuiltInForSecondLife,
+            BrowserBehavior::BuiltInForAll,
+        ] {
+            let original = Settings {
+                browser_behavior: behavior,
+                ..Settings::default()
+            };
+            let json = serde_json::to_string(&original).expect("save browser choice");
+            let reloaded: Settings = serde_json::from_str(&json).expect("reload browser choice");
+            assert_eq!(reloaded.browser_behavior, behavior);
         }
     }
 

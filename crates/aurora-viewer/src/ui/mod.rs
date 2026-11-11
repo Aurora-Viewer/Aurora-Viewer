@@ -37,6 +37,7 @@ pub mod controls;
 pub mod crosshair;
 pub mod debug_overlay;
 pub mod debug_settings;
+pub mod destinations;
 pub mod dev_toolbox;
 pub mod display_name;
 pub mod emoji;
@@ -212,6 +213,8 @@ pub struct Panels {
     pub web_browser: bool,
     /// The Avatar Welcome Pack (toolbar `avatar`, Me › Avatar Welcome Pack…).
     pub avatar_welcome: bool,
+    /// The Destination Guide (toolbar `destinations`, World › Destinations).
+    pub destinations: bool,
     /// "Quick preferences" (toolbar `quickprefs`).
     pub quick_prefs: bool,
     /// "Voice controls" (toolbar): who is in the voice channel and who speaks.
@@ -280,6 +283,7 @@ impl Panels {
             grid_status: false,
             web_browser: false,
             avatar_welcome: false,
+            destinations: false,
             quick_prefs: false,
             voice_controls: false,
             about: false,
