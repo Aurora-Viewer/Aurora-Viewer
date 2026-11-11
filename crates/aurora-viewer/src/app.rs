@@ -10668,6 +10668,7 @@ impl App {
                 hour: self.settings.night_sky_hour,
             },
             self.settings.night_sky_gain,
+            self.settings.night_sky_milky_way,
             env.sky.sun_dir,
             // the sky's moment: a photo's held instant for all its parts
             // (snapshot::Hold, Freeze World), the demo's fixed one in the
@@ -18843,11 +18844,14 @@ impl ApplicationHandler for App {
                 self.settings.night_sky = mode;
                 self.panels.time_of_day = 4;
             }
-            if let Some((latitude, gain)) = crate::demo::night_sky::place() {
+            if let Some((latitude, gain, milky_way)) = crate::demo::night_sky::place() {
                 self.settings.night_sky_place = crate::world::night_sky::SkyPlace::Custom;
                 self.settings.night_sky_latitude = latitude;
                 if let Some(gain) = gain {
                     self.settings.night_sky_gain = gain;
+                }
+                if let Some(milky_way) = milky_way {
+                    self.settings.night_sky_milky_way = milky_way;
                 }
                 self.settings.sync_night_sky();
             }
