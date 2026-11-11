@@ -126,8 +126,20 @@ impl MediaEntry {
     /// hover and wheel reach the page whatever it says (handleMediaClick).
     /// The group bit is not checked yet.
     pub fn may_navigate(&self, owner: bool) -> bool {
+        self.has_media_permission(self.perms_interact, owner)
+    }
+
+    /// LLVOVolume::hasMediaPermission(MEDIA_PERM_CONTROL): may we show and
+    /// use the prim media chrome (LLPanelPrimMediaControls)? Without it the
+    /// Legacy Viewer hides the whole bar; clicks still reach the page.
+    /// The group bit is not checked yet.
+    pub fn may_control(&self, owner: bool) -> bool {
+        self.has_media_permission(self.perms_control, owner)
+    }
+
+    fn has_media_permission(&self, perms: u8, owner: bool) -> bool {
         let bits = if owner { PERM_OWNER | PERM_ANYONE } else { PERM_ANYONE };
-        self.perms_interact & bits != 0
+        perms & bits != 0
     }
 
     /// LLMediaEntry::checkCandidateUrl: allowed by the whitelist (if on).
@@ -717,6 +729,16 @@ mod tests {
         c.request(id(2), "cap", true, WORLD);
         assert!(c.next(Instant::now(), |_| None).is_none());
         assert!(!c.is_queued(&id(1)) && !c.is_queued(&id(2)));
+    }
+
+    #[test]
+    fn control_permissions_gate_the_media_chrome() {
+        let mut e = MediaEntry::default();
+        assert!(e.may_control(true) && e.may_control(false));
+        e.perms_control = PERM_OWNER;
+        assert!(e.may_control(true) && !e.may_control(false));
+        e.perms_control = 0;
+        assert!(!e.may_control(true) && !e.may_control(false));
     }
 
     #[test]
