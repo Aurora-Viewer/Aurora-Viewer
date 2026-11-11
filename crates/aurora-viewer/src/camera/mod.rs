@@ -1788,18 +1788,25 @@ impl Camera {
     }
 
     /// Where the avatar looks from, as first person's eye (standing or
-    /// seated). For VR, which puts the headset there.
-    pub fn eye_point(&self, agent: &AgentState, s: &CameraSettings) -> Vec3 {
-        self.mouselook_eye(agent, s, None)
+    /// seated; `eyes`: the posed eyes, `Scene::eyes_offset`). For VR, which
+    /// puts the headset there.
+    pub fn eye_point(&self, agent: &AgentState, s: &CameraSettings, eyes: Option<Vec3>) -> Vec3 {
+        self.mouselook_eye(agent, s, eyes)
     }
 
     /// Seated (on an object or the ground): where the avatar looks from, as
     /// first person's eye, and the seat's turn when on an object. For VR.
-    pub fn seated_eye(&self, agent: &AgentState, s: &CameraSettings) -> Option<(Vec3, Option<glam::Quat>)> {
+    pub fn seated_eye(
+        &self,
+        agent: &AgentState,
+        s: &CameraSettings,
+        eyes: Option<Vec3>,
+    ) -> Option<(Vec3, Option<glam::Quat>)> {
         if !agent.is_sitting() {
             return None;
         }
-        let eye = self.mouselook_eye(agent, s, None);
+        // the animated head's eyes, as first person seated follows them
+        let eye = self.mouselook_eye(agent, s, eyes);
         eye.is_finite().then_some((eye, self.avatar.rotation))
     }
 

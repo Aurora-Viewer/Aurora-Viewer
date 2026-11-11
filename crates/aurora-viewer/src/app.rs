@@ -446,6 +446,11 @@ pub struct App {
     vr_trigger_down: bool,
     /// The pointing hand's grip held (sit on what the beam is on, or stand up).
     vr_grip_down: bool,
+    /// Sitting down in VR switches to first person (third person and camera
+    /// only can still be chosen while seated): the view before it (third
+    /// person, the locomotion when it was camera only), restored on standing
+    /// up if first person was kept. Some while seated.
+    vr_seated_view: Option<(bool, Option<crate::camera::VrLocomotion>)>,
     /// The VR view's mode last frame (third person, camera only) and the
     /// view offset then: a change puts the headset back at the avatar's eyes.
     vr_view_mode: Option<(bool, bool)>,
@@ -1672,6 +1677,7 @@ impl App {
             vr_avatar_position: None,
             vr_trigger_down: false,
             vr_grip_down: false,
+            vr_seated_view: None,
             vr_view_mode: None,
             vr_last_offset: Vec3::ZERO,
             vr_snap_at: None,
@@ -8498,11 +8504,36 @@ impl App {
     /// the view goes with them instead of ending up inside the head. The
     /// view offset (ahead of the eyes, height) follows the facing too.
     fn follow_vr_avatar(&mut self, renderer: &Renderer) {
+        // seated: first person at the avatar's eyes; standing up: the view
+        // from before
+        let sitting = renderer.vr_engaged() && self.world.agent.is_sitting();
+        if sitting && self.vr_seated_view.is_none() {
+            let vr = &mut self.settings.camera.vr;
+            let camera_only = vr.locomotion == crate::camera::VrLocomotion::CameraOnly;
+            self.vr_seated_view = Some((self.vr_third_person, camera_only.then_some(vr.locomotion)));
+            self.vr_third_person = false;
+            if camera_only {
+                vr.locomotion = self.vr_locomotion_before.take().unwrap_or_default();
+            }
+        } else if !sitting
+            && let Some((third, locomotion)) = self.vr_seated_view.take()
+            // (a view chosen while seated stays: only first person is undone)
+            && !self.vr_third_person
+            && self.settings.camera.vr.locomotion != crate::camera::VrLocomotion::CameraOnly
+        {
+            self.vr_third_person = third;
+            if let Some(locomotion) = locomotion {
+                self.vr_locomotion_before = Some(self.settings.camera.vr.locomotion);
+                self.settings.camera.vr.locomotion = locomotion;
+            }
+        }
         let settings = &self.settings.camera.vr;
         let yaw = self.world.agent.yaw;
         // seated, the view goes where the avatar looks from: its eyes on the
         // seat, turned with it
-        let seated = self.camera.seated_eye(&self.world.agent, &self.settings.camera);
+        // (the eyes of the animated head: a seat's animation moves them)
+        let eyes = self.scene.eyes_offset(&self.world, &self.world.agent_id);
+        let seated = self.camera.seated_eye(&self.world.agent, &self.settings.camera, eyes);
         let facing = match seated {
             Some((_, Some(turn))) => (turn * Vec3::X).with_z(0.0).normalize_or(Vec3::new(yaw.cos(), yaw.sin(), 0.0)),
             _ => Vec3::new(yaw.cos(), yaw.sin(), 0.0),
@@ -8540,7 +8571,7 @@ impl App {
         if changed || snap_due {
             self.vr_snap_at = None;
             let head = renderer.vr_input().head_position;
-            let eye = self.camera.eye_point(&self.world.agent, &self.settings.camera);
+            let eye = self.camera.eye_point(&self.world.agent, &self.settings.camera, eyes);
             let delta = eye - (head - shown_offset);
             if head != Vec3::ZERO && delta.is_finite() {
                 renderer.add_vr_translation(delta);
@@ -11089,8 +11120,11 @@ impl App {
             // shows, its head included
             let vr_whole = gfx.renderer.vr_engaged()
                 && (self.vr_third_person || self.settings.camera.vr.locomotion == crate::camera::VrLocomotion::CameraOnly);
+            // (VR's first person hides the head whatever the desktop camera
+            // does: a seat may take it out of mouselook)
+            let vr_first = gfx.renderer.vr_engaged() && !vr_whole;
             self.scene.set_first_person(
-                (self.camera.first_person_view() && !vr_whole)
+                ((self.camera.first_person_view() || vr_first) && !vr_whole)
                     .then_some(self.settings.camera.show_avatar_in_mouselook || gfx.renderer.vr_engaged()),
             );
             self.scene.update_portal_clipping(&mut gfx.renderer, &self.world);
