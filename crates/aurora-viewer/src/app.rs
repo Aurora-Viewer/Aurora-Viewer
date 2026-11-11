@@ -11837,6 +11837,7 @@ impl App {
             // comes after the text field it types into (app/vr_ui.rs)
             self.vr_keyboard(ui.ctx());
             self.vr_wrist_chat(ui.ctx());
+            self.vr_mouse_cursor(ui.ctx());
             actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
             if inventory_drop.is_empty() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);

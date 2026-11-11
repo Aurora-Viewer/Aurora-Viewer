@@ -1666,6 +1666,12 @@ pub(crate) struct Backend {
     frame_buffer: wgpu::Buffer,
     refl_buffers: [wgpu::Buffer; 9],
     hud_depth: Option<(u32, u32, wgpu::TextureView)>,
+    /// In VR, with the interface panel open: the HUDs are drawn off screen
+    /// at the desktop window's size (this), for the panel, not in the eye.
+    pub(crate) xr_hud_size: Option<(u32, u32)>,
+    xr_hud: Option<wgpu::Texture>,
+    /// The HUDs were drawn into `xr_hud` this frame.
+    xr_hud_drawn: bool,
     probes: crate::probes::Probes,
     /// Faces (bit per face) of the probe being captured that have their
     /// irradiance capture: all six, its irradiance comes from it.
@@ -3505,6 +3511,9 @@ impl Backend {
             frame_buffer,
             refl_buffers,
             hud_depth: None,
+            xr_hud_size: None,
+            xr_hud: None,
+            xr_hud_drawn: false,
             probes,
             probe_irr_faces: 0,
             groups,
@@ -6151,9 +6160,19 @@ impl Backend {
             }
             ui.tessellate()
         });
+        // the HUDs go on the interface panel while it is open: the left
+        // eye's renderer draws them off screen at the window's size
+        let mut huds = DrawLists::default();
+        if panel.is_some() {
+            huds.copy_huds_from(&packet.lists);
+        }
+        world.backends[0].xr_hud_size = panel.is_some().then_some((packet.surface.width, packet.surface.height));
         packet.lists.strip_viewer_overlays();
         let mut other_lists = DrawLists::default();
         other_lists.copy_from(&packet.lists);
+        if panel.is_some() {
+            packet.lists.copy_huds_from(&huds);
+        }
         let mut other = FramePacket {
             output: None,
             index: packet.index,
@@ -6210,7 +6229,8 @@ impl Backend {
         if (panel.is_some() || tip.is_some() || wrist.is_some())
             && let Some(ui) = &mirror_ui
         {
-            world.panel.paint(&self.device, &self.queue, &mut self.egui, ui, mirror_size);
+            let huds = world.backends[0].xr_hud_image();
+            world.panel.paint(&self.device, &self.queue, &mut self.egui, ui, mirror_size, huds);
             for shown in [panel, tip, wrist].into_iter().flatten() {
                 world.panel.draw(
                     &self.device,
@@ -6349,6 +6369,11 @@ impl Backend {
             self.shadow_merge.atlas_changed(&device, &self.shadow_view, 512, SHADOW_FORMAT);
             self.make_targets_now(false, Some((1, 1)));
         });
+    }
+
+    /// The HUDs drawn this frame for the VR interface panel.
+    fn xr_hud_image(&self) -> Option<&wgpu::Texture> {
+        self.xr_hud.as_ref().filter(|_| self.xr_hud_drawn)
     }
 
     fn render_view(&mut self, packet: FramePacket) -> FrameResult {
@@ -6925,6 +6950,30 @@ impl Backend {
             u.eye_view_proj = (narrow * Mat4::from_cols_array_2d(&main.eye_view_proj)).to_cols_array_2d();
             self.queue.write_buffer(&self.refl_buffers[6], 0, bytemuck::bytes_of(&u));
         }
+        // the HUDs' screen: the window's, or in VR the panel's off-screen image
+        let hud_size = self.xr_hud_size.unwrap_or((self.config.width, self.config.height));
+        if self.xr_hud_size.is_none() {
+            self.xr_hud = None;
+        } else if self
+            .xr_hud
+            .as_ref()
+            .is_none_or(|t| (t.width(), t.height()) != hud_size)
+        {
+            self.xr_hud = Some(self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("VR panel HUDs"),
+                size: wgpu::Extent3d {
+                    width: hud_size.0.max(1),
+                    height: hud_size.1.max(1),
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.config.format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            }));
+        }
         if let Some(view) = lists.hud_view {
             let mut hud = main;
             hud.view_proj = view.matrix().to_cols_array_2d();
@@ -6932,22 +6981,22 @@ impl Backend {
             hud.eye_view_proj = hud.view_proj;
             hud.eye = [0.0; 4];
             hud.screen = [
-                self.config.width as f32,
-                self.config.height as f32,
-                1.0 / self.config.width as f32,
-                1.0 / self.config.height as f32,
+                hud_size.0 as f32,
+                hud_size.1 as f32,
+                1.0 / hud_size.0 as f32,
+                1.0 / hud_size.1 as f32,
             ];
             self.queue.write_buffer(&self.refl_buffers[5], 0, bytemuck::bytes_of(&hud));
             if self
                 .hud_depth
                 .as_ref()
-                .is_none_or(|(w, h, _)| *w != self.config.width || *h != self.config.height)
+                .is_none_or(|(w, h, _)| *w != hud_size.0 || *h != hud_size.1)
             {
                 let depth = self.device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("HUD depth"),
                     size: wgpu::Extent3d {
-                        width: self.config.width,
-                        height: self.config.height,
+                        width: hud_size.0,
+                        height: hud_size.1,
                         depth_or_array_layers: 1,
                     },
                     mip_level_count: 1,
@@ -6957,7 +7006,7 @@ impl Backend {
                     usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                     view_formats: &[],
                 });
-                self.hud_depth = Some((self.config.width, self.config.height, depth.create_view(&Default::default())));
+                self.hud_depth = Some((hud_size.0, hud_size.1, depth.create_view(&Default::default())));
             }
         }
         let refl_frame = |this: &Self, n: Vec3, d: f32, keep_offset: f32| {
@@ -9538,15 +9587,27 @@ impl Backend {
         let draws_hud_selection = hud_select_faces_range.1 > 0 && self.hud_selection.is_some() && self.hud_depth.is_some();
         // HUDs retain their original texture colors and never inherit world
         // depth, fog, shadows, exposure or post effects (render_hud_attachments).
+        // (in VR with the panel open: into the panel's off-screen image, over
+        // the panel's tint, instead of the eye)
+        self.xr_hud_drawn = draw_huds && self.xr_hud_size.is_some() && self.xr_hud.is_some();
+        let xr_hud_view = self
+            .xr_hud
+            .as_ref()
+            .filter(|_| self.xr_hud_drawn)
+            .map(|t| t.create_view(&Default::default()));
         if draw_huds && let Some((_, _, depth)) = &self.hud_depth {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("HUD attachments"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &surface_view,
+                    view: xr_hud_view.as_ref().unwrap_or(&surface_view),
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
+                        load: if xr_hud_view.is_some() {
+                            wgpu::LoadOp::Clear(crate::vr_panel::TINT)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -9576,6 +9637,7 @@ impl Backend {
             draw(&mut pass, &self.pipelines.hud_debug_blue, hud_debug_blue_range);
         }
         if hud_select_faces_range.1 > 0
+            && xr_hud_view.is_none()
             && let (Some(selection), Some((_, _, depth))) = (&self.hud_selection, &self.hud_depth)
         {
             let mut pass = selection.begin_mask(&mut encoder, depth);

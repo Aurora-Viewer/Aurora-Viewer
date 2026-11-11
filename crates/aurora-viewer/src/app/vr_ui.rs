@@ -228,6 +228,25 @@ impl App {
         }
     }
 
+    /// The desktop mouse on the panel: its pointer drawn there (the
+    /// headset hides the system's), while no beam is on the panel.
+    pub(super) fn vr_mouse_cursor(&self, ctx: &egui::Context) {
+        if self.vr_panel.is_none() || self.vr_on_panel {
+            return;
+        }
+        let Some(at) = ctx.pointer_latest_pos().filter(|p| ctx.content_rect().contains(*p)) else {
+            return;
+        };
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("vr-mouse-cursor")));
+        // a pointer's head (convex: one shape)
+        let arrow = vec![at, at + egui::vec2(0.0, 22.0), at + egui::vec2(15.0, 15.0)];
+        painter.add(egui::Shape::convex_polygon(
+            arrow,
+            egui::Color32::WHITE,
+            egui::Stroke::new(1.5, egui::Color32::BLACK),
+        ));
+    }
+
     /// The wrist's chat, laid out in a corner of the interface while the
     /// left hand is raised and looked at: the last lines of local chat. The
     /// render worker shows that part of the interface above the hand.
@@ -301,6 +320,16 @@ impl App {
         self.vr_on_panel = true;
         self.vr_ui_pos = pos;
         self.vr_ui_events.push(egui::Event::PointerMoved(pos));
+        // a press where no window is: a HUD there takes it, as a click on
+        // the desktop would (its touch or click action)
+        if pressed && !self.egui_ctx.is_pointer_over_egui() && self.huds_shown() {
+            let ppp = self.egui_ctx.pixels_per_point().max(0.1);
+            if let Some((idx, point, hud_ray)) = self.scene.hud_click_pick(&self.world, (pos.x * ppp, pos.y * ppp))
+                && let Some(target) = crate::interaction::target(&self.world, idx, &self.interactions.props)
+            {
+                self.activate_object_action(target, idx, point, Some(hud_ray));
+            }
+        }
         if pressed || (released && self.vr_ui_down) {
             self.vr_ui_down = pressed;
             self.vr_ui_events.push(egui::Event::PointerButton {

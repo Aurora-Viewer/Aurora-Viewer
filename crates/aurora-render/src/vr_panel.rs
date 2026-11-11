@@ -18,6 +18,15 @@ struct Vertex {
 
 const SLOT: u64 = 256;
 
+/// The panel's background where the interface draws nothing: a faint dark
+/// tint (premultiplied), so the world shows through.
+pub(crate) const TINT: wgpu::Color = wgpu::Color {
+    r: 0.035 * 0.18,
+    g: 0.04 * 0.18,
+    b: 0.06 * 0.18,
+    a: 0.18,
+};
+
 pub(crate) struct Panel {
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
@@ -145,8 +154,9 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> 
         }
     }
 
-    /// Draw the frame's interface into the panel's image, over a faint
-    /// tint: the world shows where the interface draws nothing.
+    /// Draw the frame's interface into the panel's image, over the HUDs
+    /// (`huds`: drawn off screen at the window's size over the tint) or the
+    /// faint tint alone: the world shows where nothing is drawn.
     pub fn paint(
         &mut self,
         device: &wgpu::Device,
@@ -154,6 +164,7 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> 
         egui: &mut egui_wgpu::Renderer,
         ui: &crate::ui_frame::UiFrame,
         size: (u32, u32),
+        huds: Option<&wgpu::Texture>,
     ) {
         let (width, height) = (size.0.clamp(1, 4096), size.1.clamp(1, 4096));
         if self
@@ -172,7 +183,7 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> 
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: self.format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             });
             let view = texture.create_view(&Default::default());
@@ -210,6 +221,10 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> 
             pixels_per_point: ui.pixels_per_point,
         };
         let mut commands = egui.update_buffers(device, queue, &mut encoder, &ui.primitives, &screen);
+        let huds = huds.filter(|h| h.size() == texture.size() && h.format() == self.format);
+        if let Some(huds) = huds {
+            encoder.copy_texture_to_texture(huds.as_image_copy(), texture.as_image_copy(), texture.size());
+        }
         {
             let jobs = crate::ui_frame::paint_jobs(&ui.primitives, crate::ui_frame::meshes_uploaded(&ui.primitives));
             let mut pass = encoder
@@ -220,15 +235,13 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> 
                         depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
-                            // nearly clear (a faint dark tint, premultiplied):
-                            // where the interface draws nothing, the world shows
-                            // through; its bars and windows have their own frames
-                            load: wgpu::LoadOp::Clear(wgpu::Color {
-                                r: 0.035 * 0.18,
-                                g: 0.04 * 0.18,
-                                b: 0.06 * 0.18,
-                                a: 0.18,
-                            }),
+                            // over the HUDs, or the tint alone: the bars and
+                            // windows have their own frames
+                            load: if huds.is_some() {
+                                wgpu::LoadOp::Load
+                            } else {
+                                wgpu::LoadOp::Clear(TINT)
+                            },
                             store: wgpu::StoreOp::Store,
                         },
                     })],

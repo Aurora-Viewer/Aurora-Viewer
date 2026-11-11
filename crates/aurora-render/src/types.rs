@@ -720,6 +720,16 @@ impl DrawLists {
         self.select_faces.clear();
         self.hud_select_faces.clear();
     }
+    /// The HUD lists of `src` into `self` (VR: kept for the interface panel
+    /// while the rest of the viewer's overlays leave the eyes).
+    pub(crate) fn copy_huds_from(&mut self, src: &DrawLists) {
+        self.hud_view = src.hud_view;
+        self.hud_opaque.clone_from(&src.hud_opaque);
+        self.hud_blend.clone_from(&src.hud_blend);
+        self.hud_debug_red.clone_from(&src.hud_debug_red);
+        self.hud_debug_blue.clone_from(&src.hud_debug_blue);
+        self.hud_select_faces.clone_from(&src.hud_select_faces);
+    }
     /// Make `self` a copy of `src`, keeping the memory `self` already has:
     /// the lists of a frame packet, filled again every frame.
     pub fn copy_from(&mut self, src: &DrawLists) {
