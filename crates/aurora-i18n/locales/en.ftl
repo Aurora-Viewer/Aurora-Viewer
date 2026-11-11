@@ -4003,7 +4003,6 @@ ui-music-muted = muted
 ui-music-waiting = permission needed
 ui-music-blocked = blocked by filter
 ui-music-connecting = connecting…
-ui-music-error = playback error
 ui-music-no-device = no audio output
 ui-bars-tip-hints = Click the clock: SLT or local time · the FPS: Performance · hover the speaker: volumes. Right click: presets, items shown, hide the interface.
 ui-bars-graphics-presets = Graphics presets
@@ -13819,6 +13818,18 @@ picker-pipette-no-material = No copyable material found in your inventory.
 
 local-texture-preview-hint = Local texture — preview from a file on this computer.
 
+# Parcel radio state and stream failures
+music-state-error = Can't play: { $reason }
+music-error-web-page = This web page offers no radio stream
+music-error-playlist = This radio playlist cannot be played
+music-error-http = HTTP status { $code }
+music-error-tls = Secure connection failed
+music-error-connection = Connection failed
+music-error-address = Invalid or unsupported stream address
+music-error-format = Unsupported or invalid audio format
+music-error-interrupted = Audio stream interrupted
+music-error-notice = Parcel music: { $status }
+music-error-worker = Cannot start the music player
 # Object linking: LLSelectMgr::linkObjects
 build-link-error-title = Unable to link objects
 build-link-downloading = Object information is still downloading. Please wait and try linking again.

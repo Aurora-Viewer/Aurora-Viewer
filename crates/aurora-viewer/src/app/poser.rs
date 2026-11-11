@@ -231,7 +231,10 @@ impl App {
         }
         self.world.poser_consent = consent;
     }
-    pub(super) fn poser_consent_ui(&mut self, ctx: &egui::Context, p: &Palette) {
+    /// The posing consent's question, reminder and requests; `over_photo`
+    /// in the full-frame photo mode, where the poser window is raised to
+    /// the foreground (`over_viewfinder`) and they must stay above it.
+    pub(super) fn poser_consent_ui(&mut self, ctx: &egui::Context, p: &Palette, over_photo: bool) {
         let mut consent = std::mem::take(&mut self.world.poser_consent);
         // The requester sees every nearby avatar with Ask in the poser's
         // subject menu; there is no capability probe.
@@ -249,10 +252,21 @@ impl App {
                 crate::ik_edit::poser::Request::RepairBridge => self.bridge_runtime.retry(Instant::now()),
             }
         }
+        // in the photo mode, both stay over the poser window it raises to
+        // the same layer (elsewhere the windows keep their usual order)
+        let mut on_top = Vec::new();
+        let mut question = None;
         if let Some(request) = consent.incoming.front().copied() {
             let id = egui::Id::unique(("poser-consent-block", request.id));
             let mut block = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
-            widgets::Modal::new(egui::Id::unique(("poser-consent", request.id))).show(ctx, |ui| {
+            let modal = widgets::Modal::new(egui::Id::unique(("poser-consent", request.id))).show(ctx, |ui| {
+                // in the photo mode Enter is the shutter, pressed out of
+                // habit: it must not grant a resident the right to pose us,
+                // so there the answer takes a click (stricter than the
+                // dialogs' Enter rule, `modal_keys`)
+                if over_photo {
+                    widgets::enter_pressed(ui);
+                }
                 ui.set_max_width(430.0);
                 let distance = poser_consent::distance(&self.world, request.peer).unwrap_or(0.0);
                 ui.heading(aurora_i18n::tr!(
@@ -281,9 +295,11 @@ impl App {
                     }
                 });
             });
+            question = Some(modal.response.layer_id);
+            on_top.push(modal.response.layer_id);
         }
         if !consent.granted_to.is_empty() || consent.notice.is_some() {
-            egui::Area::new(egui::Id::unique("poser-consent-reminder"))
+            let reminder = egui::Area::new(egui::Id::unique("poser-consent-reminder"))
                 .order(egui::Order::Foreground)
                 .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 52.0))
                 .show(ctx, |ui| {
@@ -310,6 +326,15 @@ impl App {
                         }
                     });
                 });
+            on_top.push(reminder.response.layer_id);
+        }
+        // never over another dialog (the exit's question): raised each frame,
+        // they would take its place as the top modal and leave it unclickable
+        let top = ctx.memory(|m| m.top_modal_layer());
+        if over_photo && (top.is_none() || top == question) {
+            for layer in on_top {
+                ctx.move_to_top(layer);
+            }
         }
         self.world.poser_consent = consent;
     }

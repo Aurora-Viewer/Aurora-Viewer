@@ -4009,7 +4009,6 @@ ui-music-muted = son coupé
 ui-music-waiting = autorisation requise
 ui-music-blocked = bloquée par le filtre
 ui-music-connecting = connexion…
-ui-music-error = erreur de lecture
 ui-music-no-device = aucune sortie audio
 ui-bars-tip-hints = Clic sur l'horloge : SLT ou heure locale · sur les FPS : Performances · survol du haut-parleur : volumes. Clic droit : préréglages, éléments affichés, masquer l'interface.
 ui-bars-graphics-presets = Préréglages graphiques
@@ -13818,6 +13817,18 @@ picker-pipette-no-material = Aucun matériau copiable trouvé dans votre inventa
 
 local-texture-preview-hint = Texture locale — aperçu d’un fichier de cet ordinateur.
 
+# Parcel radio state and stream failures
+music-state-error = Lecture impossible : { $reason }
+music-error-web-page = Cette page web ne propose aucun flux radio
+music-error-playlist = Cette liste de lecture radio ne peut pas être lue
+music-error-http = Statut HTTP { $code }
+music-error-tls = Échec de la connexion sécurisée
+music-error-connection = Échec de la connexion
+music-error-address = Adresse du flux invalide ou non prise en charge
+music-error-format = Format audio invalide ou non pris en charge
+music-error-interrupted = Flux audio interrompu
+music-error-notice = Musique de la parcelle : { $status }
+music-error-worker = Impossible de démarrer le lecteur audio
 # Object linking: LLSelectMgr::linkObjects
 build-link-error-title = Impossible de lier les objets
 build-link-downloading = Les informations des objets sont en cours de téléchargement. Veuillez patienter puis réessayer.
