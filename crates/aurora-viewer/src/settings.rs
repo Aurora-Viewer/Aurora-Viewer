@@ -609,6 +609,9 @@ pub struct Settings {
     pub night_sky_hour: crate::world::night_sky::StarHour,
     /// Brightness of the real stars, 0.5 to 4 times the catalogue's.
     pub night_sky_gain: f32,
+    /// Brightness of the real sky's Milky Way, 0 (hidden) to 2 times its
+    /// map's light.
+    pub night_sky_milky_way: f32,
     pub exposure: f32,
     /// Contrast adaptive sharpening (Firestorm RenderCASSharpness, 0.4).
     pub sharpen: f32,
@@ -2001,6 +2004,7 @@ impl Default for Settings {
             night_sky_longitude: crate::world::night_sky::LONGITUDE as f32,
             night_sky_hour: Default::default(),
             night_sky_gain: crate::world::night_sky::DEFAULT_GAIN,
+            night_sky_milky_way: crate::world::night_sky::DEFAULT_MILKY_WAY,
             exposure: 1.0,
             sharpen: 0.4,
             glow: true,
@@ -2636,9 +2640,9 @@ impl Settings {
 
     /// The night sky's place, latitude and longitude agree (a preset gives
     /// its own, Custom keeps the ones typed), within range; the stars'
-    /// brightness within 0.5 to 4.
+    /// brightness within 0.5 to 4, the Milky Way's within 0 to 2.
     pub(crate) fn sync_night_sky(&mut self) {
-        use crate::world::night_sky::{DEFAULT_GAIN, GAIN_RANGE, LATITUDE, LONGITUDE};
+        use crate::world::night_sky::{DEFAULT_GAIN, DEFAULT_MILKY_WAY, GAIN_RANGE, LATITUDE, LONGITUDE, MILKY_WAY_RANGE, within};
         self.night_sky_latitude = match self.night_sky_place.latitude() {
             Some(latitude) => latitude,
             None if self.night_sky_latitude.is_finite() => self.night_sky_latitude.clamp(-90.0, 90.0),
@@ -2649,11 +2653,8 @@ impl Settings {
             None if self.night_sky_longitude.is_finite() => self.night_sky_longitude.clamp(-180.0, 180.0),
             None => LONGITUDE as f32,
         };
-        self.night_sky_gain = if self.night_sky_gain.is_finite() {
-            self.night_sky_gain.clamp(*GAIN_RANGE.start(), *GAIN_RANGE.end())
-        } else {
-            DEFAULT_GAIN
-        };
+        self.night_sky_gain = within(self.night_sky_gain, GAIN_RANGE, DEFAULT_GAIN);
+        self.night_sky_milky_way = within(self.night_sky_milky_way, MILKY_WAY_RANGE, DEFAULT_MILKY_WAY);
     }
 
     pub(crate) fn sanitized(mut self) -> Settings {
