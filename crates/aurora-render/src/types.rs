@@ -618,6 +618,20 @@ pub struct DrawLists {
     pub reflection_terrain_pbr: Vec<DrawCmd>,
     /// Particles, sorted back to front.
     pub particles: Vec<ParticleInstance>,
+    /// Where `particles` come among the non-rigged blended faces
+    /// (`ParticleRun`), in drawing order: the particles up to each run's
+    /// `end` are drawn just before blended face `before`. The particles
+    /// past the last run's `end` are drawn after the last blended face.
+    /// Empty: one draw of all of them after the faces (the interleave is
+    /// off, or nothing to interleave).
+    pub particle_runs: Vec<ParticleRun>,
+    /// The particles on the far side of the water surface while the camera
+    /// is above it (a particle crossing the surface is in both lists),
+    /// back to front: drawn with the blended faces under the water, before
+    /// the water, clipped to their side and writing depth.
+    pub particles_under: Vec<ParticleInstance>,
+    /// `particle_runs` of `particles_under` against `blend_under_water`.
+    pub particle_under_runs: Vec<ParticleRun>,
     /// Non-blended faces with glow (LL PASS_GLOW): drawn again to
     /// accumulate the glow amount in the scene alpha, before the blended
     /// faces (which dim the glow behind them).
@@ -755,6 +769,9 @@ impl DrawLists {
         self.reflection_terrain.clone_from(&src.reflection_terrain);
         self.reflection_terrain_pbr.clone_from(&src.reflection_terrain_pbr);
         self.particles.clone_from(&src.particles);
+        self.particle_runs.clone_from(&src.particle_runs);
+        self.particles_under.clone_from(&src.particles_under);
+        self.particle_under_runs.clone_from(&src.particle_under_runs);
         self.water_events.clone_from(&src.water_events);
         self.water_contacts.clone_from(&src.water_contacts);
         self.water_ground.clone_from(&src.water_ground);
@@ -804,6 +821,9 @@ impl DrawLists {
         self.reflection_terrain.clear();
         self.reflection_terrain_pbr.clear();
         self.particles.clear();
+        self.particle_runs.clear();
+        self.particles_under.clear();
+        self.particle_under_runs.clear();
         self.water_events.clear();
         self.water_contacts.clear();
         self.water_ground = Default::default();
@@ -862,6 +882,26 @@ pub struct ParticleInstance {
     /// Orientation axis for ribbons / velocity-aligned particles.
     pub axis: [f32; 3],
     pub glow: f32,
+}
+
+/// A stretch of particles drawn between two blended faces: the particles
+/// from the end of the previous run (0 for the first) up to `end` come just
+/// before blended face `before` (an index in the list the runs belong to;
+/// its length: after the last face). Runs are in drawing order, with
+/// `before` and `end` increasing. Made by `scene::particle_order`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
+pub struct ParticleRun {
+    pub before: u32,
+    pub end: u32,
+}
+
+/// `AURORA_PARTICLE_INTERLEAVE=0` draws the particles as before this
+/// feature: all after the blended faces and the overlays, sorted by radial
+/// distance, not clipped at the water. Read once.
+pub fn particle_interleave() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("AURORA_PARTICLE_INTERLEAVE").as_deref() != Ok("0"))
 }
 
 pub mod particle_flags {
@@ -1585,6 +1625,8 @@ pub struct RenderStats {
     /// None until the backend has answered a frame.
     pub settings: Option<RenderSettings>,
     pub draws: u32,
+    /// Draws of particles between the blended faces (`ParticleRun`s drawn).
+    pub particle_runs: u32,
     pub shadow_draws: u32,
     pub shadow: ShadowStats,
     pub triangles: u64,
@@ -1931,6 +1973,9 @@ mod tests {
         scene.select_faces.push(cmd(6));
         scene.hud_select_faces.push(cmd(22));
         scene.particles.push(ParticleInstance::default());
+        scene.particle_runs.push(ParticleRun { before: 1, end: 1 });
+        scene.particles_under.push(ParticleInstance::default());
+        scene.particle_under_runs.push(ParticleRun { before: 0, end: 1 });
         scene.impostor_sprites.push(ImpostorSprite {
             center: [1.0, 2.0, 3.0],
             tile: 3,
@@ -1983,6 +2028,8 @@ mod tests {
         assert_eq!(packet.select_faces[0].record, 6);
         assert_eq!(packet.hud_select_faces[0].record, 22);
         assert_eq!((packet.particles.len(), packet.impostor_sprites.len()), (1, 1));
+        assert_eq!(packet.particle_runs, [ParticleRun { before: 1, end: 1 }]);
+        assert_eq!((packet.particles_under.len(), packet.particle_under_runs.len()), (1, 1));
         assert_eq!(packet.impostor_captures[0].blend[0].record, 12);
         assert_eq!(packet.gpu.map(|g| g.draw_distance), Some(128.0));
         // what the earlier frame held is gone, its memory is reused
@@ -1995,6 +2042,7 @@ mod tests {
         assert!(scene.hud_view.is_none());
         assert!(scene.blend_under_water.is_empty());
         assert!(scene.blend_under_double_sided.is_empty());
+        assert!(scene.particle_runs.is_empty() && scene.particles_under.is_empty() && scene.particle_under_runs.is_empty());
         assert!(scene.hud_opaque.is_empty());
         assert!(scene.hud_debug_red.is_empty());
         assert!(scene.creation_preview.is_empty());

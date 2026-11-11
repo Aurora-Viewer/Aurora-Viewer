@@ -44,6 +44,7 @@ pub mod mesh_bytes;
 pub mod mesh_inspection;
 pub mod meshes;
 pub mod morph;
+pub mod particle_order;
 pub mod particles;
 pub mod physics_shapes;
 mod pick_accel;
@@ -1067,6 +1068,17 @@ pub struct Scene {
     pub draw_distance: f32,
     last_origin: Option<(u32, u32)>,
     blend_tmp: Vec<blend_order::BlendEntry>,
+    /// The blended faces under the water, sorted (`order_particles`).
+    blend_under_tmp: Vec<blend_order::BlendEntry>,
+    /// How many of `blend_under_tmp` are rigged, drawn first.
+    blend_under_rigged: usize,
+    /// The frame's blended-face sort basis and the water plane the lists were
+    /// split at (the camera above the water), for the particles
+    /// (`particle_order`).
+    alpha_view: Option<(particle_order::SortBasis, Option<f32>)>,
+    particle_scratch: particle_order::Scratch,
+    particle_depths: Vec<f32>,
+    face_depths: Vec<f32>,
     pub anims: anim::AnimStreamer,
     object_signals: FastMap<Uuid, animesh::Signals>,
     /// World and interface sounds.
@@ -1668,6 +1680,12 @@ impl Scene {
             draw_distance: 96.0,
             last_origin: None,
             blend_tmp: Vec::new(),
+            blend_under_tmp: Vec::new(),
+            blend_under_rigged: 0,
+            alpha_view: None,
+            particle_scratch: Default::default(),
+            particle_depths: Vec::new(),
+            face_depths: Vec::new(),
             sounds: sounds::SoundManager::new(cache_dir_anim.clone()),
             sound_occlusion: Default::default(),
             sound_reverb: Default::default(),
@@ -5193,9 +5211,17 @@ impl Scene {
         // (LLDrawPoolAlpha::renderPostDeferred: forwardRender(true), then
         // forwardRender()), all writing depth and without glow
         let mut under = result.blend_under;
-        blend_order::sort(&mut under, true);
+        self.blend_under_rigged = blend_order::sort(&mut under, true);
         self.lists.blend_under_water.extend(under.iter().map(|e| e.cmd));
         self.lists.blend_under_double_sided.extend(under.iter().map(|e| e.double_sided));
+        self.blend_under_tmp = under;
+        self.alpha_view = Some((
+            particle_order::SortBasis {
+                eye: view.eye,
+                forward: face_sort.then_some(alpha_forward),
+            },
+            under_water_plane,
+        ));
         self.lists.blend_glow.extend(self.blend_tmp.iter().map(|e| e.glow));
         self.lists.blend_double_sided.extend(self.blend_tmp.iter().map(|e| e.double_sided));
         self.lists.shadow_casters.extend(result.casters);

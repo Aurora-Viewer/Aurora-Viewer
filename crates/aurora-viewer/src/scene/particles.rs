@@ -2,6 +2,7 @@
 //! and per-frame instance lists for the renderer.
 
 use super::Scene;
+use super::particle_order::{SortBasis, far_first_signed};
 use super::textures::{TexSource, TextureStreamer};
 use crate::frame_profile::{Part, Parts};
 use crate::world::World;
@@ -310,6 +311,8 @@ impl ParticleManager {
     }
 
     /// Apply object updates, simulate and build the sorted instance list.
+    /// `eye` is the camera (the draw distance); `sort` what the back to front
+    /// order measures (`particle_order`).
     /// `frozen`: the photo mode holds the world still (issue #1154). The
     /// objects' particles get no time and no source emits, a script's new
     /// system included (LLFloater360Capture::freezeWorld calls
@@ -326,6 +329,7 @@ impl ParticleManager {
         dt: f32,
         frozen: bool,
         eye: Vec3,
+        sort: SortBasis,
         max_particles: usize,
         draw_distance: f32,
         attached: bool,
@@ -517,7 +521,11 @@ impl ParticleManager {
                     axis: axis.to_array(),
                     glow: p.glow,
                 };
-                self.order_tmp.push(far_first_key(pos.distance_squared(eye), self.inst_tmp.len()));
+                let index = self.inst_tmp.len();
+                self.order_tmp.push(match sort.forward {
+                    Some(_) => far_first_signed(sort.depth(pos), index),
+                    None => far_first_key(pos.distance_squared(sort.eye), index),
+                });
                 self.inst_tmp.push(inst);
             }
         }
