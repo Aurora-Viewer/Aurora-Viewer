@@ -764,11 +764,12 @@ fn rlva_maturity_deferred_teleports_keep_the_actor_recheck_locks_and_cancel_on_d
     let mut maturity = MaturityPreference::default();
     maturity.request(SIM_ACCESS_MATURE, SIM_ACCESS_PG);
     maturity.take_commands();
-    maturity.hold(NetCommand::TeleportHome, A);
+    maturity.hold(NetCommand::TeleportHome, A, false);
     // home is locked only by @tplm and @tploc together (teleportViaLandmark)
     command(&mut world.rlva, A, "@tplm=n,tploc=n");
     assert_eq!(maturity.answer(Some(SIM_ACCESS_MATURE)), Outcome::Synced);
-    let (actor, teleport) = maturity.take_commands().pop().unwrap();
+    let (actor, teleport, portal) = maturity.take_commands().pop().unwrap();
+    assert!(!portal);
     assert_eq!(actor, A);
     assert!(
         world.rlva_allows_command(&teleport, actor),
@@ -783,7 +784,7 @@ fn rlva_maturity_deferred_teleports_keep_the_actor_recheck_locks_and_cancel_on_d
         let mut maturity = MaturityPreference::default();
         maturity.request(SIM_ACCESS_MATURE, SIM_ACCESS_PG);
         maturity.take_commands();
-        maturity.hold(NetCommand::TeleportHome, A);
+        maturity.hold(NetCommand::TeleportHome, A, false);
         if release_first {
             maturity.answer(Some(SIM_ACCESS_MATURE));
         }
@@ -792,7 +793,7 @@ fn rlva_maturity_deferred_teleports_keep_the_actor_recheck_locks_and_cancel_on_d
             maturity.answer(Some(SIM_ACCESS_MATURE));
         }
         assert!(maturity.take_commands().is_empty());
-        maturity.hold(NetCommand::TeleportHome, Uuid::nil());
+        maturity.hold(NetCommand::TeleportHome, Uuid::nil(), false);
         maturity.cancel_script_teleports();
         assert!(
             maturity.holds_teleport(),

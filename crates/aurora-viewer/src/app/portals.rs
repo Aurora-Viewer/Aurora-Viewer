@@ -277,11 +277,16 @@ impl App {
     }
 
     fn cross_portal(&mut self, creator: uuid::Uuid, portal: Portal, now: Instant) {
+        if !self.world.rlva_allows_portal_crossing() {
+            self.world
+                .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
+            return;
+        }
         // Ordinary location teleports retain RLVa, maturity, map lookup,
         // cancellation and simulator access checks (LLAgent::teleportViaLocation).
         let journey = Journey::new(&self.world, creator, &portal, now);
         let look_at = Vec3::new(portal.yaw.cos(), portal.yaw.sin(), 0.0);
-        self.teleport_to_location_looking(portal.destination, Vec3::from(portal.position), look_at);
+        self.teleport_to_location_looking_origin(portal.destination, Vec3::from(portal.position), look_at, true);
         if self.world.teleporting {
             self.portal_journey = Some(journey);
         } else if let Some(ask) = self.suitcase_ask.as_mut() {

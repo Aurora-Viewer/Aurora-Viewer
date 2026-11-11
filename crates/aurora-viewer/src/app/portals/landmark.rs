@@ -111,6 +111,10 @@ impl Pending {
 
 impl App {
     pub(in crate::app) fn queue_landmark_portal(&mut self, item: uuid::Uuid, point: Vec3, shift: bool) {
+        if !self.world.rlva_allows_portal_crossing() {
+            self.portal_notice(aurora_i18n::tr!("rlva-blocked"));
+            return;
+        }
         let Some(cargo) = cargo(&self.world.inventory, item).filter(|item| !item.asset_id.is_nil()) else {
             self.portal_drop_notice("portal-landmark-unavailable");
             return;
@@ -169,6 +173,10 @@ impl App {
 
     pub(in crate::app) fn update_place_portal(&mut self) {
         let Some(mut pending) = self.portal_drop.take() else { return };
+        if matches!(pending.destination, DropDestination::Landmark { .. }) && !self.world.rlva_allows_portal_crossing() {
+            self.portal_notice(aurora_i18n::tr!("rlva-blocked"));
+            return;
+        }
         if self.world.teleporting || pending.agent != self.world.agent_id || Some(pending.region) != self.world.main_region {
             return;
         }

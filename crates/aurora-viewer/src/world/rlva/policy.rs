@@ -6,6 +6,14 @@ use glam::Vec3;
 use uuid::Uuid;
 
 impl World {
+    /// Aurora portal crossings have no trustworthy landmark provenance in
+    /// the shared portal record. Apply the stricter tplm rule to every portal
+    /// crossing; Legacy Viewer has no portal feature (landmark rule:
+    /// LLAgent::teleportViaLandmark, indra/newview/llagent.cpp).
+    pub fn rlva_allows_portal_crossing(&self) -> bool {
+        portal_crossing_allowed(self.rlva.enabled(), self.rlva.has("tplm"))
+    }
+
     pub fn rlva_allows_im(&self, behaviour: &str, target: Uuid) -> bool {
         if !self.rlva.enabled() {
             return true;
@@ -512,6 +520,10 @@ impl World {
     }
 }
 
+fn portal_crossing_allowed(rlva_enabled: bool, tplm: bool) -> bool {
+    !rlva_enabled || !tplm
+}
+
 fn teleport(option: &str) -> Option<NetCommand> {
     // RlvForceHandler<TPTO> retains double precision until the region origin
     // is removed and rotates the look vector by the optional radian angle.
@@ -566,6 +578,13 @@ fn teleport(option: &str) -> Option<NetCommand> {
 #[cfg(test)]
 mod teleport_tests {
     use super::*;
+
+    #[test]
+    fn portal_crossings_follow_tplm_only_when_rlva_is_enabled() {
+        assert!(portal_crossing_allowed(false, true));
+        assert!(portal_crossing_allowed(true, false));
+        assert!(!portal_crossing_allowed(true, true));
+    }
 
     #[test]
     fn rlva_tpto_preserves_global_fractions_and_named_region_heading() {
