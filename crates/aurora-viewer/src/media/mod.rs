@@ -183,6 +183,9 @@ pub struct MediaImpl {
     /// Prim media: perms_interact lets us navigate the face to another page
     /// (LLVOVolume::hasMediaPermission); otherwise the page bounces back.
     may_navigate: bool,
+    /// Prim media: perms_control shows the media chrome
+    /// (LLPanelPrimMediaControls); the Legacy Viewer hides it without this.
+    pub may_control: bool,
 }
 
 impl MediaImpl {
@@ -226,6 +229,7 @@ impl MediaImpl {
             mouse_down: false,
             user_nav: false,
             may_navigate: true,
+            may_control: true,
         }
     }
 

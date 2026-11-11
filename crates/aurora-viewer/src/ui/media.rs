@@ -79,8 +79,13 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, media: &mut MediaMa
     let Some(m) = media.find_mut(&key) else {
         return;
     };
-    // LLPanelPrimMediaControls: navigation needs perms_control
-    let can_control = m.entry.as_ref().is_none_or(|e| e.perms_control != 0);
+    // LLPanelPrimMediaControls: without MEDIA_PERM_CONTROL the Legacy Viewer
+    // hides the whole chrome; clicks still reach the page.
+    if matches!(key, MediaKey::Prim { .. }) && !m.may_control {
+        st.url_edit = None;
+        return;
+    }
+    let can_control = m.may_control;
     let mut close = false;
     egui::Area::new(controls_id())
         .order(egui::Order::Foreground)
