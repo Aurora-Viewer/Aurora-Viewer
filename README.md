@@ -871,6 +871,14 @@ the current server appearance. Closing a modified shape offers Save, Discard or
 Cancel. A shape without Modify is read-only and can only be copied unchanged;
 a modifiable no-copy shape can be saved in place.
 
+### Export your appearance XML
+
+Open **Appearance**, click the gear menu and choose **Export my appearance XML…**.
+Choose where to save `appearance.xml`. The option becomes available when your
+own appearance has loaded. The file uses the Legacy Viewer’s appearance XML
+format, including the shape parameters its wearable editor can import. It
+contains no texture or mesh files and does not change what you are wearing.
+
 ### Hover height
 
 Open **Appearance › Hover Height** to adjust your height from -3 to +3 m.

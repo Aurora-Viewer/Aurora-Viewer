@@ -26,6 +26,9 @@ pub enum MuteListSource {
     File(String),
     /// UseCachedMuteList: our cached copy is current.
     UseCache,
+    /// GenericMessage "emptymutelist" (LLDispatchEmptyMuteList): the
+    /// resident blocks nobody, so the server sends no file.
+    ServerEmpty,
 }
 
 /// First message of a group / conference session (ChatterBoxInvitation).
