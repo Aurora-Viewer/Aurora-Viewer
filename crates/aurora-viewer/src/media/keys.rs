@@ -245,6 +245,20 @@ pub fn paste_text(page_copy: Option<&Option<String>>, now: Option<String>) -> Op
     }
 }
 
+/// How many pages' last cut or copy the viewer remembers (`record_copy`).
+pub const PAGE_COPIES: usize = 8;
+
+/// Remember that page `pid` cut or copied while the system clipboard held
+/// `text`: its own entry replaced and moved last, the oldest page dropped
+/// past `PAGE_COPIES`, so one page's copy leaves another's record alone.
+pub fn record_copy(copies: &mut Vec<(u32, Option<String>)>, pid: u32, text: Option<String>) {
+    copies.retain(|(p, _)| *p != pid);
+    copies.push((pid, text));
+    if copies.len() > PAGE_COPIES {
+        copies.remove(0);
+    }
+}
+
 /// Run an Edit menu shortcut on a page instead of sending it the key: the
 /// command on the press (and on a repeat when it allows one). True when the
 /// key press is a shortcut, which the page then never gets, on every system;
@@ -290,15 +304,23 @@ fn sent(cmd: EditCommand, cuts: bool) -> bool {
 /// As a real paste: a `paste` event carrying the text first, so a page that
 /// handles pastes gets it, then, unless the page cancelled it, the text
 /// inserted as plain text (`insertText`, one undo step, line breaks and
-/// tabs kept). It follows the focus into frames of the same origin; a
-/// frame of another origin is out of the script's reach and gets nothing.
-/// The text is one JSON string literal, never code.
+/// tabs kept). It follows the focus into open shadow roots and into
+/// frames and embedded documents of the same origin; one of another origin
+/// is out of the script's reach and gets nothing, not even the paste event.
+/// An empty text pastes nothing. The text is one JSON string literal, never
+/// code, with U+FFFE and U+FFFF escaped: XML, which carries the message to
+/// the plugin, does not allow them.
 pub fn paste_script(text: &str) -> String {
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
-    let literal = serde_json::to_string(&text).unwrap_or_else(|_| "\"\"".into());
+    let literal = serde_json::to_string(&text)
+        .unwrap_or_else(|_| "\"\"".into())
+        .replace('\u{FFFE}', "\\ufffe")
+        .replace('\u{FFFF}', "\\uffff");
     format!(
-        "(function(t){{var d=document,e=d.activeElement;\
-         while(e&&(e.tagName==='IFRAME'||e.tagName==='FRAME')){{try{{d=e.contentDocument;e=d.activeElement}}catch(x){{return}}}}\
+        "(function(t){{if(!t)return;var d=document,e=d.activeElement;\
+         for(;;){{if(e&&e.shadowRoot&&e.shadowRoot.activeElement){{e=e.shadowRoot.activeElement;continue}}\
+         if(e&&/^(I?FRAME|OBJECT|EMBED|FENCEDFRAME)$/.test(e.tagName)){{try{{d=e.contentDocument;e=d.activeElement}}catch(x){{return}}continue}}\
+         break}}\
          if(!e)return;var go=true;\
          try{{var dt=new DataTransfer();dt.setData('text/plain',t);\
          go=e.dispatchEvent(new ClipboardEvent('paste',{{clipboardData:dt,bubbles:true,cancelable:true,composed:true}}))}}catch(x){{}}\
@@ -672,6 +694,22 @@ mod tests {
     }
 
     #[test]
+    fn each_page_keeps_its_own_copy() {
+        let mut c = Vec::new();
+        record_copy(&mut c, 1, Some("a".into()));
+        record_copy(&mut c, 2, Some("b".into()));
+        // page 1's record outlives page 2's copy
+        assert_eq!(c.iter().find(|(p, _)| *p == 1).map(|(_, t)| t.clone()), Some(Some("a".into())));
+        record_copy(&mut c, 1, Some("c".into()));
+        assert_eq!(c, vec![(2, Some("b".into())), (1, Some("c".into()))]);
+        for pid in 10..20 {
+            record_copy(&mut c, pid, None);
+        }
+        assert_eq!(c.len(), PAGE_COPIES);
+        assert_eq!(c.last().map(|(p, _)| *p), Some(19));
+    }
+
+    #[test]
     fn paste_text_after_a_page_copy() {
         let t = |s: &str| Some(s.to_owned());
         // no page copied: the system clipboard is typed
@@ -721,6 +759,12 @@ mod tests {
         // a paste event first, then the insert unless the page cancelled it
         let s = paste_script("x");
         assert!(s.find("ClipboardEvent('paste'").expect("event") < s.find("if(go)").expect("insert"));
+        // XML refuses U+FFFE and U+FFFF, so they go escaped and still arrive
+        let odd = "a\u{FFFE}b\u{FFFF}";
+        assert!(!paste_script(odd).contains('\u{FFFE}') && !paste_script(odd).contains('\u{FFFF}'));
+        assert_eq!(lit(odd), odd);
+        // the focus is followed into shadow roots and embedded documents
+        assert!(s.contains("e.shadowRoot.activeElement") && s.contains("OBJECT|EMBED|FENCEDFRAME"));
     }
 
     #[test]
