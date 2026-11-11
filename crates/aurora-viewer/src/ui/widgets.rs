@@ -49,7 +49,7 @@ pub use copy_on_click::copy_on_click;
 pub(crate) use modal_keys::{default_button, enter_pressed};
 pub use pills::{
     clearable_search_box, dot_pill, dot_pill_width, filter_field, filter_pill, filter_pill_at, filter_pill_width, pill_tab, pill_tab_wide,
-    reveal_search_selection, search_box, search_cleared, search_list_item, search_scroll_to_column, search_scroll_to_row, search_text_edit,
+    reveal_search_selection, search_cleared, search_list_item, search_scroll_to_column, search_scroll_to_row, search_text_edit,
     search_text_edit_with_margin,
 };
 pub use text_field::text_field;

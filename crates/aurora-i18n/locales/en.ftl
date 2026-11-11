@@ -9793,7 +9793,6 @@ search-event-place-info = Show the place details
 search-aurora-all = All
 search-aurora-hint = Residents, places, events, groups, classifieds…
 search-aurora-land-hint = Land for sale is searched with the filters
-search-aurora-clear = Clear
 search-aurora-web-tip = The grid's search page, in the built-in browser
 search-aurora-select = Select a result.
 search-aurora-start = Search residents, places, events, groups and classifieds.
