@@ -732,6 +732,7 @@ pub(super) fn history_list(
         .into_iter()
         .filter_map(|(i, e)| {
             let mut e = e.clone();
+            hide_teleport_history_location(&mut e, world.rlva.has("showloc"));
             privacy.redact_notice(&mut e.title, &mut e.body, &mut e.name_links);
             (query.is_empty() || e.title.to_lowercase().contains(&query) || e.body.to_lowercase().contains(&query)).then_some((i, e))
         })
@@ -980,6 +981,17 @@ fn follow_label(f: &Follow) -> Option<&'static str> {
         Follow::Inventory(_) => aurora_i18n::tr!("ui-notifications-show-in-inventory"),
         Follow::Restore => aurora_i18n::tr!("ui-notifications-restore"),
     })
+}
+
+/// History can predate the current restriction or come from an earlier
+/// session. Filter the displayed copy before search, including its action.
+fn hide_teleport_history_location(entry: &mut Entry, showloc: bool) {
+    if showloc && entry.look == crate::world::notification_history::Look::Teleport {
+        entry.body = aurora_i18n::tr!("rlva-hidden-generic").into();
+        if !matches!(entry.follow, Follow::Conversation(_)) {
+            entry.follow = Follow::None;
+        }
+    }
 }
 
 /// A greyed card of the history: its state, and the useful action left.

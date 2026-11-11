@@ -13,6 +13,25 @@ use url::Url;
 
 use crate::http::{self, HttpResponse};
 
+/// Why a station address did not lead to audio, so the viewer can say so.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum PlaylistError {
+    /// The address, or a link a playlist gave, failed at the HTTP level
+    /// (including a link to another origin, `HttpError::PlaylistOrigin`).
+    #[error(transparent)]
+    Http(#[from] http::HttpError),
+    /// A web page that exports no radio playlist.
+    #[error("{0}")]
+    WebPage(&'static str),
+    /// A playlist the radio decoder cannot follow: HLS, empty, a loop, too
+    /// large, nested too deep or not UTF-8.
+    #[error("{0}")]
+    Playlist(&'static str),
+    /// The document stopped arriving.
+    #[error("radio playlist could not be read: {0}")]
+    Read(std::io::Error),
+}
+
 const MAX_DOCUMENT_BYTES: u64 = 128 * 1024;
 const MAX_DOCUMENTS: usize = 4;
 
@@ -41,8 +60,8 @@ fn document(response: &HttpResponse) -> Option<Document> {
     }
 }
 
-pub(crate) fn open(url: &str, stop: &Arc<AtomicBool>) -> Result<HttpResponse, String> {
-    let mut response = http::open(url, stop).map_err(|e| e.to_string())?;
+pub(crate) fn open(url: &str, stop: &Arc<AtomicBool>) -> Result<HttpResponse, PlaylistError> {
+    let mut response = http::open(url, stop)?;
     let origin = response.url.clone();
     let mut visited = vec![response.url.clone()];
     for _ in 0..MAX_DOCUMENTS {
@@ -52,26 +71,26 @@ pub(crate) fn open(url: &str, stop: &Arc<AtomicBool>) -> Result<HttpResponse, St
             .body
             .take(MAX_DOCUMENT_BYTES + 1)
             .read_to_end(&mut bytes)
-            .map_err(|e| e.to_string())?;
+            .map_err(PlaylistError::Read)?;
         if bytes.len() as u64 > MAX_DOCUMENT_BYTES {
-            return Err("radio playlist or player page is too large".into());
+            return Err(PlaylistError::Playlist("radio playlist or player page is too large"));
         }
-        let text = std::str::from_utf8(&bytes).map_err(|_| "radio playlist is not UTF-8")?;
+        let text = std::str::from_utf8(&bytes).map_err(|_| PlaylistError::Playlist("radio playlist is not UTF-8"))?;
         let next = target(text, kind, &response.url)?;
         if visited.contains(&next) {
-            return Err("radio playlist contains a loop".into());
+            return Err(PlaylistError::Playlist("radio playlist contains a loop"));
         }
         visited.push(next.clone());
-        response = http::open_with_origin(next.as_str(), stop, Some(&origin)).map_err(|e| e.to_string())?;
+        response = http::open_with_origin(next.as_str(), stop, Some(&origin))?;
     }
     if document(&response).is_none() {
         Ok(response)
     } else {
-        Err("too many nested radio playlists".into())
+        Err(PlaylistError::Playlist("too many nested radio playlists"))
     }
 }
 
-fn target(text: &str, kind: Document, base: &Url) -> Result<Url, String> {
+fn target(text: &str, kind: Document, base: &Url) -> Result<Url, PlaylistError> {
     let text = text.trim().trim_start_matches('\u{feff}').trim();
     let link = match kind {
         Document::Player => {
@@ -80,24 +99,28 @@ fn target(text: &str, kind: Document, base: &Url) -> Result<Url, String> {
             let value = text
                 .split_once("\"downloadPlaylistUri\"")
                 .and_then(|(_, rest)| rest.trim_start().strip_prefix(':'))
-                .ok_or("web page does not export a radio playlist")?;
+                .ok_or(PlaylistError::WebPage("web page does not export a radio playlist"))?;
             serde_json::Deserializer::from_str(value.trim_start())
                 .into_iter::<String>()
                 .next()
                 .and_then(Result::ok)
-                .ok_or("invalid player playlist link")?
+                .ok_or(PlaylistError::WebPage("invalid player playlist link"))?
         }
-        Document::Pls => pls_target(text).ok_or("radio PLS playlist has no stream")?.to_owned(),
+        Document::Pls => pls_target(text)
+            .ok_or(PlaylistError::Playlist("radio PLS playlist has no stream"))?
+            .to_owned(),
         Document::M3u => m3u_target(text)?.to_owned(),
     };
-    let mut next = base.join(link.trim()).map_err(|_| "invalid radio playlist URL")?;
+    let mut next = base
+        .join(link.trim())
+        .map_err(|_| PlaylistError::Playlist("invalid radio playlist URL"))?;
     next.set_fragment(None);
     if !matches!(next.scheme(), "http" | "https")
         || next.origin() != base.origin()
         || !next.username().is_empty()
         || next.password().is_some()
     {
-        return Err(http::HttpError::PlaylistOrigin.to_string());
+        return Err(http::HttpError::PlaylistOrigin.into());
     }
     Ok(next)
 }
@@ -118,14 +141,14 @@ fn pls_target(text: &str) -> Option<&str> {
         .map(|(_, value)| value)
 }
 
-fn m3u_target(text: &str) -> Result<&str, String> {
+fn m3u_target(text: &str) -> Result<&str, PlaylistError> {
     if text.lines().any(|line| line.trim_start().starts_with("#EXT-X-")) {
-        return Err("HLS playlists are not supported by the radio decoder".into());
+        return Err(PlaylistError::Playlist("HLS playlists are not supported by the radio decoder"));
     }
     text.lines()
         .map(str::trim)
         .find(|line| !line.is_empty() && !line.starts_with('#'))
-        .ok_or_else(|| "radio M3U playlist has no stream".into())
+        .ok_or(PlaylistError::Playlist("radio M3U playlist has no stream"))
 }
 
 #[cfg(test)]
@@ -336,7 +359,8 @@ mod tests {
             },
         ]);
         let error = open(&format!("{base}/list.pls"), &Arc::new(AtomicBool::new(false))).err().unwrap();
-        assert!(error.contains("same HTTP(S) origin"), "{error}");
+        assert!(matches!(error, PlaylistError::Http(http::HttpError::PlaylistOrigin)), "{error}");
+        assert!(error.to_string().contains("same HTTP(S) origin"), "{error}");
         assert_eq!(forbidden.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
         server.join().unwrap();
     }
@@ -349,12 +373,15 @@ mod tests {
                 head: "HTTP/1.1 200 OK\r\nContent-Type: audio/x-scpls".into(),
                 body,
             }]);
-            let error = open(&format!("{base}/list.pls"), &Arc::new(AtomicBool::new(false))).err().unwrap();
+            let error = open(&format!("{base}/list.pls"), &Arc::new(AtomicBool::new(false)))
+                .err()
+                .unwrap()
+                .to_string();
             assert!(error.contains("loop") || error.contains("too large"), "{error}");
             server.join().unwrap();
         }
         let stop = Arc::new(AtomicBool::new(true));
-        assert_eq!(open("http://127.0.0.1:1/list.pls", &stop).err().unwrap(), "stopped");
+        assert_eq!(open("http://127.0.0.1:1/list.pls", &stop).err().unwrap().to_string(), "stopped");
     }
 
     #[test]
@@ -370,7 +397,10 @@ mod tests {
             })
             .collect();
         let (base, server) = serve(routes);
-        let error = open(&format!("{base}/a.pls"), &Arc::new(AtomicBool::new(false))).err().unwrap();
+        let error = open(&format!("{base}/a.pls"), &Arc::new(AtomicBool::new(false)))
+            .err()
+            .unwrap()
+            .to_string();
         assert!(error.contains("too many nested"), "{error}");
         server.join().unwrap();
     }

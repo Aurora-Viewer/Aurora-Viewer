@@ -233,7 +233,7 @@ pub(super) fn show(
         collection_menu(&mut g, p, world, st, entries, shown.len(), favorites, no_picture);
         g.add_space(6.0);
     }
-    banner(&mut g, p, st, no_picture);
+    banner(&mut g, p, world, st, shown, no_picture, actions);
     egui::ScrollArea::vertical()
         .id_salt("appearance_showcase")
         .auto_shrink([false, false])
@@ -391,9 +391,18 @@ fn collection_menu(
     });
 }
 
-/// "N outfits have no picture yet", with the way to see them; closed for
-/// the session by its cross.
-fn banner(ui: &mut egui::Ui, p: &Palette, st: &mut AppearanceUi, no_picture: usize) {
+/// "N outfits have no picture yet", with Take the portraits (the batch
+/// portraits' window, over our own outfits shown); closed for the session
+/// by its cross.
+fn banner(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    st: &mut AppearanceUi,
+    shown: &[Uuid],
+    no_picture: usize,
+    actions: &mut Vec<Action>,
+) {
     let state = &mut st.showcase_state;
     if no_picture == 0 || state.banner_hidden || state.filter == Filter::NoPicture {
         return;
@@ -407,9 +416,10 @@ fn banner(ui: &mut egui::Ui, p: &Palette, st: &mut AppearanceUi, no_picture: usi
                 if super::icon_button(ui, p, "x", aurora_i18n::tr!("ui-appearance-showcase-dismiss")).clicked() {
                     state.banner_hidden = true;
                 }
-                let show = aurora_i18n::tr!("ui-appearance-showcase-show-them");
-                if widgets::flat_button(ui, p, show).clicked() {
-                    state.filter = Filter::NoPicture;
+                let take = aurora_i18n::tr!("ui-appearance-batch-open");
+                if widgets::flat_button(ui, p, take).clicked() {
+                    let own = shown.iter().copied().filter(|id| own_outfit(world, *id)).collect();
+                    actions.push(Action::OutfitBatch(own));
                 }
                 ui.add(egui::Label::new(egui::RichText::new(text).size(12.0).color(p.muted)).truncate());
             });
@@ -504,13 +514,20 @@ fn card_ui(
     if !image.is_nil() {
         st.wanted_images.insert(image);
     }
+    // an outfit of ours with no picture at all: the auto portrait at once
+    let portrait = image.is_nil() && own_outfit(world, id);
     if let Some(t) = images.get(&image) {
         let (image_rect, uv) = super::preview_rects(picture.shrink(2.0), t.size_vec2(), st.fill_previews);
         painter.image(t.id(), image_rect, uv, widgets::PICTURE_TINT);
     } else if let Some(t) = icons::global("hanger-2-filled") {
+        let (center, side) = if portrait {
+            (picture.center() - Vec2::new(0.0, picture.height() * 0.12), 0.3)
+        } else {
+            (picture.center(), 0.42)
+        };
         painter.image(
             t.id(),
-            Rect::from_center_size(picture.center(), Vec2::splat(picture.width() * 0.42)),
+            Rect::from_center_size(center, Vec2::splat(picture.width() * side)),
             Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
             p.muted_dim,
         );
@@ -558,6 +575,21 @@ fn card_ui(
             .clicked();
         if clicked && enabled {
             actions.push(Action::Category(id, Update::Favorite(!favorite)));
+        }
+    }
+    if portrait && !hot {
+        let label = aurora_i18n::tr!("ui-appearance-portrait-auto");
+        let width = (widgets::action_button_fit(ui, "user-scan", label)).min(picture.width() - 16.0);
+        let at = Rect::from_center_size(
+            egui::pos2(picture.center().x, picture.center().y + picture.height() * 0.16),
+            Vec2::new(width, 30.0),
+        );
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(at).id_salt(("showcase_portrait", id)));
+        let enabled = st.pending.is_none();
+        if widgets::action_button_if(&mut child, p, "user-scan", label, widgets::ActionKind::Primary, at.size(), enabled).clicked()
+            && enabled
+        {
+            actions.push(Action::OutfitPortrait(id));
         }
     }
     if hot {
@@ -613,17 +645,19 @@ fn hover_actions(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appeara
     );
     child.spacing_mut().item_spacing.x = 6.0;
     let side = Vec2::splat(30.0);
-    let snapshot = aurora_i18n::tr!("ui-inventory-thumbnail-take-snapshot");
+    // a new photo: the auto portrait (the quick snapshot of the view stays
+    // in the menu)
+    let new_photo = aurora_i18n::tr!("ui-appearance-portrait-new-photo");
     if child
         .add_enabled_ui(rules.folder, |ui| {
-            widgets::glass_action_icon(ui, p, "camera-filled", snapshot, side, p.ink)
+            widgets::glass_action_icon(ui, p, "camera-filled", new_photo, side, p.ink)
         })
         .inner
-        .on_hover_text(snapshot)
+        .on_hover_text(new_photo)
         .clicked()
         && rules.folder
     {
-        actions.push(Action::OutfitSnapshot(id));
+        actions.push(Action::OutfitPortrait(id));
     }
     let add = aurora_i18n::tr!("ui-appearance-gallery-add-to-your-outfit");
     if child
@@ -674,11 +708,17 @@ fn preview_panel(
     let (picture, _) = ui.allocate_exact_size(Vec2::splat(side), Sense::hover());
     let radius = ui.visuals().window_corner_radius;
     ui.painter().rect_filled(picture, radius, p.panel);
+    // the outfit's paid HD picture once it has loaded (`outfit_hd`), else
+    // its picture; the cards keep the thumbnail
+    let hd = model::outfit_hd_picture(inv, id);
+    if let Some(hd) = hd {
+        st.wanted_images.insert(hd);
+    }
     let image = st.outfit_picture(inv, id);
     if !image.is_nil() {
         st.wanted_images.insert(image);
     }
-    if let Some(t) = images.get(&image) {
+    if let Some(t) = hd.and_then(|hd| images.get(&hd)).or_else(|| images.get(&image)) {
         let (image_rect, uv) = super::preview_rects(picture.shrink(2.0), t.size_vec2(), st.fill_previews);
         ui.painter().image(t.id(), image_rect, uv, widgets::PICTURE_TINT);
     } else {
@@ -710,7 +750,12 @@ fn preview_panel(
     ui.painter()
         .rect_stroke(picture, radius, egui::Stroke::new(1.0, p.raised), egui::StrokeKind::Inside);
     let own = rules.is_some_and(|r| r.folder);
-    let buttons = Rect::from_min_max(picture.max - Vec2::new(84.0, 46.0), picture.max - Vec2::new(10.0, 10.0));
+    // the auto portrait, the square photo mode and an image of the
+    // inventory, along the bottom of the picture
+    let buttons = Rect::from_min_max(
+        egui::pos2(picture.left() + 10.0, picture.bottom() - 46.0),
+        picture.max - Vec2::new(10.0, 10.0),
+    );
     let mut child = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(buttons)
@@ -722,8 +767,8 @@ fn preview_panel(
         ("photo-filled", aurora_i18n::tr!("common-image-2"), Action::OutfitImage(id)),
         (
             "camera-filled",
-            aurora_i18n::tr!("ui-inventory-thumbnail-take-snapshot"),
-            Action::OutfitSnapshot(id),
+            aurora_i18n::tr!("ui-appearance-portrait-photo-mode"),
+            Action::OutfitPhotoMode(id),
         ),
     ] {
         if child
@@ -735,6 +780,12 @@ fn preview_panel(
         {
             actions.push(action);
         }
+    }
+    let portrait = aurora_i18n::tr!("ui-appearance-portrait-auto");
+    let size = Vec2::new(child.available_width(), 36.0);
+    let enabled = own && st.pending.is_none();
+    if widgets::action_button_if(&mut child, p, "user-scan", portrait, widgets::ActionKind::Primary, size, enabled).clicked() && enabled {
+        actions.push(Action::OutfitPortrait(id));
     }
     ui.add_space(10.0);
     let parent = folder.info.parent;
@@ -845,7 +896,7 @@ fn section_of(asset_type: i32) -> usize {
 fn contents(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi, id: Uuid, actions: &mut Vec<Action>) {
     let inv = &world.inventory;
     let mut links = model::folder_links(inv, id);
-    items::sort_links(inv, &mut links, false);
+    items::sort_links(inv, &mut links);
     let found: Vec<_> = links
         .iter()
         .filter(|l| !l.folder)

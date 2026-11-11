@@ -236,8 +236,11 @@ pub struct Facts {
     pub removable_clothing: Vec<u8>,
     pub removable_points: Vec<u8>,
 
-    /// "Freeze" / "Eject" of the avatar, and whether the eject may ban.
+    /// "Freeze" / "Eject" of the avatar, whether the eject may ban, and the
+    /// estate's "Kick", "Teleport home" and "Ban".
     pub moderation: crate::world::land_moderation::Rights,
+    /// The region gave us a god level: the resident's Admin entries.
+    pub god: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -295,7 +298,20 @@ pub enum CtxAction {
     /// Avatar.Freeze / Avatar.Eject: asked first (LLAvatarActions::
     /// landFreeze / landEject).
     Freeze(Uuid),
+    /// A list's menu is open on a resident standing on group land the
+    /// viewer does not know: its parcel is asked for (selectParcelAt), and
+    /// Freeze / Eject appear once it comes when the group allows them.
+    ModerationParcel(Uuid),
     Eject(Uuid),
+    /// Avatar.Kick / Avatar.TeleportHome / Avatar.EstateBan of the estate's
+    /// owner and managers: asked first (LLAvatarActions::estateKick,
+    /// estateTeleportHome, estateBan).
+    EstateKick(Uuid),
+    EstateTeleportHome(Uuid),
+    EstateBan(Uuid),
+    /// Admin › Kick / Freeze / Unfreeze (LLAvatarActions::kick, freeze,
+    /// unfreeze): asked with its message first; `flags` are GodKickUser's.
+    GodKick(Uuid, u32),
     Touch(u32),
     Sit {
         target: Uuid,
@@ -412,6 +428,8 @@ pub enum CtxAction {
     RefreshAvatarTextures(Uuid),
     /// "Force appearance update (rebake)" (Advanced.RebakeTextures).
     Rebake,
+    /// "Reload avatar": every refresh of an avatar at once (`app/avatar_reload.rs`).
+    ReloadAvatar(Uuid),
     /// Take / take a copy into the inventory (derez_objects).
     Take(Uuid),
     TakeCopy(Uuid),
@@ -490,6 +508,9 @@ pub enum CtxAction {
     /// Web link clicked in a text: opened at once when trusted, else after
     /// the external link warning.
     OpenUrl(String),
+    /// An "Open in browser" button (LLWeb::loadURLExternal): the system
+    /// browser whatever the browser choice, after the same link checks.
+    OpenUrlExternal(String),
     /// A `secondlife:///app/...` command clicked in a text (`slapp.rs`).
     AppLink(crate::slapp::AppLink),
     TeleportToPlace(String, glam::Vec3),
@@ -919,6 +940,52 @@ fn avatar_menu_reporting(
                 act(CtxAction::PayResident(id));
             }
             block(ui);
+            // menu_fs_radar.xml / menu_mini_map.xml: Freeze, Parcel Eject,
+            // then the estate's Teleport Home, Kick and Ban, each only where
+            // we have the right (Avatar.VisibleFreezeEject,
+            // Avatar.VisibleKickTeleportHome); gathered in the same
+            // "Moderation" submenu as the world menu's
+            let rights = world.resident_rights(id);
+            if world.resident_needs_parcel(id) {
+                act(CtxAction::ModerationParcel(id));
+            }
+            if rights.allowed || rights.estate {
+                menu::submenu(
+                    ui,
+                    p,
+                    "shield-filled",
+                    aurora_i18n::tr!("ui-context-moderation-options"),
+                    true,
+                    |ui| {
+                        if rights.allowed {
+                            if menu::item(ui, p, "snowflake", aurora_i18n::tr!("ui-context-freeze")) {
+                                act(CtxAction::Freeze(id));
+                            }
+                            if menu::item(ui, p, "player-eject-filled", aurora_i18n::tr!("ui-context-eject")) {
+                                act(CtxAction::Eject(id));
+                            }
+                        }
+                        if rights.estate {
+                            if rights.allowed {
+                                menu::separator(ui, p);
+                            }
+                            for (icon, label, action) in [
+                                (
+                                    "home-filled",
+                                    aurora_i18n::tr!("ui-context-estate-teleport-home"),
+                                    CtxAction::EstateTeleportHome(id),
+                                ),
+                                ("door-exit", aurora_i18n::tr!("ui-context-estate-kick"), CtxAction::EstateKick(id)),
+                                ("ban", aurora_i18n::tr!("ui-context-estate-ban"), CtxAction::EstateBan(id)),
+                            ] {
+                                if menu::item(ui, p, icon, label) {
+                                    act(action);
+                                }
+                            }
+                        }
+                    },
+                );
+            }
             // menu_fs_radar.xml / menu_mini_map.xml: Avatar.Derender and
             // Avatar.DerenderPermanent (LLAvatarActions::derender), always enabled
             for (icon, label, permanent) in [
@@ -991,6 +1058,31 @@ fn avatar_menu_reporting(
             copy(ui);
         }
     }
+    admin_submenu(ui, p, world, id, act);
+}
+
+/// Admin, while the region keeps our god level, outside the world menus: the
+/// profile's Kick / Freeze / Unfreeze (menu_fs_profile_overflow.xml,
+/// Profile.EnableItem: gAgent.isGodlike()) and the inspector's Kick
+/// (menu_inspect_avatar_gear.xml, InspectAvatar.EnableGod), gathered as in
+/// the world menu. GodKickUser reaches them anywhere on the grid.
+pub fn admin_submenu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, act: impl Fn(CtxAction)) {
+    use aurora_net::god::{KICK_DEFAULT, KICK_FREEZE, KICK_UNFREEZE};
+    if world.god_level == 0 || id == world.agent_id {
+        return;
+    }
+    menu::separator(ui, p);
+    menu::submenu(ui, p, "crown-filled", aurora_i18n::tr!("admin-menu"), true, |ui| {
+        for (icon, label, flags) in [
+            ("logout", aurora_i18n::tr!("admin-kick-menu"), KICK_DEFAULT),
+            ("snowflake", aurora_i18n::tr!("admin-freeze-menu"), KICK_FREEZE),
+            ("sun-filled", aurora_i18n::tr!("admin-unfreeze-menu"), KICK_UNFREEZE),
+        ] {
+            if menu::item(ui, p, icon, label) {
+                act(CtxAction::GodKick(id, flags));
+            }
+        }
+    });
 }
 
 /// Right-click menu of one of our groups (menu_people_groups.xml), plus
@@ -1560,6 +1652,64 @@ mod tests {
                         );
                     }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn a_god_has_the_admin_submenu_in_every_residents_list_menu_but_its_own() {
+        use crate::ui::widgets::elide_tests::{Frames, painted};
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(1);
+        let other = Uuid::from_u128(7);
+        let p = crate::theme::Theme::default().palette();
+        let admin = aurora_i18n::text("admin-menu");
+        for kind in [AvatarList::Nearby, AvatarList::Friend, AvatarList::Name] {
+            for (level, id, shown) in [(0, other, false), (200, other, true), (200, world.agent_id, false)] {
+                world.god_level = level;
+                let mut frames = Frames::new();
+                frames.run(Vec::new(), |ui| avatar_list_menu(ui, &p, &world, id, kind));
+                let texts = frames.run(Vec::new(), |ui| avatar_list_menu(ui, &p, &world, id, kind));
+                assert_eq!(texts.iter().any(|t| t.source == admin), shown, "{kind:?}, level {level}");
+                if !shown {
+                    continue;
+                }
+                // its entries send GodKickUser with the Legacy Viewer's flags
+                let heading = painted(&texts, admin).rect.center();
+                let mut entry = None;
+                for _ in 0..30 {
+                    let texts = frames.run(vec![egui::Event::PointerMoved(heading)], |ui| {
+                        avatar_list_menu(ui, &p, &world, id, kind);
+                    });
+                    entry = texts
+                        .iter()
+                        .find(|t| t.source == aurora_i18n::text("admin-freeze-menu"))
+                        .map(|t| t.rect.center());
+                    if entry.is_some() {
+                        break;
+                    }
+                }
+                let at = entry.expect("the Admin submenu opens on hover");
+                let _ = take_requests(&frames.ctx);
+                for pressed in [true, false] {
+                    frames.run(
+                        vec![
+                            egui::Event::PointerMoved(at),
+                            egui::Event::PointerButton {
+                                pos: at,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: Default::default(),
+                            },
+                        ],
+                        |ui| avatar_list_menu(ui, &p, &world, id, kind),
+                    );
+                }
+                let actions = take_requests(&frames.ctx);
+                assert!(
+                    matches!(actions.as_slice(), [CtxAction::GodKick(i, aurora_net::god::KICK_FREEZE)] if *i == other),
+                    "{kind:?}: {actions:?}"
+                );
             }
         }
     }
