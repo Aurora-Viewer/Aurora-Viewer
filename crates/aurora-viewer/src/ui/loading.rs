@@ -612,7 +612,7 @@ mod tests {
         let ctx = egui::Context::default();
         let p = crate::theme::Theme::default().palette();
         let label = aurora_i18n::tr!("common-cancel");
-        let mut frame = |events: Vec<egui::Event>| {
+        let frame = |events: Vec<egui::Event>| {
             let mut pressed = false;
             let mut output = ctx.run_ui(
                 egui::RawInput {
@@ -664,7 +664,7 @@ mod tests {
         for events in click(Pos2::new(600.0, 450.0)) {
             assert!(!frame(events).0);
         }
-        let pressed = click(at).into_iter().map(|events| frame(events).0).any(|p| p);
+        let pressed = click(at).into_iter().any(|events| frame(events).0);
         assert!(pressed, "the click on Cancel reached the screen behind it");
     }
 }
