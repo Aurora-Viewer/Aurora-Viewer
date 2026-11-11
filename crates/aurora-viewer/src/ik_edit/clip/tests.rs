@@ -18,8 +18,8 @@ fn animation_playback_hides_bone_overlays_and_pause_restores_them() {
 #[test]
 fn timeline_opens_at_the_lower_right_and_fits_the_available_width() {
     let content = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(1536.0, 864.0));
-    let size = ui::timeline_default_size(content);
-    let pos = ui::timeline_default_position(content, size);
+    let size = timeline::timeline_default_size(content);
+    let pos = timeline::timeline_default_position(content, size);
 
     assert_eq!(size, egui::vec2(836.0, 440.0));
     assert_eq!(pos.x, 694.0);
@@ -29,42 +29,42 @@ fn timeline_opens_at_the_lower_right_and_fits_the_available_width() {
     assert_eq!(pos.y + size.y, content.bottom() - 16.0);
 
     let compact = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 720.0));
-    assert_eq!(ui::timeline_default_size(compact), egui::vec2(700.0, 440.0));
+    assert_eq!(timeline::timeline_default_size(compact), egui::vec2(700.0, 440.0));
 }
 
 #[test]
 fn timeline_zoom_keeps_a_clamped_visible_frame_window() {
-    assert_eq!(ui::timeline_view(0, 1800, 1.0, 900), (0, 1800));
-    let (start, end) = ui::timeline_view(0, 1800, 64.0, 900);
+    assert_eq!(timeline::timeline_view(0, 1800, 1.0, 900), (0, 1800));
+    let (start, end) = timeline::timeline_view(0, 1800, 64.0, 900);
     assert!(start <= 900 && 900 <= end);
     assert_eq!(end - start, 28);
-    assert_eq!(ui::timeline_view(10, 70, 8.0, u32::MAX), (62, 70));
-    assert_eq!(ui::timeline_view(0, 3600, 64.0, 0), (0, 56));
+    assert_eq!(timeline::timeline_view(10, 70, 8.0, u32::MAX), (62, 70));
+    assert_eq!(timeline::timeline_view(0, 3600, 64.0, 0), (0, 56));
 }
 
 #[test]
 fn timeline_zoom_centers_on_the_playhead_and_pan_can_reach_the_ends() {
-    let start = ui::timeline_start_around(0, 1800, 8.0, 900);
-    let (left, right) = ui::timeline_view(0, 1800, 8.0, start);
+    let start = timeline::timeline_start_around(0, 1800, 8.0, 900);
+    let (left, right) = timeline::timeline_view(0, 1800, 8.0, start);
     assert_eq!((left + right) / 2, 900);
-    assert_eq!(ui::timeline_view(0, 1800, 8.0, u32::MAX).1, 1800);
+    assert_eq!(timeline::timeline_view(0, 1800, 8.0, u32::MAX).1, 1800);
 }
 
 #[test]
 fn timeline_navigation_reveals_remote_seeks_but_keeps_visible_seeks_stable() {
-    assert_eq!(ui::reveal_timeline_frame(0, 1800, 8.0, 0, 100), 0);
-    let start = ui::reveal_timeline_frame(0, 1800, 8.0, 0, 1200);
-    let (left, right) = ui::timeline_view(0, 1800, 8.0, start);
+    assert_eq!(timeline::reveal_timeline_frame(0, 1800, 8.0, 0, 100), 0);
+    let start = timeline::reveal_timeline_frame(0, 1800, 8.0, 0, 1200);
+    let (left, right) = timeline::timeline_view(0, 1800, 8.0, start);
     assert!(left <= 1200 && 1200 <= right);
-    assert_eq!(ui::reveal_timeline_frame(0, 1800, 8.0, 1600, 0), 0);
+    assert_eq!(timeline::reveal_timeline_frame(0, 1800, 8.0, 1600, 0), 0);
 }
 
 #[test]
 fn timeline_follows_playback_without_moving_the_view_during_scrubbing() {
-    assert_eq!(ui::follow_timeline_playhead(0, 1800, 8.0, 0, 500, false), 0);
-    assert_eq!(ui::follow_timeline_playhead(0, 1800, 8.0, 0, 100, true), 0);
-    let start = ui::follow_timeline_playhead(0, 1800, 8.0, 0, 300, true);
-    let (left, right) = ui::timeline_view(0, 1800, 8.0, start);
+    assert_eq!(timeline::follow_timeline_playhead(0, 1800, 8.0, 0, 500, false), 0);
+    assert_eq!(timeline::follow_timeline_playhead(0, 1800, 8.0, 0, 100, true), 0);
+    let start = timeline::follow_timeline_playhead(0, 1800, 8.0, 0, 300, true);
+    let (left, right) = timeline::timeline_view(0, 1800, 8.0, start);
     assert!(left < 300 && 300 <= right);
     assert_eq!(right - 300, 23, "keep the playhead near the right edge while advancing");
 }
@@ -478,17 +478,17 @@ fn animation_timeline_shortcuts_match_the_documented_commands() {
         ..Default::default()
     };
 
-    assert_eq!(ui::timeline_shortcut(egui::Key::Space, none), Some(Shortcut::PlayPause));
-    assert_eq!(ui::timeline_shortcut(egui::Key::Home, none), Some(Shortcut::Rewind));
-    assert_eq!(ui::timeline_shortcut(egui::Key::Delete, none), Some(Shortcut::DeleteKey));
-    assert_eq!(ui::timeline_shortcut(egui::Key::Z, ctrl), Some(Shortcut::Undo));
-    assert_eq!(ui::timeline_shortcut(egui::Key::Y, ctrl), Some(Shortcut::Redo));
-    assert_eq!(ui::timeline_shortcut(egui::Key::Z, ctrl_shift), Some(Shortcut::Redo));
-    assert_eq!(ui::timeline_shortcut(egui::Key::C, ctrl), Some(Shortcut::CopyPose));
-    assert_eq!(ui::timeline_shortcut(egui::Key::V, ctrl), Some(Shortcut::PastePose));
-    assert_eq!(ui::timeline_shortcut(egui::Key::S, ctrl), Some(Shortcut::SaveProject));
-    assert_eq!(ui::timeline_shortcut(egui::Key::Z, ctrl_alt), None);
-    assert_eq!(ui::timeline_shortcut(egui::Key::V, none), None);
+    assert_eq!(timeline::timeline_shortcut(egui::Key::Space, none), Some(Shortcut::PlayPause));
+    assert_eq!(timeline::timeline_shortcut(egui::Key::Home, none), Some(Shortcut::Rewind));
+    assert_eq!(timeline::timeline_shortcut(egui::Key::Delete, none), Some(Shortcut::DeleteKey));
+    assert_eq!(timeline::timeline_shortcut(egui::Key::Z, ctrl), Some(Shortcut::Undo));
+    assert_eq!(timeline::timeline_shortcut(egui::Key::Y, ctrl), Some(Shortcut::Redo));
+    assert_eq!(timeline::timeline_shortcut(egui::Key::Z, ctrl_shift), Some(Shortcut::Redo));
+    assert_eq!(timeline::timeline_shortcut(egui::Key::C, ctrl), Some(Shortcut::CopyPose));
+    assert_eq!(timeline::timeline_shortcut(egui::Key::V, ctrl), Some(Shortcut::PastePose));
+    assert_eq!(timeline::timeline_shortcut(egui::Key::S, ctrl), Some(Shortcut::SaveProject));
+    assert_eq!(timeline::timeline_shortcut(egui::Key::Z, ctrl_alt), None);
+    assert_eq!(timeline::timeline_shortcut(egui::Key::V, none), None);
 }
 
 #[test]
@@ -504,12 +504,12 @@ fn animation_timeline_shortcut_keys_follow_the_typed_character() {
         ("v", egui::Key::V),
         ("s", egui::Key::S),
     ] {
-        assert_eq!(ui::timeline_key(&Key::Character(typed.into())), Some(expected));
+        assert_eq!(timeline::timeline_key(&Key::Character(typed.into())), Some(expected));
     }
-    assert_eq!(ui::timeline_key(&Key::Named(NamedKey::Space)), Some(egui::Key::Space));
-    assert_eq!(ui::timeline_key(&Key::Named(NamedKey::Home)), Some(egui::Key::Home));
-    assert_eq!(ui::timeline_key(&Key::Named(NamedKey::Delete)), Some(egui::Key::Delete));
-    assert_eq!(ui::timeline_key(&Key::Character("ß".into())), None);
+    assert_eq!(timeline::timeline_key(&Key::Named(NamedKey::Space)), Some(egui::Key::Space));
+    assert_eq!(timeline::timeline_key(&Key::Named(NamedKey::Home)), Some(egui::Key::Home));
+    assert_eq!(timeline::timeline_key(&Key::Named(NamedKey::Delete)), Some(egui::Key::Delete));
+    assert_eq!(timeline::timeline_key(&Key::Character("ß".into())), None);
 }
 
 #[test]

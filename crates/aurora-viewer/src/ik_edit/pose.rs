@@ -166,37 +166,53 @@ impl Editor {
         }
         changed
     }
+    /// Switch the selected bone between its IK chain and a direct (FK) joint
+    /// edit, shared by the Pose page and the timeline's posing toggle.
+    pub(super) fn set_chain_ik(&mut self, ik: bool, rig: &Rig, frame: &Frame) {
+        let Some(bone) = self.selected else { return };
+        if rig.parent[bone].is_none() || (self.mode == Mode::Ik) == ik {
+            return;
+        }
+        self.mode = if ik { Mode::Ik } else { Mode::Direct };
+        if ik {
+            // Direct bindings resolve with root == bone. Returning to IK must
+            // restore an actual chain, otherwise translation has no joints.
+            if self.root == bone {
+                self.root = ik::extended_root(rig, bone).unwrap_or_else(|| ik::default_root(rig, bone));
+            }
+            if let Some(limb) = limbs(rig).into_iter().find(|l| l.end == bone)
+                && ik::supports_pole(rig, bone, self.root)
+            {
+                self.pole = Some(limb.pole(frame));
+            }
+        } else {
+            self.pole = None;
+            self.control = Control::Bone;
+        }
+        self.drag = None;
+        self.gizmo.cancel();
+        self.commit_manipulation(rig, frame, false);
+    }
     pub(super) fn chain_ui(&mut self, ui: &mut egui::Ui, palette: &Palette, world: &World, frame: &Frame, bone: usize) {
         ui.horizontal_wrapped(|ui| {
             let rig = &world.avatar_lib.rig;
             let has_parent = rig.parent[bone].is_some();
             let mut detached = has_parent && self.mode == Mode::Direct;
-            let mut changed = ui
+            let toggled = ui
                 .add_enabled_ui(has_parent, |ui| {
                     widgets::checkbox(ui, palette, &mut detached, aurora_i18n::tr!("ik-edit-detach"))
                         .on_hover_text(aurora_i18n::tr!("ik-edit-detach-hint"))
                         .changed()
                 })
                 .inner;
-            if has_parent {
-                self.mode = if detached { Mode::Direct } else { Mode::Ik };
-            }
-            if changed && !detached {
-                // Direct bindings resolve with root == bone. Returning to IK must
-                // restore an actual chain, otherwise translation has no joints.
-                if self.root == bone {
-                    self.root = ik::extended_root(rig, bone).unwrap_or_else(|| ik::default_root(rig, bone));
-                }
-                if let Some(limb) = limbs(rig).into_iter().find(|l| l.end == bone)
-                    && ik::supports_pole(rig, bone, self.root)
-                {
-                    self.pole = Some(limb.pole(frame));
-                }
+            if toggled {
+                self.set_chain_ik(!detached, rig, frame);
             }
             if self.mode == Mode::Direct {
                 self.pole = None;
                 self.control = Control::Bone;
             }
+            let mut changed = false;
             if self.mode == Mode::Ik {
                 let mut ancestors = vec![bone];
                 while ancestors.len() < 12 {

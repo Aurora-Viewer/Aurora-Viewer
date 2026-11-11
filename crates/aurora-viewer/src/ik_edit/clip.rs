@@ -7,7 +7,10 @@ use std::{collections::HashSet, sync::Arc};
 pub(super) mod document;
 pub(super) mod files;
 #[cfg(test)]
+mod key_tests;
+#[cfg(test)]
 mod tests;
+mod timeline;
 mod ui;
 use document::{Document, FPS, MAX_FRAME};
 pub use files::Prepared;
