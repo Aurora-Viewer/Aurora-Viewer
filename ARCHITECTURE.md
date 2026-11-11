@@ -2579,7 +2579,10 @@ editors share its Import button through `ui/shape.rs::name_row`.
 `shape_editor/xml_export.rs` writes the draft back to that format (every
 parameter of the wearable's type, `ShapeParams::wearable_params`, no id) after
 the native save dialog, on a worker; its Export button, next to Import, needs
-modify rights (`actions::appearance_xml_export_allowed`).
+modify rights (`actions::appearance_xml_export_allowed`). Appearance › Export
+shape XML of our avatar's menu reads the worn shape's asset
+(`app/shape_editor.rs::export_worn_shape_xml`, `xml_export::MenuExport`) and
+exports it the same way, with a notice at the end.
 `shape_editor/camera.rs` frames the posed skeleton by category (whole body,
 head, torso or legs), using the existing camera transition.
 

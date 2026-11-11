@@ -96,7 +96,7 @@ impl Export {
     /// `allowed` is `Draft::can_export_xml`: a refusal comes back as the
     /// message to show.
     pub fn start(&mut self, ctx: &egui::Context, draft: &Draft, allowed: bool, lad: &ShapeParams) -> Result<(), String> {
-        self.spawn(ctx, draft, allowed, lad, None)
+        self.start_parts(ctx, &draft.item.name, draft.edited.kind, &draft.edited.params, allowed, lad, None)
     }
 
     /// Write to `path` without the dialog (`AURORA_DEMO_SHAPE_XML_EXPORT`),
@@ -109,10 +109,31 @@ impl Export {
         lad: &ShapeParams,
         path: PathBuf,
     ) -> Result<(), String> {
-        self.spawn(ctx, draft, allowed, lad, Some(path))
+        self.start_parts(
+            ctx,
+            &draft.item.name,
+            draft.edited.kind,
+            &draft.edited.params,
+            allowed,
+            lad,
+            Some(path),
+        )
     }
 
-    fn spawn(&mut self, ctx: &egui::Context, draft: &Draft, allowed: bool, lad: &ShapeParams, path: Option<PathBuf>) -> Result<(), String> {
+    /// [`Self::start`] for a wearable read outside an editor (the worn
+    /// shape of the Appearance menu), by name, type and weights; `path`
+    /// skips the dialog.
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_parts(
+        &mut self,
+        ctx: &egui::Context,
+        name: &str,
+        kind: u8,
+        weights: &BTreeMap<i32, f32>,
+        allowed: bool,
+        lad: &ShapeParams,
+        path: Option<PathBuf>,
+    ) -> Result<(), String> {
         if !allowed {
             log::info!("appearance XML export refused: no modify rights on the item");
             return Err(aurora_i18n::tr!("appearance-xml-export-refused").into());
@@ -120,8 +141,8 @@ impl Export {
         if self.busy() {
             return Ok(());
         }
-        let text = document(&draft.item.name, draft.edited.kind, &draft.edited.params, lad);
-        let file_name = format!("{}.xml", crate::world::outfit_backup::file_stem(&draft.item.name, "appearance"));
+        let text = document(name, kind, weights, lad);
+        let file_name = format!("{}.xml", crate::world::outfit_backup::file_stem(name, "appearance"));
         let (sender, receiver) = std::sync::mpsc::channel();
         let ctx = ctx.clone();
         let spawned = std::thread::Builder::new()
@@ -162,6 +183,11 @@ impl Export {
 
     /// The message to show once the export finished, if any.
     pub fn poll(&mut self) -> Option<String> {
+        self.poll_saved().map(|(message, _)| message)
+    }
+
+    /// [`Self::poll`], and whether the file was saved.
+    pub fn poll_saved(&mut self) -> Option<(String, bool)> {
         let outcome = match self.job.as_ref()?.try_recv() {
             Ok(outcome) => outcome,
             Err(TryRecvError::Empty) => return None,
@@ -170,9 +196,26 @@ impl Export {
         self.job = None;
         match outcome {
             Outcome::Cancelled => None,
-            Outcome::Failed => Some(aurora_i18n::tr!("appearance-xml-export-failed").into()),
-            Outcome::Saved(file) => Some(aurora_i18n::tr!("appearance-xml-exported", file = file)),
+            Outcome::Failed => Some((aurora_i18n::tr!("appearance-xml-export-failed").into(), false)),
+            Outcome::Saved(file) => Some((aurora_i18n::tr!("appearance-xml-exported", file = file), true)),
         }
+    }
+}
+
+/// Appearance > Export shape XML of our avatar's menu: the worn shape's
+/// asset is read (`loading`, the item and asset asked for), then exported
+/// as the editor's button does, under the same rule.
+#[derive(Default)]
+pub struct MenuExport {
+    pub loading: Option<(uuid::Uuid, uuid::Uuid)>,
+    /// Where to save without the dialog (`AURORA_DEMO_SHAPE_XML_MENU`).
+    pub path: Option<PathBuf>,
+    pub job: Export,
+}
+
+impl MenuExport {
+    pub fn busy(&self) -> bool {
+        self.loading.is_some() || self.job.busy()
     }
 }
 

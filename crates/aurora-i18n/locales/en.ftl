@@ -4426,6 +4426,7 @@ ui-appearance-current-outfit-not-in-my-outfits = The current outfit is not saved
 ui-bars-edit-objects-ctrl-3 = Edit objects (Ctrl+3)
 build-ui-tools-edit-parcel = Edit parcel
 ui-context-edit-shape = Edit shape
+ui-context-export-shape-xml = Export shape XML
 ui-context-edit-outfit = Edit outfit
 ui-context-edit-pbr-material = Edit PBR material
 ui-context-edit-land = Edit land

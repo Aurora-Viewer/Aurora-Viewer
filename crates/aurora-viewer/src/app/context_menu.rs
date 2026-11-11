@@ -167,6 +167,7 @@ impl App {
         let w = &self.world;
         let mut f = Facts {
             worn_shape: crate::shape_editor::worn_shape(&self.world),
+            shape_xml_export: self.worn_shape_xml_allowed() && !self.shape_ui.xml_menu.busy(),
             me: w.agent_id,
             seated: w.agent.is_sitting(),
             flying: w.agent.flying,
@@ -488,6 +489,7 @@ impl App {
             CtxAction::EstateTeleportHome(id) => self.ask_estate(id, land_moderation::EstateAct::TeleportHome),
             CtxAction::EstateBan(id) => self.ask_estate(id, land_moderation::EstateAct::Ban),
             CtxAction::GodKick(id, flags) => self.ask_god_kick(id, flags),
+            CtxAction::ExportShapeXml(item) => self.export_worn_shape_xml(item),
             CtxAction::EditWorn(item) => {
                 if self.world.inventory.items.get(&item).is_some_and(crate::wearable_editor::supported) {
                     self.open_wearable_editor(item);

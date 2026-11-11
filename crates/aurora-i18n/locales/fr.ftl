@@ -4432,6 +4432,7 @@ ui-appearance-current-outfit-not-in-my-outfits = La tenue actuelle n’est pas e
 ui-bars-edit-objects-ctrl-3 = Modifier des objets (Ctrl+3)
 build-ui-tools-edit-parcel = Modifier la parcelle
 ui-context-edit-shape = Modifier la silhouette
+ui-context-export-shape-xml = Exporter la silhouette (XML)
 ui-context-edit-outfit = Modifier la tenue
 ui-context-edit-pbr-material = Modifier le matériau PBR
 ui-context-edit-land = Modifier le terrain

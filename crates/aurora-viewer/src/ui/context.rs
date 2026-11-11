@@ -195,6 +195,9 @@ pub struct Facts {
     pub object_sit_blocked: bool,
     pub hover_height: bool,
     pub worn_shape: Option<Uuid>,
+    /// Appearance > Export shape XML: the worn shape may be written to a
+    /// file (`actions::appearance_xml_export_allowed`) and no export runs.
+    pub shape_xml_export: bool,
     pub object: ObjectFacts,
     /// Avatar: (complexity, shown as a silhouette).
     pub complexity: Option<(u32, bool)>,
@@ -292,6 +295,9 @@ pub enum CtxAction {
     /// handle_attachment_edit).
     TouchWorn(Uuid),
     EditWorn(Uuid),
+    /// Appearance > Export shape XML: the worn shape, by inventory item,
+    /// to an appearance XML file (`shape_editor::xml_export`).
+    ExportShapeXml(Uuid),
     /// "New physics" of the outfit gallery: created, worn and edited
     /// (LLAgentWearables::createWearable).
     NewPhysics,

@@ -4417,6 +4417,7 @@ ui-appearance-current-outfit-not-in-my-outfits = 現在のアウトフィット�
 ui-bars-edit-objects-ctrl-3 = オブジェクトを編集（Ctrl＋3）
 build-ui-tools-edit-parcel = 区画を編集
 ui-context-edit-shape = シェイプを編集
+ui-context-export-shape-xml = シェイプをＸＭＬでエクスポート
 ui-context-edit-outfit = アウトフィットを編集
 ui-context-edit-pbr-material = ＰＢＲマテリアルを編集
 ui-context-edit-land = 土地を編集

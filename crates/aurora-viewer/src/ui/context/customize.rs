@@ -284,6 +284,7 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::EditAttachment(..) => "EditAttachment",
         CtxAction::TouchWorn(..) => "TouchWorn",
         CtxAction::EditWorn(..) => "EditWorn",
+        CtxAction::ExportShapeXml(..) => "ExportShapeXml",
         CtxAction::NewPhysics => "NewPhysics",
         CtxAction::Touch(..) => "Touch",
         CtxAction::Sit { .. } => "Sit",
