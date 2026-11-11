@@ -356,6 +356,18 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     &field!(colored_sky_ambient),
                     &[(true, aurora, true), (false, tr!("ui-options-aurora-classic"), false)],
                 );
+                // the Legacy Viewer's flat layer until tried on modest GPUs;
+                // the two buttons leave it alone
+                let help = warned(tr!("ui-options-aurora-clouds-help"), tr!("ui-options-aurora-clouds-experimental"));
+                cx.wide().experimental().choice(
+                    tr!("ui-options-aurora-clouds"),
+                    &help,
+                    &field!(volumetric_clouds),
+                    &[
+                        (true, tr!("ui-options-aurora-clouds-volumetric"), true),
+                        (false, tr!("ui-options-aurora-clouds-flat"), false),
+                    ],
+                );
             });
             cx.group(tr!("common-interface"), |cx| {
                 cx.wide().choice(
@@ -486,6 +498,19 @@ mod tests {
         assert!(s.colored_sky_ambient);
         set_all(&mut s, Look::Legacy);
         assert!(!s.colored_sky_ambient);
+    }
+
+    #[test]
+    fn the_two_buttons_leave_the_volumetric_clouds_as_set() {
+        let mut s = Settings::default();
+        assert!(!s.volumetric_clouds, "the Legacy Viewer's layer by default");
+        set_all(&mut s, Look::Aurora);
+        assert!(!s.volumetric_clouds, "never switched on by the Aurora button");
+        s.volumetric_clouds = true;
+        set_all(&mut s, Look::Legacy);
+        assert!(s.volumetric_clouds, "nor off by the Legacy one");
+        set_all(&mut s, Look::Aurora);
+        assert!(s.volumetric_clouds);
     }
 
     #[test]

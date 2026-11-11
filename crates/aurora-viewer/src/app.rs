@@ -1291,10 +1291,26 @@ fn wanted_interface_colors(settings: &Settings) -> crate::interface_colors::Inte
     settings.interface_colors.clone()
 }
 
+/// Volumetric clouds for a launch: `AURORA_CLOUDS=aurora|legacy` chooses,
+/// else the demo's `AURORA_DEMO_CLOUDS` scenario turns them on, else the
+/// setting stands.
+fn clouds_choice(mode: Option<&str>, demo_scenario: bool, setting: bool) -> bool {
+    match mode.map(str::trim) {
+        Some("aurora") => true,
+        Some("legacy") => false,
+        _ => demo_scenario || setting,
+    }
+}
+
 /// Test overrides of the settings (used by automated captures): the
 /// graphics level first, so that the single settings after it still change
 /// it. Applied at start, and again after a new profile's level is chosen.
 fn apply_test_overrides(settings: &mut Settings) {
+    settings.volumetric_clouds = clouds_choice(
+        std::env::var("AURORA_CLOUDS").ok().as_deref(),
+        crate::demo::clouds::scenario().is_some(),
+        settings.volumetric_clouds,
+    );
     if std::env::var_os("AURORA_DEMO").is_some() && ui::bars::demo::get().graphics_profiles {
         crate::graphics_presets::saved::demo(settings);
     }
@@ -10862,6 +10878,13 @@ impl App {
             cutout: self.world.photo_isolation.empty_background(),
             hide_sky: self.settings.debug.hidden_types.sky,
             look: None,
+            clouds: crate::world::env::clouds_frame(
+                self.settings.volumetric_clouds,
+                self.world.main_region,
+                Some(env.sky.cloud_texture)
+                    .filter(|slot| *slot != 0)
+                    .and_then(|slot| gfx.renderer.textures.size_of(slot)),
+            ),
         };
         // a photo's look, or the live view's in the photo mode
         let focus = fp.dof.as_ref().map(|d| d.focus);
@@ -12189,6 +12212,9 @@ impl App {
                 self.world.apply(event);
             }
             for event in crate::demo::sky::events(self.frame_count) {
+                self.world.apply(event);
+            }
+            for event in crate::demo::clouds::events(self.frame_count) {
                 self.world.apply(event);
             }
             if let Some(step) = crate::demo::env::step(self.frame_count) {
@@ -18790,6 +18816,10 @@ impl ApplicationHandler for App {
                 }
                 self.settings.sync_night_sky();
             }
+            // AURORA_DEMO_CLOUDS: the region's fixed sky, not a time of day
+            if crate::demo::clouds::scenario().is_some() {
+                self.panels.time_of_day = 0;
+            }
             // AURORA_DEMO_NIGHT_SKY_CLOCK: the real time at this longitude
             if let Some(longitude) = crate::demo::night_sky::clock_longitude() {
                 if self.settings.night_sky_place != crate::world::night_sky::SkyPlace::Custom {
@@ -19813,6 +19843,14 @@ impl ApplicationHandler for App {
             }
             // AURORA_DEMO_SKY_OPTICS: from behind the avatar, up at the eastern sky
             if let Some(dir) = crate::demo::sky::view_direction()
+                && std::env::var_os("AURORA_DEMO_CAM").is_none()
+            {
+                let eye = self.world.agent.position + Vec3::new(-3.0, 0.0, 2.5);
+                self.camera
+                    .set_view(eye, eye + dir * 30.0, &mut self.world.agent, &self.settings.camera);
+            }
+            // AURORA_DEMO_CLOUDS: from behind the avatar, at the horizon
+            if let Some(dir) = crate::demo::clouds::view_direction()
                 && std::env::var_os("AURORA_DEMO_CAM").is_none()
             {
                 let eye = self.world.agent.position + Vec3::new(-3.0, 0.0, 2.5);
@@ -21726,6 +21764,18 @@ mod tests {
     use super::{RightGesture, UiActions, WindowedGeometry, capture_files, frame_cap, fullscreen_shortcut};
     use crate::settings::Settings;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn the_clouds_stay_legacy_unless_asked() {
+        use super::clouds_choice;
+        assert!(!Settings::default().volumetric_clouds, "the Legacy layer is the default");
+        assert!(!clouds_choice(None, false, false));
+        assert!(clouds_choice(None, false, true), "the setting stands");
+        assert!(clouds_choice(None, true, false), "the demo scenario turns them on");
+        assert!(clouds_choice(Some("aurora"), false, false));
+        assert!(!clouds_choice(Some("legacy"), true, true), "before / after on the same sky");
+        assert!(clouds_choice(Some("other"), true, false), "an unknown value changes nothing");
+    }
 
     #[test]
     fn coarse_interface_handles_refine_independently_and_portraits_wait_for_full_ui_size() {

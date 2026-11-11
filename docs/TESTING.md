@@ -4054,6 +4054,8 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_WATER_EEP=<fresnel offset>,<fresnel scale>,<blur>,<normal scale>[,<fog r,g,b>]` | Water of the `AURORA_DEMO_SKY` day with these values, out-of-range ones included |
 | `AURORA_DEMO_SKY_FLAGS=<flags>\|none` | Settings flags of the `AURORA_DEMO_SKY` day (rights of the sky and water snapshots) |
 | `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
+| `AURORA_DEMO_CLOUDS=fair\|broken\|stratocumulus\|overcast` | Volumetric clouds (Preferences › Aurora › Clouds on) under a fixed sky of that cloud type |
+| `AURORA_DEMO_CLOUDS_PITCH=<degrees>` | Camera pitch of `AURORA_DEMO_CLOUDS` (default 12; 2 shows the clouds at the horizon) |
 | `AURORA_DEMO_NIGHT_SKY=real\|legacy[:<azimuth>,<elevation>]` | The night sky's stars at midnight, the camera looking at the sky |
 | `AURORA_DEMO_NIGHT_SKY_PLACE=<latitude>[,<gain>]` | Where the real sky is seen from, and its stars' brightness |
 | `AURORA_DEMO_NIGHT_SKY_CLOCK=<longitude>[,<YYYY-MM-DDTHH:MM>]` | The real sky's hour from the clock at this longitude, at a fixed UTC moment if given |
@@ -4345,6 +4347,52 @@ both open states and the selection count. Capture at frame 620.
   sends Second Life's own, `rainbow_id` and `halo_id`); the shape, the place
   and the colors' order are those of skyF.glsl. Capture in `AURORA_AA=3` and
   `AURORA_AA=6`.
+- **`AURORA_DEMO_CLOUDS=fair|broken|stratocumulus|overcast`**: turns on
+  Preferences › Aurora › Clouds › Volumetric for this launch (in memory,
+  `AURORA_CLOUDS=legacy` keeps the Legacy Viewer's flat layer under the
+  same sky, for the before / after) and the region answers with a fixed
+  afternoon (`demo_clouds.rs`): the sun about 50° up in the south-east, the
+  Legacy Viewer's default haze and cloud colours, the cover of the preset
+  through `cloud_shadow` (0.27 `fair`, 0.37 `broken`, 0.42 `stratocumulus`,
+  0.62 `overcast`), which gives the cloud type and so the layer: cumulus
+  1.2 to 2 km above the camera, a lumpy sheet at 0.6 to 1.5 km, a stratus
+  slab at 0.4 to 0.9 km. The camera looks east, 12° up, from behind the
+  avatar. The volumetric layer takes about 16 frames after the switch to
+  make its noise (the Legacy layer shows meanwhile), so capture from
+  `AURORA_CAPTURE_FRAMES=2500` (the loading fade of the interface ends first). What to look at: separate heaps with flat
+  bases and bright rims for `fair`, rows that merge towards the horizon, a
+  grey uniform sheet for `overcast`, no hard edge at the horizon (the far
+  clouds melt into the haze), the sun's disc and the stars behind the
+  clouds' transparency. A photo (one pass, the tiles of a large one, any
+  frame drawn once and read back) traces the layer in full instead: every
+  pixel, 128 steps, 4 sub-samples with their jitter keyed on the pixel of
+  the whole photo (no seam between tiles), no history, so that the live
+  view's history is untouched and does not flash after the shot; try
+  `AURORA_DEMO_SNAPSHOT=shoot` (and `AURORA_DEMO_SNAPSHOT_TILE=512` for
+  tiles) with this scenario. Under water, in a cut-out photo (no sky) and
+  in the reflections (water, mirror, probes) the Legacy layer is drawn,
+  for now.
+  `AURORA_PROFILE=1` prints `g_clouds=` (the noise, trace and
+  reconstruction compute, in ms; the composite is inside the sky's time).
+- **`AURORA_CLOUDS=aurora|legacy`**: volumetric clouds or the Legacy Viewer's
+  flat layer for this launch, whatever the setting says (and the demo
+  scenario). Anything else changes nothing.
+- **`AURORA_CLOUD_NOISE=<file>`**: the volumetric clouds' noise textures
+  come from `assets/clouds/cloud_noise.bin`, built into the viewer and read by a
+  thread when the clouds are turned on. With this variable the file is the one
+  named; a path that does not exist, or a file that fails its magic, version,
+  size or checksum, logs a warning (`cloud noise: ...`) and the shader makes the
+  noise instead, over 16 frames, as before. To rebuild the file after a change
+  to the generators (`clouds_noise.rs`, kept equal to `gen_base`, `gen_detail`
+  and `gen_curl` of `clouds.wgsl`): `cargo run -p aurora-render --example
+  generate_cloud_noise`; the test `the_generator_is_deterministic_and_matches_the_shipped_file`
+  fails until the file and its pinned hashes are updated.
+- **`AURORA_CLOUDS_DEBUG=weather|slice`**: a measurement view of the volumetric
+  clouds, for development only (off by default, not a setting). `weather`:
+  the weather map's coverage as light on the sky. `slice`: three vertical
+  slices of the density across the upper picture, 100 px to the km in both
+  directions (red above 0.02, green above 0.15), to measure the width to
+  height of the heaps on the capture.
 - **`AURORA_DEMO_NIGHT_SKY=real|legacy[:<azimuth>,<elevation>]`**: sets
   Preferences › Graphics › Environment › Night sky for this launch (in
   memory), the demo's midnight (unless `AURORA_DEMO_TOD` is also given) and
@@ -10466,6 +10514,9 @@ What the inventory must show with these scenarios:
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
+| `AURORA_CLOUDS=aurora` or `legacy` | Volumetric clouds or the Legacy Viewer's flat layer for this launch, over the setting (and over `AURORA_DEMO_CLOUDS`) |
+| `AURORA_CLOUD_NOISE=<file>` | Cloud noise file to read instead of the built-in one (a missing or damaged file tests the GPU fallback) |
+| `AURORA_CLOUDS_DEBUG=weather` or `slice` | Measurement view of the volumetric clouds (the weather map, or vertical slices of the density) |
 | `AURORA_COLORED_AMBIENT=0`, `1` or `alt` | Sky ambient softened, grey under linear and HDR skies (Legacy Viewer), coloured at full strength like the first PBR release, or one second in two |
 | `AURORA_RIGGED_BLEND=split`, `runs`, `copy`, `depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: object by object, what is half covered writing its depth as drawn, then the fainter texels, then their depth from 1/255 on a copy (default); the same without the fainter texels' depth (#1024); where nearly opaque before their colour, then point by point where half covered (#966); from 1/255 on a copy (#948); where half covered before their colour; from 1/255; none (sorted with the others); or `split` by turns |
 | `AURORA_MESH_ORDER=asset` | Mesh faces keep the triangle order of the asset instead of the Legacy Viewer's vertex cache order |

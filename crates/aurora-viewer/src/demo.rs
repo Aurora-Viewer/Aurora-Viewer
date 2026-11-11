@@ -69,6 +69,9 @@ pub mod chatlog;
 /// The classifieds of the profile scenarios, ours kept for the run.
 #[path = "demo_classifieds.rs"]
 pub mod classifieds;
+/// AURORA_DEMO_CLOUDS: volumetric clouds under a fixed sky.
+#[path = "demo_clouds.rs"]
+pub mod clouds;
 /// Bumps, pushes and hits, and their window (AURORA_DEMO_COLLISIONS).
 #[path = "demo_collisions.rs"]
 pub mod collisions;
@@ -8749,6 +8752,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     }
     if *id == hud::TEX_MASK_PANEL {
         return Some(hud::mask_cutoff_texture());
+    }
+    if let Some(texture) = clouds::texture(id) {
+        return Some(texture);
     }
     if let Some(texture) = alpha_mask_ab::texture(id) {
         return Some(texture);

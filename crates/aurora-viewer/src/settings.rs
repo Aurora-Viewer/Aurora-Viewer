@@ -1379,6 +1379,11 @@ pub struct Settings {
     /// colour either way and only take the 0.7 curve, a little brighter. An
     /// experimental setting, off by default.
     pub colored_sky_ambient: bool,
+    /// Volumetric clouds (aurora-render `clouds.rs`) in the place of the
+    /// Legacy Viewer's flat cloud layer: Aurora (true) or Legacy. Off by
+    /// default until tried on modest GPUs, and left alone by the two buttons
+    /// of Preferences › Aurora, as the water effects once were.
+    pub volumetric_clouds: bool,
     /// 0 Khronos PBR Neutral, 1 ACES (RenderTonemapType: ACES by default,
     /// like the Legacy Viewer)
     pub tonemapper: u8,
@@ -2283,6 +2288,7 @@ impl Default for Settings {
             render_scale_auto: cfg!(target_os = "macos"),
             specular_aa: true,
             colored_sky_ambient: false,
+            volumetric_clouds: false,
             tonemapper: 1,
             tonemap_mix: TONEMAP_MIX,
             hdr_emissive: true,

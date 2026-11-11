@@ -433,6 +433,8 @@ struct Period {
     gpu_ssao: f32,
     /// The contact shadows alone (inside g_effects).
     gpu_contact: f32,
+    /// The volumetric clouds' compute alone (inside g_terrain_sky).
+    gpu_clouds: f32,
     /// The bloom levels alone (inside g_post).
     gpu_bloom: f32,
     /// The rest of g_effects: planar reflections, probe, scene copy, SSR.
@@ -709,6 +711,7 @@ impl FrameProfile {
         }
         p.gpu_ssao += render.gpu_ssao.unwrap_or(0.0);
         p.gpu_contact += render.gpu_contact.unwrap_or(0.0);
+        p.gpu_clouds += render.gpu_clouds.unwrap_or(0.0);
         p.gpu_bloom += render.gpu_bloom.unwrap_or(0.0);
         if let Some(e) = render.gpu_effects {
             add(&mut p.gpu_effects, &e);
@@ -1034,6 +1037,8 @@ fn summary(p: &Period, elapsed: Duration) -> String {
     let _ = write!(out, " g_ssao={:.3}", p.gpu_ssao / gpu_n);
     // the contact shadows alone (inside g_effects)
     let _ = write!(out, " g_contact={:.3}", p.gpu_contact / gpu_n);
+    // the volumetric clouds' compute alone (inside g_terrain_sky; 0 while off)
+    let _ = write!(out, " g_clouds={:.3}", p.gpu_clouds / gpu_n);
     // the bloom levels alone (inside g_post)
     let _ = write!(out, " g_bloom={:.3}", p.gpu_bloom / gpu_n);
     let _ = write!(out, " | shadow_path={}", aurora_render::shadow_cull::path_name(p.shadow_path));
@@ -1163,7 +1168,7 @@ mod tests {
         assert!(l.contains(" calls=40 "), "{l}");
         assert!(l.contains(" r_finish=0.00 ") && l.contains(" g_objects=0.000 "), "{l}");
         assert!(
-            l.contains(" g_depth=0.000 g_depth_msaa=0.000 g_ssao=0.000 g_contact=0.000 g_bloom=0.000 | shadow_path="),
+            l.contains(" g_depth=0.000 g_depth_msaa=0.000 g_ssao=0.000 g_contact=0.000 g_clouds=0.000 g_bloom=0.000 | shadow_path="),
             "{l}"
         );
         assert!(

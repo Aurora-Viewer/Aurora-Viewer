@@ -102,6 +102,21 @@ fn sky_tmp_ambient(sky: &SkyFrame) -> Vec3 {
     sky.ambient + (Vec3::ONE - sky.ambient) * sky.cloud_shadow * 0.5
 }
 
+/// The volumetric clouds' inputs for a frame (Settings::volumetric_clouds);
+/// None keeps the Legacy Viewer's flat layer. The pattern is anchored to the
+/// grid: the camera's position is relative to its region, whose south-west
+/// corner is the high half of the handle (x) and the low half (y), metres.
+pub fn clouds_frame(
+    on: bool,
+    main_region: Option<aurora_net::RegionHandle>,
+    texture_size: Option<(u32, u32)>,
+) -> Option<aurora_render::CloudsFrame> {
+    on.then(|| aurora_render::CloudsFrame {
+        region_origin: main_region.map_or([0.0; 2], |h| [(h >> 32) as f64, (h & 0xffff_ffff) as f64]),
+        texture_size: texture_size.unwrap_or((0, 0)),
+    })
+}
+
 /// Whether the colored sky ambient is on, the setting being `on`.
 /// AURORA_COLORED_AMBIENT forces it for a launch: `0` off, `1` on, `alt` one
 /// second each, for an A/B on a still scene.
@@ -420,6 +435,21 @@ impl Environment {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_clouds_follow_the_setting_and_the_grid() {
+        assert_eq!(
+            clouds_frame(false, Some(1), Some((256, 256))),
+            None,
+            "Legacy: nothing is asked of the renderer"
+        );
+        let handle = (256_000u64 << 32) | 256_256;
+        let c = clouds_frame(true, Some(handle), Some((512, 256))).expect("on");
+        assert_eq!(c.region_origin, [256_000.0, 256_256.0]);
+        assert_eq!(c.texture_size, (512, 256));
+        let none = clouds_frame(true, None, None).expect("on");
+        assert_eq!((none.region_origin, none.texture_size), ([0.0; 2], (0, 0)));
+    }
 
     #[test]
     fn only_skies_with_probe_ambiance_are_tone_mapped() {
