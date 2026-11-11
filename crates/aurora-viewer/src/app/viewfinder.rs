@@ -517,6 +517,10 @@ impl App {
             v.help = false;
             return true;
         }
+        if !self.build.selection.is_empty() {
+            self.build.deselect_all(&self.world);
+            self.flush_build();
+        }
         // A poser handle, IK manipulator or shown HUD under the pointer keeps the press
         // (#1389): the Legacy Viewer's snapshot floater takes no scene
         // clicks, so a HUD's poses and the poser stay usable while framing.

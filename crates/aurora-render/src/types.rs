@@ -207,6 +207,11 @@ pub mod flags {
     /// Bit of flags[3], above the texture animation's 24 packed bits.
     /// World faces whose material permits Blend texture alpha only.
     pub const WORLD_BLEND_PICK: u32 = 1 << 31;
+    /// Bits 24..26 of flags[3], above the texture animation: the layer rank
+    /// of a rigged face (`DrawRecord::set_layer_rank`, `layer_clip` in
+    /// object.wgsl).
+    pub const LAYER_RANK_SHIFT: u32 = 24;
+    pub const LAYER_RANK_MAX: u32 = 7;
     /// Bit of flags[3], above packed texture animation: local studio scenery
     /// is excluded from the avatar's temporary white reveal.
     pub const STUDIO_STAGE: u32 = 1 << 29;
@@ -1425,6 +1430,9 @@ pub struct FrameParams {
     /// what is drawn keeps its coverage, in the snapshot's alpha or over a
     /// checkerboard on the live view.
     pub cutout: bool,
+    /// The sky's rendering type is hidden (the viewer's Advanced ›
+    /// Rendering types): the view starts from `clear_color` instead.
+    pub hide_sky: bool,
     /// The photo's look (looks.rs), over the image once tone mapped; None:
     /// none, at no cost.
     pub look: Option<crate::looks::PhotoLook>,
@@ -2175,9 +2183,57 @@ mod tests {
     }
 
     #[test]
+    fn layer_rank_keeps_texture_animation_and_pick_bits() {
+        let animation = 1 | (7 << 8) | (15 << 16);
+        let mut record = DrawRecord {
+            flags: [flags::SKINNED, 42, 128, animation | flags::OBJECT_MASK_PICK],
+            ..Default::default()
+        };
+        record.set_world_blend_pick(true);
+        for rank in 0..=flags::LAYER_RANK_MAX {
+            record.set_layer_rank(rank);
+            assert_eq!((record.flags[3] >> flags::LAYER_RANK_SHIFT) & flags::LAYER_RANK_MAX, rank);
+            assert_eq!(record.flags[3] & 0x00ff_ffff, animation);
+            assert_ne!(record.flags[3] & flags::OBJECT_MASK_PICK, 0);
+            assert_ne!(record.flags[3] & flags::WORLD_BLEND_PICK, 0);
+        }
+        record.set_layer_rank(99);
+        assert_eq!(
+            (record.flags[3] >> flags::LAYER_RANK_SHIFT) & flags::LAYER_RANK_MAX,
+            flags::LAYER_RANK_MAX
+        );
+        record.set_layer_rank(0);
+        assert_eq!(record.flags[3], animation | flags::OBJECT_MASK_PICK | flags::WORLD_BLEND_PICK);
+    }
+
+    /// The shaders read the rank with the same bits, in the same flags word.
+    #[test]
+    fn layer_rank_bits_match_wgsl() {
+        let wgsl = include_str!("shaders/common.wgsl");
+        assert!(wgsl.contains(&format!("const LAYER_RANK_SHIFT: u32 = {}u;", flags::LAYER_RANK_SHIFT)));
+        assert!(wgsl.contains(&format!("const LAYER_RANK_MAX: u32 = {}u;", flags::LAYER_RANK_MAX)));
+        let mask = flags::LAYER_RANK_MAX << flags::LAYER_RANK_SHIFT;
+        assert_eq!(mask & 0x00ff_ffff, 0, "clear of the texture animation");
+        assert_eq!(
+            mask & (flags::OBJECT_MASK_PICK | flags::WORLD_BLEND_PICK),
+            0,
+            "clear of the pick bits"
+        );
+        let object = include_str!("shaders/object.wgsl");
+        assert!(object.contains("(rec.flags.w >> LAYER_RANK_SHIFT) & LAYER_RANK_MAX"));
+        // every eye view of a face goes through eye_clip, or the prepass and
+        // the scene pass would disagree on a ranked face's depth (the terrain
+        // too: the prepass draws it with vs_depth)
+        for src in [object, include_str!("shaders/env.wgsl")] {
+            assert!(!src.contains("out.clip = frame.eye_view_proj * ep;"));
+        }
+    }
+
+    #[test]
     fn draw_record_control_flags_do_not_overlap() {
         assert_eq!(flags::STUDIO_STAGE & flags::OBJECT_MASK_PICK, 0);
         assert_eq!(flags::STUDIO_STAGE & flags::WORLD_BLEND_PICK, 0);
         assert_eq!(flags::OBJECT_MASK_PICK & flags::WORLD_BLEND_PICK, 0);
+        assert_eq!(flags::STUDIO_STAGE & (flags::LAYER_RANK_MAX << flags::LAYER_RANK_SHIFT), 0);
     }
 }

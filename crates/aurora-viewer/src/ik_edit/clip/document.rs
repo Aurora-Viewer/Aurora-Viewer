@@ -512,6 +512,7 @@ impl Document {
                 loop_in: project.loop_in,
                 loop_out: project.loop_out,
                 looping: project.looping,
+                ends_after: None,
                 ease_in: project.ease_in,
                 ease_out: project.ease_out,
                 hand_pose: project.hand_pose,

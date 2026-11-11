@@ -137,6 +137,8 @@ pub enum BarAction {
     BuyCurrency,
     /// The balance shown or hidden (its right click, the account island's).
     ShowBalance(bool),
+    /// "L$ received" and "L$ spent" under the balance, from its menu.
+    BalanceRows(super::balance_gains::Shown),
     /// Me › Double-click on the ground (Firestorm's "DoubleClick Teleport"
     /// of its movement menu, Advanced.SetDoubleClickAction).
     SetDoubleClick(crate::autopilot::DoubleClick),
@@ -188,6 +190,9 @@ pub enum BarAction {
     HoverTips(HoverTipsMenu),
     WorldOverlays(crate::world::beacons::Overlays),
     ShowTransparency,
+    /// Advanced › Rendering types: what is not drawn, and whether the
+    /// particles are hidden (their own switch, World › Show more).
+    RenderTypes(crate::scene::render_types::Hidden, bool),
     OwnedLand,
 }
 
@@ -232,6 +237,12 @@ pub struct StatusInfo<'a> {
     pub balance: Option<i32>,
     /// The balance shown (`show_balance`, #1340).
     pub show_balance: bool,
+    /// The L$ gained and spent, under the balance.
+    pub balance_gains: Vec<super::balance_gains::GainRow>,
+    /// The balance's colour this frame: it flashes when a row lands.
+    pub balance_ink: Color32,
+    /// The switches of those rows, for the balance's menu.
+    pub balance_rows: super::balance_gains::Shown,
     /// Voice connection light and its explanation.
     pub voice: (crate::voice::VoiceLight, String),
     /// SLURL of the current position (shown when the location is edited).
@@ -317,6 +328,10 @@ pub struct StatusInfo<'a> {
     pub hover_tips: HoverTipsMenu,
     pub world_overlays: crate::world::beacons::Overlays,
     pub show_transparency: bool,
+    /// Advanced › Rendering types (not saved), and the keys of each row's
+    /// shortcut, in the order of `RENDER_TYPE_ACTIONS`.
+    pub hidden_types: crate::scene::render_types::Hidden,
+    pub render_type_keys: [String; 10],
     /// The conversations' thumbnails at the top right (#1134): how many,
     /// 0 for none (`thumbnails::reserve_top`).
     pub conversation_thumbnails: usize,
@@ -437,9 +452,39 @@ pub(super) fn home_menu(resp: &egui::Response, p: &Palette, can_set_home: bool) 
 /// The balance's right click (the account island's in the islands): the
 /// Legacy Viewer's "Show Currency Balance" of its status bar menu
 /// (menu_hide_navbar.xml, FSShowCurrencyBalanceInStatusbar), then Buy L$.
-pub(super) fn balance_menu(ui: &mut egui::Ui, p: &Palette, shown: bool, action: &mut BarAction) {
+pub(super) fn balance_menu(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, action: &mut BarAction) {
+    let shown = st.show_balance;
     if menu::check(ui, p, "coin-filled", aurora_i18n::tr!("ui-bars-show-balance"), shown, true) {
         *action = BarAction::ShowBalance(!shown);
+    }
+    // the L$ received and spent under it, each on its own: nowhere to show
+    // them while it is hidden
+    let rows = st.balance_rows;
+    if menu::check(
+        ui,
+        p,
+        "square-rounded-plus-filled",
+        aurora_i18n::tr!("ui-bars-balance-received"),
+        rows.received,
+        shown,
+    ) {
+        *action = BarAction::BalanceRows(super::balance_gains::Shown {
+            received: !rows.received,
+            ..rows
+        });
+    }
+    if menu::check(
+        ui,
+        p,
+        "square-rounded-minus-filled",
+        aurora_i18n::tr!("ui-bars-balance-spent"),
+        rows.spent,
+        shown,
+    ) {
+        *action = BarAction::BalanceRows(super::balance_gains::Shown {
+            spent: !rows.spent,
+            ..rows
+        });
     }
     if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("currency-menu")) {
         *action = BarAction::BuyCurrency;
@@ -539,6 +584,82 @@ fn flip(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: &mut bool, 
         *on = !*on;
     }
     clicked
+}
+
+/// The shortcut of each row of Advanced › Rendering types, in its order
+/// (Animesh has none, as in the Legacy Viewer).
+pub const RENDER_TYPE_ACTIONS: [Option<crate::keybinds::Action>; 10] = {
+    use crate::keybinds::Action as A;
+    [
+        Some(A::RenderTerrain),
+        Some(A::RenderWater),
+        Some(A::RenderSky),
+        Some(A::RenderClouds),
+        Some(A::RenderObjects),
+        Some(A::RenderAvatars),
+        None,
+        Some(A::RenderTrees),
+        Some(A::RenderGrass),
+        Some(A::HideParticles),
+    ]
+};
+
+/// The icons of Advanced › Rendering types: its submenu, its rows in the
+/// order of `RENDER_TYPE_ACTIONS`, then Show all.
+pub const RENDER_TYPE_ICONS: [&str; 12] = [
+    "stack-2-filled",
+    "mountain-filled",
+    "droplet-filled",
+    "sun-filled",
+    "cloud-filled",
+    "box",
+    "user-filled",
+    "run",
+    "tree",
+    "seedling-filled",
+    "sparkles-filled",
+    "eye-filled",
+];
+
+/// Advanced › Rendering types: a tick on what is drawn, as the Legacy
+/// Viewer's Develop › Rendering Types (render_type_from_string,
+/// indra/newview/llviewermenu.cpp); the menu stays open, to turn several
+/// off in a row. The Legacy Viewer's material passes (Simple, Alpha,
+/// Bump…) are not listed: Aurora does not split its draws that way.
+fn render_types_menu(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, action: &mut BarAction) {
+    use aurora_i18n::tr;
+    let mut h = st.hidden_types;
+    let mut particles = st.world_overlays.hide_particles;
+    let mut changed = false;
+    let rows = [
+        (tr!("render-types-terrain"), &mut h.terrain),
+        (tr!("render-types-water"), &mut h.water),
+        (tr!("render-types-sky"), &mut h.sky),
+        (tr!("render-types-clouds"), &mut h.clouds),
+        (tr!("render-types-objects"), &mut h.objects),
+        (tr!("render-types-avatars"), &mut h.avatars),
+        (tr!("render-types-animesh"), &mut h.animesh),
+        (tr!("render-types-trees"), &mut h.trees),
+        (tr!("render-types-grass"), &mut h.grass),
+        (tr!("render-types-particles"), &mut particles),
+    ];
+    let icons = &RENDER_TYPE_ICONS[1..];
+    for (((label, off), keys), icon) in rows.into_iter().zip(&st.render_type_keys).zip(icons) {
+        let mut drawn = !*off;
+        if menu::toggle_keys(ui, p, icon, label, &mut drawn, keys) {
+            *off = !drawn;
+            changed = true;
+        }
+    }
+    let any_hidden = h != Default::default() || particles;
+    if menu::item_if(ui, p, RENDER_TYPE_ICONS[11], tr!("render-types-show-all"), any_hidden) {
+        h = Default::default();
+        particles = false;
+        changed = true;
+    }
+    if changed {
+        *action = BarAction::RenderTypes(h, particles);
+    }
 }
 
 /// Check row of a menu for the floater `id`, ticked while it is open: it
@@ -1244,6 +1365,10 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 crate::ui::debug_settings::WINDOW,
                 &mut panels.debug_settings,
             );
+            // Develop › Rendering Types (LLAdvancedToggleRenderType)
+            menu::submenu(ui, p, RENDER_TYPE_ICONS[0], aurora_i18n::tr!("render-types-menu"), true, |ui| {
+                render_types_menu(ui, p, st, action);
+            });
             // Develop › Consoles › Region Debug Console, for those the
             // region gives the console to
             if st.region_console {
@@ -2000,14 +2125,26 @@ pub fn top_bars(
                     }
                     if let Some(b) = st.balance.filter(|_| st.show_balance) {
                         // a click opens the L$ purchase, a right click hides it
-                        let balance = ui
-                            .add(egui::Label::new(small(format!("{b} {}", aurora_i18n::currency()), p.ink)).sense(egui::Sense::click()))
+                        let text = format!("{b} {}", aurora_i18n::currency());
+                        let font = egui::FontId::proportional(12.0);
+                        let width = super::balance_gains::number_width(ui.painter(), &text, &font);
+                        let height = ui.fonts_mut(|f| f.row_height(&font));
+                        let (rect, balance) = ui.allocate_exact_size(Vec2::new(width.ceil(), height), egui::Sense::click());
+                        let left = egui::pos2(rect.left(), rect.center().y);
+                        super::balance_gains::paint_number(ui.painter(), &text, &font, left, st.balance_ink);
+                        let balance = balance
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
                             .on_hover_text(aurora_i18n::tr!("ui-bars-balance-click-to-buy-l"));
                         if balance.clicked() {
                             action = BarAction::BuyCurrency;
                         }
-                        menu::context_menu(&balance, p, |ui| balance_menu(ui, p, st.show_balance, &mut action));
+                        let anchor = super::balance_gains::Anchor {
+                            right: balance.rect.right(),
+                            text_top: balance.rect.top(),
+                            top: balance.rect.bottom() + 4.0,
+                        };
+                        super::balance_gains::paint(ui.ctx(), p, &st.balance_gains, &anchor, font);
+                        menu::context_menu(&balance, p, |ui| balance_menu(ui, p, st, &mut action));
                     }
                     // the conversations' thumbnails, left of the balance as
                     // the Legacy Viewer's chiclets (#1134)

@@ -322,12 +322,14 @@ impl Editor {
             self.gizmo.cancel();
         }
         widgets::switch_labeled(ui, palette, &mut self.limb_controls, aurora_i18n::tr!("ik-edit-limbs"));
-        ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text(aurora_i18n::tr!("ik-edit-filter")));
+        crate::ui::widgets::search_text_edit(ui, palette, &mut self.filter, |edit| {
+            edit.hint_text(aurora_i18n::tr!("ik-edit-filter"))
+        });
         let filter = self.filter.to_ascii_lowercase();
         for (bone, name) in world.avatar_lib.rig.canonical_names.iter().enumerate() {
             if self.visibility.visible(name)
                 && name.to_ascii_lowercase().contains(&filter)
-                && ui.selectable_label(self.selected == Some(bone), name).clicked()
+                && widgets::search_list_item(ui, self.selected == Some(bone), name).clicked()
             {
                 if self.links.bone_pick {
                     self.picked_bone(
