@@ -96,6 +96,9 @@ pub mod deform;
 /// A Marketplace delivery's notification (AURORA_DEMO_DELIVERY).
 #[path = "demo_delivery.rs"]
 pub mod delivery;
+/// The Destination Guide made up offline (AURORA_DEMO_DESTINATIONS).
+#[path = "demo_destinations.rs"]
+pub mod destinations;
 #[path = "demo_eep.rs"]
 pub mod eep;
 /// A facial expression and a hand pose (AURORA_DEMO_EMOTE).
