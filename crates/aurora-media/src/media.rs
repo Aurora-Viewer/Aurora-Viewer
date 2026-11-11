@@ -772,6 +772,13 @@ impl MediaPlugin {
         self.send(PluginMessage::new(CLASS_MEDIA, cmd.message()));
     }
 
+    /// LLPluginClassMedia::executeJavaScript
+    /// (indra/llplugin/llpluginclassmedia.cpp): run a script in the page's
+    /// main frame.
+    pub fn execute_javascript(&mut self, code: &str) {
+        self.send(PluginMessage::new(CLASS_MEDIA, "execute_javascript").with("code", code));
+    }
+
     // ------------------------------------------------------------ navigation
 
     /// LLPluginClassMedia::setCookie: a cookie in the browser's store (the

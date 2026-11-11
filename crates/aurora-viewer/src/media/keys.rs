@@ -205,7 +205,9 @@ fn edit_repeats(cmd: EditCommand) -> bool {
 /// Wayland backend and the page, drawn off screen, never has the keyboard
 /// focus that a Wayland client needs to read the clipboard; the viewer's
 /// window has that focus. Under X11 the plugin's Chromium neither reads the
-/// X clipboard nor answers for it (`page_cuts`).
+/// X clipboard nor answers for it (`page_cuts`); a compositor that serves
+/// the X clipboard only to a focused X window (Hyprland) leaves it nothing
+/// either.
 pub fn paste_through_viewer() -> bool {
     cfg!(target_os = "linux")
 }
@@ -232,7 +234,7 @@ pub fn wants_clipboard(letter: Option<char>, code: KeyCode, pressed: bool, repea
         && paste_through_viewer()
 }
 
-/// The text a Paste types into a page, from the system clipboard's text
+/// The text a Paste puts into a page, from the system clipboard's text
 /// now and its text when a page last cut or copied (`page_copy`): None, so
 /// the page pastes from its own clipboard, while the system clipboard has
 /// not changed since that cut or copy, which under Wayland never reaches it.
@@ -249,8 +251,8 @@ pub fn paste_text(page_copy: Option<&Option<String>>, now: Option<String>) -> Op
 /// the release still goes to the page, as in the Legacy Viewer, whose menus
 /// take only the key down (LLMenuItemCallGL::handleAcceleratorKey,
 /// indra/llui/llmenugl.cpp). `clipboard` is the text the
-/// viewer read for a Paste (`wants_clipboard`): it is typed into the page
-/// instead of `edit_paste`.
+/// viewer read for a Paste (`wants_clipboard`): `paste_script` puts it into
+/// the page instead of `edit_paste`.
 pub fn edit(
     p: &mut MediaPlugin,
     letter: Option<char>,
@@ -268,7 +270,7 @@ pub fn edit(
     }
     if (!repeat || edit_repeats(cmd)) && sent(cmd, page_cuts()) {
         match clipboard {
-            Some(text) if cmd == EditCommand::Paste => paste_typed(p, text),
+            Some(text) if cmd == EditCommand::Paste => p.execute_javascript(&paste_script(text)),
             _ => p.edit(cmd),
         }
     }
@@ -282,70 +284,28 @@ fn sent(cmd: EditCommand, cuts: bool) -> bool {
     cuts || !matches!(cmd, EditCommand::Cut | EditCommand::Copy)
 }
 
-/// The longest paste typed into a page, in characters: each one is a
-/// message to the plugin.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-const PASTE_MAX: usize = 32_768;
-
-/// The pieces of a pasted text as they are typed: runs of characters, and a
-/// Return for each line break inside it. Carriage returns, the line breaks
-/// that end the text, and other control characters are dropped.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn paste_pieces(text: &str) -> Vec<Option<String>> {
+/// The script that pastes `text` into the page's focused field, where the
+/// Legacy Viewer sends `edit_paste` (LLViewerMediaImpl::paste,
+/// indra/newview/llviewermedia.cpp) and the page reads the clipboard itself.
+/// As a real paste: a `paste` event carrying the text first, so a page that
+/// handles pastes gets it, then, unless the page cancelled it, the text
+/// inserted as plain text (`insertText`, one undo step, line breaks and
+/// tabs kept). It follows the focus into frames of the same origin; a
+/// frame of another origin is out of the script's reach and gets nothing.
+/// The text is one JSON string literal, never code.
+pub fn paste_script(text: &str) -> String {
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
-    let mut out = Vec::new();
-    for (i, line) in text.trim_end_matches('\n').split('\n').enumerate() {
-        if i > 0 {
-            out.push(None);
-        }
-        let run: String = line.chars().filter(|c| !c.is_control()).collect();
-        if !run.is_empty() {
-            out.push(Some(run));
-        }
-    }
-    out
+    let literal = serde_json::to_string(&text).unwrap_or_else(|_| "\"\"".into());
+    format!(
+        "(function(t){{var d=document,e=d.activeElement;\
+         while(e&&(e.tagName==='IFRAME'||e.tagName==='FRAME')){{try{{d=e.contentDocument;e=d.activeElement}}catch(x){{return}}}}\
+         if(!e)return;var go=true;\
+         try{{var dt=new DataTransfer();dt.setData('text/plain',t);\
+         go=e.dispatchEvent(new ClipboardEvent('paste',{{clipboardData:dt,bubbles:true,cancelable:true,composed:true}}))}}catch(x){{}}\
+         if(go)d.execCommand('insertText',false,t)}})({literal})"
+    )
 }
 
-/// Type a pasted text into a page, as the keyboard types it: its characters
-/// as text input and a Return for each line break, without modifiers so the
-/// page sees no Ctrl.
-#[cfg(target_os = "linux")]
-fn paste_typed(p: &mut MediaPlugin, text: &str) {
-    let mods = Modifiers::default();
-    let mut budget = PASTE_MAX;
-    for piece in paste_pieces(text) {
-        if budget == 0 {
-            log::warn!("media: paste cut at {PASTE_MAX} characters");
-            break;
-        }
-        match piece {
-            Some(run) => {
-                let typed: String = run.chars().take(budget).collect();
-                budget -= typed.chars().count();
-                for c in typed.chars() {
-                    let mut units = [0u16; 2];
-                    for &unit in c.encode_utf16(&mut units).iter() {
-                        let unit = u32::from(unit);
-                        let native = MediaPlugin::native_key_data_sdl(unit, sdl::to_windows(unit), 0, "textinput");
-                        p.text_input(&c.to_string(), mods, native);
-                    }
-                }
-            }
-            None => {
-                budget -= 1;
-                forward(p, KeyCode::Enter, 0, true, false, None, mods);
-                forward(p, KeyCode::Enter, 0, false, false, None, mods);
-            }
-        }
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-fn paste_typed(p: &mut MediaPlugin, _text: &str) {
-    p.edit(EditCommand::Paste);
-}
-
-#[cfg_attr(target_os = "linux", allow(dead_code))]
 /// UTF-16 code units of a text, one WM_CHAR each.
 pub fn char_units(text: &str) -> Vec<u32> {
     text.encode_utf16().map(|u| u as u32).collect()
@@ -744,23 +704,23 @@ mod tests {
     }
 
     #[test]
-    fn paste_typed_pieces() {
-        let s = |t: &str| Some(t.to_owned());
-        assert_eq!(
-            paste_pieces("https://example.com/watch?v=1"),
-            vec![s("https://example.com/watch?v=1")]
-        );
-        // the line breaks that end a copied line are dropped, inner ones are a Return
-        assert_eq!(paste_pieces("one\r\n"), vec![s("one")]);
-        assert_eq!(
-            paste_pieces("one\ntwo\r\nthree\n\n"),
-            vec![s("one"), None, s("two"), None, s("three")]
-        );
-        assert_eq!(paste_pieces("a\n\nb"), vec![s("a"), None, None, s("b")]);
-        // other control characters go, the rest of the text stays
-        assert_eq!(paste_pieces("a\tb\u{7}é😀"), vec![s("abé😀")]);
-        assert!(paste_pieces("").is_empty());
-        assert!(paste_pieces("\n").is_empty());
+    fn paste_script_quotes_the_text() {
+        // the text is one JSON string literal at the end of the script, line breaks as \n
+        let lit = |t: &str| {
+            let s = paste_script(t);
+            let start = s.rfind("})(").expect("call") + 3;
+            serde_json::from_str::<String>(&s[start..s.len() - 1]).expect("literal")
+        };
+        assert_eq!(lit("https://example.com/watch?v=1"), "https://example.com/watch?v=1");
+        assert_eq!(lit("one\r\ntwo\rthree\tx"), "one\ntwo\nthree\tx");
+        assert_eq!(lit(""), "");
+        // quotes, backslashes and script ends stay text, never code
+        let nasty = "\"); alert(1); (\"\\ ' ` ${x} </script> \u{2028} é😀";
+        assert_eq!(lit(nasty), nasty);
+        assert!(!paste_script(nasty).contains("alert(1); (\"\\"));
+        // a paste event first, then the insert unless the page cancelled it
+        let s = paste_script("x");
+        assert!(s.find("ClipboardEvent('paste'").expect("event") < s.find("if(go)").expect("insert"));
     }
 
     #[test]

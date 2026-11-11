@@ -14722,13 +14722,11 @@ impl App {
             || self.web_browser_ui.web_has_focus(self.panels.web_browser)
     }
 
-    /// LLMediaCtrl::handleKeyHere / handleUnicodeCharHere: the clicked page
-    /// receives keys before chat, gestures or viewer commands.
-    /// The text a Paste types into a page on Linux
+    /// The text a Paste puts into a page by script on Linux
     /// (keys::paste_through_viewer), read from the system clipboard; None
     /// lets the page paste from its own clipboard: for any other key, and
     /// when the clipboard has not changed since this page's last cut or
-    /// copy. Another page's copy never reaches this one, so it is typed.
+    /// copy. Another page's copy never reaches this one, so it goes by script.
     fn media_clipboard(
         &mut self,
         letter: Option<char>,
@@ -14761,6 +14759,8 @@ impl App {
         }
     }
 
+    /// LLMediaCtrl::handleKeyHere / handleUnicodeCharHere: the clicked page
+    /// receives keys before chat, gestures or viewer commands.
     fn focused_web(&mut self) -> Option<&mut aurora_media::MediaPlugin> {
         self.profile_ui
             .focused_web()
@@ -21428,7 +21428,7 @@ impl ApplicationHandler for App {
                     };
                     let letter = crate::media::keys::layout_letter(&ke.logical_key);
                     // Paste on Linux: the viewer reads the clipboard
-                    // and types it into the page (keys::paste_through_viewer)
+                    // and pastes it into the page by script (keys::paste_through_viewer)
                     let page_keys = !typing && (self.media.focus.is_some() || self.focused_web().is_some());
                     let clipboard = if page_keys {
                         self.media_clipboard(letter, code, pressed, ke.repeat, web_mods)
