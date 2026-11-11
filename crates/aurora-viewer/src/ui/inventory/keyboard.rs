@@ -109,6 +109,9 @@ pub(super) fn open_shortcut(
     });
     if pressed {
         open_selected(inv, st, prefs, facts, actions);
+        // An opened item changes the rows (a worn tag, a new window): keep the
+        // list's keyboard so a second Enter reaches it again.
+        clipboard::request_focus(ui, st);
     }
 }
 
