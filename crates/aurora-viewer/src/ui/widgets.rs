@@ -2133,7 +2133,7 @@ fn sized_icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enab
 
 /// Small flat text button.
 pub fn flat_button(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Response {
-    text_button(ui, p, label, None)
+    text_button(ui, p.ink, label, None)
 }
 
 /// A light toolbar action using the same gray/active underline as the tabs.
@@ -2185,14 +2185,31 @@ pub fn paint_ink_left(painter: &egui::Painter, galley: std::sync::Arc<egui::Gall
 
 /// Equal-sized dialog buttons; long script labels keep their full hover text.
 pub fn flat_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: Vec2) -> egui::Response {
-    text_button(ui, p, label, Some(size)).on_hover_text(label)
+    text_button(ui, p.ink, label, Some(size)).on_hover_text(label)
 }
 
-fn text_button(ui: &mut egui::Ui, p: &Palette, label: &str, size: Option<Vec2>) -> egui::Response {
+/// The modal's plain Enter action, visibly active before Tab moves focus.
+/// Use the theme's keyboard face without requesting focus or changing input.
+pub fn default_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: Vec2) -> egui::Response {
+    let hint = modal_keys::show_default_hint(ui);
+    ui.scope(|ui| {
+        if hint {
+            let active = ui.visuals().widgets.active;
+            ui.visuals_mut().widgets.inactive = active;
+            ui.visuals_mut().widgets.hovered = active;
+        }
+        let ink = if hint { p.on_accent } else { p.ink };
+        let response = text_button(ui, ink, label, Some(size)).on_hover_text(label);
+        modal_keys::default_button(response)
+    })
+    .inner
+}
+
+fn text_button(ui: &mut egui::Ui, ink: Color32, label: &str, size: Option<Vec2>) -> egui::Response {
     // Keep the button in the parent's layout so wrapped toolbars can break
     // before it. A child UI would wrap internally and enlarge narrow windows.
     // The theme gives every button its plain filled face.
-    let button = egui::Button::new(RichText::new(label).font(control_font(ui, 12.0)).color(p.ink));
+    let button = egui::Button::new(RichText::new(label).font(control_font(ui, 12.0)).color(ink));
     match size {
         Some(size) => ui.add_sized(size, button.truncate()),
         None => {

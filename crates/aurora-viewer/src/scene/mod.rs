@@ -51,6 +51,7 @@ pub mod picking;
 mod plants;
 pub mod portals;
 pub mod probes;
+pub mod render_types;
 pub mod rez;
 mod sculpt_watch;
 mod selection_demo;
@@ -430,10 +431,11 @@ pub struct ObjGpu {
     pub built_faces: usize,
     pub is_avatar: bool,
     pub parcel_hidden: bool,
-    /// Left out by the photo's isolation (`snapshot::isolate`): kept, only
-    /// flagged for the GPU lists (`object_flags::PHOTO_HIDDEN`) and left
-    /// out of the CPU ones, so that it comes back at once.
-    pub photo_hidden: bool,
+    /// Left out by the photo's isolation (`snapshot::isolate`) or by a
+    /// hidden rendering type (`render_types`): kept, only flagged for the
+    /// GPU lists (`object_flags::HIDDEN`) and left out of the CPU ones and
+    /// of the picking, so that it comes back at once.
+    pub hidden: bool,
     pub hud: bool,
     pub sculpt_wait: Option<Uuid>,
     /// Avatar wearing this object (attachments), for the avatar limit.
@@ -526,7 +528,7 @@ impl ObjGpu {
             (avatar.is_some() || self.skeleton_owner.is_some(), object_flags::NO_PROBE),
             (posed.is_some(), object_flags::POSED),
             (self.first_person_hidden, object_flags::FIRST_PERSON_HIDDEN),
-            (self.photo_hidden, object_flags::PHOTO_HIDDEN),
+            (self.hidden, object_flags::HIDDEN),
         ] {
             if on {
                 fl |= bit;
@@ -851,6 +853,10 @@ pub struct Scene {
     pub too_complex: std::collections::HashSet<usize>,
     parcel_visibility_version: u64,
     photo_isolation_version: u64,
+    /// The kinds of objects not drawn (Advanced › Rendering types), set by
+    /// the app at each frame, and those the objects were last flagged for.
+    pub hidden_types: render_types::Hidden,
+    hidden_types_applied: render_types::Hidden,
     /// The instant a photo drawn in several frames shows
     /// (`snapshot::Hold`): the sync places and moves what it visits at it,
     /// not at the clock's.
@@ -1549,6 +1555,8 @@ impl Scene {
             too_complex: Default::default(),
             parcel_visibility_version: 0,
             photo_isolation_version: 0,
+            hidden_types: Default::default(),
+            hidden_types_applied: Default::default(),
             held_at: None,
             photo_marks: Default::default(),
             give_marks: Default::default(),
@@ -2639,28 +2647,31 @@ impl Scene {
         ))
     }
 
-    /// The photo's isolation (`snapshot::isolate`): what it leaves out is
-    /// flagged, every object again when it changes, else those synced this
-    /// frame (an object arriving); and while choosing in the scene, what
-    /// is chosen is outlined, every prim and attachment of it.
+    /// The photo's isolation (`snapshot::isolate`) and the hidden rendering
+    /// types (`render_types`): what they leave out is flagged, every object
+    /// again when one of them changes, else those synced this frame (an
+    /// object arriving, one attached or linked); and while choosing in the
+    /// scene, what is chosen is outlined, every prim and attachment of it.
     fn sync_photo_isolation(&mut self, renderer: &mut Renderer, world: &World, synced: &[usize]) {
         use crate::snapshot::isolate;
         let iso = &world.photo_isolation;
-        if self.photo_isolation_version != iso.version {
+        let types = self.hidden_types;
+        // (a HUD is no rendering type: it stays)
+        let left_out = |idx: usize, hud: bool| !isolate::object_visible(world, idx) || (!hud && types.hides_object(world, idx));
+        if self.photo_isolation_version != iso.version || self.hidden_types_applied != types {
             self.photo_isolation_version = iso.version;
-            for idx in 0..self.gpu.len() {
-                let hidden = !isolate::object_visible(world, idx);
-                let g = &mut self.gpu[idx];
-                if g.photo_hidden != hidden {
-                    g.photo_hidden = hidden;
+            self.hidden_types_applied = types;
+            for (idx, g) in self.gpu.iter_mut().enumerate() {
+                let hidden = left_out(idx, g.hud);
+                if g.hidden != hidden {
+                    g.hidden = hidden;
                     renderer.cull.objects.set(idx, g.cull_object(idx));
                 }
             }
-        } else if iso.hides() {
+        } else if iso.hides() || types.any_object() {
             for &idx in synced {
-                let hidden = !isolate::object_visible(world, idx);
                 if let Some(g) = self.gpu.get_mut(idx) {
-                    g.photo_hidden = hidden;
+                    g.hidden = left_out(idx, g.hud);
                 }
             }
         }
@@ -4547,8 +4558,10 @@ impl Scene {
         let pass_view = self.pass_view;
         let dd = self.draw_distance;
         let shadow_dist = dd.min(256.0);
-        // terrain
-        for (&handle, r) in &self.regions {
+        // terrain (none while the Surface Patch rendering type is hidden:
+        // not drawn, casting no shadow, in no reflection)
+        let terrain_regions = if self.hidden_types.terrain { None } else { Some(&self.regions) };
+        for (&handle, r) in terrain_regions.into_iter().flatten() {
             for c in r.chunks.values() {
                 let center = c.world_center(r.offset);
                 if (center - view.eye).length() - c.radius > dd * 1.5 {
@@ -4594,7 +4607,10 @@ impl Scene {
                 }
             }
         }
-        self.lists.water.extend(self.water.draws(view, self.water_effects.geometry));
+        // (a hidden water draws neither itself nor its reflection pass)
+        if !self.hidden_types.water {
+            self.lists.water.extend(self.water.draws(view, self.water_effects.geometry));
+        }
 
         // nearest avatars in full (own avatar always), the others as
         // impostors (RenderAvatarMaxNonImpostors)
@@ -4616,14 +4632,14 @@ impl Scene {
         let mut avatars: Vec<(f32, usize)> = if by_index {
             self.list_index
                 .with(list_index::AVATAR)
-                .filter_map(|(i, _)| Some(i).zip(self.gpu.get(i).filter(|g| !g.photo_hidden)))
+                .filter_map(|(i, _)| Some(i).zip(self.gpu.get(i).filter(|g| !g.hidden)))
                 .map(|(i, g)| (avatar_distance(i, g), i))
                 .collect()
         } else {
             self.gpu
                 .iter()
                 .enumerate()
-                .filter(|(_, g)| g.is_avatar && !g.photo_hidden)
+                .filter(|(_, g)| g.is_avatar && !g.hidden)
                 .map(|(i, g)| (avatar_distance(i, g), i))
                 .collect()
         };
@@ -4863,7 +4879,7 @@ impl Scene {
             if g.faces.is_empty() || g.hud {
                 return l;
             }
-            if g.photo_hidden {
+            if g.hidden {
                 // left out of the photo, not of the scene: its textures held
                 // as out of view, so that memory pressure lowers them like
                 // any other out of view instead of down to nothing, and the

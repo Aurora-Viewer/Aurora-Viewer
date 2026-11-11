@@ -215,6 +215,13 @@ fn parse(v: &str) -> Scenario {
             "pending" => s.manage.pending = true,
             "ask-override" => s.manage.ask = Some(Ask::AccessOverride),
             "ask-linden" => s.manage.ask = Some(Ask::LindenEstate),
+            "ask-restrict" => {
+                use aurora_net::estate::estate_flags as ef;
+                s.manage.ask = Some(Ask::RestrictAccess {
+                    what: ef::EXTERNALLY_VISIBLE,
+                    here: 3,
+                })
+            }
             "ask-bonus" => {
                 s.manage.section = Some(1);
                 s.manage.ask = Some(Ask::ObjectBonus { dont_ask: false });
