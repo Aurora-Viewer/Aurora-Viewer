@@ -11,17 +11,21 @@ use std::{
 
 mod bones;
 mod bvh;
+mod compact;
 mod controls;
 mod data;
 mod document;
 mod kinematics;
 mod overlay;
 mod scale_gizmo;
+mod silhouette;
 mod storage;
 mod subjects;
 mod together;
 mod trackball;
 mod ui;
+mod world_hints;
+pub use compact::COMPACT_SIZE;
 pub(crate) use data::Pose as SubjectPose;
 #[cfg(test)]
 mod tests;
@@ -53,6 +57,23 @@ pub(crate) fn standing_pose(world: &World, subject: Uuid, lowered: f32) -> Optio
 pub struct Config {
     pub stop_on_close: bool,
     pub markers: bool,
+    /// The joint markers show only while the pointer is over the avatar
+    /// being posed (the selected joint's gizmo stays): an Aurora addition,
+    /// the Legacy Viewer's markers are on or off.
+    pub markers_hover: bool,
+    /// The world's hints (`world_hints`): the tint of another group's part
+    /// with Ctrl + click (`part_hints`), and the skeleton of another avatar
+    /// to pose (`avatar_hints`), each with its own button.
+    pub part_hints: bool,
+    pub avatar_hints: bool,
+    /// The selected joint's gizmo (rings, arrows, scale handles); off, the
+    /// sliders and the markers' drags still pose it. The Legacy Viewer's
+    /// visual manipulators toggle (FSFloaterPoser::onToggleVisualManipulators).
+    pub gizmo: bool,
+    /// The small window (`compact`) instead of the full one, switched by
+    /// the title bar's button and remembered. The full window stays the
+    /// default, as the Legacy Viewer's poser (FSFloaterPoser).
+    pub compact: bool,
     pub natural: bool,
     pub dof: bool,
     pub sensitivity: f32,
@@ -67,6 +88,11 @@ impl Default for Config {
         Self {
             stop_on_close: true,
             markers: true,
+            markers_hover: false,
+            part_hints: true,
+            avatar_hints: true,
+            gizmo: true,
+            compact: false,
             natural: true,
             dof: false,
             sensitivity: 0.5,
@@ -108,6 +134,10 @@ pub(super) struct State {
     pub(super) transform: usize,
     delta: bool,
     settings_open: bool,
+    /// The compact window's options popover (its title bar's gear).
+    options_open: bool,
+    /// Where it opens: the compact body's upper right corner, last frame.
+    options_anchor: Option<egui::Pos2>,
     library_open: bool,
     storage: storage::Service,
     preset: usize,
@@ -129,6 +159,14 @@ pub(super) struct State {
     /// A joint, shaft or gizmo handle was under the pointer, or dragged, in
     /// the last frame: the next press is the poser's, not a HUD's.
     pointer_owned: bool,
+    /// This frame, the selected joint's handles were under the pointer (no
+    /// drag), and a marker or shaft was: what `world_hint` may look under
+    /// with Ctrl (the handles, never a marker).
+    gizmo_hover: bool,
+    marker_hover: bool,
+    /// Last frame, Ctrl showed another part or avatar under the pointer:
+    /// the handles let it through this frame (`poser_ctrl_picks`).
+    ctrl_hint: bool,
     /// The joints edited over every subject, counted as the window shows:
     /// what a close that stops the pose would lose.
     edited_total: usize,
@@ -136,6 +174,54 @@ pub(super) struct State {
     /// anyway), and its "Don't ask again" ticked.
     close_asked: bool,
     close_dont_ask: bool,
+    /// How the compact window's Load list loads a pose.
+    load_mode: document::LoadMode,
+    /// A demo scenario's window mode, for the session only: the saved
+    /// `compact` is never written by a scenario. The title bar's button
+    /// drops it.
+    window_override: Option<bool>,
+    /// A click beside the joints and the gizmo left no joint selected: the
+    /// pelvis is not picked again by itself (an Aurora addition).
+    unselected: bool,
+    /// Profile pictures for the subject menu and the head: the app's, for
+    /// the residents drawn last frame (`pictures_drawn`); the missing ones
+    /// are asked for a few a second (`want_picture`).
+    pictures: HashMap<Uuid, egui::TextureHandle>,
+    pictures_drawn: std::collections::HashSet<Uuid>,
+    pictures_wanted: std::collections::HashSet<Uuid>,
+    pictures_asked: std::collections::HashSet<Uuid>,
+    picture_budget: crate::ui::nameplate::PictureBudget,
+    /// The joints the subject's rigged meshes use (`Scene::rigged_joints`),
+    /// refreshed by the app: the wings and the tail are offered only then.
+    rigged: std::collections::HashSet<usize>,
+    /// The Other bones shown (markers, shafts, the full window's list): those
+    /// a rigged mesh uses or the pose moved, set each frame
+    /// (`refresh_other_bones`); the rest of the wings, tail and hind limbs
+    /// stay out of the way.
+    other_used: std::collections::HashSet<String>,
+    /// The used Other bones inside the body (spine, groin, skull): in the
+    /// full window's list only, never in the world nor the compact window.
+    other_inner_used: std::collections::HashSet<String>,
+    /// "On hover": the pointer was near the silhouette last frame, and when
+    /// it last was (`overlay::markers_reveal`).
+    markers_near: bool,
+    markers_seen_at: f64,
+    /// The compact window's joint row shows its sliders.
+    joint_open: bool,
+    /// The angles the sliders last set (`controls::apply_joint_value`):
+    /// shown while the joint keeps that rotation. Read back from the
+    /// rotation, a Y past ±90° comes out as X and Z turned half a turn with
+    /// Y on the other side, and the sliders jumped every frame.
+    angles: Option<Angles>,
+}
+/// The angles the sliders set on a joint, and the rotation they made.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Angles {
+    subject: Uuid,
+    bone: usize,
+    delta: bool,
+    rotation: Quat,
+    degrees: Vec3,
 }
 impl Deref for State {
     type Target = Config;
@@ -162,6 +248,24 @@ pub(super) fn group(name: &str) -> usize {
         _ => 3,
     }
 }
+/// The tab of the Other bones (wings, tail, hind limbs, groin, skull).
+pub(super) const OTHER_GROUP: usize = 3;
+/// An Other bone inside the body: the spine, the groin, the skull (the
+/// Other bones that are not `optional_bone`). Full window's list only.
+pub(super) fn inner_bone(name: &str) -> bool {
+    group(name) == OTHER_GROUP && !optional_bone(name)
+}
+/// An Other bone that rests away from the body when nothing uses it: the
+/// wings, the tail and the hind limbs (the spine, groin and skull lie inside
+/// it). They do not widen a body's click or hover area.
+pub(super) fn optional_bone(name: &str) -> bool {
+    ["Wing", "Tail", "HindLimb"].iter().any(|part| name.contains(part))
+}
+pub(super) const FULL_WINDOW: &str = "poser";
+pub(super) const COMPACT_WINDOW: &str = "poser-compact";
+pub(super) fn window_id(compact: bool) -> &'static str {
+    if compact { COMPACT_WINDOW } else { FULL_WINDOW }
+}
 impl Editor {
     pub(super) fn poser_edited(&self, bone: usize) -> bool {
         self.poser.active && self.poser.sessions.get(&self.poser.subject).is_some_and(|s| s.edited(bone))
@@ -178,6 +282,86 @@ impl Editor {
     }
     pub fn posing(&self) -> bool {
         self.poser.active
+    }
+    /// The floater id of the poser's window in the mode it shows: each mode
+    /// keeps its own place and size. The saved setting decides until the
+    /// window has loaded it (the toolbar opens it before that).
+    pub fn poser_window(&self, saved: &Config) -> &'static str {
+        window_id(if self.poser.settings_loaded {
+            self.compact_mode()
+        } else {
+            self.poser.window_override.unwrap_or(saved.compact)
+        })
+    }
+    /// The app's profile pictures of the residents the poser drew last
+    /// frame (a few clones of shared handles).
+    pub fn set_poser_pictures(&mut self, all: &HashMap<Uuid, egui::TextureHandle>) {
+        let drawn = std::mem::take(&mut self.poser.pictures_drawn);
+        self.poser.pictures = drawn.iter().filter_map(|id| all.get(id).map(|t| (*id, t.clone()))).collect();
+    }
+    /// Whether the poser shows the joint `name`: its group is the open tab,
+    /// and an Other bone only when it is used (`State::other_used`).
+    pub(in crate::ik_edit) fn poser_bone_visible(&self, name: &str) -> bool {
+        // the open tab's joints; of the Other bones, the used ones
+        // (`refresh_other_bones`)
+        let shown = group(name);
+        shown == self.poser.group && (shown != OTHER_GROUP || self.poser.other_used.contains(name))
+    }
+    /// The Other bones listed this frame: weighted by a rigged mesh of the
+    /// subject, or moved by its pose (a loaded pose that bends a wing keeps
+    /// it reachable to reset). Aurora's own: the Legacy Viewer lists every
+    /// Other bone. The ones inside the body (`inner_bone`: the spine, the
+    /// groin, the skull) go to the full window's list alone, never to the
+    /// world nor the compact window, even used: the spine's are collapsed
+    /// pairs (mSpine2 back down on mSpine1, mSpine4 on mSpine3) whose markers
+    /// sit upside down over the torso and whose moves tear the body apart;
+    /// the body's own bones bend it. Unused, the wings, the tail and the
+    /// hind limbs rest unseen.
+    pub(super) fn refresh_other_bones(&mut self, rig: &Rig) {
+        let session = self.poser.sessions.get(&self.poser.subject);
+        let (inner, outer): (std::collections::HashSet<String>, _) = (0..rig.len())
+            .filter(|b| group(&rig.canonical_names[*b]) == OTHER_GROUP)
+            .filter(|b| self.poser.rigged.contains(b) || session.is_some_and(|s| s.edited(*b)))
+            .map(|b| rig.canonical_names[b].clone())
+            .partition(|name| inner_bone(name));
+        self.poser.other_used = outer;
+        self.poser.other_inner_used = inner;
+    }
+    /// Ctrl held in the poser over another part or avatar it shows (the
+    /// last frame's hint, `ctrl_hint`): the Ctrl + click picks it, so the
+    /// selected joint's handles let the pointer through. Elsewhere they keep
+    /// Ctrl (its temporary rotation, a handle's click in the photo mode),
+    /// and a drag already begun keeps them.
+    pub(in crate::ik_edit) fn poser_ctrl_picks(&self, modifiers: egui::Modifiers) -> bool {
+        self.poser.active && (modifiers.ctrl || modifiers.command) && self.poser.ctrl_hint
+    }
+    /// The subject posed now (you, an animesh or a resident).
+    pub fn poser_subject(&self) -> Uuid {
+        self.poser.subject
+    }
+    /// The joints the subject's rigged meshes use, from the scene.
+    pub fn set_poser_rigged_joints(&mut self, joints: std::collections::HashSet<usize>) {
+        self.poser.rigged = joints;
+    }
+    /// The profile pictures the poser waits for, for the app to ask.
+    pub fn take_poser_wanted_pictures(&mut self) -> impl Iterator<Item = Uuid> + '_ {
+        self.poser.pictures_wanted.drain()
+    }
+    /// The picture of `id` when the app has it; asked for otherwise, a few
+    /// new residents a second as People does (`PeopleUi::want_pic`).
+    pub(super) fn picture(&mut self, id: Uuid, now: f64) -> Option<egui::TextureHandle> {
+        self.poser.pictures_drawn.insert(id);
+        if let Some(t) = self.poser.pictures.get(&id) {
+            return Some(t.clone());
+        }
+        if self.poser.pictures_asked.contains(&id) || self.poser.picture_budget.take(now) {
+            self.poser.pictures_asked.insert(id);
+            self.poser.pictures_wanted.insert(id);
+        }
+        None
+    }
+    pub(super) fn compact_mode(&self) -> bool {
+        self.poser.window_override.unwrap_or(self.poser.compact)
     }
     /// A press on the scene now goes to a poser handle. The handles are
     /// painted in egui's Background layer, which the app does not count as
@@ -355,7 +539,24 @@ impl Editor {
     pub(super) fn poser_demo(&mut self, world: &World, frame: u64, mode: &str) {
         if frame == 420 {
             self.open_poser();
+            // the scenarios made before the compact window show the full one
+            // (after the open, which starts the poser's state anew)
+            self.poser.window_override = Some(mode.starts_with("poser-compact"));
+            // compact-sliders: the joint row's sliders open
+            self.poser.joint_open = mode == "poser-compact-sliders";
+            // compact-options: the gear's popover open
+            self.poser.options_open = mode == "poser-compact-options";
             self.pose_layers(world);
+        }
+        // compact-save: a name typed for Save's form (opened by the app)
+        if mode == "poser-compact-save" && frame == 480 {
+            self.poser.name = "Demo pose".into();
+        }
+        // compact-face: no joint selected, so that no gizmo covers the face
+        if mode == "poser-compact-face" && frame == 500 {
+            self.selected = None;
+            self.poser.unselected = true;
+            self.clear_together();
         }
         // the head edited at 450, then the window's cross: the confirmation
         if mode == "poser-close" && frame == 700 {
@@ -383,7 +584,7 @@ impl Editor {
                 if let Some(&bone) = rig.names.get("mFaceLipUpperCenter") {
                     self.select(bone, rig, &pose);
                 }
-            } else if mode == "poser-together" {
+            } else if mode == "poser-together" || mode == "poser-compact-together" {
                 // both eyes selected (the right one with Shift + click), the
                 // left one turned: the right one takes the same turn
                 self.poser.group = 1;
