@@ -308,4 +308,30 @@ mod tests {
             "{moved} vs {offset}"
         );
     }
+
+    #[test]
+    fn mirror_still_reflects_a_follower_that_is_not_paired() {
+        let (world, mut editor) = super::super::tests::selected_fixture();
+        let rig = world.avatar_lib.rig.clone();
+        let frame = editor.editor_frame(&world).unwrap();
+        let (lead, other) = (rig.names["mShoulderLeft"], rig.names["mHipLeft"]);
+        let (lead_pair, other_pair) = (rig.names["mShoulderRight"], rig.names["mHipRight"]);
+        editor.click_pose_bone(lead, &rig, &frame, false);
+        editor.click_pose_bone(other, &rig, &frame, true);
+        editor.set_pose_side(Side::Mirror, &rig, &frame);
+        let base = editor.poser.sessions[&world.agent_id].pose.clone();
+        editor.poser_transform(&rig, &frame, base.positions[lead], Quat::from_rotation_z(0.5), true);
+        let pose = &editor.poser.sessions[&world.agent_id].pose;
+        // the gizmo gives the same result as the sliders: every joint of the
+        // selection, the follower included, is reflected onto its counterpart
+        for (bone, pair) in [(lead, lead_pair), (other, other_pair)] {
+            assert_ne!(pose.rotations[bone], base.rotations[bone], "{}", rig.canonical_names[bone]);
+            assert!(
+                pose.rotations[pair].abs_diff_eq(data::mirrored(&rig, pose.rotations[bone], bone, pair), 1e-5),
+                "{} mirrors {}",
+                rig.canonical_names[pair],
+                rig.canonical_names[bone]
+            );
+        }
+    }
 }

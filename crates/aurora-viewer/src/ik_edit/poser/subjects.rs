@@ -120,18 +120,20 @@ impl Editor {
         } else if !edited.move_joint(rig, bone, self.position) {
             return true;
         }
-        // the joints the followers changed (themselves, and the chains a
-        // move bends): Mirror leaves them, and their counterparts, alone
-        let mut followed = vec![false; rig.len()];
+        // the joints this drag changed itself (the leader, the followers and
+        // the chains their moves bend): Mirror reflects them onto their
+        // counterparts but never writes over one of them, so a selected pair
+        // keeps its own solves while an unpaired follower still mirrors, as
+        // with the sliders
+        let mut dragged = vec![false; rig.len()];
         if !followers.is_empty() {
             let mut start = (*session.pose).clone();
             start.rotations.clone_from(&before.rotations);
             start.positions.clone_from(&before.positions);
-            let led = edited.rotations.clone();
             let change = if rotate { together::Change::Rotate } else { together::Change::Move };
             together::follow(rig, &start, &mut edited, bone, &followers, change);
-            for (joint, followed) in followed.iter_mut().enumerate() {
-                *followed = edited.rotations[joint] != led[joint] || followers.contains(&joint);
+            for (joint, dragged) in dragged.iter_mut().enumerate() {
+                *dragged = edited.rotations[joint] != before.rotations[joint] || joint == bone || followers.contains(&joint);
             }
         }
         if self.symmetry {
@@ -139,10 +141,9 @@ impl Editor {
             for (changed, rotation) in rotations.into_iter().enumerate() {
                 // a joint selected with the others takes their change, not a reflection
                 if rotation != before.rotations[changed]
-                    && !followed[changed]
                     && let Some(other) = self.mirrors.counterpart(changed)
                     && Some(other) != selected
-                    && !followed[other]
+                    && !dragged[other]
                 {
                     edited.rotations[other] = data::mirrored(rig, rotation, changed, other);
                     edited.origin[other] = data::mirrored(rig, edited.origin[changed], changed, other);
