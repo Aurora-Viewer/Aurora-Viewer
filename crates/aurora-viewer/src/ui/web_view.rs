@@ -353,6 +353,12 @@ impl WebView {
                 MediaEvent::NameChanged(name) => self.title = name,
                 MediaEvent::StatusText(text) => self.status = text,
                 MediaEvent::Progress(percent) => self.progress = percent,
+                // a Cut or Copy in the page on Linux (keys::copy_script)
+                MediaEvent::ScriptReply(r) => {
+                    if let Some(text) = crate::media::keys::copied_text(&r) {
+                        ui.ctx().copy_text(text);
+                    }
+                }
                 MediaEvent::PluginFailed(e) => {
                     log::warn!("web view: browser stopped: {e}");
                     self.failed = Some(e);

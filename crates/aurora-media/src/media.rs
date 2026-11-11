@@ -141,11 +141,20 @@ pub enum MediaEvent {
     SizeChanged,
     StatusChanged(MediaStatus),
     NavigateBegin(String),
-    NavigateComplete { uri: String, code: i32 },
+    NavigateComplete {
+        uri: String,
+        code: i32,
+    },
     LocationChanged(String),
     NameChanged(String),
-    ClickLinkHref { url: String, target: String },
-    ClickLinkNoFollow { url: String, nav_type: String },
+    ClickLinkHref {
+        url: String,
+        target: String,
+    },
+    ClickLinkNoFollow {
+        url: String,
+        nav_type: String,
+    },
     CloseRequest,
     CursorChanged(String),
     StatusText(String),
@@ -154,6 +163,22 @@ pub enum MediaEvent {
     NavigateErrorPage(i32),
     PluginFailed(String),
     DebugMessage(String),
+    /// The answer of a script run with `execute_javascript_for_reply`: what
+    /// the page logged after the tag, then the plugin's own " in file(…) at
+    /// line …" (MediaPluginCEF::onConsoleMessageCallback). Page text: to be
+    /// parsed, never run.
+    ScriptReply(String),
+}
+
+/// How long `execute_javascript_for_reply` waits for the page's answer.
+const REPLY_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// What a console message forwarded as `debug_message` says after `tag`,
+/// when it starts with it: MediaPluginCEF::postDebugMessage writes
+/// "@Media Msg> " and onConsoleMessageCallback "Console message: " before
+/// the page's text.
+fn script_reply<'a>(debug_text: &'a str, tag: &str) -> Option<&'a str> {
+    debug_text.strip_prefix("@Media Msg> Console message: ")?.strip_prefix(tag)
 }
 
 /// Dirty rectangle, in plugin coordinates (OpenGL style when
@@ -276,6 +301,9 @@ pub struct MediaPlugin {
     stream_volume: Option<crate::stream_volume::StreamVolume>,
     status: MediaStatus,
     events: Vec<MediaEvent>,
+    /// The tag a script's answer starts with, and until when it is awaited
+    /// (`execute_javascript_for_reply`).
+    reply: Option<(String, std::time::Instant)>,
     failed: bool,
     pub plugin_name: String,
     // media_browser
@@ -387,6 +415,7 @@ impl MediaPlugin {
             stream_volume,
             status: MediaStatus::None,
             events: Vec::new(),
+            reply: None,
             failed: false,
             plugin_name: plugin.to_string(),
             location: String::new(),
@@ -492,6 +521,9 @@ impl MediaPlugin {
         }
         for m in self.process.take_messages() {
             self.receive(m);
+        }
+        if self.reply.as_ref().is_some_and(|(_, until)| std::time::Instant::now() > *until) {
+            self.end_reply();
         }
         if let Some(response) = self.file_picker.as_ref().and_then(FilePicker::poll) {
             self.file_picker = None;
@@ -779,6 +811,28 @@ impl MediaPlugin {
         self.send(PluginMessage::new(CLASS_MEDIA, "execute_javascript").with("code", code));
     }
 
+    /// Run a script whose answer comes back as `MediaEvent::ScriptReply`:
+    /// the script logs `tag` then its answer with `console.log`. The plugin
+    /// has no message for a script's result; it forwards the page's console
+    /// as `debug_message` while debugging is on
+    /// (MediaPluginCEF::onConsoleMessageCallback and postDebugMessage,
+    /// indra/media_plugins/cef/media_plugin_cef.cpp), so debugging is on
+    /// only from here to the answer, or `REPLY_WAIT` at most. A newer
+    /// request replaces the one awaited. Only the first console message
+    /// that starts with `tag` is an answer: the tag should be unguessable.
+    pub fn execute_javascript_for_reply(&mut self, code: &str, tag: &str) {
+        if self.reply.is_none() {
+            self.send(PluginMessage::new(CLASS_MEDIA, "enable_media_plugin_debugging").with("enable", true));
+        }
+        self.reply = Some((tag.to_owned(), std::time::Instant::now() + REPLY_WAIT));
+        self.execute_javascript(code);
+    }
+
+    fn end_reply(&mut self) {
+        self.reply = None;
+        self.send(PluginMessage::new(CLASS_MEDIA, "enable_media_plugin_debugging").with("enable", false));
+    }
+
     // ------------------------------------------------------------ navigation
 
     /// LLPluginClassMedia::setCookie: a cookie in the browser's store (the
@@ -985,7 +1039,16 @@ impl MediaPlugin {
                     .with("blocking_response", true);
                 self.process.send(&r);
             }
-            "debug_message" => self.events.push(MediaEvent::DebugMessage(m.string("message_text"))),
+            "debug_message" => {
+                let text = m.string("message_text");
+                let answer = self.reply.as_ref().and_then(|(tag, _)| script_reply(&text, tag)).map(str::to_owned);
+                if let Some(answer) = answer {
+                    self.end_reply();
+                    self.events.push(MediaEvent::ScriptReply(answer));
+                } else {
+                    self.events.push(MediaEvent::DebugMessage(text));
+                }
+            }
             "file_download" => {
                 // Downloads are not implemented. Release CEF's blocking
                 // callback without choosing a save destination.
@@ -1144,6 +1207,18 @@ mod tests {
         assert_eq!(EditCommand::Copy.message(), "edit_copy");
         assert_eq!(EditCommand::Paste.message(), "edit_paste");
         assert_eq!(EditCommand::SelectAll.message(), "edit_select_all");
+    }
+
+    #[test]
+    fn script_reply_is_the_tagged_console_message_only() {
+        let tag = "aurora-copy:0123:";
+        let text = "@Media Msg> Console message: aurora-copy:0123:\"hi\" in file() at line 1";
+        assert_eq!(script_reply(text, tag), Some("\"hi\" in file() at line 1"));
+        // another console message, another tag, or the tag later in the text
+        assert_eq!(script_reply("@Media Msg> Console message: hello in file(x) at line 3", tag), None);
+        assert_eq!(script_reply("@Media Msg> Console message: aurora-copy:9999:\"x\"", tag), None);
+        assert_eq!(script_reply("@Media Msg> Console message: x aurora-copy:0123:\"x\"", tag), None);
+        assert_eq!(script_reply("aurora-copy:0123:\"x\"", tag), None);
     }
 
     #[test]

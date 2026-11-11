@@ -644,6 +644,7 @@ impl MediaManager {
     fn drive_plugins(&mut self, f: &MediaFrame, now: Instant) -> Vec<(Uuid, u8, String)> {
         let mut navs = Vec::new();
         let mut messages = Vec::new();
+        let mut copied = None;
         let paths = self.paths.clone();
         let browser = browser_settings(f.cache_dir, f.language);
         for m in &mut self.impls {
@@ -779,6 +780,11 @@ impl MediaManager {
                     }
                     MediaEvent::CloseRequest => close = true,
                     MediaEvent::CursorChanged(c) => m.cursor = c,
+                    MediaEvent::ScriptReply(r) => {
+                        if let Some(text) = super::keys::copied_text(&r) {
+                            copied = Some(text);
+                        }
+                    }
                     MediaEvent::PluginFailed(e) => {
                         log::warn!("media: plugin failed for {}: {e}", sanitize(&m.url));
                         m.failed = Some(e);
@@ -799,6 +805,9 @@ impl MediaManager {
             }
         }
         self.messages.extend(messages);
+        if copied.is_some() {
+            self.copied = copied;
+        }
         navs
     }
 

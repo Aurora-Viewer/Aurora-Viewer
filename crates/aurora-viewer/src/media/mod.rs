@@ -472,6 +472,9 @@ pub struct MediaManager {
     nav_rx: crossbeam_channel::Receiver<(Uuid, u8, Result<(), String>)>,
     /// Messages for the chat / notifications (drained by the app).
     pub messages: Vec<String>,
+    /// What a page's Cut or Copy gives the system clipboard on Linux
+    /// (keys::copy_script), taken by the app.
+    pub copied: Option<String>,
     /// Offline demo: autoplay regardless of the settings.
     force_autoplay: bool,
     /// Periodic state summary in the log.
@@ -517,6 +520,7 @@ impl Default for MediaManager {
             nav_tx,
             nav_rx,
             messages: Vec::new(),
+            copied: None,
             force_autoplay: false,
             last_diag: Instant::now() - Duration::from_secs(15),
             pick_cache: HashMap::new(),
@@ -717,12 +721,6 @@ impl MediaManager {
     pub fn focused_mut(&mut self) -> Option<&mut MediaImpl> {
         let k = self.focus?;
         self.find_mut(&k)
-    }
-
-    /// The system id of the focused face's plugin process, which tells one
-    /// page's clipboard from another's.
-    pub fn focused_pid(&self) -> Option<u32> {
-        self.focused()?.plugin.as_ref()?.pid()
     }
 
     /// Parcel media started (button state).

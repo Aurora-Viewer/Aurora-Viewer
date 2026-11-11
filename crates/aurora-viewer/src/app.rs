@@ -452,13 +452,6 @@ pub struct App {
     /// (LLKeyboardMacOSX::currentMask). Clicks, the wheel and media keep
     /// it separate (aurora_media::Modifiers::command).
     command: bool,
-    /// The pages (their plugin's process id) that cut or copied, each with
-    /// the system clipboard's text at its last cut or copy: the cut stays
-    /// in that page's own clipboard under Wayland
-    /// (keys::paste_through_viewer). The latest last, at most
-    /// `keys::PAGE_COPIES`; empty under X11, where no page cuts
-    /// (keys::page_cuts).
-    page_copy: Vec<(u32, Option<String>)>,
     /// What the last Paste press gave the page (`media_clipboard`), which
     /// its key repeats give again without reading the clipboard each time.
     held_paste: Option<String>,
@@ -1582,7 +1575,6 @@ impl App {
             shift: false,
             ctrl: false,
             command: false,
-            page_copy: Vec::new(),
             held_paste: None,
             screen: Screen::Login,
             login_form: LoginForm::default(),
@@ -10188,6 +10180,10 @@ impl App {
                     language: aurora_i18n::language(),
                 };
                 self.media.update(&mut self.world, &mut self.scene, &mut gfx.renderer, &frame);
+                // a page's Cut or Copy on Linux (keys::copy_script)
+                if let Some(text) = self.media.copied.take() {
+                    gfx.egui_state.set_clipboard_text(text);
+                }
                 self.options_ui.media_plugins = self
                     .media
                     .plugins_found()
@@ -13395,25 +13391,31 @@ impl App {
             // the field reads "auroraaurora" when the shortcuts reach the page
             // and the cut reaches the clipboard. The clipboard holds "stale"
             // first: a cut that does nothing leaves "stalestale", not a pass
-            // from an earlier run's clipboard. `paste`: the clipboard holds
-            // "pasted", set by the viewer as another program would, then
-            // Ctrl+V, so the field reads "aurorapasted".
+            // from an earlier run's clipboard. The pastes wait 30 frames for
+            // the page's answer on Linux (keys::copy_script), and the
+            // clipboard is logged just before them. `paste`: the clipboard
+            // holds "pasted", set by the viewer as another program would,
+            // then Ctrl+V, so the field reads "aurorapasted".
             let edit = v.split(',').any(|s| s.trim() == "edit");
             let paste = v.split(',').any(|s| s.trim() == "paste");
             if (edit || paste) && f == 864 {
                 self.egui_ctx.copy_text(if paste { "pasted" } else { "stale" }.to_owned());
             }
+            // (frame after 870 of the press, key); each release one frame later
             let keys = if edit {
-                &[KeyCode::KeyA, KeyCode::KeyX, KeyCode::KeyV, KeyCode::KeyV][..]
+                &[(0, KeyCode::KeyA), (2, KeyCode::KeyX), (30, KeyCode::KeyV), (32, KeyCode::KeyV)][..]
             } else if paste {
-                &[KeyCode::KeyV][..]
+                &[(0, KeyCode::KeyV)][..]
             } else {
                 &[][..]
             };
-            if (870..870 + 2 * keys.len() as u64).contains(&f) {
-                let k = (f - 870) as usize;
-                let code = keys[k / 2];
-                let pressed = k.is_multiple_of(2);
+            if edit && f == 899 {
+                let text = self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text());
+                log::info!("demo: media clipboard after the cut: {text:?}");
+            }
+            let at = f.checked_sub(870);
+            if let Some(&(press, code)) = keys.iter().find(|(press, _)| at.is_some_and(|a| a == *press || a == press + 1)) {
+                let pressed = at == Some(press);
                 let mods = aurora_media::Modifiers {
                     control: !cfg!(target_os = "macos"),
                     command: cfg!(target_os = "macos"),
@@ -14729,11 +14731,9 @@ impl App {
     }
 
     /// The text a Paste puts into a page by script on Linux
-    /// (keys::paste_through_viewer), read from the system clipboard; None
-    /// lets the page paste from its own clipboard: for any other key, and
-    /// when the clipboard has not changed since this page's last cut or
-    /// copy. Another page's copy never reaches this one, so it goes by script.
-    /// A held Paste repeats the press's text without reading again.
+    /// (keys::clipboard_through_viewer), read from the system clipboard;
+    /// None for any other key. A held Paste repeats the press's text
+    /// without reading again.
     fn media_clipboard(
         &mut self,
         letter: Option<char>,
@@ -14743,33 +14743,13 @@ impl App {
         mods: aurora_media::Modifiers,
     ) -> Option<String> {
         use crate::media::keys;
-        if !pressed || !keys::paste_through_viewer() {
+        if !keys::wants_clipboard(letter, code, pressed, repeat, mods) {
             return None;
         }
-        let cmd = keys::edit_shortcut(letter, code, mods)?;
-        // the page that gets the key: a web window first, as the key handler
-        let page = match self.focused_web() {
-            Some(p) => p.pid(),
-            None => self.media.focused_pid(),
-        };
-        let mut read = || self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text());
-        match cmd {
-            aurora_media::EditCommand::Cut | aurora_media::EditCommand::Copy if !repeat && keys::page_cuts() => {
-                if let Some(pid) = page {
-                    let text = read();
-                    keys::record_copy(&mut self.page_copy, pid, text);
-                }
-                None
-            }
-            aurora_media::EditCommand::Paste if keys::wants_clipboard(letter, code, pressed, repeat, mods) => {
-                if !repeat {
-                    let at_copy = self.page_copy.iter().find(|(pid, _)| Some(*pid) == page);
-                    self.held_paste = keys::paste_text(at_copy.map(|(_, text)| text), read());
-                }
-                self.held_paste.clone()
-            }
-            _ => None,
+        if !repeat {
+            self.held_paste = self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text());
         }
+        self.held_paste.clone()
     }
 
     /// LLMediaCtrl::handleKeyHere / handleUnicodeCharHere: the clicked page
@@ -21441,7 +21421,7 @@ impl ApplicationHandler for App {
                     };
                     let letter = crate::media::keys::layout_letter(&ke.logical_key);
                     // Paste on Linux: the viewer reads the clipboard
-                    // and pastes it into the page by script (keys::paste_through_viewer)
+                    // and pastes it into the page by script (keys::clipboard_through_viewer)
                     let page_keys = !typing && (self.media.focus.is_some() || self.focused_web().is_some());
                     let clipboard = if page_keys {
                         self.media_clipboard(letter, code, pressed, ke.repeat, web_mods)

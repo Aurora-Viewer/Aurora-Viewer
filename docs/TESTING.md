@@ -10109,15 +10109,15 @@ What the inventory must show with these scenarios:
   what the other residents' plates show.
 - **`AURORA_DEMO_MEDIA_CLICK`**: focus click at frame 700 by default,
   second click 60 frames after, optional click on the field 120 frames
-  after, then "aurora" is typed. With `edit`, Ctrl+A, Ctrl+X and Ctrl+V
-  twice follow (Cmd on macOS): the field reads "auroraaurora" when the
-  Edit menu shortcuts reach the page. The clipboard holds "stale" first:
-  "stalestale" means the paste took the system clipboard instead of the
-  page's cut (the cut stays in the page under Wayland). Under X11 the
-  page gets no Cut, so the selection stays and "stalestale" is right
-  there. With `paste`, the viewer puts "pasted" on the clipboard, as
-  another program would, then presses Ctrl+V: the field reads
-  "aurorapasted" when the page gets the system clipboard.
+  after, then "aurora" is typed. With `edit`, Ctrl+A, Ctrl+X and, 30
+  frames later, Ctrl+V twice follow (Cmd on macOS): the field reads
+  "auroraaurora" when the Edit menu shortcuts reach the page and the cut
+  reaches the system clipboard. The clipboard holds "stale" first:
+  "stalestale" means the cut never reached it. Just before the pastes the
+  log has `demo: media clipboard after the cut: Some("aurora")`. With
+  `paste`, the viewer puts "pasted" on the clipboard, as another program
+  would, then presses Ctrl+V: the field reads "aurorapasted" when the page
+  gets the system clipboard.
   `AURORA_DEMO_MEDIA_CLICK_FRAME` changes
   the starting frame to let the plugin load; also works with
   `AURORA_DEMO_HUDS=media`.

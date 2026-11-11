@@ -200,63 +200,28 @@ fn edit_repeats(cmd: EditCommand) -> bool {
     matches!(cmd, EditCommand::Undo | EditCommand::Redo | EditCommand::Paste)
 }
 
-/// Whether the page reads the clipboard through the viewer: on Linux, where
-/// `edit_paste` finds nothing to paste. Under Wayland, Chromium picks its
+/// Whether the page reaches the system clipboard through the viewer: on
+/// Linux, where `edit_paste` finds nothing to paste and `edit_cut` or
+/// `edit_copy` reach no other program. Under Wayland, Chromium picks its
 /// Wayland backend and the page, drawn off screen, never has the keyboard
-/// focus that a Wayland client needs to read the clipboard; the viewer's
-/// window has that focus. Under X11 the plugin's Chromium neither reads the
-/// X clipboard nor answers for it (`page_cuts`); a compositor that serves
-/// the X clipboard only to a focused X window (Hyprland) leaves it nothing
-/// either.
-pub fn paste_through_viewer() -> bool {
+/// focus that a Wayland client needs to read or set the clipboard; the
+/// viewer's window has that focus. Under X11 the plugin's Chromium neither
+/// reads the X clipboard nor answers for it, so a page's cut or copy would
+/// leave every other program's paste waiting on it until it gives up (the
+/// viewer's own for 4 s); a compositor that serves the X clipboard only to
+/// a focused X window (Hyprland) leaves it nothing either. So the viewer
+/// reads the clipboard for a Paste (`paste_script`) and sets it from the
+/// page's selection for a Cut or Copy (`copy_script`).
+pub fn clipboard_through_viewer() -> bool {
     cfg!(target_os = "linux")
 }
 
-/// Whether Cut and Copy go to the page as `edit_cut` and `edit_copy`: on
-/// every system but Linux under X11 (`cuts_on`).
-pub fn page_cuts() -> bool {
-    cuts_on(cfg!(target_os = "linux"), std::env::var_os("WAYLAND_DISPLAY").is_some())
-}
-
-/// `page_cuts` for a system: not on Linux under X11, where a page's cut or
-/// copy takes the X clipboard and its Chromium never answers a request for
-/// it, so every other program's paste waits on it until it gives up (the
-/// viewer's own for 4 s). Under Wayland the cut stays in the page.
-fn cuts_on(linux: bool, wayland: bool) -> bool {
-    !linux || wayland
-}
-
 /// Whether a key press is Paste and the viewer reads the clipboard for it
-/// (`paste_through_viewer`): read it then, and pass it to `edit`.
+/// (`clipboard_through_viewer`): read it then, and pass it to `edit`.
 pub fn wants_clipboard(letter: Option<char>, code: KeyCode, pressed: bool, repeat: bool, mods: Modifiers) -> bool {
     pressed
         && edit_shortcut(letter, code, mods).is_some_and(|cmd| cmd == EditCommand::Paste && (!repeat || edit_repeats(cmd)))
-        && paste_through_viewer()
-}
-
-/// The text a Paste puts into a page, from the system clipboard's text
-/// now and its text when a page last cut or copied (`page_copy`): None, so
-/// the page pastes from its own clipboard, while the system clipboard has
-/// not changed since that cut or copy, which under Wayland never reaches it.
-pub fn paste_text(page_copy: Option<&Option<String>>, now: Option<String>) -> Option<String> {
-    match page_copy {
-        Some(at_copy) if *at_copy == now => None,
-        _ => now,
-    }
-}
-
-/// How many pages' last cut or copy the viewer remembers (`record_copy`).
-pub const PAGE_COPIES: usize = 8;
-
-/// Remember that page `pid` cut or copied while the system clipboard held
-/// `text`: its own entry replaced and moved last, the oldest page dropped
-/// past `PAGE_COPIES`, so one page's copy leaves another's record alone.
-pub fn record_copy(copies: &mut Vec<(u32, Option<String>)>, pid: u32, text: Option<String>) {
-    copies.retain(|(p, _)| *p != pid);
-    copies.push((pid, text));
-    if copies.len() > PAGE_COPIES {
-        copies.remove(0);
-    }
+        && clipboard_through_viewer()
 }
 
 /// Run an Edit menu shortcut on a page instead of sending it the key: the
@@ -264,9 +229,12 @@ pub fn record_copy(copies: &mut Vec<(u32, Option<String>)>, pid: u32, text: Opti
 /// key press is a shortcut, which the page then never gets, on every system;
 /// the release still goes to the page, as in the Legacy Viewer, whose menus
 /// take only the key down (LLMenuItemCallGL::handleAcceleratorKey,
-/// indra/llui/llmenugl.cpp). `clipboard` is the text the
-/// viewer read for a Paste (`wants_clipboard`): `paste_script` puts it into
-/// the page instead of `edit_paste`.
+/// indra/llui/llmenugl.cpp). `clipboard` is the text the viewer read for a
+/// Paste (`wants_clipboard`): `paste_script` puts it into the page instead
+/// of `edit_paste`. Where the viewer holds the clipboard
+/// (`clipboard_through_viewer`), Cut and Copy run `copy_script` instead of
+/// `edit_cut` and `edit_copy`; its answer comes back as
+/// `MediaEvent::ScriptReply`, for `copied_text`.
 pub fn edit(
     p: &mut MediaPlugin,
     letter: Option<char>,
@@ -282,20 +250,52 @@ pub fn edit(
     if !pressed {
         return false;
     }
-    if (!repeat || edit_repeats(cmd)) && sent(cmd, page_cuts()) {
-        match clipboard {
-            Some(text) if cmd == EditCommand::Paste => p.execute_javascript(&paste_script(text)),
+    if !repeat || edit_repeats(cmd) {
+        match (cmd, clipboard) {
+            (EditCommand::Paste, Some(text)) => p.execute_javascript(&paste_script(text)),
+            (EditCommand::Cut | EditCommand::Copy, _) if clipboard_through_viewer() => {
+                let tag = copy_tag();
+                p.execute_javascript_for_reply(&copy_script(&tag, cmd == EditCommand::Cut), &tag);
+            }
             _ => p.edit(cmd),
         }
     }
     true
 }
 
-/// Whether a shortcut's command goes to the page: Cut and Copy only where
-/// the page cuts (`page_cuts`); elsewhere the key does nothing, as the
-/// plugin drops a printable key with Control held.
-fn sent(cmd: EditCommand, cuts: bool) -> bool {
-    cuts || !matches!(cmd, EditCommand::Cut | EditCommand::Copy)
+/// A fresh tag for a copy's answer (`copy_script`): random, so neither the
+/// page's frames of another origin nor an earlier page can guess it.
+fn copy_tag() -> String {
+    format!("aurora-copy:{}:", uuid::Uuid::new_v4().simple())
+}
+
+/// The script behind Cut and Copy on Linux, where the Legacy Viewer sends
+/// `edit_cut` and `edit_copy` (LLViewerMediaImpl::cut and copy,
+/// indra/newview/llviewermedia.cpp) and the page sets the clipboard itself.
+/// It finds the selection as `paste_script` finds the focus: through open
+/// shadow roots and frames of the same origin; the selected part of a
+/// focused text field, else the document's selection; never a password
+/// field's. As a real cut or copy, a `cut` or `copy` event goes first: a
+/// page that cancels it gives its own `text/plain` instead. A cut then
+/// deletes the selection, only in an editable field (one undo step).
+/// The answer is logged as the tag and one JSON string literal, every
+/// character past ASCII escaped (XML, which carries it to the viewer, does
+/// not allow some); an empty one when there is nothing to copy, so the
+/// viewer stops waiting. A page that replaced `console.log` gets the log of
+/// a blank frame of its own, removed at once.
+pub fn copy_script(tag: &str, cut: bool) -> String {
+    const SCRIPT: &str = r#"(function(tag,cut){var t='';try{var d=document,e=d.activeElement,r=null;for(;;){if(e&&e.shadowRoot&&e.shadowRoot.activeElement){r=e.shadowRoot;e=r.activeElement;continue}if(e&&/^(I?FRAME|OBJECT|EMBED|FENCEDFRAME)$/.test(e.tagName)){d=e.contentDocument;if(!d)throw 0;e=d.activeElement;r=null;continue}break}var f=e&&/^(INPUT|TEXTAREA)$/.test(e.tagName)?e:null;if(f&&String(f.type).toLowerCase()==='password')throw 0;var ed=f?!f.readOnly&&!f.disabled:!!(e&&e.isContentEditable),sel=r&&r.getSelection?r.getSelection():d.getSelection(),s=null;if(f&&f.selectionStart!=null)s=f.value.substring(f.selectionStart,f.selectionEnd);if(s===null)s=sel?String(sel):'';var a=sel&&sel.anchorNode,tg=(f||ed)?e:a?(a.nodeType===1?a:a.parentElement):null;tg=tg||e||d.body;var dt=new DataTransfer(),go=true;try{go=tg.dispatchEvent(new ClipboardEvent(cut?'cut':'copy',{clipboardData:dt,bubbles:true,cancelable:true,composed:true}))}catch(x){}if(!go)t=dt.getData('text/plain');else if(!cut||ed){t=s;if(cut&&s)d.execCommand('delete')}}catch(x){t=''}var j=JSON.stringify(String(t||'')).replace(/[\u007f-￿]/g,function(c){return'\\u'+('000'+c.charCodeAt(0).toString(16)).slice(-4)}),l=console.log;if(!/\[native code\]/.test(Function.prototype.toString.call(l))){try{var i=document.createElement('iframe');i.style.display='none';(document.body||document.documentElement).appendChild(i);i.contentWindow.console.log(tag+j);i.remove();return}catch(x){}}l.call(console,tag+j)})(TAG,CUT)"#;
+    let tag = serde_json::to_string(tag).unwrap_or_else(|_| "\"\"".into());
+    SCRIPT.replace("(TAG,CUT)", &format!("({tag},{cut})"))
+}
+
+/// The text a page's answer to `copy_script` gives the clipboard: the JSON
+/// string literal at the start of `MediaEvent::ScriptReply`, never run;
+/// None for an empty one (nothing selected: the clipboard stays as it is,
+/// as in a browser) or a malformed one.
+pub fn copied_text(reply: &str) -> Option<String> {
+    let text = serde_json::Deserializer::from_str(reply).into_iter::<String>().next()?.ok()?;
+    (!text.is_empty()).then_some(text)
 }
 
 /// The script that pastes `text` into the page's focused field, where the
@@ -694,51 +694,42 @@ mod tests {
     }
 
     #[test]
-    fn each_page_keeps_its_own_copy() {
-        let mut c = Vec::new();
-        record_copy(&mut c, 1, Some("a".into()));
-        record_copy(&mut c, 2, Some("b".into()));
-        // page 1's record outlives page 2's copy
-        assert_eq!(c.iter().find(|(p, _)| *p == 1).map(|(_, t)| t.clone()), Some(Some("a".into())));
-        record_copy(&mut c, 1, Some("c".into()));
-        assert_eq!(c, vec![(2, Some("b".into())), (1, Some("c".into()))]);
-        for pid in 10..20 {
-            record_copy(&mut c, pid, None);
-        }
-        assert_eq!(c.len(), PAGE_COPIES);
-        assert_eq!(c.last().map(|(p, _)| *p), Some(19));
+    fn linux_cuts_and_copies_through_the_viewer() {
+        assert_eq!(clipboard_through_viewer(), cfg!(target_os = "linux"));
     }
 
     #[test]
-    fn paste_text_after_a_page_copy() {
-        let t = |s: &str| Some(s.to_owned());
-        // no page copied: the system clipboard is typed
-        assert_eq!(paste_text(None, t("outside")), t("outside"));
-        assert_eq!(paste_text(None, None), None);
-        // a page copied and nothing changed since: the page's own clipboard
-        assert_eq!(paste_text(Some(&t("old")), t("old")), None);
-        assert_eq!(paste_text(Some(&None), None), None);
-        // another program copied since: its text is typed
-        assert_eq!(paste_text(Some(&t("old")), t("new")), t("new"));
-        assert_eq!(paste_text(Some(&None), t("new")), t("new"));
+    fn copy_script_carries_only_its_tag_and_kind() {
+        let tag = copy_tag();
+        assert!(tag.starts_with("aurora-copy:") && tag.ends_with(':') && tag.len() == "aurora-copy::".len() + 32);
+        assert_ne!(tag, copy_tag());
+        let s = copy_script(&tag, true);
+        assert!(s.ends_with(&format!("(\"{tag}\",true)")));
+        assert!(copy_script(&tag, false).ends_with(&format!("(\"{tag}\",false)")));
+        // the event first, then the delete of a cut, then the answer
+        let event = s.find("new ClipboardEvent(cut?'cut':'copy'").expect("event");
+        let delete = s.find("execCommand('delete')").expect("delete");
+        let answer = s.find("l.call(console,tag+j)").expect("answer");
+        assert!(event < delete && delete < answer);
+        // never a password field, and the same reach as the paste
+        assert!(s.contains("'password')throw 0"));
+        assert!(s.contains("e.shadowRoot.activeElement") && s.contains("OBJECT|EMBED|FENCEDFRAME"));
     }
 
     #[test]
-    fn x11_keeps_cut_and_copy_from_the_page() {
-        // Linux under X11: no edit_cut or edit_copy, the page never takes the X clipboard
-        assert!(!cuts_on(true, false));
-        // Linux under Wayland and every other system: the page cuts
-        assert!(cuts_on(true, true));
-        assert!(cuts_on(false, false));
-        assert!(!sent(EditCommand::Cut, false));
-        assert!(!sent(EditCommand::Copy, false));
-        assert!(sent(EditCommand::Paste, false));
-        assert!(sent(EditCommand::SelectAll, false));
-        assert!(sent(EditCommand::Undo, false));
-        assert!(sent(EditCommand::Redo, false));
-        assert!(sent(EditCommand::Cut, true));
-        assert!(sent(EditCommand::Copy, true));
-        assert_eq!(paste_through_viewer(), cfg!(target_os = "linux"));
+    fn copied_text_is_the_literal_only() {
+        let suffix = " in file() at line 1";
+        let reply = |lit: &str| format!("{lit}{suffix}");
+        assert_eq!(copied_text(&reply(r#""hello""#)), Some("hello".into()));
+        // escaped past ASCII, as the script sends it: line breaks, tabs, emoji, U+FFFE
+        assert_eq!(copied_text(&reply(r#""a\nb\tc é😀￾""#)), Some("a\nb\tc é😀\u{FFFE}".into()));
+        // what would be code stays text
+        assert_eq!(copied_text(&reply(r#""\"); alert(1); (\"""#)), Some("\"); alert(1); (\"".into()));
+        // nothing selected, or not a literal: the clipboard is left alone
+        assert_eq!(copied_text(&reply(r#""""#)), None);
+        assert_eq!(copied_text("hello in file() at line 1"), None);
+        assert_eq!(copied_text(r#""unterminated"#), None);
+        assert_eq!(copied_text(""), None);
     }
 
     #[test]
