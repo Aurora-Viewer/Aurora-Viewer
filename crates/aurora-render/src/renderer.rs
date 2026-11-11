@@ -6084,7 +6084,7 @@ impl Backend {
                 Ok(XrWorld {
                     backends: [left, right],
                     mirror: crate::vr_mirror::Mirror::new(&self.device, &self.config, &self.present_modes),
-                    grading: ([packet.settings.vr_gamma, packet.settings.vr_vibrancy] != [1.0; 2])
+                    grading: ([packet.settings.vr_gamma, packet.settings.vr_vibrancy] != [1.0; 2] && !session.grades_on_submission())
                         .then(|| crate::vr_mirror::HeadsetGrade::new(&self.device, session.output_template())),
                     session,
                     runtime: runtime.clone(),
@@ -6201,10 +6201,10 @@ impl Backend {
             bounded(packet.settings.vr_gamma, 0.5, 2.5),
             bounded(packet.settings.vr_vibrancy, 0.0, 2.0),
         ];
-        if grade == [1.0; 2] {
+        if grade == [1.0; 2] || world.session.grades_on_submission() {
             world.grading = None;
         }
-        let grading = (grade != [1.0; 2]).then(|| {
+        let grading = (grade != [1.0; 2] && !world.session.grades_on_submission()).then(|| {
             world
                 .grading
                 .get_or_insert_with(|| crate::vr_mirror::HeadsetGrade::new(&self.device, &eyes.textures[0]))
@@ -6249,7 +6249,7 @@ impl Backend {
             &mut self.egui,
             mirror_ui.as_ref(),
         );
-        if let Err(e) = world.session.end() {
+        if let Err(e) = world.session.end(grade) {
             log::error!("XR world submission failed: {e}");
             self.vr.finish(true);
             self.motion_cut = true;

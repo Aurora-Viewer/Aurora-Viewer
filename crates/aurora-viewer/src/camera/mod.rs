@@ -5782,6 +5782,38 @@ mod tests {
     }
 
     #[test]
+    fn desktop_wheel_keeps_a_position_locked_follow_camera() {
+        let mut settings = CameraSettings {
+            smoothing: 0.0,
+            ..Default::default()
+        };
+        let mut world = hover_world(true);
+        let mut camera = Camera::default();
+        settle(&mut camera, &mut world, &settings);
+        let avatar = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let seat = world.objects.parent_of(world.objects.get(avatar).unwrap()).unwrap();
+        let seat_id = world.objects.get(seat).unwrap().full_id;
+        world.scripted_camera.set(
+            seat_id,
+            world.main_region.unwrap(),
+            &[(12, 1.0), (14, 130.0), (15, 128.0), (16, 28.0), (21, 1.0)],
+            Vec3::ZERO,
+        );
+        settle(&mut camera, &mut world, &settings);
+        assert_eq!(camera.mode, CameraMode::Follow);
+        let eye = camera.position;
+        let distance = camera.follow.distance;
+        for clicks in [-1.0, 1.0] {
+            camera.scroll(clicks, false, false, &mut world.agent, &mut settings);
+            settle(&mut camera, &mut world, &settings);
+            assert_eq!(camera.mode, CameraMode::Follow);
+            assert!(camera.focus_on_avatar);
+            assert!(camera.position.abs_diff_eq(eye, 1e-4));
+            assert_eq!(camera.follow.distance, distance);
+        }
+    }
+
+    #[test]
     fn desktop_wheel_preserves_creator_seat_view_and_offset_shortcut() {
         let mut settings = CameraSettings::default();
         let mut world = hover_world(true);

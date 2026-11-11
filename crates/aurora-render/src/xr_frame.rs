@@ -52,8 +52,8 @@ pub(crate) struct Session {
     started: Option<std::time::Instant>,
     requested_stop: bool,
     stop_wanted: bool,
-    /// The eyes drawn in the viewer's format when the runtime's images are
-    /// in its sRGB twin; copied into those images at `end`.
+    /// Display-encoded eyes in the viewer's format. Submission copies the
+    /// bytes to sRGB images or converts them to linear colour for UNORM.
     staging: Option<[wgpu::Texture; 2]>,
     submission: Option<crate::vr_mirror::HeadsetGrade>,
     /// The swapchain image acquired for each eye in `begin`.
@@ -145,7 +145,7 @@ impl Session {
             return Err("Runtime does not support the viewer output format".into());
         };
         let format_raw = raw_format(eye_format)?;
-        let copied = eye_format != format || !eye_format.is_srgb();
+        let needs_staging = eye_format != format || !eye_format.is_srgb();
         let views = instance.enumerate_view_configuration_views(system, VIEWS)?;
         let [left, right] = views.as_slice() else {
             return Err("Expected stereo views".into());
@@ -159,7 +159,7 @@ impl Session {
         let mut swap_usage =
             xr::SwapchainUsageFlags::COLOR_ATTACHMENT | xr::SwapchainUsageFlags::TRANSFER_SRC | xr::SwapchainUsageFlags::SAMPLED;
         let mut eye_usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::TEXTURE_BINDING;
-        if copied {
+        if needs_staging && eye_format.is_srgb() {
             swap_usage |= xr::SwapchainUsageFlags::TRANSFER_DST;
             eye_usage |= wgpu::TextureUsages::COPY_DST;
         }
@@ -207,7 +207,7 @@ impl Session {
                         usage: wgpu::TextureUses::COLOR_TARGET
                             | wgpu::TextureUses::COPY_SRC
                             | wgpu::TextureUses::RESOURCE
-                            | if copied {
+                            | if needs_staging && eye_format.is_srgb() {
                                 wgpu::TextureUses::COPY_DST
                             } else {
                                 wgpu::TextureUses::empty()
@@ -236,9 +236,9 @@ impl Session {
             swaps.push(swap);
             images.push(imported);
         }
-        let staging = copied.then(|| {
+        let staging = needs_staging.then(|| {
             let desc = wgpu::TextureDescriptor {
-                label: Some("XR world eye, copied to the runtime"),
+                label: Some("XR world eye, staged for the runtime"),
                 size: wgpu::Extent3d {
                     width,
                     height,
@@ -483,7 +483,11 @@ impl Session {
         self.staging.as_ref().map_or(&self.images[0][0], |eyes| &eyes[0])
     }
 
-    pub fn end(&mut self) -> Result<()> {
+    pub fn grades_on_submission(&self) -> bool {
+        self.submission.is_some()
+    }
+
+    pub fn end(&mut self, grade: [f32; 2]) -> Result<()> {
         let (time, views) = self.frame.take().ok_or("No acquired XR frame")?;
         if let Some(submission) = &self.submission {
             let targets = std::array::from_fn(|i| self.images[i][self.acquired[i]].clone());
@@ -491,7 +495,7 @@ impl Session {
                 &self.device,
                 &self.queue,
                 &targets,
-                [1.0; 2],
+                grade,
                 [submission.sources[0].format().is_srgb(), true],
             );
         } else if let Some(staging) = &self.staging {
