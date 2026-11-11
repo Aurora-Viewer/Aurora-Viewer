@@ -441,8 +441,20 @@ pub enum Action {
     PropertyLines,
     LandOwners,
     HideParticles,
+    /// Advanced › Rendering types, one kind each (menu_viewer.xml: Develop ›
+    /// Rendering Types, Ctrl+Alt+Shift+3 Tree … - Clouds).
+    RenderTrees,
+    RenderAvatars,
+    RenderTerrain,
+    RenderSky,
+    RenderWater,
+    RenderObjects,
+    RenderGrass,
+    RenderClouds,
     /// Aurora's Dev Toolbox window (Ctrl+Alt+D).
     DevToolbox,
+    /// Advanced › Request Admin Status (menu_viewer.xml, control|alt|G).
+    RequestAdminStatus,
     /// Advanced.ShowDebugSettings.
     DebugSettings,
     /// "Force appearance update (rebake)" (Firestorm Ctrl+Alt+R).
@@ -642,6 +654,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                 aurora_i18n::tr!("keybinds-debug"),
                 vec![
                     (Action::DevToolbox, aurora_i18n::tr!("dev-toolbox-title")),
+                    (Action::RequestAdminStatus, aurora_i18n::tr!("god-mode-request")),
                     (Action::DebugSettings, aurora_i18n::tr!("toolbar-command-debug-settings")),
                     (Action::ShowTransparency, aurora_i18n::tr!("common-show-transparency")),
                     (Action::SelectionOutlines, aurora_i18n::tr!("keybinds-selection-outlines")),
@@ -649,6 +662,14 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::PropertyLines, aurora_i18n::tr!("world-property-lines")),
                     (Action::LandOwners, aurora_i18n::tr!("world-land-owners")),
                     (Action::HideParticles, aurora_i18n::tr!("world-hide-particles")),
+                    (Action::RenderTrees, aurora_i18n::tr!("keybinds-render-trees")),
+                    (Action::RenderAvatars, aurora_i18n::tr!("keybinds-render-avatars")),
+                    (Action::RenderTerrain, aurora_i18n::tr!("keybinds-render-terrain")),
+                    (Action::RenderSky, aurora_i18n::tr!("keybinds-render-sky")),
+                    (Action::RenderWater, aurora_i18n::tr!("keybinds-render-water")),
+                    (Action::RenderObjects, aurora_i18n::tr!("keybinds-render-objects")),
+                    (Action::RenderGrass, aurora_i18n::tr!("keybinds-render-grass")),
+                    (Action::RenderClouds, aurora_i18n::tr!("keybinds-render-clouds")),
                 ],
             ),
         ]
@@ -909,6 +930,18 @@ impl KeyBindings {
                     None,
                 ],
             ),
+            // menu_viewer.xml: Develop › Rendering Types, control|alt|shift
+            // and 3 Tree, 4 Avatars, 5 Surface Patch, 6 Sky, 7 Water, 9
+            // Volume, 0 Grass, - Clouds (the digits keep their place, the
+            // minus follows the layout)
+            (Action::RenderTrees, [kalt(K::Digit3, true, true), None]),
+            (Action::RenderAvatars, [kalt(K::Digit4, true, true), None]),
+            (Action::RenderTerrain, [kalt(K::Digit5, true, true), None]),
+            (Action::RenderSky, [kalt(K::Digit6, true, true), None]),
+            (Action::RenderWater, [kalt(K::Digit7, true, true), None]),
+            (Action::RenderObjects, [kalt(K::Digit9, true, true), None]),
+            (Action::RenderGrass, [kalt(K::Digit0, true, true), None]),
+            (Action::RenderClouds, [kalt(K::Minus, true, true), None]),
             // menu_viewer.xml: Show HUD Attachments, shortcut="alt|shift|H"
             (Action::ShowHuds, [kalt(K::KeyH, false, true), None]),
             // Aurora's direct HUD gesture must leave Alt to Firestorm's camera (#266).
@@ -939,6 +972,8 @@ impl KeyBindings {
             ),
             // Aurora's Dev Toolbox (Advanced › Dev Toolbox)
             (Action::DevToolbox, [kalt(K::KeyD, true, false), None]),
+            // menu_viewer.xml: Request Admin Status
+            (Action::RequestAdminStatus, [kalt(K::KeyG, true, false), None]),
             (Action::DebugSettings, [kalt(K::KeyS, true, true), None]),
             // menu_viewer.xml: Avatar Health
             (Action::StopAnimations, [kalt(K::KeyA, false, true), None]),
@@ -2311,7 +2346,11 @@ mod tests {
                 (true, true, true),
                 [K::Equal, K::Equal, K::Slash, K::BracketRight],
             ),
+            (Action::RenderTrees, (true, true, true), [K::Digit3; 4]),
+            (Action::RenderObjects, (true, true, true), [K::Digit9; 4]),
+            (Action::RenderGrass, (true, true, true), [K::Digit0; 4]),
             (Action::DevToolbox, (true, false, true), [K::KeyD; 4]),
+            (Action::RequestAdminStatus, (true, false, true), [K::KeyG; 4]),
             (Action::DebugSettings, (true, true, true), [K::KeyS; 4]),
             (Action::Rebake, (true, false, true), [K::KeyR; 4]),
             (Action::StopAnimations, (false, true, true), [K::KeyA, K::KeyQ, K::KeyQ, K::KeyA]),

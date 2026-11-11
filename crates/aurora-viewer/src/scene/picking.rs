@@ -744,7 +744,9 @@ impl Scene {
             .copied()
             .chain(all)
             .filter_map(|idx| Some((idx, self.gpu.get(idx)?)))
-            .filter(|(idx, gpu)| self.first_person_object_visible(*idx, gpu))
+            // (what is not drawn is not picked: a hidden rendering type, as
+            // LLPipeline::lineSegmentIntersectInWorld skips its partitions)
+            .filter(|(idx, gpu)| !gpu.hidden && self.first_person_object_visible(*idx, gpu))
     }
 
     pub fn click_bounds(&self, world: &World, idx: usize) -> Option<(Vec3, Vec3)> {
@@ -2624,6 +2626,7 @@ pub(crate) mod tests {
             te_alpha: 1.0,
             pbr_alpha: None,
             legacy_alpha: None,
+            legacy_glare: false,
             two_sided: false,
             repeats: 1.0,
             glow: false,
@@ -2971,7 +2974,9 @@ pub(crate) mod tests {
         let (mut world, mut scene, front, back) = scene_with_two_objects();
         let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
         let parent = world.objects.get(own).unwrap().key.local_id;
-        for (idx, x) in [(front, 3.0), (back, 7.0)] {
+        // (within 3.5 m of the HUD point: a HUD root is drawn no further,
+        // scene/draw_limits.rs)
+        for (idx, x) in [(front, 1.0), (back, 3.0)] {
             let o = world.objects.get_mut(idx).unwrap();
             o.parent_id = parent;
             o.state = 31u8.rotate_left(4);
@@ -3054,7 +3059,7 @@ pub(crate) mod tests {
         let (mut world, mut scene, front, back) = scene_with_two_objects();
         let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
         let parent = world.objects.get(own).unwrap().key.local_id;
-        for (idx, x) in [(front, 3.0), (back, 7.0)] {
+        for (idx, x) in [(front, 1.0), (back, 3.0)] {
             let o = world.objects.get_mut(idx).unwrap();
             o.parent_id = parent;
             o.state = 31u8.rotate_left(4);
@@ -3116,7 +3121,7 @@ pub(crate) mod tests {
         let (mut world, mut scene, front, back) = scene_with_two_objects();
         let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
         let parent = world.objects.get(own).unwrap().key.local_id;
-        for (idx, x) in [(front, 3.0), (back, 7.0)] {
+        for (idx, x) in [(front, 1.0), (back, 3.0)] {
             let o = world.objects.get_mut(idx).unwrap();
             o.parent_id = parent;
             o.state = 31u8.rotate_left(4);

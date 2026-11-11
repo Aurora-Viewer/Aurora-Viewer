@@ -650,7 +650,8 @@ impl WorldMapUi {
                 None
             };
             let teleport = resp.double_clicked() && opts.world_double_click_tp;
-            let z = world.agent.position.z;
+            // a god arrives at 200 m (GODLY_TELEPORT_HEIGHT, LLWorldMapView)
+            let z = if world.god_level > 0 { 200.0 } else { world.agent.position.z };
             match item.filter(|h| !matches!(h.1, ItemKind::Infohub | ItemKind::Telehub)) {
                 Some((_, kind, i)) => {
                     let ty = item_type(kind);

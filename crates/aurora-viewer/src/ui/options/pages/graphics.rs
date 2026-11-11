@@ -98,9 +98,9 @@ pub fn page(cx: &mut Cx, tab: usize) {
 /// The real sky's rows (world/night_sky.rs): what sets its hour (first: it
 /// decides whether the longitude below counts), where it is seen from, its
 /// latitude and longitude (set by a preset, typed for Custom; moving one
-/// makes the place Custom) and the stars' brightness.
+/// makes the place Custom), the stars' brightness and the Milky Way's.
 fn night_sky_rows(cx: &mut Cx) {
-    use crate::world::night_sky::{GAIN_RANGE, SkyPlace, StarHour};
+    use crate::world::night_sky::{GAIN_RANGE, MILKY_WAY_RANGE, SkyPlace, StarHour};
     let hours: Vec<(StarHour, &str)> = StarHour::ALL.iter().map(|h| (*h, h.label())).collect();
     cx.combo(
         aurora_i18n::tr!("ui-options-night-sky-hour"),
@@ -146,6 +146,15 @@ fn night_sky_rows(cx: &mut Cx) {
         aurora_i18n::tr!("ui-options-night-sky-brightness-help"),
         &field!(night_sky_gain),
         GAIN_RANGE,
+        "×",
+    ) {
+        cx.s.sync_night_sky();
+    }
+    if cx.slider(
+        aurora_i18n::tr!("ui-options-night-sky-milky-way"),
+        aurora_i18n::tr!("ui-options-night-sky-milky-way-help"),
+        &field!(night_sky_milky_way),
+        MILKY_WAY_RANGE,
         "×",
     ) {
         cx.s.sync_night_sky();

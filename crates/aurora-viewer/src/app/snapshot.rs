@@ -1107,7 +1107,10 @@ impl App {
     pub(super) fn photo_job(&mut self, purpose: Purpose, renderer: &Renderer) {
         let window = renderer.size();
         let outfit = purpose.outfit();
-        let full = if outfit {
+        let full = if purpose == (Purpose::Portrait { preview: false }) {
+            // (the HD picture is chosen once the photo is shown)
+            (snapshot::portrait::SHOT_SIDE, snapshot::portrait::SHOT_SIDE)
+        } else if outfit {
             (OUTFIT_PHOTO_SIDE, OUTFIT_PHOTO_SIDE)
         } else {
             self.photo_size(window)
@@ -1342,7 +1345,7 @@ impl App {
 
     /// Upload prices: the account's benefits (texture_upload_cost, by area
     /// for the large ones), the demo's, or the economy's single price.
-    fn photo_prices(&self) -> Prices {
+    pub(super) fn photo_prices(&self) -> Prices {
         let prices = if self.demo {
             Prices {
                 texture: Some(10),
@@ -3098,7 +3101,9 @@ LUT_3D_SIZE {n}
                 vf.light = v.light;
                 vf.hinted = v.menu || v.help || v.drawer || vf.looks || v.light;
                 if v.poser && self.ik_editor.toggle_poser() {
-                    crate::ui::widgets::open_floater(&self.egui_ctx, "poser", &mut self.ik_editor.open);
+                    // the window in its mode (the compact one by default)
+                    let window = self.ik_editor.poser_window(&self.settings.poser);
+                    crate::ui::widgets::open_floater(&self.egui_ctx, window, &mut self.ik_editor.open);
                 }
                 self.snapshots.quality_ask = v.quality_warning;
             }

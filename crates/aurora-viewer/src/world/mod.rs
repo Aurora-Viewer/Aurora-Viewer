@@ -3,6 +3,7 @@
 pub mod animation_log;
 pub mod anti_spam;
 pub mod appearance;
+pub mod appearance_xml;
 pub mod attachment_inventory;
 pub mod attention;
 pub mod blocking;
@@ -101,6 +102,7 @@ pub mod staff;
 pub mod status;
 pub mod suitcase;
 pub mod system_messages;
+pub mod teleport_cancel;
 pub mod teleport_invites;
 pub mod temp_attachments;
 pub mod terrain;
@@ -120,6 +122,8 @@ mod dialog_name_tests;
 mod fee_permission_tests;
 #[cfg(test)]
 mod flash_tests;
+#[cfg(test)]
+mod god_mode_tests;
 #[cfg(test)]
 mod group_notice_tests;
 #[cfg(test)]
@@ -451,6 +455,9 @@ pub struct World {
     /// A ground animesh entry holds only its mesh pelvis fixup.
     /// The adjustable hover height stays live, independent of pose timing.
     pub avatar_shape_dz: HashMap<Uuid, f32>,
+    /// Animesh drawn pulled back toward their object or shrunk
+    /// (`scene::draw_limits`), by root object id; the others have none.
+    pub animesh_fixups: HashMap<Uuid, crate::scene::draw_limits::Fixup>,
     /// Local water-wave heave of our drawn avatar, independent of physics/hover.
     pub water_float: crate::movement::water_float::Follower,
     /// Drawn body orientation per standing avatar (LLVOAvatar::updateOrientation).
@@ -473,6 +480,8 @@ pub struct World {
     pub tp_progress: f32,
     pub tp_status: String,
     pub tp_failed: bool,
+    /// Whether the teleport screen offers Cancel, and a cancel sent.
+    pub tp_cancel: teleport_cancel::TeleportCancel,
     /// Outfit restore at login (Current Outfit folder).
     pub outfit: outfit::OutfitRestore,
     /// Objects already reported by a diagnostic (logged once).
@@ -502,6 +511,9 @@ pub struct World {
     /// A parcel owner or an estate manager froze us (ViewerFrozenMessage):
     /// shown on the navigation bar while it lasts.
     pub frozen: bool,
+    /// The god level the region gave us (GrantGodlikePowers, Advanced ›
+    /// Request Admin Status): 0 none; shown on the navigation bar.
+    pub god_level: u8,
     /// What the simulator killed while the photo mode held the world still
     /// (`freeze_motion`): each object's key and id, removed on thaw.
     held_kills: Vec<(ObjKey, Uuid)>,
@@ -848,6 +860,7 @@ impl World {
             avatar_poses: HashMap::new(),
             avatar_models: HashMap::new(),
             avatar_shape_dz: HashMap::new(),
+            animesh_fixups: HashMap::new(),
             water_float: Default::default(),
             bodies: HashMap::new(),
             look_at: lookat::LookAts::default(),
@@ -870,6 +883,7 @@ impl World {
             tp_progress: 0.0,
             tp_status: String::new(),
             tp_failed: false,
+            tp_cancel: Default::default(),
             own_animations_awaited: None,
             outfit: Default::default(),
             diag_reported: HashSet::new(),
@@ -885,6 +899,7 @@ impl World {
             environment_answers: Vec::new(),
             health: 100.0,
             frozen: false,
+            god_level: 0,
             held_kills: Vec::new(),
             social: social::Social::default(),
             contact_sets: Default::default(),
@@ -1238,6 +1253,7 @@ impl World {
         self.arrival_wait_since = None;
         self.tp_show_progress = show_progress;
         self.tp_failed = false;
+        self.tp_cancel.on_request();
         self.tp_progress = 0.05;
         self.tp_status = aurora_i18n::tr!("world-mod-requesting-teleport").into();
         if show_progress {
@@ -1287,6 +1303,11 @@ impl World {
                 &l.raw["agent_region_access"].to_string_value(),
             )
         });
+        // a god may set and enter any rating (LLAgentAccess::canSetMaturity,
+        // canAccessAdult: isGodlike() first)
+        if self.god_level > 0 {
+            access.max = aurora_net::search::SIM_ACCESS_ADULT;
+        }
         if let Some(preferred) = self.maturity.preferred {
             access.preferred = preferred.min(access.max);
         }
@@ -2049,6 +2070,22 @@ impl World {
         self.system_notice(text, notice_topics::Topic::Info);
     }
 
+    /// set_god_level (llviewermenu.cpp): the level the region granted, said
+    /// as the EnteringGodMode / LeavingGodMode notifications say it.
+    pub fn set_god_level(&mut self, level: u8) {
+        let old = std::mem::replace(&mut self.god_level, level);
+        if old == level {
+            return;
+        }
+        let text = if level > 0 {
+            aurora_i18n::tr!("god-mode-entering", level = i64::from(level))
+        } else {
+            aurora_i18n::tr!("god-mode-leaving", level = i64::from(old))
+        };
+        log::info!("admin status: god level {old} -> {level}");
+        self.system_notice(text, notice_topics::Topic::Region);
+    }
+
     /// A notice of the viewer in the nearby chat, about `topic` (the icon
     /// of its compact row, #741).
     pub fn system_notice(&mut self, text: impl Into<String>, topic: notice_topics::Topic) {
@@ -2636,6 +2673,10 @@ impl World {
                 self.unpark_region(handle);
                 None
             }
+            NetEvent::GodLevel(level) => {
+                self.set_god_level(level);
+                None
+            }
             NetEvent::RegionHandshake(info) => {
                 self.tp_history.name_current(info.handle, &info.name);
                 let r = self.ensure_region(info.handle, (info.size_x, info.size_y));
@@ -2823,6 +2864,7 @@ impl World {
                 self.arrived_once = true;
                 if self.teleporting {
                     self.friends_only_teleport_arrival();
+                    self.tp_cancel.on_end();
                 }
                 self.teleporting = false;
                 self.park_far_regions();
@@ -3167,7 +3209,12 @@ impl World {
                 self.coarse.remove(&handle);
                 None
             }
-            NetEvent::TeleportProgress { message } => {
+            NetEvent::TeleportProgress { message, flags } => {
+                if self.tp_cancel.ignores_progress(self.teleporting) {
+                    log::warn!("Unexpected teleport progress message '{message}' (teleport cancelled)");
+                    return None;
+                }
+                self.tp_cancel.on_simulator_flags(flags);
                 if !self.teleporting {
                     self.tp_show_progress = false;
                 }
@@ -3189,13 +3236,22 @@ impl World {
                 None
             }
             NetEvent::TeleportFinished { handle, flying } => {
+                // process_teleport_finish: a TeleportFinish after our cancel
+                // means the simulator ignored it or got it too late; the
+                // teleport is done on its side and resumes here
+                // (restoreCanceledTeleportRequest), without its sound again.
+                let restored = self.tp_cancel.on_finish() && !self.teleporting;
+                if restored {
+                    log::info!("Restoring canceled teleport request");
+                    self.tp_failed = false;
+                }
                 self.teleporting = true;
                 let remote = Some(handle) != self.main_region;
                 // TeleportStart has no destination. Unlike Firestorm's
                 // process_teleport_start, defer its sound until a region change
                 // is confirmed, preserving silence for local script/lure TPs.
                 // A known remote request already played it in begin_teleport.
-                if remote && !self.tp_show_progress {
+                if remote && !self.tp_show_progress && !restored {
                     self.ui_sounds.push(UiSound::TeleportOut);
                 }
                 self.tp_show_progress = remote;
@@ -3228,7 +3284,8 @@ impl World {
                 self.agent.flying = self.friend_join_local_flight(flying).unwrap_or(flying || self.fly_after_teleport);
                 None
             }
-            NetEvent::TeleportStarted => {
+            NetEvent::TeleportStarted { flags } => {
+                self.tp_cancel.on_simulator_flags(flags);
                 if !self.teleporting {
                     self.cancel_friend_join_flight();
                     self.cancel_friend_join();
@@ -3250,6 +3307,7 @@ impl World {
                 self.cancel_friend_join_flight();
                 self.cancel_friend_join();
                 self.tp_history.failed();
+                self.tp_cancel.on_end();
                 self.teleporting = false;
                 self.tp_failed = true;
                 self.system_notice(
@@ -5825,12 +5883,16 @@ impl World {
     }
 
     /// The seat prim and its children: the sources LLVOAvatarSelf::
-    /// stopMotionFromSource releases when we get off it.
+    /// stopMotionFromSource releases when we get off it. Never an avatar:
+    /// LLViewerObject::removeChild takes ours out of the seat's child list
+    /// before setParent(NULL) reaches getOffObject, so the motions we asked
+    /// for ourselves (the static eyes, typing, gestures…) keep playing, and
+    /// another sitter is no source of the seat.
     fn seat_linkset_sources(&self, seat_key: ObjKey) -> Vec<Uuid> {
         let seat = self.objects.index_of(&seat_key).into_iter();
         let children = self.objects.children_of(&seat_key).iter().copied();
         seat.chain(children)
-            .filter_map(|idx| self.objects.get(idx).map(|o| o.full_id))
+            .filter_map(|idx| self.objects.get(idx).filter(|o| !o.is_avatar()).map(|o| o.full_id))
             .collect()
     }
 
@@ -6504,15 +6566,18 @@ mod motion_tests {
     fn standing_requests_only_seat_and_linked_prim_animation_stops_once() {
         let (mut world, mut avatar, handle, root, linked) = seated_fixture();
         let (sit, hands, ao) = (Uuid::from_u128(71), Uuid::from_u128(72), Uuid::from_u128(73));
+        // ours, as FSStaticEyes asks for it: the seated avatar is a child of
+        // the seat, yet no source of it
+        let static_eyes = crate::world::lookat::STATIC_EYES;
         world.apply(NetEvent::AvatarAnimations {
             avatar: world.agent_id,
-            anims: vec![(sit, 1), (hands, 1), (ao, 1), (Uuid::from_u128(74), 1)],
-            sources: vec![root, linked, Uuid::from_u128(999)],
+            anims: vec![(sit, 1), (hands, 1), (ao, 1), (static_eyes, 1)],
+            sources: vec![root, linked, Uuid::from_u128(999), world.agent_id],
         });
         // A sequence change/sparse source list must not forget the seat.
         world.apply(NetEvent::AvatarAnimations {
             avatar: world.agent_id,
-            anims: vec![(sit, 2), (hands, 2), (ao, 2)],
+            anims: vec![(sit, 2), (hands, 2), (ao, 2), (static_eyes, 2)],
             // The same motion can also be associated with a linked prim.
             sources: vec![linked],
         });
@@ -6529,7 +6594,12 @@ mod motion_tests {
         assert_eq!(world.animation_stops.len(), 2);
         assert!(world.animation_stops.contains(&sit) && world.animation_stops.contains(&hands));
         assert!(!world.animation_stops.contains(&ao));
+        assert!(
+            !world.animation_stops.contains(&static_eyes),
+            "what we started ourselves keeps playing"
+        );
         assert!(world.animation_sources.contains_key(&Uuid::from_u128(999)));
+        assert!(world.animation_sources.contains_key(&world.agent_id));
         world.animation_stops.clear();
         world.apply(NetEvent::ObjectUpdates {
             handle,
@@ -6835,9 +6905,10 @@ mod motion_tests {
         world.begin_teleport(false);
         assert!(world.teleporting && !world.tp_show_progress);
         assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
-        world.apply(NetEvent::TeleportStarted);
+        world.apply(NetEvent::TeleportStarted { flags: 0 });
         world.apply(NetEvent::TeleportProgress {
             message: "requesting".into(),
+            flags: 0,
         });
         assert!(world.teleporting && !world.tp_show_progress);
         assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
@@ -6854,9 +6925,10 @@ mod motion_tests {
         assert_eq!(world.parcel_name, aurora_i18n::tr!("world-mod-demo-parcel"));
         assert_eq!(world.tp_history.previous().expect("previous arrival").position, previous);
         // Late progress packets must never bring back a local loading screen.
-        world.apply(NetEvent::TeleportStarted);
+        world.apply(NetEvent::TeleportStarted { flags: 0 });
         world.apply(NetEvent::TeleportProgress {
             message: "arriving".into(),
+            flags: 0,
         });
         assert!(!world.tp_show_progress);
         assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
@@ -7026,7 +7098,7 @@ mod motion_tests {
         let previous = world.agent.position;
         // A preceding remote arrival may still have its screen fading out.
         world.tp_show_progress = true;
-        world.apply(NetEvent::TeleportStarted);
+        world.apply(NetEvent::TeleportStarted { flags: 0 });
         assert!(!world.tp_show_progress);
         world.apply(NetEvent::TeleportLocal { flying: false });
         world.apply(NetEvent::AgentMovementComplete {
@@ -7051,7 +7123,7 @@ mod motion_tests {
     fn unknown_destination_only_shows_progress_when_another_region_is_confirmed() {
         let (mut world, handle) = teleport_fixture();
         world.begin_teleport(false);
-        world.apply(NetEvent::TeleportStarted);
+        world.apply(NetEvent::TeleportStarted { flags: 0 });
         assert!(!world.tp_show_progress);
         assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
         let destination = handle + (256_u64 << 32);
@@ -7080,7 +7152,7 @@ mod motion_tests {
     fn known_remote_destination_shows_progress_and_failure_ends_the_teleport() {
         let (mut world, handle) = teleport_fixture();
         world.begin_teleport(true);
-        world.apply(NetEvent::TeleportStarted);
+        world.apply(NetEvent::TeleportStarted { flags: 0 });
         assert!(world.teleporting && world.tp_show_progress);
         world.apply(NetEvent::TeleportFinished {
             handle: handle + (256_u64 << 32),
@@ -8603,7 +8675,7 @@ mod motion_tests {
         let (mut world, here) = teleport_fixture();
         let there = west_of(here);
         world.agent.position = Vec3::new(0.5, 50.0, 30.0);
-        world.apply(NetEvent::TeleportStarted);
+        world.apply(NetEvent::TeleportStarted { flags: 0 });
         world.apply(NetEvent::MainRegionChanged { handle: there });
         assert_eq!(world.take_origin_shift(), Vec3::ZERO);
         world.apply(NetEvent::AgentMovementComplete {
