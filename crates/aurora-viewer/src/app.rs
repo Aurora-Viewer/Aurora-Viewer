@@ -9363,6 +9363,10 @@ impl App {
             self.world.groups.mute_when_notices_off = self.settings.mute_groups_without_notices;
             self.world.groups.report_blocks = self.settings.report_blocks;
             self.world.groups.show_joined_invitations = self.settings.show_joined_group_invitations;
+            self.world.groups.notices_in_chat = crate::world::groups::NoticesInChat {
+                on: self.settings.group_notices_in_chat,
+                subjects: self.settings.group_notice_subjects_in_chat,
+            };
             self.world.group_titles = self.settings.group_titles;
             self.world.portal_sources = self.portal_sources();
             self.world.fly_after_teleport = self.settings.fly_after_teleport && !(self.demo && crate::demo::friend_join_flight_scenario());
@@ -12074,6 +12078,19 @@ impl App {
                 for command in commands {
                     self.send(command);
                 }
+            }
+            // the notices' cards closed, then Aurora Builders' chat shown:
+            // its notice's line stays (FSGroupNoticesToIMLog)
+            if self.frame_count == crate::demo::notifs::CHAT_AT && mode == "group-notice-chat" {
+                let ids: Vec<u64> = self.world.notifications.list.iter().map(|n| n.id).collect();
+                for id in ids {
+                    let (commands, _) = self.world.respond_notification(id, crate::world::notifications::Response::Dismiss);
+                    for command in commands {
+                        self.send(command);
+                    }
+                }
+                self.world.social.focus_im = Some(crate::demo::DEMO_GROUP1);
+                ui::notifications::open_conversations(&self.egui_ctx, &mut self.panels.chat);
             }
             if self.frame_count == crate::demo::notifs::ANSWER_AT && matches!(mode.as_str(), "history" | "legacy-history") {
                 // a few cards answered or closed: they go to the history
