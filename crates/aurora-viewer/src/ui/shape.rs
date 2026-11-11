@@ -74,40 +74,71 @@ pub(super) fn appearance_controls(ui: &mut egui::Ui, p: &Palette, mut controls: 
 /// (`actions::appearance_xml_export_allowed`). Which one was clicked.
 pub(super) fn name_row(ui: &mut egui::Ui, p: &Palette, glyph: Option<&str>, name: RichText, import: bool, export: bool) -> (bool, bool) {
     let mut clicked = (false, false);
+    let buttons = |ui: &mut egui::Ui, clicked: &mut (bool, bool)| {
+        clicked.1 = widgets::action_button_if(
+            ui,
+            p,
+            "file-export",
+            aurora_i18n::tr!("appearance-xml-export-button"),
+            ActionKind::Flat,
+            Vec2::new(0.0, 26.0),
+            export,
+        )
+        .on_hover_text(aurora_i18n::tr!("appearance-xml-export-hint"))
+        .on_disabled_hover_text(aurora_i18n::tr!("appearance-xml-export-hint"))
+        .clicked();
+        clicked.0 = widgets::action_button_if(
+            ui,
+            p,
+            "file-import",
+            aurora_i18n::tr!("appearance-xml-import-button"),
+            ActionKind::Flat,
+            Vec2::new(0.0, 26.0),
+            import,
+        )
+        .on_hover_text(aurora_i18n::tr!("appearance-xml-import-hint"))
+        .on_disabled_hover_text(aurora_i18n::tr!("appearance-xml-import-hint"))
+        .clicked();
+    };
+    // The buttons go under the name when both would not fit on one row
+    // (the physics editor is narrow, item names are long), so the name is
+    // not cut down to a few letters.
+    let spacing = ui.spacing().item_spacing.x;
+    let buttons_w: f32 = [
+        ("file-export", aurora_i18n::tr!("appearance-xml-export-button")),
+        ("file-import", aurora_i18n::tr!("appearance-xml-import-button")),
+    ]
+    .iter()
+    .map(|(icon, label)| widgets::action_button_keyed_content(ui, icon, label, None) + widgets::KEYED_PAD + spacing)
+    .sum();
+    let glyph_w = if glyph.is_some() { 24.0 + spacing } else { 0.0 };
+    let name_w = egui::WidgetText::from(name.clone())
+        .into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body)
+        .size()
+        .x;
+    let one_row = glyph_w + name_w + spacing + buttons_w <= ui.available_width();
     ui.horizontal(|ui| {
         if let Some(icon) = glyph {
             widgets::glyph(ui, icon, p.muted, 24.0);
         }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            clicked.1 = widgets::action_button_if(
-                ui,
-                p,
-                "file-export",
-                aurora_i18n::tr!("appearance-xml-export-button"),
-                ActionKind::Flat,
-                Vec2::new(0.0, 26.0),
-                export,
-            )
-            .on_hover_text(aurora_i18n::tr!("appearance-xml-export-hint"))
-            .on_disabled_hover_text(aurora_i18n::tr!("appearance-xml-export-hint"))
-            .clicked();
-            clicked.0 = widgets::action_button_if(
-                ui,
-                p,
-                "file-import",
-                aurora_i18n::tr!("appearance-xml-import-button"),
-                ActionKind::Flat,
-                Vec2::new(0.0, 26.0),
-                import,
-            )
-            .on_hover_text(aurora_i18n::tr!("appearance-xml-import-hint"))
-            .on_disabled_hover_text(aurora_i18n::tr!("appearance-xml-import-hint"))
-            .clicked();
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.add(egui::Label::new(name).truncate());
+        if one_row {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                buttons(ui, &mut clicked);
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.add(egui::Label::new(name.clone()).truncate());
+                });
+            });
+        } else {
+            ui.add(egui::Label::new(name.clone()).truncate());
+        }
+    });
+    if !one_row {
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                buttons(ui, &mut clicked);
             });
         });
-    });
+    }
     clicked
 }
 
