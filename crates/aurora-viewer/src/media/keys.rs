@@ -202,18 +202,122 @@ fn edit_repeats(cmd: EditCommand) -> bool {
     matches!(cmd, EditCommand::Undo | EditCommand::Redo | EditCommand::Paste)
 }
 
+/// Whether the page reads the clipboard through the viewer: under Wayland,
+/// where Chromium picks its Wayland backend and the page, drawn off screen,
+/// never has the keyboard focus that a Wayland client needs to read the
+/// clipboard, so `edit_paste` finds nothing to paste. The viewer's window
+/// has that focus.
+pub fn paste_through_viewer() -> bool {
+    cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some()
+}
+
+/// Whether a key press is Paste and the viewer reads the clipboard for it
+/// (`paste_through_viewer`): read it then, and pass it to `edit`.
+pub fn wants_clipboard(letter: Option<char>, code: KeyCode, pressed: bool, repeat: bool, mods: Modifiers) -> bool {
+    pressed
+        && edit_shortcut(letter, code, mods).is_some_and(|cmd| cmd == EditCommand::Paste && (!repeat || edit_repeats(cmd)))
+        && paste_through_viewer()
+}
+
+/// The text a Paste types into a page, from the system clipboard's text
+/// now and its text when a page last cut or copied (`page_copy`): None, so
+/// the page pastes from its own clipboard, while the system clipboard has
+/// not changed since that cut or copy, which under Wayland never reaches it.
+pub fn paste_text(page_copy: Option<&Option<String>>, now: Option<String>) -> Option<String> {
+    match page_copy {
+        Some(at_copy) if *at_copy == now => None,
+        _ => now,
+    }
+}
+
 /// Run an Edit menu shortcut on a page instead of sending it the key: the
 /// command on the press (and on a repeat when it allows one), nothing on the
 /// release. True when the key is a shortcut, which the page then never gets,
-/// on every system, as in the Legacy Viewer.
-pub fn edit(p: &mut MediaPlugin, letter: Option<char>, code: KeyCode, pressed: bool, repeat: bool, mods: Modifiers) -> bool {
+/// on every system, as in the Legacy Viewer. `clipboard` is the text the
+/// viewer read for a Paste (`wants_clipboard`): it is typed into the page
+/// instead of `edit_paste`.
+pub fn edit(
+    p: &mut MediaPlugin,
+    letter: Option<char>,
+    code: KeyCode,
+    pressed: bool,
+    repeat: bool,
+    mods: Modifiers,
+    clipboard: Option<&str>,
+) -> bool {
     let Some(cmd) = edit_shortcut(letter, code, mods) else {
         return false;
     };
     if pressed && (!repeat || edit_repeats(cmd)) {
-        p.edit(cmd);
+        match clipboard {
+            Some(text) if cmd == EditCommand::Paste => paste_typed(p, text),
+            _ => p.edit(cmd),
+        }
     }
     true
+}
+
+/// The longest paste typed into a page, in characters: each one is a
+/// message to the plugin.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const PASTE_MAX: usize = 32_768;
+
+/// The pieces of a pasted text as they are typed: runs of characters, and a
+/// Return for each line break inside it. Carriage returns, the line breaks
+/// that end the text, and other control characters are dropped.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn paste_pieces(text: &str) -> Vec<Option<String>> {
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    let mut out = Vec::new();
+    for (i, line) in text.trim_end_matches('\n').split('\n').enumerate() {
+        if i > 0 {
+            out.push(None);
+        }
+        let run: String = line.chars().filter(|c| !c.is_control()).collect();
+        if !run.is_empty() {
+            out.push(Some(run));
+        }
+    }
+    out
+}
+
+/// Type a pasted text into a page, as the keyboard types it: its characters
+/// as text input and a Return for each line break, without modifiers so the
+/// page sees no Ctrl.
+#[cfg(target_os = "linux")]
+fn paste_typed(p: &mut MediaPlugin, text: &str) {
+    let mods = Modifiers::default();
+    let mut budget = PASTE_MAX;
+    for piece in paste_pieces(text) {
+        if budget == 0 {
+            log::warn!("media: paste cut at {PASTE_MAX} characters");
+            break;
+        }
+        match piece {
+            Some(run) => {
+                let typed: String = run.chars().take(budget).collect();
+                budget -= typed.chars().count();
+                for c in typed.chars() {
+                    let mut units = [0u16; 2];
+                    for &unit in c.encode_utf16(&mut units).iter() {
+                        let unit = u32::from(unit);
+                        let native = MediaPlugin::native_key_data_sdl(unit, sdl::to_windows(unit), 0, "textinput");
+                        p.text_input(&c.to_string(), mods, native);
+                    }
+                }
+            }
+            None => {
+                budget -= 1;
+                forward(p, KeyCode::Enter, 0, true, false, None, mods);
+                forward(p, KeyCode::Enter, 0, false, false, None, mods);
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn paste_typed(p: &mut MediaPlugin, _text: &str) {
+    p.edit(EditCommand::Paste);
 }
 
 #[cfg_attr(target_os = "linux", allow(dead_code))]
@@ -580,6 +684,40 @@ mod tests {
         assert_eq!(key_lparam(0x1E, true, false) >> 30, 3);
         assert_eq!(char_units("é😀"), vec![0xE9, 0xD83D, 0xDE00]);
         assert_eq!(virtual_key(KeyCode::KeyA), Some(0x41));
+    }
+
+    #[test]
+    fn paste_text_after_a_page_copy() {
+        let t = |s: &str| Some(s.to_owned());
+        // no page copied: the system clipboard is typed
+        assert_eq!(paste_text(None, t("outside")), t("outside"));
+        assert_eq!(paste_text(None, None), None);
+        // a page copied and nothing changed since: the page's own clipboard
+        assert_eq!(paste_text(Some(&t("old")), t("old")), None);
+        assert_eq!(paste_text(Some(&None), None), None);
+        // another program copied since: its text is typed
+        assert_eq!(paste_text(Some(&t("old")), t("new")), t("new"));
+        assert_eq!(paste_text(Some(&None), t("new")), t("new"));
+    }
+
+    #[test]
+    fn paste_typed_pieces() {
+        let s = |t: &str| Some(t.to_owned());
+        assert_eq!(
+            paste_pieces("https://example.com/watch?v=1"),
+            vec![s("https://example.com/watch?v=1")]
+        );
+        // the line breaks that end a copied line are dropped, inner ones are a Return
+        assert_eq!(paste_pieces("one\r\n"), vec![s("one")]);
+        assert_eq!(
+            paste_pieces("one\ntwo\r\nthree\n\n"),
+            vec![s("one"), None, s("two"), None, s("three")]
+        );
+        assert_eq!(paste_pieces("a\n\nb"), vec![s("a"), None, None, s("b")]);
+        // other control characters go, the rest of the text stays
+        assert_eq!(paste_pieces("a\tb\u{7}é😀"), vec![s("abé😀")]);
+        assert!(paste_pieces("").is_empty());
+        assert!(paste_pieces("\n").is_empty());
     }
 
     #[test]

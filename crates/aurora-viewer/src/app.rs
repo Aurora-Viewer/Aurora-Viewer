@@ -452,6 +452,10 @@ pub struct App {
     /// (LLKeyboardMacOSX::currentMask). Clicks, the wheel and media keep
     /// it separate (aurora_media::Modifiers::command).
     command: bool,
+    /// The system clipboard's text when a page last cut or copied, which
+    /// stays in the page's own clipboard under Wayland
+    /// (keys::paste_through_viewer): None when no page did.
+    page_copy: Option<Option<String>>,
     screen: Screen,
     login_form: LoginForm,
     // Bug report form (disabled, see main.rs):
@@ -1572,6 +1576,7 @@ impl App {
             shift: false,
             ctrl: false,
             command: false,
+            page_copy: None,
             screen: Screen::Login,
             login_form: LoginForm::default(),
             // Bug report form (disabled, see main.rs):
@@ -13376,26 +13381,40 @@ impl App {
                     false,
                     k.is_multiple_of(2).then_some(ch),
                     mods,
+                    None,
                 );
             }
             // `edit`: then Ctrl+A, Ctrl+X, Ctrl+V twice (Cmd on macOS), so
-            // the field reads "auroraaurora" when the shortcuts reach the page.
-            // The clipboard holds "stale" first: a cut that does nothing
-            // leaves "stalestale", not a pass from an earlier run's clipboard.
+            // the field reads "auroraaurora" when the shortcuts reach the page
+            // and the cut reaches the clipboard. The clipboard holds "stale"
+            // first: a cut that does nothing leaves "stalestale", not a pass
+            // from an earlier run's clipboard. `paste`: the clipboard holds
+            // "pasted", set by the viewer as another program would, then
+            // Ctrl+V, so the field reads "aurorapasted".
             let edit = v.split(',').any(|s| s.trim() == "edit");
-            if edit && f == 864 {
-                self.egui_ctx.copy_text("stale".to_owned());
+            let paste = v.split(',').any(|s| s.trim() == "paste");
+            if (edit || paste) && f == 864 {
+                self.egui_ctx.copy_text(if paste { "pasted" } else { "stale" }.to_owned());
             }
-            if edit && (870..878).contains(&f) {
+            let keys = if edit {
+                &[KeyCode::KeyA, KeyCode::KeyX, KeyCode::KeyV, KeyCode::KeyV][..]
+            } else if paste {
+                &[KeyCode::KeyV][..]
+            } else {
+                &[][..]
+            };
+            if (870..870 + 2 * keys.len() as u64).contains(&f) {
                 let k = (f - 870) as usize;
-                let code = [KeyCode::KeyA, KeyCode::KeyX, KeyCode::KeyV, KeyCode::KeyV][k / 2];
+                let code = keys[k / 2];
+                let pressed = k.is_multiple_of(2);
                 let mods = aurora_media::Modifiers {
                     control: !cfg!(target_os = "macos"),
                     command: cfg!(target_os = "macos"),
                     ..Default::default()
                 };
+                let clipboard = self.media_clipboard(None, code, pressed, false, mods);
                 self.media
-                    .on_key(&self.world, None, code, 0, k.is_multiple_of(2), false, None, mods);
+                    .on_key(&self.world, None, code, 0, pressed, false, None, mods, clipboard.as_deref());
             }
         }
         // AURORA_DEMO_CAMERA="alt,x,y" (pan, zoom, ml, wheel, fly): camera/demo.rs
@@ -14704,6 +14723,36 @@ impl App {
 
     /// LLMediaCtrl::handleKeyHere / handleUnicodeCharHere: the clicked page
     /// receives keys before chat, gestures or viewer commands.
+    /// The text a Paste types into a page under Wayland
+    /// (keys::paste_through_viewer), read from the system clipboard; None
+    /// lets the page paste from its own clipboard: for any other key, and
+    /// when the clipboard has not changed since the page's last cut or copy.
+    fn media_clipboard(
+        &mut self,
+        letter: Option<char>,
+        code: KeyCode,
+        pressed: bool,
+        repeat: bool,
+        mods: aurora_media::Modifiers,
+    ) -> Option<String> {
+        use crate::media::keys;
+        if !pressed || !keys::paste_through_viewer() {
+            return None;
+        }
+        let cmd = keys::edit_shortcut(letter, code, mods)?;
+        let mut read = || self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text());
+        match cmd {
+            aurora_media::EditCommand::Cut | aurora_media::EditCommand::Copy => {
+                self.page_copy = Some(read());
+                None
+            }
+            aurora_media::EditCommand::Paste if keys::wants_clipboard(letter, code, pressed, repeat, mods) => {
+                keys::paste_text(self.page_copy.as_ref(), read())
+            }
+            _ => None,
+        }
+    }
+
     fn focused_web(&mut self) -> Option<&mut aurora_media::MediaPlugin> {
         self.profile_ui
             .focused_web()
@@ -21370,12 +21419,20 @@ impl ApplicationHandler for App {
                         command: self.command,
                     };
                     let letter = crate::media::keys::layout_letter(&ke.logical_key);
+                    // Paste under Wayland: the viewer reads the clipboard
+                    // and types it into the page (keys::paste_through_viewer)
+                    let page_keys = !typing && (self.media.focus.is_some() || self.focused_web().is_some());
+                    let clipboard = if page_keys {
+                        self.media_clipboard(letter, code, pressed, ke.repeat, web_mods)
+                    } else {
+                        None
+                    };
                     let web = self.focused_web();
                     let web_focused = web.is_some();
                     if !typing && let Some(p) = web {
                         use winit::platform::scancode::PhysicalKeyExtScancode;
                         let scancode = ke.physical_key.to_scancode().unwrap_or(0);
-                        if crate::media::keys::edit(p, letter, code, pressed, ke.repeat, web_mods)
+                        if crate::media::keys::edit(p, letter, code, pressed, ke.repeat, web_mods, clipboard.as_deref())
                             || crate::media::keys::forward(p, code, scancode, pressed, ke.repeat, ke.text.as_deref(), web_mods)
                             || pressed
                         {
@@ -21392,10 +21449,17 @@ impl ApplicationHandler for App {
                             shift: self.shift,
                             command: self.command,
                         };
-                        if self
-                            .media
-                            .on_key(&self.world, letter, code, scancode, pressed, ke.repeat, ke.text.as_deref(), mods)
-                            && pressed
+                        if self.media.on_key(
+                            &self.world,
+                            letter,
+                            code,
+                            scancode,
+                            pressed,
+                            ke.repeat,
+                            ke.text.as_deref(),
+                            mods,
+                            clipboard.as_deref(),
+                        ) && pressed
                         {
                             return;
                         }
