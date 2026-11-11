@@ -811,6 +811,12 @@ impl super::Scene {
             crate::demo::ANIMESH_ANIM,
             std::sync::Arc::new(super::anim::BoundAnim::bind(crate::demo::animesh_animation(), &rig)),
         );
+        if crate::demo::animesh_far() {
+            self.anims.insert(
+                crate::demo::ANIMESH_FAR_ANIM,
+                std::sync::Arc::new(super::anim::BoundAnim::bind(crate::demo::far_animation(), &rig)),
+            );
+        }
         self.textures
             .acquire(renderer, crate::demo::ANIMESH_TEXTURE, super::textures::TexSource::Asset);
         let mut rgba = Vec::new();
