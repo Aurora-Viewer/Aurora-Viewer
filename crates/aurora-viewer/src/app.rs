@@ -4304,7 +4304,7 @@ impl App {
                 self.settings.camera.third_person_follow_joint = Some(joint);
             }
             if self.frame_count == 540 {
-                if let Some(head_rest) = self
+                if let Some(joint_rest) = self
                     .world
                     .avatar_lib
                     .rig
@@ -4322,7 +4322,7 @@ impl App {
                     self.scene.anims.insert(
                         id,
                         Arc::new(crate::scene::anim::BoundAnim::bind(
-                            crate::demo::third_person_joint_animation(joint.rig_name(), head_rest, axis),
+                            crate::demo::third_person_joint_animation(joint.rig_name(), joint_rest, axis),
                             &self.world.avatar_lib.rig,
                         )),
                     );

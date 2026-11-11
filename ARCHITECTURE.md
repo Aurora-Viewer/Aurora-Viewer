@@ -874,7 +874,7 @@ aim.
 Third-person body-part tracking (`CameraSettings::third_person_follow_joint`)
 moves the camera and focus together by the selected joint's animated translation,
 preserving the user's camera framing and pan. The Preferences intensity control
-scales that translation from 0% to 200%; 100% is the default and the unscaled
+scales that translation from 0% to 500%; 100% is the default and the unscaled
 behavior.
 
 `world/parcel_visibility.rs` owns saved parcel-isolation modes, region UUID/local

@@ -440,7 +440,7 @@ impl Camera {
         self.mouselook() && (agent.is_sitting() || s.mouselook_follow_eyes)
     }
 
-    /// Head tracking needs the current skeleton pose before computing the shot.
+    /// Body-part tracking needs the current skeleton pose before computing the shot.
     pub fn needs_animated_joint(&self, s: &CameraSettings) -> bool {
         self.third_person()
             && s.third_person_follow_joint.is_some()
