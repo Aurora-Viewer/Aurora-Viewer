@@ -10111,9 +10111,9 @@ What the inventory must show with these scenarios:
   second click 60 frames after, optional click on the field 120 frames
   after, then "aurora" is typed. With `edit`, Ctrl+A, Ctrl+X and Ctrl+V
   twice follow (Cmd on macOS): the field reads "auroraaurora" when the
-  Edit menu shortcuts reach the page. The cut goes through the system
-  clipboard, which holds "stale" first: "stalestale" means the cut did
-  nothing. With `paste`, the viewer puts "pasted" on the clipboard, as
+  Edit menu shortcuts reach the page. The clipboard holds "stale" first:
+  "stalestale" means the paste took the system clipboard instead of the
+  page's cut (the cut stays in the page under Wayland). With `paste`, the viewer puts "pasted" on the clipboard, as
   another program would, then presses Ctrl+V: the field reads
   "aurorapasted" when the page gets the system clipboard.
   `AURORA_DEMO_MEDIA_CLICK_FRAME` changes
