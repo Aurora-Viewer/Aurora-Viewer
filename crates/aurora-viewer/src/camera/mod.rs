@@ -1553,8 +1553,10 @@ impl Camera {
             if distance < min || distance > max {
                 let direction = offset.try_normalize().unwrap_or(-Vec3::X);
                 self.position = origin + direction * distance.clamp(min, max);
-                self.rlva_at_min |= distance < min;
-                self.rlva_at_max |= distance > max;
+                // The flags belong to the origin they were measured from:
+                // when both limits clamp, the last one holds the camera.
+                self.rlva_at_min = distance < min;
+                self.rlva_at_max = distance > max;
                 self.rlva_origin = origin;
             }
         }
@@ -2855,6 +2857,31 @@ mod tests {
         settle(&mut cam, &mut w, &s);
         let closer = cam.position.distance(focus);
         assert!(closer < at_limit - 0.02, "one click in moves closer at once: {closer}");
+    }
+
+    #[test]
+    fn rlva_avatar_and_focus_limits_together_leave_one_way_out() {
+        // The avatar limit pulls the camera in, the focus limit pushes it
+        // back out: the zoom away from the focus point must stay allowed.
+        let s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        let focus = cam.position + cam.forward() * 10.0;
+        cam.alt_focus(focus, None, (cam.position, cam.forward()), &mut w.agent, &s);
+        let mut s = s;
+        settle(&mut cam, &mut w, &s);
+        let to_avatar = cam.position.distance(w.agent.position);
+        assert!(to_avatar > 2.0, "the avatar is ahead of the camera: {to_avatar}");
+        rlva_command(
+            &mut w,
+            &format!("@setcam_avdistmax:{:.2}=n,setcam_origindistmin:10=n", to_avatar - 1.0),
+        );
+        settle(&mut cam, &mut w, &s);
+        assert!(cam.rlva_at_min && !cam.rlva_at_max, "held by the focus limit alone");
+        let before = cam.focus_offset_target.length();
+        cam.scroll(1.0, false, false, &mut w.agent, &mut s);
+        assert!(cam.focus_offset_target.length() > before, "zooming out is still allowed");
     }
 
     #[test]
