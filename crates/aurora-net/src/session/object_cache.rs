@@ -289,6 +289,7 @@ mod tests {
         let (events, _received) = crossbeam_channel::unbounded();
         let sh = Shared {
             http: reqwest::Client::new(),
+            login_http: reqwest::Client::new(),
             caps_http: reqwest::Client::new(),
             events: crate::EventSender(events),
             controls: Arc::new(Mutex::new(AgentControls::default())),
@@ -345,7 +346,7 @@ mod tests {
             control_flags: 0,
             one_shot: 0,
             cam_warned: false,
-            far: 128.0,
+            far: FarStep::new(Instant::now()),
             refuse_neighbours: false,
             fov: DEFAULT_FOV,
             logout_started: None,
@@ -365,6 +366,7 @@ mod tests {
             estate_invoice: uuid::Uuid::nil(),
             terrain_raw: Default::default(),
             decode_failures: HashMap::new(),
+            rejected_full: Default::default(),
             inventory_uploads: Default::default(),
             asset_imports: Default::default(),
             inventory_previews: Default::default(),

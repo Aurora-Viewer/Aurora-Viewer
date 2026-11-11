@@ -86,6 +86,7 @@ pub fn animation(mode: &Mode) -> Animation {
         loop_in: 0.0,
         loop_out: 1.0,
         looping: true,
+        ends_after: None,
         ease_in: 0.2,
         // (still easing out while it restarts: the hands keep their pose)
         ease_out: 0.5,

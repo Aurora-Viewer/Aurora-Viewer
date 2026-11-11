@@ -70,6 +70,30 @@ try {
     $rejected = $false
     try { Assert-UpdatePolicy $invalid '0.5.0' } catch { $rejected = $true }
     Assert-PolicyTest $rejected 'A threshold later than the release must be rejected.'
+    # grace period (#3014): chosen after a new minimum, 12 h writes nothing
+    Assert-PolicyTest ($forced.grace_hours -eq 24) 'The grace period chosen must be recorded.'
+    function Show-Menu($Title, $Items) { if ($Title -like '*Minimum version') { $Items[1] } else { $Items[0] } }
+    $usual = Read-ReleaseMaintenance (Get-UpdatePolicy $taskRoot v0.7.0 v0.5.0)
+    Assert-PolicyTest ($usual.minimum_supported_version -eq '0.7.0' -and -not $usual.Contains('grace_hours')) 'The usual 12 h must leave the viewer default.'
+    function Show-Menu($Title, $Items) { if ($Title -like '*Minimum version') { $Items[1] } elseif ($Title -like '*Grace period') { $Items | Where-Object { $_.Hours -eq 0 } } else { $Items[0] } }
+    $urgent = Read-ReleaseMaintenance (Get-UpdatePolicy $taskRoot v0.7.0 v0.5.0)
+    Assert-PolicyTest ($urgent.minimum_supported_version -eq '0.7.0' -and $urgent.grace_hours -eq 0) 'Requiring at once must record no grace period.'
+    [IO.File]::WriteAllText($messageFile, "Fixture`nAurora-Update-Policy: $($urgent | ConvertTo-Json -Compress)", [Text.UTF8Encoding]::new($false))
+    git -C $taskRoot tag -a v0.7.0 $blob -F $messageFile
+    Assert-PolicyTest ((Get-UpdatePolicy $taskRoot v0.7.0 v0.7.0).grace_hours -eq 0) 'The workflow must read back the grace period of the tag.'
+    $keptUrgent = Get-UpdatePolicy $taskRoot v0.7.1 v0.7.0
+    Assert-PolicyTest ($keptUrgent.grace_hours -eq 0) 'A release keeping an urgent minimum must stay without grace.'
+    function Show-Menu($Title, $Items) { $Items[0] }
+    $keptAgain = Read-ReleaseMaintenance (Get-UpdatePolicy $taskRoot v0.7.1 v0.7.0)
+    Assert-PolicyTest ($keptAgain.minimum_supported_version -eq '0.7.0' -and $keptAgain.grace_hours -eq 0) 'Keeping the minimum must keep its grace period, without asking again.'
+    function Show-Menu($Title, $Items) { if ($Title -like '*Minimum version') { $Items | Where-Object { $_.Minimum -eq '0.7.1' } } else { $Items[0] } }
+    $raised = Read-ReleaseMaintenance $keptUrgent
+    Assert-PolicyTest ($raised.minimum_supported_version -eq '0.7.1' -and -not $raised.Contains('grace_hours')) 'A new minimum must not keep the previous grace period.'
+    foreach ($bad in 100, -1, 'soon') {
+        $rejected = $false
+        try { Assert-UpdatePolicy ([ordered]@{ schema = 1; version = '0.5.0'; grace_hours = $bad }) '0.5.0' } catch { $rejected = $true }
+        Assert-PolicyTest $rejected "The grace period '$bad' must be rejected."
+    }
     git -C $taskRoot update-index --add -- update-policy.json
     $tree = git -C $taskRoot write-tree
     '{"cache_invalidation_before":"0.9.0"}' | Set-Content -LiteralPath (Join-Path $taskRoot 'update-policy.json') -Encoding UTF8

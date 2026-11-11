@@ -765,14 +765,17 @@ impl super::Scene {
         self.hover.needs_drawn
     }
 
-    /// The HUD object the hover cursor is over, including invisible Mask/Blend
-    /// buttons, which comes before any object of the world.
+    /// The HUD object the hover cursor is over, which comes before any object
+    /// of the world: the target a press would take (`hud_click_pick`), so
+    /// the hover cursor and the click never disagree. Invisible Mask/Blend
+    /// buttons and transparent scripted clickers count; a plain alpha-zero
+    /// panel lets the object behind it take the hover.
     pub fn hover_hud(&mut self, world: &crate::world::World, cursor: (f32, f32)) -> Option<usize> {
         if !profile_enabled() {
-            return self.hud_pick(world, cursor, false).map(|(idx, _, _)| idx);
+            return self.hud_click_pick(world, cursor).map(|(idx, _, _)| idx);
         }
         let started = Instant::now();
-        let picked = self.hud_pick(world, cursor, false).map(|(idx, _, _)| idx);
+        let picked = self.hud_click_pick(world, cursor).map(|(idx, _, _)| idx);
         let now = Instant::now();
         self.roll_hover_stats(now, true);
         self.hover.stats.hud_picks += 1;
@@ -1193,9 +1196,11 @@ mod tests {
             base_slot: 0,
             tex_id: uuid::Uuid::nil(),
             aux_tex: [uuid::Uuid::nil(); 3],
+            bump_height_source: uuid::Uuid::nil(),
             te_alpha: 1.0,
             pbr_alpha: None,
             legacy_alpha: None,
+            legacy_glare: false,
             two_sided: false,
             repeats: 1.0,
             glow: false,

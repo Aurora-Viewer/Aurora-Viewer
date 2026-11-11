@@ -15,6 +15,7 @@ pub mod experience;
 pub mod fetch;
 mod fetch_pace;
 pub mod freeze;
+pub mod god;
 pub mod group_money;
 pub mod groups;
 pub mod home;
@@ -30,6 +31,7 @@ pub mod objcache;
 pub mod objects;
 pub mod offline_im;
 pub mod outfits;
+mod packet_loss;
 pub mod pathfinding;
 pub mod postcard;
 pub mod probe;
@@ -51,6 +53,7 @@ pub mod terrain;
 mod test_http;
 pub mod text_validation;
 pub mod throttle;
+pub mod trans;
 pub mod transition;
 pub mod types;
 pub mod user_info;
@@ -181,7 +184,16 @@ impl NetClient {
         let http = reqwest::Client::builder()
             .user_agent(aurora_version::user_agent())
             .connect_timeout(std::time::Duration::from_secs(15))
+            .tls_certs_merge(ll_ca.clone())
+            .build()
+            .map_err(|e| NetError::Http(e.to_string()))?;
+        // The login request itself: the same, with redirects to the same
+        // server only (login::next_server decides on the others).
+        let login_http = reqwest::Client::builder()
+            .user_agent(aurora_version::user_agent())
+            .connect_timeout(std::time::Duration::from_secs(15))
             .tls_certs_merge(ll_ca)
+            .redirect(login::redirect_policy())
             .build()
             .map_err(|e| NetError::Http(e.to_string()))?;
         // Capabilities / assets: Linden Lab's CA for any simulator name (as
@@ -228,6 +240,7 @@ impl NetClient {
         let shared_caps_http = caps_http.clone();
         let shared = session::Shared {
             http,
+            login_http,
             caps_http,
             events: EventSender(ev_tx),
             controls: controls.clone(),

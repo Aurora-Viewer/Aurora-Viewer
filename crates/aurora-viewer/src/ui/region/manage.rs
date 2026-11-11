@@ -387,9 +387,25 @@ pub(super) fn access(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View,
     }
 }
 
-/// The Estate panel's "Apply": a Linden estate is confirmed first
-/// (LLPanelEstateInfo::sendUpdate, ChangeLindenEstate).
+/// The Estate panel's "Apply": a change that shuts people out is confirmed
+/// first (Aurora's own question: a misclick can send half a region home),
+/// then a Linden estate's (LLPanelEstateInfo::sendUpdate, ChangeLindenEstate).
 fn apply_access(s: &mut RegionUi, v: &View, world: &mut World) {
+    let Some(server) = server_access(world) else {
+        return;
+    };
+    let before = s.manage.access.base(&server);
+    let what = s.manage.access.editing().map_or(0, |a| a.restrictions(before));
+    if what != 0 {
+        let here = crate::world::radar::coarse_in(world, v.handle).count();
+        s.ask = Some(Ask::RestrictAccess { what, here });
+    } else {
+        access_confirmed(s, v, world);
+    }
+}
+
+/// The access change once its restrictions are confirmed.
+pub(super) fn access_confirmed(s: &mut RegionUi, v: &View, world: &mut World) {
     if world.estate.estate.as_ref().is_some_and(|e| e.id <= ESTATE_LAST_LINDEN) {
         s.ask = Some(Ask::LindenEstate);
     } else {
