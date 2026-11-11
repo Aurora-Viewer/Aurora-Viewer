@@ -13688,6 +13688,9 @@ ui-options-camera-vr-saturation = Saturation
 ui-options-camera-vr-saturation-help = 0 is black and white, 1 unchanged, 2 doubled colour.
 ui-options-camera-vr-gamma = Gamma
 ui-options-camera-vr-gamma-help = Above 1 opens up the shadows, below 1 deepens them.
+ui-options-camera-vr-defaults = VR defaults
+ui-options-camera-vr-defaults-help = Puts every VR setting on this page back to its default. The other camera settings stay as they are.
+ui-options-camera-vr-restore-defaults = Restore VR defaults
 
 app-vr-leave = Press { $key } to return to desktop mode
 

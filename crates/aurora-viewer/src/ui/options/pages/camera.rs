@@ -334,6 +334,34 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 ] {
                     cx.slider(label, help, &field, range, "");
                 }
+                // every VR setting above back to its default, the rest of the page untouched
+                let p = cx.p;
+                cx.row(
+                    tr!("ui-options-camera-vr-defaults"),
+                    tr!("ui-options-camera-vr-defaults-help"),
+                    &Nothing,
+                    |ui, s| {
+                        let d = crate::camera::CameraSettings::default();
+                        let c = &mut s.camera;
+                        let differs = c.vr != d.vr || c.vr_view != d.vr_view || c.vr_at_start != d.vr_at_start;
+                        let reset = crate::ui::widgets::action_button_if(
+                            ui,
+                            &p,
+                            "restore",
+                            tr!("ui-options-camera-vr-restore-defaults"),
+                            crate::ui::widgets::ActionKind::Flat,
+                            egui::vec2(0.0, 26.0),
+                            differs,
+                        )
+                        .clicked();
+                        if reset {
+                            c.vr = d.vr;
+                            c.vr_view = d.vr_view;
+                            c.vr_at_start = d.vr_at_start;
+                        }
+                        reset
+                    },
+                );
             });
         }
         1 => {

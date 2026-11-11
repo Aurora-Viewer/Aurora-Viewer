@@ -13646,6 +13646,9 @@ ui-options-camera-vr-saturation = 彩度
 ui-options-camera-vr-saturation-help = 0で白黒、1で変化なし、2で色が2倍になります。
 ui-options-camera-vr-gamma = ガンマ
 ui-options-camera-vr-gamma-help = 1より大きいと暗部が明るく、小さいと暗部が深くなります。
+ui-options-camera-vr-defaults = VRの初期設定
+ui-options-camera-vr-defaults-help = このページのVR設定をすべて初期値に戻します。ほかのカメラ設定はそのままです。
+ui-options-camera-vr-restore-defaults = VRを初期設定に戻す
 
 app-vr-leave = { $key } キーでデスクトップモードに戻ります
 
