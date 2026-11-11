@@ -13858,4 +13858,4 @@ ui-options-attached-particles-hint = アバターが装着しているものの�
 
 # Preferences › Graphics: progressive draw distance (FSRenderFarClipStepping)
 ui-options-draw-distance-stepping = 描画距離を段階的に広げる
-ui-options-draw-distance-stepping-hint = ログイン後と別のリージョンへのテレポート後、描画距離を32mから始めて設定値まで倍々に広げ、近くのものから読み込みます。
+ui-options-draw-distance-stepping-hint = ログイン後と別のリージョンへのテレポート後、描画距離を32mから始め、負荷に合わせて設定値まで広げます。オブジェクトの読み込みが終わりフレームが軽い間は2秒ごとに倍にし、そうでない間は待ち、重いフレームが続くと一段戻します。
