@@ -2617,12 +2617,8 @@ fn rlva_linking_refuses_the_locked_seat_like_can_stand_but_sittp_alone_does_not(
     assert!(!world.rlva_can_link(&[seat, other]));
 }
 
-/// #3154: `@setenv_daytime:-1=force` and its RestrainedLove synonym
-/// `@setenv_reset=force` go back to the shared environment, like
-/// RlvEnvironment's `daytime` -1 on ENV_LOCAL: the user's own local sky goes
-/// with RLVa's. Under any `@setenv=n`, the issuer's own included, RLVa
-/// targets ENV_EDIT: only RLVa's sky goes. The lock counts from where it
-/// stands in the message, as the Legacy Viewer runs a message in order.
+/// #3154: `@setenv_daytime:-1=force` and `@setenv_reset=force` go back to the
+/// shared environment, unless `@setenv=n` came before them.
 #[test]
 fn rlva_environment_reset_returns_to_the_shared_environment_unless_locked() {
     use crate::world::{World, eep::SkyFrame, eep_env::SourceRights};
