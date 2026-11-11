@@ -364,14 +364,24 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                     ""
                 };
                 let width = ui.available_width();
-                // read only without the modify right, still selectable
+                // read only without the modify right, still selectable.
+                // Stable id: an empty click focuses this row (name_focus,
+                // LLLineEditor::setFocus when select_on_focus is set).
+                let field_id = super::name_focus::field_id(field);
                 let r = crate::ui::widgets::restricted_text_field(
                     ui,
                     modify,
                     &mut v,
                     crate::ui::widgets::TextPolicy::PrintableNoPipe,
-                    |b, _| egui::TextEdit::singleline(b).desired_width(width).char_limit(limit).hint_text(hint),
+                    |b, _| {
+                        egui::TextEdit::singleline(b)
+                            .id(field_id)
+                            .desired_width(width)
+                            .char_limit(limit)
+                            .hint_text(hint)
+                    },
                 );
+                super::name_focus::remember_value(ui.ctx(), field, &v);
                 if description {
                     r.clone().on_hover_text(aurora_i18n::tr!("build-ui-general-127-bytes-maximum"));
                 } else {

@@ -76,6 +76,11 @@ pub(crate) fn pointer_over_ui(ctx: &egui::Context, pos: egui::Pos2) -> bool {
     ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input() || resize::contains_pointer(ctx, pos)
 }
 
+/// A floater edge or corner grip contains `pos` (LLResizeBar / LLResizeHandle).
+pub(crate) fn pointer_on_floater_edge(ctx: &egui::Context, pos: egui::Pos2) -> bool {
+    resize::contains_pointer(ctx, pos)
+}
+
 /// Any floater/bare window is moving or resizing, independently of drawing
 /// order. The move ID starts dragging only after the window's click tolerance,
 /// so pointer jitter, child controls and text selection keep their behavior.

@@ -279,6 +279,8 @@ pub(super) fn rail_button(ui: &mut egui::Ui, p: &Palette, icon: &str, title: &st
         if active { p.violet_light } else { p.muted },
     );
     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), active, title));
+    #[cfg(test)]
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(("build-rail", title)), rect));
     ui.is_enabled() && response.on_hover_text(title).clicked()
 }
 
