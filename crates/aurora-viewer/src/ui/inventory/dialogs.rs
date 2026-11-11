@@ -75,7 +75,7 @@ pub(super) fn show(
                         .add_enabled(
                             !st.save_pending
                                 && st.preview_can_edit
-                                && crate::world::inventory::preview::can_edit(inv, *id)
+                                && crate::world::inventory::preview::can_edit(inv, *id, facts.god_level)
                                 && st.preview_text.as_ref().is_some_and(|r| {
                                     r.as_ref().is_ok_and(|t| {
                                         inv.items.get(id).is_none_or(|it| it.asset_type != 7)
@@ -143,7 +143,9 @@ pub(super) fn show(
                 ui.horizontal(|ui| {
                     if ui
                         .add_enabled(
-                            !st.save_pending && st.preview_can_edit && crate::world::inventory::preview::can_edit(inv, *notecard),
+                            !st.save_pending
+                                && st.preview_can_edit
+                                && crate::world::inventory::preview::can_edit(inv, *notecard, facts.god_level),
                             egui::Button::new(aurora_i18n::tr!("common-save")),
                         )
                         .clicked()
@@ -593,6 +595,7 @@ pub(super) fn preview(
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
     prefs: &mut InventoryPreferences,
     script_settings: &crate::ui::scripts::settings::ScriptSettings,
+    god_level: u8,
     actions: &mut Vec<InvAction>,
 ) {
     let Some(id) = st.preview else {
@@ -614,7 +617,7 @@ pub(super) fn preview(
     } else {
         Default::default()
     };
-    let editable = st.preview_can_edit && crate::world::inventory::preview::can_edit(inv, id);
+    let editable = st.preview_can_edit && crate::world::inventory::preview::can_edit(inv, id, god_level);
     if it.asset_type == 7
         && view != super::markdown::View::Markdown
         && !st.save_pending
@@ -1140,6 +1143,7 @@ mod tests {
                     &Default::default(),
                     prefs,
                     &Default::default(),
+                    0,
                     &mut actions,
                 );
             },
@@ -1186,6 +1190,7 @@ mod tests {
                     &Default::default(),
                     &mut InventoryPreferences::default(),
                     &Default::default(),
+                    0,
                     &mut actions,
                 );
             },

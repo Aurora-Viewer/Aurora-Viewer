@@ -805,6 +805,7 @@ pub(crate) fn can_fly_for_join(world: &crate::world::World) -> bool {
             && !world.rlva.has("fly")
             && world.main_region.is_some()
             && (world.fly_override
+                || world.god_level > 0
                 || world
                     .main()
                     .and_then(|r| r.info.as_ref())
@@ -819,20 +820,17 @@ fn can_takeoff_with_unknown_policy(world: &crate::world::World, allow_unknown: b
 }
 
 /// The land part of LLAgent::canFly (indra/newview/llagent.cpp): the fly
-/// override first, then the region's no-fly, then the parcel's, which its
+/// override and a god first, then the region's no-fly, then the parcel's, which its
 /// owner and the owning group's flight managers may ignore. RLVa @fly and
 /// sitting are the callers' (they come before the override there too).
 /// `unknown_region` / `unknown_parcel`: the answer while that policy has
 /// not arrived yet.
 pub(crate) fn land_allows_flight(world: &crate::world::World, unknown_region: bool, unknown_parcel: bool) -> bool {
-    use crate::world::land::{AgentRights, owned_by_agent, powers};
-    if world.fly_override {
+    use crate::world::land::{owned_by_agent, powers};
+    if world.fly_override || world.god_level > 0 {
         return true;
     }
-    let rights = AgentRights {
-        id: world.agent_id,
-        groups: &world.groups.groups,
-    };
+    let rights = world.agent_rights();
     world
         .main()
         .and_then(|r| r.info.as_ref())
