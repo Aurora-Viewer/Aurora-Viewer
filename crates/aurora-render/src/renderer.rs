@@ -6084,7 +6084,8 @@ impl Backend {
                 Ok(XrWorld {
                     backends: [left, right],
                     mirror: crate::vr_mirror::Mirror::new(&self.device, &self.config, &self.present_modes),
-                    grading: None,
+                    grading: ([packet.settings.vr_gamma, packet.settings.vr_vibrancy] != [1.0; 2])
+                        .then(|| crate::vr_mirror::HeadsetGrade::new(&self.device, session.output_template())),
                     session,
                     runtime: runtime.clone(),
                 })
@@ -6200,6 +6201,9 @@ impl Backend {
             bounded(packet.settings.vr_gamma, 0.5, 2.5),
             bounded(packet.settings.vr_vibrancy, 0.0, 2.0),
         ];
+        if grade == [1.0; 2] {
+            world.grading = None;
+        }
         let grading = (grade != [1.0; 2]).then(|| {
             world
                 .grading

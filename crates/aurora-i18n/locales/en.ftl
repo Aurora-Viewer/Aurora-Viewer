@@ -14100,9 +14100,19 @@ vr-mode-avatar = Avatar Mode
 vr-mouse-look = VR Mouselook
 vr-discomfort = May cause discomfort
 vr-gamma = VR gamma
-vr-gamma-help = Adjust VR brightness. Higher values lighten the image. The default is 0.80.
+vr-gamma-help = Adjust headset brightness. The default is 1.0.
 vr-vibrancy = VR Colour vibrancy
-vr-vibrancy-help = Adjust headset colour intensity. The default is 1.10.
+vr-vibrancy-help = Adjust headset colour intensity. The default is 1.0.
 vr-resolution = VR resolution per eye
-vr-resolution-help = Restart the viewer to apply resolution changes. Dimensions are limited by the headset runtime.
+vr-resolution-help = Recommended uses the headset’s suggested dimensions up to 1600 pixels per side. Restart the viewer to apply changes.
+vr-resolution-recommended = Recommended
 vr-custom = Custom
+
+joystick-linux-layout = Linux button layout
+
+joystick-linux-layout-help = Choose the input driver layout if X and Y are exchanged. Controller style controls labels.
+
+joystick-layout-positional = Positional
+
+joystick-layout-auto = Automatic
+joystick-layout-xinput = XInput

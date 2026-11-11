@@ -14098,9 +14098,19 @@ vr-mode-avatar = Mode avatar
 vr-mouse-look = Vue à la souris en VR
 vr-discomfort = Peut provoquer une gêne
 vr-gamma = Gamma VR
-vr-gamma-help = Ajuste la luminosité en VR. Une valeur plus élevée éclaircit l’image. La valeur par défaut est 0,80.
+vr-gamma-help = Ajuste la luminosité dans le casque. La valeur par défaut est 1,0.
 vr-vibrancy = Intensité des couleurs VR
-vr-vibrancy-help = Ajuste l’intensité des couleurs dans le casque. La valeur par défaut est 1,10.
+vr-vibrancy-help = Ajuste l’intensité des couleurs dans le casque. La valeur par défaut est 1,0.
 vr-resolution = Résolution VR par œil
-vr-resolution-help = Redémarrez le viewer pour appliquer la résolution. Les dimensions sont limitées par le système VR.
+vr-resolution-help = Utilise les dimensions recommandées par le casque, jusqu’à 1 600 pixels par côté. Redémarrez le viewer pour appliquer les modifications.
+vr-resolution-recommended = Recommandée
 vr-custom = Personnalisée
+
+joystick-linux-layout = Disposition des boutons sous Linux
+
+joystick-linux-layout-help = Choisissez la disposition du pilote si X et Y sont inversés. Le style du contrôleur détermine les libellés.
+
+joystick-layout-positional = Positionnelle
+
+joystick-layout-auto = Automatique
+joystick-layout-xinput = XInput

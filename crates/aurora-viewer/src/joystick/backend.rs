@@ -288,7 +288,13 @@ impl Worker {
                                 (info.min >= 0 && info.max > info.min).then(|| axis_index(*code)).flatten()
                             })
                         };
-                        let style = Self::controller_style(pad.name(), pad.vendor_id());
+                        let mut style = Self::controller_style(pad.name(), pad.vendor_id());
+                        // Verified xpad XInput identities, not vendor-wide guesses.
+                        let xinput = style == GamepadStyle::Xbox
+                            || matches!(pad.vendor_id().zip(pad.product_id()), Some((0x046d, 0xc21d) | (0x2dc8, 0x310a)));
+                        if xinput && style == GamepadStyle::Generic {
+                            style = GamepadStyle::Xbox;
+                        }
                         let mut device = Device::gamepad(
                             format!("joystick:{}:{id}", uuid::Uuid::from_bytes(pad.uuid())),
                             pad.name().to_owned(),
@@ -309,6 +315,7 @@ impl Worker {
                             style,
                             pad.buttons().iter().copied().map(|code| Self::button_kind(code, style)).collect(),
                         );
+                        device.native_xinput = cfg!(target_os = "linux") && xinput;
                         device.gamepad_dpad = [
                             axis_index(gilrs_core::native_ev_codes::AXIS_DPADX),
                             axis_index(gilrs_core::native_ev_codes::AXIS_DPADY),

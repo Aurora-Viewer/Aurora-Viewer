@@ -329,6 +329,17 @@ impl App {
             Use::Off
         };
         self.joystick.backend.poll(mode, &mut self.joystick.snapshot);
+        if self.settings.migrate_legacy_gamepad(&self.joystick.snapshot) {
+            self.settings.save();
+        }
+        for device in &mut self.joystick.snapshot.devices {
+            let selected = self.settings.gamepad.device.is_empty() || self.settings.gamepad.device == device.id;
+            device.apply_layout(if selected {
+                self.settings.gamepad.gamepad_layout
+            } else {
+                crate::joystick::GamepadLayout::Auto
+            });
+        }
         self.joystick_demo();
         if self.camera.flycam.is_none() {
             self.joystick.active = false;

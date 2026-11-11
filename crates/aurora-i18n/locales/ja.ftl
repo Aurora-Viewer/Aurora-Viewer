@@ -14036,9 +14036,19 @@ vr-mode-avatar = アバターモード
 vr-mouse-look = VRマウス視点操作
 vr-discomfort = 不快感を引き起こす可能性があります
 vr-gamma = VRガンマ
-vr-gamma-help = VRの明るさを調整します。値を上げると映像が明るくなります。既定値は0.80です。
+vr-gamma-help = ヘッドセットの明るさを調整します。既定値は1.0です。
 vr-vibrancy = VRの色の鮮やかさ
-vr-vibrancy-help = ヘッドセットの色の鮮やかさを調整します。既定値は1.10です。
+vr-vibrancy-help = ヘッドセットの色の鮮やかさを調整します。既定値は1.0です。
 vr-resolution = VRの片目の解像度
-vr-resolution-help = 解像度の変更には再起動が必要です。寸法はVRランタイムの上限に制限されます。
+vr-resolution-help = ヘッドセットの推奨サイズを使用します（各辺最大1600ピクセル）。変更を適用するにはビューアを再起動してください。
+vr-resolution-recommended = 推奨
 vr-custom = カスタム
+
+joystick-linux-layout = Linuxのボタン配置
+
+joystick-linux-layout-help = XとYが逆の場合は入力ドライバーの配置を選択してください。コントローラースタイルはラベルを変更します。
+
+joystick-layout-positional = 位置に基づく
+
+joystick-layout-auto = 自動
+joystick-layout-xinput = XInput

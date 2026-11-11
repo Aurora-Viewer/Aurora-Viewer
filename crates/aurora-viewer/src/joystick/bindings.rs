@@ -108,7 +108,10 @@ impl Settings {
                 super::INHERIT_BUTTON if i == 22 || i == 23 => self.flycam_button,
                 value => value,
             };
-            device.map_or(binding, |device| super::resolve_binding(device, binding))
+            device.map_or_else(
+                || super::standard_binding(binding),
+                |device| super::resolve_binding(device, binding),
+            )
         })
     }
 
@@ -129,10 +132,11 @@ impl Settings {
             scope |= 2;
         }
         let previous = self.resolved_buttons(device);
-        if binding >= 0 {
+        let resolved = device.map_or_else(|| super::standard_binding(binding), |d| super::resolve_binding(d, binding));
+        if resolved >= 0 {
             for (other, value) in previous.into_iter().enumerate() {
                 let mode = self.button_scope(other);
-                if other != index && !(inherited && other == index + 3) && scope & mode != 0 && value == binding {
+                if other != index && !(inherited && other == index + 3) && scope & mode != 0 && value == resolved {
                     if other == 3 && index >= 17 {
                         if scope & 1 != 0 {
                             self.flycam_button = -1;
@@ -360,6 +364,50 @@ mod tests {
             enabled: true,
             ..Settings::gamepad_defaults()
         }
+    }
+
+    #[test]
+    fn offline_button_choices_resolve_by_semantics_on_reordered_pads() {
+        let mut settings = gamepad_settings();
+        settings.bind_button("gamepad.jump_button", super::super::AUTO_WEST, None);
+        assert_eq!(settings.jump_button, super::super::AUTO_WEST);
+        let mut buttons = GamepadButton::STANDARD.to_vec();
+        buttons.reverse();
+        let device = Device::gamepad(
+            "reordered".into(),
+            "Pad".into(),
+            0,
+            [[None; 2]; 2],
+            [None; 2],
+            GamepadStyle::Generic,
+            buttons,
+        );
+        let expected = device.gamepad_buttons.iter().position(|b| *b == GamepadButton::West).unwrap() as i8;
+        assert_eq!(super::super::resolve_binding(&device, settings.jump_button), expected);
+        assert_eq!(settings.crouch_button, -1, "conflicting semantic binding is released");
+    }
+
+    #[test]
+    fn explicit_linux_layout_override_is_reversible_and_idempotent() {
+        use super::super::GamepadLayout;
+        if !cfg!(target_os = "linux") {
+            return;
+        }
+        let mut device = Device::gamepad(
+            "generic".into(),
+            "Pad".into(),
+            0,
+            [[None; 2]; 2],
+            [None; 2],
+            GamepadStyle::Generic,
+            vec![GamepadButton::North, GamepadButton::West],
+        );
+        device.apply_layout(GamepadLayout::Xinput);
+        assert_eq!(device.gamepad_buttons, [GamepadButton::West, GamepadButton::North]);
+        device.apply_layout(GamepadLayout::Xinput);
+        assert_eq!(device.gamepad_buttons, [GamepadButton::West, GamepadButton::North]);
+        device.apply_layout(GamepadLayout::Positional);
+        assert_eq!(device.gamepad_buttons, [GamepadButton::North, GamepadButton::West]);
     }
 
     #[test]

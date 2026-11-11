@@ -155,7 +155,7 @@ impl AltCursor {
 impl App {
     pub(super) fn mouselook_capture_enabled(&self) -> bool {
         if self.vr_camera.is_some() {
-            self.settings.camera.vr_mouse_look
+            self.settings.camera.vr.mouse_look
                 && matches!(
                     self.vr_mode,
                     Some(crate::camera::VrView::FirstPerson | crate::camera::VrView::Avatar)

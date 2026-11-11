@@ -504,8 +504,9 @@ In VR, seated keyboard movement reaches vehicle controls and flycam keyboard tra
 remains independent of the avatar. First Person and the player-focused Avatar camera
 follow seated avatar/vehicle yaw while keeping the horizon level. VR ignores creator
 seat views, forced first-person requests and scripted follow-camera poses, retaining
-its own orbit, pan and zoom. Desktop Avatar respects explicit seat views and scripted
-position/focus locks; otherwise manual camera adjustments remain available while driving. Avatar and Flycam look sensitivity default to 4.0,
+its own orbit, pan and zoom. Desktop mouse and keyboard retain the native seat and
+FollowCam paths. Gamepad orbit, pan and zoom can take over the seated view and
+retain the adjustment while driving. Avatar and Flycam look sensitivity default to 4.0,
 first-person look sensitivity to 1.875. Movement, orbit and zoom retain the pan
 point. Y/Triangle, switching view modes, and explicit avatar-target cycling reset
 horizontal and vertical pan. New movement/view input recenters VR by translation

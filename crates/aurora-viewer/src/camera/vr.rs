@@ -394,7 +394,7 @@ impl WalkOverride {
             return None;
         }
         self.active = following;
-        Some(!following && requested_run)
+        requested_run.then_some(!following)
     }
 }
 
@@ -806,9 +806,9 @@ mod tests {
         ] {
             let mut state = WalkOverride::default();
             let requested = always || temp || trigger;
-            assert_eq!(state.update(true, requested), Some(false));
+            assert_eq!(state.update(true, requested), requested.then_some(false));
             assert_eq!(state.update(true, requested), None);
-            assert_eq!(state.update(false, requested), Some(requested));
+            assert_eq!(state.update(false, requested), requested.then_some(true));
             assert!(!state.active());
         }
     }

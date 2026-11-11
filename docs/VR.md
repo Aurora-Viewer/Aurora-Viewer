@@ -196,10 +196,11 @@ Mouse look is off by default. When enabled it turns horizontally only, and its
 warning icon explains that it may cause discomfort.
 
 Gamma (0.5–2.5) and Colour vibrancy (0–2) adjust the headset image live.
-Gamma defaults to 0.80 and vibrancy to 1.10. The desktop mirror uses the unadjusted eye image.
+Gamma and vibrancy default to 1.0. Saved adjustments are retained. The desktop mirror uses the unadjusted eye image.
 
-Resolution is specified per eye: 1600 × 1600, 2160 × 2160 (default),
-2560 × 2560, or custom width and height. Restart the viewer after changing it.
+Recommended resolution uses the runtime’s suggested width and height, capped at
+1600 per side. The 1600 × 1600, 2160 × 2160, 2560 × 2560 and custom sizes are
+explicit alternatives. Restart the viewer after changing it.
 The runtime and GPU texture limits may reduce the requested dimensions.
 
 Headset validation: check native Avatar orbit and vertical pan, then framing
@@ -212,3 +213,24 @@ toward the head without dragging the view, then stop within the inner band.
 Check manual takeover, loss/regaining of headset focus, physical head turns,
 walking/running, seated views, mode cycling, mouse look, Escape exit and each
 resolution after restarting.
+
+
+While the headset is engaged, keyboard input is reserved for movement, gestures,
+the bound Mouselook shortcut that cycles VR modes, and Escape to exit. Desktop
+shortcuts and chat typing are suspended during VR.
+
+VR keeps the selected mode over creator seat cameras, scripted FollowCam and
+forced mouselook. A turret or combat seat that expects forced mouselook may
+therefore receive no mouselook mouse-button control events in Avatar or Flycam.
+First Person is the appropriate mode for features that require mouselook.
+
+Valid inferred eye poses continue rendering after initial anchoring. Body following
+and automatic framing pause while the head is untracked and resume on fresh
+tracked feedback. Initial anchoring and explicit first-person recentering require
+fully tracked poses.
+
+Older enabled joystick profiles assigned to gamepads are migrated once into the
+Gamepad page. Saved native axes, gains and button assignments are retained.
+Unclassified profiles remain pending across saves until the saved device appears.
+The Linux input-layout choice can correct X/Y for an unrecognized input driver;
+controller style selects the displayed button labels.

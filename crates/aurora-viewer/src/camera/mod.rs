@@ -166,8 +166,11 @@ impl CameraKeys {
 
 /// Walking uses projected physical gaze; body yaw never changes the VR rig.
 pub fn vr_walk_yaw(rig_view: Mat4, head_rotation: Quat) -> f32 {
-    let forward = rig_view.inverse().transform_vector3(head_rotation * Vec3::NEG_Z);
-    forward.y.atan2(forward.x)
+    let world = rig_view.inverse();
+    let forward = world.transform_vector3(head_rotation * Vec3::NEG_Z);
+    let right = world.transform_vector3(head_rotation * Vec3::X);
+    let heading = aurora_render::stereo_view::horizontal_heading(forward, right);
+    heading.y.atan2(heading.x)
 }
 
 /// What the frame update needs besides the world.
@@ -1270,7 +1273,9 @@ impl Camera {
 
     /// AvatarSitResponse: the seat's camera and forced mouselook.
     pub fn on_sit_response(&mut self, object: Uuid, eye: Vec3, at: Vec3, force_mouselook: bool) {
-        self.sit_camera = (eye.distance_squared(at) > SIT_CAMERA_THRESHOLD_SQUARED).then_some(SitCamera { object, eye, at });
+        if eye.distance_squared(at) > SIT_CAMERA_THRESHOLD_SQUARED {
+            self.sit_camera = Some(SitCamera { object, eye, at });
+        }
         self.force_mouselook = force_mouselook;
     }
 
@@ -1448,9 +1453,6 @@ impl Camera {
     /// mouselook), `clicks` > 0 zooms out. Returns true when the settings
     /// changed: Ctrl / Shift + wheel raise the camera / the focus point.
     pub fn scroll(&mut self, clicks: f32, ctrl: bool, shift: bool, agent: &mut AgentState, s: &mut CameraSettings) -> bool {
-        if clicks.is_finite() && clicks != 0.0 && !s.disable_wheel_zoom {
-            self.prepare_seated_camera();
-        }
         if self.vr_mode == Some(VrView::Avatar) {
             if clicks.is_finite() && !s.disable_wheel_zoom {
                 self.vr_native_input();
@@ -1569,9 +1571,6 @@ impl Camera {
     /// Mouse motion during a camera drag (LLToolCamera::handleHover), in
     /// window pixels (y down). A full window width turns 360°.
     pub fn drag(&mut self, mode: ToolMode, dx: f32, dy: f32, width: f32, agent: &mut AgentState) {
-        if dx != 0.0 || dy != 0.0 {
-            self.prepare_seated_camera();
-        }
         let Some(t) = &mut self.tool else {
             return;
         };
@@ -1632,9 +1631,6 @@ impl Camera {
     /// Right drag (Aurora): around the avatar without turning it, or around
     /// the alt-camera focus point.
     pub fn orbit_drag(&mut self, dx: f32, dy: f32, sensitivity: f32, agent: &mut AgentState) {
-        if dx != 0.0 || dy != 0.0 {
-            self.prepare_seated_camera();
-        }
         let k = DRAG_RATE * sensitivity;
         if self.vr_mode == Some(VrView::Avatar) && dx != 0.0 {
             self.vr_native_input();
@@ -1660,9 +1656,6 @@ impl Camera {
     /// Camera keys held this frame (LLAgentCamera::updateCamera); like
     /// camera_spin_around_cw & co they first unlock the view from the avatar.
     pub fn apply_keys(&mut self, keys: CameraKeys, agent: &mut AgentState, s: &CameraSettings, dt: f32) {
-        if keys.any() {
-            self.prepare_seated_camera();
-        }
         let mut keys = keys;
         if self.vr_mode == Some(VrView::Avatar) {
             if keys.any() {
@@ -1708,9 +1701,9 @@ impl Camera {
 
     /// The joystick's continuous pitch, as LLAgent::pitch updates the
     /// third-person camera; mouselook uses AgentState::pitch instead.
-    pub fn joystick_pitch(&mut self, rate: f32, dt: f32) {
-        if rate != 0.0 {
-            self.prepare_seated_camera();
+    pub fn joystick_pitch(&mut self, rate: f32, dt: f32, gamepad: bool) {
+        if gamepad && rate != 0.0 {
+            self.prepare_gamepad_seated_camera();
         }
         if !self.mouselook() && rate != 0.0 {
             let angle = -rate * dt.clamp(0.0, 0.2);
@@ -1744,7 +1737,7 @@ impl Camera {
 
     /// Use the existing object-relative camera for adjustable seated views.
     /// Driving controls must not restore the creator's follow simulation over it.
-    fn prepare_seated_camera(&mut self) {
+    fn prepare_gamepad_seated_camera(&mut self) {
         if self.vr_mode.is_some()
             || self.avatar.seat.is_none()
             || !self.focus_on_avatar
@@ -1770,7 +1763,7 @@ impl Camera {
 
     pub fn gamepad_zoom(&mut self, rate: f32, dt: f32, agent: &mut AgentState, s: &CameraSettings) {
         if rate != 0.0 {
-            self.prepare_seated_camera();
+            self.prepare_gamepad_seated_camera();
         }
         if self.vr_mode == Some(VrView::Avatar) && rate != 0.0 {
             self.vr_request(vr::FramingInput {
@@ -1807,7 +1800,7 @@ impl Camera {
         if !meters.is_finite() || meters == glam::Vec2::ZERO {
             return;
         }
-        self.prepare_seated_camera();
+        self.prepare_gamepad_seated_camera();
         if !self.third_person() || self.free.is_some() || self.flycam.is_some() {
             return;
         }
@@ -1847,7 +1840,7 @@ impl Camera {
     /// Once movement starts, the caller routes this input to the avatar instead.
     pub fn joystick_orbit_yaw(&mut self, rate: f32, dt: f32, agent: &mut AgentState) {
         if rate != 0.0 {
-            self.prepare_seated_camera();
+            self.prepare_gamepad_seated_camera();
         }
         if self.vr_mode == Some(VrView::Avatar) && rate != 0.0 {
             self.vr_native_input();
@@ -3069,7 +3062,7 @@ mod tests {
             "follows the selected avatar even with ordinary object tracking off"
         );
         let eye = camera.position;
-        camera.joystick_pitch(0.5, 0.1);
+        camera.joystick_pitch(0.5, 0.1, true);
         camera.joystick_orbit_yaw(0.5, 0.1, &mut world.agent);
         settle(&mut camera, &mut world, &settings);
         assert!(camera.position.distance(eye) > 0.05);
@@ -5789,7 +5782,7 @@ mod tests {
     }
 
     #[test]
-    fn desktop_custom_vehicle_camera_allows_mouse_and_camera_keys() {
+    fn desktop_wheel_preserves_creator_seat_view_and_offset_shortcut() {
         let mut settings = CameraSettings::default();
         let mut world = hover_world(true);
         let mut camera = Camera::default();
@@ -5798,31 +5791,21 @@ mod tests {
         let seat = world.objects.parent_of(world.objects.get(avatar).unwrap()).unwrap();
         let seat_id = world.objects.get(seat).unwrap().full_id;
         camera.on_sit_response(seat_id, Vec3::new(-4.0, 0.0, 2.0), Vec3::Z, false);
-        camera.update(&mut world, &settings, &frame(0.016));
+        camera.on_sit_response(seat_id, Vec3::ZERO, Vec3::ZERO, false);
         settle(&mut camera, &mut world, &settings);
-        let distance = camera.position.distance(camera.target);
+        let eye = camera.position;
+        let at = camera.target;
         camera.scroll(2.0, false, false, &mut world.agent, &mut settings);
         settle(&mut camera, &mut world, &settings);
-        assert!((camera.position.distance(camera.target) - distance).abs() > 0.1);
+        assert!(camera.position.abs_diff_eq(eye, 1e-4));
+        assert!(camera.target.abs_diff_eq(at, 1e-4));
+        assert!(camera.sit_camera.is_some());
+        assert!(!camera.seated_manual_view());
 
-        let forward = camera.forward();
-        camera.orbit_drag(30.0, 20.0, 1.0, &mut world.agent);
-        settle(&mut camera, &mut world, &settings);
-        assert!(camera.forward().distance(forward) > 0.01);
-
-        let target = camera.target;
-        camera.apply_keys(
-            CameraKeys {
-                pan_up: 1.0,
-                ..Default::default()
-            },
-            &mut world.agent,
-            &settings,
-            0.2,
-        );
-        settle(&mut camera, &mut world, &settings);
-        assert!(camera.target.distance(target) > 0.1);
-        assert!(camera.seated_manual_view());
+        let offset = settings.camera_offset[2];
+        assert!(camera.scroll(2.0, true, false, &mut world.agent, &mut settings));
+        assert!((settings.camera_offset[2] - offset - 0.2).abs() < 1e-5);
+        assert!(camera.focus_on_avatar);
     }
 
     #[test]

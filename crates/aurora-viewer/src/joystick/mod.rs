@@ -29,6 +29,20 @@ pub const AUTO_LEFT_BUMPER: i8 = -11;
 pub const AUTO_RIGHT_BUMPER: i8 = -12;
 pub const AUTO_WEST: i8 = -13;
 pub const AUTO_NORTH: i8 = -14;
+pub const AUTO_SELECT: i8 = -15;
+pub const AUTO_START: i8 = -16;
+pub const AUTO_MODE: i8 = -17;
+pub const AUTO_LEFT_STICK: i8 = -18;
+pub const AUTO_RIGHT_STICK: i8 = -19;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GamepadLayout {
+    #[default]
+    Auto,
+    Positional,
+    Xinput,
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -152,6 +166,11 @@ pub fn gamepad_dpad_binding(device: &Device, direction: usize) -> Option<i8> {
 /// Defaults identify physical controls, never the platform's native button order.
 pub fn automatic_button(binding: i8) -> Option<GamepadButton> {
     match binding {
+        AUTO_SELECT => Some(GamepadButton::Select),
+        AUTO_START => Some(GamepadButton::Start),
+        AUTO_MODE => Some(GamepadButton::Mode),
+        AUTO_LEFT_STICK => Some(GamepadButton::LeftStick),
+        AUTO_RIGHT_STICK => Some(GamepadButton::RightStick),
         AUTO_SOUTH => Some(GamepadButton::South),
         AUTO_EAST => Some(GamepadButton::East),
         AUTO_WEST => Some(GamepadButton::West),
@@ -160,6 +179,41 @@ pub fn automatic_button(binding: i8) -> Option<GamepadButton> {
         AUTO_RIGHT_BUMPER => Some(GamepadButton::RightBumper),
         _ => None,
     }
+}
+
+/// Portable storage for choices made without a native device.
+pub fn semantic_button(button: GamepadButton) -> Option<i8> {
+    [
+        AUTO_SELECT,
+        AUTO_START,
+        AUTO_MODE,
+        AUTO_LEFT_STICK,
+        AUTO_RIGHT_STICK,
+        AUTO_SOUTH,
+        AUTO_EAST,
+        AUTO_NORTH,
+        AUTO_WEST,
+        AUTO_LEFT_BUMPER,
+        AUTO_RIGHT_BUMPER,
+    ]
+    .into_iter()
+    .find(|binding| automatic_button(*binding) == Some(button))
+    .or(match button {
+        GamepadButton::LeftTrigger => Some(AUTO_LEFT_TRIGGER),
+        GamepadButton::RightTrigger => Some(AUTO_RIGHT_TRIGGER),
+        GamepadButton::DpadUp => Some(AUTO_DPAD_UP),
+        GamepadButton::DpadDown => Some(AUTO_DPAD_DOWN),
+        GamepadButton::DpadLeft => Some(AUTO_DPAD_LEFT),
+        GamepadButton::DpadRight => Some(AUTO_DPAD_RIGHT),
+        _ => None,
+    })
+}
+
+pub fn standard_binding(binding: i8) -> i8 {
+    GamepadButton::STANDARD
+        .iter()
+        .position(|button| semantic_button(*button) == Some(binding))
+        .map_or(binding, |index| index as i8)
 }
 
 pub fn resolve_binding(device: &Device, binding: i8) -> i8 {
@@ -280,6 +334,7 @@ pub struct Settings {
     pub enabled: bool,
     /// Gamepads are monitored independently of the opt-in raw joystick/HID input.
     pub gamepad_style: GamepadStyle,
+    pub gamepad_layout: GamepadLayout,
     pub gamepad_layout_version: u8,
     pub first_person: FirstPerson,
     pub gamepad_flycam_view_button: i8,
@@ -338,6 +393,7 @@ impl Default for Settings {
         Self {
             enabled: false,
             gamepad_style: GamepadStyle::Auto,
+            gamepad_layout: GamepadLayout::Auto,
             gamepad_layout_version: 0,
             first_person: FirstPerson::default(),
             gamepad_flycam_view_button: INHERIT_BUTTON,
@@ -529,9 +585,32 @@ pub struct Device {
     pub gamepad_style: GamepadStyle,
     /// One standardized label per entry in `buttons` / `presses`.
     pub gamepad_buttons: Vec<GamepadButton>,
+    pub native_xinput: bool,
+    xy_override_applied: bool,
 }
 
 impl Device {
+    pub fn apply_layout(&mut self, layout: GamepadLayout) {
+        if !cfg!(target_os = "linux") || !self.is_gamepad {
+            return;
+        }
+        let swap = match layout {
+            GamepadLayout::Auto => false,
+            GamepadLayout::Positional => self.native_xinput,
+            GamepadLayout::Xinput => !self.native_xinput,
+        };
+        if swap != self.xy_override_applied {
+            for button in &mut self.gamepad_buttons {
+                *button = match *button {
+                    GamepadButton::North => GamepadButton::West,
+                    GamepadButton::West => GamepadButton::North,
+                    value => value,
+                };
+            }
+            self.xy_override_applied = swap;
+        }
+    }
+
     pub fn new(id: String, name: String, axis_count: usize) -> Self {
         Self {
             id,
@@ -546,6 +625,8 @@ impl Device {
             gamepad_dpad: [None; 2],
             gamepad_style: GamepadStyle::Generic,
             gamepad_buttons: Vec::new(),
+            native_xinput: false,
+            xy_override_applied: false,
         }
     }
 

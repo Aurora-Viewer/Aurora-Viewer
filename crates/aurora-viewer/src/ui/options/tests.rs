@@ -414,23 +414,23 @@ fn a_setting_has_one_page() {
 #[test]
 fn camera_and_vr_page_resets_are_independent() {
     let mut s = Settings::default();
-    s.camera.vr_mouse_look = true;
-    s.camera.vr_resolution = [2560, 2560];
-    s.camera.vr_gamma = 1.5;
-    s.camera.vr_vibrancy = 0.7;
+    s.camera.vr.mouse_look = true;
+    s.camera.vr.resolution = Some([2560, 2560]);
+    s.camera.vr.gamma = 1.5;
+    s.camera.vr.vibrancy = 0.7;
     s.camera.smoothing = 8.0;
     reset_page_settings(Page::Camera, &mut s);
-    assert!(s.camera.vr_mouse_look);
-    assert_eq!(s.camera.vr_resolution, [2560, 2560]);
-    assert_eq!(s.camera.vr_gamma, 1.5);
-    assert_eq!(s.camera.vr_vibrancy, 0.7);
+    assert!(s.camera.vr.mouse_look);
+    assert_eq!(s.camera.vr.resolution, Some([2560, 2560]));
+    assert_eq!(s.camera.vr.gamma, 1.5);
+    assert_eq!(s.camera.vr.vibrancy, 0.7);
     assert_eq!(s.camera.smoothing, Settings::default().camera.smoothing);
     s.camera.smoothing = 8.0;
     reset_page_settings(Page::Vr, &mut s);
-    assert!(!s.camera.vr_mouse_look);
-    assert_eq!(s.camera.vr_resolution, [2160, 2160]);
-    assert_eq!(s.camera.vr_gamma, 0.8);
-    assert_eq!(s.camera.vr_vibrancy, 1.1);
+    assert!(!s.camera.vr.mouse_look);
+    assert_eq!(s.camera.vr.resolution, None);
+    assert_eq!(s.camera.vr.gamma, 1.0);
+    assert_eq!(s.camera.vr.vibrancy, 1.0);
     assert_eq!(s.camera.smoothing, 8.0);
 }
 

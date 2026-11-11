@@ -2050,6 +2050,9 @@ impl App {
     }
 
     fn send_from(&mut self, mut cmd: NetCommand, actor: uuid::Uuid) {
+        if let NetCommand::SetAlwaysRun(run) = &mut cmd {
+            *run &= !self.vr_walk_override.active();
+        }
         // a region that does not bake: our own bakes stand for the server's
         if let NetCommand::RequestServerAppearance { cof_version } = cmd
             && self.world.bakes_locally()
@@ -4322,7 +4325,7 @@ impl App {
     fn camera_mouse_delta(&mut self, dx: f32, dy: f32) {
         let vr = self.gfx.as_ref().is_some_and(|g| g.renderer.vr_engaged());
         if vr {
-            if self.settings.camera.vr_mouse_look {
+            if self.settings.camera.vr.mouse_look {
                 let turn = -dx * self.settings.mouse_sensitivity * crate::camera::DRAG_RATE;
                 if self.vr_mode == Some(crate::camera::VrView::Avatar) {
                     if self.focused && !self.egui_ctx.egui_wants_pointer_input() {
@@ -4602,7 +4605,7 @@ impl App {
         }
         let first_person_vr = self.vr_mode == Some(crate::camera::VrView::FirstPerson);
         let strafe = if first_person_vr {
-            self.settings.camera.vr_mouse_look
+            self.settings.camera.vr.mouse_look
         } else {
             self.mouse_mode == MouseMode::Steer || self.shift != self.settings.arrows_strafe
         };
@@ -8139,7 +8142,7 @@ impl App {
             self.vr_mode,
             Some(crate::camera::VrView::FirstPerson | crate::camera::VrView::Flycam)
         ) {
-            i.vr_lateral_keys(self.settings.camera.vr_mouse_look);
+            i.vr_lateral_keys(self.settings.camera.vr.mouse_look);
         }
         let now = Instant::now();
         let turn_held = |since: &mut Option<Instant>, input: &MoveInput| {
@@ -8330,7 +8333,7 @@ impl App {
             pan_down: rate[9],
         };
         self.camera.apply_keys(keys, &mut self.world.agent, &self.settings.camera, dt);
-        self.camera.joystick_pitch(i.joystick_pitch, dt);
+        self.camera.joystick_pitch(i.joystick_pitch, dt, gamepad);
         if gamepad
             && (!moving || self.world.agent.is_sitting() || self.camera.gamepad_pan_follows_player())
             && self.mouse_mode != MouseMode::FocusOrbit

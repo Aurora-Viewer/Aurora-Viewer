@@ -1056,7 +1056,7 @@ pub enum AoMethod {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RenderSettings {
     /// Requested per-eye XR size, bounded by runtime limits.
-    pub vr_resolution: [u32; 2],
+    pub vr_resolution: Option<[u32; 2]>,
     pub vr_gamma: f32,
     pub vr_vibrancy: f32,
     /// Percentage of the window resolution used by the world; UI stays native.
@@ -1110,9 +1110,9 @@ pub struct RenderSettings {
 impl Default for RenderSettings {
     fn default() -> Self {
         RenderSettings {
-            vr_resolution: [2160, 2160],
-            vr_gamma: 0.8,
-            vr_vibrancy: 1.1,
+            vr_resolution: None,
+            vr_gamma: 1.0,
+            vr_vibrancy: 1.0,
             render_scale_percent: 100,
             water_effects: crate::WaterEffects::default(),
             // the state `Renderer::new` builds its pipelines and targets

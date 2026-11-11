@@ -516,6 +516,9 @@ pub struct Settings {
     /// LLViewerJoystick: device, axis mapping and separate avatar/flycam tuning.
     pub joystick: crate::joystick::Settings,
     pub gamepad: crate::joystick::Settings,
+    /// Pre-split profile awaiting device classification after an upgrade.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending_legacy_gamepad: Option<crate::joystick::Settings>,
     /// Ground foot geometry after wearing/detaching a body attachment.
     pub auto_hover_height: bool,
     /// Fixed adjustment added to each automatic grounding estimate (metres).
@@ -2009,6 +2012,7 @@ impl Default for Settings {
             crosshair: Default::default(),
             joystick: Default::default(),
             gamepad: crate::joystick::Settings::gamepad_defaults(),
+            pending_legacy_gamepad: None,
             auto_hover_height: false,
             auto_hover_offset: 0.0,
             hover_height_accounts: None,
@@ -2676,10 +2680,18 @@ impl Settings {
     /// understand; for a newer build's file, also what to keep of it on save.
     fn read_document(value: serde_json::Value, path: &Path) -> Option<(Settings, Option<(serde_json::Value, Vec<String>)>)> {
         let version = value["settings_version"].as_u64().unwrap_or(0);
-        let Some(read) = crate::tolerant::from_value::<Settings>(value.clone(), "settings.json") else {
+        let Some(mut read) = crate::tolerant::from_value::<Settings>(value.clone(), "settings.json") else {
             crate::tolerant::backup(path);
             return None;
         };
+        if version <= SETTINGS_VERSION as u64 && value.get("gamepad").is_none() && read.value.joystick.enabled {
+            read.value.pending_legacy_gamepad = Some(read.value.joystick.clone());
+            let mut preset = crate::joystick::Settings::default();
+            preset.raw_gamepad_preset();
+            if read.value.joystick.mapping == preset.mapping {
+                read.value.finish_legacy_gamepad_migration(None);
+            }
+        }
         let mut newer = None;
         if version > SETTINGS_VERSION as u64 {
             // No migration runs backwards: `sanitized` only migrates older
@@ -2728,6 +2740,49 @@ impl Settings {
         };
         self.night_sky_gain = within(self.night_sky_gain, GAIN_RANGE, DEFAULT_GAIN);
         self.night_sky_milky_way = within(self.night_sky_milky_way, MILKY_WAY_RANGE, DEFAULT_MILKY_WAY);
+    }
+
+    /// Complete only after the old selector identifies a real device. Persist
+    /// the source while disconnected so saving defaults cannot lose the upgrade.
+    pub(crate) fn migrate_legacy_gamepad(&mut self, snapshot: &crate::joystick::Snapshot) -> bool {
+        let Some(source) = &self.pending_legacy_gamepad else { return false };
+        if self.gamepad != crate::joystick::Settings::gamepad_defaults() || self.joystick != *source {
+            self.pending_legacy_gamepad = None;
+            return true;
+        }
+        let Some(device) = snapshot.devices.iter().find(|d| source.device.is_empty() || d.id == source.device) else {
+            return false;
+        };
+        if device.is_gamepad {
+            let id = device.id.clone();
+            self.finish_legacy_gamepad_migration(Some(id));
+        } else {
+            self.pending_legacy_gamepad = None;
+        }
+        true
+    }
+
+    fn finish_legacy_gamepad_migration(&mut self, device: Option<String>) {
+        let Some(mut profile) = self.pending_legacy_gamepad.take() else {
+            return;
+        };
+        if let Some(device) = device {
+            profile.device = device;
+        }
+        // Preserve native axes, gains and button indices. New actions start
+        // unbound so they cannot shadow a button assigned by the old profile.
+        profile.gamepad_layout_version = 1;
+        profile.crouch_button = -1;
+        profile.reset_view_button = -1;
+        profile.first_person.tuning = profile.avatar.clone();
+        profile.first_person.jump_button = profile.jump_button;
+        profile.first_person.rise_button = profile.rise_button;
+        profile.first_person.fall_button = profile.fall_button;
+        profile.first_person.crouch_button = -1;
+        profile.first_person.zoom_in_button = -1;
+        profile.first_person.zoom_out_button = -1;
+        self.gamepad = profile;
+        self.joystick.enabled = false;
     }
 
     pub(crate) fn sanitized(mut self) -> Settings {
@@ -3360,9 +3415,9 @@ impl Settings {
         let mut water_effects = self.water_effects.render();
         water_effects.particle_budget = self.max_particles;
         aurora_render::RenderSettings {
-            vr_gamma: self.camera.vr_gamma,
-            vr_vibrancy: self.camera.vr_vibrancy,
-            vr_resolution: self.camera.vr_resolution.map(|n| n.clamp(256, 8192)),
+            vr_gamma: self.camera.vr.gamma,
+            vr_vibrancy: self.camera.vr.vibrancy,
+            vr_resolution: self.camera.vr.resolution,
             render_scale_percent: self.render_scale_percent.clamp(50, 100),
             water_effects,
             aa: match self.antialiasing {
@@ -3702,6 +3757,45 @@ mod tests {
     }
 
     #[test]
+    fn legacy_gamepad_preset_migrates_without_hardware_and_respects_existing_profile() {
+        let path = scratch_settings_file();
+        let mut old = crate::joystick::Settings {
+            enabled: true,
+            ..Default::default()
+        };
+        old.raw_gamepad_preset();
+        let document = serde_json::json!({"settings_version":30,"joystick":old});
+        let (loaded, newer) = super::Settings::read_document(document.clone(), &path).expect("legacy preset");
+        let loaded = loaded.finished(newer);
+        assert!(loaded.gamepad.enabled);
+        assert!(!loaded.joystick.enabled);
+        assert!(loaded.pending_legacy_gamepad.is_none());
+        assert_eq!(loaded.gamepad.mapping, old.mapping);
+        assert_eq!(loaded.gamepad.flycam, old.flycam);
+        let mut explicit = document;
+        explicit["gamepad"] = serde_json::to_value(crate::joystick::Settings::gamepad_defaults()).unwrap();
+        let (loaded, _) = super::Settings::read_document(explicit, &path).expect("existing profile");
+        assert!(!loaded.gamepad.enabled);
+        assert!(loaded.pending_legacy_gamepad.is_none());
+    }
+
+    #[test]
+    fn legacy_raw_joystick_classification_preserves_the_original_input() {
+        let path = scratch_settings_file();
+        let document = serde_json::json!({"settings_version":30,"joystick":{"enabled":true,"device":"flight"}});
+        let (loaded, newer) = super::Settings::read_document(document, &path).expect("legacy flight stick");
+        let mut loaded = loaded.finished(newer);
+        let snapshot = crate::joystick::Snapshot {
+            devices: vec![crate::joystick::Device::new("flight".into(), "Flight stick".into(), 6)],
+            ..Default::default()
+        };
+        assert!(loaded.migrate_legacy_gamepad(&snapshot));
+        assert!(loaded.joystick.enabled);
+        assert!(!loaded.gamepad.enabled);
+        assert!(loaded.pending_legacy_gamepad.is_none());
+    }
+
+    #[test]
     fn joystick_legacy_file_preserves_custom_axes_and_buttons() {
         let path = scratch_settings_file();
         std::fs::write(
@@ -3710,11 +3804,11 @@ mod tests {
         )
         .expect("write legacy settings");
         let (loaded, newer) = super::Settings::read_document(read_back(&path), &path).expect("read legacy settings");
-        let loaded = loaded.finished(newer);
+        let mut loaded = loaded.finished(newer);
         assert_eq!(loaded.gamepad, crate::joystick::Settings::gamepad_defaults());
-        assert!(!loaded.gamepad.enabled, "legacy joystick enablement does not enable gamepads");
+        assert!(loaded.pending_legacy_gamepad.is_some(), "classification waits for the saved device");
         loaded.save_to(&path);
-        let s = loaded.joystick;
+        let s = loaded.joystick.clone();
         let saved = read_back(&path);
         assert_eq!(saved["joystick"]["mapping"], serde_json::json!([2, 1, 0, 3, 5, 4, 6]));
         let device = crate::joystick::Device::gamepad(
@@ -3726,6 +3820,21 @@ mod tests {
             crate::joystick::GamepadStyle::Generic,
             vec![],
         );
+        let source = saved["pending_legacy_gamepad"].clone();
+        assert!(source.is_object(), "saving while disconnected keeps the migration");
+        let snapshot = crate::joystick::Snapshot {
+            devices: vec![device.clone()],
+            ..Default::default()
+        };
+        assert!(loaded.migrate_legacy_gamepad(&snapshot));
+        assert!(loaded.gamepad.enabled);
+        assert!(!loaded.joystick.enabled);
+        assert!(loaded.pending_legacy_gamepad.is_none());
+        assert_eq!(loaded.gamepad.mapping, s.mapping);
+        assert_eq!(loaded.gamepad.avatar, s.avatar);
+        assert_eq!(loaded.gamepad.flycam, s.flycam);
+        assert_eq!(loaded.gamepad.first_person.tuning, s.avatar);
+        assert!(!loaded.migrate_legacy_gamepad(&snapshot), "conversion happens only once");
         assert!(s.enabled);
         assert_eq!((s.jump_button, s.flycam_button), (1, 0));
         assert_eq!(s.avatar.gain, [1.0, 1.0, 1.0, 0.0, 0.1, 0.1, 0.0]);

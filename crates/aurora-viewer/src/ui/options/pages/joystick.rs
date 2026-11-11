@@ -514,10 +514,6 @@ pub fn page(cx: &mut Cx) {
             |ui, s| {
                 let mut changed = false;
                 ui.horizontal(|ui| {
-                    if widgets::flat_button(ui, &p, tr!("joystick-gamepad")).clicked() {
-                        s.joystick.raw_gamepad_preset();
-                        changed = true;
-                    }
                     if widgets::flat_button(ui, &p, tr!("joystick-spacemouse")).clicked() {
                         let d = crate::joystick::Settings::default();
                         s.joystick.mapping = d.mapping;
@@ -782,7 +778,10 @@ fn gamepad_button_binding_with_fallback(cx: &mut Cx, label: &str, field: F<i8>, 
         } else {
             stored
         };
-        let mut value = device.map_or(effective, |device| crate::joystick::resolve_binding(device, effective));
+        let mut value = device.map_or_else(
+            || crate::joystick::standard_binding(effective),
+            |device| crate::joystick::resolve_binding(device, effective),
+        );
         let selected = choices
             .iter()
             .find(|(binding, _)| *binding == value)
@@ -797,7 +796,16 @@ fn gamepad_button_binding_with_fallback(cx: &mut Cx, label: &str, field: F<i8>, 
             }
         });
         if changed {
-            s.gamepad.bind_button(field.path, value, device);
+            let stored = if device.is_none() {
+                usize::try_from(value)
+                    .ok()
+                    .and_then(|index| crate::joystick::GamepadButton::STANDARD.get(index).copied())
+                    .and_then(crate::joystick::semantic_button)
+                    .unwrap_or(value)
+            } else {
+                value
+            };
+            s.gamepad.bind_button(field.path, stored, device);
         }
         changed
     });
@@ -1016,6 +1024,32 @@ fn gamepad_style_selector(cx: &mut Cx) {
         }
         changed
     });
+    #[cfg(target_os = "linux")]
+    cx.row(
+        tr!("joystick-linux-layout"),
+        tr!("joystick-linux-layout-help"),
+        &field!(gamepad.gamepad_layout),
+        |ui, s| {
+            use crate::joystick::GamepadLayout;
+            let mut changed = false;
+            egui::ComboBox::from_id_salt(ui.scope_id().with("linux-pad-layout"))
+                .selected_text(match s.gamepad.gamepad_layout {
+                    GamepadLayout::Auto => tr!("joystick-layout-auto"),
+                    GamepadLayout::Positional => tr!("joystick-layout-positional"),
+                    GamepadLayout::Xinput => tr!("joystick-layout-xinput"),
+                })
+                .show_ui(ui, |ui| {
+                    for (value, label) in [
+                        (GamepadLayout::Auto, tr!("joystick-layout-auto")),
+                        (GamepadLayout::Positional, tr!("joystick-layout-positional")),
+                        (GamepadLayout::Xinput, tr!("joystick-layout-xinput")),
+                    ] {
+                        changed |= ui.selectable_value(&mut s.gamepad.gamepad_layout, value, label).changed();
+                    }
+                });
+            changed
+        },
+    );
 }
 
 pub fn gamepad_page(cx: &mut Cx, tab: usize) {

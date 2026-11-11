@@ -1821,7 +1821,11 @@ to attachment layout before release. Bind groups are cached per eye image; no
 CPU readback or third world-rendering pass is used. When a headset colour
 setting is active, the eyes render into ungraded textures. The mirror samples
 those textures and a fullscreen pass applies gamma and vibrancy to the
-headset output. Desktop presentation is
+headset output. The optional grade textures are released at identity. Runtime
+swapchains prefer sRGB. Display-encoded staging bytes can be copied to an sRGB
+twin; UNORM-only runtime images receive a GPU conversion to linear colour before
+submission. Preferences group the VR fields inside the camera settings while
+retaining their existing flat serialized names. Desktop presentation is
 restored when VR ends.
 
 VR keeps physical VIEW-space tracking direct and separates it from the artificial
@@ -3364,8 +3368,10 @@ resumes after release.
 `joystick/bindings.rs` resolves Gamepad mappings for preferences and sampling.
 Each profile arms and samples independently. When both send input in one
 frame, gamepad input takes priority. Flycam keeps the profile that entered it.
-Legacy settings files keep their joystick axes and button numbers and get a
-separate disabled Gamepad profile.
+Older enabled gamepad profiles migrate from Joystick to Gamepad while preserving
+native axes, gains and button numbers. Device classification is deferred across
+saves when the saved device is disconnected. Explicit Gamepad profiles take
+precedence. Raw joystick profiles keep their existing input path.
 Avatar-mode camera bindings expose pressure-sensitive trigger zoom, D-pad
 four-way pan, and nearest/previous avatar cycling. Cycling calls
 `ui::people::nearby` for its existing nearest-first ordering and dispatches the

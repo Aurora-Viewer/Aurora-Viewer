@@ -12,20 +12,24 @@ mod first_person_tests {
     #[test]
     fn vr_preferences_ignore_old_view_and_keep_comfort_options() {
         let defaults: CameraSettings = serde_json::from_str("{}").expect("defaults");
-        assert!(!defaults.vr_mouse_look);
-        assert_eq!(defaults.vr_resolution, [2160, 2160]);
+        assert!(!defaults.vr.mouse_look);
+        assert_eq!(defaults.vr.resolution, None);
         assert!(serde_json::from_str::<CameraSettings>(r#"{"vr_view":"DesktopCamera"}"#).is_ok());
         let saved = CameraSettings {
-            vr_mouse_look: true,
-            vr_resolution: [2048, 2304],
-            vr_resolution_custom: true,
-            vr_gamma: 0.8,
-            vr_vibrancy: 1.1,
+            vr: VrSettings {
+                mouse_look: true,
+                resolution: Some([2048, 2304]),
+                resolution_custom: true,
+                gamma: 0.8,
+                vibrancy: 1.1,
+            },
             ..defaults
         };
+        let document = serde_json::to_value(&saved).expect("saved document");
+        assert_eq!(document["vr_resolution"], serde_json::json!([2048, 2304]));
         let loaded: CameraSettings = serde_json::from_str(&serde_json::to_string(&saved).expect("save")).expect("load");
-        assert!(loaded.vr_mouse_look && loaded.vr_resolution_custom);
-        assert_eq!(loaded.vr_resolution, [2048, 2304]);
+        assert!(loaded.vr.mouse_look && loaded.vr.resolution_custom);
+        assert_eq!(loaded.vr.resolution, Some([2048, 2304]));
     }
 
     #[test]
@@ -269,13 +273,36 @@ pub struct CameraSettings {
     /// the chat bar only shows with text in it.
     pub show_interface_in_mouselook: bool,
     pub vr_at_start: bool,
-    /// Artificial horizontal turning is an explicit comfort opt-in.
-    pub vr_mouse_look: bool,
-    /// Per-eye pixel dimensions; applied on the next VR session.
-    pub vr_resolution: [u32; 2],
-    pub vr_resolution_custom: bool,
-    pub vr_gamma: f32,
-    pub vr_vibrancy: f32,
+    /// Kept flat in the saved file for compatibility with earlier VR builds.
+    #[serde(flatten)]
+    pub vr: VrSettings,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VrSettings {
+    #[serde(rename = "vr_mouse_look")]
+    pub mouse_look: bool,
+    #[serde(rename = "vr_resolution")]
+    pub resolution: Option<[u32; 2]>,
+    #[serde(rename = "vr_resolution_custom")]
+    pub resolution_custom: bool,
+    #[serde(rename = "vr_gamma")]
+    pub gamma: f32,
+    #[serde(rename = "vr_vibrancy")]
+    pub vibrancy: f32,
+}
+
+impl Default for VrSettings {
+    fn default() -> Self {
+        Self {
+            mouse_look: false,
+            resolution: None,
+            resolution_custom: false,
+            gamma: 1.0,
+            vibrancy: 1.0,
+        }
+    }
 }
 
 /// Headset camera mode.
@@ -285,7 +312,8 @@ pub enum VrView {
     /// it are hidden the same way.
     #[default]
     FirstPerson,
-    /// Where the desktop camera was when VR was entered.
+    /// Native avatar orbit, pan and target travel with level headset viewing
+    /// and translation-only automatic framing.
     Avatar,
     Flycam,
 }
@@ -326,11 +354,7 @@ impl Default for CameraSettings {
             show_mouselook_instructions: true,
             show_interface_in_mouselook: false,
             vr_at_start: false,
-            vr_mouse_look: false,
-            vr_resolution: [2160, 2160],
-            vr_resolution_custom: false,
-            vr_gamma: 0.8,
-            vr_vibrancy: 1.1,
+            vr: VrSettings::default(),
         }
     }
 }

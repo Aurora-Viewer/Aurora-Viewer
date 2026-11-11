@@ -69,6 +69,16 @@ pub struct EyeView {
     pub projection: Mat4,
     pub position: Vec3,
 }
+/// Preserve horizontal heading at vertical gaze using the view's right axis.
+pub fn horizontal_heading(forward: Vec3, right: Vec3) -> Vec3 {
+    let flat = forward.with_z(0.0);
+    if flat.length_squared() > 1e-4 {
+        flat.normalize()
+    } else {
+        Vec3::Z.cross(right.with_z(0.0)).normalize_or(Vec3::Y)
+    }
+}
+
 impl Anchor {
     pub fn new(desktop_view: Mat4, initial_head: Pose) -> Option<Self> {
         let det = desktop_view.determinant();
@@ -80,13 +90,7 @@ impl Anchor {
         let right = desktop_world.transform_vector3(Vec3::X);
         // Preserve heading and position, but start level regardless of desktop
         // pitch/roll. At a vertical look direction, the right axis retains yaw.
-        let horizontal = Vec3::new(forward.x, forward.y, 0.0);
-        let fallback = Vec3::Z.cross(Vec3::new(right.x, right.y, 0.0)).normalize_or(Vec3::Y);
-        let heading = if horizontal.length_squared() > 1e-8 {
-            horizontal.normalize()
-        } else {
-            fallback
-        };
+        let heading = horizontal_heading(forward, right);
         let level_view = glam::camera::rh::view::look_to_mat4(desktop_world.w_axis.truncate(), heading, Vec3::Z);
         // Do not cancel the entry pose's pitch/roll: the headset may be resting
         // tilted when VR starts. Gravity defines level even after it is put on.
@@ -114,7 +118,7 @@ impl Anchor {
         }
         let world = view.inverse();
         let forward = world.transform_vector3(Vec3::NEG_Z);
-        let heading = Vec3::new(forward.x, forward.y, 0.0).normalize_or(Vec3::Y);
+        let heading = horizontal_heading(forward, world.transform_vector3(Vec3::X));
         let position = world.w_axis.truncate();
         if !position.is_finite() || !heading.is_finite() {
             return None;
@@ -229,6 +233,18 @@ mod tests {
         Pose {
             position: head.position + head.orientation * Vec3::X * offset,
             orientation: head.orientation * Quat::from_rotation_y(cant),
+        }
+    }
+
+    #[test]
+    fn vertical_heading_preserves_the_right_axis_under_tracking_noise() {
+        let right = Vec3::new(0.8, -0.6, 0.0);
+        let expected = Vec3::Z.cross(right);
+        for z in [-1.0, 1.0] {
+            for noise in [-1e-5, 0.0, 1e-5] {
+                let forward = Vec3::new(noise, -noise, z);
+                assert!(horizontal_heading(forward, right).abs_diff_eq(expected, 1e-6));
+            }
         }
     }
 
