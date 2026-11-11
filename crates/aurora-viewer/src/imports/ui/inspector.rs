@@ -133,6 +133,12 @@ pub(super) fn show(
                                         if entry.local {
                                             checkbox(ui, p, &mut entry.local_live, aurora_i18n::tr!("import-local-live"));
                                         }
+                                        // The footer only says that a file has an error: its reason is here.
+                                        if let Status::Error(error) = &entry.status
+                                            && *error != imports.message
+                                        {
+                                            ui.add(egui::Label::new(egui::RichText::new(error).small().color(p.danger)).wrap());
+                                        }
                                         if let Status::Done(item) = entry.status
                                             && flat_button(ui, p, aurora_i18n::tr!("import-open-inventory")).clicked()
                                         {
@@ -192,7 +198,7 @@ pub(super) fn show(
                                                         imports.sound_limit,
                                                         actions,
                                                     ),
-                                                    Source::Animation { animation, bvh, .. } => {
+                                                    Source::Animation { animation, bvh, bytes } => {
                                                         let old_base = entry.player.base;
                                                         let settings_width =
                                                             (ui.available_width() - 230.0 - ui.spacing().item_spacing.x).max(330.0);
@@ -318,8 +324,29 @@ pub(super) fn show(
                                                                         let current = Arc::make_mut(animation);
                                                                         header.joints = std::mem::take(&mut current.joints);
                                                                         if current.base_priority != header.base_priority {
-                                                                            for joint in &mut header.joints {
-                                                                                joint.priority = header.base_priority;
+                                                                            if bvh.is_some() {
+                                                                                for joint in &mut header.joints {
+                                                                                    joint.priority = header.base_priority;
+                                                                                }
+                                                                            } else {
+                                                                                // A native file's joints keep their own
+                                                                                // priorities and move with the base one,
+                                                                                // as the upload does.
+                                                                                match aurora_assets::native_joint_priorities(
+                                                                                    bytes.as_slice(),
+                                                                                    header.base_priority,
+                                                                                ) {
+                                                                                    Ok(priorities) => {
+                                                                                        for (joint, priority) in
+                                                                                            header.joints.iter_mut().zip(priorities)
+                                                                                        {
+                                                                                            joint.priority = priority;
+                                                                                        }
+                                                                                    }
+                                                                                    Err(error) => log::warn!(
+                                                                                        "animation import: joint priorities: {error}"
+                                                                                    ),
+                                                                                }
                                                                             }
                                                                         }
                                                                         *current = header;

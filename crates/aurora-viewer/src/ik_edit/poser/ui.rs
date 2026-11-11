@@ -34,6 +34,7 @@ impl Editor {
         self.mirrors.initialize(rig);
         self.follow_selected_side(rig);
         let (mut library, mut settings, mut undo, mut redo) = (false, false, false, false);
+        let mut markers = false;
         self.poser.edited_total = self
             .poser
             .sessions
@@ -47,8 +48,18 @@ impl Editor {
         if self.over_viewfinder {
             floater.order = egui::Order::Foreground;
         }
+        // The settings' "Show joint markers and gizmos" switch, one click
+        // away while posing, as the Legacy Viewer's toggleVisualManipulators
+        // button (FSFloaterPoser::onToggleVisualManipulators,
+        // indra/newview/fsfloaterposer.cpp); the eye says what is on screen.
+        let (markers_icon, markers_tip) = if self.poser.markers {
+            ("eye-filled", aurora_i18n::text("poser-markers-hide"))
+        } else {
+            ("eye-off", aurora_i18n::text("poser-markers"))
+        };
         floater.actions = vec![
             ("settings-filled", aurora_i18n::text("poser-settings"), &mut settings),
+            (markers_icon, markers_tip, &mut markers),
             ("arrow-forward-up", aurora_i18n::text("poser-redo"), &mut redo),
             ("arrow-back-up", aurora_i18n::text("poser-undo"), &mut undo),
             ("book-filled", aurora_i18n::text("poser-library"), &mut library),
@@ -84,6 +95,9 @@ impl Editor {
         if settings {
             self.poser.settings_open = !self.poser.settings_open;
         }
+        if markers {
+            self.poser.markers = !self.poser.markers;
+        }
         if let Some(history) = self.history_key(ctx) {
             undo |= history == EditHistory::Undo;
             redo |= history == EditHistory::Redo;
@@ -113,7 +127,14 @@ impl Editor {
                     .clicked()
                     {
                         self.poser.storage.overwrite = None;
-                        self.poser.storage.job = Some(storage::Job::Save(document, pose, bvh, unlock, false));
+                        self.poser.storage.job = Some(storage::Job::Save(storage::Save {
+                            document,
+                            pose,
+                            bvh,
+                            unlock,
+                            confirm: false,
+                            pick: false,
+                        }));
                     }
                 });
             });
@@ -295,11 +316,9 @@ impl Editor {
         } else {
             self.side_selector(&mut left, p, rig, frame);
             left.add_space(2.0);
-            left.add(
-                egui::TextEdit::singleline(&mut self.poser.filter)
-                    .hint_text(aurora_i18n::tr!("poser-search"))
-                    .desired_width(f32::INFINITY),
-            );
+            crate::ui::widgets::search_text_edit(&mut left, p, &mut self.poser.filter, |edit| {
+                edit.hint_text(aurora_i18n::tr!("poser-search")).desired_width(f32::INFINITY)
+            });
             left.add_space(2.0);
             let height = left.available_height();
             egui::ScrollArea::vertical()
@@ -352,13 +371,19 @@ impl Editor {
                     egui::vec2(0.0, 28.0),
                     !self.poser.storage.busy && !self.poser.name.trim().is_empty(),
                 )
+                .on_hover_text(aurora_i18n::text("poser-export-hint"))
                 .clicked()
                 {
-                    self.save_pose(rig, frame);
+                    self.save_pose(rig, frame, false);
                 }
                 let options = widgets::action_button(ui, p, "chevron-down", "", widgets::ActionKind::Primary, egui::vec2(26.0, 28.0))
                     .on_hover_text(aurora_i18n::text("poser-save-options"));
                 menu::dropdown(&options, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+                    let can_save = !self.poser.storage.busy && !self.poser.name.trim().is_empty();
+                    if menu::item_if(ui, p, "device-floppy-filled", aurora_i18n::text("poser-save-as"), can_save) {
+                        self.save_pose(rig, frame, true);
+                    }
+                    menu::separator(ui, p);
                     menu::toggle(
                         ui,
                         p,
@@ -389,6 +414,11 @@ impl Editor {
                 widgets::action_menu_button(ui, p, "folder-open-filled", aurora_i18n::text("poser-load-menu"), open, 28.0)
             });
             menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                if menu::item(ui, p, "book-filled", aurora_i18n::text("poser-library")) {
+                    self.poser.library_open = true;
+                    self.poser.storage.ready = false;
+                }
+                menu::separator(ui, p);
                 for (mode, key) in [
                     (LoadMode::All, "poser-load-all"),
                     (LoadMode::Rotations, "poser-load-rotations"),
@@ -415,6 +445,7 @@ impl Editor {
                     egui::vec2(0.0, 28.0),
                     !self.poser.storage.busy,
                 )
+                .on_hover_text(aurora_i18n::text("poser-export-hint"))
                 .clicked()
                 {
                     self.import_pose(rig, frame);
@@ -438,36 +469,44 @@ impl Editor {
             .and_then(|i| self.poser.storage.entries.get(i))
             .map(|e| e.path.clone())
     }
-    fn save_pose(&mut self, rig: &Rig, frame: &Frame) {
+    /// `pick`: Save as…, the file is chosen in the system dialog.
+    fn save_pose(&mut self, rig: &Rig, frame: &Frame, pick: bool) {
         let Some(session) = self.poser.sessions.get(&self.poser.subject) else {
             return;
         };
         let Some(snapshot) = session.pose.snapshot(rig, frame.model) else {
+            self.poser.storage.message = Some(aurora_i18n::text("anim-edit-invalid").to_owned());
             return;
         };
         let mut capture = session.clone();
         capture.pose = Arc::new(snapshot);
         let document = document::Document::capture(rig, &capture, self.poser.name.clone(), self.poser.priority);
-        self.poser.storage.job = Some(storage::Job::Save(
+        let Some(authored) = session.authored(rig, frame.model) else {
+            self.poser.storage.message = Some(aurora_i18n::text("anim-edit-invalid").to_owned());
+            return;
+        };
+        self.poser.storage.job = Some(storage::Job::Save(storage::Save {
             document,
-            capture.pose,
-            self.poser.also_bvh,
-            self.poser.unlock_pelvis,
-            self.poser.confirm_overwrite,
-        ));
+            pose: Arc::new(authored),
+            bvh: self.poser.also_bvh,
+            unlock: self.poser.unlock_pelvis,
+            confirm: self.poser.confirm_overwrite,
+            pick,
+        }));
     }
     fn import_pose(&mut self, rig: &Rig, frame: &Frame) {
         let Some(session) = self.poser.sessions.get(&self.poser.subject) else {
             return;
         };
-        let Some(snapshot) = session.pose.snapshot(rig, frame.model) else {
+        let Some(authored) = session.authored(rig, frame.model) else {
+            self.poser.storage.message = Some(aurora_i18n::text("anim-edit-invalid").to_owned());
             return;
         };
         let translations = (0..rig.len())
-            .filter(|b| snapshot.positions[*b].distance_squared(session.base.positions[*b]) > 1e-10)
+            .filter(|b| authored.positions[*b].distance_squared(rig.local_pos[*b]) > 1e-10)
             .collect();
         self.poser.storage.job = Some(storage::Job::Import(
-            Arc::new(snapshot),
+            Arc::new(authored),
             translations,
             self.poser.name.clone(),
             self.poser.priority,
@@ -492,12 +531,12 @@ impl Editor {
                 }
             });
         });
-        ui.add(
-            egui::TextEdit::singleline(&mut self.poser.storage.filter)
-                .hint_text(aurora_i18n::tr!("poser-library-search"))
-                .desired_width(f32::INFINITY),
-        );
-        let filter = self.poser.storage.filter.to_lowercase();
+        crate::ui::widgets::search_text_edit(ui, p, &mut self.poser.storage.filter, |edit| {
+            edit.hint_text(aurora_i18n::tr!("poser-library-search"))
+                .desired_width(f32::INFINITY)
+        });
+        let filter = self.poser.storage.filter.clone();
+        let scroll_to = std::mem::take(&mut self.poser.storage.scroll_to_selected) || widgets::search_cleared(ui);
         let height = (ui.available_height() - 40.0).max(30.0);
         let mut load = None;
         egui::ScrollArea::vertical()
@@ -507,7 +546,7 @@ impl Editor {
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
                 for (i, entry) in self.poser.storage.entries.iter().enumerate() {
-                    if !entry.name.to_lowercase().contains(&filter) {
+                    if !storage::filter_matches(&entry.name, &filter) {
                         continue;
                     }
                     let selected = self.poser.storage.selected == Some(i);
@@ -531,6 +570,9 @@ impl Editor {
                         egui::FontId::proportional(11.0),
                         p.muted,
                     );
+                    if selected && scroll_to {
+                        response.scroll_to_me_animation(Some(egui::Align::Center), egui::style::ScrollAnimation::none());
+                    }
                     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, &entry.name));
                     if response.clicked() {
                         self.poser.storage.selected = Some(i);

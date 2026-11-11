@@ -55,6 +55,7 @@ impl App {
         for action in actions {
             match action {
                 Action::Edit(change) => self.apply_inventory_action(InvAction::Edit(change)),
+                Action::Delete(deletion) => self.submit_inventory_delete(*deletion),
                 Action::Paste { change, cut } => {
                     self.inventory_ui.consume_clipboard = cut;
                     self.submit_inventory_change(change);
@@ -204,6 +205,7 @@ impl App {
                     }));
                 }
                 Action::Edit(change) => self.submit_inventory_change(change),
+                Action::Delete(deletion) => self.submit_inventory_delete(*deletion),
                 Action::Paste { change, cut } => {
                     self.inventory_ui.consume_clipboard = cut;
                     self.submit_inventory_change(change);

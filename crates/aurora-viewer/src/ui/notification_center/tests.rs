@@ -2,6 +2,36 @@ use super::*;
 use crate::world::notifications::Kind;
 use uuid::Uuid;
 
+#[test]
+fn teleport_history_hides_old_destinations_and_actions_under_showloc() {
+    use crate::world::notification_history::{Entry, Follow, Look, Outcome};
+    let original = Entry {
+        time: 0,
+        look: Look::Teleport,
+        title: "Tess offers a teleport".into(),
+        body: "Test Destination (12, 34, 56)".into(),
+        name_links: Vec::new(),
+        outcome: Outcome::Declined,
+        follow: Follow::Place("secondlife://Test%20Destination/12/34/56".into()),
+    };
+    let mut shown = original.clone();
+    hide_teleport_history_location(&mut shown, false);
+    assert_eq!(shown, original);
+    hide_teleport_history_location(&mut shown, true);
+    assert_eq!(shown.body, aurora_i18n::tr!("rlva-hidden-generic"));
+    assert_eq!(shown.follow, Follow::None);
+    assert!(!shown.body.contains("Test Destination"));
+    // Filtering the displayed copy leaves normal history available again
+    // when the restriction is lifted.
+    assert!(original.body.contains("Test Destination"));
+    shown.follow = Follow::Restore;
+    hide_teleport_history_location(&mut shown, true);
+    assert_eq!(shown.follow, Follow::None);
+    shown.follow = Follow::Conversation(Uuid::from_u128(1));
+    hide_teleport_history_location(&mut shown, true);
+    assert_eq!(shown.follow, Follow::Conversation(Uuid::from_u128(1)));
+}
+
 fn info(list: &mut Notifications, title: &str) -> u64 {
     list.push(Kind::Info, title, "", Data::None)
 }
@@ -330,6 +360,8 @@ fn mark_all_read_clears_the_count_and_keeps_what_waits() {
             group: Uuid::from_u128(7),
             tx: Uuid::from_u128(8),
             offline: false,
+            fee: 0,
+            confirming: false,
         },
     );
     update(&list, &mut c, at(0.0), 30.0);
@@ -367,6 +399,7 @@ pub(crate) fn scripted_windows(list: &mut Notifications) -> Vec<u64> {
                 questions: 0x10,
                 region: 1,
                 experience: None,
+                caution: None,
             },
         ),
         list.push(Kind::Url, "Kiosk", "Our shop", Data::Url("https://example.invalid/".into())),

@@ -121,10 +121,13 @@ pub fn show(
     let (preedit, invalid_commit, invalid_insertion) = ui.input(|i| {
         let commit = i.events.iter().any(|e| matches!(e, egui::Event::Ime(egui::ImeEvent::Commit(_))));
         (
+            // Wayland may send an empty preedit alongside ordinary typing
+            // when its IME cursor area changes. Like TextEdit's empty-event
+            // guard, do not roll back that typing as provisional composition.
             !commit
                 && i.events
                     .iter()
-                    .any(|e| matches!(e, egui::Event::Ime(egui::ImeEvent::Preedit { .. }))),
+                    .any(|e| matches!(e, egui::Event::Ime(egui::ImeEvent::Preedit { text, .. }) if !text.is_empty())),
             i.events
                 .iter()
                 .any(|e| matches!(e, egui::Event::Ime(egui::ImeEvent::Commit(text)) if !policy.accepts(text))),

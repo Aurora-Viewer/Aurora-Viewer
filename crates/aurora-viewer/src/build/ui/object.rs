@@ -267,20 +267,6 @@ pub fn volume_from_ui(u: &ShapeUi, prev_ty: usize, flexible: bool) -> VolumePara
     v
 }
 
-/// Small isometric drawing of a shape's outline (Create palette).
-pub fn shape_preview(ui: &egui::Ui, rect: egui::Rect, params: &VolumeParams, rot: Quat, color: Color32) {
-    let edges = crate::build::silhouette::preview_edges(params);
-    let view = Quat::from_rotation_x(-0.6) * Quat::from_rotation_z(0.75) * rot;
-    let s = rect.width().min(rect.height()) * 0.62;
-    let proj = |v: Vec3| {
-        let q = view * v;
-        egui::pos2(rect.center().x + q.x * s, rect.center().y - q.z * s)
-    };
-    for (a, b) in edges.iter() {
-        ui.painter().line_segment([proj(*a), proj(*b)], egui::Stroke::new(1.0, color));
-    }
-}
-
 /// "<x, y, z>" with the decimal precision (LLPanelObject::onCopyPos...).
 pub fn vector_text(v: Vec3, decimals: usize) -> String {
     format!("<{:.*}, {:.*}, {:.*}>", decimals, v.x, decimals, v.y, decimals, v.z)
@@ -408,7 +394,7 @@ fn vec_block(
                     let (letter, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
                     let drop = 0.35 * (value_size - LETTER).max(0.0);
                     ui.painter().galley(letter.min + egui::vec2(0.0, drop), galley, color);
-                    e = e.or(super::common::spin_with_min_decimals(
+                    e = e.or(super::common::transform_spin(
                         ui,
                         value,
                         increment,
@@ -476,7 +462,7 @@ fn legacy_vec_block(
                     ),
                 );
                 let width = (ui.available_width() - 23.0).max(45.0);
-                edit = edit.or(super::common::spin_with_min_decimals(
+                edit = edit.or(super::common::transform_spin(
                     ui,
                     value,
                     increment,
@@ -652,7 +638,7 @@ pub fn show_flags(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
     let Some(key) = tool.selection.first().copied() else { return };
     let Some(idx) = world.objects.index_of(&key) else { return };
     let Some(o) = world.objects.get(idx) else { return };
-    let (flags, is_root, full_id, flexible) = (o.update_flags, o.parent_id == 0, o.full_id, o.extra.flexible.is_some());
+    let (flags, is_root, full_id, flexible) = (o.update_flags, o.parent_id == 0, o.full_id, o.has_flexible_path());
     let editable = tool.can_modify(world, idx);
     let self_owned = tool.props.get(&full_id).is_some_and(|pr| pr.owner_id == world.agent_id);
     ui.spacing_mut().item_spacing.y = 1.0;
@@ -712,7 +698,7 @@ pub fn show_shape(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
     let Some(key) = tool.selection.first().copied() else { return };
     let Some(idx) = world.objects.index_of(&key) else { return };
     let Some(o) = world.objects.get(idx) else { return };
-    let (volume, flexible) = (o.volume, o.extra.flexible.is_some());
+    let (volume, flexible) = (o.volume, o.has_flexible_path());
     if volume.is_mesh() {
         super::mesh::show(ui, p, tool, world, idx, env);
         return;
@@ -756,7 +742,7 @@ pub fn show_shape(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
             ) {
                 tool.ui.shape_clipboard = Some(ShapeClip {
                     volume,
-                    sculpt: volume.sculpt,
+                    sculpt: sculpt_copy(world, volume.sculpt),
                 });
             }
         });
@@ -796,6 +782,18 @@ fn copy_vector(ui: &egui::Ui, tool: &mut BuildTool, which: usize, v: Vec3, decim
     ui.ctx().copy_text(vector_text(v, decimals));
 }
 
+/// The sculpt map of "Copy" (LLPanelObject::onCopyParams): one the agent
+/// may not copy (`texture_copy::can_copy`) is replaced by the default
+/// sculpt map; the sculpt type stays.
+pub(super) fn sculpt_copy(world: &World, sculpt: Option<SculptParams>) -> Option<SculptParams> {
+    sculpt.map(|mut sc| {
+        if !crate::build::texture_copy::can_copy(&world.inventory, world.agent_id, sc.texture) {
+            sc.texture = crate::build::edits::SCULPT_DEFAULT.texture;
+        }
+        sc
+    })
+}
+
 /// "Paste" of the shape parameters (LLPanelObject::onPasteParams).
 fn paste_params(tool: &mut BuildTool, world: &mut World, idx: usize, c: ShapeClip) {
     let current = world.objects.get(idx).map(|o| o.extra.sculpt);
@@ -804,7 +802,7 @@ fn paste_params(tool: &mut BuildTool, world: &mut World, idx: usize, c: ShapeCli
         (None, Some(Some(_))) => tool.set_extra(world, idx, crate::build::edits::Extra::Sculpt(None)),
         _ => {}
     }
-    let flexible = world.objects.get(idx).is_some_and(|o| o.extra.flexible.is_some());
+    let flexible = world.objects.get(idx).is_some_and(|o| o.has_flexible_path());
     let mut v = c.volume;
     v.sculpt = c.sculpt;
     // a line path follows the object's flexible state
@@ -906,6 +904,7 @@ fn shape_column(
     let mut e = Edit {
         changed: chosen_type.is_some(),
         commit: chosen_type.is_some(),
+        ..Edit::default()
     };
     if let Some(ty) = chosen_type {
         u.ty = ty;
@@ -942,6 +941,7 @@ fn shape_column(
                     e = e.or(Edit {
                         changed: true,
                         commit: true,
+                        ..Edit::default()
                     });
                 }
             };
@@ -952,17 +952,17 @@ fn shape_column(
                 let width = (ui.available_width() - 125.0).max(70.0);
                 row(ui, p, aurora_i18n::tr!("build-ui-object-hollow-shape"), width, hollow_shape);
             }
-            if !legacy || matches!(ty, 4..=6) {
-                e = e.or(shape_scalar(
-                    ui,
-                    p,
-                    aurora_i18n::tr!("build-ui-object-bias"),
-                    &mut u.skew,
-                    0.05,
-                    -0.95..=0.95,
-                    2,
-                ));
-            }
+            // LLPanelObject::getState exposes all transforms for parametric prims,
+            // including the extended path types, in both presentations.
+            e = e.or(shape_scalar(
+                ui,
+                p,
+                aurora_i18n::tr!("build-ui-object-bias"),
+                &mut u.skew,
+                0.05,
+                -0.95..=0.95,
+                2,
+            ));
             let (tw, ti) = if circular_basic(ty) { (360.0, 18.0) } else { (180.0, 9.0) };
             e = e.or(shape_pair(
                 ui,
@@ -1035,26 +1035,24 @@ fn shape_column(
                     3,
                 ));
             }
-            if !legacy || matches!(ty, 4..=6) {
-                e = e.or(shape_scalar(
-                    ui,
-                    p,
-                    aurora_i18n::tr!("build-ui-object-radius"),
-                    &mut u.radius,
-                    0.05,
-                    -1.0..=1.0,
-                    3,
-                ));
-                e = e.or(shape_scalar(
-                    ui,
-                    p,
-                    aurora_i18n::tr!("build-ui-object-revolutions"),
-                    &mut u.revolutions,
-                    0.1,
-                    1.0..=4.0,
-                    2,
-                ));
-            }
+            e = e.or(shape_scalar(
+                ui,
+                p,
+                aurora_i18n::tr!("build-ui-object-radius"),
+                &mut u.radius,
+                0.05,
+                -1.0..=1.0,
+                3,
+            ));
+            e = e.or(shape_scalar(
+                ui,
+                p,
+                aurora_i18n::tr!("build-ui-object-revolutions"),
+                &mut u.revolutions,
+                0.1,
+                1.0..=4.0,
+                2,
+            ));
         });
     }
     if e.changed && u != ui_now {
@@ -1101,6 +1099,7 @@ fn sculpt_section(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
             enabled,
         )
     });
+    super::texture::texture_drop::slot(ui, p, tool, world, r.rect, super::PickTarget::Sculpt, enabled);
     if r.clicked() {
         tool.ui
             .picker
@@ -1187,6 +1186,33 @@ impl BuildTool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_sculpt_map_the_agent_cannot_copy_is_copied_as_the_default_one() {
+        let mut w = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let map = uuid::Uuid::from_u128(0x5c01);
+        let sculpt = Some(SculptParams {
+            texture: map,
+            sculpt_type: 2,
+        });
+        let copied = sculpt_copy(&w, sculpt).expect("sculpt kept");
+        assert_eq!(copied.texture, crate::build::edits::SCULPT_DEFAULT.texture);
+        assert_eq!(copied.sculpt_type, 2, "the type stays");
+        let id = uuid::Uuid::from_u128(0x5c02);
+        let agent = w.agent_id;
+        w.inventory.items.insert(
+            id,
+            aurora_net::inventory::InvItem {
+                id,
+                asset_id: map,
+                owner: agent,
+                owner_mask: crate::world::inventory::actions::COPY,
+                ..Default::default()
+            },
+        );
+        assert_eq!(sculpt_copy(&w, sculpt), sculpt, "a copyable map is copied as it is");
+        assert_eq!(sculpt_copy(&w, None), None);
+    }
+
     fn box_params() -> VolumeParams {
         RawShape {
             path_curve: LL_PCODE_PATH_LINE,
@@ -1206,6 +1232,22 @@ mod tests {
         assert!((u.top_size[0]).abs() < 1e-5);
         let back = volume_from_ui(&u, u.ty, false);
         assert_eq!(back.to_raw(), v.to_raw());
+    }
+
+    #[test]
+    fn tortured_sphere_keeps_its_ratios_when_another_shape_field_changes() {
+        let mut v = box_params();
+        v.path.curve_type = LL_PCODE_PATH_CIRCLE;
+        v.profile.curve_type = LL_PCODE_PROFILE_CIRCLE_HALF;
+        v.path.scale = [1.0, 2.0];
+        v.path.twist_begin = -0.5;
+        v.path.twist_end = -0.5;
+        v.profile.hollow = 0.6;
+        let mut u = ui_from_volume(&v);
+        assert_eq!(u.ty, 3);
+        u.hollow = 50.0;
+        v.profile.hollow = 0.5;
+        assert_eq!(volume_from_ui(&u, u.ty, false).to_raw(), v.to_raw());
     }
 
     #[test]

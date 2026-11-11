@@ -139,6 +139,7 @@ pub enum Action {
     StageLocalUploads,
     MapFile(Uuid, usize),
     MapInventory(Uuid, usize),
+    MapDrop(Uuid, usize, crate::ui::resource_drop::Target),
     Zoom(Uuid, Option<usize>),
     LargeMap(Uuid, usize),
     Remove(Uuid),
@@ -590,13 +591,14 @@ fn texture(
     }
     if *target != 0 {
         if let Some(model) = model {
-            aurora_render::preview::paint(
+            let response = aurora_render::preview::paint(
                 ui,
                 ui.scope_id().with(("texture_preview", id)),
                 model.clone(),
                 view,
                 Vec2::new(ui.available_width(), 260.0),
             );
+            widgets::local_texture::paint(ui, p, response.rect);
             preview_camera_controls(ui, p, view);
         } else {
             ui.spinner();
@@ -638,6 +640,7 @@ fn texture(
             egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
             widgets::PICTURE_TINT,
         );
+        widgets::local_texture::paint(ui, p, rect);
     } else {
         ui.spinner();
     }
@@ -819,25 +822,30 @@ fn animation_controls(ui: &mut egui::Ui, p: &Palette, animation: &mut Animation,
         .small()
         .color(p.muted),
     );
-    let Some(bvh) = bvh else {
-        return;
-    };
-    ui.label(
-        RichText::new(aurora_i18n::tr!(
-            "import-animation-frames",
-            frames = bvh.frames,
-            rate = format!("{:.2}", 1.0 / bvh.frame_time)
-        ))
-        .small()
-        .color(p.muted),
-    );
+    if let Some(bvh) = bvh {
+        ui.label(
+            RichText::new(aurora_i18n::tr!(
+                "import-animation-frames",
+                frames = bvh.frames,
+                rate = format!("{:.2}", if bvh.frame_time > 0.0 { 1.0 / bvh.frame_time } else { 0.0 })
+            ))
+            .small()
+            .color(p.muted),
+        );
+    }
     ui.add_space(12.0);
     egui::Grid::new("animation_identity")
         .num_columns(2)
         .spacing(Vec2::new(12.0, 8.0))
         .show(ui, |ui| {
             ui.label(aurora_i18n::tr!("import-priority"));
-            ui.add(egui::DragValue::new(&mut animation.base_priority).range(0..=6));
+            egui::ComboBox::from_id_salt("animation_priority")
+                .selected_text(animation.base_priority.to_string())
+                .show_ui(ui, |ui| {
+                    for priority in 0..=6 {
+                        selection(ui, &mut animation.base_priority, priority, priority.to_string());
+                    }
+                });
             ui.end_row();
             ui.label(aurora_i18n::tr!("import-animation-hands"));
             let hands = super::animation::hands();
@@ -872,13 +880,15 @@ fn animation_controls(ui: &mut egui::Ui, p: &Palette, animation: &mut Animation,
     checkbox(ui, p, &mut animation.looping, aurora_i18n::tr!("import-loop"));
     ui.add_enabled_ui(animation.looping, |ui| {
         egui::Grid::new("animation_loop")
-            .num_columns(4)
+            .num_columns(if bvh.is_some() { 4 } else { 3 })
             .spacing(Vec2::new(10.0, 8.0))
             .show(ui, |ui| {
                 ui.label("");
                 ui.label(RichText::new(aurora_i18n::tr!("import-animation-seconds")).small().color(p.muted));
                 ui.label(RichText::new("%").small().color(p.muted));
-                ui.label(RichText::new(aurora_i18n::tr!("import-animation-frame")).small().color(p.muted));
+                if bvh.is_some() {
+                    ui.label(RichText::new(aurora_i18n::tr!("import-animation-frame")).small().color(p.muted));
+                }
                 ui.end_row();
                 for (label, value) in [
                     (aurora_i18n::tr!("import-loop-in"), &mut animation.loop_in),
@@ -889,7 +899,7 @@ fn animation_controls(ui: &mut egui::Ui, p: &Palette, animation: &mut Animation,
                         Vec2::new(64.0, 26.0),
                         egui::DragValue::new(value)
                             .range(0.0..=animation.duration)
-                            .speed(bvh.frame_time)
+                            .speed(bvh.map_or(0.01, |info| info.frame_time))
                             .fixed_decimals(3),
                     );
                     let mut percent = if animation.duration > 0.0 {
@@ -906,15 +916,21 @@ fn animation_controls(ui: &mut egui::Ui, p: &Palette, animation: &mut Animation,
                     {
                         *value = percent / 100.0 * animation.duration;
                     }
-                    let mut frame = (*value / bvh.frame_time).round() as usize;
-                    if ui
-                        .add_sized(
-                            Vec2::new(52.0, 26.0),
-                            egui::DragValue::new(&mut frame).range(0..=bvh.frames.saturating_sub(2)),
-                        )
-                        .changed()
-                    {
-                        *value = frame as f32 * bvh.frame_time;
+                    if let Some(bvh) = bvh {
+                        let mut frame = if bvh.frame_time > 0.0 {
+                            (*value / bvh.frame_time).round() as usize
+                        } else {
+                            0
+                        };
+                        if ui
+                            .add_sized(
+                                Vec2::new(52.0, 26.0),
+                                egui::DragValue::new(&mut frame).range(0..=bvh.frames.saturating_sub(2)),
+                            )
+                            .changed()
+                        {
+                            *value = frame as f32 * bvh.frame_time;
+                        }
                     }
                     ui.end_row();
                 }

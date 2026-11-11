@@ -2,9 +2,9 @@
 //! LLPipeline::calcNearbyLights and renderDeferredLighting collect them
 //! (indra/newview/pipeline.cpp, originally LGPL 2.1, Linden Research). A
 //! light with a light texture is a projector (LLVOVolume::isLightSpotlight):
-//! it lights the frustum that leaves its prim, through that texture. Two
-//! projectors at a time cast shadows (LLPipeline::generateSunShadow,
-//! mShadowSpotLight / mTargetShadowSpotLight).
+//! it lights the frustum that leaves its prim, through that texture. Shadow
+//! slots follow LLPipeline::generateSunShadow (mShadowSpotLight /
+//! mTargetShadowSpotLight), extended to an adjustable budget in Aurora.
 //!
 //! The Legacy Viewer keeps the 256 nearest lights within the draw distance
 //! (RenderLocalLightCount) and draws those in the camera's frustum. The
@@ -16,6 +16,7 @@
 
 use super::{CullView, Scene};
 use crate::world::World;
+use aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS;
 use aurora_render::{PointLight, Projector, Renderer, SpotShadow};
 use glam::Vec3;
 use std::time::Instant;
@@ -26,6 +27,10 @@ const MAX_LIGHTS: usize = 64;
 /// Pixels asked of a projected texture: LL keeps it at full size while its
 /// light is drawn; the beam of a light spreads it over whole walls.
 const PROJECTED_PIXELS: f32 = 512.0;
+/// Retain a shadow map until a challenger covers 20% more screen area.
+const SHADOW_AREA_RETENTION: f32 = 1.2;
+/// A fast camera still leaves at least a quarter-second for each fade.
+const MAX_SHADOW_FADE_SPEED: f32 = 4.0;
 
 /// The camera of a frame, for its lights.
 #[derive(Clone, Copy)]
@@ -41,6 +46,9 @@ pub struct LightView {
     pub dt: f32,
     /// Projectors cast shadows (the setting, with the sun's shadows on).
     pub projector_shadows: bool,
+    pub projector_shadow_limit: u8,
+    /// Keep lights worn by other residents (Preferences › Graphics).
+    pub others_attached_lights: bool,
 }
 
 /// A light that may enter the frame's list.
@@ -87,41 +95,66 @@ pub struct Scratch {
     projecting: Vec<usize>,
     /// `Scene::light_objects`, copied: the loop borrows the scene.
     objects: Vec<usize>,
+    shadow_map_count: usize,
 }
 
-/// The two projectors that cast shadows and how far each has faded in:
+/// Projectors that cast shadows and how far each has faded in:
 /// LLPipeline::generateSunShadow's update of mShadowSpotLight. A projector
-/// keeps its shadow map while it is one of the two `targets`; otherwise its
+/// keeps its shadow map while it is among the `targets`; otherwise its
 /// shadows fade out, then the map goes to the target that has none.
 #[derive(Debug, Default)]
 pub struct SpotShadowSlots {
     /// Object index of the projector of each shadow map.
-    pub lights: [Option<usize>; 2],
-    pub fade: [f32; 2],
+    pub lights: Vec<Option<usize>>,
+    pub fade: Vec<f32>,
     last_eye: Option<Vec3>,
 }
 
 impl SpotShadowSlots {
-    /// `targets`: the two projectors that weigh most on screen this frame.
+    /// LLPipeline ranks the apparent area of projectors. Keep that ranking,
+    /// with a small retention margin for the maps already drawn: nearby
+    /// lights crossing in priority must not repeatedly trade visible shadows.
+    fn targets(&self, ranked: &mut [(f32, usize)], limit: usize) -> [Option<usize>; MAX_PROJECTOR_SHADOWS] {
+        let area = |(angle, idx): &(f32, usize)| {
+            let retention = if self.lights.contains(&Some(*idx)) {
+                SHADOW_AREA_RETENTION
+            } else {
+                1.0
+            };
+            angle * angle * retention
+        };
+        ranked.sort_by(|a, b| area(b).total_cmp(&area(a)).then(a.1.cmp(&b.1)));
+        std::array::from_fn(|k| ranked.get(k).filter(|_| k < limit).map(|r| r.1))
+    }
+
+    /// `targets`: the projectors that weigh most on screen within the budget.
     /// The fade lasts a second, less as the camera moves faster.
-    pub fn update(&mut self, targets: [Option<usize>; 2], eye: Vec3, dt: f32) {
+    pub fn update(&mut self, targets: &[Option<usize>], eye: Vec3, dt: f32) {
+        let limit = targets.len().min(MAX_PROJECTOR_SHADOWS);
+        self.lights.resize(limit, None);
+        self.fade.resize(limit, 0.0);
         let speed = self.last_eye.map_or(0.0, |e| e.distance(eye) / dt.max(1e-4));
         self.last_eye = Some(eye);
-        let amount = dt * speed.max(1.0);
-        for i in 0..2 {
+        let amount = dt * speed.clamp(1.0, MAX_SHADOW_FADE_SPEED);
+        // Fade every old owner first, then fill free slots. Assigning while
+        // visiting a slot can duplicate an owner which is still fading out.
+        for i in 0..limit {
             if self.lights[i].is_some() && targets.contains(&self.lights[i]) {
                 self.fade[i] = (self.fade[i] + amount).min(1.0);
             } else {
                 self.fade[i] = (self.fade[i] - amount).max(0.0);
                 if self.fade[i] == 0.0 || self.lights[i].is_none() {
-                    // faded out: take the pending target the other map
-                    // does not already have
-                    self.lights[i] = if targets[0] != self.lights[(i + 1) % 2] {
-                        targets[0]
-                    } else {
-                        targets[1]
-                    };
+                    self.lights[i] = None;
                 }
+            }
+        }
+        for target in targets.iter().flatten() {
+            if self.lights.contains(&Some(*target)) {
+                continue;
+            }
+            if let Some(slot) = self.lights.iter().position(Option::is_none) {
+                self.lights[slot] = Some(*target);
+                self.fade[slot] = 0.0;
             }
         }
     }
@@ -144,32 +177,47 @@ fn spot_priority(position: Vec3, direction: Vec3, radius: f32, view: &LightView)
     (radius * 3f32.sqrt() / dist.max(1e-4)).atan()
 }
 
-/// Worn by an avatar: a parent up its link is one (the attachment's root,
-/// or the prim itself; LLViewerObject::isAttachment).
-fn worn(world: &World, o: &crate::world::objects::Object) -> bool {
+/// The avatar that wears the light, if any: a parent up its link is one
+/// (the attachment's root, or the prim itself; LLViewerObject::isAttachment).
+/// A seat's linkset and animesh are not worn: their avatars are children of
+/// the prims, not parents.
+fn worn(world: &World, o: &crate::world::objects::Object) -> Option<Uuid> {
     let mut current = o;
     for _ in 0..4 {
-        let Some(parent) = world.objects.parent_of(current).and_then(|i| world.objects.get(i)) else {
-            return false;
-        };
+        let parent = world.objects.parent_of(current).and_then(|i| world.objects.get(i))?;
         if parent.is_avatar() {
-            return true;
+            return Some(parent.full_id);
         }
         current = parent;
     }
-    false
+    None
+}
+
+/// Whether a light enters the frame's list. The photo window's switch
+/// (`Scene::attached_lights`) drops every worn light, as the Legacy Viewer's
+/// RenderAttachedLights does; the Graphics preference (#2474) drops only
+/// those of other avatars and keeps ours, beyond the Legacy Viewer's
+/// all-or-nothing setting.
+fn light_visible(wearer: Option<Uuid>, agent: Uuid, photo_attached: bool, others_attached: bool) -> bool {
+    wearer.is_none() || (photo_attached && (others_attached || wearer == Some(agent)))
 }
 
 impl Scene {
     /// The lights that reach the view, nearest first, then the other
     /// nearest ones (`select`), and those of them that cast shadows.
-    pub fn local_lights(&mut self, world: &World, renderer: &mut Renderer, view: &LightView) -> (Vec<PointLight>, [Option<SpotShadow>; 2]) {
+    pub fn local_lights(
+        &mut self,
+        world: &World,
+        renderer: &mut Renderer,
+        view: &LightView,
+    ) -> (Vec<PointLight>, [Option<SpotShadow>; MAX_PROJECTOR_SHADOWS]) {
         let eye = view.eye;
         let now = Instant::now();
         let Scratch {
             mut lights,
             mut projecting,
             mut objects,
+            shadow_map_count,
         } = std::mem::take(&mut self.light_scratch);
         objects.extend(self.light_objects.iter().copied());
         for idx in objects.drain(..) {
@@ -185,7 +233,13 @@ impl Scene {
             let Some((center, hud)) = self.gpu.get(idx).map(|g| (g.center, g.hud)) else {
                 continue;
             };
-            if hud || (!self.attached_lights && worn(world, o)) || !gives_light(l.color, l.radius) {
+            if hud || !gives_light(l.color, l.radius) {
+                continue;
+            }
+            // the wearer is looked up only while a switch drops worn lights
+            // (with both on, every light is kept: no walk up its links)
+            let filtered = !self.attached_lights || !view.others_attached_lights;
+            if filtered && !light_visible(worn(world, o), world.agent_id, self.attached_lights, view.others_attached_lights) {
                 continue;
             }
             let dist = light_dist(center, l.radius, eye);
@@ -199,7 +253,7 @@ impl Scene {
             let mut position = center;
             let mut projector = None;
             let mut texture = None;
-            if let Some(image) = o.extra.light_image.filter(|i| !i.texture.is_nil())
+            if let Some(image) = o.visual_light_image().filter(|i| !i.texture.is_nil())
                 && let Some((pos, rot, _)) = Self::object_transform(world, idx, now, 0)
             {
                 // the frustum leaves the prim itself, not its drawn bounds;
@@ -242,7 +296,7 @@ impl Scene {
             }
             kept
         });
-        // the two projectors of the list that weigh most on screen, among
+        // the projectors of the list that weigh most on screen, among
         // those that reach into the half-space in front of the camera
         if view.projector_shadows {
             let mut ranked: Vec<(f32, usize)> = lights
@@ -253,21 +307,32 @@ impl Scene {
                     ahead.then(|| (spot_priority(l.position, p.direction, l.radius / 1.5, view), *idx))
                 })
                 .collect();
-            ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
-            let targets = [ranked.first().map(|r| r.1), ranked.get(1).map(|r| r.1)];
-            self.spot_shadows.update(targets, eye, view.dt);
+            let limit = usize::from(view.projector_shadow_limit).min(MAX_PROJECTOR_SHADOWS);
+            let targets = self.spot_shadows.targets(&mut ranked, limit);
+            self.spot_shadows.update(&targets[..limit], eye, view.dt);
+            if std::env::var_os("AURORA_PROJECTOR_TRACE").is_some() {
+                log::info!(
+                    "projector trace: eye={eye:?} targets={targets:?} slots={:?} fade={:?} ranked={ranked:?}",
+                    self.spot_shadows.lights,
+                    self.spot_shadows.fade
+                );
+            }
         } else {
             self.spot_shadows.clear();
         }
         let slots = &self.spot_shadows;
         let shadows = std::array::from_fn(|k| {
-            let idx = slots.lights[k]?;
+            let idx = slots.lights.get(k).copied().flatten()?;
             let light = lights.iter().position(|c| c.idx == idx && c.light.projector.is_some())?;
             Some(SpotShadow {
                 light: light as u32,
                 fade: slots.fade[k],
             })
         });
+        let active = shadows.iter().flatten().count();
+        if active != shadow_map_count {
+            log::info!("projector shadow maps active: {active}, limit {}", view.projector_shadow_limit);
+        }
         let list = lights.iter().map(|c| c.light).collect();
         lights.clear();
         projecting.clear();
@@ -275,6 +340,7 @@ impl Scene {
             lights,
             projecting,
             objects,
+            shadow_map_count: active,
         };
         (list, shadows)
     }
@@ -302,21 +368,69 @@ mod tests {
     use super::*;
 
     #[test]
+    fn other_avatar_lights_can_be_hidden_without_hiding_our_own() {
+        let agent = Uuid::from_u128(1);
+        let other = Uuid::from_u128(2);
+        // preference off: ours kept, others dropped, unworn kept
+        assert!(light_visible(Some(agent), agent, true, false));
+        assert!(!light_visible(Some(other), agent, true, false));
+        assert!(light_visible(None, agent, true, false));
+        assert!(light_visible(Some(other), agent, true, true));
+        // photo switch off: every worn light dropped, whatever the preference
+        for others in [true, false] {
+            assert!(!light_visible(Some(agent), agent, false, others));
+            assert!(!light_visible(Some(other), agent, false, others));
+            assert!(light_visible(None, agent, false, others));
+        }
+    }
+
+    /// #2474: the wearer is found from a child prim of an attachment, ours
+    /// by the agent id; a seat's linkset is not worn by its sitter.
+    #[test]
+    fn the_wearer_of_a_light_is_the_avatar_above_its_linkset() {
+        let mut w = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for ev in crate::demo::events().into_iter().chain(crate::demo::action_events()) {
+            w.apply(ev);
+        }
+        let own = w.objects.index_of_uuid(&w.agent_id).expect("our avatar");
+        let own_local = w.objects.get(own).unwrap().key.local_id;
+        let (other, other_id) = w
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != w.agent_id)
+            .map(|(_, o)| (o.key.local_id, o.full_id))
+            .expect("another demo resident");
+        let root = w.objects.index_of_uuid(&crate::demo::action_id(971)).unwrap();
+        let child = w.objects.index_of_uuid(&crate::demo::action_id(974)).unwrap();
+        let wearer = |w: &World, idx| worn(w, w.objects.get(idx).unwrap());
+        assert_eq!((wearer(&w, root), wearer(&w, child)), (None, None));
+        // we sit on it: the avatar is the child, the prims stay unworn
+        let root_local = w.objects.get(root).unwrap().key.local_id;
+        w.objects.get_mut(own).unwrap().parent_id = root_local;
+        assert_eq!((wearer(&w, root), wearer(&w, child)), (None, None));
+        w.objects.get_mut(own).unwrap().parent_id = 0;
+        w.objects.get_mut(root).unwrap().parent_id = other;
+        assert_eq!((wearer(&w, root), wearer(&w, child)), (Some(other_id), Some(other_id)));
+        w.objects.get_mut(root).unwrap().parent_id = own_local;
+        assert_eq!(wearer(&w, child), Some(w.agent_id));
+    }
+
+    #[test]
     fn a_projector_keeps_its_shadow_map_while_it_is_a_target() {
         let mut slots = SpotShadowSlots::default();
         let eye = Vec3::ZERO;
         // two targets take the two maps, then fade in over a second
-        slots.update([Some(7), Some(9)], eye, 0.1);
+        slots.update(&[Some(7), Some(9)], eye, 0.1);
         assert_eq!(slots.lights, [Some(7), Some(9)]);
         assert_eq!(slots.fade, [0.0, 0.0]);
         for _ in 0..5 {
-            slots.update([Some(9), Some(7)], eye, 0.1);
+            slots.update(&[Some(9), Some(7)], eye, 0.1);
         }
         // (whatever their order among the targets)
         assert_eq!(slots.lights, [Some(7), Some(9)]);
         assert!((slots.fade[0] - 0.5).abs() < 1e-5 && (slots.fade[1] - 0.5).abs() < 1e-5);
         for _ in 0..10 {
-            slots.update([Some(7), Some(9)], eye, 0.1);
+            slots.update(&[Some(7), Some(9)], eye, 0.1);
         }
         assert_eq!(slots.fade, [1.0, 1.0]);
     }
@@ -326,27 +440,89 @@ mod tests {
         let mut slots = SpotShadowSlots::default();
         let eye = Vec3::ZERO;
         for _ in 0..12 {
-            slots.update([Some(1), Some(2)], eye, 0.1);
+            slots.update(&[Some(1), Some(2)], eye, 0.1);
         }
         // 3 outranks 2: 1 keeps its map, 2 fades out before 3 takes its
-        slots.update([Some(1), Some(3)], eye, 0.25);
+        slots.update(&[Some(1), Some(3)], eye, 0.25);
         assert_eq!(slots.lights, [Some(1), Some(2)]);
         assert_eq!(slots.fade, [1.0, 0.75]);
         for _ in 0..3 {
-            slots.update([Some(1), Some(3)], eye, 0.25);
+            slots.update(&[Some(1), Some(3)], eye, 0.25);
         }
         assert_eq!(slots.lights, [Some(1), Some(3)]);
         assert_eq!(slots.fade, [1.0, 0.0]);
-        slots.update([Some(1), Some(3)], eye, 0.25);
+        slots.update(&[Some(1), Some(3)], eye, 0.25);
         assert_eq!(slots.fade, [1.0, 0.25]);
         // a moving camera shortens the fade (2 m in 0.25 s: 8 m/s)
-        slots.update([Some(1), Some(3)], Vec3::new(2.0, 0.0, 0.0), 0.25);
+        slots.update(&[Some(1), Some(3)], Vec3::new(2.0, 0.0, 0.0), 0.25);
         assert_eq!(slots.fade, [1.0, 1.0]);
         // a single target: the other map is given up
         for _ in 0..5 {
-            slots.update([Some(1), None], Vec3::new(2.0, 0.0, 0.0), 0.25);
+            slots.update(&[Some(1), None], Vec3::new(2.0, 0.0, 0.0), 0.25);
         }
         assert_eq!(slots.lights, [Some(1), None]);
+    }
+
+    #[test]
+    fn a_camera_jump_cannot_remove_a_full_projector_shadow_in_one_frame() {
+        let mut slots = SpotShadowSlots::default();
+        for _ in 0..70 {
+            slots.update(&[Some(1), Some(2)], Vec3::ZERO, 0.016);
+        }
+        assert_eq!(slots.fade, [1.0, 1.0]);
+        slots.update(&[Some(1), Some(3)], Vec3::new(8.0, 0.0, 0.0), 0.016);
+        assert_eq!(slots.lights, [Some(1), Some(2)]);
+        assert!((slots.fade[1] - 0.936).abs() < 1e-5);
+        // Normal stationary-camera fades still take one second.
+        slots.update(&[Some(1), Some(3)], Vec3::new(8.0, 0.0, 0.0), 0.016);
+        assert!((slots.fade[1] - 0.920).abs() < 1e-5);
+    }
+
+    #[test]
+    fn nearby_projectors_keep_their_shadow_maps_until_a_clear_priority_change() {
+        let slots = SpotShadowSlots {
+            lights: vec![Some(1), Some(2)],
+            fade: vec![1.0, 1.0],
+            ..Default::default()
+        };
+        for incoming in [0.98, 1.01, 1.04, 1.01, 0.98] {
+            let mut ranked = [(incoming, 3), (1.0, 1), (0.99, 2)];
+            let targets = slots.targets(&mut ranked, 2);
+            assert!(targets.contains(&Some(1)) && targets.contains(&Some(2)));
+        }
+        let mut ranked = [(1.11, 3), (1.0, 1), (0.99, 2)];
+        let targets = slots.targets(&mut ranked, 2);
+        assert!(targets.contains(&Some(1)) && targets.contains(&Some(3)));
+    }
+
+    #[test]
+    fn projector_shadow_retention_never_keeps_a_missing_candidate() {
+        let slots = SpotShadowSlots {
+            lights: vec![Some(1), Some(2)],
+            ..Default::default()
+        };
+        assert_eq!(slots.targets(&mut [(0.3, 3)], 2)[..2], [Some(3), None]);
+        assert_eq!(slots.targets(&mut [], 2), [None; MAX_PROJECTOR_SHADOWS]);
+    }
+
+    #[test]
+    fn ten_projector_shadows_keep_distinct_slots_and_follow_budget_changes() {
+        let targets: Vec<_> = (0..10).map(Some).collect();
+        let mut slots = SpotShadowSlots::default();
+        for _ in 0..12 {
+            slots.update(&targets, Vec3::ZERO, 0.1);
+        }
+        assert_eq!(slots.lights, targets);
+        assert!(slots.fade.iter().all(|&fade| fade == 1.0));
+        let reversed: Vec<_> = targets.iter().rev().copied().collect();
+        slots.update(&reversed, Vec3::ZERO, 0.1);
+        assert_eq!(slots.lights, targets, "ranking changes cannot move retained maps");
+        slots.update(&targets[..2], Vec3::ZERO, 0.1);
+        assert_eq!(slots.lights, targets[..2]);
+        slots.update(&targets, Vec3::ZERO, 0.1);
+        assert_eq!(slots.lights, targets);
+        assert_eq!(slots.fade[..2], [1.0, 1.0]);
+        assert!(slots.fade[2..].iter().all(|&fade| fade == 0.0));
     }
 
     /// A camera at `eye` looking along `forward`, 60° of vertical field, 16:9.
@@ -361,6 +537,8 @@ mod tests {
             range: 128.0,
             dt: 0.016,
             projector_shadows: true,
+            projector_shadow_limit: 2,
+            others_attached_lights: true,
         }
     }
 

@@ -151,8 +151,10 @@ impl App {
             error: aurora_i18n::tr!("app-demo-login-pending-logout").into(),
             mfa_required: false,
             tos_required: false,
+            critical_required: false,
             bad_credentials: false,
             previous_session: true,
+            next_server: None,
         });
         true
     }

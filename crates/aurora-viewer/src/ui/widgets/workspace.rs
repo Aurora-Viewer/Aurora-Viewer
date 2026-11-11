@@ -363,6 +363,9 @@ fn section<R>(
             state.toggle(ui);
             header.mark_changed();
         }
+        if super::search_cleared(ui) {
+            ui.ctx().animate_bool_with_time(id, open, 0.0);
+        }
     } else if header.clicked() {
         state.toggle(ui);
         header.mark_changed();
@@ -480,6 +483,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "people" | "group_picker" | "group_profile" | "contact_set_config" => "users-group",
         "group_invite" | "group_invite_choice" => "user-plus",
         "group_titles" => "tags-filled",
+        "region_tracker" => "location-filled",
         "search" => "search-filled",
         "options" => "settings-filled",
         "worldmap" | "minimap" => "map",
@@ -618,6 +622,52 @@ pub(crate) fn overlay<R>(
     response
 }
 
+/// What a modal's glass shows under its tint, besides the world: the glass
+/// samples a blur of the world alone, taken before the interface is drawn,
+/// so a dialog over a full-window picture (the photo reel's quick view) would
+/// show the world where the picture is. The shade over the world, and the
+/// picture, in a small texture so that it reads as blurred, on its place.
+#[derive(Clone, Copy)]
+pub struct ModalGround {
+    pub shade: Color32,
+    pub picture: Option<(egui::TextureId, egui::Rect)>,
+}
+
+impl ModalGround {
+    fn id() -> egui::Id {
+        egui::Id::unique("modal_ground")
+    }
+
+    /// For the modals of this frame, drawn after this call.
+    pub fn set(self, ctx: &egui::Context) {
+        let frame = ctx.cumulative_frame_nr();
+        ctx.data_mut(|d| d.insert_temp(Self::id(), (frame, self)));
+    }
+
+    fn current(ctx: &egui::Context) -> Option<Self> {
+        let (frame, ground) = ctx.data(|d| d.get_temp::<(u64, Self)>(Self::id()))?;
+        (frame == ctx.cumulative_frame_nr()).then_some(ground)
+    }
+
+    /// The shapes for a modal on `rect`: the part of the picture under it.
+    fn shapes(&self, rect: egui::Rect, radius: f32) -> Vec<egui::Shape> {
+        let mut shapes = vec![egui::Shape::rect_filled(rect, radius, self.shade)];
+        if let Some((texture, picture)) = self.picture {
+            let part = rect.intersect(picture);
+            if part.is_positive() {
+                let at = |p: egui::Pos2| ((p - picture.min) / picture.size()).to_pos2();
+                let uv = egui::Rect::from_min_max(at(part.min), at(part.max));
+                shapes.push(
+                    egui::epaint::RectShape::filled(part, radius, super::PICTURE_TINT)
+                        .with_texture(texture, uv)
+                        .into(),
+                );
+            }
+        }
+        shapes
+    }
+}
+
 /// Modal dialogs use the same surface and spacing as regular windows. Enter
 /// clicks their main button and their first text field takes the focus
 /// (`modal_keys`).
@@ -671,14 +721,14 @@ impl Modal {
         if let Some((painter, slot)) = glass_slot {
             let style = ctx.global_style();
             if self.1.is_none() && style.visuals.window_fill.a() < 255 {
-                painter.set(
-                    slot,
-                    aurora_render::glass_panel(
-                        response.response.rect.shrink(1.0),
-                        f32::from(style.visuals.window_corner_radius.nw),
-                        style.visuals.window_fill,
-                    ),
-                );
+                let rect = response.response.rect.shrink(1.0);
+                let radius = f32::from(style.visuals.window_corner_radius.nw);
+                let mut shapes = vec![aurora_render::glass_region(rect, radius, 1.0, 1.0)];
+                if let Some(ground) = ModalGround::current(ctx) {
+                    shapes.extend(ground.shapes(rect, radius));
+                }
+                shapes.push(egui::Shape::rect_filled(rect, radius, style.visuals.window_fill));
+                painter.set(slot, egui::Shape::Vec(shapes));
             }
         }
         response
@@ -688,6 +738,39 @@ impl Modal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_modal_ground_shows_the_part_of_the_picture_under_it() {
+        let picture = egui::Rect::from_min_size(egui::pos2(100.0, 100.0), Vec2::splat(200.0));
+        let ground = ModalGround {
+            shade: Color32::BLACK,
+            picture: Some((egui::TextureId::Managed(1), picture)),
+        };
+        // half over the picture: its left half, in the texture's coordinates
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 150.0), Vec2::new(200.0, 100.0));
+        let shapes = ground.shapes(rect, 0.0);
+        let egui::Shape::Rect(part) = &shapes[1] else {
+            panic!("the picture's part");
+        };
+        assert_eq!(
+            part.rect,
+            egui::Rect::from_min_max(egui::pos2(100.0, 150.0), egui::pos2(200.0, 250.0))
+        );
+        let egui::epaint::Brush { uv, .. } = **part.brush.as_ref().expect("textured");
+        assert_eq!(uv, egui::Rect::from_min_max(egui::pos2(0.0, 0.25), egui::pos2(0.5, 0.75)));
+        // beside the picture: the shade alone
+        let beside = egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::splat(50.0));
+        assert_eq!(ground.shapes(beside, 0.0).len(), 1);
+        // only for the frame it was set in
+        let ctx = egui::Context::default();
+        let _ = crate::ui::login::test_output(ctx.run_ui(egui::RawInput::default(), |ui| {
+            ground.set(ui.ctx());
+            assert!(ModalGround::current(ui.ctx()).is_some());
+        }));
+        let _ = crate::ui::login::test_output(ctx.run_ui(egui::RawInput::default(), |ui| {
+            assert!(ModalGround::current(ui.ctx()).is_none());
+        }));
+    }
 
     #[test]
     fn organization_drag_preview_grows_after_short_labels_and_stays_on_screen() {

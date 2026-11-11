@@ -155,6 +155,8 @@ fn photo_maxima() -> Values {
     Values {
         draw_distance: 512.0,
         lod_factor: 4.0,
+        // the top of Preferences' Trees slider
+        tree_lod_factor: 1.0,
         max_avatars: 100,
         max_complexity: 0,
         shadow_quality: 4,
@@ -163,7 +165,7 @@ fn photo_maxima() -> Values {
         water_reflections: 4,
         mirrors: 4,
         reflection_probes: 3,
-        probe_count: 64,
+        probe_count: 256,
         anisotropy: 16,
         ..Preset::Deluxe.values()
     }
@@ -185,6 +187,7 @@ pub fn boosted(user: Values) -> Values {
         antialiasing: MSAA_8X,
         draw_distance: user.draw_distance.max(top.draw_distance),
         lod_factor: user.lod_factor.max(top.lod_factor),
+        tree_lod_factor: user.tree_lod_factor.max(top.tree_lod_factor),
         max_avatars: user.max_avatars.max(top.max_avatars),
         max_complexity: top.max_complexity,
         shadow_quality: user.shadow_quality.max(top.shadow_quality),
@@ -322,7 +325,7 @@ fn held_bytes(v: &Values, screen: Screen) -> u64 {
     let ground = std::f64::consts::PI * f64::from(v.draw_distance).powi(2) * GROUND_BYTES_PER_M2;
     // HDR colour and depth at a fraction of the screen
     let reflection = |step: u8| (px * f64::from(Settings::reflection_scale(step)).powi(2) * 12.0) as u64;
-    let probes = u64::from(v.probe_count.clamp(8, 64)) * PROBE_BYTES;
+    let probes = u64::from(v.probe_count.clamp(8, 256)) * PROBE_BYTES;
     msaa + shadows + ground as u64 + reflection(v.water_reflections) + reflection(v.mirrors) + probes
 }
 
@@ -356,7 +359,7 @@ pub fn made_bytes(from: &Values, to: &Values, screen: Screen) -> u64 {
         }
     };
     let probes = if from.probe_count != to.probe_count {
-        u64::from(from.probe_count.clamp(8, 64)) * PROBE_BYTES
+        u64::from(from.probe_count.clamp(8, 256)) * PROBE_BYTES
     } else {
         0
     };

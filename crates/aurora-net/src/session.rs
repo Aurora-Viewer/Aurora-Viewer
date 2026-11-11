@@ -5,6 +5,7 @@
 
 mod abuse_reports;
 mod account;
+mod appearance_queue;
 mod asset_imports;
 mod attach_queue;
 mod build_cmds;
@@ -12,6 +13,7 @@ mod currency;
 mod estate;
 mod experience_events;
 mod gestures;
+mod god;
 mod inventory_copies;
 mod inventory_moves;
 mod inventory_preview;
@@ -27,7 +29,7 @@ mod task_notecard;
 mod terrain_raw;
 mod wearable_save;
 
-use crate::agent_update::AgentUpdateRule;
+use crate::agent_update::{AgentUpdateRule, FarStep};
 use crate::caps::{self, EqEvent, EqMessage};
 use crate::circuit::{Circuit, Resend};
 use crate::login::{self, LoginError, LoginRequest, LoginResponse};
@@ -77,6 +79,11 @@ use crate::build::BUILD_PARCEL_SEQ;
 /// (llstartup.cpp, circuit_timeout = 100 s, LLCircuitData::checkPeriodTime).
 /// 60 s cut sessions a laggy region or a short network outage would survive.
 const SIM_TIMEOUT: Duration = Duration::from_secs(100);
+/// How long a login waits for AgentMovementComplete before logging out
+/// (STATE_AGENT_WAIT_TIMEOUT, llstartup.cpp). Only the login ends this way: a
+/// teleport or crossing the region does not confirm keeps its session, and the
+/// viewer stops waiting on its own (`NetCommand::ArrivalGivenUp`).
+const LOGIN_ARRIVAL_TIMEOUT: Duration = Duration::from_secs(240);
 /// DEFAULT_FIELD_OF_VIEW (60°): the camera's angle until the viewer gives its own.
 const DEFAULT_FOV: f32 = std::f32::consts::FRAC_PI_3;
 const PING_INTERVAL: Duration = Duration::from_secs(5);
@@ -215,6 +222,8 @@ impl Drop for Sim {
 
 pub(crate) struct Shared {
     pub http: reqwest::Client,
+    /// `http` with the login's own HTTP redirects (`login::redirect_policy`).
+    pub login_http: reqwest::Client,
     pub caps_http: reqwest::Client,
     pub events: crate::EventSender,
     pub controls: Arc<Mutex<AgentControls>>,
@@ -230,6 +239,52 @@ pub(crate) struct Shared {
     pub viewer_stats_posts: Arc<crate::viewer_stats::PostsInFlight>,
 }
 
+/// How long one appearance request may hold the queue.
+const APPEARANCE_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// One POST of the COF version to UpdateAvatarAppearance: whether it
+/// succeeded, and the version the server expects when it says.
+async fn post_appearance_request(http: &reqwest::Client, request: appearance_queue::Request) -> (bool, Option<i32>) {
+    let appearance_queue::Request { cof_version, url } = request;
+    let body = aurora_llsd::to_xml(&aurora_llsd::llsd_map! { "cof_version" => cof_version });
+    let exchange = async {
+        let resp = http
+            .post(&url)
+            .header("Content-Type", "application/llsd+xml")
+            .header("Accept", "application/llsd+xml")
+            .body(body)
+            .send()
+            .await?;
+        let status = resp.status();
+        let bytes = resp.bytes().await.ok();
+        Ok::<_, reqwest::Error>((status, bytes.and_then(|b| aurora_llsd::from_xml(&b).ok())))
+    };
+    match tokio::time::timeout(APPEARANCE_REQUEST_TIMEOUT, exchange).await {
+        Ok(Ok((status, Some(d)))) => {
+            let ok = status.is_success() && d["success"].as_bool();
+            if !ok {
+                log::warn!(
+                    "appearance request for COF {cof_version} failed: HTTP {status} {}",
+                    d["error"].to_string_value()
+                );
+            }
+            (ok, d.has("expected").then(|| d["expected"].as_i32()))
+        }
+        Ok(Ok((status, None))) => {
+            log::warn!("appearance request for COF {cof_version}: HTTP {status}");
+            (false, None)
+        }
+        Ok(Err(e)) => {
+            log::warn!("appearance request failed: {}", e.without_url());
+            (false, None)
+        }
+        Err(_) => {
+            log::warn!("appearance request for COF {cof_version}: no answer");
+            (false, None)
+        }
+    }
+}
+
 struct Session<'a> {
     sh: &'a Shared,
     sock: Arc<UdpSocket>,
@@ -243,6 +298,8 @@ struct Session<'a> {
     inventory_udp_tx: mpsc::UnboundedSender<inventory_udp::Request>,
     /// AgentSetAppearance messages sent this session (their SerialNum).
     appearance_serial: u32,
+    /// UpdateAvatarAppearance requests: one at a time, the newest version.
+    appearance_queue: Arc<Mutex<appearance_queue::AppearanceQueue>>,
     /// Our profile as last received (AvatarPropertiesReply), which a grid
     /// without `AgentProfile` needs whole to save a change.
     own_profile: Option<crate::profile::OwnProfile>,
@@ -254,7 +311,9 @@ struct Session<'a> {
     one_shot: u32,
     /// "No agent updates" already reported for this CompleteAgentMovement.
     cam_warned: bool,
-    far: f32,
+    /// AgentUpdate's `Far`, from the draw distance of the viewer's controls
+    /// (agent_update.rs).
+    far: FarStep,
     /// FSDisableNeighbourRegionConnections, while the agent stands inside its
     /// region: EnableSimulator for another region is ignored.
     refuse_neighbours: bool,
@@ -268,6 +327,8 @@ struct Session<'a> {
     viewer_stats: crate::viewer_stats::Schedule,
     regions_visited: std::collections::HashSet<u64>,
     cam_requested_at: Option<Instant>,
+    /// The first arrival of this session is still awaited (STATE_AGENT_WAIT).
+    login_arrival: bool,
     /// Last confirmed agent parcel in the main region, including its geometry.
     agent_parcel: Option<Arc<ParcelInfo>>,
     /// Teleport by region name waiting for its MapBlockReply (lowercase name, position).
@@ -288,6 +349,9 @@ struct Session<'a> {
     terrain_raw: terrain_raw::RawXfers,
     /// Decode failures per message name, to rate-limit their warnings.
     decode_failures: HashMap<&'static str, u64>,
+    /// ObjectUpdate blocks `objects::parse_full` did not read, by simulator
+    /// and size: warned once each (issue #2747).
+    rejected_full: std::collections::HashSet<(SocketAddr, usize)>,
     inventory_uploads: inventory_upload::Uploads,
     asset_imports: asset_imports::Imports,
     inventory_previews: inventory_preview::Previews,
@@ -303,8 +367,7 @@ struct Session<'a> {
 fn packets_counted(stats: &NetStats) -> throttle::Counted {
     throttle::Counted {
         received: stats.packets_in.load(Ordering::Relaxed),
-        gaps: stats.seq_gaps.load(Ordering::Relaxed),
-        late: stats.seq_late.load(Ordering::Relaxed),
+        lost: stats.packets_lost.load(Ordering::Relaxed),
     }
 }
 
@@ -370,16 +433,21 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
             fraction: 0.1,
         },
     );
-    let login = match login::login(&sh.http, &req).await {
+    let login = match login::login(&sh.login_http, &req).await {
         Ok(l) => Arc::new(l),
         Err(e) => {
             let (mfa, tos) = (matches!(e, LoginError::MfaRequired(_)), matches!(e, LoginError::TosRequired(_)));
+            let critical = matches!(e, LoginError::CriticalMessage(_));
             let bad_credentials = matches!(&e, LoginError::Refused { reason, .. } if reason == "key");
             let previous_session = e.previous_session();
             // The grid's own words (LLLoginInstance shows the message as it
             // comes), without the "login refused (presence)" prefix.
             let error = match &e {
                 LoginError::Refused { message, .. } if previous_session && !message.trim().is_empty() => message.trim().to_owned(),
+                // the text to read or accept, as LLFloaterTOS shows it
+                LoginError::TosRequired(message) | LoginError::CriticalMessage(message) if !message.trim().is_empty() => {
+                    message.trim().to_owned()
+                }
                 _ => e.to_string(),
             };
             emit(
@@ -388,8 +456,13 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     error,
                     mfa_required: mfa,
                     tos_required: tos,
+                    critical_required: critical,
                     bad_credentials,
                     previous_session,
+                    next_server: match e {
+                        LoginError::NextServer(server) => Some(server),
+                        _ => None,
+                    },
                 },
             );
             return;
@@ -416,8 +489,10 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     error: aurora_i18n::tr!("session-udp-bind-failed", e = format!("{}", e)),
                     mfa_required: false,
                     tos_required: false,
+                    critical_required: false,
                     bad_credentials: false,
                     previous_session: false,
+                    next_server: None,
                 },
             );
             return;
@@ -445,7 +520,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         control_flags: 0,
         one_shot: 0,
         cam_warned: false,
-        far: 128.0,
+        far: FarStep::new(Instant::now()),
         refuse_neighbours: false,
         fov: DEFAULT_FOV,
         logout_started: None,
@@ -454,6 +529,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         viewer_stats: Default::default(),
         regions_visited: Default::default(),
         cam_requested_at: None,
+        login_arrival: true,
         agent_parcel: None,
         pending_named_tp: None,
         object_cache,
@@ -464,6 +540,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         estate_invoice: Uuid::nil(),
         terrain_raw: Default::default(),
         decode_failures: HashMap::new(),
+        rejected_full: Default::default(),
         inventory_uploads: Default::default(),
         asset_imports: Default::default(),
         inventory_previews: Default::default(),
@@ -475,6 +552,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         inventory_move_tx,
         inventory_udp_tx,
         appearance_serial: 0,
+        appearance_queue: Default::default(),
         own_profile: None,
         notecard_copies: HashMap::new(),
         inventory_merchant_pending: false,
@@ -966,6 +1044,7 @@ impl Session<'_> {
                     log::info!("SimulatorFeatures received: avatar hover height {avatar_hover_height}");
                     let _ = events.send(NetEvent::SimulatorFeatures {
                         handle,
+                        animated_object_max_tris: v["AnimatedObjects"]["AnimatedObjectMaxTris"].as_i32().max(0) as u32,
                         voice_server_type,
                         avatar_hover_height,
                         materials_rate,
@@ -1320,7 +1399,6 @@ impl Session<'_> {
         self.send_queued_attachment(now);
         self.publish_motion();
         self.object_cache.save_when_due(now);
-        self.update_throttle(now);
         let stats = self.sh.stats.clone();
         // Deferred CompleteAgentMovement once UseCircuitCode is acked. At
         // login it waits for the ack itself, as llstartup.cpp STATE_WORLD_WAIT
@@ -1386,7 +1464,7 @@ impl Session<'_> {
                 self.cam_warned = true;
                 log::warn!("no AgentMovementComplete 5 s after CompleteAgentMovement: agent updates (movement) paused");
             }
-            if !self.agent_moved && t.elapsed() > Duration::from_secs(90) {
+            if self.login_arrival && !self.agent_moved && t.elapsed() > LOGIN_ARRIVAL_TIMEOUT {
                 // STATE_AGENT_WAIT's timeout (llstartup.cpp): "Session was
                 // created, don't just hang up on server, send a logout
                 // request", or the grid keeps this session and the next
@@ -1417,6 +1495,9 @@ impl Session<'_> {
                 dead.push(*addr);
             }
         }
+        // Circuit ticks confirm expired holes before this five-second
+        // sample, so a genuine loss is not deferred to the next sample.
+        self.update_throttle(now);
         stats.unacked.store(unacked as u32, Ordering::Relaxed);
         for addr in ping_targets {
             if let Some(sim) = self.sims.get_mut(&addr) {
@@ -1505,7 +1586,6 @@ impl Session<'_> {
     }
 
     fn send_agent_update_if_due(&mut self, mut c: AgentControls, now: Instant) {
-        c.far = self.far;
         c.control_flags = crate::script_controls::mask_left_button(c.control_flags | self.one_shot, c.alt_or_ctrl);
         let flags_changed = c.control_flags != self.agent_update.sent_flags();
         if self.agent_update.should_send(&c, now) {
@@ -1521,7 +1601,9 @@ impl Session<'_> {
             a.camera_at_axis = c.camera_at;
             a.camera_left_axis = c.camera_left;
             a.camera_up_axis = c.camera_up;
-            a.far = c.far;
+            // the draw distance the viewer hands with its controls each
+            // frame (#2810: a value of the session's own stayed at 128 m)
+            a.far = self.far.far(c.far.clamp(32.0, 1024.0), now);
             a.control_flags = c.control_flags;
             a.flags = c.flags;
             self.send_main(&m, false);
@@ -1565,6 +1647,11 @@ impl Session<'_> {
                     self.send_logout_request();
                     self.logout_started = Some(Instant::now());
                 }
+            }
+            NetCommand::ArrivalGivenUp => {
+                log::warn!("no AgentMovementComplete in time: agent updates resume, session kept");
+                self.agent_moved = true;
+                self.cam_requested_at = None;
             }
             NetCommand::Chat {
                 message,
@@ -1673,7 +1760,6 @@ impl Session<'_> {
                 m.name_data.name = str_field(name.trim());
                 self.send_main(&m, true);
             }
-            NetCommand::SetDrawDistance(d) => self.far = d.clamp(32.0, 1024.0),
             NetCommand::RefuseNeighbourRegions(on) => self.refuse_neighbours = on,
             NetCommand::SetFov(angle) => {
                 if angle.is_finite() && angle > 0.0 && angle != self.fov {
@@ -1837,8 +1923,12 @@ impl Session<'_> {
                 folder,
                 sale_type,
                 price,
+                group_id,
             } => {
-                // Port of LLSelectMgr::sendBuy / packBuyObjectIDs (llselectmgr.cpp).
+                // Port of LLSelectMgr::sendBuy / packBuyObjectIDs and
+                // packAgentGroupAndCatID (indra/newview/llselectmgr.cpp): the
+                // AgentData carries gAgent.getGroupID(), the active group,
+                // which the simulator gives the bought object (#2793).
                 if (1..=3).contains(&sale_type)
                     && price >= 0
                     && !folder.is_nil()
@@ -1847,6 +1937,7 @@ impl Session<'_> {
                     let mut m = ObjectBuy::default();
                     m.agent_data.agent_id = self.agent_id();
                     m.agent_data.session_id = self.session_id();
+                    m.agent_data.group_id = group_id;
                     m.agent_data.category_id = folder;
                     m.object_data.push(object_buy::ObjectData {
                         object_local_id: local_id,
@@ -2049,6 +2140,8 @@ impl Session<'_> {
             }
             NetCommand::Land(l) => self.on_land_command(l),
             NetCommand::Estate(e) => self.on_estate_command(e),
+            NetCommand::RequestGodlikePowers { godlike } => self.request_godlike(godlike),
+            NetCommand::God(c) => self.on_god_command(c),
             NetCommand::ParcelInfoRequest(id) => {
                 let mut m = ParcelInfoRequest::default();
                 m.agent_data.agent_id = self.agent_id();
@@ -3557,51 +3650,32 @@ impl Session<'_> {
             );
             return;
         };
+        let request = appearance_queue::Request { cof_version, url };
+        let Some(first) = self.appearance_queue.lock().request(request) else {
+            return;
+        };
+        let queue = self.appearance_queue.clone();
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         tokio::spawn(async move {
-            let body = aurora_llsd::to_xml(&aurora_llsd::llsd_map! { "cof_version" => cof_version });
-            let result = http
-                .post(&url)
-                .header("Content-Type", "application/llsd+xml")
-                .header("Accept", "application/llsd+xml")
-                .body(body)
-                .send()
-                .await;
-            let (success, expected) = match result {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let doc = resp.bytes().await.ok().and_then(|b| aurora_llsd::from_xml(&b).ok());
-                    match doc {
-                        Some(d) => {
-                            let ok = status.is_success() && d["success"].as_bool();
-                            if !ok {
-                                log::warn!(
-                                    "appearance request for COF {cof_version} failed: HTTP {status} {}",
-                                    d["error"].to_string_value()
-                                );
-                            }
-                            (ok, d.has("expected").then(|| d["expected"].as_i32()))
-                        }
-                        None => {
-                            log::warn!("appearance request for COF {cof_version}: HTTP {status}");
-                            (false, None)
-                        }
+            appearance_queue::drain(&queue, first, |request| {
+                let http = http.clone();
+                let events = events.clone();
+                async move {
+                    let cof_version = request.cof_version;
+                    let (success, expected) = post_appearance_request(&http, request).await;
+                    if success {
+                        log::info!("server appearance requested for COF version {cof_version}");
                     }
+                    let _ = events.send(NetEvent::AppearanceRequestResult {
+                        cof_version,
+                        success,
+                        expected,
+                    });
+                    success
                 }
-                Err(e) => {
-                    log::warn!("appearance request failed: {}", e.without_url());
-                    (false, None)
-                }
-            };
-            if success {
-                log::info!("server appearance requested for COF version {cof_version}");
-            }
-            let _ = events.send(NetEvent::AppearanceRequestResult {
-                cof_version,
-                success,
-                expected,
-            });
+            })
+            .await;
         });
     }
 
@@ -3654,6 +3728,30 @@ impl Session<'_> {
             };
             let _ = events.send(NetEvent::CofVersionIncremented(version));
         });
+    }
+
+    /// An ObjectUpdate block `objects::parse_full` did not read (an
+    /// ObjectData size it does not know): the object is dropped, and the
+    /// simulator, which sent it, does not send it again. Warned once per
+    /// simulator and size, then counted (issue #2747: avatars whose worn
+    /// objects never show). The Legacy Viewer also reads the 16, 32 and 48
+    /// byte sizes (LLViewerObject::processUpdateMessage, OUT_FULL); this
+    /// only says whether the grid sends them.
+    fn note_rejected_full(&mut self, from: SocketAddr, b: &aurora_msg::msgs::object_update::ObjectData) {
+        let size = b.object_data.len();
+        self.sh.stats.objects_unread.fetch_add(1, Ordering::Relaxed);
+        if self.rejected_full.insert((from, size)) {
+            log::warn!(
+                "ObjectUpdate block not read: ObjectData of {size} bytes (object {}, local id {}, pcode {}, parent {}, attach state {}) \
+                 from region {}; the next ones of this size from this region are counted, not logged",
+                b.full_id,
+                b.id,
+                b.p_code,
+                b.parent_id,
+                b.state,
+                transition::grid(self.handle_of(from)),
+            );
+        }
     }
 
     fn request_objects(&mut self, addr: SocketAddr, ids: &[u32]) {
@@ -3724,6 +3822,22 @@ impl Session<'_> {
             return;
         }
         match e.message.as_str() {
+            "OpenRegionInfo" => {
+                if let Some(sim) = self.sims.get(&e.sim) {
+                    let value = &b["MaxLinkCount"];
+                    let max_children = (!value.is_undef()).then(|| {
+                        let value = value.as_i32();
+                        if value < 0 { 10000 } else { value as u32 }
+                    });
+                    emit(
+                        self.sh,
+                        NetEvent::RegionLinkLimit {
+                            handle: sim.handle,
+                            max_children,
+                        },
+                    );
+                }
+            }
             "EnableSimulator" => {
                 for info in b["SimulatorInfo"].as_array() {
                     let handle = info["Handle"].as_u64();
@@ -3784,6 +3898,7 @@ impl Session<'_> {
                     info["RegionHandle"].as_u64(),
                     info["TeleportFlags"].as_u64()
                 );
+                self.far.teleported();
                 self.switch_region(
                     info["RegionHandle"].as_u64(),
                     ip_from_llsd(&info["SimIP"]),
@@ -3931,7 +4046,7 @@ impl Session<'_> {
             stats.duplicates.fetch_add(1, Ordering::Relaxed);
             return;
         }
-        sim.circuit.note_sequence(pkt.sequence, stats);
+        sim.circuit.note_sequence(pkt.sequence, pkt.resent(), stats);
         match self.dispatch(from, &pkt) {
             // ack only now (the handler may also have removed the circuit)
             Ok(()) => {
@@ -3987,6 +4102,7 @@ impl Session<'_> {
             || self.dispatch_search(from, pkt)?
             || self.dispatch_groups(pkt)?
             || self.dispatch_build(pkt)?
+            || self.dispatch_god(pkt)?
         {
             return Ok(());
         }
@@ -4019,7 +4135,13 @@ impl Session<'_> {
             if transition::running() && self.main == Some(from) {
                 transition::step_once("first objects", || "first object update of the region (ObjectUpdate)".to_string());
             }
-            let objects: Vec<_> = m.object_data.iter().filter_map(objects::parse_full).collect();
+            let mut objects = Vec::with_capacity(m.object_data.len());
+            for b in &m.object_data {
+                match objects::parse_full(b) {
+                    Some(u) => objects.push(u),
+                    None => self.note_rejected_full(from, b),
+                }
+            }
             self.attach_queue
                 .observe(objects.iter().map(|o| o.name_values.as_str()), Instant::now());
             self.sh.stats.objects_full.fetch_add(objects.len() as u64, Ordering::Relaxed);
@@ -4215,6 +4337,9 @@ impl Session<'_> {
                 self.main == Some(from),
             );
             let owner = format!("{} {}", field_str(&d.first_name), field_str(&d.last_name));
+            // process_script_dialog: the OwnerData block is missing from
+            // older simulators (getNumberOfBlocks("OwnerData")): nil then
+            let owner_id = m.owner_data.first().map_or(Uuid::nil(), |o| o.owner_id);
             emit(
                 self.sh,
                 NetEvent::ScriptDialog {
@@ -4222,6 +4347,7 @@ impl Session<'_> {
                     object_id: d.object_id,
                     object_name: field_str(&d.object_name),
                     owner_name: owner.trim().to_owned(),
+                    owner_id,
                     message: field_str(&d.message),
                     channel: d.chat_channel,
                     buttons: m.buttons.iter().map(|b| field_str(&b.button_label)).collect(),
@@ -4545,6 +4671,8 @@ impl Session<'_> {
             self.agent_moved = true;
             self.regions_visited.insert(m.data.region_handle);
             self.cam_requested_at = None;
+            self.far.movement_complete(self.login_arrival, Instant::now());
+            self.login_arrival = false;
             // gLastVersionChannel: the server version the Region / Estate
             // window shows
             emit(
@@ -4643,13 +4771,7 @@ impl Session<'_> {
                     cof_version: m.appearance_data.first().map(|a| a.cof_version).unwrap_or(0),
                     appearance_version: m.appearance_data.first().map(|a| a.appearance_version).unwrap_or(0),
                     hover_height: m.appearance_hover.first().map(|h| h.hover_height.z).unwrap_or(0.0),
-                    attachments: m
-                        .attachment_block
-                        .iter()
-                        .filter(|a| !a.id.is_nil())
-                        .map(|a| a.id)
-                        .collect::<std::collections::HashSet<_>>()
-                        .len() as u32,
+                    attachments: objects::listed_attachments(m.attachment_block.iter().map(|a| (a.id, a.attachment_point))),
                 }),
             );
         } else if id == SimulatorViewerTimeMessage::ID {
@@ -5281,6 +5403,7 @@ impl Session<'_> {
             // the agent is in this region: keep (or start) sending its updates
             self.agent_moved = true;
             self.cam_requested_at = None;
+            self.login_arrival = false;
             self.agent_update.force();
             emit(
                 self.sh,
@@ -6167,6 +6290,7 @@ mod event_queue_tests {
     pub(super) fn shared(events: crate::EventSender) -> Shared {
         Shared {
             http: reqwest::Client::new(),
+            login_http: reqwest::Client::new(),
             caps_http: reqwest::Client::new(),
             events,
             controls: Arc::new(Mutex::new(AgentControls::default())),
@@ -6219,13 +6343,14 @@ mod event_queue_tests {
             inventory_move_tx,
             inventory_udp_tx,
             appearance_serial: 0,
+            appearance_queue: Default::default(),
             own_profile: None,
             notecard_copies: HashMap::new(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,
             one_shot: 0,
             cam_warned: false,
-            far: 128.0,
+            far: FarStep::new(Instant::now()),
             refuse_neighbours: false,
             fov: DEFAULT_FOV,
             logout_started: None,
@@ -6234,6 +6359,7 @@ mod event_queue_tests {
             viewer_stats: Default::default(),
             regions_visited: Default::default(),
             cam_requested_at: None,
+            login_arrival: false,
             agent_parcel: None,
             pending_named_tp: None,
             object_cache: object_cache::ObjectCaches::new(None).0,
@@ -6244,6 +6370,7 @@ mod event_queue_tests {
             estate_invoice: Uuid::nil(),
             terrain_raw: Default::default(),
             decode_failures: HashMap::new(),
+            rejected_full: Default::default(),
             inventory_uploads: Default::default(),
             asset_imports: Default::default(),
             inventory_previews: Default::default(),
@@ -6503,9 +6630,10 @@ mod event_queue_tests {
 mod script_dialog_tests {
     use super::*;
 
-    fn test_shared(events: crossbeam_channel::Sender<(Instant, NetEvent)>) -> Shared {
+    pub(in crate::session) fn test_shared(events: crossbeam_channel::Sender<(Instant, NetEvent)>) -> Shared {
         Shared {
             http: reqwest::Client::new(),
+            login_http: reqwest::Client::new(),
             caps_http: reqwest::Client::new(),
             events: crate::EventSender(events),
             controls: Arc::new(Mutex::new(AgentControls::default())),
@@ -6518,7 +6646,7 @@ mod script_dialog_tests {
         }
     }
 
-    fn test_login(main_port: u16) -> Arc<LoginResponse> {
+    pub(in crate::session) fn test_login(main_port: u16) -> Arc<LoginResponse> {
         Arc::new(LoginResponse {
             agent_id: Uuid::from_u128(1),
             session_id: Uuid::from_u128(2),
@@ -6542,7 +6670,12 @@ mod script_dialog_tests {
         })
     }
 
-    fn test_session<'a>(sh: &'a Shared, sock: Arc<UdpSocket>, sims: HashMap<SocketAddr, Sim>, main: SocketAddr) -> Session<'a> {
+    pub(in crate::session) fn test_session<'a>(
+        sh: &'a Shared,
+        sock: Arc<UdpSocket>,
+        sims: HashMap<SocketAddr, Sim>,
+        main: SocketAddr,
+    ) -> Session<'a> {
         let (eq_tx, _) = mpsc::unbounded_channel();
         let (caps_tx, _) = mpsc::unbounded_channel();
         let (notecard_copy_tx, _) = mpsc::unbounded_channel();
@@ -6560,13 +6693,14 @@ mod script_dialog_tests {
             inventory_move_tx,
             inventory_udp_tx,
             appearance_serial: 0,
+            appearance_queue: Default::default(),
             own_profile: None,
             notecard_copies: HashMap::new(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,
             one_shot: 0,
             cam_warned: false,
-            far: 128.0,
+            far: FarStep::new(Instant::now()),
             refuse_neighbours: false,
             fov: DEFAULT_FOV,
             logout_started: None,
@@ -6575,6 +6709,7 @@ mod script_dialog_tests {
             viewer_stats: Default::default(),
             regions_visited: Default::default(),
             cam_requested_at: None,
+            login_arrival: false,
             agent_parcel: None,
             pending_named_tp: None,
             object_cache: super::object_cache::ObjectCaches::new(None).0,
@@ -6585,6 +6720,7 @@ mod script_dialog_tests {
             estate_invoice: uuid::Uuid::nil(),
             terrain_raw: Default::default(),
             decode_failures: HashMap::new(),
+            rejected_full: Default::default(),
             inventory_uploads: Default::default(),
             asset_imports: Default::default(),
             inventory_previews: Default::default(),
@@ -6631,6 +6767,85 @@ mod script_dialog_tests {
         assert_eq!(message.report_data.summary, str_field(&report.summary));
         assert_eq!(message.report_data.details, str_field(&report.details));
         assert!(received.try_iter().any(|(_, e)| matches!(e, NetEvent::AbuseReportSent(Ok(())))));
+    }
+
+    /// LLSelectMgr::sendBuy packs the AgentData with packAgentGroupAndCatID:
+    /// the active group (nil for none) and the destination folder, one
+    /// reliable ObjectBuy to the object's region (#2793).
+    #[tokio::test]
+    async fn object_buy_carries_the_active_group_and_the_folder() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let sim = UdpSocket::bind("127.0.0.1:0").await.expect("simulator");
+        let sim_addr = sim.local_addr().expect("simulator address");
+        let (events, _) = crossbeam_channel::unbounded();
+        let sh = test_shared(events);
+        let mut session = test_session(&sh, sock.clone(), [(sim_addr, Sim::new(sim_addr, 10))].into(), sim_addr);
+        sock.writable().await.expect("socket ready");
+        let folder = Uuid::from_u128(60);
+        for group_id in [Uuid::from_u128(77), Uuid::nil()] {
+            session.on_command(NetCommand::BuyObject {
+                handle: 10,
+                local_id: 971,
+                folder,
+                sale_type: 2,
+                price: 10,
+                group_id,
+            });
+            let mut bytes = [0; 1500];
+            let (size, _) = tokio::time::timeout(Duration::from_secs(2), sim.recv_from(&mut bytes))
+                .await
+                .expect("purchase reaches the simulator")
+                .expect("datagram");
+            let packet = parse_packet(&bytes[..size]).expect("packet");
+            assert_eq!(packet.id, ObjectBuy::ID);
+            assert!(packet.reliable());
+            let m: ObjectBuy = packet.decode().expect("ObjectBuy");
+            assert_eq!(m.agent_data.agent_id, Uuid::from_u128(1));
+            assert_eq!(m.agent_data.session_id, Uuid::from_u128(2));
+            assert_eq!(m.agent_data.group_id, group_id);
+            assert_eq!(m.agent_data.category_id, folder);
+            assert_eq!(m.object_data.len(), 1);
+            let o = &m.object_data[0];
+            assert_eq!((o.object_local_id, o.sale_type, o.sale_price), (971, 2, 10));
+        }
+    }
+
+    /// #2810: AgentUpdate's Far is the draw distance of the viewer's
+    /// controls (the simulator connects the neighbours within it), not a
+    /// value of the session's own that stayed at 128 m.
+    #[tokio::test]
+    async fn agent_update_asks_for_the_viewers_draw_distance() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main = UdpSocket::bind("127.0.0.1:0").await.expect("simulator");
+        let main_addr = main.local_addr().expect("simulator address");
+        let (events, _received) = crossbeam_channel::unbounded();
+        let sh = test_shared(events);
+        let mut session = test_session(&sh, sock.clone(), [(main_addr, Sim::new(main_addr, 10))].into(), main_addr);
+        session.agent_moved = true;
+        sock.writable().await.expect("socket ready");
+        let far_sent = |session: &mut Session<'_>| {
+            session.agent_update.force();
+            session.on_agent_controls(AgentControls {
+                far: 290.0,
+                ..Default::default()
+            });
+        };
+        async fn next_far(sim: &UdpSocket) -> f32 {
+            let mut datagram = [0; 1500];
+            let (size, _) = tokio::time::timeout(Duration::from_secs(2), sim.recv_from(&mut datagram))
+                .await
+                .expect("an AgentUpdate reaches the region")
+                .expect("datagram");
+            let packet = parse_packet(&datagram[..size]).expect("packet");
+            let update: msgs::AgentUpdate = packet.decode().expect("AgentUpdate");
+            update.agent_data.far
+        }
+        far_sent(&mut session);
+        assert_eq!(next_far(&main).await, 290.0);
+        // a login arrival asks for half of it first (send_agent_update)
+        session.far.movement_complete(true, Instant::now());
+        far_sent(&mut session);
+        assert_eq!(next_far(&main).await, 145.0);
     }
 
     /// The next LogoutRequest the simulator receives, past the other packets
@@ -6705,14 +6920,27 @@ mod script_dialog_tests {
         // account still there, #956): STATE_AGENT_WAIT's time-out logs the
         // new session out before going back to the login screen.
         let mut session = test_session(&sh, sock.clone(), one_sim(), main_addr);
-        session.cam_requested_at = Some(ago(89));
+        session.login_arrival = true;
+        session.cam_requested_at = Some(ago(239));
         session.tick();
         assert!(!session.finished);
-        session.cam_requested_at = Some(ago(91));
+        session.cam_requested_at = Some(ago(241));
         session.tick();
         logout_request_from(&main).await;
         assert!(session.finished);
         assert!(matches!(ended(&received), Some(NetEvent::Disconnected { lost: true, .. })));
+
+        // A teleport or crossing the region does not confirm keeps the session
+        // however long it takes, and giving up on it resumes the agent updates
+        // (send_agent_update only checks the teleport state).
+        let mut session = test_session(&sh, sock.clone(), one_sim(), main_addr);
+        session.cam_requested_at = Some(ago(241));
+        session.tick();
+        assert!(!session.finished);
+        assert!(ended(&received).is_none());
+        session.on_command(NetCommand::ArrivalGivenUp);
+        assert!(session.agent_moved);
+        assert!(session.cam_requested_at.is_none());
     }
 
     /// A `ViewerStats` capability: the body of every POST it receives.
@@ -6846,6 +7074,12 @@ mod script_dialog_tests {
                         button_label: str_field(label),
                     })
                     .collect();
+                // the owner's block on new simulators only: nil without it
+                let owner = (channel > 0).then(|| Uuid::from_u128(0x0E));
+                menu.owner_data = owner
+                    .map(|owner_id| msgs::script_dialog::OwnerData { owner_id })
+                    .into_iter()
+                    .collect();
                 let mut bytes = Vec::new();
                 aurora_msg::build_packet(&menu, 1, true, false, &[], &mut bytes);
                 session
@@ -6854,6 +7088,7 @@ mod script_dialog_tests {
                 let NetEvent::ScriptDialog {
                     sender,
                     object_id,
+                    owner_id,
                     channel: received_channel,
                     buttons,
                     ..
@@ -6863,6 +7098,7 @@ mod script_dialog_tests {
                 };
                 assert_eq!(sender, origin_addr);
                 assert_eq!((object_id, received_channel), (object, channel));
+                assert_eq!(owner_id, owner.unwrap_or_default());
                 for (index, label) in buttons.into_iter().enumerate() {
                     session.on_command(NetCommand::ScriptDialogReply {
                         sender: Some(sender),
@@ -6992,5 +7228,24 @@ mod script_dialog_tests {
             assert_eq!(parts.join(" "), words);
             assert!(main.try_recv_from(&mut large).is_err(), "three parts only");
         }
+    }
+
+    /// The next packets the region receives, decoded as `M`, past the
+    /// others (pings, agent updates) until `n` of them arrived.
+    pub(in crate::session) async fn received<M: Msg>(sim: &UdpSocket, n: usize) -> Vec<M> {
+        let mut datagram = [0; 1500];
+        let mut out = Vec::new();
+        while out.len() < n {
+            let (size, _) = tokio::time::timeout(Duration::from_secs(2), sim.recv_from(&mut datagram))
+                .await
+                .expect("the packet reaches the region")
+                .expect("packet");
+            let packet = parse_packet(&datagram[..size]).expect("datagram");
+            if packet.id == M::ID {
+                assert!(packet.reliable());
+                out.push(packet.decode().expect("message"));
+            }
+        }
+        out
     }
 }

@@ -3,7 +3,7 @@
 //! reflections and Aurora's water, the image (anti-aliasing, tone mapping,
 //! depth of field), smoothness and parcel visibility.
 
-use super::super::cx::{Cx, Nothing, field};
+use super::super::cx::{Custom, Cx, Nothing, field};
 use super::super::{COMBO_W, preset_choice, stepped, toggle};
 use egui::RichText;
 
@@ -95,11 +95,19 @@ pub fn page(cx: &mut Cx, tab: usize) {
 /// The GPU the viewer draws with (#894): automatic (discrete first) or one
 /// by name; the renderer opens it at startup, so the choice applies at the
 /// next start. `AURORA_GPU` overrides it.
-/// The real sky's rows (world/night_sky.rs): where it is seen from, its
-/// latitude (set by a preset, typed for Custom; moving it makes the place
-/// Custom) and the stars' brightness.
+/// The real sky's rows (world/night_sky.rs): what sets its hour (first: it
+/// decides whether the longitude below counts), where it is seen from, its
+/// latitude and longitude (set by a preset, typed for Custom; moving one
+/// makes the place Custom) and the stars' brightness.
 fn night_sky_rows(cx: &mut Cx) {
-    use crate::world::night_sky::{GAIN_RANGE, SkyPlace};
+    use crate::world::night_sky::{GAIN_RANGE, SkyPlace, StarHour};
+    let hours: Vec<(StarHour, &str)> = StarHour::ALL.iter().map(|h| (*h, h.label())).collect();
+    cx.combo(
+        aurora_i18n::tr!("ui-options-night-sky-hour"),
+        aurora_i18n::tr!("ui-options-night-sky-hour-help"),
+        &field!(night_sky_hour),
+        &hours,
+    );
     let places: Vec<(SkyPlace, &str)> = SkyPlace::ALL.iter().map(|p| (*p, p.label())).collect();
     if cx.combo(
         aurora_i18n::tr!("ui-options-night-sky-place"),
@@ -115,6 +123,18 @@ fn night_sky_rows(cx: &mut Cx) {
         aurora_i18n::tr!("ui-options-night-sky-latitude-help"),
         &field!(night_sky_latitude),
         -90.0..=90.0,
+        "°",
+    ) {
+        cx.s.night_sky_place = SkyPlace::Custom;
+        cx.s.sync_night_sky();
+    }
+    // the longitude counts with the real time only
+    cx.greyed(cx.s.night_sky_place != SkyPlace::Custom || cx.s.night_sky_hour != StarHour::RealTime);
+    if cx.slider(
+        aurora_i18n::tr!("ui-options-night-sky-longitude"),
+        aurora_i18n::tr!("ui-options-night-sky-longitude-help"),
+        &field!(night_sky_longitude),
+        -180.0..=180.0,
         "°",
     ) {
         cx.s.night_sky_place = SkyPlace::Custom;
@@ -164,7 +184,7 @@ fn graphics_card(cx: &mut Cx) {
     });
 }
 
-/// Other programs' overlays (Steam, RivaTuner, Epic…): their Vulkan layers
+/// Other programs' overlays (OBS's game capture, Steam, RivaTuner, Epic…): their Vulkan layers
 /// are kept out at startup unless allowed (`aurora_render::vulkan_layers`),
 /// so the choice applies at the next start. `AURORA_VULKAN_LAYERS=keep`
 /// loads them all.
@@ -182,18 +202,46 @@ fn overlays(cx: &mut Cx) {
 fn frames_per_second(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-frames-per-second"), |cx| {
-        cx.slider(
+        // FSR's mode sets the world's size in their place
+        let fsr = cx.s.antialiasing == 7;
+        cx.greyed(fsr);
+        cx.toggle(
+            tr!("ui-options-render-scale-auto"),
+            tr!("ui-options-render-scale-auto-help"),
+            &field!(render_scale_auto),
+        );
+        // While the world matches the display, the slider shows the
+        // percentage the display gives, greyed: not a choice of the user,
+        // so neither modified nor reset by this row.
+        let scale = Custom {
+            path: "render_scale_percent",
+            modified: |s: &crate::settings::Settings, d: &crate::settings::Settings| {
+                !s.render_scale_auto && s.render_scale_percent != d.render_scale_percent
+            },
+            reset: |s: &mut crate::settings::Settings, d: &crate::settings::Settings| {
+                if !s.render_scale_auto {
+                    s.render_scale_percent = d.render_scale_percent;
+                }
+            },
+        };
+        cx.greyed(fsr || cx.s.render_scale_auto);
+        cx.row(
             tr!("ui-options-render-scale"),
             tr!("ui-options-render-scale-help"),
-            &field!(render_scale_percent),
-            50..=100,
-            "%",
+            &scale,
+            |ui, s| super::super::slider(ui, &mut s.render_scale_percent, 50..=100, "%"),
         );
+        cx.greyed(false);
         // across, its switch in line with those of the limits below
         cx.wide().toggle(
             tr!("ui-options-vertical-synchronization"),
             tr!("ui-options-synchronizes-frames-with-the-monitor-refresh-rate-no-tearing"),
             &field!(vsync),
+        );
+        cx.wide().toggle(
+            tr!("ui-options-borderless-fullscreen"),
+            tr!("ui-options-borderless-fullscreen-help"),
+            &field!(window_fullscreen),
         );
         // the limits show under their switches: the value is what the
         // switch is turned on for
@@ -221,6 +269,16 @@ fn frames_per_second(cx: &mut Cx) {
                 tr!("status-fps"),
             );
         });
+        cx.unfolded().toggle(
+            tr!("ui-options-pause-when-card-busy"),
+            tr!("ui-options-pause-when-card-busy-tip"),
+            &field!(background_gpu_pause),
+        );
+        cx.unfolded().toggle(
+            tr!("ui-options-gpu-recovery"),
+            tr!("ui-options-gpu-recovery-tip"),
+            &field!(gpu_recovery),
+        );
     });
 }
 
@@ -293,6 +351,12 @@ fn quality(cx: &mut Cx) {
             32.0..=512.0,
             " m",
         );
+        // FSRenderFarClipStepping; its interval in Debug Settings (clean menus)
+        cx.keywords("FSRenderFarClipStepping progressive").toggle(
+            tr!("ui-options-draw-distance-stepping"),
+            tr!("ui-options-draw-distance-stepping-hint"),
+            &field!(draw_distance_stepping),
+        );
         cx.row(
             tr!("ui-options-level-of-detail-lod"),
             tr!("ui-options-lod-factor-for-sl-objects-and-meshes-2-by"),
@@ -300,6 +364,24 @@ fn quality(cx: &mut Cx) {
             |ui, s| {
                 ui.add(
                     egui::Slider::new(&mut s.lod_factor, 0.5..=4.0)
+                        .custom_parser(aurora_i18n::parse_number)
+                        .step_by(0.125)
+                        .trailing_fill(true),
+                )
+                .changed()
+            },
+        );
+        // TreeMeshDetail (panel_preferences_graphics1.xml). From 0, where the
+        // Legacy slider starts at 0.125: 0 turns trees and grass off, as the
+        // Potato level and Debug Settings do (the human's decision,
+        // 2026-11-07)
+        cx.keywords("RenderTreeLODFactor LOD").row(
+            tr!("ui-options-trees"),
+            tr!("ui-options-trees-hint"),
+            &field!(tree_lod_factor),
+            |ui, s| {
+                ui.add(
+                    egui::Slider::new(&mut s.tree_lod_factor, 0.0..=1.0)
                         .custom_parser(aurora_i18n::parse_number)
                         .step_by(0.125)
                         .trailing_fill(true),
@@ -321,6 +403,12 @@ fn quality(cx: &mut Cx) {
                 .changed()
             },
         );
+        // RenderAttachedParticles (panel_preferences_graphics1.xml)
+        cx.keywords("RenderAttachedParticles").toggle(
+            tr!("ui-options-attached-particles"),
+            tr!("ui-options-attached-particles-hint"),
+            &field!(attached_particles),
+        );
         cx.toggle(
             tr!("ui-options-occlusion"),
             tr!("ui-options-objects-hidden-behind-others-walls-floors-are-not-drawn"),
@@ -333,8 +421,8 @@ fn quality(cx: &mut Cx) {
         );
         cx.subs(false, |cx| {
             if cx.s.texture_budget_auto {
-                let (vram, integrated) = cx.st.vram;
-                let budget = crate::settings::auto_texture_budget(vram, integrated);
+                let (vram, shared, integrated) = cx.st.vram;
+                let budget = crate::settings::auto_texture_budget(vram, shared, integrated);
                 let gpu = match vram {
                     Some(v) if !integrated => tr!("ui-options-mb-of-video-memory-detected", value0 = format!("{}", v)),
                     _ if integrated => tr!("ui-options-integrated-graphics").to_owned(),
@@ -489,10 +577,27 @@ fn quality(cx: &mut Cx) {
             );
         });
     });
+    // the photo window's own switch, also here: a PC that crashes as soon
+    // as the window opens with it on can still turn it off
+    cx.group(tr!("photo-title"), |cx| {
+        cx.toggle(tr!("photo-quality"), tr!("photo-quality-hint"), &field!(snapshot.quality));
+        cx.toggle(
+            tr!("photo-quality-off-after-crash"),
+            tr!("photo-quality-off-after-crash-help"),
+            &field!(snapshot.quality_off_after_crash),
+        );
+    });
 }
 
 fn light(cx: &mut Cx) {
     use aurora_i18n::tr;
+    cx.group(tr!("ui-options-local-lights"), |cx| {
+        cx.toggle(
+            tr!("ui-options-others-attached-lights"),
+            tr!("ui-options-others-attached-lights-help"),
+            &field!(others_attached_lights),
+        );
+    });
     cx.group(tr!("ui-options-shadows"), |cx| {
         let p = cx.p;
         let levels = [
@@ -520,6 +625,23 @@ fn light(cx: &mut Cx) {
                 tr!("ui-options-projector-shadows"),
                 tr!("ui-options-projector-shadows-help"),
                 &field!(projector_shadows),
+            );
+            let enabled = cx.s.projector_shadows;
+            cx.row(
+                tr!("ui-options-projector-shadow-limit"),
+                tr!("ui-options-projector-shadow-limit-help"),
+                &field!(projector_shadow_limit),
+                |ui, s| {
+                    ui.add_enabled(
+                        enabled,
+                        egui::Slider::new(
+                            &mut s.projector_shadow_limit,
+                            1..=aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS as u8,
+                        )
+                        .trailing_fill(true),
+                    )
+                    .changed()
+                },
             );
             cx.toggle(
                 tr!("ui-options-contact-shadows"),
@@ -671,9 +793,24 @@ fn reflections_and_water(cx: &mut Cx) {
             &field!(probe_count),
             |ui, s| {
                 ui.add(
-                    egui::Slider::new(&mut s.probe_count, 8..=64)
+                    egui::Slider::new(&mut s.probe_count, 8..=256)
                         .custom_parser(aurora_i18n::parse_number)
                         .step_by(8.0)
+                        .trailing_fill(true),
+                )
+                .changed()
+            },
+        );
+        cx.row(
+            tr!("ui-options-probe-range"),
+            tr!("ui-options-probe-range-help"),
+            &field!(probe_range),
+            |ui, s| {
+                ui.add(
+                    egui::Slider::new(&mut s.probe_range, 32.0..=512.0)
+                        .custom_parser(aurora_i18n::parse_number)
+                        .step_by(16.0)
+                        .suffix(" m")
                         .trailing_fill(true),
                 )
                 .changed()
@@ -730,12 +867,38 @@ fn image(cx: &mut Cx) {
                 (4, "MSAA 8×"),
                 (5, "TAA"),
                 (6, "SMAA"),
+                (7, "FSR 3.1"),
             ],
         );
         cx.toggle(
             tr!("ui-options-specular-aa"),
             tr!("ui-options-specular-aa-help"),
             &field!(specular_aa),
+        );
+    });
+    // FSR's own settings (aurora_render fsr.rs), greyed under another
+    // anti-aliasing
+    cx.group(tr!("ui-options-fsr"), |cx| {
+        cx.note(tr!("ui-options-fsr-note"));
+        cx.greyed(cx.s.antialiasing != 7);
+        cx.combo(
+            tr!("ui-options-fsr-quality"),
+            tr!("ui-options-fsr-quality-help"),
+            &field!(fsr_quality),
+            &[
+                (0, tr!("ui-options-fsr-native-aa")),
+                (1, tr!("ui-options-fsr-quality-mode")),
+                (2, tr!("ui-options-fsr-balanced")),
+                (3, tr!("ui-options-fsr-performance")),
+                (4, tr!("ui-options-fsr-ultra-performance")),
+            ],
+        );
+        cx.slider(
+            tr!("ui-options-fsr-sharpness"),
+            tr!("ui-options-fsr-sharpness-help"),
+            &field!(fsr_sharpness),
+            0..=100,
+            "%",
         );
     });
     cx.group(tr!("ui-options-color-and-sharpness"), |cx| {
@@ -794,7 +957,10 @@ fn image(cx: &mut Cx) {
             tr!("ui-options-enhances-fine-details-amd-cas-0-4-as-in"),
             &field!(sharpen),
             |ui, s| {
-                let r = ui.add_enabled_ui(hdr, |ui| {
+                // FSR's RCAS takes its place: both on top of each other
+                // turn FSR's faint sub-pixel pattern into a visible one
+                let fsr = s.antialiasing == 7;
+                let r = ui.add_enabled_ui(hdr && !fsr, |ui| {
                     ui.add(
                         egui::Slider::new(&mut s.sharpen, 0.0..=1.0)
                             .custom_parser(aurora_i18n::parse_number)
@@ -803,7 +969,11 @@ fn image(cx: &mut Cx) {
                     )
                     .changed()
                 });
-                r.response.on_disabled_hover_text(tr!("ui-options-needs-hdr-emissive"));
+                r.response.on_disabled_hover_text(if fsr {
+                    tr!("ui-options-sharpness-off-with-fsr")
+                } else {
+                    tr!("ui-options-needs-hdr-emissive")
+                });
                 r.inner
             },
         );

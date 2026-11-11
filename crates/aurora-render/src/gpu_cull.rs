@@ -67,8 +67,10 @@ pub mod object_flags {
     /// Attachment point marked invisible in first person by avatar_lad.xml.
     pub const FIRST_PERSON_HIDDEN: u32 = 64;
     /// Left out of the photo by its isolation (the viewer's
-    /// `snapshot::isolate`): not drawn, casting no shadow, in no reflection.
-    pub const PHOTO_HIDDEN: u32 = 128;
+    /// `snapshot::isolate`) or by a hidden rendering type
+    /// (`scene::render_types`): not drawn, casting no shadow, in no
+    /// reflection.
+    pub const HIDDEN: u32 = 128;
 }
 
 /// `CullObject::state` of an avatar entry, set every frame by the scene.
@@ -81,8 +83,10 @@ pub mod avatar_state {
     pub const LOADING: u32 = 4;
 }
 
-pub const BINS: usize = 16;
-pub const BIN_WATER_EXCLUSION: usize = 15;
+pub const BINS: usize = 31;
+pub const BIN_WATER_EXCLUSION: usize = 29;
+/// Shadow casters of the probe being captured, drawn with the alpha test.
+pub const BIN_PROBE_SHADOW: usize = 30;
 pub const MAIN_BINS: usize = 4;
 /// Shadow casters of each cascade drawn depth only: opaque faces, which
 /// `fs_shadow` never discards.
@@ -93,29 +97,29 @@ pub const BIN_PROBE: usize = 9;
 /// Shadow casters of each cascade drawn with the alpha test of `fs_shadow`
 /// (masked faces, blended rigged faces).
 pub const BIN_SHADOW_ALPHA: usize = 10;
-/// Shadow casters of the two projectors that cast shadows, drawn with the
+/// Shadow casters of the projectors within the configured budget, drawn with the
 /// alpha test.
 pub const BIN_SPOT: usize = 13;
 /// Projector shadow maps of a frame.
-pub const SPOT_SHADOWS: usize = 2;
+pub const SPOT_SHADOWS: usize = crate::projector_shadows::MAX_PROJECTOR_SHADOWS;
 /// Argument regions: the bins, then the occlusion's phase 1 and phase 2
 /// prepass lists of the main bins (depth only, in no particular order).
-pub const REGION_PRE1: usize = 16;
-pub const REGION_PRE2: usize = 20;
-const REGIONS: usize = 24;
+pub const REGION_PRE1: usize = BINS;
+pub const REGION_PRE2: usize = REGION_PRE1 + MAIN_BINS;
+const REGIONS: usize = REGION_PRE2 + MAIN_BINS;
 
-const COUNT_VISIBLE: usize = 16;
-const COUNT_TRIANGLES: usize = 17;
-const COUNT_HIDDEN: usize = 18;
+const COUNT_VISIBLE: usize = BINS;
+const COUNT_TRIANGLES: usize = COUNT_VISIBLE + 1;
+const COUNT_HIDDEN: usize = COUNT_VISIBLE + 2;
 /// Counts of the phase 1 and phase 2 prepass lists of each main bin.
-pub const COUNT_PRE1: usize = 19;
-pub const COUNT_PRE2: usize = 23;
+pub const COUNT_PRE1: usize = COUNT_VISIBLE + 3;
+pub const COUNT_PRE2: usize = COUNT_PRE1 + MAIN_BINS;
 /// Profile (`frame_flags::SHADOW_STATS`), per cascade: triangles of its
 /// casters, then its rigged casters, then their triangles.
-const COUNT_SHADOW: usize = 27;
+const COUNT_SHADOW: usize = COUNT_PRE2 + MAIN_BINS;
 #[cfg(test)]
 const SHADOW_STATS: usize = 9;
-const COUNTS: usize = 40;
+const COUNTS: usize = 53;
 
 /// `CullFrame::sizes.w`.
 pub mod frame_flags {
@@ -131,8 +135,10 @@ pub mod frame_flags {
     /// Every caster drawn with the alpha test, none depth only
     /// (AURORA_SHADOW_LEGACY).
     pub const SHADOW_ALPHA_ALL: u32 = 128;
+    /// The shadow map of the probe being captured is drawn this frame.
+    pub const PROBE_SHADOW: u32 = 256;
     /// Projector shadow map 0 is drawn (map 1: the next bit).
-    pub const SPOT: u32 = 256;
+    pub const SPOT: u32 = 1 << 16;
     /// Exterior refraction shares the water bin, with a union of frustums.
     pub const WATER_AIR: u32 = 1024;
     /// Blended faces that are not rigged cast too
@@ -333,9 +339,14 @@ pub struct CullFrame {
     pub water_air: [[f32; 4]; 6],
     pub mirror: [[f32; 4]; 6],
     pub probe: [[f32; 4]; 6],
+    /// The probe capture's origin and how far it draws objects
+    /// (`ProbeCapture::reach`).
+    pub probe_eye: [f32; 4],
     /// Frustums of the projector shadow maps (`frame_flags::SPOT`).
     pub spots: [[[f32; 4]; 6]; SPOT_SHADOWS],
     pub cascades: [[[f32; 4]; 4]; 3],
+    /// Shadow map of the probe being captured (`frame_flags::PROBE_SHADOW`).
+    pub probe_shadow: [[f32; 4]; 4],
     /// Per cascade: planes around what can cast a shadow the main view
     /// samples in it (`caster_planes`).
     pub shadow_planes: [[[f32; 4]; SHADOW_PLANES]; 3],
@@ -366,9 +377,13 @@ impl CullFrame {
         merge_size: f32,
         [water, mirror, probe]: [Mat4; 3],
         spots: [Option<Mat4>; SPOT_SHADOWS],
+        probe_shadow: Option<Mat4>,
         mut flags: u32,
     ) -> CullFrame {
         let planes = |vp: Mat4| view_planes(vp).map(|p| p.to_array());
+        if probe_shadow.is_some() {
+            flags |= frame_flags::PROBE_SHADOW;
+        }
         if let Some((_, show)) = view.first_person {
             flags |= frame_flags::FIRST_PERSON;
             if show {
@@ -386,10 +401,12 @@ impl CullFrame {
             water_air: planes(Mat4::IDENTITY),
             mirror: planes(mirror),
             probe: planes(probe),
+            probe_eye: [0.0; 4],
             // (a depth of 0 to 1: the fifth plane is the far one, and
             // nothing is left out for being before the near one)
             spots: spots.map(|s| planes(s.unwrap_or(Mat4::IDENTITY))),
             cascades: cascades.map(|m| m.to_cols_array_2d()),
+            probe_shadow: probe_shadow.unwrap_or(Mat4::IDENTITY).to_cols_array_2d(),
             shadow_planes: *shadow_planes,
             eye: view.eye.extend(view.draw_distance).to_array(),
             dist: [view.shadow_distance, view.reflection_distance, view.pixel_scale, merge_size],
@@ -456,7 +473,7 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
         return (0, false);
     }
     let o = objects[f.object as usize];
-    if o.flags & object_flags::ACTIVE == 0 || o.flags & (object_flags::HUD | object_flags::PHOTO_HIDDEN) != 0 {
+    if o.flags & object_flags::ACTIVE == 0 || o.flags & (object_flags::HUD | object_flags::HIDDEN) != 0 {
         return (0, false);
     }
     let is_avatar = o.flags & object_flags::AVATAR != 0;
@@ -476,17 +493,25 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
         return (0, false);
     }
     let fl = frame.sizes[3];
-    let in_view = sphere_in(&frame.planes, c, r)
+    let viewed = sphere_in(&frame.planes, c, r)
         && !(own_first_person && (o.flags & object_flags::FIRST_PERSON_HIDDEN != 0 || f.bits & FACE_FIRST_PERSON_HIDDEN != 0));
-    let casts = fl & frame_flags::SHADOWS != 0 && d - r < frame.dist[0];
-    let reflects = fl & frame_flags::REFLECTIONS != 0 && d - r < frame.dist[1];
-    if !in_view && !casts && !reflects {
+    let shadow_reach = fl & frame_flags::SHADOWS != 0 && d - r < frame.dist[0];
+    let reflect_reach = fl & frame_flags::REFLECTIONS != 0 && d - r < frame.dist[1];
+    // a capture measures from its probe, not from the camera
+    let captured = fl & frame_flags::REFLECTIONS != 0
+        && fl & frame_flags::PROBE != 0
+        && o.flags & object_flags::NO_PROBE == 0
+        && (c - Vec3::new(frame.probe_eye[0], frame.probe_eye[1], frame.probe_eye[2])).length() - r < frame.probe_eye[3]
+        && sphere_in(&frame.probe, c, r);
+    if !viewed && !shadow_reach && !reflect_reach && !captured {
         return (0, false);
     }
-    let px = r * frame.dist[2] / d.max(0.1);
-    if px < 1.5 && !is_avatar {
+    // small object culling is the camera's too
+    let large = r * frame.dist[2] / d.max(0.1) >= 1.5 || is_avatar;
+    if !large && !captured {
         return (0, false);
     }
+    let (in_view, casts, reflects) = (viewed && large, shadow_reach && large, reflect_reach && large);
     let visible = in_view && f.bits & FACE_FIRST != 0;
     let p = f.bits & pass::BITS;
     if p == pass::HIDDEN {
@@ -519,6 +544,14 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
             }
         }
     }
+    if reflects
+        && fl & frame_flags::PROBE_SHADOW != 0
+        && o.flags & object_flags::NO_PROBE == 0
+        && (p != pass::BLEND || fl & frame_flags::BLEND_CASTS != 0)
+        && in_cascade(&Mat4::from_cols_array_2d(&frame.probe_shadow), c, r)
+    {
+        m |= 1 << BIN_PROBE_SHADOW;
+    }
     let solid = (pass::OPAQUE..=pass::MASK_2S).contains(&p);
     if reflects && solid {
         if (fl & frame_flags::WATER != 0 && sphere_in(&frame.water, c, r))
@@ -529,9 +562,9 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
         if fl & frame_flags::MIRROR != 0 && sphere_in(&frame.mirror, c, r) {
             m |= 1 << BIN_REFL_MIRROR;
         }
-        if fl & frame_flags::PROBE != 0 && o.flags & object_flags::NO_PROBE == 0 && sphere_in(&frame.probe, c, r) {
-            m |= 1 << BIN_PROBE;
-        }
+    }
+    if captured && solid {
+        m |= 1 << BIN_PROBE;
     }
     if in_view && solid {
         m |= 1 << (p - pass::OPAQUE);
@@ -540,8 +573,8 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
 }
 
 /// `pack_bins` of cull.wgsl: one 8-bit counter per bin, four per lane.
-pub fn pack_bins(m: u32) -> [u32; 4] {
-    let mut v = [0u32; 4];
+pub fn pack_bins(m: u32) -> [u32; 8] {
+    let mut v = [0u32; 8];
     for b in 0..BINS {
         if (m >> b) & 1 != 0 {
             v[b >> 2] += 1 << ((b & 3) * 8);
@@ -554,12 +587,12 @@ pub fn pack_bins(m: u32) -> [u32; 4] {
 /// scatter pass, as cull.wgsl computes it (inclusive prefix sum of the
 /// packed counters minus the face's own): reference for the tests.
 pub fn workgroup_ranks(masks: &[u32]) -> Vec<[u32; BINS]> {
-    let mut acc = [0u32; 4];
+    let mut acc = [0u32; 8];
     masks
         .iter()
         .map(|&m| {
             let own = pack_bins(m);
-            for k in 0..4 {
+            for k in 0..8 {
                 acc[k] += own[k];
             }
             let mut r = [0u32; BINS];
@@ -1049,7 +1082,7 @@ impl GpuCull {
             .map(|_| {
                 let b = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("cull readback"),
-                    size: (COUNTS * 4) as u64,
+                    size: crate::readback::readback_size((COUNTS * 4) as u64),
                     usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
@@ -1287,7 +1320,7 @@ impl GpuCull {
         for (buf, ready, pending) in self.readback.iter_mut() {
             if *pending && ready.load(Ordering::Acquire) {
                 if let Ok(view) = buf.get_mapped_range(..) {
-                    let n: &[u32] = bytemuck::cast_slice(&view[..COUNTS * 4]);
+                    let n = crate::readback::u32_array::<COUNTS>(&view[..COUNTS * 4]);
                     let mut c = CullCounts::default();
                     c.bins.copy_from_slice(&n[..BINS]);
                     c.visible_objects = n[COUNT_VISIBLE];
@@ -1341,10 +1374,10 @@ mod tests {
             max_storage_buffer_binding_size: 2 << 20,
             ..Default::default()
         };
-        assert_eq!(face_capacity(&limits), 4352);
+        assert_eq!(face_capacity(&limits), 2688);
         assert_eq!(sphere_capacity(&limits), 32768);
         limits.max_storage_buffer_binding_size = 1 << 20;
-        assert_eq!(face_capacity(&limits), 2176);
+        assert_eq!(face_capacity(&limits), 1280);
         assert_eq!(sphere_capacity(&limits), 16384);
         limits.max_compute_workgroups_per_dimension = 16;
         assert_eq!(face_capacity(&limits), 1024);
@@ -1382,10 +1415,10 @@ mod tests {
         assert!(src.contains(&format!("const POSED_RADIUS_MAX: f32 = {POSED_RADIUS_MAX:?};")));
         assert!(src.contains("const POSED_COORD_MAX: f32 = 1.0e6;") && POSED_COORD_MAX == 1.0e6);
         // Main, water reflection/exterior, mirror, probe and spot frusta;
-        // then 3 matrices, 3 x 12 shadow planes and 4 vectors.
+        // the capture's origin; then 4 matrices, 3 x 12 shadow planes and 4 vectors.
         assert_eq!(
             std::mem::size_of::<CullFrame>(),
-            (5 + SPOT_SHADOWS) * 6 * 16 + 3 * 64 + 3 * SHADOW_PLANES * 16 + 4 * 16
+            (5 + SPOT_SHADOWS) * 6 * 16 + 16 + 4 * 64 + 3 * SHADOW_PLANES * 16 + 4 * 16
         );
         assert_eq!(
             wgsl_fields(src, "CullFrame"),
@@ -1395,8 +1428,10 @@ mod tests {
                 "water_air",
                 "mirror",
                 "probe",
+                "probe_eye",
                 "spots",
                 "cascades",
+                "probe_shadow",
                 "shadow_planes",
                 "eye",
                 "dist",
@@ -1499,7 +1534,8 @@ mod tests {
                 .trim_end_matches('u');
             v.parse().unwrap_or_else(|_| panic!("{name}: {v}"))
         };
-        let pairs: [(&str, u32); 47] = [
+        let pairs: [(&str, u32); 49] = [
+            ("F_PROBE_SHADOW", frame_flags::PROBE_SHADOW),
             ("F_FIRST_PERSON", frame_flags::FIRST_PERSON),
             ("F_SHOW_SELF", frame_flags::SHOW_SELF),
             ("OBJ_FIRST_PERSON_HIDDEN", object_flags::FIRST_PERSON_HIDDEN),
@@ -1522,6 +1558,7 @@ mod tests {
             ("BIN_REFL_WATER", BIN_REFL_WATER as u32),
             ("BIN_REFL_MIRROR", BIN_REFL_MIRROR as u32),
             ("BIN_PROBE", BIN_PROBE as u32),
+            ("BIN_PROBE_SHADOW", BIN_PROBE_SHADOW as u32),
             ("REGION_PRE1", REGION_PRE1 as u32),
             ("REGION_PRE2", REGION_PRE2 as u32),
             ("COUNT_VISIBLE", COUNT_VISIBLE as u32),
@@ -1541,7 +1578,7 @@ mod tests {
             ("OBJ_HUD", object_flags::HUD),
             ("OBJ_NO_PROBE", object_flags::NO_PROBE),
             ("OBJ_POSED", object_flags::POSED),
-            ("OBJ_PHOTO_HIDDEN", object_flags::PHOTO_HIDDEN),
+            ("OBJ_HIDDEN", object_flags::HIDDEN),
             ("SKELETON_ANCHOR", SKELETON_ANCHOR),
             ("AV_FULL", avatar_state::FULL),
             ("AV_TOO_COMPLEX", avatar_state::TOO_COMPLEX),
@@ -1674,8 +1711,10 @@ mod tests {
             water_air: planes,
             mirror: planes,
             probe: planes,
+            probe_eye: [0.0; 4],
             spots: [planes; SPOT_SHADOWS],
             cascades: [cascade.to_cols_array_2d(); 3],
+            probe_shadow: cascade.to_cols_array_2d(),
             shadow_planes: [crate::shadow_cull::CASTER_PLANES_ALL; 3],
             eye: [0.0, 0.0, 0.0, 64.0],
             dist: [64.0, 32.0, 1000.0 / 0.5, 0.0],
@@ -1737,6 +1776,45 @@ mod tests {
         let (mask, visible) = face_bins(&frame, &faces, &objects, &spheres, 0);
         assert_ne!(mask & (1 << BIN_REFL_WATER), 0, "offscreen exterior must reach its render pass");
         assert!(!visible, "exterior visibility must not make the object visible in the main view");
+    }
+
+    #[test]
+    fn a_probe_capture_measures_from_its_probe() {
+        let mut frame = frame_for_tests();
+        frame.sizes[3] |= frame_flags::PROBE;
+        let bin = 1 << BIN_PROBE;
+        let object = |radius: f32| CullObject {
+            sphere: [50.0, 0.0, 0.0, radius],
+            flags: object_flags::ACTIVE,
+            ..CullObject::NONE
+        };
+        let faces = [CullFace {
+            index_count: 30,
+            object: 0,
+            bits: pass::OPAQUE | FACE_FIRST,
+            ..CullFace::NONE
+        }];
+        let bins = |frame: &CullFrame, radius: f32| {
+            let objects = [object(radius)];
+            let spheres = world_spheres(&objects, &[], &[], &[]);
+            face_bins(frame, &faces, &objects, &spheres, 0)
+        };
+        // 50 m from the camera, past its reflection distance of 32 m, and in
+        // reach of a probe beside it
+        frame.probe_eye = [45.0, 0.0, 0.0, 64.0];
+        assert_ne!(bins(&frame, 1.0).0 & bin, 0);
+        assert_eq!(bins(&frame, 1.0).0 & (1 << BIN_REFL_WATER), 0);
+        // out of the probe's reach, near as the camera is
+        frame.probe_eye = [45.0, 0.0, 0.0, 2.0];
+        assert_eq!(bins(&frame, 1.0).0 & bin, 0);
+        frame.dist[1] = 64.0;
+        assert_eq!(bins(&frame, 1.0).0 & bin, 0);
+        // too small for the camera: in the capture and nowhere else
+        frame.probe_eye = [45.0, 0.0, 0.0, 64.0];
+        assert_eq!(bins(&frame, 0.01), (bin, false));
+        // and no capture this frame: not drawn at all
+        frame.sizes[3] &= !frame_flags::PROBE;
+        assert_eq!(bins(&frame, 0.01), (0, false));
     }
 
     #[test]
@@ -2218,13 +2296,19 @@ mod tests {
             | frame_flags::OCCLUSION
             | frame_flags::SHADOW_STATS
             | frame_flags::BLEND_CASTS;
+        // Exercise every projector bin, including the upper packed-counter
+        // words and the highest frame-flag bit.
+        for k in 0..SPOT_SHADOWS {
+            frame.sizes[3] |= frame_flags::SPOT << k;
+        }
         // caster volumes: the east half in the second cascade, a slanted slab in the third
         frame.shadow_planes[1][0] = [-1.0, 0.0, 0.0, 5.0];
         frame.shadow_planes[2][3] = [0.6, 0.0, 0.8, 10.0];
         frame.shadow_planes[2][SHADOW_PLANES - 1] = [-0.6, 0.0, -0.8, 30.0];
-        // merged cascades: squares of 10, 25 and 50 m, the opaque casters
-        // of a finer one left out of the next
-        frame.cascades = [0.1, 0.04, 0.02].map(|s| Mat4::from_scale(Vec3::new(s, s, 0.01)).to_cols_array_2d());
+        // merged cascades: squares of 8, 32 and 64 m, the opaque casters
+        // of a finer one left out of the next. Binary scales keep a sphere
+        // exactly on a plane from rounding to opposite sides on CPU/GPU.
+        frame.cascades = [0.125, 0.03125, 0.015625].map(|s| Mat4::from_scale(Vec3::new(s, s, 0.01)).to_cols_array_2d());
         frame.dist[3] = 2048.0;
         // Exterior and reflection share one draw bin but retain independent
         // frusta. Include objects behind the main/reflection camera as well.
@@ -2238,6 +2322,7 @@ mod tests {
                 * glam::camera::rh::view::look_at_mat4(Vec3::ZERO, Vec3::Y, Vec3::Z),
         )
         .map(|p| p.to_array());
+        frame.probe_eye = [0.0, 40.0, 0.0, 40.0];
         cull.prepare(&device, &queue, n_faces, tables.objects.len(), frame);
         let mut f = frame;
         f.sizes[0] = n_faces as u32;
@@ -2260,7 +2345,7 @@ mod tests {
         let read = |label| {
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
-                size,
+                size: crate::readback::readback_size(size),
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             })
@@ -2274,9 +2359,9 @@ mod tests {
         counts_read.map_async(wgpu::MapMode::Read, .., |_| {});
         let _ = device.poll(wgpu::PollType::wait_indefinitely());
         let args = args_read.get_mapped_range(..).expect("args mapped");
-        let args: &[u32] = bytemuck::cast_slice(&args);
+        let args = crate::readback::u32s(&args[..size as usize]);
         let counts = counts_read.get_mapped_range(..).expect("counts mapped");
-        let counts: &[u32] = bytemuck::cast_slice(&counts[..COUNTS * 4]);
+        let counts = crate::readback::u32s(&counts[..COUNTS * 4]);
         let mut expect: Vec<Vec<u32>> = vec![Vec::new(); BINS];
         let (mut visible, mut tris) = (0, 0);
         for i in 0..n_faces {
@@ -2292,6 +2377,10 @@ mod tests {
             }
         }
         assert!(expect.iter().take(MAIN_BINS + 3).all(|e| !e.is_empty()), "every bin used");
+        assert!(
+            expect[BIN_SPOT..BIN_SPOT + SPOT_SHADOWS].iter().all(|e| !e.is_empty()),
+            "every projector shadow bin used"
+        );
         assert!(
             expect[BIN_SHADOW_ALPHA..BIN_SHADOW_ALPHA + 3].iter().all(|e| !e.is_empty()),
             "alpha tested casters in every cascade"

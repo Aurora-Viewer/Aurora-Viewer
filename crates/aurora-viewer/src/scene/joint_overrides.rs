@@ -320,14 +320,15 @@ mod tests {
                 let mut position = ap.position;
                 position.y *= world.hud_aspect;
                 (position, ap.rotation)
-            } else if let Some(joint) = ap.joint {
-                (
-                    avatar_pos + avatar_rot * (joints[joint].0 + joints[joint].1 * (base.scale[joint] * ap.local_position) - lib.pelvis),
-                    avatar_rot * joints[joint].1 * ap.rotation,
-                )
             } else {
-                // Avatar Center is on mRoot, outside the animated skeleton.
-                (avatar_pos + avatar_rot * ap.position, avatar_rot * ap.rotation)
+                // The fixture also rotates the attachment joints themselves.
+                // LLViewerJointAttachment follows that full frame, including
+                // Avatar Center, without scaling the worn geometry (#1694).
+                let joint = rig.names[&lib.attach_names[&point]];
+                (
+                    avatar_pos + avatar_rot * (joints[joint].0 - lib.pelvis),
+                    avatar_rot * joints[joint].1,
+                )
             };
             let root_object = world.objects.get(root).expect("root");
             let child_object = world.objects.get(child).expect("child");

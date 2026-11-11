@@ -52,6 +52,17 @@ fn fmt_time(t: f64) -> String {
     }
 }
 
+fn controls_id() -> egui::Id {
+    egui::Id::unique("media_controls")
+}
+
+/// Where the controls are while they show (the media filter's banner goes
+/// under them).
+pub fn controls_rect(ctx: &egui::Context) -> Option<egui::Rect> {
+    let layer = egui::LayerId::new(egui::Order::Foreground, controls_id());
+    ctx.memory(|m| m.areas().visible_last_frame(&layer).then(|| m.area_rect(controls_id())).flatten())
+}
+
 /// Draw the controls of the focused media (if any) at `top` (logical px).
 pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, media: &mut MediaManager, st: &mut MediaUi, top: f32) {
     let Some(key) = media.focus else {
@@ -63,6 +74,8 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, media: &mut MediaMa
         st.url_edit = None;
         st.shown_for = Some(key);
     }
+    // no plugins: where Aurora's pack stands, or its Download button
+    let no_plugins = media.plugins_found().is_none();
     let Some(m) = media.find_mut(&key) else {
         return;
     };
@@ -74,7 +87,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, media: &mut MediaMa
     }
     let can_control = m.may_control;
     let mut close = false;
-    egui::Area::new(egui::Id::unique("media_controls"))
+    egui::Area::new(controls_id())
         .order(egui::Order::Foreground)
         .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, top + 6.0))
         .show(ctx, |ui| {
@@ -193,6 +206,9 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, media: &mut MediaMa
                             .size(11.0)
                             .color(p.muted),
                     );
+                }
+                if no_plugins {
+                    super::web_view::plugins_notice(ui, p);
                 }
             });
         });

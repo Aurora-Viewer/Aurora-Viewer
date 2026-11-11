@@ -134,9 +134,12 @@ mod tests {
     }
 
     #[test]
-    fn the_built_in_notice_names_the_licence_and_every_bundled_work() {
+    fn the_built_in_notice_names_the_copyright_the_licence_and_every_bundled_work() {
         let blocks = blocks();
-        assert!(matches!(&blocks[0], Block::Paragraph(p) if p.contains("GNU General Public License")));
+        // the copyright line opens the Licences tab: modified versions must
+        // keep it on screen (GPLv3 section 5(d))
+        assert!(matches!(&blocks[0], Block::Paragraph(p) if p.starts_with("Copyright © ") && p.contains("Aurora Viewer contributors")));
+        assert!(matches!(&blocks[1], Block::Paragraph(p) if p.contains("GNU General Public License")));
         let rows = blocks.iter().filter(|b| matches!(b, Block::Row { .. })).count();
         let table_lines = NOTICE.lines().filter(|l| l.trim_start().starts_with('|')).count();
         let tables = NOTICE.lines().filter(|l| l.trim_start().starts_with("|---")).count();

@@ -107,8 +107,69 @@ pub struct Submission {
     frame: u64,
 }
 
+/// How the loss was first seen, as fixed words for the crash report: the
+/// driver's device-lost callback, a wait on the device that panicked, the
+/// start, the demo's simulated loss.
+const SEEN_BY: [&str; 5] = ["callback", "wait", "start", "demo", "other"];
+/// The first sighting (index in [`SEEN_BY`] + 1, 0 none), the reason wgpu
+/// gave (1 unknown, 2 other) and what its message is about ([`CAUSES`]).
+static FIRST_SEEN: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+static REASON: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+static CAUSE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+const CAUSES: [&str; 4] = ["device-lost", "out-of-memory", "timeout", "other"];
+
+/// A new renderer begins with no loss on record.
+pub(crate) fn forget_details() {
+    for a in [&FIRST_SEEN, &REASON, &CAUSE] {
+        a.store(0, Ordering::Relaxed);
+    }
+}
+
+/// The reason wgpu gave and the class of its message. The message itself is
+/// not kept: only the fixed word that its text matches.
+pub(crate) fn note_reason(reason: wgpu::DeviceLostReason, message: &str) {
+    REASON.store(
+        if matches!(reason, wgpu::DeviceLostReason::Unknown) { 1 } else { 2 },
+        Ordering::Relaxed,
+    );
+    CAUSE.store(cause_of(message), Ordering::Relaxed);
+}
+
+fn cause_of(message: &str) -> u8 {
+    let m = message.to_ascii_lowercase();
+    if m.contains("out of memory") || m.contains("out_of_memory") {
+        2
+    } else if m.contains("timeout") || m.contains("timed out") {
+        3
+    } else if m.contains("device lost") || m.contains("device_lost") || m.contains("device is lost") {
+        1
+    } else {
+        4
+    }
+}
+
+/// What is known of the loss: the reason, what the message is about and how
+/// it was first seen, all fixed words. None before any loss.
+pub fn loss_details() -> Option<(&'static str, &'static str, &'static str)> {
+    let seen = SEEN_BY.get(usize::from(FIRST_SEEN.load(Ordering::Relaxed)).checked_sub(1)?)?;
+    let reason = match REASON.load(Ordering::Relaxed) {
+        1 => "unknown",
+        2 => "other",
+        _ => "none",
+    };
+    let cause = CAUSES
+        .get(usize::from(CAUSE.load(Ordering::Relaxed)).wrapping_sub(1))
+        .copied()
+        .unwrap_or("none");
+    Some((reason, cause, seen))
+}
+
 impl DeviceLost {
-    pub fn set(&self) {
+    /// The loss, first seen by `by` (a word of [`SEEN_BY`]); the first
+    /// sighting stays.
+    pub fn set_by(&self, by: &str) {
+        let index = SEEN_BY.iter().position(|w| *w == by).unwrap_or(SEEN_BY.len() - 1) as u8 + 1;
+        let _ = FIRST_SEEN.compare_exchange(0, index, Ordering::Relaxed, Ordering::Relaxed);
         self.lost.store(true, Ordering::Release);
     }
 
@@ -210,7 +271,7 @@ impl DeviceLost {
         }
         let result = poll_guarded(device, poll);
         if result.is_none() {
-            self.set();
+            self.set_by("wait");
         }
         result
     }
@@ -361,13 +422,36 @@ pub(crate) fn demo_frame_of(demo: bool, var: Option<&str>, renderer: usize) -> O
 mod tests {
     use super::*;
 
+    /// The tests that touch the process-wide loss details take turns: the
+    /// test runner runs them in parallel.
+    static DETAILS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn the_callback_s_copy_tells_every_other() {
+        let _turn = DETAILS.lock().unwrap_or_else(|e| e.into_inner());
         let lost = DeviceLost::default();
         let (callback, render_thread) = (lost.clone(), lost.clone());
         assert!(!render_thread.get());
-        callback.set();
+        callback.set_by("callback");
         assert!(lost.get() && render_thread.get());
+    }
+
+    #[test]
+    fn the_first_sighting_and_the_class_of_the_message_are_kept() {
+        let _turn = DETAILS.lock().unwrap_or_else(|e| e.into_inner());
+        forget_details();
+        assert_eq!(loss_details(), None);
+        let lost = DeviceLost::default();
+        note_reason(
+            wgpu::DeviceLostReason::Unknown,
+            "Parent device is lost: ERROR_DEVICE_LOST at /home/someone",
+        );
+        lost.set_by("callback");
+        lost.set_by("wait");
+        assert_eq!(loss_details(), Some(("unknown", "device-lost", "callback")));
+        assert_eq!(cause_of("vk out of memory"), 2);
+        assert_eq!(cause_of("something else"), 4);
+        forget_details();
     }
 
     /// wgpu's panic for a device lost during a wait (`handle_error_fatal`)

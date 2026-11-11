@@ -13,6 +13,26 @@ impl App {
         let Ok(mode) = std::env::var("AURORA_DEMO_WORN") else {
             return;
         };
+        if mode == "animated" {
+            if self.frame_count == 600 {
+                for event in crate::demo::worn::animated_events() {
+                    self.world.apply(event);
+                }
+                self.scene.anims.insert(
+                    crate::demo::worn::POINT_ANIMATION,
+                    Arc::new(crate::scene::anim::BoundAnim::bind(
+                        crate::demo::worn::point_animation(),
+                        &self.scene.avatar_lib.rig,
+                    )),
+                );
+                self.world.apply(NetEvent::AvatarAnimations {
+                    sources: Vec::new(),
+                    avatar: self.world.agent_id,
+                    anims: vec![(crate::demo::worn::POINT_ANIMATION, 1)],
+                });
+            }
+            return;
+        }
         if matches!(mode.as_str(), "temporary-detach" | "temporary-drop") {
             self.demo_temporary_detach_steps(mode == "temporary-detach");
             return;

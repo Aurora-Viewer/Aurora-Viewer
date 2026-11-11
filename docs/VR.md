@@ -34,9 +34,12 @@ tests, simulator rendering and physical headset streaming are separate gates.
   loader built in (`xr-static-loader`, CMake needed to build it; a local build
   without it loads the runtime's loader); Linux uses the distribution's loader package (WiVRn and Monado
   install it), macOS the installed loader. VR is set up when
-  Aurora starts: with the headset connected later, the headset button offers
-  "Restart in VR" (the viewer restarts with `--vr` and enters VR once the world
-  shows). VR is optional: without a runtime, the viewer starts as usual.
+  Aurora starts, and only once VR has been used (Preferences › Camera › VR ›
+  "Set up VR at startup", off by default: loading a runtime at every start
+  crashed PCs that never use VR, #2309). Until then, or with the headset
+  connected later, the headset button offers "Restart in VR" (the viewer
+  restarts with `--vr`, enters VR once the world shows and turns the setting
+  on). VR is optional: without a runtime, the viewer starts as usual.
 - Head-mounted display, two-view `PRIMARY_STEREO`, `LOCAL` and `VIEW` reference
   spaces, opaque composition and the selected RGBA8/BGRA8 eye format.
 - Eye images supporting color attachment and sampling; Vulkan also uses

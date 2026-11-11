@@ -403,6 +403,55 @@ mod win {
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().chain(std::iter::once(0)).collect()
     }
+
+    fn app_id_key() -> String {
+        format!(r"Software\Classes\AppUserModelId\{AUMID}")
+    }
+
+    /// The AppUserModelID's key, when this user's registry holds it (the
+    /// notifications were turned on once).
+    pub fn app_id_registration() -> Option<String> {
+        use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+        use windows_sys::Win32::System::Registry::{HKEY, HKEY_CURRENT_USER, KEY_READ, RegCloseKey, RegOpenKeyExW};
+        let key = wide(&app_id_key());
+        let mut opened: HKEY = std::ptr::null_mut();
+        // SAFETY: a NUL-terminated string alive for the call and a handle
+        // to fill, closed below when the call opened it.
+        let status = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, key.as_ptr(), 0, KEY_READ, &mut opened) };
+        if status != ERROR_SUCCESS {
+            return None;
+        }
+        // SAFETY: the handle the call above opened.
+        unsafe { RegCloseKey(opened) };
+        Some(format!(r"HKEY_CURRENT_USER\{}", app_id_key()))
+    }
+
+    /// Removes the AppUserModelID's key; the notifications write it again
+    /// when they start.
+    pub fn unregister_app_id() -> Result<(), String> {
+        use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
+        use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RegDeleteTreeW};
+        let key = wide(&app_id_key());
+        // SAFETY: a NUL-terminated string alive for the call.
+        match unsafe { RegDeleteTreeW(HKEY_CURRENT_USER, key.as_ptr()) } {
+            ERROR_SUCCESS | ERROR_FILE_NOT_FOUND => Ok(()),
+            status => Err(format!("{}: error {status}", app_id_key())),
+        }
+    }
+}
+
+#[cfg(windows)]
+pub use win::{app_id_registration, unregister_app_id};
+
+/// Only Windows needs a registered identity for its notifications.
+#[cfg(not(windows))]
+pub fn app_id_registration() -> Option<String> {
+    None
+}
+
+#[cfg(not(windows))]
+pub fn unregister_app_id() -> Result<(), String> {
+    Ok(())
 }
 
 #[cfg(test)]

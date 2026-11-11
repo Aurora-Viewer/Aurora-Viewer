@@ -488,6 +488,7 @@ impl GroupCreateUi {
         if pick.clicked() && !self.sending {
             self.pick_insignia();
         }
+        self.texture.drop_target(ui, insignia_rect, false, !self.sending);
 
         // the badges the group will have
         let badges_top = id_top + 56.0 + 4.0;
@@ -524,7 +525,14 @@ impl GroupCreateUi {
                         charter_limit: CHARTER_BYTES,
                         insignia_card: false,
                     };
-                    change = administration::identity_cards(ui, c, &mut draft.info, Rating::Choice(&mut draft.rating), fields);
+                    change = administration::identity_cards(
+                        ui,
+                        c,
+                        &mut draft.info,
+                        Rating::Choice(&mut draft.rating),
+                        fields,
+                        &mut self.texture,
+                    );
                     clip_bytes(&mut draft.info.charter, CHARTER_BYTES);
                 };
                 if wide {
@@ -654,6 +662,7 @@ impl GroupCreateUi {
                     if pic.clicked() && enabled {
                         self.pick_insignia();
                     }
+                    self.texture.drop_target(ui, pic.rect, false, enabled);
                     ui.add_enabled_ui(enabled, |ui| {
                         ui.add(
                             egui::TextEdit::multiline(&mut self.draft.info.charter)

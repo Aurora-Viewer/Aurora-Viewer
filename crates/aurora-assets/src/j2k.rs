@@ -193,6 +193,296 @@ fn bound_tile_parts(cs: &[u8], plausible: usize) -> Option<Vec<u8>> {
     }
     copy
 }
+
+/// What OpenJPEG may hold at once for one decode, estimated from the headers
+/// ([`decode_memory`]) before it reads them: its header parsing keeps the
+/// coding parameters of every tile, each tile it decodes the structures of
+/// all its code-blocks and precincts whatever the resolution asked for, and
+/// the samples are 32-bit for every component. Headers can declare all of
+/// these far beyond any texture's needs. An SL texture (one tile,
+/// at most 2048² and 4 components) needs about 85 MB at full resolution, a
+/// 4096² one with 4 components about 330 MB.
+const DECODE_BUDGET: u64 = 512 << 20;
+/// Tiles of a codestream: SL textures have one. OpenJPEG itself accepts 65,535.
+const MAX_TILES: u64 = 4096;
+// Sizes of OpenJPEG 2.5's allocations, rounded up.
+/// Coding parameters of one tile (`opj_tcp_t`, its 32 progression orders) and its index.
+const TILE_BYTES: u64 = 8 << 10;
+/// Per component of each tile (`opj_tccp_t`, its 97 quantization step sizes).
+const TILE_COMPONENT_BYTES: u64 = 2 << 10;
+/// One code-block: `opj_tcd_cblk_dec_t`, its first 10 segments, its tag tree leaves.
+const CODEBLOCK_BYTES: u64 = 512;
+/// One precinct of one band: `opj_tcd_precinct_t` and its two tag trees.
+const PRECINCT_BYTES: u64 = 256;
+
+/// The SIZ fields that size OpenJPEG's allocations (reference grid coordinates).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Siz {
+    x0: u32,
+    y0: u32,
+    x1: u32,
+    y1: u32,
+    tile_x0: u32,
+    tile_y0: u32,
+    tile_w: u32,
+    tile_h: u32,
+    /// Subsampling (XRsiz, YRsiz) of each component.
+    sub: Vec<(u8, u8)>,
+}
+
+fn parse_siz(body: &[u8]) -> Option<Siz> {
+    // Rsiz(2) Xsiz Ysiz XOsiz YOsiz XTsiz YTsiz XTOsiz YTOsiz (4 each) Csiz(2),
+    // then Ssiz XRsiz YRsiz (1 each) per component.
+    let csiz = usize::from(be16(body, 34)?);
+    let sub = (0..csiz)
+        .map(|i| Some((*body.get(37 + 3 * i)?, *body.get(38 + 3 * i)?)))
+        .collect::<Option<Vec<_>>>()?;
+    Some(Siz {
+        x1: be32(body, 2)?,
+        y1: be32(body, 6)?,
+        x0: be32(body, 10)?,
+        y0: be32(body, 14)?,
+        tile_w: be32(body, 18)?,
+        tile_h: be32(body, 22)?,
+        tile_x0: be32(body, 26)?,
+        tile_y0: be32(body, 30)?,
+        sub,
+    })
+}
+
+/// The costliest coding style among all the COD and COC segments of a
+/// codestream (main and tile-part headers): most decomposition levels and
+/// layers, smallest code-blocks and precincts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Coding {
+    levels: u8,
+    layers: u16,
+    /// log2 of the code-block width and height.
+    block: (u8, u8),
+    /// log2 of the precinct width and height.
+    precinct: (u8, u8),
+}
+
+impl Coding {
+    /// Before any segment: each one only makes it costlier.
+    const NONE: Coding = Coding {
+        levels: 0,
+        layers: 1,
+        block: (10, 10),
+        precinct: (15, 15),
+    };
+
+    /// SPcod / SPcoc at `at`: NL, xcb, ycb, style, transform, then one
+    /// precinct size per resolution when `precincts` is set. Values OpenJPEG
+    /// refuses are clamped to what it accepts.
+    fn add_style(&mut self, body: &[u8], at: usize, precincts: bool) {
+        let (Some(&nl), Some(&xcb), Some(&ycb)) = (body.get(at), body.get(at + 1), body.get(at + 2)) else {
+            return;
+        };
+        self.levels = self.levels.max(nl.min(32));
+        self.block = (self.block.0.min(xcb.min(8) + 2), self.block.1.min(ycb.min(8) + 2));
+        if precincts {
+            for &b in body.iter().skip(at + 5).take(usize::from(nl) + 1) {
+                self.precinct = (self.precinct.0.min(b & 0x0F), self.precinct.1.min(b >> 4));
+            }
+        }
+    }
+
+    /// COD: Scod(1) progression(1) layers(2) mct(1) SPcod.
+    fn add_cod(&mut self, body: &[u8]) {
+        let Some(&scod) = body.first() else { return };
+        if let Some(layers) = be16(body, 2) {
+            self.layers = self.layers.max(layers);
+        }
+        self.add_style(body, 5, scod & 1 != 0);
+    }
+
+    /// COC: Ccoc(1, or 2 from 257 components) Scoc(1) SPcoc.
+    fn add_coc(&mut self, body: &[u8], components: usize) {
+        let ccoc = if components < 257 { 1 } else { 2 };
+        let Some(&scoc) = body.get(ccoc) else { return };
+        self.add_style(body, ccoc + 1, scoc & 1 != 0);
+    }
+}
+
+/// The marker segments OpenJPEG reads in a main or tile-part header
+/// (`j2k_memory_marker_handler_tab`), all with a length.
+fn is_header_segment(marker: u16) -> bool {
+    matches!(
+        marker,
+        0xFF50..=0xFF53 | 0xFF55 | 0xFF57..=0xFF59 | 0xFF5C..=0xFF61 | 0xFF63 | 0xFF64 | 0xFF74 | 0xFF75 | 0xFF77 | 0xFF78
+    )
+}
+
+/// Walk the marker segments of a header from `pos` as OpenJPEG reads them,
+/// handing each one (marker, contents) to `segment`, up to a marker `stop`
+/// accepts or the end of the data. Other bytes are passed two at a time, as
+/// `opj_j2k_read_unk` looks for the next known marker. `steps` bounds the
+/// work over all the headers of a codestream: `None` once it runs out.
+fn walk_header(
+    cs: &[u8],
+    mut pos: usize,
+    stop: impl Fn(u16) -> bool,
+    steps: &mut usize,
+    mut segment: impl FnMut(u16, &[u8]),
+) -> Option<()> {
+    while let Some(marker) = be16(cs, pos) {
+        *steps = steps.checked_sub(1)?;
+        if stop(marker) {
+            break;
+        }
+        if !is_header_segment(marker) {
+            pos += 2;
+            continue;
+        }
+        // OpenJPEG stops on a segment that is too short or cut (a partial
+        // download can end anywhere).
+        let Some(len) = be16(cs, pos + 2).map(usize::from).filter(|&l| l >= 2) else {
+            break;
+        };
+        let Some(body) = cs.get(pos + 4..pos + 2 + len) else {
+            break;
+        };
+        segment(marker, body);
+        pos += 2 + len;
+    }
+    Some(())
+}
+
+/// The SIZ of the main header and the costliest coding style of the
+/// codestream. Every tile-part header is read, found like in
+/// [`bound_tile_parts`] by its SOT marker: a COD or COC there can change the
+/// code-blocks, precincts, levels and layers of its tile.
+fn parse_layout(cs: &[u8]) -> Option<(Siz, Coding)> {
+    let mut steps = cs.len() + 4096;
+    let mut siz: Option<Siz> = None;
+    let mut coding = Coding::NONE;
+    let mut visit = |marker: u16, body: &[u8]| match marker {
+        0xFF51 if siz.is_none() => siz = parse_siz(body),
+        0xFF52 => coding.add_cod(body),
+        0xFF53 => {
+            if let Some(s) = &siz {
+                coding.add_coc(body, s.sub.len());
+            }
+        }
+        _ => {}
+    };
+    if be16(cs, 0)? != 0xFF4F {
+        return None;
+    }
+    walk_header(cs, 2, |m| m == 0xFF90, &mut steps, &mut visit)?;
+    for pos in 0..cs.len().saturating_sub(10) {
+        if cs[pos..pos + 4] == [0xFF, 0x90, 0x00, 0x0A] {
+            // SOT is 12 bytes; its header ends at SOD (or another SOT, or EOC).
+            walk_header(cs, pos + 12, |m| matches!(m, 0xFF90 | 0xFF93 | 0xFFD9), &mut steps, &mut visit)?;
+        }
+    }
+    Some((siz?, coding))
+}
+
+/// Tiles across and down, as `opj_j2k_read_siz` counts them: from the tile
+/// grid origin, which must lie in the first tile, to the image's far edge.
+fn tile_grid(siz: &Siz) -> Option<(u64, u64)> {
+    let first_tile_holds_origin = |t0: u32, size: u32, x0: u32| t0 <= x0 && u64::from(t0) + u64::from(size) > u64::from(x0);
+    if siz.tile_w == 0
+        || siz.tile_h == 0
+        || siz.x1 <= siz.x0
+        || siz.y1 <= siz.y0
+        || !first_tile_holds_origin(siz.tile_x0, siz.tile_w, siz.x0)
+        || !first_tile_holds_origin(siz.tile_y0, siz.tile_h, siz.y0)
+    {
+        return None;
+    }
+    let across = u64::from(siz.x1 - siz.tile_x0).div_ceil(u64::from(siz.tile_w));
+    let down = u64::from(siz.y1 - siz.tile_y0).div_ceil(u64::from(siz.tile_h));
+    Some((across, down))
+}
+
+/// Size of `n` samples after `levels` halvings, plus one for the alignment.
+fn shrink(n: u64, levels: u32) -> u64 {
+    n.div_ceil(1u64 << levels.min(63)).saturating_add(1)
+}
+
+/// Cells of `2^exp` samples that cover `len` samples, wherever they start.
+fn cells(len: u64, exp: u8) -> u64 {
+    len.saturating_add(1).div_ceil(1u64 << exp.min(63)).saturating_add(1)
+}
+
+/// Upper estimate, in bytes, of what OpenJPEG holds at once to decode the
+/// codestream at resolution reduction `reduce` (the Legacy Viewer's
+/// LLImageJ2COJ::decodeImpl has no such bound). OpenJPEG decodes the
+/// tiles one after the other, reusing the code-block and precinct structures
+/// of the previous one: those count for the largest tile.
+fn decode_memory(siz: &Siz, coding: &Coding, reduce: u8, tiles: (u64, u64)) -> u64 {
+    let tile_count = tiles.0.saturating_mul(tiles.1);
+    let comps = siz.sub.len() as u64;
+    let levels = u32::from(coding.levels.min(32));
+    let reduce = u32::from(reduce).min(levels);
+    let (w, h) = (u64::from(siz.x1 - siz.x0), u64::from(siz.y1 - siz.y0));
+    let (px, py) = coding.precinct;
+    let (bx, by) = coding.block;
+
+    let mut total = tile_count.saturating_mul(TILE_BYTES + comps * TILE_COMPONENT_BYTES);
+    let mut tile_precincts = 1u64;
+    for &(dx, dy) in &siz.sub {
+        let (dx, dy) = (u64::from(dx.max(1)), u64::from(dy.max(1)));
+        let cw = u64::from(siz.x1).div_ceil(dx) - u64::from(siz.x0).div_ceil(dx);
+        let ch = u64::from(siz.y1).div_ceil(dy) - u64::from(siz.y0).div_ceil(dy);
+        // The largest tile, within this component.
+        let tw = u64::from(siz.tile_w).min(w).div_ceil(dx) + 1;
+        let th = u64::from(siz.tile_h).min(h).div_ceil(dy) + 1;
+        // 32-bit samples: the image, and one tile besides when there are several.
+        let mut samples = shrink(cw, reduce).saturating_mul(shrink(ch, reduce));
+        if tile_count > 1 {
+            samples = samples.saturating_add(shrink(tw, reduce).saturating_mul(shrink(th, reduce)));
+        }
+        total = total.saturating_add(samples.saturating_mul(4));
+        // Every resolution of the tile, the reduced ones included.
+        for res in 0..=levels {
+            let (rw, rh) = (shrink(tw, levels - res), shrink(th, levels - res));
+            let precincts = cells(rw, px).saturating_mul(cells(rh, py));
+            tile_precincts = tile_precincts.max(precincts);
+            // Resolution 0 has one band (LL); the others three, each half as
+            // large, with precincts of half the size (B.6).
+            let (bands, blocks) = if res == 0 {
+                (1, cells(rw, bx.min(px)).saturating_mul(cells(rh, by.min(py))))
+            } else {
+                let (bw, bh) = (rw.div_ceil(2), rh.div_ceil(2));
+                let (sx, sy) = (bx.min(px.saturating_sub(1)), by.min(py.saturating_sub(1)));
+                (3, cells(bw, sx).saturating_mul(cells(bh, sy)))
+            };
+            let bytes = precincts
+                .saturating_mul(PRECINCT_BYTES)
+                .saturating_add(blocks.saturating_mul(CODEBLOCK_BYTES));
+            total = total.saturating_add(bytes.saturating_mul(bands));
+        }
+    }
+    // The packet iterator's inclusion flags (`opj_pi_create_decode`): an
+    // OPJ_INT16 per layer + 1, resolution, component and precinct of a tile.
+    let include = (u64::from(coding.layers) + 1)
+        .saturating_mul(u64::from(levels) + 1)
+        .saturating_mul(comps)
+        .saturating_mul(tile_precincts)
+        .saturating_mul(2);
+    // The 8-bit pixels `convert_image` returns.
+    let pixels = shrink(w, reduce).saturating_mul(shrink(h, reduce)).saturating_mul(comps.min(4));
+    total.saturating_add(include).saturating_add(pixels)
+}
+
+/// Refuse a codestream whose decode at `reduce` would need more than
+/// [`DECODE_BUDGET`] or has more than [`MAX_TILES`] tiles.
+fn check_decode_memory(cs: &[u8], reduce: u8) -> Result<(), AssetError> {
+    let (siz, coding) = parse_layout(cs).ok_or(AssetError::J2k("JPEG2000 header layout"))?;
+    let tiles = tile_grid(&siz).ok_or(AssetError::J2k("JPEG2000 tile grid"))?;
+    if tiles.0.saturating_mul(tiles.1) > MAX_TILES {
+        return Err(AssetError::TooLarge("JPEG2000 tile count"));
+    }
+    if decode_memory(&siz, &coding, reduce, tiles) > DECODE_BUDGET {
+        return Err(AssetError::TooLarge("JPEG2000 decoder memory"));
+    }
+    Ok(())
+}
+
 /// Read image dimensions, component count and decomposition levels from the
 /// codestream main header without decoding. Returns `None` if the header is
 /// missing, incomplete (SIZ and COD must both be present) or malformed.
@@ -408,6 +698,7 @@ pub fn decode_j2k_timed(data: &[u8], discard: u8) -> Result<(DecodedImage, Decod
         return Err(AssetError::Unsupported(format!("JPEG2000 with {} components", info.components)));
     }
     let reduce = discard.min(info.levels);
+    check_decode_memory(cs, reduce)?;
     // (a tile-part can never need more than about twice the raw pixels)
     let plausible = (info.width as usize * info.height as usize * usize::from(info.components)).saturating_mul(2) + (1 << 16);
     let bounded = bound_tile_parts(cs, plausible);
@@ -831,6 +1122,233 @@ mod tests {
         assert_eq!(be32(&bounded, sot + 6), Some(0));
         let _ = decode_j2k(cs, 0);
     }
+    /// The header fields a synthetic codestream is built from.
+    #[derive(Clone)]
+    struct Layout {
+        /// Image area on the reference grid: x0, y0, x1, y1.
+        area: (u32, u32, u32, u32),
+        /// Tile grid origin and tile size.
+        tile_origin: (u32, u32),
+        tile: (u32, u32),
+        comps: u16,
+        sub: (u8, u8),
+        levels: u8,
+        layers: u16,
+        /// xcb, ycb as written (log2 of the code-block size minus 2).
+        block: (u8, u8),
+        /// Precinct size byte (PPy << 4 | PPx) for every resolution.
+        precinct: Option<u8>,
+    }
+
+    impl Layout {
+        fn texture(w: u32, h: u32, comps: u16) -> Self {
+            Layout {
+                area: (0, 0, w, h),
+                tile_origin: (0, 0),
+                tile: (w, h),
+                comps,
+                sub: (1, 1),
+                levels: 5,
+                layers: 1,
+                block: (4, 4),
+                precinct: None,
+            }
+        }
+    }
+
+    fn segment(marker: u16, body: &[u8]) -> Vec<u8> {
+        let mut s = marker.to_be_bytes().to_vec();
+        s.extend_from_slice(&(body.len() as u16 + 2).to_be_bytes());
+        s.extend_from_slice(body);
+        s
+    }
+
+    /// COD contents: Scod, progression, layers, mct, then SPcod.
+    fn cod_body(l: &Layout) -> Vec<u8> {
+        let mut b = vec![u8::from(l.precinct.is_some()), 0];
+        b.extend_from_slice(&l.layers.to_be_bytes());
+        b.extend_from_slice(&[0, l.levels, l.block.0, l.block.1, 0, 1]);
+        if let Some(p) = l.precinct {
+            b.extend(std::iter::repeat_n(p, usize::from(l.levels) + 1));
+        }
+        b
+    }
+
+    /// SOC, SIZ, COD, QCD, then one tile-part whose header holds
+    /// `tile_header` and whose data is empty, and EOC.
+    fn codestream(l: &Layout, tile_header: &[u8]) -> Vec<u8> {
+        let mut siz = vec![0, 0];
+        for v in [
+            l.area.2,
+            l.area.3,
+            l.area.0,
+            l.area.1,
+            l.tile.0,
+            l.tile.1,
+            l.tile_origin.0,
+            l.tile_origin.1,
+        ] {
+            siz.extend_from_slice(&v.to_be_bytes());
+        }
+        siz.extend_from_slice(&l.comps.to_be_bytes());
+        for _ in 0..l.comps {
+            siz.extend_from_slice(&[7, l.sub.0, l.sub.1]);
+        }
+        let mut cs = vec![0xFF, 0x4F];
+        cs.extend(segment(0xFF51, &siz));
+        cs.extend(segment(0xFF52, &cod_body(l)));
+        // No quantization, 2 guard bits: one exponent per band.
+        let mut qcd = vec![0x40];
+        qcd.extend(std::iter::repeat_n(8 << 3, 3 * usize::from(l.levels) + 1));
+        cs.extend(segment(0xFF5C, &qcd));
+        cs.extend_from_slice(&[0xFF, 0x90, 0x00, 0x0A, 0, 0, 0, 0, 0, 0, 0, 1]);
+        cs.extend_from_slice(tile_header);
+        cs.extend_from_slice(&[0xFF, 0x93, 0xFF, 0xD9]);
+        cs
+    }
+
+    fn memory(cs: &[u8], reduce: u8) -> u64 {
+        let (siz, coding) = parse_layout(cs).expect("layout");
+        decode_memory(&siz, &coding, reduce, tile_grid(&siz).expect("tile grid"))
+    }
+
+    /// Refused before OpenJPEG sees it, at every discard level.
+    fn assert_refused(cs: &[u8]) {
+        for discard in 0..=MAX_DISCARD_LEVEL {
+            assert!(
+                matches!(check_decode_memory(cs, discard), Err(AssetError::TooLarge(_))),
+                "discard {discard}"
+            );
+            assert!(matches!(decode_j2k(cs, discard), Err(AssetError::TooLarge(_))));
+        }
+    }
+
+    #[test]
+    fn the_synthetic_layout_is_read_back() {
+        let mut l = Layout::texture(640, 480, 3);
+        l.tile = (256, 128);
+        l.layers = 7;
+        l.block = (3, 2);
+        l.precinct = Some(0x87);
+        let cs = codestream(&l, &[]);
+        let (siz, coding) = parse_layout(&cs).expect("layout");
+        assert_eq!((siz.x1, siz.y1, siz.tile_w, siz.tile_h, siz.sub.len()), (640, 480, 256, 128, 3));
+        assert_eq!(tile_grid(&siz), Some((3, 4)));
+        assert_eq!(
+            coding,
+            Coding {
+                levels: 5,
+                layers: 7,
+                block: (5, 4),
+                precinct: (7, 8)
+            }
+        );
+        assert!(check_decode_memory(&cs, 0).is_ok());
+        let _ = decode_j2k(&cs, 0);
+    }
+
+    /// What the textures of the grid look like stays well within the budget.
+    #[test]
+    fn real_texture_layouts_are_accepted() {
+        for (w, comps) in [(64, 3), (512, 4), (1024, 4), (2048, 4), (4096, 4), (8192, 1)] {
+            let l = Layout::texture(w, w, comps);
+            let cs = codestream(&l, &[]);
+            assert!(check_decode_memory(&cs, 0).is_ok(), "{w}² × {comps}");
+        }
+        // An SL texture of 2048² RGBA at full resolution: about 85 MB.
+        let big = memory(&codestream(&Layout::texture(2048, 2048, 4), &[]), 0);
+        assert!(big < 100 << 20, "{big}");
+        // Tiled and with precincts, as other encoders write them.
+        let mut l = Layout::texture(2048, 2048, 4);
+        l.tile = (256, 256);
+        l.layers = 12;
+        l.precinct = Some(0x77);
+        assert!(check_decode_memory(&codestream(&l, &[]), 0).is_ok());
+        l.tile = (64, 64);
+        l.precinct = None;
+        assert!(check_decode_memory(&codestream(&l, &[]), 0).is_ok());
+        // Every texture our encoder writes.
+        let pixels: Vec<u8> = (0..256u32 * 256 * 4).map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8).collect();
+        for comps in [3u8, 4] {
+            let n = 256 * 256 * usize::from(comps);
+            let enc = encode_texture_j2k(256, 256, comps, &pixels[..n], false).expect("encode");
+            assert!(check_decode_memory(locate_codestream(&enc).expect("codestream"), 0).is_ok());
+        }
+    }
+
+    /// Full-size samples of many components, at every discard level.
+    #[test]
+    fn many_large_components_are_refused() {
+        let mut l = Layout::texture(8192, 8192, 16);
+        l.levels = 0;
+        assert_refused(&codestream(&l, &[]));
+        // An RGBA 8192² at full resolution needs about 1.3 GB; a level down it fits.
+        let cs = codestream(&Layout::texture(8192, 8192, 4), &[]);
+        assert!(check_decode_memory(&cs, 0).is_err());
+        assert!(check_decode_memory(&cs, 1).is_ok());
+    }
+
+    /// Tiny tiles: OpenJPEG keeps the coding parameters of each one.
+    #[test]
+    fn tile_counts_are_bounded() {
+        let mut l = Layout::texture(1024, 1024, 4);
+        l.tile = (8, 8);
+        assert_refused(&codestream(&l, &[]));
+        // Counted from the tile grid origin, which lies in the first tile.
+        let mut l = Layout::texture(64, 64, 4);
+        l.area = (1 << 20, 0, (1 << 20) + 64, 64);
+        l.tile_origin = ((1 << 20) - 1, 0);
+        let cs = codestream(&l, &[]);
+        let (siz, _) = parse_layout(&cs).expect("layout");
+        assert_eq!(tile_grid(&siz), Some((2, 1)));
+        assert!(check_decode_memory(&cs, 0).is_ok());
+        // A tile grid OpenJPEG refuses itself is refused here too.
+        for origin in [0, (1 << 20) + 1] {
+            l.tile_origin = (origin, 0);
+            assert!(check_decode_memory(&codestream(&l, &[]), 0).is_err());
+        }
+    }
+
+    /// Code-blocks of 4 × 4 samples in 2 × 2 precincts: a structure every few
+    /// samples, at every resolution whatever the discard level.
+    #[test]
+    fn small_code_blocks_and_precincts_are_refused() {
+        let mut l = Layout::texture(4096, 4096, 4);
+        l.block = (0, 0);
+        l.precinct = Some(0x11);
+        assert_refused(&codestream(&l, &[]));
+    }
+
+    /// The packet iterator flags one OPJ_INT16 per layer and precinct.
+    #[test]
+    fn many_layers_are_refused() {
+        let mut l = Layout::texture(2048, 2048, 4);
+        l.precinct = Some(0x44);
+        assert!(check_decode_memory(&codestream(&l, &[]), 0).is_ok());
+        l.layers = u16::MAX;
+        assert_refused(&codestream(&l, &[]));
+    }
+
+    /// A COD in a tile-part header replaces the main header's for its tile.
+    #[test]
+    fn tile_part_coding_styles_are_counted() {
+        let l = Layout::texture(4096, 4096, 4);
+        assert!(check_decode_memory(&codestream(&l, &[]), 0).is_ok());
+        let mut costly = l.clone();
+        costly.block = (0, 0);
+        costly.precinct = Some(0x11);
+        let cod = segment(0xFF52, &cod_body(&costly));
+        assert_refused(&codestream(&l, &cod));
+        // also behind fill bytes, which OpenJPEG passes to find the next marker
+        let mut hidden = vec![0xFF; 6];
+        hidden.extend(&cod);
+        assert_refused(&codestream(&l, &hidden));
+        // and as a COC for one component
+        let mut coc = vec![2, 1];
+        coc.extend_from_slice(&cod_body(&costly)[5..]);
+        assert_refused(&codestream(&l, &segment(0xFF53, &coc)));
+    }
+
     /// Found by fuzzing: a SIZ header claiming 2^32 - 1 on both sides
     /// overflowed the surface (a panic in the overflow-checked CI profile).
     #[test]

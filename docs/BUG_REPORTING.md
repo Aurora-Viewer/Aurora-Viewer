@@ -86,25 +86,85 @@ What each part tells the one who fixes it:
 - **Window**: answering until the end, or not answering for the last N s.
 - **GPU device lost**: the renderer's device-lost callback fired (driver
   reset, GPU removed).
+- **Risk factors** (GPU loss or stall only): what was stacked up, from
+  what the report already has: the heavy effects first (contact shadows,
+  GTAO, SSR…), video-memory headroom of 10 % or less, an overlay hook, a
+  region change in the last 60 s, then the preset, driver and session
+  length. A list, not a diagnosis: no rating comes with it, since the order
+  is a guess at weight and no crash statistics back it yet.
 - **GPU work at the loss**: the frame last submitted to the card and the
   last one it finished, each with its age at the loss, and what that says:
   a hang (the last frame not finished 0.5 s or more after its submission:
   the driver reset the card; a real hang on an RTX 5070 Ti was declared
   1.1 s after), a fault the driver found in a frame's work (the loss within
   0.1 s of the submission, or after the frame ended), or undecided between
-  the two. Frame numbers and ages only.
+  the two. Frame numbers and ages only. It describes the loss that began
+  the end of the session: the first of the last losses less than five
+  minutes apart, not a recovery's new device lost after it.
+- **GPU work at the later losses**: when the viewer recovered (or tried
+  to) and the card was lost again, each later loss in the same words,
+  numbered (`loss 2: …`). "nothing submitted yet (lost while starting)"
+  there is a recovery whose new device was lost before its first frame.
 - **GPU recoveries**: the graphics card resets the viewer recovered from
-  during the session (`AURORA_GPU_RECOVERY=1`), how many, and for the first
+  during the session (Preferences › Graphics, on by default), how many, and for the first
   five when in the session, how long the recovery took and whether it came
   back with the safe graphics. Only shown when the session ended badly later.
 - **Overlay hooks**: the overlay or capture programs that injected their
   hook into the viewer during the session (Discord, Steam, RivaTuner, OBS
-  game capture), named from the viewer's fixed list only.
+  game capture), named from the viewer's fixed list only (Windows).
+- **Overlay hooks at GPU loss**: the known hooks loaded when the first GPU
+  loss of the session happened, recovered from or not, or `none loaded`
+  (Windows).
+- **Vulkan layers installed**: the `VK_LAYER_*` names the Vulkan loader
+  lists, noted at the very start, so a crash while Vulkan starts has them
+  too. A listed layer was not necessarily enabled. **Vulkan layers eligible
+  (known ones)**: those of the viewer's known list that no variable or
+  loader filter turned off, which still does not prove they ran.
+- **GPU errors**: the errors wgpu reported, first of each in the order they
+  came, with their count, ten at most: `out-of-memory`, with the call when
+  the log names it (`out-of-memory in Device::create_bind_group (x2)`), or
+  the wgpu operation that failed (`Queue::write_buffer (x155)`). On a GPU
+  loss with none, the row says so. Their messages stay local: in the log,
+  and up to 50 distinct ones with their labels, counts and age in
+  `gpu-errors-private.txt`.
+- **OS GPU reset records** (GPU loss or stall, or when the OS recorded
+  something): what the operating system noted of a GPU reset from two
+  minutes before to five minutes after the session's end. Linux: the kernel
+  lines of a GPU driver (`journalctl`, else `dmesg`), published as fixed
+  labels (`amdgpu timeout`, `DRM reset`). Windows: Display 4101 and
+  LiveKernelEvent 141 / 117 / 1a8, with their times. The row also says
+  whether the query worked: collected, partial (one event channel
+  unavailable), incomplete (a cap reached) or not collected and why. The
+  kernel lines, event text, TDR / HAGS / MPO registry values and WATCHDOG
+  dump names stay local; the registry values and dumps are read when the
+  report is built and may have changed since the crash. The queries share
+  one two-second budget.
+- **XR runtime**: the VR runtime of the session, as a fixed name (SteamVR,
+  Meta, Virtual Desktop, Monado, Windows Mixed Reality or other), and
+  whether it created the Vulkan device. Only shown when one was loaded.
 - **Last state**: screen, frame rate, frame time, window size, graphics
-  preset, memory, video memory used / budget, texture memory pressure,
+  preset, memory, video memory used / budget, the tightest video memory
+  headroom of the last 60 seconds (the driver's budget less what it
+  counted for the viewer, in MB, negative while the viewer was past its
+  budget: a card shared with another program, where the driver moves
+  memory out and the frames slow down together), texture memory pressure,
   objects, avatars, regions, as noted every 2 seconds, and the swapchain
   recreations of the last 10 seconds (window resizes among them), frozen
-  when the graphics card is lost.
+  when the graphics card is lost. It also tells the cause of a GPU loss
+  apart from another: the graphics switches on (shadows level, contact
+  shadows, ambient occlusion, SSR, anti-aliasing, bloom, indirect light,
+  probes, render scale, draw distance, VR, and photo when one was drawn in
+  the last 10 seconds), the window state
+  (focused, background, minimized, occluded), the latest GPU frame time,
+  the longest one of the last 10 seconds with the pass that took most of it
+  and its ambient occlusion and contact shadows,
+  the texture uploads (count, MB), the seconds since the login began, in
+  the world and since the region changed, what was still loading, how the
+  loss was seen (the
+  reason wgpu gave, the class of its message, the first place that saw it),
+  how long the GPU held the render thread past 2 seconds (no row otherwise:
+  a reset that comes sooner shows in **GPU work at the loss**), the other Aurora viewers on the card (from the viewer registry, not in demo),
+  and the card's memory in use by all programs and by the others (Windows). Fixed words and numbers only.
 - **Recent warnings and errors**: the last 20, as
   `-<seconds before the end> s | level | Rust module | kind`, repeats folded
   (`(x3)`); the messages themselves stay in the local log.
@@ -146,9 +206,16 @@ inlined functions included, to functions and source lines. It then:
 - when an open issue already has the same signature, comments there with
   the new occurrence (version, system, GPU) and closes the new issue as its
   duplicate; otherwise renames the issue `Crash: <kind> in <function>` and
-  sets the Bug type.
+  sets the Bug type;
+- adds the `crash-triaged` label to the issue it signed.
 
-No label is needed: the signature lives in a hidden comment of the body. A
+The signature lives in a hidden comment, the last line of the triage
+section. An open issue is a reference only when it carries the
+`crash-triaged` label (the workflow or a maintainer sets it; a reporter
+cannot) and that line of its own triage section has the same signature: a
+`crash-signature` comment written anywhere else in a body is not read. An
+issue signed before the label existed becomes a reference again once
+"Run workflow" triages it again. A
 closed issue is not a reference: a crash that comes back after its fix
 opens a new issue. "Run workflow" with an issue number triages it again,
 for example once the symbols of its version are published. Locally, on a
@@ -243,7 +310,7 @@ reopening the window or choosing "New report" then prepares a fresh form.
 The browser does not confirm the publication to the viewer: the tester
 clicks "I have published the report" after sending on GitHub to clear the
 draft. Opening GitHub or saving a local copy does not clear it.
-The avatar name and the diagnostics are unticked at first. No SL login
+The location, the avatar name and the diagnostics are unticked at first. No SL login
 state and no full settings are serialised. The public diagnostics keep only
 the recognised warning / error categories: simply removing the URLs or
 UUIDs would not be enough to remove the names and the free texts coming

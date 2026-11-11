@@ -420,6 +420,37 @@ where
     .await
 }
 
+/// What an operation asks of AIS, for the log: its kind and, for a patch,
+/// the field names (never their values nor the capability).
+fn describe(op: &Operation) -> String {
+    match op {
+        Operation::Folder { .. } => "create folder".into(),
+        Operation::Patch { folder, body, .. } => {
+            let fields: Vec<_> = body.as_map().into_iter().flat_map(|m| m.keys().map(String::as_str)).collect();
+            format!("patch {} [{}]", if *folder { "category" } else { "item" }, fields.join(", "))
+        }
+        Operation::Links { links, .. } => format!("create {} link(s)", links.len()),
+        Operation::Delete { folder, .. } => format!("delete {}", if *folder { "category" } else { "item" }),
+        Operation::Purge(_) => "purge folder".into(),
+    }
+}
+
+/// One AIS request of a mutation. A refusal stops the mutation; its step and
+/// the reply's error fields go to the log, the user sees only the status.
+async fn ais(req: reqwest::RequestBuilder, body: &Llsd, (index, total, op): (usize, usize, &Operation)) -> Result<Llsd, String> {
+    crate::outfits::send_detailed(req, body).await.map_err(|refusal| {
+        log::warn!(
+            "inventory operation {}/{total} ({}) failed: HTTP {}, error_code={:?}, error_description={:?}",
+            index + 1,
+            describe(op),
+            refusal.status.map_or_else(|| "no reply".into(), |s| s.to_string()),
+            refusal.code,
+            refusal.description,
+        );
+        refusal.message
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn apply<F, Fut, E, EFut, P>(
     http: &reqwest::Client,
@@ -517,6 +548,7 @@ where
             }
             continue;
         }
+        let step = (index, change.operations.len(), op);
         match op {
             Operation::Folder {
                 id,
@@ -528,7 +560,7 @@ where
                 let body = llsd_map! { "categories" => Llsd::Array(vec![llsd_map! {
                     "category_id" => Uuid::nil(), "parent_id" => parent, "name" => folder_name(name), "type_default" => *type_default,
                 }]) };
-                let reply = crate::outfits::send(http.post(format!("{cap}/category/{parent}?tid={}", Uuid::new_v4())), &body).await?;
+                let reply = ais(http.post(format!("{cap}/category/{parent}?tid={}", Uuid::new_v4())), &body, step).await?;
                 let actual = reply["_created_categories"].at(0).as_uuid();
                 if actual.is_nil() {
                     return Err(aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-the-new-folder-reload").into());
@@ -563,13 +595,13 @@ where
                 }
                 if !fields.is_empty() {
                     let kind = if *folder { "category" } else { "item" };
-                    crate::outfits::send(http.patch(format!("{cap}/{kind}/{id}")), &Llsd::Map(fields)).await?;
+                    ais(http.patch(format!("{cap}/{kind}/{id}")), &Llsd::Map(fields), step).await?;
                 }
             }
             Operation::Links { parent, links } => {
                 let parent = resolve(&created, *parent);
                 let body = llsd_map! { "links" => crate::outfits::links_body(links) };
-                let response = crate::outfits::send(http.post(format!("{cap}/category/{parent}?tid={}", Uuid::new_v4())), &body).await?;
+                let response = ais(http.post(format!("{cap}/category/{parent}?tid={}", Uuid::new_v4())), &body, step).await?;
                 if response["_created_items"].as_array().len() < links.len()
                     || response["_created_items"].as_array().iter().any(|id| id.as_uuid().is_nil())
                 {
@@ -578,10 +610,10 @@ where
             }
             Operation::Delete { id, folder } => {
                 let kind = if *folder { "category" } else { "item" };
-                crate::outfits::send(http.delete(format!("{cap}/{kind}/{id}")), &Llsd::new_map()).await?;
+                ais(http.delete(format!("{cap}/{kind}/{id}")), &Llsd::new_map(), step).await?;
             }
             Operation::Purge(id) => {
-                crate::outfits::send(http.delete(format!("{cap}/category/{id}/children")), &Llsd::new_map()).await?;
+                ais(http.delete(format!("{cap}/category/{id}/children")), &Llsd::new_map(), step).await?;
             }
         }
     }
@@ -970,7 +1002,7 @@ pub async fn save_content(
         body.insert("target", Llsd::String("mono".into()));
     }
     let ack = upload_content(http, cap, &body, data).await?;
-    if kind == 10 && !ack["compiled"].as_bool() {
+    if kind == 10 && !crate::scripts::compile_ok(&ack) {
         return Err(aurora_i18n::tr!("inventory-operations-the-script-contains-compilation-errors-check-the-code-and").into());
     }
     let asset = ack["new_asset"].as_uuid();
@@ -2005,6 +2037,32 @@ mod tests {
             .is_err()
         );
         assert_eq!(task.await.expect("requests").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_ais_refusal_keeps_its_error_fields_for_the_log_only() {
+        let reply = llsd_map! {
+            "error_code" => 400,
+            "error_description" => "Invalid field desc\nfor http://sim.example/cap/0123-4567/item/x?token=1",
+        };
+        let (url, task) = server(vec![(400, reply)]).await;
+        let refusal = crate::outfits::send_detailed(
+            reqwest::Client::new().patch(format!("{url}/item/{}", id(3))),
+            &llsd_map! { "desc" => "2" },
+        )
+        .await
+        .expect_err("refused");
+        assert_eq!(refusal.status, Some(400));
+        assert_eq!(refusal.code, "400");
+        assert_eq!(refusal.description, "Invalid field desc for http://sim.example…");
+        assert!(refusal.message.contains("400") && !refusal.message.contains("Invalid"));
+        task.await.expect("request");
+        let patch = Operation::Patch {
+            id: id(3),
+            folder: false,
+            body: llsd_map! { "desc" => "2" },
+        };
+        assert_eq!(describe(&patch), "patch item [desc]");
     }
 
     #[tokio::test]

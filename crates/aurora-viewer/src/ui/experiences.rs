@@ -137,7 +137,7 @@ impl ExperiencesUi {
     fn search(&mut self, ui: &mut egui::Ui, p: &Palette, world: &mut World) {
         let mut go = false;
         ui.horizontal(|ui| {
-            let field = widgets::search_field(ui, &mut self.query, aurora_i18n::tr!("ui-experiences-search-hint"), 260.0);
+            let field = widgets::search_field(ui, p, &mut self.query, aurora_i18n::tr!("ui-experiences-search-hint"), 260.0);
             go |= field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             go |= widgets::flat_button(ui, p, aurora_i18n::tr!("ui-experiences-search-go")).clicked();
         });
@@ -244,7 +244,11 @@ impl ExperiencesUi {
                                             .strong()
                                             .color(p.ink),
                                     );
-                                    ui.label(RichText::new(format!("{name} · {}", entry.object_name)).size(11.5).color(p.muted));
+                                    ui.label(
+                                        RichText::new(format!("{name} · {}", crate::world::dialog_names::shown(&entry.object_name)))
+                                            .size(11.5)
+                                            .color(p.muted),
+                                    );
                                 });
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                                     ui.label(RichText::new(format!("{} {}", entry.day, entry.time)).size(11.5).color(p.muted));
@@ -252,6 +256,7 @@ impl ExperiencesUi {
                             });
                         });
                     hover_tint(ui, p, frame.response.rect, selected);
+                    widgets::reveal_search_selection(ui, &frame.response, selected);
                     let click = ui.interact(
                         frame.response.rect,
                         ui.make_persistent_id(("xp_log_row", index)),

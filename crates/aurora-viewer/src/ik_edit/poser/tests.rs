@@ -733,6 +733,16 @@ fn poser_window_stays_steady_at_scaled_fonts_and_keeps_the_upload_footer_visible
                     let (world, mut editor) = selected_fixture();
                     editor.poser.library_open = library;
                     editor.poser.settings_open = settings;
+                    editor.poser.storage.message = Some(
+                        aurora_i18n::tr!(
+                            "poser-saved-to",
+                            path = format!(
+                                "/a-long-local-profile-directory/{}/Portrait.aurora-pose.json",
+                                "nested-directory/".repeat(12)
+                            )
+                        )
+                        .to_string(),
+                    );
                     (world, editor)
                 },
                 |(world, editor), ctx, p| {
@@ -817,6 +827,100 @@ fn poser_bone_rows_and_xyz_controls_are_painted_inside_their_scroll_clips() {
     }
 }
 #[test]
+fn poser_name_can_be_replaced_and_survives_idle_frames() {
+    use crate::ui::widgets::elide_tests::{Frames, painted};
+    let (world, mut editor) = selected_fixture();
+    let frame = editor.editor_frame(&world).unwrap();
+    let p = crate::theme::Theme::default().palette();
+    let mut frames = Frames::new();
+    let mut texts = Vec::new();
+    for _ in 0..5 {
+        texts = frames.run(Vec::new(), |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame));
+    }
+    let pointer = painted(&texts, &editor.poser.name).rect.center();
+    for pressed in [true, false] {
+        frames.run(
+            vec![
+                egui::Event::PointerMoved(pointer),
+                egui::Event::PointerButton {
+                    pos: pointer,
+                    pressed,
+                    button: egui::PointerButton::Primary,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame),
+        );
+    }
+    let modifiers = egui::Modifiers {
+        ctrl: true,
+        command: true,
+        ..Default::default()
+    };
+    frames.run(
+        vec![egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }],
+        |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame),
+    );
+    frames.run(
+        vec![
+            egui::Event::Text("Portrait".into()),
+            egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: String::new(),
+                active_range_chars: None,
+            }),
+        ],
+        |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame),
+    );
+    assert_eq!(editor.poser.name, "Portrait");
+    for _ in 0..30 {
+        frames.run(Vec::new(), |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame));
+        assert_eq!(editor.poser.name, "Portrait");
+    }
+}
+#[test]
+fn poser_load_menu_opens_the_existing_library_without_a_file_picker() {
+    use crate::ui::widgets::elide_tests::{Frames, painted};
+    let (world, mut editor) = selected_fixture();
+    let frame = editor.editor_frame(&world).unwrap();
+    let p = crate::theme::Theme::default().palette();
+    editor.poser.storage.ready = true;
+    let mut frames = Frames::new();
+    let mut texts = Vec::new();
+    for _ in 0..5 {
+        texts = frames.run(Vec::new(), |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame));
+    }
+    for label in ["poser-load-menu", "poser-library"] {
+        let pointer = painted(&texts, aurora_i18n::text(label)).rect.center();
+        for pressed in [true, false] {
+            frames.run(
+                vec![
+                    egui::Event::PointerMoved(pointer),
+                    egui::Event::PointerButton {
+                        pos: pointer,
+                        pressed,
+                        button: egui::PointerButton::Primary,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame),
+            );
+        }
+        texts = frames.run(Vec::new(), |ui| editor.poser_ui(ui.ctx(), &p, &world, &frame));
+    }
+    assert!(editor.poser.library_open);
+    assert!(!editor.poser.storage.ready);
+    assert!(
+        editor.poser.storage.job.is_none(),
+        "opening the library must not launch a file picker"
+    );
+}
+#[test]
 fn poser_library_saves_bvh_confirms_overwrite_and_correlates_loads_to_the_original_subject() {
     let (world, editor) = fixture();
     let owner = Uuid::new_v4();
@@ -831,12 +935,74 @@ fn poser_library_saves_bvh_confirms_overwrite_and_correlates_loads_to_the_origin
     let ctx = egui::Context::default();
     let mut service = storage::Service::default();
     let tick = |service: &mut storage::Service| service.tick(&jobs, &ctx, owner, rig.clone(), world.avatar_lib.skeleton.as_ref());
-    service.job = Some(storage::Job::Save(document.clone(), session.pose.clone(), true, true, false));
+    service.filter = "does not match Portrait".into();
+    service.job = Some(storage::Job::Save(storage::Save {
+        document: document.clone(),
+        pose: session.pose.clone(),
+        bvh: true,
+        unlock: true,
+        confirm: false,
+        pick: false,
+    }));
     for _ in 0..3 {
         tick(&mut service);
     }
     assert_eq!(service.entries.len(), 1);
     let path = service.entries[0].path.clone();
+    assert_eq!(service.saved_path, None);
+    assert_eq!(service.selected, Some(0));
+    assert!(service.filter.is_empty(), "a search that hides the saved pose is cleared");
+    assert!(service.scroll_to_selected, "the list scrolls to the saved pose once");
+    assert!(service.message.as_ref().unwrap().contains(path.to_string_lossy().as_ref()));
+
+    // A search the saved pose matches stays.
+    service.filter = "PORT".into();
+    service.scroll_to_selected = false;
+    service.job = Some(storage::Job::Save(storage::Save {
+        document: document.clone(),
+        pose: session.pose.clone(),
+        bvh: true,
+        unlock: true,
+        confirm: false,
+        pick: false,
+    }));
+    for _ in 0..3 {
+        tick(&mut service);
+    }
+    if let Some((document, pose, bvh, unlock)) = service.overwrite.take() {
+        // saving the same name again asks to overwrite: confirm it
+        service.job = Some(storage::Job::Save(storage::Save {
+            document,
+            pose,
+            bvh,
+            unlock,
+            confirm: true,
+            pick: false,
+        }));
+        for _ in 0..3 {
+            tick(&mut service);
+        }
+    }
+    assert_eq!(service.selected, Some(0));
+    assert_eq!(service.filter, "PORT", "a search the saved pose matches is kept");
+    assert!(service.scroll_to_selected);
+    service.scroll_to_selected = false;
+
+    // A user can select an existing row while the post-save refresh is pending.
+    service.saved_path = Some(path.clone());
+    service.ready = false;
+    for _ in 0..3 {
+        tick(&mut service);
+    }
+    assert_eq!(service.selected, Some(0));
+    assert_eq!(service.saved_path, None, "a current selection must consume the pending saved path");
+
+    service.selected = None;
+    service.ready = false;
+    for _ in 0..3 {
+        tick(&mut service);
+    }
+    assert_eq!(service.selected, None, "a later library refresh must not reuse the saved path");
     let bvh = std::fs::read(root.join("poses/Portrait.bvh")).unwrap();
     let imported = aurora_assets::import_animation::parse_bvh_pose(&bvh, world.avatar_lib.skeleton.as_ref().unwrap()).unwrap();
     assert!(
@@ -846,7 +1012,14 @@ fn poser_library_saves_bvh_confirms_overwrite_and_correlates_loads_to_the_origin
             .iter()
             .any(|j| j.joint_name == "mHead" && !j.rot_keys.is_empty())
     );
-    service.job = Some(storage::Job::Save(document, session.pose.clone(), false, false, true));
+    service.job = Some(storage::Job::Save(storage::Save {
+        document,
+        pose: session.pose.clone(),
+        bvh: false,
+        unlock: false,
+        confirm: true,
+        pick: false,
+    }));
     tick(&mut service);
     tick(&mut service);
     assert!(service.overwrite.is_some());
@@ -947,4 +1120,215 @@ fn poser_poses_a_shape_whose_sliders_mirror_face_joints() {
         "{scaled:?}"
     );
     assert_eq!(data::bounded_scale(Vec3::new(-20.0, 0.0, -1e-6)), Vec3::new(-10.0, 0.001, -0.001));
+}
+
+#[test]
+fn poser_poses_and_exports_a_shape_that_leaves_a_joint_almost_flat() {
+    // A slider crossing zero left both pectorals at this scale on a real
+    // avatar: the capture took it, the check behind 0.001 refused the pose,
+    // and neither edits nor Save and Upload did anything.
+    let (mut world, mut editor) = fixture();
+    let lib = world.avatar_lib.clone();
+    let rig = &lib.rig;
+    let mut shape = lib.shape_params.shape(&[0; 260], rig);
+    for name in ["LEFT_PEC", "RIGHT_PEC"] {
+        shape.scale[rig.names[name]].x = -0.00019;
+    }
+    let joints = rig.world_with(&rig.local_rot, Vec3::ZERO, &shape.local_pos, &shape.scale);
+    world.avatar_poses.insert(
+        world.agent_id,
+        joints.iter().zip(&rig.default_world_inv).map(|(p, i)| *p * *i).collect(),
+    );
+    editor.poser.sessions.clear();
+    assert!(editor.pose_layers(&world).contains_key(&world.agent_id), "the avatar is posed");
+    let frame = Frame::new(&world).expect("frame");
+    editor.select(rig.names["mHead"], rig, &frame);
+    editor.set_rotation(Quat::from_rotation_z(0.4));
+    assert!(editor.commit_poser_manipulation(rig, &frame, true));
+    let session = &editor.poser.sessions[&world.agent_id];
+    let authored = session.authored(rig, frame.model).expect("the export has a pose");
+    let moved = authored.rotations[rig.names["mHead"]].dot(rig.local_rot[rig.names["mHead"]]).abs();
+    assert!(moved < 0.999, "the edit is exported");
+    assert!(
+        storage::native(rig, &authored, &[], "Flat".into(), 4).is_ok(),
+        "the upload is prepared"
+    );
+    assert!(
+        document::Document::capture(rig, session, "Flat".into(), 4).valid(rig),
+        "the pose can be saved"
+    );
+}
+
+/// The fixture on a pose it did not make: an animation plays on the avatar
+/// when the poser captures it.
+fn captured_animation() -> (World, Editor, usize, usize, Quat) {
+    let (mut world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let (left, right) = (rig.names["mElbowLeft"], rig.names["mElbowRight"]);
+    let played = Quat::from_euler(EulerRot::ZYX, 0.9, -0.4, 0.7);
+    let mut rotations = rig.local_rot.clone();
+    rotations[left] = played;
+    rotations[rig.names["mHead"]] = Quat::from_rotation_x(0.8);
+    let mut positions = rig.local_pos.clone();
+    positions[rig.pelvis] += Vec3::new(0.1, -0.2, 0.3);
+    world.avatar_poses.insert(
+        world.agent_id,
+        rig.world_with(&rotations, Vec3::ZERO, &positions, &rig.scale)
+            .iter()
+            .zip(&rig.default_world_inv)
+            .map(|(p, i)| *p * *i)
+            .collect(),
+    );
+    editor.poser.sessions.clear();
+    editor.pose_layers(&world);
+    (world, editor, left, right, played)
+}
+fn near(a: Quat, b: Quat) -> bool {
+    a.dot(b).abs() > 0.9999
+}
+#[test]
+fn poser_exports_nothing_of_a_captured_animation_through_any_format() {
+    let (world, editor, left, _, played) = captured_animation();
+    let rig = &world.avatar_lib.rig;
+    let session = &editor.poser.sessions[&world.agent_id];
+    assert!(near(session.pose.rotations[left], played), "the avatar keeps showing its animation");
+    let authored = session.authored(rig, Mat4::IDENTITY).unwrap();
+    for bone in 0..rig.len() {
+        assert!(near(authored.rotations[bone], rig.local_rot[bone]), "{}", rig.canonical_names[bone]);
+        assert!(authored.positions[bone].abs_diff_eq(rig.local_pos[bone], 1e-5));
+    }
+    let native = storage::native(rig, &authored, &[], "Pose".into(), 4).unwrap();
+    let track = native.animation.joints.iter().find(|j| j.joint_name == "mElbowLeft").unwrap();
+    assert!(near(track.rot_keys[0].rotation, rig.local_rot[left]));
+    let pelvis = native.animation.joints.iter().find(|j| j.joint_name == "mPelvis").unwrap();
+    assert!(pelvis.pos_keys[0].position.abs_diff_eq(Vec3::ZERO, 1e-4));
+    let bvh = bvh::encode(rig, &authored, true).unwrap();
+    assert!(
+        aurora_assets::import_animation::parse_bvh(bvh.as_bytes(), world.avatar_lib.skeleton.as_ref().unwrap()).is_err(),
+        "nothing moves in the file"
+    );
+    let document = document::Document::capture(rig, session, "Pose".into(), 4);
+    let text = serde_json::to_string(&document).unwrap();
+    let decoded: document::Document = serde_json::from_str(&text).unwrap();
+    let mut other = data::Session::new(SubjectPose {
+        rotations: rig.local_rot.clone(),
+        positions: rig.local_pos.clone(),
+        scales: rig.scale.clone(),
+        locks: Default::default(),
+        origin: rig.local_rot.clone(),
+    });
+    assert!(decoded.apply(rig, &mut other, document::LoadMode::All, Mat4::IDENTITY));
+    assert!(
+        (0..rig.len()).all(|b| near(other.pose.rotations[b], rig.local_rot[b])),
+        "a saved file brings none of it to another avatar"
+    );
+}
+#[test]
+fn poser_touching_or_mirroring_joints_exports_the_change_and_not_the_captured_rotation() {
+    let (world, mut editor, left, right, played) = captured_animation();
+    let rig = world.avatar_lib.rig.clone();
+    let frame = Frame::new(&world).unwrap();
+    let change = Quat::from_rotation_z(0.2);
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    Arc::make_mut(&mut session.pose).rotations[left] = played * change;
+    let authored = session.authored(&rig, frame.model).unwrap();
+    assert!(near(authored.rotations[left], rig.local_rot[left] * change));
+    editor.select(left, &rig, &frame);
+    editor.pose_operation(&rig, &frame, controls::Operation::Mirror);
+    let session = &editor.poser.sessions[&world.agent_id];
+    assert!(session.edited(right), "the right arm shows the mirrored pose");
+    let authored = session.authored(&rig, frame.model).unwrap();
+    let mirrored = data::mirrored(&rig, rig.local_rot[left] * change, left, right);
+    assert!(near(authored.rotations[right], mirrored), "the mirror carries the change only");
+    editor.pose_operation(&rig, &frame, controls::Operation::Flip);
+    let authored = editor.poser.sessions[&world.agent_id].authored(&rig, frame.model).unwrap();
+    assert!(near(authored.rotations[rig.names["mHead"]], rig.local_rot[rig.names["mHead"]]));
+    assert!(near(authored.rotations[left], rig.local_rot[left] * change));
+    editor.poser.preset = 1;
+    editor.hand_preset(&rig, Some(true));
+    let session = &editor.poser.sessions[&world.agent_id];
+    let authored = session.authored(&rig, frame.model).unwrap();
+    let finger = rig.names["mHandIndex1Left"];
+    assert!(
+        near(authored.rotations[finger], session.pose.rotations[finger]),
+        "a preset is the user's"
+    );
+}
+#[test]
+fn poser_t_pose_makes_the_whole_pose_the_users_until_undo_or_reset() {
+    let (world, mut editor, left, _, played) = captured_animation();
+    let rig = world.avatar_lib.rig.clone();
+    let frame = Frame::new(&world).unwrap();
+    editor.select(left, &rig, &frame);
+    editor.pose_operation(&rig, &frame, controls::Operation::TPose);
+    let built = Quat::from_rotation_y(0.5);
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    session.checkpoint();
+    Arc::make_mut(&mut session.pose).rotations[left] = built;
+    let authored = session.authored(&rig, frame.model).unwrap();
+    assert!(near(authored.rotations[left], built), "built from the T-pose, it exports in full");
+    let document = document::Document::capture(&rig, session, "Built".into(), 4);
+    let mut other = data::Session::new((*session.base).clone());
+    assert!(document.apply(&rig, &mut other, document::LoadMode::All, Mat4::IDENTITY));
+    assert!(near(other.pose.rotations[left], built), "a complete file reloads as it was");
+    assert!(
+        near(other.authored(&rig, frame.model).unwrap().rotations[left], built),
+        "and stays the user's on the avatar it is loaded on"
+    );
+    session.history(false);
+    session.history(false);
+    assert!(near(session.pose.rotations[left], played));
+    assert!(
+        near(session.authored(&rig, frame.model).unwrap().rotations[left], rig.local_rot[left]),
+        "undo restores the origin"
+    );
+    session.history(true);
+    editor.pose_operation(&rig, &frame, controls::Operation::ResetJoint);
+    let session = &editor.poser.sessions[&world.agent_id];
+    assert!(near(session.pose.rotations[left], played));
+    assert!(near(
+        session.authored(&rig, frame.model).unwrap().rotations[left],
+        rig.local_rot[left]
+    ));
+    editor.pose_operation(&rig, &frame, controls::Operation::ResetAll);
+    assert!(near(editor.poser.sessions[&world.agent_id].pose.origin[left], played));
+}
+#[test]
+fn poser_a_saved_change_applies_on_the_destinations_own_pose_and_older_files_still_load() {
+    let (world, editor, left, _, played) = captured_animation();
+    let rig = &world.avatar_lib.rig;
+    let change = Quat::from_rotation_z(0.2);
+    let mut session = editor.poser.sessions[&world.agent_id].clone();
+    Arc::make_mut(&mut session.pose).rotations[left] = played * change;
+    let document = document::Document::capture(rig, &session, "Change".into(), 4);
+    let mut same = data::Session::new((*session.base).clone());
+    assert!(document.apply(rig, &mut same, document::LoadMode::All, Mat4::IDENTITY));
+    assert!(near(same.pose.rotations[left], played * change), "reloaded over the same pose");
+    let older = br#"{"name":"mElbowLeft","rotation":[0.0,0.0,0.0,1.0],"translation":[0.0,0.0,0.0],"scale":[1.0,1.0,1.0],"locked":false}"#;
+    let older: document::Joint = serde_json::from_slice(older).unwrap();
+    assert_eq!(older.name, "mElbowLeft");
+}
+#[test]
+fn poser_title_eye_hides_and_shows_the_markers_and_gizmos() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (world, mut editor) = selected_fixture();
+    let frame = editor.editor_frame(&world).unwrap();
+    let mut frames = Frames::new();
+    let p = crate::theme::Theme::default().palette();
+    crate::ui::widgets::place_floater(&frames.ctx, "poser", egui::pos2(30.0, 30.0), egui::vec2(880.0, 760.0));
+    assert!(editor.poser.markers);
+    // the eye shows what is on screen: open, then struck through once hidden
+    for (icon, after) in [("eye-filled", false), ("eye-off", true)] {
+        for _ in 0..3 {
+            frames.run(Vec::new(), |ui: &mut egui::Ui| editor.poser_ui(ui.ctx(), &p, &world, &frame));
+        }
+        let eye = frames
+            .ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("floater_action", "poser", icon))))
+            .unwrap_or_else(|| panic!("the title shows {icon}"))
+            .center();
+        frames.run(click(eye), |ui: &mut egui::Ui| editor.poser_ui(ui.ctx(), &p, &world, &frame));
+        assert_eq!(editor.poser.markers, after, "{icon} toggles the settings' switch");
+        assert!(!editor.poser.settings_open, "no detour through the settings");
+    }
 }

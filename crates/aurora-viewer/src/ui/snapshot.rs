@@ -135,6 +135,9 @@ pub struct View<'a> {
     pub message: Option<&'a (String, bool)>,
     pub last_saved: Option<&'a Path>,
     pub gallery: &'a [(PathBuf, Option<egui::TextureHandle>)],
+    /// The session's photos, shown instead of the folder's once there is
+    /// one (None in the Legacy style).
+    pub reel: Option<crate::ui::photo_reel::ReelView<'a>>,
     pub folder: PathBuf,
     /// The destination is the inventory.
     pub inventory: Option<InventoryView>,
@@ -194,6 +197,8 @@ pub enum Action {
     RemoveLut(String),
     /// Show the folder of the tables.
     OpenLutFolder,
+    /// The session's photos (`ui::photo_reel`).
+    Reel(crate::ui::photo_reel::ReelAction),
 }
 
 impl SnapshotUi {
@@ -430,7 +435,7 @@ impl SnapshotUi {
     /// quality (SnapshotQuality, shared with the disk's JPEG). An empty
     /// subject or message is sent with the default shown in the field
     /// (PromptMissingSubjMsg's choice, without the question).
-    fn postcard_form(&mut self, ui: &mut egui::Ui, p: &Palette, s: &mut Settings, mail: &EmailView) {
+    pub(crate) fn postcard_form(&mut self, ui: &mut egui::Ui, p: &Palette, s: &mut Settings, mail: &EmailView) {
         if !mail.available {
             ui.label(RichText::new(aurora_i18n::tr!("photo-email-unavailable")).color(p.muted));
         }
@@ -822,6 +827,9 @@ impl SnapshotUi {
                     }
                 });
             });
+            // (above the reel's quick view, which raises its layers every frame)
+            ctx.move_to_top(response.backdrop_response.layer_id);
+            ctx.move_to_top(response.response.layer_id);
             if answer.is_none() && response.should_close() {
                 answer = Some(false);
             }
@@ -837,6 +845,8 @@ impl SnapshotUi {
                     close = true;
                 }
             });
+            ctx.move_to_top(response.backdrop_response.layer_id);
+            ctx.move_to_top(response.response.layer_id);
             if close || response.should_close() {
                 out.push(Action::CloseAfford);
             }
@@ -1484,29 +1494,41 @@ fn preview(ui: &mut egui::Ui, p: &Palette, s: &Settings, view: &View) -> bool {
     resp.on_hover_text(aurora_i18n::tr!("photo-refresh")).clicked()
 }
 
-/// The latest photos and "Open the folder".
+/// The latest photos and "Open the folder": the session's reel once it
+/// has a photo (its stack, the older ones after it; a click opens the
+/// quick view), the folder's latest before that and in the Legacy style.
 fn gallery(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Vec<Action>) {
     ui.add_space(2.0);
+    if let Some(reel) = view.reel.filter(|r| !r.photos.is_empty()) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let mut asked = Vec::new();
+            let stack = crate::ui::photo_reel::stack(ui, p, &reel, 34.0, reel.photos.len());
+            if stack.clicked() {
+                asked.push(crate::ui::photo_reel::ReelAction::Show(reel.photos[0].id));
+            }
+            // the room left of the folder's button
+            let width = ui.available_width() - 30.0 - ui.spacing().item_spacing.x;
+            crate::ui::photo_reel::strip(ui, p, &reel, 1, width, &mut asked);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if widgets::action_button(ui, p, "folder-open-filled", "", ActionKind::Flat, Vec2::new(30.0, 26.0))
+                    .on_hover_text(aurora_i18n::tr!("photo-open-folder"))
+                    .clicked()
+                {
+                    out.push(Action::OpenFolder);
+                }
+            });
+            out.extend(asked.into_iter().map(Action::Reel));
+        });
+        return;
+    }
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         let radius = ui.visuals().window_corner_radius;
         for (path, tex) in view.gallery {
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(54.0, 34.0), Sense::click());
-            ui.painter().rect_filled(rect, radius, p.field);
-            if let Some(t) = tex {
-                let size = t.size_vec2();
-                // the middle of the photo, filling the thumbnail
-                let r = size.x / size.y.max(1.0);
-                let want = rect.width() / rect.height();
-                let uv = if r > want {
-                    let w = want / r;
-                    Rect::from_min_max(Pos2::new(0.5 - w / 2.0, 0.0), Pos2::new(0.5 + w / 2.0, 1.0))
-                } else {
-                    let h = r / want;
-                    Rect::from_min_max(Pos2::new(0.0, 0.5 - h / 2.0), Pos2::new(1.0, 0.5 + h / 2.0))
-                };
-                ui.painter().image(t.id(), rect, uv, widgets::PICTURE_TINT);
-            }
+            // the middle of the photo, filling the thumbnail
+            crate::ui::photo_reel::picture(ui.painter(), p, rect, radius, tex.as_ref());
             let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             if resp.on_hover_text(name).clicked() {
                 out.push(Action::OpenPhoto(path.clone()));

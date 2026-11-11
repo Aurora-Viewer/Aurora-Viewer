@@ -16,8 +16,8 @@ use aurora_audio::{AudioEngine, Channel, SoundClip};
 use aurora_net::fetch::{FetchRequest, FetchResult, Fetcher, Lane};
 use aurora_net::objects::AttachedSound;
 use glam::Vec3;
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -44,6 +44,14 @@ const UNDERWATER_ROLLOFF: f32 = 5.0;
 /// A one-shot sound not loaded by then is dropped (a late sound would be
 /// out of place).
 const ONE_SHOT_PATIENCE: Duration = Duration::from_secs(10);
+/// Decoded sounds kept in memory besides the interface ones: the oldest
+/// unused goes first past this count (LL_MAX_AUDIO_BUFFERS and
+/// LLAudioEngine::getFreeBuffer, llaudio/llaudioengine.cpp)...
+const MAX_DECODED_CLIPS: usize = 60;
+/// ...or past this memory (interleaved f32 stereo at 48 kHz: about six
+/// minutes of sound). A sound dropped is decoded again from the disk cache
+/// when it is wanted again; one playing or waiting to play is never dropped.
+const DECODED_BUDGET: usize = 128 << 20;
 
 /// Collision sounds (LLMaterialTable::isCollisionSound: SL and OpenSim
 /// material pairs, llmessage/sound_ids.cpp): EnableCollisionSounds.
@@ -113,10 +121,16 @@ pub fn is_collision(id: &Uuid) -> bool {
 #[derive(Default)]
 struct Clip {
     clip: Option<Arc<SoundClip>>,
-    /// 0 new, 1 reading the cache, 2 downloading, 3 ready, 4 failed.
+    /// 0 new, 1 reading the cache, 2 downloading, 3 ready, 4 failed,
+    /// 5 decoded once then dropped from memory (read again when wanted).
     state: u8,
     failures: u32,
+    gesture: bool,
     retry_at: Option<Instant>,
+    /// Interface sound (or one made locally): never dropped from memory.
+    kept: bool,
+    /// Last time it was wanted or played (a tick of `SoundManager::used`).
+    used: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -244,6 +258,8 @@ pub struct SoundManager {
     pub history: history::History,
     previews: HashMap<Uuid, (Instant, Option<Playing>)>,
     clips: HashMap<Uuid, Clip>,
+    /// Clock of `Clip::used`.
+    used: u64,
     by_key: HashMap<u64, Uuid>,
     next_key: u64,
     cache_dir: PathBuf,
@@ -259,6 +275,11 @@ pub struct SoundManager {
     radius: HashMap<Uuid, f32>,
     /// The world sounds playing at a place, from the last update.
     audible: Vec<Audible>,
+}
+
+/// The disk cache file of sound `id` in the store `cache_dir`.
+pub fn cache_file(cache_dir: &Path, id: &Uuid) -> PathBuf {
+    crate::cache::path(cache_dir, "sound", id, "ogg")
 }
 
 impl SoundManager {
@@ -289,6 +310,7 @@ impl SoundManager {
             history: Default::default(),
             previews: HashMap::new(),
             clips: HashMap::new(),
+            used: 0,
             by_key: HashMap::new(),
             next_key: 1,
             cache_dir,
@@ -303,7 +325,7 @@ impl SoundManager {
         }
     }
 
-    /// A sound made locally (offline demo).
+    /// A sound made locally (offline demo): kept, as no cache holds it.
     pub fn insert(&mut self, id: Uuid, clip: SoundClip) {
         self.clips.insert(
             id,
@@ -311,24 +333,67 @@ impl SoundManager {
                 clip: Some(Arc::new(clip)),
                 state: 3,
                 failures: 0,
+                gesture: false,
                 retry_at: None,
+                kept: true,
+                used: 0,
             },
         );
     }
 
     /// Ask for a sound (PreloadSound, or before playing it).
     pub fn want(&mut self, id: Uuid) {
-        if !id.is_nil() {
-            self.clips.entry(id).or_default();
+        if id.is_nil() {
+            return;
+        }
+        self.used += 1;
+        let c = self.clips.entry(id).or_default();
+        c.used = self.used;
+        if c.state == 5 {
+            c.state = 0;
         }
     }
 
-    pub fn asset_settled(&self, id: &Uuid) -> bool {
-        self.clips.get(id).is_some_and(|entry| entry.state >= 3)
+    /// LLGestureMgr::playGesture's priority sound preload. Re-rank an
+    /// existing queued download too, without sending a duplicate request.
+    pub fn preload_gesture(&mut self, id: Uuid, fetcher: &Fetcher) {
+        if id.is_nil() {
+            return;
+        }
+        self.want(id);
+        let clip = self.clips.get_mut(&id).expect("want registered the sound");
+        if !clip.gesture {
+            clip.gesture = true;
+            for (&key, asset) in &self.by_key {
+                if *asset == id {
+                    fetcher.reprioritise(key, urgent::GESTURE);
+                }
+            }
+        }
     }
 
-    fn ready(&self, id: &Uuid) -> Option<Arc<SoundClip>> {
-        self.clips.get(id).and_then(|c| c.clip.clone())
+    /// An interface sound: wanted, and kept in memory once decoded.
+    pub fn want_kept(&mut self, id: Uuid) {
+        self.want(id);
+        if let Some(c) = self.clips.get_mut(&id) {
+            c.kept = true;
+        }
+    }
+
+    /// A cache miss still needs its first HTTP request; a failed download
+    /// lets the gesture continue, as LLGestureMgr::onAssetLoadComplete does.
+    pub fn asset_settled(&self, id: &Uuid) -> bool {
+        self.clips
+            .get(id)
+            .is_some_and(|entry| matches!(entry.state, 3 | 5) || (entry.state == 4 && entry.failures > 0))
+    }
+
+    fn ready(&mut self, id: &Uuid) -> Option<Arc<SoundClip>> {
+        let c = self.clips.get_mut(id)?;
+        let clip = c.clip.clone()?;
+        self.used += 1;
+        c.used = self.used;
+        Some(clip)
     }
 
     fn failed(&self, id: &Uuid) -> bool {
@@ -480,12 +545,14 @@ impl SoundManager {
 
     /// Cache reads and downloads of the wanted sounds.
     pub fn fetch(&mut self, jobs: &Jobs, fetcher: &Fetcher, viewer_asset: Option<&str>) {
+        let mut decoded = false;
         while let Ok((id, clip, from_cache)) = self.rx.try_recv() {
             if let Some(c) = self.clips.get_mut(&id) {
                 match clip {
                     Some(clip) => {
                         c.clip = Some(clip);
                         c.state = 3;
+                        decoded = true;
                     }
                     None if from_cache => c.state = 4,
                     None => {
@@ -496,6 +563,9 @@ impl SoundManager {
                 }
             }
         }
+        if decoded {
+            self.drop_unused_clips(MAX_DECODED_CLIPS, DECODED_BUDGET);
+        }
         let now = Instant::now();
         for (id, c) in self.clips.iter_mut() {
             if c.retry_at.is_some_and(|t| now < t) {
@@ -503,7 +573,7 @@ impl SoundManager {
             }
             if c.state == 0 {
                 c.state = 1;
-                let path = self.cache_dir.join("sound").join(format!("{id}.ogg"));
+                let path = cache_file(&self.cache_dir, id);
                 let tx = self.tx.clone();
                 let id = *id;
                 jobs.spawn(move || {
@@ -527,11 +597,54 @@ impl SoundManager {
                     url: super::textures::asset_url(base, "sound_id", id),
                     range: None,
                     // sounds are small and late ones are useless
-                    priority: urgent::SOUND,
+                    priority: if c.gesture { urgent::GESTURE } else { urgent::SOUND },
                     lane: Lane::Urgent,
                     accept: "*/*",
                 });
             }
+        }
+    }
+
+    /// Drops the least recently used decoded sounds past
+    /// [`MAX_DECODED_CLIPS`] or [`DECODED_BUDGET`], except the kept ones
+    /// and those playing or waiting to play (LLAudioEngine::getFreeBuffer
+    /// takes over the oldest buffer not in use).
+    fn drop_unused_clips(&mut self, max_clips: usize, budget: usize) {
+        let held = |c: &Clip| c.clip.as_ref().filter(|_| !c.kept).map(|clip| clip.memory_bytes());
+        let (mut count, mut bytes) = self
+            .clips
+            .values()
+            .filter_map(held)
+            .fold((0usize, 0usize), |(n, b), size| (n + 1, b + size));
+        if count <= max_clips && bytes <= budget {
+            return;
+        }
+        let wanted: HashSet<Uuid> = self
+            .sources
+            .values()
+            .flat_map(|s| [Some(s.sound), s.queued])
+            .flatten()
+            .chain(self.triggered.iter().map(|t| t.sound))
+            .chain(self.previews.keys().copied())
+            .chain(self.ui_pending.iter().map(|(id, _)| *id))
+            .collect();
+        let mut idle: Vec<(u64, Uuid, usize)> = self
+            .clips
+            .iter()
+            .filter(|(id, c)| !wanted.contains(*id) && c.clip.as_ref().is_some_and(|clip| !clip.is_shared()))
+            .filter_map(|(id, c)| Some((c.used, *id, held(c)?)))
+            .collect();
+        idle.sort_unstable_by_key(|&(used, ..)| used);
+        for (_, id, size) in idle {
+            if count <= max_clips && bytes <= budget {
+                break;
+            }
+            if let Some(c) = self.clips.get_mut(&id) {
+                c.clip = None;
+                c.state = 5;
+            }
+            count -= 1;
+            bytes -= size;
         }
     }
 
@@ -541,7 +654,7 @@ impl SoundManager {
         };
         match r.data {
             Ok(d) => {
-                let path = self.cache_dir.join("sound").join(format!("{id}.ogg"));
+                let path = cache_file(&self.cache_dir, &id);
                 let tx = self.tx.clone();
                 jobs.spawn(move || {
                     let clip = match SoundClip::decode(&d) {
@@ -1050,6 +1163,165 @@ fn same_seat(world: &World, source: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gesture_sound_preload_waits_past_a_cache_miss() {
+        let mut sounds = SoundManager::new(std::env::temp_dir().join("aurora-gesture-sound-preload-tests"));
+        let id = Uuid::from_u128(2931);
+        sounds.want(id);
+        assert!(!sounds.asset_settled(&id));
+        sounds.clips.get_mut(&id).expect("requested").state = 4;
+        assert!(!sounds.asset_settled(&id), "a cache miss still needs its HTTP request");
+        sounds.clips.get_mut(&id).expect("requested").failures = 1;
+        assert!(sounds.asset_settled(&id), "an actual failure must let the gesture continue");
+    }
+
+    /// Saturate the fetcher, then play a sound while crowd animations wait.
+    /// A fresh preload and an existing queued download must both take the
+    /// next free slot, without duplicate downloads (#2931).
+    #[test]
+    fn gesture_sound_download_passes_queued_crowd_animations() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::mpsc;
+        for already_queued in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("loopback");
+            let address = listener.local_addr().expect("address");
+            let (started_tx, started_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
+            let server = std::thread::spawn(move || {
+                let mut paths = Vec::new();
+                for index in 0..3 {
+                    let (mut stream, _) = listener.accept().expect("connection");
+                    stream.set_read_timeout(Some(Duration::from_secs(10))).expect("timeout");
+                    let mut headers = Vec::new();
+                    while !headers.ends_with(b"\r\n\r\n") {
+                        let mut byte = [0];
+                        stream.read_exact(&mut byte).expect("headers");
+                        headers.push(byte[0]);
+                    }
+                    paths.push(
+                        String::from_utf8(headers)
+                            .expect("HTTP")
+                            .lines()
+                            .next()
+                            .expect("request")
+                            .to_owned(),
+                    );
+                    if index == 0 {
+                        started_tx.send(()).expect("started");
+                        release_rx.recv_timeout(Duration::from_secs(10)).expect("release");
+                    }
+                    stream
+                        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                        .expect("reply");
+                }
+                paths
+            });
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .expect("runtime");
+            let (fetcher, results) = Fetcher::new(
+                runtime.handle(),
+                reqwest::Client::builder().no_proxy().build().expect("HTTP"),
+                1,
+                Arc::new(aurora_net::stats::NetStats::default()),
+            );
+            let request = |key, path: &str, priority| FetchRequest {
+                key,
+                url: format!("http://{address}/{path}"),
+                range: None,
+                priority,
+                lane: Lane::Urgent,
+                accept: "*/*",
+            };
+            fetcher.request(request(1, "busy", urgent::ANIMATION));
+            started_rx.recv_timeout(Duration::from_secs(10)).expect("saturated");
+            fetcher.request(request(2, "crowd", urgent::ANIMATION));
+            let mut sounds = SoundManager::new(std::env::temp_dir().join("aurora-gesture-queue-tests"));
+            let id = Uuid::from_u128(2931);
+            sounds.want(id);
+            sounds.clips.get_mut(&id).expect("wanted").state = 4;
+            let (jobs, _) = Jobs::new();
+            let base = format!("http://{address}/asset");
+            if already_queued {
+                sounds.fetch(&jobs, &fetcher, Some(&base));
+            }
+            sounds.preload_gesture(id, &fetcher);
+            if !already_queued {
+                sounds.fetch(&jobs, &fetcher, Some(&base));
+            }
+            release_tx.send(()).expect("free the slot");
+            for _ in 0..3 {
+                assert!(results.recv_timeout(Duration::from_secs(10)).expect("result").data.is_ok());
+            }
+            let paths = server.join().expect("server");
+            assert!(paths[1].contains("sound_id="), "gesture waited behind crowd: {paths:?}");
+            assert!(paths[2].contains("/crowd "), "one gesture request only: {paths:?}");
+        }
+    }
+
+    /// A sound decoded from the cache (not kept), wanted now.
+    fn decoded(sounds: &mut SoundManager, id: Uuid, frames: usize) {
+        sounds.want(id);
+        let c = sounds.clips.get_mut(&id).expect("wanted");
+        c.clip = Some(Arc::new(SoundClip::from_pcm(&vec![0.0; frames], 1, 48_000)));
+        c.state = 3;
+    }
+
+    fn in_memory(sounds: &SoundManager, id: u128) -> bool {
+        sounds.clips.get(&Uuid::from_u128(id)).is_some_and(|c| c.clip.is_some())
+    }
+
+    #[test]
+    fn decoded_sounds_past_the_count_go_oldest_first_except_those_in_use() {
+        let mut sounds = SoundManager::new(std::env::temp_dir().join("aurora-sound-memory-tests"));
+        for i in 1..=8u128 {
+            decoded(&mut sounds, Uuid::from_u128(i), 480);
+        }
+        // in use: an object's sound, a queued one, a triggered one, a clip the mixer plays
+        sounds.set_attached(None, Uuid::from_u128(100), Uuid::from_u128(1), 1.0, FLAG_LOOP);
+        sounds.sources.get_mut(&Uuid::from_u128(100)).expect("source").queued = Some(Uuid::from_u128(2));
+        sounds.trigger(Uuid::from_u128(3), Vec3::ZERO, None, 1.0);
+        let voice = sounds.clips[&Uuid::from_u128(4)].clip.as_deref().cloned();
+        // an interface sound, kept however old
+        sounds.want_kept(Uuid::from_u128(5));
+        sounds.clips.get_mut(&Uuid::from_u128(5)).expect("kept").used = 0;
+        // 6 is the oldest idle sound, then 7; 8 was just played
+        let _ = sounds.ready(&Uuid::from_u128(8));
+
+        sounds.drop_unused_clips(5, usize::MAX);
+        for kept in [1, 2, 3, 4, 5, 8] {
+            assert!(in_memory(&sounds, kept), "{kept}");
+        }
+        assert!(!in_memory(&sounds, 6) && !in_memory(&sounds, 7));
+        assert!(sounds.asset_settled(&Uuid::from_u128(6)), "a dropped sound stays known as good");
+
+        // wanted again: read from the cache again
+        sounds.want(Uuid::from_u128(6));
+        assert_eq!(sounds.clips[&Uuid::from_u128(6)].state, 0);
+        drop(voice);
+    }
+
+    #[test]
+    fn decoded_sounds_past_the_memory_budget_are_dropped() {
+        let mut sounds = SoundManager::new(std::env::temp_dir().join("aurora-sound-memory-tests"));
+        // 4800 mono frames: 38 400 bytes once stereo
+        for i in 1..=4u128 {
+            decoded(&mut sounds, Uuid::from_u128(i), 4_800);
+        }
+        sounds.drop_unused_clips(MAX_DECODED_CLIPS, 2 * 38_400);
+        assert!(!in_memory(&sounds, 1) && !in_memory(&sounds, 2));
+        assert!(in_memory(&sounds, 3) && in_memory(&sounds, 4));
+
+        // nothing to drop when everything is in use: the budget is exceeded, not the playback
+        sounds.trigger(Uuid::from_u128(3), Vec3::ZERO, None, 1.0);
+        sounds.trigger(Uuid::from_u128(4), Vec3::ZERO, None, 1.0);
+        sounds.drop_unused_clips(MAX_DECODED_CLIPS, 0);
+        assert!(in_memory(&sounds, 3) && in_memory(&sounds, 4));
+    }
 
     #[test]
     fn sound_explorer_logs_actual_playback_and_stops_only_that_voice() {

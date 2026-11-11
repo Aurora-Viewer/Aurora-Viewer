@@ -756,3 +756,200 @@ fn a_link_can_be_pasted_into_an_outfit_folder_but_a_copy_cannot() {
     let change = paste(&inv, &mixed, id(9701), false, true, &none, &none).expect("the wearable is linked");
     assert_eq!(change.operations.len(), 1, "only the wearable");
 }
+
+#[test]
+fn an_asset_uuid_shows_for_full_permissions_or_a_built_in_texture() {
+    let mut inv = Inventory::default();
+    let asset = id(9801);
+    assert!(!asset_uuid_shown(&inv, asset), "not in the inventory");
+    assert!(asset_uuid_shown_to(&inv, asset, true), "a god may see any asset UUID");
+    assert!(asset_uuid_shown(&inv, aurora_prim::te::BLANK_TEXTURE));
+    assert!(asset_uuid_shown(&inv, aurora_prim::te::TRANSPARENT_TEXTURE));
+    for missing in [COPY, MODIFY, TRANSFER] {
+        inv.items.insert(
+            id(9802),
+            InvItem {
+                id: id(9802),
+                asset_id: asset,
+                owner_mask: FULL & !missing,
+                ..Default::default()
+            },
+        );
+        assert!(!asset_uuid_shown(&inv, asset), "missing permission {missing:x}");
+    }
+    inv.items.insert(
+        id(9803),
+        InvItem {
+            id: id(9803),
+            asset_id: asset,
+            owner_mask: FULL,
+            ..Default::default()
+        },
+    );
+    assert!(asset_uuid_shown(&inv, asset), "a second item gives full permissions");
+}
+
+#[test]
+fn the_agent_holds_the_owner_mask_of_its_items_and_the_everyone_mask_of_others() {
+    let (agent, library) = (id(9901), id(9902));
+    let item = |owner, group_owned| InvItem {
+        owner,
+        group_owned,
+        owner_mask: FULL,
+        everyone_mask: COPY,
+        ..Default::default()
+    };
+    assert_eq!(agent_mask(&item(agent, false), agent), FULL, "its own item");
+    assert_eq!(agent_mask(&item(library, false), agent), COPY, "a Library item");
+    assert_eq!(agent_mask(&item(agent, true), agent), COPY, "group owned");
+    assert_eq!(agent_mask(&item(Uuid::nil(), false), agent), FULL, "built here, no owner yet");
+    assert_eq!(agent_mask(&item(library, false), Uuid::nil()), FULL, "before the login");
+    let inv = Inventory {
+        owner: agent,
+        ..Default::default()
+    };
+    assert_eq!(held(&inv, &item(agent, false)), FULL);
+    assert_eq!(held(&inv, &item(library, false)), COPY);
+}
+
+#[test]
+fn the_agent_holds_the_everyone_mask_of_contents_in_someone_elses_object() {
+    let (agent, friend) = (id(9921), id(9922));
+    let item = |owner_id, group_owned| aurora_net::build::TaskItem {
+        owner_id,
+        group_owned,
+        owner_mask: FULL,
+        everyone_mask: COPY,
+        ..Default::default()
+    };
+    assert_eq!(task_agent_mask(&item(agent, false), agent), FULL, "its own object's contents");
+    assert_eq!(task_agent_mask(&item(friend, false), agent), COPY, "an object it may only modify");
+    assert_eq!(task_agent_mask(&item(agent, true), agent), COPY, "group owned");
+}
+
+#[test]
+fn a_library_item_shows_its_asset_uuid_by_what_it_allows_everyone() {
+    let (agent, library, asset) = (id(9911), id(9912), id(9913));
+    let mut inv = Inventory {
+        owner: agent,
+        ..Default::default()
+    };
+    let mut lib_item = InvItem {
+        id: id(9914),
+        owner: library,
+        asset_id: asset,
+        owner_mask: FULL,
+        everyone_mask: COPY,
+        ..Default::default()
+    };
+    inv.items.insert(lib_item.id, lib_item.clone());
+    assert!(!asset_uuid_shown(&inv, asset), "full for the Library's account only");
+    lib_item.everyone_mask = FULL;
+    inv.items.insert(lib_item.id, lib_item);
+    assert!(asset_uuid_shown(&inv, asset), "full for everyone");
+}
+
+#[test]
+fn next_owner_rights_need_the_owners_transfer() {
+    let item = |owner_mask: u32, asset_type: i32, inv_type: i32| InvItem {
+        owner_mask,
+        asset_type,
+        inv_type,
+        ..Default::default()
+    };
+    let full = COPY | MODIFY | TRANSFER;
+    assert!(next_owner_editable(&item(full, 6, 6)));
+    assert!(!next_owner_editable(&item(COPY | MODIFY, 6, 6)), "no transfer for the owner");
+    // LLInventoryType::cannotRestrictPermissions
+    assert!(!next_owner_editable(&item(full, 2, 2)), "calling card");
+    assert!(!next_owner_editable(&item(full, 3, 3)), "landmark");
+}
+
+#[test]
+fn a_no_copy_object_is_not_restored_to_its_last_position_in_second_life() {
+    let object = |owner_mask: u32| InvItem {
+        owner_mask,
+        asset_type: 6,
+        ..Default::default()
+    };
+    assert!(restorable(&object(COPY | MODIFY | TRANSFER), false));
+    assert!(!restorable(&object(MODIFY | TRANSFER), false));
+    assert!(restorable(&object(MODIFY | TRANSFER), true), "OpenSim keeps it");
+}
+
+#[test]
+fn god_permission_table_keeps_ordinary_agent_rights_and_grants_only_asset_bits() {
+    let (agent, other, asset) = (id(9951), id(9952), id(9953));
+    for (name, owner, group_owned, owner_mask, everyone_mask, ordinary) in [
+        ("owner", agent, false, FULL, 0, FULL),
+        ("group owned", agent, true, FULL, COPY, COPY),
+        ("other", other, false, FULL, 0, 0),
+        ("Library", other, false, 0, FULL, FULL),
+        ("no copy", agent, false, FULL & !COPY, 0, FULL & !COPY),
+        ("no transfer", agent, false, FULL & !TRANSFER, 0, FULL & !TRANSFER),
+        ("no modify", agent, false, FULL & !MODIFY, 0, FULL & !MODIFY),
+    ] {
+        let item = InvItem {
+            id: id(9954),
+            asset_id: asset,
+            owner,
+            group_owned,
+            owner_mask,
+            everyone_mask,
+            ..Default::default()
+        };
+        let mut inv = Inventory {
+            owner: agent,
+            ..Default::default()
+        };
+        inv.items.insert(item.id, item.clone());
+        // OpenSim's usual god levels (200 to 249) keep the ordinary rights
+        // (LLAgent::allowOperation's default god_minimum is GOD_MAINTENANCE)
+        // but see every asset UUID (isGodlikeWithoutAdminMenuFakery)
+        for level in [0u8, 1, 225, GOD_MAINTENANCE - 1, GOD_MAINTENANCE, 255] {
+            let expected = if level >= GOD_MAINTENANCE { ordinary | FULL } else { ordinary };
+            assert_eq!(held_for(&inv, &item, level), expected, "{name}, level {level}");
+            assert_eq!(
+                asset_uuid_shown_to(&inv, asset, level > 0),
+                level > 0 || ordinary & FULL == FULL,
+                "{name}, level {level}"
+            );
+        }
+    }
+    assert_eq!(with_god(MOVE, 0), MOVE);
+    assert_eq!(with_god(MOVE, 225), MOVE, "under GOD_MAINTENANCE: no right added");
+    assert_eq!(with_god(MOVE, GOD_MAINTENANCE), MOVE | FULL);
+    assert_eq!(with_god(0, 255) & MOVE, 0, "asset rights do not grant other powers");
+}
+
+#[test]
+fn task_asset_group_rules_keep_script_membership_and_notecard_manipulation_distinct() {
+    let (agent, other) = (id(9961), id(9962));
+    let mut script = aurora_net::build::TaskItem {
+        owner_id: other,
+        owner_mask: FULL,
+        everyone_mask: TRANSFER,
+        group_mask: COPY,
+        ..Default::default()
+    };
+    let mut note = InvItem {
+        owner: other,
+        owner_mask: FULL,
+        everyone_mask: TRANSFER,
+        group_mask: COPY,
+        ..Default::default()
+    };
+    assert_eq!(task_script_mask(&script, agent, false), TRANSFER);
+    assert_eq!(task_script_mask(&script, agent, true), TRANSFER | COPY);
+    assert_eq!(task_notecard_mask(&note, agent, false, false), TRANSFER);
+    assert_eq!(task_notecard_mask(&note, agent, true, false), TRANSFER | COPY);
+    script.group_owned = true;
+    note.group_owned = true;
+    assert_eq!(task_script_mask(&script, agent, true), FULL);
+    assert_eq!(task_notecard_mask(&note, agent, true, false), TRANSFER | COPY);
+    assert_eq!(task_notecard_mask(&note, agent, true, true), FULL);
+    script.owner_id = agent;
+    note.owner = agent;
+    assert_eq!(task_script_mask(&script, agent, false), FULL);
+    assert_eq!(task_notecard_mask(&note, agent, false, false), FULL);
+}

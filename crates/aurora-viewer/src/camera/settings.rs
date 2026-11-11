@@ -61,7 +61,8 @@ impl CameraPreset {
         }
     }
 
-    /// CameraOffsetRearView, FocusOffsetRearView and CameraOffsetScale of the preset.
+    /// CameraOffsetRearView, FocusOffsetRearView and CameraOffsetScale of the
+    /// preset's template (app_settings/camera/<Name>.xml).
     pub fn values(self) -> Option<([f32; 3], [f32; 3], f32)> {
         Some(match self {
             CameraPreset::Rear => ([-3.0, 0.0, 0.75], [1.0, 0.0, 1.0], 1.0),
@@ -70,6 +71,123 @@ impl CameraPreset {
             CameraPreset::Shoulder => ([-3.0, -0.4, -0.2], [0.9, -0.7, 0.2], 1.1),
             CameraPreset::Custom => return None,
         })
+    }
+
+    /// The view as the user saved it, else its template: the Legacy Viewer
+    /// loads "<Name> View.xml" of user_settings/presets/camera, a copy of
+    /// the template until "Save as preset" replaced it
+    /// (LLFloaterCamera::switchToPreset, LLPresetsManager::loadPreset and
+    /// createDefaultCameraPreset).
+    pub fn view(self, saved: &SavedViews) -> Option<ViewValues> {
+        saved.get(self).or_else(|| {
+            self.values().map(|(camera_offset, focus_offset, offset_scale)| ViewValues {
+                camera_offset,
+                focus_offset,
+                offset_scale,
+            })
+        })
+    }
+
+    /// The view a preset name stands for: the Legacy Viewer's file names
+    /// ("Front View", PRESETS_FRONT_VIEW; "TPP View" for the shoulder) or
+    /// the view's own label, whatever the case. Saving a new preset under
+    /// such a name replaces the view (LLFloaterSaveCameraPreset::onBtnSave
+    /// hides the views from its name check, LLPresetsManager::savePreset
+    /// then writes over "Front View.xml").
+    pub fn from_preset_name(name: &str) -> Option<CameraPreset> {
+        let name = name.trim();
+        [
+            (CameraPreset::Rear, "Rear View"),
+            (CameraPreset::Front, "Front View"),
+            (CameraPreset::Side, "Side View"),
+            (CameraPreset::Shoulder, "TPP View"),
+        ]
+        .into_iter()
+        .find(|(view, legacy)| name.eq_ignore_ascii_case(legacy) || name.to_lowercase() == view.label().to_lowercase())
+        .map(|(view, _)| view)
+    }
+}
+
+/// What a view holds: CameraOffsetRearView, FocusOffsetRearView and
+/// CameraOffsetScale, the parts of a Legacy Viewer camera preset that place
+/// the camera behind the avatar.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ViewValues {
+    pub camera_offset: [f32; 3],
+    pub focus_offset: [f32; 3],
+    pub offset_scale: f32,
+}
+
+/// The user's own Rear, Front, Side and Shoulder views, saved over their
+/// templates (the Legacy Viewer's "Rear View.xml", "Front View.xml",
+/// "Side View.xml" and "TPP View.xml"); none: the template. Kept apart
+/// from `CameraSettings`, which "Reset" sets back, as the Legacy Viewer's
+/// reset keeps its preset files.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SavedViews {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rear: Option<ViewValues>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub front: Option<ViewValues>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub side: Option<ViewValues>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shoulder: Option<ViewValues>,
+}
+
+impl SavedViews {
+    fn slot(&mut self, view: CameraPreset) -> Option<&mut Option<ViewValues>> {
+        match view {
+            CameraPreset::Rear => Some(&mut self.rear),
+            CameraPreset::Front => Some(&mut self.front),
+            CameraPreset::Side => Some(&mut self.side),
+            CameraPreset::Shoulder => Some(&mut self.shoulder),
+            CameraPreset::Custom => None,
+        }
+    }
+
+    pub fn get(&self, view: CameraPreset) -> Option<ViewValues> {
+        match view {
+            CameraPreset::Rear => self.rear,
+            CameraPreset::Front => self.front,
+            CameraPreset::Side => self.side,
+            CameraPreset::Shoulder => self.shoulder,
+            CameraPreset::Custom => None,
+        }
+    }
+
+    /// Replace `view` with `values`; false for Custom, which is no view.
+    pub fn set(&mut self, view: CameraPreset, values: ViewValues) -> bool {
+        self.slot(view).map(|slot| *slot = Some(values)).is_some()
+    }
+
+    /// Back to the template (LLPresetsManager::resetCameraPreset); true if
+    /// the view had been saved.
+    pub fn restore(&mut self, view: CameraPreset) -> bool {
+        self.slot(view).and_then(Option::take).is_some()
+    }
+
+    /// Values from an edited file: a broken view goes back to its template.
+    pub fn sanitize(&mut self) {
+        for view in CameraPreset::ALL {
+            if let Some(slot) = self.slot(view)
+                && slot.is_some_and(|v| !v.is_sound())
+            {
+                *slot = None;
+            }
+        }
+    }
+}
+
+impl ViewValues {
+    fn is_sound(&self) -> bool {
+        let finite = |v: [f32; 3]| v.iter().all(|x| x.is_finite());
+        finite(self.camera_offset)
+            && finite(self.focus_offset)
+            && Vec3::from(self.camera_offset).length() >= 0.01
+            && self.offset_scale.is_finite()
+            && (0.5..=3.0).contains(&self.offset_scale)
     }
 }
 
@@ -87,7 +205,8 @@ pub struct CameraSettings {
     pub fov: f32,
     /// ZoomTime: seconds of a transition between camera modes.
     pub zoom_time: f32,
-    /// CameraPositionSmoothing ("Smoothing"), × 0.02 s half-life.
+    /// CameraPositionSmoothing ("Smoothing"), × 0.02 s half-life. Limits:
+    /// `SMOOTHING_RANGE`.
     pub smoothing: f32,
     /// DynamicCameraStrength: lag behind the avatar in the air (0 = none, 30 = avatar velocity).
     pub dynamic_strength: f32,
@@ -132,6 +251,11 @@ pub struct CameraSettings {
     pub show_interface_in_mouselook: bool,
     /// Where the headset view starts when VR is entered (Aurora-specific).
     pub vr_view: VrView,
+    /// Set up VR at each start (Preferences › Camera › VR), so the VR
+    /// button enters it at once. Off by default: loading a VR runtime at
+    /// every start crashed PCs that never use VR (#2309); the first
+    /// "Restart in VR" turns it on.
+    pub vr_at_start: bool,
 }
 
 /// Where the headset view starts on VR entry (Preferences › Camera › VR).
@@ -157,10 +281,13 @@ impl Default for CameraSettings {
             zoom_time: 0.4,
             smoothing: 1.0,
             dynamic_strength: 2.0,
-            // both on, unlike the Legacy Viewer (human choice of 2026-10-16):
-            // the camera goes where it is put, walls and objects included
-            disable_constraints: true,
-            ignore_sim_constraints: true,
+            // both off, as DisableCameraConstraints and
+            // FSIgnoreSimulatorCameraConstraints in the Legacy Viewer: the
+            // camera keeps within the draw distance and in front of walls.
+            // They were on from 2026-10-16; version 33 of the settings turns
+            // them off once (`Settings::sanitized`)
+            disable_constraints: false,
+            ignore_sim_constraints: false,
             disable_wheel_zoom: false,
             click_avatar_keeps_camera: false,
             reset_on_movement: true,
@@ -178,6 +305,7 @@ impl Default for CameraSettings {
             show_mouselook_instructions: true,
             show_interface_in_mouselook: false,
             vr_view: VrView::FirstPerson,
+            vr_at_start: false,
         }
     }
 }
@@ -256,6 +384,11 @@ impl CameraSettings {
 pub const DEFAULT_FOV: f32 = std::f32::consts::FRAC_PI_3;
 /// LLViewerCamera min / max view angles of the "Viewing angle" slider.
 pub const FOV_RANGE: std::ops::RangeInclusive<f32> = 0.17..=2.97;
+/// CameraPositionSmoothing: the limits of Phototools' "Cam. Smoothing" slider
+/// (floater_phototools_camera.xml, floater_phototools.xml), up to a half-life
+/// of 6 s, and not the 9 of panel_preferences_move.xml: both sliders drive the
+/// same setting, and Aurora has one.
+pub const SMOOTHING_RANGE: std::ops::RangeInclusive<f32> = 0.0..=300.0;
 
 impl CameraSettings {
     pub fn camera_offset(&self) -> Vec3 {
@@ -266,13 +399,32 @@ impl CameraSettings {
         Vec3::from(self.focus_offset)
     }
 
-    pub fn apply_preset(&mut self, preset: CameraPreset) {
+    /// Switch to `preset`: its offsets as the user saved them, else its
+    /// template (`CameraPreset::view`); Custom keeps the offsets.
+    pub fn apply_view(&mut self, preset: CameraPreset, saved: &SavedViews) {
         self.preset = preset;
-        if let Some((cam, focus, scale)) = preset.values() {
-            self.camera_offset = cam;
-            self.focus_offset = focus;
-            self.offset_scale = scale;
+        if let Some(v) = preset.view(saved) {
+            self.camera_offset = v.camera_offset;
+            self.focus_offset = v.focus_offset;
+            self.offset_scale = v.offset_scale;
         }
+    }
+
+    /// The camera where it is becomes `view` (LLFloaterSaveCameraPreset::
+    /// onBtnSave over "Front View"): the offsets of the camera as it is,
+    /// at its own distance, which the view shows from now on. False for
+    /// Custom.
+    pub fn save_view(&mut self, view: CameraPreset, camera_offset: [f32; 3], focus_offset: [f32; 3], saved: &mut SavedViews) -> bool {
+        let values = ViewValues {
+            camera_offset,
+            focus_offset,
+            offset_scale: 1.0,
+        };
+        if !values.is_sound() || !saved.set(view, values) {
+            return false;
+        }
+        self.apply_view(view, saved);
+        true
     }
 
     /// Settings coming from an edited or older file: finite and in range.
@@ -290,9 +442,109 @@ impl CameraSettings {
         self.fov = fix(self.fov, 5.0f32.to_radians(), 175.0f32.to_radians(), d.fov);
         self.mouselook_zoom_fov = super::mouselook_zoom::sanitize(self.mouselook_zoom_fov);
         self.zoom_time = fix(self.zoom_time, 0.0, 4.0, d.zoom_time);
-        self.smoothing = fix(self.smoothing, 0.0, 9.0, d.smoothing);
+        self.smoothing = fix(self.smoothing, *SMOOTHING_RANGE.start(), *SMOOTHING_RANGE.end(), d.smoothing);
         self.dynamic_strength = fix(self.dynamic_strength, 0.0, 30.0, d.dynamic_strength);
         self
+    }
+}
+
+#[cfg(test)]
+mod saved_view_tests {
+    use super::*;
+
+    /// Issue #2755: a Front view saved by the user is the one the Front
+    /// button gives back, after a restart too, until it is restored.
+    #[test]
+    fn a_saved_view_comes_back_after_a_restart_until_restored() {
+        let mut camera = CameraSettings::default();
+        let mut saved = SavedViews::default();
+        let (cam, focus) = ([1.8, -0.6, 0.4], [0.2, 0.1, 0.9]);
+        assert!(camera.save_view(CameraPreset::Front, cam, focus, &mut saved));
+        assert_eq!(
+            (camera.preset, camera.camera_offset, camera.focus_offset, camera.offset_scale),
+            (CameraPreset::Front, cam, focus, 1.0)
+        );
+
+        // elsewhere, then back to the Front view
+        camera.apply_view(CameraPreset::Rear, &saved);
+        assert_eq!(camera.camera_offset, CameraPreset::Rear.values().unwrap().0);
+        camera.apply_view(CameraPreset::Front, &saved);
+        assert_eq!((camera.camera_offset, camera.focus_offset), (cam, focus));
+
+        // the settings file keeps it
+        let json = serde_json::to_string(&saved).unwrap();
+        let mut loaded: SavedViews = serde_json::from_str(&json).unwrap();
+        loaded.sanitize();
+        assert_eq!(loaded, saved);
+        let mut fresh = CameraSettings::default();
+        fresh.apply_view(CameraPreset::Front, &loaded);
+        assert_eq!((fresh.camera_offset, fresh.focus_offset), (cam, focus));
+
+        // restored: the template again; the other views never moved
+        assert!(loaded.restore(CameraPreset::Front));
+        assert!(!loaded.restore(CameraPreset::Front));
+        fresh.apply_view(CameraPreset::Front, &loaded);
+        let (t_cam, t_focus, t_scale) = CameraPreset::Front.values().unwrap();
+        assert_eq!(
+            (fresh.camera_offset, fresh.focus_offset, fresh.offset_scale),
+            (t_cam, t_focus, t_scale)
+        );
+        assert_eq!(loaded, SavedViews::default());
+    }
+
+    #[test]
+    fn custom_and_broken_views_are_never_kept() {
+        let mut camera = CameraSettings::default();
+        let mut saved = SavedViews::default();
+        assert!(!camera.save_view(CameraPreset::Custom, [1.0, 0.0, 0.0], [0.0; 3], &mut saved));
+        assert!(!camera.save_view(CameraPreset::Side, [f32::NAN, 0.0, 0.0], [0.0; 3], &mut saved));
+        assert!(!camera.save_view(CameraPreset::Side, [0.0; 3], [0.0; 3], &mut saved));
+        assert_eq!(saved, SavedViews::default());
+        assert_eq!(camera, CameraSettings::default());
+        // an edited file: the broken view goes back to its template
+        let mut edited: SavedViews =
+            serde_json::from_str(r#"{"side":{"camera_offset":[0,0,0],"focus_offset":[0,0,0],"offset_scale":1},"rear":{"camera_offset":[-2,0,1],"focus_offset":[1,0,1],"offset_scale":9}}"#)
+                .unwrap();
+        edited.sanitize();
+        assert_eq!(edited, SavedViews::default());
+        // older settings have none
+        let old: SavedViews = serde_json::from_str("{}").unwrap();
+        assert_eq!(old, SavedViews::default());
+    }
+
+    #[test]
+    fn the_legacy_view_names_and_the_labels_name_the_views() {
+        assert_eq!(CameraPreset::from_preset_name("Front View"), Some(CameraPreset::Front));
+        assert_eq!(CameraPreset::from_preset_name(" rear view "), Some(CameraPreset::Rear));
+        assert_eq!(CameraPreset::from_preset_name("TPP View"), Some(CameraPreset::Shoulder));
+        assert_eq!(CameraPreset::from_preset_name(CameraPreset::Side.label()), Some(CameraPreset::Side));
+        // the templates' own names and the custom presets are not views
+        assert_eq!(CameraPreset::from_preset_name("Front"), None);
+        assert_eq!(CameraPreset::from_preset_name("My front"), None);
+        assert_eq!(CameraPreset::from_preset_name(CameraPreset::Custom.label()), None);
+    }
+}
+
+#[cfg(test)]
+mod smoothing_range_tests {
+    use super::*;
+
+    #[test]
+    fn a_saved_smoothing_keeps_the_whole_range_and_only_the_range() {
+        let saved = |smoothing| {
+            CameraSettings {
+                smoothing,
+                ..Default::default()
+            }
+            .sanitized()
+            .smoothing
+        };
+        assert_eq!(saved(300.0), 300.0);
+        assert_eq!(saved(301.0), 300.0);
+        assert_eq!(saved(-1.0), 0.0);
+        assert_eq!(saved(f32::NAN), CameraSettings::default().smoothing);
+        // the default stays the Legacy Viewer's
+        assert_eq!(CameraSettings::default().smoothing, 1.0);
     }
 }
 

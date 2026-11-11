@@ -53,6 +53,17 @@ pub struct WearRequest {
 
 #[derive(Clone, Debug)]
 pub enum Action {
+    /// The image editor on an outfit (the menu's Image…, Outfit.Thumbnail).
+    OutfitImage(Uuid),
+    /// A snapshot of the scene, set as the outfit's picture at once.
+    OutfitSnapshot(Uuid),
+    /// The auto portrait of an outfit (`snapshot::portrait`).
+    OutfitPortrait(Uuid),
+    /// The photo mode, square, for an outfit's picture.
+    OutfitPhotoMode(Uuid),
+    /// The batch portraits' window, over these outfits (the showcase's,
+    /// in its order).
+    OutfitBatch(Vec<Uuid>),
     Wear(Uuid, bool),
     WearOutfits {
         folders: Vec<Uuid>,
@@ -113,6 +124,63 @@ pub enum Action {
     /// closest to the body (LLAppearanceMgr::reorderWearable).
     PlaceLayer(Uuid, usize),
     Revert,
+}
+
+/// The picture of an outfit (LLOutfitGallery::refreshOutfit): the folder's
+/// thumbnail, else the first texture in it or linked from it, its subfolders
+/// included. Nil without one.
+pub fn outfit_image(inv: &Inventory, outfit: Uuid) -> Uuid {
+    let Some(folder) = inv.folders.get(&outfit) else {
+        return Uuid::nil();
+    };
+    if !folder.info.thumbnail.is_nil() {
+        return folder.info.thumbnail;
+    }
+    let mut todo = vec![outfit];
+    let mut seen = HashSet::new();
+    while let Some(id) = todo.pop() {
+        let Some(folder) = inv.folders.get(&id).filter(|_| seen.insert(id)) else {
+            continue;
+        };
+        for item in folder.items.iter().filter_map(|id| inv.items.get(id)) {
+            let item = if item.asset_type == 24 {
+                inv.items.get(&item.asset_id).unwrap_or(item)
+            } else {
+                item
+            };
+            if item.asset_type == 0 && !item.asset_id.is_nil() {
+                return item.asset_id;
+            }
+        }
+        todo.extend(&folder.children);
+    }
+    Uuid::nil()
+}
+
+/// The HD pictures this viewer uploaded into an outfit's own folder
+/// (`snapshot::portrait::HD_PICTURE_DESC`): our own textures, not links,
+/// oldest first. The showcase shows the newest in its large preview; the
+/// cards keep the thumbnail, as LLOutfitGallery::refreshOutfit does.
+pub fn hd_pictures(inv: &Inventory, outfit: Uuid) -> Vec<&InvItem> {
+    let Some(folder) = inv.folders.get(&outfit) else {
+        return Vec::new();
+    };
+    let mut found: Vec<(usize, &InvItem)> = folder
+        .items
+        .iter()
+        .filter_map(|id| inv.items.get(id))
+        .filter(|it| {
+            it.parent == outfit && it.asset_type == 0 && !it.asset_id.is_nil() && it.desc == crate::snapshot::portrait::HD_PICTURE_DESC
+        })
+        .enumerate()
+        .collect();
+    found.sort_by_key(|(at, it)| (it.created_at, *at));
+    found.into_iter().map(|(_, it)| it).collect()
+}
+
+/// The newest HD picture of an outfit, its texture's asset.
+pub fn outfit_hd_picture(inv: &Inventory, outfit: Uuid) -> Option<Uuid> {
+    hd_pictures(inv, outfit).last().map(|it| it.asset_id)
 }
 
 /// LLInventoryModel::findCategoryUUIDForTypeInRoot (llinventorymodel.cpp),
@@ -878,6 +946,11 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
         }
         Action::ShowOriginal(_)
         | Action::Favorite(_)
+        | Action::OutfitImage(_)
+        | Action::OutfitSnapshot(_)
+        | Action::OutfitPortrait(_)
+        | Action::OutfitPhotoMode(_)
+        | Action::OutfitBatch(_)
         | Action::Category(..)
         | Action::Folders(_)
         | Action::DeleteFromOutfit { .. }
@@ -1135,9 +1208,10 @@ pub fn sync_with_attachments(
     agent: Uuid,
     worn: &HashSet<Uuid>,
     worn_before: &HashSet<Uuid>,
+    keep: Uuid,
     attachments: Vec<AttachRequest>,
 ) -> CofSync {
-    let mut sync = sync_plan(inv, agent, worn);
+    let mut sync = sync_plan_keeping(inv, agent, worn, keep);
     for command in &mut sync.commands {
         if let NetCommand::DetachAttachments(items) = command {
             items.retain(|id| worn_before.contains(id) && !attachments.iter().any(|request| request.item_id == *id));
@@ -1155,13 +1229,21 @@ pub fn sync_with_attachments(
 }
 
 pub fn sync_plan(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> CofSync {
+    sync_plan_keeping(inv, agent, worn, Uuid::nil())
+}
+
+/// `sync_plan` that never takes `keep` off, linked or not: the Aurora bridge,
+/// which the Legacy Viewer puts back into every replaced outfit (FSLSLBridge
+/// in LLAppearanceMgr::updateCOF, llappearancemgr.cpp). It stays in `worn`,
+/// or its link would ask to wear it again at each sync.
+pub fn sync_plan_keeping(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>, keep: Uuid) -> CofSync {
     let Some(cof) = cof(inv) else {
         return CofSync::default();
     };
     // the links to objects, with those whose item is not known yet: a worn
     // object linked in the COF stays on even before its item is fetched
     let objects: HashSet<_> = super::outfit::cof_objects(inv, cof).into_iter().collect();
-    let detach: Vec<_> = worn.difference(&objects).copied().collect();
+    let detach: Vec<_> = worn.difference(&objects).copied().filter(|id| *id != keep).collect();
     let mut unknown = Vec::new();
     let mut attach = Vec::new();
     for id in objects.difference(worn) {
@@ -1199,6 +1281,58 @@ pub fn sync_plan(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> CofSync 
 /// The commands of `sync_plan` alone (demo and tests: everything is known).
 pub fn sync_commands(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> Vec<NetCommand> {
     sync_plan(inv, agent, worn).commands
+}
+
+/// A forced batch with nothing left to do: its links would not change and the
+/// avatar already matches. RlvForceWear::done (rlvhelper.cpp) returns early
+/// here; an outfit write would still raise the COF version and ask for a new
+/// appearance. Read when the batch runs: a run of `@detach` queues while the
+/// first object is leaving, and has nothing to do once it has left. An object
+/// on the avatar or on its way needs no new request (`requested`:
+/// LLAttachmentsMgr::wasRequestedRecently) and is linked when it arrives
+/// (`update_attachment_inventory`). Gestures are always applied, their state
+/// is not in the links.
+pub fn force_changes_nothing(inv: &Inventory, action: &Action, worn: &HashMap<Uuid, u8>, requested: &HashSet<Uuid>) -> bool {
+    let Action::Force { remove, wear } = action else {
+        return false;
+    };
+    let original = |id: Uuid| super::inventory::actions::original(inv, id).unwrap_or(id);
+    let gesture = |id: Uuid| inv.items.get(&id).is_some_and(|it| it.asset_type == 21);
+    let settled_off = |id: &Uuid| {
+        let id = original(*id);
+        !gesture(id) && !worn.contains_key(&id)
+    };
+    let settled_on = |request: &WearRequest| {
+        let id = original(request.item);
+        !gesture(id)
+            && match inv.items.get(&id).map(|it| it.asset_type) {
+                Some(6) => match worn.get(&id) {
+                    Some(point) => request.point == 0 || request.point == *point,
+                    None => requested.contains(&id),
+                },
+                Some(_) => true,
+                None => false,
+            }
+    };
+    if !remove.iter().all(settled_off) || !wear.iter().all(settled_on) {
+        return false;
+    }
+    let (Some(cof), Ok((change, _))) = (cof(inv), plan(inv, action.clone(), worn)) else {
+        return false;
+    };
+    let arriving: HashSet<_> = wear
+        .iter()
+        .map(|request| original(request.item))
+        .filter(|id| inv.items.get(id).is_some_and(|it| it.asset_type == 6))
+        .collect();
+    let links = |links: &[OutfitLink]| {
+        links
+            .iter()
+            .filter(|l| !arriving.contains(&l.target))
+            .map(|l| (l.target, l.folder))
+            .collect::<HashSet<_>>()
+    };
+    links(&folder_links(inv, cof)) == links(&change.links)
 }
 
 /// Explicit attachment requests retain the chosen point and replace/add mode.
@@ -2247,6 +2381,38 @@ mod tests {
     }
 
     #[test]
+    fn the_newest_hd_picture_is_found_and_never_worn() {
+        let mut inv = fixture();
+        let outfit = Uuid::from_u128(702);
+        let before = folder_links(&inv, outfit);
+        assert_eq!(outfit_hd_picture(&inv, outfit), None);
+        let texture = |n: u128, desc: &str, created_at: i64| InvItem {
+            id: Uuid::from_u128(0x4d00 + n),
+            parent: outfit,
+            name: format!("Photo {n}"),
+            desc: desc.to_owned(),
+            asset_type: 0,
+            asset_id: Uuid::from_u128(0x4e00 + n),
+            created_at,
+            ..Default::default()
+        };
+        let ours = crate::snapshot::portrait::HD_PICTURE_DESC;
+        inv.add_items(vec![
+            texture(1, ours, 10),
+            texture(2, ours, 20),
+            // a texture the user keeps in the folder is not ours
+            texture(3, "a merchant's picture", 30),
+        ]);
+        assert_eq!(outfit_hd_picture(&inv, outfit), Some(Uuid::from_u128(0x4e02)));
+        assert_eq!(
+            hd_pictures(&inv, outfit).iter().map(|it| it.id).collect::<Vec<_>>(),
+            [Uuid::from_u128(0x4d01), Uuid::from_u128(0x4d02)]
+        );
+        // a texture in the folder is never part of what the outfit wears
+        assert_eq!(folder_links(&inv, outfit).len(), before.len());
+    }
+
+    #[test]
     fn save_to_selected_outfit_updates_its_links_and_the_cof_base() {
         let mut inv = fixture();
         let selected = Uuid::from_u128(702);
@@ -2580,6 +2746,7 @@ mod tests {
                 agent,
                 &worn.keys().copied().collect(),
                 &worn.keys().copied().collect(),
+                Uuid::nil(),
                 attachments,
             );
             assert_eq!(
@@ -2656,6 +2823,7 @@ mod tests {
             agent,
             &HashSet::from([item, another, removed]),
             &HashSet::from([removed]),
+            Uuid::nil(),
             attachments,
         );
         assert!(
@@ -2932,6 +3100,157 @@ mod tests {
         assert_eq!(folder_links(&inv, cof(&inv).expect("COF")), before);
     }
 
+    /// RlvForceWear::done: a run of forced commands costs no outfit write once
+    /// the avatar and the links are as asked, and anything still to do does.
+    #[test]
+    fn a_forced_batch_with_nothing_to_do_changes_nothing() {
+        let mut inv = fixture();
+        let cof = cof(&inv).expect("COF");
+        let (linked, other) = (Uuid::from_u128(970), Uuid::from_u128(971));
+        let shirt = Uuid::from_u128(972);
+        inv.add_items(
+            [(linked, 6, 6), (other, 6, 6), (shirt, 5, 18)]
+                .into_iter()
+                .map(|(id, asset_type, inv_type)| InvItem {
+                    id,
+                    parent: inv.root,
+                    asset_type,
+                    inv_type,
+                    flags: 4,
+                    name: "item".into(),
+                    ..Default::default()
+                })
+                .collect(),
+        );
+        inv.add_items(
+            [(980, linked, 6), (981, shirt, 18)]
+                .into_iter()
+                .map(|(id, target, inv_type)| InvItem {
+                    id: Uuid::from_u128(id),
+                    parent: cof,
+                    asset_type: 24,
+                    inv_type,
+                    asset_id: target,
+                    ..Default::default()
+                })
+                .collect(),
+        );
+        let remove = |items: &[Uuid]| Action::Force {
+            remove: items.to_vec(),
+            wear: Vec::new(),
+        };
+        let wear = |item, point| Action::Force {
+            remove: Vec::new(),
+            wear: vec![WearRequest {
+                item,
+                replace: false,
+                point,
+            }],
+        };
+        let on = HashMap::from([(linked, 5)]);
+        let none = HashMap::new();
+        let nothing = |action: &Action, worn: &HashMap<Uuid, u8>| force_changes_nothing(&inv, action, worn, &HashSet::new());
+        assert!(nothing(&remove(&[other]), &on), "off already, no link");
+        assert!(!nothing(&remove(&[other]), &HashMap::from([(other, 5)])), "still on");
+        assert!(!nothing(&remove(&[linked]), &none), "its link is still there");
+        assert!(nothing(&wear(linked, 0), &on), "on already, linked");
+        assert!(nothing(&wear(linked, 5), &on), "on its point");
+        assert!(!nothing(&wear(linked, 6), &on), "to be moved");
+        assert!(!nothing(&wear(linked, 0), &none), "linked, not on the avatar");
+        assert!(nothing(&wear(other, 0), &HashMap::from([(other, 5)])), "on, linked when it arrived");
+        assert!(!nothing(&wear(other, 0), &none), "off, no request");
+        let requested = HashSet::from([other]);
+        assert!(force_changes_nothing(&inv, &wear(other, 0), &none, &requested), "on its way");
+        assert!(
+            !force_changes_nothing(&inv, &wear(other, 6), &HashMap::from([(other, 5)]), &requested),
+            "still to be moved"
+        );
+        assert!(nothing(&wear(shirt, 0), &none), "clothing already linked");
+        assert!(!nothing(&remove(&[shirt]), &none), "clothing to take off");
+        assert!(
+            !nothing(&remove(&[Uuid::from_u128(999)]), &on),
+            "an unknown item is an error to report"
+        );
+        assert!(!nothing(&Action::Remove(other), &on), "only forced batches");
+    }
+
+    /// LLAttachmentsMgr::wasRequestedRecently: the first wear goes out, its
+    /// repeats do not, and one is sent again once the request is old.
+    #[test]
+    fn repeats_of_a_forced_wear_wait_for_the_first_request() {
+        let mut world = super::super::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.inventory = fixture();
+        let item = Uuid::from_u128(990);
+        world.inventory.add_items(vec![InvItem {
+            id: item,
+            parent: world.inventory.root,
+            asset_type: 6,
+            inv_type: 6,
+            flags: 4,
+            name: "item".into(),
+            ..Default::default()
+        }]);
+        let action = Action::Force {
+            remove: Vec::new(),
+            wear: vec![WearRequest {
+                item,
+                replace: true,
+                point: 0,
+            }],
+        };
+        let start = std::time::Instant::now();
+        assert!(!world.rlva_force_settled(&action, start), "the first one goes out");
+        assert!(
+            world.rlva_force_settled(&action, start + std::time::Duration::from_secs(1)),
+            "a repeat does not"
+        );
+        assert!(
+            !world.rlva_force_settled(&action, start + std::time::Duration::from_secs(6)),
+            "sent again once old"
+        );
+    }
+
+    /// The bridge item: on while it is worn, whether the COF links it or not,
+    /// and only worn again when a link finds it really absent.
+    #[test]
+    fn cof_sync_neither_wears_again_nor_takes_off_the_kept_bridge() {
+        let mut inv = fixture();
+        let agent = Uuid::from_u128(1);
+        let cof = cof(&inv).expect("COF");
+        let bridge = Uuid::from_u128(960);
+        let touched = |sync: &CofSync| {
+            sync.commands.iter().fold((false, false), |(worn, off), command| match command {
+                NetCommand::RezAttachments(items) => (worn || items.iter().any(|a| a.item_id == bridge), off),
+                NetCommand::DetachAttachments(items) => (worn, off || items.contains(&bridge)),
+                _ => (worn, off),
+            })
+        };
+        inv.add_items(vec![InvItem {
+            id: bridge,
+            parent: inv.root,
+            asset_type: 6,
+            inv_type: 6,
+            name: "bridge".into(),
+            ..Default::default()
+        }]);
+        let on = HashSet::from([bridge]);
+        let unlinked = sync_plan_keeping(&inv, agent, &on, bridge);
+        assert_eq!(touched(&unlinked), (false, false), "worn and not linked: it stays on");
+        assert_eq!(touched(&sync_plan(&inv, agent, &on)), (false, true), "any other object comes off");
+        inv.add_items(vec![InvItem {
+            id: Uuid::from_u128(961),
+            parent: cof,
+            asset_type: 24,
+            inv_type: 6,
+            asset_id: bridge,
+            ..Default::default()
+        }]);
+        let linked = sync_plan_keeping(&inv, agent, &on, bridge);
+        assert_eq!(touched(&linked), (false, false), "worn and linked: nothing to do");
+        let absent = sync_plan_keeping(&inv, agent, &HashSet::new(), bridge);
+        assert_eq!(touched(&absent), (true, false), "linked and absent: it is worn");
+    }
+
     /// `missing_targets` reads the links in place; it finds what the copied
     /// `folder_links` would: item links whose original is not there.
     /// Replace outfit with a cold inventory cache: the COF links to objects
@@ -2994,5 +3313,46 @@ mod tests {
             assert_eq!(found, expected, "folder {id}");
         }
         assert!(any, "some originals are missing");
+    }
+
+    /// LLOutfitGallery::refreshOutfit: the thumbnail, else a texture in the
+    /// outfit or linked from it, its subfolders included.
+    #[test]
+    fn an_outfit_s_picture_falls_back_on_a_texture_inside() {
+        let id = Uuid::from_u128;
+        let folder = |n, parent, thumbnail| InvFolder {
+            id: id(n),
+            parent: id(parent),
+            type_default: 47,
+            thumbnail: id(thumbnail),
+            ..Default::default()
+        };
+        let item = |n, parent, asset_type, asset_id| InvItem {
+            id: id(n),
+            parent: id(parent),
+            asset_type,
+            asset_id: id(asset_id),
+            ..Default::default()
+        };
+        let mut inv = Inventory::default();
+        inv.add_folders(vec![folder(1, 48, 0), folder(2, 1, 0)], false);
+        assert!(outfit_image(&inv, id(1)).is_nil(), "nothing to show");
+        assert!(outfit_image(&inv, id(99)).is_nil(), "unknown outfit");
+        // a wearable is no picture
+        inv.items.insert(id(10), item(10, 1, 13, 500));
+        inv.folders.get_mut(&id(1)).expect("outfit").items.push(id(10));
+        assert!(outfit_image(&inv, id(1)).is_nil());
+        // in a subfolder
+        inv.items.insert(id(11), item(11, 2, 0, 501));
+        inv.folders.get_mut(&id(2)).expect("subfolder").items.push(id(11));
+        assert_eq!(outfit_image(&inv, id(1)), id(501));
+        // a link to a texture elsewhere, in the outfit itself
+        inv.items.insert(id(12), item(12, 7, 0, 502));
+        inv.items.insert(id(13), item(13, 1, 24, 12));
+        inv.folders.get_mut(&id(1)).expect("outfit").items.push(id(13));
+        assert_eq!(outfit_image(&inv, id(1)), id(502));
+        // the folder's own thumbnail comes first
+        inv.folders.get_mut(&id(1)).expect("outfit").info.thumbnail = id(503);
+        assert_eq!(outfit_image(&inv, id(1)), id(503));
     }
 }

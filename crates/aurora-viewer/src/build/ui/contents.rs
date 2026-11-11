@@ -112,11 +112,13 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             });
         });
     }
-    ui.add(
-        egui::TextEdit::singleline(&mut tool.ui.contents_filter)
-            .hint_text(aurora_i18n::tr!("build-ui-contents-enter-filter-text"))
-            .desired_width(ui.available_width()),
-    );
+    {
+        let width = ui.available_width();
+        crate::ui::widgets::search_text_edit(ui, p, &mut tool.ui.contents_filter, |edit| {
+            edit.hint_text(aurora_i18n::tr!("build-ui-contents-enter-filter-text"))
+                .desired_width(width)
+        })
+    };
     crate::ui::inventory::permissions::next_owner_toggle(ui, p, &mut tool.ui.contents_show_next_owner);
     let inv = tool.contents.objects.get(&object_id).cloned().unwrap_or_default();
     let items: Vec<TaskItem> = inv.items.iter().filter(|i| !i.is_folder).cloned().collect();
@@ -125,7 +127,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         .iter()
         .filter(|i| filter.is_empty() || searchable_name(i).to_uppercase().contains(&filter))
         .collect();
-    list.sort_by_key(|i| i.name.to_lowercase());
+    list.sort_by_key(|i| crate::natural_order::key(&i.name));
     tool.ui
         .contents_selection
         .sync(object_id, list.iter().map(|it| it.item_id).collect(), ui.layer_id());
@@ -249,7 +251,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     }
 }
 
-/// `AURORA_DEMO_CONTENTS_DROP=panel…` carries inventory onto the list.
+/// `AURORA_DEMO_CONTENTS_DROP=panelâ€¦` carries inventory onto the list.
 fn demo_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("AURORA_DEMO").as_deref() == Ok("1") && std::env::var_os("AURORA_DEMO_CONTENTS_DROP").is_some())
@@ -311,6 +313,7 @@ fn item_row(
                 .contents_selection
                 .select(ui, object_id, item.item_id, r.secondary_clicked());
         }
+        widgets::reveal_search_selection(ui, &r, selected);
         if r.drag_started() && !selected {
             tool.ui.contents_selection.select(ui, object_id, item.item_id, false);
         }
@@ -376,11 +379,9 @@ fn item_row(
             } else {
                 aurora_i18n::tr!("build-ui-contents-copy-to-inventory")
             };
-            let take_tip = aurora_i18n::tr!("build-ui-contents-like-dragging-the-item-to-inventory");
+            let take_tip = aurora_i18n::tr!("contents-copy-selection-tip");
             if menu::item_tip(ui, p, "briefcase-filled", take, can_take, take_tip) {
-                for it in &taken {
-                    tool.copy_item_to_inventory(world, idx, it, uuid::Uuid::nil());
-                }
+                tool.copy_contents_to_inventory(world, idx, &taken);
             }
             if item.asset_type == AT_LSL_TEXT {
                 menu::separator(ui, p);

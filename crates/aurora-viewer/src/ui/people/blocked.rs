@@ -1,4 +1,4 @@
-//! People › Blocked in Aurora's look (the People mock-up v2): the block
+//! People â€º Blocked in Aurora's look (the People mock-up v2): the block
 //! list (LLPanelBlockedList, panel_block_list_sidetray.xml, LLMuteList) as
 //! rows, what is blocked of each in pills (everything, or voice, text,
 //! particles, object sounds), each pill a click away from changing it as
@@ -105,7 +105,7 @@ pub(super) fn tab(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi) {
             }
         });
         let w = ui.available_width();
-        widgets::search_box(ui, p, &mut st.filter, aurora_i18n::tr!("people-filter-short"), w);
+        widgets::clearable_search_box(ui, p, &mut st.filter, aurora_i18n::tr!("people-filter-short"), w);
     });
     ui.add_space(7.0);
     let filter = st.filter.trim().to_lowercase();
@@ -116,7 +116,7 @@ pub(super) fn tab(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi) {
         .filter(|m| filter.is_empty() || m.name.to_lowercase().contains(&filter))
         .collect();
     // by name, BlockPeopleSortOrder's default (LLBlockList::sortByName)
-    entries.sort_by_cached_key(|m| m.name.to_lowercase());
+    entries.sort_by_cached_key(|m| crate::natural_order::key(&m.name));
     let order: Vec<Uuid> = entries.iter().map(row_id).collect();
     st.sel.retain(|id| order.contains(id));
     egui::ScrollArea::vertical()
@@ -150,6 +150,11 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, m: &Mute, all: &[Mute]
     let p = c.p;
     let id = row_id(m);
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), RICH_H), Sense::click());
+    widgets::reveal_search_selection(
+        ui,
+        &resp,
+        st.anchor.filter(|id| st.sel.contains(id)).or_else(|| st.sel.last().copied()) == Some(id),
+    );
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -183,7 +188,10 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, m: &Mute, all: &[Mute]
     let mut clicked_inside = false;
     if hot && let Some(cell) = items.next() {
         let r = Rect::from_center_size(cell.center(), Vec2::new(cell.width(), 26.0));
-        let unblock = ui.put(
+        // `place`, not `put`: the row is already laid out, and putting the
+        // hover-only button would move the cursor back over the rows below
+        // (#2291).
+        let unblock = ui.place(
             r,
             egui::Button::new(egui::RichText::new(aurora_i18n::tr!("common-unblock")).size(12.5)),
         );
@@ -280,6 +288,71 @@ fn parts_menu(ui: &mut egui::Ui, c: &mut Ctx, m: &Mute) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The hover-only "Unblock" button must not take its room from the rows
+    /// below: the list keeps its gaps (#2291).
+    #[test]
+    fn hovering_a_row_keeps_the_rows_below_in_place() {
+        use crate::world::mutes::LoadState;
+
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&frames.ctx, 1.0);
+        // Compare hover states without the scroll bar's width animation.
+        frames.ctx.all_styles_mut(|style| style.animation_time = 0.0);
+        let p = theme.palette();
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.mutes.state = LoadState::Loaded;
+        let first = Uuid::from_u128(0xB000);
+        for (id, name) in [(first, "Alpha"), (Uuid::from_u128(0xB001), "Beta")] {
+            world
+                .mutes
+                .add(
+                    Mute {
+                        id,
+                        name: name.into(),
+                        kind: MuteType::Agent,
+                        flags: 0,
+                    },
+                    0,
+                )
+                .expect("the test entry is added");
+        }
+        let bounds = Rect::from_min_size(Pos2::new(20.0, 20.0), Vec2::new(400.0, 500.0));
+        let pics: std::collections::HashMap<Uuid, egui::TextureHandle> = std::collections::HashMap::new();
+        let mut contacts = crate::ui::contacts::ContactsUi::default();
+        let mut friends = super::super::FriendsSettings::default();
+        let mut actions = Vec::new();
+        let mut st = PeopleUi::default();
+        let mut beta_y = |frames: &mut crate::ui::widgets::elide_tests::Frames, hot: Option<Uuid>| {
+            st.demo_hover = hot;
+            let mut found = None;
+            for _ in 0..3 {
+                let shapes = frames.shapes(Vec::new(), |ui| {
+                    let mut child = super::super::nearby::list_ui(ui, bounds, "blocked-hover-test", true);
+                    let mut c = Ctx {
+                        p: &p,
+                        world: &world,
+                        contacts: &mut contacts,
+                        friends: &mut friends,
+                        images: &pics,
+                        actions: &mut actions,
+                        embedded_contacts: false,
+                        contact_sheet_on_click: false,
+                    };
+                    tab(&mut child, &mut c, &mut st);
+                });
+                found = shapes.iter().find_map(|shape| match shape {
+                    egui::Shape::Text(t) if t.galley.text() == "Beta" => Some(t.pos.y),
+                    _ => None,
+                });
+            }
+            found.expect("the second entry is painted")
+        };
+        let idle = beta_y(&mut frames, None);
+        let hovered = beta_y(&mut frames, Some(first));
+        assert_eq!(hovered, idle, "hovering the first entry must not move the rows below");
+    }
 
     #[test]
     fn the_pills_say_what_is_blocked() {

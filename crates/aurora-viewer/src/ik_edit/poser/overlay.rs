@@ -21,6 +21,24 @@ impl Editor {
     }
     pub(super) fn select_pose_group(&mut self, group: usize, rig: &Rig, frame: &Frame) {
         self.poser.group = group;
+        // a follower the new tab hides would still move unseen: only the
+        // active tab's joints are selected, as in the Legacy Viewer's lists
+        // (FSFloaterPoser::getUiSelectedPoserJoints reads the active one)
+        let hidden: Vec<usize> = self
+            .poser
+            .together
+            .iter()
+            .copied()
+            .filter(|b| !self.bone_visible(&rig.canonical_names[*b]))
+            .collect();
+        self.poser.together.retain(|b| !hidden.contains(b));
+        // a hidden lead hands over to a follower the tab shows
+        if self.selected.is_some_and(|b| !self.bone_visible(&rig.canonical_names[b]))
+            && let Some(next) = self.poser.together.first().copied()
+        {
+            self.poser.together.remove(0);
+            self.selected = Some(next);
+        }
         if let Some(bone) = self
             .selected
             .filter(|b| self.bone_visible(&rig.canonical_names[*b]))
@@ -83,6 +101,7 @@ impl Editor {
         }
         // Paint the selected joint last so it wins over coincident markers.
         let chosen = self.selected;
+        let shift = ctx.input(|i| i.modifiers.shift);
         for joint in (0..rig.len()).filter(|b| chosen != Some(*b)).chain(chosen) {
             let name = &rig.canonical_names[joint];
             if !self.bone_visible(name) {
@@ -92,6 +111,7 @@ impl Editor {
                 continue;
             };
             let selected = chosen == Some(joint);
+            let follower = !selected && self.poser.together.contains(&joint);
             let response = egui::Area::new(egui::Id::unique(("poser-joint", joint)))
                 .fixed_pos(at - egui::vec2(6.0, 6.0))
                 .order(egui::Order::Background)
@@ -108,13 +128,16 @@ impl Editor {
                     let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(12.0), sense);
                     if selected {
                         ui.painter().circle_stroke(rect.center(), 7.0, Stroke::new(2.0, p.teal));
+                    } else if follower {
+                        // a joint that follows the selected one: a thinner ring
+                        ui.painter().circle_stroke(rect.center(), 6.0, Stroke::new(1.5, p.teal));
                     }
                     ui.painter().circle_filled(
                         rect.center(),
-                        if selected { 4.5 } else { 2.5 },
+                        if selected || follower { 4.5 } else { 2.5 },
                         if self.poser_edited(joint) {
                             p.violet_light
-                        } else if selected {
+                        } else if selected || follower {
                             p.teal
                         } else {
                             p.ink
@@ -124,8 +147,10 @@ impl Editor {
                 })
                 .inner;
             self.poser.pointer_owned |= response.contains_pointer();
-            if response.clicked() || response.drag_started() {
-                self.select_pose_bone(joint, rig, frame);
+            if response.clicked() {
+                self.click_pose_bone(joint, rig, frame, shift);
+            } else if response.drag_started() {
+                self.grab_pose_bone(joint, rig, frame);
             }
             if response.dragged()
                 && let Some(pointer) = response.interact_pointer_pos()
@@ -167,7 +192,7 @@ impl Editor {
             painter.line_segment([segment.a.0, segment.b.0], Stroke::new(3.0, p.violet_light));
         }
         if response.clicked() {
-            self.select_pose_bone(bone, rig, frame);
+            self.click_pose_bone(bone, rig, frame, ctx.input(|i| i.modifiers.shift));
         }
         response.on_hover_text(&rig.canonical_names[bone]);
     }

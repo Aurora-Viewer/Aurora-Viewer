@@ -11,7 +11,8 @@
 use super::App;
 use crate::snapshot::looks::{self, Placement, Resolved};
 use crate::snapshot::luts::{Imported, LutLibrary};
-use crate::snapshot::{self, ContextPass, TilePass, gallery, inventory, profile, save};
+use crate::snapshot::reel::Place;
+use crate::snapshot::{self, ContextPass, PausedPart, TilePass, gallery, inventory, profile, save};
 use crate::ui::snapshot::{Action, Destination, EmailView, InventoryView, ProfileView};
 use crate::ui_sound::UiSound;
 use aurora_net::NetCommand;
@@ -36,7 +37,7 @@ const PHOTO_WAIT: Duration = Duration::from_secs(30);
 const DEFAULT_TARGET_BYTES: u64 = 1_600_000_000;
 
 #[derive(Debug, Clone, PartialEq)]
-enum Purpose {
+pub(super) enum Purpose {
     Preview,
     /// To a file; Some: the one chosen in "Save as".
     Save(Option<PathBuf>),
@@ -48,7 +49,33 @@ enum Purpose {
     Profile,
     /// By e-mail.
     Postcard,
+    /// An outfit's picture, for the image request (#2716).
+    Outfit(Uuid),
+    /// The outfit's auto portrait or its square photo mode
+    /// (`app::outfit_portrait`): the window's small preview, or the photo
+    /// shown for confirmation.
+    Portrait {
+        preview: bool,
+    },
 }
+
+impl Purpose {
+    /// A preview, drawn again and again: not logged, not "busy".
+    fn quiet(&self) -> bool {
+        matches!(self, Purpose::Preview | Purpose::Portrait { preview: true })
+    }
+
+    /// An outfit's picture: square, never the interface, the HUDs or the
+    /// photo quality.
+    fn outfit(&self) -> bool {
+        matches!(self, Purpose::Outfit(_) | Purpose::Portrait { .. })
+    }
+}
+
+/// The side of an outfit's picture as it is drawn, reduced to 256 afterwards.
+pub(super) const OUTFIT_PHOTO_SIDE: u32 = 512;
+/// The side of the auto portrait's live preview.
+const PORTRAIT_PREVIEW_SIDE: u32 = 256;
 
 /// A photo on its way to the inventory or the profile feed.
 enum Upload {
@@ -116,6 +143,8 @@ struct Job {
     hold: Option<snapshot::Hold>,
     /// The whole photo drawn small before its tiles, for their occlusion.
     context: ContextPass,
+    /// Its parts wait while the 3D drawing is paused behind.
+    paused: snapshot::PausedWait,
 }
 
 /// A held photo (freeze frame) and what shows it.
@@ -171,7 +200,7 @@ pub(super) struct Snapshots {
     luts: Option<LutLibrary>,
     /// A table being imported (its file chosen, read and copied on a
     /// worker; None: the dialog was closed).
-    lut_import: Option<crossbeam_channel::Receiver<Option<Imported>>>,
+    lut_import: Option<crossbeam_channel::Receiver<Option<Vec<Imported>>>>,
     /// The focus distance of the depth of field last frame, for the depth
     /// looks (None: off, the middle of the photo then).
     pub look_focus: Option<f32>,
@@ -181,9 +210,9 @@ pub(super) struct Snapshots {
     /// toolbar's Snapshot to disk): taken by the next `photo_update`.
     to_disk: bool,
     /// The price to confirm before the upload.
-    confirm: Option<i32>,
+    pub(super) confirm: Option<i32>,
     /// The price the balance cannot pay.
-    short: Option<i32>,
+    pub(super) short: Option<i32>,
     /// "Photo quality" was switched on for the first time: held off until
     /// its warning is answered (`Settings::quality_warned`).
     quality_ask: bool,
@@ -237,12 +266,8 @@ pub(super) struct Snapshots {
     /// The field of view before the viewfinder opened: its focal length
     /// is the photo's, the view gets this back when it closes.
     pub(super) fov_before: Option<f32>,
-    /// The last photo's card in the viewfinder: what it says, what it
-    /// offers, its thumbnail (made on a worker for the inventory and the
-    /// profile feed).
-    review: Option<(String, crate::ui::viewfinder::Review)>,
-    review_tex: Option<egui::TextureHandle>,
-    review_rx: Option<crossbeam_channel::Receiver<(u32, u32, Vec<u8>)>>,
+    /// The session's photos (`app::photo_reel`).
+    pub(super) reel: super::photo_reel::ReelState,
     /// Choosing for the isolation (`app::photo_isolate`): the points asked
     /// of the renderer, this frame's point (window pixels), and the avatar
     /// or linkset under the pointer.
@@ -252,6 +277,11 @@ pub(super) struct Snapshots {
 }
 
 impl Snapshots {
+    /// A photo is being drawn (the crash report's effects list).
+    pub(super) fn drawing(&self) -> bool {
+        self.job.is_some()
+    }
+
     /// After a GPU recovery (gpu_recovery.rs): a photo under way is given up,
     /// its frames asked of the lost renderer never come back.
     pub(super) fn gpu_lost(&mut self) {
@@ -381,6 +411,19 @@ struct DemoInventory {
     poor: bool,
 }
 
+impl Snapshots {
+    /// The photo window's line (the reel's outcomes).
+    pub(super) fn reel_message(&mut self, text: String, error: bool) {
+        self.message = Some((text, error));
+    }
+
+    /// The photo window's latest photos read again from the folder (one of
+    /// them deleted).
+    pub(super) fn gallery_reread(&mut self) {
+        self.gallery_folder = None;
+    }
+}
+
 impl Default for Snapshots {
     fn default() -> Self {
         Snapshots {
@@ -432,9 +475,7 @@ impl Default for Snapshots {
             vf_tick_slot: None,
             vf_free_up: 0.0,
             fov_before: None,
-            review: None,
-            review_tex: None,
-            review_rx: None,
+            reel: Default::default(),
             isolate_picks: Vec::new(),
             isolate_point: None,
             isolate_hover: None,
@@ -489,6 +530,18 @@ impl App {
         self.snapshots.world_freeze
     }
 
+    /// Whether this frame's 3D drawing is paused behind
+    /// (texture_budget::Background::paused, busy_pause.rs): not for a frame
+    /// that carries a part of a photo. No part is asked while the drawing is
+    /// paused for memory (`snapshot::PausedWait`), but the pause can begin
+    /// after the part of the frame was asked, or while one asked is still on
+    /// its way; the busy card's pause only ends after the frame of a photo's
+    /// first part. Drawn paused, it was only sky (the empty lists, at a
+    /// sixteenth of its size).
+    pub(super) fn scene_paused(&self) -> bool {
+        self.drawing_paused() && self.snapshots.capturing.is_none()
+    }
+
     /// Whether the photo mode holds the world still.
     pub(super) fn photo_world_frozen(&self) -> bool {
         self.snapshots.world_freeze.is_some()
@@ -496,9 +549,36 @@ impl App {
 
     /// Before a frame is laid out: the photo frame it carries, if any.
     pub(super) fn photo_frame(&mut self, renderer: &mut Renderer) -> Option<PhotoFrame> {
+        let textures = &self.scene.textures;
+        let (paused, pending, passes) = (textures.drawing_paused(), textures.pending_in_view(), textures.wants_passes());
+        let occlusion = self.settings.ssao > 0;
         let s = &mut self.snapshots;
         s.capturing = None;
         let job = s.job.as_mut()?;
+        // (a part already asked is drawn all the same: the frame that
+        // carries it draws the scene, `App::scene_paused`)
+        if !job.asked {
+            let waited = job.paused.waiting();
+            match job.paused.next(Instant::now(), paused, pending, passes) {
+                PausedPart::Draw if waited => {
+                    log::info!("photo: the 3D drawing resumed, drawn from its first part ({pending} textures in view left)");
+                }
+                PausedPart::Draw => {}
+                PausedPart::Wait => return None,
+                PausedPart::StartOver => {
+                    log::info!(
+                        "photo: the 3D drawing is paused behind, the photo waits for it ({} of {} part(s) drawn, drawn again)",
+                        job.next,
+                        job.tiles.len()
+                    );
+                    job.next = 0;
+                    job.pixels = Vec::new();
+                    job.hold = None;
+                    job.context = ContextPass::plan(job.size, job.tiles.len(), occlusion);
+                    return None;
+                }
+            }
+        }
         if job.asked {
             if renderer.failed() || renderer.device_lost() {
                 // the frame asked never came back (the render thread is gone)
@@ -692,7 +772,7 @@ impl App {
             return;
         };
         let render_ms = job.started.elapsed().as_millis();
-        if job.purpose != Purpose::Preview {
+        if !job.purpose.quiet() {
             log::info!(
                 "photo: {} x {} drawn in {} part(s), {render_ms} ms",
                 job.size.0,
@@ -715,36 +795,64 @@ impl App {
                 self.snapshots.preview = Some(self.egui_ctx.load_texture("photo_preview", image, egui::TextureOptions::LINEAR));
             }
             Purpose::Hold => {
-                let (tx, rx) = crossbeam_channel::bounded(1);
-                let (w, h) = job.size;
-                let rgba = job.pixels.clone();
-                // shown at the screen's size, reduced on a worker
                 let side = renderer.size().0.max(renderer.size().1);
-                std::thread::spawn(move || {
-                    let _ = tx.send(save::downscale(w, h, &rgba, side));
-                });
-                self.snapshots.held_view = Some(rx);
-                self.snapshots.held = Some(Held {
-                    width: w,
-                    height: h,
-                    rgba: job.pixels,
-                    cutout: job.cutout,
-                    texture: None,
-                });
+                self.photo_hold_pixels(job.size, job.pixels, job.cutout, side);
                 self.photo_shutter();
             }
             Purpose::Save(path) => self.photo_save(job.size, job.pixels, path, job.cutout),
-            Purpose::Inventory(cost) => self.photo_encode(job.size, job.pixels, cost),
-            Purpose::Profile => self.photo_post(job.size, job.pixels),
-            Purpose::Postcard => self.photo_postcard(job.size, job.pixels),
+            Purpose::Inventory(cost) => self.photo_encode(job.size, job.pixels, cost, job.cutout),
+            Purpose::Profile => self.photo_post(job.size, job.pixels, job.cutout),
+            Purpose::Postcard => self.photo_postcard(job.size, job.pixels, job.cutout),
+            Purpose::Outfit(request) => {
+                self.inventory_images.photo = None;
+                self.prepare_inventory_photo(request, job.size.0, job.size.1, job.pixels);
+            }
+            Purpose::Portrait { preview } => self.outfit_portrait_drawn(preview, job.size, job.pixels, job.cutout),
         }
     }
 
     /// The size of the photo for the chosen destination: the disk's
     /// settings, or the inventory's size before it becomes a texture.
     pub(super) fn photo_size(&self, window: (u32, u32)) -> (u32, u32) {
+        // the outfit's photo mode: its square
+        if self.outfit_photo_mode() {
+            return (OUTFIT_PHOTO_SIDE, OUTFIT_PHOTO_SIDE);
+        }
+        self.photo_size_for(self.snapshots.ui.destination, window)
+    }
+
+    /// Hold a photo (the freeze frame, or one of the reel sent again):
+    /// "Take" and the destinations send it; shown at the screen's `side`,
+    /// reduced on a worker.
+    pub(super) fn photo_hold_pixels(&mut self, size: (u32, u32), rgba: Vec<u8>, cutout: bool, side: u32) {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        let (w, h) = size;
+        let view = rgba.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(save::downscale(w, h, &view, side));
+        });
+        self.snapshots.held_view = Some(rx);
+        self.snapshots.held = Some(Held {
+            width: w,
+            height: h,
+            rgba,
+            cutout,
+            texture: None,
+        });
+    }
+
+    /// Save pixels to disk now, named and formatted as "Take" would (a
+    /// photo of the reel saved again).
+    pub(super) fn photo_save_pixels(&mut self, size: (u32, u32), rgba: Vec<u8>, cutout: bool) {
+        if !self.photo_busy() {
+            self.photo_save(size, rgba, None, cutout);
+        }
+    }
+
+    /// The size of a photo for `destination` (`photo_size`).
+    pub(super) fn photo_size_for(&self, destination: Destination, window: (u32, u32)) -> (u32, u32) {
         let s = &self.settings.snapshot;
-        match self.snapshots.ui.destination {
+        match destination {
             Destination::Disk => s.size(window),
             Destination::Inventory => inventory::capture_size(s.aspect, s.inventory_size, window),
             Destination::Profile => profile::capture_size(s.aspect, s.profile_size, window),
@@ -781,7 +889,7 @@ impl App {
     }
 
     /// What the window shows of a photo for the profile feed.
-    fn photo_profile_view(&mut self, window: (u32, u32)) -> ProfileView {
+    pub(super) fn photo_profile_view(&self, window: (u32, u32)) -> ProfileView {
         ProfileView {
             connected: self.demo || self.world.login.is_some(),
             ready: self.demo || (self.world.login.is_some() && self.media.openid.raw().is_some()),
@@ -795,8 +903,8 @@ impl App {
             return;
         }
         if let Some(held) = &self.snapshots.held {
-            let (size, rgba) = ((held.width, held.height), held.rgba.clone());
-            self.photo_post(size, rgba);
+            let (size, rgba, cutout) = ((held.width, held.height), held.rgba.clone(), held.cutout);
+            self.photo_post(size, rgba, cutout);
             return;
         }
         self.photo_job(Purpose::Profile, renderer);
@@ -804,12 +912,12 @@ impl App {
 
     /// Encode the PNG and post it, off the main thread: the session cookie
     /// of the web profile first when it is not known for this login.
-    fn photo_post(&mut self, size: (u32, u32), rgba: Vec<u8>) {
+    fn photo_post(&mut self, size: (u32, u32), rgba: Vec<u8>, cutout: bool) {
         let Some(web) = self.photo_profile_web() else {
             self.snapshots.message = Some((aurora_i18n::tr!("photo-profile-not-ready").to_owned(), true));
             return;
         };
-        self.photo_review_thumb(size, &rgba);
+        self.snapshots.reel.start(size, &rgba, cutout, &self.world.agent_id);
         let caption: String = self.snapshots.ui.caption.chars().take(profile::MAX_CAPTION).collect();
         let add_location = self.settings.snapshot.profile_location;
         let auth = self.snapshots.web_auth.clone();
@@ -853,7 +961,7 @@ impl App {
 
     /// What the window shows of a postcard: the region takes them
     /// (SendPostcard), or the demo.
-    fn photo_email_view(&self, window: (u32, u32)) -> EmailView {
+    pub(super) fn photo_email_view(&self, window: (u32, u32)) -> EmailView {
         EmailView {
             available: self.demo || self.world.main_has_cap("SendPostcard"),
             size: self.photo_size(window),
@@ -874,8 +982,8 @@ impl App {
             return;
         }
         if let Some(held) = &self.snapshots.held {
-            let (size, rgba) = ((held.width, held.height), held.rgba.clone());
-            self.photo_postcard(size, rgba);
+            let (size, rgba, cutout) = ((held.width, held.height), held.rgba.clone(), held.cutout);
+            self.photo_postcard(size, rgba, cutout);
             return;
         }
         self.photo_job(Purpose::Postcard, renderer);
@@ -919,13 +1027,13 @@ impl App {
     /// Encode the JPEG and send the postcard, off the main thread; the
     /// demo has no simulator and answers itself (AURORA_DEMO_SNAPSHOT=
     /// postcard-fail: refused).
-    fn photo_postcard(&mut self, size: (u32, u32), rgba: Vec<u8>) {
+    pub(super) fn photo_postcard(&mut self, size: (u32, u32), rgba: Vec<u8>, cutout: bool) {
         let url = self.world.main().and_then(|r| r.caps.get("SendPostcard").cloned());
         if url.is_none() && !self.demo {
             self.snapshots.message = Some((aurora_i18n::tr!("photo-email-unavailable").to_owned(), true));
             return;
         }
-        self.photo_review_thumb(size, &rgba);
+        self.snapshots.reel.start(size, &rgba, cutout, &self.world.agent_id);
         let postcard = self.photo_postcard_fields();
         let quality = self.settings.snapshot.jpeg_quality;
         let demo_fail = self.demo && std::env::var("AURORA_DEMO_SNAPSHOT").is_ok_and(|m| m == "postcard-fail");
@@ -977,14 +1085,13 @@ impl App {
         match result {
             Ok(()) => {
                 log::info!("photo: postcard sent");
+                s.reel.done(Some(Place::Email), None);
                 s.message = Some((aurora_i18n::tr!("photo-email-sent").to_owned(), false));
-                self.photo_review_show(
-                    aurora_i18n::tr!("photo-destination-email").to_owned(),
-                    crate::ui::viewfinder::Review::Email,
-                );
+                self.photo_review_show();
             }
             Err(e) => {
                 log::warn!("photo: postcard not sent: {e}");
+                s.reel.done(None, None);
                 // CannotUploadSnapshotEmailTooBig
                 let text = match e {
                     aurora_net::postcard::Error::TooBig => aurora_i18n::tr!("photo-email-too-big"),
@@ -997,13 +1104,26 @@ impl App {
     }
 
     /// Start a photo of the destination's size.
-    fn photo_job(&mut self, purpose: Purpose, renderer: &Renderer) {
+    pub(super) fn photo_job(&mut self, purpose: Purpose, renderer: &Renderer) {
         let window = renderer.size();
-        let full = self.photo_size(window);
+        let outfit = purpose.outfit();
+        let full = if purpose == (Purpose::Portrait { preview: false }) {
+            // (the HD picture is chosen once the photo is shown)
+            (snapshot::portrait::SHOT_SIDE, snapshot::portrait::SHOT_SIDE)
+        } else if outfit {
+            (OUTFIT_PHOTO_SIDE, OUTFIT_PHOTO_SIDE)
+        } else {
+            self.photo_size(window)
+        };
         let s = &self.settings.snapshot;
-        let size = if purpose == Purpose::Preview {
+        let size = if purpose.quiet() {
             let (w, h) = full;
-            let scale = (PREVIEW_SIDE as f32 / w.max(h) as f32).min(1.0);
+            let side = if purpose == Purpose::Preview {
+                PREVIEW_SIDE
+            } else {
+                PORTRAIT_PREVIEW_SIDE
+            };
+            let scale = (side as f32 / w.max(h) as f32).min(1.0);
             (
                 ((w as f32 * scale).round() as u32).max(16),
                 ((h as f32 * scale).round() as u32).max(16),
@@ -1012,7 +1132,7 @@ impl App {
             full
         };
         // the photo quality draws a photo (not its preview) at twice its size
-        let supersample = if purpose != Purpose::Preview && self.settings.photo_held.is_some() {
+        let supersample = if !purpose.quiet() && !outfit && self.settings.photo_held.is_some() {
             snapshot::quality::supersample(size)
         } else {
             1
@@ -1021,12 +1141,12 @@ impl App {
         // the choosing in the scene stops: its outlines are not in the
         // photo, which shows what is chosen (the scene follows before the
         // photo's frame is drawn)
-        if purpose != Purpose::Preview {
+        if !purpose.quiet() {
             self.world.photo_isolation.set_picking(false);
         }
         self.snapshots.gpu_cost.new_photo();
         let tiles = self.photo_tiles(renderer, size);
-        if purpose != Purpose::Preview {
+        if !purpose.quiet() {
             log::info!(
                 "photo: {} x {} planned in {} part(s), at most {} Mpx a pass (memory and GPU time; {} bytes a pixel, {})",
                 size.0,
@@ -1041,9 +1161,14 @@ impl App {
                 }
             );
         }
-        let interface = s.interface && snapshot::same_proportions(full, window);
+        // an outfit's picture shows the outfit: never the interface, the
+        // HUDs or the photo's looks, whatever the Photo window has chosen
+        let interface = !outfit && s.interface && snapshot::same_proportions(full, window);
         // (with the ambient occlusion on: GTAO may be forced over its method)
         let context = ContextPass::plan(size, tiles.len(), self.settings.ssao > 0);
+        // (the outfit's photo mode keeps the viewfinder's looks: the
+        // square shows them)
+        let looks = !outfit || (matches!(purpose, Purpose::Portrait { .. }) && self.outfit_photo_mode());
         self.snapshots.job = Some(Job {
             purpose,
             size,
@@ -1054,7 +1179,7 @@ impl App {
             waiting: None,
             pixels: Vec::new(),
             interface,
-            huds: s.huds,
+            huds: !outfit && s.huds,
             started: Instant::now(),
             supersample,
             cutout: self.world.photo_isolation.empty_background(),
@@ -1063,7 +1188,11 @@ impl App {
             photo: full,
             hold: None,
             context,
+            paused: Default::default(),
         });
+        if !looks {
+            return;
+        }
         let stack = self.settings.snapshot.looks.clone();
         let settings = self.settings.snapshot.look_settings.clone();
         let resolved = looks::resolve_stack(&stack, &settings, self.photo_luts());
@@ -1116,7 +1245,7 @@ impl App {
     fn photo_tiles(&self, renderer: &Renderer, size: (u32, u32)) -> Vec<snapshot::TilePass> {
         let bloom = if self.settings.bloom { self.settings.bloom_strength } else { 0.0 };
         let dof = self
-            .photo_dof_max_coc(size.1, renderer.size().1)
+            .photo_dof_max_coc(size, renderer.size())
             .map_or(0, aurora_render::dof_tile_reach);
         let scale = snapshot::viewfinder_scale(size, renderer.size(), self.settings.render_scale_percent);
         let contact = aurora_render::contact_tile_reach(self.settings.contact_shadows, scale);
@@ -1193,6 +1322,7 @@ impl App {
         };
         self.snapshots.message_item = None;
         self.snapshots.message_profile = false;
+        self.snapshots.reel.start(size, &rgba, cutout, &self.world.agent_id);
         self.snapshots.saving = Some(save::Saving::start(save::Job {
             width: size.0,
             height: size.1,
@@ -1206,14 +1336,14 @@ impl App {
     }
 
     /// A photo is being taken, saved or uploaded.
-    fn photo_busy(&self) -> bool {
+    pub(super) fn photo_busy(&self) -> bool {
         let s = &self.snapshots;
-        s.saving.is_some() || s.upload.is_some() || s.detail_wait.is_some() || s.job.as_ref().is_some_and(|j| j.purpose != Purpose::Preview)
+        s.saving.is_some() || s.upload.is_some() || s.detail_wait.is_some() || s.job.as_ref().is_some_and(|j| !j.purpose.quiet())
     }
 
     /// Upload prices: the account's benefits (texture_upload_cost, by area
     /// for the large ones), the demo's, or the economy's single price.
-    fn photo_prices(&self) -> Prices {
+    pub(super) fn photo_prices(&self) -> Prices {
         let prices = if self.demo {
             Prices {
                 texture: Some(10),
@@ -1228,8 +1358,14 @@ impl App {
     }
 
     /// What the window shows of a photo for the inventory.
-    fn photo_inventory_view(&self, window: (u32, u32)) -> InventoryView {
-        let texture = inventory::texture_size(self.photo_size(window));
+    pub(super) fn photo_inventory_view(&self, window: (u32, u32)) -> InventoryView {
+        // a photo of the reel sent again goes at its own size (never above
+        // the largest texture when it was read back): its price follows
+        let capture = match &self.snapshots.reel.pending {
+            Some((_, (w, h, _))) => (*w, *h),
+            None => self.photo_size(window),
+        };
+        let texture = inventory::texture_size(capture);
         InventoryView {
             texture,
             cost: self.photo_prices().cost(Kind::Snapshot, texture),
@@ -1263,8 +1399,8 @@ impl App {
             return;
         }
         if let Some(held) = &self.snapshots.held {
-            let (size, rgba) = ((held.width, held.height), held.rgba.clone());
-            self.photo_encode(size, rgba, cost);
+            let (size, rgba, cutout) = ((held.width, held.height), held.rgba.clone(), held.cutout);
+            self.photo_encode(size, rgba, cost, cutout);
             return;
         }
         self.photo_job(Purpose::Inventory(cost), renderer);
@@ -1272,8 +1408,8 @@ impl App {
 
     /// Scale and encode the texture on a worker; the shutter sounds as the
     /// upload starts, like saveTexture's playSnapshotAnimAndSound.
-    fn photo_encode(&mut self, size: (u32, u32), rgba: Vec<u8>, cost: i32) {
-        self.photo_review_thumb(size, &rgba);
+    pub(super) fn photo_encode(&mut self, size: (u32, u32), rgba: Vec<u8>, cost: i32, cutout: bool) {
+        self.snapshots.reel.start(size, &rgba, cutout, &self.world.agent_id);
         let texture = inventory::texture_size(size);
         let (tx, rx) = crossbeam_channel::bounded(1);
         std::thread::spawn(move || {
@@ -1352,14 +1488,13 @@ impl App {
                 self.inventory_ui.show_original(&self.world.inventory, id);
                 self.snapshots.message = Some((aurora_i18n::tr!("photo-uploaded").to_owned(), false));
                 self.snapshots.message_item = Some(id);
+                self.snapshots.reel.done(Some(Place::Inventory(id)), None);
                 self.snapshots.message_profile = false;
-                self.photo_review_show(
-                    aurora_i18n::tr!("photo-destination-inventory").to_owned(),
-                    crate::ui::viewfinder::Review::Inventory,
-                );
+                self.photo_review_show();
             }
             Err(e) => {
                 log::warn!("photo: upload failed: {e}");
+                self.snapshots.reel.done(None, None);
                 let text = match e {
                     upload::Error::PriceChanged(Some(cost)) => aurora_i18n::tr!("photo-upload-price-changed", cost = cost).to_owned(),
                     upload::Error::Unknown | upload::Error::Uncertain(_) | upload::Error::Verification => {
@@ -1397,15 +1532,14 @@ impl App {
         match result {
             Ok(()) => {
                 log::info!("photo: posted to the profile feed");
+                s.reel.done(Some(Place::Profile), None);
                 s.message = Some((aurora_i18n::tr!("photo-profile-posted").to_owned(), false));
                 s.message_profile = true;
-                self.photo_review_show(
-                    aurora_i18n::tr!("photo-destination-profile").to_owned(),
-                    crate::ui::viewfinder::Review::Profile,
-                );
+                self.photo_review_show();
             }
             Err(e) => {
                 log::warn!("photo: not posted to the profile feed: {e}");
+                s.reel.done(None, None);
                 // CannotUploadSnapshotWebTooBig when the PNG is over the limit
                 let text = if too_big {
                     aurora_i18n::tr!("photo-profile-too-big")
@@ -1452,6 +1586,7 @@ impl App {
             self.photo_take(renderer, None);
         }
         self.photo_demo(renderer);
+        self.photo_reel_demo(renderer);
         self.photo_luts_update();
         self.photo_quality(renderer);
         self.photo_light();
@@ -1482,6 +1617,7 @@ impl App {
                 Ok(data) => self.photo_upload(data, cost),
                 Err(e) => {
                     log::warn!("photo: texture not encoded: {e}");
+                    self.snapshots.reel.done(None, None);
                     self.snapshots.upload = None;
                     self.snapshots.message = Some((aurora_i18n::tr!("photo-upload-failed", error = e.as_str()).to_owned(), true));
                 }
@@ -1489,6 +1625,7 @@ impl App {
         }
         self.photo_profile_poll();
         self.photo_postcard_poll();
+        self.photo_reel_update();
         let viewfinder = self.viewfinder_on();
         let s = &mut self.snapshots;
         // the save on its worker
@@ -1509,13 +1646,10 @@ impl App {
                     let tex = self.egui_ctx.load_texture("photo_thumb", image, egui::TextureOptions::LINEAR);
                     s.gallery.retain(|(p, _)| *p != saved.path);
                     s.gallery.insert(0, (saved.path.clone(), Some(tex.clone())));
-                    s.review_tex = Some(tex);
-                    s.review = Some((
-                        format!("{} · {name}", aurora_i18n::tr!("photo-destination-disk")),
-                        crate::ui::viewfinder::Review::Disk(saved.path.clone()),
-                    ));
-                    if viewfinder {
-                        s.vf.review_until = self.egui_ctx.input(|i| i.time) + 4.8;
+                    s.reel.done(Some(Place::Disk(saved.path.clone())), Some(tex));
+                    // (a photo of the reel saved again from the quick view: no card)
+                    if viewfinder && !s.reel.sent_again {
+                        s.vf.review_until = self.egui_ctx.input(|i| i.time) + crate::ui::viewfinder::CARD_TIME;
                     }
                     s.gallery.truncate(gallery::SHOWN);
                     if std::mem::take(&mut s.quiet) {
@@ -1530,6 +1664,7 @@ impl App {
                 }
                 Err(e) => {
                     log::warn!("photo: not saved: {e}");
+                    s.reel.done(None, None);
                     let text = aurora_i18n::tr!("photo-failed", error = e.as_str()).to_owned();
                     let now = self.egui_ctx.input(|i| i.time);
                     s.vf.say(text.clone(), true, now);
@@ -1558,14 +1693,6 @@ impl App {
                 let image = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &px);
                 slot.1 = Some(self.egui_ctx.load_texture("photo_thumb", image, egui::TextureOptions::LINEAR));
             }
-        }
-        // the last photo's thumbnail, made on a worker
-        if let Some(rx) = &s.review_rx
-            && let Ok((w, h, px)) = rx.try_recv()
-        {
-            s.review_rx = None;
-            let image = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &px);
-            s.review_tex = Some(self.egui_ctx.load_texture("photo_review", image, egui::TextureOptions::LINEAR));
         }
         // the held photo, reduced for the screen
         if let Some(rx) = &s.held_view
@@ -1646,6 +1773,8 @@ impl App {
     pub(super) fn photo_action(&mut self, action: Action, renderer: &Renderer) {
         match action {
             Action::Refresh => self.snapshots.preview_wanted = true,
+            // the outfit's photo mode: its own photo, shown for confirmation
+            Action::Take if self.outfit_photo_mode() => self.outfit_portrait_shoot(),
             Action::Take => {
                 self.snapshots.quiet = false;
                 // the photo quality waits for the textures in view to load
@@ -1679,7 +1808,10 @@ impl App {
                 }
             }
             Action::Confirm(yes) => {
-                if let Some(cost) = self.snapshots.confirm.take()
+                let cost = self.snapshots.confirm.take();
+                // a photo of the reel waiting for its price, or a new one
+                if !self.photo_reel_confirmed(cost.filter(|_| yes))
+                    && let Some(cost) = cost
                     && yes
                 {
                     self.photo_inventory_start(cost, renderer);
@@ -1754,6 +1886,7 @@ impl App {
             Action::Freeze(on) => {
                 self.snapshots.held = None;
                 self.snapshots.held_view = None;
+                self.snapshots.reel.held = None;
                 if on {
                     self.photo_job(Purpose::Hold, renderer);
                 } else {
@@ -1775,8 +1908,8 @@ impl App {
                     let picked = rfd::FileDialog::new()
                         .set_title(aurora_i18n::tr!("photo-lut-dialog"))
                         .add_filter(aurora_i18n::tr!("photo-lut-files"), &["cube", "CUBE"])
-                        .pick_file();
-                    let _ = tx.send(picked.map(|path| LutLibrary::import(&dir, &path)));
+                        .pick_files();
+                    let _ = tx.send(picked.map(|paths| LutLibrary::import_all(&dir, &paths)));
                 });
                 self.snapshots.lut_import = Some(rx);
             }
@@ -1793,6 +1926,7 @@ impl App {
                 let _ = std::fs::create_dir_all(&dir);
                 gallery::reveal(&dir, None);
             }
+            Action::Reel(a) => self.photo_reel_action(a, renderer),
         }
     }
 
@@ -1815,32 +1949,50 @@ impl App {
         let Some(rx) = &self.snapshots.lut_import else { return };
         let Ok(result) = rx.try_recv() else { return };
         self.snapshots.lut_import = None;
-        match result {
-            None => {}
-            Some(Ok((name, lut))) => {
-                let text = aurora_i18n::tr!("photo-lut-imported", name = looks::lut_display(&name));
-                self.photo_luts().imported(name.clone(), lut);
-                let id = format!("{}{name}", looks::LUT);
-                self.snapshots.ui.looks.pick(&mut self.settings.snapshot, &id);
-                self.settings.save();
-                self.snapshots.message = Some((text.clone(), false));
-                let now = self.egui_ctx.input(|i| i.time);
-                self.snapshots.vf.say(text, false, now);
+        let Some(results) = result else { return };
+        // the tables kept, the first one chosen; the failures said together
+        let mut first = None;
+        let mut count = 0;
+        let mut failures = Vec::new();
+        for outcome in results {
+            match outcome {
+                Ok((name, lut)) => {
+                    self.photo_luts().imported(name.clone(), lut);
+                    count += 1;
+                    first.get_or_insert(name);
+                }
+                Err(e) => {
+                    log::warn!("photo LUT not imported: {e}");
+                    failures.push(e);
+                }
             }
-            Some(Err(e)) => {
-                log::warn!("photo LUT not imported: {e}");
-                let text = aurora_i18n::tr!("photo-lut-failed", error = e);
-                self.snapshots.message = Some((text.clone(), true));
-                self.photo_vf_error(&text);
-            }
+        }
+        if let Some(name) = first {
+            let text = if count == 1 {
+                aurora_i18n::tr!("photo-lut-imported", name = looks::lut_display(&name))
+            } else {
+                aurora_i18n::tr!("photo-lut-imported-many", count = count)
+            };
+            let id = format!("{}{name}", looks::LUT);
+            self.snapshots.ui.looks.pick(&mut self.settings.snapshot, &id);
+            self.settings.save();
+            self.snapshots.message = Some((text.clone(), false));
+            let now = self.egui_ctx.input(|i| i.time);
+            self.snapshots.vf.say(text, false, now);
+        }
+        if !failures.is_empty() {
+            let text = aurora_i18n::tr!("photo-lut-failed", error = failures.join("; "));
+            self.snapshots.message = Some((text.clone(), true));
+            self.photo_vf_error(&text);
         }
     }
 
     /// AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel]
     /// [:tab=legacy|aurora|luts][:search=<text>][:set=<n>,<v>,…], with
     /// AURORA_DEMO_SNAPSHOT: the looks stacked in that order (`Sepia`,
-    /// `aurora:vhs`, `lut:<file>`, or `lut:demo` for a warm table written
-    /// into the library), the last one chosen, at that strength (100 by
+    /// `aurora:vhs`, `lut:<file>`, `lut:demo` for a warm table written
+    /// into the library, or `pack:<pack>/<table>` for a creator's table
+    /// built in), the last one chosen, at that strength (100 by
     /// default), the before / after line in the middle, the viewfinder's
     /// filter panel open on the chosen look's tab or the one given, a
     /// search typed, the chosen Aurora look's settings set (the photo
@@ -1851,10 +2003,10 @@ impl App {
         let mut parts: Vec<&str> = value.split('+').collect();
         let last = parts.pop().unwrap_or_default();
         let mut tokens = last.split(':');
-        // `aurora:` and `lut:` ids hold a colon
+        // `aurora:`, `lut:` and `pack:` ids hold a colon
         let id_of = |tokens: &mut std::str::Split<'_, char>| {
             let mut id = tokens.next().unwrap_or_default().to_owned();
-            if matches!(id.as_str(), "aurora" | "lut")
+            if matches!(id.as_str(), "aurora" | "lut" | "pack")
                 && let Some(rest) = tokens.next()
             {
                 id = format!("{id}:{rest}");
@@ -1975,7 +2127,7 @@ LUT_3D_SIZE {n}
                 Upload::Postcard { encoded: true, .. } => (0.85, aurora_i18n::tr!("photo-email-sending").to_owned()),
             })
         } else {
-            s.job.as_ref().filter(|j| j.purpose != Purpose::Preview).map(|j| {
+            s.job.as_ref().filter(|j| !j.purpose.quiet()).map(|j| {
                 let f = 0.5 * j.next as f32 / j.tiles.len().max(1) as f32;
                 let what = if j.tiles.len() > 1 {
                     aurora_i18n::tr!("photo-rendering-tiles", tile = j.next + 1, count = j.tiles.len()).to_owned()
@@ -1991,6 +2143,11 @@ LUT_3D_SIZE {n}
     /// (AURORA_DEMO_SNAPSHOT=classic the Legacy floater, viewfinder… the
     /// viewfinder, any other scenario the panel).
     pub(super) fn photo_style(&self) -> crate::settings::PhotoWindowStyle {
+        // the outfit's photo mode is the viewfinder's square, whatever the
+        // window chosen
+        if self.outfit_photo_mode() {
+            return crate::settings::PhotoWindowStyle::Aurora;
+        }
         self.snapshots
             .demo
             .as_ref()
@@ -2022,35 +2179,13 @@ LUT_3D_SIZE {n}
             .is_some_and(|d| d.viewfinder.as_ref().is_some_and(|v| v.group) && self.frame_count == d.frame + 40)
     }
 
-    /// The last photo's card of the viewfinder: its thumbnail, what it
-    /// says, what it offers.
-    pub(super) fn photo_review(&self) -> Option<(egui::TextureHandle, String, crate::ui::viewfinder::Review)> {
-        let s = &self.snapshots;
-        let (label, kind) = s.review.clone()?;
-        Some((s.review_tex.clone()?, label, kind))
-    }
-
-    /// The card shows a photo sent to the inventory or the profile feed.
-    fn photo_review_show(&mut self, label: String, kind: crate::ui::viewfinder::Review) {
-        self.snapshots.review = Some((label, kind));
-        if self.viewfinder_on() {
-            self.snapshots.vf.review_until = self.egui_ctx.input(|i| i.time) + 4.8;
+    /// The card shows a photo sent to the inventory, the profile feed or by
+    /// e-mail (its picture is the reel's card photo).
+    fn photo_review_show(&mut self) {
+        // (a photo of the reel sent again from the quick view: no card)
+        if self.viewfinder_on() && !self.snapshots.reel.sent_again {
+            self.snapshots.vf.review_until = self.egui_ctx.input(|i| i.time) + crate::ui::viewfinder::CARD_TIME;
         }
-    }
-
-    /// The card's thumbnail of a photo that is not saved to disk, reduced
-    /// on a worker.
-    fn photo_review_thumb(&mut self, size: (u32, u32), rgba: &[u8]) {
-        if !self.viewfinder_on() {
-            return;
-        }
-        let (tx, rx) = crossbeam_channel::bounded(1);
-        let rgba = rgba.to_vec();
-        std::thread::spawn(move || {
-            let _ = tx.send(save::downscale(size.0, size.1, &rgba, 300));
-        });
-        self.snapshots.review_tex = None;
-        self.snapshots.review_rx = Some(rx);
     }
 
     /// An upload's error, on the viewfinder's line too.
@@ -2078,7 +2213,12 @@ LUT_3D_SIZE {n}
         let quality_reduced = self.settings.photo_held.is_some() && self.snapshots.fit.as_ref().is_some_and(|f| f.step > 0 && !f.climbing);
         // (the panel shows it in its own line, the viewfinder once at the top)
         let quality_note = std::mem::take(&mut self.snapshots.fit_note) && quality_reduced;
-        let mut actions = self.snapshots.ui.dialogs(ctx, p, self.snapshots.confirm, self.snapshots.short);
+        // (over the quick view, open: drawn after it, photo_reel_quick)
+        let mut actions = if self.snapshots.reel.quick.is_open() {
+            Vec::new()
+        } else {
+            self.snapshots.ui.dialogs(ctx, p, self.snapshots.confirm, self.snapshots.short)
+        };
         if self.snapshots.quality_ask
             && let Some(yes) = self.snapshots.ui.quality_warning(ctx, p)
         {
@@ -2120,6 +2260,8 @@ LUT_3D_SIZE {n}
                 message: message.as_ref(),
                 last_saved: last_saved.as_deref(),
                 gallery: &gallery,
+                // (the dock has the reel's stack)
+                reel: None,
                 folder: self.settings.snapshot.folder(),
                 inventory,
                 item_saved: self.snapshots.message_item.is_some(),
@@ -2132,7 +2274,12 @@ LUT_3D_SIZE {n}
                 back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
                 quality_reduced,
             };
-            self.viewfinder_ui(ctx, p, projector, renderer, &view);
+            // (under the reel's quick view, nothing of the viewfinder acts:
+            // no focus by a click, no shutter)
+            if !self.snapshots.reel.quick.is_open() {
+                self.viewfinder_ui(ctx, p, projector, renderer, &view);
+            }
+            self.outfit_photo_mode_ui(ctx, p);
             drop(view);
             self.env_ui = env_ui;
         } else if self.snapshots.ui.full_frame && self.panels.snapshot {
@@ -2169,7 +2316,7 @@ LUT_3D_SIZE {n}
                     Upload::Postcard { encoded: true, .. } => (0.85, aurora_i18n::tr!("photo-email-sending").to_owned()),
                 })
             } else {
-                s.job.as_ref().filter(|j| j.purpose != Purpose::Preview).map(|j| {
+                s.job.as_ref().filter(|j| !j.purpose.quiet()).map(|j| {
                     let f = 0.5 * j.next as f32 / j.tiles.len().max(1) as f32;
                     let what = if j.tiles.len() > 1 {
                         aurora_i18n::tr!("photo-rendering-tiles", tile = j.next + 1, count = j.tiles.len()).to_owned()
@@ -2179,6 +2326,8 @@ LUT_3D_SIZE {n}
                     (f, what)
                 })
             };
+            let classic = self.photo_style() == crate::settings::PhotoWindowStyle::Legacy;
+            let no_time = |_: i64| String::new();
             let gallery = s.gallery.clone();
             let view = crate::ui::snapshot::View {
                 window,
@@ -2189,6 +2338,7 @@ LUT_3D_SIZE {n}
                 message: s.message.as_ref(),
                 last_saved: s.last_saved.as_deref(),
                 gallery: &gallery,
+                reel: (!classic).then(|| s.reel.view(&[], &no_time)),
                 folder: self.settings.snapshot.folder(),
                 inventory,
                 item_saved: s.message_item.is_some(),
@@ -2202,7 +2352,6 @@ LUT_3D_SIZE {n}
                 quality_reduced,
             };
             let mut open = self.panels.snapshot;
-            let classic = self.photo_style() == crate::settings::PhotoWindowStyle::Legacy;
             actions.extend(state.show(
                 ctx,
                 p,
@@ -2223,11 +2372,19 @@ LUT_3D_SIZE {n}
         for a in actions {
             self.photo_action(a, renderer);
         }
+        // the quick view: photo mode's, closed with it; or the toolbar's
+        // Photo roll's, opened without it
+        if self.panels.snapshot || !self.snapshots.reel.in_photo_mode {
+            self.photo_reel_quick(ctx, p, renderer);
+        } else {
+            self.snapshots.reel.quick.close();
+        }
         if !self.panels.snapshot {
             self.snapshots.quality_ask = false;
             self.snapshots.ui.full_frame = false;
             if self.snapshots.held.take().is_some() {
                 self.snapshots.ui.freeze = false;
+                self.snapshots.reel.held = None;
             }
         }
     }
@@ -2272,6 +2429,9 @@ LUT_3D_SIZE {n}
                 v.isolate = false;
                 v.presets = false;
                 v.light = false;
+            } else if !self.build.selection.is_empty() {
+                self.build.deselect_all(&self.world);
+                self.flush_build();
             } else if self.camera.free().is_some() {
                 self.snapshots.ui.free.on = false;
                 self.photo_free_camera();
@@ -2283,6 +2443,11 @@ LUT_3D_SIZE {n}
             return true;
         }
         if self.photo_full_frame() {
+            if !self.build.selection.is_empty() {
+                self.build.deselect_all(&self.world);
+                self.flush_build();
+                return true;
+            }
             self.snapshots.ui.full_frame = false;
             return true;
         }
@@ -2404,6 +2569,12 @@ LUT_3D_SIZE {n}
     fn photo_light(&mut self) {
         if !self.panels.snapshot {
             self.snapshots.ui.light = snapshot::light::PhotoLight::default();
+            // the outfit's auto portrait in its studio light
+            if let Some(studio) = self.outfit_portrait_light() {
+                self.world.eep.set_photo(studio);
+                self.scene.attached_lights = self.snapshots.ui.light.attached_lights;
+                return;
+            }
             // (the user's own fades back in)
             self.world.eep.close_photo();
         }
@@ -2440,9 +2611,18 @@ LUT_3D_SIZE {n}
     /// the user's values back as soon as either is off (they are also what
     /// a save in the meantime writes, `Settings::to_saved`).
     fn photo_quality(&mut self, renderer: &Renderer) {
+        // switched on from Preferences › Graphics: the photo window's first
+        // warning still comes before the boost
+        if self.panels.snapshot && self.settings.snapshot.quality && !self.settings.snapshot.quality_warned {
+            self.settings.snapshot.quality = false;
+            self.snapshots.quality_ask = true;
+        }
         let want = self.panels.snapshot && self.settings.snapshot.quality;
         match (&self.settings.photo_held, want) {
             (None, true) => {
+                // marked before the boost: a crash while it is drawn turns
+                // the switch off at the next start
+                crate::crash::photo_quality(true);
                 let mut held = snapshot::quality::boost(&mut self.settings);
                 // within what the video memory leaves, from the start, and
                 // with room for what the estimate leaves out: the whole
@@ -2487,6 +2667,7 @@ LUT_3D_SIZE {n}
                     held.restore(&mut self.settings);
                 }
                 log::info!("photo quality: off, the user's settings back");
+                crate::crash::photo_quality(false);
                 self.snapshots.fit = None;
                 self.snapshots.settings_changed = true;
             }
@@ -2504,6 +2685,34 @@ LUT_3D_SIZE {n}
         // the textures in view at full resolution only with the whole boost:
         // lowered, the video memory has no room for them either
         self.scene.textures.full_resolution = self.settings.photo_held.is_some() && self.snapshots.fit.as_ref().is_none_or(|f| f.step == 0);
+    }
+
+    /// The last session crashed or was stopped with "Photo quality" on: the
+    /// switch goes off (the graphics settings themselves were never saved
+    /// raised), and the login screen says so with a way to turn it back on.
+    /// The Legacy Viewer has no such boost. `AURORA_DEMO_PHOTO_QUALITY_CRASH=1`
+    /// shows the card in demo.
+    pub(super) fn photo_quality_at_start(&mut self) {
+        let crashed = crate::crash::take_photo_quality_crash();
+        let demo = std::env::var_os("AURORA_DEMO").is_some() && std::env::var_os("AURORA_DEMO_PHOTO_QUALITY_CRASH").is_some();
+        if demo || (crashed && self.settings.snapshot.quality && self.settings.snapshot.quality_off_after_crash) {
+            log::warn!("the last session ended badly with the photo quality on: switched off");
+            self.settings.snapshot.quality = false;
+            self.settings.save();
+            self.login_form.photo_quality_off = true;
+        } else if crashed {
+            log::info!("the last session ended badly with the photo quality on: left as it is");
+        }
+    }
+
+    /// The login card's answer: back on (true) or just read.
+    pub(super) fn photo_quality_off_answer(&mut self, back_on: bool) {
+        self.login_form.photo_quality_off = false;
+        if back_on {
+            log::info!("photo quality turned back on from the login card");
+            self.settings.snapshot.quality = true;
+            self.settings.save();
+        }
     }
 
     /// The photo quality still climbing towards the whole boost: a photo
@@ -2795,6 +3004,7 @@ LUT_3D_SIZE {n}
             }
             if demo.quality {
                 self.settings.snapshot.quality = true;
+                self.settings.snapshot.quality_warned = true;
             }
             if demo.light {
                 let mut light = snapshot::light::PhotoLight {

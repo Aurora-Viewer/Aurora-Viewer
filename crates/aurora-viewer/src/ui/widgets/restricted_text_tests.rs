@@ -272,3 +272,29 @@ fn restricted_text_invalid_replacement_and_enter_cannot_submit_the_old_name() {
     assert_eq!(text, "Original");
     assert!(ctx.memory(|m| m.has_focus(Id::unique("restricted_field"))));
 }
+
+#[test]
+fn restricted_text_empty_preedit_does_not_roll_back_typing_or_paste() {
+    for paste in [false, true] {
+        for empty_first in [false, true] {
+            let ctx = egui::Context::default();
+            let mut text = "Original".to_owned();
+            selected(&ctx, &mut text, Policy::PrintableNoPipe);
+            let input = if paste {
+                Event::Paste("Portrait".into())
+            } else {
+                Event::Text("Portrait".into())
+            };
+            let empty = Event::Ime(egui::ImeEvent::Preedit {
+                text: String::new(),
+                active_range_chars: None,
+            });
+            let events = if empty_first { vec![empty, input] } else { vec![input, empty] };
+            let output = frame(&ctx, &mut text, Policy::PrintableNoPipe, events, false);
+            assert_eq!(text, "Portrait", "paste {paste}, empty_first {empty_first}");
+            assert!(output.response.changed());
+            frame(&ctx, &mut text, Policy::PrintableNoPipe, vec![Event::Text("2".into())], false);
+            assert_eq!(text, "Portrait2");
+        }
+    }
+}

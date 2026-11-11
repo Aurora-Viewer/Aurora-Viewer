@@ -142,6 +142,7 @@ pub(super) fn show(
             s.texture_snapshot = false;
             s.texture.open(aurora_i18n::tr!("ui-land-media-media-texture"), id);
         }
+        s.texture.drop_target_slot(ui, rect, false, can, 0);
         ui.add_space(8.0);
         ui.add(
             egui::Label::new(
