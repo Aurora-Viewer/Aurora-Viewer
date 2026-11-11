@@ -883,6 +883,10 @@ pub struct Settings {
     /// chat (PlayTypingAnim, on; Preferences > Chat); the typing notices go
     /// out either way.
     pub play_typing_anim: bool,
+    /// Our avatar plays the talk, shout or whisper animation when we say a
+    /// line aloud in the nearby chat (PlayChatAnim, on; Preferences >
+    /// Avatars, beside the typing animation).
+    pub play_chat_anim: bool,
     /// An emote ("/me") shows us typing too (FSTypeDuringEmote, off).
     pub type_during_emote: bool,
     /// The name tags show who types: the plates' dots, "(Typing)" on the
@@ -2124,6 +2128,7 @@ impl Default for Settings {
             conversations_own_windows: false,
             send_typing_state: true,
             play_typing_anim: true,
+            play_chat_anim: true,
             type_during_emote: false,
             typing_in_name_tags: true,
             typing_chevron: false,
