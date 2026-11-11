@@ -146,6 +146,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "question-mark",
     "radio",
     "refresh",
+    "refresh-dot",
     "refresh-off",
     "reload",
     "repeat",

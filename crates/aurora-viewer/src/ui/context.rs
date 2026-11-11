@@ -428,6 +428,8 @@ pub enum CtxAction {
     RefreshAvatarTextures(Uuid),
     /// "Force appearance update (rebake)" (Advanced.RebakeTextures).
     Rebake,
+    /// "Reload avatar": every refresh of an avatar at once (`app/avatar_reload.rs`).
+    ReloadAvatar(Uuid),
     /// Take / take a copy into the inventory (derez_objects).
     Take(Uuid),
     TakeCopy(Uuid),
