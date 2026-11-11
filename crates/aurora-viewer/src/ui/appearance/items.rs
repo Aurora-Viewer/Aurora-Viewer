@@ -77,7 +77,7 @@ pub(super) fn double_clicked(response: &egui::Response) -> bool {
 /// (lloutfitslist.cpp, llpanelwearing.cpp): add beside the worn items,
 /// remove a worn item, and only replace body parts. Act on the clicked row
 /// alone, independently of the inventory's Add/Replace preferences.
-pub(super) fn double_click(response: &egui::Response, world: &World, it: &InvItem, worn: bool, actions: &mut Vec<Action>) {
+pub(crate) fn double_click(response: &egui::Response, world: &World, it: &InvItem, worn: bool, actions: &mut Vec<Action>) {
     if !double_clicked(response) || !matches!(it.asset_type, 5 | 6 | 13) {
         return;
     }
@@ -99,6 +99,14 @@ pub(super) fn double_click(response: &egui::Response, world: &World, it: &InvIte
     }
 }
 
+/// What ends an item row's menu: the outfit's Delete from outfit, or the
+/// entries of the Favorite Wearables window, which has none (the
+/// "Delete from outfit" fix of LLWearableItemsList::ContextMenu for it).
+pub(crate) enum Tail<'a> {
+    Outfit(Uuid),
+    Custom(&'a mut dyn FnMut(&mut egui::Ui, &mut Vec<Action>)),
+}
+
 /// The menu of an outfit's item row `it`, acting on `selected` (the row
 /// alone, or the selection it is part of). As updateItemsVisibility does,
 /// Wear, Add, Attach to, Take off / Detach, the favorites and Delete from
@@ -112,7 +120,7 @@ pub(super) fn context_menu(
     p: &Palette,
     world: &World,
     st: &mut AppearanceUi,
-    folder: Uuid,
+    tail: Tail,
     it: &InvItem,
     selected: &[Uuid],
     actions: &mut Vec<Action>,
@@ -211,17 +219,22 @@ pub(super) fn context_menu(
         ) {
             actions.push(Action::ShowOriginal(it.id));
         }
-        if menu::item_if(
-            ui,
-            p,
-            "trash-filled",
-            aurora_i18n::tr!("ui-appearance-items-remove-from-outfit"),
-            st.pending.is_none(),
-        ) {
-            actions.push(Action::DeleteFromOutfit {
-                folder,
-                items: items.iter().map(|it| it.id).collect(),
-            });
+        match tail {
+            Tail::Outfit(folder) => {
+                if menu::item_if(
+                    ui,
+                    p,
+                    "trash-filled",
+                    aurora_i18n::tr!("ui-appearance-items-remove-from-outfit"),
+                    st.pending.is_none(),
+                ) {
+                    actions.push(Action::DeleteFromOutfit {
+                        folder,
+                        items: items.iter().map(|it| it.id).collect(),
+                    });
+                }
+            }
+            Tail::Custom(entries) => entries(ui, actions),
         }
     });
 }

@@ -14588,3 +14588,23 @@ joystick-layout-xinput = XInput
 
 # Favorite Wearables window (FSFloaterWearableFavorites)
 ui-wearable-favorites-invalid-name = フォルダー名に / や \ は使えません：「{ $name }」
+ui-wearable-favorites-title = お気に入りの着用物
+ui-wearable-favorites-help = お気に入りの衣類・身体部位・オブジェクトを、ダブルクリックひとつで着用できます。インベントリからここへドラッグして追加します。タブを右クリックすると名前の変更や削除ができます。
+ui-wearable-favorites-search = お気に入りを検索
+ui-wearable-favorites-sort = 並べ替え
+ui-wearable-favorites-sort-name = 名前順
+ui-wearable-favorites-sort-recent = 新しい順
+ui-wearable-favorites-sort-type = 種類順
+ui-wearable-favorites-remove = お気に入りから外す
+ui-wearable-favorites-assign = フォルダーに追加
+ui-wearable-favorites-empty = お気に入りはまだありません
+ui-wearable-favorites-empty-hint = インベントリから衣類・身体部位・オブジェクトをここへドラッグしてください。
+ui-wearable-favorites-no-match = 「{ $filter }」に一致するものはありません。
+ui-wearable-favorites-rename-folder = フォルダー名の変更
+ui-wearable-favorites-delete-folder = フォルダーの削除
+ui-wearable-favorites-delete-confirm = { $count ->
+    [0] フォルダー「{ $name }」を削除しますか？
+    [one] フォルダー「{ $name }」とそのお気に入りを削除しますか？アイテム自体はインベントリに残ります。
+   *[other] フォルダー「{ $name }」とその{ $count }件のお気に入りを削除しますか？アイテム自体はインベントリに残ります。
+    }
+ui-wearable-favorites-delete-refused = このフォルダーにはお気に入り以外のものが入っています。先にインベントリで移動してください。

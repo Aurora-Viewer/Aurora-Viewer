@@ -14670,3 +14670,23 @@ joystick-layout-xinput = XInput
 
 # Favorite Wearables window (FSFloaterWearableFavorites)
 ui-wearable-favorites-invalid-name = A folder name cannot contain / or \: “{ $name }”
+ui-wearable-favorites-title = Favorite wearables
+ui-wearable-favorites-help = Your favorite clothing, body parts and objects, to wear in one double-click. Drag them here from your inventory; right-click a tab to rename or delete it.
+ui-wearable-favorites-search = Search favorites
+ui-wearable-favorites-sort = Sort
+ui-wearable-favorites-sort-name = By name
+ui-wearable-favorites-sort-recent = Most recent first
+ui-wearable-favorites-sort-type = By type
+ui-wearable-favorites-remove = Remove from favorites
+ui-wearable-favorites-assign = Add to folder
+ui-wearable-favorites-empty = No favorites yet
+ui-wearable-favorites-empty-hint = Drag clothing, body parts or objects here from your inventory.
+ui-wearable-favorites-no-match = Nothing matches “{ $filter }”.
+ui-wearable-favorites-rename-folder = Rename folder
+ui-wearable-favorites-delete-folder = Delete folder
+ui-wearable-favorites-delete-confirm = { $count ->
+    [0] Delete the folder “{ $name }”?
+    [one] Delete the folder “{ $name }” and its favorite? The item itself stays in your inventory.
+   *[other] Delete the folder “{ $name }” and its { $count } favorites? The items themselves stay in your inventory.
+    }
+ui-wearable-favorites-delete-refused = This folder holds more than favorites: move its other contents out from the inventory first.

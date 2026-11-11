@@ -13,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 pub(crate) mod batch;
 mod clipboard;
+pub(crate) mod favorites;
 mod folders;
 mod gallery;
 pub(crate) mod items;
@@ -101,6 +102,8 @@ pub struct AppearanceUi {
     /// The heights of the rows last drawn, for those left out.
     rows: RowHeights,
     selection_info: Option<SelectionInfo>,
+    /// The Favorite Wearables window (`favorites`).
+    pub(crate) favorites: favorites::State,
 }
 
 struct SelectionInfo {
@@ -1201,7 +1204,7 @@ fn outfit_list(
                                 st.select_item(&response, *id, it.id, &order);
                                 items::double_click(&response, world, it, worn.contains_key(&it.id), actions);
                                 let selected = st.selected_items(*id, it.id, &order);
-                                items::context_menu(&response, p, world, st, *id, it, &selected, actions);
+                                items::context_menu(&response, p, world, st, items::Tail::Outfit(*id), it, &selected, actions);
                             });
                             row_gap(ui);
                         } else {

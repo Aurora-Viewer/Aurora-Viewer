@@ -166,6 +166,9 @@ pub struct Panels {
     /// Group titles (FSFloaterGroupTitles): the toolbar's command and
     /// Contacts › Groups › Titles.
     pub group_titles: bool,
+    /// Favorite Wearables (FSFloaterWearableFavorites): the toolbar's
+    /// command and Me › Favorite wearables.
+    pub wearable_favorites: bool,
     /// The photo window (Firestorm's snapshot floater).
     pub snapshot: bool,
     pub people: bool,
@@ -257,6 +260,7 @@ impl Panels {
             dev_toolbox: false,
             sim_console: false,
             group_titles: false,
+            wearable_favorites: false,
             snapshot: false,
             people: settings.show_people,
             minimap: settings.show_minimap,

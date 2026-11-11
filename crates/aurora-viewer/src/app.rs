@@ -12232,6 +12232,7 @@ impl App {
             raw.events.extend(crate::demo::conv_button::input_events(&ctx, self.frame_count));
             raw.events.extend(crate::demo::chatlog::input_events(self.frame_count));
             raw.events.extend(ui::appearance::demo_events(self.frame_count));
+            raw.events.extend(ui::appearance::favorites::demo_events(&ctx, self.frame_count));
             raw.events.extend(self.appearance_ui.demo_clipboard_events(
                 &ctx,
                 self.frame_count,
@@ -18806,6 +18807,24 @@ impl App {
                     self.settings.save();
                 }
                 self.panels.appearance = open;
+                let mut open = self.panels.wearable_favorites;
+                let mut sort = self.settings.wearable_favorites_sort;
+                for action in ui::appearance::favorites::show(
+                    &ctx,
+                    &p,
+                    &self.world,
+                    &mut self.appearance_ui,
+                    &mut open,
+                    &self.ui_images,
+                    &mut sort,
+                ) {
+                    self.apply_appearance_action(action);
+                }
+                self.panels.wearable_favorites = open;
+                if sort != self.settings.wearable_favorites_sort {
+                    self.settings.wearable_favorites_sort = sort;
+                    self.settings.save();
+                }
                 self.outfit_portrait_window(&ctx, &p);
                 self.outfit_batch_window(&ctx, &p);
                 self.update_demo_shape_mesh();
@@ -21713,6 +21732,21 @@ impl ApplicationHandler for App {
                 self.panels.ao = true;
                 self.panels.perf = false;
                 self.panels.inventory = false;
+            }
+            if let Some(mode) = ui::appearance::favorites::demo_mode() {
+                if std::env::var_os("AURORA_DEMO_APPEARANCE").is_none() {
+                    crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);
+                }
+                ui::appearance::favorites::demo_seed(
+                    &self.egui_ctx,
+                    &mut self.world.inventory,
+                    self.world.agent_id,
+                    &mut self.ui_images,
+                    &mut self.appearance_ui,
+                    mode,
+                );
+                self.panels.wearable_favorites = true;
+                self.panels.inventory = mode == "drop";
             }
             if let Ok(view) = std::env::var("AURORA_DEMO_APPEARANCE") {
                 crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);

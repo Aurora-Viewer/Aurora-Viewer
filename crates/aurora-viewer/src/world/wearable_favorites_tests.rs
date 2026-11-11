@@ -197,15 +197,33 @@ fn a_drop_adds_wearable_originals_once_and_nothing_else() {
 }
 
 #[test]
-fn removing_takes_the_link_and_never_the_wearable() {
+fn removing_takes_the_links_and_never_the_wearable() {
     let (mut inv, root) = with_favorites();
+    folder(&mut inv, id(50), root, "Work", false);
     link(&mut inv, 200, root, 101, 1);
-    assert!(remove(&inv, &[id(101)]).is_none(), "an original is never deleted");
-    let change = remove(&inv, &[id(200), id(101)]).expect("the link");
-    assert!(matches!(change.operations.as_slice(), [Operation::Delete { id: gone, folder: false }] if *gone == id(200)));
-    assert_eq!(change.refresh, [root]);
+    link(&mut inv, 201, id(50), 101, 2);
+    link(&mut inv, 202, id(50), 103, 3);
+    item(&mut inv, 400, id(50), "My own shirt", 5, 4);
+    assert!(remove(&inv, root, &[id(102)]).is_none(), "not a favorite");
+    assert!(remove(&inv, id(50), &[id(400)]).is_none(), "an original is never deleted");
+    // In a tab: that tab's link only.
+    let change = remove(&inv, id(50), &[id(101)]).expect("the tab's link");
+    assert!(matches!(change.operations.as_slice(), [Operation::Delete { id: gone, folder: false }] if *gone == id(201)));
+    assert_eq!(change.refresh, [id(50)]);
+    // In All: every link to it, so it really leaves the list.
+    let change = remove(&inv, root, &[id(101)]).expect("every link");
+    let mut gone: Vec<Uuid> = change
+        .operations
+        .iter()
+        .map(|op| match op {
+            Operation::Delete { id, folder: false } => *id,
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    gone.sort();
+    assert_eq!(gone, [id(200), id(201)]);
     demo_mutate(&mut inv, id(AGENT), change).expect("removed");
-    assert!(entries(&inv, root).is_empty());
+    assert_eq!(entries(&inv, root).iter().map(|e| e.item).collect::<Vec<_>>(), [id(103), id(400)]);
     assert!(inv.items.contains_key(&id(101)));
 }
 

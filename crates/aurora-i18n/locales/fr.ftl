@@ -14671,3 +14671,23 @@ joystick-layout-xinput = XInput
 
 # Favorite Wearables window (FSFloaterWearableFavorites)
 ui-wearable-favorites-invalid-name = Un nom de dossier ne peut pas contenir / ni \ : « { $name } »
+ui-wearable-favorites-title = Vêtements préférés
+ui-wearable-favorites-help = Vos vêtements, parties du corps et objets préférés, à porter d’un double-clic. Glissez-les ici depuis votre inventaire ; clic droit sur un onglet pour le renommer ou le supprimer.
+ui-wearable-favorites-search = Chercher dans les favoris
+ui-wearable-favorites-sort = Trier
+ui-wearable-favorites-sort-name = Par nom
+ui-wearable-favorites-sort-recent = Les plus récents d’abord
+ui-wearable-favorites-sort-type = Par type
+ui-wearable-favorites-remove = Retirer des favoris
+ui-wearable-favorites-assign = Ajouter au dossier
+ui-wearable-favorites-empty = Aucun favori pour l’instant
+ui-wearable-favorites-empty-hint = Glissez ici des vêtements, des parties du corps ou des objets depuis votre inventaire.
+ui-wearable-favorites-no-match = { "Rien ne correspond à « " }{ $filter }{ " »." }
+ui-wearable-favorites-rename-folder = Renommer le dossier
+ui-wearable-favorites-delete-folder = Supprimer le dossier
+ui-wearable-favorites-delete-confirm = { $count ->
+    [0] { "Supprimer le dossier « " }{ $name }{ " » ?" }
+    [one] { "Supprimer le dossier « " }{ $name }{ " » et son favori ? L’objet lui-même reste dans votre inventaire." }
+   *[other] { "Supprimer le dossier « " }{ $name }{ " » et ses " }{ $count }{ " favoris ? Les objets eux-mêmes restent dans votre inventaire." }
+    }
+ui-wearable-favorites-delete-refused = Ce dossier contient autre chose que des favoris : sortez d’abord ce contenu depuis l’inventaire.

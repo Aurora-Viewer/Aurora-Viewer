@@ -167,13 +167,7 @@ pub fn sort(inv: &Inventory, entries: &mut [Entry], sort: Sort) {
             let date = inv.items.get(&e.link).map_or(0, |it| it.created_at);
             (std::cmp::Reverse(date), name(&e.item), e.item)
         }),
-        Sort::Type => entries.sort_by_cached_key(|e| {
-            (
-                super::appearance::type_rank(inv.items.get(&e.item)),
-                name(&e.item),
-                e.item,
-            )
-        }),
+        Sort::Type => entries.sort_by_cached_key(|e| (super::appearance::type_rank(inv.items.get(&e.item)), name(&e.item), e.item)),
     }
 }
 
@@ -225,16 +219,34 @@ pub fn add(inv: &Inventory, folder: Uuid, items: &[Uuid]) -> Option<Mutation> {
     })
 }
 
-/// handleRemove: the links go, the wearables stay (remove_inventory_item
-/// on each link).
-pub fn remove(inv: &Inventory, links: &[Uuid]) -> Option<Mutation> {
+/// handleRemove: the links to `items` under `shown` go, the wearables stay
+/// (remove_inventory_item on each link). In a tab, that tab's link; in the
+/// root view, every link to the wearable, in the root and in the tabs: the
+/// Legacy Viewer removes only the link it happened to list there, and the
+/// wearable stayed on the list while another tab held it (deliberate
+/// difference).
+pub fn remove(inv: &Inventory, shown: Uuid, items: &[Uuid]) -> Option<Mutation> {
+    let items: HashSet<Uuid> = items.iter().copied().collect();
     let mut change = Mutation::default();
-    for id in links {
-        let Some(it) = inv.items.get(id).filter(|it| matches!(it.asset_type, 24 | 25)) else {
+    let mut stack = vec![shown];
+    let mut visited = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !visited.insert(id) {
+            continue;
+        }
+        let Some(f) = inv.folders.get(&id) else {
             continue;
         };
-        change.operations.push(Operation::Delete { id: *id, folder: false });
-        change.refresh.push(it.parent);
+        for link in &f.items {
+            let Some(it) = inv.items.get(link).filter(|it| it.parent == id && matches!(it.asset_type, 24 | 25)) else {
+                continue;
+            };
+            if actions::original(inv, it.id).is_some_and(|o| items.contains(&o)) {
+                change.operations.push(Operation::Delete { id: it.id, folder: false });
+                change.refresh.push(id);
+            }
+        }
+        stack.extend(&f.children);
     }
     change.refresh.sort_unstable();
     change.refresh.dedup();
@@ -246,7 +258,7 @@ pub fn remove(inv: &Inventory, links: &[Uuid]) -> Option<Mutation> {
 pub fn folder_name(name: &str) -> Result<String, String> {
     let name = name.trim();
     if name.contains(['/', '\\']) {
-        return Err(aurora_i18n::tr!("ui-wearable-favorites-invalid-name", name = name.to_string()).into());
+        return Err(aurora_i18n::tr!("ui-wearable-favorites-invalid-name", name = name.to_string()));
     }
     actions::clean_name(name)
 }
@@ -275,8 +287,7 @@ pub fn rename_folder(inv: &Inventory, root: Uuid, folder: Uuid, name: &str) -> R
 pub fn delete_folder(inv: &Inventory, root: Uuid, folder: Uuid) -> Option<Mutation> {
     let f = inv.folders.get(&folder).filter(|f| f.info.parent == root && folder != root)?;
     let only_links = f.children.is_empty()
-        && f
-            .items
+        && f.items
             .iter()
             .all(|id| inv.items.get(id).is_none_or(|it| matches!(it.asset_type, 24 | 25)));
     if !only_links {

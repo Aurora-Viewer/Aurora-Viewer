@@ -844,6 +844,8 @@ pub struct Settings {
     /// The Appearance tab shown at exit (gallery, outfit list, worn), shown
     /// again at the next start, as the Legacy Viewer's `LastAppearanceTab`.
     pub appearance_tab: u8,
+    /// The Favorite Wearables order (FSWearableFavoritesSortOrder).
+    pub wearable_favorites_sort: crate::world::wearable_favorites::Sort,
     pub show_ao: bool,
     /// Loading / teleport screens show the last view, blurred.
     pub loading_backdrop: bool,
@@ -2289,6 +2291,7 @@ impl Default for Settings {
             show_appearance: false,
             appearance_fill_previews: false,
             appearance_tab: 0,
+            wearable_favorites_sort: Default::default(),
             show_ao: false,
             ao: Default::default(),
             bridge: Default::default(),
