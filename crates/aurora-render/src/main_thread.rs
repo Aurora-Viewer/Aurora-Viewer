@@ -78,9 +78,6 @@ pub struct GpuInfo {
     /// Why the dedicated GPU may not be the one drawing (shown under that
     /// choice too).
     pub notice: Option<crate::adapter_choice::Notice>,
-    /// Blended faces can be drawn with stochastic transparency
-    /// (oit_stochastic.rs): the scene can be multisampled.
-    pub oit: bool,
     /// The Vulkan driver's version and limits (Linden Lab's viewer
     /// statistics); None on another backend.
     pub vulkan: Option<VulkanLimits>,
@@ -604,7 +601,6 @@ impl Renderer {
             max_texture_size: alim.max_texture_dimension_2d,
             adapters,
             notice,
-            oit: true,
             vulkan: vulkan_limits(&adapter),
         };
 
@@ -678,6 +674,7 @@ impl Renderer {
             gpu_cull,
             tex_layout: textures.layout.clone(),
             tex_layout_entries: textures.layout_entries.clone(),
+            instance_flags: desc().flags,
             scene: scene_gpu(
                 &records,
                 &cull,

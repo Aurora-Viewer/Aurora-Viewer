@@ -214,8 +214,14 @@ impl BanLines {
                         ],
                         flags: [flags::FULLBRIGHT | flags::ALPHA_BLEND, 0, 0, 0],
                         // the OIT tie-break: a namespace of their own and the
-                        // line's rank in the parcels' order
-                        identity: [aurora_render::oit_tie(*b"aurora-ban-line!", used as u32), 0, 0, 0],
+                        // segment's place on the region's grid (not its rank
+                        // among the visible ones, which changes as you walk)
+                        identity: [
+                            aurora_render::oit_tie(*b"aurora-ban-line!", ((x + y * stride) * 2 + usize::from(dir == WEST)) as u32),
+                            0,
+                            0,
+                            0,
+                        ],
                         ..Default::default()
                     };
                     let record = match self.records.get(used) {

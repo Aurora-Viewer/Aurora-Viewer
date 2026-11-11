@@ -455,9 +455,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_JOYSTICK=<mode>` | Synthetic joystick input, preferences, lens reset gestures or an independent six-axis camera flight |
 | `AURORA_CAPTURE=<file.png>` | Saves a screenshot of the frame |
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
-| `AURORA_CAPTURE_TIMES=<s>[,<s>…]` | Captures at those seconds of a camera path run by time (`AURORA_DEMO_CAMERA=hair`), the same place in every run |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
-| `AURORA_EXIT_AFTER=<seconds>` | Quits cleanly after that many seconds of frames (measurement runs of a camera that moves by time) |
 | `AURORA_DEMO_RENDER_TEXTURE=1` | Captures the demo world through a caller-owned render target |
 | `AURORA_DEMO_XR_DEVICE=1` | Uses OpenXR-compatible Vulkan initialization for the Linux demo |
 | `AURORA_OPENXR_LOADER=<path>` | Explicit macOS OpenXR loader dylib for runtime tests |
@@ -922,21 +920,6 @@ Several frames separated by commas (`2500,2600`) save one file each,
 `<file>-<frame>.png`. The frames-per-second cap in the background ("Limit
 when unfocused") is ignored during a screenshot.
 
-`AURORA_CAPTURE_TIMES`: with a demo camera that moves by time from frame
-600 (`AURORA_DEMO_CAMERA=hair`), one capture per time, `<file>-t<s>.png`
-(`1.5,5,5.0167` gives `-t1.5`, `-t5`, `-t5.0167`). When the camera's clock
-reaches a time, it is set to exactly that time and held there until the
-picture is saved, then the path goes on: whatever the frame rate, every run
-captures the camera at the same point of the path, so that the methods of a
-setting can be compared there (`AURORA_OIT=0` and `1`, `AURORA_OIT_SAMPLES`;
-two times 1/60 s apart give a frame pair, the flicker of a 60 fps step). The
-avatars hold still from the start (their skeletons paused, as in the photo
-mode's frozen world): the idle sway, a degree of the torso, would otherwise
-move the hair on the head by several pixels between runs. Without
-`AURORA_CAPTURE_FRAMES`, no frame is captured by number;
-`AURORA_CAPTURE_EXIT=1` quits after the last one. The log gives `frame <n>
-captured to <file> (camera clock <s> s)`.
-
 ## Camera, movement and pointer
 
 | Variable | Effect |
@@ -1221,34 +1204,15 @@ captured to <file> (camera clock <s> s)`.
   trigger plain G (snap / guide). Releasing a key first pressed without
   AltGr must always release it, even if AltGr was held in the meantime.
 
-- **`AURORA_DEMO_CAMERA=alt,x,y|altgr,x,y|pan,x,y|zoom,x,y|crouch-alt,x,y|crouch-pan,x,y|crouch-zoom,x,y|close,x,y[,n]|hair|drift,x,y[,n]|orbit,x,y[,px]|zoom-resident|zoom-unloaded|tag|ml|ml-alt|ml-zoom|ml-zoom-alt|wheel|wheel-chat|fly|sit|sit-ml|sit-ml-reclined|scripted|scripted-sit`**:
+- **`AURORA_DEMO_CAMERA=alt,x,y|altgr,x,y|pan,x,y|zoom,x,y|crouch-alt,x,y|crouch-pan,x,y|crouch-zoom,x,y|close,x,y[,n]|drift,x,y[,n]|zoom-resident|zoom-unloaded|tag|ml|ml-alt|ml-zoom|ml-zoom-alt|wheel|wheel-chat|fly|sit|sit-ml|sit-ml-reclined|scripted|scripted-sit`**:
   scenario logged under `demo camera` — Alt+click at (x, y) then drag and
   return while walking; `altgr`: the same orbit with AltGr alone held, as
   winit reports it (neither Ctrl nor Alt), so its `demo camera` lines match
   those of `alt` frame for frame; `close`: Alt+click at (x, y) at frame 600, zoom for
   n frames (60 by default), then the camera no longer moves (close-up with a
-  fixed camera, to compare consecutive screenshots; the drag is per frame
-  and the focus animation per second, so the depth reached depends on the
-  frame rate: use `hair` to compare runs); `hair`: the fly-through of the 400 strand cards
-  (`AURORA_DEMO_HAIR_CARDS=400`) by the scripted camera, locked on a path
-  fixed in our avatar's head frame (it follows the avatar as it stands and
-  turns) and run by time from frame 600, 15 s in all: 0 to 3 s straight in
-  from 0.5 m outside the cards to 0.16 m from the head's centre, inside
-  their shell (cards in front, behind and around, the near plane, 0.1 m,
-  crossing the nearest); 3 to 6 s a full turn on the spot there; 6 to 12 s an orbit inside
-  the shell along the cards' arc, looking ahead along it; 12 to 15 s
-  straight back out; then the scripted camera is released. The camera is
-  logged once a second. Every run follows the same path whatever the frame
-  rate; with `AURORA_FPS_LIMIT=60` a second is 60 frames, so a capture at
-  frame 870 is 4.5 s into the path (inside, mid-turn). The headline run of
-  the transparency measurements (`AURORA_OIT`, `AURORA_PROFILE_FRAMES=1` for
-  the GPU time of every frame); `drift`: the same
+  fixed camera, to compare consecutive screenshots); `drift`: the same
   close-up, then a very slow orbit (one fiftieth of a mouse pixel per frame)
-  until frame 1200; `orbit,x,y[,px]`: Alt+click at (x, y) at frame 600,
-  then an orbit of `px` mouse pixels per frame (0.5 by default) that never
-  stops, its pitch swinging slowly, for the stability runs of several
-  minutes with a moving camera (the panes of `AURORA_DEMO_ALPHA_PLANES`
-  seen from every side); press on our own name plate then drag (steering);
+  until frame 1200; press on our own name plate then drag (steering);
   entering / leaving mouselook (frame 650 shows "Press Esc to return to
   world view" above the bottom bar); `ml-zoom`: the right button held in
   mouselook at 640 (the normal angle stays: no zoom was set with the wheel
@@ -10506,10 +10470,7 @@ What the inventory must show with these scenarios:
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
 | `AURORA_COLORED_AMBIENT=0`, `1` or `alt` | Sky ambient softened, grey under linear and HDR skies (Legacy Viewer), coloured at full strength like the first PBR release, or one second in two |
 | `AURORA_RIGGED_BLEND=split`, `runs`, `copy`, `depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: object by object, what is half covered writing its depth as drawn, then the fainter texels, then their depth from 1/255 on a copy (default); the same without the fainter texels' depth (#1024); where nearly opaque before their colour, then point by point where half covered (#966); from 1/255 on a copy (#948); where half covered before their colour; from 1/255; none (sorted with the others); or `split` by turns |
-| `AURORA_OIT=0` or `1` | Order-independent transparency (stochastic) off or on for this launch, whatever the setting |
-| `AURORA_OIT=stochastic` | The same as `1` |
-| `AURORA_OIT_SAMPLES=8\|16\|32` | With the stochastic method: samples per pixel in all (8 by default: one run, with the temporal blend; 16 is the earlier default, two runs, no temporal blend with `AURORA_OIT_STOCH=notemporal`) |
-| `AURORA_OIT_STOCH=<flags>` | With `AURORA_OIT=stochastic`: `naive`, `nocorr`, `filter=<r>[:<sigma>]`, `temporal[=<n>]`, `notemporal`, `index`, `mask`, `pass=<n>`, `noprim`, `seed=white\|r2\|blue` (see Details) |
+| `AURORA_OIT=0` or `1` | Order-independent transparency (stochastic) off or on for this launch, whatever the setting (`stochastic` is the same as `1`) |
 | `AURORA_MESH_ORDER=asset` | Mesh faces keep the triangle order of the asset instead of the Legacy Viewer's vertex cache order |
 | `AURORA_DEBUG_GEOM_DELAY=<seconds>` | Every built geometry reaches the GPU that long after its job ended, as on a slow PC in a busy region |
 | `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those at least half covered (default), none, all, or `none` by turns |
@@ -11116,118 +11077,72 @@ What the inventory must show with these scenarios:
   with eight meshes each, 0.083 → 0.131 ms with one.
 - **`AURORA_OIT=0|1`**: order-independent transparency off or on
   (`oit_stochastic.rs`; Preferences › Aurora, or Graphics › Image ›
-  Transparency; off by default, the Legacy Viewer's sorted order): the
-  blended faces drawn with depth-based stochastic transparency (Enderton et
-  al., "Stochastic Transparency", I3D 2010, section 3.4): the total alpha of every sample, then each fragment
-  covering a random subset of its samples of size alpha x S into a copy of
-  the opaque depth, then the accumulation of the fragments at or in front
-  of that depth, composited per sample with the alpha correction; the glow
-  of the blended faces that have some is accumulated the same way (each
-  face's glow where it is at or in front of the stochastic depth: on
-  average its glow dimmed by the layers in front of it, as with OIT off),
-  corrected by the same ratio and added to the scene's glow (check with
+  Transparency; off by default, the sorted order of the Legacy Viewer, per
+  face as `scene/blend_order.rs` sorts it): the blended faces drawn with
+  depth-based stochastic transparency (Enderton et al., "Stochastic
+  Transparency", I3D 2010, section 3.4): the total alpha of every sample,
+  then each fragment covering a stratified random subset of its samples of
+  size alpha x S into a copy of the opaque depth (GreaterEqual for the
+  faces of non-rigged meshes, as the sorted order, so that a decal at the
+  depth of its surface stays; Greater for rigged ones), then the
+  accumulation of the fragments at or in front of that depth, composited
+  per sample with the alpha correction; the glow of the blended faces that
+  have some is accumulated the same way (each face's glow where it is at or
+  in front of the stochastic depth: on average its glow dimmed by the
+  layers in front of it, as with `AURORA_OIT=0`), corrected by the same
+  ratio and added to the scene's glow (check with
   `AURORA_DEMO_GLOW_LAYERS=1` or `shell`, `AURORA_DEBUG_GLOW=1`: the same
-  glow as `AURORA_OIT=0`). Every
-  anti-aliasing mode (`AURORA_AA`): the two stochastic
-  passes run at their own sample count, the most the device takes up to 8
-  (the paper's 8 per pass), whatever the scene's: their depth starts as the
-  opaque depth spread over those samples (each takes the scene sample
-  nearest to it). With MSAA (`AURORA_AA=2`, `3`, `4`) the total alpha and
-  the composite stay at the scene's samples, each dimmed by its own
+  glow as `AURORA_OIT=0`). The method is made the first frame it is on and
+  not before (the log's `oit stochastic: made` and `pipelines for <n>
+  sample(s) made in <ms>` lines: the first frame with it on pays them once);
+  off, nothing of it exists and the scene module does not hold its shaders.
+  Every anti-aliasing mode (`AURORA_AA`): the two stochastic passes run at
+  their own sample count, the most the device takes up to 8, whatever the
+  scene's: their depth starts as the opaque depth spread over those samples
+  (each takes the scene sample nearest to it); 8 samples per pixel, their
+  noise averaged over the frames by the temporal blend (the resolved colour
+  blended 1/8 with the last frame's, reprojected through the nearest
+  transparent depth and clamped to the 3 x 3 neighbourhood; the seeds
+  change every frame). With MSAA (`AURORA_AA=2`, `3`, `4`) the total alpha
+  and the composite stay at the scene's samples, each dimmed by its own
   transparency. Without (`AURORA_AA=0` none, `1` FXAA, `5` TAA, `6` SMAA,
-  `7` FSR) the total alpha runs at the passes' samples against that spread depth,
-  the composite dims each pixel by its resolved transparency, and the
-  anti-aliasing then runs over the result as with `AURORA_OIT=0`: check
-  the edges of opaque objects in front of and behind the panes of
+  `7` FSR) the total alpha runs at the passes' samples against that spread
+  depth, the composite dims each pixel by its resolved transparency, and the
+  anti-aliasing then runs over the result as with `AURORA_OIT=0`: check the
+  edges of opaque objects in front of and behind the panes of
   `AURORA_DEMO_ALPHA_PLANES=8,0.4,0.5` (no halo, the same edge as with
-  `AURORA_OIT=0`), and under TAA the hair fly-through
-  (`AURORA_DEMO_CAMERA=hair`; the grain is the same every frame, so TAA
-  neither averages it out nor ghosts it). Under FSR (`AURORA_AA=7`,
+  `AURORA_OIT=0`). Under TAA the temporal blend is off (logged once as
+  `oit stochastic: temporal blend off, the scene's TAA accumulates`): TAA
+  accumulates already, the grain is the same every frame, so TAA neither
+  averages it out nor ghosts it. Under FSR (`AURORA_AA=7`,
   `AURORA_FSR_QUALITY`) the passes and their targets are at the render
-  size, before the upscale (the log's `targets` line gives it), and FSR's
+  size, before the upscale (the log's `targets` line gives it), FSR's
   reactive mask compares the scene copy with the composited colour as it
-  does with the sorted order. The temporal blend stays on there (FSR
-  takes this frame's colour on the blended faces, so a static grain would
-  show, enlarged and sharpened): check the 8 panes (as smooth as
-  `AURORA_OIT=0`), the coplanar panes of `AURORA_DEMO_ALPHA_PLANES=2,0.5,0`
-  across frames and the hair fly-through for a trail.
-  The log gives the configuration and the counts the device
-  takes (`oit stochastic: Config …; pass sample counts the device takes:
-  [2, 4, 8]`), the route (`oit stochastic: the sample mask route` or `the
-  sample index route`) and the targets (`oit stochastic: targets <w>x<h>,
-  the scene at <n> samples, the passes at <p>: <i> iterations for <S>
-  samples, <m> MB`, the video memory of those targets: about 187 MB at
-  1600 x 900 and 478 MB at 2560 x 1440 with MSAA 4x without the history; 198 and 506 MB with it, the default); with `AURORA_PROFILE=1`, `oit stochastic gpu ms: alpha=…
-  depth1=… accum1=… more_iterations=… resolve_composite=… total=…` every
-  120 frames (the first run of the stochastic depth and of the
-  accumulation, then the other runs together). `AURORA_OIT_SAMPLES` sets
-  the samples in all (8 by default, one run of passes of 8): past a pass's count the two
-  stochastic passes run again with the next bits of one stratified mask
-  (16 with passes of 8: two runs). The paper's method is the default: stratified
-  masks, alpha correction, the depth-based accumulation, seeds by pixel and
-  triangle; the other flags below are experiments outside the paper. `AURORA_OIT_STOCH` flags, comma separated: `naive` (one coin per
-  sample instead of a stratified S-choose-R mask), `nocorr` (no alpha
-  correction), `filter=<r>[:<sigma>]` (the paper's cross-bilateral filter
-  of the accumulated colour guided by the total alpha, radius 1 to 4,
-  alpha sigma 0.1 by default), `temporal[=<n>]` (on by default with n = 8,
-  and off when the scene's anti-aliasing is TAA, which accumulates already
-  (logged once as `oit stochastic: temporal blend off, the scene's TAA
-  accumulates`; under FSR it stays on, `on, before FSR …`); `notemporal` turns it off: the resolved colour
-  blended 1/n with the last frame's reprojected through the nearest
-  transparent depth and clamped to the 3 x 3 neighbourhood; the seeds then
-  change every frame; ghosts under motion), `index` (the coverage by one
-  invocation per sample, `@builtin(sample_index)`, the samples off the mask
-  discarded, instead of the default `@builtin(sample_mask)` output: the
-  same image, about four times the invocations of that pass; the default
-  falls back to it on Vulkan when `spirv_fix.rs` cannot make the module),
-  `mask` (the default route), `pass=<n>` (the samples of a stochastic pass,
-  2 to 16, when the device takes that count and it is at least the
-  scene's: `pass=4` with `AURORA_AA=3` is the earlier behaviour),
-  `noprim` (the triangle index left out of the seed: the fragments of one
-  face in a pixel then share a mask and occlude instead of blending),
-  `seed=white|r2|blue` (the per-pixel part of the seed: a hash, the R2
-  sequence or a 64 x 64 blue-noise tile). Grain: compare a capture with
-  `AURORA_OIT=0` of the same frame where one layer covers the pixel (exact
-  there), or the lists' build on the same scene (`AURORA_FPS_LIMIT=60`, a `close`
-  camera): the panes of `AURORA_DEMO_ALPHA_PLANES=8,0.4,0.5` show it most.
-- **`AURORA_MESH_ORDER=asset`**: the triangles of every mesh face are drawn
-  in the order the Legacy Viewer draws them, reordered for the vertex cache
-  when the mesh is loaded (`LLVolumeFace::cacheOptimize`,
-  `meshopt_optimizeVertexCache`): without a depth sort, the strand cards of
-  a blended mesh hair blend and hide one another in that order, the one
-  its creator saw. `asset` keeps the order of the asset, as before, to
-  compare.
-- **`AURORA_BLEND_AO=new|none|old|alt`**: the occlusion (both methods)
-  reads a copy of the depth prepass with the blended faces at least half
-  covered drawn over it (`fs_depth_contact`, the rule of the contact
-  shadows), and those faces take the screen-space ambient occlusion and
-  GTAO's indirect light like the opaque ones (#882: a mesh head whose two
-  halves differ in alpha mode showed a line down the middle with the
-  occlusion on); more transparent ones take neither, as the Legacy
-  Viewer's alpha pass. `none`: no blended face takes them and the
-  occlusion reads the prepass alone (#556 to #882); `old`: every blended
-  face takes those of what lies behind it (before #556); `alt`: `none` one
-  second in two. With the contact shadows on, their pass copies that depth
-  instead of drawing the blended faces a second time. See
-  `AURORA_DEMO_BLEND_AO`.
-- **`AURORA_DEMO_HALO=1`**: a wide translucent pane (35 % opaque) 3 m
-  ahead of the start position (`AURORA_DEMO_POS`), facing the camera, so
-  that our avatar stands between the camera and the pane. With
-  `AURORA_DEMO_HAIR=8,24,60,16` and `AURORA_RIGGED_BLEND=write`, the ring
-  of #556 (the pane missing around the hair) appears; by default it does
-  not.
-- **`AURORA_DEMO_WET_LAYER=1`**: three skin-coloured spheres 2.5 m ahead
-  of the start position (`AURORA_DEMO_POS`) and to the left of our avatar,
-  from the avatar outwards, each under a slightly larger shell: a
-  transparent texture (alpha 0) with a blended legacy material whose
-  specular map holds drips, as a body's wet layer; the built-in transparent
-  texture with the same material, as the shine layers of heads and eyes;
-  the transparent texture with no material, a control. With
-  `AURORA_DEMO_POS=100,100` the spheres stand on the right of the screen.
-  The first two show the drips reflecting the sky and nothing else of their
-  shell; the control shows nothing (#1420, the alpha max(texture alpha,
-  glare) of class3/deferred/materialF.glsl). Before the fix, no shell
-  showed anything.
+  does with the sorted order, and the temporal blend stays on (FSR takes
+  this frame's colour on the blended faces, so a static grain would show,
+  enlarged and sharpened): check the 8 panes (as smooth as `AURORA_OIT=0`)
+  and the coplanar panes of `AURORA_DEMO_ALPHA_PLANES=2,0.5,0` across
+  frames. The history starts again (this frame's colour alone) when the
+  targets are new or the camera jumped. A photo, its tiles and a snapshot
+  draw the sorted order whatever the setting (their size and history are
+  their own, and the targets are freed before them: the snapshot's memory
+  plan counts none). The targets are freed too when the method is turned off
+  and after 120 frames without a blended face; when the memory refuses them
+  (`oit stochastic: the memory refused the targets`) the frame draws the
+  sorted order and the size is not tried again. The log gives the counts the
+  device takes (`oit stochastic: made; pass sample counts the device takes:
+  [2, 4, 8]`), the route (`oit stochastic: the sample mask route`, or `the
+  sample index route` when `spirv_fix.rs` cannot make the module or the
+  pipelines made from it are refused: the same image, about four times the
+  invocations of that pass) and the targets (`oit stochastic: targets
+  <w>x<h>, the scene at <n> samples, the passes at <p>, <m> MB`: about 198
+  MB at 1600 x 900 and 506 MB at 2560 x 1440 with MSAA 4x). With
+  `AURORA_PROFILE=1`, `oit stochastic gpu ms: alpha=… depth=… accum=…
+  resolve_composite=… total=…` every 120 frames. Grain: compare a capture
+  with `AURORA_OIT=0` of the same frame where one layer covers the pixel
+  (exact there): the panes of `AURORA_DEMO_ALPHA_PLANES=8,0.4,0.5` show it
+  most. Decals: `AURORA_DEMO_COPLANAR_DECAL` (a decal at the depth of the
+  surface under it) must show with the method on as it does off.
 - **`AURORA_DEMO_OIT_COLUMN=<tubes>[,<alpha>]`**: `tubes` nested hollow
   cylinders (1 to 5, 3 when the value is not a number), 8 m tall, from
   2.2 m across, 1.5 m ahead and 2 m to the left of the start position

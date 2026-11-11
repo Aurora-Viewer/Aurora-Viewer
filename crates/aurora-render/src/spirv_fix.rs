@@ -35,7 +35,8 @@
 //!
 //! Its user is the stochastic transparency's depth pass
 //! (`oit_stochastic.rs`, `Shared::mask_module`), which takes the sample
-//! index route instead when no module can be made here.
+//! index route instead when no module can be made here, or when the
+//! pipelines made from it are refused.
 //!
 //! Upstream: the bug is in `naga/src/back/spv/writer.rs`
 //! (`write_varying`, the `BuiltIn::SampleMask` arm takes the varying's
@@ -768,16 +769,6 @@ fn mask_variables(words: &[u32], instrs: &[Instr]) -> Result<(Vec<MaskVar>, Outc
     }
 }
 
-/// The id of an `OpConstant %int value` of the module, if any.
-fn find_constant(words: &[u32], instrs: &[Instr], int: u32, value: u32) -> Option<u32> {
-    instrs
-        .iter()
-        .filter(|i| i.op == op(spirv::Op::Constant) && i.len == 4)
-        .map(|i| i.words(words))
-        .find(|w| w[1] == int && w[3] == value)
-        .map(|w| w[2])
-}
-
 fn instruction(code: spirv::Op, operands: &[u32]) -> Vec<u32> {
     let mut out = Vec::with_capacity(operands.len() + 1);
     out.push(((operands.len() as u32 + 1) << 16) | code as u32);
@@ -810,23 +801,14 @@ pub fn rewrite(words: &[u32]) -> Result<Outcome, RewriteError> {
     let mut array_pointer_of: BTreeMap<(u32, u32), u32> = BTreeMap::new();
     for var in &vars {
         if let std::collections::btree_map::Entry::Vacant(entry) = zero_of.entry(var.int) {
-            let zero = match find_constant(words, &instrs, var.int, 0) {
-                Some(id) => id,
-                None => {
-                    let id = next_id();
-                    declarations.extend(instruction(spirv::Op::Constant, &[var.int, id, 0]));
-                    id
-                }
-            };
+            // always fresh constants, declared with the array type that
+            // uses them: a module's own could be declared after the place
+            // these go (a forward reference), and equal constants are legal
+            let zero = next_id();
+            declarations.extend(instruction(spirv::Op::Constant, &[var.int, zero, 0]));
             entry.insert(zero);
-            let one = match find_constant(words, &instrs, var.int, 1) {
-                Some(id) => id,
-                None => {
-                    let id = next_id();
-                    declarations.extend(instruction(spirv::Op::Constant, &[var.int, id, 1]));
-                    id
-                }
-            };
+            let one = next_id();
+            declarations.extend(instruction(spirv::Op::Constant, &[var.int, one, 1]));
             let array = next_id();
             declarations.extend(instruction(spirv::Op::TypeArray, &[array, var.int, one]));
             array_of.insert(var.int, array);

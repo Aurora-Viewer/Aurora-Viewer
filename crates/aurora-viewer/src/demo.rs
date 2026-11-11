@@ -386,13 +386,12 @@ fn height(x: f32, y: f32) -> f32 {
     21.5 + shore + hill + dune + relief + altitude()
 }
 
-/// `AURORA_DEMO_ALPHA_PLANES=<n>[,<alpha>]`: the panes (1 to 64, 8 when
-/// the value is not a number) and their opacity (0.3 by default, 0.02 to
-/// 1), or `None` without the variable.
-/// `AURORA_DEMO_ALPHA_PLANES=<n>[,<alpha>[,<spacing>]]`: the panes, their
-/// opacity and the distance between two (metres; 0 puts them all in the
-/// same place, exactly coplanar, for the order-independent transparency's
-/// tie-break).
+/// `AURORA_DEMO_ALPHA_PLANES=<n>[,<alpha>[,<spacing>]]`: the panes (from
+/// one to 64, eight when the value is not a number), their opacity (0.3 by
+/// default, from 0.02 to full) and the distance between two (metres, 0.25 by
+/// default; 0 puts them all in the same place, exactly coplanar, for the
+/// order-independent transparency's tie-break), or `None` without the
+/// variable.
 fn alpha_planes_spec(value: Option<&str>) -> Option<(u32, f32, f32)> {
     let value = value?;
     let mut parts = value.split(',').map(str::trim);
@@ -5672,14 +5671,13 @@ pub fn events() -> Vec<NetEvent> {
         ));
         id += 1;
     }
-    // AURORA_DEMO_ALPHA_PLANES=<n>[,<alpha>]: n wide translucent panes
+    // AURORA_DEMO_ALPHA_PLANES=<n>[,<alpha>[,<spacing>]]: n wide translucent panes
     // ahead of the start position, facing the camera, one every 0.25 m
     // from 3 m on, each wide enough to fill the view at its distance: the
     // fog planes, glass walls and skybox panes of a club, n blended layers
     // over nearly every pixel (the load of the order-independent
-    // transparency, oit.rs, and the overflow of its pool past its layers
-    // per pixel). A hue ramp from the nearest to the farthest, so that a
-    // wrong order shows.
+    // transparency, aurora-render oit_stochastic.rs). A hue ramp from the
+    // nearest to the farthest, so that a wrong order shows.
     if let Some((n, alpha, spacing)) = alpha_planes_spec(std::env::var("AURORA_DEMO_ALPHA_PLANES").ok().as_deref()) {
         let (sx, sy) = std::env::var("AURORA_DEMO_POS")
             .ok()

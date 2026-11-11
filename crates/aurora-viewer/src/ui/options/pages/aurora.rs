@@ -359,7 +359,6 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 // also in Graphics › Image › Transparency (aurora-render
                 // oit_stochastic.rs): an opt-in, off by default and left as
                 // the user set it by the two buttons above
-                cx.greyed(!cx.st.oit_supported);
                 cx.wide().experimental().choice(
                     tr!("ui-options-oit"),
                     tr!("ui-options-aurora-oit-help"),

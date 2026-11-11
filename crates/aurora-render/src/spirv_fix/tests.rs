@@ -428,9 +428,9 @@ fn a_hand_built_scalar_module_is_rewritten() {
         panic!("not rewritten");
     };
     verify(&fixed).expect("verified");
-    // Both constants existed: only the array type and two pointers were
-    // added, plus one id per access chain.
-    assert_eq!(fixed[3], 20 + 3 + 2);
+    // Fresh constants (zero and one) are always declared: with the array
+    // type and two pointers that is five ids, plus one per access chain.
+    assert_eq!(fixed[3], 20 + 5 + 2);
     if let Some(result) = spirv_val(&fixed, &facts(api_version(1))) {
         result.expect("the rewritten module validates");
     }
@@ -878,5 +878,54 @@ struct Out { @location(0) color: vec4<f32>, @builtin(sample_mask) mask: u32 }
             "the plain module got no message either ({} validation messages in all): is the validation layer installed?",
             ANY_VALIDATION.load(std::sync::atomic::Ordering::Relaxed)
         );
+    }
+}
+
+/// The real thing: the scene module's `fs_st_depth_mask`, as `mask_module`
+/// makes it (the overrides turned into constants), is rewritten and
+/// verified, and spirv-val accepts it when the SDK is there.
+#[test]
+fn the_scene_module_of_the_stochastic_depth_pass_is_rewritten() {
+    let object = include_str!("../shaders/object.wgsl").replace("\r\n", "\n");
+    let src = format!(
+        "{}{}\n{}\n{}",
+        crate::oit_stochastic::enable_directive_with(true),
+        crate::COMMON_SHADER,
+        crate::oit_stochastic::st_object_source_with(&object, true),
+        include_str!("../shaders/env.wgsl")
+    );
+    let wgsl = crate::oit_stochastic::constants_for_overrides(&src, &[("WATER_CLIP", "1u"), ("BLEND_EARLY_DISCARD", "true")]);
+    // every declared resource gets a binding of its own (the real layouts
+    // are the renderer's; the rewrite does not depend on them)
+    let mut map = BTreeMap::new();
+    for (i, (group, binding)) in crate::oit_stochastic::declared_bindings(&wgsl).into_iter().enumerate() {
+        map.insert(
+            naga::ResourceBinding { group, binding },
+            spv::BindingInfo {
+                descriptor_set: group,
+                binding: 100 + i as u32,
+                // (the texture pages are a binding array)
+                binding_array_size: ((group, binding) == (2, 0)).then_some(64),
+            },
+        );
+    }
+    let mut facts = facts(api_version(3));
+    // (the textures are a binding array indexed by a value that varies)
+    facts.features = wgpu::Features::TEXTURE_BINDING_ARRAY
+        | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
+        | wgpu::Features::PRIMITIVE_INDEX;
+    let shaders = SampleMaskShaders::with_facts(Some(facts.clone()), true);
+    let words = shaders
+        .fixed_words_mapped(&facts, "scene stochastic mask", &wgsl, map)
+        .expect("the scene module is written and rewritten")
+        .expect("the module has a SampleMask built-in to rewrite");
+    verify(&words.spirv).expect("verified");
+    assert_eq!(rewrite(&words.spirv), Ok(Outcome::AlreadyArray));
+    assert!(words.entry_points.iter().any(|(name, _)| name == "fs_st_depth_mask"));
+    // (the module declares many resources the entry point never uses: only
+    // the faults about the mask matter here)
+    if let Some(Err(report)) = spirv_val(&words.spirv, &facts) {
+        let about_the_mask: Vec<String> = faults(&report).into_iter().filter(|f| f.contains("SampleMask")).collect();
+        assert!(about_the_mask.is_empty(), "{about_the_mask:?}");
     }
 }

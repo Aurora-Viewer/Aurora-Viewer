@@ -2332,8 +2332,8 @@ impl Default for Settings {
             display_name_notices: true,
             mirrors: 1,
             ssr: false,
-            // off until tried on modest GPUs (integrated graphics, 4 GB
-            // cards): its node pool takes video memory on every frame
+            // an opt-in: the Legacy Viewer sorts its blended faces, and the
+            // method's targets take video memory while it is on
             oit: false,
             anisotropy: 8,
             cache_size_mb: 20480,

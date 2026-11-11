@@ -78,8 +78,6 @@ impl App {
         self.options_ui.gpus = renderer.info.adapters.clone();
         self.options_ui.gpu_in_use = renderer.info.name.clone();
         self.options_ui.gpu_notice = renderer.info.notice;
-        // (the new device's: a recovered renderer re-evaluates it)
-        self.options_ui.oit_supported = renderer.info.oit;
     }
 
     pub(super) fn egui_state_for(&self, window: &Window, renderer: &Renderer) -> egui_winit::State {

@@ -927,10 +927,6 @@ struct Pipelines {
     /// and their depth into the single-sampled scene depth.
     blend_under: SidedPipelines,
     blend_under_depth_ss: SidedPipelines,
-    /// Order-independent transparency by depth-based stochastic transparency
-    /// (oit_stochastic.rs): its passes over the faces and its resolve
-    st: Option<crate::oit_stochastic::ScenePipes>,
-    st_resolve: Option<crate::oit_stochastic::Resolve>,
     particles: wgpu::RenderPipeline,
     water_particles: wgpu::RenderPipeline,
     water_particles_under: wgpu::RenderPipeline,
@@ -1049,10 +1045,10 @@ struct GpuTimer {
     slot_prepass: [std::cell::Cell<bool>; 3],
     /// The stochastic transparency's pass times summed over `st_n` frames,
     /// logged every 120 (with `AURORA_PROFILE=1`).
-    st_sum: [f32; 5],
+    st_sum: [f32; 4],
     st_n: u32,
     /// The last frame's stochastic pass times (`AURORA_PROFILE_FRAMES`).
-    last_st: Option<[f32; 5]>,
+    last_st: Option<[f32; 4]>,
     compare: PrepassCompare,
 }
 
@@ -1176,14 +1172,13 @@ const MARK_WATER_AIR_BEGIN: u32 = 25;
 const MARK_WATER_AIR_END: u32 = 26;
 /// Depth-based stochastic transparency (oit_stochastic.rs), written only
 /// while it runs: before its passes, after the total alpha, after the
-/// first stochastic depth, after the first accumulation, after the other
-/// iterations, after the resolve and the composite.
+/// stochastic depth, after the accumulation, after the resolve and the
+/// composite.
 const MARK_ST_BEGIN: u32 = 27;
 const MARK_ST_ALPHA_END: u32 = 28;
 const MARK_ST_DEPTH_END: u32 = 29;
 const MARK_ST_ACCUM_END: u32 = 30;
-const MARK_ST_ITER_END: u32 = 31;
-const MARK_ST_COMPOSITE_END: u32 = 32;
+const MARK_ST_COMPOSITE_END: u32 = 31;
 /// The effects beyond the occlusion and the contact shadows
 /// (`RenderStats::gpu_effects`): the planar reflections (water, mirror), with
 /// the refracted water light before them; the reflection probe face with its
@@ -1273,7 +1268,7 @@ impl GpuTimer {
             last_ssao: None,
             last_contact: None,
             last_bloom: None,
-            st_sum: [0.0; 5],
+            st_sum: [0.0; 4],
             st_n: 0,
             last_st: None,
             last_effects: None,
@@ -1310,8 +1305,7 @@ impl GpuTimer {
                                     ms(MARK_ST_BEGIN, MARK_ST_ALPHA_END),
                                     ms(MARK_ST_ALPHA_END, MARK_ST_DEPTH_END),
                                     ms(MARK_ST_DEPTH_END, MARK_ST_ACCUM_END),
-                                    ms(MARK_ST_ACCUM_END, MARK_ST_ITER_END),
-                                    ms(MARK_ST_ITER_END, MARK_ST_COMPOSITE_END),
+                                    ms(MARK_ST_ACCUM_END, MARK_ST_COMPOSITE_END),
                                 ];
                                 self.last_st = Some(parts);
                                 for (sum, p) in self.st_sum.iter_mut().zip(parts) {
@@ -1322,15 +1316,14 @@ impl GpuTimer {
                                     let n = self.st_n as f32;
                                     let p = self.st_sum.map(|v| v / n);
                                     log::info!(
-                                        "oit stochastic gpu ms: alpha={:.3} depth1={:.3} accum1={:.3} more_iterations={:.3} resolve_composite={:.3} total={:.3}",
+                                        "oit stochastic gpu ms: alpha={:.3} depth={:.3} accum={:.3} resolve_composite={:.3} total={:.3}",
                                         p[0],
                                         p[1],
                                         p[2],
                                         p[3],
-                                        p[4],
                                         p.iter().sum::<f32>()
                                     );
-                                    self.st_sum = [0.0; 5];
+                                    self.st_sum = [0.0; 4];
                                     self.st_n = 0;
                                 }
                             }
@@ -1625,6 +1618,18 @@ impl FrameTarget {
 
 /// The passes of a frame and all they own. Lives on the render thread, or
 /// in the `Renderer` itself with AURORA_RENDER_THREAD=0.
+/// What the stochastic transparency is made from the first frame it is on
+/// (`Backend::ensure_st`).
+struct StInit {
+    adapter: wgpu::Adapter,
+    instance_flags: wgpu::InstanceFlags,
+    /// the sample counts the colour, depth and transmittance formats take
+    pass_supported: Vec<u32>,
+    /// the scene's bind group layouts (frame, records, textures): the sample
+    /// mask route's shader is written against them
+    scene_groups: Vec<Vec<wgpu::BindGroupLayoutEntry>>,
+}
+
 pub(crate) struct Backend {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -1689,8 +1694,12 @@ pub(crate) struct Backend {
     post_layout: wgpu::BindGroupLayout,
     gbuf_layout: wgpu::BindGroupLayout,
     pipelines: Pipelines,
-    /// Order-independent transparency (oit_stochastic.rs).
+    /// Order-independent transparency (oit_stochastic.rs): made the first
+    /// frame the method is on, with its pipelines for the scene's samples.
     st: Option<crate::oit_stochastic::Stochastic>,
+    st_pipes: Option<crate::oit_stochastic::Pipes>,
+    /// What `make_st` needs that the Backend does not keep.
+    st_init: StInit,
     ssao: Ssao,
     gtao: crate::gtao::Gtao,
     water_effects: crate::water_effects::WaterGpu,
@@ -1901,6 +1910,9 @@ pub(crate) struct BackendInit {
     pub tex_layout: wgpu::BindGroupLayout,
     /// its entries (the stochastic transparency's sample mask shader)
     pub tex_layout_entries: Vec<wgpu::BindGroupLayoutEntry>,
+    /// The flags the instance was made with (the sample mask shader's debug
+    /// information follows them).
+    pub instance_flags: wgpu::InstanceFlags,
     /// The scene's buffers at the start (first records bind group).
     pub scene: SceneGpu,
     pub anim_clock: crate::tex_anim::AnimClock,
@@ -2969,6 +2981,7 @@ impl Backend {
             gpu_cull,
             tex_layout,
             tex_layout_entries,
+            instance_flags,
             scene,
             anim_clock,
             lost,
@@ -3381,16 +3394,15 @@ impl Backend {
         let msaa_samples = if msaa_supported.contains(&4) { 4 } else { 1 };
         let settings = RenderSettings::default();
         let bloom = crate::bloom::Bloom::new(&device, &post_layout);
-        // Order-independent transparency (oit_stochastic.rs; always made,
-        // the setting selects it at any time, its targets are made on the
-        // first frame that uses it)
-        let st = Some({
+        // what the stochastic transparency is made from, the first frame the
+        // method is on (`make_st`): nothing of it exists before
+        let st_init = {
             // the stochastic passes' own sample count (oit_stochastic.rs
             // `pass_samples`): the colour, depth and transmittance (R16Float)
-            // formats all, 2, 8 and 16 needing the adapter's own format
+            // formats all, 2 and 8 needing the adapter's own format
             // features as the scene's
             let r16_features = adapter.get_texture_format_features(wgpu::TextureFormat::R16Float);
-            let pass_supported: Vec<u32> = [2u32, 4, 8, 16]
+            let pass_supported: Vec<u32> = [2u32, 4, 8]
                 .into_iter()
                 .filter(|n| *n == 4 || adapter_specific)
                 .filter(|n| {
@@ -3399,21 +3411,13 @@ impl Backend {
                         && r16_features.flags.sample_count_supported(*n)
                 })
                 .collect();
-            let mut st = crate::oit_stochastic::Stochastic::new(&device, &queue, HDR_FORMAT, DEPTH_FORMAT, pass_supported);
-            // the sample mask route writes its shader against the scene's
-            // layouts (spirv_fix.rs: a passthrough module is not checked
-            // against them)
-            let flags = if std::env::var_os("AURORA_GPU_VALIDATION").is_some() {
-                wgpu::InstanceFlags::debugging()
-            } else {
-                wgpu::InstanceFlags::empty()
-            };
-            st.set_mask_shaders(
-                crate::spirv_fix::SampleMaskShaders::new(&adapter, &device, flags),
-                vec![frame_entries.clone(), records_entries.clone(), tex_layout_entries.clone()],
-            );
-            st
-        });
+            StInit {
+                adapter: adapter.clone(),
+                instance_flags,
+                pass_supported,
+                scene_groups: vec![frame_entries.clone(), records_entries.clone(), tex_layout_entries.clone()],
+            }
+        };
         let pipelines = Self::make_pipelines(
             &device,
             &frame_layout,
@@ -3422,7 +3426,6 @@ impl Backend {
             &shadow_layout,
             [&post_layout, &bloom.post_layout],
             &gbuf_layout,
-            st.as_ref().map(|s| s.shared()),
             msaa_samples,
             format,
             settings.ssr,
@@ -3581,7 +3584,9 @@ impl Backend {
             post_layout,
             gbuf_layout,
             pipelines,
-            st,
+            st: None,
+            st_pipes: None,
+            st_init,
             ssao,
             gtao,
             water_effects,
@@ -3725,6 +3730,251 @@ impl Backend {
         })
     }
 
+    /// The stochastic transparency's own: made the first frame the method is
+    /// on (`ensure_st`), never while it is off. `Stochastic` (layouts,
+    /// buffers, the resolve's module) once, its pipelines for each count of
+    /// the scene's samples. False when the passes cannot run here.
+    #[allow(clippy::too_many_arguments)]
+    fn ensure_st(
+        st: &mut Option<crate::oit_stochastic::Stochastic>,
+        st_pipes: &mut Option<crate::oit_stochastic::Pipes>,
+        init: &StInit,
+        device: &wgpu::Device,
+        frame_layout: &wgpu::BindGroupLayout,
+        records_layout: &wgpu::BindGroupLayout,
+        tex_layout: &wgpu::BindGroupLayout,
+        samples: u32,
+    ) -> bool {
+        if st.is_none() {
+            let masks = crate::spirv_fix::SampleMaskShaders::new(&init.adapter, device, init.instance_flags);
+            *st = Some(crate::oit_stochastic::Stochastic::new(
+                device,
+                HDR_FORMAT,
+                DEPTH_FORMAT,
+                init.pass_supported.clone(),
+                masks,
+                init.scene_groups.clone(),
+            ));
+        }
+        let Some(st) = st.as_ref() else { return false };
+        if st.shared().pass_samples(samples) < 2 {
+            return false;
+        }
+        if st_pipes.as_ref().is_none_or(|p| p.samples != samples) {
+            let started = std::time::Instant::now();
+            *st_pipes = Some(Self::make_st_pipes(
+                device,
+                frame_layout,
+                records_layout,
+                tex_layout,
+                st.shared(),
+                samples,
+            ));
+            log::info!(
+                "oit stochastic: pipelines for {samples} sample(s) made in {:.0} ms",
+                started.elapsed().as_secs_f32() * 1000.0
+            );
+        }
+        true
+    }
+
+    /// Depth-based stochastic transparency's pipelines (oit_stochastic.rs):
+    /// the total alpha (the transmittance product, Zero / OneMinusSrcAlpha),
+    /// the stochastic depth (depth only, by route) and the accumulation
+    /// (fs_blend added into the samples at or in front of that depth), the
+    /// glow, and the resolve. From a scene module of their own, with the
+    /// passes in (`st_scene_source`); the sample mask route's module is
+    /// checked by a validation scope, and the index route replaces it when
+    /// the pipelines are refused.
+    fn make_st_pipes(
+        device: &wgpu::Device,
+        frame_layout: &wgpu::BindGroupLayout,
+        records_layout: &wgpu::BindGroupLayout,
+        tex_layout: &wgpu::BindGroupLayout,
+        st: &crate::oit_stochastic::Shared,
+        samples: u32,
+    ) -> crate::oit_stochastic::Pipes {
+        let src = crate::oit_stochastic::st_scene_source(device);
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("scene stochastic"),
+            source: wgpu::ShaderSource::Wgsl(src.as_str().into()),
+        });
+        let scene_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("scene stochastic"),
+            bind_group_layouts: &[Some(frame_layout), Some(records_layout), Some(tex_layout)],
+            immediate_size: 0,
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("scene stochastic faces"),
+            bind_group_layouts: &[Some(frame_layout), Some(records_layout), Some(tex_layout), Some(&st.face_layout)],
+            immediate_size: 0,
+        });
+        let base = |label: &'static str, vs: &'static str, fs: &'static str| PipeDesc {
+            label,
+            vs,
+            fs: Some(fs),
+            vb: Vb::Mesh,
+            cull: Some(wgpu::Face::Back),
+            blend: None,
+            write_mask: wgpu::ColorWrites::COLOR,
+            depth_write: true,
+            depth_compare: wgpu::CompareFunction::GreaterEqual,
+            a2c: false,
+            samples,
+            format: Some(HDR_FORMAT),
+            gbuf: false,
+            depth_format: Some(DEPTH_FORMAT),
+            depth_bias: Default::default(),
+            constants: &[],
+            polygon_line: false,
+            unclipped_depth: false,
+        };
+        // the stochastic depth and the accumulation at the passes' own
+        // count (oit_stochastic.rs `pass_samples`), the total alpha at the
+        // scene's with MSAA, at the passes' without
+        let pass_samples = st.pass_samples(samples);
+        let alpha_samples = crate::oit_stochastic::trans_samples(samples, pass_samples);
+        let additive = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+        };
+        let transmittance = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::Zero,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::Zero,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+        };
+        // The faces of rigged meshes (the first `n_depth` of the blended
+        // range) test against the opaque depth with Greater, the others with
+        // GreaterEqual like the sorted order (#3059, #3070: a decal at the
+        // depth of the surface under it stays).
+        let compare = |rigged: usize| {
+            if rigged == 0 {
+                wgpu::CompareFunction::Greater
+            } else {
+                wgpu::CompareFunction::GreaterEqual
+            }
+        };
+        let build = |mask_module: Option<&wgpu::ShaderModule>| {
+            let (depth_module, route_fs, depth_constants): (&wgpu::ShaderModule, &str, &[(&str, f64)]) = match mask_module {
+                Some(m) => (m, "fs_st_depth_mask", &[]),
+                None => (&module, "fs_st_depth_index", &[("WATER_CLIP", 1.0)]),
+            };
+            let alpha = std::array::from_fn(|rigged| {
+                std::array::from_fn(|side| {
+                    make_pipeline(
+                        device,
+                        &module,
+                        &layout,
+                        PipeDesc {
+                            cull: blend_cull(side != 0),
+                            format: Some(wgpu::TextureFormat::R16Float),
+                            blend: Some(transmittance),
+                            write_mask: wgpu::ColorWrites::ALL,
+                            depth_write: false,
+                            depth_compare: compare(rigged),
+                            constants: &[("WATER_CLIP", 1.0)],
+                            samples: alpha_samples,
+                            ..base("stochastic total alpha", "vs_main", "fs_st_alpha")
+                        },
+                    )
+                })
+            });
+            let depth = std::array::from_fn(|rigged| {
+                std::array::from_fn(|side| {
+                    make_pipeline(
+                        device,
+                        depth_module,
+                        &layout,
+                        PipeDesc {
+                            cull: blend_cull(side != 0),
+                            format: None,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::empty(),
+                            depth_write: true,
+                            depth_compare: compare(rigged),
+                            constants: depth_constants,
+                            samples: pass_samples,
+                            ..base("stochastic depth", "vs_main", route_fs)
+                        },
+                    )
+                })
+            });
+            let accum = std::array::from_fn(|side| {
+                make_pipeline(
+                    device,
+                    &module,
+                    &scene_layout,
+                    PipeDesc {
+                        cull: blend_cull(side != 0),
+                        blend: Some(additive),
+                        write_mask: wgpu::ColorWrites::ALL,
+                        depth_write: false,
+                        depth_compare: wgpu::CompareFunction::GreaterEqual,
+                        constants: &[("BLEND_EARLY_DISCARD", 1.0), ("WATER_CLIP", 1.0)],
+                        samples: pass_samples,
+                        ..base("stochastic accumulation", "vs_main", "fs_blend")
+                    },
+                )
+            });
+            // the glowing faces' glow, accumulated as their colour (as
+            // `glow_water`: no culling, fs_glow tests the backs; clipped to
+            // the camera's side of the water)
+            let glow = make_pipeline(
+                device,
+                &module,
+                &scene_layout,
+                PipeDesc {
+                    cull: None,
+                    format: Some(wgpu::TextureFormat::R16Float),
+                    blend: Some(additive),
+                    write_mask: wgpu::ColorWrites::RED,
+                    depth_write: false,
+                    depth_compare: wgpu::CompareFunction::GreaterEqual,
+                    constants: &[("WATER_CLIP", 1.0)],
+                    samples: pass_samples,
+                    ..base("stochastic glow", "vs_main", "fs_st_glow")
+                },
+            );
+            crate::oit_stochastic::ScenePipes { alpha, depth, accum, glow }
+        };
+        // the sample mask route (the default): its own module without
+        // overrides, through spirv_fix (oit_stochastic.rs `mask_module`);
+        // the sample index route when that cannot be made, or when its
+        // pipelines are refused
+        let mask_module = st.mask_module(device, &src, &[("WATER_CLIP", "1u"), ("BLEND_EARLY_DISCARD", "true")]);
+        let (scene, refused) = crate::gpu_alloc::scoped(device, || build(mask_module.as_ref()));
+        let scene = if refused && mask_module.is_some() {
+            log::warn!("oit stochastic: the sample mask pipelines were refused: the sample index route");
+            build(None)
+        } else {
+            log::info!(
+                "oit stochastic: the {} route",
+                if mask_module.is_some() { "sample mask" } else { "sample index" }
+            );
+            scene
+        };
+        crate::oit_stochastic::Pipes {
+            samples,
+            scene,
+            resolve: crate::oit_stochastic::make_resolve(device, st, samples),
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn make_pipelines(
         device: &wgpu::Device,
@@ -3734,19 +3984,16 @@ impl Backend {
         shadow_layout: &wgpu::BindGroupLayout,
         post_layouts: [&wgpu::BindGroupLayout; 2],
         gbuf_layout: &wgpu::BindGroupLayout,
-        st: Option<&crate::oit_stochastic::Shared>,
         samples: u32,
         surface_format: wgpu::TextureFormat,
         ssr: bool,
     ) -> Pipelines {
+        // (without the stochastic transparency's passes: its own module,
+        // `make_st`, when the method is first on)
         let src = format!(
-            "{}{}\n{}\n{}",
-            crate::oit_stochastic::enable_directive(device),
+            "{}\n{}\n{}",
             crate::common_shader_source(),
-            crate::oit_stochastic::object_source(
-                device,
-                &crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl"))
-            ),
+            crate::oit_stochastic::without_st(&crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl"))),
             crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
         );
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -4014,143 +4261,6 @@ impl Backend {
             constants: &[("DEPTH_CONTACT_ALPHA", 0.004), ("WATER_CLIP", 1.0)],
             ..base("blend rigged fringe depth", "vs_main", "fs_blend")
         });
-        // Depth-based stochastic transparency (oit_stochastic.rs): the
-        // total alpha (the transmittance product, Zero / OneMinusSrcAlpha),
-        // the stochastic depth (depth only, by route) and the accumulation
-        // (fs_blend added into the samples at or in front of that depth)
-        let st_pipes = st.map(|st| {
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("scene stochastic"),
-                bind_group_layouts: &[Some(frame_layout), Some(records_layout), Some(tex_layout), Some(&st.face_layout)],
-                immediate_size: 0,
-            });
-            // the sample mask route (the default): its own module without
-            // overrides, through spirv_fix (oit_stochastic.rs `mask_module`);
-            // the sample index route when that cannot be made
-            let mask_module = (crate::oit_stochastic::config().route == crate::oit_stochastic::Route::SampleMask)
-                .then(|| st.mask_module(device, &src, &[("WATER_CLIP", "1u"), ("BLEND_EARLY_DISCARD", "true")]))
-                .flatten();
-            log::info!(
-                "oit stochastic: the {} route",
-                if mask_module.is_some() { "sample mask" } else { "sample index" }
-            );
-            let (depth_module, route_fs, depth_constants): (&wgpu::ShaderModule, &str, &[(&str, f64)]) = match &mask_module {
-                Some(m) => (m, "fs_st_depth_mask", &[]),
-                None => (&module, "fs_st_depth_index", &[("WATER_CLIP", 1.0)]),
-            };
-            // the stochastic depth and the accumulation at the passes' own
-            // count (oit_stochastic.rs `pass_samples`), the total alpha at
-            // the scene's with MSAA, at the passes' without
-            let pass_samples = st.pass_samples(samples);
-            let alpha_samples = crate::oit_stochastic::trans_samples(samples, pass_samples);
-            let alpha = std::array::from_fn(|side| {
-                make_pipeline(
-                    device,
-                    &module,
-                    &layout,
-                    PipeDesc {
-                        cull: blend_cull(side != 0),
-                        format: Some(wgpu::TextureFormat::R16Float),
-                        blend: Some(wgpu::BlendState {
-                            color: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::Zero,
-                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                                operation: wgpu::BlendOperation::Add,
-                            },
-                            alpha: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::Zero,
-                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                                operation: wgpu::BlendOperation::Add,
-                            },
-                        }),
-                        write_mask: wgpu::ColorWrites::ALL,
-                        depth_write: false,
-                        depth_compare: wgpu::CompareFunction::Greater,
-                        constants: &[("WATER_CLIP", 1.0)],
-                        samples: alpha_samples,
-                        ..base("stochastic total alpha", "vs_main", "fs_st_alpha")
-                    },
-                )
-            });
-            let depth = std::array::from_fn(|side| {
-                make_pipeline(
-                    device,
-                    depth_module,
-                    &layout,
-                    PipeDesc {
-                        cull: blend_cull(side != 0),
-                        format: None,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::empty(),
-                        depth_write: true,
-                        depth_compare: wgpu::CompareFunction::Greater,
-                        constants: depth_constants,
-                        samples: pass_samples,
-                        ..base("stochastic depth", "vs_main", route_fs)
-                    },
-                )
-            });
-            let accum = std::array::from_fn(|side| {
-                make_pipeline(
-                    device,
-                    &module,
-                    &scene_layout,
-                    PipeDesc {
-                        cull: blend_cull(side != 0),
-                        blend: Some(wgpu::BlendState {
-                            color: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::One,
-                                dst_factor: wgpu::BlendFactor::One,
-                                operation: wgpu::BlendOperation::Add,
-                            },
-                            alpha: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::One,
-                                dst_factor: wgpu::BlendFactor::One,
-                                operation: wgpu::BlendOperation::Add,
-                            },
-                        }),
-                        write_mask: wgpu::ColorWrites::ALL,
-                        depth_write: false,
-                        depth_compare: wgpu::CompareFunction::GreaterEqual,
-                        constants: &[("BLEND_EARLY_DISCARD", 1.0), ("WATER_CLIP", 1.0)],
-                        samples: pass_samples,
-                        ..base("stochastic accumulation", "vs_main", "fs_blend")
-                    },
-                )
-            });
-            // the glowing faces' glow, accumulated as their colour (as
-            // `glow_water`: no culling, fs_glow tests the backs; clipped to
-            // the camera's side of the water)
-            let glow = make_pipeline(
-                device,
-                &module,
-                &scene_layout,
-                PipeDesc {
-                    cull: None,
-                    format: Some(wgpu::TextureFormat::R16Float),
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::One,
-                            dst_factor: wgpu::BlendFactor::One,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                        alpha: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::One,
-                            dst_factor: wgpu::BlendFactor::One,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                    }),
-                    write_mask: wgpu::ColorWrites::RED,
-                    depth_write: false,
-                    depth_compare: wgpu::CompareFunction::GreaterEqual,
-                    constants: &[("WATER_CLIP", 1.0)],
-                    samples: pass_samples,
-                    ..base("stochastic glow", "vs_main", "fs_st_glow")
-                },
-            );
-            crate::oit_stochastic::ScenePipes { alpha, depth, accum, glow }
-        });
-        let st_resolve = st.map(|st| crate::oit_stochastic::make_resolve(device, st, samples));
         let particles = pipe(PipeDesc {
             vb: Vb::Particle,
             cull: None,
@@ -4677,8 +4787,6 @@ impl Backend {
             blend_depth_solid,
             blend_depth_fringe,
             blend_depth_fringe_depth,
-            st: st_pipes,
-            st_resolve,
             blend_under,
             blend_under_depth_ss,
             particles,
@@ -5627,7 +5735,6 @@ impl Backend {
                     &self.shadow_layout,
                     [&self.post_layout, &self.bloom.post_layout],
                     &self.gbuf_layout,
-                    self.st.as_ref().map(|s| s.shared()),
                     samples,
                     self.config.format,
                     s.ssr,
@@ -5661,22 +5768,9 @@ impl Backend {
             self.impostors.layout.clone(),
         ];
         let format = self.config.format;
-        let st_shared = self.st.as_ref().map(|s| s.shared().clone());
         let spawned = std::thread::Builder::new().name("aurora-pipelines".into()).spawn(move || {
             let [frame, records, tex, shadow, post, bloom, gbuf, impostor] = &layouts;
-            let scene = Self::make_pipelines(
-                &device,
-                frame,
-                records,
-                tex,
-                shadow,
-                [post, bloom],
-                gbuf,
-                st_shared.as_ref(),
-                samples,
-                format,
-                ssr,
-            );
+            let scene = Self::make_pipelines(&device, frame, records, tex, shadow, [post, bloom], gbuf, samples, format, ssr);
             let impostors = Impostors::make_pipelines(&device, impostor, frame, records, tex, samples, ssr);
             // (refused when other settings came meanwhile: the set is dropped)
             let _ = tx.send((scene, impostors));
@@ -6252,6 +6346,11 @@ impl Backend {
     /// swapchain keeps the window's (it is not reconfigured).
     fn begin_snapshot(&mut self, s: SnapshotSpec) {
         self.snapshot_window = Some((self.config.width, self.config.height));
+        // the stochastic transparency's targets go before the photo's memory
+        // is taken: its tiles draw the sorted order
+        if let Some(st) = &mut self.st {
+            st.release();
+        }
         self.config.width = s.width;
         self.config.height = s.height;
         self.gtao.photo = Some(s.photo);
@@ -8920,23 +9019,25 @@ impl Backend {
         // Order-independent transparency (oit_stochastic.rs): the blended
         // faces, rigged or not, drawn with depth-based stochastic
         // transparency (in every anti-aliasing mode: its passes have their
-        // own multisampled targets) instead of the sorted order below
+        // own multisampled targets) instead of the sorted order below. The
+        // plain main view only: a photo, its tiles and a snapshot have a
+        // size and a history of their own.
         let method = crate::oit_stochastic::method(self.settings.oit);
+        let plain_view =
+            f.photo_tile == Mat4::IDENTITY && f.photo_context == crate::types::PhotoContext::None && self.snapshot_window.is_none();
+        let want_st = crate::oit_stochastic::frame_wants_method(method, bn, plain_view);
         // the glowing blended faces (their glow accumulated with the
         // method, as `blended` adds it after each face in order)
-        let st_glow: Vec<u32> = if glow_on && glow_skip & 8 == 0 {
+        let st_glow: Vec<u32> = if want_st && glow_on && glow_skip & 8 == 0 {
             (0..bn)
                 .filter(|&i| lists.blend_glow.get(i as usize).copied().unwrap_or(false))
                 .collect()
         } else {
             Vec::new()
         };
-        let st_on = method == crate::oit_stochastic::Method::Stochastic && bn > 0 && self.pipelines.st.is_some() && {
+        let st_on = want_st && {
             let size = self.targets.depth_ss_tex.size();
             let samples = self.targets.depth_msaa_tex.as_ref().map_or(1, |t| t.sample_count());
-            let ready = self.pipelines.st_resolve.as_ref().is_some_and(|r| r.samples() == samples);
-            let (device, queue) = (&self.device, &self.queue);
-            let reproj = main.motion_reproj;
             // the scene's own history, after the composite (FSR runs at
             // the render size like the scene, its reactive mask comparing
             // the scene copy with the composited colour as with the
@@ -8946,25 +9047,35 @@ impl Backend {
                 AntiAliasing::Fsr(_) => crate::oit_stochastic::SceneHistory::Fsr,
                 _ => crate::oit_stochastic::SceneHistory::None,
             };
-            ready
-                && self.st.as_mut().is_some_and(|s| {
-                    s.prepare(
-                        device,
-                        queue,
-                        size.width,
-                        size.height,
-                        samples,
-                        reproj,
-                        !st_glow.is_empty(),
-                        history,
-                    )
-                })
+            let frame = crate::oit_stochastic::Frame {
+                width: size.width,
+                height: size.height,
+                samples,
+                reproj: main.motion_reproj,
+                glow: !st_glow.is_empty(),
+                history,
+                cut: self.motion_cut,
+            };
+            Self::ensure_st(
+                &mut self.st,
+                &mut self.st_pipes,
+                &self.st_init,
+                &self.device,
+                &self.frame_layout,
+                &self.records_layout,
+                &self.tex_layout,
+                samples,
+            ) && self.st.as_mut().is_some_and(|s| s.prepare(&self.device, &self.queue, &frame))
         };
-        // off, its targets are freed (as `Bloom::release`)
-        if method != crate::oit_stochastic::Method::Stochastic
-            && let Some(s) = &mut self.st
-        {
-            s.release();
+        // the targets go with the method (as `Bloom::release`), with a photo
+        // or a snapshot (its memory is planned without them), and after a
+        // while without a blended face
+        if let Some(s) = &mut self.st {
+            if method != crate::oit_stochastic::Method::Stochastic || !plain_view {
+                s.release();
+            } else if !st_on {
+                s.unused_frame();
+            }
         }
         let split = n_depth > 0 && !st_on;
         let blend_pipe = self
@@ -9075,14 +9186,20 @@ impl Backend {
                 rest(&mut pass);
             }
         }
-        if let (true, Some(st), Some(pipes), Some(resolve)) = (st_on, &self.st, &self.pipelines.st, &self.pipelines.st_resolve) {
+        if let (true, Some(st), Some(st_pipes)) = (st_on, &self.st, &self.st_pipes) {
+            let (pipes, resolve) = (&st_pipes.scene, &st_pipes.resolve);
             let t = &self.targets;
             let scene_depth_tex = t.depth_msaa_tex.as_ref().unwrap_or(&t.depth_ss_tex);
             let scene_depth = t.depth_msaa.as_ref().unwrap_or(&t.depth_ss);
+            // the rigged faces first in the blended range (Greater against
+            // the opaque depth), then the others (GreaterEqual, as the
+            // sorted order)
+            let rigged = (b0, n_depth);
+            let others = (b0 + u64::from(n_depth) * stride, bn - n_depth);
             mark(&mut encoder, MARK_ST_BEGIN);
             // without MSAA the total alpha is tested against the opaque
-            // depth spread over the passes' samples: the first iteration's
-            // copy of it comes first
+            // depth spread over the passes' samples: the copy of it comes
+            // first
             let early = st.alpha_on_pass_depth();
             if early {
                 st.begin_iteration(&self.device, &mut encoder, (scene_depth_tex, scene_depth), resolve, true);
@@ -9090,41 +9207,35 @@ impl Backend {
             // 2. the total alpha of every sample
             if let Some(mut pass) = st.begin_alpha(&mut encoder, scene_depth) {
                 bind_mesh(&mut pass, &self.groups.b);
-                pass.set_bind_group(3, st.face_group(0), &[]);
-                draw_sided(&mut pass, &pipes.alpha, (b0, bn), 0);
+                pass.set_bind_group(3, st.face_group(), &[]);
+                draw_sided(&mut pass, &pipes.alpha[0], rigged, 0);
+                draw_sided(&mut pass, &pipes.alpha[1], others, n_depth);
             }
             mark(&mut encoder, MARK_ST_ALPHA_END);
-            // 3 and 4: the stochastic depth, then the accumulation, once per
-            // run of the samples
-            for i in 0..st.iterations() {
-                if !(early && i == 0) {
-                    st.begin_iteration(&self.device, &mut encoder, (scene_depth_tex, scene_depth), resolve, i == 0);
-                }
-                if let Some(mut pass) = st.begin_depth(&mut encoder) {
-                    bind_mesh(&mut pass, &self.groups.b);
-                    pass.set_bind_group(3, st.face_group(i), &[]);
-                    draw_sided(&mut pass, &pipes.depth, (b0, bn), 0);
-                }
-                if i == 0 {
-                    mark(&mut encoder, MARK_ST_DEPTH_END);
-                }
-                if let Some(mut pass) = st.begin_accum(&mut encoder) {
-                    bind_mesh(&mut pass, &self.groups.b);
-                    draw_sided(&mut pass, &pipes.accum, (b0, bn), 0);
-                }
-                if !st_glow.is_empty()
-                    && let Some(mut pass) = st.begin_glow(&mut encoder, i == 0)
-                {
-                    bind_mesh(&mut pass, &self.groups.b);
-                    for &g in &st_glow {
-                        draw(&mut pass, &pipes.glow, (b0 + u64::from(g) * stride, 1));
-                    }
-                }
-                if i == 0 {
-                    mark(&mut encoder, MARK_ST_ACCUM_END);
+            // 3 and 4: the stochastic depth, then the accumulation
+            if !early {
+                st.begin_iteration(&self.device, &mut encoder, (scene_depth_tex, scene_depth), resolve, true);
+            }
+            if let Some(mut pass) = st.begin_depth(&mut encoder) {
+                bind_mesh(&mut pass, &self.groups.b);
+                pass.set_bind_group(3, st.face_group(), &[]);
+                draw_sided(&mut pass, &pipes.depth[0], rigged, 0);
+                draw_sided(&mut pass, &pipes.depth[1], others, n_depth);
+            }
+            mark(&mut encoder, MARK_ST_DEPTH_END);
+            if let Some(mut pass) = st.begin_accum(&mut encoder) {
+                bind_mesh(&mut pass, &self.groups.b);
+                draw_sided(&mut pass, &pipes.accum, (b0, bn), 0);
+            }
+            if !st_glow.is_empty()
+                && let Some(mut pass) = st.begin_glow(&mut encoder)
+            {
+                bind_mesh(&mut pass, &self.groups.b);
+                for &g in &st_glow {
+                    draw(&mut pass, &pipes.glow, (b0 + u64::from(g) * stride, 1));
                 }
             }
-            mark(&mut encoder, MARK_ST_ITER_END);
+            mark(&mut encoder, MARK_ST_ACCUM_END);
             // 5. the resolve, then the composite over the scene (the
             // creation preview under it, as under the blended faces)
             st.resolve(&mut encoder, resolve);
@@ -9135,12 +9246,21 @@ impl Backend {
                 st.composite(&mut pass, resolve);
             }
             mark(&mut encoder, MARK_ST_COMPOSITE_END);
-            // the rigged faces' depth from 1/255, as they leave it when drawn
-            // in order (`RiggedBlendDepth::Write`), for what follows
+            // the rigged faces' depth for what follows, as the sorted
+            // order leaves it (`DrawLists::blend_depth_mode`): where at
+            // least half covered for the modes that keep the scene depth
+            // clear of the fringes (#556), from 1/255 as the Legacy Viewer
+            // for `Write` and `Split`
             if n_depth > 0 {
                 let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend depth", false, true);
                 bind_mesh(&mut pass, &self.groups.a);
-                draw_sided(&mut pass, &self.pipelines.blend_depth_fringe_depth, (b0, n_depth), 0);
+                let pipe = match lists.blend_depth_mode {
+                    RiggedBlendDepth::Write | RiggedBlendDepth::Split => &self.pipelines.blend_depth_fringe_depth,
+                    RiggedBlendDepth::HalfCovered | RiggedBlendDepth::Layered | RiggedBlendDepth::Runs | RiggedBlendDepth::Layers => {
+                        &self.pipelines.blend_depth_mask
+                    }
+                };
+                draw_sided(&mut pass, pipe, rigged, 0);
             }
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b blend", true, false);
             bind_mesh(&mut pass, &self.groups.b);
@@ -10082,13 +10202,12 @@ impl Backend {
             // the stochastic transparency's passes (oit_stochastic.rs)
             if let Some(st) = self.timer.as_ref().and_then(|t| t.last_st) {
                 out.push_str(&format!(
-                    "st={:.3} st_alpha={:.3} st_depth1={:.3} st_accum1={:.3} st_more={:.3} st_resolve={:.3}",
+                    "st={:.3} st_alpha={:.3} st_depth={:.3} st_accum={:.3} st_resolve={:.3}",
                     st.iter().sum::<f32>(),
                     st[0],
                     st[1],
                     st[2],
-                    st[3],
-                    st[4]
+                    st[3]
                 ));
             }
             log::info!("gpu profile: {out}");
