@@ -426,7 +426,7 @@ impl Editor {
             TimelineShortcut::Redo if !self.clip.redo.is_empty() => self.studio_clip_redo(),
             TimelineShortcut::CopyPose => self.studio_copy_clip_keyframe(),
             TimelineShortcut::PastePose if !self.clip.clipboard.is_empty() => self.studio_paste_clip_keyframe(),
-            TimelineShortcut::DeleteKey if self.selected.is_some_and(|bone| self.clip.has_key(Some(bone), self.clip.frame)) => {
+            TimelineShortcut::DeleteKey if self.selected.is_some_and(|bone| self.clip.has_authored_key(bone, self.clip.frame)) => {
                 self.studio_delete_selected_clip_bone_keyframe();
             }
             TimelineShortcut::SaveProject if !self.clip.busy => self.queue_studio_file_action(files::Action::SaveProject),
@@ -823,7 +823,7 @@ impl Editor {
         {
             self.studio_paste_clip_keyframe();
         }
-        let selected_key = self.selected.is_some_and(|bone| self.clip.has_key(Some(bone), self.clip.frame));
+        let selected_key = self.selected.is_some_and(|bone| self.clip.has_authored_key(bone, self.clip.frame));
         if tool_button(ui, palette, "trash-filled", selected_key)
             .on_hover_text(aurora_i18n::tr!("anim-edit-shortcut-delete"))
             .clicked()
@@ -1090,13 +1090,24 @@ impl Editor {
         {
             self.select(bone, rig, frame);
         }
-        self.timeline_lane(ui, palette, track, lane, FrameScale::new(lane, lanes.start, lanes.end));
+        self.timeline_lane(ui, palette, rig, frame, track, lane, FrameScale::new(lane, lanes.start, lanes.end));
     }
 
     /// A bone's keys as diamonds on its lane: hover shows a key's frame,
     /// dragging a key moves it, a click or a drag elsewhere moves the
-    /// playhead.
-    fn timeline_lane(&mut self, ui: &mut egui::Ui, palette: &Palette, track: &TimelineTrack, lane: egui::Rect, scale: FrameScale) {
+    /// playhead. Clicking or grabbing a key also selects its bone, so that
+    /// Delete and the toolbar act on the key just picked.
+    #[allow(clippy::too_many_arguments)]
+    fn timeline_lane(
+        &mut self,
+        ui: &mut egui::Ui,
+        palette: &Palette,
+        rig: &Rig,
+        frame: Option<&Frame>,
+        track: &TimelineTrack,
+        lane: egui::Rect,
+        scale: FrameScale,
+    ) {
         let bone = track.bone;
         let response = ui.interact(
             lane,
@@ -1117,6 +1128,9 @@ impl Editor {
             self.clip.drag_key = key.map(|key| (bone, key, key));
             if let Some(key) = key {
                 self.clip_seek(key);
+                if let Some(frame) = frame {
+                    self.select(bone, rig, frame);
+                }
             }
         }
         if response.dragged()
@@ -1139,6 +1153,11 @@ impl Editor {
             && let Some(pointer) = response.interact_pointer_pos()
         {
             self.clip_seek(hovered_key.unwrap_or_else(|| scale.frame_at(pointer.x)));
+            if hovered_key.is_some()
+                && let Some(frame) = frame
+            {
+                self.select(bone, rig, frame);
+            }
         }
         let moving = self.clip.drag_key.filter(|(dragged, _, _)| *dragged == bone);
         if moving.is_some() && response.dragged() {
@@ -1169,7 +1188,7 @@ impl Editor {
                 palette.violet.gamma_multiply(0.35)
             } else if !track.enabled {
                 palette.muted_dim
-            } else if Some(key) == hovered_key || key == self.clip.frame {
+            } else if Some(key) == hovered_key || (key == self.clip.frame && !self.clip.playing) {
                 palette.violet_light
             } else {
                 palette.violet

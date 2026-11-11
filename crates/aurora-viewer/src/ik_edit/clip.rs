@@ -246,6 +246,16 @@ impl State {
                 .any(|track| bone.map_or(track.authored, |bone| track.bone == bone) && track.keys.binary_search(&frame).is_ok())
         })
     }
+    /// A key the user recorded on this bone at this frame. The rest baseline
+    /// a fresh draft seeds on every bone is not one: deleting it would leave
+    /// the preview without that joint.
+    pub(super) fn has_authored_key(&mut self, bone: usize, frame: u32) -> bool {
+        self.timeline_tracks().is_some_and(|tracks| {
+            tracks
+                .iter()
+                .any(|track| track.bone == bone && track.authored && track.keys.binary_search(&frame).is_ok())
+        })
+    }
     fn checkpoint(&mut self) {
         if let Some(document) = self.document.as_ref() {
             self.undo.push(document.clone());
@@ -564,15 +574,22 @@ impl Editor {
             Arc::make_mut(document).remove_keyframe(self.clip.frame);
             self.clip.changed();
         }
+        self.clip_seek(self.clip.frame);
     }
 
     pub(super) fn studio_delete_selected_clip_bone_keyframe(&mut self) {
         let Some(bone) = self.selected else { return };
+        if !self.clip.has_authored_key(bone, self.clip.frame) {
+            return;
+        }
         self.clip.checkpoint();
         if let Some(document) = self.clip.document.as_mut() {
             Arc::make_mut(document).remove_track_keyframe(bone, self.clip.frame);
             self.clip.changed();
         }
+        // Drop the staged pose edits like a seek does: the avatar then shows
+        // the clip without the key instead of holding the deleted pose.
+        self.clip_seek(self.clip.frame);
     }
 
     pub(super) fn open_from_avatar_studio(&mut self, world: &World) {

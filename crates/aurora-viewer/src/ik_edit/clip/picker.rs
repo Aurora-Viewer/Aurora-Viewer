@@ -228,10 +228,14 @@ impl Editor {
             }
         }
         let at = self.clip.frame;
-        let keyed = self
-            .clip
-            .timeline_tracks()
-            .map_or_else(HashSet::new, |tracks| keyed_at(&tracks, at));
+        // No rings while playing: they would flash as the playhead crosses keys.
+        let keyed = if self.clip.is_playing() {
+            HashSet::new()
+        } else {
+            self.clip
+                .timeline_tracks()
+                .map_or_else(HashSet::new, |tracks| keyed_at(&tracks, at))
+        };
         // the selected and hovered dots are drawn last, over their neighbours
         let selected = dots.iter().position(|dot| self.selected == Some(dot.bone));
         let order = (0..dots.len())

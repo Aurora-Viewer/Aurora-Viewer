@@ -729,6 +729,13 @@ fn frame_keys_ignore_the_hidden_rest_pose_of_a_fresh_draft() {
         "deleting the frame's keys keeps the rest pose of the untouched bones"
     );
     assert_eq!(document.frames(None), vec![0]);
+
+    // Delete on the selected bone leaves its rest key too: it is not a key
+    // the user recorded, and nothing is added to the undo history.
+    assert!(!editor.clip.has_authored_key(head, 0));
+    editor.studio_delete_selected_clip_bone_keyframe();
+    assert!(editor.clip.has_key(Some(head), 0));
+    assert!(editor.clip.undo.len() <= 1, "only the frame delete above may have checkpointed");
 }
 
 #[test]
