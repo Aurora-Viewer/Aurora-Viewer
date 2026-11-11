@@ -452,10 +452,11 @@ pub struct App {
     /// (LLKeyboardMacOSX::currentMask). Clicks, the wheel and media keep
     /// it separate (aurora_media::Modifiers::command).
     command: bool,
-    /// The system clipboard's text when a page last cut or copied, which
-    /// stays in the page's own clipboard under Wayland
-    /// (keys::paste_through_viewer): None when no page did.
-    page_copy: Option<Option<String>>,
+    /// The page (its plugin's process id) that last cut or copied, and the
+    /// system clipboard's text then: the cut stays in that page's own
+    /// clipboard under Wayland (keys::paste_through_viewer). None when no
+    /// page did.
+    page_copy: Option<(Option<u32>, Option<String>)>,
     screen: Screen,
     login_form: LoginForm,
     // Bug report form (disabled, see main.rs):
@@ -14726,7 +14727,8 @@ impl App {
     /// The text a Paste types into a page under Wayland
     /// (keys::paste_through_viewer), read from the system clipboard; None
     /// lets the page paste from its own clipboard: for any other key, and
-    /// when the clipboard has not changed since the page's last cut or copy.
+    /// when the clipboard has not changed since this page's last cut or
+    /// copy. Another page's copy never reaches this one, so it is typed.
     fn media_clipboard(
         &mut self,
         letter: Option<char>,
@@ -14740,14 +14742,20 @@ impl App {
             return None;
         }
         let cmd = keys::edit_shortcut(letter, code, mods)?;
+        // the page that gets the key: a web window first, as the key handler
+        let page = match self.focused_web() {
+            Some(p) => p.pid(),
+            None => self.media.focused_pid(),
+        };
         let mut read = || self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text());
         match cmd {
-            aurora_media::EditCommand::Cut | aurora_media::EditCommand::Copy => {
-                self.page_copy = Some(read());
+            aurora_media::EditCommand::Cut | aurora_media::EditCommand::Copy if !repeat => {
+                self.page_copy = Some((page, read()));
                 None
             }
             aurora_media::EditCommand::Paste if keys::wants_clipboard(letter, code, pressed, repeat, mods) => {
-                keys::paste_text(self.page_copy.as_ref(), read())
+                let at_copy = self.page_copy.as_ref().filter(|(pid, _)| page.is_some() && *pid == page);
+                keys::paste_text(at_copy.map(|(_, text)| text), read())
             }
             _ => None,
         }

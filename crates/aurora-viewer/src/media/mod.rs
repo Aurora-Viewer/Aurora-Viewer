@@ -719,6 +719,12 @@ impl MediaManager {
         self.find_mut(&k)
     }
 
+    /// The system id of the focused face's plugin process, which tells one
+    /// page's clipboard from another's.
+    pub fn focused_pid(&self) -> Option<u32> {
+        self.focused()?.plugin.as_ref()?.pid()
+    }
+
     /// Parcel media started (button state).
     pub fn parcel_playing(&self) -> bool {
         self.find(&MediaKey::Parcel).is_some_and(|m| m.wanted && !m.paused)

@@ -157,23 +157,21 @@ pub fn key_lparam(scancode: u32, up: bool, repeat: bool) -> u32 {
 /// the layout's letter, as the Legacy Viewer's SDL keycode (`event.key.key`
 /// in LLWindowSDL::handleEvent, indra/llwindow/llwindowsdl.cpp), so
 /// Ctrl+Z is Undo on QWERTZ and AZERTY too; the physical key stands in on a
-/// layout without Latin letters, as egui-winit does.
+/// layout without Latin letters, as egui-winit does. A layout's ASCII key
+/// that is not a letter (`;` where QWERTY has Z, on Dvorak) is no shortcut.
 pub fn edit_shortcut(letter: Option<char>, code: KeyCode, mods: Modifiers) -> Option<EditCommand> {
     if !(mods.control || mods.command) || mods.alt || mods.shift {
         return None;
     }
-    let letter = letter
-        .filter(char::is_ascii_alphabetic)
-        .map(|c| c.to_ascii_lowercase())
-        .or(match code {
-            KeyCode::KeyZ => Some('z'),
-            KeyCode::KeyY => Some('y'),
-            KeyCode::KeyX => Some('x'),
-            KeyCode::KeyC => Some('c'),
-            KeyCode::KeyV => Some('v'),
-            KeyCode::KeyA => Some('a'),
-            _ => None,
-        })?;
+    let letter = letter.filter(char::is_ascii).map(|c| c.to_ascii_lowercase()).or(match code {
+        KeyCode::KeyZ => Some('z'),
+        KeyCode::KeyY => Some('y'),
+        KeyCode::KeyX => Some('x'),
+        KeyCode::KeyC => Some('c'),
+        KeyCode::KeyV => Some('v'),
+        KeyCode::KeyA => Some('a'),
+        _ => None,
+    })?;
     Some(match letter {
         'z' => EditCommand::Undo,
         'y' => EditCommand::Redo,
@@ -231,9 +229,11 @@ pub fn paste_text(page_copy: Option<&Option<String>>, now: Option<String>) -> Op
 }
 
 /// Run an Edit menu shortcut on a page instead of sending it the key: the
-/// command on the press (and on a repeat when it allows one), nothing on the
-/// release. True when the key is a shortcut, which the page then never gets,
-/// on every system, as in the Legacy Viewer. `clipboard` is the text the
+/// command on the press (and on a repeat when it allows one). True when the
+/// key press is a shortcut, which the page then never gets, on every system;
+/// the release still goes to the page, as in the Legacy Viewer, whose menus
+/// take only the key down (LLMenuItemCallGL::handleAcceleratorKey,
+/// indra/llui/llmenugl.cpp). `clipboard` is the text the
 /// viewer read for a Paste (`wants_clipboard`): it is typed into the page
 /// instead of `edit_paste`.
 pub fn edit(
@@ -248,7 +248,10 @@ pub fn edit(
     let Some(cmd) = edit_shortcut(letter, code, mods) else {
         return false;
     };
-    if pressed && (!repeat || edit_repeats(cmd)) {
+    if !pressed {
+        return false;
+    }
+    if !repeat || edit_repeats(cmd) {
         match clipboard {
             Some(text) if cmd == EditCommand::Paste => paste_typed(p, text),
             _ => p.edit(cmd),
@@ -747,6 +750,9 @@ mod tests {
         assert_eq!(edit_shortcut(Some('W'), KeyCode::KeyZ, ctrl), None);
         // a layout without Latin letters falls back to the physical key
         assert_eq!(edit_shortcut(Some('м'), KeyCode::KeyV, ctrl), Some(EditCommand::Paste));
+        // an ASCII key that is not a letter is no shortcut: Dvorak's `;` on Z
+        assert_eq!(edit_shortcut(Some(';'), KeyCode::KeyZ, ctrl), None);
+        assert_eq!(edit_shortcut(Some('j'), KeyCode::KeyC, ctrl), None);
         assert_eq!(layout_letter(&winit::keyboard::Key::Character("v".into())), Some('v'));
         assert_eq!(layout_letter(&winit::keyboard::Key::Named(winit::keyboard::NamedKey::Delete)), None);
         assert!(edit_repeats(EditCommand::Paste));
