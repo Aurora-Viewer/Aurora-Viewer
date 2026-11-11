@@ -1242,10 +1242,15 @@ mod tests {
         let uploaded_animation = aurora_assets::parse_animation_upload(&uploaded).expect("parse edited upload");
         assert_eq!(uploaded_animation.base_priority, 6);
         assert!(!uploaded_animation.looping);
-        assert_eq!(
-            uploaded_animation.joints, animation.joints,
-            "editing upload options preserves the motion"
-        );
+        let mut motion = animation.joints.clone();
+        for (joint, priority) in motion
+            .iter_mut()
+            .zip(aurora_assets::native_joint_priorities(bytes, 6).expect("joint priorities"))
+        {
+            joint.priority = priority;
+        }
+        assert!(motion.iter().all(|joint| joint.priority == 6), "the joints follow the priority");
+        assert_eq!(uploaded_animation.joints, motion, "editing upload options preserves the motion");
         assert!(
             load(
                 &files.0.join("animation-demo.bvh"),
