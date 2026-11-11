@@ -10839,7 +10839,7 @@ What the inventory must show with these scenarios:
   prepass; blended faces in front of it, water, reflections and probes keep
   the filter of before. Off, nothing is created or drawn and the casters'
   culling planes are those of before. **`AURORA_SHADOW_SOFTNESS=<0-2>`**
-  (the slider, active with the soft shadows only; the default is 0.4, a light about 0.9 degrees across; 1 is a light 2.3 degrees
+  (the slider, active with the soft shadows only; the default is 0.25, a light about 0.6 degrees across, close to the real sun (0.23); 1 is a light 2.3 degrees
   across, the look of PR 2288, the real sun being 0.23; 0 a light with no
   size) and
   **`AURORA_SHADOW_INTENSITY=<0-1>`** (how dark the sun's shadows are, with
