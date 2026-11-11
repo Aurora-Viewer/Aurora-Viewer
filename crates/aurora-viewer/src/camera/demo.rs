@@ -16,10 +16,6 @@
 //! - `drift,x,y[,n]`: the same close-up, then a very slow Ctrl+Alt orbit
 //!   (a fiftieth of a pixel per frame) until frame 1200: edges that drift
 //!   steadily when the picture is exact, for comparing consecutive captures
-//! - `orbit,x,y[,px]`: Alt+click at (x, y) at frame 600, then a Ctrl+Alt
-//!   orbit of `px` pixels per frame (0.5 by default) that never stops, its
-//!   pitch swinging slowly: a camera moving around the scene for as long as
-//!   the run lasts (stability runs of several minutes)
 //! - `zoom-resident`: the People list's Zoom on the nearest standing resident
 //!   at frame 600, who then walks south from 660 to 760 and west until 860:
 //!   the camera keeps facing them all along
@@ -100,11 +96,6 @@ pub enum Step {
     ZoomResident,
     /// Slide the demo resident by (x, y) metres, as if it walked.
     MoveResident(f32, f32),
-    /// The scripted camera on the `hair` path at this second of the clock
-    /// ([`hair_path`]), placed by the app from our avatar's head.
-    HairCam(f32),
-    /// The end of the `hair` path: the scripted camera released.
-    HairCamOff,
     /// The radar's double click on the first far resident of
     /// AURORA_DEMO_PEOPLE, only a coarse location yet.
     ZoomUnloadedResident,
@@ -113,66 +104,7 @@ pub enum Step {
     Log,
 }
 
-/// The scripted camera of the `hair` path (`SetFollowCam`'s object).
-pub const HAIR_CAM: uuid::Uuid = uuid::Uuid::from_u128(0xca00_4a1e);
-
-/// Seconds of the `hair` path: in, held, around, out.
-pub const HAIR_PATH_SECONDS: f32 = 15.0;
-
-/// The `hair` camera path at `t` seconds: the eye and the point it looks
-/// at, in our avatar's head frame (metres; x forward, y left, z up, the
-/// origin on the mHead joint). The 400 strand cards of
-/// `AURORA_DEMO_HAIR_CARDS` hang around the back of the head (-x), 0.11 to
-/// 0.20 m from its centre, 4 cm up: the path starts 0.5 m behind them,
-/// moves straight in to 0.16 m from the centre (cards in front, behind and
-/// around, the near plane crossing some), turns on the spot there, then
-/// orbits inside the shell of cards along their arc and moves back out.
-/// `None` once the path is over.
-pub fn hair_path(t: f32) -> Option<(glam::Vec3, glam::Vec3)> {
-    use glam::Vec3;
-    if !(0.0..HAIR_PATH_SECONDS).contains(&t) {
-        return None;
-    }
-    let centre = Vec3::new(0.0, 0.0, 0.04);
-    // the eye at the cards' mid-height, 18 cm under their roots
-    let z = -0.18;
-    let at_angle = |a: f32, r: f32| centre + Vec3::new(a.cos() * r, a.sin() * r, z);
-    let back = std::f32::consts::PI;
-    let inside = 0.16;
-    if t < 3.0 {
-        // in: from 0.7 m behind the centre (0.5 m outside the cards) to
-        // inside, looking at the head first, then along the shell (the
-        // near plane, 0.1 m, clips the cards nearest the eye: the ones
-        // ahead along the arc stay in front)
-        let f = t / 3.0;
-        let r = 0.7 + (inside - 0.7) * f;
-        let at = centre.lerp(at_angle(back + 0.6, inside), f * f);
-        return Some((at_angle(back, r), at));
-    }
-    if t < 6.0 {
-        // held inside: a full turn on the spot, through the cards all around
-        let look = back + (t - 3.0) / 3.0 * std::f32::consts::TAU;
-        let eye = at_angle(back, inside);
-        return Some((eye, eye + Vec3::new(look.cos(), look.sin(), 0.0)));
-    }
-    if t < 12.0 {
-        // around: along the cards' arc (+-1.2 rad about the back), looking
-        // a little ahead along the shell
-        let swing = ((t - 6.0) / 6.0 * std::f32::consts::TAU).sin() * 1.2;
-        let eye = at_angle(back + swing, inside);
-        let ahead = at_angle(back + swing + 0.6, inside);
-        return Some((eye, ahead));
-    }
-    // out: straight back to the start, looking at the head
-    let r = inside + (0.7 - inside) * ((t - 12.0) / 3.0);
-    Some((at_angle(back, r), centre))
-}
-
-/// The steps of the scenario `spec` at `frame`, with the frame's duration
-/// `dt` (s) and the `clock` the caller counts from frame 600 (s): the
-/// scenarios that move by time (`hair`) reach the same place whatever the
-/// frame rate.
-pub fn steps_at(spec: &str, frame: u64, clock: f32, dt: f32) -> Vec<Step> {
+pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
     let frame = if spec.starts_with("sit-ml") {
         frame.saturating_sub(400)
     } else {
@@ -286,24 +218,6 @@ pub fn steps_at(spec: &str, frame: u64, clock: f32, dt: f32) -> Vec<Step> {
                 _ => {}
             }
         }
-        "hair" => {
-            // The fly-through of the hair cards by time ([`hair_path`]),
-            // from frame 600: the scripted camera each frame, released at
-            // the end; the camera logged once a second.
-            let before = clock - dt;
-            match frame {
-                f if f > 600 && clock < HAIR_PATH_SECONDS => {
-                    out.push(Step::HairCam(clock));
-                    if before.floor() != clock.floor() {
-                        out.push(Step::Log);
-                    }
-                }
-                f if f > 600 && before < HAIR_PATH_SECONDS && clock >= HAIR_PATH_SECONDS => {
-                    out.extend([Step::HairCamOff, Step::Log]);
-                }
-                _ => {}
-            }
-        }
         "drift" => {
             let (Some(x), Some(y)) = (num(1), num(2)) else {
                 return out;
@@ -338,33 +252,6 @@ pub fn steps_at(spec: &str, frame: u64, clock: f32, dt: f32) -> Vec<Step> {
                     },
                     Step::Log,
                 ]),
-                _ => {}
-            }
-        }
-        "orbit" => {
-            let (Some(x), Some(y)) = (num(1), num(2)) else {
-                return out;
-            };
-            let px = num(3).map_or(0.5, |n| n.clamp(0.01, 20.0));
-            match frame {
-                600 => out.extend([
-                    Step::Cursor(x, y),
-                    Step::Mods {
-                        ctrl: true,
-                        shift: false,
-                        alt: true,
-                    },
-                    Step::Press,
-                    Step::Log,
-                ]),
-                f if f > 600 => {
-                    // around, and slowly up and down (a swing of ±3 s at 120 fps)
-                    let pitch = ((f - 600) as f32 / 120.0).sin() * 0.3 * px;
-                    out.push(Step::Drag(px, pitch));
-                    if f.is_multiple_of(600) {
-                        out.push(Step::Log);
-                    }
-                }
                 _ => {}
             }
         }
@@ -539,13 +426,6 @@ pub fn steps_at(spec: &str, frame: u64, clock: f32, dt: f32) -> Vec<Step> {
         _ => {}
     }
     out
-}
-
-/// [`steps_at`] at 60 frames per second (the tests of the frame-based
-/// scenarios).
-#[cfg(test)]
-pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
-    steps_at(spec, frame, (frame.saturating_sub(600)) as f32 / 60.0, 1.0 / 60.0)
 }
 
 pub fn sit_events(spec: &str, frame: u64) -> Vec<aurora_net::NetEvent> {
