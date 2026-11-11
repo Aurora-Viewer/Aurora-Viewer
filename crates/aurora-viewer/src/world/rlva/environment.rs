@@ -358,18 +358,12 @@ impl World {
         true
     }
 
-    /// RlvEnvironment's `daytime` -1 (clearEnvironment and
-    /// setSelectedEnvironment of RlvEnvironment::getTargetEnvironment).
-    /// Unlocked, the target is ENV_LOCAL, where RLVa writes into the user's
-    /// own local environment: the reset drops RLVa's sky and the user's
-    /// choice (a World › Environment preset, a personal sky or day), back to
-    /// the shared environment. While any object holds `@setenv=n` the target
-    /// is ENV_EDIT: only RLVa's sky goes, the local environment stays.
+    /// RlvEnvironment's `daytime` -1: back to the shared environment, or
+    /// only RLVa's sky while `@setenv=n` is held (getTargetEnvironment).
     fn rlva_reset_environment(&mut self, locked: bool) {
         self.rlva.clear_environment();
         if !locked {
-            // the selector is already locked when `@setenv=n` comes later in
-            // the same message (`@setenv_daytime:-1=force,setenv=n`)
+            // a later `@setenv=n` in the same message already locked it
             let held = std::mem::replace(&mut self.eep.rlva_locked, false);
             self.eep.clear_local();
             self.eep.rlva_locked = held;

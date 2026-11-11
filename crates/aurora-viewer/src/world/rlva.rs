@@ -62,10 +62,7 @@ pub struct Command {
     pub option: String,
     pub strict: bool,
     pub param: Param,
-    /// A queued force came while `@setenv=n` was held: RlvEnvironment then
-    /// targets ENV_EDIT, not the user's local environment, so an
-    /// environment reset leaves the local one alone. Set when queued, since
-    /// a restriction later in the same message applies before the queue runs.
+    /// `@setenv=n` was held when this force was queued.
     pub environment_locked: bool,
 }
 
