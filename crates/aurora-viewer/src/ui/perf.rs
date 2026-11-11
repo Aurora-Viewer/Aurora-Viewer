@@ -802,6 +802,7 @@ mod tests {
             max_texture_size: 0,
             adapters: vec!["Test GPU".into()],
             notice: None,
+            oit: true,
             vulkan: None,
         };
         let data = PerfData::default();
