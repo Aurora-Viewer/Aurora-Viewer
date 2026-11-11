@@ -1360,7 +1360,7 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     if(water_fx_on(1u)){rough=clamp(rough*0.65+footprint*0.06,0.035,0.25);}
     rough=mix(rough,0.055,smoothstep(0.004,0.045,-wake.z)*0.65);
     let gn = select(n, legacy_glint_n, legacy_water);
-    let shadow = shadow_factor(in.world_pos, vec3<f32>(0.0, 0.0, 1.0), dist);
+    let shadow = shadow_lift(shadow_factor(in.world_pos, vec3<f32>(0.0, 0.0, 1.0), dist));
     // waterF.glsl: punctual = clamp(nl x (diffPunc + specPunc), 0, 10) x
     // sunlit_linear x shadow x atten, metallic 1 (no diffuse), roughness the
     // blur multiplier, F0 the `specular` uniform (LLDrawPoolWater: the

@@ -62,9 +62,11 @@ const PHOTO_TAPS: f32 = 32.0;
 /// the texels at the point itself.
 const GATHERS: f32 = 8.0;
 
-/// Pixels the blur reads on each side of a pixel: what a photo drawn in
-/// tiles draws around each one.
-pub(crate) const BLUR_RADIUS: u32 = 4;
+/// Pixels the mask of a pixel reads around it: the blur's 4 on each side and
+/// the one more of the neighbours its normal is made from. A photo drawn in
+/// tiles draws this much around each one (`tile_reach`; the viewer's guard
+/// band of 128 pixels is far wider, it is the limit to keep).
+pub(crate) const BLUR_RADIUS: u32 = 5;
 
 /// Tangent of the light's half angle at `softness` (1: 2.3 degrees across).
 pub(crate) fn light_tan(softness: f32) -> f32 {
@@ -203,6 +205,7 @@ pub(crate) struct Targets {
     /// one before, and the size of each.
     mm: [wgpu::BindGroup; 3],
     mm_size: [(u32, u32); 3],
+    atlas_width: u32,
     /// The distance of the surface the mask was made for (an f16, high 16
     /// bits), the radius of the filter (6 bits) and the light let through (low
     /// 10) in an R32Uint; the shading reads the distance and the light.
@@ -224,6 +227,12 @@ impl Targets {
 }
 
 impl SoftShadows {
+    /// The masks are copied out by the tests only.
+    #[cfg(test)]
+    const COPY_OUT: wgpu::TextureUsages = wgpu::TextureUsages::COPY_SRC;
+    #[cfg(not(test))]
+    const COPY_OUT: wgpu::TextureUsages = wgpu::TextureUsages::empty();
+
     pub(crate) fn new(device: &wgpu::Device) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("soft shadows"),
@@ -433,8 +442,7 @@ impl SoftShadows {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: MASK_FORMAT,
-                // copied out by the tests only
-                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | Self::COPY_OUT,
                 view_formats: &[],
             })
         };
@@ -505,6 +513,7 @@ impl SoftShadows {
                 group("soft shadows min 2", depth, &b, &a, &level(1), &level(2)),
             ],
             mm_size,
+            atlas_width: atlas.0,
             result: a,
             #[cfg(test)]
             texture: a_texture,
@@ -543,7 +552,9 @@ impl SoftShadows {
         for (k, group) in t.mm.iter().enumerate() {
             pass.set_pipeline(if k == 0 { &self.mm_build0 } else { &self.mm_build });
             pass.set_bind_group(0, group, &[]);
-            pass.dispatch_workgroups(t.mm_size[k].0.div_ceil(8), t.mm_size[k].1.div_ceil(8), 1);
+            // (the cascades' rows only: the atlas's own width of them)
+            let rows = (t.mm_size[k].1).min(t.atlas_width / (MIN_BLOCK << k));
+            pass.dispatch_workgroups(t.mm_size[k].0.div_ceil(8), rows.div_ceil(8), 1);
         }
         pass.set_pipeline(&self.soft);
         pass.set_bind_group(0, if more { &t.soft_more } else { &t.soft }, &[]);
@@ -573,7 +584,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_light_is_two_degrees_across_at_a_softness_of_one() {
+    fn the_light_is_2_3_degrees_across_at_a_softness_of_one() {
         // tan of the half angle 0.02: 2.3 degrees across, the first soft
         // shadows PR's look; the real sun (0.53 degrees) is about 0.23
         assert_eq!(light_tan(1.0), 0.02);
@@ -666,6 +677,45 @@ mod tests {
         // the cascade blend band and the far fade
         assert!(shader.contains("(end - start) * 0.15") && common.contains("(end - start) * 0.15"));
         assert!(shader.contains("(splits.z * 0.1)") && common.contains("(splits.z * 0.1)"));
+    }
+
+    /// `classic_shadowed` and `shadow_lift` of common.wgsl, `lift` being
+    /// `frame.soft.y` (1 - the shadow intensity).
+    fn classic_shadowed(nl: f32, shadow: f32, lift: f32) -> f32 {
+        let lit = nl.min(shadow);
+        lit + (nl - lit) * lift
+    }
+
+    fn shadow_lift(s: f32, lift: f32) -> f32 {
+        s + (1.0 - s) * lift
+    }
+
+    #[test]
+    fn the_shadow_intensity_lifts_the_shadow_and_leaves_full_intensity_untouched() {
+        for nl in [0.0_f32, 0.2, 0.57, 1.0] {
+            for shadow in [0.0_f32, 0.1, 0.5, 0.9, 1.0] {
+                // full intensity: the Legacy min(N.L, shadow), to the bit
+                assert_eq!(classic_shadowed(nl, shadow, 0.0).to_bits(), nl.min(shadow).to_bits());
+                assert_eq!(shadow_lift(shadow, 0.0).to_bits(), shadow.to_bits());
+                // no intensity: no shadow at all
+                assert_eq!(classic_shadowed(nl, shadow, 1.0), nl);
+                assert_eq!(shadow_lift(shadow, 1.0), 1.0);
+                // linear between
+                let (a, b) = (classic_shadowed(nl, shadow, 0.25), classic_shadowed(nl, shadow, 0.75));
+                let (lit, lifted) = (nl.min(shadow), nl);
+                assert!((a - (lit + 0.25 * (lifted - lit))).abs() < 1e-6 && (b - (lit + 0.75 * (lifted - lit))).abs() < 1e-6);
+                assert!((shadow_lift(shadow, 0.5) - (shadow + 0.5 * (1.0 - shadow))).abs() < 1e-6);
+            }
+        }
+        // the shader holds the same formulas, and every consumer of a sun
+        // shadow takes the lift: classic PBR, classic highlights, water
+        let common = include_str!("shaders/common.wgsl");
+        assert!(common.contains("return lit + (nl - lit) * frame.soft.y;"));
+        assert!(common.contains("return s + (1.0 - s) * frame.soft.y;"));
+        assert!(common.contains("* shadow_lift(shadow), vec3<f32>(0.0), vec3<f32>(10.0)"));
+        assert!(common.contains("shadow_lift(shadow_factor(pos,normal"));
+        assert!(include_str!("shaders/env.wgsl").contains("shadow_lift(shadow_factor(in.world_pos"));
+        assert!(include_str!("shaders/object.wgsl").contains("shadow_lift(sh), ll_sun_linear(a)"));
     }
 
     #[test]

@@ -1440,7 +1440,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
                 + ll_classic_pbr_local(m.color.rgb, m.metallic, m.roughness, m.n, v, in.world_pos, in.clip.xy);
         } else {
             col = ll_classic_sun_ambient(m.color.rgb, m.n, sh, in.clip.xy, a);
-            col = legacy_light(col, m.color.rgb, m.unlit, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy, sh, ll_sun_linear(a), 1.0);
+            col = legacy_light(col, m.color.rgb, m.unlit, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy, shadow_lift(sh), ll_sun_linear(a), 1.0);
             col = (col + m.emissive) * ll_final_scale() + ll_local_diffuse(m.color.rgb, m.n, in.world_pos, in.clip.xy)
                 + legacy_local_spec(m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy) * ll_local_scale();
         }

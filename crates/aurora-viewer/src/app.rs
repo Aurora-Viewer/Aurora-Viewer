@@ -10705,6 +10705,7 @@ impl App {
         } else {
             aurora_render::ProbeFrame::default()
         };
+        let photo_shadows = self.photo_shadows();
         let mut fp = FrameParams {
             // (a window behind past the driver's budget, or on a card another
             // program keeps busy, pauses its 3D drawing: its 3D targets
@@ -10795,8 +10796,8 @@ impl App {
             water_height: self.world.main_water_height(),
             shadows: self.settings.shadow_quality > 0 && matches!(self.screen, Screen::World),
             shadow_distance: self.settings.shadow_params().1,
-            shadow_softness: self.photo_shadows().0,
-            shadow_intensity: self.photo_shadows().1,
+            shadow_softness: photo_shadows.0,
+            shadow_intensity: photo_shadows.1,
             lights,
             spot_shadows,
             clear_color: Vec4::new(env.fog_color.x, env.fog_color.y, env.fog_color.z, 1.0),

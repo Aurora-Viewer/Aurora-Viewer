@@ -92,8 +92,12 @@ fn normal_at(px: vec2<i32>, depth: f32, pos: vec3<f32>) -> vec3<f32> {
     let sy = select(1, -1, abs(u - depth) < abs(d - depth));
     let dx = (world_of(px + vec2<i32>(sx, 0), select(r, l, sx < 0)) - pos) * f32(sx);
     let dy = (world_of(px + vec2<i32>(0, sy), select(d, u, sy < 0)) - pos) * f32(sy);
-    var n = normalize(cross(dx, dy));
-    if (dot(n, p.camera.xyz - pos) < 0.0) {
+    let c = cross(dx, dy);
+    let to_camera = p.camera.xyz - pos;
+    // (a degenerate step, on the ring of the target's edge or a flat
+    // depth, leaves the view direction)
+    var n = select(normalize(to_camera), c * inverseSqrt(max(dot(c, c), 1e-30)), dot(c, c) > 1e-20);
+    if (dot(n, to_camera) < 0.0) {
         n = -n;
     }
     return n;
@@ -188,7 +192,12 @@ fn cascade_soft(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32, frag: vec2<u32
             separation += dot(gap, hit);
             blockers += dot(hit, vec4<f32>(1.0));
         }
-        if (blockers > 0.0) {
+        // no caster within the search: lit, with the floor's filter (the
+        // point's own texels and the blocks around it hold none)
+        if (blockers == 0.0) {
+            return vec2<f32>(1.0, FILTER_FLOOR);
+        }
+        {
             // the light's half width seen from the receiver, at the blockers'
             // mean distance; the least is the floor (contact hardening)
             let reach = separation / blockers / depth_per_metre * p.light.x;
@@ -307,6 +316,11 @@ fn blur(id: vec3<u32>, axis: vec2<i32>) {
     }
     let size = vec2<i32>(p.size.xy) - vec2<i32>(1);
     let spread = 0.4 * radius;
+    // under a quarter of a pixel's width in metres no neighbour counts
+    if (spread < 0.25 * c.y * p.camera.w) {
+        store(id.xy, c.x, c.y, radius);
+        return;
+    }
     let sharp = -0.5 / (spread * spread);
     var sum = c.x;
     var weights = 1.0;
@@ -330,11 +344,19 @@ fn blur_h(@builtin(global_invocation_id) id: vec3<u32>) { blur(id, vec2<i32>(1, 
 @compute @workgroup_size(8, 8)
 fn blur_v(@builtin(global_invocation_id) id: vec3<u32>) { blur(id, vec2<i32>(0, 1)); }
 
+// Whether an atlas texel is in a cascade's tile: the three of the four
+// squares of the first two rows, not the projectors' maps (the fourth square
+// and the rows below), which the search never reads.
+fn in_cascades(texel: vec2<u32>, dims: vec2<u32>) -> bool {
+    let tile = dims.x / 2u;
+    return texel.y < 2u * tile && (texel.x < tile || texel.y < tile);
+}
+
 // Level 0 of the minimum depths: 4 x 4 texels of the atlas a thread.
 @compute @workgroup_size(8, 8)
 fn mm_build0(@builtin(global_invocation_id) id: vec3<u32>) {
     let dims = textureDimensions(shadow_map);
-    if (id.x * 4u >= dims.x || id.y * 4u >= dims.y) {
+    if (id.x * 4u >= dims.x || id.y * 4u >= dims.y || !in_cascades(id.xy * 4u, dims)) {
         return;
     }
     var m = 1.0;
@@ -352,6 +374,10 @@ fn mm_build0(@builtin(global_invocation_id) id: vec3<u32>) {
 fn mm_build(@builtin(global_invocation_id) id: vec3<u32>) {
     let size = vec2<i32>(textureDimensions(mm_in));
     if (i32(id.x) * 2 >= size.x || i32(id.y) * 2 >= size.y) {
+        return;
+    }
+    let dims = textureDimensions(shadow_map);
+    if (!in_cascades(id.xy * 2u * (dims.x / u32(size.x)), dims)) {
         return;
     }
     let at = vec2<i32>(id.xy) * 2;

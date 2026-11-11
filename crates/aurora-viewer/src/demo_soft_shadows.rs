@@ -55,7 +55,7 @@ pub fn events() -> Vec<NetEvent> {
     if !enabled() {
         return Vec::new();
     }
-    // `near`: the same things at a third of the distance, for the contact
+    // `near`: the same things at 0.4 of the distance, for the contact
     // under the table and at the foot of the pole
     let near = std::env::var("AURORA_DEMO_SOFT_SHADOWS").is_ok_and(|v| v.trim() == "near");
     let scale = if near { 0.4 } else { 1.0 };

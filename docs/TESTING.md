@@ -4508,7 +4508,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_COPLANAR_DECAL=1`, `mask` or `blend` | Two dirt strips blended over a grass face of the same static mesh, 9 m along the start view (#3059) |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
 | `AURORA_DEMO_PLANTS=1`, `far` or `dense` | Linden trees and grass: every species near or far along the start view, or a forest |
-| `AURORA_DEMO_SOFT_SHADOWS=1` | A pergola, a pole, a table and a sphere in a 35 degree sun, soft shadows on |
+| `AURORA_DEMO_SOFT_SHADOWS=1` or `near` | A pergola, a 14 m pole, a table and a sphere on a pale receiving plate in a 35 degree sun, soft shadows on (`near`: at 0.4 of the distance) |
 | `AURORA_DEMO_BLEND_SHADOWS=1` or `dense` | Alpha-blended panels in the sun (greenhouse pane, face and texture alpha), or 400 greenhouse panes |
 | `AURORA_DEMO_FEET=opaque` or `blend` | A shoe on each foot of our avatar and of the crowd, and two blocks on the ground (contact shadows) |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
@@ -4790,7 +4790,7 @@ both open states and the selection count. Capture at frame 620.
   left half, leaves in the top right quarter, grass blades from the bottom
   edge), only with this scenario. Close-ups: `AURORA_DEMO_CAMERA=close,790,185,80`
   on the tree behind the palm, capture at frame 760.
-- **`AURORA_DEMO_SOFT_SHADOWS=1`**: things standing in the sun to see how
+- **`AURORA_DEMO_SOFT_SHADOWS=1|near`**: things standing on a pale receiving plate (level whatever the terrain) in the sun to see how
   the penumbra of a shadow grows with the distance of its caster
   (`demo_soft_shadows.rs`), from `AURORA_DEMO_POS="132,126"`: a pergola
   (a 6 m roof 3 m up), a pole 14 m high, a table (top 0.75 m up) and a

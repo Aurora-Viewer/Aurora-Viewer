@@ -5066,13 +5066,13 @@ ui-options-projector-shadow-limit = Projecteurs avec ombres
 ui-options-projector-shadow-limit-help = Nombre maximal d’ombres de projecteurs simultanées (1–16). Une limite plus élevée augmente le temps GPU et la mémoire vidéo utilisée.
 ui-options-contact-shadows = Ombres de contact
 ui-options-contact-shadows-help = Des ombres du soleil nettes là où les choses se touchent (pieds au sol, objets posés, plis), trop fines pour la carte d’ombre. Coûte un peu à la carte graphique
-ui-options-soft-shadows = Ombres douces (expérimental)
+ui-options-soft-shadows = Ombres douces
 ui-options-soft-shadows-help = Des ombres du soleil aux bords plus doux à mesure que l’objet s’éloigne de ce qu’il ombre, comme dans la réalité : l’ombre d’un grand poteau devient floue vers sa pointe alors qu’un pied reste net. Expérimental, désactivé par défaut ; coûte une fraction de milliseconde à la carte graphique
 ui-options-shadow-softness = Douceur des ombres
-ui-options-shadow-softness-help = La taille de la lumière pour les ombres douces : 1 est une lumière de 2,3 degrés de large, 2 une lumière plus grande qui adoucit deux fois plus (le vrai soleil fait environ 0,2), 0 une lumière ponctuelle qui ne garde qu’un bord net de 1,5 cm
+ui-options-shadow-softness-help = La taille de la lumière pour les ombres douces : 1 est une lumière de 2,3 degrés de large, 2 une lumière plus grande qui adoucit deux fois plus (le vrai soleil fait environ 0,2), 0 une lumière ponctuelle qui ne garde qu’un bord net de 1,5 cm et laisse les ombres des projecteurs comme elles étaient
 ui-options-shadow-softness-needs-soft = Activez les ombres douces pour l’utiliser
 ui-options-shadow-intensity = Intensité des ombres
-ui-options-shadow-intensity-help = À quel point les ombres du soleil sont sombres : 1 comme avant, plus bas laisse entrer plus de lumière
+ui-options-shadow-intensity-help = À quel point les ombres du soleil sont sombres : 1 est l’obscurité normale, plus bas laisse entrer plus de lumière
 ui-options-when-i-am-away = Quand je suis absent :
 ui-options-when-the-window-is-not-in-the-foreground-the = Quand la fenêtre n'est pas au premier plan, le viewer ralentit pour libérer la machine. Activé par défaut
 ui-options-glow-amount-instead-of-the-image-red-glow-10 = Quantité de glow à la place de l'image (rouge = glow × 10, vert = × 2)

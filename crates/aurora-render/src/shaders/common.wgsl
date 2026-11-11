@@ -1443,13 +1443,19 @@ fn sun_shadow(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32, frag: vec2<
         return s;
     }
     s = min(s, contact_shadow(frag));
-    // the light a shadow lets through, 0 at full intensity: untouched then
     // (a classic sky's sun is min(N.L, shadow), where the lift would hide
-    // under N.L: `classic_shadowed` lifts the result there)
-    if (frame.soft.y > 0.0 && frame.sky_ll.x < 0.5) {
-        s = s + (1.0 - s) * frame.soft.y;
+    // under N.L: `classic_shadowed` and `ll_classic_pbr` lift it there)
+    if (frame.sky_ll.x < 0.5) {
+        s = shadow_lift(s);
     }
     return s;
+}
+
+// The shadow with the shadow intensity: the share of the light a shadow lets
+// through, `frame.soft.y` (1 - intensity, 0 at full intensity: the shadow is
+// then returned as it is, to the bit).
+fn shadow_lift(s: f32) -> f32 {
+    return s + (1.0 - s) * frame.soft.y;
 }
 
 // The Legacy `min(N.L, shadow)` of a classic sky's sun, with the shadow
@@ -2177,7 +2183,7 @@ fn projector_shadow(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
         origin = vec2<f32>(f32((k - 4u) % 4u) * half, 2.0 * size + f32((k - 4u) / 4u) * half);
     }
     var s = -1.0;
-    if (frame.soft.z > 0.0 && !in_reflection_pass()) {
+    if (frame.soft.z > 0.0) {
         s = projector_soft(k, world_pos + n * 0.04, n, uv, ndc.z, lp.w, origin, half, dims, texel);
     }
     if (s < 0.0) {
@@ -2561,7 +2567,7 @@ fn ll_classic_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32
         let spec = d_ggx(nh, ra) * v_smith(nv, nl, ra) * f;
         let diff = (vec3<f32>(1.0) - f) * diffuse_color / PI;
         let sun_contrib = srgb_to_linear(ll_linear_to_srgb(vec3<f32>(classic_shadowed(pow(nl, 1.2), shadow))) * sunlit * 0.7) * PI;
-        final_sun = clamp(sun_contrib * (diff + spec) * shadow, vec3<f32>(0.0), vec3<f32>(10.0));
+        final_sun = clamp(sun_contrib * (diff + spec) * shadow_lift(shadow), vec3<f32>(0.0), vec3<f32>(10.0));
     }
     var col = srgb_to_linear(ll_linear_to_srgb(irr * diffuse_color) + ll_linear_to_srgb(final_sun) * 1.1);
     // GTAO's indirect light (Aurora's own: the Legacy Viewer has none)
@@ -2734,7 +2740,7 @@ fn water_caustics(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
     if(depth>2.5){intensity=mix(focus.g,focus.b,smoothstep(2.5,7.0,depth));}
     let energy=max(intensity-0.9,0.0)*0.42;
     let extinction=exp(-depth*(0.13+frame.water_fog.w*0.025));
-    let shadow=shadow_factor(pos,normal,distance(pos,frame.camera_pos.xyz));
+    let shadow=shadow_lift(shadow_factor(pos,normal,distance(pos,frame.camera_pos.xyz)));
     return frame.sun_color.rgb*energy*extinction*max(dot(normal,light),0.0)*shadow*frame.sun_dir.w*smoothstep(0.03,0.3,depth);
 }
 

@@ -840,6 +840,52 @@ impl Values {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn the_soft_shadows_are_off_in_every_level_at_the_default_size() {
+        for preset in Preset::ALL {
+            let e = preset.values().effects;
+            assert!(!e.soft_shadows, "{preset:?}");
+            assert_eq!(e.shadow_softness, crate::settings::SHADOW_SOFTNESS, "{preset:?}");
+            let mut settings = Settings::default();
+            settings.soft_shadows = true;
+            settings.shadow_softness = 1.7;
+            preset.apply(&mut settings);
+            assert!(!settings.soft_shadows && settings.shadow_softness == crate::settings::SHADOW_SOFTNESS);
+        }
+    }
+
+    #[test]
+    fn a_preset_saved_before_the_soft_shadows_reads_them_off_and_a_size_counts_only_while_on() {
+        let mut settings = Settings::default();
+        Preset::Deluxe.apply(&mut settings);
+        let mut saved = serde_json::to_value(Values::read(&settings)).expect("save preset");
+        let effects = saved.get_mut("effects").and_then(|e| e.as_object_mut()).expect("effects");
+        effects.remove("soft_shadows");
+        effects.remove("shadow_softness");
+        let old: Values = serde_json::from_value(saved).expect("older preset");
+        assert!(!old.effects.soft_shadows);
+        assert_eq!(old.effects.shadow_softness, crate::settings::SHADOW_SOFTNESS);
+        // the size shown is the default while the effect is off
+        let mut v = Values::read(&settings);
+        v.effects.shadow_softness = 1.7;
+        v.effects.soft_shadows = false;
+        assert_eq!(v.as_shown().effects.shadow_softness, crate::settings::SHADOW_SOFTNESS);
+        v.effects.soft_shadows = true;
+        assert!((v.as_shown().effects.shadow_softness - 1.7).abs() < 0.03);
+    }
+
+    #[test]
+    fn the_shadow_softness_and_intensity_are_sanitised() {
+        for (softness, intensity) in [(f32::NAN, f32::NAN), (-3.0, -1.0), (50.0, 9.0), (f32::INFINITY, f32::NEG_INFINITY)] {
+            let mut s = Settings::default();
+            s.shadow_softness = softness;
+            s.shadow_intensity = intensity;
+            let s = s.sanitized();
+            assert!((0.0..=crate::settings::SHADOW_SOFTNESS_MAX).contains(&s.shadow_softness), "{softness}");
+            assert!((0.0..=1.0).contains(&s.shadow_intensity), "{intensity}");
+        }
+    }
+
+    #[test]
     fn projector_shadow_budget_is_saved_with_custom_presets_and_old_presets_keep_two() {
         let mut settings = Settings::default();
         Preset::Deluxe.apply(&mut settings);

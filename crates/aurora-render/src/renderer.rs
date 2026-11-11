@@ -1712,6 +1712,8 @@ pub(crate) struct Backend {
     shadow_buffers: Vec<wgpu::Buffer>,
     shadow_bind_groups: Vec<wgpu::BindGroup>,
     shadow_size: u32,
+    /// The shadow atlas's real size in texels (the shed one is small).
+    shadow_dims: (u32, u32),
     shadow_count: u8,
     /// Opaque casters shared between the cascades (shadow_merge.rs).
     shadow_merge: crate::shadow_merge::ShadowMerge,
@@ -3557,6 +3559,7 @@ impl Backend {
             probe_shadow_group,
             shadow_bind_groups,
             shadow_size,
+            shadow_dims: crate::projector_shadows::atlas_size(shadow_size, 2),
             shadow_count: 2,
             shadow_merge,
             post_buffer,
@@ -5362,7 +5365,7 @@ impl Backend {
             &self.contact,
             self.soft.as_ref(),
             &self.shadow_view,
-            crate::projector_shadows::atlas_size(self.shadow_size, self.shadow_count),
+            self.shadow_dims,
             size.0,
             size.1,
             self.msaa_samples,
@@ -5529,7 +5532,7 @@ impl Backend {
     /// set compiled for other samples or SSR, `None` when they stay.
     fn apply_settings_with(&mut self, s: RenderSettings, rebuilt: Option<(u32, Pipelines, ImpostorPipelines)>) {
         let pipelines_dirty = rebuilt.is_some();
-        let targets_dirty = pipelines_dirty
+        let mut targets_dirty = pipelines_dirty
             || s.render_scale_percent != self.settings.render_scale_percent
             || fsr_ratio(s.aa) != fsr_ratio(self.settings.aa)
             || (s.aa == AntiAliasing::Smaa) != (self.settings.aa == AntiAliasing::Smaa)
@@ -5541,7 +5544,6 @@ impl Backend {
             || s.water_reflection_scale != self.settings.water_reflection_scale
             || crate::water_optics::scale(s.water_effects) != crate::water_optics::scale(self.settings.water_effects)
             || s.mirror_scale != self.settings.mirror_scale;
-        let mut targets_dirty = targets_dirty;
         let taa_was = self.taa.is_some();
         if let Some((samples, scene, impostors)) = rebuilt {
             self.msaa_samples = samples;
@@ -5562,8 +5564,11 @@ impl Backend {
         let shadows_dirty = (s.shadow_resolution > 0 && res != self.shadow_size) || count != self.shadow_count;
         // (the soft shadows' mask reads the atlas)
         targets_dirty |= shadows_dirty && self.targets.soft.is_some();
+        // (`AURORA_SOFT_SHADOWS=1|alt` asks for the mask whatever the setting)
+        targets_dirty |= self.targets.soft.is_none() && crate::soft_shadows::Override::from_env().needed(s.soft_shadows);
         if shadows_dirty {
             self.shadow_view = Self::make_shadow_atlas(&self.device, res, count);
+            self.shadow_dims = crate::projector_shadows::atlas_size(res, count);
             self.shadow_size = res;
             self.shadow_count = count;
             let (width, height) = crate::projector_shadows::atlas_size(res, count);
@@ -6392,6 +6397,7 @@ impl Backend {
             // (the size the settings ask for stays recorded: no frame's
             // settings make the full atlas again before the remake)
             self.shadow_view = Self::make_shadow_atlas(&device, 512, 0);
+            self.shadow_dims = crate::projector_shadows::atlas_size(512, 0);
             self.shadow_merge.atlas_changed(&device, &self.shadow_view, 512, SHADOW_FORMAT);
             self.make_targets_now(false, Some((1, 1)));
         });

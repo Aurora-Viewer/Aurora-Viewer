@@ -5057,13 +5057,13 @@ ui-options-projector-shadow-limit = 影付きプロジェクター数
 ui-options-projector-shadow-limit-help = 同時に影を描画するプロジェクターの上限（1～16）。増やすほどGPU処理時間とビデオメモリ使用量が増えます。
 ui-options-contact-shadows = 接触影
 ui-options-contact-shadows-help = 物が接する部分（地面の足、表面に置かれた物、折り目）に、シャドウマップでは粗すぎて表せない鋭い太陽の影を付けます。グラフィックカードの負荷が少し増えます
-ui-options-soft-shadows = ソフトシャドウ（実験的）
+ui-options-soft-shadows = ソフトシャドウ
 ui-options-soft-shadows-help = 影を落とす物と影の距離が離れるほど、太陽の影の縁が現実のように柔らかくなります。高いポールの影は先端ほどぼやけ、足元の影は鮮明なままです。実験的な機能で、デフォルトではオフです。グラフィックカードの負荷が1ミリ秒に満たない程度増えます
 ui-options-shadow-softness = 影のやわらかさ
-ui-options-shadow-softness-help = ソフトシャドウでの光源の大きさです。1は見かけの幅が2.3度の光源で、2はその倍の大きさで影がさらに柔らかくなります（実際の太陽は約0.2）。0は点光源で、1.5cmの鮮明な縁だけが残ります
+ui-options-shadow-softness-help = ソフトシャドウでの光源の大きさです。1は見かけの幅が2.3度の光源で、2はその倍の大きさで影がさらに柔らかくなります（実際の太陽は約0.2）。0は点光源で、1.5cmの鮮明な縁だけが残り、プロジェクターの影は従来のままです
 ui-options-shadow-softness-needs-soft = 使うにはソフトシャドウをオンにしてください
 ui-options-shadow-intensity = 影の濃さ
-ui-options-shadow-intensity-help = 太陽の影の暗さです。1は従来どおりで、小さくすると影に入る光が増えます
+ui-options-shadow-intensity-help = 太陽の影の暗さです。1は通常の濃さで、小さくすると影に入る光が増えます
 ui-options-when-i-am-away = 一時退席中：
 ui-options-when-the-window-is-not-in-the-foreground-the = ウィンドウが前面にないとき、ビューアは速度を落としてシステムリソースを解放します。デフォルトで有効
 ui-options-glow-amount-instead-of-the-image-red-glow-10 = 画像の代わりにグローの量（赤 = グロー × 10、緑 = × 2）
