@@ -300,7 +300,7 @@ pub(super) fn show(
         match picker.selected.and_then(|id| inv.items.get(&id)) {
             Some(it) => {
                 let path = folder_path(inv, it.parent, None).unwrap_or_default();
-                let tint = item_icon_color(it.asset_type, it.inv_type, it.flags, p);
+                let tint = item_icon_color(it.asset_type, it.inv_type, p);
                 paint_item(
                     ui,
                     p,
@@ -371,7 +371,7 @@ pub(super) fn show(
                         } else if response.hovered() {
                             ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
                         }
-                        let tint = item_icon_color(row.asset_type, row.inv_type, row.flags, p);
+                        let tint = item_icon_color(row.asset_type, row.inv_type, p);
                         let icon = item_icon(row.asset_type, row.inv_type, row.flags);
                         paint_item(ui, p, icons, rect, icon, tint, &row.name, &row.path);
                         #[cfg(test)]

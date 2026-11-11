@@ -519,9 +519,11 @@ impl Editor {
             }
         });
     }
-    pub(super) fn project_import_ui(&mut self, ui: &mut egui::Ui, world: &World) {
+    pub(super) fn project_import_ui(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World) {
         if self.project.picker {
-            ui.add(egui::TextEdit::singleline(&mut self.project.filter).hint_text(aurora_i18n::tr!("ik-project-notecard-search")));
+            crate::ui::widgets::search_text_edit(ui, p, &mut self.project.filter, |edit| {
+                edit.hint_text(aurora_i18n::tr!("ik-project-notecard-search"))
+            });
             let signature = (world.inventory.generation, self.project.filter.clone());
             if self.project.candidates_at.as_ref() != Some(&signature) {
                 let filter = self.project.filter.to_lowercase();

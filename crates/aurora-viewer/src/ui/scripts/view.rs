@@ -713,12 +713,11 @@ fn insertion(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id) {
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                 .show_ui(ui, |ui| {
                     super::focus::claim(ui.ctx(), ui.layer_id(), id);
-                    let field = ui.add(
-                        egui::TextEdit::singleline(&mut e.tools.insert_filter)
-                            .id(id.with("insert_filter"))
+                    let field = crate::ui::widgets::search_text_edit(ui, p, &mut e.tools.insert_filter, |edit| {
+                        edit.id(id.with("insert_filter"))
                             .desired_width(260.0)
-                            .hint_text(aurora_i18n::tr!("script-insert-filter")),
-                    );
+                            .hint_text(aurora_i18n::tr!("script-insert-filter"))
+                    });
                     if !e.tools.insertion_open {
                         field.request_focus();
                     }
@@ -829,7 +828,7 @@ pub(super) fn dialogs(
             Vec2::new(560.0, 480.0),
         )
         .show(ctx, p, &mut e.tools.library, |ui| {
-            ui.text_edit_singleline(&mut e.tools.insert_filter);
+            crate::ui::widgets::search_text_edit(ui, p, &mut e.tools.insert_filter, |edit| edit);
             let filter = e.tools.insert_filter.to_lowercase();
             let mut keyword = None;
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -1046,7 +1045,7 @@ mod tests {
                 item: Uuid::from_u128(10),
             };
             let mut editors = super::super::Editors::default();
-            editors.open(target, "Script".into(), readable, editable);
+            editors.open(target, "Script".into(), readable, editable, 0);
             let e = &mut editors.documents[0];
             e.can_reset = available;
             if saving {
@@ -1129,7 +1128,7 @@ mod tests {
                 item: Uuid::from_u128(10),
             };
             let mut editors = super::super::Editors::default();
-            let request = editors.open(target, "Wrapping".into(), true, editable).expect("load");
+            let request = editors.open(target, "Wrapping".into(), true, editable, 0).expect("load");
             editors.loaded(request, target, Ok(original.clone()));
             let e = &mut editors.documents[0];
             e.tools.reset_history = false;
@@ -1212,7 +1211,7 @@ mod tests {
                 item: uuid::Uuid::from_u128(10),
             };
             let mut editors = super::super::Editors::default();
-            let request = editors.open(target, "Resize".into(), true, true).unwrap();
+            let request = editors.open(target, "Resize".into(), true, true, 0).unwrap();
             editors.loaded(request, target, Ok("default {\n    event() {\n        code;\n    }\n}".into()));
             let e = &mut editors.documents[0];
             let settings = ScriptSettings::default();
@@ -1291,7 +1290,7 @@ mod tests {
             item: uuid::Uuid::from_u128(10),
         };
         let mut editors = super::super::Editors::default();
-        let request = editors.open(target, "Main".into(), true, false).unwrap();
+        let request = editors.open(target, "Main".into(), true, false, 0).unwrap();
         editors.loaded(request, target, Ok("éあ original".into()));
         let e = &mut editors.documents[0];
         let ctx = egui::Context::default();

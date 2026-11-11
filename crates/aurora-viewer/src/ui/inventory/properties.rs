@@ -168,7 +168,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
                 || {
                     (
                         item_icon(it.asset_type, it.inv_type, it.flags),
-                        item_icon_color(it.asset_type, it.inv_type, it.flags, p),
+                        item_icon_color(it.asset_type, it.inv_type, p),
                     )
                 },
                 |inv| inventory_item_icon(inv, it, p),

@@ -13,6 +13,34 @@ use uuid::Uuid;
 pub fn page(cx: &mut Cx) {
     use aurora_i18n::tr;
     let p = cx.p;
+    // the Legacy Viewer's "Texture Lag Protection" (RenderVolumeSAProtection
+    // and its FrameMax spinner, 500 to 10000, greyed while off); the two
+    // thresholds stay in Debug Settings, as there
+    cx.group(tr!("large-surface-title"), |cx| {
+        cx.keywords("RenderVolumeSAProtection lag crasher").toggle(
+            tr!("large-surface-enable"),
+            tr!("large-surface-enable-hint"),
+            &field!(large_surface_protection),
+        );
+        let off = !cx.s.large_surface_protection;
+        cx.subs(off, |cx| {
+            cx.keywords("RenderVolumeSAFrameMax").row(
+                tr!("large-surface-frame-max"),
+                tr!("large-surface-frame-max-hint"),
+                &field!(large_surface_frame_max),
+                |ui, s| {
+                    ui.add(
+                        egui::DragValue::new(&mut s.large_surface_frame_max)
+                            .range(500.0..=10_000.0)
+                            .speed(10.0)
+                            .fixed_decimals(0)
+                            .custom_parser(aurora_i18n::parse_number),
+                    )
+                    .changed()
+                },
+            );
+        });
+    });
     cx.group(tr!("anti-spam-title"), |cx| {
         cx.keywords(tr!("anti-spam-title"))
             .toggle(tr!("anti-spam-enable"), tr!("anti-spam-enable-hint"), &field!(anti_spam.enabled));

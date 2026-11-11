@@ -205,7 +205,7 @@ pub(super) fn show(
                             // under the root folder, as in the Build tools' Contents tab
                             ui.add_space(indent - 4.0);
                             if let Some(t) = icons.get(inventory::item_icon(item.asset_type, item.inv_type, item.flags)) {
-                                let color = inventory::item_icon_color(item.asset_type, item.inv_type, item.flags, p);
+                                let color = inventory::item_icon_color(item.asset_type, item.inv_type, p);
                                 ui.add(egui::Image::new(t).fit_to_exact_size(Vec2::splat(16.0)).tint(color));
                             } else {
                                 ui.add_space(16.0);

@@ -125,11 +125,13 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             });
         });
     }
-    ui.add(
-        egui::TextEdit::singleline(&mut tool.ui.contents_filter)
-            .hint_text(aurora_i18n::tr!("build-ui-contents-enter-filter-text"))
-            .desired_width(ui.available_width()),
-    );
+    {
+        let width = ui.available_width();
+        crate::ui::widgets::search_text_edit(ui, p, &mut tool.ui.contents_filter, |edit| {
+            edit.hint_text(aurora_i18n::tr!("build-ui-contents-enter-filter-text"))
+                .desired_width(width)
+        })
+    };
     crate::ui::inventory::permissions::next_owner_toggle(ui, p, &mut tool.ui.contents_show_next_owner);
     let inv = tool.contents.objects.get(&object_id).cloned().unwrap_or_default();
     let items: Vec<TaskItem> = inv.items.iter().filter(|i| !i.is_folder).cloned().collect();
@@ -262,7 +264,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     }
 }
 
-/// `AURORA_DEMO_CONTENTS_DROP=panel…` carries inventory onto the list.
+/// `AURORA_DEMO_CONTENTS_DROP=panelâ€¦` carries inventory onto the list.
 fn demo_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("AURORA_DEMO").as_deref() == Ok("1") && std::env::var_os("AURORA_DEMO_CONTENTS_DROP").is_some())
@@ -292,7 +294,7 @@ fn item_row(
         ui.spacing_mut().item_spacing.x = 4.0;
         widgets::inventory_spacing(ui);
         if let Some(t) = crate::ui::icons::global(item_icon(item.asset_type as i32, item.inv_type as i32, item.flags)) {
-            let color = crate::ui::inventory::item_icon_color(item.asset_type as i32, item.inv_type as i32, item.flags, p);
+            let color = crate::ui::inventory::item_icon_color(item.asset_type as i32, item.inv_type as i32, p);
             ui.add(egui::Image::new(&t).fit_to_exact_size(Vec2::splat(16.0)).tint(color));
         } else {
             ui.add_space(16.0);
@@ -324,6 +326,7 @@ fn item_row(
                 .contents_selection
                 .select(ui, object_id, item.item_id, r.secondary_clicked());
         }
+        widgets::reveal_search_selection(ui, &r, selected);
         if r.drag_started() && !selected {
             tool.ui.contents_selection.select(ui, object_id, item.item_id, false);
         }

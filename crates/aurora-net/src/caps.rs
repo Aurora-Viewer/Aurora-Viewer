@@ -88,6 +88,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "ObjectAnimation",
     "ObjectMedia",
     "ObjectMediaNavigate",
+    // Legacy Viewer: LLViewerRegionImpl::buildCapabilityNames (llviewerregion.cpp).
+    "ParcelPropertiesUpdate",
     "ParcelVoiceInfoRequest",
     "ProvisionVoiceAccountRequest",
     // instant messages kept while offline (LLIMProcessing::requestOfflineMessages)
@@ -175,6 +177,11 @@ pub fn hover_height_body(value: f32) -> Option<Llsd> {
 #[cfg(test)]
 mod language_tests {
     use super::*;
+
+    #[test]
+    fn parcel_rename_requests_the_properties_update_capability() {
+        assert!(REQUESTED_CAPS.contains(&"ParcelPropertiesUpdate"));
+    }
 
     #[test]
     fn maturity_preference_is_sent_and_read_as_short_strings() {

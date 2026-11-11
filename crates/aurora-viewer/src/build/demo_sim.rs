@@ -528,8 +528,8 @@ impl DemoSim {
                 let ids = Self::uuids(world, *handle, local_ids);
                 self.reply_props(world, &ids)
             }
-            BuildCmd::SetName { handle, local_id, name } => {
-                let ids = Self::uuids(world, *handle, &[*local_id]);
+            BuildCmd::SetName { handle, local_ids, name } => {
+                let ids = Self::uuids(world, *handle, local_ids);
                 for id in &ids {
                     self.props_of(world, *id).name = name.clone();
                 }
@@ -537,10 +537,10 @@ impl DemoSim {
             }
             BuildCmd::SetDescription {
                 handle,
-                local_id,
+                local_ids,
                 description,
             } => {
-                let ids = Self::uuids(world, *handle, &[*local_id]);
+                let ids = Self::uuids(world, *handle, local_ids);
                 for id in &ids {
                     self.props_of(world, *id).description = description.clone();
                 }
@@ -736,12 +736,33 @@ impl DemoSim {
                 })
                 .into_iter()
                 .collect(),
-            BuildCmd::ParcelRequest { handle, sequence, .. } => match world.parcel.clone() {
-                Some(p) => vec![NetEvent::SelectedParcel {
-                    handle: *handle,
-                    sequence: *sequence,
-                    parcel: p,
-                }],
+            BuildCmd::ParcelRequest {
+                handle,
+                sequence,
+                west,
+                south,
+                east,
+                north,
+                ..
+            } => match world.parcel.clone() {
+                Some(mut p) => {
+                    // Explicit offline aggregate fixture: no unique owner, and
+                    // an area matching the rectangle must not disable Join.
+                    if *sequence >= aurora_net::build::BUILD_PARCEL_SEQ + 1000
+                        && std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("select-join,"))
+                        && (east - west) * (north - south) > 16.0
+                    {
+                        let p = std::sync::Arc::make_mut(&mut p);
+                        p.request_result = aurora_net::land::PARCEL_RESULT_MULTIPLE;
+                        p.owner_id = Uuid::nil();
+                        p.area = ((east - west) * (north - south)) as i32;
+                    }
+                    vec![NetEvent::SelectedParcel {
+                        handle: *handle,
+                        sequence: *sequence,
+                        parcel: p,
+                    }]
+                }
                 None => Vec::new(),
             },
             BuildCmd::Cap { cap, body, tag, .. } => vec![NetEvent::CapReply {
