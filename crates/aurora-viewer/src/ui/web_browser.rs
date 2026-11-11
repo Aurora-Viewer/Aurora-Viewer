@@ -148,6 +148,15 @@ impl WebBrowserUi {
         self.web_has_focus(open).then(|| self.web.plugin_mut()).flatten()
     }
 
+    /// Give the page the keyboard as a click on it does
+    /// (AURORA_DEMO_WEB_BROWSER_KEYS).
+    pub fn demo_focus(&mut self) {
+        if let Some(plugin) = self.web.plugin_mut() {
+            plugin.focus(true);
+            self.web.focused = true;
+        }
+    }
+
     /// The system id of the page's browser process, while one runs.
     pub fn web_process_id(&self) -> Option<u32> {
         self.web.process_id()

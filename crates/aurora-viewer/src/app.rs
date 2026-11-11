@@ -13394,37 +13394,79 @@ impl App {
             // from an earlier run's clipboard. On Linux the pastes come before
             // the page's answer to the cut (keys::copy_script) and wait for
             // it, as a quick Ctrl+X, Ctrl+V does; the clipboard is logged at
-            // frame 899, after the answer. `paste`: the clipboard
-            // holds "pasted", set by the viewer as another program would,
-            // then Ctrl+V, so the field reads "aurorapasted".
-            let edit = v.split(',').any(|s| s.trim() == "edit");
-            let paste = v.split(',').any(|s| s.trim() == "paste");
-            if (edit || paste) && f == 864 {
-                self.egui_ctx.copy_text(if paste { "pasted" } else { "stale" }.to_owned());
+            // frame 899, after the answer. `copy`: Ctrl+A, Ctrl+C, Right
+            // (no modifier: the selection collapses at its end), Ctrl+V, so
+            // the field reads "auroraaurora" when the copy reaches the
+            // clipboard and leaves the field as it was ("aurora" when it
+            // deleted, "aurorastale" when it copied nothing). `paste`: the
+            // clipboard holds "pasted", set by the viewer as another program
+            // would, then Ctrl+V, so the field reads "aurorapasted".
+            let mode = demo_page_keys_mode(&v);
+            if mode.is_some() && f == 864 {
+                self.egui_ctx
+                    .copy_text(if mode == Some("paste") { "pasted" } else { "stale" }.to_owned());
             }
-            // (frame after 870 of the press, key); each release one frame later
-            let keys = if edit {
-                &[(0, KeyCode::KeyA), (2, KeyCode::KeyX), (4, KeyCode::KeyV), (6, KeyCode::KeyV)][..]
-            } else if paste {
-                &[(0, KeyCode::KeyV)][..]
-            } else {
-                &[][..]
-            };
-            if edit && f == 899 {
+            if matches!(mode, Some("edit" | "copy")) && f == 899 {
                 let text = self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text());
                 log::info!("demo: media clipboard after the cut: {text:?}");
             }
-            let at = f.checked_sub(870);
-            if let Some(&(press, code)) = keys.iter().find(|(press, _)| at.is_some_and(|a| a == *press || a == press + 1)) {
-                let pressed = at == Some(press);
-                let mods = aurora_media::Modifiers {
-                    control: !cfg!(target_os = "macos"),
-                    command: cfg!(target_os = "macos"),
-                    ..Default::default()
-                };
+            if let Some((code, pressed, mods)) = mode.and_then(|m| demo_page_key(m, f)) {
                 let clipboard = self.media_clipboard(None, code, pressed, false, mods);
                 self.media
                     .on_key(&self.world, None, code, 0, pressed, false, None, mods, clipboard.as_deref());
+            }
+        }
+        // AURORA_DEMO_WEB_BROWSER_KEYS=edit|copy|paste, with
+        // AURORA_DEMO_WEB_BROWSER: the same keys as AURORA_DEMO_MEDIA_CLICK's
+        // in the web browser window's page, on the same frames
+        // (AURORA_DEMO_MEDIA_CLICK_FRAME): the page gets the keyboard at
+        // frame 760 as after a click on it, "aurora" goes to its focused
+        // field from frame 850, then the Edit keys. Its answers come back
+        // through ui/web_view.rs, not the media face's.
+        if self.demo
+            && self.panels.web_browser
+            && let Ok(v) = std::env::var("AURORA_DEMO_WEB_BROWSER_KEYS")
+            && let Some(mode) = demo_page_keys_mode(&v)
+        {
+            let start = std::env::var("AURORA_DEMO_MEDIA_CLICK_FRAME")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(700);
+            let f = self.frame_count.checked_sub(start).map_or(0, |delta| delta.saturating_add(700));
+            if f == 760 {
+                self.web_browser_ui.demo_focus();
+            }
+            if f == 864 {
+                self.egui_ctx.copy_text(if mode == "paste" { "pasted" } else { "stale" }.to_owned());
+            }
+            if matches!(mode, "edit" | "copy") && f == 899 {
+                let text = self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text());
+                log::info!("demo: web browser clipboard after the cut: {text:?}");
+            }
+            let typed = (850..862).contains(&f).then(|| {
+                let k = (f - 850) as usize;
+                let (code, ch) = [
+                    (KeyCode::KeyA, "a"),
+                    (KeyCode::KeyU, "u"),
+                    (KeyCode::KeyR, "r"),
+                    (KeyCode::KeyO, "o"),
+                    (KeyCode::KeyR, "r"),
+                    (KeyCode::KeyA, "a"),
+                ][k / 2];
+                (code, k.is_multiple_of(2), ch)
+            });
+            let edit = demo_page_key(mode, f);
+            let clipboard = edit.and_then(|(code, pressed, mods)| self.media_clipboard(None, code, pressed, false, mods));
+            if let Some(p) = self.focused_web() {
+                if let Some((code, pressed, ch)) = typed {
+                    let text = pressed.then_some(ch);
+                    crate::media::keys::forward(p, code, 0x1E, pressed, false, text, Default::default());
+                }
+                if let Some((code, pressed, mods)) = edit
+                    && !crate::media::keys::edit(p, None, code, pressed, false, mods, clipboard.as_deref())
+                {
+                    crate::media::keys::forward(p, code, 0, pressed, false, None, mods);
+                }
             }
         }
         // AURORA_DEMO_CAMERA="alt,x,y" (pan, zoom, ml, wheel, fly): camera/demo.rs
@@ -21776,6 +21818,34 @@ fn restart_with_vr() {
         Ok(_) => log::info!("restarting into VR"),
         Err(e) => log::warn!("restart into VR failed: {e}"),
     }
+}
+
+/// The Edit-keys mode of AURORA_DEMO_MEDIA_CLICK or
+/// AURORA_DEMO_WEB_BROWSER_KEYS: `edit`, `copy` or `paste`, else None.
+fn demo_page_keys_mode(v: &str) -> Option<&'static str> {
+    ["edit", "copy", "paste"].into_iter().find(|m| v.split(',').any(|s| s.trim() == *m))
+}
+
+/// The key a demo Edit-keys mode presses or releases at demo frame `f`
+/// (each press from frame 870, two frames apart, released one frame
+/// later): `edit` Ctrl+A, Ctrl+X, Ctrl+V, Ctrl+V; `copy` Ctrl+A, Ctrl+C,
+/// Right, Ctrl+V; `paste` Ctrl+V. Cmd in place of Ctrl on macOS.
+fn demo_page_key(mode: &str, f: u64) -> Option<(KeyCode, bool, aurora_media::Modifiers)> {
+    let keys: &[(u64, KeyCode)] = match mode {
+        "edit" => &[(0, KeyCode::KeyA), (2, KeyCode::KeyX), (4, KeyCode::KeyV), (6, KeyCode::KeyV)],
+        "copy" => &[(0, KeyCode::KeyA), (2, KeyCode::KeyC), (4, KeyCode::ArrowRight), (6, KeyCode::KeyV)],
+        "paste" => &[(0, KeyCode::KeyV)],
+        _ => return None,
+    };
+    let at = f.checked_sub(870)?;
+    let &(press, code) = keys.iter().find(|(press, _)| at == *press || at == press + 1)?;
+    let shortcut = code != KeyCode::ArrowRight;
+    let mods = aurora_media::Modifiers {
+        control: shortcut && !cfg!(target_os = "macos"),
+        command: shortcut && cfg!(target_os = "macos"),
+        ..Default::default()
+    };
+    Some((code, at == press, mods))
 }
 
 #[cfg(test)]

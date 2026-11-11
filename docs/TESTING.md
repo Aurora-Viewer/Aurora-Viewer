@@ -5520,6 +5520,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GRID_HELP=<page>` | Help › Knowledge base shown, opening this page |
 | `AURORA_DEMO_MARKETPLACE=<page>` | Marketplace window open at start on this page |
 | `AURORA_DEMO_WEB_BROWSER=<page>` | Toolbar web browser window open at start on this page |
+| `AURORA_DEMO_WEB_BROWSER_KEYS=edit`, `copy` or `paste` | The Edit shortcuts of `AURORA_DEMO_MEDIA_CLICK` in that window's page |
 | `AURORA_DEMO_MARKETPLACE_LISTINGS=<mode>` | Marketplace listings window open on a simulated SLM server |
 | `AURORA_DEMO_BAN=1` | Ban lines |
 | `AURORA_DEMO_RESTRICTED=1` | Parcel that forbids everything |
@@ -8806,6 +8807,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the status line and load bar under the page. An http(s) link clicked in
   a page opens in the same window; a SLURL acts in the viewer; a link that
   asks for a new window (`target="_blank"`) does nothing.
+- **`AURORA_DEMO_WEB_BROWSER_KEYS=edit`, `copy` or `paste`**: with
+  `AURORA_DEMO_WEB_BROWSER`, the page gets the keyboard at frame 760 as
+  after a click on it, then the keys of `AURORA_DEMO_MEDIA_CLICK`'s mode
+  of the same name reach its focused field on the same frames
+  (`AURORA_DEMO_MEDIA_CLICK_FRAME` moves them): "aurora" typed, then the
+  Edit shortcuts, with the same expected field and clipboard. The page
+  should focus its field itself (`autofocus`). At frame 899 the log has
+  `demo: web browser clipboard after the cut: Some("aurora")`. It checks
+  the web window's side of cut and copy, `ui/web_view.rs`.
 - **`AURORA_DEMO_MARKETPLACE=<page>`**: World › SL Marketplace stands for
   this page in demo (a local `file:///…` page is enough): the window opens
   at start on it, the menu entry shows, and a link to an address under it
@@ -9842,7 +9852,7 @@ What the inventory must show with these scenarios:
 |---|---|
 | `AURORA_DEMO_MEDIA=<url>` or `1` | Media on a prim |
 | `AURORA_DEMO_PARCEL_MEDIA=<url>` or `1` | Parcel media |
-| `AURORA_DEMO_MEDIA_CLICK="x,y[,x2,y2][,edit\|paste]"` | Clicks on the media |
+| `AURORA_DEMO_MEDIA_CLICK="x,y[,x2,y2][,edit\|copy\|paste]"` | Clicks on the media |
 | `AURORA_DEMO_MEDIA_CLICK_FRAME=<n>` | Starting frame of these clicks |
 | `AURORA_DEMO_MEDIA_PACK=consent`, `declined`, `downloading`, `installing` or `failed` | The download's consent card, or a fixed state of the media plugins download |
 | `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
@@ -10119,7 +10129,12 @@ What the inventory must show with these scenarios:
   `demo: media clipboard after the cut: Some("aurora")`. With
   `paste`, the viewer puts "pasted" on the clipboard, as another program
   would, then presses Ctrl+V: the field reads "aurorapasted" when the page
-  gets the system clipboard.
+  gets the system clipboard. With `copy`, Ctrl+A, Ctrl+C, Right (no
+  modifier, to drop the selection) and Ctrl+V: the field reads
+  "auroraaurora" when the copy reaches the system clipboard and leaves
+  the field as it was; "aurora" means the copy deleted the text,
+  "aurorastale" that nothing was copied. The clipboard is logged at
+  frame 899 as with `edit`.
   `AURORA_DEMO_MEDIA_CLICK_FRAME` changes
   the starting frame to let the plugin load; also works with
   `AURORA_DEMO_HUDS=media`.
