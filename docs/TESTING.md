@@ -4512,6 +4512,8 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_COPLANAR_DECAL=1`, `mask` or `blend` | Two dirt strips blended over a grass face of the same static mesh, 9 m along the start view (#3059) |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
 | `AURORA_DEMO_PLANTS=1`, `far` or `dense` | Linden trees and grass: every species near or far along the start view, or a forest |
+| `AURORA_DEMO_PARTICLE_GLASS=1` or `dense` | Fountains behind, in front of and through two glass panes (the right one glowing), or 300 thin panes and 36 emitters (the cap of 256 particle runs) |
+| `AURORA_PARTICLE_INTERLEAVE=0` | Particles as before the interleave: all after the blended faces and the overlays, radial sort, not clipped at the water (A/B) |
 | `AURORA_DEMO_BLEND_SHADOWS=1` or `dense` | Alpha-blended panels in the sun (greenhouse pane, face and texture alpha), or 400 greenhouse panes |
 | `AURORA_DEMO_FEET=opaque` or `blend` | A shoe on each foot of our avatar and of the crowd, and two blocks on the ground (contact shadows) |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
@@ -4793,6 +4795,24 @@ both open states and the selection count. Capture at frame 620.
   left half, leaves in the top right quarter, grass blades from the bottom
   edge), only with this scenario. Close-ups: `AURORA_DEMO_CAMERA=close,790,185,80`
   on the tree behind the palm, capture at frame 760.
+- **`AURORA_DEMO_PARTICLE_GLASS=1|dense`** (`demo_particle_glass.rs`), with
+  `AURORA_PARTICLE_INTERLEAVE=0|1` for the A/B: particles drawn between the
+  blended faces by view depth (`scene/particle_order.rs`). `1`: two 3 m
+  glass panes 9 m along the start view (face alpha 0.45, the right one
+  glowing), a fountain 2 m behind each, one 2 m in front of each and one in
+  the left pane's plane. Expected: the particles behind a pane tinted by the
+  glass and those in front clear, the arc through the left pane cut exactly
+  at it, the glowing pane keeping its glow over the particles behind it;
+  with `AURORA_PARTICLE_INTERLEAVE=0` all the particles are over the glass.
+  `dense`: 300 thin panes 8 to 80 m ahead and 36 fountains over the same
+  depths, more than 256 runs, for the cost of the cap: read `p_part_order`,
+  `part_runs`, `r_*`, `g_transparent` and `g_post` with `AURORA_PROFILE=1`,
+  alternating `AURORA_PARTICLE_INTERLEAVE=0` and `1`. Under the water,
+  `AURORA_DEMO_WATER=shore:alpha:particles` (also `medium:shore:alpha:particles`)
+  adds a fountain behind and one in front of each of the three blended boxes
+  of `:alpha`: the particles under the surface are refracted and fogged like
+  the box, those above it are not, a fountain crossing the surface is cut at
+  it. `AURORA_PARTICLE_INTERLEAVE=0` brings back the former order and no clip.
 - **`AURORA_DEMO_BLEND_SHADOWS=1|dense`**: alpha-blended prims that cast
   sun shadows (`demo_blend_shadows.rs`), best from
   `AURORA_DEMO_POS="80,100"`. `1`: six 2 m panels lying 1.3 m above the
@@ -11784,7 +11804,9 @@ thread.
     mirror, then the particles — `part_sources` systems set up or stopped
     by the object updates, `part_sim` simulation of each source,
     `part_list` instances of the frame sorted from the farthest to the
-    nearest (`particles` gives their number) —, `lights` nearest local
+    nearest (`particles` gives their number), `part_order` their split at
+    the water and their merge into the blended faces (`part_runs` gives the
+    number of switches drawn) —, `lights` nearest local
     lights and `probes` reflection probes (search for the candidates by
     slices, slots, face to capture);
   - the parts of the interface (`u_*`, in `ui`): `bars` top and bottom

@@ -302,6 +302,34 @@ pub fn update(
             ));
         }
     }
+    if mode.contains("alpha") && mode.contains("particles") {
+        static SENT: AtomicBool = AtomicBool::new(false);
+        // Particles with those boxes (the order of particles among the
+        // blended faces, and the particles under the water drawn before it):
+        // a fountain 3 m behind each box and one 3 m in front of it, seen
+        // from the shore. Those under the surface are refracted and fogged
+        // like the box, a fountain crossing it is cut at it.
+        for (k, (x, z)) in [(52.0, 17.6), (55.0, 19.5), (58.0, 22.1)].into_iter().enumerate() {
+            for (j, y) in [124.0, 130.0].into_iter().enumerate() {
+                let mut emitter = super::prim(
+                    99540 + (k * 2 + j) as u32,
+                    Vec3::new(x, y, z),
+                    Quat::IDENTITY,
+                    Vec3::splat(0.25),
+                    box_shape,
+                    super::te([0.1, 0.1, 0.12, 1.0], 0, false, 0.0),
+                    Default::default(),
+                    "",
+                );
+                // (sent once: another system block would restart it)
+                if !SENT.load(Ordering::Relaxed) {
+                    emitter.particles = aurora_net::objects::ParticleUpdate::Set(super::fountain_particles());
+                }
+                objects.push(emitter);
+            }
+        }
+        SENT.store(true, Ordering::Relaxed);
+    }
     for (id, pos) in [
         // Shin-deep wading: feet cross the surface during the fixture's gait.
         (

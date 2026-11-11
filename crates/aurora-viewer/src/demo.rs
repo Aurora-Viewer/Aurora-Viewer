@@ -53,6 +53,10 @@ pub mod asset_server;
 pub mod attention;
 #[path = "demo_auto_hover.rs"]
 pub mod auto_hover;
+/// Fountains behind, in front of and through glass panes, for the order of
+/// particles among the blended faces (AURORA_DEMO_PARTICLE_GLASS).
+#[path = "demo_particle_glass.rs"]
+pub mod particle_glass;
 /// Blended panes standing in the sun, for their shadows
 /// (AURORA_DEMO_BLEND_SHADOWS).
 #[path = "demo_blend_shadows.rs"]
@@ -6108,6 +6112,7 @@ pub fn events() -> Vec<NetEvent> {
     ev.extend(sculpt::events());
     ev.extend(plants::events());
     ev.extend(blend_shadows::events());
+    ev.extend(particle_glass::events());
     ev.extend(alpha_mask_ab::events());
     ev.extend(tortured_prims::events());
     ev.extend(bom_rezzed::events());
