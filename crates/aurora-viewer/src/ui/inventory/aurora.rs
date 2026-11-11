@@ -109,12 +109,13 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
     if frame == 2 {
         // "-no-details": the same width, the details hidden
         let size = match mode.strip_suffix("-no-details").unwrap_or(mode) {
-            "aurora-medium" | "aurora-sidebar-medium" | "aurora-worn-medium" => egui::vec2(800.0, 640.0),
+            "aurora-medium" | "aurora-sidebar-medium" | "aurora-worn-medium" | "aurora-delete-confirm-medium" => egui::vec2(800.0, 640.0),
             "aurora-wide"
             | "aurora-worn-wide"
             | "aurora-sidebar-wide"
             | "aurora-smart-wide"
             | "aurora-keyboard-wide"
+            | "aurora-delete-confirm-wide"
             | "aurora-rights"
             | "aurora-columns"
             | "aurora-columns-hidden"

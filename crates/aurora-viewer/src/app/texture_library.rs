@@ -439,7 +439,7 @@ impl App {
             self.settings.texture_library.texture_preview_size = None;
             self.settings.texture_library.material_preview_size = None;
             self.texture_library.demo(&mode, self.world.agent_id);
-            if mode.starts_with("face-") {
+            if mode.starts_with("face-") || mode == "preview-controls-local-apply" {
                 if let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::action_id(970)) {
                     let position = self.world.agent.position + Vec3::new(0.0, -2.0, 1.0);
                     if let Some(object) = self.world.objects.get_mut(idx) {
@@ -553,11 +553,45 @@ impl App {
                     ctx,
                     &library::preview_window_id(item),
                     egui::pos2(24.0 + index as f32 * 660.0, 60.0),
-                    egui::vec2(620.0, 720.0),
+                    if mode.ends_with("-narrow") {
+                        egui::vec2(280.0, 520.0)
+                    } else {
+                        egui::vec2(620.0, 720.0)
+                    },
                 );
             }
             if self.frame_count == 700 {
-                self.texture_library.demo_preview_controls(&mode);
+                self.texture_library.demo_preview_controls(&mode, &mut self.world);
+            }
+        }
+        if self.demo && std::env::var("AURORA_DEMO_TEXTURE_LIBRARY").as_deref() == Ok("preview-controls-local-apply") {
+            let [texture, _, item, _] = crate::demo::texture_library::preview_items();
+            if self.frame_count == 740
+                && let Some(material) = self.texture_library.demo_material_draft(item)
+            {
+                self.resource_material_save(item, material, None);
+                self.texture_library.close_texture(texture);
+                ui::widgets::move_floater(ctx, &library::preview_window_id(item), egui::pos2(24.0, 60.0));
+            }
+            if self.frame_count == 760
+                && let Some(object) = self.world.objects.index_of_uuid(&crate::demo::action_id(970))
+            {
+                self.apply_texture_library_drop(Drop {
+                    item,
+                    object,
+                    face: 0,
+                    all: true,
+                    linkset: false,
+                    confirmed: false,
+                    contents: false,
+                    remove_pbr: false,
+                });
+                let asset = self.world.inventory.items.get(&item).map(|item| item.asset_id);
+                let maps = asset
+                    .and_then(|asset| self.scene.materials.peek(&asset))
+                    .map(|material| crate::imports::maps::ids(&material));
+                let applied = self.world.objects.get(object).and_then(|object| object.visual_material(0));
+                log::info!("demo saved local material: asset={asset:?}, maps={maps:?}, applied={applied:?}");
             }
         }
         let preferences = self.settings.texture_library.clone();
@@ -659,6 +693,10 @@ impl App {
         }
     }
     fn resource_material_save(&mut self, id: Uuid, material: aurora_assets::PbrMaterial, name: Option<String>) {
+        // LLMaterialEditor::getEncodedAsset / finishInventoryUpload
+        // (indra/newview/llmaterialeditor.cpp) retain local bitmap IDs. Our
+        // local registry restores stable IDs, so the saved asset resolves the
+        // same local textures when used on a face, without uploading pixels.
         let Some(item) = self.world.inventory.items.get(&id).cloned() else {
             return;
         };
