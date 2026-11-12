@@ -40,6 +40,14 @@ fn account(grid: &str, username: &str) -> String {
     format!("{}|{}", grid.trim(), username.trim().to_lowercase())
 }
 
+/// The credential store's entries of one saved login, as (service, account):
+/// its password hash and its second-factor authorization. The removal from
+/// this computer (`uninstall.rs`) deletes them without reading them.
+pub fn store_entries(grid: &str, username: &str) -> [(&'static str, String); 2] {
+    let account = account(grid, username);
+    [(SERVICE, account.clone()), (MFA_SERVICE, account)]
+}
+
 fn entry(grid: &str, username: &str) -> Option<keyring::Entry> {
     service_entry(SERVICE, grid, username)
 }

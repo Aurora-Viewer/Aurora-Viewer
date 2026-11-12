@@ -41,6 +41,7 @@ pub(crate) mod scroll_offset;
 #[cfg(test)]
 pub(crate) mod steady_tests;
 mod text_field;
+mod tracks;
 mod unread;
 mod volume;
 mod workspace;
@@ -49,9 +50,14 @@ pub use copy_on_click::copy_on_click;
 pub(crate) use modal_keys::{default_button, enter_pressed};
 pub use pills::{
     clearable_search_box, dot_pill, dot_pill_width, filter_field, filter_pill, filter_pill_at, filter_pill_width, pill_tab, pill_tab_wide,
-    search_box,
+    reveal_search_selection, search_box, search_cleared, search_list_item, search_scroll_to_column, search_scroll_to_row, search_text_edit,
+    search_text_edit_with_margin,
 };
 pub use text_field::text_field;
+pub use tracks::{
+    TRACK_INSET, TrackFace, TrackLit, button_track, help_tag, icon_track, labelled_choice, paint_tile_button, track_button,
+    wide_button_track,
+};
 pub use unread::{CountSize, UnreadCount, unread_count};
 pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
 pub use workspace::{
@@ -60,7 +66,8 @@ pub use workspace::{
 };
 pub(crate) use workspace::{
     finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island_shape, organization_drag_preview,
-    organization_header, organization_section, organization_typography, overlay, overlay_frame, paint_world_label,
+    organization_drop_target, organization_header, organization_section, organization_source, organization_typography, overlay,
+    overlay_frame, paint_world_label,
 };
 
 /// Whether UI owns a world-pointer event at `pos` (logical points). Resize
@@ -189,11 +196,41 @@ pub(crate) fn faux_bold_offset(ui: &egui::Ui) -> Option<Vec2> {
     Some(Vec2::new(ppp.round().max(1.0) / ppp, 0.0))
 }
 
+/// A floater's inner margin around its body (neither `flush_body` nor
+/// `framed_header`, not minimized), and the width of its outline.
+const FLOATER_MARGIN: egui::Margin = egui::Margin {
+    left: 10,
+    right: 10,
+    top: 5,
+    bottom: 10,
+};
+const FLOATER_STROKE: f32 = 1.0;
+/// The title row's least height, its title's size, and the room left
+/// between the divider under it and the body.
+const TITLE_ROW_MIN: f32 = 28.0;
+const TITLE_SIZE: f32 = 14.0;
+const UNDER_DIVIDER: f32 = 5.0;
 /// What a floater has above and below its body besides its title: the
 /// margins of its frame and its outline.
-const BODY_CHROME: f32 = 17.0;
+const BODY_CHROME: f32 = FLOATER_MARGIN.top as f32 + FLOATER_MARGIN.bottom as f32 + 2.0 * FLOATER_STROKE;
 /// The least height the scrolled body of a floater keeps.
 const MIN_SCROLLED_BODY: f32 = 80.0;
+
+/// What a floater of the usual layout (title row and divider, no status
+/// row, neither `flush_body` nor `framed_header`) adds around its body:
+/// its margins and outline across; down, those with the title row and the
+/// divider under it. A window whose minimum follows its body adds this.
+pub fn floater_chrome(ctx: &egui::Context) -> Vec2 {
+    let gap = ctx.global_style().spacing.item_spacing.y;
+    let title = ctx
+        .fonts_mut(|f| f.row_height(&egui::FontId::proportional(TITLE_SIZE)))
+        .max(TITLE_ROW_MIN);
+    let m = FLOATER_MARGIN;
+    Vec2::new(
+        m.leftf() + m.rightf() + 2.0 * FLOATER_STROKE,
+        BODY_CHROME + title + gap + DIVIDER_ROOM + gap + UNDER_DIVIDER,
+    )
+}
 
 /// `pos` moved so that a window of `size` placed there stands inside `area`
 /// (its top left corner first, when it is larger).
@@ -277,9 +314,13 @@ pub struct Floater<'a> {
     pub header_status: Vec<(&'static str, String, Color32)>,
     /// A text action at the right end of the secondary header row.
     pub header_status_action: Option<(&'a str, &'a str, &'a str, &'a mut bool)>,
+    /// A single-line detail row inside the expanded title section.
+    pub header_summary: Option<egui::WidgetText>,
+    pub header_summary_action: Option<&'a mut bool>,
     /// A short muted text right after the title (a count of what the
     /// window holds).
     pub title_note: Option<String>,
+    pub title_note_tooltip: Option<String>,
     /// A state at the right end of the title bar, before its buttons: a
     /// dot of its colour and its text in muted.
     pub title_state: Option<(Color32, String)>,
@@ -337,7 +378,10 @@ impl<'a> Floater<'a> {
             title: title.into(),
             header_status: Vec::new(),
             header_status_action: None,
+            header_summary: None,
+            header_summary_action: None,
             title_note: None,
+            title_note_tooltip: None,
             title_state: None,
             default_pos: pos,
             default_size: size,
@@ -389,6 +433,12 @@ impl<'a> Floater<'a> {
     /// A muted text after the title (see `title_note`).
     pub fn title_note(mut self, note: impl Into<String>) -> Self {
         self.title_note = Some(note.into());
+        self
+    }
+
+    /// Details shown when hovering the muted text after the title.
+    pub fn title_note_tooltip(mut self, tooltip: impl Into<String>) -> Self {
+        self.title_note_tooltip = Some(tooltip.into());
         self
     }
 
@@ -515,7 +565,7 @@ impl<'a> Floater<'a> {
                 p.panel.b(),
                 p.panel_alpha,
             ))
-            .stroke(border_stroke(p, Stroke::new(1.0, p.muted_dim.gamma_multiply(0.6))))
+            .stroke(border_stroke(p, Stroke::new(FLOATER_STROKE, p.muted_dim.gamma_multiply(0.6))))
             .corner_radius(ctx.global_style().visuals.window_corner_radius)
             .shadow(ctx.global_style().visuals.window_shadow)
             .inner_margin(if self.framed_header.is_some() {
@@ -527,13 +577,14 @@ impl<'a> Floater<'a> {
                     top: if minimized && !compact { 4 } else { 5 },
                     bottom: if minimized && !compact { 4 } else { 0 },
                 }
-            } else {
+            } else if minimized && !compact {
                 egui::Margin {
-                    left: 10,
-                    right: 10,
-                    top: if minimized && !compact { 4 } else { 5 },
-                    bottom: if minimized && !compact { 4 } else { 10 },
+                    top: 4,
+                    bottom: 4,
+                    ..FLOATER_MARGIN
                 }
+            } else {
+                FLOATER_MARGIN
             });
         // Ctrl+W closes it as its cross does, when it is the frontmost.
         // Ctrl+Shift+W closes every window.
@@ -696,6 +747,8 @@ impl<'a> Floater<'a> {
             }
             // title bar
             let mut buttons_left = f32::INFINITY;
+            let mut note_rect = None;
+            let mut primary_title_rect = None;
             let framed_header = self.framed_header;
             if framed_header.is_some() {
                 ui.spacing_mut().item_spacing.y = 0.0;
@@ -705,8 +758,8 @@ impl<'a> Floater<'a> {
                     ui.spacing_mut().interact_size.y = 20.0;
                 }
                 let title_row = ui.horizontal(|ui| {
-                    ui.set_min_height(if framed_header.is_some() { 20.0 } else { 28.0 });
-                    let title = RichText::new(&self.title).size(14.0).strong().color(p.ink);
+                    ui.set_min_height(if framed_header.is_some() { 20.0 } else { TITLE_ROW_MIN });
+                    let title = RichText::new(&self.title).size(TITLE_SIZE).strong().color(p.ink);
                     // a fixed floater is as wide as its title; a resizable one
                     // cuts a long title short before the buttons (LLFloater
                     // titles end with an ellipsis)
@@ -768,13 +821,15 @@ impl<'a> Floater<'a> {
                                 }
                                 ui.add(egui::Label::new(title).truncate());
                                 if let Some(note) = &self.title_note {
-                                    ui.add(egui::Label::new(RichText::new(note).size(12.0).color(p.muted)).truncate());
+                                    let response = ui.add(egui::Label::new(RichText::new(note).size(12.0).color(p.muted)).truncate());
+                                    note_rect = Some(response.rect);
                                 }
                             });
                         }
                     });
                 });
-                if !self.header_status.is_empty() || self.header_status_action.is_some() {
+                primary_title_rect = Some(title_row.response.rect);
+                if (!minimized || compact) && (!self.header_status.is_empty() || self.header_status_action.is_some()) {
                     let status = |ui: &mut egui::Ui| {
                         ui.horizontal_wrapped(|ui| {
                             ui.spacing_mut().item_spacing = Vec2::new(7.0, 2.0);
@@ -806,6 +861,24 @@ impl<'a> Floater<'a> {
                         status(ui);
                     }
                 }
+                if (!minimized || compact)
+                    && let Some(summary) = &self.header_summary
+                {
+                    let full_text = summary.text().to_owned();
+                    let sense = if self.header_summary_action.is_some() {
+                        Sense::click()
+                    } else {
+                        Sense::hover()
+                    };
+                    if ui
+                        .add(egui::Label::new(summary.clone()).truncate().sense(sense))
+                        .on_hover_text(full_text)
+                        .clicked()
+                        && let Some(clicked) = &mut self.header_summary_action
+                    {
+                        **clicked = true;
+                    }
+                }
                 title_row
             };
             let flush = self.flush_body;
@@ -829,22 +902,30 @@ impl<'a> Floater<'a> {
             } else {
                 header_content(ui).response
             };
-            let mut title_rect = header.rect;
+            // Secondary header controls own their clicks; only the title row
+            // is the window's double-click target.
+            let mut title_rect = primary_title_rect.unwrap_or(header.rect);
             if framed_header.is_some() {
                 ui.painter().hline(header.rect.x_range(), header.rect.bottom(), divider_stroke(p));
             }
             title_rect.max.x = buttons_left;
             // Keep the title buttons outside the double-click target; Window
             // still owns dragging the bar, including when it is minimized.
-            if ui
-                .interact(title_rect, window_id.with("title_double_click"), Sense::click())
-                .double_clicked()
-            {
+            let title_response = ui.interact(title_rect, window_id.with("title_double_click"), Sense::click());
+            if title_response.double_clicked() {
                 toggle_min = true;
+            }
+            // The double-click target owns title-bar hover. Keep its interaction
+            // and restrict the note's tooltip to the note's own rectangle.
+            if let Some(rect) = note_rect
+                && let Some(tooltip) = &self.title_note_tooltip
+                && ui.input(|input| input.pointer.hover_pos().is_some_and(|pos| rect.contains(pos)))
+            {
+                title_response.with_new_rect(rect).on_hover_text(tooltip);
             }
             if compact {
                 divider(ui, p);
-                ui.add_space(5.0);
+                ui.add_space(UNDER_DIVIDER);
                 out = Some(body(ui));
             } else if !minimized {
                 if flush {
@@ -855,7 +936,7 @@ impl<'a> Floater<'a> {
                             .hline(header.rect.x_range(), header.rect.bottom() + 2.0, divider_stroke(p));
                     } else {
                         divider(ui, p);
-                        ui.add_space(5.0);
+                        ui.add_space(UNDER_DIVIDER);
                     }
                 }
                 if scrolls {
@@ -1516,12 +1597,14 @@ pub fn border_stroke(p: &Palette, usual: Stroke) -> Stroke {
     }
 }
 
+/// The room a `divider` takes across its line.
+const DIVIDER_ROOM: f32 = 6.0;
+
 /// Thin line between two zones of a window, across the layout (horizontal in
 /// a column, vertical in a row), in the room of egui's separator: a window
 /// keeps its layout. Not for buttons or toolbar items: their spacing and the
 /// pill of the hovered one tell them apart. A menu uses `menu::separator`.
 pub fn divider(ui: &mut egui::Ui, p: &Palette) -> egui::Response {
-    const ROOM: f32 = 6.0;
     let across = !ui.layout().main_dir().is_horizontal();
     let available = if ui.is_sizing_pass() {
         Vec2::ZERO
@@ -1529,9 +1612,9 @@ pub fn divider(ui: &mut egui::Ui, p: &Palette) -> egui::Response {
         ui.available_size_before_wrap()
     };
     let size = if across {
-        Vec2::new(available.x, ROOM)
+        Vec2::new(available.x, DIVIDER_ROOM)
     } else {
-        Vec2::new(ROOM, available.y)
+        Vec2::new(DIVIDER_ROOM, available.y)
     };
     let (rect, resp) = ui.allocate_at_least(size, Sense::hover());
     if ui.is_rect_visible(rect) {
@@ -1588,6 +1671,25 @@ pub fn switch(ui: &mut egui::Ui, p: &Palette, on: &mut bool) -> egui::Response {
     let knob = egui::Rect::from_center_size(egui::pos2(x, rect.center().y), Vec2::splat(KNOB));
     painter.rect_filled(knob, inner_radius(ui.visuals()), if *on { p.on_accent } else { p.muted });
     resp
+}
+
+/// Compact padding for values adjoining construction controls.
+const READOUT_PADDING: Vec2 = Vec2::new(4.0, 1.0);
+pub const TEXT_BUTTON_HEIGHT: f32 = 18.0;
+
+/// A non-interactive value with the same neutral face as the adjoining buttons.
+pub fn readout_sized(ui: &mut egui::Ui, label: impl Into<egui::WidgetText>, size: Vec2) -> egui::Response {
+    let label = label.into();
+    let response = ui
+        .scope(|ui| {
+            ui.spacing_mut().button_padding = READOUT_PADDING;
+            let face = ui.visuals().widgets.inactive;
+            ui.visuals_mut().widgets.noninteractive = face;
+            ui.add_sized(size, egui::Button::new(label.clone()).sense(egui::Sense::hover()).truncate())
+        })
+        .inner;
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, ui.is_enabled(), label.text()));
+    response
 }
 
 /// Check box of the interface, with the contract of `ui.checkbox`: the
@@ -1748,6 +1850,25 @@ pub fn switch_labeled(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: impl
     ui.horizontal(|ui| {
         let mut resp = switch(ui, p, on);
         let text = ui.add(egui::Label::new(label).sense(Sense::click()));
+        if text.clicked() {
+            *on = !*on;
+            resp.mark_changed();
+        }
+        resp.union(text)
+    })
+    .inner
+}
+
+/// [`switch_labeled`] in a narrow column: the label wraps onto more lines
+/// instead of running past the column's edge (a long translation, a larger
+/// font), the switch beside its first line. It wraps within what is shown:
+/// a wider row above can stretch the column past its clip.
+pub fn switch_labeled_wrapped(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: impl Into<egui::WidgetText>) -> egui::Response {
+    let room = ui.available_width().min(ui.clip_rect().right() - ui.cursor().left()).max(0.0);
+    ui.horizontal_top(|ui| {
+        ui.set_max_width(room);
+        let mut resp = switch(ui, p, on);
+        let text = ui.add(egui::Label::new(label).wrap().sense(Sense::click()));
         if text.clicked() {
             *on = !*on;
             resp.mark_changed();
@@ -1999,8 +2120,8 @@ pub fn status_dot(ui: &mut egui::Ui, color: Color32) {
     ui.painter().circle_filled(rect.center(), 3.5, color);
 }
 
-pub fn search_field(ui: &mut egui::Ui, text: &mut String, hint: &str, width: f32) -> egui::Response {
-    ui.add(egui::TextEdit::singleline(text).hint_text(hint).desired_width(width))
+pub fn search_field(ui: &mut egui::Ui, p: &Palette, text: &mut String, hint: &str, width: f32) -> egui::Response {
+    search_text_edit(ui, p, text, |edit| edit.hint_text(hint).desired_width(width))
 }
 
 /// Small flat button with a Tabler icon (copy / paste / flip...).
@@ -2062,7 +2183,7 @@ fn sized_icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enab
 
 /// Small flat text button.
 pub fn flat_button(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Response {
-    text_button(ui, p, label, None)
+    text_button(ui, p.ink, label, None)
 }
 
 /// A light toolbar action using the same gray/active underline as the tabs.
@@ -2114,14 +2235,51 @@ pub fn paint_ink_left(painter: &egui::Painter, galley: std::sync::Arc<egui::Gall
 
 /// Equal-sized dialog buttons; long script labels keep their full hover text.
 pub fn flat_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: Vec2) -> egui::Response {
-    text_button(ui, p, label, Some(size)).on_hover_text(label)
+    text_button(ui, p.ink, label, Some(size)).on_hover_text(label)
 }
 
-fn text_button(ui: &mut egui::Ui, p: &Palette, label: &str, size: Option<Vec2>) -> egui::Response {
+/// The initial Enter action of a confirmation with no text field. Give its
+/// visible default real focus so the first Tab advances from that button.
+pub fn default_button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, size: Vec2) -> egui::Response {
+    let hint = modal_keys::show_default_hint(ui);
+    ui.scope(|ui| {
+        if hint {
+            let active = ui.visuals().widgets.active;
+            ui.visuals_mut().widgets.inactive = active;
+            ui.visuals_mut().widgets.hovered = active;
+        }
+        let ink = if hint { p.on_accent } else { p.ink };
+        let mut response = text_button(ui, ink, label, Some(size)).on_hover_text(label);
+        // Keep the modal's opening-Enter guard when its default gains focus:
+        // egui otherwise turns held-key repeats into focused-button clicks.
+        if ui.input(|input| {
+            input.events.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::Key {
+                        key: egui::Key::Enter,
+                        pressed: true,
+                        repeat: true,
+                        ..
+                    }
+                )
+            })
+        }) {
+            response.flags.remove(egui::response::Flags::FAKE_PRIMARY_CLICKED);
+        }
+        if hint && response.enabled() && ui.memory(|m| m.allows_interaction(response.layer_id)) {
+            response.request_focus();
+        }
+        modal_keys::default_button(response)
+    })
+    .inner
+}
+
+fn text_button(ui: &mut egui::Ui, ink: Color32, label: &str, size: Option<Vec2>) -> egui::Response {
     // Keep the button in the parent's layout so wrapped toolbars can break
     // before it. A child UI would wrap internally and enlarge narrow windows.
     // The theme gives every button its plain filled face.
-    let button = egui::Button::new(RichText::new(label).font(control_font(ui, 12.0)).color(p.ink));
+    let button = egui::Button::new(RichText::new(label).font(control_font(ui, 12.0)).color(ink));
     match size {
         Some(size) => ui.add_sized(size, button.truncate()),
         None => {
@@ -2917,6 +3075,63 @@ pub fn paint_row_text(painter: &egui::Painter, galley: std::sync::Arc<egui::Gall
     painter.galley(pos, galley, color);
 }
 
+/// A row of a window's rail (Places, Appearance's showcase): icon, name,
+/// count; `depth` indents a sub-folder. The chosen row takes the accent's
+/// wash, a hovered one the raised face.
+#[allow(clippy::too_many_arguments)]
+pub fn rail_row(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    tint: Color32,
+    label: &str,
+    count: Option<usize>,
+    on: bool,
+    depth: usize,
+) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), on, label));
+    if !ui.is_rect_visible(rect) {
+        return resp;
+    }
+    let radius = ui.visuals().window_corner_radius;
+    if on {
+        ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.28));
+    } else if resp.hovered() {
+        ui.painter().rect_filled(rect, radius, p.raised);
+    }
+    let x = rect.left() + 10.0 + depth as f32 * 14.0;
+    if let Some(t) = super::icons::global(icon) {
+        ui.painter().image(
+            t.id(),
+            egui::Rect::from_center_size(egui::pos2(x + 8.0, rect.center().y), Vec2::splat(16.0)),
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+            if on && tint == p.muted { p.violet_pale } else { tint },
+        );
+    }
+    let one_line = |text: &str, size: f32, color: Color32, width: f32| {
+        let mut job =
+            egui::text::LayoutJob::single_section(text.to_owned(), egui::TextFormat::simple(egui::FontId::proportional(size), color));
+        job.wrap = egui::text::TextWrapping {
+            max_width: width.max(1.0),
+            max_rows: 1,
+            break_anywhere: true,
+            overflow_character: Some('…'),
+        };
+        ui.painter().layout_job(job)
+    };
+    let num = count.map(|n| one_line(&n.to_string(), 11.5, p.muted, 40.0));
+    let num_w = num.as_ref().map_or(0.0, |g| g.size().x + 10.0);
+    let ink = if tint == p.violet_light { tint } else { p.ink };
+    let g = one_line(label, 13.0, ink, rect.right() - num_w - x - 25.0);
+    paint_row_text(ui.painter(), g, x + 25.0, rect.center().y, ink);
+    if let Some(g) = num {
+        let w = g.size().x;
+        paint_row_text(ui.painter(), g, rect.right() - 10.0 - w, rect.center().y, p.muted);
+    }
+    resp
+}
+
 /// The margin that puts the capitals of a text field in `font` in the middle
 /// of the field (the human's choice of 2026-10-22): egui centres the text's
 /// row, whose room for descenders leaves the letters high (Inter at 13
@@ -2960,6 +3175,27 @@ pub fn row_tag_width(ui: &egui::Ui, text: &str) -> f32 {
 /// Text colour shared by row tags and the names that follow their state.
 pub fn row_tag_ink(p: &Palette, active: bool) -> Color32 {
     if active { p.teal } else { p.muted }
+}
+
+/// Colors `(ink, fill)` for the active group tag pill.
+pub fn active_tag_colors(p: &Palette) -> (Color32, Color32) {
+    (p.teal, p.teal.gamma_multiply(0.14))
+}
+
+/// Measures a small row tag pill (such as "active" next to a group). Returns `(galley, total_width)`.
+pub fn tag_pill_layout(ui: &egui::Ui, text: &str, ink: Color32) -> (std::sync::Arc<egui::Galley>, f32) {
+    let g = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), egui::FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())), ink);
+    let w = g.size().x + 12.0;
+    (g, w)
+}
+
+/// Paints a small row tag pill (such as "active" next to a group) into `rect`.
+pub fn paint_tag_pill(ui: &egui::Ui, g: std::sync::Arc<egui::Galley>, rect: egui::Rect, ink: Color32, fill: Color32) {
+    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
+    let left = rect.center().x - g.size().x / 2.0;
+    paint_row_text(ui.painter(), g, left, rect.center().y, ink);
 }
 
 /// A small tag after an item's name, the same in every list: teal when

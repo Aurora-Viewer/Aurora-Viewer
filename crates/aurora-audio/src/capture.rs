@@ -220,11 +220,45 @@ struct MicInner {
 }
 
 impl Drop for MicInner {
+    /// Closing the control channel stops the capture thread within a few
+    /// milliseconds, but its last step, dropping the cpal stream, waits for
+    /// the audio driver, which can hang (#2635). The last clone is dropped
+    /// on the main thread (voice turned off, `voice.rs`), so it never waits:
+    /// the thread is joined by a short-lived closer instead. A new
+    /// microphone may open meanwhile: it gets its own thread, stream and
+    /// ring.
     fn drop(&mut self) {
         drop(self.ctl.lock().take());
         if let Some(h) = self.thread.lock().take() {
-            let _ = h.join();
+            close_in_background(h, CLOSE_WARN_AFTER);
         }
+    }
+}
+
+/// A capture thread still running this long after its microphone was closed
+/// is logged as stuck in the audio driver.
+const CLOSE_WARN_AFTER: Duration = Duration::from_secs(3);
+
+/// Joins the capture thread `h` on a thread of its own, warning once if it
+/// has not ended after `warn_after`. Returns at once; if no thread can be
+/// started, `h` is detached rather than joined here.
+fn close_in_background(h: thread::JoinHandle<()>, warn_after: Duration) {
+    let spawned = thread::Builder::new().name("aurora-mic-close".into()).spawn(move || {
+        let start = std::time::Instant::now();
+        while !h.is_finished() {
+            if start.elapsed() >= warn_after {
+                log::warn!(
+                    "audio input: the device has not closed after {} s; the audio driver is holding it",
+                    warn_after.as_secs()
+                );
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        let _ = h.join();
+    });
+    if let Err(e) = spawned {
+        log::warn!("audio input: closing without waiting for the device ({e})");
     }
 }
 
@@ -290,7 +324,7 @@ impl MicCapture {
                 Ok(mic)
             }
             Ok(Err(e)) => {
-                let _ = handle.join();
+                close_in_background(handle, CLOSE_WARN_AFTER);
                 Err(e)
             }
             // Do not block on a wedged driver: the thread is detached.
@@ -680,6 +714,46 @@ mod tests {
         assert!(output[480..].iter().all(|&v| v == 0.0));
         feed.push(&[0.0; 14_400]);
         assert_eq!(mic.level(), 0.0);
+    }
+
+    #[test]
+    fn closing_never_waits_for_a_stuck_device() {
+        let (_writer, mic) = MicCapture::with_ring();
+        let (release_tx, release_rx) = bounded::<()>(0);
+        let (done_tx, done_rx) = bounded::<()>(1);
+        // Stands in for a capture thread whose driver never releases the
+        // device: it ignores the closed control channel and waits.
+        let stuck = thread::spawn(move || {
+            let _ = release_rx.recv();
+            let _ = done_tx.send(());
+        });
+        *mic.inner.thread.lock() = Some(stuck);
+        let start = std::time::Instant::now();
+        drop(mic);
+        assert!(start.elapsed() < Duration::from_millis(500), "drop waited {:?}", start.elapsed());
+
+        // A new microphone works while the old one is still closing.
+        let (mut feed, mic) = MicCapture::virtual_input();
+        assert_eq!(feed.push(&[0.25; 10]), 10);
+        assert_eq!(mic.available(), 10);
+
+        // Once the driver lets go, the old thread ends and is joined.
+        release_tx.send(()).unwrap();
+        done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    }
+
+    #[test]
+    fn a_stuck_close_still_joins_after_the_warning() {
+        let (release_tx, release_rx) = bounded::<()>(0);
+        let stuck = thread::spawn(move || {
+            let _ = release_rx.recv();
+        });
+        let start = std::time::Instant::now();
+        close_in_background(stuck, Duration::from_millis(10));
+        assert!(start.elapsed() < Duration::from_millis(500));
+        thread::sleep(Duration::from_millis(50));
+        // The closer is still waiting for the thread after its warning.
+        release_tx.send(()).unwrap();
     }
 
     fn sine(n: usize, amp: f32) -> Vec<f32> {

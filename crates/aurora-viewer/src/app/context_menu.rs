@@ -7,8 +7,59 @@ use crate::ui::context::{CtxAction, Facts, ObjectFacts, Target};
 use uuid::Uuid;
 
 impl App {
+    /// Open a web link already checked (`open_web_link`) where the browser
+    /// choice sends it: the system browser, the Marketplace window for a
+    /// Marketplace page, else the Web browser window, shown and brought to
+    /// the front like LLWeb::loadURLInternal (indra/newview/llweb.cpp).
+    pub(super) fn route_web_link(&mut self, url: String, entry: crate::link_trust::BrowserEntryPoint) {
+        let marketplace = self.marketplace_home();
+        let marketplace_url = matches!(
+            entry,
+            crate::link_trust::BrowserEntryPoint::MarketplaceLink | crate::link_trust::BrowserEntryPoint::MarketplaceWindow
+        ) || marketplace.is_some_and(|home| ui::marketplace::is_marketplace_url(&url, &home));
+        let system = crate::link_trust::should_use_system_browser(&url, self.settings.browser_behavior, entry);
+        if system {
+            self.egui_ctx.open_url(egui::OpenUrl::new_tab(url));
+        } else if marketplace_url {
+            self.marketplace_ui.open(Some(url));
+        } else {
+            self.web_browser_ui.go_to(&url);
+            let window = ui::web_browser::WINDOW;
+            ui::widgets::open_floater(&self.egui_ctx, window, &mut self.panels.web_browser);
+            ui::widgets::bring_floater_front(&self.egui_ctx, window);
+        }
+    }
+
+    /// A web link clicked anywhere: refused when it is not a web page, then
+    /// checked (the link warning) and routed (`route_web_link`). `entry`
+    /// None reads it from the URL: a Marketplace page or an ordinary link.
+    pub(super) fn open_web_link(&mut self, url: String, requested_entry: Option<crate::link_trust::BrowserEntryPoint>) {
+        use crate::link_trust::Trust;
+
+        if let Some(scheme) = crate::link_trust::refused_scheme(&url) {
+            log::warn!("link not opened: the {scheme} scheme is not a web page");
+            return;
+        }
+        let marketplace = self.marketplace_home();
+        let marketplace_url = marketplace.is_some_and(|home| ui::marketplace::is_marketplace_url(&url, &home));
+        let entry = requested_entry.unwrap_or(if marketplace_url {
+            crate::link_trust::BrowserEntryPoint::MarketplaceLink
+        } else {
+            crate::link_trust::BrowserEntryPoint::Link
+        });
+        let trust = crate::link_trust::classify(&url);
+        match trust {
+            Trust::Dangerous(why) => self.url_confirm = Some((url, false, Some(why), entry)),
+            Trust::Unknown if self.settings.warn_external_links => self.url_confirm = Some((url, false, None, entry)),
+            _ => self.route_web_link(url, entry),
+        }
+    }
+
     /// Right click on the world: the menu of what is under the cursor.
     pub(super) fn open_context_menu(&mut self) {
+        if self.photo_full_frame() {
+            return;
+        }
         self.click(click_pick::Click::Menu);
     }
 
@@ -71,7 +122,6 @@ impl App {
         if self.gfx.is_none() {
             return;
         }
-        let now = Instant::now();
         let Some((picked, point)) = self.menu_pick() else {
             return;
         };
@@ -88,6 +138,9 @@ impl App {
         }
         // the previous menu's selection goes, as deselectUnused would
         self.build.release_menu_selection(&self.world);
+        // Shift or Ctrl alone adds to the selection or takes out of it
+        // (LLToolPie::handleRightClickPick, the click's mask)
+        let extend = crate::build::BuildTool::menu_extends(self.shift, self.ctrl, self.alt);
         let me = self.world.agent_id;
         let target = match picked.and_then(|i| self.world.objects.get(i).map(|o| (i, o))) {
             Some((_, o)) if o.is_avatar() => Target::Avatar {
@@ -99,7 +152,7 @@ impl App {
                 let (key, full_id) = (o.key, o.full_id);
                 match ui::context::wearer(&self.world, idx) {
                     Some(w) if w == me => {
-                        self.build.select_for_menu(&mut self.world, &self.settings.build, idx);
+                        self.build.select_for_menu_with(&mut self.world, &self.settings.build, idx, extend);
                         self.flush_build();
                         Target::Attachment { key }
                     }
@@ -111,12 +164,12 @@ impl App {
                         attachment: Some(full_id),
                     },
                     None => {
-                        let offset = Scene::object_transform(&self.world, idx, now, 0)
-                            .map(|(pos, rot, _)| rot.inverse() * (point - pos))
-                            .unwrap_or(Vec3::ZERO);
+                        let ray = self.object_menu.ray;
+                        let offset =
+                            super::object_actions::object_sit_offset(&self.world, &self.camera, idx, point, ray).unwrap_or(Vec3::ZERO);
                         // selected and outlined while the menu is open
                         // (LLToolSelect::handleObjectSelection, temp_select)
-                        self.build.select_for_menu(&mut self.world, &self.settings.build, idx);
+                        self.build.select_for_menu_with(&mut self.world, &self.settings.build, idx, extend);
                         self.flush_build();
                         Target::Object { key, full_id, offset }
                     }
@@ -162,6 +215,7 @@ impl App {
         let w = &self.world;
         let mut f = Facts {
             worn_shape: crate::shape_editor::worn_shape(&self.world),
+            shape_xml_export: self.worn_shape_xml_allowed() && !self.shape_ui.xml_menu.busy(),
             me: w.agent_id,
             seated: w.agent.is_sitting(),
             flying: w.agent.flying,
@@ -215,6 +269,7 @@ impl App {
                 f.voice_volume = crate::ui::context::voice_volume_of(w, *id);
                 f.worn = !super::inspect::worn_roots(w, id).is_empty();
                 f.moderation = self.moderation_rights(*id);
+                f.god = w.god_level > 0;
             }
             _ => {}
         }
@@ -307,7 +362,7 @@ impl App {
         } else {
             w.place_details.open_panel(source, &w.map, &mut w.landmarks, now);
             self.panels.places = true;
-            self.places_ui.raise();
+            self.places_ui.show_profile();
         }
     }
 
@@ -366,7 +421,7 @@ impl App {
         let (commands, requests, properties) = self.object_profile.take_output();
         if !commands.is_empty() {
             self.interactions.on_properties(&properties);
-            self.build.on_properties(properties);
+            self.build.on_properties(&self.world, properties);
         }
         for command in commands {
             self.send(command);
@@ -422,6 +477,7 @@ impl App {
                 self.on_ctx_action(CtxAction::Edit(id));
                 self.build.tab = 3;
                 self.build.ui.tex_tab = 1;
+                self.build.keep_texture_tab();
             }
             CtxAction::TakeOffClothing(kind) => {
                 let items = crate::world::appearance::worn_clothing(&self.world.inventory)
@@ -475,7 +531,13 @@ impl App {
             }
             CtxAction::NewPhysics => self.new_physics(),
             CtxAction::Freeze(id) => self.ask_moderation(id, false),
+            CtxAction::ModerationParcel(id) => self.moderation_menu_opened(id),
             CtxAction::Eject(id) => self.ask_moderation(id, true),
+            CtxAction::EstateKick(id) => self.ask_estate(id, land_moderation::EstateAct::Kick),
+            CtxAction::EstateTeleportHome(id) => self.ask_estate(id, land_moderation::EstateAct::TeleportHome),
+            CtxAction::EstateBan(id) => self.ask_estate(id, land_moderation::EstateAct::Ban),
+            CtxAction::GodKick(id, flags) => self.ask_god_kick(id, flags),
+            CtxAction::ExportShapeXml(item) => self.export_worn_shape_xml(item),
             CtxAction::EditWorn(item) => {
                 if self.world.inventory.items.get(&item).is_some_and(crate::wearable_editor::supported) {
                     self.open_wearable_editor(item);
@@ -575,7 +637,13 @@ impl App {
             CtxAction::CreateLandmark => self.open_create_landmark(None),
             CtxAction::OpenAppearance { tab, editing } => {
                 self.panels.appearance = true;
-                self.appearance_ui.open(tab, editing);
+                // "Change outfit" (tab 0) opens the outfit view in use,
+                // the gallery or the list, rather than always the gallery
+                if tab == 0 && !editing {
+                    self.appearance_ui.open_outfits();
+                } else {
+                    self.appearance_ui.open(tab, editing);
+                }
             }
             CtxAction::StandUp => self.send(NetCommand::OneShotControl(control::STAND_UP)),
             CtxAction::SitGround => self.send(NetCommand::OneShotControl(control::SIT_ON_GROUND)),
@@ -676,6 +744,7 @@ impl App {
             CtxAction::RefreshTextures(id) => self.refresh_object_textures(id),
             CtxAction::RefreshAvatarTextures(id) => self.refresh_avatar_textures(id),
             CtxAction::Rebake => self.rebake(),
+            CtxAction::ReloadAvatar(id) => self.reload_avatar(id),
             CtxAction::Take(id) | CtxAction::TakeCopy(id) => {
                 let copy = matches!(act, CtxAction::TakeCopy(_));
                 if let Some(idx) = self.world.objects.index_of_uuid(&id) {
@@ -799,11 +868,14 @@ impl App {
             }
             CtxAction::ZoomAvatar(id) => {
                 // a drawn avatar is followed; one only known by its map
-                // position is a fixed point (handle_zoom_to_object)
+                // position is a fixed point (handle_zoom_to_object with the
+                // radar entry's position), followed once drawn
+                self.zoom_awaited = None;
                 if let Some(avatar) = self.zoom_focus_object(&id).filter(|o| o.1.avatar) {
                     self.camera.zoom_avatar(avatar, &mut self.world.agent, &self.settings.camera);
-                } else if let Some(p) = ui::context::avatar_position(&self.world, &id) {
+                } else if let Some(p) = self.unloaded_avatar_point(&id) {
                     self.camera.zoom_to(p, None, &mut self.world.agent, &self.settings.camera);
+                    self.zoom_awaited = Some((id, p));
                 }
             }
             CtxAction::TeleportToAvatar(id) | CtxAction::ShowOnMap(id) => {
@@ -821,7 +893,9 @@ impl App {
                 let Some(region) = self.grid_region(&region) else {
                     return;
                 };
-                self.world.map.track_region(&region, pos);
+                // LLWorldMapHandler::handle: trackURL, then the map opens
+                // centred on the place ("center")
+                self.world.map.show_region(&region, pos);
                 ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
             }
             CtxAction::TeleportToPlace(region, pos) if self.settings.confirm_teleports => self.place_confirm = Some((region, pos, false)),
@@ -829,31 +903,8 @@ impl App {
                 self.teleport_to_location(region, pos);
             }
             CtxAction::AppLink(link) => self.run_app_link(link),
-            CtxAction::OpenUrl(url) => {
-                use crate::link_trust::Trust;
-                // only web pages go to the system, as the links of a
-                // notification: a link of a text, a profile or a server reply
-                // must not start a local program (the scheme alone is logged)
-                if let Some(scheme) = crate::link_trust::refused_scheme(&url) {
-                    log::warn!("link not opened: the {scheme} scheme is not a web page");
-                    return;
-                }
-                // LLWeb::loadURLInternal: a Marketplace page opens in the
-                // Marketplace window (Firestorm's default browser choice keeps
-                // the Second Life sites inside the viewer)
-                let marketplace = self.marketplace_home();
-                if marketplace.is_some_and(|home| ui::marketplace::is_marketplace_url(&url, &home))
-                    && !matches!(crate::link_trust::classify(&url), Trust::Dangerous(_))
-                {
-                    self.marketplace_ui.open(Some(url));
-                } else {
-                    match crate::link_trust::classify(&url) {
-                        Trust::Dangerous(why) => self.url_confirm = Some((url, false, Some(why))),
-                        Trust::Unknown if self.settings.warn_external_links => self.url_confirm = Some((url, false, None)),
-                        _ => self.egui_ctx.open_url(egui::OpenUrl::new_tab(url)),
-                    }
-                }
-            }
+            CtxAction::OpenUrl(url) => self.open_web_link(url, None),
+            CtxAction::OpenUrlExternal(url) => self.open_web_link(url, Some(crate::link_trust::BrowserEntryPoint::ExplicitExternal)),
             CtxAction::TeleportToPlaceConfirmed(region, pos) => {
                 self.teleport_to_location(region, pos);
             }
@@ -903,6 +954,34 @@ impl App {
     fn zoom_focus_object(&self, id: &uuid::Uuid) -> Option<(uuid::Uuid, crate::camera::FocusObject)> {
         let idx = self.world.objects.index_of_uuid(id)?;
         crate::camera::pick_focus_object(&self.world, idx, Instant::now())
+    }
+
+    /// Where to look for an avatar the camera cannot follow yet: its radar
+    /// position (exact when drawn, else its coarse location with a known
+    /// height), else its map position. The object's own position is not
+    /// used first: seated on a seat not loaded yet, it is relative to it.
+    fn unloaded_avatar_point(&self, id: &uuid::Uuid) -> Option<glam::Vec3> {
+        match self.radar.get(id) {
+            Some(e) if e.range.is_some() => Some(e.position),
+            _ => ui::context::avatar_position(&self.world, id),
+        }
+    }
+
+    /// The resident a zoom waits for is drawn: the camera now follows it,
+    /// unless it was moved off the point meanwhile (another focus, a reset,
+    /// Alt-click…).
+    pub(super) fn follow_awaited_zoom(&mut self) {
+        let Some((id, point)) = self.zoom_awaited else {
+            return;
+        };
+        let still_there =
+            self.camera.focus_object_id().is_none() && self.camera.focus_point().is_some_and(|f| f.distance_squared(point) < 0.01);
+        if !still_there {
+            self.zoom_awaited = None;
+        } else if let Some(avatar) = self.zoom_focus_object(&id).filter(|o| o.1.avatar) {
+            self.zoom_awaited = None;
+            self.camera.zoom_avatar(avatar, &mut self.world.agent, &self.settings.camera);
+        }
     }
 }
 

@@ -10,6 +10,7 @@ use super::widgets::{self, ActionKind};
 use crate::settings::{GridChoice, Settings};
 use crate::theme::Palette;
 use egui::{Color32, Frame, Margin, RichText, Sense, Stroke, TextEdit, Vec2};
+mod camera_limits_notice;
 mod carousel;
 mod chrome;
 mod credentials_form;
@@ -56,6 +57,19 @@ pub struct LoginForm {
     pub show_mfa: bool,
     pub tos_message: Option<String>,
     pub agree_tos: bool,
+    /// The login server's critical message (reason "critical"), to read
+    /// before the next attempt; `read_critical` is its own acknowledgement,
+    /// apart from the Terms of Service (LLLoginInstance::handleTOSResponse).
+    pub critical_message: Option<String>,
+    pub read_critical: bool,
+    /// The other server the login server sends the login on to
+    /// (`NetEvent::LoginFailed::next_server`), until the next attempt;
+    /// `accept_next_server` is its own checkbox.
+    pub next_server: Option<String>,
+    pub accept_next_server: bool,
+    /// The other servers agreed to for this account and grid, named in
+    /// every attempt (`LoginRequest::accepted_next_servers`).
+    pub accepted_next_servers: Vec<String>,
     pub error: Option<String>,
     /// The session ended with its region's restart: the login button reads
     /// "Reconnect" (region_restart.rs).
@@ -92,6 +106,18 @@ pub struct LoginForm {
     /// "Photo quality" was switched off after the last session crashed with
     /// it on (`app/snapshot.rs`, `photo_quality_at_start`).
     pub photo_quality_off: bool,
+    /// The camera's limits went back on with the settings' version 33
+    /// (`Settings::camera_limits_restored`).
+    pub camera_limits_restored: bool,
+}
+
+impl LoginForm {
+    /// Another account or grid: no other login server is agreed to any more.
+    pub fn forget_next_server(&mut self) {
+        self.next_server = None;
+        self.accept_next_server = false;
+        self.accepted_next_servers.clear();
+    }
 }
 
 #[derive(Default)]
@@ -105,6 +131,9 @@ pub enum LoginAction {
     SafeGraphics(safe_graphics_notice::Choice),
     /// A button of the photo quality card: turned back on (true) or read.
     PhotoQualityOff(bool),
+    /// A button of the camera limits card: the camera preferences (true) or
+    /// read.
+    CameraLimits(bool),
     #[default]
     None,
     Login,
@@ -124,6 +153,34 @@ pub(crate) fn client_tagline() -> &'static str {
         aurora_i18n::tr!("ui-login-second-life-client-rust-metal")
     } else {
         aurora_i18n::tr!("ui-login-second-life-client-rust-vulkan")
+    }
+}
+
+/// The Terms of Service page of Linden Lab's grids (the `real_url` of
+/// LLFloaterTOS, floater_tos.xml).
+const SECOND_LIFE_TERMS: &str = "https://secondlife.com/app/tos/";
+
+/// The page of the Terms of Service a login asks to accept: the first web
+/// address of the login server's `message` (an OpenSim grid names its page
+/// there, LLFloaterTOS::postBuild), else Linden Lab's page on their grids.
+pub(crate) fn terms_url(message: &str, login_uri: &str) -> Option<String> {
+    let named = message.split_whitespace().find_map(|word| {
+        let word = word.trim_matches(|c: char| matches!(c, '<' | '>' | '(' | ')' | '[' | ']' | '"' | '\'' | ',' | ';' | '.'));
+        let url = reqwest::Url::parse(word).ok()?;
+        matches!(url.scheme(), "http" | "https").then(|| String::from(url))
+    });
+    named.or_else(|| aurora_net::login::is_linden_login(login_uri).then(|| SECOND_LIFE_TERMS.to_owned()))
+}
+
+/// The link to the Terms of Service page, opened in the browser.
+pub(crate) fn terms_link(ui: &mut egui::Ui, p: &Palette, url: &str) {
+    let label = aurora_i18n::tr!("ui-login-terms-of-service-read");
+    let size = Vec2::new(ui.available_width(), 28.0);
+    if widgets::action_button(ui, p, "external-link-filled", label, ActionKind::Flat, size)
+        .on_hover_text(url)
+        .clicked()
+    {
+        ui.ctx().open_url(egui::OpenUrl::new_tab(url));
     }
 }
 
@@ -867,8 +924,11 @@ pub fn show(
                     widgets::divider(ui, p);
                     ui.label(RichText::new(aurora_i18n::tr!("ui-login-terms-of-service")).strong().color(p.amber));
                     egui::ScrollArea::vertical().max_height(120.0).show(ui, |ui| {
-                        ui.label(RichText::new(msg).size(12.0).color(p.muted));
+                        ui.label(RichText::new(&msg).size(12.0).color(p.muted));
                     });
+                    if let Some(url) = terms_url(&msg, &settings.login_uri()) {
+                        terms_link(ui, p, &url);
+                    }
                     if ui
                         .add_enabled(
                             form.block_reason.is_none() && !form.busy,
@@ -878,6 +938,52 @@ pub fn show(
                     {
                         form.agree_tos = true;
                         form.tos_message = None;
+                        action = LoginAction::Login;
+                    }
+                }
+                // a step of its own, as the Legacy Viewer's message_critical
+                // floater: reading it acknowledges this message only
+                if let Some(msg) = form.critical_message.clone() {
+                    ui.add_space(8.0);
+                    widgets::divider(ui, p);
+                    ui.label(RichText::new(aurora_i18n::tr!("ui-login-critical-message")).strong().color(p.amber));
+                    egui::ScrollArea::vertical()
+                        .id_salt("critical_message")
+                        .max_height(120.0)
+                        .show(ui, |ui| {
+                            ui.label(RichText::new(msg).size(12.0).color(p.muted));
+                        });
+                    if ui
+                        .add_enabled(
+                            form.block_reason.is_none() && !form.busy,
+                            egui::Button::new(aurora_i18n::tr!("ui-login-critical-message-read")),
+                        )
+                        .clicked()
+                    {
+                        form.read_critical = true;
+                        form.critical_message = None;
+                        action = LoginAction::Login;
+                    }
+                }
+                // the login would go on to another server: the user decides
+                if let Some(server) = form.next_server.clone() {
+                    ui.add_space(8.0);
+                    widgets::divider(ui, p);
+                    ui.label(RichText::new(aurora_i18n::tr!("ui-login-next-server")).strong());
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!("ui-login-next-server-body", server = server.as_str()))
+                            .size(12.0)
+                            .color(p.muted),
+                    );
+                    if ui
+                        .add_enabled(
+                            form.block_reason.is_none() && !form.busy,
+                            egui::Button::new(aurora_i18n::tr!("ui-login-next-server-accept")),
+                        )
+                        .clicked()
+                    {
+                        form.accepted_next_servers.push(server);
+                        form.next_server = None;
                         action = LoginAction::Login;
                     }
                 }
@@ -1070,6 +1176,167 @@ mod tests {
             &mut settings,
         );
         assert!(matches!(action, LoginAction::Login));
+    }
+
+    /// The Terms of Service link: the page the server's message names, else
+    /// Linden Lab's on their grids, else none.
+    #[test]
+    fn the_terms_link_is_the_page_the_server_names_or_linden_lab_s() {
+        let grid = "http://grid.example.org:8002/";
+        assert_eq!(
+            terms_url("Please accept the new terms.", aurora_net::login::SL_MAIN_GRID).as_deref(),
+            Some(SECOND_LIFE_TERMS)
+        );
+        assert_eq!(
+            terms_url("Read them (https://grid.example.org/tos.html).", grid).as_deref(),
+            Some("https://grid.example.org/tos.html")
+        );
+        assert_eq!(terms_url("Accept the terms.", grid), None);
+        assert_eq!(terms_url("ftp://grid.example.org/tos", grid), None);
+    }
+
+    /// The critical message is a step of its own: reading it sets
+    /// `read_critical` alone, and both flags start false.
+    #[test]
+    fn separate_step_for_the_login_critical_message() {
+        fn position(shape: &egui::Shape, label: &str) -> Option<egui::Pos2> {
+            match shape {
+                egui::Shape::Text(t) if t.galley.text() == label => Some(t.pos + egui::vec2(3.0, 5.0)),
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| position(s, label)),
+                _ => None,
+            }
+        }
+        let ctx = egui::Context::default();
+        let mut settings = Settings {
+            username: "Demo Resident".into(),
+            ..Default::default()
+        };
+        let mut form = LoginForm {
+            password: "synthetic".into(),
+            critical_message: Some("Synthetic message".into()),
+            ..Default::default()
+        };
+        assert!(!form.agree_tos && !form.read_critical);
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let info = LoginInfo::preview_release("0.3.0");
+        let mut draw = |events, form: &mut LoginForm| {
+            let mut action = LoginAction::None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    action = show(ui, &p, &icons, None, &mut settings, form, &info, None);
+                },
+            );
+            output.textures_delta.clear();
+            (action, output)
+        };
+        draw(vec![], &mut form);
+        let (_, output) = draw(vec![], &mut form);
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|s| position(&s.shape, aurora_i18n::tr!("ui-login-critical-message-read")))
+            .expect("the critical message's button");
+        let mut last = LoginAction::None;
+        for pressed in [true, false] {
+            last = draw(
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ],
+                &mut form,
+            )
+            .0;
+        }
+        assert!(matches!(last, LoginAction::Login));
+        assert!(form.read_critical);
+        assert!(!form.agree_tos);
+        assert!(form.critical_message.is_none());
+    }
+
+    /// Another login server is a step of its own: agreeing names that
+    /// server in the next attempt, and nothing else.
+    #[test]
+    fn another_login_server_is_agreed_to_in_its_own_step() {
+        fn position(shape: &egui::Shape, label: &str) -> Option<egui::Pos2> {
+            match shape {
+                egui::Shape::Text(t) if t.galley.text() == label => Some(t.pos + egui::vec2(3.0, 5.0)),
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| position(s, label)),
+                _ => None,
+            }
+        }
+        let ctx = egui::Context::default();
+        let mut settings = Settings {
+            username: "Demo Resident".into(),
+            ..Default::default()
+        };
+        let mut form = LoginForm {
+            password: "synthetic".into(),
+            next_server: Some("login.other-grid.example".into()),
+            ..Default::default()
+        };
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let info = LoginInfo::preview_release("0.3.0");
+        let mut draw = |events, form: &mut LoginForm| {
+            let mut action = LoginAction::None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    action = show(ui, &p, &icons, None, &mut settings, form, &info, None);
+                },
+            );
+            output.textures_delta.clear();
+            (action, output)
+        };
+        draw(vec![], &mut form);
+        let (_, output) = draw(vec![], &mut form);
+        let body = aurora_i18n::tr!("ui-login-next-server-body", server = "login.other-grid.example");
+        assert!(
+            output.shapes.iter().any(|s| position(&s.shape, &body).is_some()),
+            "the server is named"
+        );
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|s| position(&s.shape, aurora_i18n::tr!("ui-login-next-server-accept")))
+            .expect("the other server's button");
+        let mut last = LoginAction::None;
+        for pressed in [true, false] {
+            last = draw(
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    },
+                ],
+                &mut form,
+            )
+            .0;
+        }
+        assert!(matches!(last, LoginAction::Login));
+        assert_eq!(form.accepted_next_servers, ["login.other-grid.example"]);
+        assert!(form.next_server.is_none());
+        assert!(!form.agree_tos && !form.read_critical);
+        form.forget_next_server();
+        assert!(form.accepted_next_servers.is_empty());
     }
 
     /// At 1280 × 720 the news, as tall as the login card, stood over the

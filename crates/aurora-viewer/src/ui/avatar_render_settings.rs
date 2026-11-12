@@ -71,7 +71,7 @@ impl AvatarRenderSettings {
             .filter(|r| r.name.to_lowercase().contains(&filter) || (r.can_name && r.id.to_string().contains(&filter)))
             .collect();
         shown.sort_by(|a, b| {
-            let name = a.name.to_lowercase().cmp(&b.name.to_lowercase());
+            let name = crate::natural_order::cmp(&a.name, &b.name);
             let order = if self.sort_setting { a.mode.cmp(&b.mode).then(name) } else { name };
             let order = order.then(a.id.cmp(&b.id));
             if self.descending { order.reverse() } else { order }

@@ -18,7 +18,7 @@ const OLD_SUBFOLDER: &str = "Bridge";
 pub const NAME: &str = "#Aurora Bridge v1.0";
 // Stable inventory/script names let upgrades replace the existing controller
 // instead of wearing two bridges with competing physics.
-const VERSION: &str = "1.40";
+const VERSION: &str = "1.41";
 /// The controller's and query script's owner-say tags, never shown in chat.
 const PRIVATE_TAGS: [&str; 7] = [
     "<auroraBridge>",
@@ -29,7 +29,13 @@ const PRIVATE_TAGS: [&str; 7] = [
     "<auroraBridgeError>",
     "<auroraBridgeStatus>",
 ];
-const DISCOVERY_CHANNEL: i32 = -184735219;
+/// The hello channel of bridges up to 1.40. A worn bridge older than this
+/// session's scripts only listens there: see [`Bridge::discover`].
+const LEGACY_DISCOVERY_CHANNEL: i32 = -184735219;
+/// Silence on the bridge's own channel after which a worn bridge whose
+/// version is not known yet is also asked on the old one, so that it answers
+/// with its old version and gets updated well before its own 60 s detach.
+const LEGACY_DISCOVERY_AFTER: Duration = Duration::from_secs(10);
 const DISCOVERY_INTERVAL: Duration = Duration::from_secs(5);
 const ROCK: &str = "Rock - medium, round";
 const SOURCE: &str = include_str!("bridge/bridge.lsl");
@@ -61,6 +67,17 @@ const REINSTALL_LIMIT: usize = 3;
 pub mod demo;
 #[cfg(test)]
 mod tests;
+
+/// The negative chat channel the viewer and its own worn bridge talk on,
+/// derived from a key both of them know: the worn root for the hello, the IK
+/// relay's random session for its commands. The worn root gets a new key at
+/// each rez, so the channel changes with every login and is never a fixed
+/// one that any listener could watch. The bridge scripts compute the same
+/// value: `-0x10000000 - (integer)("0x" + llGetSubString((string)key, 0, 6))`.
+pub(crate) fn private_channel(key: Uuid) -> i32 {
+    // The first seven hex digits of the key's text form: 28 bits.
+    -0x1000_0000 - (key.as_u128() >> 100) as i32
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -703,13 +720,26 @@ impl Bridge {
         // No endpoint/token or public chat, and no physical command in this
         // request. A quiet attachment can be rediscovered after any login.
         self.probe = Some((self.object, now));
-        self.commands.push(NetCommand::ScriptDialogReply {
+        let hello = |channel| NetCommand::ScriptDialogReply {
             sender: None,
             object_id: self.agent,
-            channel: DISCOVERY_CHANNEL,
+            channel,
             index: 0,
             label: format!("auroraHello|{}", self.object),
-        });
+        };
+        self.commands.push(hello(private_channel(self.object)));
+        // A bridge worn since before this version listens on the old fixed
+        // channel only. Ask there too, only while the worn scripts are not
+        // verified yet and nothing answered on the new channel: current
+        // scripts answer a hello at once, with their hello or their status.
+        if self.phase == Phase::Verify
+            && self.since.is_some_and(|since| now.duration_since(since) >= LEGACY_DISCOVERY_AFTER)
+            && self.boot.is_none()
+            && self.candidate.is_none()
+            && self.rejection.is_none()
+        {
+            self.commands.push(hello(LEGACY_DISCOVERY_CHANNEL));
+        }
     }
     /// Accept the query service's hello only from the exact root we wear in
     /// the current region, with this bridge's folder and version.

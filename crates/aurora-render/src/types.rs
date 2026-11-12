@@ -93,20 +93,31 @@ pub fn unpack_tangent(normal: [i8; 4]) -> Option<(Vec3, f32)> {
 }
 
 /// Per-vertex skinning data (parallel stream): 4 joint indices and 4
-/// normalized weights. Terrain uses these same eight bytes for its frame
+/// normalized 16-bit weights. The Legacy Viewer sends its weights to the
+/// GPU as floats (LLVolumeFace's weight4, objectSkinV.glsl): 8 bits are not
+/// enough there, because bodies that drive long bone position offsets with
+/// very small weights turn each 1/255 step into millimetres of movement and
+/// the surface terraces (#2372). Terrain uses this same stream for its frame
 /// ([`pack_terrain_frame`]); its records never enable skinning.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable, Default)]
 pub struct SkinVertex {
     /// Mesh joint indices into the record's skin bindings (`flags[2]`).
     pub joints: [u8; 4],
-    pub weights: [u8; 4],
+    /// Unorm16 weights ([`pack_skin_weight`]), renormalised by the shader.
+    pub weights: [u16; 4],
 }
 
-/// Terrain has no skeleton: its parallel 8-byte stream holds octahedral
-/// normal/tangent directions (two snorm16 values each). This keeps the
-/// Legacy Viewer's terrain frame without reducing it to snorm8 or deriving
-/// the tangent from the normal. No vertex stride or GPU binding is added.
+/// The packed weight of a joint influence, 0.0..=1.0 in 65535 steps.
+pub fn pack_skin_weight(w: f32) -> u16 {
+    (w.clamp(0.0, 1.0) * 65535.0).round() as u16
+}
+
+/// Terrain has no skeleton: its parallel stream holds octahedral
+/// normal/tangent directions (two snorm16 values each): the normal in the
+/// joint bytes, the tangent in the first two weights (the last two stay 0).
+/// This keeps the Legacy Viewer's terrain frame without reducing it to snorm8
+/// or deriving the tangent from the normal. No GPU binding is added.
 pub fn pack_terrain_frame(normal: Vec3, tangent: Vec3) -> SkinVertex {
     let pack = |v: Vec3| {
         let v = v / v.abs().element_sum().max(1e-20);
@@ -115,20 +126,22 @@ pub fn pack_terrain_frame(normal: Vec3, tangent: Vec3) -> SkinVertex {
             p = (glam::Vec2::ONE - glam::Vec2::new(p.y, p.x).abs())
                 * glam::Vec2::new(if p.x < 0.0 { -1.0 } else { 1.0 }, if p.y < 0.0 { -1.0 } else { 1.0 });
         }
-        let x = ((p.x.clamp(-1.0, 1.0) * 32767.0).round() as i16).to_le_bytes();
-        let y = ((p.y.clamp(-1.0, 1.0) * 32767.0).round() as i16).to_le_bytes();
-        [x[0], x[1], y[0], y[1]]
+        [
+            (p.x.clamp(-1.0, 1.0) * 32767.0).round() as i16,
+            (p.y.clamp(-1.0, 1.0) * 32767.0).round() as i16,
+        ]
     };
+    let [nx, ny] = pack(normal).map(i16::to_le_bytes);
+    let [tx, ty] = pack(tangent);
     SkinVertex {
-        joints: pack(normal),
-        weights: pack(tangent),
+        joints: [nx[0], nx[1], ny[0], ny[1]],
+        weights: [tx as u16, ty as u16, 0, 0],
     }
 }
 
 pub fn unpack_terrain_frame(frame: SkinVertex) -> (Vec3, Vec3) {
-    let unpack = |bytes: [u8; 4]| {
-        let x = f32::from(i16::from_le_bytes([bytes[0], bytes[1]])) / 32767.0;
-        let y = f32::from(i16::from_le_bytes([bytes[2], bytes[3]])) / 32767.0;
+    let unpack = |x: i16, y: i16| {
+        let (x, y) = (f32::from(x) / 32767.0, f32::from(y) / 32767.0);
         let mut n = Vec3::new(x, y, 1.0 - x.abs() - y.abs());
         if n.z < 0.0 {
             n.x = (1.0 - y.abs()) * if x < 0.0 { -1.0 } else { 1.0 };
@@ -136,7 +149,11 @@ pub fn unpack_terrain_frame(frame: SkinVertex) -> (Vec3, Vec3) {
         }
         n.normalize_or(Vec3::Z)
     };
-    (unpack(frame.joints), unpack(frame.weights))
+    let j = frame.joints;
+    (
+        unpack(i16::from_le_bytes([j[0], j[1]]), i16::from_le_bytes([j[2], j[3]])),
+        unpack(frame.weights[0] as i16, frame.weights[1] as i16),
+    )
 }
 
 /// One mesh joint of a skinned mesh (LLMeshSkinInfo): its inverse bind
@@ -184,9 +201,17 @@ pub mod flags {
     pub const PORTAL_CLIP: u32 = 16384;
     /// Procedural Aurora portal surface; uses the ordinary sorted blend/glow.
     pub const PORTAL_EFFECT: u32 = 32768;
+    /// Bit of flags[3], above texture animation: world and worn object
+    /// geometry, excluding HUDs and the system avatar's masked body.
+    pub const OBJECT_MASK_PICK: u32 = 1 << 30;
     /// Bit of flags[3], above the texture animation's 24 packed bits.
     /// World faces whose material permits Blend texture alpha only.
     pub const WORLD_BLEND_PICK: u32 = 1 << 31;
+    /// Bits 24..26 of flags[3], above the texture animation: the layer rank
+    /// of a rigged face (`DrawRecord::set_layer_rank`, `layer_clip` in
+    /// object.wgsl).
+    pub const LAYER_RANK_SHIFT: u32 = 24;
+    pub const LAYER_RANK_MAX: u32 = 7;
 }
 
 pub const PORTAL_HALF_WIDTH: f32 = 1.0;
@@ -341,6 +366,16 @@ impl DrawRecord {
     /// flags[3]'s texture-animation mode and dimensions.
     pub fn set_world_blend_pick(&mut self, enabled: bool) {
         self.flags[3] = (self.flags[3] & !flags::WORLD_BLEND_PICK) | if enabled { flags::WORLD_BLEND_PICK } else { 0 };
+    }
+
+    /// Layer rank (0..=`flags::LAYER_RANK_MAX`) of a face that may lie
+    /// exactly on another one, such as a worn layer made from the body's own
+    /// mesh: the vertex shaders pull a higher rank toward the camera by a few
+    /// depth steps (`layer_clip`), so the same layer wins on every face and
+    /// after every rebuild, whatever the order of the draw records.
+    pub fn set_layer_rank(&mut self, rank: u32) {
+        let mask = flags::LAYER_RANK_MAX << flags::LAYER_RANK_SHIFT;
+        self.flags[3] = (self.flags[3] & !mask) | ((rank.min(flags::LAYER_RANK_MAX)) << flags::LAYER_RANK_SHIFT);
     }
 
     /// Upper 16 bits of flags.x: visual HUD zoom in units of 1/4096.
@@ -950,6 +985,35 @@ pub enum AntiAliasing {
     Taa,
     /// SMAA 1x, preset high (Firestorm RenderFSAAType 2).
     Smaa,
+    /// AMD FidelityFX Super Resolution 3.1 (fsr.rs) in the place of TAA,
+    /// the world drawn at the size of its quality mode.
+    Fsr(FsrQuality),
+}
+
+/// FSR's quality modes (FfxFsr3UpscalerQualityMode): how much smaller than
+/// the display the world is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FsrQuality {
+    /// At the display size: FSR as an anti-aliasing only.
+    NativeAa,
+    Quality,
+    Balanced,
+    Performance,
+    UltraPerformance,
+}
+
+impl FsrQuality {
+    /// The display size over the render size
+    /// (ffxFsr3UpscalerGetUpscaleRatioFromQualityMode).
+    pub fn ratio(self) -> f32 {
+        match self {
+            FsrQuality::NativeAa => 1.0,
+            FsrQuality::Quality => 1.5,
+            FsrQuality::Balanced => 1.7,
+            FsrQuality::Performance => 2.0,
+            FsrQuality::UltraPerformance => 3.0,
+        }
+    }
 }
 
 /// A photo drawn at its own size (snapshot window): the frame that carries
@@ -995,6 +1059,8 @@ pub struct RenderSettings {
     pub render_scale_percent: u32,
     pub water_effects: crate::WaterEffects,
     pub aa: AntiAliasing,
+    /// With FSR: RCAS's strength (0..1), none without RCAS.
+    pub fsr_sharpness: Option<f32>,
     pub tonemapper: Tonemapper,
     /// "HDR and Emissive" (RenderDisableVintageMode, which drives
     /// RenderHDREnabled and RenderEnableEmissiveBuffer). Off, the Legacy
@@ -1045,6 +1111,7 @@ impl Default for RenderSettings {
             // the state `Renderer::new` builds its pipelines and targets
             // for, not the viewer's default (SMAA, in its own settings)
             aa: AntiAliasing::Msaa(4),
+            fsr_sharpness: Some(0.8),
             tonemapper: Tonemapper::KhronosNeutral,
             hdr: true,
             shadow_resolution: 2048,
@@ -1356,6 +1423,9 @@ pub struct FrameParams {
     /// what is drawn keeps its coverage, in the snapshot's alpha or over a
     /// checkerboard on the live view.
     pub cutout: bool,
+    /// The sky's rendering type is hidden (the viewer's Advanced ›
+    /// Rendering types): the view starts from `clear_color` instead.
+    pub hide_sky: bool,
     /// The photo's look (looks.rs), over the image once tone mapped; None:
     /// none, at no cost.
     pub look: Option<crate::looks::PhotoLook>,
@@ -1461,6 +1531,9 @@ pub struct ProbeCapture {
     pub origin: Vec3,
     /// Near clip of the capture (LLReflectionMap::getNearClip).
     pub near: f32,
+    /// How far from `origin` the capture draws objects (m), its far clip
+    /// (RenderReflectionProbeDrawDistance in display_update_camera).
+    pub reach: f32,
     /// Cube face 0..5 (+X, -X, +Y, -Y, +Z, -Z).
     pub face: u32,
     /// Default probe: sky and terrain only.
@@ -1623,6 +1696,9 @@ pub struct RenderStats {
     /// presentation (ms; None when it was not presented). What the GPU
     /// still has to draw after `present` is not in it.
     pub input_ms: Option<f32>,
+    /// The render targets could not be made: video memory is full, the
+    /// frame shows the interface alone, and they are tried again.
+    pub video_memory_full: bool,
     /// Main thread: the sleep the frame pacing asks before the next frame
     /// reads its input (pacing.rs, ms).
     pub pace_ms: f32,
@@ -1701,7 +1777,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn terrain_frames_keep_direction_precision_in_the_existing_eight_bytes() {
+    fn small_weights_on_long_bone_offsets_deform_smoothly() {
+        // #2372: a body moves bones about 0.8 m and weights the surface a
+        // few percent on them. What the shader moves (weights renormalised,
+        // object.wgsl skin_matrix) must follow the mesh's weight closely.
+        let lever = 0.8;
+        let moved = |packed: [f32; 2]| packed[0] / (packed[0] + packed[1]) * lever;
+        let mut old_error = 0.0f32;
+        for i in 1..=200 {
+            let w = i as f32 * 0.0003;
+            let new = moved([pack_skin_weight(w), pack_skin_weight(1.0 - w)].map(f32::from));
+            assert!((new - w * lever).abs() < 0.00005, "weight {w}: {new} m instead of {} m", w * lever);
+            let old = moved([w, 1.0 - w].map(|w| (w * 255.0).round()));
+            old_error = old_error.max((old - w * lever).abs());
+        }
+        // the 8-bit weights stepped by more than a millimetre
+        assert!(old_error > 0.001, "{old_error}");
+        // the Legacy Viewer's smallest influence (LLVolume) still counts
+        assert!(pack_skin_weight(0.001) > 0);
+        assert_eq!(pack_skin_weight(1.0), u16::MAX);
+    }
+
+    #[test]
+    fn terrain_frames_keep_direction_precision_in_the_skin_stream() {
         for x in -3..=3 {
             for y in -3..=3 {
                 for z in -3..=3 {
@@ -1717,7 +1815,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(std::mem::size_of::<SkinVertex>(), 8);
+        assert_eq!(std::mem::size_of::<SkinVertex>(), 12);
         assert_eq!(std::mem::size_of::<Vertex>(), 24);
     }
 
@@ -2062,17 +2160,65 @@ mod tests {
     fn world_blend_pick_survives_zoom_packing_without_changing_texture_animation() {
         let animation = 1 | (7 << 8) | (15 << 16);
         let mut record = DrawRecord {
-            flags: [flags::PLANAR | flags::TEX_ANIM, 42, 128, animation],
+            flags: [flags::PLANAR | flags::TEX_ANIM, 42, 128, animation | flags::OBJECT_MASK_PICK],
             ..Default::default()
         };
         record.set_world_blend_pick(true);
         for zoom in [1.0, 0.1, 2.0, 8.0] {
             record.set_hud_zoom(zoom);
             assert_ne!(record.flags[3] & flags::WORLD_BLEND_PICK, 0);
+            assert_ne!(record.flags[3] & flags::OBJECT_MASK_PICK, 0);
             assert_eq!(record.flags[3] & 0x00ff_ffff, animation);
             assert_eq!(record.flags[0] & 0xffff, flags::PLANAR | flags::TEX_ANIM);
         }
         record.set_world_blend_pick(false);
-        assert_eq!(record.flags[3], animation);
+        assert_eq!(record.flags[3], animation | flags::OBJECT_MASK_PICK);
+    }
+
+    #[test]
+    fn layer_rank_keeps_texture_animation_and_pick_bits() {
+        let animation = 1 | (7 << 8) | (15 << 16);
+        let mut record = DrawRecord {
+            flags: [flags::SKINNED, 42, 128, animation | flags::OBJECT_MASK_PICK],
+            ..Default::default()
+        };
+        record.set_world_blend_pick(true);
+        for rank in 0..=flags::LAYER_RANK_MAX {
+            record.set_layer_rank(rank);
+            assert_eq!((record.flags[3] >> flags::LAYER_RANK_SHIFT) & flags::LAYER_RANK_MAX, rank);
+            assert_eq!(record.flags[3] & 0x00ff_ffff, animation);
+            assert_ne!(record.flags[3] & flags::OBJECT_MASK_PICK, 0);
+            assert_ne!(record.flags[3] & flags::WORLD_BLEND_PICK, 0);
+        }
+        record.set_layer_rank(99);
+        assert_eq!(
+            (record.flags[3] >> flags::LAYER_RANK_SHIFT) & flags::LAYER_RANK_MAX,
+            flags::LAYER_RANK_MAX
+        );
+        record.set_layer_rank(0);
+        assert_eq!(record.flags[3], animation | flags::OBJECT_MASK_PICK | flags::WORLD_BLEND_PICK);
+    }
+
+    /// The shaders read the rank with the same bits, in the same flags word.
+    #[test]
+    fn layer_rank_bits_match_wgsl() {
+        let wgsl = include_str!("shaders/common.wgsl");
+        assert!(wgsl.contains(&format!("const LAYER_RANK_SHIFT: u32 = {}u;", flags::LAYER_RANK_SHIFT)));
+        assert!(wgsl.contains(&format!("const LAYER_RANK_MAX: u32 = {}u;", flags::LAYER_RANK_MAX)));
+        let mask = flags::LAYER_RANK_MAX << flags::LAYER_RANK_SHIFT;
+        assert_eq!(mask & 0x00ff_ffff, 0, "clear of the texture animation");
+        assert_eq!(
+            mask & (flags::OBJECT_MASK_PICK | flags::WORLD_BLEND_PICK),
+            0,
+            "clear of the pick bits"
+        );
+        let object = include_str!("shaders/object.wgsl");
+        assert!(object.contains("(rec.flags.w >> LAYER_RANK_SHIFT) & LAYER_RANK_MAX"));
+        // every eye view of a face goes through eye_clip, or the prepass and
+        // the scene pass would disagree on a ranked face's depth (the terrain
+        // too: the prepass draws it with vs_depth)
+        for src in [object, include_str!("shaders/env.wgsl")] {
+            assert!(!src.contains("out.clip = frame.eye_view_proj * ep;"));
+        }
     }
 }

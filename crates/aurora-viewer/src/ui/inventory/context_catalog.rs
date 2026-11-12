@@ -551,9 +551,9 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                     aurora_i18n::tr!("ui-inventory-context-return-to-last-location"),
                     writable
                         && ids.iter().all(|id| {
-                            rules::original(inv, *id)
-                                .and_then(|id| inv.items.get(&id))
-                                .is_some_and(|item| item.asset_type == 6 && !facts.worn.contains(&item.id))
+                            rules::original(inv, *id).and_then(|id| inv.items.get(&id)).is_some_and(|item| {
+                                item.asset_type == 6 && !facts.worn.contains(&item.id) && rules::restorable(item, facts.opensim)
+                            })
                         }),
                     InvAction::Restore(target.unwrap_or(id)),
                 );
@@ -638,7 +638,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                     TEXT,
                     "pencil-filled",
                     aurora_i18n::tr!("common-edit"),
-                    original.is_some_and(|item| item.owner_mask & rules::MODIFY != 0),
+                    original.is_some_and(|item| rules::held(inv, item) & rules::MODIFY != 0),
                     Command::Worn(crate::ui::context::CtxAction::EditWorn(target.unwrap_or(id))),
                 );
             }
@@ -867,7 +867,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
         .filter(|it| !trash && super::context::exposes_asset_uuid(it.asset_type))
         .or_else(|| all.then_some(&placeholder))
     {
-        let asset = super::context::copyable_asset_uuid(it);
+        let asset = super::context::copyable_asset_uuid(inv, it, facts.god);
         c.add(
             "asset-uuid",
             &organize,
@@ -1187,7 +1187,14 @@ pub(super) fn execute(
             });
             submit(plan);
         }
-        Command::Delete(ids, purge) => st.dialog = Some(EditDialog::Delete(ids, purge)),
+        Command::Delete(ids, purge) => {
+            if purge {
+                // Permanent delete always asks (PurgeSelectedItems has no ignore).
+                st.dialog = Some(EditDialog::Delete(ids, true));
+            } else {
+                super::delete::confirm_or_run(inv, st, prefs, facts, actions, ids);
+            }
+        }
         Command::Share(ids) => {
             st.share_items = ids;
             st.share_picker.open(&format!("inventory_share_{}", st.ui_id), false);

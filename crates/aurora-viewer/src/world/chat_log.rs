@@ -319,21 +319,27 @@ impl ChatLog {
 
     /// Import from these folders, every file read again (the import window).
     pub fn import(&mut self, folders: Vec<PathBuf>) -> bool {
-        self.start_import(import::Sources::Folders(folders), false)
+        self.start_import(import::Sources::Folders(folders), import::Kinds::ALL, false)
     }
 
     /// Import from everything found for the account, without the files that
-    /// did not change since the last import (at login). Not on a grid whose
-    /// folders cannot be told apart: nobody would see which were read.
+    /// did not change since the last import (at login), and without what
+    /// the user chose not to save: unlike the window, nobody asked for this
+    /// import. Not on a grid whose folders cannot be told apart: nobody
+    /// would see which were read.
     pub fn import_found(&mut self, account: import::Account) -> bool {
-        if !account.grid_known() {
+        let kinds = import::Kinds {
+            im: self.cfg.log_im,
+            nearby: self.cfg.log_nearby,
+        };
+        if !account.grid_known() || !kinds.any() {
             return false;
         }
         let apps = self.legacy_apps();
-        self.start_import(import::Sources::Find { apps, account }, true)
+        self.start_import(import::Sources::Find { apps, account }, kinds, true)
     }
 
-    fn start_import(&mut self, sources: import::Sources, skip_unchanged: bool) -> bool {
+    fn start_import(&mut self, sources: import::Sources, kinds: import::Kinds, skip_unchanged: bool) -> bool {
         if self.importing.is_some() || self.moving.is_some() || self.erasing.is_some() {
             return false;
         }
@@ -342,6 +348,7 @@ impl ChatLog {
         };
         let request = import::Request {
             sources,
+            kinds,
             // beside the account's folder, not in it: never a transcript
             state: dir.with_extension("legacy-import.json"),
             dated: self.cfg.dated_names,

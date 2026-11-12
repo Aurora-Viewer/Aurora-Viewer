@@ -86,9 +86,11 @@ match it too (Hyprland: `class:^(aurora-viewer)$`; KDE: window class
 
 ## Web pages and video
 
-The first web page or video downloads the media plugins (about 200 MB) by
-itself, once; Preferences › Sound and voice › Media shows the progress. They
-go to `~/.local/share/auroraviewer/media-plugins`.
+The first time a web page or a video needs them, the viewer asks before it
+downloads the media plugins (about 200 MB), once; "Not now" leaves a
+Download button in Preferences › Sound and voice › Media and where the page
+would show, and the same row shows the progress. They go to
+`~/.local/share/auroraviewer/media-plugins`.
 
 - **Video does not play:** check that the GStreamer packages of step 1 are
   installed (`gst-libav` / `gstreamer1.0-libav` for H.264 and AAC).

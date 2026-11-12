@@ -14,8 +14,8 @@
 //! - The customise animation (LLAgentCamera::changeCameraToCustomizeAvatar
 //!   in indra/newview/llagentcamera.cpp, LLAgent::endAnimationUpdateUI in
 //!   indra/newview/llagent.cpp): when the camera frames our avatar for
-//!   editing its appearance (AppearanceCameraMovement, on by default; the
-//!   shape editor always does), our avatar stands up and
+//!   editing its appearance (AppearanceCameraMovement, on by default),
+//!   our avatar stands up and
 //!   ANIM_AGENT_CUSTOMIZE plays; leaving stops it and plays
 //!   ANIM_AGENT_CUSTOMIZE_DONE.
 //!
@@ -94,6 +94,7 @@ impl App {
             self.shape_ui.camera_pending |= self.shape_ui.open;
             self.wearable_ui.camera_pending |= self.wearable_ui.open;
         }
+        self.sync_appearance_camera();
         if self.demo && self.frame_count == 600 {
             match std::env::var("AURORA_DEMO_AVATAR_HEALTH").as_deref() {
                 Ok("undeform") => self.undeform_avatar(),
