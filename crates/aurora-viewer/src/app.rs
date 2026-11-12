@@ -11819,6 +11819,7 @@ impl App {
             if let Some(old) = self.retired_window.take() {
                 old.set_visible(false);
             }
+            crate::splash::shown();
             crate::crash::watch_window(&gfx.window);
             crate::crash::demo_freeze();
             crate::crash::demo_thread_death();
@@ -18678,6 +18679,7 @@ impl ApplicationHandler for App {
             Ok(w) => w,
             Err(e) => {
                 log::error!("cannot create window: {e}");
+                crate::splash::close();
                 graphics_start::report(&e.to_string(), capture);
                 event_loop.exit();
                 return;
@@ -18698,6 +18700,7 @@ impl ApplicationHandler for App {
                     aurora_i18n::tr!("app-aurora-viewer-unable-to-initialize-vulkan", e = format!("{}", e))
                 };
                 eprintln!("{message}");
+                crate::splash::close();
                 // unlike a missing card this is a crash, and a report is the
                 // only way to hear of it (#1892)
                 if matches!(e, aurora_render::RenderError::DeviceLost) {
