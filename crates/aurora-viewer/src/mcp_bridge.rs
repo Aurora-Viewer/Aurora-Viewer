@@ -3472,7 +3472,7 @@ impl App {
                     .world
                     .group_for_rez(self.settings.build.rez_under_land_group),
                 item,
-                ray_start: self.camera.position,
+                ray_start: pos_vec,
                 ray_end: pos_vec,
                 target: Uuid::nil(),
                 selected: select,
