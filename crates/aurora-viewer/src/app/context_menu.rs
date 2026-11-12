@@ -594,6 +594,30 @@ impl App {
                     self.apply_appearance_action(crate::world::appearance::Action::Remove(item));
                 }
             }
+            CtxAction::DetachDelete(key) => {
+                // the worn object's item, as Detach finds it; Inventory's
+                // "Detach and Delete" confirmation then asks about it without
+                // opening the Inventory window (refused under @showinv)
+                if let Some(idx) = self.world.objects.index_of(&key)
+                    && ui::context::wearer(&self.world, idx) == Some(self.world.agent_id)
+                    && let Some(item) = self
+                        .world
+                        .objects
+                        .get(linkset_root(&self.world, idx))
+                        .and_then(|o| o.attachment_item_id())
+                    && !self.world.rlva.has("showinv")
+                {
+                    // the same rules as Inventory's entry, checked before the
+                    // confirmation: its window may be closed to say why not
+                    let facts = ui::inventory::Facts::from_world(&self.world, self.appearance_ui.pending.is_some());
+                    if let Err(reason) = self
+                        .inventory_ui
+                        .ask_detach_delete(&self.world.inventory, &self.settings.inventory, &facts, item)
+                    {
+                        self.world.system_message(reason);
+                    }
+                }
+            }
             CtxAction::Touch(local_id) => self.menu_touch(local_id),
             CtxAction::Sit { target, offset } => {
                 if let Some(idx) = self.world.objects.index_of_uuid(&target)

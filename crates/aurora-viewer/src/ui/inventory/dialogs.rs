@@ -39,6 +39,7 @@ pub(super) fn show(
         EditDialog::Properties(..) => aurora_i18n::tr!("ui-inventory-dialogs-object-properties"),
         EditDialog::Delete(_, true) => aurora_i18n::tr!("ui-inventory-dialogs-purge-selection"),
         EditDialog::Delete(_, false) => aurora_i18n::tr!("ui-inventory-dialogs-delete-selection"),
+        EditDialog::DetachDelete(_) => aurora_i18n::tr!("ui-inventory-dialogs-detach-and-delete"),
         EditDialog::Empty(_) => aurora_i18n::tr!("common-empty-trash"),
         EditDialog::Ungroup(_) => aurora_i18n::tr!("ui-inventory-dialogs-ungroup-folder"),
         EditDialog::Discard(..) | EditDialog::SaveEmbedded(..) => aurora_i18n::tr!("ui-inventory-dialogs-save-changes"),
@@ -51,7 +52,7 @@ pub(super) fn show(
         dialog,
         EditDialog::Discard(_) | EditDialog::CopyEmbedded(..) | EditDialog::SaveEmbedded(_)
     );
-    let confirmation = matches!(dialog, EditDialog::Delete(..) | EditDialog::Empty(_));
+    let confirmation = matches!(dialog, EditDialog::Delete(..) | EditDialog::DetachDelete(_) | EditDialog::Empty(_));
     let window_id = format!(
         "inventory_{}_{}",
         if properties {
@@ -218,6 +219,32 @@ pub(super) fn show(
                         }
                         Err(reason) => st.message = reason,
                     }
+                }
+            }
+            // "DeleteWornItems" (notifications.xml): no ignore box.
+            EditDialog::DetachDelete(ids) => {
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(if ids.len() == 1 {
+                        aurora_i18n::tr!("ui-inventory-dialogs-delete", value0 = rules::name(inv, ids[0]).to_string())
+                    } else {
+                        aurora_i18n::tr!("ui-inventory-dialogs-delete-the-selected-items", value0 = format!("{}", ids.len()))
+                    })
+                    .strong()
+                    .color(p.ink),
+                );
+                ui.add_space(4.0);
+                ui.label(aurora_i18n::tr!("ui-inventory-dialogs-detach-and-delete-body"));
+                if confirmation_buttons(
+                    ui,
+                    p,
+                    st.pending.is_none(),
+                    aurora_i18n::tr!("ui-inventory-dialogs-detach-and-delete"),
+                    &mut done,
+                    st.ui_id,
+                ) {
+                    super::delete::start_detach(inv, st, prefs, facts, actions, std::mem::take(ids));
+                    done = true;
                 }
             }
             EditDialog::Empty(id) => {
@@ -545,7 +572,11 @@ fn confirmation_buttons(ui: &mut egui::Ui, p: &Palette, enabled: bool, label: &s
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_enabled_ui(enabled, |ui| {
                 // the Legacy Viewer's default="true" OK: Enter clicks it
-                let response = widgets::default_button_sized(ui, p, label, Vec2::new(120.0, 28.0));
+                // 120 px, wider when the label needs it ("Detach and Delete")
+                let font = widgets::control_font(ui, 12.0);
+                let text = ui.painter().layout_no_wrap(label.to_owned(), font, p.ink).size().x;
+                let width = (text + 2.0 * ui.spacing().button_padding.x + 8.0).max(120.0);
+                let response = widgets::default_button_sized(ui, p, label, Vec2::new(width, 28.0));
                 if cfg!(test) || super::delete::demo_enabled() {
                     ui.ctx()
                         .data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_delete_confirm", window)), response.rect.center()));
