@@ -16,6 +16,9 @@ cargo run -p aurora-viewer -- --title "Test my-task"
 
 The logs are in `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\`.
 
+The VR preferences can be inspected offline with `AURORA_DEMO_OPTIONS=vr`.
+Headset movement and resolution checks are listed in [VR.md](VR.md#movement-and-camera-preferences).
+
 For localisation, launch the same scenario with `--language en`, then
 `--language fr`. `AURORA_DEMO_OPTIONS=1` opens the interface preferences,
 with the language selector. Remove the argument to check the immediate
@@ -452,7 +455,7 @@ the background still applies outside screenshots.
 
 | Variable | Effect |
 |---|---|
-| `AURORA_DEMO_JOYSTICK=<mode>` | Synthetic joystick input, preferences, lens reset gestures or an independent six-axis camera flight |
+| `AURORA_DEMO_JOYSTICK=<mode>` | Synthetic controller input and preferences, avatar camera cycling, lens reset gestures or six-axis camera flight |
 | `AURORA_CAPTURE=<file.png>` | Saves a screenshot of the frame |
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
@@ -481,9 +484,74 @@ to OpenXR or provide stereo views.
 `AURORA_DEMO_JOYSTICK`: at frame 600, injects a synthetic eight-axis
 controller through the production input path, without connecting a device
 or a grid. `preferences` opens Mouse and keyboard › Joystick and 3D mouse;
+`gamepad-preferences` opens Preferences › Controls › Gamepad › Map controls.
+A connected physical gamepad remains active; without one, a synthetic gamepad
+walks after frame 650 so mappings can be explored while moving;
+Gamepad › Settings shows the gamepad-only flycam travel speed and level-camera
+control. Horizontal and vertical sensitivity sliders edit the gamepad profile’s per-mode axis gains.
+Avatar Mode maps zoom to RT/LT, vertical pan to D-pad up/down, horizontal pan to
+D-pad left/right, and nearest/previous avatar cycling to RB/R1 and LB/L1 by default. Controller zoom stays in third
+person at close range; mouse-wheel zoom can still enter mouselook. Cycling before the nearest or
+after the furthest avatar returns to the player. In Avatar flight, B/Circle ascends
+and X/Square descends;
+flycam down/up are X (Square)/B (Circle). X (Square) crouches in Avatar and
+First Person; Y (Triangle) resets the current view in every mode. First Person
+returns to the current head position and avatar heading; VR Avatar recenters by horizontal translation,
+clearing pan while preserving zoom; Flycam removes artificial pitch and roll without moving.
+Earlier default flycam height bindings migrate to B/X once, alongside the
+new pan/target layout. Other custom bindings remain editable in Map controls.
+In VR, seated keyboard movement reaches vehicle controls and flycam keyboard travel
+remains independent of the avatar. First Person and the player-focused Avatar camera
+follow seated avatar/vehicle yaw while keeping the horizon level. VR ignores creator
+seat views, forced first-person requests and scripted follow-camera poses, retaining
+its own orbit, pan and zoom. Desktop mouse and keyboard retain the native seat and
+FollowCam paths. Gamepad orbit, pan and zoom can take over the seated view and
+retain the adjustment while driving. Avatar and Flycam look sensitivity default to 4.0,
+first-person look sensitivity to 1.875. Movement, orbit and zoom retain the pan
+point. Y/Triangle, switching view modes, and explicit avatar-target cycling reset
+horizontal and vertical pan. New movement/view input recenters VR by translation
+toward that pan point. First person has independent mappings and
+look sensitivity/inversion. Change view mode cycles First person → Avatar →
+Flycam → First person; disabled modes are skipped. First-person zoom uses a
+smooth transient lens zoom: it stays after release and looking around, then
+resets on player movement input or when entering flycam (passive avatar motion does not reset it); saved camera and mouse zoom settings are unchanged.
+In normal use, select **Input gamepad** in Gamepad Settings and turn on
+**Enable gamepad input**. The gamepad profile uses the mappings above by
+default. Joystick and 3D mouse has its own device, enable switch and tuning.
+Keep the flycam level gradually levels the camera when
+enabled and preserves free roll when disabled. The Flycam mapping list includes pressure-sensitive travel slowdown
+and speedup triggers;
 `axes` filters the axis mapping rows in preference search; `avatar` walks and turns;
 `flycam` starts at frame 630 and moves after 650;
 `roll` also enables roll and disables auto-level. Capture after frame 900.
+`avatar-camera` (add `AURORA_DEMO_CROWD=6` for several targets) pans the player view down during frames 620–699, cycles to the
+nearest loaded avatar at 720, moves that avatar at 800, cycles forward at 900
+and back at 1000. Previous at 1040 returns to the player; Previous at 1060
+selects the furthest avatar; Next at 1080 returns to the player; Next at 1090
+selects the nearest. The player then moves during 1100–1159. Capture at
+`850,1050,1070,1085,1250`: tracked head, player, furthest head, player, and
+return after locomotion with the
+configured preset height. With `RUST_LOG=aurora_viewer=info`, demo log lines record the People-list rank, selected avatar,
+eye and focus. Synthetic camera pans do not change saved settings.
+`view-modes` presses Change view mode at frames 630, 900 and 1100; looks around
+in first person at 680–759, pulls RT immediately to full pressure at 780–819, looks around at 830–859,
+receives passive avatar displacement at 840, walks at 870–889, zooms again at 896–899
+and moves the flycam at 950–999. Entering flycam must restore the normal lens. Capture `770,810,865,895,1030,1170` for the first-person look, smooth lens zoom,
+retained zoom after release/look, movement reset, flycam and returned avatar. With `RUST_LOG=aurora_viewer=info`,
+`gamepad view modes` traces record camera modes, yaw, pitch and field of view.
+`avatar-orbit` zooms the unpanned player view during 620–999, pans down during
+1005–1044, zooms to the panned pivot during 1060–1519, orbits approximately half
+a turn during 1540–1649, receives passive player displacement at 1680, then
+zooms again during 1700–1849. Capture
+`1000,1010,1025,1055,1520,1700,1850`: third person at its close limit, the
+existing camera transition easing into the new pan pivot, panned rear view, panned
+front view and continued front zoom. `RUST_LOG=aurora_viewer=info` traces the
+player/focus positions, radius and mode at these frames; panned focus X/Y
+should match the moving player and the close radius should match front/back.
+`gamepad-defaults` uses the gamepad profile defaults in memory with an Xbox-style
+synthetic device whose native button order places triggers before A/B. Combine
+with `AURORA_DEMO_OPTIONS=gamepad/0` or `gamepad/1` to inspect settings/mappings;
+capture after frame 680. Nothing is saved by the scenario.
 `rearm` keeps a relative zoom axis at -1, enters flycam with a synthetic
 button press at frame 630 and leaves it at 750 while movement is held.
 The other axes centre at 770 and move the avatar again from 800.
@@ -3639,7 +3707,7 @@ That ignored test creates and removes its own isolated profile.
   list, parent-local numeric controls, markers and native save/load/import
   actions. No motorcycle, contacts or IK-project draft is loaded or written.
   Prefer the dedicated `AURORA_DEMO_POSER` scenarios below. See [Poser](POSER.md).
-- **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|together|misc|physics|library|settings|close|square-head|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-request|consent-reminder|consent-reply|bridge-starting|bridge-silent|bridge-failed|bridge-off|compact|compact-invite|compact-accept|compact-long|compact-crowd|compact-wings|compact-tail|compact-sliders|compact-options|compact-save|compact-face|compact-together`**:
+- **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|together|misc|physics|library|settings|close|square-head|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-request|consent-reminder|consent-reply|bridge-starting|bridge-silent|bridge-failed|bridge-off|compact|compact-invite|compact-accept|compact-long|compact-crowd|compact-wings|compact-tail|compact-sliders|compact-options|compact-save|compact-face|compact-together|compact-body`**:
   the full handoff trial, with the real local pose layer and consent state
   machine, on a standing avatar without motorcycle contacts or bone bindings.
   The additional `connected` mode restores a T-pose at 450 and moves the
@@ -3689,9 +3757,22 @@ That ignored test creates and removes its own isolated profile.
   types a name and opens Save's form at 490 (Save, Save as…).
   `compact-together` is `together` in the compact window: both eyes
   selected, "+ 1 joint moves with it" under the joint's row.
-  `compact-face` unselects the joint at 500, then holds Ctrl over the face
-  from 560 while posing the Body: capture 640 shows the face's oval tint
-  and "Ctrl + click: Face" (seen from the demo camera, behind the avatar).
+  `compact-face` unselects the joint at 500 (as a click beside), then holds
+  Ctrl over the forehead from 560 while posing the Body: capture 640 shows
+  the head lit from the mesh and "Ctrl + click: Face" (seen from the demo
+  camera, behind the avatar; the system head is weighted to the head bone,
+  so the whole head lights). `compact-body` opens the Hands tab at 500 and
+  holds Ctrl over the chest from 560: the body lit from its mesh without
+  the head, a soft halo on its outline (the demo also moves the app's
+  cursor there, for the GPU part pick).
+  For mesh-pick regression checks, hold Ctrl over a neck/wrist seam at
+  several LODs, a one-sided attachment seen from its back, and an unrigged
+  blended accessory in front of the body. The offered part must match the
+  lit surface; visible accessories block the body behind them in either
+  attachment order, while clear alpha texels do not. Repeat with reduced
+  render scale and FSR, then close the poser with Ctrl held and take a
+  photo: no part tint may remain in the photo. The GPU regression tests
+  also cover triangle index rotation and out-of-order readback slots.
   Synthetic events
   do not validate real LSL delivery: two human-controlled grid clients must
   check bridge 1.34 provisioning and the complete consent round trip.

@@ -133,6 +133,10 @@ struct FrameU {
     sky_star_pass: [f32; 4],
     anim_clock: [u32; 4],
     selection_color: [f32; 4],
+    /// The poser's hovered part: bit j for palette joint j (shaders'
+    /// `in_poser_part`).
+    part_joints: [[u32; 4]; 2],
+    part_classes: [[u32; 4]; 8],
     rez_gradient: [[f32; 4]; 3],
     cascade_vp: [[[f32; 4]; 4]; CASCADES],
     lights: [LightU; MAX_LIGHTS],
@@ -950,6 +954,10 @@ struct Pipelines {
     physics_wire: Option<wgpu::RenderPipeline>,
     select_child_wire: Option<wgpu::RenderPipeline>,
     selection_mask: wgpu::RenderPipeline,
+    /// The poser's hovered part on the subject's skinned faces.
+    part_mask: wgpu::RenderPipeline,
+    /// The visible part of the subject's faces (part_pick.rs).
+    part_pick: wgpu::RenderPipeline,
     ssr: Option<wgpu::RenderPipeline>,
     pre_opaque: wgpu::RenderPipeline,
     pre_opaque_2s: wgpu::RenderPipeline,
@@ -1626,6 +1634,11 @@ pub(crate) struct Backend {
     previews: crate::preview::Cache,
     selection: Option<crate::selection::Overlay>,
     hud_selection: Option<crate::selection::Overlay>,
+    /// The poser's hovered part (`part_faces`), as the selection's halo.
+    part: Option<crate::selection::Overlay>,
+    /// Seeded from post depth while hovering; part faces resolve their own
+    /// nearest surface here, including blended unrigged accessories.
+    part_depth: Option<wgpu::TextureView>,
     /// The coverage pass of cut-out photos (cutout.rs), made on first use.
     cutout: Option<crate::cutout::Cutout>,
     frame_layout: wgpu::BindGroupLayout,
@@ -1722,6 +1735,15 @@ pub(crate) struct Backend {
     depth_pick: crate::pick::DepthPick,
     /// Faces drawn under a clicked pixel (drawn_pick.rs).
     drawn_pick: crate::drawn_pick::DrawnPick,
+    /// The poser's part under the cursor (part_pick.rs), and this frame's
+    /// pixel to read; whether the part overlay draws this frame (a part is
+    /// lit: the subject's faces are also listed for the pick alone).
+    part_pick: crate::part_pick::PartPick,
+    part_pick_px: Option<([u32; 2], [u32; 2])>,
+    part_lit: bool,
+    /// Frames since a part was last lit: its overlay images go after
+    /// `PART_IDLE_FRAMES`.
+    part_idle: u32,
     /// The world's labels, drawn behind what the scene has in front of
     /// them (label_depth.rs).
     label_depth: crate::label_depth::LabelDepth,
@@ -1818,6 +1840,7 @@ impl std::ops::DerefMut for EguiSlot {
 struct XrWorld {
     backends: [Backend; 2],
     mirror: crate::vr_mirror::Mirror,
+    grading: Option<crate::vr_mirror::HeadsetGrade>,
     session: crate::xr_frame::Session,
     runtime: openxr::Instance,
 }
@@ -1979,6 +2002,45 @@ fn sprite_layout() -> wgpu::VertexBufferLayout<'static> {
         attributes: &ATTRS,
     }
 }
+
+/// The tint inside the poser's hovered part (the selection overlay's pulse,
+/// held): which part reads at once, its clothing still seen through it.
+const PART_TINT: f32 = 0.4;
+/// The part's halo against the selection's: a little wider, a soft glow
+/// around the body rather than a line (a game's hover outline on a
+/// character).
+const PART_HALO: f32 = 1.25;
+/// Frames without a lit part before its overlay images are freed (about
+/// 4 s at 60 fps).
+const PART_IDLE_FRAMES: u32 = 240;
+/// The part passes' depth test against the scene's (`post_depth`): with an
+/// upscaler, that depth is the nearest render pixel's at the display's size,
+/// a little in front of a slanted surface's own pixels, which would fail one
+/// in two (a hatched tint, holes in the pick); a bias that grows with the
+/// slope covers that gap, the constant one the selection's.
+const PART_DEPTH_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
+    constant: 1,
+    slope_scale: 2.0,
+    clamp: 0.0,
+};
+
+// Both passes resolve nearest subject coverage in a private copy of scene
+// depth. Keep these states shared: otherwise mask and pick can disagree.
+fn part_desc(base: PipeDesc<'_>, format: wgpu::TextureFormat, write_mask: wgpu::ColorWrites) -> PipeDesc<'_> {
+    PipeDesc {
+        cull: None, // the fragments retain each material's sidedness
+        samples: 1,
+        format: Some(format),
+        depth_write: true,
+        write_mask,
+        depth_bias: PART_DEPTH_BIAS,
+        ..base
+    }
+}
+
+#[cfg(test)]
+#[path = "part_tests.rs"]
+mod part_tests;
 
 #[derive(Clone, Copy)]
 struct PipeDesc<'a> {
@@ -2809,6 +2871,7 @@ struct Ranges {
     physics_shapes: (u64, u32),
     select_child: (u64, u32),
     select_faces: (u64, u32),
+    part_faces: (u64, u32),
     refl_water: (u64, u32),
     water_air: (u64, u32),
     water_air_terrain: (u64, u32),
@@ -3430,6 +3493,7 @@ impl Backend {
         });
         let depth_pick = crate::pick::DepthPick::new(&device);
         let drawn_pick = crate::drawn_pick::DrawnPick::new(&device, DEPTH_FORMAT);
+        let part_pick = crate::part_pick::PartPick::new(&device);
         let label_depth = crate::label_depth::LabelDepth::new(&device, format);
         lost_at_start(&lost, &surface)?;
         let occlusion = crate::occlusion::Occlusion::new(&device);
@@ -3478,6 +3542,8 @@ impl Backend {
             selection: None,
             cutout: None,
             hud_selection: None,
+            part: None,
+            part_depth: None,
             frame_layout,
             records_layout,
             tex_layout,
@@ -3542,6 +3608,10 @@ impl Backend {
             gpu_cull,
             depth_pick,
             drawn_pick,
+            part_pick,
+            part_pick_px: None,
+            part_lit: false,
+            part_idle: 0,
             label_depth,
             impostors,
             motion_history,
@@ -4117,6 +4187,18 @@ impl Backend {
             },
             ..base("selected face coverage", "vs_main", "fs_selection_mask")
         });
+        // The poser's hovered part: the subject's skinned faces kept where
+        // their weights are the part's joints (`vs_part_mask`)
+        let part_mask = pipe(part_desc(
+            base("poser part coverage", "vs_part_mask", "fs_part_mask"),
+            wgpu::TextureFormat::Rg8Unorm,
+            wgpu::ColorWrites::RED | wgpu::ColorWrites::GREEN,
+        ));
+        let part_pick = pipe(part_desc(
+            base("poser part pick", "vs_part_pick", "fs_part_pick"),
+            crate::part_pick::FORMAT,
+            wgpu::ColorWrites::RED,
+        ));
         let ssr_pipe = ssr.then(|| {
             let src = format!("{}\n{}", crate::common_shader_source(), include_str!("shaders/ssr.wgsl"));
             let m = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -4456,6 +4538,8 @@ impl Backend {
             select_root_wire,
             select_child_wire,
             selection_mask,
+            part_mask,
+            part_pick,
             ssr: ssr_pipe,
             pre_opaque,
             pre_opaque_2s,
@@ -5786,6 +5870,11 @@ impl Backend {
         let camera_pos = inv_view.transform_point3(Vec3::ZERO);
         let mut u = FrameU::zeroed();
         u.selection_color = f.selection_color;
+        u.part_joints = [
+            [f.part_joints[0], f.part_joints[1], f.part_joints[2], f.part_joints[3]],
+            [f.part_joints[4], f.part_joints[5], f.part_joints[6], f.part_joints[7]],
+        ];
+        u.part_classes = std::array::from_fn(|i| std::array::from_fn(|j| f.part_classes[i * 4 + j]));
         u.rez_gradient = f.rez_gradient;
         u.view_proj = vp.to_cols_array_2d();
         u.inv_view_proj = vp.inverse().to_cols_array_2d();
@@ -5984,6 +6073,7 @@ impl Backend {
             hover: self.depth_pick.latest(),
             picks: self.depth_pick.take_click_answers(),
             drawn: self.drawn_pick.take_answers(),
+            part_pick: self.part_pick.take_answer(),
             cull: self.cull.last,
             captured,
             snapshot,
@@ -6044,6 +6134,7 @@ impl Backend {
         uploads.after_submit();
         // (nothing was drawn for the pixel this frame began to answer)
         self.drawn_pick.abandon();
+        self.part_pick.abandon();
         self.result(index, stats, None, spent)
     }
 
@@ -6061,7 +6152,15 @@ impl Backend {
                 return Err(Box::new(packet));
             };
             let created = (|| -> Result<XrWorld, Box<dyn std::error::Error>> {
-                let session = crate::xr_frame::Session::new(runtime, *system, &self.device, &self.queue, self.config.format)?;
+                let session = crate::xr_frame::Session::new(
+                    runtime,
+                    *system,
+                    &self.device,
+                    &self.queue,
+                    self.config.format,
+                    packet.settings.vr_resolution,
+                )?;
+                self.vr.set_default_resolution(Some(session.default_resolution));
                 let mut init = (**seed).clone();
                 init.external = true;
                 init.xr = None;
@@ -6076,6 +6175,8 @@ impl Backend {
                 Ok(XrWorld {
                     backends: [left, right],
                     mirror: crate::vr_mirror::Mirror::new(&self.device, &self.config, &self.present_modes),
+                    grading: ([packet.settings.vr_gamma, packet.settings.vr_vibrancy] != [1.0; 2] && !session.grades_on_submission())
+                        .then(|| crate::vr_mirror::HeadsetGrade::new(&self.device, session.output_template())),
                     session,
                     runtime: runtime.clone(),
                 })
@@ -6108,7 +6209,21 @@ impl Backend {
         if !self.vr.wanted() {
             world.session.request_stop();
         }
-        let eyes = match world.session.begin(&world.runtime, packet.params.view, packet.params.near) {
+        let frame = world.session.begin(
+            &world.runtime,
+            packet.params.view,
+            packet.params.near,
+            packet.params.vr_rig,
+            packet.params.vr_revision,
+        );
+        let focused = world.session.focused
+            && frame
+                .as_ref()
+                .is_ok_and(|eyes| eyes.as_ref().is_some_and(|e| e.head_rotation.is_some()));
+        if !focused {
+            self.vr.set_focused(false);
+        }
+        let eyes = match frame {
             Ok(Some(eyes)) => eyes,
             Ok(None) => {
                 self.xr_world = Some(world);
@@ -6122,6 +6237,19 @@ impl Backend {
                 return Err(Box::new(packet));
             }
         };
+        if let Some(rotation) = eyes.head_rotation {
+            self.vr.set_head_pose(crate::HeadPose {
+                rotation,
+                position: eyes.head_position,
+                rig_position: packet.params.view.inverse().w_axis.truncate(),
+                generation: self.vr.reference(eyes.reference_changed),
+                origin: packet.params.vr_origin,
+                revision: packet.params.vr_revision,
+                mode: packet.params.vr_rig,
+                sampled: std::time::Instant::now(),
+            });
+        }
+        self.vr.set_focused(focused);
         self.vr.started();
         // Keep the desktop egui texture atlas current, even though the headset has no UI.
         let mirror_ui = packet.ui.take().map(|mut ui| {
@@ -6159,9 +6287,23 @@ impl Backend {
             motion_cut: packet.motion_cut,
             input_at: None,
         };
+        let bounded = |value: f32, min: f32, max: f32| if value.is_finite() { value.clamp(min, max) } else { 1.0 };
+        let grade = [
+            bounded(packet.settings.vr_gamma, 0.5, 2.5),
+            bounded(packet.settings.vr_vibrancy, 0.0, 2.0),
+        ];
+        if grade == [1.0; 2] || world.session.grades_on_submission() {
+            world.grading = None;
+        }
+        let grading = (grade != [1.0; 2] && !world.session.grades_on_submission()).then(|| {
+            world
+                .grading
+                .get_or_insert_with(|| crate::vr_mirror::HeadsetGrade::new(&self.device, &eyes.textures[0]))
+        });
+        let sources = grading.as_ref().map_or(&eyes.textures, |grading| &grading.sources);
         let apply = |p: &mut FramePacket, i: usize| {
             let eye = eyes.cameras[i];
-            p.output = Some(eyes.textures[i].clone());
+            p.output = Some(sources[i].clone());
             p.params.view = eye.view;
             p.params.proj = eye.projection;
             p.params.camera_pos = eye.position;
@@ -6186,16 +6328,19 @@ impl Backend {
         let mirror_size = desktop_size;
         let mut first = world.backends[0].render_view(packet);
         let _second = world.backends[1].render_view(other);
+        if let Some(grading) = grading.as_ref() {
+            grading.encode(&self.device, &self.queue, &eyes.textures, grade);
+        }
         first.stats.presented = world.mirror.present(
             &self.device,
             &self.queue,
             &self.surface,
-            &eyes.textures[0],
+            &sources[0],
             (mirror_size.0, mirror_size.1),
             &mut self.egui,
             mirror_ui.as_ref(),
         );
-        if let Err(e) = world.session.end() {
+        if let Err(e) = world.session.end(grade) {
             log::error!("XR world submission failed: {e}");
             self.vr.finish(true);
             self.motion_cut = true;
@@ -6339,6 +6484,7 @@ impl Backend {
         self.depth_pick.harvest();
         self.depth_pick.harvest_clicks();
         self.drawn_pick.harvest();
+        self.part_pick.harvest();
         self.drawn_pick.ask(drawn);
         let previous_scene = self.scene_size();
         let picks = picks
@@ -6588,6 +6734,74 @@ impl Backend {
             }
             if let Some(selection) = &self.selection {
                 selection.update(&self.queue, f.selection_color, f.selection_pulse, f.selection_scale);
+            }
+        }
+        // the subject's faces serve the pick (Ctrl over it) and the overlay
+        // (a part lit): the overlay only when a joint is set
+        self.part_lit = !lists.part_faces.is_empty() && f.part_joints != [0; 8];
+        // the cursor, in window pixels, on the target drawn at `post_size`
+        // (a lower render scale, RLVa's divisor); none on a photo frame,
+        // whose `config` is the photo's (the hover is skipped there too)
+        let (window_w, window_h) = (self.config.width.max(1), self.config.height.max(1));
+        self.part_pick_px = f
+            .part_pick
+            .filter(|_| !lists.part_faces.is_empty() && snapshot.is_none())
+            .map(|px| {
+                let at = crate::part_pick::target_pixel(px, [window_w, window_h], [post_size.0, post_size.1]);
+                (at, px)
+            });
+        // its target under the video memory guard, freed once idle
+        let pick_size = [post_size.0, post_size.1];
+        if self.part_pick_px.is_some() {
+            if self.part_pick.needs_target(pick_size) {
+                let texture = extra(&mut self.oom, &self.device, self.lost.get(), "poser part pick", |device| {
+                    crate::part_pick::PartPick::make_target(device, pick_size)
+                });
+                self.part_pick.set_target(texture, pick_size);
+            }
+        } else {
+            self.part_pick.idle();
+        }
+        // the part's overlay images go the same way once no part is lit
+        self.part_idle = if self.part_lit { 0 } else { self.part_idle.saturating_add(1) };
+        if self.part_idle > PART_IDLE_FRAMES {
+            self.part = None;
+            if self.part_pick_px.is_none() {
+                self.part_depth = None;
+            }
+        }
+        if self.part_lit || self.part_pick_px.is_some() {
+            let size = [post_size.0, post_size.1];
+            if self
+                .part_depth
+                .as_ref()
+                .is_none_or(|depth| depth.texture().width() != size[0] || depth.texture().height() != size[1])
+            {
+                self.part_depth = extra(&mut self.oom, &self.device, self.lost.get(), "poser part depth", |device| {
+                    make_view(
+                        device,
+                        "poser part depth",
+                        size[0],
+                        size[1],
+                        DEPTH_FORMAT,
+                        1,
+                        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
+                    )
+                    .1
+                });
+            }
+        }
+        if self.part_lit {
+            let size = [post_size.0, post_size.1];
+            if self.part.as_ref().is_none_or(|part| part.size != size) {
+                let format = self.config.format;
+                self.part = extra(&mut self.oom, &self.device, self.lost.get(), "poser part outline", |device| {
+                    crate::selection::Overlay::new_part(device, format, size)
+                });
+            }
+            if let Some(part) = &self.part {
+                // a steady tint inside, a wide halo outside
+                part.update(&self.queue, f.part_color, PART_TINT, f.selection_scale * PART_HALO);
             }
         }
         if !lists.hud_select_faces.is_empty() {
@@ -7416,6 +7630,7 @@ impl Backend {
         rg.physics_shapes = push(cpu, &lists.physics_shapes);
         rg.select_child = push(cpu, &lists.select_child);
         rg.select_faces = push(cpu, &lists.select_faces);
+        rg.part_faces = push(cpu, &lists.part_faces);
         let imp_ranges: Vec<((u64, u32), (u64, u32))> = imp_caps.iter().map(|c| (push(cpu, &c.opaque), push(cpu, &c.blend))).collect();
         // reflection passes: each culled to its own frustum
         if let Some(c) = &capture {
@@ -9257,10 +9472,11 @@ impl Backend {
         // outline refused by a full video memory is not): the frame's last
         // timestamp goes to whichever pass really ends it
         let draws_selection = rg.select_faces.1 > 0 && self.selection.is_some();
+        let draws_part = rg.part_faces.1 > 0 && self.part_lit && self.part.is_some() && self.part_depth.is_some();
         // ---- post (tonemap) to the swapchain
         {
             let ts = match (&self.timer, timer_slot) {
-                (Some(t), Some(_)) if !draw_huds && !draws_selection => Some(wgpu::RenderPassTimestampWrites {
+                (Some(t), Some(_)) if !draw_huds && !draws_selection && !draws_part => Some(wgpu::RenderPassTimestampWrites {
                     query_set: &t.query_set,
                     beginning_of_pass_write_index: None,
                     end_of_pass_write_index: Some(1),
@@ -9330,7 +9546,7 @@ impl Backend {
             draw(&mut pass, &self.pipelines.selection_mask, rg.select_faces);
             drop(pass);
             let timestamps = match (&self.timer, timer_slot) {
-                (Some(t), Some(_)) if !draw_huds => Some(wgpu::RenderPassTimestampWrites {
+                (Some(t), Some(_)) if !draw_huds && !draws_part => Some(wgpu::RenderPassTimestampWrites {
                     query_set: &t.query_set,
                     beginning_of_pass_write_index: None,
                     end_of_pass_write_index: Some(1),
@@ -9338,6 +9554,75 @@ impl Backend {
                 _ => None,
             };
             selection.encode(&mut encoder, scene_target, timestamps);
+            calls.set(calls.get() + 2);
+        }
+
+        // Resolve subject coverage against private depth. Without depth
+        // writes the last visited face wins, including the body behind a
+        // visible unrigged Blend attachment. The scene depth stays intact.
+        let part_depth = self.part_depth.as_ref().filter(|_| draws_part || self.part_pick_px.is_some());
+        if let Some(depth) = part_depth {
+            encoder.copy_texture_to_texture(
+                post_depth.texture().as_image_copy(),
+                depth.texture().as_image_copy(),
+                depth.texture().size(),
+            );
+        }
+        if rg.part_faces.1 > 0
+            && let Some(depth) = part_depth
+            && let Some((px, tag)) = self.part_pick_px
+            && let Some(view) = self.part_pick.begin([post_size.0, post_size.1], px, tag)
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("poser part pick"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            // the cursor's pixel alone is read: only it is rasterized
+            pass.set_scissor_rect(px[0], px[1], 1, 1);
+            bind_mesh(&mut pass, &self.groups.b);
+            draw(&mut pass, &self.pipelines.part_pick, rg.part_faces);
+            drop(pass);
+            self.part_pick.encode_copy(&mut encoder);
+            calls.set(calls.get() + 1);
+        }
+
+        if rg.part_faces.1 > 0
+            && self.part_lit
+            && let Some(depth) = part_depth
+            && let Some(part) = &self.part
+        {
+            let mut pass = part.begin_mask(&mut encoder, depth);
+            bind_mesh(&mut pass, &self.groups.b);
+            draw(&mut pass, &self.pipelines.part_mask, rg.part_faces);
+            drop(pass);
+            let timestamps = match (&self.timer, timer_slot) {
+                (Some(t), Some(_)) if !draw_huds => Some(wgpu::RenderPassTimestampWrites {
+                    query_set: &t.query_set,
+                    beginning_of_pass_write_index: None,
+                    end_of_pass_write_index: Some(1),
+                }),
+                _ => None,
+            };
+            part.encode(&mut encoder, scene_target, timestamps);
             calls.set(calls.get() + 2);
         }
 
@@ -9686,6 +9971,7 @@ impl Backend {
         self.exposure.after_submit();
         self.histogram.after_submit();
         self.drawn_pick.after_submit();
+        self.part_pick.after_submit();
         prof.mark("submit");
         let encode_ms = t0.elapsed().as_secs_f32() * 1000.0;
         if let FrameTarget::Surface(t) = surface_tex {
@@ -9697,6 +9983,7 @@ impl Backend {
         // a click answered by now goes back with this frame's result
         self.depth_pick.harvest_clicks();
         self.drawn_pick.harvest();
+        self.part_pick.harvest();
         prof.mark("present");
         let phase = |step: &str| RENDER_PHASES.iter().position(|p| *p == step);
         stats.cpu_phases[0] = (t0 - t_acquire).as_secs_f32() * 1000.0;

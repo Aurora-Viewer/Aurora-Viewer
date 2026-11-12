@@ -4,7 +4,7 @@
 //! live view back behind the avatar (`OptionsResult::reset_camera`).
 
 use super::super::COMBO_W;
-use super::super::cx::{Cx, Nothing, field, fields};
+use super::super::cx::{Custom, Cx, Nothing, field, fields};
 use crate::camera::{CameraPreset, CameraSettings, DEFAULT_FOV, FOV_RANGE, SMOOTHING_RANGE};
 use egui::RichText;
 
@@ -171,19 +171,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     "",
                 );
             });
-            // the headset's starting viewpoint (app.rs, toggle_vr)
             cx.group(tr!("ui-options-camera-vr"), |cx| {
-                use crate::camera::VrView;
-                cx.unfolded().choice(
-                    tr!("ui-options-camera-vr-view"),
-                    tr!("ui-options-camera-vr-view-help"),
-                    &field!(camera.vr_view),
-                    &[
-                        (VrView::FirstPerson, tr!("ui-options-camera-vr-view-first-person"), false),
-                        (VrView::DesktopCamera, tr!("ui-options-camera-vr-view-desktop-camera"), false),
-                    ],
-                );
-                // read by open_renderer at the next start (#2309)
                 cx.toggle(
                     tr!("ui-options-camera-vr-at-start"),
                     tr!("ui-options-camera-vr-at-start-help"),
@@ -268,7 +256,20 @@ pub fn page(cx: &mut Cx, tab: usize) {
     }
     // the rest of the camera's settings (written by its shortcuts, its
     // windows): the page's reset puts them back too, as "Reset camera" did
-    cx.track(&field!(camera));
+    cx.track(&Custom {
+        // Reset ownership excludes the independently tracked camera.vr group.
+        path: "camera.desktop",
+        modified: |s, d| {
+            let mut camera = s.camera.clone();
+            camera.vr = d.camera.vr.clone();
+            camera != d.camera
+        },
+        reset: |s, d| {
+            let vr = s.camera.vr.clone();
+            s.camera = d.camera.clone();
+            s.camera.vr = vr;
+        },
+    });
 }
 
 /// Preferences › Camera › Mouselook: the Legacy Viewer's mouselook rows.

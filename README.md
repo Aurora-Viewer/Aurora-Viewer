@@ -111,37 +111,34 @@ while rethinking the user interface.
   </tr>
 </table>
 
-### New in 0.9.7 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+### New in 0.9.8 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>A rethought Build window</h3>
-      The selection sits in a header that folds away, the options form
-      columns you arrange yourself with Organize options…, position, size
-      and rotation keep the full width, and Contents gets its own display
-      menu.
+      <h3>Building, like the Legacy Viewer</h3>
+      Edit Face selects the faces of what you wear again, and Derender
+      with Edit linked parts hides only the selected part, handy for the
+      DEMO signs of a worn demo.
     </td>
     <td width="50%" valign="top">
-      <h3>Script recovery, like the Legacy Viewer</h3>
-      After a crash or a lost connection, the unsaved changes of your
-      scripts come back at the next login, in Lost And Found. Advanced ›
-      Release keys frees the controls a broken vehicle or HUD keeps.
+      <h3>Chat and voice</h3>
+      The channel selector shows by every nearby chat input and keeps the
+      channel you chose. Nearby voice now connects on slow, high-latency
+      links too.
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <h3>Destinations, in Aurora's own window</h3>
-      Search the grid's Destination Guide, filter by category and rating,
-      see how many people are at each place and which ones you visited,
-      and teleport in one click.
+      <h3>Right on every graphics card</h3>
+      Tree leaves and mesh hair look right again on AMD cards, and
+      blended eyelashes stay visible behind mesh hair.
     </td>
     <td valign="top">
-      <h3>Poser and appearance</h3>
-      A compact poser window that leaves the scene free, several joints
-      moved together with Shift + click, a ring that turns a joint around
-      the camera's view, and Export XML for your shape, physics and
-      clothing.
+      <h3>Smoother starts</h3>
+      A small Aurora window shows while the viewer starts and after an
+      update's restart. The avatar complexity notice no longer repeats,
+      and invisible HUD buttons take a left click again.
     </td>
   </tr>
 </table>
@@ -1161,6 +1158,7 @@ exe before publishing; the local build also writes it to `version.txt`.
 |---|---|
 | `--title <text>` | Names the window "Aurora Viewer <version> - <text> (Dev)" and its log file |
 | `--fps-limit <fps>` | Caps this instance at 1–500 fps without changing saved preferences |
+| `--vr-mode=first-person\|avatar\|flycam` | Starting camera mode when used with `--vr` |
 | `--vr` | Enters VR once the world shows, with a headset connected (Windows and Linux) |
 | `--language <code>` | Forces the language of this instance (`en`, `fr`, `ja`, or another language added to the catalogues), without changing the saved choice |
 | `--grid <name>` | Selects the login grid: `agni`, `aditi`, a saved grid name/nickname or a login URI (`--loginuri <uri>` too) |
