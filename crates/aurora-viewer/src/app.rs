@@ -3325,6 +3325,14 @@ impl App {
             }
             return;
         }
+        // llOpenFloater (LLUrlFloaterDispatchHandler): the Legacy Viewer
+        // opens its web_content window at once. Aurora takes the way of any
+        // other link instead: refused schemes, the question for a dangerous
+        // or unknown address, and the resident's choice of browser.
+        if let NetEvent::UrlFloater { url } = ev {
+            self.open_web_link(url, None);
+            return;
+        }
         if let NetEvent::TeleportRegionResolved { request, result } = ev {
             if !self.settings.rlva_enabled {
                 self.named_teleport.cancel_scripts();
@@ -13219,6 +13227,16 @@ impl App {
             }
             if let Some(url) = self.world.media_filter.question().map(|q| q.url.clone()) {
                 self.world.media_filter.answer(&url, true, crate::media::filter::Remember::Once);
+            }
+        }
+        // AURORA_DEMO_URL_FLOATER=1: at frame 300 the simulator's llOpenFloater
+        // ("URLFloater", read by aurora-net's url_floater) asks for a web
+        // window on an unknown address: the link question comes up
+        if self.demo && self.frame_count == 300 && std::env::var_os("AURORA_DEMO_URL_FLOATER").is_some() {
+            let message = br#"{'action':'OpenURL','action_data':{'floater_title':'web_content','floater_url':'https%3A%2F%2Fexample.invalid%2Fwelcome','floater_params':{'trusted_content':1}}}"#;
+            if let Some(url) = aurora_net::url_floater::url(message) {
+                log::info!("demo URLFloater: {url}");
+                self.on_app_event(NetEvent::UrlFloater { url });
             }
         }
         // AURORA_DEMO_TURN_SELECT=1: the camera off the avatar, then an

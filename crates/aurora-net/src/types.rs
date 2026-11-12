@@ -968,6 +968,11 @@ pub enum NetEvent {
         message: String,
         url: String,
     },
+    /// The simulator asks for a web window on this URL (llOpenFloater, the
+    /// "URLFloater" GenericMessage; `url_floater.rs`).
+    UrlFloater {
+        url: String,
+    },
     /// llMapDestination (ScriptTeleportRequest): a place to show on the
     /// world map. Despite its name it never teleports by itself.
     ScriptTeleportRequest {

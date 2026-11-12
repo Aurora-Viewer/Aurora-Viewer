@@ -1489,6 +1489,10 @@ allocates no reduced-scene target and runs no upscale pass.
 Script replies use `NetCommand::ChatReply` and `aurora-net/src/chat_reply.rs`:
 one reliable shout, including an empty response, UTF-8 truncated to the
 protocol's 1023-byte limit. They bypass user chat splitting and redirection.
+The simulator's llOpenFloater ("URLFloater" GenericMessage) is read by
+`aurora-net/src/url_floater.rs` into `NetEvent::UrlFloater`; the app opens it
+like any other web link (`open_web_link`: refused schemes, link question,
+browser choice), never with more trust.
 `app/rlva.rs` dispatches
 forced actions through the native application handlers. Camera constraints
 also cover the free camera; HUD text and avatar tags are filtered at drawing.

@@ -5079,6 +5079,7 @@ impl Session<'_> {
             );
             if let Some(parameter) = m.param_list.first() {
                 self.on_inventory_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
+                self.on_url_floater_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
             }
             self.on_social_generic(m.agent_data.agent_id, &m.method_data.method);
         } else if id == LargeGenericMessage::ID {
@@ -5095,6 +5096,7 @@ impl Session<'_> {
             );
             if let Some(parameter) = m.param_list.first() {
                 self.on_inventory_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
+                self.on_url_floater_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
             }
             self.on_social_generic(m.agent_data.agent_id, &m.method_data.method);
         } else if id == UpdateCreateInventoryItem::ID {
